@@ -37,25 +37,22 @@ class TestChatUploadAPI:
 
     @pytest.mark.backend
     async def test_upload_txt_file(self, async_client: AsyncClient):
-        """TXT upload returns 200 with text_preview"""
+        """Async contract: TXT upload returns 200 in 'processing' immediately —
+        text extraction (OCR) runs in the background and the preview is pushed
+        over the chat WebSocket later (was: synchronous extract → 30s timeout)."""
         content = b"Hello, this is a test document with some content."
         files = {"file": ("test.txt", io.BytesIO(content), "text/plain")}
         data = {"session_id": "test-session-123"}
 
-        with patch("api.routes.chat_upload._get_processor") as mock_proc:
-            processor = AsyncMock()
-            processor.extract_text_only = AsyncMock(return_value="Hello, this is a test document with some content.")
-            mock_proc.return_value = processor
-
-            response = await async_client.post("/api/chat/upload", files=files, data=data)
+        response = await async_client.post("/api/chat/upload", files=files, data=data)
 
         assert response.status_code == 200
         body = response.json()
         assert body["filename"] == "test.txt"
         assert body["file_type"] == "txt"
-        assert body["status"] == "completed"
-        assert body["text_preview"] is not None
-        assert "Hello" in body["text_preview"]
+        assert body["status"] == "processing"
+        assert body["text_preview"] is None
+        assert body["id"]
 
     @pytest.mark.backend
     async def test_upload_invalid_format(self, async_client: AsyncClient):
@@ -157,23 +154,151 @@ class TestChatUploadAPI:
         assert response.json()["file_type"] == "pdf"
 
     @pytest.mark.backend
-    async def test_upload_extraction_failure(self, async_client: AsyncClient):
-        """When text extraction fails, status is 'failed' but HTTP 200"""
-        content = b"some content"
-        files = {"file": ("broken.txt", io.BytesIO(content), "text/plain")}
-        data = {"session_id": "fail-session"}
+    async def test_get_upload_status(self, async_client: AsyncClient, db_session: AsyncSession):
+        """GET /upload/{id} reflects the row's current status + preview — the
+        WS-push fallback / status read for the async upload."""
+        upload = ChatUpload(
+            session_id="status-session", filename="s.txt", file_type="txt",
+            file_size=3, file_hash="h-status", status="completed",
+            extracted_text="ready text",
+        )
+        db_session.add(upload)
+        await db_session.commit()
+        await db_session.refresh(upload)
 
-        with patch("api.routes.chat_upload._get_processor") as mock_proc:
-            processor = AsyncMock()
-            processor.extract_text_only = AsyncMock(side_effect=RuntimeError("Docling crash"))
-            mock_proc.return_value = processor
-
-            response = await async_client.post("/api/chat/upload", files=files, data=data)
-
+        response = await async_client.get(f"/api/chat/upload/{upload.id}")
         assert response.status_code == 200
         body = response.json()
-        assert body["status"] == "failed"
-        assert body["error_message"] is not None
+        assert body["status"] == "completed"
+        assert body["text_preview"] == "ready text"
+
+        missing = await async_client.get("/api/chat/upload/99999999")
+        assert missing.status_code == 404
+
+
+@pytest.mark.backend
+class TestExtractAndFinalize:
+    """The background worker that the async upload schedules."""
+
+    async def _seed(self, db_session, *, text="hi", file_hash="h"):
+        from pathlib import Path as _P
+        import tempfile
+        f = _P(tempfile.gettempdir()) / f"renfield-bg-{file_hash}.txt"
+        f.write_text(text)
+        upload = ChatUpload(
+            session_id="bg-session", filename=f.name, file_type="txt",
+            file_size=len(text), file_hash=file_hash, status="processing",
+            file_path=str(f),
+        )
+        db_session.add(upload)
+        await db_session.commit()
+        await db_session.refresh(upload)
+        return upload, str(f)
+
+    def _wire(self, monkeypatch, db_session, *, auto_index=False):
+        """Patch the bg worker's collaborators. Returns (module, notify_mock,
+        auto_index_mock) so tests can assert the WS push + auto-index calls."""
+        from contextlib import asynccontextmanager
+        from api.routes import chat_upload as cu
+
+        @asynccontextmanager
+        async def _sess():
+            yield db_session
+
+        notify = AsyncMock()
+        auto = AsyncMock()
+        monkeypatch.setattr(cu, "AsyncSessionLocal", _sess)
+        monkeypatch.setattr(cu, "_auto_index_to_kb", auto)
+        monkeypatch.setattr(cu.settings, "chat_upload_auto_index", auto_index)
+        monkeypatch.setattr(cu.settings, "knowledge_graph_enabled", False)
+        # notify_session is imported inside _extract_and_finalize from this module.
+        monkeypatch.setattr("api.websocket.shared.notify_session", notify)
+        return cu, notify, auto
+
+    async def test_finalize_success_marks_completed_and_pushes(self, db_session, monkeypatch):
+        cu, notify, auto = self._wire(monkeypatch, db_session, auto_index=True)
+        upload, fpath = await self._seed(db_session, file_hash="ok")
+        proc = AsyncMock()
+        proc.extract_text_only = AsyncMock(return_value="extracted body text")
+        monkeypatch.setattr(cu, "_get_processor", lambda: proc)
+
+        await cu._extract_and_finalize(
+            upload_id=upload.id, file_path=fpath, user_id=None,
+            session_id="bg-session", safe_name=upload.filename, file_hash="ok",
+        )
+        await db_session.refresh(upload)
+        assert upload.status == "completed"
+        assert upload.extracted_text == "extracted body text"
+
+        # WS push carries the completed result (the whole point of the rework).
+        notify.assert_awaited_once()
+        sess_arg, payload = notify.await_args.args
+        assert sess_arg == "bg-session"
+        assert payload["type"] == "upload_processed"
+        assert payload["upload_id"] == upload.id
+        assert payload["status"] == "completed"
+        assert payload["text_preview"] == "extracted body text"
+        assert payload["error"] is None
+        # Auto-index fires on success.
+        auto.assert_awaited_once()
+
+    async def test_finalize_failure_marks_failed_and_skips_autoindex(self, db_session, monkeypatch):
+        """Defensive path: if extract_text_only ever RAISES, the row is marked
+        failed, the push carries the error, and auto-index is skipped."""
+        cu, notify, auto = self._wire(monkeypatch, db_session, auto_index=True)
+        upload, fpath = await self._seed(db_session, file_hash="bad")
+        proc = AsyncMock()
+        proc.extract_text_only = AsyncMock(side_effect=RuntimeError("Docling crash"))
+        monkeypatch.setattr(cu, "_get_processor", lambda: proc)
+
+        await cu._extract_and_finalize(
+            upload_id=upload.id, file_path=fpath, user_id=None,
+            session_id="bg-session", safe_name=upload.filename, file_hash="bad",
+        )
+        await db_session.refresh(upload)
+        assert upload.status == "failed"
+        assert upload.error_message and "Docling" in upload.error_message
+
+        sess_arg, payload = notify.await_args.args
+        assert payload["status"] == "failed"
+        assert payload["text_preview"] is None
+        assert "Docling" in (payload["error"] or "")
+        auto.assert_not_awaited()  # no auto-index on failure
+
+    async def test_finalize_none_extraction_stays_completed_empty(self, db_session, monkeypatch):
+        """Reality check (extract_text_only returns None on error, it does NOT
+        raise): a None result is persisted as completed-with-null-text — the
+        current behavior — and the push reflects that. Documents the known
+        limitation that a silent OCR failure looks like an empty doc."""
+        cu, notify, auto = self._wire(monkeypatch, db_session, auto_index=True)
+        upload, fpath = await self._seed(db_session, file_hash="none")
+        proc = AsyncMock()
+        proc.extract_text_only = AsyncMock(return_value=None)
+        monkeypatch.setattr(cu, "_get_processor", lambda: proc)
+
+        await cu._extract_and_finalize(
+            upload_id=upload.id, file_path=fpath, user_id=None,
+            session_id="bg-session", safe_name=upload.filename, file_hash="none",
+        )
+        await db_session.refresh(upload)
+        assert upload.status == "completed"
+        assert upload.extracted_text is None
+        assert notify.await_args.args[1]["text_preview"] is None
+
+    async def test_finalize_missing_row_is_noop(self, db_session, monkeypatch):
+        """A vanished upload row (deleted before the bg task ran) must not raise
+        and must not push / auto-index."""
+        cu, notify, auto = self._wire(monkeypatch, db_session, auto_index=True)
+        proc = AsyncMock()
+        proc.extract_text_only = AsyncMock(return_value="x")
+        monkeypatch.setattr(cu, "_get_processor", lambda: proc)
+
+        await cu._extract_and_finalize(
+            upload_id=999999999, file_path="/tmp/none", user_id=None,
+            session_id="bg-session", safe_name="gone.txt", file_hash="gone",
+        )
+        notify.assert_not_awaited()
+        auto.assert_not_awaited()
 
 
 # ============================================================================
@@ -1444,7 +1569,7 @@ class TestOCRSupport:
         body = response.json()
         assert body["filename"] == "photo.png"
         assert body["file_type"] == "png"
-        assert body["status"] == "completed"
+        assert body["status"] == "processing"  # async: OCR runs in background
 
     @pytest.mark.backend
     async def test_upload_jpg_accepted(self, async_client: AsyncClient):
@@ -1464,4 +1589,4 @@ class TestOCRSupport:
         body = response.json()
         assert body["filename"] == "scan.jpg"
         assert body["file_type"] == "jpg"
-        assert body["status"] == "completed"
+        assert body["status"] == "processing"  # async: OCR runs in background

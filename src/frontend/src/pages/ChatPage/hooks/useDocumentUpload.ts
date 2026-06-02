@@ -13,8 +13,12 @@ export interface UploadState {
 export type UploadStates = Record<string, UploadState>;
 
 export interface UploadedDocument {
+  id?: number;
   upload_id?: string;
   message?: string;
+  status?: string;
+  text_preview?: string | null;
+  error_message?: string | null;
   [key: string]: unknown;
 }
 
@@ -53,6 +57,13 @@ export function useDocumentUpload() {
         },
       });
 
+      // Text extraction (OCR) runs server-side in the background: the POST
+      // returns immediately with status "processing" instead of blocking on
+      // slow OCR (which tripped the 30s axios timeout for large docs). The
+      // attachment chip is added in "processing" state; the backend PUSHES an
+      // `upload_processed` event over the chat WebSocket when extraction
+      // finishes, which flips the attachment to completed (or failed). No
+      // polling — see ChatContext.handleUploadProcessed.
       setUploadStates((prev) => {
         const next = { ...prev };
         delete next[fileKey];

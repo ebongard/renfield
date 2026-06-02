@@ -38,6 +38,7 @@ import type {
   DoneMessage,
   IntentFeedbackRequestMessage,
   RagContextMessage,
+  UploadProcessedMessage,
 } from '../hooks/useChatWebSocket';
 import type { UploadStates, UploadedDocument } from '../hooks/useDocumentUpload';
 import type { Conversation } from '../../../types/chat';
@@ -73,6 +74,8 @@ export interface MessageAttachment {
   indexed?: boolean;
   document_id?: string;
   indexError?: string;
+  extractError?: string;
+  text_preview?: string | null;
   file_size?: number;
 }
 
@@ -846,6 +849,24 @@ export function ChatProvider({ children }: ChatProviderProps) {
     }));
   }, []);
 
+  // Async chat-upload text extraction finished server-side: the backend pushes
+  // this over the WS (no polling). Flip the PENDING attachment chip from
+  // "processing" to its terminal status so it becomes sendable (completedIds
+  // filters on status === 'completed') — or surface the extraction error.
+  const handleUploadProcessed = useCallback((data: UploadProcessedMessage) => {
+    setAttachments((prev) => prev.map((att) =>
+      // att.id is the numeric upload id at runtime (typed string in the shape).
+      (att.id as unknown as number) === data.upload_id
+        ? {
+            ...att,
+            status: data.status,
+            text_preview: data.text_preview ?? att.text_preview,
+            ...(data.status === 'failed' && data.error ? { extractError: data.error } : {}),
+          }
+        : att,
+    ));
+  }, []);
+
   // Adaptive Card from server (sent after orchestrated/single-role response)
   const handleCard = useCallback((data: CardMessage) => {
     if (!data.card) return;
@@ -880,6 +901,7 @@ export function ChatProvider({ children }: ChatProviderProps) {
     onIntentFeedbackRequest: handleIntentFeedbackRequest,
     onDocumentProcessing: handleDocumentProcessing,
     onDocumentReady: handleDocumentReady,
+    onUploadProcessed: handleUploadProcessed,
     onDocumentError: handleDocumentError,
     onAgentThinking: handleAgentThinking,
     onAgentToolCall: handleAgentToolCall,

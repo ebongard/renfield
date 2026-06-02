@@ -155,6 +155,8 @@
     "unsupportedFormat": "Dateiformat nicht unterstützt",
     "fileTooLarge": "Datei zu groß (max. {{size}}MB)",
     "removeAttachment": "Anhang entfernen",
+    "uploadProcessing": "wird verarbeitet …",
+    "uploadFailed": "Verarbeitung fehlgeschlagen",
     "documentUploaded": "Dokument hochgeladen: {{filename}}",
     "documentAttached": "{{count}} Dokument(e) angehängt",
     "dropFileHere": "Datei ablegen zum Anhängen",

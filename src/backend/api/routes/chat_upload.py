@@ -20,6 +20,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from models.database import (
     UPLOAD_STATUS_COMPLETED,
     UPLOAD_STATUS_FAILED,
+    UPLOAD_STATUS_PROCESSING,
     ChatUpload,
     Conversation,
     KnowledgeBase,
@@ -103,29 +104,20 @@ async def upload_chat_document(
         logger.error(f"Chat upload: Datei speichern fehlgeschlagen: {e}")
         raise HTTPException(status_code=500, detail="File save failed")
 
-    # Extract text
-    extracted_text = None
-    status = UPLOAD_STATUS_COMPLETED
-    error_message = None
-
-    try:
-        processor = _get_processor()
-        extracted_text = await processor.extract_text_only(str(file_path))
-    except Exception as e:
-        logger.error(f"Chat upload: Text-Extraktion fehlgeschlagen: {e}")
-        status = UPLOAD_STATUS_FAILED
-        error_message = str(e)
-
-    # Create DB entry
+    # Create the row up-front in PROCESSING state so the client gets an id right
+    # away. Text extraction (OCR) can run well past the client's 30s timeout for
+    # large/scanned docs (was: synchronous extract → ECONNABORTED on the upload
+    # POST). It now runs in a background task that, when done, PUSHES an
+    # `upload_processed` event over the chat WS (no client polling).
     upload = ChatUpload(
         session_id=session_id,
         filename=safe_name,
         file_type=ext,
         file_size=len(content),
         file_hash=file_hash,
-        extracted_text=extracted_text,
-        status=status,
-        error_message=error_message,
+        extracted_text=None,
+        status=UPLOAD_STATUS_PROCESSING,
+        error_message=None,
         knowledge_base_id=knowledge_base_id,
         file_path=str(file_path),
     )
@@ -133,34 +125,101 @@ async def upload_chat_document(
     await db.commit()
     await db.refresh(upload)
 
-    # Fire KG extraction for extracted text (fire-and-forget)
-    if extracted_text and settings.knowledge_graph_enabled:
-        from utils.hooks import run_hooks
-        background_tasks.add_task(
-            run_hooks,
-            "post_document_ingest",
-            chunks=[extracted_text],
-            document_id=None,
-            user_id=user.id if user else None,
-        )
-
-    # Auto-index to KB if enabled
-    if settings.chat_upload_auto_index and status == UPLOAD_STATUS_COMPLETED:
-        background_tasks.add_task(
-            _auto_index_to_kb, upload.id, str(file_path), safe_name, file_hash,
-            session_id=session_id,
-        )
+    background_tasks.add_task(
+        _extract_and_finalize,
+        upload_id=upload.id,
+        file_path=str(file_path),
+        user_id=user.id if user else None,
+        session_id=session_id,
+        safe_name=safe_name,
+        file_hash=file_hash,
+    )
 
     return ChatUploadResponse(
         id=upload.id,
         filename=upload.filename,
         file_type=upload.file_type,
         file_size=upload.file_size,
-        status=upload.status,
-        text_preview=extracted_text[:500] if extracted_text else None,
-        error_message=upload.error_message,
+        status=upload.status,  # "processing" — result pushed over the chat WS
+        text_preview=None,
+        error_message=None,
         created_at=upload.created_at.isoformat() if upload.created_at else "",
     )
+
+
+async def _extract_and_finalize(
+    *,
+    upload_id: int,
+    file_path: str,
+    user_id: int | None,
+    session_id: str,
+    safe_name: str,
+    file_hash: str,
+) -> None:
+    """Background worker for an async chat upload: extract text (OCR), persist it
+    on the ChatUpload row, then fire the KG hook + auto-index. Runs AFTER the
+    upload response, so slow OCR can't time out the client. Uses its own DB
+    session (the request's is already closed)."""
+    extracted_text = None
+    status = UPLOAD_STATUS_COMPLETED
+    error_message = None
+    try:
+        extracted_text = await _get_processor().extract_text_only(file_path)
+    except Exception as e:  # noqa: BLE001 — failure recorded on the row, not raised
+        logger.error(f"Chat upload {upload_id}: Text-Extraktion fehlgeschlagen: {e}")
+        status = UPLOAD_STATUS_FAILED
+        error_message = str(e)
+
+    try:
+        async with AsyncSessionLocal() as db:
+            upload = await db.get(ChatUpload, upload_id)
+            if upload is None:
+                logger.warning(f"Chat upload {upload_id} vanished before finalize")
+                return
+            upload.extracted_text = extracted_text
+            upload.status = status
+            upload.error_message = error_message
+            await db.commit()
+    except Exception as e:  # noqa: BLE001
+        logger.error(f"Chat upload {upload_id}: status persist failed: {e}")
+        return
+
+    # Push the extraction result over the chat WebSocket so the attachment chip
+    # flips from "processing" to ready (or failed) — no client polling.
+    if session_id:
+        try:
+            from api.websocket.shared import notify_session
+            await notify_session(session_id, {
+                "type": "upload_processed",
+                "upload_id": upload_id,
+                "filename": safe_name,
+                "status": status,
+                "text_preview": extracted_text[:500] if extracted_text else None,
+                "error": error_message,
+            })
+        except Exception as e:  # noqa: BLE001
+            logger.warning(f"Chat upload {upload_id}: notify_session failed: {e}")
+
+    if status != UPLOAD_STATUS_COMPLETED:
+        return
+
+    # KG extraction (fire-and-forget) — mirrors the old inline path.
+    if extracted_text and settings.knowledge_graph_enabled:
+        try:
+            from utils.hooks import run_hooks
+            await run_hooks(
+                "post_document_ingest",
+                chunks=[extracted_text],
+                document_id=None,
+                user_id=user_id,
+            )
+        except Exception as e:  # noqa: BLE001
+            logger.warning(f"Chat upload {upload_id}: KG hook failed: {e}")
+
+    if settings.chat_upload_auto_index:
+        await _auto_index_to_kb(
+            upload_id, file_path, safe_name, file_hash, session_id=session_id,
+        )
 
 
 # ============================================================================
@@ -192,6 +251,30 @@ async def _get_owned_upload(
         ).where(Conversation.user_id == user.id)
     result = await db.execute(query)
     return result.scalar_one_or_none()
+
+
+@router.get("/upload/{upload_id}", response_model=ChatUploadResponse)
+async def get_chat_upload(
+    upload_id: int,
+    db: AsyncSession = Depends(get_db),
+    user=Depends(get_optional_user),
+):
+    """Status-read for a chat upload (status + preview + error). The live update
+    is PUSHED over the chat WS (``upload_processed``); the frontend does NOT poll
+    this — it exists as a reconnect-recovery / debugging fallback. Ownership-scoped."""
+    upload = await _get_owned_upload(db, upload_id, user)
+    if upload is None:
+        raise HTTPException(status_code=404, detail="Upload not found")
+    return ChatUploadResponse(
+        id=upload.id,
+        filename=upload.filename,
+        file_type=upload.file_type,
+        file_size=upload.file_size,
+        status=upload.status,
+        text_preview=upload.extracted_text[:500] if upload.extracted_text else None,
+        error_message=upload.error_message,
+        created_at=upload.created_at.isoformat() if upload.created_at else "",
+    )
 
 
 @router.post("/upload/{upload_id}/index", response_model=IndexResponse)

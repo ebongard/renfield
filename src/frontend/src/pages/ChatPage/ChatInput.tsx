@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import type { ChangeEvent, DragEvent, KeyboardEvent } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Send, Mic, MicOff, BookOpen, ChevronDown, Paperclip, X, FileText, Loader } from 'lucide-react';
+import { Send, Mic, MicOff, BookOpen, ChevronDown, Paperclip, X, FileText, Loader, AlertCircle } from 'lucide-react';
 import apiClient from '../../utils/axios';
 import AudioVisualizer from './AudioVisualizer';
 import { useChatContext } from './context/ChatContext';
@@ -59,9 +59,16 @@ export default function ChatInput() {
     }
   }, [useRag, knowledgeBases.length]);
 
+  // Gate send while any attachment is still extracting (status "processing").
+  // Sending now would silently drop it from attachment_ids — the assistant
+  // would answer as if no file were attached. A failed attachment doesn't block
+  // (it can't be sent anyway); the user removes it or sends without it.
+  const attachmentsProcessing = attachments.some((a) => a.status === 'processing');
+
   const handleKeyDown = (e: KeyboardEvent<HTMLInputElement>) => {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
+      if (attachmentsProcessing) return;
       sendMessage?.(input, false);
     }
   };
@@ -191,22 +198,40 @@ export default function ChatInput() {
       {/* Pending Attachments */}
       {attachments.length > 0 && (
         <div className="flex flex-wrap gap-2 mb-3 pb-3 border-b border-gray-200 dark:border-gray-700">
-          {attachments.map(att => (
-            <div
-              key={att.id}
-              className="flex items-center space-x-1 px-2 py-1 bg-gray-100 dark:bg-gray-700 rounded text-sm text-gray-700 dark:text-gray-300"
-            >
-              <FileText className="w-3.5 h-3.5 flex-shrink-0" aria-hidden="true" />
-              <span className="truncate max-w-[120px]">{att.filename}</span>
-              <button
-                onClick={() => removeAttachment(att.id)}
-                className="ml-1 text-gray-400 hover:text-red-500 dark:hover:text-red-400"
-                aria-label={t('chat.removeAttachment')}
+          {attachments.map(att => {
+            const isProcessing = att.status === 'processing';
+            const isFailed = att.status === 'failed';
+            return (
+              <div
+                key={att.id}
+                title={isFailed ? (att.extractError || t('chat.uploadFailed')) : isProcessing ? t('chat.uploadProcessing') : undefined}
+                className={`flex items-center space-x-1 px-2 py-1 rounded text-sm ${
+                  isFailed
+                    ? 'bg-red-50 dark:bg-red-900/30 text-red-700 dark:text-red-300'
+                    : 'bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300'
+                }`}
               >
-                <X className="w-3.5 h-3.5" />
-              </button>
-            </div>
-          ))}
+                {isProcessing ? (
+                  <Loader className="w-3.5 h-3.5 flex-shrink-0 animate-spin" aria-hidden="true" />
+                ) : isFailed ? (
+                  <AlertCircle className="w-3.5 h-3.5 flex-shrink-0" aria-hidden="true" />
+                ) : (
+                  <FileText className="w-3.5 h-3.5 flex-shrink-0" aria-hidden="true" />
+                )}
+                <span className="truncate max-w-[120px]">{att.filename}</span>
+                {isProcessing && (
+                  <span className="text-xs text-gray-400 dark:text-gray-500">{t('chat.uploadProcessing')}</span>
+                )}
+                <button
+                  onClick={() => removeAttachment(att.id)}
+                  className="ml-1 text-gray-400 hover:text-red-500 dark:hover:text-red-400"
+                  aria-label={t('chat.removeAttachment')}
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            );
+          })}
         </div>
       )}
 
@@ -284,9 +309,10 @@ export default function ChatInput() {
 
         <button
           onClick={() => sendMessage?.(input, false)}
-          disabled={loading || !input.trim()}
+          disabled={loading || !input.trim() || attachmentsProcessing}
           className="btn btn-primary"
           aria-label={t('chat.sendMessage')}
+          title={attachmentsProcessing ? t('chat.uploadProcessing') : undefined}
         >
           <Send className="w-5 h-5" aria-hidden="true" />
         </button>

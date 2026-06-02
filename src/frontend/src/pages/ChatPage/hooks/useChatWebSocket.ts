@@ -56,6 +56,17 @@ export interface DocumentErrorMessage extends BaseWsMessage {
   upload_id: string;
 }
 
+// Pushed when async chat-upload text extraction (OCR) finishes — flips the
+// pending attachment chip from "processing" to completed (or failed).
+export interface UploadProcessedMessage extends BaseWsMessage {
+  type: 'upload_processed';
+  upload_id: number;
+  filename: string;
+  status: string;            // "completed" | "failed"
+  text_preview?: string | null;
+  error?: string | null;
+}
+
 export interface AgentThinkingMessage extends BaseWsMessage {
   type: 'agent_thinking';
   step?: number;
@@ -106,6 +117,7 @@ interface UseChatWebSocketOptions {
   onDocumentProcessing?: (data: DocumentProcessingMessage) => void;
   onDocumentReady?: (data: DocumentReadyMessage) => void;
   onDocumentError?: (data: DocumentErrorMessage) => void;
+  onUploadProcessed?: (data: UploadProcessedMessage) => void;
   onAgentThinking?: (data: AgentThinkingMessage) => void;
   onAgentToolCall?: (data: AgentToolCallMessage) => void;
   onAgentToolResult?: (data: AgentToolResultMessage) => void;
@@ -126,6 +138,7 @@ export function useChatWebSocket({
   onDocumentProcessing,
   onDocumentReady,
   onDocumentError,
+  onUploadProcessed,
   onAgentThinking,
   onAgentToolCall,
   onAgentToolResult,
@@ -192,6 +205,10 @@ export function useChatWebSocket({
         const msg = data as DocumentErrorMessage;
         debug.log('Document error:', msg.filename, msg.error);
         onDocumentError?.(msg);
+      } else if (data.type === 'upload_processed') {
+        const msg = data as UploadProcessedMessage;
+        debug.log('Upload processed:', msg.filename, msg.status);
+        onUploadProcessed?.(msg);
       } else if (data.type === 'agent_thinking') {
         const msg = data as AgentThinkingMessage;
         debug.log('Agent thinking:', msg.content?.substring(0, 80));
