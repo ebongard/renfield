@@ -311,6 +311,58 @@ def _format_file_size(size_bytes: int | None) -> str:
     return f"{size_bytes / (1024 * 1024):.1f} MB"
 
 
+# --- Paperless cold-start confirm handoff (deterministic bridge) -----------
+# forward_attachment_to_paperless leaves a paperless_pending_confirms row and
+# shows the user a preview; the user's NEXT message is their response. The
+# router/agent has no notion of a pending confirm, so without this bridge the
+# reply ("ja" / "1:neu, 2:x") is treated as a fresh request and the upload never
+# commits. We resolve the pending row per session and, when the message looks
+# like a confirm reply, route it straight to internal.paperless_commit_upload;
+# non-matches fall through to the agent (LLM fallback).
+_CONFIRM_REPLY_RE = re.compile(
+    r"^\s*(ja|nein|yes|no|ok|okay|abbrechen|cancel|neu|new|x)\b", re.IGNORECASE
+)
+_CONFIRM_FIELD_RE = re.compile(r"\b\d+\s*:\s*\S+")  # per-field choice, e.g. "1:neu", "2: x"
+_PENDING_CONFIRM_MAX_AGE_MIN = 60  # ignore abandoned confirms older than this
+
+
+def _looks_like_confirm_reply(text: str) -> bool:
+    """Does this message look like a reply to a Paperless confirm preview
+    (ja/nein, or per-field choices like '1:neu, 2:x')? Only consulted when a
+    pending confirm already exists for the session."""
+    t = (text or "").strip()
+    return bool(_CONFIRM_REPLY_RE.match(t) or _CONFIRM_FIELD_RE.search(t))
+
+
+async def _pending_paperless_confirm(session_id: str) -> str | None:
+    """confirm_token of the most recent *fresh* pending Paperless confirm for
+    this session, else None. The row exists only while a confirm awaits the
+    user (forward creates it; commit/abort deletes it; edit-rounds keep it). A
+    freshness window guards against an abandoned row hijacking a later message."""
+    try:
+        from datetime import datetime, timedelta
+
+        from sqlalchemy import select
+
+        from models.database import PaperlessPendingConfirm
+
+        cutoff = datetime.utcnow() - timedelta(minutes=_PENDING_CONFIRM_MAX_AGE_MIN)
+        async with AsyncSessionLocal() as db:
+            row = (await db.execute(
+                select(PaperlessPendingConfirm)
+                .where(
+                    PaperlessPendingConfirm.session_id == session_id,
+                    PaperlessPendingConfirm.created_at >= cutoff,
+                )
+                .order_by(PaperlessPendingConfirm.created_at.desc())
+                .limit(1)
+            )).scalar_one_or_none()
+            return str(row.confirm_token) if row else None
+    except Exception as e:  # noqa: BLE001 — bridge is best-effort, never block chat
+        logger.warning(f"⚠️ Pending-confirm lookup failed: {e}")
+        return None
+
+
 async def _fetch_document_context(attachment_ids: list[int], lang: str) -> str:
     """Fetch extracted text from uploaded documents and format as prompt context.
 
@@ -834,6 +886,8 @@ async def websocket_endpoint(
             action_result = None
             agent_steps_count = 0
             media_shortcut_handled = False
+            paperless_confirm_handled = False
+            pending_confirm_token = None
 
             if settings.agent_enabled:
                 transport = _detect_media_transport(content)
@@ -873,16 +927,71 @@ async def websocket_endpoint(
                         session_state.last_media_room = room
                         media_shortcut_handled = True
 
+            # === Paperless confirm handoff (pre-memory, pre-router) ===
+            # A fresh pending Paperless confirm + a confirm-like reply → commit
+            # deterministically. The router/agent can't be relied on to
+            # rediscover the 2-step protocol (it doesn't know a confirm is
+            # pending). Non-confirm-like messages fall through to the agent,
+            # which then sees the [PENDING_PAPERLESS_CONFIRM] directive below.
+            if not media_shortcut_handled and message_type == "text" and content and msg_session_id:
+                pending_confirm_token = await _pending_paperless_confirm(msg_session_id)
+                if pending_confirm_token and _looks_like_confirm_reply(content):
+                    try:
+                        from services.action_executor import ActionExecutor
+                        _mcp = getattr(app.state, "mcp_manager", None)
+                        _executor = ActionExecutor(mcp_manager=_mcp, session_id=msg_session_id)
+                        intent = {
+                            "intent": "internal.paperless_commit_upload",
+                            "parameters": {"confirm_token": pending_confirm_token},
+                            "confidence": 1.0,
+                        }
+                        action_result = await _executor.execute(
+                            {
+                                "intent": "internal.paperless_commit_upload",
+                                "parameters": {
+                                    "confirm_token": pending_confirm_token,
+                                    "user_response_text": content,
+                                },
+                                "confidence": 1.0,
+                            },
+                            user_id=user_id,
+                        )
+                        full_response = action_result.get("message", "") or ""
+                        await websocket.send_json(
+                            {"type": "action", "intent": intent, "result": action_result}
+                        )
+                        if full_response:
+                            await websocket.send_json({"type": "stream", "content": full_response})
+                        paperless_confirm_handled = True
+                        logger.info(
+                            f"📎 Paperless confirm handoff → commit token "
+                            f"{pending_confirm_token[:8]} (session {msg_session_id})"
+                        )
+                    except Exception as e:  # noqa: BLE001 — fall through to agent
+                        logger.warning(f"⚠️ Paperless confirm handoff failed: {e}")
+
             # Retrieve memory + document context (skipped for transport shortcuts)
             memory_context = ""
             document_context = ""
-            if not media_shortcut_handled:
+            if not media_shortcut_handled and not paperless_confirm_handled:
                 memory_context = await _retrieve_memory_context(
                     content, user_id=user_id, lang=ollama.default_lang
                 )
                 if attachment_ids:
                     document_context = await _fetch_document_context(
                         attachment_ids, lang=ollama.default_lang
+                    )
+                # LLM fallback: a pending confirm exists but the reply didn't look
+                # like ja/nein/field-choices. Tell the agent so it can still route
+                # to internal.paperless_commit_upload instead of guessing.
+                if pending_confirm_token and not paperless_confirm_handled:
+                    document_context += (
+                        "\n\n[PENDING_PAPERLESS_CONFIRM] Es liegt eine offene "
+                        "Paperless-Bestätigung vor (confirm_token="
+                        f"{pending_confirm_token}). Die aktuelle Nutzernachricht ist "
+                        "wahrscheinlich die Antwort darauf — rufe "
+                        "internal.paperless_commit_upload mit diesem confirm_token und "
+                        "user_response_text=<Nachricht> auf; erfinde keine andere Aktion."
                     )
 
             # Build personality context for agent prompts
@@ -896,7 +1005,7 @@ async def websocket_endpoint(
             # Get router from app state (initialized at startup if agent_enabled)
             agent_router = getattr(app.state, 'agent_router', None)
 
-            if not media_shortcut_handled and settings.agent_enabled and agent_router:
+            if not media_shortcut_handled and not paperless_confirm_handled and settings.agent_enabled and agent_router:
                 # === Unified Router Path ===
                 # Every message goes through router → specialized agent
                 from services.action_executor import ActionExecutor
@@ -1432,7 +1541,7 @@ async def websocket_endpoint(
                     if not intent:
                         intent = {"intent": f"agent.{role.name}", "confidence": 1.0, "parameters": {}}
 
-            elif not media_shortcut_handled:
+            elif not media_shortcut_handled and not paperless_confirm_handled:
                 # === Legacy Ranked Intent Path (agent_enabled=false or no router) ===
                 logger.info("🔍 Extrahiere Ranked Intents...")
                 ranked_intents = await ollama.extract_ranked_intents(
