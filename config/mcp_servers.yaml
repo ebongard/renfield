@@ -180,7 +180,6 @@ servers:
       - resume
       - next_track
       - previous_track
-      - set_volume
     examples:
       de:
         - "Spiel das Album im Arbeitszimmer"

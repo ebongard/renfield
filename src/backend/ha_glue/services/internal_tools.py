@@ -59,9 +59,9 @@ class InternalToolService:
             "parameters": {},
         },
         "internal.media_control": {
-            "description": "Control media playback in a room: stop, pause, resume, next track, previous track, set volume, mute, unmute. Works with both Home Assistant media players and DLNA renderers.",
+            "description": "Control media playback in a room: stop, pause, resume, next track, previous track, set volume, mute, unmute, or query status (what's playing). Works with both Home Assistant media players and DLNA renderers.",
             "parameters": {
-                "action": "Control action: stop, pause, resume, next, previous, volume, mute, unmute (required)",
+                "action": "Control action: stop, pause, resume, next, previous, volume, mute, unmute, status (required)",
                 "room_name": "Target room name (required)",
                 "volume": "Absolute volume 0-100 (use for 'set volume to X'). Mutually exclusive with volume_step.",
                 "volume_step": "Relative volume change in percentage points, e.g. -20 for 20% quieter, +10 for louder (use for 'leiser/lauter um X'). Mutually exclusive with volume.",
@@ -663,6 +663,35 @@ class InternalToolService:
         return max(0, min(100, current_pct + step)), None
 
     @staticmethod
+    def _extract_mcp_json(res: dict) -> dict:
+        """Parse the JSON payload dict out of an execute_tool result.
+
+        execute_tool returns `data` as a LIST of content blocks
+        (`[{"type":"text","text":"<json>"}]`), NOT the deserialized object — so
+        the real payload must be parsed from the text block (falling back to
+        `message`). Tolerates a flat dict `data` too (tests / direct callers).
+        Returns {} when nothing parses.
+        """
+        import json as _json
+
+        data = res.get("data")
+        if isinstance(data, dict):
+            return data
+        raw_text = ""
+        if isinstance(data, list):
+            for item in data:
+                if isinstance(item, dict) and item.get("type") == "text":
+                    raw_text = item.get("text", "")
+                    break
+        if not raw_text:
+            raw_text = res.get("message", "") or ""
+        try:
+            parsed = _json.loads(raw_text)
+        except (ValueError, TypeError):
+            return {}
+        return parsed if isinstance(parsed, dict) else {}
+
+    @staticmethod
     def _extract_dlna_volume(vol_res: dict) -> int | None:
         """Pull a 0-100 volume int out of an mcp.dlna.get_volume result.
 
@@ -717,7 +746,7 @@ class InternalToolService:
                 "action_taken": False,
             }
 
-        valid_actions = set(self._MEDIA_ACTION_MAP) | {"volume", "mute", "unmute"}
+        valid_actions = set(self._MEDIA_ACTION_MAP) | {"volume", "mute", "unmute", "status"}
         if action not in valid_actions:
             return {
                 "success": False,
@@ -785,6 +814,31 @@ class InternalToolService:
                     "success": False,
                     "message": "MCP manager not available",
                     "action_taken": False,
+                }
+
+            if action == "status":
+                # Read-only: what's playing on this renderer (track/state/queue).
+                status_res = await mcp_manager.execute_tool(
+                    "mcp.dlna.get_status", {"renderer_name": renderer_name}
+                )
+                if not status_res.get("success"):
+                    return {
+                        "success": False,
+                        "message": f"Could not get status for {room_name}: "
+                                   f"{status_res.get('message', 'unknown error')}",
+                        "action_taken": False,
+                    }
+                # execute_tool nests the real payload in content blocks — parse it.
+                return {
+                    "success": True,
+                    "message": f"Playback status for {room_name} (DLNA: {renderer_name})",
+                    "action_taken": False,
+                    "data": {
+                        "room_name": room_name,
+                        "renderer_name": renderer_name,
+                        "target_type": "dlna",
+                        "status": self._extract_mcp_json(status_res),
+                    },
                 }
 
             applied_volume = None
@@ -876,6 +930,27 @@ class InternalToolService:
             from ha_glue.integrations.homeassistant import HomeAssistantClient
 
             ha_client = HomeAssistantClient()
+
+            if action == "status":
+                # Read-only: what's playing on this HA media_player.
+                state = await ha_client.get_state(entity_id)
+                attrs = (state or {}).get("attributes", {})
+                return {
+                    "success": True,
+                    "message": f"Playback status for {room_name}",
+                    "action_taken": False,
+                    "data": {
+                        "room_name": room_name,
+                        "entity_id": entity_id,
+                        "target_type": "homeassistant",
+                        "status": {
+                            "state": (state or {}).get("state"),
+                            "title": attrs.get("media_title"),
+                            "artist": attrs.get("media_artist"),
+                            "album": attrs.get("media_album_name"),
+                        },
+                    },
+                }
 
             applied_volume = None
             if action == "volume":
