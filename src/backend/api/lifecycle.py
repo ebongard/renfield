@@ -434,6 +434,36 @@ def _schedule_kg_reconciler():
     )
 
 
+def _schedule_kg_conflation_monitor():
+    """Periodic KG conflation tripwire (read-only early warning).
+
+    Logs + gauges distinct-name same-type entity pairs that embed >= the monitor
+    threshold — a forming generic-centroid magnet / mis-embedding. NEVER mutates
+    (a genuine duplicate is the reconciler's job). Gated on
+    ``kg_conflation_monitor_enabled`` (opt-in). Expected count: 0.
+    """
+    if not settings.kg_conflation_monitor_enabled:
+        return
+
+    async def _tick():
+        from services.kg_conflation_monitor import KgConflationMonitor
+
+        async with AsyncSessionLocal() as db:
+            await KgConflationMonitor(db).scan_all()
+
+    _spawn_periodic_task(
+        name="KG conflation monitor",
+        interval=settings.kg_conflation_monitor_interval,
+        work=_tick,
+        started_msg=(
+            f"KG Conflation-Monitor gestartet "
+            f"(interval={settings.kg_conflation_monitor_interval}s, "
+            f"threshold>={settings.kg_conflation_monitor_threshold})"
+        ),
+        run_at_boot=True,  # daily interval — see #678
+    )
+
+
 def _schedule_skill_shadow_log_cleanup():
     """Prune `skill_would_have_injected_log` rows older than the
     configured retention.
@@ -831,6 +861,7 @@ async def lifespan(app: "FastAPI"):
     _schedule_trajectory_cleanup()
     _schedule_skill_curator()
     _schedule_kg_reconciler()
+    _schedule_kg_conflation_monitor()
     _schedule_skill_shadow_log_cleanup()
     _schedule_paperless_sweepers(app)
 

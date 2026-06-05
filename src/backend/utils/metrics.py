@@ -40,6 +40,7 @@ _injection_attempts_total = None
 _budget_reductions_total = None
 _output_guard_violations_total = None
 _auth_provider_unreachable_total = None
+_kg_conflation_candidates = None
 
 
 def _init_metrics():
@@ -54,6 +55,7 @@ def _init_metrics():
     global _agent_outcome_total, _injection_attempts_total
     global _budget_reductions_total, _output_guard_violations_total
     global _auth_provider_unreachable_total
+    global _kg_conflation_candidates
 
     if _metrics_initialized:
         return
@@ -108,6 +110,13 @@ def _init_metrics():
         _memory_total = Gauge(
             "renfield_memory_active_total",
             "Total active memories",
+        )
+
+        _kg_conflation_candidates = Gauge(
+            "renfield_kg_conflation_candidates",
+            "Distinct-name same-type KG entity pairs embedding >= the monitor "
+            "threshold (a forming generic-centroid magnet / mis-embedding "
+            "tripwire; expected 0)",
         )
 
         _memory_cleanup_total = Counter(
@@ -240,6 +249,18 @@ def set_memory_total(count: int):
     if not _metrics_initialized:
         return
     _memory_total.set(count)
+
+
+def set_kg_conflation_candidates(count: int):
+    """Set the current count of distinct-name same-type near-duplicate KG pairs.
+
+    A tripwire gauge: it should sit at 0. A non-zero value means two entities
+    that SHOULD be distinct embed close enough to risk an inline fold (the
+    generic-centroid magnet class). See ``services/kg_conflation_monitor.py``.
+    """
+    if not _metrics_initialized:
+        return
+    _kg_conflation_candidates.set(count)
 
 
 def record_mcp_tool_call(server: str, tool: str, duration: float, success: bool):

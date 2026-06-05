@@ -472,6 +472,13 @@ class Settings(BaseSettings):
     kg_reconciler_auto_merge_threshold: float = Field(default=0.95, ge=0.5, le=1.0)  # Same-tier auto-merge bar (>= candidate)
     kg_reconciler_max_per_run: int = Field(default=50, ge=1, le=500)             # Safety cap per user per run
     kg_reconciler_embed_backfill_per_run: int = Field(default=50, ge=0, le=500)  # Re-embed up to N null-embedding entities per pass (#6); 0 disables
+    # KG conflation tripwire (read-only early warning, services/kg_conflation_monitor.py).
+    # Logs + gauges DISTINCT-name same-type pairs embedding >= threshold (a forming
+    # generic-centroid magnet); never mutates. Expected count: 0.
+    kg_conflation_monitor_enabled: bool = False                                  # Master switch (opt-in scheduled scan)
+    kg_conflation_monitor_interval: int = Field(default=86400, ge=300, le=604800)    # Seconds between scans (default 1d)
+    kg_conflation_monitor_threshold: float = Field(default=0.85, ge=0.5, le=1.0)     # Cosine at/above which a distinct-name same-type pair is flagged
+    kg_conflation_monitor_max_pairs: int = Field(default=100, ge=1, le=1000)         # Cap on pairs reported per user per scan
     memory_kg_bridge_enabled: bool = False                                       # Phase 3: link memory subjects to canonical KG entities (save-time + entity-augmented retrieval). Opt-in.
     memory_subsume_to_kg: bool = False                                           # Phase 3-subsume: decomposable facts (category=fact + subject) live in the KG only; skip the flat duplicate. Opt-in, aggressive.
     memory_retrieval_subject_union_limit: int = Field(default=5, ge=1, le=50)    # Phase 3c: max deterministic subject-linked memories merged into retrieval per turn

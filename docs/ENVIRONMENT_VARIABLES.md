@@ -668,6 +668,12 @@ KG_RECONCILER_AUTO_MERGE_THRESHOLD=0.95       # Same-Tier-Auto-Merge-Schwelle (>
 KG_RECONCILER_MAX_PER_RUN=50                  # Safety-Cap pro User pro Lauf
 KG_RECONCILER_EMBED_BACKFILL_PER_RUN=50       # Null-Embedding-Entitaeten pro Lauf nach-einbetten (0 deaktiviert)
 
+# KG-Konflations-Tripwire (read-only Fruehwarnung) — opt-in, mutiert NIE
+KG_CONFLATION_MONITOR_ENABLED=false           # Periodischer Scan: distinct-name same-type Paare >= Schwelle
+KG_CONFLATION_MONITOR_INTERVAL=86400          # Sekunden zwischen Scans (default 1d)
+KG_CONFLATION_MONITOR_THRESHOLD=0.85          # Cosine, ab der ein distinct-name same-type Paar gemeldet wird
+KG_CONFLATION_MONITOR_MAX_PAIRS=100           # Cap auf gemeldete Paare pro User pro Scan
+
 # Graph-Expansion-Retrieval (Phase 4, post-RRF) — opt-in, aus = byte-identisch
 GRAPH_EXPANSION_ENABLED=false                 # Nach RRF 1-2 Hops von den fused kg_node-Pivots laufen (PolymorphicAtomStore)
 GRAPH_EXPANSION_MAX_PIVOTS=8                   # Max fused kg_node-Pivots zum Expandieren
@@ -685,6 +691,17 @@ Kanten** nur wenn beide Endpunkte sichtbar; Decay = pivot/(1+hop); Cap
 ueberlebt. Aus (default) = `query` byte-identisch. (Der Agent-String-Pfad
 `get_relevant_context` profitiert erst, wenn er auf den fused-Pfad umgestellt wird
 — offener Follow-up in `TODOS.md`.)
+
+**KG-Konflations-Tripwire:** Wenn `KG_CONFLATION_MONITOR_ENABLED=true`, laeuft
+ein Background-Scan pro `KG_CONFLATION_MONITOR_INTERVAL` Sekunden und meldet
+(WARNING-Log + Gauge `renfield_kg_conflation_candidates`) **distinct-name,
+same-type, same-tier** Entitaets-Paare, deren Cosine >=
+`KG_CONFLATION_MONITOR_THRESHOLD` ist — eine entstehende Generischer-Centroid-
+Magnet-/Fehl-Embedding-Situation. Der Scan **mutiert nie** (echte Dubletten sind
+Sache des Reconcilers); erwarteter Wert ist 0. On-demand ohne Scheduler:
+`python bin/scan_kg_conflation.py [--user-id N] [--threshold 0.9]`. Hintergrund:
+der Personen-Magnet-Bug (Entitaet #11, 127 Mentions) entstand genau so; der
+Tripwire faengt eine Wiederkehr in JEDEM Typ frueh ab. `services/kg_conflation_monitor.py`.
 
 **Verhalten:**
 Wenn `KG_RECONCILER_ENABLED=true`, iteriert ein Background-Scheduler pro
