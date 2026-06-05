@@ -1990,6 +1990,79 @@ class TestRelativeVolume:
         assert result["data"]["volume"] == 65
         assert "65" in result["message"]
 
+    # --- native mute/unmute (no pause, no stored volume) ---
+
+    @pytest.mark.unit
+    async def test_mute_dlna(self, internal_tools):
+        """mute on DLNA calls mcp.dlna.set_mute with mute=True."""
+        mock_mcp_manager = MagicMock()
+        mock_mcp_manager.execute_tool = AsyncMock(return_value={"success": True, "muted": True})
+        with patch.object(internal_tools, "_resolve_room_player",
+                          new_callable=AsyncMock, return_value=self._dlna_resolve()), \
+             self._patch_main_app(mock_mcp_manager):
+            result = await internal_tools._media_control({
+                "action": "mute", "room_name": "Arbeitszimmer",
+            })
+        assert result["success"] is True
+        mock_mcp_manager.execute_tool.assert_called_once_with(
+            "mcp.dlna.set_mute", {"renderer_name": "HiFiBerry Arbeitszimmer", "mute": True},
+        )
+        assert "muted" in result["message"].lower()
+
+    @pytest.mark.unit
+    async def test_unmute_dlna(self, internal_tools):
+        """unmute on DLNA calls mcp.dlna.set_mute with mute=False."""
+        mock_mcp_manager = MagicMock()
+        mock_mcp_manager.execute_tool = AsyncMock(return_value={"success": True, "muted": False})
+        with patch.object(internal_tools, "_resolve_room_player",
+                          new_callable=AsyncMock, return_value=self._dlna_resolve()), \
+             self._patch_main_app(mock_mcp_manager):
+            result = await internal_tools._media_control({
+                "action": "unmute", "room_name": "Arbeitszimmer",
+            })
+        assert result["success"] is True
+        mock_mcp_manager.execute_tool.assert_called_once_with(
+            "mcp.dlna.set_mute", {"renderer_name": "HiFiBerry Arbeitszimmer", "mute": False},
+        )
+
+    @pytest.mark.unit
+    async def test_mute_ha(self, internal_tools):
+        """mute on an HA player calls media_player.volume_mute is_volume_muted=True."""
+        mock_ha_client = MagicMock()
+        mock_ha_client.call_service = AsyncMock(return_value=True)
+        with patch.object(internal_tools, "_resolve_room_player",
+                          new_callable=AsyncMock, return_value=self._ha_resolve()), \
+             patch("ha_glue.integrations.homeassistant.HomeAssistantClient", return_value=mock_ha_client):
+            result = await internal_tools._media_control({
+                "action": "mute", "room_name": "Arbeitszimmer",
+            })
+        assert result["success"] is True
+        mock_ha_client.call_service.assert_called_once_with(
+            domain="media_player",
+            service="volume_mute",
+            entity_id="media_player.arbeitszimmer",
+            service_data={"is_volume_muted": True},
+        )
+
+    @pytest.mark.unit
+    async def test_unmute_ha(self, internal_tools):
+        """unmute on an HA player calls media_player.volume_mute is_volume_muted=False."""
+        mock_ha_client = MagicMock()
+        mock_ha_client.call_service = AsyncMock(return_value=True)
+        with patch.object(internal_tools, "_resolve_room_player",
+                          new_callable=AsyncMock, return_value=self._ha_resolve()), \
+             patch("ha_glue.integrations.homeassistant.HomeAssistantClient", return_value=mock_ha_client):
+            result = await internal_tools._media_control({
+                "action": "unmute", "room_name": "Arbeitszimmer",
+            })
+        assert result["success"] is True
+        mock_ha_client.call_service.assert_called_once_with(
+            domain="media_player",
+            service="volume_mute",
+            entity_id="media_player.arbeitszimmer",
+            service_data={"is_volume_muted": False},
+        )
+
 
 # ============================================================================
 # Test play_album_on_dlna

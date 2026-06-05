@@ -59,9 +59,9 @@ class InternalToolService:
             "parameters": {},
         },
         "internal.media_control": {
-            "description": "Control media playback in a room: stop, pause, resume, next track, previous track, set volume. Works with both Home Assistant media players and DLNA renderers.",
+            "description": "Control media playback in a room: stop, pause, resume, next track, previous track, set volume, mute, unmute. Works with both Home Assistant media players and DLNA renderers.",
             "parameters": {
-                "action": "Control action: stop, pause, resume, next, previous, volume (required)",
+                "action": "Control action: stop, pause, resume, next, previous, volume, mute, unmute (required)",
                 "room_name": "Target room name (required)",
                 "volume": "Absolute volume 0-100 (use for 'set volume to X'). Mutually exclusive with volume_step.",
                 "volume_step": "Relative volume change in percentage points, e.g. -20 for 20% quieter, +10 for louder (use for 'leiser/lauter um X'). Mutually exclusive with volume.",
@@ -717,7 +717,7 @@ class InternalToolService:
                 "action_taken": False,
             }
 
-        valid_actions = set(self._MEDIA_ACTION_MAP) | {"volume"}
+        valid_actions = set(self._MEDIA_ACTION_MAP) | {"volume", "mute", "unmute"}
         if action not in valid_actions:
             return {
                 "success": False,
@@ -807,6 +807,11 @@ class InternalToolService:
                 applied_volume = target
                 tool_name = "mcp.dlna.set_volume"
                 tool_params = {"renderer_name": renderer_name, "volume": target}
+            elif action in ("mute", "unmute"):
+                # Native RenderingControl SetMute — the renderer restores the
+                # prior volume on unmute, so no level is stored.
+                tool_name = "mcp.dlna.set_mute"
+                tool_params = {"renderer_name": renderer_name, "mute": action == "mute"}
             else:
                 tool_name = self._DLNA_ACTION_MAP.get(action)
                 if not tool_name:
@@ -838,6 +843,8 @@ class InternalToolService:
                 # (which, for a relative volume_step, would re-apply the delta).
                 data["volume"] = applied_volume
                 message = f"Volume in {room_name} set to {applied_volume}%."
+            elif action in ("mute", "unmute"):
+                message = f"{room_name} {'muted' if action == 'mute' else 'unmuted'}."
             else:
                 message = f"Media {action} executed on {room_name} (DLNA: {renderer_name})"
             return {
@@ -891,6 +898,15 @@ class InternalToolService:
                     entity_id=entity_id,
                     service_data={"volume_level": volume_level},
                 )
+            elif action in ("mute", "unmute"):
+                # Native media_player.volume_mute — the player restores the prior
+                # volume on unmute, so no level is stored.
+                await ha_client.call_service(
+                    domain="media_player",
+                    service="volume_mute",
+                    entity_id=entity_id,
+                    service_data={"is_volume_muted": action == "mute"},
+                )
             else:
                 ha_service = self._MEDIA_ACTION_MAP[action]
                 await ha_client.call_service(
@@ -909,6 +925,8 @@ class InternalToolService:
                 # state and gives final_answer instead of re-issuing the call.
                 data["volume"] = applied_volume
                 message = f"Volume in {room_name} set to {applied_volume}%."
+            elif action in ("mute", "unmute"):
+                message = f"{room_name} {'muted' if action == 'mute' else 'unmuted'}."
             else:
                 message = f"Media {action} executed on {room_name}"
             return {
