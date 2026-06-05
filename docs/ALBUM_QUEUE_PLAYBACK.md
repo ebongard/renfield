@@ -392,8 +392,22 @@ Eigenstaendiger MCP-Server der als UPnP/DLNA **Control Point** agiert. Nutzt `as
 | `set_volume` | Lautstaerke setzen (0-100). Geht **direkt** ueber RenderingControl `SetVolume` mit rohen 0-100-Werten (NICHT `DmrDevice.async_set_volume_level`, das bei Renderern mit absurder Range — Linn meldet 2^31-1 — auf volle Lautstaerke springt). Sane advertised Range wird respektiert, bogus Range als 0-100 behandelt. |
 | `get_volume` | Aktuelle Lautstaerke lesen (0-100, `None` falls Renderer sie nicht meldet) — direkt via RenderingControl `GetVolume`; cached aus Events/`set_volume`. Backt die relative Lautstaerke (`internal.media_control` mit `volume_step`). |
 | `set_mute` | Stummschalten (`mute=true`) / aufheben (`mute=false`) via nativem RenderingControl `SetMute` — Renderer stellt die vorige Lautstaerke beim Unmute selbst wieder her (kein gespeicherter Wert). Capability via Action-Presence (nicht `has_volume_mute`). |
+| `get_mute` | Mute-Status lesen (subsumiert in `get_status`). |
+| `seek` | Zu `position_seconds` im aktuellen Track springen. |
+| `set_play_mode` | Wiederhol-/Zufallsmodus: `normal`/`repeat_one`/`repeat_all`/`shuffle`/`random` (capability-gated). |
 
-> **`internal.media_control` (Renfield-Backend, raumbasiert)** kapselt diese Tools: `action` = `stop`/`pause`/`resume`/`next`/`previous`/`volume` (absolut `volume=0-100` oder relativ `volume_step=±N` Prozentpunkte)/`mute`/`unmute`/`status`. Der Agent nutzt IMMER `internal.media_control` mit `room_name` (Raumaufloesung + HA-vs-DLNA-Branch); `mcp.dlna.set_volume` ist nicht mehr LLM-facing. `status` liefert den aktuellen Track/State (DLNA: `get_status`; HA: `media_player`-State).
+**MediaServer (Content-Libraries / NAS):**
+
+| Tool | Funktion |
+|---|---|
+| `list_servers` | DLNA MediaServers (ContentDirectory) im Netzwerk entdecken |
+| `browse_server` | Container-Inhalt auflisten (paginiert; `object_id="0"` = Root) |
+| `search_server` | Library nach Titel durchsuchen (capability-gated) |
+| `play_from_server` | Library-Objekt (Album/Playlist/Track) aufloesen + auf einem Renderer abspielen — keine URLs noetig |
+
+> **`internal.media_control` (Renfield-Backend, raumbasiert)** kapselt die Renderer-Tools: `action` = `stop`/`pause`/`resume`/`next`/`previous`/`volume` (absolut `volume=0-100` oder relativ `volume_step=±N` Prozentpunkte)/`mute`/`unmute`/`status`/`seek` (`position_seconds`)/`play_mode` (`mode`). Der Agent nutzt IMMER `internal.media_control` mit `room_name` (Raumaufloesung + HA-vs-DLNA-Branch); `mcp.dlna.set_volume` ist nicht mehr LLM-facing. `status` liefert den aktuellen Track/State (DLNA: `get_status`; HA: `media_player`-State).
+>
+> **MediaServer-Wiedergabe:** der Agent ruft `mcp.dlna.list_servers` + `browse_server`/`search_server` direkt (read-only) und spielt via **`internal.play_from_server(server_name, object_id, room_name)`** (raumaufgeloest auf den DLNA-Renderer).
 
 **Queue State Machine (pro Renderer):**
 

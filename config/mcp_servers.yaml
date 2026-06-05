@@ -180,13 +180,24 @@ servers:
       - resume
       - next_track
       - previous_track
+      # MediaServer browsing (content libraries / NAS). Read-only discovery the
+      # LLM drives directly; playback goes through internal.play_from_server
+      # (room-resolved). set_volume/get_volume/get_status/set_mute/seek/
+      # set_play_mode are backend-internal via internal.media_control.
+      - list_servers
+      - browse_server
+      - search_server
     examples:
       de:
         - "Spiel das Album im Arbeitszimmer"
         - "Stoppe die Musik auf dem Samsung TV"
+        - "Welche Medienserver gibt es im Netzwerk?"
+        - "Durchsuche die Mediathek nach Pink Floyd"
       en:
         - "Play the album in the study"
         - "Stop music on the Samsung TV"
+        - "What media servers are on the network?"
+        - "Search the library for Pink Floyd"
 
   # --- n8n MCP Server (Workflow Builder + Node Catalog) ---
   # npm: n8n-mcp (czlonkowski/n8n-mcp)

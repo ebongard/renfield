@@ -59,12 +59,14 @@ class InternalToolService:
             "parameters": {},
         },
         "internal.media_control": {
-            "description": "Control media playback in a room: stop, pause, resume, next track, previous track, set volume, mute, unmute, or query status (what's playing). Works with both Home Assistant media players and DLNA renderers.",
+            "description": "Control media playback in a room: stop, pause, resume, next, previous, volume, mute, unmute, seek, play_mode, or query status (what's playing). Works with both Home Assistant media players and DLNA renderers.",
             "parameters": {
-                "action": "Control action: stop, pause, resume, next, previous, volume, mute, unmute, status (required)",
+                "action": "Control action: stop, pause, resume, next, previous, volume, mute, unmute, status, seek, play_mode (required)",
                 "room_name": "Target room name (required)",
                 "volume": "Absolute volume 0-100 (use for 'set volume to X'). Mutually exclusive with volume_step.",
                 "volume_step": "Relative volume change in percentage points, e.g. -20 for 20% quieter, +10 for louder (use for 'leiser/lauter um X'). Mutually exclusive with volume.",
+                "position_seconds": "Target offset in seconds from the track start (required when action is 'seek')",
+                "mode": "Play mode: normal, repeat_one, repeat_all, shuffle, random (required when action is 'play_mode')",
             },
         },
         "internal.play_album_on_dlna": {
@@ -84,6 +86,14 @@ class InternalToolService:
                 "room_name": "Room name to resolve visual DLNA renderer (optional if renderer_name given)",
                 "title": "Display title (optional)",
                 "image_url": "Thumbnail URL (optional)",
+            },
+        },
+        "internal.play_from_server": {
+            "description": "Play a library object (album/playlist/folder/track) from a DLNA MediaServer (e.g. a NAS/Jellyfin library) on a room's audio device. Use AFTER mcp.dlna.list_servers + browse_server/search_server to obtain a server_name + object_id — no content URLs needed.",
+            "parameters": {
+                "server_name": "DLNA MediaServer name from mcp.dlna.list_servers (required)",
+                "object_id": "Library object id from mcp.dlna.browse_server/search_server (required)",
+                "room_name": "Target room name whose DLNA renderer to play on (required)",
             },
         },
         "internal.play_radio": {
@@ -125,6 +135,7 @@ class InternalToolService:
         "internal.media_control": "_media_control",
         "internal.play_album_on_dlna": "_play_album_on_dlna",
         "internal.play_video_on_dlna": "_play_video_on_dlna",
+        "internal.play_from_server": "_play_from_server",
         "internal.play_radio": "_play_radio",
         "internal.save_radio_favorite": "_save_radio_favorite",
         "internal.list_radio_favorites": "_list_radio_favorites",
@@ -746,7 +757,7 @@ class InternalToolService:
                 "action_taken": False,
             }
 
-        valid_actions = set(self._MEDIA_ACTION_MAP) | {"volume", "mute", "unmute", "status"}
+        valid_actions = set(self._MEDIA_ACTION_MAP) | {"volume", "mute", "unmute", "status", "seek", "play_mode"}
         if action not in valid_actions:
             return {
                 "success": False,
@@ -840,6 +851,34 @@ class InternalToolService:
                         "status": self._extract_mcp_json(status_res),
                     },
                 }
+
+            if action == "seek":
+                pos = params.get("position_seconds")
+                if pos is None:
+                    return {"success": False, "message": "Parameter 'position_seconds' is required for seek", "action_taken": False}
+                try:
+                    pos = int(pos)
+                except (ValueError, TypeError):
+                    return {"success": False, "message": f"Invalid position_seconds: {params.get('position_seconds')}", "action_taken": False}
+                res = await mcp_manager.execute_tool(
+                    "mcp.dlna.seek", {"renderer_name": renderer_name, "position_seconds": max(0, pos)}
+                )
+                if not res.get("success"):
+                    return {"success": False, "message": f"Seek failed on {room_name}: {res.get('message', 'unknown error')}", "action_taken": False}
+                return {"success": True, "message": f"Seeked to {max(0, pos)}s on {room_name}", "action_taken": True,
+                        "data": {"room_name": room_name, "renderer_name": renderer_name, "action": action, "position_seconds": max(0, pos)}}
+
+            if action == "play_mode":
+                mode = (params.get("mode") or "").strip()
+                if not mode:
+                    return {"success": False, "message": "Parameter 'mode' is required for play_mode (normal/repeat_one/repeat_all/shuffle/random)", "action_taken": False}
+                res = await mcp_manager.execute_tool(
+                    "mcp.dlna.set_play_mode", {"renderer_name": renderer_name, "mode": mode}
+                )
+                if not res.get("success"):
+                    return {"success": False, "message": f"Play mode '{mode}' failed on {room_name}: {res.get('message', 'unknown error')}", "action_taken": False}
+                return {"success": True, "message": f"Play mode set to {mode} on {room_name}", "action_taken": True,
+                        "data": {"room_name": room_name, "renderer_name": renderer_name, "action": action, "mode": mode}}
 
             applied_volume = None
             if action == "volume":
@@ -951,6 +990,46 @@ class InternalToolService:
                         },
                     },
                 }
+
+            if action == "seek":
+                pos = params.get("position_seconds")
+                if pos is None:
+                    return {"success": False, "message": "Parameter 'position_seconds' is required for seek", "action_taken": False}
+                try:
+                    pos = max(0, int(pos))
+                except (ValueError, TypeError):
+                    return {"success": False, "message": f"Invalid position_seconds: {params.get('position_seconds')}", "action_taken": False}
+                await ha_client.call_service(
+                    domain="media_player", service="media_seek", entity_id=entity_id,
+                    service_data={"seek_position": pos},
+                )
+                return {"success": True, "message": f"Seeked to {pos}s on {room_name}", "action_taken": True,
+                        "data": {"room_name": room_name, "entity_id": entity_id, "action": action, "position_seconds": pos}}
+
+            if action == "play_mode":
+                # HA exposes shuffle + repeat as SEPARATE services, not the single
+                # UPnP play-mode enum. Map the common ones; reject the rest clearly.
+                mode = (params.get("mode") or "").strip().lower()
+                if not mode:
+                    return {"success": False, "message": "Parameter 'mode' is required for play_mode (normal/repeat_one/repeat_all/shuffle)", "action_taken": False}
+                if mode in ("shuffle", "random"):
+                    await ha_client.call_service(domain="media_player", service="shuffle_set",
+                                                 entity_id=entity_id, service_data={"shuffle": True})
+                elif mode in ("repeat_one",):
+                    await ha_client.call_service(domain="media_player", service="repeat_set",
+                                                 entity_id=entity_id, service_data={"repeat": "one"})
+                elif mode in ("repeat_all",):
+                    await ha_client.call_service(domain="media_player", service="repeat_set",
+                                                 entity_id=entity_id, service_data={"repeat": "all"})
+                elif mode == "normal":
+                    await ha_client.call_service(domain="media_player", service="shuffle_set",
+                                                 entity_id=entity_id, service_data={"shuffle": False})
+                    await ha_client.call_service(domain="media_player", service="repeat_set",
+                                                 entity_id=entity_id, service_data={"repeat": "off"})
+                else:
+                    return {"success": False, "message": f"Unknown play mode '{mode}' (use normal/repeat_one/repeat_all/shuffle)", "action_taken": False}
+                return {"success": True, "message": f"Play mode set to {mode} on {room_name}", "action_taken": True,
+                        "data": {"room_name": room_name, "entity_id": entity_id, "action": action, "mode": mode}}
 
             applied_volume = None
             if action == "volume":
@@ -1171,6 +1250,79 @@ class InternalToolService:
                 "message": f"Error playing album on DLNA: {e!s}",
                 "action_taken": False,
             }
+
+    async def _play_from_server(self, params: dict) -> dict:
+        """Play a DLNA MediaServer library object on a room's DLNA renderer.
+
+        Resolves room → DLNA renderer, then calls mcp.dlna.play_from_server,
+        which resolves the object's playable items server-side and plays them as
+        a gapless queue (no content URLs from the caller). Pairs with
+        mcp.dlna.list_servers + browse_server/search_server.
+        """
+        server_name = (params.get("server_name") or "").strip()
+        object_id = (params.get("object_id") or "").strip()
+        room_name = (params.get("room_name") or "").strip()
+
+        if not server_name:
+            return {"success": False, "message": "Parameter 'server_name' is required", "action_taken": False}
+        if not object_id:
+            return {"success": False, "message": "Parameter 'object_id' is required", "action_taken": False}
+        if not room_name:
+            return {"success": False, "message": "Parameter 'room_name' is required", "action_taken": False}
+
+        resolve_result = await self._resolve_room_player({"room_name": room_name})
+        if not resolve_result.get("success"):
+            # A busy device resolves to success=False with the generic "ask to
+            # interrupt" message — but play_from_server has no force param, so
+            # give a clear, actionable error instead of leaking resolve vocab.
+            if resolve_result.get("data", {}).get("status") == "busy":
+                return {
+                    "success": False,
+                    "message": f"Room '{room_name}' is currently playing — stop it first before playing from a media server.",
+                    "action_taken": False,
+                }
+            return resolve_result
+        data = resolve_result["data"]
+        if data.get("target_type") != "dlna":
+            return {
+                "success": False,
+                "message": f"Room '{room_name}' has no DLNA renderer configured (found {data.get('target_type', 'unknown')})",
+                "action_taken": False,
+            }
+        renderer_name = data.get("dlna_renderer_name", "")
+        resolved_room = data.get("room_name", room_name)
+
+        try:
+            from main import app
+            mcp_manager = getattr(app.state, "mcp_manager", None)
+            if not mcp_manager:
+                return {"success": False, "message": "MCP manager not available", "action_taken": False}
+
+            res = await mcp_manager.execute_tool(
+                "mcp.dlna.play_from_server",
+                {"server_name": server_name, "object_id": object_id, "renderer_name": renderer_name},
+            )
+            if not res.get("success"):
+                return {
+                    "success": False,
+                    "message": f"Play from server failed: {res.get('message', 'unknown error')}",
+                    "action_taken": False,
+                }
+            return {
+                "success": True,
+                "message": f"Playing from {server_name} on {resolved_room}",
+                "action_taken": True,
+                "data": {
+                    "room_name": resolved_room,
+                    "renderer_name": renderer_name,
+                    "server_name": server_name,
+                    "object_id": object_id,
+                    "result": self._extract_mcp_json(res),
+                },
+            }
+        except Exception as e:
+            logger.error(f"Error playing from server '{server_name}' object '{object_id}' in '{room_name}': {e}")
+            return {"success": False, "message": f"Error playing from server: {e!s}", "action_taken": False}
 
     async def _resolve_room_visual_player(self, params: dict) -> dict:
         """
