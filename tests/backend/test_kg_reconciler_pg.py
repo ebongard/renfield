@@ -439,3 +439,18 @@ class TestPersonGuard:
 
         report = await rec.run_for_user(owner.id)
         assert report.auto_merged == 0 and report.proposed == 1
+
+
+class TestLockEngineResolution:
+    async def test_resolve_lock_engine_topologies(self, pg_async_engine):
+        # Regression for the advisory-lock crash on first prod-enable: prod binds an
+        # AsyncEngine (must be used directly — its .engine is the SYNC engine, which
+        # explodes under `async with .connect()`); tests bind an AsyncConnection
+        # (its .engine IS the AsyncEngine). Anything else -> None (unlocked).
+        from services.kg_reconciler_service import _resolve_lock_engine
+
+        assert _resolve_lock_engine(pg_async_engine) is pg_async_engine  # prod path
+        async with pg_async_engine.connect() as conn:
+            assert _resolve_lock_engine(conn) is pg_async_engine          # test path
+        assert _resolve_lock_engine(object()) is None
+        assert _resolve_lock_engine(None) is None

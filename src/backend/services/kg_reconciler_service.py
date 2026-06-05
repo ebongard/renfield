@@ -29,7 +29,7 @@ from datetime import UTC, datetime
 
 from loguru import logger
 from sqlalchemy import select, text
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine, AsyncSession
 
 from models.database import (
     EMBEDDING_DIMENSION,
@@ -49,6 +49,27 @@ _RECONCILER_LOCK_NS = 0x4B47  # "KG"
 
 def _norm(s: str | None) -> str:
     return (s or "").strip().lower()
+
+
+def _resolve_lock_engine(bind) -> AsyncEngine | None:
+    """The AsyncEngine to open the dedicated advisory-lock connection on.
+
+    Topology-dependent and the reason the reconciler crashed when first enabled
+    in prod (run-unlocked / MissingGreenlet otherwise):
+      * prod: ``AsyncSession`` is bound to an ``AsyncEngine`` (async_sessionmaker).
+        Use it DIRECTLY — ``AsyncEngine.engine`` proxies to the *sync* Engine,
+        whose ``.connect()`` returns a sync connection that explodes under
+        ``async with`` (greenlet_spawn / 'NoneType' has no attribute 'cursor').
+      * tests: ``AsyncSession`` is bound to an ``AsyncConnection`` (per-test
+        connection fixture); its ``.engine`` IS the AsyncEngine.
+      * sqlite shim / unknown: return None -> caller runs unlocked (safe: the
+        single-instance daily scheduler won't collide per-user).
+    """
+    if isinstance(bind, AsyncEngine):
+        return bind
+    if isinstance(bind, AsyncConnection):
+        return bind.engine
+    return None
 
 
 def _name_collision_low_signal(
@@ -313,18 +334,18 @@ class KgReconcilerService:
         Wrapped in a non-blocking per-user advisory lock (#4): two overlapping
         runs for the same user must not redo each other's work — the second
         caller finds the lock held and returns a no-op report. The lock lives on
-        a DEDICATED connection (``self.db.bind.engine``) because merge_entities
-        commits mid-pass, which can return self.db's own connection to the pool;
-        a session-level lock taken on self.db would not survive that.
+        a DEDICATED connection (a fresh connection off the AsyncEngine, see
+        ``_resolve_lock_engine``) because merge_entities commits mid-pass, which
+        can return self.db's own connection to the pool; a session-level lock
+        taken on self.db would not survive that.
         """
         report = ReconcileReport(user_id=user_id)
         dialect = self.db.bind.dialect.name if self.db.bind is not None else ""
         if dialect != "postgresql":
             return await self._reconcile_pass(user_id, report)
 
-        try:
-            lock_engine = self.db.bind.engine
-        except AttributeError:  # no standalone connectable — run unlocked
+        lock_engine = _resolve_lock_engine(self.db.bind)
+        if lock_engine is None:  # no async connectable — run unlocked (safe fallback)
             return await self._reconcile_pass(user_id, report)
 
         async with lock_engine.connect() as lock_conn:
