@@ -1546,6 +1546,358 @@ class TestMediaControl:
 
 
 # ============================================================================
+# Test _resolve_target_volume (pure precedence + step math + clamping helper)
+# ============================================================================
+
+class TestResolveTargetVolume:
+    """Pure-function tests for the shared volume-target helper."""
+
+    @pytest.mark.unit
+    def test_both_volume_and_step_is_error(self, internal_tools):
+        target, err = internal_tools._resolve_target_volume(
+            {"volume": 30, "volume_step": -20}, current_pct=50
+        )
+        assert target is None
+        assert err["success"] is False
+        assert "not both" in err["message"]
+
+    @pytest.mark.unit
+    def test_neither_volume_nor_step_is_error(self, internal_tools):
+        target, err = internal_tools._resolve_target_volume({}, current_pct=50)
+        assert target is None
+        assert err["success"] is False
+        assert "required" in err["message"]
+
+    @pytest.mark.unit
+    def test_absolute_passthrough(self, internal_tools):
+        target, err = internal_tools._resolve_target_volume({"volume": "42"}, current_pct=None)
+        assert err is None
+        assert target == 42
+
+    @pytest.mark.unit
+    def test_absolute_clamps_high(self, internal_tools):
+        target, err = internal_tools._resolve_target_volume({"volume": 150}, current_pct=None)
+        assert err is None
+        assert target == 100
+
+    @pytest.mark.unit
+    def test_absolute_clamps_low(self, internal_tools):
+        target, err = internal_tools._resolve_target_volume({"volume": -10}, current_pct=None)
+        assert err is None
+        assert target == 0
+
+    @pytest.mark.unit
+    def test_relative_step_down(self, internal_tools):
+        target, err = internal_tools._resolve_target_volume(
+            {"volume_step": -20}, current_pct=30
+        )
+        assert err is None
+        assert target == 10
+
+    @pytest.mark.unit
+    def test_relative_step_up(self, internal_tools):
+        target, err = internal_tools._resolve_target_volume(
+            {"volume_step": 15}, current_pct=30
+        )
+        assert err is None
+        assert target == 45
+
+    @pytest.mark.unit
+    def test_relative_clamps_floor(self, internal_tools):
+        target, err = internal_tools._resolve_target_volume(
+            {"volume_step": -20}, current_pct=10
+        )
+        assert err is None
+        assert target == 0
+
+    @pytest.mark.unit
+    def test_relative_clamps_ceil(self, internal_tools):
+        target, err = internal_tools._resolve_target_volume(
+            {"volume_step": 20}, current_pct=90
+        )
+        assert err is None
+        assert target == 100
+
+    @pytest.mark.unit
+    def test_relative_with_no_current_is_clear_error(self, internal_tools):
+        target, err = internal_tools._resolve_target_volume(
+            {"volume_step": -20}, current_pct=None
+        )
+        assert target is None
+        assert err["success"] is False
+        assert "absolute" in err["message"].lower()
+
+
+# ============================================================================
+# Test relative volume on HA + DLNA branches (reads current server-side)
+# ============================================================================
+
+class TestRelativeVolume:
+    """Relative ('leiser/lauter um X') volume for HA + DLNA."""
+
+    @staticmethod
+    def _patch_main_app(mock_mcp_manager):
+        mock_app = MagicMock()
+        mock_app.state.mcp_manager = mock_mcp_manager
+        fake_main = ModuleType("main")
+        fake_main.app = mock_app
+        return patch.dict(sys.modules, {"main": fake_main})
+
+    @staticmethod
+    def _ha_resolve():
+        return {
+            "success": True,
+            "message": "Found",
+            "action_taken": True,
+            "data": {
+                "entity_id": "media_player.arbeitszimmer",
+                "target_type": "homeassistant",
+                "room_name": "Arbeitszimmer",
+                "device_name": "Speaker",
+            },
+        }
+
+    @staticmethod
+    def _dlna_resolve():
+        return {
+            "success": True,
+            "message": "Found DLNA renderer",
+            "action_taken": True,
+            "data": {
+                "target_type": "dlna",
+                "dlna_renderer_name": "HiFiBerry Arbeitszimmer",
+                "room_name": "Arbeitszimmer",
+                "device_name": "HiFiBerry Arbeitszimmer",
+            },
+        }
+
+    # --- HA branch ---
+
+    @pytest.mark.unit
+    async def test_volume_absolute_unchanged_regression_ha(self, internal_tools):
+        """REGRESSION: absolute volume=N still calls volume_set with N/100 and
+        never reads current state (no wasted get_state HTTP read)."""
+        mock_ha_client = MagicMock()
+        mock_ha_client.call_service = AsyncMock(return_value=True)
+        mock_ha_client.get_state = AsyncMock(return_value=None)
+
+        with patch.object(internal_tools, "_resolve_room_player",
+                          new_callable=AsyncMock, return_value=self._ha_resolve()), \
+             patch("ha_glue.integrations.homeassistant.HomeAssistantClient", return_value=mock_ha_client):
+            result = await internal_tools._media_control({
+                "action": "volume",
+                "room_name": "Arbeitszimmer",
+                "volume": "50",
+            })
+
+        assert result["success"] is True
+        mock_ha_client.get_state.assert_not_called()
+        mock_ha_client.call_service.assert_called_once_with(
+            domain="media_player",
+            service="volume_set",
+            entity_id="media_player.arbeitszimmer",
+            service_data={"volume_level": 0.5},
+        )
+
+    @pytest.mark.unit
+    async def test_volume_relative_reads_current_ha(self, internal_tools):
+        """Relative step computes target from get_state volume_level (0.3 -> 30 -> 10)."""
+        mock_ha_client = MagicMock()
+        mock_ha_client.call_service = AsyncMock(return_value=True)
+        mock_ha_client.get_state = AsyncMock(
+            return_value={"attributes": {"volume_level": 0.3}}
+        )
+
+        with patch.object(internal_tools, "_resolve_room_player",
+                          new_callable=AsyncMock, return_value=self._ha_resolve()), \
+             patch("ha_glue.integrations.homeassistant.HomeAssistantClient", return_value=mock_ha_client):
+            result = await internal_tools._media_control({
+                "action": "volume",
+                "room_name": "Arbeitszimmer",
+                "volume_step": -20,
+            })
+
+        assert result["success"] is True
+        call_kwargs = mock_ha_client.call_service.call_args
+        assert call_kwargs.kwargs["service_data"]["volume_level"] == 0.1
+
+    @pytest.mark.unit
+    async def test_volume_relative_offline_ha_clear_error(self, internal_tools):
+        """get_state returns None (entity offline) -> clear error, no call_service."""
+        mock_ha_client = MagicMock()
+        mock_ha_client.call_service = AsyncMock(return_value=True)
+        mock_ha_client.get_state = AsyncMock(return_value=None)
+
+        with patch.object(internal_tools, "_resolve_room_player",
+                          new_callable=AsyncMock, return_value=self._ha_resolve()), \
+             patch("ha_glue.integrations.homeassistant.HomeAssistantClient", return_value=mock_ha_client):
+            result = await internal_tools._media_control({
+                "action": "volume",
+                "room_name": "Arbeitszimmer",
+                "volume_step": -20,
+            })
+
+        assert result["success"] is False
+        assert "absolute" in result["message"].lower()
+        mock_ha_client.call_service.assert_not_called()
+
+    @pytest.mark.unit
+    async def test_volume_relative_missing_attr_ha_clear_error(self, internal_tools):
+        """State present but volume_level attr missing -> clear error."""
+        mock_ha_client = MagicMock()
+        mock_ha_client.call_service = AsyncMock(return_value=True)
+        mock_ha_client.get_state = AsyncMock(return_value={"attributes": {}})
+
+        with patch.object(internal_tools, "_resolve_room_player",
+                          new_callable=AsyncMock, return_value=self._ha_resolve()), \
+             patch("ha_glue.integrations.homeassistant.HomeAssistantClient", return_value=mock_ha_client):
+            result = await internal_tools._media_control({
+                "action": "volume",
+                "room_name": "Arbeitszimmer",
+                "volume_step": -20,
+            })
+
+        assert result["success"] is False
+        assert "absolute" in result["message"].lower()
+        mock_ha_client.call_service.assert_not_called()
+
+    # --- DLNA branch ---
+
+    @pytest.mark.unit
+    async def test_volume_absolute_unchanged_regression_dlna(self, internal_tools):
+        """REGRESSION: absolute volume=N still calls set_volume with N and never
+        calls get_volume."""
+        mock_mcp_manager = MagicMock()
+        mock_mcp_manager.execute_tool = AsyncMock(return_value={
+            "success": True, "message": "Volume set",
+        })
+
+        with patch.object(internal_tools, "_resolve_room_player",
+                          new_callable=AsyncMock, return_value=self._dlna_resolve()), \
+             self._patch_main_app(mock_mcp_manager):
+            result = await internal_tools._media_control({
+                "action": "volume",
+                "room_name": "Arbeitszimmer",
+                "volume": "75",
+            })
+
+        assert result["success"] is True
+        mock_mcp_manager.execute_tool.assert_called_once_with(
+            "mcp.dlna.set_volume", {"renderer_name": "HiFiBerry Arbeitszimmer", "volume": 75},
+        )
+
+    @pytest.mark.unit
+    async def test_volume_relative_reads_current_dlna(self, internal_tools):
+        """Relative step via mocked mcp.dlna.get_volume (40 -> +15 -> 55)."""
+        async def _exec(tool_name, tool_params):
+            if tool_name == "mcp.dlna.get_volume":
+                return {"success": True, "volume": 40}
+            return {"success": True, "message": "Volume set"}
+
+        mock_mcp_manager = MagicMock()
+        mock_mcp_manager.execute_tool = AsyncMock(side_effect=_exec)
+
+        with patch.object(internal_tools, "_resolve_room_player",
+                          new_callable=AsyncMock, return_value=self._dlna_resolve()), \
+             self._patch_main_app(mock_mcp_manager):
+            result = await internal_tools._media_control({
+                "action": "volume",
+                "room_name": "Arbeitszimmer",
+                "volume_step": 15,
+            })
+
+        assert result["success"] is True
+        # get_volume read, then set_volume with computed target.
+        mock_mcp_manager.execute_tool.assert_any_call(
+            "mcp.dlna.get_volume", {"renderer_name": "HiFiBerry Arbeitszimmer"},
+        )
+        mock_mcp_manager.execute_tool.assert_any_call(
+            "mcp.dlna.set_volume", {"renderer_name": "HiFiBerry Arbeitszimmer", "volume": 55},
+        )
+
+    @pytest.mark.unit
+    async def test_volume_relative_reads_current_dlna_nested_payload(self, internal_tools):
+        """get_volume value nested in data content blocks (MCP wrapper shape)."""
+        async def _exec(tool_name, tool_params):
+            if tool_name == "mcp.dlna.get_volume":
+                return {
+                    "success": True,
+                    "data": [{"type": "text", "text": '{"volume": 40}'}],
+                }
+            return {"success": True, "message": "Volume set"}
+
+        mock_mcp_manager = MagicMock()
+        mock_mcp_manager.execute_tool = AsyncMock(side_effect=_exec)
+
+        with patch.object(internal_tools, "_resolve_room_player",
+                          new_callable=AsyncMock, return_value=self._dlna_resolve()), \
+             self._patch_main_app(mock_mcp_manager):
+            result = await internal_tools._media_control({
+                "action": "volume",
+                "room_name": "Arbeitszimmer",
+                "volume_step": 15,
+            })
+
+        assert result["success"] is True
+        mock_mcp_manager.execute_tool.assert_any_call(
+            "mcp.dlna.set_volume", {"renderer_name": "HiFiBerry Arbeitszimmer", "volume": 55},
+        )
+
+    @pytest.mark.unit
+    async def test_volume_relative_dlna_volume_none_clear_error(self, internal_tools):
+        """get_volume returns volume=None (renderer can't report) -> clear error,
+        no set_volume call."""
+        async def _exec(tool_name, tool_params):
+            if tool_name == "mcp.dlna.get_volume":
+                return {"success": True, "volume": None}
+            return {"success": True, "message": "Volume set"}
+
+        mock_mcp_manager = MagicMock()
+        mock_mcp_manager.execute_tool = AsyncMock(side_effect=_exec)
+
+        with patch.object(internal_tools, "_resolve_room_player",
+                          new_callable=AsyncMock, return_value=self._dlna_resolve()), \
+             self._patch_main_app(mock_mcp_manager):
+            result = await internal_tools._media_control({
+                "action": "volume",
+                "room_name": "Arbeitszimmer",
+                "volume_step": 15,
+            })
+
+        assert result["success"] is False
+        assert "absolute" in result["message"].lower()
+        # set_volume must NOT have been called (only the get_volume read).
+        for call in mock_mcp_manager.execute_tool.call_args_list:
+            assert call.args[0] != "mcp.dlna.set_volume"
+
+    @pytest.mark.unit
+    async def test_volume_relative_dlna_get_volume_errored_clear_error(self, internal_tools):
+        """get_volume tool returns success=False (errored / not deployed) -> clear
+        error, no set_volume call."""
+        async def _exec(tool_name, tool_params):
+            if tool_name == "mcp.dlna.get_volume":
+                return {"success": False, "message": "unknown tool"}
+            return {"success": True, "message": "Volume set"}
+
+        mock_mcp_manager = MagicMock()
+        mock_mcp_manager.execute_tool = AsyncMock(side_effect=_exec)
+
+        with patch.object(internal_tools, "_resolve_room_player",
+                          new_callable=AsyncMock, return_value=self._dlna_resolve()), \
+             self._patch_main_app(mock_mcp_manager):
+            result = await internal_tools._media_control({
+                "action": "volume",
+                "room_name": "Arbeitszimmer",
+                "volume_step": 15,
+            })
+
+        assert result["success"] is False
+        assert "absolute" in result["message"].lower()
+        for call in mock_mcp_manager.execute_tool.call_args_list:
+            assert call.args[0] != "mcp.dlna.set_volume"
+
+
+# ============================================================================
 # Test play_album_on_dlna
 # ============================================================================
 

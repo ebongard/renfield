@@ -368,7 +368,6 @@ servers:
       - GetLiveContext
       - HassSetPosition
       - HassMediaSearchAndPlay
-      - HassSetVolume
     examples:
       de:
         - "Schalte das Licht im Wohnzimmer ein"

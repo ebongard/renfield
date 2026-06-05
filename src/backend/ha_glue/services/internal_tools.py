@@ -63,7 +63,8 @@ class InternalToolService:
             "parameters": {
                 "action": "Control action: stop, pause, resume, next, previous, volume (required)",
                 "room_name": "Target room name (required)",
-                "volume": "Volume level 0-100 (required when action is 'volume')",
+                "volume": "Absolute volume 0-100 (use for 'set volume to X'). Mutually exclusive with volume_step.",
+                "volume_step": "Relative volume change in percentage points, e.g. -20 for 20% quieter, +10 for louder (use for 'leiser/lauter um X'). Mutually exclusive with volume.",
             },
         },
         "internal.play_album_on_dlna": {
@@ -615,6 +616,91 @@ class InternalToolService:
         "previous": "mcp.dlna.previous_track",
     }
 
+    @staticmethod
+    def _resolve_target_volume(params: dict, current_pct: int | None) -> tuple[int | None, dict | None]:
+        """Compute absolute target volume 0-100 from params. Returns (target, error).
+
+        Exactly one of (target, error) is non-None.
+        - Rejects passing BOTH 'volume' and 'volume_step'.
+        - 'volume' (absolute): clamp 0-100.
+        - 'volume_step' (relative, PERCENTAGE POINTS): requires current_pct;
+          if current_pct is None -> clear error (can't read current volume).
+          target = clamp(current_pct + step, 0, 100).
+        """
+        has_step = params.get("volume_step") is not None
+        raw_abs = params.get("volume")
+        has_abs = raw_abs is not None
+
+        def _err(message: str) -> tuple[None, dict]:
+            return None, {
+                "success": False,
+                "message": message,
+                "action_taken": False,
+            }
+
+        if has_step and has_abs:
+            return _err("Pass either 'volume' (absolute 0-100) or 'volume_step' (relative), not both")
+        if not has_step and not has_abs:
+            return _err("Parameter 'volume' or 'volume_step' is required for volume action")
+
+        if has_abs:
+            try:
+                v = int(raw_abs)
+            except (ValueError, TypeError):
+                return _err(f"Invalid volume value: {raw_abs}")
+            return max(0, min(100, v)), None
+
+        # Relative (volume_step, percentage points)
+        try:
+            step = int(params.get("volume_step"))
+        except (ValueError, TypeError):
+            return _err(f"Invalid volume_step value: {params.get('volume_step')}")
+        if current_pct is None:
+            return _err(
+                "Could not read the current volume for this device, so I can't change it "
+                "relatively — please tell me an absolute level (0-100)."
+            )
+        return max(0, min(100, current_pct + step)), None
+
+    @staticmethod
+    def _extract_dlna_volume(vol_res: dict) -> int | None:
+        """Pull a 0-100 volume int out of an mcp.dlna.get_volume result.
+
+        The MCP wrapper (MCPManager.execute_tool) may surface the value either
+        flat on the result (`vol_res["volume"]`) or nested inside the `data`
+        content blocks / `message` as JSON (see the project memory note that the
+        wrapper can nest the real payload — same shape `_play_album_on_dlna`
+        parses for Jellyfin track lists). Returns None when the renderer can't
+        report a volume (value missing / None / unparseable).
+        """
+        # 1) Flat value on the result.
+        v = vol_res.get("volume")
+        # 2) Nested JSON payload (data content blocks, else message string).
+        if v is None:
+            import json as _json
+
+            raw_text = ""
+            data = vol_res.get("data", [])
+            if isinstance(data, list):
+                for item in data:
+                    if isinstance(item, dict) and item.get("type") == "text":
+                        raw_text = item.get("text", "")
+                        break
+            if not raw_text:
+                raw_text = vol_res.get("message", "")
+            try:
+                parsed = _json.loads(raw_text)
+            except (ValueError, TypeError):
+                parsed = {}
+            if isinstance(parsed, dict):
+                v = parsed.get("volume")
+        if v is None:
+            return None
+        try:
+            return int(v)
+        except (ValueError, TypeError):
+            return None
+
     async def _media_control(self, params: dict) -> dict:
         """
         Control media playback in a room (stop, pause, resume, next, previous, volume).
@@ -702,24 +788,23 @@ class InternalToolService:
                 }
 
             if action == "volume":
-                volume = params.get("volume")
-                if volume is None:
-                    return {
-                        "success": False,
-                        "message": "Parameter 'volume' is required for volume action",
-                        "action_taken": False,
-                    }
-                try:
-                    volume = int(volume)
-                except (ValueError, TypeError):
-                    return {
-                        "success": False,
-                        "message": f"Invalid volume value: {params.get('volume')}",
-                        "action_taken": False,
-                    }
-                volume = max(0, min(100, volume))
+                # Read current volume only for the relative path — a wasted MCP
+                # round-trip on absolute sets is avoided.
+                current_pct = None
+                if params.get("volume_step") is not None and params.get("volume") is None:
+                    vol_res = await mcp_manager.execute_tool(
+                        "mcp.dlna.get_volume", {"renderer_name": renderer_name}
+                    )
+                    if vol_res.get("success"):
+                        current_pct = self._extract_dlna_volume(vol_res)
+                    # If the tool errored or isn't deployed yet, current_pct stays
+                    # None -> _resolve_target_volume returns the D2 clear error.
+
+                target, err = self._resolve_target_volume(params, current_pct)
+                if err:
+                    return err
                 tool_name = "mcp.dlna.set_volume"
-                tool_params = {"renderer_name": renderer_name, "volume": volume}
+                tool_params = {"renderer_name": renderer_name, "volume": target}
             else:
                 tool_name = self._DLNA_ACTION_MAP.get(action)
                 if not tool_name:
@@ -775,22 +860,18 @@ class InternalToolService:
             ha_client = HomeAssistantClient()
 
             if action == "volume":
-                volume = params.get("volume")
-                if volume is None:
-                    return {
-                        "success": False,
-                        "message": "Parameter 'volume' is required for volume action",
-                        "action_taken": False,
-                    }
-                try:
-                    volume = int(volume)
-                except (ValueError, TypeError):
-                    return {
-                        "success": False,
-                        "message": f"Invalid volume value: {params.get('volume')}",
-                        "action_taken": False,
-                    }
-                volume_level = max(0.0, min(1.0, volume / 100.0))
+                # Read current volume only for the relative path — avoids a
+                # wasted HTTP read on absolute sets.
+                current_pct = None
+                if params.get("volume_step") is not None and params.get("volume") is None:
+                    state = await ha_client.get_state(entity_id)  # dict | None (swallows errors)
+                    level = (state or {}).get("attributes", {}).get("volume_level")  # 0.0-1.0 or None
+                    current_pct = round(level * 100) if level is not None else None
+
+                target, err = self._resolve_target_volume(params, current_pct)
+                if err:
+                    return err
+                volume_level = max(0.0, min(1.0, target / 100.0))
                 await ha_client.call_service(
                     domain="media_player",
                     service="volume_set",
