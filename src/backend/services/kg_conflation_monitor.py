@@ -112,6 +112,14 @@ class KgConflationMonitor:
                 pairs = await self.scan_for_user(uid)
             except Exception as e:  # noqa: BLE001 — one user's bad data must not stop the scan
                 logger.warning("conflation scan failed for user %d: %s", uid, e)
+                # All users share this session: a DB error leaves the txn in an
+                # aborted state and every subsequent user would fail too, silently
+                # zeroing the gauge — the worst failure for a tripwire. Roll back
+                # so the scan continues cleanly (no-op on a read-only session).
+                try:
+                    await self.db.rollback()
+                except Exception:  # noqa: BLE001
+                    pass
                 continue
             for p in pairs:
                 logger.warning(
