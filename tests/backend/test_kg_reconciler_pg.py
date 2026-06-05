@@ -358,3 +358,84 @@ class TestApproveReject:
             select(KGEntity).where(KGEntity.id == b.id)
         )).scalar_one()
         assert b_row.is_active is False  # b became the loser
+
+
+class TestPersonGuard:
+    async def test_distinct_name_persons_not_candidates_even_at_cosine_1(
+        self, pg_db_session, monkeypatch
+    ):
+        # The vulnerability: two DIFFERENT people whose names cluster in embedding
+        # space (here identical embeddings = cosine 1.0 >= auto threshold) must NOT
+        # auto-merge and must NOT even be proposed — they're dropped as candidates.
+        owner = await _make_user(pg_db_session, "rec_pg_distinct")
+        await _entity(pg_db_session, owner, "Jutta", tier=0, mention=4, emb=_unit(6))
+        await _entity(pg_db_session, owner, "Anna", tier=0, mention=9, emb=_unit(6))
+        rec = _recon(pg_db_session, monkeypatch)
+
+        pairs = await rec.find_duplicate_pairs(owner.id)
+        assert pairs == []  # unrelated person names -> not a candidate
+
+        report = await rec.run_for_user(owner.id)
+        assert report.auto_merged == 0 and report.proposed == 0
+        assert await _count_pending(pg_db_session, owner.id) == 0
+
+    async def test_related_name_persons_still_reconcile(self, pg_db_session, monkeypatch):
+        # "Jutta" ⊆ "Jutta van den Bongard" (token subset) -> a legitimate dedup
+        # candidate; same-tier + cosine 1.0 -> auto-merge (the reconciler's purpose).
+        owner = await _make_user(pg_db_session, "rec_pg_related")
+        await _entity(pg_db_session, owner, "Jutta", tier=0, mention=2, emb=_unit(6))
+        await _entity(pg_db_session, owner, "Jutta van den Bongard", tier=0, mention=9, emb=_unit(6))
+        rec = _recon(pg_db_session, monkeypatch)
+
+        report = await rec.run_for_user(owner.id)
+        assert report.auto_merged == 1
+
+    async def test_distinct_name_nonpersons_unaffected(self, pg_db_session, monkeypatch):
+        # The guard is person-scoped: two distinct-name organizations at cosine 1.0
+        # same-tier still auto-merge (embedding IS meaningful for non-persons).
+        owner = await _make_user(pg_db_session, "rec_pg_org")
+        await _entity(pg_db_session, owner, "Acme GmbH", etype="organization",
+                      tier=0, mention=2, emb=_unit(6))
+        await _entity(pg_db_session, owner, "Globex AG", etype="organization",
+                      tier=0, mention=9, emb=_unit(6))
+        rec = _recon(pg_db_session, monkeypatch)
+
+        report = await rec.run_for_user(owner.id)
+        assert report.auto_merged == 1
+
+    async def test_multitype_person_distinct_names_excluded(self, pg_db_session, monkeypatch):
+        # Primary 'organization' but person in the multi-type set -> person-guard
+        # applies (mirrors resolve's seed_types gate); distinct names -> excluded.
+        owner = await _make_user(pg_db_session, "rec_pg_multi")
+        a = KGEntity(user_id=owner.id, name="Die Schmidts", entity_type="organization",
+                     entity_types=["organization", "person"], circle_tier=0,
+                     mention_count=2, embedding=_unit(6))
+        b = KGEntity(user_id=owner.id, name="Die Müllers", entity_type="organization",
+                     entity_types=["organization", "person"], circle_tier=0,
+                     mention_count=9, embedding=_unit(6))
+        pg_db_session.add_all([a, b])
+        await pg_db_session.flush()
+        rec = _recon(pg_db_session, monkeypatch)
+
+        pairs = await rec.find_duplicate_pairs(owner.id)
+        assert pairs == []
+
+    async def test_auto_merge_gate_blocks_unrelated_person_if_find_bypassed(
+        self, pg_db_session, monkeypatch
+    ):
+        # Defense in depth: even if a distinct-name person candidate reached the
+        # loop (find-guard bypassed by a future refactor / detection miss), the
+        # auto-merge gate must route it to a proposal, never a silent merge.
+        from services.kg_reconciler_service import MergeCandidate
+        owner = await _make_user(pg_db_session, "rec_pg_gate")
+        a = await _entity(pg_db_session, owner, "Jutta", tier=0, mention=2, emb=_unit(6))
+        b = await _entity(pg_db_session, owner, "Anna", tier=0, mention=9, emb=_unit(6))
+        rec = _recon(pg_db_session, monkeypatch)
+        cand = MergeCandidate(loser_id=a.id, winner_id=b.id, similarity=1.0,
+                              loser_tier=0, winner_tier=0,
+                              is_person_pair=True, names_related=False)
+        monkeypatch.setattr(rec, "find_duplicate_pairs", AsyncMock(return_value=[cand]))
+        monkeypatch.setattr(rec, "backfill_missing_embeddings", AsyncMock(return_value=0))
+
+        report = await rec.run_for_user(owner.id)
+        assert report.auto_merged == 0 and report.proposed == 1

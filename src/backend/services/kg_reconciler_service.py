@@ -7,6 +7,12 @@ reconciled here). Mirrors SkillCuratorService: a halfvec embedding self-join
 finds candidate pairs; the winner is the more-established row.
 
 Policy (the safety core):
+  - PERSON-GUARD (first gate): a person-involving pair whose names are UNRELATED
+    is dropped entirely (no merge, no proposal). Distinct person names embed
+    >= the candidate threshold by themselves, so embedding can't tell two people
+    apart — persons only reconcile when names are related (equal or token-subset:
+    "Alice" ⊆ "Alice B."). Mirrors resolve's person embedding-match skip. This is
+    what makes the reconciler safe to enable; see _person_pair_names_unrelated.
   - SAME tier AND similarity >= auto-merge threshold -> auto-merge via
     KnowledgeGraphService.merge_entities (which enforces tier=MIN etc.).
   - CROSS tier (could change visibility, D3) OR gray-zone (similar but below
@@ -63,6 +69,50 @@ def _name_collision_low_signal(
     return (not da) or (not db) or (da == db)
 
 
+def _is_person(etype: str | None, etypes_text: str | None) -> bool:
+    """True if the entity is person-typed — primary OR in the multi-type set.
+
+    ``etypes_text`` is ``entity_types::text`` (a JSON array literal like
+    ``["organization", "person"]``), so a substring check on the quoted token is
+    a deterministic, decoder-independent membership test.
+    """
+    return etype == "person" or (etypes_text is not None and '"person"' in etypes_text)
+
+
+def _person_pair_names_unrelated(
+    etype_a: str | None, etypes_a: str | None, name_a: str | None,
+    etype_b: str | None, etypes_b: str | None, name_b: str | None,
+) -> bool:
+    """The person-guard: True for a PERSON-involving pair whose names are unrelated.
+
+    Distinct person names embed >= the candidate threshold by themselves
+    (measured: Jutta~Anna 0.894, Jutta~Gaby 0.863), so embedding similarity alone
+    cannot tell two different people apart. A person pair is only a real dedup
+    candidate when the names are RELATED — equal, or one's whitespace tokens are a
+    subset of the other's ("Alice" ⊆ "Alice B.", "Jutta" ⊆ "Jutta van den
+    Bongard"). Unrelated-name person pairs (Jutta vs Anna) are dropped entirely —
+    no auto-merge, no proposal — which is what makes the reconciler safe to enable
+    (resolve already skips embedding-match for persons for the same reason). Pairs
+    with no person on either side are unaffected (return False).
+    """
+    if not (_is_person(etype_a, etypes_a) or _is_person(etype_b, etypes_b)):
+        return False
+    return not _names_related(name_a, name_b)
+
+
+def _names_related(name_a: str | None, name_b: str | None) -> bool:
+    """Two names are related iff equal or one's whitespace tokens subset the other.
+
+    "Alice" ⊆ "Alice B.", "Jutta" ⊆ "Jutta van den Bongard" -> related (likely the
+    same entity, a surface-form variant). "Jutta" vs "Anna", "Anna Schmidt" vs
+    "Anna Müller" -> unrelated. Empty on either side -> not related (can't tell).
+    """
+    ta, tb = set(_norm(name_a).split()), set(_norm(name_b).split())
+    if not ta or not tb:
+        return False
+    return ta == tb or ta <= tb or tb <= ta
+
+
 @dataclass
 class MergeCandidate:
     loser_id: int
@@ -77,6 +127,13 @@ class MergeCandidate:
     # route to owner review — else the memory↔entity bridge's backfill would feed
     # the Jutta/Anna conflation back through the reconciler (Phase 3 P3-T2).
     block_auto_merge: bool = False
+    # Person-guard defense-in-depth: whether the pair involves a person and whether
+    # the names are related. find_duplicate_pairs already DROPS unrelated-name
+    # person pairs, so a surviving person candidate is always name-related; the
+    # auto-merge gate re-checks these (a no-op for current behavior) so a future
+    # refactor or a person-detection miss can't silently merge two distinct people.
+    is_person_pair: bool = False
+    names_related: bool = True
 
 
 @dataclass
@@ -119,6 +176,8 @@ class KgReconcilerService:
                    a.first_seen_at AS fs_a, b.first_seen_at AS fs_b,
                    a.name AS name_a, b.name AS name_b,
                    a.description AS desc_a, b.description AS desc_b,
+                   a.entity_type AS etype_a, b.entity_type AS etype_b,
+                   a.entity_types::text AS etypes_a, b.entity_types::text AS etypes_b,
                    1 - (a.embedding::halfvec({dim}) <=> b.embedding::halfvec({dim})) AS similarity
             FROM kg_entities a
             JOIN kg_entities b
@@ -147,6 +206,14 @@ class KgReconcilerService:
 
         out: list[MergeCandidate] = []
         for r in rows:
+            is_person = (_is_person(r.etype_a, r.etypes_a)
+                         or _is_person(r.etype_b, r.etypes_b))
+            related = _names_related(r.name_a, r.name_b)
+            # Person-guard: drop person-involving pairs whose names are unrelated
+            # (distinct people whose names merely cluster in embedding space). No
+            # auto-merge, no proposal.
+            if is_person and not related:
+                continue
             # Winner = the more-established row: higher mention_count, tie-break
             # on the OLDER first_seen_at (smaller timestamp).
             a_key = (int(r.mc_a or 1), -(r.fs_a.timestamp() if r.fs_a else 0.0))
@@ -164,6 +231,8 @@ class KgReconcilerService:
                 block_auto_merge=_name_collision_low_signal(
                     r.name_a, r.name_b, r.desc_a, r.desc_b,
                 ),
+                is_person_pair=is_person,
+                names_related=related,
             ))
         return out
 
@@ -289,7 +358,12 @@ class KgReconcilerService:
             if c.loser_id in touched or c.winner_id in touched:
                 continue  # transitive-cluster guard
             try:
-                if c.loser_tier == c.winner_tier and c.similarity >= auto_t and not c.block_auto_merge:
+                # Person pairs may only auto-merge when names are related (defense
+                # in depth behind the find-time drop): a distinct-name person pair
+                # must never silently merge two different people.
+                person_ok = (not c.is_person_pair) or c.names_related
+                if (c.loser_tier == c.winner_tier and c.similarity >= auto_t
+                        and not c.block_auto_merge and person_ok):
                     kg = KnowledgeGraphService(self.db)
                     res = await kg.merge_entities(c.loser_id, c.winner_id)
                     if res is not None:

@@ -204,15 +204,11 @@ chosen option = disable-embedding-for-person + prompt + de-magnetize backfill):
   (persons skip embedding-match, names cluster ≥0.85 → flagging is noise). 8/8 PG. Done 2026-06-05.
 - `kg_demagnetize --apply` RUN on prod (#9 + #11 NULLed + re-embedded); migration backfill RUN
   (Jutta → own entity #234, not Anna). Done 2026-06-05 (rc.9).
+- Reconciler **person-guard** added + `KG_RECONCILER_ENABLED=true` in prod. Done 2026-06-05 (rc.11).
+  Person-involving pairs with unrelated names are dropped (no merge/proposal); auto-merge gate
+  re-requires name-relatedness for persons (defense in depth). 19/19 PG. See
+  [[reference_person_names_embedding_cluster]].
 - **Residual follow-ups:**
-  - **(P1) Reconciler shares the person-clustering vulnerability — guard before enabling.**
-    `KgReconcilerService.find_duplicate_pairs` does a halfvec self-join over ALL entities incl.
-    persons; its auto-merge fires same-tier ≥ `kg_reconciler_auto_merge_threshold` (0.95) and the
-    same-name gate only blocks *same*-name pairs. Distinct person names cluster 0.86–0.89 today
-    (below 0.95, safe NOW), but it's the exact bug class resolve was fixed for: enabling the
-    reconciler could auto-merge two distinct people if a name pair hits 0.95. Give the reconciler
-    the same person-skip/guard (or a person-only same-name requirement for auto-merge) BEFORE
-    setting `KG_RECONCILER_ENABLED=true`. See [[reference_person_names_embedding_cluster]].
   - (a) person OCR-variant dedup is now entirely review-gated (the reconciler same-name gate
     doesn't surface differing *spellings* — only normalized-equal names); acceptable per the
     chosen tradeoff but watch document-extraction duplicate persons.
