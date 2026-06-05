@@ -787,6 +787,7 @@ class InternalToolService:
                     "action_taken": False,
                 }
 
+            applied_volume = None
             if action == "volume":
                 # Read current volume only for the relative path — a wasted MCP
                 # round-trip on absolute sets is avoided.
@@ -803,6 +804,7 @@ class InternalToolService:
                 target, err = self._resolve_target_volume(params, current_pct)
                 if err:
                     return err
+                applied_volume = target
                 tool_name = "mcp.dlna.set_volume"
                 tool_params = {"renderer_name": renderer_name, "volume": target}
             else:
@@ -824,16 +826,25 @@ class InternalToolService:
                     "action_taken": False,
                 }
 
+            data = {
+                "renderer_name": renderer_name,
+                "room_name": room_name,
+                "action": action,
+                "target_type": "dlna",
+            }
+            if action == "volume":
+                # Echo the resulting level so the agent sees a concrete completed
+                # state and gives final_answer instead of re-issuing the call
+                # (which, for a relative volume_step, would re-apply the delta).
+                data["volume"] = applied_volume
+                message = f"Volume in {room_name} set to {applied_volume}%."
+            else:
+                message = f"Media {action} executed on {room_name} (DLNA: {renderer_name})"
             return {
                 "success": True,
-                "message": f"Media {action} executed on {room_name} (DLNA: {renderer_name})",
+                "message": message,
                 "action_taken": True,
-                "data": {
-                    "renderer_name": renderer_name,
-                    "room_name": room_name,
-                    "action": action,
-                    "target_type": "dlna",
-                },
+                "data": data,
             }
 
         except Exception as e:
@@ -859,6 +870,7 @@ class InternalToolService:
 
             ha_client = HomeAssistantClient()
 
+            applied_volume = None
             if action == "volume":
                 # Read current volume only for the relative path — avoids a
                 # wasted HTTP read on absolute sets.
@@ -871,6 +883,7 @@ class InternalToolService:
                 target, err = self._resolve_target_volume(params, current_pct)
                 if err:
                     return err
+                applied_volume = target
                 volume_level = max(0.0, min(1.0, target / 100.0))
                 await ha_client.call_service(
                     domain="media_player",
@@ -886,15 +899,23 @@ class InternalToolService:
                     entity_id=entity_id,
                 )
 
+            data = {
+                "entity_id": entity_id,
+                "room_name": room_name,
+                "action": action,
+            }
+            if action == "volume":
+                # Echo the resulting level so the agent sees a concrete completed
+                # state and gives final_answer instead of re-issuing the call.
+                data["volume"] = applied_volume
+                message = f"Volume in {room_name} set to {applied_volume}%."
+            else:
+                message = f"Media {action} executed on {room_name}"
             return {
                 "success": True,
-                "message": f"Media {action} executed on {room_name}",
+                "message": message,
                 "action_taken": True,
-                "data": {
-                    "entity_id": entity_id,
-                    "room_name": room_name,
-                    "action": action,
-                },
+                "data": data,
             }
 
         except Exception as e:

@@ -53,6 +53,7 @@ de:
     - WICHTIG — Album/Kuenstler abspielen: (1) search_media, (2) internal.play_album_on_dlna(album_id="<id>", renderer_name="<Raum>"). Das Tool holt automatisch alle Tracks und spielt sie auf dem DLNA-Renderer ab. NIEMALS mcp.dlna.play_tracks direkt aufrufen!
     - Einzelnen Song abspielen: (1) search_media(type="Audio"), (2) internal.play_in_room mit api_stream URL.
     - Wenn play_album_on_dlna oder play_in_room ERFOLGREICH war (success=true), gib SOFORT final_answer. NIEMALS dasselbe Play-Tool nochmal aufrufen!
+    - Wenn internal.media_control ERFOLGREICH war (success=true), gib SOFORT final_answer mit Bestaetigung (z.B. der neuen Lautstaerke aus data.volume). NIEMALS dasselbe Tool nochmal aufrufen — ein wiederholter volume_step aendert die Lautstaerke ERNEUT!
     - Wenn ein Play-Tool FEHLSCHLAEGT (success=false): Gib SOFORT final_answer mit einer klaren Fehlermeldung. Beschreibe NICHT die Suchergebnisse und gib KEINE URLs oder technische Details aus.
     - Um die Wiedergabe zu stoppen oder Tracks zu wechseln: Nutze mcp.dlna.stop/mcp.dlna.next_track/mcp.dlna.previous_track wenn eine DLNA-Session aktiv ist. Alternativ: internal.media_control mit action (stop/pause/resume/next/previous/volume) und room_name. Fuer Lautstaerke: "auf X% setzen" -> action="volume", volume=X; "um X% leiser/lauter" -> action="volume", volume_step=-X / +X (Prozentpunkte).
     - Beende NICHT mit final_answer, wenn noch offene Schritte aus der AUFGABE übrig sind. "Schick mir X zu Y" erfordert ALLE Schritte: (1) ggf. search, (2) download_document, (3) send_email. Erst NACH dem letzten Schritt darfst du final_answer geben.
@@ -114,6 +115,7 @@ de:
     - Fuer Sensorwerte: Nutze GetLiveContext mit "name" und optional "area"
     - Uebergib NIEMALS "device_class"
     - Lautstaerke eines Raum-Players: Nutze internal.media_control mit room_name (NICHT HassSetVolume/HassSetPosition). "auf X% setzen" → action="volume", volume=X; "um X% leiser/lauter" → action="volume", volume_step=-X / +X (Prozentpunkte). z.B. {{"action": "internal.media_control", "parameters": {{"action": "volume", "volume_step": -20, "room_name": "<aktueller_raum>"}}}}
+    - Wenn internal.media_control ERFOLGREICH war (success=true), gib SOFORT final_answer mit Bestaetigung (z.B. der neuen Lautstaerke aus data.volume). NIEMALS dasselbe Tool nochmal aufrufen — ein wiederholter volume_step aendert die Lautstaerke ERNEUT!
     - Wenn ein Such-Tool 0 Ergebnisse liefert, wiederhole NICHT dieselbe Suche. Versuche: (1) Kuerzeren Suchbegriff, (2) alternative Schreibweise, (3) anderes Tool. Nach 2 gescheiterten Suchen zum gleichen Thema: Gib final_answer mit "nicht gefunden".
     - Die finale Antwort muss natuerlich und auf Deutsch sein
     - Antworte NUR mit JSON
@@ -276,6 +278,7 @@ de:
     - NIEMALS mcp.dlna.play_tracks direkt aufrufen — immer internal.play_album_on_dlna verwenden!
     - NIEMALS get_album_tracks mit einer Artist-ID aufrufen — nutze get_artist_albums fuer Kuenstler
     - Wenn play_album_on_dlna oder play_in_room ERFOLGREICH war (success=true), gib SOFORT final_answer. NIEMALS dasselbe Play-Tool nochmal aufrufen!
+    - Wenn internal.media_control ERFOLGREICH war (success=true), gib SOFORT final_answer mit Bestaetigung (z.B. der neuen Lautstaerke aus data.volume). NIEMALS dasselbe Tool nochmal aufrufen — ein wiederholter volume_step aendert die Lautstaerke ERNEUT!
     - Bei mehreren Treffern: waehle den besten Match nach Titel und Kuenstler
     - Wenn Informationen fehlen, frage den Benutzer
     - Um die Wiedergabe zu stoppen oder Tracks zu wechseln: Nutze mcp.dlna.stop/mcp.dlna.next_track/mcp.dlna.previous_track wenn eine DLNA-Session aktiv ist. Alternativ: internal.media_control mit action (stop/pause/resume/next/previous/volume) und room_name. Fuer Lautstaerke: "auf X% setzen" -> action="volume", volume=X (z.B. {{"action": "internal.media_control", "parameters": {{"action": "volume", "volume": 30}}}}); "um X% leiser/lauter" -> action="volume", volume_step=-X / +X Prozentpunkte (z.B. {{"action": "internal.media_control", "parameters": {{"action": "volume", "volume_step": -20}}}}).
@@ -625,6 +628,7 @@ en:
     - IMPORTANT — Playing albums/artists: (1) search_media, (2) internal.play_album_on_dlna(album_id="<id>", renderer_name="<room>"). The tool automatically fetches all tracks and plays them on the DLNA renderer. NEVER call mcp.dlna.play_tracks directly!
     - Playing a single song: (1) search_media(type="Audio"), (2) internal.play_in_room with the api_stream URL.
     - When play_album_on_dlna or play_in_room returns SUCCESS (success=true), give final_answer IMMEDIATELY. NEVER call the same play tool again!
+    - When internal.media_control returns SUCCESS (success=true), give final_answer IMMEDIATELY confirming the result (e.g. the new volume from data.volume). NEVER call the same tool again — a repeated volume_step changes the volume AGAIN!
     - When a play tool FAILS (success=false): Give final_answer IMMEDIATELY with a clear error message. Do NOT describe search results and do NOT output URLs or technical details.
     - To stop playback or skip tracks: Use mcp.dlna.stop/mcp.dlna.next_track/mcp.dlna.previous_track if a DLNA session is active. Alternatively: internal.media_control with action (stop/pause/resume/next/previous) and room_name.
     - Do NOT give final_answer if there are still open steps from the TASK. "Send me X to Y" requires ALL steps: (1) optionally search, (2) download_document, (3) send_email. Only give final_answer AFTER the last step is completed.
@@ -683,6 +687,7 @@ en:
     - For sensor values: Use GetLiveContext with "name" and optionally "area"
     - NEVER pass "device_class"
     - Volume of a room player: Use internal.media_control with room_name (NOT HassSetVolume/HassSetPosition). "set to X%" → action="volume", volume=X; "X% quieter/louder" → action="volume", volume_step=-X / +X (percentage points). e.g. {{"action": "internal.media_control", "parameters": {{"action": "volume", "volume_step": -20, "room_name": "<current_room>"}}}}
+    - When internal.media_control returns SUCCESS (success=true), give final_answer IMMEDIATELY confirming the result (e.g. the new volume from data.volume). NEVER call the same tool again — a repeated volume_step changes the volume AGAIN!
     - If a search tool returns 0 results, do NOT repeat the same search. Try: (1) Shorter query, (2) alternative spelling, (3) different tool. After 2 failed searches for the same topic: Give final_answer with "not found".
     - The final answer must be natural and in English
     - Reply ONLY with JSON
@@ -836,6 +841,7 @@ en:
     - NEVER call mcp.dlna.play_tracks directly — always use internal.play_album_on_dlna!
     - NEVER call get_album_tracks with an artist ID — use get_artist_albums for artists
     - When play_album_on_dlna or play_in_room returns SUCCESS (success=true), give final_answer IMMEDIATELY. NEVER call the same play tool again!
+    - When internal.media_control returns SUCCESS (success=true), give final_answer IMMEDIATELY confirming the result (e.g. the new volume from data.volume). NEVER call the same tool again — a repeated volume_step changes the volume AGAIN!
     - When multiple results exist, choose the best match by title and artist
     - If information is missing, ask the user
     - To stop playback or skip tracks: Use mcp.dlna.stop/mcp.dlna.next_track/mcp.dlna.previous_track if a DLNA session is active. Alternatively: internal.media_control with action (stop/pause/resume/next/previous/volume) and room_name. For volume: "set to X%" -> action="volume", volume=X (e.g. {{"action": "internal.media_control", "parameters": {{"action": "volume", "volume": 30}}}}); "X% quieter/louder" -> action="volume", volume_step=-X / +X percentage points (e.g. {{"action": "internal.media_control", "parameters": {{"action": "volume", "volume_step": -20}}}}).

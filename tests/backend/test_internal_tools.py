@@ -1947,6 +1947,49 @@ class TestRelativeVolume:
         call_kwargs = mock_ha_client.call_service.call_args
         assert call_kwargs.kwargs["service_data"]["volume_level"] == pytest.approx(0.3)
 
+    # --- loop-prevention: volume success echoes the resulting level so the agent
+    #     gives final_answer instead of re-issuing (a repeated volume_step would
+    #     re-apply the delta — the rc.13 +10% → +30% loop bug) ---
+
+    @pytest.mark.unit
+    async def test_volume_result_echoes_level_dlna(self, internal_tools):
+        """DLNA volume success returns the resulting level in data.volume + message."""
+        async def _exec(tool_name, tool_params):
+            if tool_name == "mcp.dlna.get_volume":
+                return {"success": True, "volume": 40}
+            return {"success": True, "message": "ok"}
+
+        mock_mcp_manager = MagicMock()
+        mock_mcp_manager.execute_tool = AsyncMock(side_effect=_exec)
+
+        with patch.object(internal_tools, "_resolve_room_player",
+                          new_callable=AsyncMock, return_value=self._dlna_resolve()), \
+             self._patch_main_app(mock_mcp_manager):
+            result = await internal_tools._media_control({
+                "action": "volume", "room_name": "Arbeitszimmer", "volume_step": 15,
+            })
+
+        assert result["success"] is True
+        assert result["data"]["volume"] == 55  # 40 + 15
+        assert "55" in result["message"]
+
+    @pytest.mark.unit
+    async def test_volume_result_echoes_level_ha(self, internal_tools):
+        """HA volume success returns the resulting level in data.volume + message."""
+        mock_ha_client = MagicMock()
+        mock_ha_client.call_service = AsyncMock(return_value=True)
+
+        with patch.object(internal_tools, "_resolve_room_player",
+                          new_callable=AsyncMock, return_value=self._ha_resolve()), \
+             patch("ha_glue.integrations.homeassistant.HomeAssistantClient", return_value=mock_ha_client):
+            result = await internal_tools._media_control({
+                "action": "volume", "room_name": "Arbeitszimmer", "volume": 65,
+            })
+
+        assert result["success"] is True
+        assert result["data"]["volume"] == 65
+        assert "65" in result["message"]
+
 
 # ============================================================================
 # Test play_album_on_dlna
