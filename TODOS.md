@@ -189,18 +189,23 @@ Rebuilt on the **post-RRF single-insertion design** (`docs/HANDOVER_graph_expans
 ### Structured Memory Phase 3-subsume — recall-loss watch (post-enable)
 Shipped dark (`MEMORY_SUBSUME_TO_KG`, off). When enabled, `fact`-category memories with a subject are NOT stored flat (they live in the KG). **Risk:** a fact whose object is not a named entity (e.g. "Anna ist müde") may not be captured as a KG relation → lost. Before enabling in prod, validate KG extraction's fact-capture rate on real transcripts; consider a shadow/measure pass first. Trigger: owner wants to reduce flat-memory duplication AND KG fact-capture is validated good.
 
-### KG extraction-path embedding conflation (original-bug root) — needs decision
-The Phase 3 bridge now resolves with `use_embedding=False` (exact/surface/create), so it
-no longer folds "Jutta" into "Anna" via name-embedding. BUT the LIVE KG **extraction** path
-(`resolve_entity` default `use_embedding=True`) still does this: a bare given name embeds
->= `kg_similarity_threshold` (0.85) to a different same-tier person and gets merged in. Entity
-`Anna Johanna von den Bongard` has mention_count 127 — a hub that has likely absorbed other
-people (incl. Jutta) over time via exactly this. This is the mechanism behind the originally
-reported conflation. Options: (a) lower-risk — raise the threshold / require a stronger signal
-for name-only matches; (b) disable embedding match for extraction too (exact-name handles
-re-mentions; same-name reconciler gate + dedup cover the rest) — bigger blast radius, own review;
-(c) a cleanup pass to split mis-absorbed people out of hub entities. **Decide before trusting
-KG person-entities for retrieval.** Surfaced 2026-06-05 during the memory migration sample.
+### KG extraction-path embedding conflation (original-bug root) — FIXED 2026-06-05
+Root cause confirmed by measurement: entity embeddings = `name + description`, and the
+extractor filled `description` with a generic type-floskel ("Vollständiger Name einer Person"),
+collapsing every person row to a generic-person centroid that any bare name lands ≥0.85 from
+(entity #11 reached 127 mentions, #9 36). Fixed (branch `fix/kg-extraction-person-magnet`,
+chosen option = disable-embedding-for-person + prompt + de-magnetize backfill):
+- PERSON entities skip the inline embedding-match (gate on multi-type `seed_types`); non-person
+  types keep it. `resolve_entity` strips generic descriptions (`is_generic_person_description`,
+  whole-string) from person rows before embed/store. Extraction prompt forbids type-meta
+  descriptions (all 4 variants). De-magnetize backfill `services/kg_demagnetize.py` +
+  `bin/demagnetize_person_entities.py` repairs existing rows. 38/38 on real PG.
+- **Residual follow-ups:** (a) person OCR-variant dedup is now entirely review-gated (the
+  reconciler same-name gate doesn't surface differing *spellings* — only normalized-equal
+  names); acceptable per the chosen tradeoff but watch document-extraction duplicate persons.
+  (b) `kg_demagnetize --apply` still needs to be RUN on prod after the deploy (one-shot,
+  entities #9 + #11). (c) the unfiltered `name_map` endpoint-name leak in
+  `get_relevant_atoms`/`get_relevant_context` is unrelated but pre-existing.
 
 ### Paperless PR 5 — Interactive confirm card
 In-chat card with per-field controls, tag chips, storage-path tree; structured-payload callback instead of free-text.
