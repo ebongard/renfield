@@ -204,9 +204,17 @@ When you hit this in the future: don't keep retrying blindly past 3 attempts —
 ```bash
 kubectl config use-context renfield-private
 
-# Rolling restart to pull the new :latest. ALL FOUR deploys must be
-# rolled (dlna-mcp also runs the backend image).
-kubectl -n renfield rollout restart deploy/backend deploy/dlna-mcp deploy/document-worker deploy/frontend
+# Backend image powers `backend` + `document-worker` (NOT dlna-mcp anymore —
+# see below). Roll both on a backend change. frontend is its own image.
+kubectl -n renfield rollout restart deploy/backend deploy/document-worker deploy/frontend
+
+# dlna-mcp is now a SEPARATE small image (registry/renfield/dlna-mcp, built from
+# the Dockerfile in the renfield-mcp-dlna repo — like voice-server). It does NOT
+# run the backend image. Roll it ONLY when the dlna image changed:
+#   build+push registry/renfield/dlna-mcp:v0.1.N on .159, then:
+#   kubectl -n renfield set image deploy/dlna-mcp dlna-mcp=registry.treehouse.x-idra.de/renfield/dlna-mcp:v0.1.N
+# (The backend reaches dlna-mcp over HTTP only — it never imports the package —
+# so a dlna change does NOT need a backend rebuild, and vice versa.)
 
 # Or pin an explicit tag (force-pulls even if :latest is cached on the node)
 kubectl -n renfield set image deploy/backend \
