@@ -80,6 +80,51 @@ class TestDemagnetize:
         assert refreshed.description == "Nachbarin aus Bonn"
         assert list(refreshed.embedding) == _vec(8)       # unchanged
 
+    async def test_substring_containing_generic_phrase_is_kept(self, pg_db_session, monkeypatch):
+        # The anchoring fix: a REAL description that merely CONTAINS a generic
+        # phrase ("eine Person", "Vollständiger Name …:") plus identity text must
+        # NOT be nulled — whole-string match only.
+        owner = await _make_user(pg_db_session, "dm_substr")
+        a = await _entity(pg_db_session, owner, "Klaus",
+                          desc="Vorsitzende, eine Person des öffentlichen Lebens", emb=_vec(31))
+        b = await _entity(pg_db_session, owner, "Anna",
+                          desc="Vollständiger Name laut Ausweis: Anna B.", emb=_vec(32))
+        _patch_embed(monkeypatch, _vec(199))
+
+        rep = await kg_demagnetize.run(pg_db_session, user_id=owner.id)
+
+        assert rep.candidates == 0 and rep.updated == 0   # neither selected
+        for ent, vec in ((a, 31), (b, 32)):
+            r = (await pg_db_session.execute(
+                select(KGEntity).where(KGEntity.id == ent.id))).scalar_one()
+            assert r.description is not None and list(r.embedding) == _vec(vec)
+
+    async def test_trailing_period_variant_selected(self, pg_db_session, monkeypatch):
+        owner = await _make_user(pg_db_session, "dm_dot")
+        e = await _entity(pg_db_session, owner, "Max", desc="Eine Person.", emb=_vec(33))
+        _patch_embed(monkeypatch, _vec(200))
+        rep = await kg_demagnetize.run(pg_db_session, user_id=owner.id)
+        assert rep.candidates == 1 and rep.updated == 1
+        r = (await pg_db_session.execute(
+            select(KGEntity).where(KGEntity.id == e.id))).scalar_one()
+        assert r.description is None
+
+    async def test_multitype_person_selected(self, pg_db_session, monkeypatch):
+        # Person carried as a SECONDARY type (primary organization) — the magnet
+        # edge. Must still be cleaned.
+        owner = await _make_user(pg_db_session, "dm_multitype")
+        e = KGEntity(user_id=owner.id, name="Die Bongards", entity_type="organization",
+                     entity_types=["organization", "person"], circle_tier=0,
+                     description="Vollständiger Name einer Person", embedding=_vec(34))
+        pg_db_session.add(e)
+        await pg_db_session.flush()
+        _patch_embed(monkeypatch, _vec(201))
+        rep = await kg_demagnetize.run(pg_db_session, user_id=owner.id)
+        assert rep.candidates == 1 and rep.updated == 1
+        r = (await pg_db_session.execute(
+            select(KGEntity).where(KGEntity.id == e.id))).scalar_one()
+        assert r.description is None
+
     async def test_nonperson_not_selected(self, pg_db_session, monkeypatch):
         # Even if a place somehow carried the generic phrase, the pass is person-scoped.
         owner = await _make_user(pg_db_session, "dm_place")

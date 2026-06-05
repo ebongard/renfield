@@ -31,6 +31,46 @@ from utils.config import settings
 from utils.llm_client import get_default_client, get_embed_client
 
 # =============================================================================
+# Generic meta-descriptions (the magnet-hub root cause)
+# =============================================================================
+# A description that names the TYPE rather than the entity ("Vollständiger Name
+# einer Person") carries no identity signal. Stored on a person row it collapses
+# the row's name+description embedding toward a generic-person centroid that any
+# bare name lands ≥ kg_similarity_threshold from — that is how one entity became
+# a 127-mention magnet hub. We detect these by WHOLE-STRING equality (trim +
+# casefold, trailing "." tolerated): a description that merely CONTAINS the
+# phrase plus real text (e.g. "Vollständiger Name laut Ausweis: Anna B.") carries
+# identity and is KEPT. resolve_entity strips them from new person rows; the
+# kg_demagnetize backfill repairs existing ones. Keep this set in sync with the
+# extraction-prompt guidance in prompts/knowledge_graph.yaml.
+GENERIC_PERSON_DESCRIPTIONS = frozenset({
+    "vollständiger name einer person",
+    "vollstaendiger name einer person",
+    "name einer person",
+    "eine person",
+    "full name of a person",
+    "name of a person",
+    "a person's full name",
+    "a person",
+})
+
+
+def is_generic_person_description(desc: str | None) -> bool:
+    """True iff ``desc`` is ENTIRELY a generic type-meta-description (no identity).
+
+    Whole-string match after trim/casefold and a single trailing-period strip —
+    NOT a substring test, so a real description that contains a generic phrase
+    plus distinguishing text is preserved.
+    """
+    if not desc:
+        return False
+    norm = desc.strip().lower()
+    if norm.endswith("."):
+        norm = norm[:-1].strip()
+    return norm in GENERIC_PERSON_DESCRIPTIONS
+
+
+# =============================================================================
 # Compiled regex patterns for entity validation (module-level for performance)
 # =============================================================================
 
@@ -546,6 +586,18 @@ class KnowledgeGraphService:
         # create_tier (Phase 3) overrides the legacy self-tier default; clamp to
         # the valid 0..4 ladder so a bad caller can never mint an out-of-range row.
         default_tier = 0 if create_tier is None else max(0, min(4, int(create_tier)))
+
+        # Defense in depth (the extraction prompt discourages it; this ENFORCES
+        # it server-side): never embed or store a generic type-meta-description on
+        # a person row — it would re-create the generic-person centroid the
+        # demagnetize backfill exists to remove. Keyed on the multi-type set so a
+        # person carried as a secondary type (e.g. types=["organization","person"])
+        # is covered too.
+        is_person = "person" in seed_types
+        if is_person and is_generic_person_description(description):
+            logger.debug("KG: dropping generic person description %r for '%s'", description, name)
+            description = None
+
         embedding = None
         try:
             embedding = await self._get_embedding(self._embed_input(name, description))
@@ -569,8 +621,9 @@ class KnowledgeGraphService:
         # types KEEP embedding-match — it salvages OCR/typo variants (e.g. "Bnn"→"Bonn")
         # and they don't suffer the bare-name centroid problem. The entity embedding is
         # still computed + stored above (it backs retrieval + reconciler dedup); only the
-        # inline *match* is suppressed for persons.
-        embed_match = use_embedding and resolved_type != "person"
+        # inline *match* is suppressed for persons. Keyed on the multi-type set so a
+        # person carried as a secondary type is also protected.
+        embed_match = use_embedding and not is_person
         if embed_match and embedding:
             similar = await self._find_similar_entity(
                 embedding, user_id=user_id, tier=default_tier,

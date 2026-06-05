@@ -14,9 +14,29 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.database import EMBEDDING_DIMENSION, KGEntity, Role, User
-from services.knowledge_graph_service import KnowledgeGraphService
+from services.knowledge_graph_service import (
+    KnowledgeGraphService,
+    is_generic_person_description,
+)
 
 pytestmark = [pytest.mark.postgres, pytest.mark.asyncio]
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("desc,generic", [
+    ("Vollständiger Name einer Person", True),
+    ("  vollständiger name einer person.  ", True),  # trim + trailing dot
+    ("Eine Person", True),
+    ("A person.", True),
+    ("full name of a person", True),
+    ("Vollständiger Name laut Ausweis: Anna B.", False),  # contains phrase + identity
+    ("Vorsitzende, eine Person des öffentlichen Lebens", False),
+    ("Nachbarin aus Bonn", False),
+    ("", False),
+    (None, False),
+])
+def test_is_generic_person_description(desc, generic):
+    assert is_generic_person_description(desc) is generic
 
 
 def _vec(seed: int) -> list[float]:
@@ -232,3 +252,39 @@ class TestUseEmbeddingGuard:
 
         got = await svc.resolve_entity("Bnn", "place", owner.id, create_tier=0)
         assert got.id == bonn.id  # place still folds via embedding
+
+
+class TestGenericDescriptionEnforcement:
+    async def test_new_person_generic_desc_stripped(self, pg_db_session, monkeypatch):
+        # Defense in depth: a new person row never STORES a generic meta-description
+        # (which would re-create the magnet centroid), even though the LLM emitted one.
+        owner = await _make_user(pg_db_session, "ge_strip")
+        svc = _svc(pg_db_session, monkeypatch, embed=_vec(70))
+        got = await svc.resolve_entity("Jutta", "person", owner.id,
+                                       description="Vollständiger Name einer Person")
+        assert got.name == "Jutta" and got.description is None
+
+    async def test_new_person_specific_desc_kept(self, pg_db_session, monkeypatch):
+        owner = await _make_user(pg_db_session, "ge_keep")
+        svc = _svc(pg_db_session, monkeypatch, embed=_vec(71))
+        got = await svc.resolve_entity("Jutta", "person", owner.id,
+                                       description="Nachbarin aus Bonn")
+        assert got.description == "Nachbarin aus Bonn"
+
+    async def test_multitype_person_desc_stripped(self, pg_db_session, monkeypatch):
+        # Person as a SECONDARY type still triggers the strip + the no-embed gate.
+        owner = await _make_user(pg_db_session, "ge_multi")
+        svc = _svc(pg_db_session, monkeypatch, embed=_vec(72))
+        got = await svc.resolve_entity("Die Bongards", "organization", owner.id,
+                                       extra_types=["person"],
+                                       description="Vollständiger Name einer Person")
+        assert got.description is None
+        assert "person" in (got.entity_types or [])
+
+    async def test_nonperson_generic_like_desc_kept(self, pg_db_session, monkeypatch):
+        # The strip is person-scoped: a non-person keeps its description verbatim.
+        owner = await _make_user(pg_db_session, "ge_nonperson")
+        svc = _svc(pg_db_session, monkeypatch, embed=_vec(73))
+        got = await svc.resolve_entity("Bonn", "place", owner.id,
+                                       description="Eine Person")  # nonsensical but must be kept
+        assert got.description == "Eine Person"
