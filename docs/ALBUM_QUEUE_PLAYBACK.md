@@ -389,7 +389,8 @@ Eigenstaendiger MCP-Server der als UPnP/DLNA **Control Point** agiert. Nutzt `as
 | `pause` / `resume` | Pause/Fortsetzen |
 | `next` / `previous` | Naechster/vorheriger Track in der Queue |
 | `get_status` | Aktueller Track, Position, Queue-Inhalt, Renderer-State |
-| `set_volume` | Lautstaerke setzen |
+| `set_volume` | Lautstaerke setzen (0-100) |
+| `get_volume` | Aktuelle Lautstaerke lesen (0-100, `None` falls Renderer sie nicht meldet) — cached aus RenderingControl-Events/`set_volume`, sonst gebuendelter `async_update()`-Fallback. Backt die relative Lautstaerke (`internal.media_control` mit `volume_step`). |
 
 **Queue State Machine (pro Renderer):**
 
