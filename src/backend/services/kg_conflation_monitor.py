@@ -14,6 +14,16 @@ them (WARNING log + a Prometheus gauge). It NEVER mutates: a genuine duplicate i
 the review-gated reconciler's job; this only surfaces "two things that should be
 different look the same", which expected-0 makes a clean regression signal.
 
+**Scope: NON-person entities only.** ``resolve_entity`` skips embedding-match for
+persons unconditionally (gate on the multi-type set), because distinct person
+names inherently embed >= the threshold name-only (measured: Jutta~Anna 0.894,
+Jutta~Gaby 0.863). So a close person pair can NEVER fold via resolve — flagging it
+would be permanent noise that keeps the gauge off zero. The tripwire therefore
+excludes any entity that is person-typed (primary OR multi-type), matching the
+set resolve protects, so the gauge stays a clean 0/non-0 signal for the types
+where a fold can actually happen. (Person dedup is the reconciler's same-name
+gate, not this tripwire.)
+
 Read-only by construction. Postgres-only (halfvec); short-circuits to [] on the
 sqlite shim. Mirrors ``KgReconcilerService`` structure.
 """
@@ -83,6 +93,13 @@ class KgConflationMonitor:
             WHERE a.user_id = :uid
               AND a.is_active = true AND b.is_active = true
               AND a.canonical_id IS NULL AND b.canonical_id IS NULL
+              -- NON-person only: persons skip embedding-match in resolve (their
+              -- names inherently cluster >= threshold), so a close person pair
+              -- can't fold and would be permanent noise. Mirror resolve's gate:
+              -- exclude primary-person AND multi-type-person on either side.
+              AND a.entity_type <> 'person' AND b.entity_type <> 'person'
+              AND NOT (a.entity_types::jsonb @> '["person"]'::jsonb)
+              AND NOT (b.entity_types::jsonb @> '["person"]'::jsonb)
               AND (1 - (a.embedding::halfvec({dim}) <=> b.embedding::halfvec({dim})))
                   >= :thresh
             ORDER BY similarity DESC

@@ -695,13 +695,17 @@ ueberlebt. Aus (default) = `query` byte-identisch. (Der Agent-String-Pfad
 **KG-Konflations-Tripwire:** Wenn `KG_CONFLATION_MONITOR_ENABLED=true`, laeuft
 ein Background-Scan pro `KG_CONFLATION_MONITOR_INTERVAL` Sekunden und meldet
 (WARNING-Log + Gauge `renfield_kg_conflation_candidates`) **distinct-name,
-same-type, same-tier** Entitaets-Paare, deren Cosine >=
+same-type, same-tier NICHT-Personen**-Paare, deren Cosine >=
 `KG_CONFLATION_MONITOR_THRESHOLD` ist — eine entstehende Generischer-Centroid-
-Magnet-/Fehl-Embedding-Situation. Der Scan **mutiert nie** (echte Dubletten sind
-Sache des Reconcilers); erwarteter Wert ist 0. On-demand ohne Scheduler:
-`python bin/scan_kg_conflation.py [--user-id N] [--threshold 0.9]`. Hintergrund:
-der Personen-Magnet-Bug (Entitaet #11, 127 Mentions) entstand genau so; der
-Tripwire faengt eine Wiederkehr in JEDEM Typ frueh ab. `services/kg_conflation_monitor.py`.
+Magnet-/Fehl-Embedding-Situation in einem Typ, in dem `resolve_entity` noch
+embedding-matched. **Personen sind ausgeschlossen** (primaer ODER Multi-Typ):
+Personennamen clustern intrinsisch ≥ Schwelle (gemessen Jutta~Anna 0.894), und
+`resolve_entity` matched Personen ohnehin nicht per Embedding — ein nahes
+Personen-Paar kann nicht falten, ein Treffer waere Dauer-Rauschen. Der Scan
+**mutiert nie** (echte Dubletten sind Sache des Reconcilers); erwarteter Wert
+ist 0. On-demand ohne Scheduler: `python bin/scan_kg_conflation.py [--user-id N]
+[--threshold 0.9]`. Hintergrund: der Personen-Magnet-Bug (Entitaet #11, 127
+Mentions) entstand genau so. `services/kg_conflation_monitor.py`.
 
 **Verhalten:**
 Wenn `KG_RECONCILER_ENABLED=true`, iteriert ein Background-Scheduler pro

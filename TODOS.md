@@ -200,12 +200,24 @@ chosen option = disable-embedding-for-person + prompt + de-magnetize backfill):
   whole-string) from person rows before embed/store. Extraction prompt forbids type-meta
   descriptions (all 4 variants). De-magnetize backfill `services/kg_demagnetize.py` +
   `bin/demagnetize_person_entities.py` repairs existing rows. 38/38 on real PG.
-- **Residual follow-ups:** (a) person OCR-variant dedup is now entirely review-gated (the
-  reconciler same-name gate doesn't surface differing *spellings* — only normalized-equal
-  names); acceptable per the chosen tradeoff but watch document-extraction duplicate persons.
-  (b) `kg_demagnetize --apply` still needs to be RUN on prod after the deploy (one-shot,
-  entities #9 + #11). (c) the unfiltered `name_map` endpoint-name leak in
-  `get_relevant_atoms`/`get_relevant_context` is unrelated but pre-existing.
+- Conflation tripwire (`KG_CONFLATION_MONITOR_ENABLED`, read-only) scoped to NON-person types
+  (persons skip embedding-match, names cluster ≥0.85 → flagging is noise). 8/8 PG. Done 2026-06-05.
+- `kg_demagnetize --apply` RUN on prod (#9 + #11 NULLed + re-embedded); migration backfill RUN
+  (Jutta → own entity #234, not Anna). Done 2026-06-05 (rc.9).
+- **Residual follow-ups:**
+  - **(P1) Reconciler shares the person-clustering vulnerability — guard before enabling.**
+    `KgReconcilerService.find_duplicate_pairs` does a halfvec self-join over ALL entities incl.
+    persons; its auto-merge fires same-tier ≥ `kg_reconciler_auto_merge_threshold` (0.95) and the
+    same-name gate only blocks *same*-name pairs. Distinct person names cluster 0.86–0.89 today
+    (below 0.95, safe NOW), but it's the exact bug class resolve was fixed for: enabling the
+    reconciler could auto-merge two distinct people if a name pair hits 0.95. Give the reconciler
+    the same person-skip/guard (or a person-only same-name requirement for auto-merge) BEFORE
+    setting `KG_RECONCILER_ENABLED=true`. See [[reference_person_names_embedding_cluster]].
+  - (a) person OCR-variant dedup is now entirely review-gated (the reconciler same-name gate
+    doesn't surface differing *spellings* — only normalized-equal names); acceptable per the
+    chosen tradeoff but watch document-extraction duplicate persons.
+  - (c) the unfiltered `name_map` endpoint-name leak in
+    `get_relevant_atoms`/`get_relevant_context` is unrelated but pre-existing.
 
 ### Paperless PR 5 — Interactive confirm card
 In-chat card with per-field controls, tag chips, storage-path tree; structured-payload callback instead of free-text.
