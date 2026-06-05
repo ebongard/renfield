@@ -40,7 +40,11 @@ SAMPLE_CONFIG = {
                 "en": "Smart home: lights, switches, sensors",
             },
             "mcp_servers": ["homeassistant"],
-            "internal_tools": ["internal.resolve_room_player", "internal.play_in_room"],
+            "internal_tools": [
+                "internal.resolve_room_player",
+                "internal.play_in_room",
+                "internal.media_control",
+            ],
             "max_steps": 4,
             "prompt_key": "agent_prompt_smart_home",
         },
@@ -224,9 +228,33 @@ class TestParseRoles:
         assert role.name == "smart_home"
         assert role.mcp_servers == ["homeassistant"]
         assert "internal.resolve_room_player" in role.internal_tools
+        # Volume commands ("lauter/leiser", "auf X% setzen") route to smart_home,
+        # so the role MUST carry the canonical room-volume tool. Without it the
+        # agent has no working volume path (HassSetVolume was removed for being
+        # DLNA-incompatible) — the gap that shipped broken in v2.13.0-rc.13.
+        assert "internal.media_control" in role.internal_tools
         assert role.max_steps == 4
         assert role.prompt_key == "agent_prompt_smart_home"
         assert role.has_agent_loop is True
+
+    @pytest.mark.unit
+    def test_real_config_smart_home_has_media_control(self):
+        """Regression guard against the real config/agent_roles.yaml (not the
+        SAMPLE_CONFIG mock): the smart_home role must include internal.media_control
+        so volume commands routed there can actually adjust volume. Skips when the
+        repo config isn't present (e.g. the image-stripped test container)."""
+        from pathlib import Path
+
+        config_file = next(
+            (p / "config" / "agent_roles.yaml"
+             for p in Path(__file__).resolve().parents
+             if (p / "config" / "agent_roles.yaml").exists()),
+            None,
+        )
+        if config_file is None:
+            pytest.skip("config/agent_roles.yaml not present in this environment")
+        roles = _parse_roles(load_roles_config(str(config_file)))
+        assert "internal.media_control" in roles["smart_home"].internal_tools
 
     @pytest.mark.unit
     def test_conversation_role_no_agent_loop(self):

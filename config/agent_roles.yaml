@@ -18,7 +18,12 @@ roles:
       de: "Smart Home: Licht, Schalter, Sensoren, Heizung, Szenen steuern, Temperatur/Luftfeuchte in Raeumen abfragen (NICHT Musik/Medien, NICHT Aussenwetter)"
       en: "Smart home: control lights, switches, sensors, heating, scenes, query temperature/humidity in rooms (NOT music/media, NOT outdoor weather)"
     mcp_servers: [homeassistant]
-    internal_tools: [internal.resolve_room_player, internal.play_in_room]
+    # internal.media_control is the canonical room-volume path (HA media_players
+    # AND DLNA renderers). Volume commands ("lauter/leiser", "auf X% setzen")
+    # route here as smart_home/volume_control, so the role needs it — otherwise
+    # the agent has no working volume tool (HassSetVolume was removed because it
+    # can't target DLNA renderers and bypasses room routing).
+    internal_tools: [internal.resolve_room_player, internal.play_in_room, internal.media_control]
     max_steps: 4
     prompt_key: agent_prompt_smart_home
     model: "qwen3:8b"

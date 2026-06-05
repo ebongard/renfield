@@ -113,6 +113,7 @@ de:
     - Fuer Helligkeiten/Farben: Nutze HassLightSet mit "area"+"domain" oder "name"
     - Fuer Sensorwerte: Nutze GetLiveContext mit "name" und optional "area"
     - Uebergib NIEMALS "device_class"
+    - Lautstaerke eines Raum-Players: Nutze internal.media_control mit room_name (NICHT HassSetVolume/HassSetPosition). "auf X% setzen" → action="volume", volume=X; "um X% leiser/lauter" → action="volume", volume_step=-X / +X (Prozentpunkte). z.B. {{"action": "internal.media_control", "parameters": {{"action": "volume", "volume_step": -20, "room_name": "<aktueller_raum>"}}}}
     - Wenn ein Such-Tool 0 Ergebnisse liefert, wiederhole NICHT dieselbe Suche. Versuche: (1) Kuerzeren Suchbegriff, (2) alternative Schreibweise, (3) anderes Tool. Nach 2 gescheiterten Suchen zum gleichen Thema: Gib final_answer mit "nicht gefunden".
     - Die finale Antwort muss natuerlich und auf Deutsch sein
     - Antworte NUR mit JSON
@@ -681,6 +682,7 @@ en:
     - For brightness/colors: Use HassLightSet with "area"+"domain" or "name"
     - For sensor values: Use GetLiveContext with "name" and optionally "area"
     - NEVER pass "device_class"
+    - Volume of a room player: Use internal.media_control with room_name (NOT HassSetVolume/HassSetPosition). "set to X%" → action="volume", volume=X; "X% quieter/louder" → action="volume", volume_step=-X / +X (percentage points). e.g. {{"action": "internal.media_control", "parameters": {{"action": "volume", "volume_step": -20, "room_name": "<current_room>"}}}}
     - If a search tool returns 0 results, do NOT repeat the same search. Try: (1) Shorter query, (2) alternative spelling, (3) different tool. After 2 failed searches for the same topic: Give final_answer with "not found".
     - The final answer must be natural and in English
     - Reply ONLY with JSON
