@@ -117,12 +117,39 @@ docker push registry.treehouse.x-idra.de/renfield/frontend:vX.Y.Z
 > box. Pass `--build-arg VITE_API_URL=https://other.host` only for cross-origin
 > deployments. See `src/frontend/src/utils/env.ts`.
 
-### Step 3 — Cleanup
+### Step 3 — Cleanup + image retention (run EVERY deploy)
 
 ```bash
 # Remove the staging dir once the cluster has rolled (or even before — the images are in Harbor)
 ssh evdb@192.168.1.159 "rm -rf /tmp/renfield-build-vX.Y.Z"
 ```
+
+**Image retention — DO THIS EVERY DEPLOY or the box fills up.** Each deploy builds
+a new tagged `backend` image (~3.9 GB) and nothing removes the old tag, so they
+pile up fast (diagnosed 2026-06-05: ~25 backend tags = 47 GB images + 16 GB build
+cache + 4 GB stale volumes had the 97 GB box at 90%). **Rollback pulls from
+Harbor, not the local .159 daemon**, so local tags are pure convenience + layer
+cache — prune aggressively. Keep the few newest tags (so the ~2.5 GB shared deps
+layer survives for fast next builds) and drop the rest:
+
+```bash
+ssh evdb@192.168.1.159 '
+  # docker images lists newest-first by default -> keep the 3 newest tags per repo,
+  # remove the rest (untags; the shared deps layer survives via the kept tags).
+  for repo in backend frontend; do
+    docker images "registry.treehouse.x-idra.de/renfield/$repo" --format "{{.Repository}}:{{.Tag}}" \
+    | awk "NR>3" | xargs -r -n1 docker rmi 2>/dev/null || true
+  done
+  docker image prune -f                         # dangling layers
+  docker builder prune -f --keep-storage 10GB   # cap build cache (keeps recent -> fast rebuilds)
+  df -h / | tail -1'
+```
+
+If the box has already crept high (>80%), the one-shot deep reclaim is safe here
+(nothing prod-critical runs on .159): `docker image prune -a -f` +
+`docker builder prune -a -f` + `docker volume prune -a -f` (the last needs `-a` —
+plain `volume prune` skips *named* volumes). Reclaimed ~45 GB on 2026-06-05.
+Full rationale: `memory/reference_build_box_disk_wget_exit3.md`.
 
 Always build + push a pinned tag (`:vX.Y.Z`) alongside `:latest` — gives you an immutable rollback target (`kubectl set image deploy/backend backend=.../backend:vX.Y.Z`).
 
@@ -288,6 +315,7 @@ curl -sI http://renfield.local/          # 308 → https
 10. ✅ Backend health smoke (`curl -sS http://localhost:8000/health` inside the pod).
 11. ✅ Browser smoke for migrated pages / new features.
 12. ✅ Cleanup `/tmp/renfield-build-vX.Y.Z` on .159.
+13. ✅ **Image retention on .159** — prune old backend/frontend tags (keep newest 3) + cap build cache (Step 3). Skipping this is what fills the build box to 90%.
 
 ## Build-box testing (not production)
 
