@@ -558,7 +558,20 @@ class KnowledgeGraphService:
         # person — the exact conflation Phase 3 exists to prevent. The bridge resolves
         # by exact-name + surface-form only, else CREATES a fresh entity; a genuine
         # near-duplicate is left for the review-gated reconciler, never inline-merged.
-        if use_embedding and embedding:
+        #
+        # PERSON entities ALSO skip the embedding match unconditionally, even on the
+        # live extraction path (use_embedding=True): people are identified by NAME, not
+        # semantic similarity. Worse, a generic meta-description ("…: Vollständiger Name
+        # einer Person") turns a person row into a generic-person CENTROID that any bare
+        # name lands ≥ threshold from — that is how entity #11 became a 127-mention magnet
+        # hub that swallowed other people. Persons resolve by exact-name + surface-form;
+        # a genuine near-duplicate is left for the review-gated reconciler. Non-person
+        # types KEEP embedding-match — it salvages OCR/typo variants (e.g. "Bnn"→"Bonn")
+        # and they don't suffer the bare-name centroid problem. The entity embedding is
+        # still computed + stored above (it backs retrieval + reconciler dedup); only the
+        # inline *match* is suppressed for persons.
+        embed_match = use_embedding and resolved_type != "person"
+        if embed_match and embedding:
             similar = await self._find_similar_entity(
                 embedding, user_id=user_id, tier=default_tier,
                 entity_type=resolved_type if match_entity_type else None,

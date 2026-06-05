@@ -196,26 +196,39 @@ class TestPhase3MatchEntityType:
 
 class TestUseEmbeddingGuard:
     async def test_use_embedding_false_never_folds_a_different_name(self, pg_db_session, monkeypatch):
-        # The conflation the bridge must avoid: a bare given name embeds close to a
-        # different same-tier person, and the embedding step would fold it in.
-        # use_embedding=False (the bridge path) skips that → creates a fresh entity.
+        # The bridge path (use_embedding=False) skips the embedding match for ANY
+        # type, not just person — a non-person sanity check that the explicit opt-out
+        # still works independently of the person rule.
         owner = await _make_user(pg_db_session, "rc_ue_false")
-        anna = await _entity(pg_db_session, owner, "Anna Johanna von den Bongard",
-                             tier=0, etype="person", embedding=_vec(60))
-        svc = _svc(pg_db_session, monkeypatch, embed=_vec(60))  # 'Jutta' embeds == Anna
+        bonn = await _entity(pg_db_session, owner, "Bonn", tier=0, etype="place",
+                             embedding=_vec(60))
+        svc = _svc(pg_db_session, monkeypatch, embed=_vec(60))  # 'Beuel' embeds == Bonn
 
-        got = await svc.resolve_entity("Jutta", "person", owner.id, create_tier=0,
-                                       match_entity_type=True, use_embedding=False)
-        assert got.id != anna.id and got.name == "Jutta"  # own entity, NOT Anna
+        got = await svc.resolve_entity("Beuel", "place", owner.id, create_tier=0,
+                                       use_embedding=False)
+        assert got.id != bonn.id and got.name == "Beuel"  # own entity despite the opt-out
 
-    async def test_use_embedding_true_is_legacy_match(self, pg_db_session, monkeypatch):
-        # Control: the default (live extraction path) still embedding-matches —
-        # documents exactly the cross-person fold the bridge opts out of.
+    async def test_person_never_embedding_folds_even_when_enabled(self, pg_db_session, monkeypatch):
+        # The live extraction-path fix: PERSON entities skip the embedding match
+        # UNCONDITIONALLY (use_embedding default True), because a bare name embeds
+        # onto a generic-person centroid and folded different people into one magnet
+        # hub (entity #11). Even with embedding enabled, Jutta must get her own row.
         owner = await _make_user(pg_db_session, "rc_ue_true")
         anna = await _entity(pg_db_session, owner, "Anna Johanna von den Bongard",
                              tier=0, etype="person", embedding=_vec(61))
-        svc = _svc(pg_db_session, monkeypatch, embed=_vec(61))
+        svc = _svc(pg_db_session, monkeypatch, embed=_vec(61))  # 'Jutta' embeds == Anna
 
         got = await svc.resolve_entity("Jutta", "person", owner.id, create_tier=0,
                                        match_entity_type=True)  # use_embedding default True
-        assert got.id == anna.id  # legacy: folds Jutta into Anna via embedding (the bug)
+        assert got.id != anna.id and got.name == "Jutta"  # own entity, NOT the Anna hub
+
+    async def test_nonperson_still_embedding_folds_when_enabled(self, pg_db_session, monkeypatch):
+        # Guard against over-disabling: NON-person types keep the embedding match on
+        # the live path (it salvages OCR/typo variants like "Bnn"→"Bonn").
+        owner = await _make_user(pg_db_session, "rc_ue_place")
+        bonn = await _entity(pg_db_session, owner, "Bonn", tier=0, etype="place",
+                             embedding=_vec(62))
+        svc = _svc(pg_db_session, monkeypatch, embed=_vec(62))  # cosine 1.0
+
+        got = await svc.resolve_entity("Bnn", "place", owner.id, create_tier=0)
+        assert got.id == bonn.id  # place still folds via embedding

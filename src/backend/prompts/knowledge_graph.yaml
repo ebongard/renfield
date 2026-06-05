@@ -13,6 +13,7 @@ de:
     2. NIEMALS eine Relation ausgeben, bei der Subject und Object dieselbe Entitaet sind (kein Self-Loop wie "Anna ist_verheiratet_mit Anna").
     3. NIEMALS Weltwissen ausserhalb des Dialogs nutzen, um Lücken zu fuellen. Wenn der Dialog nichts ueber den Ehepartner einer Person sagt, gibt es KEINE ist_verheiratet_mit-Relation — auch dann nicht, wenn du den Ehepartner aus Trainingsdaten zu kennen glaubst.
     4. Pronomen sorgfaeltig aufloesen: "Du", "ich", "meine Frau", "meine Mutter" beziehen sich auf VERSCHIEDENE Personen. Fakten ueber "ich" gehoeren nicht zu "meine Mutter", auch wenn beide im selben Dialog vorkommen.
+    5. BESCHREIBUNG (`description`): ein SPEZIFISCHES, unterscheidendes Detail ueber GENAU diese Entitaet, das im Dialog steht (z.B. eine Rolle, Beziehung oder Eigenschaft) — oder leerer String "". NIEMALS eine generische Beschreibung des TYPS selbst (z.B. "Vollstaendiger Name einer Person", "eine Stadt", "eine Firma"): solche Floskeln machen verschiedene Entitaeten im Embedding-Raum ununterscheidbar und fuehren dazu, dass fremde Namen faelschlich derselben Person zugeordnet werden.
 
     Nur KONKRETE, BENANNTE Entitaeten extrahieren — mit echtem Namen oder Titel:
     - Personen (vollstaendiger Name oder Spitzname, NICHT generische Rollen)
@@ -61,7 +62,7 @@ de:
 
     Antworte als JSON-Objekt (leere Arrays wenn nichts relevant):
     {{
-      "entities": [{{"name": "...", "type": "person|place|organization|thing|event|concept", "types": ["person"], "description": "..."}}],
+      "entities": [{{"name": "...", "type": "person|place|organization|thing|event|concept", "types": ["person"], "description": "<spezifisches Detail oder leer>"}}],
       "relations": [{{"subject": "...", "predicate": "...", "object": "...", "confidence": 0.8}}]
     }}
 
@@ -78,6 +79,8 @@ de:
 
   document_extraction_prompt: |
     Analysiere den folgenden Textabschnitt aus einem Dokument und extrahiere benannte Entitaeten und ihre Beziehungen.
+
+    BESCHREIBUNG (`description`): ein SPEZIFISCHES, unterscheidendes Detail ueber GENAU diese Entitaet aus dem Text (Rolle, Beziehung, Eigenschaft) — oder leerer String "". NIEMALS eine generische Beschreibung des TYPS selbst (z.B. "Vollstaendiger Name einer Person", "eine Firma"): solche Floskeln machen verschiedene Entitaeten im Embedding-Raum ununterscheidbar und ordnen fremde Namen faelschlich derselben Person zu.
 
     Nur KONKRETE, BENANNTE Entitaeten mit echtem Namen extrahieren:
     - Personen (vollstaendiger Name, NICHT generische Rollen wie "Kunde" oder "Sachbearbeiter")
@@ -116,7 +119,7 @@ de:
 
     Antworte als JSON-Objekt (leere Arrays wenn nichts relevant):
     {{
-      "entities": [{{"name": "...", "type": "person|place|organization|thing|event|concept", "description": "..."}}],
+      "entities": [{{"name": "...", "type": "person|place|organization|thing|event|concept", "description": "<spezifisches Detail oder leer>"}}],
       "relations": [{{"subject": "...", "predicate": "...", "object": "...", "confidence": 0.8}}]
     }}
 
@@ -131,6 +134,7 @@ en:
     2. NEVER emit a relation where subject and object are the same entity (no self-loops like "Anna married_to Anna").
     3. NEVER use world knowledge from outside the dialog to fill in facts. If the dialog says nothing about a person's spouse, there is NO married_to relation — even if you believe you know the spouse from training data.
     4. Resolve pronouns carefully: "you", "I", "my wife", "my mother" refer to DIFFERENT people. Facts about "I" do not belong to "my mother", even when both appear in the same dialog.
+    5. DESCRIPTION (`description`): a SPECIFIC, distinguishing detail about THIS exact entity stated in the dialog (a role, relationship, or attribute) — or an empty string "". NEVER a generic description of the TYPE itself (e.g. "full name of a person", "a city", "a company"): such filler makes different entities indistinguishable in embedding space and causes foreign names to be mis-attributed to the same person.
 
     Only extract CONCRETE, NAMED entities — with real names or titles:
     - People (full names or nicknames, NOT generic roles)
@@ -179,7 +183,7 @@ en:
 
     Reply as JSON object (empty arrays if nothing relevant):
     {{
-      "entities": [{{"name": "...", "type": "person|place|organization|thing|event|concept", "types": ["person"], "description": "..."}}],
+      "entities": [{{"name": "...", "type": "person|place|organization|thing|event|concept", "types": ["person"], "description": "<specific detail or empty>"}}],
       "relations": [{{"subject": "...", "predicate": "...", "object": "...", "confidence": 0.8}}]
     }}
 
@@ -196,6 +200,8 @@ en:
 
   document_extraction_prompt: |
     Analyze the following text passage from a document and extract named entities and their relationships.
+
+    DESCRIPTION (`description`): a SPECIFIC, distinguishing detail about THIS exact entity from the text (role, relationship, attribute) — or an empty string "". NEVER a generic description of the TYPE itself (e.g. "full name of a person", "a company"): such filler makes different entities indistinguishable in embedding space and mis-attributes foreign names to the same person.
 
     Only extract CONCRETE, NAMED entities with real names:
     - People (full names, NOT generic roles like "customer" or "clerk")
@@ -234,7 +240,7 @@ en:
 
     Reply as JSON object (empty arrays if nothing relevant):
     {{
-      "entities": [{{"name": "...", "type": "person|place|organization|thing|event|concept", "description": "..."}}],
+      "entities": [{{"name": "...", "type": "person|place|organization|thing|event|concept", "description": "<specific detail or empty>"}}],
       "relations": [{{"subject": "...", "predicate": "...", "object": "...", "confidence": 0.8}}]
     }}
 
