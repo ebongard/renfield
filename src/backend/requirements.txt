@@ -91,9 +91,10 @@ aiosmtplib>=3.0                  # Required by renfield-mcp-mail (not auto-resol
 renfield-mcp-jellyfin @ https://github.com/ebongard/renfield-mcp-jellyfin/archive/refs/heads/main.tar.gz
 renfield-mcp-tunein @ https://github.com/ebongard/renfield-mcp-tunein/archive/refs/heads/main.tar.gz
 renfield-mcp-calendar @ https://github.com/ebongard/renfield-mcp-calendar/archive/refs/heads/main.tar.gz
-renfield-mcp-dlna @ https://github.com/ebongard/renfield-mcp-dlna/archive/refs/heads/main.tar.gz
-async-upnp-client>=0.40.0               # Required by renfield-mcp-dlna (UPnP device control)
-python-didl-lite>=1.4.0                  # Required by renfield-mcp-dlna (DIDL-Lite metadata)
+# renfield-mcp-dlna moved to a DEDICATED image (registry/renfield/dlna-mcp, see
+# renfield-mcp-dlna/Dockerfile). The backend reaches dlna over HTTP only (never
+# imports it), so the package + its deps (async-upnp-client, python-didl-lite)
+# are no longer installed here. Re-add ONLY if some backend code imports them.
 exchangelib>=5.4                     # Required by renfield-mcp-calendar (EWS backend)
 caldav>=1.4                          # Required by renfield-mcp-calendar (CalDAV backend)
 
