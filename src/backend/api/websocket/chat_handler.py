@@ -1154,8 +1154,12 @@ async def websocket_endpoint(
                         pass  # Non-critical
 
                 # Fire post_routing hook (async, fire-and-forget) for trace persistence
+                # NOTE: do NOT `import asyncio` here. asyncio is imported at module
+                # scope (top of file); a function-local import inside this branch
+                # makes `asyncio` a LOCAL for the whole websocket_endpoint, so any
+                # asyncio.* use on a path that skips this branch raises
+                # UnboundLocalError (prod WebSocket crash, chat_handler:~1980).
                 from utils.hooks import run_hooks
-                import asyncio
                 _pr_task = asyncio.create_task(run_hooks(
                     "post_routing",
                     message=content,
