@@ -1896,6 +1896,57 @@ class TestRelativeVolume:
         for call in mock_mcp_manager.execute_tool.call_args_list:
             assert call.args[0] != "mcp.dlna.set_volume"
 
+    # --- muted-device (volume == 0) guards: 0 is a valid level, not "no reading" ---
+
+    @pytest.mark.unit
+    async def test_volume_relative_from_muted_dlna(self, internal_tools):
+        """A muted DLNA renderer (volume=0) + step up resolves correctly — 0 must
+        be treated as a real reading, not as 'can't report' (no falsy-0 bug)."""
+        async def _exec(tool_name, tool_params):
+            if tool_name == "mcp.dlna.get_volume":
+                return {"success": True, "volume": 0}
+            return {"success": True, "message": "Volume set"}
+
+        mock_mcp_manager = MagicMock()
+        mock_mcp_manager.execute_tool = AsyncMock(side_effect=_exec)
+
+        with patch.object(internal_tools, "_resolve_room_player",
+                          new_callable=AsyncMock, return_value=self._dlna_resolve()), \
+             self._patch_main_app(mock_mcp_manager):
+            result = await internal_tools._media_control({
+                "action": "volume",
+                "room_name": "Arbeitszimmer",
+                "volume_step": 20,
+            })
+
+        assert result["success"] is True
+        mock_mcp_manager.execute_tool.assert_any_call(
+            "mcp.dlna.set_volume", {"renderer_name": "HiFiBerry Arbeitszimmer", "volume": 20},
+        )
+
+    @pytest.mark.unit
+    async def test_volume_relative_from_muted_ha(self, internal_tools):
+        """A muted HA device (volume_level=0.0) + step up resolves correctly —
+        0.0 must be distinguished from None (offline), not collapsed by a falsy check."""
+        mock_ha_client = MagicMock()
+        mock_ha_client.call_service = AsyncMock(return_value=True)
+        mock_ha_client.get_state = AsyncMock(
+            return_value={"attributes": {"volume_level": 0.0}}
+        )
+
+        with patch.object(internal_tools, "_resolve_room_player",
+                          new_callable=AsyncMock, return_value=self._ha_resolve()), \
+             patch("ha_glue.integrations.homeassistant.HomeAssistantClient", return_value=mock_ha_client):
+            result = await internal_tools._media_control({
+                "action": "volume",
+                "room_name": "Arbeitszimmer",
+                "volume_step": 30,
+            })
+
+        assert result["success"] is True
+        call_kwargs = mock_ha_client.call_service.call_args
+        assert call_kwargs.kwargs["service_data"]["volume_level"] == pytest.approx(0.3)
+
 
 # ============================================================================
 # Test play_album_on_dlna
