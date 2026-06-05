@@ -51,9 +51,11 @@ spec:
         - name: harbor-pull-secret
       containers:
         - name: dlna-mcp
-          image: registry.treehouse.x-idra.de/renfield/backend:latest
+          # Dedicated small image (see renfield-mcp-dlna/Dockerfile) — no longer
+          # the 3.5 GB backend image. ENTRYPOINT is renfield-mcp-dlna, so no
+          # `command:` override needed. The backend reaches this over HTTP only.
+          image: registry.treehouse.x-idra.de/renfield/dlna-mcp:v0.1.0
           imagePullPolicy: Always
-          command: ["/opt/venv/bin/renfield-mcp-dlna"]
           env:
             - name: MCP_TRANSPORT
               value: streamable-http
