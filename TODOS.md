@@ -184,7 +184,7 @@ Surfaced by `/review` of the branch; all three fixed in the same branch (commit 
 Rebuilt on the **post-RRF single-insertion design** (`docs/HANDOVER_graph_expansion.md` §4) after the per-module MVP was re-deferred by `/plan-eng-review` + outside voice. `services/graph_expansion.py::expand_fused` in `PolymorphicAtomStore.query` (tests: `test_graph_expansion_pg.py` 7/7). All review must-fixes addressed: ✅ post-RRF single seam (no double-work, decay survives); ✅ level-synchronous BFS (correct min-hop, frontier cap can't mislabel); ✅ leak-safe edges (both endpoints accessible, no `name_map` reuse); ✅ per-hop circle filter + per-hop frontier cap; ✅ provenance (`payload.expanded`+`hop`); ✅ anonymous (`asker_id=None`) public-only test. The per-module MVP stays parked on `feature/structured-memory-phase4-subsume` (`2794872`) as a dead end.
 **Remaining Phase 4 follow-ups (not blocking; the flag works for the /brain fused path today):**
 - **Agent string path:** `get_relevant_context` (the agent's KG string / `internal.knowledge_search`) does NOT yet go through the fused path, so it doesn't benefit from expansion. Handover bullet 3 = refactor it onto the fused path. Until then, expansion enriches `PolymorphicAtomStore.query` consumers only.
-- **Pre-existing `name_map` leak (P1):** `get_relevant_atoms`/`get_relevant_context` resolve relation endpoint NAMES via an **unfiltered** `name_map` (`kg_retrieval.py:~458`) — a visible relation (tier=MIN) can name an owner-only endpoint. NOT introduced by Phase 4 (expansion's own edges are leak-safe), but fix both methods' name lookup through `kg_entities_circles_filter` ("?" on miss, like `kg_graph_service.focus`).
+- ~~**Pre-existing `name_map` leak (P1):**~~ **FIXED 2026-06-06** (`fix/kg-name-map-circle-leak`). `get_relevant_atoms`/`get_relevant_context` resolved relation endpoint NAMES via an **unfiltered** `name_map` — a visible relation (tier=MIN) could name an owner-only endpoint (into the agent LLM context / the `/wissen` drawer). Both methods now route the endpoint-name lookup through the shared `KGRetrieval._resolve_entity_names()` → `kg_entities_circles_filter` ("?" on miss, mirroring `kg_graph_service.focus`'s per-node gate). Regression test `tests/backend/test_kg_retrieval_name_leak_pg.py` (8 cases, real PG, incl. the cross-user self-tier leak) — green on .159; adjacent suites 21 passed.
 
 ### Structured Memory Phase 3-subsume — recall-loss watch (post-enable)
 Shipped dark (`MEMORY_SUBSUME_TO_KG`, off). When enabled, `fact`-category memories with a subject are NOT stored flat (they live in the KG). **Risk:** a fact whose object is not a named entity (e.g. "Anna ist müde") may not be captured as a KG relation → lost. Before enabling in prod, validate KG extraction's fact-capture rate on real transcripts; consider a shadow/measure pass first. Trigger: owner wants to reduce flat-memory duplication AND KG fact-capture is validated good.
@@ -212,8 +212,9 @@ chosen option = disable-embedding-for-person + prompt + de-magnetize backfill):
   - (a) person OCR-variant dedup is now entirely review-gated (the reconciler same-name gate
     doesn't surface differing *spellings* — only normalized-equal names); acceptable per the
     chosen tradeoff but watch document-extraction duplicate persons.
-  - (c) the unfiltered `name_map` endpoint-name leak in
-    `get_relevant_atoms`/`get_relevant_context` is unrelated but pre-existing.
+  - (c) ~~the unfiltered `name_map` endpoint-name leak in
+    `get_relevant_atoms`/`get_relevant_context`~~ **FIXED 2026-06-06**
+    (`fix/kg-name-map-circle-leak`; see the Phase 4 follow-ups section above).
 
 ### Paperless PR 5 — Interactive confirm card
 In-chat card with per-field controls, tag chips, storage-path tree; structured-payload callback instead of free-text.
