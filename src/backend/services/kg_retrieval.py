@@ -168,6 +168,37 @@ class KGRetrieval:
             logger.debug(f"KG: Could not parse entity list from: {raw_text[:200]}")
             return []
 
+    async def _resolve_entity_names(
+        self, ids, user_id: int | None
+    ) -> dict[int, str]:
+        """Resolve entity ids → names, circle-filtered by the asker's access.
+
+        Only ids the asker may see are returned; callers default missing ids to
+        ``"?"`` so a visible relation can't disclose the NAME of an endpoint
+        entity in a circle the asker can't reach. Same per-node visibility gate
+        as ``kg_graph_service.focus`` (auth-off → all, anonymous → public-only,
+        authenticated → the standard kg_entities circle filter).
+        """
+        from services.circle_sql import kg_entities_circles_filter
+
+        ids = list(ids)
+        if not ids:
+            return {}
+        base = select(KGEntity.id, KGEntity.name).where(
+            KGEntity.is_active == True,  # noqa: E712
+            KGEntity.id.in_(ids),
+        )
+        if not settings.auth_enabled:
+            pass
+        elif user_id is None:
+            from models.database import TIER_PUBLIC
+            base = base.where(KGEntity.circle_tier == TIER_PUBLIC)
+        else:
+            clause, params = kg_entities_circles_filter(user_id, alias="kg_entities")
+            base = base.where(text(clause).bindparams(**params))
+        rows = (await self.db.execute(base)).all()
+        return {r.id: r.name for r in rows}
+
     async def get_relevant_context(
         self,
         query: str,
@@ -303,16 +334,15 @@ class KGRetrieval:
         if not relation_rows:
             return None
 
-        # Fetch all entity names we need
+        # Fetch the endpoint entity names we need — circle-filtered so a visible
+        # relation can't disclose the NAME of an endpoint entity in a circle the
+        # asker can't reach (inaccessible ids fall through to "?" below).
         entity_ids = set()
         for r in relation_rows:
             entity_ids.add(r.subject_id)
             entity_ids.add(r.object_id)
 
-        entities_result = await self.db.execute(
-            select(KGEntity).where(KGEntity.id.in_(entity_ids))
-        )
-        entity_map = {e.id: e.name for e in entities_result.scalars().all()}
+        entity_map = await self._resolve_entity_names(entity_ids, user_id)
 
         # Format triples
         triples = []
@@ -445,21 +475,18 @@ class KGRetrieval:
         )
         relation_rows = rel_result.fetchall()
 
-        # Resolve subject/object names (may reference entities outside the match set).
-        # TODO(circle-leak): this fetch is NOT circle-filtered, so a relation the
-        # asker may see can disclose the NAME of an endpoint entity in a circle
-        # they can't. Pre-existing — get_relevant_context does the identical
-        # unfiltered fetch into LLM context — so fix BOTH methods together (route
-        # the name lookup through kg_entities_circles_filter, "?" on miss) in a
-        # dedicated follow-up verified on .159; not introduced by this PR.
+        # Resolve subject/object names (may reference entities outside the match
+        # set). Circle-filtered so a visible relation can't disclose the NAME of
+        # an endpoint entity in a circle the asker can't reach — inaccessible
+        # endpoints fall through to "?" below. The matched `entities` already
+        # passed the entity filter, so reuse their names and only gate the
+        # out-of-set endpoints. Mirrors kg_graph_service.focus.
         needed_ids = {r.subject_id for r in relation_rows} | {r.object_id for r in relation_rows}
         # `entities` is non-empty here (early-returned above otherwise).
         name_map = {eid: e["name"] for eid, e in entities.items()}
-        missing = [i for i in needed_ids if i not in name_map]
+        missing = {i for i in needed_ids if i not in name_map}
         if missing:
-            res = await self.db.execute(select(KGEntity).where(KGEntity.id.in_(missing)))
-            for e in res.scalars().all():
-                name_map[e.id] = e.name
+            name_map.update(await self._resolve_entity_names(missing, user_id))
 
         relations = [
             {
