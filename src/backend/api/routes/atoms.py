@@ -206,10 +206,18 @@ async def get_obligations(
 
 
 def _ics_escape(s: str) -> str:
-    """Escape a value for an iCalendar text field (RFC 5545 §3.3.11)."""
-    return (
-        s.replace("\\", "\\\\").replace(";", "\\;").replace(",", "\\,").replace("\n", "\\n")
-    )
+    """Escape a value for an iCalendar TEXT field (RFC 5545 §3.3.11).
+
+    Backslash first, then collapse CR / CRLF / LF to the literal ``\\n`` escape —
+    a bare ``\\r`` is a line separator in iCalendar, so leaving it unescaped would
+    let a crafted (LLM-extracted) value inject new content-lines (e.g. forge an
+    ``END:VEVENT`` / ``ATTENDEE``). Other control chars are stripped.
+    """
+    s = s.replace("\\", "\\\\")
+    s = s.replace("\r\n", "\\n").replace("\r", "\\n").replace("\n", "\\n")
+    s = s.replace(";", "\\;").replace(",", "\\,")
+    # Drop remaining control characters (keep tab) that could confuse parsers.
+    return "".join(ch for ch in s if ch >= " " or ch == "\t")
 
 
 @router.get("/obligations/export.ics")

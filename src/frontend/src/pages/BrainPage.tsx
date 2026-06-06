@@ -38,6 +38,7 @@ export default function BrainPage() {
     const q = query.trim();
     if (!q) return;
     setActiveQuery(q);
+    setFactsOnly(false); // a new search starts unfiltered (else a fact-less result set looks empty)
   };
 
   return (

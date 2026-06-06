@@ -99,6 +99,29 @@ class TestObligationsIcs:
         assert "geheim" not in body
         assert body.count("BEGIN:VEVENT") == 0  # peer sees none of the owner's self-tier obligations
 
+    async def test_crlf_in_value_cannot_inject_ics_lines(self, pg_db_session, monkeypatch):
+        # A crafted obligation value with CRLF must NOT forge calendar lines.
+        monkeypatch.setattr(settings, "auth_enabled", True)
+        _commit_as_flush(pg_db_session, monkeypatch)
+        from api.routes.atoms import export_obligations_ics
+        owner = await _make_user(pg_db_session, "ics_inj")
+        fid = await _mk_obligation(pg_db_session, owner, ob_date=dt.date(2026, 6, 15), kind="zahlung")
+        # overwrite value with an injection payload
+        await pg_db_session.execute(
+            text("UPDATE document_facts SET value = :v WHERE id = :id"),
+            {"v": "evil\r\nEND:VEVENT\r\nBEGIN:VEVENT\r\nSUMMARY:Injected", "id": fid})
+        await pg_db_session.flush()
+        resp = await export_obligations_ics(due_before=None, db=pg_db_session, current_user=owner)
+        body = resp.body.decode("utf-8")
+        # Assert on real content-lines (CRLF-split), not substrings — the payload
+        # survives as escaped text INSIDE the DESCRIPTION value, which is the point.
+        lines = body.split("\r\n")
+        assert lines.count("BEGIN:VEVENT") == 1   # no forged event line
+        assert lines.count("END:VEVENT") == 1
+        assert "SUMMARY:Injected" not in lines     # not promoted to a real content-line
+        desc = next(line for line in lines if line.startswith("DESCRIPTION:"))
+        assert "\\nEND:VEVENT" in desc             # CRLF collapsed to the literal \n escape
+
     async def test_empty_export_is_valid_calendar(self, pg_db_session, monkeypatch):
         monkeypatch.setattr(settings, "auth_enabled", True)
         _commit_as_flush(pg_db_session, monkeypatch)
