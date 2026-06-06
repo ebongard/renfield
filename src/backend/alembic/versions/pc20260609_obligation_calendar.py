@@ -60,13 +60,9 @@ def upgrade() -> None:
         "ix_obligation_calendar_events_user_id",
         "obligation_calendar_events", ["user_id"],
     )
-    op.create_index(
-        "idx_obligation_calevent_user", "obligation_calendar_events", ["user_id"]
-    )
 
 
 def downgrade() -> None:
-    op.drop_index("idx_obligation_calevent_user", table_name="obligation_calendar_events")
     op.drop_index("ix_obligation_calendar_events_user_id", table_name="obligation_calendar_events")
     op.drop_index("ix_obligation_calendar_events_document_fact_id", table_name="obligation_calendar_events")
     op.drop_table("obligation_calendar_events")

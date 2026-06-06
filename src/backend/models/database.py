@@ -2027,7 +2027,7 @@ class ObligationCalendarEvent(Base):
         # One event per (fact, user). NULLs are distinct in Postgres, so orphan
         # rows (fact purged → SET NULL) coexist until the reconciler cleans them.
         UniqueConstraint("document_fact_id", "user_id", name="uq_obligation_calevent_fact_user"),
-        Index("idx_obligation_calevent_user", "user_id"),
+        # (user_id already indexed via the column's index=True — no extra index.)
     )
 
 

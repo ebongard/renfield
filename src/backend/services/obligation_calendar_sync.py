@@ -17,7 +17,23 @@ Design (mirrors the notifier/digest):
   ``obligation_calendar_event_hour``.
 - MCP failures are non-fatal: the op is skipped and retried next pass (a failed
   create writes no ledger row; a failed delete keeps the row), so the ledger
-  never claims a calendar state that didn't happen.
+  never claims a calendar state that didn't happen. A delete that reports the
+  event already gone is treated as success (idempotent teardown).
+- Turning sync OFF (clearing the calendar pref) tears the user's events down
+  synchronously first (the route calls :meth:`teardown_user` before forgetting
+  the event ids) — otherwise the reconciler, which keys off the pref, would
+  never see the user again and the events would linger.
+
+Known limitations (documented, not bugs):
+- The MCP exposes no idempotency key, so a crash in the narrow window between a
+  successful ``create_event`` and the ledger commit can leave a duplicate event
+  (at-least-once, like the notifier). A pre-create marker-scan or MCP idempotency
+  would close it — follow-up in TODOS.
+- Events are timed at ``obligation_calendar_event_hour`` (all-day unsupported);
+  the naive datetime is interpreted in the calendar backend's timezone (Europe/
+  Berlin for the Google backend).
+- A pref pointing at a calendar the user can no longer write to errors every
+  pass (logged); it never self-heals until the pref is changed.
 """
 from __future__ import annotations
 
@@ -206,8 +222,15 @@ class ObligationCalendarSync:
             )).fetchall()
         ]
 
-        # create / update for desired obligations
+        # create / update for desired obligations (capped per pass — a user with
+        # hundreds of open obligations would otherwise fire hundreds of serial
+        # MCP round-trips under the lock; the rest are picked up next pass).
+        cap = max(1, settings.obligation_calendar_max_ops_per_run)
+        ops = 0
         for fact_id, ob in desired.items():
+            if ops >= cap:
+                report.notes.append(f"op cap reached ({cap}); remaining deferred to next pass")
+                break
             try:
                 summary = _summary(ob["kind"], ob["amount"], ob["currency"], ob["legal"])
                 start, end = _event_times(ob["date"])
@@ -218,14 +241,17 @@ class ObligationCalendarSync:
                         "calendar": calendar, "title": summary,
                         "start": start, "end": end, "description": desc,
                     }, user_id)
+                    ops += 1
                     if ev and ev.get("id"):
                         self.db.add(ObligationCalendarEvent(
                             document_fact_id=fact_id, user_id=user_id, calendar=calendar,
                             event_id=str(ev["id"]), synced_obligation_date=ob["date"],
                             synced_summary=summary,
                         ))
-                        await self.db.commit()
-                        report.created += 1
+                        if await self._commit():
+                            report.created += 1
+                        else:
+                            report.errors += 1
                     else:
                         report.errors += 1
                 else:
@@ -236,6 +262,7 @@ class ObligationCalendarSync:
                             "calendar": calendar, "event_id": event_id, "title": summary,
                             "start": start, "end": end, "description": desc,
                         }, user_id)
+                        ops += 1
                         if ev is not None:
                             await self.db.execute(
                                 text("UPDATE obligation_calendar_events SET "
@@ -243,13 +270,16 @@ class ObligationCalendarSync:
                                      "updated_at = NOW() WHERE id = :id"),
                                 {"d": ob["date"], "s": summary, "id": _id},
                             )
-                            await self.db.commit()
-                            report.updated += 1
+                            if await self._commit():
+                                report.updated += 1
+                            else:
+                                report.errors += 1
                         else:
                             report.errors += 1
             except Exception as e:  # noqa: BLE001
                 report.errors += 1
                 logger.warning(f"calendar sync: fact {fact_id} create/update failed: {e}")
+                await self.db.rollback()
 
         # delete ledger rows whose obligation is no longer desired (confirmed,
         # out of window) + orphans (fact purged → SET NULL).
@@ -260,22 +290,67 @@ class ObligationCalendarSync:
             await self._delete_row(calendar, orow[0], orow[1], user_id, report)
         return report
 
+    async def _commit(self) -> bool:
+        """Commit, rolling back on failure so one bad commit (e.g. a unique race
+        or transient blip) doesn't poison the rest of the pass."""
+        try:
+            await self.db.commit()
+            return True
+        except Exception as e:  # noqa: BLE001
+            logger.warning(f"calendar sync: commit failed: {e}")
+            await self.db.rollback()
+            return False
+
+    async def _delete_event(self, calendar: str, event_id: str, user_id: int) -> str:
+        """Delete a calendar event. Returns 'ok' (deleted), 'gone' (the calendar
+        already has no such event → desired state reached, treat as done), or
+        'fail' (transient → keep the ledger row and retry)."""
+        if self.mcp is None:
+            return "fail"
+        try:
+            res = await self.mcp.execute_tool(
+                _DELETE, {"calendar": calendar, "event_id": event_id},
+                user_permissions=_PERMS, user_id=user_id,
+            )
+        except Exception as e:  # noqa: BLE001
+            logger.warning(f"calendar sync: delete {event_id} raised: {e}")
+            return "fail"
+        if res and res.get("success"):
+            return "ok"
+        msg = ((res or {}).get("message") or "").lower()
+        if "not found" in msg or "notfound" in msg or "no such" in msg:
+            return "gone"  # user already removed it — don't retry forever (review F4)
+        logger.warning(f"calendar sync: delete {event_id} failed: {msg or 'no result'}")
+        return "fail"
+
     async def _delete_row(self, calendar: str, row_id: int, event_id: str,
                           user_id: int, report: CalSyncReport) -> None:
-        try:
-            ev = await self._mcp_event(_DELETE, {"calendar": calendar, "event_id": event_id}, user_id)
-            if ev is not None:  # delete returns the success dict (no "event") → truthy
-                await self.db.execute(
-                    text("DELETE FROM obligation_calendar_events WHERE id = :id"),
-                    {"id": row_id},
-                )
-                await self.db.commit()
+        status = await self._delete_event(calendar, event_id, user_id)
+        if status in ("ok", "gone"):
+            await self.db.execute(
+                text("DELETE FROM obligation_calendar_events WHERE id = :id"), {"id": row_id},
+            )
+            if await self._commit():
                 report.deleted += 1
             else:
-                report.errors += 1  # keep the ledger row; retry next pass
-        except Exception as e:  # noqa: BLE001
-            report.errors += 1
-            logger.warning(f"calendar sync: delete event {event_id} failed: {e}")
+                report.errors += 1
+        else:
+            report.errors += 1  # transient — keep the ledger row, retry next pass
+
+    async def teardown_user(self, user_id: int) -> int:
+        """Delete ALL of a user's synced calendar events + ledger rows (called
+        when they turn sync off, BEFORE the pref row is removed — otherwise the
+        reconciler, which keys off the pref, would never see them again and the
+        events would linger; review F2). Best-effort: a transient delete failure
+        keeps that row (rare orphan). Returns the count removed."""
+        rows = (await self.db.execute(
+            text("SELECT id, calendar, event_id FROM obligation_calendar_events WHERE user_id = :u"),
+            {"u": user_id},
+        )).fetchall()
+        report = CalSyncReport(user_id=user_id)
+        for r in rows:
+            await self._delete_row(r[1], r[0], r[2], user_id, report)
+        return report.deleted
 
 
 async def reconcile_all_users(mcp_manager: Any) -> None:

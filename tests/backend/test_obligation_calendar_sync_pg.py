@@ -27,10 +27,11 @@ TODAY = dt.date(2026, 6, 6)
 
 class FakeMcp:
     """Records execute_tool calls; returns the calendar MCP response shapes."""
-    def __init__(self, *, calendars=None, fail_create=False):
+    def __init__(self, *, calendars=None, fail_create=False, delete_not_found=False):
         self.calls: list[tuple[str, dict]] = []
         self._calendars = calendars if calendars is not None else [{"name": "family", "label": "Familie"}]
         self._fail_create = fail_create
+        self._delete_not_found = delete_not_found
         self._n = 0
 
     async def execute_tool(self, tool, args, user_permissions=None, user_id=None, **kw):
@@ -47,6 +48,9 @@ class FakeMcp:
             return {"success": True, "message": json.dumps(
                 {"success": True, "event": {"id": args["event_id"]}})}
         if tool.endswith("delete_event"):
+            if self._delete_not_found:
+                return {"success": False, "message": json.dumps(
+                    {"error": f"Event not found: {args.get('event_id')}"})}
             return {"success": True, "message": json.dumps(
                 {"success": True, "message": "Event deleted"})}
         return {"success": False, "message": "unknown tool"}
@@ -213,6 +217,35 @@ class TestReconciler:
         assert rep.created == 0 and rep.errors == 1
         assert await _ledger(pg_db_session, owner.id) == []  # nothing claimed → retried next pass
 
+    async def test_delete_not_found_treated_as_success(self, pg_db_session, monkeypatch):
+        # F4: the user removed the event in their calendar → not-found on delete
+        # must clear the ledger row, not loop forever as an error.
+        _commit_as_flush(pg_db_session, monkeypatch)
+        owner = await _make_user(pg_db_session, "cal_gone")
+        await _set_pref(pg_db_session, owner.id, "family")
+        fid = await _mk_obligation(pg_db_session, owner, ob_date=TODAY + dt.timedelta(days=10))
+        await ObligationCalendarSync(pg_db_session, FakeMcp()).run_for_user(owner.id, today=TODAY)
+        await pg_db_session.execute(
+            text("INSERT INTO obligation_acknowledgements (document_fact_id, user_id, milestone) "
+                 "VALUES (:f, :u, 'confirmed')"), {"f": fid, "u": owner.id})
+        await pg_db_session.flush()
+        rep = await ObligationCalendarSync(pg_db_session, FakeMcp(delete_not_found=True)).run_for_user(owner.id, today=TODAY)
+        assert rep.deleted == 1 and rep.errors == 0
+        assert await _ledger(pg_db_session, owner.id) == []
+
+    async def test_op_cap_defers_remainder(self, pg_db_session, monkeypatch):
+        # F7: a per-pass cap bounds the serial MCP fan-out.
+        _commit_as_flush(pg_db_session, monkeypatch)
+        monkeypatch.setattr(settings, "obligation_calendar_max_ops_per_run", 2)
+        owner = await _make_user(pg_db_session, "cal_cap")
+        await _set_pref(pg_db_session, owner.id, "family")
+        for i in range(3):
+            await _mk_obligation(pg_db_session, owner, ob_date=TODAY + dt.timedelta(days=5 + i))
+        rep = await ObligationCalendarSync(pg_db_session, FakeMcp()).run_for_user(owner.id, today=TODAY)
+        assert rep.created == 2
+        assert any("op cap" in n for n in rep.notes)
+        assert len(await _ledger(pg_db_session, owner.id)) == 2
+
     async def test_advisory_lock_overlap_is_noop(self, pg_db_session, monkeypatch):
         _commit_as_flush(pg_db_session, monkeypatch)
         owner = await _make_user(pg_db_session, "cal_lock")
@@ -263,3 +296,23 @@ class TestCalendarPrefRoutes:
                                           db=pg_db_session, current_user=owner)
         assert cleared.calendar_name is None
         assert (await get_calendar_pref(request=req, db=pg_db_session, current_user=owner)).calendar_name is None
+
+    async def test_clear_pref_tears_down_events(self, pg_db_session, monkeypatch):
+        # F2: turning sync off must remove the user's already-synced events
+        # (not orphan them in the calendar forever).
+        _commit_as_flush(pg_db_session, monkeypatch)
+        from api.routes.atoms import set_calendar_pref, SetCalendarPrefRequest
+        owner = await _make_user(pg_db_session, "cal_teardown")
+        await _set_pref(pg_db_session, owner.id, "family")
+        await _mk_obligation(pg_db_session, owner, ob_date=TODAY + dt.timedelta(days=10))
+        mcp = FakeMcp()
+        await ObligationCalendarSync(pg_db_session, mcp).run_for_user(owner.id, today=TODAY)
+        assert len(await _ledger(pg_db_session, owner.id)) == 1
+        # clear the pref via the route → teardown deletes the event + ledger row
+        await set_calendar_pref(SetCalendarPrefRequest(calendar_name=None), request=self._req(mcp),
+                                db=pg_db_session, current_user=owner)
+        assert len(mcp.calls_for("delete_event")) == 1
+        assert await _ledger(pg_db_session, owner.id) == []
+        pref = (await pg_db_session.execute(
+            text("SELECT 1 FROM obligation_calendar_pref WHERE user_id = :u"), {"u": owner.id})).first()
+        assert pref is None

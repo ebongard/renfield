@@ -747,6 +747,7 @@ class Settings(BaseSettings):
     obligation_calendar_event_hour: int = 9            # local hour for the (timed) event
     obligation_calendar_horizon_days: int = 90         # sync obligations due within N days
     obligation_calendar_retain_past_days: int = 30     # keep past-due events this long before cleanup
+    obligation_calendar_max_ops_per_run: int = 100     # cap create/update MCP calls per user per pass
 
     @property
     def features(self) -> dict[str, bool]:

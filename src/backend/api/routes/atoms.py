@@ -351,6 +351,16 @@ async def set_calendar_pref(
 
     if body.calendar_name is None:
         if existing is not None:
+            # Tear the user's synced events down BEFORE forgetting their event
+            # ids — once the pref is gone the reconciler never revisits them, so
+            # the events would otherwise linger in the calendar forever (review F2).
+            mgr = getattr(request.app.state, "mcp_manager", None)
+            if mgr is not None:
+                from services.obligation_calendar_sync import ObligationCalendarSync
+                try:
+                    await ObligationCalendarSync(db, mgr).teardown_user(current_user.id)
+                except Exception as e:  # noqa: BLE001 — teardown is best-effort
+                    logger.warning(f"calendar pref clear: teardown failed: {e}")
             await db.delete(existing)
             await db.commit()
         return ObligationCalendarPrefResponse(calendar_name=None, available=available)
