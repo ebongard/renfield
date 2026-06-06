@@ -64,6 +64,11 @@ export interface DocumentFact {
   confidence: number | null;
   source: FactSource;
   circle_tier: number;
+  /**
+   * The asker's per-user Bestätigt state from the server ledger (only present on
+   * the obligations() query; absent/false on the facts-for-document query).
+   */
+  confirmed?: boolean;
 }
 
 export interface ObligationsFilter {
@@ -129,6 +134,14 @@ interface PatchAtomTierArgs {
 
 async function patchAtomTierRequest({ atomId, policy }: PatchAtomTierArgs): Promise<void> {
   await apiClient.patch(`/api/atoms/${atomId}/tier`, { policy });
+}
+
+async function confirmObligationRequest(factId: number): Promise<void> {
+  await apiClient.post(`/api/atoms/obligations/${factId}/confirm`);
+}
+
+async function reopenObligationRequest(factId: number): Promise<void> {
+  await apiClient.delete(`/api/atoms/obligations/${factId}/confirm`);
 }
 
 export function useAtomSearchQuery(query: string) {
@@ -229,5 +242,37 @@ export function usePatchAtomTier() {
       },
     },
     'circles.couldNotSave',
+  );
+}
+
+/**
+ * Mark / unmark an obligation handled for the current user (the agenda's
+ * Bestätigen / Wieder öffnen) — the server home for the former localStorage
+ * state. Invalidates obligations so the `confirmed` flag reflects the ledger
+ * (the agenda layers an optimistic override on top for the 5s undo window).
+ */
+export function useConfirmObligation() {
+  const queryClient = useQueryClient();
+  return useApiMutation<void, number>(
+    {
+      mutationFn: confirmObligationRequest,
+      onSuccess: () => {
+        queryClient.invalidateQueries({ queryKey: keys.brain.all });
+      },
+    },
+    'obligations.confirmError',
+  );
+}
+
+export function useReopenObligation() {
+  const queryClient = useQueryClient();
+  return useApiMutation<void, number>(
+    {
+      mutationFn: reopenObligationRequest,
+      onSuccess: () => {
+        queryClient.invalidateQueries({ queryKey: keys.brain.all });
+      },
+    },
+    'obligations.confirmError',
   );
 }

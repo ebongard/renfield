@@ -23,10 +23,18 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException, status
 from loguru import logger
 from pydantic import BaseModel, Field
-from sqlalchemy import select
+from sqlalchemy import delete, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from models.database import Atom as AtomModel, Document, KnowledgeBase, User
+from models.database import (
+    Atom as AtomModel,
+    Document,
+    KnowledgeBase,
+    OBLIGATION_MILESTONE_CONFIRMED,
+    ObligationAcknowledgement,
+    User,
+)
 from services.atom_service import AtomService
 from services.atom_types import Atom
 from services.auth_service import get_user_or_default
@@ -105,6 +113,13 @@ class DocumentFactResponse(BaseModel):
     confidence: float | None = None
     source: str | None = None
     circle_tier: int = 0
+    confirmed: bool = False  # the asker's per-user Bestätigt state (server ledger)
+
+
+class ObligationConfirmResponse(BaseModel):
+    """Result of confirming / reopening an obligation (the agenda's Bestätigen)."""
+    document_fact_id: int
+    confirmed: bool
 
 
 # =============================================================================
@@ -179,6 +194,66 @@ async def get_obligations(
         asker_id=current_user.id, due_before=due_before, limit=limit, offset=offset,
     )
     return [DocumentFactResponse(**f) for f in facts]
+
+
+@router.post("/obligations/{fact_id}/confirm", response_model=ObligationConfirmResponse)
+async def confirm_obligation(
+    fact_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_user_or_default),
+):
+    """Mark an obligation handled for the current user (the agenda's Bestätigen).
+
+    Server home for the agenda's former per-device localStorage state: writes a
+    ``(fact, user, "confirmed")`` row in the shared obligation ledger, which both
+    persists the agenda's Bestätigt across devices AND tells the deadline
+    notifier to stop firing further milestones for this obligation. Idempotent.
+    404 (not 403) when the fact is not circle-visible — existence-oracle defense.
+    """
+    retrieval = DocumentFactRetrieval(db)
+    if not await retrieval.is_visible(fact_id, current_user.id):
+        raise HTTPException(status_code=404, detail="Obligation not found")
+    existing = await db.execute(
+        select(ObligationAcknowledgement).where(
+            ObligationAcknowledgement.document_fact_id == fact_id,
+            ObligationAcknowledgement.user_id == current_user.id,
+            ObligationAcknowledgement.milestone == OBLIGATION_MILESTONE_CONFIRMED,
+        )
+    )
+    if existing.scalar_one_or_none() is None:
+        db.add(ObligationAcknowledgement(
+            document_fact_id=fact_id,
+            user_id=current_user.id,
+            milestone=OBLIGATION_MILESTONE_CONFIRMED,
+        ))
+        try:
+            await db.commit()
+        except IntegrityError:
+            await db.rollback()  # concurrent confirm — already recorded, still confirmed
+    return ObligationConfirmResponse(document_fact_id=fact_id, confirmed=True)
+
+
+@router.delete("/obligations/{fact_id}/confirm", response_model=ObligationConfirmResponse)
+async def reopen_obligation(
+    fact_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_user_or_default),
+):
+    """Reopen a previously-confirmed obligation for the current user (the
+    agenda's „Wieder öffnen"). Deletes the user's ``confirmed`` ledger row.
+    Idempotent; 404 when the fact is not circle-visible."""
+    retrieval = DocumentFactRetrieval(db)
+    if not await retrieval.is_visible(fact_id, current_user.id):
+        raise HTTPException(status_code=404, detail="Obligation not found")
+    await db.execute(
+        delete(ObligationAcknowledgement).where(
+            ObligationAcknowledgement.document_fact_id == fact_id,
+            ObligationAcknowledgement.user_id == current_user.id,
+            ObligationAcknowledgement.milestone == OBLIGATION_MILESTONE_CONFIRMED,
+        )
+    )
+    await db.commit()
+    return ObligationConfirmResponse(document_fact_id=fact_id, confirmed=False)
 
 
 @router.get("/documents/{document_id}/facts", response_model=list[DocumentFactResponse])

@@ -720,6 +720,14 @@ class Settings(BaseSettings):
     proactive_reminders_enabled: bool = False
     proactive_reminder_check_interval: int = 15        # Sekunden
 
+    # Obligation-deadline notifier (Schicht A). Daily idempotent scan over
+    # document_facts (obligations are the scheduling source of truth) →
+    # owner-targeted lead-time reminders + a (fact, milestone) notified-ledger.
+    # Opt-in; delivery degrades gracefully if proactive_enabled is off.
+    obligation_notifier_enabled: bool = False
+    obligation_notifier_interval: int = 86400          # daily (seconds)
+    obligation_notifier_overdue_grace_days: int = 30   # still fire "overdue" within this window
+
     @property
     def features(self) -> dict[str, bool]:
         """Resolve feature flags: explicit override > edition preset."""

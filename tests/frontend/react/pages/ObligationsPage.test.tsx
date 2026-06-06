@@ -10,7 +10,12 @@ import apiClient from '../../../../src/frontend/src/utils/axios';
 import type { DocumentFact } from '../../../../src/frontend/src/api/resources/brain';
 
 vi.mock('../../../../src/frontend/src/utils/axios', () => ({
-  default: { get: vi.fn() },
+  default: {
+    get: vi.fn(),
+    // The Bestätigen flow now writes to the server ledger via useBestaetigt.
+    post: vi.fn().mockResolvedValue({ data: { confirmed: true } }),
+    delete: vi.fn().mockResolvedValue({ data: { confirmed: false } }),
+  },
   extractApiError: (_e: unknown, fallback: string) => fallback,
   extractFieldErrors: () => ({}),
 }));

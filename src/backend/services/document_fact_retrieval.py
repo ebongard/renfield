@@ -33,7 +33,7 @@ from sqlalchemy import text
 from sqlalchemy.exc import OperationalError, ProgrammingError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from models.database import TIER_PUBLIC
+from models.database import OBLIGATION_MILESTONE_CONFIRMED, TIER_PUBLIC
 from services.circle_sql import document_facts_circles_filter
 from services.fts_languages import build_tsquery_union_sql
 from services.lexical_retrieval import _significant_tokens
@@ -107,6 +107,9 @@ def _row_to_dict(row: Any, *, rank: float = 0.0) -> dict[str, Any]:
         "circle_tier": row.circle_tier or 0,
         "source": row.source,
         "similarity": round(float(rank), 6),
+        # Present only on the obligations() query (LEFT-derived EXISTS); other
+        # queries don't select it, so default False via getattr.
+        "confirmed": bool(getattr(row, "confirmed", False)),
     }
 
 
@@ -328,13 +331,25 @@ class DocumentFactRetrieval:
         is total, so offset paging never skips or repeats a row).
         """
         circles_clause, circles_params = self._facts_circles_filter(asker_id)
-        params: dict[str, Any] = {"limit": limit, "offset": max(0, offset), **circles_params}
+        # The asker's per-user Bestätigt state (milestone='confirmed'). Bind -1
+        # for anonymous (no user) so the EXISTS never matches.
+        confirm_uid = asker_id if asker_id is not None else -1
+        params: dict[str, Any] = {
+            "limit": limit, "offset": max(0, offset),
+            "confirm_uid": confirm_uid, **circles_params,
+        }
         due_filter = ""
         if due_before is not None:
             params["due_before"] = due_before
             due_filter = "AND df.obligation_date <= :due_before"
         sql = text(f"""
-            SELECT {_FACT_COLS}
+            SELECT {_FACT_COLS},
+                   EXISTS (
+                     SELECT 1 FROM obligation_acknowledgements oa
+                     WHERE oa.document_fact_id = df.id
+                       AND oa.user_id = :confirm_uid
+                       AND oa.milestone = '{OBLIGATION_MILESTONE_CONFIRMED}'
+                   ) AS confirmed
             FROM document_facts df
             JOIN documents d ON df.document_id = d.id
             LEFT JOIN knowledge_bases kb ON d.knowledge_base_id = kb.id
@@ -347,3 +362,20 @@ class DocumentFactRetrieval:
         """)
         rows = await self._fetch(sql, params, "obligations")
         return [_row_to_dict(r) for r in rows]
+
+    async def is_visible(self, fact_id: int, asker_id: int | None) -> bool:
+        """Whether ``fact_id`` is circle-visible to the asker — gates the
+        confirm/reopen routes (404 on not-visible, same existence-oracle defense
+        as the single-atom GET)."""
+        circles_clause, circles_params = self._facts_circles_filter(asker_id)
+        sql = text(f"""
+            SELECT 1
+            FROM document_facts df
+            JOIN documents d ON df.document_id = d.id
+            LEFT JOIN knowledge_bases kb ON d.knowledge_base_id = kb.id
+            WHERE df.id = :fact_id
+              AND {circles_clause}
+            LIMIT 1
+        """)
+        rows = await self._fetch(sql, {"fact_id": fact_id, **circles_params}, "is_visible")
+        return len(rows) > 0

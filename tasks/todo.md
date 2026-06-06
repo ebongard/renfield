@@ -1,44 +1,63 @@
-# Open Follow-Ups — refreshed 2026-05-22
+# Obligation-Deadline Notifier — plan (2026-06-06)
 
-Shipped / superseded items from the old voice-pipeline plan:
+Branch: `feat/obligation-deadline-notifier`. Scope: **A + B** (notifier core +
+Bestätigt server-migration on the shared ledger). Digest (C) = fast-follow.
 
-| Item | Reality |
-|---|---|
-| Phase A — streaming-first pipeline | Shipped: PR #509 (`faster-whisper` streaming + in-process Piper + singleton dedup), PR #534 (partial text + activation) |
-| Phase C — voice tier on GPU | Shipped: PR #531 (`voice-server` pod live on `k8s-gpu-3`); PR #532 wired `whisper_service` + `piper_service` thin-client delegation via `voice_server_url` |
-| Phase B.5 — XTTS-v2 evaluation | Shipped: PR #539 (decision: stay on Piper) |
-| End-of-utterance robustness | Shipped: PRs #535, #536 ("5 compounded design flaws") |
-| Voice-originated tool-call guard | Shipped: PR #542 (`verify_tool_call` hook + `voice_originated` ContextVar) |
-| **Voice barge-in (Fork A acoustic)** | **Shipped — v2.8.0** (PR #601, deployed 2026-05-22): interrupt the assistant by speaking. AEC spike passed 6.77×; two independent reviews. Plan: `tasks/voice-barge-in-plan.md`. **Open:** run the PR's 8-step manual barge-in checklist live (needs a human + mic). |
-| **Vision tier (`qwen3-vl:8b`)** | **Shipped — 2026-05-22** (PR #604): `OLLAMA_VISION_MODEL` flipped on. `qwen3-vl:8b` is served by the in-cluster `ollama` pod on k8s-gpu-1 (idle 16 GB GPU); `OLLAMA_VISION_URL` already routed there. The old "new CPU pod on k8s-gpu-2" plan was moot — model + routing already existed. Verified: accurate sub-second image inference. |
-| Cosmetic `AGENT_MODEL=qwen3.6` | Done in `k8s/configmap.yaml` |
-| `:llama-rc5` re-tag to versioned | Moot — backend is on `:latest` with `imagePullPolicy: Always` |
-| Reva submodule bump (Stage 1) | Moot — submodule pointer is current (`v2.6.1-21-g856ae13`) |
-| Local repo cleanup | Done 2026-05-22 — merged `[gone]` branches pruned, no stale stashes. Recurring hygiene, not a backlog item. |
+## Design authority
+Cross-model learning `schicht-a-obligations-source-of-truth` (overrides the
+earlier `schicht-a-reminder-durability`):
+- **Do NOT** reuse `check_due_reminders` / pre-materialize `Reminder` rows
+  (back-fire storm on restart, household broadcast = privacy breach, no lock).
+- Obligations (`document_facts`) ARE the scheduling source of truth.
+- **One daily idempotent scan** → due lead-time milestones + a
+  `(obligation_id, milestone)` notified-ledger, **owner-targeted**.
+- Survives pod restarts (safety component — missed-deadline scar).
+- **Legal-gate kinds always human-gated** → notify but flag for `/brain/review`,
+  never auto-act (per user decision: notify-but-human-gated).
 
-Voice runs through `/ws/voice` on the `voice-server` pod with the frontend `useVoiceStream` hook, gated by `VITE_FEATURE_VOICE_STREAM=true`. Frames use the `RFWA` binary header (4-byte magic + 16-byte UUID + 4-byte sequence).
+## Architecture
+- **Ledger table** `obligation_acknowledgements`: `(document_fact_id, user_id,
+  milestone)` UNIQUE. `milestone` ∈ {`14d`,`7d`,`3d`,`1d`,`due`,`overdue`} for
+  notifier rows (user_id=owner) OR `confirmed` for the agenda's Bestätigt
+  (user_id=acker). Serves BOTH the notified-ledger and the Bestätigt state.
+- **Milestone bucket** (no storm): `current_milestone(days_until)` returns the
+  single current bucket; fire only if `(fact, owner, bucket)` not in ledger.
+  First-enable at d=2 fires only `3d`, never 14d/7d at once.
+- **Delivery:** reuse `NotificationService.process_webhook(target_user_id=owner,
+  privacy="personal", source="obligation_notifier")`. Degrades gracefully if
+  `proactive_enabled` off / no ha_glue hooks (persisted, not broadcast).
+- **Scheduler:** `_spawn_periodic_task(run_at_boot=True)` daily, per-user session
+  + advisory lock (mirror `_schedule_kg_reconciler`).
+- **Confirmed suppresses:** scan skips a fact entirely if a `confirmed` ack
+  exists for the owner.
 
----
+## Tasks
+### Backend — notifier core (A)
+- [x] B1 config: `obligation_notifier_enabled=False`, `obligation_notifier_interval=86400`, `obligation_notifier_overdue_grace_days=30`
+- [x] B2 model `ObligationAcknowledgement` + `OBLIGATION_MILESTONE_CONFIRMED`
+- [x] B3 alembic migration `pc20260606_oblig_acks` (down_revision = verified single head `pc20260604b_kgmp`)
+- [x] B4 service `services/obligation_deadline_notifier.py` — `current_milestone` (no-storm), `run_for_user` (advisory lock), owner-scoped scan, ledger dedup, legal-gate flag, delivery via NotificationService, `scan_all_users`
+- [x] B5 scheduler `_schedule_obligation_deadline_notifier()` (run_at_boot) + registered in lifespan
 
-## 1. Voice — edge STT (Phase B-original) — re-evaluate
+### Backend — Bestätigt migration (B)
+- [x] B6 endpoints `POST/DELETE /api/atoms/obligations/{fact_id}/confirm` (circle-gated 404)
+- [x] B7 obligations response carries `confirmed: bool` + `is_visible` helper
 
-Original idea: `window.SpeechRecognition` in-browser, send only final text. Since the voice-server is now GPU-fast (<2 s STT for 10 s audio per the original Phase C estimate), this may no longer be worth the multi-engine complexity. Action: park unless someone measures a concrete win.
+### Frontend — Bestätigt rewire (B)
+- [x] F1 `useConfirmObligation` / `useReopenObligation` mutations
+- [x] F2 `useBestaetigt` → server (optimistic override + 5s undo→DELETE); one-time localStorage→server migration
+- [x] F3 `confirmed` on DocumentFact; ObligationsPage passes `f.confirmed`; i18n `obligations.confirmError` (de+en)
 
-## 2. Voice — Speech-to-Speech (Phase D) — tracking only
+### Tests
+- [x] T1 backend PG (8): bucket logic, no-storm, no re-fire, progression, owner-targeting, confirmed suppresses, legal_gate flagged, too-far, advisory-lock no-op, list_owner_user_ids — GREEN on .159
+- [x] T2 endpoint PG (3): confirm/reopen roundtrip, circle 404, per-user — GREEN on .159
+- [~] T3 migration: down_revision verified as single repo head + schema validated by create_all in the 24 PG tests. Full-chain `alembic upgrade head` on .159 blocked by env friction (root-owned __pycache__ + stale tree); migration is pure create_table (no data ops). Real run happens via the staging alembic-upgrade-job at deploy.
+- [x] T4 frontend (9 hook + 6 page + 7 row = 22): confirm→POST, undo/reopen→DELETE, server-flag layering, one-time migration — GREEN
 
-Not actionable. Watch upstream releases of Moshi (Kyutai), Llama-Voice, Qwen-Voice. Migrate when a stable open-weights model fits in 16-32 GB VRAM at acceptable quality with built-in barge-in.
+### Ship
+- [ ] /review → update docs (CLAUDE.md, TODOS.md, docs/SECOND_BRAIN.md/schicht-a-gui-plan) → wait → merge
+- [x] Config defaults dark (opt-in), mirror proactive_*; co-author trailer; no push without approval
 
----
-
-## 3. Reva cross-migration — Stages 2 + 3 still open
-
-Stage 1 (submodule bump) is moot; current pointer tracks main. Open:
-
-- **Stage 2 (1-2 h)** — make `reva.llm.openai_client.OpenAIClient` extend `renfield.utils.llm_client.OpenAICompatibleClient` so Reva inherits the `_OllamaShapedMessage`/`_OllamaShapedResponse` wrappers, `_options_to_openai`, `_think_extra_body`, `_convert_messages` (incl. Qwen3 thinking-mode workaround). Reva keeps `_log_llm_exchange` trace logging and multi-backend dispatch (Anthropic, vLLM) as overrides.
-- **Stage 3 (1 h + prod-validation)** — drop per-role `ollama_url: "http://cuda.local:8081/v1"` in `reva/config/agent_roles.yaml`; switch to platform-level `LLM_OPENAI_BASE_URL` + per-tier `LLM_OPENAI_FOR_*` flags for opt-outs.
-
-Neither urgent; Reva works as-is.
-
----
-
-*Last refreshed 2026-05-22 — voice barge-in (v2.8.0) + vision tier (PR #604) shipped; local branch cleanup done.*
+## Deferred (fast-follow)
+- C: weekly catch-all digest (safety floor for never-extracted/missed)
+- `.ics` export; per-fact TierPicker; agenda `Fakten` filter chip

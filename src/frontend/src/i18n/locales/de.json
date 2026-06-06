@@ -1147,6 +1147,7 @@
     "title": "Fristen",
     "subtitle": "Anstehende Pflichten aus deinen Dokumenten",
     "loadError": "Fristen konnten nicht geladen werden.",
+    "confirmError": "Bestätigung konnte nicht gespeichert werden.",
     "timeRangeLabel": "Zeitraum",
     "group": {
       "overdue": "Überfällig",

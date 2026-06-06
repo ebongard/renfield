@@ -152,7 +152,7 @@ export default function ObligationsPage() {
                 </div>
                 <ul className="space-y-3 animate-stagger">
                   {items.map((f) => {
-                    const confirmed = isConfirmed(f.id);
+                    const confirmed = isConfirmed(f.id, f.confirmed);
                     return (
                       <li
                         key={f.id}

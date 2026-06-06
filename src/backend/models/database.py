@@ -1704,6 +1704,14 @@ DOC_FACT_CATEGORY_UNIVERSAL = "universal"
 DOC_FACT_SOURCE_DETERMINISTIC = "deterministic"
 DOC_FACT_SOURCE_LLM = "llm"
 
+# ObligationAcknowledgement.milestone — the lead-time bucket the notifier fired,
+# OR the reserved sentinel "confirmed" written by the agenda's Bestätigen action.
+# A "confirmed" ack for (fact, owner) suppresses all further notifier milestones
+# for that obligation (the user has handled it). Free text; values are produced
+# only by services/obligation_deadline_notifier.current_milestone + the confirm
+# route, never by the LLM, so no CHECK constraint.
+OBLIGATION_MILESTONE_CONFIRMED = "confirmed"
+
 # ProceduralSkill.source discriminators are declared up-file (in front of
 # the ORM class body that references them as Column defaults). Asserting
 # the canonical values here so a future drift between the two declaration
@@ -1898,6 +1906,44 @@ class DocumentFact(Base):
     )
 
     document = relationship("Document", foreign_keys=[document_id])
+
+
+class ObligationAcknowledgement(Base):
+    """Notified-ledger + Bestätigt state for Schicht A obligation deadlines.
+
+    One table, two row shapes discriminated by ``milestone``:
+
+      * **notifier ledger** — ``milestone`` ∈ {``14d``,``7d``,``3d``,``1d``,
+        ``due``,``overdue``}, ``user_id`` = the obligation's OWNER. Written by
+        ``services/obligation_deadline_notifier`` after it enqueues a reminder so
+        the daily scan never re-fires the same lead-time bucket (idempotent across
+        pod restarts — the missed-deadline safety property).
+      * **user confirmation** — ``milestone`` = ``"confirmed"`` (the
+        ``OBLIGATION_MILESTONE_CONFIRMED`` sentinel), ``user_id`` = whoever
+        clicked Bestätigen in the agenda. This is the server home for the
+        agenda's former localStorage state (per-user; a circle peer can confirm
+        their own view). A confirmed ack for ``(fact, owner)`` also tells the
+        notifier the obligation is handled → it stops firing further milestones.
+
+    Keyed on the always-present ``DocumentFact.id`` (not the nullable atom_id).
+    ``ON DELETE CASCADE`` from both parents so a purged fact / deleted user takes
+    its acks with it.
+    """
+    __tablename__ = "obligation_acknowledgements"
+
+    id = Column(Integer, primary_key=True, index=True)
+    document_fact_id = Column(Integer, ForeignKey("document_facts.id", ondelete="CASCADE"), nullable=False, index=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    milestone = Column(String(16), nullable=False)  # 14d|7d|3d|1d|due|overdue|confirmed
+    created_at = Column(DateTime, default=_utcnow)
+
+    __table_args__ = (
+        # One row per (fact, user, milestone) — the notifier's INSERT-or-skip
+        # dedup and the confirm route's idempotency both rely on this.
+        UniqueConstraint("document_fact_id", "user_id", "milestone", name="uq_obligation_ack_fact_user_milestone"),
+        # Hot path: "which of these facts has user U confirmed / been notified about".
+        Index("idx_obligation_ack_user_fact", "user_id", "document_fact_id"),
+    )
 
 
 # ---------------------------------------------------------------------------
