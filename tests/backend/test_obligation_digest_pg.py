@@ -160,6 +160,23 @@ class TestDigest:
         assert owner_rep.sent == 1
         assert await _digest_notifs(pg_db_session, peer.id) == []
 
+    async def test_two_users_identical_content_both_sent(self, pg_db_session, monkeypatch):
+        # Regression: two household members with an identical digest (same kind +
+        # date → identical title/message) within the suppression window must BOTH
+        # receive it. The dedup key now includes target_user_id, so the second is
+        # not suppressed as a content-hash "duplicate".
+        _commit_as_flush(pg_db_session, monkeypatch)
+        a = await _make_user(pg_db_session, "dg_ident_a")
+        b = await _make_user(pg_db_session, "dg_ident_b")
+        await _mk_obligation(pg_db_session, a, ob_date=TODAY + dt.timedelta(days=4), kind="miete")
+        await _mk_obligation(pg_db_session, b, ob_date=TODAY + dt.timedelta(days=4), kind="miete")
+        svc = ObligationDigest(pg_db_session)
+        ra = await svc.run_for_user(a.id, today=TODAY)
+        rb = await svc.run_for_user(b.id, today=TODAY)
+        assert ra.sent == 1 and rb.sent == 1
+        assert len(await _digest_notifs(pg_db_session, a.id)) == 1
+        assert len(await _digest_notifs(pg_db_session, b.id)) == 1
+
     async def test_list_owner_user_ids(self, pg_db_session, monkeypatch):
         _commit_as_flush(pg_db_session, monkeypatch)
         a = await _make_user(pg_db_session, "dg_lst_a")

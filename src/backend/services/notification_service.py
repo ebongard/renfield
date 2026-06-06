@@ -93,9 +93,18 @@ class NotificationService:
         title: str,
         message: str,
         room_name: str | None,
+        target_user_id: int | None = None,
     ) -> str:
-        """Hash-based dedup key from event content."""
-        raw = f"{event_type}:{title}:{message}:{room_name or ''}"
+        """Hash-based dedup key from event content.
+
+        Includes ``target_user_id`` so two per-user-targeted notifications with
+        identical content but different recipients are NOT treated as duplicates
+        — without it, e.g. two household members' identical weekly obligation
+        digests sent within the suppression window collide and the second is
+        silently dropped. Broadcast notifications (``target_user_id is None``)
+        keep the prior key shape.
+        """
+        raw = f"{event_type}:{title}:{message}:{room_name or ''}:{target_user_id or ''}"
         return hashlib.sha256(raw.encode()).hexdigest()[:40]
 
     async def _is_duplicate(self, dedup_key: str) -> bool:
@@ -432,7 +441,7 @@ class NotificationService:
             tts = settings.proactive_tts_default
 
         # 1. Hash-based dedup (fast first-pass)
-        dedup_key = self._compute_dedup_key(event_type, title, message, room)
+        dedup_key = self._compute_dedup_key(event_type, title, message, room, target_user_id)
         if await self._is_duplicate(dedup_key):
             logger.info(f"🔇 Notification suppressed (duplicate): {title}")
             raise ValueError("Duplicate notification suppressed")
