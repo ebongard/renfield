@@ -40,9 +40,13 @@ RUN pip install --no-cache-dir --upgrade pip>=25.3 setuptools
 # The constraints file pins torch/torchaudio/torchvision to +cpu wheels from the
 # PyTorch CPU index — prevents transitive deps (docling, easyocr, transformers)
 # from resolving torch to a full CUDA build (saves ~3 GB of nvidia/* wheels).
-COPY requirements.txt constraints.txt ./
-RUN grep -v "github.com" requirements.txt > requirements-pypi.txt \
-    && (grep "github.com" requirements.txt > requirements-github.txt || true)
+# Only constraints.txt is needed for the heavy layers below — they install
+# LITERAL package names, not from requirements.txt. requirements.txt is COPY'd
+# LATER (just before Layer 4) so a dependency bump — especially an MCP-server
+# github pin (the frequent case) — rebuilds only Layers 4-5 (~3 min) and leaves
+# the cached ~1.9 GB torch/ML/audio layers intact. Single canonical
+# requirements.txt is kept; the pypi/github split is generated in-build.
+COPY constraints.txt ./
 
 # Layer 1: torch ecosystem (~700 MB) — biggest single chunk; isolated so the
 # rest of the deps can re-use it from the layer cache on subsequent builds.
@@ -61,6 +65,12 @@ RUN pip install --no-cache-dir \
 RUN pip install --no-cache-dir \
       --constraint constraints.txt \
       faster-whisper piper-tts librosa soundfile noisereduce
+
+# requirements.txt COPY'd HERE (after the heavy layers) so a deps change rebuilds
+# only Layers 4-5 below, not the torch/ML/audio layers above.
+COPY requirements.txt ./
+RUN grep -v "github.com" requirements.txt > requirements-pypi.txt \
+    && (grep "github.com" requirements.txt > requirements-github.txt || true)
 
 # Layer 4: remaining pypi reqs (~600 MB) — fastapi, sqlalchemy, ollama, mcp, etc.
 RUN pip install --no-cache-dir \

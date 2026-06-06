@@ -81,8 +81,13 @@ ssh evdb@192.168.1.159
 docker login registry.treehouse.x-idra.de
 
 # Backend (CPU image, ~3.5 GB — torch pinned to +cpu wheels via constraints.txt)
-# Slowest step; budget 10-20 min if requirements.txt changed (deps layer cache miss).
-# 2-4 min if only Python source changed (deps layer cached).
+# Build time (since the Dockerfile reorder — requirements.txt is COPY'd AFTER the
+# heavy torch/ML/audio layers):
+#   - Python source only: ~2-4 min (all deps layers cached)
+#   - requirements.txt change (incl. MCP-server github pin bump): ~3-5 min —
+#     rebuilds only Layers 4-5 (pypi + github); torch/ML/audio stay cached.
+#   - constraints.txt change OR Dockerfile deps-section edit: 10-20 min (full
+#     deps rebuild, the only case that re-pulls torch).
 cd /tmp/renfield-build-vX.Y.Z/src/backend
 docker build \
   -t registry.treehouse.x-idra.de/renfield/backend:latest \
