@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Link, useLocation } from 'react-router';
-import { CalendarClock } from 'lucide-react';
+import { CalendarClock, Download } from 'lucide-react';
 
 import PageHeader from '../components/PageHeader';
 import LensFrame from '../components/wissen/LensFrame';
@@ -9,7 +9,7 @@ import Alert from '../components/Alert';
 import ObligationRow from '../components/ObligationRow';
 import BestaetigenButton from '../components/obligations/BestaetigenButton';
 import BestaetigtToast from '../components/obligations/BestaetigtToast';
-import { useObligationsQuery, type DocumentFact } from '../api/resources/brain';
+import { useObligationsQuery, buildObligationsIcsUrl, type DocumentFact } from '../api/resources/brain';
 import { useBestaetigt } from '../hooks/useBestaetigt';
 import { urgencyGroup, URGENCY_ORDER, type UrgencyGroup } from '../utils/frist';
 
@@ -123,6 +123,14 @@ export default function ObligationsPage() {
             </button>
           ))}
         </div>
+        <a
+          href={buildObligationsIcsUrl({ dueBefore })}
+          className="btn-secondary inline-flex items-center gap-1 px-3 py-1.5 text-sm ml-auto"
+          data-testid="export-ics-link"
+        >
+          <Download className="w-4 h-4" aria-hidden="true" />
+          {t('obligations.exportIcs')}
+        </a>
       </div>
 
       {query.isLoading && accumulated.length === 0 ? (

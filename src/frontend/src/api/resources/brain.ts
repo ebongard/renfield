@@ -114,6 +114,18 @@ async function fetchDocumentFacts(documentId: number): Promise<DocumentFact[]> {
   return response.data ?? [];
 }
 
+/**
+ * Build the iCalendar (.ics) export URL for obligations with the current
+ * horizon. Used by the agenda's "Export" button for a browser-native download
+ * (mirrors the trajectory JSONL export); the backend circle-filters + caps it.
+ */
+export function buildObligationsIcsUrl(filter: { dueBefore?: string | null } = {}): string {
+  const params = new URLSearchParams();
+  if (filter.dueBefore) params.set('due_before', filter.dueBefore);
+  const qs = params.toString();
+  return `/api/atoms/obligations/export.ics${qs ? `?${qs}` : ''}`;
+}
+
 async function fetchObligations(filter: ObligationsFilter): Promise<DocumentFact[]> {
   const params: Record<string, unknown> = {
     limit: filter.limit ?? 200,

@@ -1148,6 +1148,7 @@
     "subtitle": "Anstehende Pflichten aus deinen Dokumenten",
     "loadError": "Fristen konnten nicht geladen werden.",
     "confirmError": "Bestätigung konnte nicht gespeichert werden.",
+    "exportIcs": "Export (.ics)",
     "timeRangeLabel": "Zeitraum",
     "group": {
       "overdue": "Überfällig",
@@ -1183,6 +1184,9 @@
     "tierOverridden": "Eigene Sichtbarkeit (weicht vom Dokument ab).",
     "tierOverriddenShort": "abweichend",
     "resetTier": "Auf Dokument-Tier zurücksetzen",
+    "filterLabel": "Ergebnisse filtern",
+    "filterAll": "Alle",
+    "filterFactsOnly": "Nur Fakten",
     "tier": {
       "0": "Privat",
       "1": "Vertraut",

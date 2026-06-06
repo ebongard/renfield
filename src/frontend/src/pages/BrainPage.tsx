@@ -22,9 +22,16 @@ export default function BrainPage() {
 
   const [query, setQuery] = useState('');
   const [activeQuery, setActiveQuery] = useState('');
+  const [factsOnly, setFactsOnly] = useState(false);
   const searchQuery = useAtomSearchQuery(activeQuery);
   const results = searchQuery.data ?? [];
   const searched = activeQuery.trim().length > 0 && !searchQuery.isLoading;
+  // Client-side "Fakten" scope: results are mixed-type; this chip narrows to
+  // document_fact atoms only (no extra fetch).
+  const factCount = results.filter((m) => m.atom.atom_type === 'document_fact').length;
+  const displayed = factsOnly
+    ? results.filter((m) => m.atom.atom_type === 'document_fact')
+    : results;
 
   const handleSearch = (e?: FormEvent<HTMLFormElement>) => {
     e?.preventDefault?.();
@@ -67,6 +74,36 @@ export default function BrainPage() {
         </button>
       </form>
 
+      {searched && results.length > 0 && (
+        <div className="flex flex-wrap gap-2" role="group" aria-label={t('circles.filterLabel')}>
+          <button
+            type="button"
+            onClick={() => setFactsOnly(false)}
+            aria-pressed={!factsOnly}
+            className={`px-3 py-1 rounded-full text-sm border transition-colors ${
+              !factsOnly
+                ? 'bg-primary-600 text-white border-primary-600'
+                : 'border-gray-300 dark:border-gray-600 text-gray-600 dark:text-gray-300'
+            }`}
+          >
+            {t('circles.filterAll')} ({results.length})
+          </button>
+          <button
+            type="button"
+            onClick={() => setFactsOnly(true)}
+            aria-pressed={factsOnly}
+            disabled={factCount === 0}
+            className={`px-3 py-1 rounded-full text-sm border transition-colors disabled:opacity-40 ${
+              factsOnly
+                ? 'bg-primary-600 text-white border-primary-600'
+                : 'border-gray-300 dark:border-gray-600 text-gray-600 dark:text-gray-300'
+            }`}
+          >
+            {t('circles.filterFactsOnly')} ({factCount})
+          </button>
+        </div>
+      )}
+
       {searchQuery.isLoading ? (
         <div className="text-center py-12 text-gray-500 dark:text-gray-400">
           {t('common.loading')}
@@ -76,13 +113,13 @@ export default function BrainPage() {
           <Brain className="w-12 h-12 mx-auto mb-3 text-gray-300 dark:text-gray-600" aria-hidden="true" />
           <p className="text-gray-500 dark:text-gray-400">{t('circles.brainEmpty')}</p>
         </div>
-      ) : results.length === 0 ? (
+      ) : displayed.length === 0 ? (
         <div className="card text-center py-12">
           <p className="text-gray-500 dark:text-gray-400">{t('circles.brainNoMatches')}</p>
         </div>
       ) : (
         <ul className="space-y-3 animate-stagger">
-          {results.map((match) => {
+          {displayed.map((match) => {
             const { atom, score, snippet, rank } = match;
             const tier = atom?.tier ?? 0;
             return (

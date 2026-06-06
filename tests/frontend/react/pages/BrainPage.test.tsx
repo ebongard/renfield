@@ -62,4 +62,27 @@ describe('BrainPage document_fact rendering', () => {
     expect(badge.className).toContain('green');
     expect(screen.getByText('Finanzverwaltung NRW')).toBeInTheDocument();
   });
+
+  it('Fakten filter chip narrows mixed results to document_fact only', async () => {
+    mockSearch([
+      { atom: { atom_id: 'fa-1', atom_type: 'document_fact', tier: 0 }, score: 0.9, snippet: 'Finanzverwaltung NRW', rank: 1 },
+      { atom: { atom_id: 'kg-1', atom_type: 'kg_node', tier: 0 }, score: 0.8, snippet: 'Müller GmbH', rank: 2 },
+    ]);
+
+    renderWithRouter(<BrainPage />, { route: '/brain' });
+    fireEvent.change(screen.getByRole('textbox'), { target: { value: 'x' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Suchen' }));
+
+    await waitFor(() => screen.getByText('Finanzverwaltung NRW'));
+    expect(screen.getByText('Müller GmbH')).toBeInTheDocument();
+
+    // narrow to facts only → the kg_node row disappears
+    fireEvent.click(screen.getByRole('button', { name: /Nur Fakten/ }));
+    expect(screen.getByText('Finanzverwaltung NRW')).toBeInTheDocument();
+    expect(screen.queryByText('Müller GmbH')).toBeNull();
+
+    // back to All restores it
+    fireEvent.click(screen.getByRole('button', { name: /Alle/ }));
+    expect(screen.getByText('Müller GmbH')).toBeInTheDocument();
+  });
 });

@@ -68,6 +68,14 @@ describe('ObligationsPage', () => {
     expect(await screen.findByText('Keine offenen Pflichten.')).toBeInTheDocument();
   });
 
+  it('exposes an .ics export link carrying the current horizon', async () => {
+    wire([obligation(1, 2)]);
+    renderWithRouter(<ObligationsPage />, { route: '/brain/fristen' });
+    const link = await screen.findByTestId('export-ics-link');
+    expect(link).toHaveAttribute('href', expect.stringContaining('/api/atoms/obligations/export.ics'));
+    expect(link).toHaveAttribute('href', expect.stringContaining('due_before='));
+  });
+
   it('confirm → toast appears; undo removes it', async () => {
     wire([obligation(1, 2)]);
     renderWithRouter(<ObligationsPage />, { route: '/brain/fristen' });

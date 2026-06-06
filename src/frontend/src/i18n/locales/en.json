@@ -1148,6 +1148,7 @@
     "subtitle": "Upcoming obligations from your documents",
     "loadError": "Could not load deadlines.",
     "confirmError": "Could not save confirmation.",
+    "exportIcs": "Export (.ics)",
     "timeRangeLabel": "Range",
     "group": {
       "overdue": "Overdue",
@@ -1183,6 +1184,9 @@
     "tierOverridden": "Custom visibility (differs from the document).",
     "tierOverriddenShort": "custom",
     "resetTier": "Reset to document tier",
+    "filterLabel": "Filter results",
+    "filterAll": "All",
+    "filterFactsOnly": "Facts only",
     "tier": {
       "0": "Self",
       "1": "Trusted",

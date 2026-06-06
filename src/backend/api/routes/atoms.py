@@ -17,10 +17,10 @@ Per the design doc:
 """
 from __future__ import annotations
 
-from datetime import date, datetime
+from datetime import UTC, date, datetime
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Response, status
 from loguru import logger
 from pydantic import BaseModel, Field
 from sqlalchemy import delete, select
@@ -203,6 +203,65 @@ async def get_obligations(
         asker_id=current_user.id, due_before=due_before, limit=limit, offset=offset,
     )
     return [DocumentFactResponse(**f) for f in facts]
+
+
+def _ics_escape(s: str) -> str:
+    """Escape a value for an iCalendar text field (RFC 5545 §3.3.11)."""
+    return (
+        s.replace("\\", "\\\\").replace(";", "\\;").replace(",", "\\,").replace("\n", "\\n")
+    )
+
+
+@router.get("/obligations/export.ics")
+async def export_obligations_ics(
+    due_before: date | None = None,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_user_or_default),
+):
+    """Export the caller's circle-visible obligations as an iCalendar (.ics) feed
+    — one all-day VEVENT per obligation on its printed Frist, so deadlines can be
+    pulled into a calendar app. Circle-filtered (same read path as the agenda);
+    capped at 500 events. Browser-native download (mirrors the trajectory export).
+    """
+    facts = await DocumentFactRetrieval(db).obligations(
+        asker_id=current_user.id, due_before=due_before, limit=500, offset=0,
+    )
+    stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
+    lines = [
+        "BEGIN:VCALENDAR", "VERSION:2.0",
+        "PRODID:-//Renfield//Obligations//EN", "CALSCALE:GREGORIAN",
+    ]
+    for f in facts:
+        iso = f.get("obligation_date")
+        if not iso:
+            continue
+        ymd = str(iso).replace("-", "")[:8]
+        kind = f.get("kind") or "Frist"
+        summary = f"Frist: {kind}"
+        amount = f.get("amount_value")
+        if amount is not None:
+            cur = (f.get("amount_currency") or "").strip()
+            summary += f" ({amount}{(' ' + cur) if cur else ''})"
+        if f.get("legal_gate"):
+            summary = "⚠ " + summary  # ⚑ legal
+        desc = f.get("value") or f.get("excerpt") or ""
+        lines += [
+            "BEGIN:VEVENT",
+            f"UID:obligation-{f.get('id')}@renfield",
+            f"DTSTAMP:{stamp}",
+            f"DTSTART;VALUE=DATE:{ymd}",
+            f"SUMMARY:{_ics_escape(summary)}",
+        ]
+        if desc:
+            lines.append(f"DESCRIPTION:{_ics_escape(str(desc))}")
+        lines.append("END:VEVENT")
+    lines.append("END:VCALENDAR")
+    body = "\r\n".join(lines) + "\r\n"
+    return Response(
+        content=body,
+        media_type="text/calendar; charset=utf-8",
+        headers={"Content-Disposition": 'attachment; filename="fristen.ics"'},
+    )
 
 
 @router.post("/obligations/{fact_id}/confirm", response_model=ObligationConfirmResponse)
