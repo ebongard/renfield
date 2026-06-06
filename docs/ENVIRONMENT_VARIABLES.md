@@ -376,6 +376,25 @@ Kalenderwoche steht im Titel, damit zwei legitime Wochen-Digests nicht über die
 Content-Hash-Dedup kollidieren. Ein never-extracted Fall bleibt ungedeckt (muss
 upstream sichtbar bleiben).
 
+```bash
+# Obligation → Kalender-Auto-Push (Calendar MCP). Per-User opt-in: nur Nutzer
+# mit einer Kalender-Präferenz (GET/PUT /api/atoms/obligations/calendar-pref)
+# bekommen ihre offenen Fristen als Kalendereinträge gespiegelt (create/update/
+# delete-Reconciler). Benötigt das Calendar MCP (CALENDAR_ENABLED) erreichbar.
+OBLIGATION_CALENDAR_SYNC_ENABLED=false
+OBLIGATION_CALENDAR_SYNC_INTERVAL=86400        # täglich (Sekunden)
+OBLIGATION_CALENDAR_EVENT_HOUR=9               # Uhrzeit des (terminierten) Events; all-day vom MCP nicht unterstützt
+OBLIGATION_CALENDAR_HORIZON_DAYS=90            # Fristen bis N Tage voraus synchronisieren
+OBLIGATION_CALENDAR_RETAIN_PAST_DAYS=30        # vergangene Events so lange behalten
+OBLIGATION_CALENDAR_MAX_OPS_PER_RUN=100        # Cap der create/update-MCP-Aufrufe je Nutzer je Lauf
+```
+
+Reconciler-Ledger `obligation_calendar_events` (fact→event_id, FK ON DELETE SET
+NULL für Waisen-Bereinigung); besitzer-adressiert (MCP erzwingt Kalenderzugriff
+per user_id); restart-fest + advisory-locked. Bekannt: ohne Idempotenz-Key des
+MCP kann ein Crash zwischen erfolgreichem create und Ledger-Commit ein Duplikat
+hinterlassen (at-least-once; P2).
+
 #### Externe Scheduling-Templates
 
 Cron-basiertes Scheduling (z.B. Morgenbriefing) wird extern via **n8n-Workflows** oder **Home Assistant-Automationen** gelöst. Diese senden per Webhook an `POST /api/notifications/webhook`.
