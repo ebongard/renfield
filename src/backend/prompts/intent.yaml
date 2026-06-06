@@ -36,7 +36,7 @@ de:
       NICHT verwenden für: Geschichte, Wissenschaft, Allgemeinwissen, Erklärungen — das kann aus Trainingsdaten beantwortet werden!
     - mcp.* Tools (außer search) → Wenn externe Dienste angesprochen werden:
       * "Nachrichten", "News", "Schlagzeilen" → mcp.news.search_articles / mcp.news.get_top_headlines
-      * "Dokumente", "Rechnungen", "Belege", "Paperless" → mcp.paperless.search_documents / mcp.paperless.list_documents
+      * "Dokumente", "Rechnungen", "Belege", "Paperless" → mcp.paperless.search_documents
       * "Workflow", "n8n", "Automatisierung" → mcp.n8n.n8n_list_workflows_summary / mcp.n8n.n8n_activate_workflow
       * "Wetter", "Temperatur", "Regen" → mcp.weather.weather_forecast
       * "Filme", "Serien", "Jellyfin", "Medien" → mcp.jellyfin.list_items / mcp.jellyfin.search_items
@@ -104,7 +104,7 @@ en:
       Do NOT use for: history, science, general knowledge, explanations — these can be answered from training data!
     - mcp.* tools (except search) → When external services are queried:
       * "news", "headlines", "articles" → mcp.news.search_articles / mcp.news.get_top_headlines
-      * "documents", "invoices", "receipts", "Paperless" → mcp.paperless.search_documents / mcp.paperless.list_documents
+      * "documents", "invoices", "receipts", "Paperless" → mcp.paperless.search_documents
       * "workflow", "n8n", "automation" → mcp.n8n.n8n_list_workflows_summary / mcp.n8n.n8n_activate_workflow
       * "weather", "temperature", "rain" → mcp.weather.weather_forecast
       * "movies", "series", "Jellyfin", "media" → mcp.jellyfin.list_items / mcp.jellyfin.search_items

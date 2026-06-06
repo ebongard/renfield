@@ -92,13 +92,12 @@ _SWEEP_BATCH_SIZE = 50
 # Substring emitted by ``_truncate_response`` in ``mcp_client.py`` when
 # the response exceeds ``mcp_max_response_size`` (10 KB default) and
 # can't be slimmed to fit. A truncated ``get_document`` response means
-# we literally cannot compare against the original metadata — the
-# mismatch could be real or it could be a byte-truncation artefact.
-# The proper fix lives on the MCP server side (a narrow
-# ``get_document_metadata`` tool without the OCR content, or an
-# ``include_content=False`` flag). Until that lands, we detect and
-# skip rather than pollute the learning corpus with partial-data
-# diffs.
+# we literally cannot compare against the original metadata.
+# The server-side fix HAS landed: we now read get_document with
+# ``include_content=False`` (paperless-mcp >= v1.7.0), so the OCR text is
+# omitted and the metadata response can't reach the cap. This marker +
+# the skip path below are now a DEFENSIVE FALLBACK — kept in case a
+# future/older MCP version still returns content and truncates.
 _TRUNCATION_MARKER = "[... Response truncated"
 
 
@@ -283,8 +282,12 @@ async def _detect_edit(
     timestamp is outside ``_EDIT_WINDOW_AFTER_UPLOAD``, the diff is
     dropped as taxonomy drift (the design intent of the 1 h window).
     """
+    # Metadata-only read: the sweeper diffs metadata, never the OCR content.
+    # include_content=False (paperless-mcp >= v1.7.0) keeps the response small
+    # so it can't hit the size cap and get truncated (the old skip path).
     result = await mcp_manager.execute_tool(
-        "mcp.paperless.get_document", {"document_id": document_id},
+        "mcp.paperless.get_document",
+        {"document_id": document_id, "include_content": False},
     )
     if not result or not result.get("success"):
         return None

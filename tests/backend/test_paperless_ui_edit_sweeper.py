@@ -85,6 +85,21 @@ class TestDetectEdit:
 
     @pytest.mark.asyncio
     @pytest.mark.unit
+    async def test_get_document_requested_metadata_only(self):
+        """The sweeper must read metadata-only (include_content=False) so the
+        response can't be size-truncated (paperless-mcp >= v1.7.0)."""
+        mcp = MagicMock()
+        mcp.execute_tool = AsyncMock(return_value={
+            "success": True,
+            "message": json.dumps({"title": "T"}),
+        })
+        await _detect_edit(mcp_manager=mcp, document_id=42, original={"title": "T"})
+        mcp.execute_tool.assert_awaited_once_with(
+            "mcp.paperless.get_document", {"document_id": 42, "include_content": False},
+        )
+
+    @pytest.mark.asyncio
+    @pytest.mark.unit
     async def test_correspondent_changed_returns_diff(self):
         mcp = MagicMock()
         mcp.execute_tool = AsyncMock(return_value={

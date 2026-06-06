@@ -273,6 +273,13 @@ servers:
       - search_documents
       - get_document
       - update_document
+      # Taxonomy reads so the agent can answer "welche Dokumenttypen /
+      # Korrespondenten / Tags habe ich?" directly. The create_* + other
+      # list_* tools stay agent-hidden (the Paperless-Audit subsystem drives
+      # those programmatically) but remain executable.
+      - list_correspondents
+      - list_document_types
+      - list_tags
     examples:
       de:
         - "Suche nach Rechnungen in Paperless"
