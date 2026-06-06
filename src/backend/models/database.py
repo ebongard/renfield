@@ -1947,6 +1947,31 @@ class ObligationAcknowledgement(Base):
     )
 
 
+class ObligationDigestLog(Base):
+    """Per-(user, ISO-week) sent-marker for the weekly obligation digest.
+
+    The weekly digest is the safety FLOOR under the per-milestone notifier: one
+    owner-targeted summary of every OPEN obligation (no lower date bound), so a
+    late-extracted / very-overdue deadline the notifier's grace window missed
+    still surfaces. This table dedups it: one row per ``(user_id, period_key)``
+    (period_key = ISO ``YYYY-Www``) so a pod restart mid-week never re-sends.
+
+    A dedicated table rather than reusing the ``notifications`` row — those carry
+    a ~24h TTL and are reaped by the cleanup scheduler, which would let a
+    mid-week restart re-send. The digest marker must outlive the notification.
+    """
+    __tablename__ = "obligation_digest_log"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    period_key = Column(String(16), nullable=False)  # ISO year-week, e.g. "2026-W23"
+    created_at = Column(DateTime, default=_utcnow)
+
+    __table_args__ = (
+        UniqueConstraint("user_id", "period_key", name="uq_obligation_digest_user_period"),
+    )
+
+
 # ---------------------------------------------------------------------------
 # Wissensbasis longitudinal substrate (platform-level provenance primitives)
 # ---------------------------------------------------------------------------

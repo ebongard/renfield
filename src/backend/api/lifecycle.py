@@ -500,6 +500,38 @@ def _schedule_obligation_deadline_notifier():
     )
 
 
+def _schedule_obligation_digest():
+    """Weekly obligation digest (Schicht A) — the safety floor under the
+    per-milestone notifier.
+
+    One owner-targeted summary per ISO week of every OPEN obligation (no lower
+    date bound), so a late-extracted / very-overdue deadline the notifier's
+    grace window missed still surfaces. Dedup is a ``(user, week)`` row in
+    ``obligation_digest_log`` (restart-safe). Gated on both
+    ``obligation_digest_enabled`` AND ``proactive_enabled`` (delivery runs
+    through the proactive subsystem).
+    """
+    if not (settings.obligation_digest_enabled and settings.proactive_enabled):
+        return
+
+    async def _tick():
+        from services.obligation_digest import scan_all_users
+
+        await scan_all_users()
+
+    _spawn_periodic_task(
+        name="Obligation digest",
+        interval=settings.obligation_digest_interval,
+        work=_tick,
+        started_msg=(
+            f"Obligation Digest gestartet "
+            f"(interval={settings.obligation_digest_interval}s, "
+            f"horizon={settings.obligation_digest_horizon_days}d)"
+        ),
+        run_at_boot=True,  # weekly interval — must run on cold start (#678)
+    )
+
+
 def _schedule_skill_shadow_log_cleanup():
     """Prune `skill_would_have_injected_log` rows older than the
     configured retention.
@@ -899,6 +931,7 @@ async def lifespan(app: "FastAPI"):
     _schedule_kg_reconciler()
     _schedule_kg_conflation_monitor()
     _schedule_obligation_deadline_notifier()
+    _schedule_obligation_digest()
     _schedule_skill_shadow_log_cleanup()
     _schedule_paperless_sweepers(app)
 

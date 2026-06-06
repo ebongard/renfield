@@ -728,6 +728,15 @@ class Settings(BaseSettings):
     obligation_notifier_interval: int = 86400          # daily (seconds)
     obligation_notifier_overdue_grace_days: int = 30   # still fire "overdue" within this window
 
+    # Weekly obligation digest — the safety floor under the per-milestone
+    # notifier. One owner-targeted summary per ISO week of every OPEN obligation
+    # (no lower date bound), so a late-extracted / very-overdue deadline the
+    # notifier's grace window missed still surfaces. Opt-in; also needs
+    # proactive_enabled (delivery runs through the proactive subsystem).
+    obligation_digest_enabled: bool = False
+    obligation_digest_interval: int = 604800           # weekly (seconds)
+    obligation_digest_horizon_days: int = 30           # include upcoming within N days (overdue always included)
+
     @property
     def features(self) -> dict[str, bool]:
         """Resolve feature flags: explicit override > edition preset."""
