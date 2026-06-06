@@ -361,6 +361,21 @@ Ein Tages-Scan berechnet pro Verpflichtung den einen aktuellen Vorlauf-Meilenste
 aber human-gated (`/brain/review`), nie automatisch erledigt. Die Agenda-Bestätigung
 (`POST/DELETE /api/atoms/obligations/{id}/confirm`) nutzt dasselbe Ledger.
 
+```bash
+# Wöchentliches Sammel-Digest — das Sicherheitsnetz UNTER dem Notifier. Ein
+# besitzer-adressiertes Wochen-Digest ALLER offenen Verpflichtungen OHNE untere
+# Datumsgrenze, fängt also spät extrahierte / lange überfällige Fristen ab, die
+# das Scan-Fenster des Notifiers verpasst. Benötigt ebenfalls PROACTIVE_ENABLED.
+OBLIGATION_DIGEST_ENABLED=false
+OBLIGATION_DIGEST_INTERVAL=604800             # wöchentlich (Sekunden)
+OBLIGATION_DIGEST_HORIZON_DAYS=30             # kommende Fristen bis N Tage (überfällige immer dabei)
+```
+
+Dedup pro `(user, ISO-Woche)` über `obligation_digest_log` (restart-fest); die
+Kalenderwoche steht im Titel, damit zwei legitime Wochen-Digests nicht über die
+Content-Hash-Dedup kollidieren. Ein never-extracted Fall bleibt ungedeckt (muss
+upstream sichtbar bleiben).
+
 #### Externe Scheduling-Templates
 
 Cron-basiertes Scheduling (z.B. Morgenbriefing) wird extern via **n8n-Workflows** oder **Home Assistant-Automationen** gelöst. Diese senden per Webhook an `POST /api/notifications/webhook`.
