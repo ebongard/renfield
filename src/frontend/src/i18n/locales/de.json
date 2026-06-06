@@ -1149,6 +1149,9 @@
     "loadError": "Fristen konnten nicht geladen werden.",
     "confirmError": "Bestätigung konnte nicht gespeichert werden.",
     "exportIcs": "Export (.ics)",
+    "calendarSyncLabel": "Kalender-Sync:",
+    "calendarSyncOff": "Aus",
+    "calendarError": "Kalendereinstellung konnte nicht geladen/gespeichert werden.",
     "timeRangeLabel": "Zeitraum",
     "group": {
       "overdue": "Überfällig",

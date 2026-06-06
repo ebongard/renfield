@@ -132,6 +132,7 @@ export const keys = {
     facts: (documentId: number) => ['brain', 'facts', documentId] as const,
     obligations: (filters?: Record<string, unknown>) =>
       ['brain', 'obligations', filters ?? {}] as const,
+    calendarPref: () => ['brain', 'calendar-pref'] as const,
   },
   config: {
     all: ['config'] as const,

@@ -15,6 +15,7 @@ vi.mock('../../../../src/frontend/src/utils/axios', () => ({
     // The Bestätigen flow now writes to the server ledger via useBestaetigt.
     post: vi.fn().mockResolvedValue({ data: { confirmed: true } }),
     delete: vi.fn().mockResolvedValue({ data: { confirmed: false } }),
+    put: vi.fn().mockResolvedValue({ data: { calendar_name: 'family', available: [] } }),
   },
   extractApiError: (_e: unknown, fallback: string) => fallback,
   extractFieldErrors: () => ({}),
@@ -74,6 +75,37 @@ describe('ObligationsPage', () => {
     const link = await screen.findByTestId('export-ics-link');
     expect(link).toHaveAttribute('href', expect.stringContaining('/api/atoms/obligations/export.ics'));
     expect(link).toHaveAttribute('href', expect.stringContaining('due_before='));
+  });
+
+  it('calendar-sync selector: lists writable calendars and PUTs the choice', async () => {
+    // Branch GET by URL: calendar-pref → pref shape; obligations → facts.
+    mockedGet.mockImplementation((url: string) => {
+      if (url.includes('calendar-pref')) {
+        return Promise.resolve(createMockResponse({
+          calendar_name: null,
+          available: [{ name: 'family', label: 'Familie' }],
+        }));
+      }
+      return Promise.resolve(createMockResponse([obligation(1, 5)]));
+    });
+    const putMock = vi.mocked(apiClient.put);
+    renderWithRouter(<ObligationsPage />, { route: '/brain/fristen' });
+
+    const select = await screen.findByLabelText('Kalender-Sync:');
+    expect(within(select as HTMLSelectElement).getByRole('option', { name: 'Familie' })).toBeInTheDocument();
+    expect(screen.getByRole('option', { name: 'Aus' })).toBeInTheDocument();
+
+    fireEvent.change(select, { target: { value: 'family' } });
+    await waitFor(() =>
+      expect(putMock).toHaveBeenCalledWith('/api/atoms/obligations/calendar-pref', { calendar_name: 'family' }),
+    );
+  });
+
+  it('calendar-sync selector hidden when no writable calendars (MCP off)', async () => {
+    wire([obligation(1, 2)]); // calendar-pref GET also returns the facts array → available undefined → []
+    renderWithRouter(<ObligationsPage />, { route: '/brain/fristen' });
+    await screen.findByTestId('export-ics-link');
+    expect(screen.queryByLabelText('Kalender-Sync:')).toBeNull();
   });
 
   it('confirm → toast appears; undo removes it', async () => {

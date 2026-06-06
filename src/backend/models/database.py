@@ -1983,6 +1983,54 @@ class ObligationDigestLog(Base):
     )
 
 
+class ObligationCalendarPref(Base):
+    """Per-user opt-in: which calendar to mirror this user's obligations into.
+
+    The obligation→calendar reconciler only runs for users who have a row here
+    (no pref = no sync). ``calendar_name`` is a calendar key from the Calendar
+    MCP's ``list_calendars`` (validated writable for the user at set time).
+    """
+    __tablename__ = "obligation_calendar_pref"
+
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
+    calendar_name = Column(String(64), nullable=False)
+    created_at = Column(DateTime, default=_utcnow)
+    updated_at = Column(DateTime, default=_utcnow, onupdate=_utcnow)
+
+
+class ObligationCalendarEvent(Base):
+    """Sync ledger mapping an obligation fact → its calendar event.
+
+    The reconciler (``services/obligation_calendar_sync``) keeps the user's
+    chosen calendar in step with their open obligations: create on first sight,
+    update when the date/summary changes, delete when the obligation is handled
+    (confirmed), drops out of the window, or its fact is purged. We must keep the
+    ``event_id`` to delete/update later, so the FK to ``document_facts`` is
+    ``ON DELETE SET NULL`` (NOT cascade): a purged fact leaves an orphan row
+    (``document_fact_id`` NULL) that the next reconcile pass deletes from the
+    calendar and removes. ``synced_obligation_date`` + ``synced_summary`` are the
+    last-pushed values, compared each pass to decide create-vs-update-vs-noop.
+    """
+    __tablename__ = "obligation_calendar_events"
+
+    id = Column(Integer, primary_key=True, index=True)
+    document_fact_id = Column(Integer, ForeignKey("document_facts.id", ondelete="SET NULL"), nullable=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    calendar = Column(String(64), nullable=False)
+    event_id = Column(String(256), nullable=False)
+    synced_obligation_date = Column(Date, nullable=True)
+    synced_summary = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=_utcnow)
+    updated_at = Column(DateTime, default=_utcnow, onupdate=_utcnow)
+
+    __table_args__ = (
+        # One event per (fact, user). NULLs are distinct in Postgres, so orphan
+        # rows (fact purged → SET NULL) coexist until the reconciler cleans them.
+        UniqueConstraint("document_fact_id", "user_id", name="uq_obligation_calevent_fact_user"),
+        Index("idx_obligation_calevent_user", "user_id"),
+    )
+
+
 # ---------------------------------------------------------------------------
 # Wissensbasis longitudinal substrate (platform-level provenance primitives)
 # ---------------------------------------------------------------------------

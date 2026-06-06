@@ -737,6 +737,17 @@ class Settings(BaseSettings):
     obligation_digest_interval: int = 604800           # weekly (seconds)
     obligation_digest_horizon_days: int = 30           # include upcoming within N days (overdue always included)
 
+    # Obligation → calendar auto-push (Calendar MCP). Per-user, opt-in: only
+    # users who set a calendar preference get their open obligations mirrored as
+    # calendar events (create/update/delete reconciler). Needs the calendar MCP
+    # (CALENDAR_ENABLED) reachable; degrades gracefully if not. Events are timed
+    # at obligation_calendar_event_hour (all-day not supported by the MCP).
+    obligation_calendar_sync_enabled: bool = False
+    obligation_calendar_sync_interval: int = 86400     # daily (seconds)
+    obligation_calendar_event_hour: int = 9            # local hour for the (timed) event
+    obligation_calendar_horizon_days: int = 90         # sync obligations due within N days
+    obligation_calendar_retain_past_days: int = 30     # keep past-due events this long before cleanup
+
     @property
     def features(self) -> dict[str, bool]:
         """Resolve feature flags: explicit override > edition preset."""

@@ -79,6 +79,17 @@ export interface ObligationsFilter {
   offset?: number;
 }
 
+export interface CalendarOption {
+  name: string;
+  label: string;
+}
+
+/** The user's obligation-calendar sync preference + the calendars they can pick. */
+export interface ObligationCalendarPref {
+  calendar_name: string | null;
+  available: CalendarOption[];
+}
+
 /** Frontend-visible backend feature flags (allowlist — see api/routes/config.py). */
 export interface FeatureFlags {
   schicht_a_extraction_enabled: boolean;
@@ -160,6 +171,19 @@ async function reopenObligationRequest(factId: number): Promise<void> {
 
 async function resetFactTierRequest(factId: number): Promise<void> {
   await apiClient.post(`/api/atoms/documents/facts/${factId}/reset-tier`);
+}
+
+async function fetchObligationCalendarPref(): Promise<ObligationCalendarPref> {
+  const response = await apiClient.get<ObligationCalendarPref>('/api/atoms/obligations/calendar-pref');
+  return response.data;
+}
+
+async function setObligationCalendarPrefRequest(calendarName: string | null): Promise<ObligationCalendarPref> {
+  const response = await apiClient.put<ObligationCalendarPref>(
+    '/api/atoms/obligations/calendar-pref',
+    { calendar_name: calendarName },
+  );
+  return response.data;
 }
 
 export function useAtomSearchQuery(query: string) {
@@ -302,6 +326,31 @@ export function useReopenObligation() {
  * Invalidates brain queries so the facts panel / drawer reflect the restored
  * tier + cleared override badge.
  */
+/** The user's obligation→calendar sync preference + writable-calendar options. */
+export function useObligationCalendarPref() {
+  return useApiQuery(
+    {
+      queryKey: keys.brain.calendarPref(),
+      queryFn: fetchObligationCalendarPref,
+      staleTime: STALE.DEFAULT,
+    },
+    'obligations.calendarError',
+  );
+}
+
+export function useSetObligationCalendarPref() {
+  const queryClient = useQueryClient();
+  return useApiMutation<ObligationCalendarPref, string | null>(
+    {
+      mutationFn: setObligationCalendarPrefRequest,
+      onSuccess: () => {
+        queryClient.invalidateQueries({ queryKey: keys.brain.calendarPref() });
+      },
+    },
+    'obligations.calendarError',
+  );
+}
+
 export function useResetFactTier() {
   const queryClient = useQueryClient();
   return useApiMutation<void, number>(

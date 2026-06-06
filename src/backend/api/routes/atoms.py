@@ -17,10 +17,11 @@ Per the design doc:
 """
 from __future__ import annotations
 
+import json
 from datetime import UTC, date, datetime
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from loguru import logger
 from pydantic import BaseModel, Field
 from sqlalchemy import delete, select
@@ -34,6 +35,7 @@ from models.database import (
     KnowledgeBase,
     OBLIGATION_MILESTONE_CONFIRMED,
     ObligationAcknowledgement,
+    ObligationCalendarPref,
     User,
 )
 from services.atom_service import AtomService
@@ -129,6 +131,48 @@ class FactTierResetResponse(BaseModel):
     document_fact_id: int
     circle_tier: int
     tier_overridden: bool
+
+
+class CalendarOption(BaseModel):
+    name: str
+    label: str
+
+
+class ObligationCalendarPrefResponse(BaseModel):
+    """The user's obligation-calendar preference + the calendars they can pick."""
+    calendar_name: str | None = None
+    available: list[CalendarOption] = Field(default_factory=list)
+
+
+class SetCalendarPrefRequest(BaseModel):
+    """Set (or clear, with null) the obligation-calendar preference."""
+    calendar_name: str | None = None
+
+
+async def _writable_calendars(request: Request, user_id: int) -> list[CalendarOption]:
+    """The user's writable calendars via the Calendar MCP (empty if MCP off)."""
+    mgr = getattr(request.app.state, "mcp_manager", None)
+    if mgr is None:
+        return []
+    try:
+        res = await mgr.execute_tool(
+            "mcp.calendar.list_calendars", {},
+            user_permissions=["mcp.calendar.read"], user_id=user_id,
+        )
+    except Exception:  # noqa: BLE001
+        return []
+    if not res or not res.get("success"):
+        return []
+    try:
+        inner = json.loads(res.get("message") or "{}")
+    except (json.JSONDecodeError, TypeError):
+        return []
+    out: list[CalendarOption] = []
+    for c in inner.get("calendars", []) if isinstance(inner, dict) else []:
+        name = c.get("name")
+        if name:
+            out.append(CalendarOption(name=name, label=c.get("label") or name))
+    return out
 
 
 # =============================================================================
@@ -270,6 +314,56 @@ async def export_obligations_ics(
         media_type="text/calendar; charset=utf-8",
         headers={"Content-Disposition": 'attachment; filename="fristen.ics"'},
     )
+
+
+@router.get("/obligations/calendar-pref", response_model=ObligationCalendarPrefResponse)
+async def get_calendar_pref(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_user_or_default),
+):
+    """The current user's obligation-calendar preference + the calendars they can
+    write to (for the picker). Empty `available` when the Calendar MCP is off."""
+    pref = (await db.execute(
+        select(ObligationCalendarPref).where(ObligationCalendarPref.user_id == current_user.id)
+    )).scalar_one_or_none()
+    return ObligationCalendarPrefResponse(
+        calendar_name=pref.calendar_name if pref else None,
+        available=await _writable_calendars(request, current_user.id),
+    )
+
+
+@router.put("/obligations/calendar-pref", response_model=ObligationCalendarPrefResponse)
+async def set_calendar_pref(
+    body: SetCalendarPrefRequest,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_user_or_default),
+):
+    """Set or clear (null) the user's obligation-calendar preference. A chosen
+    calendar must be one the user can write to (validated via the MCP) — else
+    400. Clearing it stops the sync for this user (the reconciler removes their
+    events on its next pass)."""
+    available = await _writable_calendars(request, current_user.id)
+    existing = (await db.execute(
+        select(ObligationCalendarPref).where(ObligationCalendarPref.user_id == current_user.id)
+    )).scalar_one_or_none()
+
+    if body.calendar_name is None:
+        if existing is not None:
+            await db.delete(existing)
+            await db.commit()
+        return ObligationCalendarPrefResponse(calendar_name=None, available=available)
+
+    if body.calendar_name not in {c.name for c in available}:
+        raise HTTPException(status_code=400, detail="Calendar not available or not writable")
+
+    if existing is None:
+        db.add(ObligationCalendarPref(user_id=current_user.id, calendar_name=body.calendar_name))
+    else:
+        existing.calendar_name = body.calendar_name
+    await db.commit()
+    return ObligationCalendarPrefResponse(calendar_name=body.calendar_name, available=available)
 
 
 @router.post("/obligations/{fact_id}/confirm", response_model=ObligationConfirmResponse)

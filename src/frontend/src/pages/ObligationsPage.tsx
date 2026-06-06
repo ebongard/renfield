@@ -9,7 +9,13 @@ import Alert from '../components/Alert';
 import ObligationRow from '../components/ObligationRow';
 import BestaetigenButton from '../components/obligations/BestaetigenButton';
 import BestaetigtToast from '../components/obligations/BestaetigtToast';
-import { useObligationsQuery, buildObligationsIcsUrl, type DocumentFact } from '../api/resources/brain';
+import {
+  useObligationsQuery,
+  buildObligationsIcsUrl,
+  useObligationCalendarPref,
+  useSetObligationCalendarPref,
+  type DocumentFact,
+} from '../api/resources/brain';
 import { useBestaetigt } from '../hooks/useBestaetigt';
 import { urgencyGroup, URGENCY_ORDER, type UrgencyGroup } from '../utils/frist';
 
@@ -39,6 +45,13 @@ export default function ObligationsPage() {
 
   const dueBefore = useMemo(() => isoInDays(rangeDays), [rangeDays]);
   const query = useObligationsQuery({ dueBefore, limit: PAGE_SIZE, offset });
+
+  // Per-user calendar sync preference (only shown when the Calendar MCP offers
+  // writable calendars to pick from).
+  const calPref = useObligationCalendarPref();
+  const setCalPref = useSetObligationCalendarPref();
+  const calendars = calPref.data?.available ?? [];
+  const currentCalendar = calPref.data?.calendar_name ?? '';
 
   // Reset the accumulator when the time range changes.
   useEffect(() => {
@@ -123,15 +136,35 @@ export default function ObligationsPage() {
             </button>
           ))}
         </div>
-        <a
-          href={buildObligationsIcsUrl({ dueBefore })}
-          className="btn-secondary inline-flex items-center gap-1 px-3 py-1.5 text-sm ml-auto"
-          data-testid="export-ics-link"
-        >
-          <Download className="w-4 h-4" aria-hidden="true" />
-          {t('obligations.exportIcs')}
-        </a>
+        <div className="flex items-center gap-2 ml-auto">
+          {calendars.length > 0 && (
+            <label className="inline-flex items-center gap-1.5 text-sm text-gray-600 dark:text-gray-300">
+              {t('obligations.calendarSyncLabel')}
+              <select
+                value={currentCalendar}
+                onChange={(e) => setCalPref.mutate(e.target.value || null)}
+                disabled={setCalPref.isPending}
+                className="input py-1 text-sm"
+                aria-label={t('obligations.calendarSyncLabel')}
+              >
+                <option value="">{t('obligations.calendarSyncOff')}</option>
+                {calendars.map((c) => (
+                  <option key={c.name} value={c.name}>{c.label}</option>
+                ))}
+              </select>
+            </label>
+          )}
+          <a
+            href={buildObligationsIcsUrl({ dueBefore })}
+            className="btn-secondary inline-flex items-center gap-1 px-3 py-1.5 text-sm"
+            data-testid="export-ics-link"
+          >
+            <Download className="w-4 h-4" aria-hidden="true" />
+            {t('obligations.exportIcs')}
+          </a>
+        </div>
       </div>
+      {setCalPref.errorMessage && <Alert variant="error">{setCalPref.errorMessage}</Alert>}
 
       {query.isLoading && accumulated.length === 0 ? (
         <div className="text-center py-12 text-gray-500 dark:text-gray-400">{t('common.loading')}</div>

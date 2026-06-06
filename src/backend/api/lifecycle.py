@@ -532,6 +532,39 @@ def _schedule_obligation_digest():
     )
 
 
+def _schedule_obligation_calendar_sync(app):
+    """Daily obligation → calendar reconciler (Calendar MCP).
+
+    Mirrors each opted-in user's open obligations into their chosen calendar as
+    events (create/update/delete). Per-user opt-in via obligation_calendar_pref;
+    needs the calendar MCP reachable (degrades gracefully if not). Gated on
+    ``obligation_calendar_sync_enabled``.
+    """
+    if not settings.obligation_calendar_sync_enabled:
+        return
+
+    async def _tick():
+        from services.obligation_calendar_sync import reconcile_all_users
+
+        mgr = getattr(app.state, "mcp_manager", None)
+        if mgr is None:
+            logger.debug("Calendar sync: mcp_manager not ready; skipping tick")
+            return
+        await reconcile_all_users(mgr)
+
+    _spawn_periodic_task(
+        name="Obligation calendar sync",
+        interval=settings.obligation_calendar_sync_interval,
+        work=_tick,
+        started_msg=(
+            f"Obligation Calendar Sync gestartet "
+            f"(interval={settings.obligation_calendar_sync_interval}s, "
+            f"horizon={settings.obligation_calendar_horizon_days}d)"
+        ),
+        run_at_boot=True,  # daily — must run on cold start (#678)
+    )
+
+
 def _schedule_skill_shadow_log_cleanup():
     """Prune `skill_would_have_injected_log` rows older than the
     configured retention.
@@ -934,6 +967,7 @@ async def lifespan(app: "FastAPI"):
     _schedule_obligation_digest()
     _schedule_skill_shadow_log_cleanup()
     _schedule_paperless_sweepers(app)
+    _schedule_obligation_calendar_sync(app)
 
     # Self-learning Phase 1: load bundled seed skills into the database.
     # Idempotent — seeds with a matching title are skipped, so re-running
