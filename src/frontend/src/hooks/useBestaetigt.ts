@@ -44,6 +44,8 @@ export interface UseBestaetigt {
   reopen: (id: number) => void;
   /** The obligation whose undo toast is currently open, or null. */
   pending: number | null;
+  /** Error message if the last confirm/reopen write failed, else null. */
+  error: string | null;
 }
 
 export function useBestaetigt(): UseBestaetigt {
@@ -54,8 +56,8 @@ export function useBestaetigt(): UseBestaetigt {
   const [pending, setPending] = useState<number | null>(null);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const confirmMutate = confirmMutation.mutate;
-  const reopenMutate = reopenMutation.mutate;
+  const confirmMutate = confirmMutation.mutateAsync;
+  const reopenMutate = reopenMutation.mutateAsync;
 
   const clearTimer = useCallback(() => {
     if (timerRef.current) {
@@ -68,34 +70,46 @@ export function useBestaetigt(): UseBestaetigt {
     setOverride((prev) => new Map(prev).set(id, value));
   }, []);
 
+  // On a failed write, drop the optimistic override so the row falls back to the
+  // server `confirmed` flag (the truth — the write didn't persist). Without this
+  // a failed POST/DELETE would leave the UI permanently showing the wrong state.
+  const clearOverride = useCallback((id: number) => {
+    setOverride((prev) => {
+      if (!prev.has(id)) return prev;
+      const next = new Map(prev);
+      next.delete(id);
+      return next;
+    });
+  }, []);
+
   const confirm = useCallback(
     (id: number) => {
       setOverrideFor(id, true);
-      confirmMutate(id);
+      confirmMutate(id).catch(() => clearOverride(id));
       clearTimer();
       setPending(id);
       timerRef.current = setTimeout(() => setPending(null), UNDO_WINDOW_MS);
     },
-    [confirmMutate, setOverrideFor, clearTimer],
+    [confirmMutate, setOverrideFor, clearOverride, clearTimer],
   );
 
   const undo = useCallback(
     (id: number) => {
       setOverrideFor(id, false);
-      reopenMutate(id);
+      reopenMutate(id).catch(() => clearOverride(id));
       clearTimer();
       setPending(null);
     },
-    [reopenMutate, setOverrideFor, clearTimer],
+    [reopenMutate, setOverrideFor, clearOverride, clearTimer],
   );
 
   // reopen = un-acknowledge without a toast (re-opening a stuck confirmation).
   const reopen = useCallback(
     (id: number) => {
       setOverrideFor(id, false);
-      reopenMutate(id);
+      reopenMutate(id).catch(() => clearOverride(id));
     },
-    [reopenMutate, setOverrideFor],
+    [reopenMutate, setOverrideFor, clearOverride],
   );
 
   // Esc reverts the open undo window (D-FLOW-1 / A11Y).
@@ -118,7 +132,7 @@ export function useBestaetigt(): UseBestaetigt {
       const legacy = loadLegacyIds();
       for (const id of legacy) {
         setOverrideFor(id, true);
-        confirmMutate(id);
+        confirmMutate(id).catch(() => clearOverride(id));
       }
       localStorage.removeItem(LEGACY_STORAGE_KEY);
       localStorage.setItem(MIGRATED_FLAG_KEY, '1');
@@ -133,5 +147,7 @@ export function useBestaetigt(): UseBestaetigt {
     [override],
   );
 
-  return { isConfirmed, confirm, undo, reopen, pending };
+  const error = confirmMutation.errorMessage ?? reopenMutation.errorMessage ?? null;
+
+  return { isConfirmed, confirm, undo, reopen, pending, error };
 }

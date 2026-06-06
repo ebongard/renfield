@@ -29,7 +29,7 @@ function isoInDays(days: number): string {
 export default function ObligationsPage() {
   const { t } = useTranslation();
   const location = useLocation();
-  const { isConfirmed, confirm, undo, reopen, pending } = useBestaetigt();
+  const { isConfirmed, confirm, undo, reopen, pending, error: confirmError } = useBestaetigt();
 
   const [rangeDays, setRangeDays] = useState(DEFAULT_RANGE);
   const [offset, setOffset] = useState(0);
@@ -100,6 +100,7 @@ export default function ObligationsPage() {
       <PageHeader icon={CalendarClock} title={t('obligations.title')} subtitle={t('obligations.subtitle')} />
 
       {query.errorMessage && <Alert variant="error">{query.errorMessage}</Alert>}
+      {confirmError && <Alert variant="error">{confirmError}</Alert>}
 
       <div className="flex items-center gap-3 flex-wrap">
         <span className="text-sm font-medium text-gray-700 dark:text-gray-300">

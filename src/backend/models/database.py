@@ -1921,13 +1921,14 @@ class ObligationAcknowledgement(Base):
       * **user confirmation** — ``milestone`` = ``"confirmed"`` (the
         ``OBLIGATION_MILESTONE_CONFIRMED`` sentinel), ``user_id`` = whoever
         clicked Bestätigen in the agenda. This is the server home for the
-        agenda's former localStorage state (per-user; a circle peer can confirm
-        their own view). A confirmed ack for ``(fact, owner)`` also tells the
-        notifier the obligation is handled → it stops firing further milestones.
+        agenda's former localStorage state. Per-user: a circle peer can confirm
+        their OWN view without affecting anyone else's. The notifier only honors
+        the OWNER's own confirmed ack (it scans by owner + loads that owner's
+        acks) — a peer's confirm hides the row for the peer but does NOT stop the
+        owner's reminders, which is the intended owner-targeted behavior.
 
-    Keyed on the always-present ``DocumentFact.id`` (not the nullable atom_id).
-    ``ON DELETE CASCADE`` from both parents so a purged fact / deleted user takes
-    its acks with it.
+    Keyed on the stable ``DocumentFact.id`` int PK. ``ON DELETE CASCADE`` from
+    both parents so a purged fact / deleted user takes its acks with it.
     """
     __tablename__ = "obligation_acknowledgements"
 

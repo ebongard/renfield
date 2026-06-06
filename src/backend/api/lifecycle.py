@@ -470,11 +470,16 @@ def _schedule_obligation_deadline_notifier():
     Scans dated ``document_facts`` obligations, fires the single current
     lead-time milestone per obligation, and records it in the
     ``obligation_acknowledgements`` ledger so a restart / re-run never re-fires
-    (the missed-deadline safety property). Gated on
-    ``obligation_notifier_enabled`` (opt-in); delivery degrades gracefully when
-    ``proactive_enabled`` is off.
+    (the missed-deadline safety property).
+
+    Gated on BOTH ``obligation_notifier_enabled`` AND ``proactive_enabled``:
+    the notifier delivers via the proactive subsystem, so running it while
+    proactive delivery is off would consume each milestone in the ledger (the
+    scan records it) without ever delivering — the elapsed reminders would be
+    silently skipped once proactive is later enabled. Requiring both keeps the
+    ledger and delivery in lockstep.
     """
-    if not settings.obligation_notifier_enabled:
+    if not (settings.obligation_notifier_enabled and settings.proactive_enabled):
         return
 
     async def _tick():

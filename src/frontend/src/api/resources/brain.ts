@@ -257,7 +257,9 @@ export function useConfirmObligation() {
     {
       mutationFn: confirmObligationRequest,
       onSuccess: () => {
-        queryClient.invalidateQueries({ queryKey: keys.brain.all });
+        // Scope to the obligations agenda (prefix match) — no need to churn
+        // /brain search, review, or per-document facts queries.
+        queryClient.invalidateQueries({ queryKey: ['brain', 'obligations'] });
       },
     },
     'obligations.confirmError',
@@ -270,7 +272,7 @@ export function useReopenObligation() {
     {
       mutationFn: reopenObligationRequest,
       onSuccess: () => {
-        queryClient.invalidateQueries({ queryKey: keys.brain.all });
+        queryClient.invalidateQueries({ queryKey: ['brain', 'obligations'] });
       },
     },
     'obligations.confirmError',

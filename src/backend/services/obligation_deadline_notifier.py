@@ -14,8 +14,13 @@ overrides the earlier ``schicht-a-reminder-durability``):
     the ``obligation_acknowledgements`` ledger so a pod restart / re-run never
     re-fires it. The scan surviving restarts is the safety property (the
     missed-deadline scar).
-  * **Owner-targeted**: each reminder goes only to the obligation's owner
-    (``atoms.owner_user_id``), never broadcast — ``privacy="personal"``.
+  * **Owner-targeted**: each reminder is addressed to the obligation's owner
+    (``atoms.owner_user_id``) with ``target_user_id`` + ``privacy="personal"``.
+    NOTE: whether per-user targeting is actually enforced on delivery depends on
+    the delivery layer — the ha_glue WS push currently only privacy-gates TTS,
+    not the WS broadcast, so on a household with shared display devices a
+    personal reminder can still reach other devices. Enabling this notifier in a
+    multi-user household needs the WS-delivery privacy gate first (see TODOS.md).
   * **Legal-gate kinds** (Widerspruch/Einspruch/Klage) are notified too (they're
     the most important to surface) but flagged human-gated → the message points
     at ``/brain/review`` and urgency is raised; the notifier never auto-acts.

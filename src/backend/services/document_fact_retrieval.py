@@ -336,7 +336,8 @@ class DocumentFactRetrieval:
         confirm_uid = asker_id if asker_id is not None else -1
         params: dict[str, Any] = {
             "limit": limit, "offset": max(0, offset),
-            "confirm_uid": confirm_uid, **circles_params,
+            "confirm_uid": confirm_uid, "confirmed_ms": OBLIGATION_MILESTONE_CONFIRMED,
+            **circles_params,
         }
         due_filter = ""
         if due_before is not None:
@@ -348,7 +349,7 @@ class DocumentFactRetrieval:
                      SELECT 1 FROM obligation_acknowledgements oa
                      WHERE oa.document_fact_id = df.id
                        AND oa.user_id = :confirm_uid
-                       AND oa.milestone = '{OBLIGATION_MILESTONE_CONFIRMED}'
+                       AND oa.milestone = :confirmed_ms
                    ) AS confirmed
             FROM document_facts df
             JOIN documents d ON df.document_id = d.id

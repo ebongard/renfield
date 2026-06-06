@@ -84,6 +84,36 @@ async def ha_deliver_notification(
         "created_at": notification.created_at.isoformat() if notification.created_at else None,
     }
 
+    # Privacy gate — applies to BOTH the WS display push and TTS. A non-public
+    # notification must not fan out to a room / the whole household unless the
+    # presence-aware check allows it. (`should_play_tts_for_notification` predates
+    # this use but is a channel-agnostic presence/household decision: personal →
+    # all room occupants are household members; confidential → target user alone.)
+    # Computed once, reused below. Fail-closed: no handler / presence off / error
+    # → suppress ALL device delivery. The notification is still persisted, so the
+    # target user sees it in their own authenticated in-app notification list —
+    # it just isn't broadcast to shared/other devices. Without this gate a
+    # `privacy="personal"` reminder (e.g. an obligation deadline + amount) would
+    # WS-broadcast to every household device whenever no room resolved.
+    surface_allowed = True
+    if notification.privacy and notification.privacy != "public":
+        try:
+            from utils.hooks import run_hooks
+            results = await run_hooks(
+                "should_play_tts_for_notification",
+                privacy=notification.privacy,
+                target_user_id=notification.target_user_id,
+                room_id=notification.room_id,
+            )
+            surface_allowed = False
+            for r in results:
+                if isinstance(r, bool):
+                    surface_allowed = r
+                    break
+        except Exception as e:  # noqa: BLE001
+            logger.warning(f"Privacy gate error, suppressing delivery: {e}")
+            surface_allowed = False
+
     # Determine target devices
     if notification.room_name:
         devices = device_manager.get_devices_in_room(notification.room_name)
@@ -92,50 +122,31 @@ async def ha_deliver_notification(
     else:
         devices = list(device_manager.devices.values())
 
-    # WebSocket broadcast to display-capable devices
-    for device in devices:
-        if device.capabilities.supports_notifications or device.capabilities.has_display:
-            try:
-                await device.websocket.send_json(ws_message)
-                delivered_ids.append(device.device_id)
-            except Exception as e:  # noqa: BLE001
-                logger.warning(f"⚠️ Notification delivery failed for {device.device_id}: {e}")
+    # WebSocket broadcast to display-capable devices (gated for non-public).
+    if surface_allowed:
+        for device in devices:
+            if device.capabilities.supports_notifications or device.capabilities.has_display:
+                try:
+                    await device.websocket.send_json(ws_message)
+                    delivered_ids.append(device.device_id)
+                except Exception as e:  # noqa: BLE001
+                    logger.warning(f"⚠️ Notification delivery failed for {device.device_id}: {e}")
+        logger.info(f"📤 Notification #{notification.id} an {len(delivered_ids)} Geräte gesendet")
+    else:
+        logger.info(
+            f"WS broadcast suppressed for #{notification.id} (privacy={notification.privacy})"
+        )
 
-    logger.info(f"📤 Notification #{notification.id} an {len(delivered_ids)} Geräte gesendet")
-
-    # TTS delivery (privacy-gated)
-    if tts:
-        tts_allowed = True
-        if notification.privacy and notification.privacy != "public":
-            # Non-public privacy needs domain-specific presence check.
-            # ha_glue has its own should_play_tts handler wired too, so
-            # this run_hooks call will invoke it within the same process.
-            try:
-                from utils.hooks import run_hooks
-                results = await run_hooks(
-                    "should_play_tts_for_notification",
-                    privacy=notification.privacy,
-                    target_user_id=notification.target_user_id,
-                    room_id=notification.room_id,
-                )
-                tts_allowed = False
-                for r in results:
-                    if isinstance(r, bool):
-                        tts_allowed = r
-                        break
-            except Exception as e:  # noqa: BLE001
-                logger.warning(f"Privacy gate error, suppressing TTS: {e}")
-                tts_allowed = False
-
-        if tts_allowed:
-            tts_delivered = await _deliver_notification_tts(notification)
-            if tts_delivered:
-                notification.tts_delivered = True
-                ws_message["tts_handled"] = True
-        else:
-            logger.info(
-                f"TTS suppressed for #{notification.id} (privacy={notification.privacy})"
-            )
+    # TTS delivery (same privacy gate)
+    if tts and surface_allowed:
+        tts_delivered = await _deliver_notification_tts(notification)
+        if tts_delivered:
+            notification.tts_delivered = True
+            ws_message["tts_handled"] = True
+    elif tts and not surface_allowed:
+        logger.info(
+            f"TTS suppressed for #{notification.id} (privacy={notification.privacy})"
+        )
 
     return delivered_ids
 
