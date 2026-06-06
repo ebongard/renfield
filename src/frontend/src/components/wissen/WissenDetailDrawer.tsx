@@ -3,7 +3,7 @@ import { Link } from 'react-router';
 import { useTranslation } from 'react-i18next';
 import { X, ArrowRight } from 'lucide-react';
 import type { AtomMatch, DocumentFact, FactSource } from '../../api/resources/brain';
-import { usePatchAtomTier } from '../../api/resources/brain';
+import { usePatchAtomTier, useResetFactTier } from '../../api/resources/brain';
 import { useUpdateKgEntityTier } from '../../api/resources/knowledgeGraph';
 import { useMemoriesBySubjectQuery } from '../../api/resources/memories';
 import TierPicker from '../TierPicker';
@@ -69,6 +69,7 @@ export default function WissenDetailDrawer({ atom, onClose }: WissenDetailDrawer
   const restoreRef = useRef<HTMLElement | null>(null);
   const patchAtomTier = usePatchAtomTier();
   const updateKgTier = useUpdateKgEntityTier();
+  const resetFactTier = useResetFactTier();
 
   const open = atom !== null;
 
@@ -209,6 +210,18 @@ export default function WissenDetailDrawer({ atom, onClose }: WissenDetailDrawer
           <div className="pt-2 border-t border-gray-100 dark:border-gray-700/60">
             <p className="text-xs font-medium text-gray-500 dark:text-gray-400 mb-1">{t('lens.detail.tier')}</p>
             <TierPicker value={currentTier} onChange={handleTier} variant="compact" />
+            {atom_type === 'document_fact' && Boolean(payload.tier_overridden) && num(payload.fact_id) != null && (
+              <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                {t('circles.tierOverridden')}{' '}
+                <button
+                  type="button"
+                  className="underline hover:text-primary-600 dark:hover:text-primary-400"
+                  onClick={() => resetFactTier.mutate(num(payload.fact_id) as number)}
+                >
+                  {t('circles.resetTier')}
+                </button>
+              </p>
+            )}
           </div>
         )}
       </div>

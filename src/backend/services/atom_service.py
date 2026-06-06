@@ -247,12 +247,21 @@ class AtomService:
         atom.source_id = str(source_id)
         await self.db.flush()
 
-    async def update_tier(self, atom_id: str, new_policy: dict[str, Any]) -> None:
+    async def update_tier(
+        self, atom_id: str, new_policy: dict[str, Any], *, fact_override: bool = True,
+    ) -> None:
         """
         Update atom.policy + cascade to source row's denormalized circle_tier.
 
         For kg_node atoms, also recomputes circle_tier on every incident
         kg_relation (per CEO Finding E cascade rule).
+
+        For document_fact atoms, ``fact_override`` records whether this is a
+        deliberate per-fact override: a direct tier edit (default True) marks
+        ``tier_overridden=True`` so the parent-document cascade won't stomp it;
+        :meth:`reset_fact_tier` passes False to clear the flag. The kb_document
+        cascade below only moves facts WHERE NOT tier_overridden, so an override
+        (e.g. a public issuer on a private document) is sticky in both directions.
         """
         atom_orm = (await self.db.execute(
             select(AtomModel).where(AtomModel.atom_id == atom_id)
@@ -278,6 +287,18 @@ class AtomService:
             {"tier": new_tier, "source_id": atom_orm.source_id},
         )
 
+        # A direct tier edit on a single fact is a deliberate per-fact override
+        # (fact_override=True); reset_fact_tier passes False to clear it. The
+        # kb_document cascade below then preserves overridden facts.
+        if atom_orm.atom_type == ATOM_TYPE_DOCUMENT_FACT:
+            await self.db.execute(
+                text(
+                    "UPDATE document_facts SET tier_overridden = :ov "
+                    "WHERE id::text = :source_id"
+                ),
+                {"ov": fact_override, "source_id": atom_orm.source_id},
+            )
+
         # Fact atoms whose resolver cache must be invalidated after a
         # kb_document tier change (collected inside the cascade block below;
         # invalidated after commit alongside the parent doc atom).
@@ -300,10 +321,13 @@ class AtomService:
             # tier the same way chunks do — keep them in lockstep so retrieval
             # can't leak a Steuernummer/obligation at the old tier. Also bump
             # the facts' own atoms.policy so the canonical policy stays in sync.
+            # Only facts that have NOT been individually overridden follow the
+            # document tier — a per-fact override (e.g. a public issuer on a
+            # private doc) is sticky in both directions until explicitly reset.
             await self.db.execute(
                 text(
                     "UPDATE document_facts SET circle_tier = :tier "
-                    "WHERE document_id = :doc_id"
+                    "WHERE document_id = :doc_id AND NOT tier_overridden"
                 ),
                 {"tier": new_tier, "doc_id": doc_id},
             )
@@ -316,7 +340,8 @@ class AtomService:
                     "FROM document_facts f "
                     "WHERE atoms.atom_type = :fact_type "
                     "AND atoms.source_id = f.id::text "
-                    "AND f.document_id = :doc_id"
+                    "AND f.document_id = :doc_id "
+                    "AND NOT f.tier_overridden"
                 ),
                 {"tier": new_tier, "fact_type": ATOM_TYPE_DOCUMENT_FACT, "doc_id": doc_id},
             )
@@ -367,6 +392,30 @@ class AtomService:
         # isn't invalidated after a kg_node tier change; out of scope here.)
         for fa in fact_atom_ids:
             self.resolver.invalidate_for_atom(fa)
+
+    async def reset_fact_tier(self, fact_id: int) -> int | None:
+        """Clear a document_fact's per-fact tier override, restoring it to the
+        parent document's current tier.
+
+        Looks up the fact's parent-document tier and its atom_id, then delegates
+        to :meth:`update_tier` with ``fact_override=False`` (which resets
+        ``circle_tier`` + the fact atom's policy, clears ``tier_overridden``, and
+        invalidates the resolver cache). Returns the restored tier, or None if
+        the fact does not exist.
+        """
+        row = (await self.db.execute(
+            text(
+                "SELECT f.atom_id, d.circle_tier "
+                "FROM document_facts f JOIN documents d ON f.document_id = d.id "
+                "WHERE f.id = :fact_id"
+            ),
+            {"fact_id": fact_id},
+        )).first()
+        if row is None:
+            return None
+        fact_atom_id, doc_tier = row[0], int(row[1] or 0)
+        await self.update_tier(fact_atom_id, {"tier": doc_tier}, fact_override=False)
+        return doc_tier
 
     # ==========================================================================
     # Read

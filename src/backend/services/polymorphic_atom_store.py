@@ -422,6 +422,7 @@ def _wrap_document_fact_results(fact_results: Any) -> list[AtomMatch]:
                         "legal_gate": f.get("legal_gate", False),
                         "payment_method": f.get("payment_method"),
                         "source": f.get("source"),
+                        "tier_overridden": f.get("tier_overridden", False),
                     },
                 ),
                 score=float(f.get("similarity", 0.0)),

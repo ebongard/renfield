@@ -69,6 +69,8 @@ export interface DocumentFact {
    * the obligations() query; absent/false on the facts-for-document query).
    */
   confirmed?: boolean;
+  /** This fact's circle_tier was set independently of the parent document. */
+  tier_overridden?: boolean;
 }
 
 export interface ObligationsFilter {
@@ -142,6 +144,10 @@ async function confirmObligationRequest(factId: number): Promise<void> {
 
 async function reopenObligationRequest(factId: number): Promise<void> {
   await apiClient.delete(`/api/atoms/obligations/${factId}/confirm`);
+}
+
+async function resetFactTierRequest(factId: number): Promise<void> {
+  await apiClient.post(`/api/atoms/documents/facts/${factId}/reset-tier`);
 }
 
 export function useAtomSearchQuery(query: string) {
@@ -276,5 +282,23 @@ export function useReopenObligation() {
       },
     },
     'obligations.confirmError',
+  );
+}
+
+/**
+ * Reset a fact's per-fact tier override back to its parent document's tier.
+ * Invalidates brain queries so the facts panel / drawer reflect the restored
+ * tier + cleared override badge.
+ */
+export function useResetFactTier() {
+  const queryClient = useQueryClient();
+  return useApiMutation<void, number>(
+    {
+      mutationFn: resetFactTierRequest,
+      onSuccess: () => {
+        queryClient.invalidateQueries({ queryKey: keys.brain.all });
+      },
+    },
+    'circles.couldNotSave',
   );
 }

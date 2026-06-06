@@ -30,6 +30,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from models.database import (
     Atom as AtomModel,
     Document,
+    DocumentFact,
     KnowledgeBase,
     OBLIGATION_MILESTONE_CONFIRMED,
     ObligationAcknowledgement,
@@ -114,12 +115,20 @@ class DocumentFactResponse(BaseModel):
     source: str | None = None
     circle_tier: int = 0
     confirmed: bool = False  # the asker's per-user Bestätigt state (server ledger)
+    tier_overridden: bool = False  # fact's tier set independently of the parent doc
 
 
 class ObligationConfirmResponse(BaseModel):
     """Result of confirming / reopening an obligation (the agenda's Bestätigen)."""
     document_fact_id: int
     confirmed: bool
+
+
+class FactTierResetResponse(BaseModel):
+    """Result of resetting a fact's per-fact tier override to the document tier."""
+    document_fact_id: int
+    circle_tier: int
+    tier_overridden: bool
 
 
 # =============================================================================
@@ -300,6 +309,33 @@ async def get_document_facts(
         document_id, asker_id=current_user.id,
     )
     return [DocumentFactResponse(**f) for f in facts]
+
+
+@router.post("/documents/facts/{fact_id}/reset-tier", response_model=FactTierResetResponse)
+async def reset_fact_tier(
+    fact_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_user_or_default),
+):
+    """Clear a fact's per-fact tier override, restoring it to the parent
+    document's current tier. Owner-only (the fact atom's owner); 404 otherwise —
+    same existence-oracle defense as the tier PATCH. Idempotent."""
+    fact = (await db.execute(
+        select(DocumentFact).where(DocumentFact.id == fact_id)
+    )).scalar_one_or_none()
+    if fact is None:
+        raise HTTPException(status_code=404, detail="Fact not found")
+    # Lock the fact's atom + verify ownership (mirrors the tier-PATCH route).
+    atom_orm = (await db.execute(
+        select(AtomModel).where(AtomModel.atom_id == fact.atom_id).with_for_update()
+    )).scalar_one_or_none()
+    if atom_orm is None or atom_orm.owner_user_id != current_user.id:
+        raise HTTPException(status_code=404, detail="Fact not found")
+
+    new_tier = await AtomService(db).reset_fact_tier(fact_id)
+    return FactTierResetResponse(
+        document_fact_id=fact_id, circle_tier=new_tier or 0, tier_overridden=False,
+    )
 
 
 @router.get("/{atom_id}", response_model=AtomResponse)

@@ -131,6 +131,14 @@ export default function FaktenPanel({ documentId, status, open, onToggle }: Fakt
                           className="ml-auto"
                         />
                         <TierBadge tier={fact.circle_tier} />
+                        {fact.tier_overridden && (
+                          <span
+                            className="text-[10px] uppercase tracking-wide text-gray-400 dark:text-gray-500"
+                            title={t('circles.tierOverridden')}
+                          >
+                            {t('circles.tierOverriddenShort')}
+                          </span>
+                        )}
                       </div>
                     ),
                   )}

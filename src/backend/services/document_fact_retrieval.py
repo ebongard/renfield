@@ -78,7 +78,7 @@ _FACT_COLS = """
     df.id, df.document_id, df.atom_id, df.category, df.kind, df.value,
     df.normalized_value, df.excerpt, df.obligation_date, df.amount_value,
     df.amount_currency, df.legal_gate, df.payment_method, df.confidence,
-    df.source, df.circle_tier
+    df.source, df.circle_tier, df.tier_overridden
 """
 
 
@@ -105,6 +105,7 @@ def _row_to_dict(row: Any, *, rank: float = 0.0) -> dict[str, Any]:
         "payment_method": row.payment_method,
         "confidence": float(row.confidence) if row.confidence is not None else None,
         "circle_tier": row.circle_tier or 0,
+        "tier_overridden": bool(getattr(row, "tier_overridden", False)),
         "source": row.source,
         "similarity": round(float(rank), 6),
         # Present only on the obligations() query (LEFT-derived EXISTS); other

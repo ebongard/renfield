@@ -1180,6 +1180,9 @@
     "openSource": "Dokument öffnen"
   },
   "circles": {
+    "tierOverridden": "Eigene Sichtbarkeit (weicht vom Dokument ab).",
+    "tierOverriddenShort": "abweichend",
+    "resetTier": "Auf Dokument-Tier zurücksetzen",
     "tier": {
       "0": "Privat",
       "1": "Vertraut",

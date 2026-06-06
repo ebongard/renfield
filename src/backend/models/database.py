@@ -1888,6 +1888,11 @@ class DocumentFact(Base):
     source = Column(String(16), nullable=False, default=DOC_FACT_SOURCE_DETERMINISTIC)
     atom_id = Column(String(36), ForeignKey("atoms.atom_id", ondelete="CASCADE"), nullable=False, index=True)
     circle_tier = Column(Integer, nullable=False, default=0)
+    # When True, this fact's circle_tier was set independently (e.g. a public
+    # issuer on an otherwise-private document) and the parent-document tier
+    # cascade (AtomService.update_tier) MUST NOT overwrite it. Sticky in both
+    # directions until explicitly reset to the document tier.
+    tier_overridden = Column(Boolean, nullable=False, default=False)
     created_at = Column(DateTime, default=_utcnow)
 
     # Full-text search vector. Post-<id>_document_facts_fts this is a Postgres

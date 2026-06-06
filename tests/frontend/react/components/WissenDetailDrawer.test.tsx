@@ -11,13 +11,14 @@ import { fireEvent, screen } from '@testing-library/react';
 import { renderWithRouter, userEvent } from '../test-utils';
 import WissenDetailDrawer from '../../../../src/frontend/src/components/wissen/WissenDetailDrawer';
 import type { AtomMatch } from '../../../../src/frontend/src/api/resources/brain';
-import { usePatchAtomTier } from '../../../../src/frontend/src/api/resources/brain';
+import { usePatchAtomTier, useResetFactTier } from '../../../../src/frontend/src/api/resources/brain';
 import { useUpdateKgEntityTier } from '../../../../src/frontend/src/api/resources/knowledgeGraph';
 import { useMemoriesBySubjectQuery } from '../../../../src/frontend/src/api/resources/memories';
 
 vi.mock('../../../../src/frontend/src/api/resources/brain', async (orig) => ({
   ...(await orig<typeof import('../../../../src/frontend/src/api/resources/brain')>()),
   usePatchAtomTier: vi.fn(),
+  useResetFactTier: vi.fn(),
 }));
 vi.mock('../../../../src/frontend/src/api/resources/knowledgeGraph', async (orig) => ({
   ...(await orig<typeof import('../../../../src/frontend/src/api/resources/knowledgeGraph')>()),
@@ -30,11 +31,14 @@ vi.mock('../../../../src/frontend/src/api/resources/memories', async (orig) => (
 
 const patchSpy = vi.fn();
 const kgSpy = vi.fn();
+const resetSpy = vi.fn();
 
 beforeEach(() => {
   patchSpy.mockReset();
   kgSpy.mockReset();
+  resetSpy.mockReset();
   vi.mocked(usePatchAtomTier).mockReturnValue({ mutate: patchSpy } as unknown as ReturnType<typeof usePatchAtomTier>);
+  vi.mocked(useResetFactTier).mockReturnValue({ mutate: resetSpy } as unknown as ReturnType<typeof useResetFactTier>);
   vi.mocked(useUpdateKgEntityTier).mockReturnValue({ mutate: kgSpy } as unknown as ReturnType<typeof useUpdateKgEntityTier>);
   // default: no linked memories (EntityMemories renders nothing) — keeps the
   // pre-existing kg_node tests unaffected.
@@ -109,5 +113,31 @@ describe('WissenDetailDrawer', () => {
     renderWithRouter(<WissenDetailDrawer atom={kgNode} onClose={() => {}} />);
     expect(screen.getByText('Erinnerungen über diesen Knoten')).toBeInTheDocument();
     expect(screen.getByText('Jutta mag Tee')).toBeInTheDocument();
+  });
+
+  it('per-fact tier override: shows reset and routes it to the fact id', async () => {
+    const overriddenFact: AtomMatch = {
+      atom: {
+        atom_id: 'fact-uuid', atom_type: 'document_fact', tier: 4,
+        payload: { fact_id: 77, document_id: 9, kind: 'issuer', value: 'Finanzverwaltung NRW', tier_overridden: true },
+      },
+      score: 1, snippet: 'Finanzverwaltung NRW', rank: 1,
+    };
+    renderWithRouter(<WissenDetailDrawer atom={overriddenFact} onClose={() => {}} />);
+    const reset = screen.getByRole('button', { name: /Auf Dokument-Tier zurücksetzen/ });
+    await userEvent.click(reset);
+    expect(resetSpy).toHaveBeenCalledWith(77);
+  });
+
+  it('per-fact tier override: no reset control when the fact is not overridden', () => {
+    const inheritedFact: AtomMatch = {
+      atom: {
+        atom_id: 'fact-uuid2', atom_type: 'document_fact', tier: 0,
+        payload: { fact_id: 78, document_id: 9, kind: 'amount', value: '89,90 EUR', tier_overridden: false },
+      },
+      score: 1, snippet: '89,90 EUR', rank: 1,
+    };
+    renderWithRouter(<WissenDetailDrawer atom={inheritedFact} onClose={() => {}} />);
+    expect(screen.queryByRole('button', { name: /Auf Dokument-Tier zurücksetzen/ })).toBeNull();
   });
 });

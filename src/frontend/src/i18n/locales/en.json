@@ -1180,6 +1180,9 @@
     "openSource": "Open document"
   },
   "circles": {
+    "tierOverridden": "Custom visibility (differs from the document).",
+    "tierOverriddenShort": "custom",
+    "resetTier": "Reset to document tier",
     "tier": {
       "0": "Self",
       "1": "Trusted",
