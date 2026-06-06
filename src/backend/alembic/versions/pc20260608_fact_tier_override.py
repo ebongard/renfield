@@ -7,8 +7,9 @@ Create Date: 2026-06-06
 Adds ``document_facts.tier_overridden`` — when True, the fact's circle_tier was
 set independently (e.g. a public issuer on an otherwise-private document) and the
 parent-document tier cascade (AtomService.update_tier) must NOT overwrite it. The
-override is sticky in both directions until explicitly reset to the document tier.
-See models.database.DocumentFact.
+override is sticky in both directions for the life of the fact row, until
+explicitly reset to the document tier. (Re-ingest/re-OCR recreates facts fresh,
+so overrides don't survive a re-extraction — see models.database.DocumentFact.)
 """
 from alembic import op
 import sqlalchemy as sa

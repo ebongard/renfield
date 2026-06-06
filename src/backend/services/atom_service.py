@@ -324,6 +324,12 @@ class AtomService:
             # Only facts that have NOT been individually overridden follow the
             # document tier — a per-fact override (e.g. a public issuer on a
             # private doc) is sticky in both directions until explicitly reset.
+            # Concurrency: a per-fact override (the PATCH route SELECT-FOR-UPDATEs
+            # the fact atom) racing this doc cascade converges to "override wins"
+            # — the WHERE NOT tier_overridden is re-evaluated per row at statement
+            # time under MVCC and the fact-row write is the last writer, so the
+            # circle_tier + atoms.policy stay consistent (both UPDATEs carry the
+            # same guard).
             await self.db.execute(
                 text(
                     "UPDATE document_facts SET circle_tier = :tier "
