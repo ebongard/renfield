@@ -117,7 +117,8 @@ Jedes Subsystem, das Inhalte dem LLM präsentiert, wendet den Circle-Filter an:
 |---|---|
 | `GET /api/atoms` | Unified Cross-Source-Search (`/brain` Frontend); `document_fact` ist eine fusionierte RRF-Quelle (Schicht-A-Fakten erscheinen mit grünem „Fakt"-Badge) |
 | `GET /api/atoms/documents/{id}/facts` | Alle Schicht-A-Fakten eines Dokuments; 404/403 am Eltern-Dokument circle-gated |
-| `GET /api/atoms/obligations` | Verpflichtungen (Rechnungen + Behörden-Fristen), nächste Frist zuerst; `due_before` + `limit` + `offset` (Offset-Paging für „Mehr laden") |
+| `GET /api/atoms/obligations` | Verpflichtungen (Rechnungen + Behörden-Fristen), nächste Frist zuerst; `due_before` + `limit` + `offset` (Offset-Paging für „Mehr laden"); jede Zeile trägt den per-Nutzer `confirmed`-Status |
+| `POST/DELETE /api/atoms/obligations/{id}/confirm` | Frist als erledigt markieren / wieder öffnen (pro Nutzer, circle-gated 404); serverseitige Quittungs-Ledger statt localStorage |
 | `GET /api/config/features` | Frontend-sichtbare Feature-Flags (Allowlist: `schicht_a_extraction_enabled`, `wissen_workspace_enabled`) — die eine bewusste Settings→Browser-Naht |
 | `PATCH /api/atoms/{id}` | Tier ändern; cascade auf incidente Relationen |
 | `GET /api/circles/me` | Eigene Circle-Konfiguration laden |
@@ -135,7 +136,7 @@ Jedes Subsystem, das Inhalte dem LLM präsentiert, wendet den Circle-Filter an:
 |---|---|
 | `/brain` | Cross-Source-Suche über eigene Wissensebene |
 | `/brain/review` | Review-Queue: vom System vorgeschlagene Tier-Zuweisungen bestätigen |
-| `/brain/fristen` | Verpflichtungs-Agenda: Fristen-Inbox nach Dringlichkeit gruppiert (Überfällig/Diese Woche/Später), `⚑ rechtlich` bei `legal_gate`, localStorage-gestütztes Bestätigen mit Undo-Toast |
+| `/brain/fristen` | Verpflichtungs-Agenda: Fristen-Inbox nach Dringlichkeit gruppiert (Überfällig/Diese Woche/Später), `⚑ rechtlich` bei `legal_gate`, server-gestütztes Bestätigen (Quittungs-Ledger) mit Undo-Toast; gespeist vom Fristen-Notifier (`OBLIGATION_NOTIFIER_ENABLED`) |
 | `/settings/circles` | Circle-Mitglieder pro Stufe verwalten |
 | `/settings/circles/peers` | Federations-Peers (für externe Anfragen über die Circle-Grenze) |
 

@@ -343,6 +343,24 @@ PROACTIVE_REMINDER_CHECK_INTERVAL=15     # Prüfintervall in Sekunden
 - `GET /api/notifications/reminders` — Offene Erinnerungen
 - `DELETE /api/notifications/reminders/{id}` — Erinnerung stornieren
 
+#### Obligation-Deadline Notifier (Schicht A)
+
+```bash
+# Tägliche, besitzer-adressierte Fristen-Erinnerungen aus document_facts.
+# Benötigt zusätzlich PROACTIVE_ENABLED=true (Zustellung läuft über das
+# Proactive-Subsystem); sonst liefe der Scan ins Leere und würde Meilensteine
+# im Ledger verbrauchen, ohne zuzustellen.
+OBLIGATION_NOTIFIER_ENABLED=false
+OBLIGATION_NOTIFIER_INTERVAL=86400            # Scan-Intervall in Sekunden (täglich)
+OBLIGATION_NOTIFIER_OVERDUE_GRACE_DAYS=30     # wie weit zurück "überfällig" noch feuert
+```
+
+Ein Tages-Scan berechnet pro Verpflichtung den einen aktuellen Vorlauf-Meilenstein
+(`14d`/`7d`/`3d`/`1d`/`due`/`overdue`) und feuert ihn genau einmal (Ledger
+`obligation_acknowledgements`, restart-fest). Rechtliche Fristen werden gemeldet,
+aber human-gated (`/brain/review`), nie automatisch erledigt. Die Agenda-Bestätigung
+(`POST/DELETE /api/atoms/obligations/{id}/confirm`) nutzt dasselbe Ledger.
+
 #### Externe Scheduling-Templates
 
 Cron-basiertes Scheduling (z.B. Morgenbriefing) wird extern via **n8n-Workflows** oder **Home Assistant-Automationen** gelöst. Diese senden per Webhook an `POST /api/notifications/webhook`.
