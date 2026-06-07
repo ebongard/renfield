@@ -133,6 +133,8 @@ def test_match_key_collapses_ha_and_dlna_names():
     # HA friendly name (doubled room) vs DLNA renderer name → same key
     assert _device_match_key("Linn Wohnzimmer Wohnzimmer") == _device_match_key("Linn Wohnzimmer:UPnP AV")
     assert _device_match_key("HiFiBerry Arbeitszimmer") == _device_match_key("HiFiBerry Arbeitszimmer")
+    # multi-word room doubled (apostrophe → "ben s zimmer ben s zimmer")
+    assert _device_match_key("Linn Ben’s Zimmer Ben’s Zimmer") == _device_match_key("Linn Ben’s Zimmer:UPnP AV")
     # distinct devices → distinct keys
     assert _device_match_key("Linn Küche:UpnpAv") != _device_match_key("Linn Garten:UPnP AV")
 
@@ -140,6 +142,17 @@ def test_match_key_collapses_ha_and_dlna_names():
 def test_clean_display_name():
     assert _clean_display_name("Linn Wohnzimmer:UPnP AV") == "Linn Wohnzimmer"
     assert _clean_display_name("Linn Wohnzimmer Wohnzimmer") == "Linn Wohnzimmer"
+    assert _clean_display_name("Linn Ben’s Zimmer Ben’s Zimmer") == "Linn Ben’s Zimmer"
+
+
+def test_dedupe_multiword_room_merges():
+    targets = [
+        _t("homeassistant", "media_player.bz", "Linn Ben’s Zimmer Ben’s Zimmer", ["audio", "transport"]),
+        _t("dlna", "Linn Ben’s Zimmer:UPnP AV", "Linn Ben’s Zimmer:UPnP AV", ["audio"]),
+    ]
+    out = _dedupe_output_targets(targets)
+    assert len(out) == 1
+    assert out[0]["provider"] == "dlna" and out[0]["name"] == "Linn Ben’s Zimmer"
 
 
 def _t(provider, target_id, name, caps, reachable=True):

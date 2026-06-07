@@ -33,30 +33,35 @@ from models.database import OUTPUT_TYPE_AUDIO, OUTPUT_TYPE_VISUAL, RoomDevice, R
 _PROVIDER_RANK = {"dlna": 0, "homeassistant": 1, "renfield": 2}
 
 
+def _collapse_doubled_suffix(words: list[str]) -> list[str]:
+    """Drop a duplicated trailing phrase: HA friendly names double the room, which
+    may be one word ("Linn Wohnzimmer Wohnzimmer") or several
+    ("Linn Ben s Zimmer Ben s Zimmer"). Removes the largest repeated tail."""
+    n = len(words)
+    for k in range(n // 2, 0, -1):
+        if words[-k:] == words[-2 * k:-k]:
+            return words[:-k]
+    return words
+
+
 def _device_match_key(name: str) -> str:
     """Normalize a target name so the same physical speaker exposed via different
     protocols collapses to one key. Strips DLNA suffixes (``:UPnP AV`` / ``:UpnpAv``),
-    lowercases, drops non-alphanumerics, and collapses consecutive duplicate words
-    (HA friendly names often double the room: "Linn Wohnzimmer Wohnzimmer")."""
+    lowercases, drops non-alphanumerics, and collapses a doubled trailing room
+    phrase (HA friendly names repeat the room, single- or multi-word)."""
     s = name.split(":", 1)[0].lower()
     s = re.sub(r"[^a-z0-9]+", " ", s).strip()
-    words: list[str] = []
-    for w in s.split():
-        if not words or words[-1] != w:
-            words.append(w)
-    return " ".join(words)
+    return " ".join(_collapse_doubled_suffix(s.split()))
 
 
 def _clean_display_name(name: str) -> str:
     """Tidy a display name: strip the DLNA transport suffix + collapse the doubled
-    trailing room word, keeping original casing."""
-    base = name.split(":", 1)[0].strip()
-    words = base.split()
-    out: list[str] = []
-    for w in words:
-        if not out or out[-1].lower() != w.lower():
-            out.append(w)
-    return " ".join(out) or name
+    trailing room phrase, keeping original casing. Case-insensitive on the match."""
+    words = name.split(":", 1)[0].strip().split()
+    # Collapse on a lowercased copy but return the original-cased words.
+    lowered = [w.lower() for w in words]
+    keep = len(_collapse_doubled_suffix(lowered))
+    return " ".join(words[:keep]) or name
 
 
 def _dedupe_output_targets(targets: list[dict]) -> list[dict]:
