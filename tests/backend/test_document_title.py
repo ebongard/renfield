@@ -63,6 +63,19 @@ async def test_generates_title_from_facts():
     assert len(client.calls) == 1  # one LLM call
 
 
+async def test_facts_actually_reach_the_user_prompt():
+    # Regression for the prompt_manager-default bug: {facts} must be substituted,
+    # not passed literally — else the LLM gets no facts.
+    client = _FakeClient('{"title": "x"}')
+    facts = [_f("identifier", "kontoinhaber", "BFS health finance GmbH"),
+             _f("identifier", "mahnnummer", "70660643")]
+    await generate_document_title(facts, lang="de", llm_client=client)
+    user_msg = next(m["content"] for m in client.calls[0]["messages"] if m["role"] == "user")
+    assert "BFS health finance GmbH" in user_msg
+    assert "70660643" in user_msg
+    assert "{facts}" not in user_msg  # placeholder was substituted, not left literal
+
+
 async def test_empty_facts_returns_none_without_llm():
     client = _FakeClient('{"title": "should not be used"}')
     assert await generate_document_title([], llm_client=client) is None

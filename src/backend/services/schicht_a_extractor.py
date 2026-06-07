@@ -355,9 +355,18 @@ async def generate_document_title(
     system = prompt_manager.get(
         "schicht_a_title", "system", default=_TITLE_SYSTEM_DEFAULT, lang=lang,
     )
-    user = prompt_manager.get(
+    # Substitute {facts} ourselves (not via prompt_manager kwargs): prompt_manager
+    # returns the DEFAULT verbatim when the key isn't in the YAML, so a kwarg would
+    # never reach the default template. .replace (not .format) is brace-safe — fact
+    # values can contain literal braces.
+    user_template = prompt_manager.get(
         "schicht_a_title", "user", default=_TITLE_USER_DEFAULT, lang=lang,
-        facts=_facts_to_block(facts),
+    )
+    facts_block = _facts_to_block(facts)
+    user = (
+        user_template.replace("{facts}", facts_block)
+        if "{facts}" in user_template
+        else f"{user_template}\n{facts_block}"
     )
     try:
         client = llm_client or get_default_client()
