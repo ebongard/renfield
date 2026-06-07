@@ -174,7 +174,8 @@ def test_dedupe_collapses_cross_provider_prefers_dlna_merges_caps():
 
 
 def test_dedupe_keeps_same_provider_same_name_as_distinct():
-    # Two different HA entities both named "Soundbar" → must NOT merge
+    # Two different HA entities both named "Soundbar" → must NOT merge, and get
+    # disambiguated by a short id (polish 2).
     targets = [
         _t("homeassistant", "media_player.buro", "Soundbar", ["audio"]),
         _t("homeassistant", "media_player.118", "Soundbar", ["audio"]),
@@ -182,6 +183,21 @@ def test_dedupe_keeps_same_provider_same_name_as_distinct():
     out = _dedupe_output_targets(targets)
     assert len(out) == 2
     assert {t["target_id"] for t in out} == {"media_player.buro", "media_player.118"}
+    assert {t["name"] for t in out} == {"Soundbar (buro)", "Soundbar (118)"}
+
+
+def test_singleton_dlna_name_is_tidied():
+    # polish 1: a DLNA-only device (no merge) still gets its :UPnP AV suffix stripped
+    out = _dedupe_output_targets([_t("dlna", "Linn Garten:UPnP AV", "Linn Garten:UPnP AV", ["audio"])])
+    assert out[0]["name"] == "Linn Garten"
+
+
+def test_unique_names_not_disambiguated():
+    out = _dedupe_output_targets([
+        _t("homeassistant", "media_player.a", "Küche", ["audio"]),
+        _t("homeassistant", "media_player.b", "Fernseher", ["audio"]),
+    ])
+    assert {t["name"] for t in out} == {"Küche", "Fernseher"}
 
 
 def test_dedupe_preserves_singletons_and_order():

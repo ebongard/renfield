@@ -64,6 +64,13 @@ def _clean_display_name(name: str) -> str:
     return " ".join(words[:keep]) or name
 
 
+def _short_id(target_id: str) -> str:
+    """A short distinguisher from a target id — the last dotted segment
+    (e.g. ``media_player.buro`` → ``buro``). Used to disambiguate two distinct
+    devices that share a display name."""
+    return target_id.rsplit(".", 1)[-1] or target_id
+
+
 def _dedupe_output_targets(targets: list[dict]) -> list[dict]:
     """Collapse the SAME physical device exposed by MULTIPLE providers into one
     entry (e.g. a Linn shows as both an HA media_player and a DLNA renderer).
@@ -88,7 +95,9 @@ def _dedupe_output_targets(targets: list[dict]) -> list[dict]:
         group = groups[k]
         providers = {t["provider"] for t in group}
         if len(providers) <= 1:
-            deduped.extend(group)  # same provider → distinct devices, keep all
+            # Same provider → distinct devices; keep all, but tidy each name
+            # (polish 1: strip the DLNA ":UPnP AV" suffix on singletons too).
+            deduped.extend({**t, "name": _clean_display_name(t["name"])} for t in group)
             continue
         # Same physical device on several protocols → keep the preferred provider's
         # entry, union capabilities across the whole group, tidy the name.
@@ -97,7 +106,19 @@ def _dedupe_output_targets(targets: list[dict]) -> list[dict]:
         merged_caps = sorted({c for t in group for c in t.get("capabilities", [])})
         deduped.append({**winner, "capabilities": merged_caps,
                         "name": _clean_display_name(winner["name"])})
-    return deduped
+
+    # Polish 2: disambiguate entries that still share a display name (two distinct
+    # devices both named e.g. "Soundbar") by appending a short id distinguisher.
+    name_counts: dict[str, int] = {}
+    for t in deduped:
+        name_counts[t["name"].casefold()] = name_counts.get(t["name"].casefold(), 0) + 1
+    result: list[dict] = []
+    for t in deduped:
+        if name_counts[t["name"].casefold()] > 1 and t["target_id"]:
+            result.append({**t, "name": f"{t['name']} ({_short_id(t['target_id'])})"})
+        else:
+            result.append(t)
+    return result
 
 
 class DeviceAvailability(str, Enum):
