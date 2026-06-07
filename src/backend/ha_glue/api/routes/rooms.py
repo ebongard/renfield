@@ -772,19 +772,11 @@ async def add_output_device(
     if not room:
         raise HTTPException(status_code=404, detail="Room not found")
 
-    # Validate that exactly one device identifier is provided
-    identifiers = [request.renfield_device_id, request.ha_entity_id, request.dlna_renderer_name]
-    set_count = sum(1 for v in identifiers if v)
-    if set_count == 0:
-        raise HTTPException(
-            status_code=400,
-            detail="One of renfield_device_id, ha_entity_id, or dlna_renderer_name must be provided"
-        )
-    if set_count > 1:
-        raise HTTPException(
-            status_code=400,
-            detail="Only one of renfield_device_id, ha_entity_id, or dlna_renderer_name can be provided"
-        )
+    # Device-identity validation (exactly one legacy id OR the
+    # (output_provider, output_target_id) pair) is owned by
+    # OutputRoutingService.add_output_device — it raises ValueError, caught below
+    # as a 400. Don't duplicate a legacy-only guard here: it would reject the
+    # generic pair (samsung/sonos, or any device added via the unified picker).
 
     # Validate output_type
     from models.database import OUTPUT_TYPES
