@@ -16,6 +16,7 @@ Routing Algorithm:
 4. If nothing available → return None
 """
 
+import re
 from dataclasses import dataclass
 from enum import Enum
 
@@ -25,6 +26,73 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ha_glue.integrations.homeassistant import HomeAssistantClient
 from models.database import OUTPUT_TYPE_AUDIO, OUTPUT_TYPE_VISUAL, RoomDevice, RoomOutputDevice
+
+# Provider preference when the SAME physical device is exposed by several
+# protocols (lower = preferred): dlna first (gapless album playback), then HA,
+# then renfield, then any MCP brand. Used by _dedupe_output_targets.
+_PROVIDER_RANK = {"dlna": 0, "homeassistant": 1, "renfield": 2}
+
+
+def _device_match_key(name: str) -> str:
+    """Normalize a target name so the same physical speaker exposed via different
+    protocols collapses to one key. Strips DLNA suffixes (``:UPnP AV`` / ``:UpnpAv``),
+    lowercases, drops non-alphanumerics, and collapses consecutive duplicate words
+    (HA friendly names often double the room: "Linn Wohnzimmer Wohnzimmer")."""
+    s = name.split(":", 1)[0].lower()
+    s = re.sub(r"[^a-z0-9]+", " ", s).strip()
+    words: list[str] = []
+    for w in s.split():
+        if not words or words[-1] != w:
+            words.append(w)
+    return " ".join(words)
+
+
+def _clean_display_name(name: str) -> str:
+    """Tidy a display name: strip the DLNA transport suffix + collapse the doubled
+    trailing room word, keeping original casing."""
+    base = name.split(":", 1)[0].strip()
+    words = base.split()
+    out: list[str] = []
+    for w in words:
+        if not out or out[-1].lower() != w.lower():
+            out.append(w)
+    return " ".join(out) or name
+
+
+def _dedupe_output_targets(targets: list[dict]) -> list[dict]:
+    """Collapse the SAME physical device exposed by MULTIPLE providers into one
+    entry (e.g. a Linn shows as both an HA media_player and a DLNA renderer).
+
+    Cross-provider only: two entries that share a normalized name but come from
+    the SAME provider are distinct devices (e.g. two HA "Soundbar" entities) and
+    are BOTH kept. For a real cross-provider duplicate, the preferred provider
+    (`_PROVIDER_RANK`) wins, its capabilities are unioned across the group, and
+    the display name is tidied. First-seen order is preserved.
+    """
+    groups: dict[str, list[dict]] = {}
+    order: list[str] = []
+    for t in targets:
+        k = _device_match_key(t["name"])
+        if k not in groups:
+            groups[k] = []
+            order.append(k)
+        groups[k].append(t)
+
+    deduped: list[dict] = []
+    for k in order:
+        group = groups[k]
+        providers = {t["provider"] for t in group}
+        if len(providers) <= 1:
+            deduped.extend(group)  # same provider → distinct devices, keep all
+            continue
+        # Same physical device on several protocols → keep the preferred provider's
+        # entry, union capabilities across the whole group, tidy the name.
+        winner_provider = min(providers, key=lambda p: _PROVIDER_RANK.get(p, 9))
+        winner = next(t for t in group if t["provider"] == winner_provider)
+        merged_caps = sorted({c for t in group for c in t.get("capabilities", [])})
+        deduped.append({**winner, "capabilities": merged_caps,
+                        "name": _clean_display_name(winner["name"])})
+    return deduped
 
 
 class DeviceAvailability(str, Enum):
@@ -565,7 +633,7 @@ class OutputRoutingService:
                 for r in results:
                     targets.extend(r)
 
-        return targets
+        return _dedupe_output_targets(targets)
 
     async def get_available_dlna_renderers(self) -> list[dict]:
         """

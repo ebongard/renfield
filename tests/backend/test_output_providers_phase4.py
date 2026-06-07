@@ -118,3 +118,78 @@ async def test_no_mcp_manager_returns_builtins_only():
     svc = _service()
     out = await svc.get_aggregated_outputs(room_id=1, mcp_manager=None)
     assert {t["provider"] for t in out} == {"renfield", "homeassistant", "dlna"}
+
+
+# --- dedupe (same physical device exposed by multiple providers) -------------
+
+from ha_glue.services.output_routing_service import (  # noqa: E402
+    _clean_display_name,
+    _device_match_key,
+    _dedupe_output_targets,
+)
+
+
+def test_match_key_collapses_ha_and_dlna_names():
+    # HA friendly name (doubled room) vs DLNA renderer name → same key
+    assert _device_match_key("Linn Wohnzimmer Wohnzimmer") == _device_match_key("Linn Wohnzimmer:UPnP AV")
+    assert _device_match_key("HiFiBerry Arbeitszimmer") == _device_match_key("HiFiBerry Arbeitszimmer")
+    # distinct devices → distinct keys
+    assert _device_match_key("Linn Küche:UpnpAv") != _device_match_key("Linn Garten:UPnP AV")
+
+
+def test_clean_display_name():
+    assert _clean_display_name("Linn Wohnzimmer:UPnP AV") == "Linn Wohnzimmer"
+    assert _clean_display_name("Linn Wohnzimmer Wohnzimmer") == "Linn Wohnzimmer"
+
+
+def _t(provider, target_id, name, caps, reachable=True):
+    return {"provider": provider, "target_id": target_id, "name": name,
+            "capabilities": caps, "room_hint": None, "reachable": reachable}
+
+
+def test_dedupe_collapses_cross_provider_prefers_dlna_merges_caps():
+    targets = [
+        _t("homeassistant", "media_player.linn_wz", "Linn Wohnzimmer Wohnzimmer", ["audio", "transport"]),
+        _t("dlna", "Linn Wohnzimmer:UPnP AV", "Linn Wohnzimmer:UPnP AV", ["audio", "video"]),
+    ]
+    out = _dedupe_output_targets(targets)
+    assert len(out) == 1
+    assert out[0]["provider"] == "dlna"                       # dlna preferred
+    assert out[0]["target_id"] == "Linn Wohnzimmer:UPnP AV"
+    assert out[0]["name"] == "Linn Wohnzimmer"               # tidied
+    assert out[0]["capabilities"] == ["audio", "transport", "video"]  # unioned
+
+
+def test_dedupe_keeps_same_provider_same_name_as_distinct():
+    # Two different HA entities both named "Soundbar" → must NOT merge
+    targets = [
+        _t("homeassistant", "media_player.buro", "Soundbar", ["audio"]),
+        _t("homeassistant", "media_player.118", "Soundbar", ["audio"]),
+    ]
+    out = _dedupe_output_targets(targets)
+    assert len(out) == 2
+    assert {t["target_id"] for t in out} == {"media_player.buro", "media_player.118"}
+
+
+def test_dedupe_preserves_singletons_and_order():
+    targets = [
+        _t("renfield", "sat-1", "Kitchen Sat", ["audio"]),
+        _t("samsung", "192.168.1.47", "Living Room TV", ["video", "power"]),
+    ]
+    out = _dedupe_output_targets(targets)
+    assert [t["target_id"] for t in out] == ["sat-1", "192.168.1.47"]
+
+
+async def test_aggregation_dedupes_ha_dlna_overlap():
+    # get_aggregated_outputs end-to-end: HA + dlna both expose "Wohnzimmer Speaker"
+    svc = _service()
+    svc.get_available_renfield_devices = AsyncMock(return_value=[])
+    svc.get_available_ha_media_players = AsyncMock(return_value=[
+        {"entity_id": "media_player.wz", "friendly_name": "Wohnzimmer Speaker"},
+    ])
+    svc.get_available_dlna_renderers = AsyncMock(return_value=[
+        {"name": "Wohnzimmer Speaker:UPnP AV", "friendly_name": "Wohnzimmer Speaker:UPnP AV"},
+    ])
+    out = await svc.get_aggregated_outputs(room_id=1, mcp_manager=None)
+    assert len(out) == 1
+    assert out[0]["provider"] == "dlna" and out[0]["name"] == "Wohnzimmer Speaker"
