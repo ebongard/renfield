@@ -95,6 +95,20 @@ The hybrid extractor (deterministic Steuernummer/IBAN with whitespace normalizat
 - **`lang` is not plumbed to the `post_document_ingest` firing site.** WHAT: `RAGService.process_existing_document` fires the hook with `chunks/document_id/user_id/field_text` but **no `lang`** (`rag_service.py:~422`). Both consumers fall back to `settings.default_language`, so a non-default-language KB document extracts under the wrong language prompt. Surfaced (not introduced) by the worker-hook fix (#642) — before that, the worker path never ran extraction so the fallback never bit there. WHY: extraction quality for multilingual corpora. FIX: resolve the document's language (it is detected at ingest) and pass it through to `run_hooks(...)`. **Trigger:** when a non-German-default KB is ingested and field/entity extraction quality matters.
 - **KG hook accumulates entities on re-ingest (no pre-delete by source).** WHAT: unlike the Schicht A hook (write-then-purge of old fact atoms), `kg_post_document_ingest_hook` / `extract_from_chunks` does **no** delete-by-`source_ref` before extracting, so re-indexing a document accumulates duplicate KG entities. Pre-existing; now reachable from the worker path too after #642 (force-OCR reindexes re-run extraction). WHY: KG dedup correctness across reindex. FIX: pre-delete the document's prior KG contributions (mirror the Schicht A write-then-purge), or upsert on a stable `(source_document_id, name, entity_type)` key. **Trigger:** on observing duplicate `kg_entities` for a reindexed document.
 
+### Output providers — destructive cleanup (after additive schema soaks)
+
+**WHAT:** Once the generic output-provider feature PR (`docs/design/output-providers.md`) has soaked in prod on its additive schema, ship a follow-up PR that drops the three legacy `RoomOutputDevice` columns (`renfield_device_id`, `ha_entity_id`, `dlna_renderer_name`), removes the brand-specific `internal.play_album_on_dlna` / `play_video_on_dlna` / `play_from_server` shims, and deletes the per-source discovery methods (`get_available_renfield_devices` / `_ha_media_players` / `_dlna_renderers`) now superseded by the registry.
+
+**WHY:** The eng-review (2026-06-07) deliberately split the irreversible `DROP COLUMN` out of the feature PR — a feature flag can't protect a column drop, and bundling it makes the feature un-revertable. The additive-only feature PR adds `output_provider`+`output_target_id` with a dual-read window; this item is the obligation that creates. Without it, dead dual-read code + unused columns + duplicate dispatch shims linger indefinitely.
+
+**CONTEXT:** Primary source `docs/design/output-providers.md` (rollout phase 5 + "Locked decisions" #1). Provider Protocol/registry, `play_in_room` generic dispatch, and the `available-outputs` registry loop all land in the feature PR; this PR only removes the now-dead legacy paths. Needs a real `alembic upgrade head` PG test (repo migration rule) and a confirm that no row still resolves via the old-column fallback before dropping.
+
+**DEPENDS ON:** Generic output-provider feature PR shipped + `OUTPUT_PROVIDERS_ENABLED` on in prod + a soak window (verify dual-read fallback unused).
+
+**SOURCE:** `docs/design/output-providers.md` — eng-review 2026-06-07.
+
+---
+
 ### Run `/design-consultation` to formalize DESIGN.md (BEFORE next major frontend surface)
 
 **WHAT:** Run the `/design-consultation` skill to formalize Renfield's existing implicit design system into a DESIGN.md file. Captures the palette (crimson primary + turquoise accent + cream neutral), typography (Cormorant Variable display + DM Sans Variable body), component vocabulary (cards, inputs, buttons, animations), and design philosophy.
