@@ -10,8 +10,13 @@
 # Token persistence: the one-time "Allow Renfield?" websocket pairing issues a
 # token saved to $RENFIELD_STATE_DIR/token.json. A small RWO PVC mounted at /state
 # keeps it across restarts. WoL power-on + DLNA media/volume do NOT need the token;
-# only websocket keys/apps/power-off do. RWO is fine because hostPort already pins
-# the pod to one node (single instance), matching strategy: Recreate.
+# only websocket keys/apps/power-off do. RWO + strategy:Recreate matches the
+# postgres/redis pattern: the single replica terminates before its replacement
+# starts, so Longhorn detaches and reattaches the volume on reschedule (no
+# Multi-Attach). hostPort:9092 only caps it at one instance per node — it does
+# NOT pin the node, and no nodeSelector is needed (a TV-control server shouldn't
+# be less reschedulable than the database, which runs the same way unpinned).
+# Losing the token only re-triggers the one-time pairing popup; it never crashes.
 ---
 apiVersion: v1
 kind: PersistentVolumeClaim
@@ -23,6 +28,7 @@ metadata:
     app.kubernetes.io/part-of: renfield
 spec:
   accessModes: [ReadWriteOnce]
+  storageClassName: longhorn
   resources:
     requests:
       storage: 64Mi

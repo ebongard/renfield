@@ -1230,6 +1230,8 @@ DLNA_MCP_ENABLED=true
 
 # Samsung Smart TV (Tizen — websocket remote, Wake-on-LAN, DLNA media)
 # Agent-only: chat-driven TV control. Dedicated hostNetwork image (renfield-mcp-samsung).
+# Ships DARK: the k8s configmap sets this false; flip to true only AFTER the
+# samsung-mcp image is built and the one-time TV pairing is done.
 SAMSUNG_MCP_ENABLED=true
 
 # n8n (Workflow Automation)
