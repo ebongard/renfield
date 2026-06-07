@@ -445,7 +445,7 @@ RAG_CONTEXT_WINDOW=1              # Benachbarte Chunks (0=deaktiviert)
 Siehe [WAKEWORD_CONFIGURATION.md](WAKEWORD_CONFIGURATION.md) für Details.
 
 ### Audio-Output-Routing
-Intelligentes TTS-Routing zum optimalen Ausgabegerät pro Raum (prioritätsbasiert, mit Verfügbarkeitsprüfung). Unterstützt Renfield-Geräte, HA Media Players und DLNA Renderer.
+Intelligentes TTS-Routing zum optimalen Ausgabegerät pro Raum (prioritätsbasiert, mit Verfügbarkeitsprüfung). Unterstützt Renfield-Geräte, HA Media Players und DLNA Renderer. Optional (`OUTPUT_PROVIDERS_ENABLED`): **generische Output-Provider** — neue Marken (Samsung TV, künftig Sonos/LG) werden room-auswählbar/-abspielbar/-steuerbar per `output_provider:`-Stanza in `mcp_servers.yaml`, ohne Backend-/Frontend-Code; inkl. Power-on (Wake-on-LAN) vor Wiedergabe. Siehe `docs/OUTPUT_ROUTING.md`.
 
 ### DLNA Gapless Album Playback
 DLNA-Renderer ermöglichen lückenlose Album-Wiedergabe: Jellyfin liefert die Tracks, der DLNA MCP Server queued sie gapless auf dem Renderer. Album-Art und Metadaten werden an den Player und als Inline-Bild in den Chat weitergegeben. Siehe `internal.play_album_on_dlna` Tool.

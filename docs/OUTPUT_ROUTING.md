@@ -11,6 +11,21 @@ Renfield unterstützt intelligentes Routing von TTS-Ausgaben an das beste verfü
 - **Automatischer Fallback** auf Eingabegerät bei Nichtverfügbarkeit
 - **Unterstützt Renfield-Geräte** (Satellites, Web Panels), **Home Assistant Media Player** und **DLNA Renderer**
 - **DLNA Renderer Discovery** via SSDP-Multicast (automatische Erkennung im Netzwerk)
+- **Generische Output-Provider** (`OUTPUT_PROVIDERS_ENABLED`, opt-in) — neue Marken (Samsung TV, künftig Sonos/LG) werden room-fähig per Config-Stanza, nicht per Code
+
+## Generische Output-Provider (`OUTPUT_PROVIDERS_ENABLED`)
+
+Opt-in-Schicht (Standard aus → Verhalten byte-identisch zum Legacy-Routing). Quelle der Wahrheit: [`docs/design/output-providers.md`](design/output-providers.md).
+
+Statt der drei hartkodierten Quellen (renfield / homeassistant / dlna) macht ein **Provider-Registry** ein neues Ausgabegerät zu *Config + kleinem MCP-Contract*:
+
+- **Stanza in `mcp_servers.yaml`** (`output_provider:`) bildet die normalisierten Contract-Methoden (`discover`/`play`/`control`/`status`) auf die *echten* Tools des MCP-Servers ab — die Übersetzung lebt **vollständig im Renfield-Backend** (`ha_glue/services/output_providers.py`), nie in den (fremden) MCP-Servern.
+- **`(output_provider, output_target_id)`** ersetzt die drei Marken-Spalten auf `room_output_devices` (additiv eingeführt, Dual-Read; die alten Spalten fallen in einem späteren PR weg).
+- **Aggregierte Discovery**: `GET /{room}/available-outputs` liefert bei aktivem Flag eine kapazitäts-getaggte Union (`output_targets`) über alle Provider — parallel ermittelt, mit Per-Provider-Timeout (`OUTPUT_PROVIDER_DISCOVER_TIMEOUT`); ein nicht erreichbarer Provider erscheint **degradiert (nicht weggelassen)**.
+- **Generischer Dispatch**: `internal.play_in_room` / `internal.media_control` routen room-aufgelöste Provider-Ziele über das Registry inkl. **Power-on** (Status off/unerreichbar → `control('on')` → Bereitschafts-Poll bis `boot_timeout` → play; weckt nicht → ehrlicher Fehler). dlna bleibt auf dem bewährten Gapless-Pfad.
+- **Frontend**: `RoomOutputSettings` wird datengetrieben — ein einziger Picker über alle Provider mit Capability-Badges; ein neues Gerät erfordert **keine** UI-Änderung.
+
+Erste Marke: **Samsung TV** (`renfield-mcp-samsung`) — wird damit room-auswählbar, room-abspielbar und room-steuerbar.
 
 ## Voraussetzungen
 

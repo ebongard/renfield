@@ -72,7 +72,7 @@ docker exec -it renfield-backend alembic downgrade -1
 
 **Request Flow:** User → React Frontend → WebSocket/REST → FastAPI Backend → Intent Recognition → Action Execution → MCP/RAG → Streaming Response
 
-**Subsystems:** Intent Recognition, Agent Loop (ReAct), MCP Integration (8+ servers), RAG/Knowledge Base, Conversation Persistence, Hook System (plugin API), Auth/RPBAC, Presence Detection, Media Follow Me, Speaker Recognition, Knowledge Graph, Paperless Audit, Audio Output Routing, Proactive Notifications (webhook + privacy-aware delivery — both WS push and TTS are presence-gated for non-public, `PROACTIVE_ENABLED`), Obligation-Deadline Notifier (`OBLIGATION_NOTIFIER_ENABLED`), Device Management, **Circles (access tiers)**
+**Subsystems:** Intent Recognition, Agent Loop (ReAct), MCP Integration (8+ servers), RAG/Knowledge Base, Conversation Persistence, Hook System (plugin API), Auth/RPBAC, Presence Detection, Media Follow Me, Speaker Recognition, Knowledge Graph, Paperless Audit, Audio Output Routing (+ generic **output providers** behind `OUTPUT_PROVIDERS_ENABLED` — pluggable room media/control targets via an `output_provider:` MCP stanza; new brand = config, not code; see `docs/OUTPUT_ROUTING.md` + `docs/design/output-providers.md`), Proactive Notifications (webhook + privacy-aware delivery — both WS push and TTS are presence-gated for non-public, `PROACTIVE_ENABLED`), Obligation-Deadline Notifier (`OBLIGATION_NOTIFIER_ENABLED`), Device Management, **Circles (access tiers)**
 
 **Key config:** All via `.env` loaded by `utils/config.py` (Pydantic Settings). Full list: `docs/ENVIRONMENT_VARIABLES.md`.
 

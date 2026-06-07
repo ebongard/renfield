@@ -1234,6 +1234,16 @@ DLNA_MCP_ENABLED=true
 # samsung-mcp image is built and the one-time TV pairing is done.
 SAMSUNG_MCP_ENABLED=true
 
+# Generic output-provider registry for room media/control routing (opt-in/dark).
+# When on, room output discovery + dispatch route through the pluggable provider
+# registry (built-in renfield/HA + MCP-declared dlna/samsung/sonos via the
+# `output_provider:` stanza) instead of the hardcoded 3-source branches. Off =>
+# byte-identical legacy routing. See docs/OUTPUT_ROUTING.md + docs/design/output-providers.md.
+OUTPUT_PROVIDERS_ENABLED=false
+# Per-provider timeout (seconds) for the aggregated available-outputs discover
+# fan-out; a provider exceeding it shows DEGRADED (not dropped). Default 5.0.
+OUTPUT_PROVIDER_DISCOVER_TIMEOUT=5.0
+
 # n8n (Workflow Automation)
 N8N_MCP_ENABLED=true
 
