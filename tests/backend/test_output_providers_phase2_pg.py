@@ -161,6 +161,31 @@ class TestAddOutputDevice:
         assert dev.device_name == "192.168.1.47"  # auto from target id
         assert dev.target_type == "samsung"
 
+    async def test_explicit_pair_legacy_provider_backfills_brand_column(self, pg_db_session, monkeypatch):
+        # A legacy provider added via the unified picker (pair-only) must also get
+        # its brand column so the legacy dispatch/resolve paths still resolve it.
+        _commit_as_flush(pg_db_session, monkeypatch)
+        room = await _make_room(pg_db_session, "add_pair_dlna")
+        svc = OutputRoutingService(pg_db_session)
+        dev = await svc.add_output_device(
+            room_id=room.id, output_type="visual",
+            output_provider="dlna", output_target_id="Wohnzimmer TV",
+        )
+        assert dev.dlna_renderer_name == "Wohnzimmer TV"   # back-filled
+        assert dev.output_provider == "dlna"
+        assert dev.output_target_id == "Wohnzimmer TV"
+        # HA pair → ha_entity_id back-filled; samsung pair → no legacy column.
+        ha = await svc.add_output_device(
+            room_id=room.id, output_type="audio",
+            output_provider="homeassistant", output_target_id="media_player.x",
+        )
+        assert ha.ha_entity_id == "media_player.x"
+        sam = await svc.add_output_device(
+            room_id=room.id, output_type="visual",
+            output_provider="samsung", output_target_id="192.168.1.47",
+        )
+        assert sam.renfield_device_id is None and sam.ha_entity_id is None and sam.dlna_renderer_name is None
+
     async def test_rejects_pair_plus_legacy(self, pg_db_session, monkeypatch):
         _commit_as_flush(pg_db_session, monkeypatch)
         room = await _make_room(pg_db_session, "add_both")

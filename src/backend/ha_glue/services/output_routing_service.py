@@ -299,8 +299,11 @@ class OutputRoutingService:
 
         Two ways to identify the target:
         - **Generic pair** ``(output_provider, output_target_id)`` — for any
-          provider, including brands with no legacy column (e.g. samsung). Legacy
-          columns stay NULL.
+          provider. For a KNOWN legacy provider (renfield/homeassistant/dlna) the
+          matching brand column is ALSO back-filled, so the legacy resolve/dispatch/
+          availability paths (which still read the brand columns during the soak)
+          keep working for devices added via the unified picker. A new brand with
+          no legacy column (e.g. samsung) stays pair-only → registry dispatch.
         - **Legacy column** — exactly one of renfield_device_id / ha_entity_id /
           dlna_renderer_name. The generic pair is dual-written from it so both
           read paths resolve during the soak (docs/design/output-providers.md).
@@ -316,6 +319,16 @@ class OutputRoutingService:
                     "Provide either the (output_provider, output_target_id) pair "
                     "OR a single legacy id column, not both"
                 )
+            # Back-fill the matching legacy column for known legacy providers so the
+            # existing dispatch paths (which read the brand columns until the
+            # DROP COLUMN cleanup) resolve a unified-picker add. Non-legacy brands
+            # (samsung/sonos) have no column and route via the registry instead.
+            if output_provider == "renfield":
+                renfield_device_id = output_target_id
+            elif output_provider == "homeassistant":
+                ha_entity_id = output_target_id
+            elif output_provider == "dlna":
+                dlna_renderer_name = output_target_id
             if not device_name:
                 device_name = output_target_id
         else:
