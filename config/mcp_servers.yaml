@@ -212,6 +212,24 @@ servers:
     enabled: "${SAMSUNG_MCP_ENABLED:-false}"
     refresh_interval: 300
     example_intent: mcp.samsung.tv_power
+    # Output-provider stanza (docs/design/output-providers.md): adapts the
+    # normalized contract onto samsung's real tools, entirely backend-side.
+    # Makes the TV room-selectable + room-playable when OUTPUT_PROVIDERS_ENABLED.
+    # status maps to tv_info: an asleep TV can't be probed (the call fails), which
+    # the dispatcher reads as "needs waking" → tv_power on → poll → play.
+    output_provider:
+      capabilities: [video, audio, power]
+      boot_timeout: 25
+      discover: { tool: tv_discover, list_at: tvs }
+      play: { tool: tv_media, args: { action: play_url, url: "{url}", title: "{title}" } }
+      status: { tool: tv_info }
+      control:
+        # NOTE: "on"/"off" MUST be quoted — bare on/off are YAML 1.1 booleans,
+        # which would make the control-map keys True/False instead of strings.
+        "on": { tool: tv_power, args: { action: "on" } }
+        "off": { tool: tv_power, args: { action: "off" } }
+        volume: { tool: tv_volume, args: { level: "{value}" } }
+        mute: { tool: tv_volume, args: { action: mute } }
     prompt_tools:
       - tv_discover
       - tv_info

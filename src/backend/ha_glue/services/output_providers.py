@@ -419,6 +419,12 @@ def _parse_stanza(name: str, stanza: dict[str, Any], mcp_manager: Any) -> McpOut
     control_raw = stanza.get("control")
     if isinstance(control_raw, dict):
         for action, spec in control_raw.items():
+            # YAML 1.1 footgun: bare on/off keys parse as booleans. Coerce back so
+            # an unquoted third-party stanza still maps to the "on"/"off" actions.
+            if action is True:
+                action = "on"
+            elif action is False:
+                action = "off"
             m = _coerce_method(spec)
             if m is not None:
                 control_maps[str(action)] = m

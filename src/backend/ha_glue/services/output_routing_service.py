@@ -193,14 +193,19 @@ class OutputRoutingService:
         """
         Check if an output device is available for playback.
         """
-        if output_device.is_renfield_device:
-            return await self._check_renfield_device_availability(output_device.renfield_device_id)
-        elif output_device.is_dlna_device:
-            # DLNA availability via SSDP probing is too expensive for routing checks.
-            # Assume available — playback will fail gracefully if renderer is off.
-            return DeviceAvailability.AVAILABLE
+        # Use the dual-read target_type so generic-provider rows (samsung/sonos/…
+        # with only the (output_provider, output_target_id) pair) resolve too.
+        target_type = output_device.target_type
+        if target_type == "renfield":
+            return await self._check_renfield_device_availability(output_device.target_id)
+        elif target_type == "homeassistant":
+            return await self._check_ha_device_availability(output_device.target_id)
         else:
-            return await self._check_ha_device_availability(output_device.ha_entity_id)
+            # dlna + any generic output provider (samsung, sonos, …). SSDP/network
+            # probing is too expensive for routing; assume available — playback
+            # (and the power-on poll for power-capable providers) verifies for real
+            # and fails gracefully / wakes the device at dispatch time.
+            return DeviceAvailability.AVAILABLE
 
     async def _check_renfield_device_availability(
         self,

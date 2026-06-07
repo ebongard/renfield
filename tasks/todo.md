@@ -32,12 +32,21 @@ follow-up). Flag OFF = byte-identical to today.
       deploy time (repo convention: ha_glue room tables live in a separate plugin migration tree, so a
       core-only from-scratch upgrade can't build them — backfill LOGIC tested via create_all'd PG instead).
 
-## Phase 3 — Generic dispatch (registry) + power-on
-- [ ] P3.1 `play_in_room`/`_media_control`/`_resolve_room_player` route via registry when flag on
-- [ ] P3.2 power-on: status==off → control(on) → poll-until-ready(boot_timeout) → play; never-wakes → honest error
-- [ ] P3.3 keep old `internal.play_*_on_dlna` as shims delegating to the resolver
-- [ ] P3.4 dlna + samsung `output_provider` stanzas in mcp_servers.yaml
-- [ ] P3.5 tests: dispatch via registry, power-on 3 branches, shim-regression parity
+## Phase 3 — config-driven adapter + generic dispatch + power-on  ✅ DONE (58 tests; 0 regressions)
+- [x] P3a config-driven MCP adapter (bridge in renfield, not in MCP servers) — McpOutputProvider
+      maps contract↔native tools via per-method arg-templates; control per-action; 25 tests
+- [x] P3.1 `_resolve_room_player` + `_play_in_room` route via registry when flag on (samsung);
+      dlna/HA/renfield keep their legacy branches. `_check_device_availability` uses dual-read
+      target_type so generic-provider rows resolve as available.
+- [x] P3.2 power-on: status off/unreachable → control('on') → `_poll_provider_ready` (bounded by
+      boot_timeout, iteration-based) → play; never-wakes → honest "could not wake" error
+- [x] P3.4 samsung `output_provider` stanza (quoted "on"/"off" keys — YAML-bool footgun; parser
+      also coerces bool keys defensively). dlna stays legacy (gapless capability preserved).
+- [x] P3.5 tests: 9 dispatch (already-on / power-on / never-wakes / control-fail / play-fail /
+      non-power / poll bounds) + 25 adapter; existing internal_tools = same 6 pre-existing
+      stale-tree failures with AND without my change (proven zero regression).
+- N/A P3.3 shims: `internal.play_*_on_dlna` unchanged (dlna stays legacy this phase); they delegate
+      to the generic resolver only when dlna itself moves onto the contract (deferred w/ dlna).
 
 ## Phase 4 — Aggregation + frontend
 - [ ] P4.1 `available-outputs` iterates registry (parallel discover, per-provider timeout, degraded-not-dropped)

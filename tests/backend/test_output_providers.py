@@ -117,6 +117,17 @@ def test_build_skips_malformed():
     assert set(build_mcp_output_providers(mgr)) == {"good"}
 
 
+def test_build_coerces_yaml_bool_control_keys():
+    # Unquoted on/off in YAML parse as booleans; the parser must coerce them back.
+    stanza = {
+        "capabilities": ["power"],
+        "discover": "d",
+        "control": {True: {"tool": "pwr", "args": {"a": "on"}}, False: {"tool": "pwr", "args": {"a": "off"}}},
+    }
+    p = build_mcp_output_providers(_fake_manager({"x": stanza}))["x"]
+    assert set(p.control_maps) == {"on", "off"}
+
+
 def test_build_keeps_unknown_capability():
     mgr = _fake_manager({"weird": {"capabilities": ["audio", "hologram"], "discover": "d"}})
     assert "hologram" in build_mcp_output_providers(mgr)["weird"].capabilities

@@ -243,6 +243,27 @@ class InternalToolService:
                         "action_taken": False,
                     }
 
+                # Generic output provider (samsung, sonos, …) — registry-driven
+                # dispatch. Gated on the flag; dlna/HA/renfield keep their own
+                # branches below. Surfaces the (target_type, output_target_id)
+                # pair for _play_in_room's registry path.
+                from utils.config import settings as _root_settings
+                if (
+                    _root_settings.output_providers_enabled
+                    and decision.target_type not in ("renfield", "homeassistant", "dlna")
+                ):
+                    return {
+                        "success": True,
+                        "message": f"Found {decision.target_type} output for {room.name}: {decision.target_id}",
+                        "action_taken": True,
+                        "data": {
+                            "target_type": decision.target_type,
+                            "output_target_id": decision.target_id,
+                            "room_name": room.name,
+                            "device_name": decision.output_device.device_name or decision.target_id,
+                        },
+                    }
+
                 # DLNA renderer — return target_type + renderer name
                 if decision.target_type == "dlna":
                     return {
@@ -380,6 +401,18 @@ class InternalToolService:
                 return resolve_result
 
         data = resolve_result["data"]
+
+        # Generic output provider (samsung, sonos, …): route through the registry
+        # adapter with bounded power-on. Gated on the flag; the resolver only
+        # returns these target_types when output_providers_enabled is on.
+        from utils.config import settings as _root_settings
+        if _root_settings.output_providers_enabled:
+            provider = self._get_output_provider(data.get("target_type"))
+            if provider is not None:
+                return await self._play_via_provider(
+                    provider, data, media_url=media_url, title=title,
+                    room_name=room_name, params=params,
+                )
 
         # DLNA renderers have no HA entity_id and must be driven through the
         # DLNA MCP path, not media_player.play_media. Without this branch the
@@ -531,6 +564,119 @@ class InternalToolService:
                 "message": f"Error playing media: {e!s}",
                 "action_taken": False,
             }
+
+    # --- Generic output-provider dispatch (output_providers_enabled) ---------
+
+    def _get_output_provider(self, target_type: str | None):
+        """Look up a registry McpOutputProvider for a target_type (None if absent
+        or the registry can't be built). Built fresh per call from the live
+        MCPManager so a re-registered server is picked up without restart."""
+        if not target_type:
+            return None
+        try:
+            from main import app
+            from ha_glue.services.output_providers import build_mcp_output_providers
+            mcp_manager = getattr(app.state, "mcp_manager", None)
+            if not mcp_manager:
+                return None
+            return build_mcp_output_providers(mcp_manager).get(target_type)
+        except Exception as e:  # never let provider lookup break playback
+            logger.error(f"output provider lookup failed for '{target_type}': {e}")
+            return None
+
+    async def _poll_provider_ready(self, provider, target_id: str) -> bool:
+        """Poll status() until the target is no longer 'off', bounded by the
+        provider's boot_timeout. Returns True when ready, False on timeout.
+        Iteration-bounded (no wall-clock dependency) so it is test-friendly."""
+        import asyncio as _asyncio
+
+        interval = 2.0
+        max_polls = max(1, int((provider.boot_timeout or interval) / interval))
+        for _ in range(max_polls):
+            await _asyncio.sleep(interval)
+            try:
+                st = await provider.status(target_id)
+            except Exception:  # transient during boot — keep polling
+                continue
+            if not st.is_off:
+                return True
+        return False
+
+    async def _play_via_provider(
+        self, provider, data: dict, *, media_url: str, title: str | None,
+        room_name: str, params: dict,
+    ) -> dict:
+        """Play through a generic output provider: power-on (bounded poll) if the
+        device is off and the provider can power, then play. Honest errors — a TV
+        that won't wake returns failure, never a fake success."""
+        from ha_glue.services.output_providers import MediaRef, OutputProviderError
+
+        target_id = data.get("output_target_id") or data.get("target_id") or ""
+        device_name = data.get("device_name") or target_id
+        resolved_room = data.get("room_name", room_name)
+
+        # Power-on before play if supported and the device is off OR unreachable.
+        # A TV in standby typically can't be probed at all (status() raises), so a
+        # failed status is itself the "needs waking" signal, not just state=="off".
+        if provider.has_capability("power"):
+            try:
+                st = await provider.status(target_id)
+            except OutputProviderError as e:
+                logger.info(f"{provider.key} pre-play status failed ({e}); treating as off → power-on")
+                st = None
+            if st is None or st.is_off:
+                try:
+                    await provider.control(target_id, "on")
+                except OutputProviderError as e:
+                    return {
+                        "success": False,
+                        "message": f"Could not power on {device_name}: {e}",
+                        "action_taken": False,
+                    }
+                if not await self._poll_provider_ready(provider, target_id):
+                    return {
+                        "success": False,
+                        "message": (
+                            f"Could not wake {device_name} in {resolved_room} within "
+                            f"{int(provider.boot_timeout)}s — it may be unplugged or "
+                            f"Wake-on-LAN is off."
+                        ),
+                        "action_taken": False,
+                    }
+
+        try:
+            res = await provider.play(
+                target_id, [MediaRef(url=media_url, title=title)], mode="now"
+            )
+        except OutputProviderError as e:
+            return {
+                "success": False,
+                "message": f"Playback failed on {device_name}: {e}",
+                "action_taken": False,
+            }
+        if not res.ok:
+            detail = res.message or res.state or "unknown error"
+            return {
+                "success": False,
+                "message": f"Playback failed on {device_name}: {detail}",
+                "action_taken": False,
+            }
+
+        await self._register_media_follow(
+            params, resolved_room, "single_url", media_url=media_url, title=title,
+        )
+        return {
+            "success": True,
+            "message": f"Playing on {device_name} in {resolved_room}",
+            "action_taken": True,
+            "data": {
+                "target_type": provider.key,
+                "output_target_id": target_id,
+                "room_name": resolved_room,
+                "device_name": device_name,
+                "media_url": media_url,
+            },
+        }
 
     async def _play_url_on_dlna(
         self,
