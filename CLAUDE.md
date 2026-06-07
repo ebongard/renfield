@@ -10,7 +10,7 @@ Renfield is a fully offline-capable, self-hosted **digital assistant** — a per
 
 **LLM:** Local models via Ollama (multi-model: chat, intent, RAG, agent, vision, embeddings).
 
-**Integrations:** Home Assistant, Frigate, n8n, SearXNG, Jellyfin, DLNA, Paperless, Email, Calendar — all via MCP servers.
+**Integrations:** Home Assistant, Frigate, n8n, SearXNG, Jellyfin, DLNA, Samsung TV, Paperless, Email, Calendar — all via MCP servers. (DLNA + Samsung TV run as dedicated `hostNetwork` images — `renfield-mcp-dlna` / `renfield-mcp-samsung` — not in the backend image; all other stdio servers live in the backend image.)
 
 ## KRITISCHE REGELN - IMMER BEACHTEN
 

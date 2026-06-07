@@ -199,6 +199,42 @@ servers:
         - "What media servers are on the network?"
         - "Search the library for Pink Floyd"
 
+  # --- Samsung Smart TV (Tizen) MCP Server ---
+  # Dedicated Python MCP server (renfield-mcp-samsung) for Samsung TV control:
+  # websocket remote (keys/apps/power-off), Wake-on-LAN power-on, and DLNA media.
+  # Companion to the dlna server — Samsung's vendor channels are NOT DLNA ops.
+  # Runs as a dedicated hostNetwork image (SSDP + WoL + websocket to the TV).
+  # AGENT-ONLY for now: chat-driven control. Room-view selection arrives with the
+  # generic output-provider architecture (docs/design/output-providers.md).
+  - name: samsung
+    transport: streamable_http
+    url: "${SAMSUNG_MCP_URL:-http://host.docker.internal:9092/mcp}"
+    enabled: "${SAMSUNG_MCP_ENABLED:-false}"
+    refresh_interval: 300
+    example_intent: mcp.samsung.tv_power
+    prompt_tools:
+      - tv_discover
+      - tv_info
+      - tv_power
+      - tv_navigate
+      - tv_volume
+      - tv_channel
+      - tv_launch
+      - tv_apps
+      - tv_current_app
+      - tv_media
+    examples:
+      de:
+        - "Schalte den Samsung Fernseher ein"
+        - "Starte Netflix auf dem Fernseher"
+        - "Mach den Fernseher leiser"
+        - "Wechsle auf HDMI am Samsung TV"
+      en:
+        - "Turn on the Samsung TV"
+        - "Launch Netflix on the TV"
+        - "Turn the TV volume down"
+        - "Switch to HDMI on the Samsung TV"
+
   # --- n8n MCP Server (Workflow Builder + Node Catalog) ---
   # npm: n8n-mcp (czlonkowski/n8n-mcp)
   # Provides: Workflow CRUD, node catalog (1,084+ nodes),

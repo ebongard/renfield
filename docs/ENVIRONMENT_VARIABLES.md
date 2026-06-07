@@ -1228,6 +1228,10 @@ TUNEIN_PARTNER_ID=                     # Optional: TuneIn Partner ID für höher
 # DLNA (Media Renderer Control)
 DLNA_MCP_ENABLED=true
 
+# Samsung Smart TV (Tizen — websocket remote, Wake-on-LAN, DLNA media)
+# Agent-only: chat-driven TV control. Dedicated hostNetwork image (renfield-mcp-samsung).
+SAMSUNG_MCP_ENABLED=true
+
 # n8n (Workflow Automation)
 N8N_MCP_ENABLED=true
 
@@ -1281,6 +1285,15 @@ HOME_ASSISTANT_URL=http://homeassistant.local:8123
 # DLNA MCP Server URL (läuft als Host-Service, nicht im Docker)
 # Default: http://host.docker.internal:9091/mcp
 DLNA_MCP_URL=http://host.docker.internal:9091/mcp
+
+# Samsung TV MCP Server URL (dediziertes hostNetwork-Image, nicht im Backend)
+# Default: http://host.docker.internal:9092/mcp ; in k8s: http://samsung-mcp:9092/mcp
+SAMSUNG_MCP_URL=http://host.docker.internal:9092/mcp
+# Optional: feste TV-IP (überspringt SSDP) + Identität im Pairing-Popup
+# SAMSUNG_TV_HOST=192.168.1.47
+# SAMSUNG_CLIENT_NAME=Renfield
+# Pairing-Token-Persistenz (in k8s: PVC samsung-mcp-state an /state gemountet)
+# RENFIELD_STATE_DIR=/state
 
 # n8n Base URL
 N8N_BASE_URL=http://192.168.1.78:5678

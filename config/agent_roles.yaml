@@ -49,7 +49,7 @@ roles:
     description:
       de: "Medien: Musik, Filme, Serien, Radio suchen und abspielen (auch in bestimmten Raeumen)"
       en: "Media: search and play music, movies, series, radio (also in specific rooms)"
-    mcp_servers: [jellyfin, dlna, radio]
+    mcp_servers: [jellyfin, dlna, radio, samsung]
     internal_tools: [internal.resolve_room_player, internal.play_in_room, internal.play_album_on_dlna, internal.play_video_on_dlna, internal.media_control, internal.play_radio, internal.save_radio_favorite, internal.list_radio_favorites, internal.remove_radio_favorite]
     max_steps: 6
     prompt_key: agent_prompt_media
@@ -76,7 +76,7 @@ roles:
     description:
       de: "Routinen: Gute-Nacht-Routine, Guten-Morgen-Routine, Schlafenszeit, Aufstehen — mehrstufige Smart-Home-Ablaeufe mit Statusbericht"
       en: "Routines: good-night routine, good-morning routine, bedtime, waking up — multi-step smart home sequences with status briefing"
-    mcp_servers: [homeassistant, calendar, weather, jellyfin, dlna, radio]
+    mcp_servers: [homeassistant, calendar, weather, jellyfin, dlna, radio, samsung]
     internal_tools: [internal.get_all_presence, internal.get_user_location, internal.resolve_room_player, internal.media_control, internal.play_in_room, internal.play_radio]
     max_steps: 15
     prompt_key: agent_prompt_routine

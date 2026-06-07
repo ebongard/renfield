@@ -191,6 +191,49 @@ docker run --rm -v /tmp/renfield-build-vX.Y.Z/voice-server:/work -w /work \
 
 **GPU-node driver drift (verified painful, v2.8.0 deploy 2026-05-22).** The `voice-server` Deployment runs on the `k8s-gpu-3` GPU node. If `apt` upgraded that node's NVIDIA driver libraries without a reboot, a *new* voice-server pod CrashLoops with `failed to initialize NVML: Driver/library version mismatch` — the *old* pod keeps running, only new pods fail, so it stays latent until the next voice-server rollout. Fix is a **node reboot**, not an image rollback (a fresh pod on the old image crashes identically). A live `modprobe -r nvidia*` reload fails — `nvidia_uvm` stays held even when `lsof /dev/nvidia*` is empty. Procedure: `kubectl cordon k8s-gpu-3` → delete the `frontend` pod so it reschedules off the node (keeps the UI up) → `ssh ... sudo reboot` → wait for `Ready` → `kubectl uncordon` → `kubectl rollout restart deploy/voice-server`. Confirm `dkms status` has the nvidia module built for the kernel the node will boot into first (a pending kernel update can switch it).
 
+### Samsung-mcp image (build ONLY when `../renfield-mcp-samsung/` changed)
+
+Like dlna-mcp, `samsung-mcp` is a SEPARATE small image built from the Dockerfile
+in the **`renfield-mcp-samsung` repo** (sibling of the renfield repo) — NOT the
+backend image. The backend reaches it over streamable-http only (never imports
+the package), so a Samsung change needs no backend rebuild. It runs on
+`hostNetwork` (SSDP discovery + Wake-on-LAN broadcast + websocket/UPnP to the
+TV) with a small RWO PVC (`samsung-mcp-state`) at `/state` holding the one-time
+pairing token. Own `v0.1.x` versioning, independent of the repo's `vX.Y.Z`.
+
+```bash
+# Rsync the samsung build context (its own repo dir IS the context)
+ssh evdb@192.168.1.159 "mkdir -p /tmp/renfield-samsung-build"
+rsync -avz --delete \
+  --exclude='__pycache__' --exclude='*.pyc' --exclude='.pytest_cache' \
+  --exclude='.venv' --exclude='token.json' --exclude='.git' \
+  ../renfield-mcp-samsung/ evdb@192.168.1.159:/tmp/renfield-samsung-build/
+
+# Build + push on .159 (pure-python / manylinux wheels — no toolchain needed)
+ssh evdb@192.168.1.159
+R=registry.treehouse.x-idra.de/renfield/samsung-mcp
+cd /tmp/renfield-samsung-build
+docker build -t $R:v0.1.N -t $R:latest -f Dockerfile .
+docker push $R:v0.1.N
+docker push $R:latest
+
+# First-ever deploy: apply the manifest (kustomization already includes it):
+kubectl -n renfield apply -f k8s/samsung-mcp.yaml
+# Thereafter, pinned-tag rollout (set image, like dlna-mcp/voice-server):
+kubectl -n renfield set image deploy/samsung-mcp \
+  samsung-mcp=registry.treehouse.x-idra.de/renfield/samsung-mcp:v0.1.N
+kubectl -n renfield rollout status deploy/samsung-mcp --timeout=600s
+```
+
+**One-time TV pairing (after first deploy).** Websocket keys/apps/power-off need
+a one-time "Allow Renfield?" approval on the TV (WoL power-on + DLNA media/volume
+do NOT). Enable on the TV: **Settings → General → External Device Manager →
+Device Connect Manager → Access Notification On**, then trigger any websocket
+tool (e.g. `tv_key`) while the TV is on the Smart Hub home screen and approve the
+popup. The token persists to the `samsung-mcp-state` PVC and survives restarts.
+Set `SAMSUNG_MCP_ENABLED=true` (+ optional `SAMSUNG_TV_HOST` to pin a TV) for the
+backend to register the server.
+
 ### Harbor 504 / "Client Closed Request" on the 2.66 GB pip-install layer
 
 When `requirements.txt` changes (so the deps layer cache misses), Docker tries to upload a single 2.66 GB layer to Harbor. The ingress proxy in front of Harbor has been observed timing out on this with `received unexpected HTTP status: 504 Gateway Timeout` or `unknown: Client Closed Request`. The error reproduces on the same layer ID across multiple retries (verified during the v2.3.0 deploy 2026-05-01 — 4 attempts, same `ed85...` layer, same error).

@@ -13,6 +13,7 @@ resources:
   - ollama.yaml
   - searxng.yaml
   - dlna-mcp.yaml
+  - samsung-mcp.yaml
   - mdns-responder.yaml
   - backend.yaml
   - frontend.yaml
