@@ -340,6 +340,13 @@ class Settings(BaseSettings):
     # /wissen workspace and the old routes redirect in. Off => legacy flat nav.
     # Runtime flag (exposed via /api/config/features) so it flips without a rebuild.
     wissen_workspace_enabled: bool = False
+    # Generic output-provider registry for room media/control routing. When on,
+    # room output discovery + dispatch route through the pluggable OutputProvider
+    # registry (built-in renfield/HA + MCP-declared dlna/samsung/sonos via the
+    # `output_provider:` stanza in mcp_servers.yaml) instead of the hardcoded
+    # 3-source branches. Off => byte-identical legacy routing. See
+    # docs/design/output-providers.md.
+    output_providers_enabled: bool = False
     schicht_a_extraction_model: str = ""             # empty => ollama_chat_model || ollama_model
     # Output-token cap for the obligation/universal LLM pass. The old fixed 1200
     # cap (→ OpenAI max_tokens) silently truncated rich docs' JSON → unparseable

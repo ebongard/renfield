@@ -716,6 +716,13 @@ class MCPServerConfig:
     permissions: list[str] = field(default_factory=list)  # e.g. ["mcp.calendar.read", "mcp.calendar.manage"]
     tool_permissions: dict[str, str] = field(default_factory=dict)  # e.g. {"list_events": "mcp.calendar.read"}
     notifications: dict | None = None  # {"enabled": true, "poll_interval": 900, "tool": "get_pending_notifications"}
+    # Output-provider stanza (docs/design/output-providers.md). When present, this
+    # MCP server is a room-output target source. Shape:
+    #   {capabilities: [audio|video|power|transport|queue],
+    #    discover/play/control/status: <tool_name>, boot_timeout?: <seconds>}
+    # Consumed by ha_glue/services/output_providers.py to build McpOutputProvider
+    # entries. None => not an output provider (the default for every other server).
+    output_provider: dict | None = None
     streaming: bool = False  # Opt-in: server emits progress notifications via MCP progress_callback.
                               # When true, execute_tool_streaming wires an asyncio.Queue to capture
                               # notifications and yield ProgressChunks. First consumer: federation
@@ -902,6 +909,11 @@ class MCPManager:
                     permissions=entry.get("permissions", []),
                     tool_permissions=entry.get("tool_permissions", {}),
                     notifications=_parse_notifications(entry.get("notifications")),
+                    output_provider=(
+                        entry.get("output_provider")
+                        if isinstance(entry.get("output_provider"), dict)
+                        else None
+                    ),
                     streaming=bool(_resolve_value(entry.get("streaming", False))),
                 )
 

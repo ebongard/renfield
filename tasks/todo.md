@@ -1,38 +1,46 @@
-# Obligation → Calendar auto-push (Calendar MCP) — plan (2026-06-06)
+# Generic Output Providers — implementation plan
 
-Branch: `feat/obligation-calendar-sync`. Decisions (user): **per-user calendar
-preference** (each user picks their obligations calendar; no pref = no sync) ·
-**delete event when handled** (confirmed / out-of-window / fact gone) · **full
-reconciler** (create / update / delete, idempotent + restart-safe).
+Branch: `feat/output-providers`. Source of truth: `docs/design/output-providers.md`
+(eng-reviewed 2026-06-07). Big-bang feature PR, phases 1-4, all behind
+`OUTPUT_PROVIDERS_ENABLED` (additive schema only; destructive cleanup is a P2
+follow-up). Flag OFF = byte-identical to today.
 
-## MCP facts (from exploration)
-- `mcp.calendar.create_event(calendar,title,start,end,description,location,user_id)` →
-  `{"success":true,"event":{"id":...}}` inside `execute_tool` result `message` (JSON string). Parse it.
-- `update_event(calendar,event_id,...)` → same shape. `delete_event(calendar,event_id,user_id)` → no id (ledger stores it).
-- `list_calendars(user_id)` → `{"calendars":[{name,label,type}]}` = the user's WRITABLE calendars.
-- All-day NOT supported on create → events are timed at `obligation_calendar_event_hour` (default 09:00, 30 min). Note limitation.
-- user_id passed as `execute_tool(..., user_id=)` kwarg; MCP enforces per-calendar access by user_id.
+## Phase 1 — Foundation (config + Protocol + MCP registry)  ✅ DONE (20/20 tests green on .159)
+- [x] P1.1 `config.py`: `output_providers_enabled: bool = False`
+- [x] P1.2 `mcp_client.py`: `MCPServerConfig.output_provider: dict | None = None` + parse in `load_config`
+- [x] P1.3 new `ha_glue/services/output_providers.py`:
+      - dataclasses: `OutputTarget`, `MediaRef`, `PlayResult`, `ControlResult`, `TargetStatus`
+      - capability constants (audio/video/power/transport/queue) + `OutputProvider` Protocol
+      - `McpOutputProvider` (maps the 4 contract methods onto `mcp.<server>.<tool>`, envelope+shape normalize)
+      - `build_mcp_output_providers(mcp_manager)` → {key: McpOutputProvider} from stanzas
+      - NOTE: built-in renfield/HA adapters deferred to Phase 4 (aggregation), where their
+        discover() is consumed + dispatch wiring exists — not shipping half-baked stubs.
+- [x] P1.4 unit tests (`tests/backend/test_output_providers.py`): 20 tests — registry build,
+      capability parsing (known + unknown-kept), stanza validation (malformed/no-discover skipped),
+      McpOutputProvider discover/play/control/status normalization, tool-failure + transport-error
+      → OutputProviderError, payload extraction, target-shape normalization (contract + legacy).
 
-## Backend
-- [ ] B1 config: `obligation_calendar_sync_enabled=False`, `obligation_calendar_sync_interval=86400`, `obligation_calendar_event_hour=9`, `obligation_calendar_horizon_days=90`, `obligation_calendar_retain_past_days=30`
-- [ ] B2 models: `ObligationCalendarPref(user_id unique, calendar_name)` + `ObligationCalendarEvent(document_fact_id FK SET NULL, user_id FK CASCADE, calendar, event_id, synced_obligation_date, synced_summary, ts)` UNIQUE(document_fact_id,user_id)
-- [ ] B3 migration pc20260609 (down_revision = pc20260608_fact_tier_ov)
-- [ ] B4 service `services/obligation_calendar_sync.py` — per-user advisory lock (ns 0x4F43), reconcile desired-set (open, owner, [today-retain, today+horizon]) ↔ ledger: create/update/delete via mcp execute_tool, parse event id, graceful failure; `reconcile_all_users(mcp_manager)`
-- [ ] B5 scheduler `_schedule_obligation_calendar_sync(app)` (run_at_boot, daily) reading app.state.mcp_manager
-- [ ] B6 routes: `GET/PUT /api/atoms/obligations/calendar-pref` (current + writable-calendar list via list_calendars; validate chosen name is writable)
+## Phase 2 — Additive model migration + dual-read
+- [ ] P2.1 `RoomOutputDevice`: add `output_provider` + `output_target_id` columns (nullable)
+- [ ] P2.2 migration (additive: add cols + backfill from 3 cols; NO drop)
+- [ ] P2.3 `target_id`/`target_type` props prefer new cols, fall back to old (dual-read)
+- [ ] P2.4 `add_output_device` accepts `(provider, target_id)`; CRUD schemas gain the pair
+- [ ] P2.5 real-PG migration upgrade test + dual-read test
 
-## Frontend
-- [ ] F1 hooks `useObligationCalendarPref` (GET) + `useSetObligationCalendarPref` (PUT)
-- [ ] F2 ObligationsPage: a small "Kalender-Sync: [calendar ▼ / aus]" selector (writable calendars + Off)
-- [ ] F3 i18n de+en
+## Phase 3 — Generic dispatch (registry) + power-on
+- [ ] P3.1 `play_in_room`/`_media_control`/`_resolve_room_player` route via registry when flag on
+- [ ] P3.2 power-on: status==off → control(on) → poll-until-ready(boot_timeout) → play; never-wakes → honest error
+- [ ] P3.3 keep old `internal.play_*_on_dlna` as shims delegating to the resolver
+- [ ] P3.4 dlna + samsung `output_provider` stanzas in mcp_servers.yaml
+- [ ] P3.5 tests: dispatch via registry, power-on 3 branches, shim-regression parity
 
-## Tests
-- [ ] T1 backend PG: reconciler create (new obligation→event+ledger), update (date change→update_event), delete (confirmed→delete_event+row gone), orphan cleanup (fact gone→delete), no-pref→skip, out-of-window→delete, idempotent re-run no-op, advisory-lock no-op. Mock mcp_manager.execute_tool.
-- [ ] T2 routes: get pref + available, put validates writable, clear
-- [ ] T3 frontend RTL: selector lists calendars, set/clear calls PUT
+## Phase 4 — Aggregation + frontend
+- [ ] P4.1 `available-outputs` iterates registry (parallel discover, per-provider timeout, degraded-not-dropped)
+- [ ] P4.2 `RoomOutputSettings.tsx` data-driven over the aggregated list + capability badges
+- [ ] P4.3 RTL tests
 
-## Notes / accepted
-- Timed events (all-day unsupported by MCP) at the configured hour.
-- Gated on `obligation_calendar_sync_enabled` (+ runtime calendar MCP availability — graceful skip if down).
-- Per-calendar authz enforced by the MCP via user_id; sync passes manage perm acting for the owner.
-- Re-extraction recreates facts → SET NULL orphans the ledger row → next reconcile deletes the stale event + recreates for the new fact.
+## Gate
+- Flag OFF must be byte-identical. Real-PG for migration. /review + adversarial before PR.
+
+## Review (filled at the end)
+_(pending)_
