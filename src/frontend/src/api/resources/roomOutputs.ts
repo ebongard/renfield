@@ -17,6 +17,20 @@ export interface OutputDevice {
   dlna_renderer_name?: string | null;
   ha_entity_id?: string | null;
   renfield_device_id?: string | null;
+  // Generic output-provider pair (output_providers_enabled). When set, the row
+  // was created via the unified picker; legacy id columns may be null.
+  output_provider?: string | null;
+  output_target_id?: string | null;
+}
+
+/** One target in the unified available-outputs union (flag-on). */
+export interface OutputTarget {
+  provider: string;        // renfield | homeassistant | dlna | samsung | ...
+  target_id: string;
+  name: string;
+  capabilities: string[];  // audio | video | power | transport | queue
+  room_hint?: string | null;
+  reachable: boolean;
 }
 
 export interface RenfieldOutputDevice {
@@ -38,6 +52,9 @@ export interface AvailableOutputs {
   renfield_devices: RenfieldOutputDevice[];
   ha_media_players: HaOutputDevice[];
   dlna_renderers: DlnaOutputDevice[];
+  // Unified capability-tagged union — present only when output_providers_enabled.
+  // null/undefined => legacy three-list shape.
+  output_targets?: OutputTarget[] | null;
 }
 
 const EMPTY_AVAILABLE: AvailableOutputs = {

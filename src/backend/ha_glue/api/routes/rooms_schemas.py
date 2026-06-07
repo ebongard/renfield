@@ -191,7 +191,14 @@ class OutputDeviceReorderRequest(BaseModel):
 
 
 class AvailableOutputResponse(BaseModel):
-    """Response model for available output devices (HA + Renfield + DLNA)"""
+    """Response model for available output devices (HA + Renfield + DLNA).
+
+    When OUTPUT_PROVIDERS_ENABLED is on, ``output_targets`` carries the unified
+    capability-tagged union across all providers (built-in + MCP-declared like
+    samsung), each ``{provider, target_id, name, capabilities[], room_hint,
+    reachable}``. None when the flag is off (legacy three-list shape only).
+    """
     renfield_devices: list[dict]
     ha_media_players: list[dict]
     dlna_renderers: list[dict] = []
+    output_targets: list[dict] | None = None

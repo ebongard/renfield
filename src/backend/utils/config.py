@@ -347,6 +347,9 @@ class Settings(BaseSettings):
     # 3-source branches. Off => byte-identical legacy routing. See
     # docs/design/output-providers.md.
     output_providers_enabled: bool = False
+    # Per-provider timeout (seconds) for the aggregated available-outputs discover
+    # fan-out. A provider that exceeds it is shown DEGRADED (not dropped).
+    output_provider_discover_timeout: float = 5.0
     schicht_a_extraction_model: str = ""             # empty => ollama_chat_model || ollama_model
     # Output-token cap for the obligation/universal LLM pass. The old fixed 1200
     # cap (→ OpenAI max_tokens) silently truncated rich docs' JSON → unparseable

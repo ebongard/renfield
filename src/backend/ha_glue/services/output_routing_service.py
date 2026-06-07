@@ -481,6 +481,79 @@ class OutputRoutingService:
         # Filter to devices with speaker capability
         return [d for d in devices if d.capabilities and d.capabilities.get("has_speaker", False)]
 
+    async def get_aggregated_outputs(self, room_id: int, mcp_manager) -> list[dict]:
+        """Capability-tagged union of every output target for a room, normalized to
+        ``{provider, target_id, name, capabilities[], room_hint, reachable}``.
+
+        Built-ins (renfield / homeassistant / dlna) come from the existing
+        per-source methods; MCP-declared providers (samsung, sonos, …) are
+        discovered in parallel with a per-provider timeout. A provider that times
+        out or errors is surfaced as a single DEGRADED entry (reachable=False),
+        never silently dropped — output discovery is a control surface, so a
+        missing-but-expected device is a silent failure.
+
+        Backs the flag-on ``available-outputs`` aggregation (docs/design/output-providers.md).
+        """
+        import asyncio
+
+        from utils.config import settings
+
+        targets: list[dict] = []
+
+        # --- built-ins (reuse the proven per-source methods) ---
+        for d in await self.get_available_renfield_devices(room_id):
+            targets.append({
+                "provider": "renfield", "target_id": d.device_id,
+                "name": d.device_name or d.device_id,
+                "capabilities": ["audio"], "room_hint": None, "reachable": True,
+            })
+        for m in await self.get_available_ha_media_players():
+            eid = m.get("entity_id", "")
+            targets.append({
+                "provider": "homeassistant", "target_id": eid,
+                "name": m.get("friendly_name") or eid,
+                "capabilities": ["audio", "video", "transport"], "room_hint": None,
+                "reachable": True,
+            })
+        for r in await self.get_available_dlna_renderers():
+            rid = r.get("name", "")
+            targets.append({
+                "provider": "dlna", "target_id": rid,
+                "name": r.get("friendly_name") or rid,
+                "capabilities": ["audio", "video", "transport"], "room_hint": None,
+                "reachable": True,
+            })
+
+        # --- MCP-declared providers (parallel discover, timeout, degraded-not-dropped) ---
+        if mcp_manager is not None:
+            from ha_glue.services.output_providers import (
+                OutputProviderError,
+                build_mcp_output_providers,
+            )
+
+            registry = build_mcp_output_providers(mcp_manager)
+            timeout = settings.output_provider_discover_timeout
+
+            async def _discover_one(provider) -> list[dict]:
+                try:
+                    found = await asyncio.wait_for(provider.discover(room_id), timeout=timeout)
+                    return [t.to_dict() for t in found]
+                except (OutputProviderError, asyncio.TimeoutError, Exception) as e:  # noqa: BLE001
+                    logger.warning(f"output provider '{provider.key}' discover failed: {e}")
+                    return [{
+                        "provider": provider.key, "target_id": "",
+                        "name": f"{provider.key} (unreachable)",
+                        "capabilities": sorted(provider.capabilities),
+                        "room_hint": None, "reachable": False,
+                    }]
+
+            if registry:
+                results = await asyncio.gather(*[_discover_one(p) for p in registry.values()])
+                for r in results:
+                    targets.extend(r)
+
+        return targets
+
     async def get_available_dlna_renderers(self) -> list[dict]:
         """
         Get all available DLNA renderers via the DLNA MCP server.

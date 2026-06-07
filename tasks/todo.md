@@ -48,13 +48,21 @@ follow-up). Flag OFF = byte-identical to today.
 - N/A P3.3 shims: `internal.play_*_on_dlna` unchanged (dlna stays legacy this phase); they delegate
       to the generic resolver only when dlna itself moves onto the contract (deferred w/ dlna).
 
-## Phase 4 — Aggregation + frontend
-- [ ] P4.1 `available-outputs` iterates registry (parallel discover, per-provider timeout, degraded-not-dropped)
-- [ ] P4.2 `RoomOutputSettings.tsx` data-driven over the aggregated list + capability badges
-- [ ] P4.3 RTL tests
+## Phase 4 — Aggregation + frontend  ✅ DONE (5 aggregation + 4 RTL tests; typecheck clean)
+- [x] P4.1 `get_aggregated_outputs` (built-ins via existing methods + registry providers via
+      parallel `asyncio.gather` discover, per-provider `output_provider_discover_timeout`,
+      **degraded-not-dropped**); `available-outputs` returns `output_targets` when flag on (None off).
+- [x] P4.2 `RoomOutputSettings.tsx` data-driven: generic mode (output_targets present) → one unified
+      picker over all providers + capability badges + unreachable-disabled + submits (provider,
+      target_id) pair; flag off → byte-identical legacy type-buttons. `roomOutputs.ts` types extended.
+- [x] P4.3 RTL (`RoomOutputSettings.test.tsx`, 4 tests): unified picker / no type-buttons / unreachable
+      disabled / submits the pair / legacy fallback when output_targets absent.
 
 ## Gate
-- Flag OFF must be byte-identical. Real-PG for migration. /review + adversarial before PR.
+- Flag OFF byte-identical ✅ (verified: dual-read identical, dispatch/aggregation gated, frontend legacy path).
+- Real-PG for migration ✅ (backfill logic + dual-read on real PG; full plugin-aware upgrade at deploy).
+- Totals: 85 backend + 4 RTL tests green; existing internal_tools = same 6 pre-existing stale-tree fails.
+- NEXT: /review + adversarial → docs sweep → one big-bang PR.
 
 ## Review (filled at the end)
-_(pending)_
+_(pending — run /review on the full branch diff)_

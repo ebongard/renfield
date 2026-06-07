@@ -16,6 +16,7 @@ import {
   useReorderOutputDevices,
   type OutputType,
   type OutputDevice,
+  type OutputTarget,
   type RenfieldOutputDevice,
   type HaOutputDevice,
   type DlnaOutputDevice,
@@ -23,6 +24,15 @@ import {
 
 type DeviceKind = 'homeassistant' | 'renfield' | 'dlna';
 type AvailableDevice = RenfieldOutputDevice | HaOutputDevice | DlnaOutputDevice;
+
+// Stable "provider::target_id" key for a configured device (prefer the generic
+// pair; fall back to the legacy columns so dual-read rows match too).
+function devicePairKey(d: OutputDevice): string {
+  const provider = d.output_provider
+    ?? (d.renfield_device_id ? 'renfield' : d.ha_entity_id ? 'homeassistant' : d.dlna_renderer_name ? 'dlna' : '');
+  const targetId = d.output_target_id ?? d.renfield_device_id ?? d.ha_entity_id ?? d.dlna_renderer_name ?? '';
+  return `${provider}::${targetId}`;
+}
 
 export interface RoomOutputSettingsProps {
   roomId: number;
@@ -57,6 +67,10 @@ export default function RoomOutputSettings({
     dlna_renderers: [],
   };
   const loadingAvailable = availableQuery.isLoading;
+
+  // Generic mode: backend returned the unified output_targets union
+  // (output_providers_enabled). One picker for every provider incl. samsung.
+  const genericMode = availableOutputs.output_targets != null;
 
   const addMutation = useAddOutputDevice(roomId);
   const updateMutation = useUpdateOutputDevice(roomId);
@@ -93,7 +107,12 @@ export default function RoomOutputSettings({
         priority: outputDevices.length + 1,
       };
 
-      if (selectedType === 'renfield') {
+      if (genericMode) {
+        // selectedDevice is "provider::target_id" from the unified picker.
+        const sep = selectedDevice.indexOf('::');
+        payload.output_provider = selectedDevice.slice(0, sep);
+        payload.output_target_id = selectedDevice.slice(sep + 2);
+      } else if (selectedType === 'renfield') {
         payload.renfield_device_id = selectedDevice;
       } else if (selectedType === 'dlna') {
         payload.dlna_renderer_name = selectedDevice;
@@ -174,6 +193,14 @@ export default function RoomOutputSettings({
       return availableOutputs.ha_media_players.filter((d) => !configuredHAIds.has(d.entity_id));
     }
     return [];
+  };
+
+  // Unified picker: every output_target not already configured in this room.
+  const getAvailableTargets = (): OutputTarget[] => {
+    const configured = new Set(outputDevices.map(devicePairKey));
+    return (availableOutputs.output_targets ?? []).filter(
+      (t) => !configured.has(`${t.provider}::${t.target_id}`),
+    );
   };
 
   const getDeviceKey = (device: AvailableDevice): string => {
@@ -259,7 +286,8 @@ export default function RoomOutputSettings({
                   {getDeviceIcon(device)}
 
                   <span className="flex-1 text-sm text-gray-300 truncate">
-                    {device.device_name || device.dlna_renderer_name || device.ha_entity_id || device.renfield_device_id}
+                    {device.device_name || device.dlna_renderer_name || device.ha_entity_id
+                      || device.renfield_device_id || device.output_target_id}
                   </span>
 
                   {device.tts_volume !== null && (
@@ -338,6 +366,7 @@ export default function RoomOutputSettings({
             <p className="text-gray-400 text-sm mb-4">{t('rooms.outputDialogRoomLabel', { name: roomName })}</p>
 
             <div className="space-y-4">
+              {!genericMode && (
               <div>
                 <label className="block text-sm text-gray-400 mb-2">{t('rooms.outputDeviceTypeLabel')}</label>
                 <div className="flex space-x-2">
@@ -387,7 +416,60 @@ export default function RoomOutputSettings({
                   </button>
                 </div>
               </div>
+              )}
 
+              {genericMode ? (
+                <div>
+                  <label className="block text-sm text-gray-400 mb-2">{t('rooms.outputDeviceLabel')}</label>
+                  {loadingAvailable ? (
+                    <div className="text-center py-4">
+                      <Loader className="w-5 h-5 animate-spin mx-auto text-gray-400" />
+                    </div>
+                  ) : (
+                    <select
+                      value={selectedDevice}
+                      onChange={(e) => setSelectedDevice(e.target.value)}
+                      className="input w-full"
+                    >
+                      <option value="">{t('rooms.outputDeviceSelectPlaceholder')}</option>
+                      {getAvailableTargets().map((target) => (
+                        <option
+                          key={`${target.provider}::${target.target_id}`}
+                          value={`${target.provider}::${target.target_id}`}
+                          disabled={!target.reachable}
+                        >
+                          {target.name} · {target.provider}
+                          {target.capabilities.length > 0 && ` · ${target.capabilities.join(', ')}`}
+                        </option>
+                      ))}
+                    </select>
+                  )}
+                  {/* Capability badges for the selected target */}
+                  {(() => {
+                    const sel = getAvailableTargets().find(
+                      (tg) => `${tg.provider}::${tg.target_id}` === selectedDevice,
+                    );
+                    if (!sel || sel.capabilities.length === 0) return null;
+                    return (
+                      <div className="flex flex-wrap gap-1 mt-2">
+                        {sel.capabilities.map((cap) => (
+                          <span
+                            key={cap}
+                            className="text-xs px-2 py-0.5 rounded-full bg-gray-700 text-gray-300"
+                          >
+                            {cap}
+                          </span>
+                        ))}
+                      </div>
+                    );
+                  })()}
+                  {getAvailableTargets().length === 0 && !loadingAvailable && (
+                    <p className="text-yellow-400 text-xs mt-2">
+                      {t('rooms.outputNoAvailableDevices')}
+                    </p>
+                  )}
+                </div>
+              ) : (
               <div>
                 <label className="block text-sm text-gray-400 mb-2">{t('rooms.outputDeviceLabel')}</label>
                 {loadingAvailable ? (
@@ -422,6 +504,7 @@ export default function RoomOutputSettings({
                   </p>
                 )}
               </div>
+              )}
 
               {!isVisual && (
                 <div>

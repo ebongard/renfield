@@ -937,8 +937,18 @@ async def get_available_outputs(
     # Get DLNA renderers
     dlna_renderers = await routing_service.get_available_dlna_renderers()
 
+    # Flag-on: also return the unified capability-tagged union (built-in + MCP
+    # providers like samsung), parallel-discovered, degraded-not-dropped.
+    output_targets = None
+    from utils.config import settings as _root_settings
+    if _root_settings.output_providers_enabled:
+        from main import app
+        mcp_manager = getattr(app.state, "mcp_manager", None)
+        output_targets = await routing_service.get_aggregated_outputs(room_id, mcp_manager)
+
     return AvailableOutputResponse(
         renfield_devices=renfield_list,
         ha_media_players=ha_media_players,
-        dlna_renderers=dlna_renderers
+        dlna_renderers=dlna_renderers,
+        output_targets=output_targets,
     )
