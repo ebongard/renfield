@@ -135,11 +135,19 @@ class ConnectedDeviceResponse(BaseModel):
 # --- Output Device Models ---
 
 class OutputDeviceCreate(BaseModel):
-    """Request model for creating an output device"""
+    """Request model for creating an output device.
+
+    Identify the target EITHER by the generic ``(output_provider,
+    output_target_id)`` pair (any provider, incl. samsung) OR by exactly one
+    legacy id column (the pair is dual-written from it). See
+    docs/design/output-providers.md.
+    """
     output_type: str = "audio"  # "audio" or "visual"
     renfield_device_id: str | None = None
     ha_entity_id: str | None = None
     dlna_renderer_name: str | None = None
+    output_provider: str | None = None
+    output_target_id: str | None = None
     priority: int = 1
     allow_interruption: bool = False
     tts_volume: float | None = 0.5
@@ -163,6 +171,8 @@ class OutputDeviceResponse(BaseModel):
     renfield_device_id: str | None
     ha_entity_id: str | None
     dlna_renderer_name: str | None = None
+    output_provider: str | None = None
+    output_target_id: str | None = None
     priority: int
     allow_interruption: bool
     tts_volume: float | None

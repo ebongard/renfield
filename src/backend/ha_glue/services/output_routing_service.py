@@ -282,6 +282,8 @@ class OutputRoutingService:
         renfield_device_id: str | None = None,
         ha_entity_id: str | None = None,
         dlna_renderer_name: str | None = None,
+        output_provider: str | None = None,
+        output_target_id: str | None = None,
         priority: int = 1,
         allow_interruption: bool = False,
         tts_volume: float | None = 0.5,
@@ -290,28 +292,60 @@ class OutputRoutingService:
         """
         Add a new output device to a room.
 
-        Exactly one of renfield_device_id, ha_entity_id, or dlna_renderer_name must be provided.
+        Two ways to identify the target:
+        - **Generic pair** ``(output_provider, output_target_id)`` — for any
+          provider, including brands with no legacy column (e.g. samsung). Legacy
+          columns stay NULL.
+        - **Legacy column** — exactly one of renfield_device_id / ha_entity_id /
+          dlna_renderer_name. The generic pair is dual-written from it so both
+          read paths resolve during the soak (docs/design/output-providers.md).
         """
-        identifiers = [renfield_device_id, ha_entity_id, dlna_renderer_name]
-        set_count = sum(1 for v in identifiers if v)
-        if set_count == 0:
-            raise ValueError("One of renfield_device_id, ha_entity_id, or dlna_renderer_name must be provided")
-        if set_count > 1:
-            raise ValueError("Only one of renfield_device_id, ha_entity_id, or dlna_renderer_name can be provided")
+        # Generic path: an explicit provider + target id.
+        if output_provider or output_target_id:
+            if not (output_provider and output_target_id):
+                raise ValueError(
+                    "output_provider and output_target_id must be provided together"
+                )
+            if any([renfield_device_id, ha_entity_id, dlna_renderer_name]):
+                raise ValueError(
+                    "Provide either the (output_provider, output_target_id) pair "
+                    "OR a single legacy id column, not both"
+                )
+            if not device_name:
+                device_name = output_target_id
+        else:
+            # Legacy path: exactly one of the three identity columns.
+            identifiers = [renfield_device_id, ha_entity_id, dlna_renderer_name]
+            set_count = sum(1 for v in identifiers if v)
+            if set_count == 0:
+                raise ValueError(
+                    "One of renfield_device_id, ha_entity_id, dlna_renderer_name, "
+                    "or the (output_provider, output_target_id) pair must be provided"
+                )
+            if set_count > 1:
+                raise ValueError("Only one of renfield_device_id, ha_entity_id, or dlna_renderer_name can be provided")
 
-        # Auto-generate device name if not provided
-        if not device_name:
+            # Auto-generate device name if not provided
+            if not device_name:
+                if renfield_device_id:
+                    device_name = renfield_device_id
+                elif dlna_renderer_name:
+                    device_name = dlna_renderer_name
+                else:
+                    # Try to get friendly name from HA
+                    try:
+                        state = await self.ha_client.get_state(ha_entity_id)
+                        device_name = state.get("attributes", {}).get("friendly_name", ha_entity_id)
+                    except Exception:
+                        device_name = ha_entity_id  # Fallback if HA unavailable
+
+            # Dual-write the generic pair from the legacy column.
             if renfield_device_id:
-                device_name = renfield_device_id
-            elif dlna_renderer_name:
-                device_name = dlna_renderer_name
+                output_provider, output_target_id = "renfield", renfield_device_id
+            elif ha_entity_id:
+                output_provider, output_target_id = "homeassistant", ha_entity_id
             else:
-                # Try to get friendly name from HA
-                try:
-                    state = await self.ha_client.get_state(ha_entity_id)
-                    device_name = state.get("attributes", {}).get("friendly_name", ha_entity_id)
-                except Exception:
-                    device_name = ha_entity_id  # Fallback if HA unavailable
+                output_provider, output_target_id = "dlna", dlna_renderer_name
 
         output_device = RoomOutputDevice(
             room_id=room_id,
@@ -319,6 +353,8 @@ class OutputRoutingService:
             renfield_device_id=renfield_device_id,
             ha_entity_id=ha_entity_id,
             dlna_renderer_name=dlna_renderer_name,
+            output_provider=output_provider,
+            output_target_id=output_target_id,
             priority=priority,
             allow_interruption=allow_interruption,
             tts_volume=tts_volume,

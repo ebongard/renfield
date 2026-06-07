@@ -307,6 +307,13 @@ class RoomOutputDevice(Base):
     ha_entity_id = Column(String(255), nullable=True)
     dlna_renderer_name = Column(String(255), nullable=True)
 
+    # Generic output-provider pair (docs/design/output-providers.md). Replaces the
+    # three brand columns above; both are populated during the dual-read soak
+    # (the legacy columns are dropped in a later PR). A provider with no legacy
+    # column (e.g. samsung) stores ONLY this pair.
+    output_provider = Column(String(50), nullable=True)
+    output_target_id = Column(String(255), nullable=True)
+
     output_type = Column(String(20), nullable=False, default=OUTPUT_TYPE_AUDIO)
 
     priority = Column(Integer, nullable=False, default=1)
@@ -339,10 +346,22 @@ class RoomOutputDevice(Base):
 
     @property
     def target_id(self) -> str:
-        return self.renfield_device_id or self.ha_entity_id or self.dlna_renderer_name or ""
+        # Dual-read: prefer the generic pair, fall back to the legacy columns so
+        # rows written either way (and un-backfilled rows) resolve identically.
+        return (
+            self.output_target_id
+            or self.renfield_device_id
+            or self.ha_entity_id
+            or self.dlna_renderer_name
+            or ""
+        )
 
     @property
     def target_type(self) -> str:
+        # Dual-read: prefer output_provider, fall back to inferring from the
+        # legacy columns. output_provider IS the target_type value space.
+        if self.output_provider:
+            return self.output_provider
         if self.renfield_device_id:
             return "renfield"
         if self.ha_entity_id:

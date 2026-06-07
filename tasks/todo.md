@@ -20,12 +20,17 @@ follow-up). Flag OFF = byte-identical to today.
       McpOutputProvider discover/play/control/status normalization, tool-failure + transport-error
       → OutputProviderError, payload extraction, target-shape normalization (contract + legacy).
 
-## Phase 2 — Additive model migration + dual-read
-- [ ] P2.1 `RoomOutputDevice`: add `output_provider` + `output_target_id` columns (nullable)
-- [ ] P2.2 migration (additive: add cols + backfill from 3 cols; NO drop)
-- [ ] P2.3 `target_id`/`target_type` props prefer new cols, fall back to old (dual-read)
-- [ ] P2.4 `add_output_device` accepts `(provider, target_id)`; CRUD schemas gain the pair
-- [ ] P2.5 real-PG migration upgrade test + dual-read test
+## Phase 2 — Additive model migration + dual-read  ✅ DONE (11 PG + 35 routing tests green on .159)
+- [x] P2.1 `RoomOutputDevice`: add `output_provider` + `output_target_id` columns (nullable)
+- [x] P2.2 migration `pc20260610_output_target` (additive add cols + CASE/COALESCE backfill; NO drop)
+- [x] P2.3 `target_id`/`target_type` props prefer new cols, fall back to old (dual-read)
+- [x] P2.4 `add_output_device` dual-writes the pair from a legacy arg + accepts an explicit
+      `(provider, target_id)` path (samsung, no legacy col); CRUD create/response schemas + route gain the pair
+- [x] P2.5 real-PG tests (`test_output_providers_phase2_pg.py`): backfill SQL across all 3 legacy
+      types + idempotent skip-already-paired, dual-read (prefer/fallback/both/empty), add_output_device
+      dual-write + explicit-pair + 3 validation paths. Full plugin-aware `alembic upgrade` verified at
+      deploy time (repo convention: ha_glue room tables live in a separate plugin migration tree, so a
+      core-only from-scratch upgrade can't build them — backfill LOGIC tested via create_all'd PG instead).
 
 ## Phase 3 — Generic dispatch (registry) + power-on
 - [ ] P3.1 `play_in_room`/`_media_control`/`_resolve_room_player` route via registry when flag on
