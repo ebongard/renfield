@@ -262,7 +262,7 @@ export default function OverviewLens() {
               {recentDocs.map((doc) => (
                 <PreviewRow
                   key={doc.id}
-                  primary={doc.title || doc.filename}
+                  primary={doc.display_name || doc.title || doc.filename}
                   secondary={relLabel(doc.created_at)}
                 />
               ))}

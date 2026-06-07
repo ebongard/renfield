@@ -509,6 +509,10 @@ def _doc_to_response_kwargs(doc: Document) -> dict:
         "id": doc.id,
         "filename": doc.filename,
         "title": doc.title,
+        # The UI display name: prefer the LLM-synthesized facts title, then the
+        # metadata title, then the filename — so the list never shows a bare
+        # scan-timestamp filename when we have something better.
+        "display_name": doc.generated_title or doc.title or doc.filename,
         "file_type": doc.file_type,
         "file_size": doc.file_size,
         "status": doc.status,

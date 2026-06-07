@@ -294,6 +294,97 @@ class SchichtAExtractor:
 
 
 # ---------------------------------------------------------------------------
+# Document title synthesis (from facts, for the Wissen/Dokumente display name)
+# ---------------------------------------------------------------------------
+
+_MAX_TITLE_LEN = 160
+
+_TITLE_SYSTEM_DEFAULT = (
+    "Du erzeugst aus den extrahierten Fakten eines Dokuments einen kurzen, "
+    "sprechenden Titel für eine Dokumentenliste. Nimm den Aussteller/Absender, "
+    "die Dokumentart und (falls vorhanden) das Datum. Leite die Dokumentart aus "
+    "dem Kontext ab (z. B. Rechnung, Mahnung, Bescheid, Vertrag, Kündigung, "
+    "Fragebogen, Pfändung), auch wenn sie nicht wörtlich als Fakt vorliegt. "
+    "Maximal ~80 Zeichen, keine Anführungszeichen im Titel, kein Dateiname. "
+    "Antworte AUSSCHLIESSLICH als JSON: {\"title\": \"<Titel>\"}."
+)
+_TITLE_USER_DEFAULT = "Fakten des Dokuments:\n{facts}"
+
+
+def _facts_to_block(facts: list[Any]) -> str:
+    """Compact 'kind: value (Frist …) (Betrag …)' lines for the title prompt.
+    Accepts ExtractedFact or DocumentFact rows (duck-typed on the shared attrs),
+    so the same synthesizer serves ingest and the backfill."""
+    lines: list[str] = []
+    for f in (facts or [])[:_MAX_FACTS_PER_DOC]:
+        kind = getattr(f, "kind", "") or ""
+        value = (getattr(f, "value", "") or "")[:120]
+        extra = ""
+        od = getattr(f, "obligation_date", None)
+        if od:
+            extra += f" (Frist {od})"
+        av = getattr(f, "amount_value", None)
+        if av is not None:
+            cur = getattr(f, "amount_currency", "") or ""
+            extra += f" (Betrag {av} {cur})" if cur else f" (Betrag {av})"
+        lines.append(f"- {kind}: {value}{extra}")
+    return "\n".join(lines)
+
+
+async def generate_document_title(
+    facts: list[Any], *, lang: str = "de", llm_client: Any = None
+) -> str | None:
+    """Synthesize a short human-readable title from a document's Schicht A facts
+    (issuer + document type + date, inferring the type from context).
+
+    Works from the FACTS, never the raw OCR text — so the ingest hook and the
+    one-off backfill produce identical titles. Returns None on no facts / no model
+    / generation failure (caller keeps the metadata title or filename). Never
+    raises — title synthesis must not break ingest.
+    """
+    if not facts:
+        return None
+    model = (
+        settings.schicht_a_extraction_model
+        or settings.ollama_chat_model
+        or settings.ollama_model
+    )
+    if not model:
+        return None
+
+    system = prompt_manager.get(
+        "schicht_a_title", "system", default=_TITLE_SYSTEM_DEFAULT, lang=lang,
+    )
+    user = prompt_manager.get(
+        "schicht_a_title", "user", default=_TITLE_USER_DEFAULT, lang=lang,
+        facts=_facts_to_block(facts),
+    )
+    try:
+        client = llm_client or get_default_client()
+        classification_kwargs = get_classification_chat_kwargs(model)
+        response = await client.chat(
+            model=model,
+            messages=[
+                {"role": "system", "content": system},
+                {"role": "user", "content": user},
+            ],
+            options={"temperature": 0.2},
+            **classification_kwargs,
+        )
+        raw = extract_response_content(response) or ""
+        payload = _parse_llm_json(raw)
+        if not isinstance(payload, dict):
+            return None
+        title = payload.get("title")
+        if isinstance(title, str):
+            title = " ".join(title.split()).strip().strip('"').strip()[:_MAX_TITLE_LEN]
+            return title or None
+    except Exception as e:  # noqa: BLE001 — title synthesis never breaks ingest
+        logger.warning(f"Schicht A title synthesis failed: {e}")
+    return None
+
+
+# ---------------------------------------------------------------------------
 # LLM payload → facts
 # ---------------------------------------------------------------------------
 
@@ -701,6 +792,16 @@ async def schicht_a_post_document_ingest_hook(
                     await AtomPurgeService.purge(
                         db, atom_id=aid, reason="schicht_a_reextract"
                     )
+
+            # Synthesize a human-meaningful display title from the facts (best-
+            # effort; a miss leaves the metadata title / filename as-is).
+            try:
+                title = await generate_document_title(capped, lang=lang)
+                if title:
+                    doc.generated_title = title
+                    await db.commit()
+            except Exception as e:  # noqa: BLE001 — title is non-essential
+                logger.warning(f"Schicht A: title synthesis failed for doc {document_id}: {e}")
 
             logger.info(
                 f"Schicht A: stored {stored} fact(s) for doc {document_id} "

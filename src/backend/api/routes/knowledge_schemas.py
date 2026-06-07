@@ -67,6 +67,9 @@ class DocumentResponse(BaseModel):
     id: int
     filename: str
     title: str | None
+    # UI display name: LLM-synthesized facts title → metadata title → filename.
+    # Always populated; defaults to None for legacy callers that don't set it.
+    display_name: str | None = None
     file_type: str | None
     file_size: int | None
     status: str

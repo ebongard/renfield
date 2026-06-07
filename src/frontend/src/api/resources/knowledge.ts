@@ -54,6 +54,9 @@ export interface DocumentRow {
   page_count?: number;
   chunk_count?: number;
   title?: string;
+  // UI display name from the backend: LLM-synthesized facts title → metadata
+  // title → filename. Prefer this over title/filename when rendering.
+  display_name?: string;
   created_at?: string;
 }
 
