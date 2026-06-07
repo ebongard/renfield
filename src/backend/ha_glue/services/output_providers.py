@@ -179,7 +179,8 @@ def _render_value(template: Any, ctx: dict[str, Any]) -> tuple[Any, bool]:
         key = whole.group(1)
         val = ctx.get(key)
         return (None, False) if val is None else (val, True)
-    # embedded interpolation; drop only if it references a single missing key
+    # Embedded interpolation: always included; missing keys substitute "" (only a
+    # whole-string placeholder can drop the arg entirely).
     return _PLACEHOLDER_RE.sub(lambda m: str(ctx.get(m.group(1), "")), template), True
 
 

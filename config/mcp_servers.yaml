@@ -214,15 +214,18 @@ servers:
     example_intent: mcp.samsung.tv_power
     # Output-provider stanza (docs/design/output-providers.md): adapts the
     # normalized contract onto samsung's real tools, entirely backend-side.
-    # Makes the TV room-selectable + room-playable when OUTPUT_PROVIDERS_ENABLED.
-    # status maps to tv_info: an asleep TV can't be probed (the call fails), which
-    # the dispatcher reads as "needs waking" → tv_power on → poll → play.
+    # Makes the TV room-selectable + room-playable + room-controllable when
+    # OUTPUT_PROVIDERS_ENABLED. status maps to tv_media(status): the DLNA media
+    # endpoint (:9197) is unreachable on an asleep TV, so the probe fails — the
+    # dispatcher reads that as "needs waking" → tv_power on → poll the media
+    # endpoint until it responds → play. (Better than tv_info: it verifies the
+    # MEDIA endpoint is ready, not merely that the panel powered on.)
     output_provider:
-      capabilities: [video, audio, power]
+      capabilities: [video, audio, power, transport]
       boot_timeout: 25
       discover: { tool: tv_discover, list_at: tvs }
       play: { tool: tv_media, args: { action: play_url, url: "{url}", title: "{title}" } }
-      status: { tool: tv_info }
+      status: { tool: tv_media, args: { action: status }, state_at: state }
       control:
         # NOTE: "on"/"off" MUST be quoted — bare on/off are YAML 1.1 booleans,
         # which would make the control-map keys True/False instead of strings.
@@ -230,6 +233,12 @@ servers:
         "off": { tool: tv_power, args: { action: "off" } }
         volume: { tool: tv_volume, args: { level: "{value}" } }
         mute: { tool: tv_volume, args: { action: mute } }
+        unmute: { tool: tv_volume, args: { action: unmute } }
+        # Transport via tv_media (DLNA). next/previous/seek/play_mode are not
+        # samsung single-item DLNA ops → unmapped → graceful "not supported".
+        stop: { tool: tv_media, args: { action: stop } }
+        pause: { tool: tv_media, args: { action: pause } }
+        resume: { tool: tv_media, args: { action: play } }
     prompt_tools:
       - tv_discover
       - tv_info
