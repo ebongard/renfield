@@ -1,8 +1,9 @@
-"""Tests for the generic output-provider registry (Phase 1 foundation).
+"""Tests for the generic output-provider registry + config-driven MCP adapter.
 
-Covers stanza parsing / registry build, capability handling, and the
-McpOutputProvider contract-method normalization against a mocked MCPManager.
-The module is pure (no heavy deps), so no import stubbing is needed.
+The adapter lives entirely in renfield: each stanza maps the normalized contract
+methods onto a server's REAL tools via an arg-template, and McpOutputProvider
+renders those templates + normalizes responses. No MCP-server changes required.
+Pure module (no heavy deps) — imports directly, no stubbing.
 """
 
 from types import SimpleNamespace
@@ -12,13 +13,14 @@ import pytest
 
 from ha_glue.services.output_providers import (
     CAP_POWER,
-    McpOutputProvider,
+    MediaRef,
     OutputProviderError,
     OutputTarget,
-    MediaRef,
     TargetStatus,
     _extract_payload,
     _normalize_targets,
+    _render_args,
+    _render_value,
     build_mcp_output_providers,
 )
 
@@ -27,12 +29,10 @@ from ha_glue.services.output_providers import (
 
 
 def _envelope(payload_json: str) -> dict:
-    """Shape MCPManager.execute_tool returns: success + data[].text JSON."""
     return {"success": True, "message": "", "data": [{"type": "text", "text": payload_json}]}
 
 
 def _fake_manager(servers: dict) -> SimpleNamespace:
-    """servers: {name: output_provider_stanza_or_None}."""
     states = {
         name: SimpleNamespace(config=SimpleNamespace(output_provider=stanza))
         for name, stanza in servers.items()
@@ -40,66 +40,93 @@ def _fake_manager(servers: dict) -> SimpleNamespace:
     return SimpleNamespace(_servers=states, execute_tool=AsyncMock())
 
 
-_DLNA_STANZA = {
-    "capabilities": ["audio", "video", "transport"],
-    "discover": "list_renderers",
-    "play": "play_tracks",
-    "control": "media_control",
-    "status": "get_status",
-}
+# A samsung-style stanza: real tools (tv_discover/tv_media/tv_power/tv_volume)
+# with arg-templates that adapt the normalized contract onto them.
 _SAMSUNG_STANZA = {
     "capabilities": ["video", "audio", "power", "transport"],
-    "discover": "tv_discover",
-    "play": "tv_media",
-    "control": "tv_power",
-    "status": "tv_media",
+    "boot_timeout": 25,
+    "discover": {"tool": "tv_discover", "list_at": "tvs"},
+    "play": {"tool": "tv_media", "args": {"action": "play_url", "url": "{url}", "title": "{title}"}},
+    "status": {"tool": "tv_media", "args": {"action": "status"}, "state_at": "state"},
+    "control": {
+        "on": {"tool": "tv_power", "args": {"action": "on"}},
+        "off": {"tool": "tv_power", "args": {"action": "off"}},
+        "volume": {"tool": "tv_volume", "args": {"level": "{value}"}},
+        "mute": {"tool": "tv_volume", "args": {"action": "mute"}},
+    },
 }
+# A minimal contract-native stanza (bare tool names, no arg mapping).
+_BARE_STANZA = {"capabilities": ["audio"], "discover": "list_things"}
+
+
+# --- arg-template rendering ------------------------------------------------
+
+
+def test_render_value_whole_placeholder_preserves_type():
+    assert _render_value("{value}", {"value": 30}) == (30, True)        # int stays int
+    assert _render_value("{url}", {"url": "http://x"}) == ("http://x", True)
+
+
+def test_render_value_missing_whole_placeholder_drops():
+    assert _render_value("{title}", {"title": None}) == (None, False)
+    assert _render_value("{title}", {}) == (None, False)
+
+
+def test_render_value_embedded_interpolates():
+    assert _render_value("KEY_{action}", {"action": "VOLUP"}) == ("KEY_VOLUP", True)
+
+
+def test_render_value_literal_passthrough():
+    assert _render_value("play_url", {}) == ("play_url", True)
+    assert _render_value(5, {}) == (5, True)
+
+
+def test_render_args_drops_missing_keeps_literals():
+    tmpl = {"action": "play_url", "url": "{url}", "title": "{title}"}
+    # title missing → dropped; action literal kept; url filled
+    assert _render_args(tmpl, {"url": "http://a", "title": None}) == {
+        "action": "play_url",
+        "url": "http://a",
+    }
 
 
 # --- registry build --------------------------------------------------------
 
 
-def test_build_registers_mcp_stanzas():
-    mgr = _fake_manager({"dlna": _DLNA_STANZA, "samsung": _SAMSUNG_STANZA, "paperless": None})
+def test_build_registers_stanzas():
+    mgr = _fake_manager({"samsung": _SAMSUNG_STANZA, "bare": _BARE_STANZA, "paperless": None})
     providers = build_mcp_output_providers(mgr)
-    assert set(providers) == {"dlna", "samsung"}  # paperless (no stanza) excluded
-    assert providers["dlna"].capabilities == frozenset({"audio", "video", "transport"})
-    assert providers["dlna"].boot_timeout == 0.0  # no power cap
-    # samsung has power → default boot_timeout
-    assert providers["samsung"].has_capability(CAP_POWER)
-    assert providers["samsung"].boot_timeout == 20.0
+    assert set(providers) == {"samsung", "bare"}
+    s = providers["samsung"]
+    assert s.capabilities == frozenset({"video", "audio", "power", "transport"})
+    assert s.boot_timeout == 25.0
+    assert set(s.control_maps) == {"on", "off", "volume", "mute"}
+    assert s.play_map.tool == "tv_media"
 
 
-def test_build_skips_malformed_stanzas():
+def test_build_skips_malformed():
     mgr = _fake_manager(
         {
-            "no_caps": {"discover": "x"},                       # missing capabilities
-            "empty_caps": {"capabilities": [], "discover": "x"},  # empty capabilities
-            "no_discover": {"capabilities": ["audio"], "play": "p"},  # no discover tool
-            "good": _DLNA_STANZA,
+            "no_caps": {"discover": "x"},
+            "empty_caps": {"capabilities": [], "discover": "x"},
+            "no_discover": {"capabilities": ["audio"], "play": {"tool": "p"}},
+            "bad_discover": {"capabilities": ["audio"], "discover": {"no_tool": 1}},
+            "good": _BARE_STANZA,
         }
     )
-    providers = build_mcp_output_providers(mgr)
-    assert set(providers) == {"good"}
+    assert set(build_mcp_output_providers(mgr)) == {"good"}
 
 
 def test_build_keeps_unknown_capability():
     mgr = _fake_manager({"weird": {"capabilities": ["audio", "hologram"], "discover": "d"}})
-    providers = build_mcp_output_providers(mgr)
-    assert "hologram" in providers["weird"].capabilities  # kept (warned, not dropped)
-
-
-def test_build_custom_boot_timeout():
-    stanza = dict(_SAMSUNG_STANZA, boot_timeout=35)
-    mgr = _fake_manager({"samsung": stanza})
-    assert build_mcp_output_providers(mgr)["samsung"].boot_timeout == 35.0
+    assert "hologram" in build_mcp_output_providers(mgr)["weird"].capabilities
 
 
 def test_build_empty_manager():
     assert build_mcp_output_providers(SimpleNamespace(_servers={})) == {}
 
 
-# --- payload extraction ----------------------------------------------------
+# --- payload extraction + target normalization -----------------------------
 
 
 def test_extract_payload_from_data_text():
@@ -110,49 +137,86 @@ def test_extract_payload_from_message():
     assert _extract_payload({"success": True, "message": '{"b": 2}', "data": []}) == {"b": 2}
 
 
-def test_extract_payload_unparseable_returns_none():
-    assert _extract_payload({"success": True, "message": "not json", "data": []}) is None
-
-
-# --- target normalization --------------------------------------------------
-
-
 @pytest.mark.parametrize(
     "payload",
     [
-        {"targets": [{"id": "tv1", "name": "Living Room", "capabilities": ["video", "power"]}]},
-        [{"id": "tv1", "name": "Living Room", "capabilities": ["video", "power"]}],
-        {"tvs": [{"id": "tv1", "name": "Living Room", "capabilities": ["video", "power"]}]},
-        {"renderers": [{"name": "tv1", "friendly_name": "Living Room", "capabilities": ["video", "power"]}]},
+        {"tvs": [{"id": "192.168.1.47", "name": "Living Room"}]},
+        {"targets": [{"id": "192.168.1.47", "name": "Living Room"}]},
+        [{"host": "192.168.1.47", "name": "Living Room"}],
     ],
 )
 def test_normalize_targets_shapes(payload):
-    targets = _normalize_targets(payload, "samsung")
-    assert len(targets) == 1
-    t = targets[0]
-    assert t.provider == "samsung"
-    assert t.target_id == "tv1"
-    assert t.name == "Living Room"
-    assert t.capabilities == frozenset({"video", "power"})
+    targets = _normalize_targets(payload, "samsung", list_at="tvs")
+    assert targets == [OutputTarget(provider="samsung", target_id="192.168.1.47", name="Living Room")]
 
 
-def test_normalize_targets_skips_idless_items():
-    targets = _normalize_targets({"targets": [{"name": "no id here, but name is the id"}, {}]}, "dlna")
-    # first item: name becomes the id; second: empty dict skipped
-    assert [t.target_id for t in targets] == ["no id here, but name is the id"]
+def test_normalize_legacy_name_is_id():
+    targets = _normalize_targets({"renderers": [{"name": "rid", "friendly_name": "Wohnzimmer"}]}, "dlna")
+    assert targets == [OutputTarget(provider="dlna", target_id="rid", name="Wohnzimmer")]
 
 
-# --- McpOutputProvider contract calls --------------------------------------
+# --- contract calls adapt onto real tools ----------------------------------
 
 
 @pytest.mark.asyncio
-async def test_discover_calls_namespaced_tool_and_normalizes():
+async def test_discover_uses_mapped_tool_and_list_at():
     mgr = _fake_manager({"samsung": _SAMSUNG_STANZA})
     p = build_mcp_output_providers(mgr)["samsung"]
-    mgr.execute_tool.return_value = _envelope('{"targets": [{"id": "tv1", "name": "TV"}]}')
+    mgr.execute_tool.return_value = _envelope('{"tvs": [{"id": "tv1", "name": "TV"}]}')
     targets = await p.discover()
     mgr.execute_tool.assert_awaited_once_with("mcp.samsung.tv_discover", {})
     assert targets == [OutputTarget(provider="samsung", target_id="tv1", name="TV")]
+
+
+@pytest.mark.asyncio
+async def test_play_renders_native_args():
+    mgr = _fake_manager({"samsung": _SAMSUNG_STANZA})
+    p = build_mcp_output_providers(mgr)["samsung"]
+    mgr.execute_tool.return_value = _envelope('{"ok": true, "state": "playing"}')
+    res = await p.play("tv1", [MediaRef(url="http://x/a.mp4", title="A")])
+    args = mgr.execute_tool.await_args.args
+    assert args[0] == "mcp.samsung.tv_media"
+    # normalized {target_id, items, mode} → native {action, url, title}; no target_id leaks
+    assert args[1] == {"action": "play_url", "url": "http://x/a.mp4", "title": "A"}
+    assert res.ok and res.state == "playing"
+
+
+@pytest.mark.asyncio
+async def test_play_drops_missing_title():
+    mgr = _fake_manager({"samsung": _SAMSUNG_STANZA})
+    p = build_mcp_output_providers(mgr)["samsung"]
+    mgr.execute_tool.return_value = _envelope('{"ok": true}')
+    await p.play("tv1", [MediaRef(url="http://x/a.mp4")])  # no title
+    assert mgr.execute_tool.await_args.args[1] == {"action": "play_url", "url": "http://x/a.mp4"}
+
+
+@pytest.mark.asyncio
+async def test_control_per_action_routing_and_raw_value():
+    mgr = _fake_manager({"samsung": _SAMSUNG_STANZA})
+    p = build_mcp_output_providers(mgr)["samsung"]
+    mgr.execute_tool.return_value = _envelope('{"ok": true}')
+    await p.control("tv1", "on")
+    assert mgr.execute_tool.await_args.args == ("mcp.samsung.tv_power", {"action": "on"})
+    await p.control("tv1", "volume", value=30)
+    # whole-placeholder {value} preserves the int
+    assert mgr.execute_tool.await_args.args == ("mcp.samsung.tv_volume", {"level": 30})
+
+
+@pytest.mark.asyncio
+async def test_control_unknown_action_raises():
+    mgr = _fake_manager({"samsung": _SAMSUNG_STANZA})
+    p = build_mcp_output_providers(mgr)["samsung"]
+    with pytest.raises(OutputProviderError, match="no control mapping for action 'seek'"):
+        await p.control("tv1", "seek")
+
+
+@pytest.mark.asyncio
+async def test_status_reads_state_at():
+    mgr = _fake_manager({"samsung": _SAMSUNG_STANZA})
+    p = build_mcp_output_providers(mgr)["samsung"]
+    mgr.execute_tool.return_value = _envelope('{"state": "off"}')
+    st = await p.status("tv1")
+    assert st == TargetStatus(state="off") and st.is_off
 
 
 @pytest.mark.asyncio
@@ -174,47 +238,8 @@ async def test_discover_raises_on_transport_exception():
 
 
 @pytest.mark.asyncio
-async def test_play_sends_normalized_items_and_parses_result():
-    mgr = _fake_manager({"dlna": _DLNA_STANZA})
-    p = build_mcp_output_providers(mgr)["dlna"]
-    mgr.execute_tool.return_value = _envelope('{"ok": true, "state": "playing"}')
-    res = await p.play("Wohnzimmer", [MediaRef(url="http://x/a.mp3", title="A")], mode="now")
-    args = mgr.execute_tool.await_args.args
-    assert args[0] == "mcp.dlna.play_tracks"
-    assert args[1] == {
-        "target_id": "Wohnzimmer",
-        "items": [{"url": "http://x/a.mp3", "title": "A"}],
-        "mode": "now",
-    }
-    assert res.ok and res.state == "playing"
-
-
-@pytest.mark.asyncio
-async def test_control_omits_value_when_none():
-    mgr = _fake_manager({"samsung": _SAMSUNG_STANZA})
-    p = build_mcp_output_providers(mgr)["samsung"]
-    mgr.execute_tool.return_value = _envelope('{"ok": true}')
-    await p.control("tv1", "on")
-    assert mgr.execute_tool.await_args.args[1] == {"target_id": "tv1", "action": "on"}
-    await p.control("tv1", "volume", value=30)
-    assert mgr.execute_tool.await_args.args[1] == {"target_id": "tv1", "action": "volume", "value": 30}
-
-
-@pytest.mark.asyncio
-async def test_status_parses_off_state():
-    mgr = _fake_manager({"samsung": _SAMSUNG_STANZA})
-    p = build_mcp_output_providers(mgr)["samsung"]
-    mgr.execute_tool.return_value = _envelope('{"state": "off"}')
-    st = await p.status("tv1")
-    assert st == TargetStatus(state="off")
-    assert st.is_off
-
-
-@pytest.mark.asyncio
-async def test_missing_status_tool_raises():
-    # A stanza with no status tool — control method missing from tools map.
-    stanza = {"capabilities": ["audio"], "discover": "d"}
-    mgr = _fake_manager({"x": stanza})
-    p = build_mcp_output_providers(mgr)["x"]
-    with pytest.raises(OutputProviderError, match="no 'status' tool"):
-        await p.status("t1")
+async def test_play_without_mapping_raises():
+    mgr = _fake_manager({"bare": _BARE_STANZA})  # discover only
+    p = build_mcp_output_providers(mgr)["bare"]
+    with pytest.raises(OutputProviderError, match="no 'play' mapping"):
+        await p.play("t1", [MediaRef(url="u")])

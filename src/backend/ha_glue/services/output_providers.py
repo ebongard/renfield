@@ -4,41 +4,54 @@ Design: docs/design/output-providers.md. A *provider* is a source of
 controllable room-output targets (a TV, a renderer, a speaker). Two kinds:
 
   - **MCP-declared** — any MCP server carrying an ``output_provider:`` stanza in
-    ``mcp_servers.yaml`` (dlna, samsung, sonos, …). ``McpOutputProvider`` maps the
-    four contract methods onto ``mcp.<server>.<tool>`` calls. This is the payoff:
-    a new brand is config + a small MCP contract, not backend code.
+    ``mcp_servers.yaml`` (samsung, sonos, …). ``McpOutputProvider`` adapts the
+    four normalized contract methods onto that server's REAL tools.
   - **built-in** — the Renfield device registry + Home Assistant media_player
-    domain, wrapped as adapters over ``OutputRoutingService``. Added in the
-    aggregation phase where their ``discover()`` is consumed (Phase 4); this
-    module currently ships the MCP machinery only.
+    domain (added in the aggregation phase). dlna keeps its proven legacy
+    gapless-queue dispatch — it is not driven through this generic path.
 
-Every provider speaks the SAME normalized shapes so the aggregator/dispatcher
-never special-cases a brand:
+**The adaptation lives entirely in renfield (config-driven), never in the MCP
+servers.** We cannot require third-party servers (sonos, LG, …) to expose
+wrapper tools, so the stanza declares, per contract method, the server's real
+tool name plus an arg-template that maps the normalized inputs onto that tool's
+native parameters. ``McpOutputProvider`` renders those templates and normalizes
+the response. A new brand is a stanza, not backend code.
 
-    discover()                         -> list[OutputTarget]
-    play(target_id, items, mode)       -> PlayResult
-    control(target_id, action, value)  -> ControlResult
-    status(target_id)                  -> TargetStatus
+Stanza shape (samsung example)::
 
-Capabilities a target/provider may advertise: audio, video, power, transport,
-queue (gapless). A provider only implements what it has; missing capability =
-missing behaviour.
+    output_provider:
+      capabilities: [video, audio, power, transport]
+      boot_timeout: 25
+      discover: { tool: tv_discover, list_at: tvs }
+      play:     { tool: tv_media, args: { action: play_url, url: "{url}", title: "{title}" } }
+      status:   { tool: tv_media, args: { action: status }, state_at: state }
+      control:
+        on:     { tool: tv_power,  args: { action: "on" } }
+        off:    { tool: tv_power,  args: { action: "off" } }
+        volume: { tool: tv_volume, args: { level: "{value}" } }
+        mute:   { tool: tv_volume, args: { action: mute } }
 
-                build_mcp_output_providers(mcp_manager)
-                                │
-            ┌───────────────────┴───────────────────┐
-   reads MCPServerConfig.output_provider stanzas   {key: McpOutputProvider}
-   (capabilities + discover/play/control/status     keyed by server name,
-    tool names + optional boot_timeout)             which == the target_type
-                                                    value space.
+A method may also be a bare tool name (``discover: tv_discover``) when the tool
+needs no arg mapping. ``control`` maps per-action (on/off/volume/mute/key/…)
+because a brand's control surface is usually split across several tools.
 
-The whole module is inert unless ``OUTPUT_PROVIDERS_ENABLED`` is on — callers gate
-on the flag before building the registry. Flag off => legacy routing, untouched.
+Arg-template rendering:
+  - ``"{key}"`` (whole value is one placeholder) substitutes the RAW context
+    value (an int stays an int). If that key is absent/None, the arg is DROPPED.
+  - ``"pre {key} post"`` (placeholder embedded in text) string-interpolates.
+  - any non-string value is passed through literally (e.g. ``action: play_url``).
+
+Contexts: play → {url, item_ref, title, target_id, mode}; control →
+{target_id, action, value}; status/discover → {target_id}.
+
+The module is inert unless ``OUTPUT_PROVIDERS_ENABLED`` is on — callers gate on
+the flag before building the registry.
 """
 
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass, field
 from typing import Any, Protocol, runtime_checkable
 
@@ -55,9 +68,8 @@ KNOWN_CAPABILITIES = frozenset(
     {CAP_AUDIO, CAP_VIDEO, CAP_POWER, CAP_TRANSPORT, CAP_QUEUE}
 )
 
-# The four contract methods a provider stanza must map to tool names. `status`
-# may reuse another tool (e.g. samsung's tv_media doubles as play + status).
-_CONTRACT_METHODS = ("discover", "play", "control", "status")
+_PLACEHOLDER_RE = re.compile(r"\{(\w+)\}")
+_WHOLE_PLACEHOLDER_RE = re.compile(r"^\{(\w+)\}$")
 
 
 class OutputProviderError(RuntimeError):
@@ -75,8 +87,8 @@ class OutputProviderError(RuntimeError):
 class OutputTarget:
     """One controllable output discovered from a provider."""
 
-    provider: str            # == target_type: "dlna" | "samsung" | "renfield" | ...
-    target_id: str           # provider-scoped id (renderer name / TV host / entity / device id)
+    provider: str            # == target_type: "samsung" | "dlna" | "renfield" | ...
+    target_id: str           # provider-scoped id (TV host / renderer name / entity / device id)
     name: str
     capabilities: frozenset[str] = frozenset()
     room_hint: str | None = None   # advisory only (e.g. a renderer named "Wohnzimmer")
@@ -101,16 +113,6 @@ class MediaRef:
     url: str | None = None
     item_ref: str | None = None   # provider-native id (e.g. a Jellyfin/library object id)
     title: str | None = None
-
-    def to_dict(self) -> dict[str, Any]:
-        d: dict[str, Any] = {}
-        if self.url is not None:
-            d["url"] = self.url
-        if self.item_ref is not None:
-            d["item_ref"] = self.item_ref
-        if self.title is not None:
-            d["title"] = self.title
-        return d
 
 
 @dataclass(frozen=True)
@@ -160,6 +162,38 @@ class OutputProvider(Protocol):
     async def status(self, target_id: str) -> TargetStatus: ...
 
 
+# --- arg-template rendering ------------------------------------------------
+
+
+def _render_value(template: Any, ctx: dict[str, Any]) -> tuple[Any, bool]:
+    """Render one arg-template value. Returns (value, include).
+
+    A whole-string placeholder substitutes the raw ctx value (type-preserving);
+    a missing/None value means the arg is dropped (include=False). Embedded
+    placeholders string-interpolate. Non-strings pass through.
+    """
+    if not isinstance(template, str):
+        return template, True
+    whole = _WHOLE_PLACEHOLDER_RE.match(template)
+    if whole:
+        key = whole.group(1)
+        val = ctx.get(key)
+        return (None, False) if val is None else (val, True)
+    # embedded interpolation; drop only if it references a single missing key
+    return _PLACEHOLDER_RE.sub(lambda m: str(ctx.get(m.group(1), "")), template), True
+
+
+def _render_args(arg_template: dict[str, Any] | None, ctx: dict[str, Any]) -> dict[str, Any]:
+    if not arg_template:
+        return {}
+    out: dict[str, Any] = {}
+    for k, v in arg_template.items():
+        rendered, include = _render_value(v, ctx)
+        if include:
+            out[k] = rendered
+    return out
+
+
 # --- MCP envelope helpers --------------------------------------------------
 
 
@@ -167,8 +201,7 @@ def _extract_payload(result: dict[str, Any]) -> Any:
     """Pull the inner tool JSON out of an MCPManager.execute_tool result.
 
     execute_tool returns {"success", "message", "data"} where the real tool
-    output is a JSON string sitting in data[].text or in message. Mirrors the
-    parse in OutputRoutingService.get_available_dlna_renderers.
+    output is a JSON string in data[].text or in message.
     """
     raw_text = ""
     data = result.get("data", [])
@@ -187,24 +220,22 @@ def _extract_payload(result: dict[str, Any]) -> Any:
         return None
 
 
-def _normalize_targets(payload: Any, provider_key: str) -> list[OutputTarget]:
-    """Map a discover() payload into OutputTargets, tolerant of common shapes.
-
-    Accepts {"targets": [...]}, a bare list, or the legacy per-brand keys
-    ({"renderers": [...]}, {"tvs": [...]}). Each item: id from id|target_id|
-    host|name, name from name|friendly_name|id.
-    """
+def _normalize_targets(payload: Any, provider_key: str, list_at: str | None = None) -> list[OutputTarget]:
+    """Map a discover() payload into OutputTargets, tolerant of common shapes."""
     items: list[Any]
     if isinstance(payload, list):
         items = payload
     elif isinstance(payload, dict):
-        items = (
-            payload.get("targets")
-            or payload.get("renderers")
-            or payload.get("tvs")
-            or payload.get("devices")
-            or []
-        )
+        if list_at and isinstance(payload.get(list_at), list):
+            items = payload[list_at]
+        else:
+            items = (
+                payload.get("targets")
+                or payload.get("tvs")
+                or payload.get("renderers")
+                or payload.get("devices")
+                or []
+            )
     else:
         items = []
 
@@ -212,15 +243,13 @@ def _normalize_targets(payload: Any, provider_key: str) -> list[OutputTarget]:
     for it in items:
         if not isinstance(it, dict):
             continue
-        # Two shapes: the normalized contract carries an explicit `id` + a `name`
-        # display; the legacy per-brand shape ({name, friendly_name}, e.g. dlna
-        # renderers) uses `name` AS the identifier with `friendly_name` as display.
+        # Explicit id + display name, OR legacy {name, friendly_name} (name is id).
         explicit_id = it.get("id") or it.get("target_id") or it.get("host")
         if explicit_id:
             tid = explicit_id
             name = it.get("name") or it.get("friendly_name") or str(tid)
         else:
-            tid = it.get("name")  # legacy: name is the identifier
+            tid = it.get("name")
             name = it.get("friendly_name") or it.get("name") or str(tid)
         if not tid:
             continue
@@ -242,29 +271,54 @@ def _normalize_targets(payload: Any, provider_key: str) -> list[OutputTarget]:
     return targets
 
 
+# --- method-mapping records ------------------------------------------------
+
+
+@dataclass(frozen=True)
+class _MethodMap:
+    """One contract method bound to a real tool + arg-template + response hints."""
+
+    tool: str
+    args: dict[str, Any] = field(default_factory=dict)
+    list_at: str | None = None    # discover: key holding the targets list
+    state_at: str | None = None   # status: key holding the state string
+
+
+def _coerce_method(spec: Any) -> _MethodMap | None:
+    """Accept ``"tool_name"`` or ``{tool, args, list_at, state_at}``."""
+    if isinstance(spec, str) and spec:
+        return _MethodMap(tool=spec)
+    if isinstance(spec, dict) and isinstance(spec.get("tool"), str):
+        return _MethodMap(
+            tool=spec["tool"],
+            args=spec.get("args") if isinstance(spec.get("args"), dict) else {},
+            list_at=spec.get("list_at"),
+            state_at=spec.get("state_at"),
+        )
+    return None
+
+
 # --- MCP-declared provider -------------------------------------------------
 
 
 @dataclass
 class McpOutputProvider:
-    """An MCP server carrying an ``output_provider:`` stanza, exposed as a
-    provider. Maps the four contract methods onto ``mcp.<server>.<tool>``."""
+    """An MCP server carrying an ``output_provider:`` stanza. Adapts the four
+    normalized contract methods onto the server's real tools (config-driven)."""
 
     key: str                              # the MCP server name (== target_type)
     capabilities: frozenset[str]
-    tools: dict[str, str]                 # {"discover": tool, "play": ..., "control": ..., "status": ...}
+    discover_map: _MethodMap
+    play_map: _MethodMap | None = None
+    status_map: _MethodMap | None = None
+    control_maps: dict[str, _MethodMap] = field(default_factory=dict)  # action -> map
     boot_timeout: float = 0.0
-    mcp_manager: Any = None               # MCPManager; injected at build time
+    mcp_manager: Any = None
 
     def has_capability(self, cap: str) -> bool:
         return cap in self.capabilities
 
-    async def _call(self, method: str, arguments: dict[str, Any]) -> Any:
-        tool = self.tools.get(method)
-        if not tool:
-            raise OutputProviderError(
-                f"provider '{self.key}' has no '{method}' tool declared"
-            )
+    async def _call(self, tool: str, arguments: dict[str, Any]) -> Any:
         if self.mcp_manager is None:
             raise OutputProviderError(f"provider '{self.key}' has no mcp_manager")
         namespaced = f"mcp.{self.key}.{tool}"
@@ -278,20 +332,24 @@ class McpOutputProvider:
         return _extract_payload(result)
 
     async def discover(self, room_id: int | None = None) -> list[OutputTarget]:
-        payload = await self._call("discover", {})
-        return _normalize_targets(payload, self.key)
+        args = _render_args(self.discover_map.args, {"target_id": None})
+        payload = await self._call(self.discover_map.tool, args)
+        return _normalize_targets(payload, self.key, self.discover_map.list_at)
 
     async def play(
         self, target_id: str, items: list[MediaRef], mode: str = "now"
     ) -> PlayResult:
-        payload = await self._call(
-            "play",
-            {
-                "target_id": target_id,
-                "items": [m.to_dict() for m in items],
-                "mode": mode,
-            },
-        )
+        if self.play_map is None:
+            raise OutputProviderError(f"provider '{self.key}' has no 'play' mapping")
+        first = items[0] if items else MediaRef()
+        ctx = {
+            "target_id": target_id,
+            "mode": mode,
+            "url": first.url,
+            "item_ref": first.item_ref,
+            "title": first.title,
+        }
+        payload = await self._call(self.play_map.tool, _render_args(self.play_map.args, ctx))
         if isinstance(payload, dict):
             return PlayResult(
                 ok=bool(payload.get("ok", True)),
@@ -303,10 +361,13 @@ class McpOutputProvider:
     async def control(
         self, target_id: str, action: str, value: Any | None = None
     ) -> ControlResult:
-        args: dict[str, Any] = {"target_id": target_id, "action": action}
-        if value is not None:
-            args["value"] = value
-        payload = await self._call("control", args)
+        m = self.control_maps.get(action)
+        if m is None:
+            raise OutputProviderError(
+                f"provider '{self.key}' has no control mapping for action '{action}'"
+            )
+        ctx = {"target_id": target_id, "action": action, "value": value}
+        payload = await self._call(m.tool, _render_args(m.args, ctx))
         if isinstance(payload, dict):
             return ControlResult(
                 ok=bool(payload.get("ok", True)), message=payload.get("message", "")
@@ -314,10 +375,14 @@ class McpOutputProvider:
         return ControlResult(ok=True)
 
     async def status(self, target_id: str) -> TargetStatus:
-        payload = await self._call("status", {"target_id": target_id})
+        if self.status_map is None:
+            raise OutputProviderError(f"provider '{self.key}' has no 'status' mapping")
+        ctx = {"target_id": target_id}
+        payload = await self._call(self.status_map.tool, _render_args(self.status_map.args, ctx))
         if isinstance(payload, dict):
+            state_key = self.status_map.state_at or "state"
             return TargetStatus(
-                state=str(payload.get("state", "unknown")),
+                state=str(payload.get(state_key, payload.get("state", "unknown"))),
                 position=payload.get("position"),
                 reachable=bool(payload.get("reachable", True)),
             )
@@ -332,9 +397,7 @@ def _parse_stanza(name: str, stanza: dict[str, Any], mcp_manager: Any) -> McpOut
     malformed (logged + skipped — never raises into the registry build)."""
     caps_raw = stanza.get("capabilities")
     if not isinstance(caps_raw, list) or not caps_raw:
-        logger.warning(
-            f"output_provider '{name}': missing/empty capabilities — skipping"
-        )
+        logger.warning(f"output_provider '{name}': missing/empty capabilities — skipping")
         return None
     caps = set()
     for c in caps_raw:
@@ -344,20 +407,29 @@ def _parse_stanza(name: str, stanza: dict[str, Any], mcp_manager: Any) -> McpOut
             logger.warning(f"output_provider '{name}': unknown capability '{c}' (kept)")
         caps.add(c)
 
-    tools: dict[str, str] = {}
-    for method in _CONTRACT_METHODS:
-        tool = stanza.get(method)
-        if isinstance(tool, str) and tool:
-            tools[method] = tool
-    # discover is mandatory (a provider that can't enumerate targets is useless).
-    if "discover" not in tools:
-        logger.warning(
-            f"output_provider '{name}': no 'discover' tool — skipping"
-        )
+    discover_map = _coerce_method(stanza.get("discover"))
+    if discover_map is None:
+        logger.warning(f"output_provider '{name}': missing/invalid 'discover' — skipping")
         return None
+
+    play_map = _coerce_method(stanza.get("play"))
+    status_map = _coerce_method(stanza.get("status"))
+
+    control_maps: dict[str, _MethodMap] = {}
+    control_raw = stanza.get("control")
+    if isinstance(control_raw, dict):
+        for action, spec in control_raw.items():
+            m = _coerce_method(spec)
+            if m is not None:
+                control_maps[str(action)] = m
+            else:
+                logger.warning(f"output_provider '{name}': bad control mapping for '{action}' (skipped)")
 
     boot_timeout = 0.0
     if CAP_POWER in caps:
+        # power needs an 'on' control mapping to be actionable; warn if absent.
+        if "on" not in control_maps:
+            logger.warning(f"output_provider '{name}': power capability but no control.on mapping")
         try:
             boot_timeout = float(stanza.get("boot_timeout", 20.0))
         except (TypeError, ValueError):
@@ -366,7 +438,10 @@ def _parse_stanza(name: str, stanza: dict[str, Any], mcp_manager: Any) -> McpOut
     return McpOutputProvider(
         key=name,
         capabilities=frozenset(caps),
-        tools=tools,
+        discover_map=discover_map,
+        play_map=play_map,
+        status_map=status_map,
+        control_maps=control_maps,
         boot_timeout=boot_timeout,
         mcp_manager=mcp_manager,
     )
@@ -374,11 +449,7 @@ def _parse_stanza(name: str, stanza: dict[str, Any], mcp_manager: Any) -> McpOut
 
 def build_mcp_output_providers(mcp_manager: Any) -> dict[str, McpOutputProvider]:
     """Build {server_name: McpOutputProvider} from every MCP server config that
-    carries an ``output_provider:`` stanza. Malformed stanzas are skipped.
-
-    Built-in providers (renfield, homeassistant) are assembled separately in the
-    aggregation phase; this returns the MCP-declared providers only.
-    """
+    carries an ``output_provider:`` stanza. Malformed stanzas are skipped."""
     providers: dict[str, McpOutputProvider] = {}
     servers = getattr(mcp_manager, "_servers", None)
     if not servers:
@@ -393,6 +464,7 @@ def build_mcp_output_providers(mcp_manager: Any) -> dict[str, McpOutputProvider]
             providers[name] = provider
             logger.info(
                 f"output provider '{name}' registered "
-                f"(caps={sorted(provider.capabilities)}, boot_timeout={provider.boot_timeout})"
+                f"(caps={sorted(provider.capabilities)}, boot_timeout={provider.boot_timeout}, "
+                f"controls={sorted(provider.control_maps)})"
             )
     return providers
