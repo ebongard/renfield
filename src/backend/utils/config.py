@@ -526,6 +526,19 @@ class Settings(BaseSettings):
     chat_upload_retention_days: int = Field(default=30, ge=1, le=365)
     chat_upload_cleanup_enabled: bool = False
     chat_upload_email_account: str = "primary"
+
+    # Folder-ingest (watch-folder auto-ingest via renfield-mcp-filesystem).
+    # The dedicated Filesystem MCP pushes settled files to
+    # POST /api/folder-ingest/document; the backend never mounts the shares.
+    # The Bearer token lives in SystemSetting (revocable), not here. Owner/tier
+    # (D4) and the Paperless leg toggle are consumed in later tasks (T5/T6);
+    # the push route (T3) uses enabled + kb_name + target_user.
+    folder_ingest_enabled: bool = False
+    folder_ingest_kb_name: str = "Eingang"  # target KB; auto-created on first push
+    folder_ingest_target_user: str = ""  # owner username/id; empty → admin/first user
+    folder_ingest_default_tier: int = Field(default=0, ge=0, le=4)  # circle tier at create
+    folder_ingest_to_paperless: bool = True
+    folder_ingest_notify_on_filed: bool = True
     # Paperless cold-start confirm ramp: the first N archives show a metadata
     # confirm; after N the system trusts itself and archives silently. 0 =
     # never confirm (always silent). Tunable without a code change.

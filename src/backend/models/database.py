@@ -1659,12 +1659,17 @@ SETTING_WAKEWORD_KEYWORD = "wakeword.keyword"
 SETTING_WAKEWORD_THRESHOLD = "wakeword.threshold"
 SETTING_WAKEWORD_COOLDOWN_MS = "wakeword.cooldown_ms"
 SETTING_NOTIFICATION_WEBHOOK_TOKEN = "notification.webhook_token"
+# Revocable Bearer token the renfield-mcp-filesystem server presents on the
+# folder-ingest push (POST /api/folder-ingest/document). Minted by the admin
+# token route (T14), verified constant-time on every push.
+SETTING_FOLDER_INGEST_TOKEN = "folder_ingest.token"
 
 SYSTEM_SETTING_KEYS = [
     SETTING_WAKEWORD_KEYWORD,
     SETTING_WAKEWORD_THRESHOLD,
     SETTING_WAKEWORD_COOLDOWN_MS,
     SETTING_NOTIFICATION_WEBHOOK_TOKEN,
+    SETTING_FOLDER_INGEST_TOKEN,
 ]
 
 

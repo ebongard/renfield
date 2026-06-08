@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import hashlib
 import os
+import secrets
 import uuid
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
@@ -41,12 +42,20 @@ from models.database import (
     DOC_STATUS_FAILED,
     DOC_STATUS_PENDING,
     PAPERLESS_STATE_DONE,
+    SETTING_FOLDER_INGEST_TOKEN,
     Document,
+    SystemSetting,
 )
 from services.rag_service import DuplicateDocumentError, RAGService
 from services.redis_client import get_redis
 from services.task_queue import DocumentTaskQueue
 from utils.config import settings
+
+# Cross-repo push-contract version (DX-7). Sent in the request + response
+# header; the MCP treats an unknown response status as `retry` and logs a skew
+# WARN. Mirror of auth/provider_contract.py::PROVIDER_RESULT_CONTRACT_VERSION.
+# Bump on ANY change to the request/response shape or the IngestStatus names.
+FOLDER_INGEST_CONTRACT_VERSION = "1"
 
 
 class IngestStatus(str, Enum):
@@ -355,3 +364,51 @@ def _cleanup(file_path: str) -> None:
             os.remove(file_path)
     except OSError as exc:
         logger.warning(f"folder-ingest: failed to clean up {file_path}: {exc}")
+
+
+# ---------------------------------------------------------------------------
+# Bearer token management (mirrors NotificationService.{get,generate,verify}_
+# webhook_token). The token authenticates the MCP→backend push; it lives in
+# SystemSetting so it is revocable without a redeploy. generate_ backs the
+# admin mint route (T14); verify_ guards the push route (T3).
+# ---------------------------------------------------------------------------
+
+async def get_folder_ingest_token(db: AsyncSession) -> str | None:
+    """Return the stored folder-ingest Bearer token, or None if unset."""
+    setting = (
+        await db.execute(
+            select(SystemSetting).where(
+                SystemSetting.key == SETTING_FOLDER_INGEST_TOKEN
+            )
+        )
+    ).scalar_one_or_none()
+    return setting.value if setting else None
+
+
+async def generate_folder_ingest_token(db: AsyncSession) -> str:
+    """Mint a new folder-ingest token (rotating any existing one) and persist
+    it to SystemSetting. Returns the plaintext token (shown once to the admin)."""
+    token = secrets.token_urlsafe(48)
+    existing = (
+        await db.execute(
+            select(SystemSetting).where(
+                SystemSetting.key == SETTING_FOLDER_INGEST_TOKEN
+            )
+        )
+    ).scalar_one_or_none()
+    if existing:
+        existing.value = token
+    else:
+        db.add(SystemSetting(key=SETTING_FOLDER_INGEST_TOKEN, value=token))
+    await db.commit()
+    logger.info("🔑 folder-ingest token (re)generated")
+    return token
+
+
+async def verify_folder_ingest_token(db: AsyncSession, token: str) -> bool:
+    """Constant-time compare a presented Bearer token against the stored one.
+    False when no token is configured (feature unprovisioned)."""
+    stored = await get_folder_ingest_token(db)
+    if not stored:
+        return False
+    return secrets.compare_digest(stored, token)

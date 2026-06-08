@@ -28,6 +28,7 @@ from api.routes import (
     federation_pairing,
     federation_query,
     feedback,
+    folder_ingest,
     intents,
     knowledge,
     memory,
@@ -177,6 +178,7 @@ app.include_router(settings_routes.router, prefix="/api/settings", tags=["Settin
 app.include_router(config_routes.router, prefix="/api/config", tags=["Config"])
 app.include_router(speakers.router, prefix="/api/speakers", tags=["Speakers"])
 app.include_router(knowledge.router, prefix="/api/knowledge", tags=["Knowledge"])
+app.include_router(folder_ingest.router, prefix="/api/folder-ingest", tags=["Folder Ingest"])
 app.include_router(memory.router, prefix="/api/memory", tags=["Memory"])
 app.include_router(preferences.router, prefix="/api/preferences", tags=["Preferences"])
 app.include_router(mcp_routes.router, prefix="/api/mcp", tags=["MCP"])
