@@ -36,6 +36,7 @@ async def client(db_session: AsyncSession):
     to the endpoint under test."""
     from api.routes import folder_ingest as route
     from services.api_rate_limiter import limiter, rate_limit_exceeded_handler
+    from services.auth_service import get_current_user
     from services.database import get_db
 
     app = FastAPI()
@@ -47,6 +48,10 @@ async def client(db_session: AsyncSession):
         yield db_session
 
     app.dependency_overrides[get_db] = _override_db
+    # The admin token-mint route depends on require_permission → get_current_user.
+    # Provide a stub user; the per-permission gate is exercised by patching
+    # auth_enabled in the token tests (the enforcement itself is require_permission's).
+    app.dependency_overrides[get_current_user] = lambda: MagicMock(id=1, username="admin")
     async with AsyncClient(
         transport=ASGITransport(app=app), base_url="http://test"
     ) as c:
@@ -287,3 +292,121 @@ async def test_unexpected_error_is_503_not_500(client: AsyncClient, token_set: s
     r = await client.post(URL, **_multipart(), headers=_auth())
     assert r.status_code == 503
     assert r.json()["detail"]["reason"] == "internal_error"
+
+
+# ===========================================================================
+# T14 — health handshake (DX-1) + admin token mint (DX-2)
+# ===========================================================================
+
+HEALTH_URL = "/api/folder-ingest/health"
+TOKEN_URL = "/api/folder-ingest/token"
+
+
+@pytest.mark.integration
+async def test_health_401_without_auth(client: AsyncClient, token_set: str):
+    r = await client.get(HEALTH_URL)
+    assert r.status_code == 401
+
+
+@pytest.mark.integration
+async def test_health_403_wrong_token(client: AsyncClient, token_set: str):
+    r = await client.get(HEALTH_URL, headers=_auth("nope"))
+    assert r.status_code == 403
+
+
+@pytest.mark.integration
+async def test_health_snapshot(client: AsyncClient, token_set: str):
+    r = await client.get(HEALTH_URL, headers=_auth())
+    assert r.status_code == 200
+    body = r.json()
+    assert body["enabled"] is True  # autouse fixture forces it on
+    assert body["token_ok"] is True
+    assert body["contract_version"] == FOLDER_INGEST_CONTRACT_VERSION
+    assert isinstance(body["allowed_extensions"], list) and "pdf" in body["allowed_extensions"]
+    assert body["max_file_size_mb"] >= 1
+    assert "kb_name" in body and "kb_resolved" in body
+
+
+@pytest.mark.integration
+async def test_health_reports_disabled_without_503(client: AsyncClient, token_set: str):
+    # Unlike the push route, health does NOT 503 when disabled — it reports
+    # enabled:False so the MCP can distinguish "feature off" from "worker down".
+    from api.routes import folder_ingest as route
+
+    with patch.object(route.settings, "folder_ingest_enabled", False):
+        r = await client.get(HEALTH_URL, headers=_auth())
+    assert r.status_code == 200
+    assert r.json()["enabled"] is False
+
+
+@pytest.mark.integration
+async def test_health_kb_resolved_reflects_existence(
+    client: AsyncClient, token_set: str, db_session: AsyncSession
+):
+    from api.routes import folder_ingest as route
+    from models.database import KnowledgeBase
+
+    # No KB yet → kb_resolved False.
+    r = await client.get(HEALTH_URL, headers=_auth())
+    assert r.json()["kb_resolved"] is False
+
+    # Create the configured KB → kb_resolved True (SELECT-only, no side effect).
+    db_session.add(KnowledgeBase(name=route.settings.folder_ingest_kb_name, description="x"))
+    await db_session.commit()
+    r = await client.get(HEALTH_URL, headers=_auth())
+    assert r.json()["kb_resolved"] is True
+
+
+@pytest.mark.integration
+async def test_token_mint_returns_and_persists(
+    client: AsyncClient, db_session: AsyncSession, monkeypatch
+):
+    # auth_enabled False → require_permission short-circuits to allow (the stub
+    # user from the fixture). This proves the route mints + persists; the
+    # permission ENFORCEMENT itself is require_permission's own concern.
+    from services import auth_service
+
+    monkeypatch.setattr(auth_service.settings, "auth_enabled", False)
+
+    r = await client.post(TOKEN_URL)
+    assert r.status_code == 200
+    token = r.json()["token"]
+    assert token and len(token) > 20
+
+    # Persisted in SystemSetting + verifiable.
+    from services.folder_ingest import verify_folder_ingest_token
+
+    assert await verify_folder_ingest_token(db_session, token) is True
+
+
+# ---------------------------------------------------------------------------
+# Token helpers (service level)
+# ---------------------------------------------------------------------------
+
+@pytest.mark.integration
+async def test_generate_then_verify_roundtrip(db_session: AsyncSession):
+    from services.folder_ingest import (
+        generate_folder_ingest_token,
+        get_folder_ingest_token,
+        verify_folder_ingest_token,
+    )
+
+    assert await get_folder_ingest_token(db_session) is None
+    token = await generate_folder_ingest_token(db_session)
+    assert await get_folder_ingest_token(db_session) == token
+    assert await verify_folder_ingest_token(db_session, token) is True
+    assert await verify_folder_ingest_token(db_session, "wrong") is False
+
+
+@pytest.mark.integration
+async def test_generate_rotates_and_invalidates_old(db_session: AsyncSession):
+    from services.folder_ingest import (
+        generate_folder_ingest_token,
+        verify_folder_ingest_token,
+    )
+
+    first = await generate_folder_ingest_token(db_session)
+    second = await generate_folder_ingest_token(db_session)
+    assert first != second
+    assert await verify_folder_ingest_token(db_session, first) is False
+    assert await verify_folder_ingest_token(db_session, second) is True

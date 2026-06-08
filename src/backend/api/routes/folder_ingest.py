@@ -30,15 +30,19 @@ from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.routes.knowledge import _worker_is_alive
+from models.permissions import Permission
 from services.api_rate_limiter import limiter
+from services.auth_service import require_permission
 from services.database import get_db
 from services.folder_ingest import (
     FOLDER_INGEST_CONTRACT_VERSION,
     IngestMeta,
     IngestStatus,
+    generate_folder_ingest_token,
     ingest_document,
     resolve_owner_user_id,
     resolve_target_kb,
+    target_kb_exists,
     verify_folder_ingest_token,
 )
 from utils.config import settings
@@ -54,6 +58,25 @@ class FolderIngestResponse(BaseModel):
     status: str
     document_id: int | None = None
     detail: str | None = None
+    contract_version: str = FOLDER_INGEST_CONTRACT_VERSION
+
+
+class FolderIngestTokenResponse(BaseModel):
+    token: str
+
+
+class FolderIngestHealthResponse(BaseModel):
+    """Config snapshot the filesystem MCP pings on startup + periodically to
+    detect two-surface mismatches (DX-1) — a wrong token surfaces as 401/403
+    (fatal in the MCP), everything else is reported here so the MCP can log one
+    loud error instead of silently misrouting every file."""
+
+    enabled: bool
+    kb_name: str
+    kb_resolved: bool
+    token_ok: bool
+    max_file_size_mb: int
+    allowed_extensions: list[str]
     contract_version: str = FOLDER_INGEST_CONTRACT_VERSION
 
 
@@ -167,3 +190,45 @@ async def ingest_pushed_document(
         document_id=result.document_id,
         detail=result.detail,
     )
+
+
+@router.get("/health", response_model=FolderIngestHealthResponse)
+@limiter.limit(settings.api_rate_limit_default)
+async def health(
+    request: Request,
+    authorization: str | None = Header(None),
+    db: AsyncSession = Depends(get_db),
+):
+    """Config-alignment handshake for the filesystem MCP (DX-1). Bearer-auth'd
+    with the same token as the push: a wrong/missing token is 401/403 (fatal in
+    the MCP). Unlike the push route this does NOT 503 when disabled — the
+    ``enabled`` flag is reported in the body so the MCP can tell "backend up,
+    feature off" (definitive, stop) from the push route's transient 503."""
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Missing or invalid Authorization header")
+    token = authorization.removeprefix("Bearer ").strip()
+    if not await verify_folder_ingest_token(db, token):
+        raise HTTPException(status_code=403, detail="Invalid folder-ingest token")
+
+    return FolderIngestHealthResponse(
+        enabled=settings.folder_ingest_enabled,
+        kb_name=settings.folder_ingest_kb_name,
+        kb_resolved=await target_kb_exists(db),
+        token_ok=True,  # reaching here means the presented token matched
+        max_file_size_mb=settings.max_file_size_mb,
+        allowed_extensions=settings.allowed_extensions_list,
+    )
+
+
+@router.post("/token", response_model=FolderIngestTokenResponse)
+@limiter.limit(settings.api_rate_limit_admin)
+async def mint_token(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    user=Depends(require_permission(Permission.SETTINGS_MANAGE)),
+):
+    """Generate or rotate the folder-ingest Bearer token (admin). Without this
+    there is no way to produce the token the whole feature depends on (DX-2).
+    Returns the plaintext token once — store it in the MCP's secret."""
+    token = await generate_folder_ingest_token(db)
+    return FolderIngestTokenResponse(token=token)

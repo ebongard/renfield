@@ -465,6 +465,20 @@ async def resolve_target_kb(db: AsyncSession) -> KnowledgeBase:
     return kb
 
 
+async def target_kb_exists(db: AsyncSession) -> bool:
+    """Whether the configured folder-ingest target KB already exists. SELECT
+    only — unlike :func:`resolve_target_kb` it does NOT create the KB, so the
+    health handshake can report provisioning state without a side effect."""
+    kb_id = (
+        await db.execute(
+            select(KnowledgeBase.id).where(
+                KnowledgeBase.name == settings.folder_ingest_kb_name
+            )
+        )
+    ).scalar_one_or_none()
+    return kb_id is not None
+
+
 async def resolve_owner_user_id(db: AsyncSession) -> int | None:
     """Resolve ``folder_ingest_target_user`` (username or numeric id) to a user
     id. Empty config → None (the bridge/worker handle an ownerless enqueue the
