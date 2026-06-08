@@ -72,17 +72,16 @@ async def _fetch_correspondent_names(mcp_manager) -> list[str] | None:
 
 
 async def resolve_or_create_correspondent(
-    mcp_manager, extracted_value: str
+    mcp_manager, extracted_value: str, *, names: list[str] | None = None
 ) -> str | None:
     """Option A + guardrail: map a confidently-new extracted sender to a Paperless
     correspondent NAME the upload can resolve, creating it ONLY when it has no
     fuzzy-near match anywhere in the FULL taxonomy.
 
     The extractor only matches against a recency-pruned taxonomy window (top-N),
-    so its "new sender" verdict (a ``status=="none"`` resolution) can be a
-    false-new for a correspondent outside that window. We therefore re-check
-    against the FULL correspondent list here before creating, to avoid duplicates
-    on a large instance. Returns:
+    so its non-exact verdict can be a false-new for a correspondent outside that
+    window. We therefore re-check against the FULL correspondent list here before
+    creating, to avoid duplicates on a large instance. Returns:
 
       - an existing canonical name when the sender STRONG-fuzzy matches one
         (recovers a pruned-window miss — reuse, never duplicate);
@@ -90,11 +89,24 @@ async def resolve_or_create_correspondent(
         field unset, honouring "auto-create only when no fuzzy-near match");
       - the (now-existing) name when the sender is genuinely new and was created;
       - ``None`` on any transport / create failure (caller does a bare upload).
+
+    ``names`` lets a batch caller (the backfill) pass the full list once instead
+    of this re-fetching it per document.
+
+    Note: the Paperless MCP's name→id resolver also does a bidirectional
+    *substring* match, so ``create_correspondent`` may answer ``already_exists``
+    for a containment relationship our (Levenshtein) guardrail treated as new
+    (e.g. "Telekom" ⊂ "Telekom Deutschland GmbH"). We reuse that existing name —
+    intentional: it avoids a near-duplicate and is correct for the dominant
+    recurring-sender case (the same substring resolution the upload would apply
+    anyway). A spurious mid-token substring against an unrelated correspondent is
+    a rare, accepted limitation (the LLM extracts full sender names).
     """
     value = (extracted_value or "").strip()
     if not value:
         return None
-    names = await _fetch_correspondent_names(mcp_manager)
+    if names is None:
+        names = await _fetch_correspondent_names(mcp_manager)
     if names is None:
         return None  # couldn't read the taxonomy → don't risk a duplicate
     # Reuse the extractor's own matchers so "existing" means the same thing here
@@ -112,7 +124,7 @@ async def resolve_or_create_correspondent(
         )
     )
     if created.get("error") == "already_exists":
-        return created.get("existing_name") or value  # raced / exact-dup → reuse
+        return created.get("existing_name") or value  # MCP substring match → reuse
     if created.get("id"):
         logger.info(
             f"folder-ingest paperless: auto-created correspondent {value!r} "
@@ -124,6 +136,35 @@ async def resolve_or_create_correspondent(
         f"{created.get('error')}"
     )
     return None
+
+
+async def resolve_correspondent_from_metadata(
+    mcp_manager, metadata, *, names: list[str] | None = None
+) -> str | None:
+    """The correspondent NAME to file ``metadata`` under — the single source of
+    truth shared by the live leg and the backfill, so they can't drift.
+
+    An exact taxonomy hit already populated ``metadata.correspondent`` (the
+    extractor never emits an "exact" resolution), so use it directly. Otherwise
+    take the first NON-exact correspondent resolution's raw extracted name and
+    let ``resolve_or_create_correspondent`` make the full-taxonomy
+    reuse/skip/create decision — we deliberately do NOT pre-filter on the
+    resolution ``status`` here, because that status was computed against the
+    extractor's *pruned* window; the helper re-checks the full list.
+    """
+    if metadata.correspondent:
+        return metadata.correspondent
+    new_name = next(
+        (
+            r.extracted_value
+            for r in metadata.resolutions
+            if r.field == "correspondent" and r.status != "exact" and r.extracted_value
+        ),
+        None,
+    )
+    if not new_name:
+        return None
+    return await resolve_or_create_correspondent(mcp_manager, new_name, names=names)
 
 
 def make_paperless_leg(
@@ -173,29 +214,10 @@ def make_paperless_leg(
                 m = extraction.metadata
                 if m.title:
                     upload_params["title"] = m.title
-                if m.correspondent:
-                    upload_params["correspondent"] = m.correspondent
-                else:
-                    # Option A: a confidently-new sender (a ``status=="none"``
-                    # correspondent resolution = no near match even in the
-                    # extractor's pruned window) → resolve-or-create against the
-                    # FULL taxonomy, with the no-fuzzy-near guardrail.
-                    new_name = next(
-                        (
-                            r.extracted_value
-                            for r in m.resolutions
-                            if r.field == "correspondent"
-                            and r.status == "none"
-                            and r.extracted_value
-                        ),
-                        None,
-                    )
-                    if new_name:
-                        resolved = await resolve_or_create_correspondent(
-                            mcp_manager, new_name
-                        )
-                        if resolved:
-                            upload_params["correspondent"] = resolved
+                # Existing match, or (Option A) resolve-or-create a new sender.
+                correspondent = await resolve_correspondent_from_metadata(mcp_manager, m)
+                if correspondent:
+                    upload_params["correspondent"] = correspondent
                 if m.document_type:
                     upload_params["document_type"] = m.document_type
                 if m.tags:

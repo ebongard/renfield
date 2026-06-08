@@ -20,6 +20,7 @@ from services.folder_ingest import IngestMeta
 from services.folder_ingest_paperless import (
     _parse_paperless_result,
     make_paperless_leg,
+    resolve_correspondent_from_metadata,
     resolve_or_create_correspondent,
 )
 from services.paperless_metadata_extractor import (
@@ -392,3 +393,67 @@ async def test_leg_persists_paperless_document_id(monkeypatch):
 
     assert await leg_mod.make_paperless_leg(mgr)(db, doc, _PDF, _meta()) is True
     assert doc.paperless_document_id == 77
+
+
+# ---------------------------------------------------------------------------
+# resolve_correspondent_from_metadata (shared leg/backfill source of truth)
+# ---------------------------------------------------------------------------
+
+async def test_metadata_exact_match_returned_directly(monkeypatch):
+    # An exact taxonomy hit already populated m.correspondent → no MCP calls.
+    mgr = MagicMock()
+    mgr.execute_tool = AsyncMock(side_effect=AssertionError("should not call MCP"))
+    meta = PaperlessMetadata(correspondent="Stadtwerke")
+    assert await resolve_correspondent_from_metadata(mgr, meta) == "Stadtwerke"
+
+
+async def test_metadata_none_resolution_creates(monkeypatch):
+    _patch_fuzzy(monkeypatch, strict=None, loose=[])
+    mgr = _corr_mgr(["X"], create_inner={"id": 9, "name": "regfish GmbH"})
+    meta = PaperlessMetadata(
+        resolutions=[FieldResolution(field="correspondent", extracted_value="regfish GmbH")]
+    )
+    assert await resolve_correspondent_from_metadata(mgr, meta) == "regfish GmbH"
+
+
+async def test_metadata_NEAR_resolution_still_routes_through_full_list(monkeypatch):
+    # Finding #4: a status=="near" resolution (a near match only in the extractor's
+    # PRUNED window) must still go through the full-list helper — here the full
+    # list has NO match, so the genuinely-new sender is created (not dropped).
+    _patch_fuzzy(monkeypatch, strict=None, loose=[])
+    mgr = _corr_mgr(["Unrelated"], create_inner={"id": 9, "name": "regfish GmbH"})
+    meta = PaperlessMetadata(
+        resolutions=[
+            FieldResolution(
+                field="correspondent", extracted_value="regfish GmbH",
+                near_matches=["Some Recency-Window Name"],  # status == "near"
+            )
+        ]
+    )
+    assert meta.resolutions[0].status == "near"
+    assert await resolve_correspondent_from_metadata(mgr, meta) == "regfish GmbH"
+    assert "mcp.paperless.create_correspondent" in _created_tool_names(mgr)
+
+
+async def test_metadata_no_correspondent_anywhere_returns_none(monkeypatch):
+    mgr = MagicMock()
+    mgr.execute_tool = AsyncMock(side_effect=AssertionError("should not call MCP"))
+    # only a tag resolution, no correspondent → None, no MCP calls
+    meta = PaperlessMetadata(resolutions=[FieldResolution(field="tag", extracted_value="energie")])
+    assert await resolve_correspondent_from_metadata(mgr, meta) is None
+
+
+async def test_resolve_or_create_uses_passed_names_no_list_call(monkeypatch):
+    # Batch caller passes names → list_correspondents is NOT called.
+    _patch_fuzzy(monkeypatch, strict="regfish GmbH", loose=[])
+    calls = []
+
+    async def _execute(tool, params):
+        calls.append(tool)
+        return _envelope({"id": 1, "name": "x"})
+
+    mgr = MagicMock()
+    mgr.execute_tool = AsyncMock(side_effect=_execute)
+    out = await resolve_or_create_correspondent(mgr, "regfish GmbH", names=["regfish GmbH"])
+    assert out == "regfish GmbH"
+    assert "mcp.paperless.list_correspondents" not in calls  # used the passed list

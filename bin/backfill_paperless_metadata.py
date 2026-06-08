@@ -36,7 +36,6 @@ import argparse
 import asyncio
 import logging
 import sys
-from datetime import timedelta
 from pathlib import Path
 
 _BACKEND = Path(__file__).resolve().parent.parent / "src" / "backend"
@@ -47,8 +46,9 @@ from sqlalchemy import select  # noqa: E402
 from models.database import PAPERLESS_STATE_DONE, Document  # noqa: E402
 from services.database import AsyncSessionLocal  # noqa: E402
 from services.folder_ingest_paperless import (  # noqa: E402
+    _fetch_correspondent_names,
     _parse_paperless_result,
-    resolve_or_create_correspondent,
+    resolve_correspondent_from_metadata,
 )
 from services.paperless_metadata_extractor import PaperlessMetadataExtractor  # noqa: E402
 from utils.config import settings  # noqa: E402
@@ -67,28 +67,20 @@ async def _build_mcp_manager():
     return manager
 
 
-async def _find_paperless_id(manager, doc: Document) -> int | None:
-    """Resolve the Paperless document id for *doc*: the stored id, else a
-    created-date window + exact ``original_file_name`` match. Returns None when
-    it can't be located UNAMBIGUOUSLY (we never guess)."""
-    if doc.paperless_document_id:
-        return doc.paperless_document_id
-    anchor = doc.created_at
-    if anchor is None:
-        return None
-    after = (anchor - timedelta(days=2)).date().isoformat()
-    before = (anchor + timedelta(days=2)).date().isoformat()
+async def _build_filename_index(manager) -> dict[str, int]:
+    """``{original_file_name(lower): paperless_id}`` over the most recently ADDED
+    Paperless documents (one pass). Keyed on the upload filename — the leg sends
+    ``title``+``filename = meta.filename`` — which sidesteps the document-date vs
+    ingest-date mismatch a ``created`` window would suffer (Paperless's ``created``
+    is the parsed *document* date, not when we filed it). Bounded by max_results,
+    so the backfill targets recent ingests (older docs need the stored id)."""
     search = _parse_paperless_result(
         await manager.execute_tool(
-            "mcp.paperless.search_documents",
-            {"created_after": after, "created_before": before, "max_results": 200},
+            "mcp.paperless.search_documents", {"ordering": "-added", "max_results": 500}
         )
     )
-    if search.get("error"):
-        return None
-    results = search.get("results") or []
-    matches: list[int] = []
-    for r in results:
+    index: dict[str, int] = {}
+    for r in search.get("results") or []:
         pid = r.get("id")
         if pid is None:
             continue
@@ -96,13 +88,9 @@ async def _find_paperless_id(manager, doc: Document) -> int | None:
             await manager.execute_tool("mcp.paperless.get_document", {"document_id": pid})
         )
         ofn = (got.get("original_file_name") or "").strip().lower()
-        if ofn and ofn == (doc.filename or "").strip().lower():
-            matches.append(pid)
-    if len(matches) == 1:
-        return matches[0]
-    if len(matches) > 1:
-        logger.warning("  doc %s: %d Paperless docs match filename — ambiguous, skipped", doc.id, len(matches))
-    return None
+        if ofn and ofn not in index:  # most-recently-added wins on a duplicate filename
+            index[ofn] = pid
+    return index
 
 
 async def _run(*, commit: bool, limit: int | None) -> None:
@@ -110,6 +98,7 @@ async def _run(*, commit: bool, limit: int | None) -> None:
     extractor = PaperlessMetadataExtractor(mcp_manager=manager)
     fixed = skipped = no_corr = unmatched = already = 0
     try:
+        names = await _fetch_correspondent_names(manager)  # full taxonomy, fetched once
         async with AsyncSessionLocal() as db:
             stmt = (
                 select(Document)
@@ -121,8 +110,13 @@ async def _run(*, commit: bool, limit: int | None) -> None:
             docs = (await db.execute(stmt)).scalars().all()
             logger.info("%d filed folder-ingest document(s) to check", len(docs))
 
+            # Build the filename→id index once, only if some doc lacks a stored id.
+            index: dict[str, int] = {}
+            if any(d.paperless_document_id is None for d in docs):
+                index = await _build_filename_index(manager)
+
             for doc in docs:
-                pid = await _find_paperless_id(manager, doc)
+                pid = doc.paperless_document_id or index.get((doc.filename or "").strip().lower())
                 if pid is None:
                     unmatched += 1
                     logger.info("  doc %s (%s): no Paperless match — skipped", doc.id, doc.filename)
@@ -152,19 +146,9 @@ async def _run(*, commit: bool, limit: int | None) -> None:
                     logger.info("  doc %s: extraction failed (%s) — skipped", doc.id, result.error)
                     continue
 
-                m = result.metadata
-                corr = m.correspondent
-                if not corr:
-                    new_name = next(
-                        (
-                            r.extracted_value
-                            for r in m.resolutions
-                            if r.field == "correspondent" and r.status == "none" and r.extracted_value
-                        ),
-                        None,
-                    )
-                    if new_name:
-                        corr = await resolve_or_create_correspondent(manager, new_name)
+                # Same resolve-or-create path as the live leg (shared helper);
+                # full taxonomy passed in so it isn't re-fetched per document.
+                corr = await resolve_correspondent_from_metadata(manager, result.metadata, names=names)
                 if not corr:
                     no_corr += 1
                     logger.info("  doc %s (paperless %s): no correspondent resolved — left blank", doc.id, pid)
@@ -182,7 +166,7 @@ async def _run(*, commit: bool, limit: int | None) -> None:
                         logger.warning("    update_document(%s) failed: %s", pid, patch.get("error"))
                         continue
                     if doc.paperless_document_id != pid:
-                        doc.paperless_document_id = pid  # backfill the linkage too
+                        doc.paperless_document_id = pid  # backfill the linkage (filename-matched only)
                         await db.commit()
                 fixed += 1
 
