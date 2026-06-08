@@ -109,6 +109,28 @@ class TestActionExecutorRouting:
         assert "unknown intent" in result["message"].lower()
 
     @pytest.mark.unit
+    async def test_route_internal_ingest_file(self, action_executor):
+        """internal.ingest_file is dispatched to the folder-ingest tool with the
+        injected mcp_manager + authenticated user_id."""
+        intent_data = {
+            "intent": "internal.ingest_file",
+            "parameters": {"path": "/inbox/invoice.pdf"},
+            "confidence": 0.9,
+        }
+        sentinel = {"success": True, "message": "ok", "action_taken": True}
+        with patch(
+            "services.folder_ingest_tool.ingest_file",
+            new=AsyncMock(return_value=sentinel),
+        ) as mock_tool:
+            result = await action_executor.execute(intent_data, user_id=7)
+
+        assert result is sentinel
+        mock_tool.assert_awaited_once()
+        _, kwargs = mock_tool.await_args
+        assert kwargs["user_id"] == 7
+        assert kwargs["mcp_manager"] is action_executor.mcp_manager
+
+    @pytest.mark.unit
     async def test_route_knowledge_intent(self, action_executor):
         """Test: Knowledge Intent wird an RAG-Service geroutet"""
         intent_data = {

@@ -45,7 +45,9 @@ from models.database import (
     PAPERLESS_STATE_FAILED,
     SETTING_FOLDER_INGEST_TOKEN,
     Document,
+    KnowledgeBase,
     SystemSetting,
+    User,
 )
 
 # paperless_state values that mean "the Paperless leg is settled" — either it
@@ -193,6 +195,7 @@ async def ingest_document(
     db: AsyncSession,
     kb_id: int | None,
     owner_user_id: int | None = None,
+    default_tier: int | None = None,
     paperless_leg: PaperlessLeg | None = None,
     force_ocr: bool = False,
 ) -> IngestResult:
@@ -201,9 +204,11 @@ async def ingest_document(
 
     Steps: (0) persist a recovery byte copy, (1) reject bad ext/oversize,
     (2) completion+Paperless-aware dedup (D2), (3) race-safe create (D3) +
-    enqueue, (4) Paperless leg, (5) respond. The owner/tier override (D4) is
-    derived from the target KB here; the explicit ``folder_ingest_target_user``
-    / ``folder_ingest_default_tier`` wiring lands in T6.
+    enqueue, (4) Paperless leg, (5) respond. D4 owner/tier: ``owner_user_id``
+    (the configured ``folder_ingest_target_user``, None → KB owner / first user)
+    and ``default_tier`` (the configured ``folder_ingest_default_tier``, None →
+    KB default tier) are applied as overrides at create — auto-filed documents
+    are owned by the configured user at the configured tier regardless of the KB.
 
     ``paperless_leg`` is the Paperless-filing seam: pass the real leg (T5) to
     file into Paperless, or ``None`` to skip filing entirely — the latter marks
@@ -312,6 +317,8 @@ async def ingest_document(
                 knowledge_base_id=kb_id,
                 filename=meta.filename,
                 file_hash=file_hash,
+                owner_user_id_override=owner_user_id,  # D4: configured owner
+                circle_tier_override=default_tier,  # D4: configured tier
             )
         except DuplicateDocumentError as dup:
             # Lost-race: a concurrent push committed the same (hash, kb)
@@ -428,3 +435,53 @@ async def verify_folder_ingest_token(db: AsyncSession, token: str) -> bool:
     if not stored:
         return False
     return secrets.compare_digest(stored, token)
+
+
+# ---------------------------------------------------------------------------
+# Target KB + owner resolution (shared by the push route and the
+# internal.ingest_file agent tool). Both file into the single configured
+# (folder_ingest_kb_name, folder_ingest_target_user) destination.
+# ---------------------------------------------------------------------------
+
+async def resolve_target_kb(db: AsyncSession) -> KnowledgeBase:
+    """Get-or-create the configured folder-ingest target KB. Mirrors the
+    chat-upload default-KB pattern so a fresh install just works."""
+    kb = (
+        await db.execute(
+            select(KnowledgeBase).where(
+                KnowledgeBase.name == settings.folder_ingest_kb_name
+            )
+        )
+    ).scalar_one_or_none()
+    if kb:
+        return kb
+    kb = KnowledgeBase(
+        name=settings.folder_ingest_kb_name,
+        description="Auto-ingested documents from watched folders",
+    )
+    db.add(kb)
+    await db.commit()
+    await db.refresh(kb)
+    return kb
+
+
+async def resolve_owner_user_id(db: AsyncSession) -> int | None:
+    """Resolve ``folder_ingest_target_user`` (username or numeric id) to a user
+    id. Empty config → None (the bridge/worker handle an ownerless enqueue the
+    same way the upload route does for unauthenticated single-user mode)."""
+    target = settings.folder_ingest_target_user.strip()
+    if not target:
+        return None
+    user = (
+        await db.execute(select(User).where(User.username == target))
+    ).scalar_one_or_none()
+    if user is None and target.isdigit():
+        user = (
+            await db.execute(select(User).where(User.id == int(target)))
+        ).scalar_one_or_none()
+    if user is None:
+        logger.warning(
+            f"folder-ingest: target_user {target!r} not found; using ownerless"
+        )
+        return None
+    return user.id

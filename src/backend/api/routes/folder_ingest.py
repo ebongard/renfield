@@ -27,11 +27,9 @@ from fastapi import (
 )
 from loguru import logger
 from pydantic import BaseModel
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.routes.knowledge import _worker_is_alive
-from models.database import KnowledgeBase, User
 from services.api_rate_limiter import limiter
 from services.database import get_db
 from services.folder_ingest import (
@@ -39,6 +37,8 @@ from services.folder_ingest import (
     IngestMeta,
     IngestStatus,
     ingest_document,
+    resolve_owner_user_id,
+    resolve_target_kb,
     verify_folder_ingest_token,
 )
 from utils.config import settings
@@ -55,28 +55,6 @@ class FolderIngestResponse(BaseModel):
     document_id: int | None = None
     detail: str | None = None
     contract_version: str = FOLDER_INGEST_CONTRACT_VERSION
-
-
-async def _resolve_target_kb(db: AsyncSession) -> KnowledgeBase:
-    """Get-or-create the configured folder-ingest target KB. Mirrors the
-    chat-upload default-KB pattern so a fresh install just works."""
-    kb = (
-        await db.execute(
-            select(KnowledgeBase).where(
-                KnowledgeBase.name == settings.folder_ingest_kb_name
-            )
-        )
-    ).scalar_one_or_none()
-    if kb:
-        return kb
-    kb = KnowledgeBase(
-        name=settings.folder_ingest_kb_name,
-        description="Auto-ingested documents from watched folders",
-    )
-    db.add(kb)
-    await db.commit()
-    await db.refresh(kb)
-    return kb
 
 
 def _build_paperless_leg(request: Request, owner_user_id: int | None):
@@ -96,28 +74,6 @@ def _build_paperless_leg(request: Request, owner_user_id: int | None):
     from services.folder_ingest_paperless import make_paperless_leg
 
     return make_paperless_leg(mcp_manager, user_id=owner_user_id)
-
-
-async def _resolve_owner_user_id(db: AsyncSession) -> int | None:
-    """Resolve ``folder_ingest_target_user`` (username or numeric id) to a user
-    id. Empty config → None (the bridge/worker handle an ownerless enqueue the
-    same way the upload route does for unauthenticated single-user mode)."""
-    target = settings.folder_ingest_target_user.strip()
-    if not target:
-        return None
-    user = (
-        await db.execute(select(User).where(User.username == target))
-    ).scalar_one_or_none()
-    if user is None and target.isdigit():
-        user = (
-            await db.execute(select(User).where(User.id == int(target)))
-        ).scalar_one_or_none()
-    if user is None:
-        logger.warning(
-            f"folder-ingest: target_user {target!r} not found; enqueuing ownerless"
-        )
-        return None
-    return user.id
 
 
 @router.post("/document", response_model=FolderIngestResponse)
@@ -189,14 +145,15 @@ async def ingest_pushed_document(
     # bridge already maps its own known errors to FAILED/RETRY; this guards the
     # residual transient ones so the 4-state transport contract never breaks.
     try:
-        kb = await _resolve_target_kb(db)
-        owner_user_id = await _resolve_owner_user_id(db)
+        kb = await resolve_target_kb(db)
+        owner_user_id = await resolve_owner_user_id(db)
         result = await ingest_document(
             file_bytes,
             meta,
             db=db,
             kb_id=kb.id,
             owner_user_id=owner_user_id,
+            default_tier=settings.folder_ingest_default_tier,
             paperless_leg=_build_paperless_leg(request, owner_user_id),
         )
     except Exception as exc:  # noqa: BLE001 - never 500 the push contract

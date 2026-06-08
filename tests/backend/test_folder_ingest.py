@@ -404,6 +404,27 @@ async def test_ingest_create_decision_enqueues_and_is_ingested(monkeypatch):
 
 @pytest.mark.unit
 @pytest.mark.asyncio
+async def test_ingest_create_passes_owner_and_tier_overrides(monkeypatch):
+    # D4: the configured owner + tier are forwarded to create as overrides.
+    created = MagicMock(id=20)
+    _patch_pipeline(monkeypatch, decision=_Decision.CREATE, created_doc=created)
+    rag = MagicMock()
+    rag.create_document_record_safe = AsyncMock(return_value=created)
+    monkeypatch.setattr(fi, "RAGService", MagicMock(return_value=rag))
+
+    await ingest_document(
+        _PDF, _meta(), db=AsyncMock(), kb_id=7, owner_user_id=9, default_tier=2,
+        paperless_leg=AsyncMock(return_value=True),
+    )
+
+    _, kwargs = rag.create_document_record_safe.await_args
+    assert kwargs["owner_user_id_override"] == 9
+    assert kwargs["circle_tier_override"] == 2
+    assert kwargs["knowledge_base_id"] == 7
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
 async def test_ingest_create_paperless_leg_failure_still_ingested(monkeypatch):
     # The Paperless leg is best-effort: a failure must NOT fail the KB ingest
     # (the row is already enqueued).

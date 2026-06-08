@@ -104,6 +104,35 @@ async def test_create_document_record_defaults_filename_from_path(db_session):
     assert doc.status == DOC_STATUS_PENDING
 
 
+@pytest.mark.unit
+@pytest.mark.database
+async def test_create_document_record_applies_d4_overrides(
+    db_session, test_user, test_knowledge_base_with_owner
+):
+    """D4: owner_user_id_override + circle_tier_override replace the KB-derived
+    owner/tier on the Document and its atoms row (folder-ingest)."""
+    from sqlalchemy import select as _select
+
+    from models.database import Atom
+
+    rag = RAGService(db_session)
+    doc = await rag.create_document_record(
+        file_path="/tmp/d4.pdf",
+        knowledge_base_id=test_knowledge_base_with_owner.id,
+        filename="d4.pdf",
+        file_hash="sha256:d4override",
+        owner_user_id_override=test_user.id,
+        circle_tier_override=3,
+    )
+
+    assert doc.circle_tier == 3  # override, not the KB default
+    assert doc.atom_id is not None
+    atom = (
+        await db_session.execute(_select(Atom).where(Atom.atom_id == doc.atom_id))
+    ).scalar_one()
+    assert atom.owner_user_id == test_user.id
+
+
 # ---------------------------------------------------------------------------
 # process_existing_document
 # ---------------------------------------------------------------------------

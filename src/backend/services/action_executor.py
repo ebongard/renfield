@@ -100,6 +100,19 @@ class ActionExecutor:
                 user_id=user_id,
             )
 
+        # Platform-owned internal tool: interactive folder-ingest. The agent
+        # passes a file ``path`` on a watched share; the tool pulls the bytes
+        # through the filesystem MCP (truncate=False) and runs them through the
+        # same ingest bridge as the REST push path. mcp_manager + the
+        # authenticated user_id (the file's owner) are injected here.
+        if intent == "internal.ingest_file":
+            from services.folder_ingest_tool import ingest_file
+            return await ingest_file(
+                parameters,
+                mcp_manager=self.mcp_manager,
+                user_id=user_id,
+            )
+
         # Paperless commit (second half of the two-tool confirm flow).
         # Reads a pending-confirm row created by forward_attachment_to_paperless
         # during the cold-start window (first N uploads) and finalises the
