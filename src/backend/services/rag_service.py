@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING, Any
 
 from loguru import logger
 from sqlalchemy import delete, func, select, text
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 # Keep strong references to fire-and-forget background tasks so they are not
@@ -47,6 +48,19 @@ class _ProcessorFailed(Exception):
     ``process_existing_document``'s ``history.track()`` block so the history
     row closes as ``failed``, then swallowed at the outer return to preserve
     the legacy contract (handled processor failure → return None)."""
+
+
+class DuplicateDocumentError(Exception):
+    """A document with the same ``(file_hash, knowledge_base_id)`` already
+    exists — surfaced as a ``uq_documents_file_hash_kb`` IntegrityError from a
+    concurrent insert. Carries the winning row (may be ``None`` if it could
+    not be re-fetched). Raised by :meth:`RAGService.create_document_record_safe`
+    so every caller (the upload route and the folder-ingest bridge) handles the
+    race in exactly one place (D3)."""
+
+    def __init__(self, winner: "Document | None"):
+        self.winner = winner
+        super().__init__("duplicate document")
 
 
 class RAGService:
@@ -284,6 +298,52 @@ class RAGService:
             f"status=pending, atom_id={atom_id}, tier={kb_default_tier}"
         )
         return doc
+
+    async def create_document_record_safe(
+        self,
+        *,
+        file_path: str,
+        knowledge_base_id: int | None = None,
+        filename: str | None = None,
+        file_hash: str | None = None,
+    ) -> Document:
+        """:meth:`create_document_record` plus concurrent-hash-race handling.
+
+        Shared by the upload route and the folder-ingest bridge so the
+        ``uq_documents_file_hash_kb`` race lives in exactly one place (D3).
+        On a concurrent insert of the same ``(file_hash, knowledge_base_id)``
+        pair, rolls back and raises :class:`DuplicateDocumentError` carrying the
+        winning row. Any other ``IntegrityError`` (FK / NOT NULL) is rolled back
+        and re-raised so the caller can surface a genuine 500 rather than
+        papering over it with a misleading duplicate.
+        """
+        try:
+            return await self.create_document_record(
+                file_path=file_path,
+                knowledge_base_id=knowledge_base_id,
+                filename=filename,
+                file_hash=file_hash,
+            )
+        except IntegrityError as ie:
+            orig_err = str(ie.orig) if ie.orig else str(ie)
+            await self.db.rollback()
+            if "uq_documents_file_hash_kb" not in orig_err:
+                logger.error(f"Unexpected IntegrityError on Document insert: {orig_err}")
+                raise
+            winner = (
+                await self.db.execute(
+                    select(Document).where(
+                        Document.file_hash == file_hash,
+                        Document.knowledge_base_id == knowledge_base_id,
+                    )
+                )
+            ).scalar_one_or_none()
+            logger.warning(
+                f"Concurrent duplicate insert for hash "
+                f"{(file_hash or '')[:16]}... (kb={knowledge_base_id}); "
+                f"winner id={winner.id if winner else 'unknown'}"
+            )
+            raise DuplicateDocumentError(winner) from ie
 
     async def process_existing_document(
         self,
