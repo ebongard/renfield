@@ -113,7 +113,26 @@ ingest (falling back to `FOLDER_INGEST_TARGET_USER` in single-user mode).
   `FOLDER_INGEST_DEFAULT_TIER` (default 0 = self/private), regardless of the KB.
 - **Paperless leg.** Uploads non-blocking, then awaits the consume verdict via the
   Paperless MCP. A Paperless **duplicate** counts as terminal success (the document is
-  already there). Paperless filing never fails the KB ingest.
+  already there). Paperless filing never fails the KB ingest. The filed Paperless
+  document id is persisted on `documents.paperless_document_id` (migration `pc20260613`).
+- **Correspondent auto-create (Option A + guardrail).** Metadata extraction (`services/
+  paperless_metadata_extractor.py`) only matches a correspondent against the *recency-
+  pruned* taxonomy window, so a new sender would otherwise be filed blank. The leg now
+  resolves-or-creates via `resolve_correspondent_from_metadata` →
+  `resolve_or_create_correspondent`: it re-checks the extracted sender against the
+  **full** correspondent list — a strong fuzzy match reuses the existing entry (recovers
+  a pruned-window miss, never duplicates); a loose fuzzy-near match is left unset
+  (the "no fuzzy-near existing match" guardrail); a genuinely-new sender is **created**
+  and assigned. Document-type and tags stay existing-match-only (no auto-create). Note:
+  the Paperless MCP's name→id resolver does bidirectional *substring* matching, so a
+  containment match (e.g. "Telekom" ⊂ "Telekom Deutschland GmbH") is reused rather than
+  duplicated — intended, and correct for recurring senders.
+- **Backfill.** `bin/backfill_paperless_metadata.py` (`--dry-run`/`--commit`) gap-fills
+  the correspondent on already-filed folder-ingest docs that lack one (the Docling-outage
+  + new-sender cohorts): it re-extracts, runs the same resolve-or-create path, and
+  PATCHes via `update_document`. Correspondent-only (never touches title/type/tags),
+  locates the Paperless doc by the stored id else a filename match over recently-added
+  docs, and skips any doc that already has a correspondent.
 
 ## Troubleshooting
 
@@ -133,4 +152,5 @@ ingest (falling back to `FOLDER_INGEST_TARGET_USER` in single-user mode).
 - Routes: `api/routes/folder_ingest.py` (`POST /document`, `GET /health`, `POST /token`)
 - Interactive tool: `services/folder_ingest_tool.py` (+ dispatch in `services/action_executor.py`)
 - Worker terminal-failure handling: `workers/document_processor_worker.py`
+- Correspondent backfill: `bin/backfill_paperless_metadata.py`
 - Paperless MCP consume-poll: `renfield-mcp-paperless` `await_consume_result` (v1.8.0+)
