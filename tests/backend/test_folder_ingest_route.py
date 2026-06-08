@@ -9,7 +9,7 @@ extension-reject case, which proves the real route→bridge wiring.
 """
 
 import json
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from fastapi import FastAPI
@@ -241,6 +241,37 @@ async def test_client_kb_override_ignored(
     ).scalar_one()
     _, kwargs = fake.await_args
     assert kwargs["kb_id"] == expected_kb.id
+
+
+def _fake_request(mcp_manager):
+    req = MagicMock()
+    req.app.state.mcp_manager = mcp_manager
+    return req
+
+
+def test_build_paperless_leg_none_when_disabled(monkeypatch):
+    from api.routes import folder_ingest as route
+
+    monkeypatch.setattr(route.settings, "folder_ingest_to_paperless", False)
+    assert route._build_paperless_leg(_fake_request(MagicMock()), 1) is None
+
+
+def test_build_paperless_leg_none_when_no_mcp(monkeypatch):
+    from api.routes import folder_ingest as route
+
+    monkeypatch.setattr(route.settings, "folder_ingest_to_paperless", True)
+    # app.state has no mcp_manager attribute → getattr returns None
+    req = MagicMock()
+    req.app.state = MagicMock(spec=[])  # no mcp_manager
+    assert route._build_paperless_leg(req, 1) is None
+
+
+def test_build_paperless_leg_built_when_enabled(monkeypatch):
+    from api.routes import folder_ingest as route
+
+    monkeypatch.setattr(route.settings, "folder_ingest_to_paperless", True)
+    leg = route._build_paperless_leg(_fake_request(MagicMock()), 1)
+    assert leg is not None and callable(leg)
 
 
 @pytest.mark.integration

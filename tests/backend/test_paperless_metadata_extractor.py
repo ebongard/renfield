@@ -775,6 +775,54 @@ class TestExtractorIntegration:
 
     @pytest.mark.asyncio
     @pytest.mark.unit
+    async def test_extract_from_file_no_chatupload(self, tmp_path):
+        """The folder-ingest path: extract straight from a file on disk, with
+        NO ChatUpload row (decoupling, D5). _load_upload must not be touched."""
+        file = tmp_path / "doc.pdf"
+        file.write_text("dummy")
+
+        llm_client = MagicMock()
+        llm_client.chat = AsyncMock(return_value=SimpleNamespace(
+            message=SimpleNamespace(
+                content='{"title": "T", "correspondent": "Finanzamt Neuss", '
+                        '"document_type": "Rechnung", "tags": [], '
+                        '"new_entry_proposals": []}',
+            ),
+        ))
+        doc_proc = MagicMock()
+        doc_proc.extract_text_only = AsyncMock(return_value="Finanzamt Neuss Bescheid")
+
+        async def _mcp_execute(tool_name: str, params: dict):
+            if "correspondents" in tool_name:
+                return {"success": True, "message": '{"items": [{"name": "Finanzamt Neuss"}]}'}
+            if "document_types" in tool_name:
+                return {"success": True, "message": '{"items": [{"name": "Rechnung"}]}'}
+            if "tags" in tool_name:
+                return {"success": True, "message": '{"items": []}'}
+            if "storage_paths" in tool_name:
+                return {"success": True, "message": '{"paths": []}'}
+            return {"success": False}
+
+        mcp = MagicMock()
+        mcp.execute_tool = AsyncMock(side_effect=_mcp_execute)
+
+        extractor = PaperlessMetadataExtractor(
+            mcp_manager=mcp, llm_client=llm_client, document_processor=doc_proc,
+        )
+        extractor._load_upload = AsyncMock(side_effect=AssertionError("must not load a ChatUpload"))
+
+        with patch("services.paperless_metadata_extractor.settings") as s:
+            s.paperless_extraction_model = "qwen3:8b"
+            s.ollama_vision_model = ""
+            s.ollama_chat_model = ""
+            result = await extractor.extract_from_file(str(file), lang="de")
+
+        assert result.error is None
+        assert result.metadata.correspondent == "Finanzamt Neuss"
+        extractor._load_upload.assert_not_called()
+
+    @pytest.mark.asyncio
+    @pytest.mark.unit
     async def test_extract_passes_learned_examples_to_prompt(self, tmp_path):
         """When the retriever returns past confirm-diffs, those flow
         into the LLM prompt as additional in-context examples."""

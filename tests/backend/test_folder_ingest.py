@@ -25,6 +25,7 @@ from models.database import (
     DOC_STATUS_PENDING,
     DOC_STATUS_PROCESSING,
     PAPERLESS_STATE_DONE,
+    PAPERLESS_STATE_FAILED,
     Document,
 )
 from services.folder_ingest import (
@@ -192,6 +193,21 @@ async def test_classify_completed_paperless_done_is_duplicate(pg_db_session):
 
 @pytest.mark.database
 @pytest.mark.asyncio
+async def test_classify_completed_paperless_failed_is_duplicate(pg_db_session):
+    # A terminally-tried Paperless leg ('failed' — non-duplicate reject) is
+    # SETTLED, so a re-push dedups instead of looping the leg.
+    await _insert_doc(
+        pg_db_session,
+        file_hash="h_plfail",
+        status=DOC_STATUS_COMPLETED,
+        paperless_state=PAPERLESS_STATE_FAILED,
+    )
+    decision, _ = await classify_existing(pg_db_session, "h_plfail", None)
+    assert decision is _Decision.DUPLICATE
+
+
+@pytest.mark.database
+@pytest.mark.asyncio
 async def test_classify_completed_paperless_missing_is_paperless_only(pg_db_session):
     # completed but paperless_state NULL → run only the Paperless leg.
     await _insert_doc(
@@ -350,6 +366,21 @@ async def test_ingest_paperless_only_leg_failure_is_retry(monkeypatch):
     )
     assert out.status is IngestStatus.RETRY
     assert out.detail == "paperless_retry"
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_ingest_paperless_only_unsettled_leg_is_retry(monkeypatch):
+    # The leg ran without raising but couldn't settle (upload error / pending) →
+    # RETRY so the MCP re-pushes and the leg is attempted again.
+    existing = MagicMock(id=11)
+    _patch_pipeline(monkeypatch, decision=_Decision.PAPERLESS_ONLY, existing=existing)
+    leg = AsyncMock(return_value=False)
+    out = await ingest_document(
+        _PDF, _meta(), db=AsyncMock(), kb_id=None, paperless_leg=leg
+    )
+    assert out.status is IngestStatus.RETRY
+    assert out.detail == "paperless_pending"
 
 
 @pytest.mark.unit

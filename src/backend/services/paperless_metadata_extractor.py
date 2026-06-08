@@ -789,15 +789,43 @@ class PaperlessMetadataExtractor:
                 metadata=PaperlessMetadata(),
                 error=f"Attachment {attachment_id} not found",
             )
+        return await self.extract_from_file(
+            upload.file_path, user_id=user_id, lang=lang
+        )
 
+    async def extract_from_file(
+        self,
+        file_path: str,
+        *,
+        user_id: int | None = None,
+        lang: str = "de",
+    ) -> ExtractionResult:
+        """Run the pipeline on a file on disk (no ChatUpload row needed).
+
+        The folder-ingest Paperless leg uses this against the document's
+        persisted recovery copy — the extractor is no longer coupled to the
+        chat-upload table. OCR the file, then delegate to
+        :meth:`extract_from_doc_text`.
+        """
         # 2. Extract text (Docling; vision-model path is PR 2b refinement).
-        doc_text = await self._extract_text(upload.file_path)
+        doc_text = await self._extract_text(file_path)
         if not doc_text:
             return ExtractionResult(
                 metadata=PaperlessMetadata(),
                 error="Konnte Dokument nicht lesen (OCR lieferte keinen Text).",
             )
+        return await self.extract_from_doc_text(doc_text, user_id=user_id, lang=lang)
 
+    async def extract_from_doc_text(
+        self,
+        doc_text: str,
+        *,
+        user_id: int | None = None,
+        lang: str = "de",
+    ) -> ExtractionResult:
+        """Run taxonomy → LLM → validate on already-extracted document text.
+        The text-source-agnostic core of the pipeline (steps 3-6); both the
+        ChatUpload path and the folder-ingest file path land here."""
         # 3. Fetch + prune taxonomy.
         taxonomy = await self._fetch_taxonomy()
         if taxonomy is None:
@@ -840,7 +868,7 @@ class PaperlessMetadataExtractor:
                 error="LLM lieferte keine gueltige JSON-Antwort.",
             )
 
-        # 5. Validate + fuzzy-match + clamp.
+        # 6. Validate + fuzzy-match + clamp.
         try:
             metadata = validate_extraction(parsed, taxonomy)
         except ValueError as exc:

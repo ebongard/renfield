@@ -79,6 +79,25 @@ async def _resolve_target_kb(db: AsyncSession) -> KnowledgeBase:
     return kb
 
 
+def _build_paperless_leg(request: Request, owner_user_id: int | None):
+    """The real Paperless leg when ``folder_ingest_to_paperless`` is on and the
+    MCP manager is available, else None (the bridge then records the leg as a
+    no-op settled — nothing to file). Kept out of the bridge so the import of
+    the Paperless/MCP stack stays at the route edge."""
+    if not settings.folder_ingest_to_paperless:
+        return None
+    mcp_manager = getattr(request.app.state, "mcp_manager", None)
+    if mcp_manager is None:
+        logger.warning(
+            "folder-ingest: to_paperless is on but no MCP manager — skipping "
+            "Paperless filing for this push"
+        )
+        return None
+    from services.folder_ingest_paperless import make_paperless_leg
+
+    return make_paperless_leg(mcp_manager, user_id=owner_user_id)
+
+
 async def _resolve_owner_user_id(db: AsyncSession) -> int | None:
     """Resolve ``folder_ingest_target_user`` (username or numeric id) to a user
     id. Empty config → None (the bridge/worker handle an ownerless enqueue the
@@ -161,9 +180,8 @@ async def ingest_pushed_document(
             return FolderIngestResponse(status=IngestStatus.FAILED.value, detail="file_too_large")
     file_bytes = bytes(buf)
 
-    # 6. Resolve the server-side target KB + owner, then delegate to the bridge.
-    # paperless_leg stays None until T5 wires the real PaperlessMetadataExtractor
-    # leg; for now Paperless filing is recorded as settled by the bridge's no-op.
+    # 6. Resolve the server-side target KB + owner, build the Paperless leg
+    # (when filing is enabled), then delegate to the bridge.
     #
     # Any unexpected failure here (Redis enqueue down, concurrent KB-create
     # IntegrityError, …) must surface as a 503/retry, NOT a raw 500: the MCP
@@ -179,7 +197,7 @@ async def ingest_pushed_document(
             db=db,
             kb_id=kb.id,
             owner_user_id=owner_user_id,
-            paperless_leg=None,
+            paperless_leg=_build_paperless_leg(request, owner_user_id),
         )
     except Exception as exc:  # noqa: BLE001 - never 500 the push contract
         logger.error(f"folder-ingest: unexpected error processing {meta.filename!r}: {exc}")

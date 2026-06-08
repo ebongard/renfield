@@ -42,10 +42,16 @@ from models.database import (
     DOC_STATUS_FAILED,
     DOC_STATUS_PENDING,
     PAPERLESS_STATE_DONE,
+    PAPERLESS_STATE_FAILED,
     SETTING_FOLDER_INGEST_TOKEN,
     Document,
     SystemSetting,
 )
+
+# paperless_state values that mean "the Paperless leg is settled" — either it
+# was filed/duplicate (done) or terminally rejected for a non-duplicate reason
+# (failed). Both stop the D2 matrix re-running the leg; only None/unset retries.
+_PAPERLESS_SETTLED = (PAPERLESS_STATE_DONE, PAPERLESS_STATE_FAILED)
 from services.rag_service import DuplicateDocumentError, RAGService
 from services.redis_client import get_redis
 from services.task_queue import DocumentTaskQueue
@@ -131,7 +137,7 @@ async def classify_existing(
     if doc is None:
         return _Decision.CREATE, None
     if doc.status == DOC_STATUS_COMPLETED:
-        if doc.paperless_state == PAPERLESS_STATE_DONE:
+        if doc.paperless_state in _PAPERLESS_SETTLED:
             return _Decision.DUPLICATE, doc
         return _Decision.PAPERLESS_ONLY, doc
     if doc.status == DOC_STATUS_FAILED:
@@ -254,17 +260,23 @@ async def ingest_document(
 
     if decision is _Decision.PAPERLESS_ONLY:
         # KB ingest is complete but the Paperless leg never settled. Run only
-        # the still-missing leg, then report duplicate (the KB already has it,
-        # so the MCP moves the file to processed/).
+        # the still-missing leg. If it settles (filed/duplicate/terminal-reject)
+        # report duplicate so the MCP moves the file to processed/; if it
+        # couldn't settle (upload error / consume still pending) report retry so
+        # the MCP re-pushes and the leg is attempted again.
         try:
-            await leg(db, existing, file_bytes, meta)
+            settled = await leg(db, existing, file_bytes, meta)
         except Exception as exc:  # noqa: BLE001 - leg failure is non-fatal
             logger.warning(f"folder-ingest: Paperless-only leg failed: {exc}")
             return IngestResult(
                 IngestStatus.RETRY, document_id=existing.id, detail="paperless_retry"
             )
+        if settled:
+            return IngestResult(
+                IngestStatus.DUPLICATE, document_id=existing.id, detail="paperless_filed"
+            )
         return IngestResult(
-            IngestStatus.DUPLICATE, document_id=existing.id, detail="paperless_filed"
+            IngestStatus.RETRY, document_id=existing.id, detail="paperless_pending"
         )
 
     # decision is CREATE or REINGEST: run the full pipeline.
@@ -316,7 +328,7 @@ async def ingest_document(
             if (
                 winner is not None
                 and winner.status == DOC_STATUS_COMPLETED
-                and winner.paperless_state == PAPERLESS_STATE_DONE
+                and winner.paperless_state in _PAPERLESS_SETTLED
             ):
                 return IngestResult(
                     IngestStatus.DUPLICATE,
@@ -343,8 +355,12 @@ async def ingest_document(
     )
 
     # 4. Paperless leg (best-effort — never fails the KB ingest; the row is
-    # already enqueued). A leg failure leaves paperless_state un-done so a
-    # later D2 PAPERLESS_ONLY pass retries it.
+    # already enqueued, so we respond INGESTED regardless of the leg). The leg
+    # records its own outcome on paperless_state. KNOWN GAP: on this CREATE path
+    # the response is INGESTED → the MCP moves the file to processed/, so a leg
+    # that didn't settle (transient Paperless outage) is NOT auto-retried — the
+    # document is in the KB but missing from Paperless until a manual re-push or
+    # a future paperless-reconciler (P2). A leg exception is likewise swallowed.
     try:
         await leg(db, doc, file_bytes, meta)
     except Exception as exc:  # noqa: BLE001
