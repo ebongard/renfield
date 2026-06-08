@@ -3,3 +3,9 @@
 torch==2.6.0+cpu
 torchaudio==2.6.0+cpu
 torchvision==0.21.0+cpu
+
+# Cap transformers <5 here (not only in requirements.txt) so the Dockerfile's
+# Layer-2 literal install (`pip install transformers …`) never pulls 5.x in the
+# first place. transformers 5.x references torch.float8_e8m0fnu (torch >=2.7);
+# prod torch is 2.6, so 5.x breaks the Docling import chain. See requirements.txt.
+transformers<5
