@@ -72,7 +72,7 @@ docker exec -it renfield-backend alembic downgrade -1
 
 **Request Flow:** User → React Frontend → WebSocket/REST → FastAPI Backend → Intent Recognition → Action Execution → MCP/RAG → Streaming Response
 
-**Subsystems:** Intent Recognition, Agent Loop (ReAct), MCP Integration (8+ servers), RAG/Knowledge Base, Conversation Persistence, Hook System (plugin API), Auth/RPBAC, Presence Detection, Media Follow Me, Speaker Recognition, Knowledge Graph, Paperless Audit, Audio Output Routing (+ generic **output providers** behind `OUTPUT_PROVIDERS_ENABLED` — pluggable room media/control targets via an `output_provider:` MCP stanza; new brand = config, not code; see `docs/OUTPUT_ROUTING.md` + `docs/design/output-providers.md`), Proactive Notifications (webhook + privacy-aware delivery — both WS push and TTS are presence-gated for non-public, `PROACTIVE_ENABLED`), Obligation-Deadline Notifier (`OBLIGATION_NOTIFIER_ENABLED`), Device Management, **Circles (access tiers)**
+**Subsystems:** Intent Recognition, Agent Loop (ReAct), MCP Integration (8+ servers), RAG/Knowledge Base, Conversation Persistence, Hook System (plugin API), Auth/RPBAC, Presence Detection, Media Follow Me, Speaker Recognition, Knowledge Graph, Paperless Audit, Audio Output Routing (+ generic **output providers** behind `OUTPUT_PROVIDERS_ENABLED` — pluggable room media/control targets via an `output_provider:` MCP stanza; new brand = config, not code; see `docs/OUTPUT_ROUTING.md` + `docs/design/output-providers.md`), Proactive Notifications (webhook + privacy-aware delivery — both WS push and TTS are presence-gated for non-public, `PROACTIVE_ENABLED`), Obligation-Deadline Notifier (`OBLIGATION_NOTIFIER_ENABLED`), Device Management, **Circles (access tiers)**, **Folder Auto-Ingest** (watch-folder → KB + Paperless; a dedicated filesystem MCP PUSHES files over REST to `POST /api/folder-ingest/document` — no backend mounts, no polling; `FOLDER_INGEST_ENABLED`; see `docs/FOLDER_INGEST.md`)
 
 **Key config:** All via `.env` loaded by `utils/config.py` (Pydantic Settings). Full list: `docs/ENVIRONMENT_VARIABLES.md`.
 
@@ -87,8 +87,9 @@ The agent loop sees a mix of MCP tools (`mcp.<server>.<tool>`) and `internal.*` 
 | `internal.knowledge_search` | Semantic RAG search over the user's knowledge base | `services/knowledge_tool.py` |
 | `internal.list_my_memories` | Enumerate the asker's own conversation memories (preferences/facts/instructions) WITHOUT the per-turn `{memory_context}` vector threshold — backs broad self-knowledge queries ("Was weißt du über mich?") the small auto-injected snapshot can't answer. Reads only the authenticated user's own memories. | `services/memory_list_tool.py` |
 | `internal.forward_attachment_to_paperless` | Forward a chat-attached file to Paperless using real server-stored bytes — prevents the LLM from handling base64 payloads it can't actually see | `services/chat_upload_tool.py` |
+| `internal.ingest_file` | Interactive folder-ingest: the agent points at a file `path` on a watched share; pulls the bytes through the filesystem MCP (`mcp.files.read_file`, `truncate=False` — no 128 KB cap corruption) and runs them through the same `folder_ingest.ingest_document` bridge as the REST push (dedup / owner+tier / Paperless leg identical). Gated by `FOLDER_INGEST_ENABLED`. See `docs/FOLDER_INGEST.md`. | `services/folder_ingest_tool.py` |
 
-Dispatch for these is a special case in `services/action_executor.py` that injects dependencies the generic `intent.startswith("internal.")` hook path cannot provide (`mcp_manager`, `session_id`, and the authenticated `user_id` for `list_my_memories`).
+Dispatch for these is a special case in `services/action_executor.py` that injects dependencies the generic `intent.startswith("internal.")` hook path cannot provide (`mcp_manager`, `session_id`, and the authenticated `user_id` for `list_my_memories` / `ingest_file`).
 
 ### Agent stale-error marker
 

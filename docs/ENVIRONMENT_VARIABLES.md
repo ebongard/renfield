@@ -512,6 +512,37 @@ Erweitert jeden Treffer-Chunk um benachbarte Chunks aus demselben Dokument für 
 
 ---
 
+### Folder Auto-Ingest (Watch-Folder → KB + Paperless)
+
+Ein dedizierter Filesystem-MCP-Server überwacht Ordner (lokal/SMB/NFS) und
+**PUSHT** neue Dateien per REST an `POST /api/folder-ingest/document` (Bearer).
+Das Backend mountet die Shares NICHT — die Bytes reisen im Multipart-Body. Siehe
+`docs/FOLDER_INGEST.md`. Off by default; flag-aus = byte-identisch.
+
+```bash
+FOLDER_INGEST_ENABLED=false           # Feature-Schalter (Push-Route + internal.ingest_file)
+FOLDER_INGEST_KB_NAME=Eingang         # Ziel-Knowledge-Base (wird bei Bedarf angelegt)
+FOLDER_INGEST_TARGET_USER=            # Owner der auto-abgelegten Dokumente (Username/ID; leer → Admin/erster User)
+FOLDER_INGEST_DEFAULT_TIER=0          # Circle-Tier beim Anlegen (0=self … 4=public)
+FOLDER_INGEST_TO_PAPERLESS=true       # zusätzlich in Paperless ablegen
+FOLDER_INGEST_NOTIFY_ON_FILED=true    # Bestätigungs-Notification nach Ablage
+```
+
+Wiederverwendet `MAX_FILE_SIZE_MB`, `ALLOWED_EXTENSIONS`, `UPLOAD_DIR` (siehe RAG/Upload).
+Der Bearer-Token liegt revozierbar in `SystemSetting` (nicht in `.env`) — per
+`POST /api/folder-ingest/token` (Admin, `settings.manage`) erzeugen/rotieren. Der
+MCP prüft die Konfig-Ausrichtung beim Start via `GET /api/folder-ingest/health`.
+
+**Defaults:**
+- `FOLDER_INGEST_ENABLED`: `false`
+- `FOLDER_INGEST_KB_NAME`: `Eingang`
+- `FOLDER_INGEST_TARGET_USER`: `""` (leer → Admin/erster User)
+- `FOLDER_INGEST_DEFAULT_TIER`: `0`
+- `FOLDER_INGEST_TO_PAPERLESS`: `true`
+- `FOLDER_INGEST_NOTIFY_ON_FILED`: `true`
+
+---
+
 ### Conversation Memory (Langzeitgedaechtnis)
 
 ```bash
