@@ -72,7 +72,7 @@ async def _fetch_correspondent_names(mcp_manager) -> list[str] | None:
 
 
 async def resolve_or_create_correspondent(
-    mcp_manager, extracted_value: str, *, names: list[str] | None = None
+    mcp_manager, extracted_value: str, *, names: list[str] | None = None, create: bool = True
 ) -> str | None:
     """Option A + guardrail: map a confidently-new extracted sender to a Paperless
     correspondent NAME the upload can resolve, creating it ONLY when it has no
@@ -91,7 +91,9 @@ async def resolve_or_create_correspondent(
       - ``None`` on any transport / create failure (caller does a bare upload).
 
     ``names`` lets a batch caller (the backfill) pass the full list once instead
-    of this re-fetching it per document.
+    of this re-fetching it per document. ``create=False`` makes it side-effect
+    free: a genuinely-new sender returns its name as a *preview* WITHOUT actually
+    creating the correspondent (so a ``--dry-run`` doesn't mutate Paperless).
 
     Note: the Paperless MCP's name→id resolver also does a bidirectional
     *substring* match, so ``create_correspondent`` may answer ``already_exists``
@@ -118,6 +120,8 @@ async def resolve_or_create_correspondent(
         return existing  # strong match in the full list → reuse (pruned-window recovery)
     if _fuzzy_top_candidates(value, names):
         return None  # fuzzy-near existing → guardrail: don't auto-create
+    if not create:
+        return value  # preview only (dry-run): report what WOULD be created
     created = _parse_paperless_result(
         await mcp_manager.execute_tool(
             "mcp.paperless.create_correspondent", {"name": value}
@@ -139,7 +143,7 @@ async def resolve_or_create_correspondent(
 
 
 async def resolve_correspondent_from_metadata(
-    mcp_manager, metadata, *, names: list[str] | None = None
+    mcp_manager, metadata, *, names: list[str] | None = None, create: bool = True
 ) -> str | None:
     """The correspondent NAME to file ``metadata`` under — the single source of
     truth shared by the live leg and the backfill, so they can't drift.
@@ -164,7 +168,9 @@ async def resolve_correspondent_from_metadata(
     )
     if not new_name:
         return None
-    return await resolve_or_create_correspondent(mcp_manager, new_name, names=names)
+    return await resolve_or_create_correspondent(
+        mcp_manager, new_name, names=names, create=create
+    )
 
 
 def make_paperless_leg(

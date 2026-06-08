@@ -58,12 +58,22 @@ logger = logging.getLogger("backfill_paperless_metadata")
 
 
 async def _build_mcp_manager():
-    """A connected MCPManager, mirroring api.lifecycle's construction."""
+    """A connected MCPManager, mirroring api.lifecycle's construction. Lifts the
+    paperless per-server rate limit: the default 60/min token bucket *rejects*
+    (doesn't wait) over the cap, and the one-pass filename index issues hundreds
+    of get_document calls in a burst. This is a one-off admin script driving a
+    single server, so an unthrottled paperless client is appropriate."""
     from services.mcp_client import MCPManager
 
     manager = MCPManager()
     manager.load_config(settings.mcp_config_path)
     await manager.connect_all()
+    state = getattr(manager, "_servers", {}).get("paperless")
+    limiter = getattr(state, "rate_limiter", None) if state else None
+    if limiter is not None:
+        limiter.rate = 100_000
+        limiter.max_tokens = 100_000.0
+        limiter.tokens = 100_000.0
     return manager
 
 
@@ -148,7 +158,11 @@ async def _run(*, commit: bool, limit: int | None) -> None:
 
                 # Same resolve-or-create path as the live leg (shared helper);
                 # full taxonomy passed in so it isn't re-fetched per document.
-                corr = await resolve_correspondent_from_metadata(manager, result.metadata, names=names)
+                # create=commit so a --dry-run previews new correspondents
+                # without actually creating them in Paperless.
+                corr = await resolve_correspondent_from_metadata(
+                    manager, result.metadata, names=names, create=commit
+                )
                 if not corr:
                     no_corr += 1
                     logger.info("  doc %s (paperless %s): no correspondent resolved — left blank", doc.id, pid)

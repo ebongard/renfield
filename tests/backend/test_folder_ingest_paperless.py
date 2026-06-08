@@ -457,3 +457,23 @@ async def test_resolve_or_create_uses_passed_names_no_list_call(monkeypatch):
     out = await resolve_or_create_correspondent(mgr, "regfish GmbH", names=["regfish GmbH"])
     assert out == "regfish GmbH"
     assert "mcp.paperless.list_correspondents" not in calls  # used the passed list
+
+
+async def test_resolve_dry_run_previews_without_creating(monkeypatch):
+    # create=False: a genuinely-new sender is REPORTED but not created (dry-run).
+    _patch_fuzzy(monkeypatch, strict=None, loose=[])
+    mgr = _corr_mgr(["Unrelated"])
+    out = await resolve_or_create_correspondent(mgr, "regfish GmbH", create=False)
+    assert out == "regfish GmbH"  # previewed
+    assert "mcp.paperless.create_correspondent" not in _created_tool_names(mgr)  # not created
+
+
+async def test_metadata_dry_run_threads_create_flag(monkeypatch):
+    _patch_fuzzy(monkeypatch, strict=None, loose=[])
+    mgr = _corr_mgr(["Unrelated"])
+    meta = PaperlessMetadata(
+        resolutions=[FieldResolution(field="correspondent", extracted_value="regfish GmbH")]
+    )
+    out = await resolve_correspondent_from_metadata(mgr, meta, create=False)
+    assert out == "regfish GmbH"
+    assert "mcp.paperless.create_correspondent" not in _created_tool_names(mgr)
