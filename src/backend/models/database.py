@@ -250,6 +250,15 @@ class Document(Base):
     page_count = Column(Integer, nullable=True)
     chunk_count = Column(Integer, default=0)
 
+    # Folder-ingest Paperless leg (D2/D10). Tracks whether this document has
+    # been filed into Paperless by the folder-ingest bridge, so a re-pushed
+    # already-completed document runs ONLY the still-missing Paperless step
+    # instead of re-ingesting. NULL = never attempted (normal uploads, and
+    # existing rows pre-migration); see PAPERLESS_STATE_* constants below.
+    # "done" (filed / duplicate-marker terminal / skipped) is the only value
+    # that counts as paperless-done for the dedup matrix.
+    paperless_state = Column(String(20), nullable=True)
+
     # Timestamps
     created_at = Column(DateTime, default=_utcnow)
     processed_at = Column(DateTime, nullable=True)
@@ -536,6 +545,15 @@ DOC_STATUS_COMPLETED = "completed"
 DOC_STATUS_FAILED = "failed"
 
 DOC_STATUSES = [DOC_STATUS_PENDING, DOC_STATUS_PROCESSING, DOC_STATUS_COMPLETED, DOC_STATUS_FAILED]
+
+# Folder-ingest Paperless leg state (Document.paperless_state). NULL = the
+# Paperless step was never attempted for this row. "pending"/"failed" are
+# retryable (not paperless-done); only "done" terminates the leg — it covers a
+# successful file, a Paperless duplicate-marker reject (D10, the doc is already
+# there), and the to_paperless-disabled skip.
+PAPERLESS_STATE_PENDING = "pending"
+PAPERLESS_STATE_DONE = "done"
+PAPERLESS_STATE_FAILED = "failed"
 
 
 # Chunk Type Constants
