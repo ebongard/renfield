@@ -258,6 +258,10 @@ class Document(Base):
     # "done" (filed / duplicate-marker terminal / skipped) is the only value
     # that counts as paperless-done for the dedup matrix.
     paperless_state = Column(String(20), nullable=True)
+    # The resulting Paperless document id once filed (from await_consume_result).
+    # NULL = never filed, or filed before pc20260613 (recoverable via the
+    # filename+date match in bin/backfill_paperless_metadata.py).
+    paperless_document_id = Column(Integer, nullable=True)
 
     # Timestamps
     created_at = Column(DateTime, default=_utcnow)

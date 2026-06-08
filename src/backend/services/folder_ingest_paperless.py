@@ -60,6 +60,72 @@ def _parse_paperless_result(mcp_result: dict | None) -> dict:
     return {"error": "unparseable_paperless_response"}
 
 
+async def _fetch_correspondent_names(mcp_manager) -> list[str] | None:
+    """The FULL Paperless correspondent list (names). None on transport failure
+    — the caller must then NOT guess (no auto-create on a half-known taxonomy)."""
+    parsed = _parse_paperless_result(
+        await mcp_manager.execute_tool("mcp.paperless.list_correspondents", {})
+    )
+    if parsed.get("error"):
+        return None
+    return [it["name"] for it in (parsed.get("items") or []) if it.get("name")]
+
+
+async def resolve_or_create_correspondent(
+    mcp_manager, extracted_value: str
+) -> str | None:
+    """Option A + guardrail: map a confidently-new extracted sender to a Paperless
+    correspondent NAME the upload can resolve, creating it ONLY when it has no
+    fuzzy-near match anywhere in the FULL taxonomy.
+
+    The extractor only matches against a recency-pruned taxonomy window (top-N),
+    so its "new sender" verdict (a ``status=="none"`` resolution) can be a
+    false-new for a correspondent outside that window. We therefore re-check
+    against the FULL correspondent list here before creating, to avoid duplicates
+    on a large instance. Returns:
+
+      - an existing canonical name when the sender STRONG-fuzzy matches one
+        (recovers a pruned-window miss — reuse, never duplicate);
+      - ``None`` when only a LOOSE fuzzy-near match exists (ambiguous → leave the
+        field unset, honouring "auto-create only when no fuzzy-near match");
+      - the (now-existing) name when the sender is genuinely new and was created;
+      - ``None`` on any transport / create failure (caller does a bare upload).
+    """
+    value = (extracted_value or "").strip()
+    if not value:
+        return None
+    names = await _fetch_correspondent_names(mcp_manager)
+    if names is None:
+        return None  # couldn't read the taxonomy → don't risk a duplicate
+    # Reuse the extractor's own matchers so "existing" means the same thing here
+    # as it does inside extraction.
+    from services.paperless_metadata_extractor import _fuzzy_match, _fuzzy_top_candidates
+
+    existing = _fuzzy_match(value, names)
+    if existing:
+        return existing  # strong match in the full list → reuse (pruned-window recovery)
+    if _fuzzy_top_candidates(value, names):
+        return None  # fuzzy-near existing → guardrail: don't auto-create
+    created = _parse_paperless_result(
+        await mcp_manager.execute_tool(
+            "mcp.paperless.create_correspondent", {"name": value}
+        )
+    )
+    if created.get("error") == "already_exists":
+        return created.get("existing_name") or value  # raced / exact-dup → reuse
+    if created.get("id"):
+        logger.info(
+            f"folder-ingest paperless: auto-created correspondent {value!r} "
+            f"(id={created.get('id')})"
+        )
+        return created.get("name") or value
+    logger.warning(
+        f"folder-ingest paperless: create_correspondent failed for {value!r}: "
+        f"{created.get('error')}"
+    )
+    return None
+
+
 def make_paperless_leg(
     mcp_manager,
     *,
@@ -109,6 +175,27 @@ def make_paperless_leg(
                     upload_params["title"] = m.title
                 if m.correspondent:
                     upload_params["correspondent"] = m.correspondent
+                else:
+                    # Option A: a confidently-new sender (a ``status=="none"``
+                    # correspondent resolution = no near match even in the
+                    # extractor's pruned window) → resolve-or-create against the
+                    # FULL taxonomy, with the no-fuzzy-near guardrail.
+                    new_name = next(
+                        (
+                            r.extracted_value
+                            for r in m.resolutions
+                            if r.field == "correspondent"
+                            and r.status == "none"
+                            and r.extracted_value
+                        ),
+                        None,
+                    )
+                    if new_name:
+                        resolved = await resolve_or_create_correspondent(
+                            mcp_manager, new_name
+                        )
+                        if resolved:
+                            upload_params["correspondent"] = resolved
                 if m.document_type:
                     upload_params["document_type"] = m.document_type
                 if m.tags:
@@ -157,6 +244,11 @@ def make_paperless_leg(
 
         if status in ("success", "duplicate"):
             doc.paperless_state = PAPERLESS_STATE_DONE
+            # Persist the filed Paperless id so a later re-tag / backfill can
+            # address it directly (a "duplicate" may carry no id — keep NULL).
+            pid = outcome.get("document_id")
+            if pid:
+                doc.paperless_document_id = pid
             await db.commit()
             logger.info(
                 f"folder-ingest paperless: doc {doc.id} {status} "

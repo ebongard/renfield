@@ -20,8 +20,13 @@ from services.folder_ingest import IngestMeta
 from services.folder_ingest_paperless import (
     _parse_paperless_result,
     make_paperless_leg,
+    resolve_or_create_correspondent,
 )
-from services.paperless_metadata_extractor import ExtractionResult, PaperlessMetadata
+from services.paperless_metadata_extractor import (
+    ExtractionResult,
+    FieldResolution,
+    PaperlessMetadata,
+)
 
 # Module-level unit mark; async tests are picked up by asyncio_mode=auto. The
 # sync _parse_* tests stay sync (no spurious asyncio mark).
@@ -230,3 +235,160 @@ async def test_extractor_exception_does_not_break_leg(monkeypatch):
 
     # extractor blew up → bare upload still proceeds → success
     assert await leg(AsyncMock(), _doc(), _PDF, _meta()) is True
+
+
+# ---------------------------------------------------------------------------
+# resolve_or_create_correspondent (Option A + full-taxonomy guardrail)
+# ---------------------------------------------------------------------------
+
+def _corr_mgr(names, *, create_inner=None):
+    """A mock mcp_manager dispatching list_correspondents + create_correspondent."""
+    create_inner = create_inner if create_inner is not None else {"id": 999, "name": "_created_"}
+
+    async def _execute(tool, params):
+        if tool == "mcp.paperless.list_correspondents":
+            return _envelope({"items": [{"id": i + 1, "name": n} for i, n in enumerate(names)]})
+        if tool == "mcp.paperless.create_correspondent":
+            inner = dict(create_inner)
+            if inner.get("name") == "_created_":
+                inner["name"] = params["name"]
+            return _envelope(inner)
+        raise AssertionError(f"unexpected tool {tool}")
+
+    mgr = MagicMock()
+    mgr.execute_tool = AsyncMock(side_effect=_execute)
+    return mgr
+
+
+def _patch_fuzzy(monkeypatch, *, strict, loose):
+    monkeypatch.setattr("services.paperless_metadata_extractor._fuzzy_match", lambda v, t: strict)
+    monkeypatch.setattr("services.paperless_metadata_extractor._fuzzy_top_candidates", lambda v, t, **k: loose)
+
+
+def _created_tool_names(mgr):
+    return [c.args[0] for c in mgr.execute_tool.await_args_list]
+
+
+async def test_resolve_strong_match_reuses_existing_never_creates(monkeypatch):
+    # A full-list strong match (recovers a pruned-window miss) → reuse, no create.
+    _patch_fuzzy(monkeypatch, strict="regfish GmbH", loose=[])
+    mgr = _corr_mgr(["regfish GmbH", "Stadtwerke"])
+    out = await resolve_or_create_correspondent(mgr, "Regfish  GmbH")
+    assert out == "regfish GmbH"
+    assert "mcp.paperless.create_correspondent" not in _created_tool_names(mgr)
+
+
+async def test_resolve_fuzzy_near_skips_and_never_creates(monkeypatch):
+    # No strict match but a LOOSE near candidate exists → guardrail: leave unset.
+    _patch_fuzzy(monkeypatch, strict=None, loose=["Stadtwerke Korschenbroich"])
+    mgr = _corr_mgr(["Stadtwerke Korschenbroich"])
+    out = await resolve_or_create_correspondent(mgr, "Stadtwerke Korschnbroich GmbH")
+    assert out is None
+    assert "mcp.paperless.create_correspondent" not in _created_tool_names(mgr)
+
+
+async def test_resolve_genuinely_new_creates(monkeypatch):
+    # No strict AND no loose match anywhere in the full list → create it.
+    _patch_fuzzy(monkeypatch, strict=None, loose=[])
+    mgr = _corr_mgr(["Stadtwerke"], create_inner={"id": 42, "name": "regfish GmbH"})
+    out = await resolve_or_create_correspondent(mgr, "regfish GmbH")
+    assert out == "regfish GmbH"
+    assert "mcp.paperless.create_correspondent" in _created_tool_names(mgr)
+
+
+async def test_resolve_taxonomy_unreadable_returns_none_no_create(monkeypatch):
+    # list_correspondents transport failure → never guess / create.
+    async def _execute(tool, params):
+        if tool == "mcp.paperless.list_correspondents":
+            return {"success": False, "message": "boom"}
+        raise AssertionError(f"unexpected tool {tool}")
+
+    mgr = MagicMock()
+    mgr.execute_tool = AsyncMock(side_effect=_execute)
+    out = await resolve_or_create_correspondent(mgr, "Anything")
+    assert out is None
+
+
+async def test_resolve_empty_value_is_noop(monkeypatch):
+    mgr = _corr_mgr([])
+    assert await resolve_or_create_correspondent(mgr, "   ") is None
+    mgr.execute_tool.assert_not_called()
+
+
+async def test_resolve_create_already_exists_reuses(monkeypatch):
+    # A concurrent/exact dup at create time → reuse the existing name, not error.
+    _patch_fuzzy(monkeypatch, strict=None, loose=[])
+    mgr = _corr_mgr(["X"], create_inner={"error": "already_exists", "existing_id": 7, "existing_name": "regfish GmbH"})
+    out = await resolve_or_create_correspondent(mgr, "regfish GmbH")
+    assert out == "regfish GmbH"
+
+
+# ---------------------------------------------------------------------------
+# leg: auto-create wiring + paperless_document_id persistence
+# ---------------------------------------------------------------------------
+
+def _meta_new_sender():
+    return PaperlessMetadata(
+        resolutions=[FieldResolution(field="correspondent", extracted_value="regfish GmbH")]
+    )
+
+
+def _full_mgr(names, *, create_inner=None, await_inner=None):
+    """Mock dispatching the leg's tools AND the helper's taxonomy tools."""
+    await_inner = await_inner if await_inner is not None else {"status": "success", "document_id": 5}
+    create_inner = create_inner if create_inner is not None else {"id": 999, "name": "_created_"}
+
+    async def _execute(tool, params):
+        if tool == "mcp.paperless.upload_document":
+            return _envelope({"task_id": "t1"})
+        if tool == "mcp.paperless.await_consume_result":
+            return _envelope(await_inner)
+        if tool == "mcp.paperless.list_correspondents":
+            return _envelope({"items": [{"id": i + 1, "name": n} for i, n in enumerate(names)]})
+        if tool == "mcp.paperless.create_correspondent":
+            inner = dict(create_inner)
+            if inner.get("name") == "_created_":
+                inner["name"] = params["name"]
+            return _envelope(inner)
+        raise AssertionError(f"unexpected tool {tool}")
+
+    mgr = MagicMock()
+    mgr.execute_tool = AsyncMock(side_effect=_execute)
+    return mgr
+
+
+def _upload_params(mgr):
+    for c in mgr.execute_tool.await_args_list:
+        if c.args[0] == "mcp.paperless.upload_document":
+            return c.args[1]
+    raise AssertionError("upload_document was not called")
+
+
+async def test_leg_auto_creates_new_correspondent(monkeypatch):
+    _patch_extractor(monkeypatch, metadata=_meta_new_sender())
+    _patch_fuzzy(monkeypatch, strict=None, loose=[])  # genuinely new
+    mgr = _full_mgr(["Stadtwerke"], create_inner={"id": 42, "name": "regfish GmbH"})
+    doc, db = _doc(), AsyncMock()
+
+    assert await leg_mod.make_paperless_leg(mgr)(db, doc, _PDF, _meta()) is True
+    assert _upload_params(mgr)["correspondent"] == "regfish GmbH"  # created + applied
+
+
+async def test_leg_skips_correspondent_when_fuzzy_near(monkeypatch):
+    _patch_extractor(monkeypatch, metadata=_meta_new_sender())
+    _patch_fuzzy(monkeypatch, strict=None, loose=["regfish Domains GmbH"])  # ambiguous
+    mgr = _full_mgr(["regfish Domains GmbH"])
+    doc, db = _doc(), AsyncMock()
+
+    await leg_mod.make_paperless_leg(mgr)(db, doc, _PDF, _meta())
+    assert "correspondent" not in _upload_params(mgr)  # guardrail: left unset
+    assert "mcp.paperless.create_correspondent" not in _created_tool_names(mgr)
+
+
+async def test_leg_persists_paperless_document_id(monkeypatch):
+    _patch_extractor(monkeypatch)  # no correspondent path needed
+    mgr = _full_mgr([], await_inner={"status": "success", "document_id": 77})
+    doc, db = _doc(), AsyncMock()
+
+    assert await leg_mod.make_paperless_leg(mgr)(db, doc, _PDF, _meta()) is True
+    assert doc.paperless_document_id == 77
