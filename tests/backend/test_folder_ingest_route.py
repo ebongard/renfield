@@ -410,3 +410,99 @@ async def test_generate_rotates_and_invalidates_old(db_session: AsyncSession):
     assert first != second
     assert await verify_folder_ingest_token(db_session, first) is False
     assert await verify_folder_ingest_token(db_session, second) is True
+
+
+# ===========================================================================
+# T9 / T15 — the cross-repo push contract (lock test) + contract-version skew.
+#
+# These pin the exact wire shape BOTH repos depend on. A change here is a
+# breaking change to the renfield-mcp-filesystem ↔ backend seam and MUST be
+# accompanied by a FOLDER_INGEST_CONTRACT_VERSION bump. If one of these fails,
+# do not "fix the test" — bump the contract version and update the MCP.
+# ===========================================================================
+
+CONTRACT_HEADER = "X-Folder-Ingest-Contract"
+
+
+def test_contract_version_pinned():
+    # Bump deliberately when the request/response shape or status names change.
+    assert FOLDER_INGEST_CONTRACT_VERSION == "1"
+
+
+def test_ingest_status_values_pinned():
+    # The 4-state names the MCP keys its file-move decision off — exact strings.
+    assert IngestStatus.INGESTED.value == "ingested"
+    assert IngestStatus.DUPLICATE.value == "duplicate"
+    assert IngestStatus.RETRY.value == "retry"
+    assert IngestStatus.FAILED.value == "failed"
+    assert {s.value for s in IngestStatus} == {"ingested", "duplicate", "retry", "failed"}
+
+
+def test_response_shape_pinned():
+    from api.routes.folder_ingest import FolderIngestResponse
+
+    fields = set(FolderIngestResponse.model_fields)
+    assert fields == {"status", "document_id", "detail", "contract_version"}
+
+
+def test_metadata_consumes_documented_keys_and_ignores_extras():
+    from services.folder_ingest import IngestMeta
+
+    meta = IngestMeta.from_dict(
+        {
+            "filename": "invoice.pdf",
+            "root": "inbox",
+            "relpath": "2026/invoice.pdf",
+            "sha256": "abc123",
+            "mime": "application/pdf",
+            "knowledge_base_id": 999,  # client override — MUST be ignored
+        }
+    )
+    assert meta.filename == "invoice.pdf"
+    assert meta.root == "inbox"
+    assert meta.relpath == "2026/invoice.pdf"
+    assert meta.sha256 == "abc123"
+    assert meta.mime == "application/pdf"
+    assert not hasattr(meta, "knowledge_base_id")
+
+
+@pytest.mark.integration
+async def test_response_carries_contract_version(client: AsyncClient, token_set: str, monkeypatch):
+    from api.routes import folder_ingest as route
+
+    monkeypatch.setattr(
+        route, "ingest_document",
+        AsyncMock(return_value=IngestResult(IngestStatus.INGESTED, document_id=1)),
+    )
+    r = await client.post(URL, **_multipart(), headers=_auth())
+    assert r.json()["contract_version"] == FOLDER_INGEST_CONTRACT_VERSION
+
+
+@pytest.mark.integration
+async def test_matching_contract_header_processed(client: AsyncClient, token_set: str, monkeypatch):
+    from api.routes import folder_ingest as route
+
+    monkeypatch.setattr(
+        route, "ingest_document",
+        AsyncMock(return_value=IngestResult(IngestStatus.INGESTED, document_id=1)),
+    )
+    headers = {**_auth(), CONTRACT_HEADER: FOLDER_INGEST_CONTRACT_VERSION}
+    r = await client.post(URL, **_multipart(), headers=headers)
+    assert r.status_code == 200
+    assert r.json()["status"] == "ingested"
+
+
+@pytest.mark.integration
+async def test_contract_skew_header_is_lenient_not_fatal(client: AsyncClient, token_set: str, monkeypatch):
+    # A skewed contract version is logged loudly but NOT rejected — the request
+    # shape has stayed backward-compatible, so we process rather than lose a file.
+    from api.routes import folder_ingest as route
+
+    monkeypatch.setattr(
+        route, "ingest_document",
+        AsyncMock(return_value=IngestResult(IngestStatus.INGESTED, document_id=1)),
+    )
+    headers = {**_auth(), CONTRACT_HEADER: "999"}
+    r = await client.post(URL, **_multipart(), headers=headers)
+    assert r.status_code == 200
+    assert r.json()["status"] == "ingested"

@@ -106,10 +106,26 @@ async def ingest_pushed_document(
     file: UploadFile = File(...),
     metadata: str = Form(...),
     authorization: str | None = Header(None),
+    x_folder_ingest_contract: str | None = Header(None),
     db: AsyncSession = Depends(get_db),
 ):
     """Receive one pushed file from the filesystem MCP and run it through the
     shared folder-ingest bridge. See the module docstring for the contract."""
+    # Contract-version skew check (DX-7). The MCP sends its contract version in
+    # the X-Folder-Ingest-Contract header; a mismatch is logged loudly (and the
+    # response always carries OUR version so the MCP can detect skew too) but is
+    # NOT fatal here — the request shape has been backward-compatible so far, so
+    # we process leniently rather than reject a file over a version bump.
+    if (
+        x_folder_ingest_contract
+        and x_folder_ingest_contract != FOLDER_INGEST_CONTRACT_VERSION
+    ):
+        logger.warning(
+            f"folder-ingest: contract skew — MCP sent "
+            f"{x_folder_ingest_contract!r}, backend is "
+            f"{FOLDER_INGEST_CONTRACT_VERSION!r}; processing leniently"
+        )
+
     # 1. Feature gate — a forgotten flag is a transient "nothing's happening"
     # (retry), distinct from the token-fatal path below (DX-3). The MCP's
     # health probe (T14) is the loud disabled-detector; here we just 503.
