@@ -353,6 +353,41 @@ servers:
         - "Find documents from Telekom"
         - "Send this document to Paperless"
 
+  # --- Filesystem watch-folder MCP Server ---
+  # Dedicated Python MCP server (renfield-mcp-filesystem) that watches local/SMB
+  # folders and PUSHES settled new files into the backend over REST
+  # (POST /api/folder-ingest/document) — no backend mounts, event-driven, no
+  # polling. This streamable_http connection is for the INTERACTIVE path only
+  # (browse + on-demand ingest); the auto-push path does not use this client.
+  # Runs as a dedicated deployment (like dlna/samsung), not in the backend image.
+  # GitHub: https://github.com/ebongard/renfield-mcp-filesystem
+  # See docs/FOLDER_INGEST.md.
+  - name: files
+    transport: streamable_http
+    url: "${FILES_MCP_URL:-http://renfield-mcp-filesystem:8080/mcp}"
+    enabled: "${FILES_MCP_ENABLED:-false}"
+    refresh_interval: 300
+    example_intent: mcp.files.list_watch_folders
+    # read_file + move_file are intentionally NOT in the agent prompt: read_file
+    # returns base64 the LLM can't usefully handle (it is used UNDER THE HOOD by
+    # the platform tool internal.ingest_file, which pulls real bytes with
+    # truncate=False), and move_file is a destructive op the watcher drives. Both
+    # remain executable for those internal paths — prompt_tools only filters the
+    # agent-visible list (mirrors the paperless upload_document exclusion).
+    prompt_tools:
+      - list_watch_folders
+      - list_files
+      - get_file_info
+    examples:
+      de:
+        - "Welche Ordner werden ueberwacht?"
+        - "Liste die Dateien im Eingang-Ordner"
+        - "Lies das PDF aus dem Dokumente-Ordner ein"
+      en:
+        - "Which folders are being watched?"
+        - "List the files in the inbox folder"
+        - "Ingest the PDF from the documents folder"
+
   # --- Email MCP Server ---
   # Custom Python MCP server for multi-account email (IMAP/SMTP).
   # Requires: MAIL_ACCOUNTS_CONFIG env var pointing to YAML config file
