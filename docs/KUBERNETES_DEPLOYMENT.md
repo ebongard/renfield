@@ -82,6 +82,8 @@ Harbor is the registry. A `harbor-pull-secret` of type `kubernetes.io/dockerconf
 
 The backend image had ballooned to 7.5 GB because transitive deps in `docling`, `easyocr`, and `transformers` upgraded torch to a CUDA build, dragging in `nvidia/*` wheels (2.7 GB) and `triton` (641 MB). `src/backend/constraints.txt` pins `torch`/`torchaudio`/`torchvision` to `+cpu` wheels from the PyTorch CPU index so pip's resolver cannot upgrade. Final image: ~3.5 GB, which pushes through Harbor's proxy without the 504 timeouts that the old layer had.
 
+**`transformers` must stay capped `<5`** (`requirements.txt`). Since the torch pin holds at the **2.6.0 +cpu** wheel, an unbounded `transformers` resolves to a 5.x release that references `torch.float8_e8m0fnu` (added only in torch ≥ 2.7). That breaks the Docling import chain at runtime (`AttributeError: module 'torch' has no attribute 'float8_e8m0fnu'` → `Could not import module 'AutoProcessor'` → "Docling nicht installiert"), so **every** document fails processing (`status=failed`). `transformers>=4.47.0,<5` resolves to 4.57.x (with `huggingface_hub` 0.36.x), which `docling-ibm-models` (`>=4.42`) accepts and which keeps `rt_detr_v2` support. Only the **document-worker** runs Docling, so a worker-only image roll fixes this with zero API downtime. Reprocess already-failed docs by moving them from the watch-share `processed/` back to `incomming/` (the folder-ingest D2 matrix re-ingests a `failed` row on re-push).
+
 ## Manifest Structure
 
 ```
