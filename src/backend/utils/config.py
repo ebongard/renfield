@@ -539,6 +539,18 @@ class Settings(BaseSettings):
     folder_ingest_default_tier: int = Field(default=0, ge=0, le=4)  # circle tier at create
     folder_ingest_to_paperless: bool = True
     folder_ingest_notify_on_filed: bool = True
+
+    # Email-mailbox auto-ingest (Phase 1; ships dark). The dedicated
+    # renfield-mcp-email-ingest watcher PUSHES attachments to
+    # POST /api/email-ingest/document; the backend owns the SPHERE routing here
+    # (server-authoritative — the watcher only sends a mailbox_id). Each entry:
+    #   {"id": "<stable mailbox id>", "owner": "<username|id|''>",
+    #    "tier": <0-4>, "kb": "<target KB name>"}
+    # Set as a JSON env (EMAIL_INGEST_MAILBOXES) or via the renfield-mcp-config
+    # ConfigMap. An unknown mailbox_id on a push → failed (route).
+    email_ingest_enabled: bool = False
+    email_ingest_to_paperless: bool = True
+    email_ingest_mailboxes: list[dict] = Field(default_factory=list)
     # Paperless cold-start confirm ramp: the first N archives show a metadata
     # confirm; after N the system trusts itself and archives silently. 0 =
     # never confirm (always silent). Tunable without a code change.

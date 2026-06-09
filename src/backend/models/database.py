@@ -542,6 +542,44 @@ class PaperlessUploadTracking(Base):
     swept_at = Column(DateTime, nullable=True, index=True)
 
 
+class EmailIngestLog(Base):
+    """Per-attachment provenance + idempotency ledger for email auto-ingest.
+
+    The renfield-mcp-email-ingest watcher pushes each allowlisted attachment to
+    POST /api/email-ingest/document; the bridge records one row per
+    (mailbox_id, message_id, attachment_sha256) here. Two jobs:
+
+    - **Provenance/audit:** which email (mailbox + Message-ID + sender/subject)
+      a given Document came from — not stored on Document itself.
+    - **Idempotency:** the UNIQUE (mailbox_id, message_id, attachment_sha256)
+      lets a re-pushed email short-circuit to `duplicate` even before the
+      content-hash dedup (and keyed by mailbox so two spheres never collide).
+
+    ``document_id`` is the resulting Document (NULL when the push was rejected
+    before a row was created, e.g. failed/oversize); ``status`` mirrors the
+    4-state IngestStatus the bridge returned.
+    """
+    __tablename__ = "email_ingest_log"
+    __table_args__ = (
+        UniqueConstraint(
+            "mailbox_id", "message_id", "attachment_sha256",
+            name="uq_email_ingest_mailbox_msg_attachment",
+        ),
+    )
+
+    id = Column(Integer, primary_key=True)
+    mailbox_id = Column(String(120), nullable=False, index=True)
+    message_id = Column(String(998), nullable=False)  # RFC 5322 line-length cap
+    attachment_sha256 = Column(String(64), nullable=False)
+    document_id = Column(
+        Integer, ForeignKey("documents.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    sender = Column(String(320), nullable=True)  # RFC 5321 max addr length
+    subject = Column(Text, nullable=True)
+    status = Column(String(20), nullable=True)  # IngestStatus value at record time
+    created_at = Column(DateTime, default=_utcnow)
+
+
 # Document Processing Status Constants
 DOC_STATUS_PENDING = "pending"
 DOC_STATUS_PROCESSING = "processing"
@@ -1667,6 +1705,10 @@ SETTING_NOTIFICATION_WEBHOOK_TOKEN = "notification.webhook_token"
 # folder-ingest push (POST /api/folder-ingest/document). Minted by the admin
 # token route (T14), verified constant-time on every push.
 SETTING_FOLDER_INGEST_TOKEN = "folder_ingest.token"
+# Revocable Bearer token the renfield-mcp-email-ingest server presents on the
+# email-ingest push (POST /api/email-ingest/document). Separate from the
+# folder-ingest token so the two watchers are independently revocable.
+SETTING_EMAIL_INGEST_TOKEN = "email_ingest.token"
 
 SYSTEM_SETTING_KEYS = [
     SETTING_WAKEWORD_KEYWORD,
@@ -1674,6 +1716,7 @@ SYSTEM_SETTING_KEYS = [
     SETTING_WAKEWORD_COOLDOWN_MS,
     SETTING_NOTIFICATION_WEBHOOK_TOKEN,
     SETTING_FOLDER_INGEST_TOKEN,
+    SETTING_EMAIL_INGEST_TOKEN,
 ]
 
 

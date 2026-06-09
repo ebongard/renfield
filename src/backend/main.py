@@ -24,6 +24,7 @@ from api.routes import (
     chat,
     chat_upload,
     circles,
+    email_ingest,
     federation_audit,
     federation_pairing,
     federation_query,
@@ -179,6 +180,7 @@ app.include_router(config_routes.router, prefix="/api/config", tags=["Config"])
 app.include_router(speakers.router, prefix="/api/speakers", tags=["Speakers"])
 app.include_router(knowledge.router, prefix="/api/knowledge", tags=["Knowledge"])
 app.include_router(folder_ingest.router, prefix="/api/folder-ingest", tags=["Folder Ingest"])
+app.include_router(email_ingest.router, prefix="/api/email-ingest", tags=["Email Ingest"])
 app.include_router(memory.router, prefix="/api/memory", tags=["Memory"])
 app.include_router(preferences.router, prefix="/api/preferences", tags=["Preferences"])
 app.include_router(mcp_routes.router, prefix="/api/mcp", tags=["MCP"])
