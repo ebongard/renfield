@@ -142,7 +142,7 @@ export default function ChatMessages() {
     handleSendViaEmail, emailDialog, confirmSendViaEmail, cancelEmailDialog,
     sendMessage, sessionId, submitPaperlessConfirm,
   } = useChatContext();
-  const messagesEndRef = useRef<HTMLDivElement | null>(null);
+  const scrollContainerRef = useRef<HTMLDivElement | null>(null);
 
   // Fetch the wissensbasis reasoning trace for this session so we can
   // wrap entity mentions in the assistant prose with CitationChips.
@@ -155,13 +155,20 @@ export default function ChatMessages() {
     [traceQ.data?.trace?.entities],
   );
 
-  // Auto-scroll to bottom when messages change
+  // Auto-scroll to bottom when messages change. Scroll the CONTAINER directly
+  // rather than calling scrollIntoView() on a sentinel: in Safari, scrollIntoView
+  // walks up and scrolls every scrollable ancestor — including the window — so on
+  // each new message it scrolled the whole page and pushed the chat + input out of
+  // view. Scrolling the container's scrollTop can only move this region, never the
+  // window, so it fixes Safari and behaves identically elsewhere.
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    const el = scrollContainerRef.current;
+    if (el) el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' });
   }, [messages]);
 
   return (
     <div
+      ref={scrollContainerRef}
       className="flex-1 overflow-y-auto card space-y-4 mb-4 mx-4 md:mx-0"
       role="log"
       aria-live="polite"
@@ -442,9 +449,6 @@ export default function ChatMessages() {
           onCancel={cancelEmailDialog}
         />
       )}
-
-      {/* Scroll anchor */}
-      <div ref={messagesEndRef} />
     </div>
   );
 }

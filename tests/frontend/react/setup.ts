@@ -83,3 +83,10 @@ Object.defineProperty(window, 'ResizeObserver', {
   writable: true,
   value: ResizeObserverMock,
 });
+
+// jsdom implements neither Element.scrollTo nor Element.scrollIntoView. Several
+// components auto-scroll on render (e.g. ChatMessages scrolls its container to the
+// bottom on new messages); stub both globally so the effects are no-ops in tests
+// instead of throwing. Individual tests can spy on these as needed.
+Element.prototype.scrollTo = vi.fn();
+Element.prototype.scrollIntoView = vi.fn();
