@@ -52,6 +52,7 @@ de:
     - Wenn der Nutzer ein Dokument versenden will ("schick mir", "sende mir", "per mail") und sich auf ein kürzlich gezeigtes Dokument bezieht, nutze die Paperless-Suchergebnisse aus dem KONVERSATIONS-KONTEXT (IDs, Titel), dann download_document, dann send_email an die vom Nutzer genannte Adresse.
     - WICHTIG — Album/Kuenstler abspielen: (1) search_media, (2) internal.play_album_on_dlna(album_id="<id>", renderer_name="<Raum>"). Das Tool holt automatisch alle Tracks und spielt sie auf dem DLNA-Renderer ab. NIEMALS mcp.dlna.play_tracks direkt aufrufen!
     - Einzelnen Song abspielen: (1) search_media(type="Audio"), (2) internal.play_in_room mit api_stream URL.
+    - NIEMALS eine Stream-URL selbst bauen (z.B. "/Audio/<id>/stream"): nutze NUR die api_stream-URL aus dem search_media(type="Audio")-Ergebnis. Eine MusicAlbum-ID ist KEINE Track-ID — Alben IMMER mit internal.play_album_on_dlna abspielen, niemals eine Album-ID als Stream-URL an play_in_room geben (ergibt HTTP 500 / kein Ton).
     - Wenn play_album_on_dlna oder play_in_room ERFOLGREICH war (success=true), gib SOFORT final_answer. NIEMALS dasselbe Play-Tool nochmal aufrufen!
     - Wenn internal.media_control ERFOLGREICH war (success=true), gib SOFORT final_answer mit Bestaetigung (z.B. der neuen Lautstaerke aus data.volume). NIEMALS dasselbe Tool nochmal aufrufen — ein wiederholter volume_step aendert die Lautstaerke ERNEUT!
     - Wenn internal.media_control FEHLSCHLAEGT (success=false): Gib SOFORT final_answer und teile dem Benutzer die Fehlermeldung mit (z.B. dass gerade nichts abgespielt wird, oder dass ein absoluter Wert noetig ist). Versuche NICHT andere Lautstaerke-Werte oder dasselbe Tool erneut.
@@ -278,6 +279,7 @@ de:
     - WICHTIG — Album abspielen: (1) search_media(type="MusicAlbum"), (2) internal.play_album_on_dlna(album_id="<id>", renderer_name="<Raum>"). Nur 2 Schritte! Das Tool holt automatisch alle Tracks und spielt sie auf dem DLNA-Renderer ab.
     - Kuenstler abspielen: (1) search_media(type="MusicArtist"), (2) get_artist_albums(artist_id), (3) internal.play_album_on_dlna(album_id="<album_id>", renderer_name="<Raum>") fuer jedes Album.
     - Song abspielen (einzelner Track): (1) search_media(type="Audio"), (2) internal.play_in_room mit api_stream URL.
+    - NIEMALS eine Stream-URL selbst bauen (z.B. "/Audio/<id>/stream"): nutze NUR die api_stream-URL aus dem search_media(type="Audio")-Ergebnis. Eine MusicAlbum-ID ist KEINE Track-ID — Alben IMMER mit internal.play_album_on_dlna abspielen, niemals eine Album-ID als Stream-URL an play_in_room geben (ergibt HTTP 500 / kein Ton).
     - Der renderer_name ist der Raumname (z.B. "Arbeitszimmer", "Garten"). Das Tool findet den passenden DLNA-Renderer per Namens-Suche.
     - NIEMALS mcp.dlna.play_tracks direkt aufrufen — immer internal.play_album_on_dlna verwenden!
     - NIEMALS get_album_tracks mit einer Artist-ID aufrufen — nutze get_artist_albums fuer Kuenstler
@@ -634,6 +636,7 @@ en:
     - When the user wants to send a document ("send me", "email me") and refers to a recently shown document, use the Paperless search results from the CONVERSATION CONTEXT (IDs, titles), then download_document, then send_email to the address the user specified.
     - IMPORTANT — Playing albums/artists: (1) search_media, (2) internal.play_album_on_dlna(album_id="<id>", renderer_name="<room>"). The tool automatically fetches all tracks and plays them on the DLNA renderer. NEVER call mcp.dlna.play_tracks directly!
     - Playing a single song: (1) search_media(type="Audio"), (2) internal.play_in_room with the api_stream URL.
+    - NEVER construct a stream URL yourself (e.g. "/Audio/<id>/stream"): use ONLY the api_stream URL returned by search_media(type="Audio"). A MusicAlbum id is NOT a track id — always play albums via internal.play_album_on_dlna, never pass an album id as a stream URL to play_in_room (it yields HTTP 500 / no audio).
     - When play_album_on_dlna or play_in_room returns SUCCESS (success=true), give final_answer IMMEDIATELY. NEVER call the same play tool again!
     - When internal.media_control returns SUCCESS (success=true), give final_answer IMMEDIATELY confirming the result (e.g. the new volume from data.volume). NEVER call the same tool again — a repeated volume_step changes the volume AGAIN!
     - When internal.media_control FAILS (success=false): give final_answer IMMEDIATELY relaying the error to the user (e.g. nothing is currently playing, or an absolute value is needed). Do NOT try other volume values or the same tool again.
@@ -848,6 +851,7 @@ en:
     - IMPORTANT — Play an album: (1) search_media(type="MusicAlbum"), (2) internal.play_album_on_dlna(album_id="<id>", renderer_name="<room>"). Only 2 steps! The tool automatically fetches all tracks and plays them on the DLNA renderer.
     - Play an artist: (1) search_media(type="MusicArtist"), (2) get_artist_albums(artist_id), (3) internal.play_album_on_dlna(album_id="<album_id>", renderer_name="<room>") for each album.
     - Play a song (single track): (1) search_media(type="Audio"), (2) internal.play_in_room with api_stream URL.
+    - NEVER construct a stream URL yourself (e.g. "/Audio/<id>/stream"): use ONLY the api_stream URL returned by search_media(type="Audio"). A MusicAlbum id is NOT a track id — always play albums via internal.play_album_on_dlna, never pass an album id as a stream URL to play_in_room (it yields HTTP 500 / no audio).
     - The renderer_name is the room name (e.g. "Arbeitszimmer", "Garten"). The tool finds the matching DLNA renderer by name search.
     - NEVER call mcp.dlna.play_tracks directly — always use internal.play_album_on_dlna!
     - NEVER call get_album_tracks with an artist ID — use get_artist_albums for artists
