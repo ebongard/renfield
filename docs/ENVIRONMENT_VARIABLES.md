@@ -543,6 +543,39 @@ MCP prüft die Konfig-Ausrichtung beim Start via `GET /api/folder-ingest/health`
 
 ---
 
+### Email Auto-Ingest (Watch-Mailbox → KB + Paperless)
+
+Der dedizierte `renfield-mcp-email-ingest`-Watcher überwacht IMAP-Postfächer per
+**IMAP IDLE** (event-driven, KEIN Polling) und **PUSHT** die Anhänge neuer Mails
+per REST an `POST /api/email-ingest/document` (Bearer). Das Backend hält die
+IMAP-Credentials NICHT — der Watcher schickt nur eine Routing-`mailbox_id`, nie
+Tier/Owner. Das Backend löst pro Mailbox **server-autoritativ** `mailbox_id →
+owner/tier/kb` auf (ein geleakter Push-Token kann das Tier also nicht eskalieren).
+Siehe `docs/EMAIL_INGEST.md`. Off by default; flag-aus = byte-identisch.
+
+```bash
+EMAIL_INGEST_ENABLED=false            # Feature-Schalter (Push-Route)
+# Routing-Tabelle (server-autoritativ), JSON-String, ein Eintrag pro Mailbox.
+# id=Routing-Key (KEIN Credential), owner=Username/ID (leer → ownerless),
+# tier=Circle-Tier 0-4, kb=Ziel-Knowledge-Base (wird bei Bedarf angelegt).
+EMAIL_INGEST_MAILBOXES_JSON=          # z.B. [{"id":"buchhaltung","owner":"evdb","tier":0,"kb":"xidra"}]
+EMAIL_INGEST_TO_PAPERLESS=true        # Anhänge zusätzlich in Paperless ablegen
+```
+
+Wiederverwendet `MAX_FILE_SIZE_MB`, `ALLOWED_EXTENSIONS` (siehe RAG/Upload) und die
+gesamte folder-ingest-Bridge (`services/folder_ingest.py`). Der Bearer-Token liegt
+revozierbar in `SystemSetting` (eigener Key, getrennt vom folder-ingest-Token) —
+per `POST /api/email-ingest/token` (Admin, `settings.manage`) erzeugen/rotieren.
+Die IMAP-Zugangsdaten + die zu überwachenden Postfächer (`mailboxes.yaml`, nur
+Verbindung + Routing-`id`, KEIN owner/tier/kb) leben ausschließlich im Watcher.
+
+**Defaults:**
+- `EMAIL_INGEST_ENABLED`: `false`
+- `EMAIL_INGEST_MAILBOXES_JSON`: `""` (leer → keine Mailbox geroutet; unbekannte `mailbox_id` → `failed`)
+- `EMAIL_INGEST_TO_PAPERLESS`: `true`
+
+---
+
 ### Conversation Memory (Langzeitgedaechtnis)
 
 ```bash
