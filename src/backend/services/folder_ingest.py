@@ -25,7 +25,6 @@ from __future__ import annotations
 
 import hashlib
 import os
-import secrets
 import uuid
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
@@ -46,14 +45,18 @@ from models.database import (
     SETTING_FOLDER_INGEST_TOKEN,
     Document,
     KnowledgeBase,
-    SystemSetting,
-    User,
 )
 
 # paperless_state values that mean "the Paperless leg is settled" — either it
 # was filed/duplicate (done) or terminally rejected for a non-duplicate reason
 # (failed). Both stop the D2 matrix re-running the leg; only None/unset retries.
 _PAPERLESS_SETTLED = (PAPERLESS_STATE_DONE, PAPERLESS_STATE_FAILED)
+from services.ingest_common import (
+    generate_ingest_token,
+    get_ingest_token,
+    resolve_user_id,
+    verify_ingest_token,
+)
 from services.rag_service import DuplicateDocumentError, RAGService
 from services.redis_client import get_redis
 from services.task_queue import DocumentTaskQueue
@@ -398,43 +401,19 @@ def _cleanup(file_path: str) -> None:
 
 async def get_folder_ingest_token(db: AsyncSession) -> str | None:
     """Return the stored folder-ingest Bearer token, or None if unset."""
-    setting = (
-        await db.execute(
-            select(SystemSetting).where(
-                SystemSetting.key == SETTING_FOLDER_INGEST_TOKEN
-            )
-        )
-    ).scalar_one_or_none()
-    return setting.value if setting else None
+    return await get_ingest_token(db, SETTING_FOLDER_INGEST_TOKEN)
 
 
 async def generate_folder_ingest_token(db: AsyncSession) -> str:
     """Mint a new folder-ingest token (rotating any existing one) and persist
     it to SystemSetting. Returns the plaintext token (shown once to the admin)."""
-    token = secrets.token_urlsafe(48)
-    existing = (
-        await db.execute(
-            select(SystemSetting).where(
-                SystemSetting.key == SETTING_FOLDER_INGEST_TOKEN
-            )
-        )
-    ).scalar_one_or_none()
-    if existing:
-        existing.value = token
-    else:
-        db.add(SystemSetting(key=SETTING_FOLDER_INGEST_TOKEN, value=token))
-    await db.commit()
-    logger.info("🔑 folder-ingest token (re)generated")
-    return token
+    return await generate_ingest_token(db, SETTING_FOLDER_INGEST_TOKEN)
 
 
 async def verify_folder_ingest_token(db: AsyncSession, token: str) -> bool:
     """Constant-time compare a presented Bearer token against the stored one.
     False when no token is configured (feature unprovisioned)."""
-    stored = await get_folder_ingest_token(db)
-    if not stored:
-        return False
-    return secrets.compare_digest(stored, token)
+    return await verify_ingest_token(db, SETTING_FOLDER_INGEST_TOKEN, token)
 
 
 # ---------------------------------------------------------------------------
@@ -483,19 +462,4 @@ async def resolve_owner_user_id(db: AsyncSession) -> int | None:
     """Resolve ``folder_ingest_target_user`` (username or numeric id) to a user
     id. Empty config → None (the bridge/worker handle an ownerless enqueue the
     same way the upload route does for unauthenticated single-user mode)."""
-    target = settings.folder_ingest_target_user.strip()
-    if not target:
-        return None
-    user = (
-        await db.execute(select(User).where(User.username == target))
-    ).scalar_one_or_none()
-    if user is None and target.isdigit():
-        user = (
-            await db.execute(select(User).where(User.id == int(target)))
-        ).scalar_one_or_none()
-    if user is None:
-        logger.warning(
-            f"folder-ingest: target_user {target!r} not found; using ownerless"
-        )
-        return None
-    return user.id
+    return await resolve_user_id(db, settings.folder_ingest_target_user)

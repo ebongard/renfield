@@ -1,6 +1,7 @@
 """
 Konfiguration und Settings
 """
+import json
 import os
 from functools import lru_cache
 
@@ -546,11 +547,14 @@ class Settings(BaseSettings):
     # (server-authoritative — the watcher only sends a mailbox_id). Each entry:
     #   {"id": "<stable mailbox id>", "owner": "<username|id|''>",
     #    "tier": <0-4>, "kb": "<target KB name>"}
-    # Set as a JSON env (EMAIL_INGEST_MAILBOXES) or via the renfield-mcp-config
-    # ConfigMap. An unknown mailbox_id on a push → failed (route).
+    # Stored as a JSON STRING (EMAIL_INGEST_MAILBOXES_JSON, or the
+    # renfield-mcp-config ConfigMap) and parsed by the email_ingest_mailboxes
+    # property — graceful: a malformed value falls back to [] rather than
+    # crashing the backend at import (a raw list[dict] env would). An unknown
+    # mailbox_id on a push → failed (route).
     email_ingest_enabled: bool = False
     email_ingest_to_paperless: bool = True
-    email_ingest_mailboxes: list[dict] = Field(default_factory=list)
+    email_ingest_mailboxes_json: str = ""
     # Paperless cold-start confirm ramp: the first N archives show a metadata
     # confirm; after N the system trusts itself and archives silently. 0 =
     # never confirm (always silent). Tunable without a code change.
@@ -806,6 +810,25 @@ class Settings(BaseSettings):
     def allowed_extensions_list(self) -> list[str]:
         """Gibt allowed_extensions als Liste zurück"""
         return [ext.strip().lower() for ext in self.allowed_extensions.split(",")]
+
+    @property
+    def email_ingest_mailboxes(self) -> list[dict]:
+        """Parsed email-ingest routing table from ``email_ingest_mailboxes_json``.
+        Graceful: a malformed JSON value logs + falls back to ``[]`` so a config
+        typo can't crash the backend at import (a typed ``list[dict]`` env would).
+        """
+        raw = (self.email_ingest_mailboxes_json or "").strip()
+        if not raw:
+            return []
+        try:
+            data = json.loads(raw)
+        except (json.JSONDecodeError, TypeError, ValueError):
+            logger.warning("email_ingest_mailboxes_json is not valid JSON; using []")
+            return []
+        if not isinstance(data, list):
+            logger.warning("email_ingest_mailboxes_json is not a JSON list; using []")
+            return []
+        return [e for e in data if isinstance(e, dict)]
 
     @property
     def supported_languages_list(self) -> list[str]:

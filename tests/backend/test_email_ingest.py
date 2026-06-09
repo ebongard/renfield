@@ -45,7 +45,9 @@ _MAILBOXES = [
 # ---------------------------------------------------------------------------
 
 def _patch_mailboxes(monkeypatch, boxes=_MAILBOXES):
-    monkeypatch.setattr(svc.settings, "email_ingest_mailboxes", boxes)
+    # email_ingest_mailboxes is now a parsed property over the JSON string field;
+    # set the backing field so the graceful-parse path is exercised too.
+    monkeypatch.setattr(svc.settings, "email_ingest_mailboxes_json", json.dumps(boxes))
 
 
 def test_resolve_known_mailbox(monkeypatch):
@@ -70,6 +72,29 @@ def test_resolve_clamps_tier_and_defaults_kb(monkeypatch):
     t = resolve_mailbox_target("clamp")
     assert t.tier == 4  # 9 clamped to the 0-4 ladder
     assert t.kb_name == "Eingang"  # empty kb → default
+
+
+def test_resolve_skips_malformed_entry_before_valid(monkeypatch):
+    # A bad entry (non-numeric tier, a non-dict) must NOT crash routing for a
+    # VALID mailbox that sits after it in the list.
+    boxes = [
+        {"id": "bad", "owner": "", "tier": "abc", "kb": "X"},  # tier int() raises
+        "not-a-dict",  # entry.get() would raise
+        {"id": "good", "owner": "", "tier": 1, "kb": "Good KB"},
+    ]
+    _patch_mailboxes(monkeypatch, boxes)
+    assert resolve_mailbox_target("good") == MailboxTarget("good", "", 1, "Good KB")
+    assert resolve_mailbox_target("bad") is None  # the malformed one is skipped
+
+
+def test_config_property_graceful_on_bad_json(monkeypatch):
+    # A malformed EMAIL_INGEST_MAILBOXES_JSON must fall back to [] (never crash).
+    monkeypatch.setattr(svc.settings, "email_ingest_mailboxes_json", "not json{")
+    assert svc.settings.email_ingest_mailboxes == []
+    monkeypatch.setattr(svc.settings, "email_ingest_mailboxes_json", '{"not":"a list"}')
+    assert svc.settings.email_ingest_mailboxes == []
+    monkeypatch.setattr(svc.settings, "email_ingest_mailboxes_json", "")
+    assert svc.settings.email_ingest_mailboxes == []
 
 
 # ---------------------------------------------------------------------------
@@ -278,9 +303,7 @@ async def test_happy_path_returns_ingested(client, token_set, monkeypatch):
 @pytest.mark.integration
 async def test_unknown_mailbox_routes_to_failed(client, token_set, monkeypatch):
     # End-to-end through the real wrapper (mailboxes table empty) → unknown → failed.
-    from api.routes import email_ingest as route
-    monkeypatch.setattr(route.settings, "email_ingest_mailboxes", [])
-    monkeypatch.setattr(svc.settings, "email_ingest_mailboxes", [])
+    monkeypatch.setattr(svc.settings, "email_ingest_mailboxes_json", "[]")
     r = await client.post(URL, **_multipart(mailbox_id="ghost"), headers=_auth())
     assert r.status_code == 200 and r.json()["status"] == "failed"
     assert r.json()["detail"] == "unknown_mailbox"
@@ -288,9 +311,7 @@ async def test_unknown_mailbox_routes_to_failed(client, token_set, monkeypatch):
 
 @pytest.mark.integration
 async def test_health_reports_known_mailbox_ids(client, token_set, monkeypatch):
-    from api.routes import email_ingest as route
-    monkeypatch.setattr(route.settings, "email_ingest_mailboxes", _MAILBOXES)
-    monkeypatch.setattr(svc.settings, "email_ingest_mailboxes", _MAILBOXES)
+    monkeypatch.setattr(svc.settings, "email_ingest_mailboxes_json", json.dumps(_MAILBOXES))
     r = await client.get("/api/email-ingest/health", headers=_auth())
     assert r.status_code == 200
     body = r.json()

@@ -96,6 +96,10 @@ def _build_paperless_leg(request: Request):
         return None
     from services.folder_ingest_paperless import make_paperless_leg
 
+    # TODO(email-ingest phase 2): thread the per-mailbox owner (ingest_email_document
+    # resolves it) into make_paperless_leg(user_id=...) so the Paperless extractor's
+    # learned-examples are owner-scoped, as folder-ingest already does. Phase-1-safe:
+    # the correspondent resolve-or-create does not depend on user_id.
     return make_paperless_leg(mcp_manager, user_id=None)
 
 

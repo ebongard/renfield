@@ -21,7 +21,6 @@ and never cross-record (the ledger keys on ``mailbox_id``).
 from __future__ import annotations
 
 import hashlib
-import secrets
 from dataclasses import dataclass
 
 from loguru import logger
@@ -32,8 +31,6 @@ from models.database import (
     SETTING_EMAIL_INGEST_TOKEN,
     EmailIngestLog,
     KnowledgeBase,
-    SystemSetting,
-    User,
 )
 from services.folder_ingest import (
     IngestMeta,
@@ -41,6 +38,12 @@ from services.folder_ingest import (
     IngestStatus,
     PaperlessLeg,
     ingest_document,
+)
+from services.ingest_common import (
+    generate_ingest_token,
+    get_ingest_token,
+    resolve_user_id,
+    verify_ingest_token,
 )
 from utils.config import settings
 
@@ -68,7 +71,14 @@ def resolve_mailbox_target(mailbox_id: str) -> MailboxTarget | None:
     if not mid:
         return None
     for entry in settings.email_ingest_mailboxes:
-        if str(entry.get("id", "")).strip() == mid:
+        # Defensive: a malformed routing entry (non-dict, non-numeric tier, …)
+        # must NOT crash routing for OTHER mailboxes (or 500 the /health probe).
+        # Skip the bad entry and keep scanning.
+        try:
+            if not isinstance(entry, dict):
+                continue
+            if str(entry.get("id", "")).strip() != mid:
+                continue
             tier = min(max(int(entry.get("tier", 0)), 0), 4)  # clamp to ladder
             return MailboxTarget(
                 mailbox_id=mid,
@@ -76,6 +86,9 @@ def resolve_mailbox_target(mailbox_id: str) -> MailboxTarget | None:
                 tier=tier,
                 kb_name=str(entry.get("kb") or "").strip() or "Eingang",
             )
+        except (ValueError, TypeError, AttributeError) as exc:
+            logger.warning(f"email-ingest: skipping malformed mailbox entry {entry!r}: {exc}")
+            continue
     return None
 
 
@@ -96,21 +109,9 @@ async def _resolve_kb(db: AsyncSession, kb_name: str) -> KnowledgeBase:
 
 
 async def _resolve_owner(db: AsyncSession, owner: str) -> int | None:
-    """Resolve ``owner`` (username or numeric id) to a user id; ``""`` → None."""
-    target = (owner or "").strip()
-    if not target:
-        return None
-    user = (
-        await db.execute(select(User).where(User.username == target))
-    ).scalar_one_or_none()
-    if user is None and target.isdigit():
-        user = (
-            await db.execute(select(User).where(User.id == int(target)))
-        ).scalar_one_or_none()
-    if user is None:
-        logger.warning(f"email-ingest: owner {target!r} not found; using ownerless")
-        return None
-    return user.id
+    """Resolve the mailbox's ``owner`` (username/id) to a user id; ``""`` → None.
+    Thin wrapper over the shared resolver (folder-ingest uses the same)."""
+    return await resolve_user_id(db, owner)
 
 
 async def _record_ledger(
@@ -180,12 +181,15 @@ async def ingest_email_document(
     kb = await _resolve_kb(db, target.kb_name)
     owner_user_id = await _resolve_owner(db, target.owner)
 
+    # Coerce optional metadata to str|None — a watcher could send a non-string
+    # (e.g. {"sha256": 123}) which would crash downstream `.lower()` / DB writes.
+    sha = str(sha256).strip() if sha256 not in (None, "") else None
     meta = IngestMeta(
         filename=filename,
         root=target.mailbox_id,  # provenance: which mailbox
         relpath=f"{message_id}/{filename}",  # provenance: which message + attachment
-        sha256=sha256,
-        mime=mime,
+        sha256=sha,
+        mime=(str(mime) if mime else None),
     )
     result = await ingest_document(
         file_bytes,
@@ -197,16 +201,19 @@ async def ingest_email_document(
         paperless_leg=paperless_leg,
     )
 
-    attachment_sha = (sha256 or "").lower() or hashlib.sha256(file_bytes).hexdigest()
-    await _record_ledger(
-        db,
-        mailbox_id=target.mailbox_id,
-        message_id=message_id or "",
-        attachment_sha256=attachment_sha,
-        sender=sender,
-        subject=subject,
-        result=result,
-    )
+    # Record provenance + idempotency keyed by the CONTENT hash (matches
+    # ingest_document's dedup key). Skip transient RETRY: a re-push that later
+    # succeeds would otherwise leave an orphan row keyed by a stale hash.
+    if result.status is not IngestStatus.RETRY:
+        await _record_ledger(
+            db,
+            mailbox_id=target.mailbox_id,
+            message_id=str(message_id or ""),
+            attachment_sha256=hashlib.sha256(file_bytes).hexdigest(),
+            sender=(str(sender) if sender else None),
+            subject=(str(subject) if subject else None),
+            result=result,
+        )
     return result
 
 
@@ -216,34 +223,13 @@ async def ingest_email_document(
 # ---------------------------------------------------------------------------
 
 async def get_email_ingest_token(db: AsyncSession) -> str | None:
-    setting = (
-        await db.execute(
-            select(SystemSetting).where(SystemSetting.key == SETTING_EMAIL_INGEST_TOKEN)
-        )
-    ).scalar_one_or_none()
-    return setting.value if setting else None
+    return await get_ingest_token(db, SETTING_EMAIL_INGEST_TOKEN)
 
 
 async def generate_email_ingest_token(db: AsyncSession) -> str:
-    """Mint/rotate the email-ingest token; persist to SystemSetting. Returns the
-    plaintext token (shown once to the admin)."""
-    token = secrets.token_urlsafe(48)
-    existing = (
-        await db.execute(
-            select(SystemSetting).where(SystemSetting.key == SETTING_EMAIL_INGEST_TOKEN)
-        )
-    ).scalar_one_or_none()
-    if existing:
-        existing.value = token
-    else:
-        db.add(SystemSetting(key=SETTING_EMAIL_INGEST_TOKEN, value=token))
-    await db.commit()
-    logger.info("🔑 email-ingest token (re)generated")
-    return token
+    """Mint/rotate the email-ingest token (shown once to the admin)."""
+    return await generate_ingest_token(db, SETTING_EMAIL_INGEST_TOKEN)
 
 
 async def verify_email_ingest_token(db: AsyncSession, token: str) -> bool:
-    stored = await get_email_ingest_token(db)
-    if not stored:
-        return False
-    return secrets.compare_digest(stored, token)
+    return await verify_ingest_token(db, SETTING_EMAIL_INGEST_TOKEN, token)
