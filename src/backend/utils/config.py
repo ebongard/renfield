@@ -153,6 +153,7 @@ class Settings(BaseSettings):
     # Output Routing
     advertise_host: str | None = None  # Hostname/IP that external services (like HA) can reach
     advertise_port: int = 8000            # Port for advertise_host
+    advertise_scheme: str = "http"        # URL scheme for advertise_host-built media URLs (http|https). https requires renderers to resolve+trust advertise_host's cert.
     backend_internal_url: str = "http://backend:8000"  # Internal URL for Docker networking (fallback when advertise_host not set)
 
     # Wake Word Detection

@@ -334,6 +334,7 @@ class TestBackendURL:
         mock_s = MagicMock()
         mock_s.advertise_host = "renfield.local"
         mock_s.advertise_port = 8000
+        mock_s.advertise_scheme = "http"
 
         with patch("ha_glue.services.audio_output_service.settings", mock_s), \
              patch("ha_glue.services.audio_output_service.HomeAssistantClient"):
@@ -341,6 +342,42 @@ class TestBackendURL:
             url = svc._get_backend_url()
 
         assert url == "http://renfield.local:8000"
+
+    def test_url_http_default_port_omitted(self):
+        """Port 80 is omitted for http."""
+        mock_s = MagicMock()
+        mock_s.advertise_host = "192.168.1.230"
+        mock_s.advertise_port = 80
+        mock_s.advertise_scheme = "http"
+
+        with patch("ha_glue.services.audio_output_service.settings", mock_s), \
+             patch("ha_glue.services.audio_output_service.HomeAssistantClient"):
+            svc = AudioOutputService()
+            assert svc._get_backend_url() == "http://192.168.1.230"
+
+    def test_url_https_scheme_omits_443(self):
+        """https scheme produces an https:// URL; the default 443 is omitted."""
+        mock_s = MagicMock()
+        mock_s.advertise_host = "renfield.local"
+        mock_s.advertise_port = 443
+        mock_s.advertise_scheme = "https"
+
+        with patch("ha_glue.services.audio_output_service.settings", mock_s), \
+             patch("ha_glue.services.audio_output_service.HomeAssistantClient"):
+            svc = AudioOutputService()
+            assert svc._get_backend_url() == "https://renfield.local"
+
+    def test_url_https_nonstandard_port_kept(self):
+        """A non-default port is kept for https."""
+        mock_s = MagicMock()
+        mock_s.advertise_host = "renfield.local"
+        mock_s.advertise_port = 8443
+        mock_s.advertise_scheme = "https"
+
+        with patch("ha_glue.services.audio_output_service.settings", mock_s), \
+             patch("ha_glue.services.audio_output_service.HomeAssistantClient"):
+            svc = AudioOutputService()
+            assert svc._get_backend_url() == "https://renfield.local:8443"
 
     def test_url_falls_back_to_internal(self):
         """Falls back to backend_internal_url when advertise_host is None."""

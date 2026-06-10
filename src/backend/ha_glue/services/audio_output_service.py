@@ -301,13 +301,19 @@ class AudioOutputService:
         Priority:
         1. ADVERTISE_HOST from settings (recommended for HA integration)
         2. BACKEND_INTERNAL_URL for Docker networking (default: http://backend:8000)
+
+        The scheme is ADVERTISE_SCHEME (http|https). https is only reachable by
+        renderers that can resolve ADVERTISE_HOST and trust its TLS cert — see
+        docs/MESSAGE_RELAY.md ("TTS audio delivery to renderers").
         """
         if settings.advertise_host:
+            scheme = (settings.advertise_scheme or "http").lower()
             host = settings.advertise_host
             port = settings.advertise_port
-            if port and port != 80:
-                return f"http://{host}:{port}"
-            return f"http://{host}"
+            default_port = 443 if scheme == "https" else 80
+            if port and port != default_port:
+                return f"{scheme}://{host}:{port}"
+            return f"{scheme}://{host}"
 
         # Use internal Docker URL - works when HA and Renfield are on same Docker network
         logger.debug(f"Using internal backend URL: {settings.backend_internal_url}")
