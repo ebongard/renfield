@@ -1,0 +1,25 @@
+# Renfield Satellite — ensure onboard Bluetooth is unblocked + up at boot.
+# Managed by Ansible — do not edit manually.
+#
+# Why: the Pi can boot with Bluetooth rfkill SOFT-BLOCKED (hci0 DOWN), which
+# silently kills BLE + Classic-BT presence scanning — the scan loops run but
+# every probe fails ("Operation not possible due to RF-kill"). systemd-rfkill's
+# saved-state restore is fragile across kernel/path changes, so this oneshot
+# unblocks + ups the adapter explicitly on every boot.
+[Unit]
+Description=Renfield Satellite Bluetooth enable (presence scanning)
+After=bluetooth.service
+Wants=bluetooth.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+# Shell wrapper so we don't hardcode rfkill/hciconfig paths (they differ across
+# Raspbian releases). After unblocking we try-restart bluetoothd so it cleanly
+# (re)initialises the now-unblocked adapter for BR/EDR (Classic BT) — bluetoothd
+# having started against a still-blocked adapter can leave Classic-BT paging
+# half-initialised even after a bare `hciconfig up`.
+ExecStart=/bin/sh -c 'rfkill unblock bluetooth; hciconfig hci0 up || true; systemctl try-restart bluetooth || true'
+
+[Install]
+WantedBy=multi-user.target

@@ -37,6 +37,25 @@ each time; the room row is created on first connect (`ROOMS_AUTO_CREATE_FROM_SAT
    mitigate with `use_arecord: true`.
 4. **In-process wedges (fixed in the client).** See below.
 
+## Bluetooth presence scanning won't work
+
+Symptom: `PRESENCE_ENABLED=true`, a device registered (`user_ble_devices`), the
+satellite logs `BLE/Classic BT scan loop started` and `… known devices received`
+— yet nobody is ever placed in the room.
+
+- **Adapter rfkill-blocked (the silent killer).** A Pi can boot with Bluetooth
+  **rfkill soft-blocked** (`hci0 DOWN`); the scan loops run but every probe fails
+  (`Operation not possible due to RF-kill`). Check on the Pi: `rfkill list
+  bluetooth` (Soft blocked: yes), `hciconfig hci0` (DOWN). Fixed by the
+  `renfield-bt.service` oneshot (provisioned via `--tags bluetooth`) which
+  `rfkill unblock bluetooth` + `hciconfig hci0 up` on every boot.
+- **Phones don't answer unpaired Classic-BT probes.** Even with the adapter up,
+  a modern phone (iPhone/Samsung/Android) only responds to `hcitool name` /
+  `l2ping` when it is **discoverable** or **bonded (paired)** with that adapter —
+  in normal use it reports `Host is down`. So a registered `detection_method=
+  classic_bt` phone stays invisible until paired per-satellite, or until phone
+  presence is sourced from elsewhere (e.g. Home Assistant device_tracker).
+
 ## Robustness knobs (`server.*` in `satellite.yaml`)
 
 Tuned defaults live in `provisioning/group_vars/satellites.yml`; override per-host

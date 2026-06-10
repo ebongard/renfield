@@ -501,6 +501,31 @@
         - alexa_v0.1.onnx
 
     # =========================================================================
+    # BLUETOOTH — ensure the adapter is unblocked + up for presence scanning
+    # =========================================================================
+    # The Pi can boot with BT rfkill SOFT-BLOCKED (hci0 DOWN), which silently
+    # kills BLE + Classic-BT presence scanning. A boot oneshot unblocks + ups it.
+
+    - name: Deploy Bluetooth-enable oneshot unit
+      tags: [bluetooth, config]
+      ansible.builtin.template:
+        src: renfield-bt.service.j2
+        dest: /etc/systemd/system/renfield-bt.service
+        mode: "0644"
+      notify: reload systemd
+
+    - name: Flush handlers (reload systemd for BT unit)
+      tags: [bluetooth, config]
+      ansible.builtin.meta: flush_handlers
+
+    - name: Enable + start Bluetooth-enable oneshot (unblocks BT now + on boot)
+      tags: [bluetooth, config]
+      ansible.builtin.systemd:
+        name: renfield-bt
+        enabled: true
+        state: started
+
+    # =========================================================================
     # SERVICE — Systemd service
     # =========================================================================
 
