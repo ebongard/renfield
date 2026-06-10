@@ -8,7 +8,7 @@ adds **per-mailbox, server-authoritative** sphere routing.
 > **Status.** **Deployed to production (backend `v2.15.0`, 2026-06-09)** and live
 > against `buchhaltung@x-idra.de`. The dedicated watcher
 > [`renfield-mcp-email-ingest`](https://github.com/ebongard/renfield-mcp-email-ingest)
-> (`renfield/email-ingest-mcp:v0.1.0`) holds the IMAP credentials and pushes
+> (`renfield/email-ingest-mcp:v0.1.1`) holds the IMAP credentials and pushes
 > attachments over REST. Ships behind `EMAIL_INGEST_ENABLED`.
 
 ## Architecture
@@ -142,6 +142,14 @@ A wrong token → `401`/`403`. When the feature is **disabled** health still ret
   without it, it falls back to `COPY` + `UID EXPUNGE` (UIDPLUS) and **never** issues
   a bare `EXPUNGE` (which would purge all `\Deleted` mail). See the watcher README's
   *Known limitations* for the UIDVALIDITY + no-MOVE/no-UIDPLUS edge cases.
+- **Reconnect self-heal (`v0.1.1+`).** The watcher uses two IMAP connections — one
+  dedicated to IDLE, one for `SEARCH`/`FETCH`/`MOVE`. A server `BYE timeout` (IONOS
+  ends a long IDLE roughly every ~30 min) can drop both. On any disconnect the watch
+  loop now **resets both connections** and reconnects with backoff, then reconciles
+  `UNSEEN` so mail that arrived during the gap is still picked up. *(Before `v0.1.1`
+  only the IDLE connection was reset; the dead command connection made every
+  `SEARCH UNSEEN` throw, so the watcher silently stopped detecting mail until a pod
+  restart — fixed by resetting the command connection too.)*
 
 ## Troubleshooting
 
@@ -152,7 +160,8 @@ A wrong token → `401`/`403`. When the feature is **disabled** health still ret
 | Push gets `503 worker_unavailable` | document worker pod down | check the worker; the email stays UNSEEN and is re-pushed when it recovers |
 | Email lands in `Fehler` | a real document failed / all attachments gate-rejected | check `ALLOWED_EXTENSIONS` + `MAX_FILE_SIZE_MB`; inspect the attachment |
 | `mailbox_id … unknown` → `failed` | the watcher's mailbox id isn't in `EMAIL_INGEST_MAILBOXES_JSON` | add the routing entry (id/owner/tier/kb) + restart the backend |
-| Watcher idle, mail not picked up | IMAP IDLE not firing / connection wedged | check the watcher pod logs; it reconnects with backoff. `renfield-mcp-email-ingest-scan <id>` does a no-side-effect dry-run |
+| Watcher idle, mail not picked up | IMAP IDLE not firing / connection wedged | check the pod logs — `v0.1.1+` self-heals on disconnect (resets both connections + reconciles `UNSEEN`). To force recovery: `kubectl -n renfield rollout restart deploy/renfield-mcp-email-ingest` (reconciles `UNSEEN` on boot — so if you already opened the mail in a client, mark it **unread** first). `renfield-mcp-email-ingest-scan <id>` does a no-side-effect dry-run |
+| Repeating `IMAP watch disconnected:` (empty reason), no pushes | on `v0.1.0` the command connection wasn't reset on reconnect — watcher wedged after a server `BYE timeout` | upgrade the watcher to `v0.1.1+`; restart to recover immediately |
 
 ## Where it lives
 
