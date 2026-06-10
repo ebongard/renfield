@@ -87,6 +87,11 @@ activating a camera to protect privacy is itself a tradeoff (mitigated by never
 storing the image). It reduces — but does not eliminate — the chance a personal
 message is overheard.
 
+It can also **false-block in the safe direction**: if two intended recipients
+are in the room but one carries no tracked device, the camera sees 2 while only 1
+is tracked → blocked (→ the "message waiting" + `force` flow). Annoying but
+private; `force` resolves it.
+
 ## Where it lives
 
 - Tool + gate: `ha_glue/services/internal_tools.py` (`_announce_in_room`, `internal.announce_in_room`)

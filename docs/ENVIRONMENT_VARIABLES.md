@@ -419,6 +419,14 @@ PRESENCE_HOUSEHOLD_ROLES="Admin,Familie" # Rollen die als Haushaltsmitglieder ge
 # Presence Webhooks (Automation-Hooks)
 PRESENCE_WEBHOOK_URL=""                  # URL für Presence-Events (leer = deaktiviert). Unterstützt n8n Webhook-Trigger
 PRESENCE_WEBHOOK_SECRET=""               # Shared Secret als X-Webhook-Secret Header für Webhook-Authentifizierung
+
+# Nachricht ausrichten (internal.announce_in_room): Kamera-Belegungs-Check
+# Bei einer persönlichen Nachricht wird nach dem BLE-Gate (falls eine Kamera im
+# Raum ist) ein Snapshot gemacht und per Vision-Modell die Personenzahl gezählt,
+# um einen NICHT per BLE getrackten Anwesenden zu erkennen. Siehe docs/MESSAGE_RELAY.md.
+ANNOUNCE_CAMERA_OCCUPANCY_CHECK=true     # Kamera-Check nutzen, wenn eine Kamera im Raum ist
+ANNOUNCE_CAMERA_CHECK_FAIL_CLOSED=false  # Bei Snapshot-/Vision-Fehler: true=blockieren, false=auf BLE-Gate zurückfallen
+ANNOUNCE_SNAPSHOT_TIMEOUT=8.0            # Sekunden Timeout für Satelliten-Snapshot + Vision (jeweils)
 ```
 
 **Satellite-Konfiguration** (in `satellite.yaml`):

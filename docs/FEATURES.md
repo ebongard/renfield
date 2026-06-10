@@ -792,6 +792,16 @@ Benachrichtigungen tragen `privacy` und `target_user_id` Metadaten. Die Privacy-
 - `personal` — TTS nur wenn alle Raumbewohner Haushaltsmitglieder sind
 - `confidential` — TTS nur wenn der Zielnutzer allein im Raum ist
 
+### Nachricht an eine Person ausrichten (Message Relay)
+
+"Sag ihm/ihr, …" → der Agent ermittelt per Presence den Raum der Person und sagt
+die Nachricht dort an (`internal.get_user_location` → `internal.announce_in_room`,
+LLM-orchestriert). **Fail-closed Privacy-Gate:** eine `personal`-Nachricht wird
+nur laut ausgegeben, wenn jeder erkennbar Anwesende Empfänger ist; sonst neutrale
+"Nachricht wartet"-Ansage + Bestätigung-mit-`force`. Zusätzlich (wenn eine
+Satelliten-Kamera im Raum ist) ein **Kamera-Belegungs-Check** per Vision-Modell,
+um nicht per BLE getrackte Anwesende zu erkennen. Details: `docs/MESSAGE_RELAY.md`.
+
 ### Automation-Hooks
 
 Presence-Events feuern Hooks für externe Automatisierung (z.B. n8n-Workflows):
