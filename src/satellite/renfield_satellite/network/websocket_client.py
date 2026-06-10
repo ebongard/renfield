@@ -129,6 +129,8 @@ class WebSocketClient:
         self._on_update_request: Optional[Callable[[str, str, str, int], None]] = None  # version, url, checksum, size
         self._on_ble_known_devices: Optional[Callable[[List[str]], None]] = None
         self._on_classic_bt_known_devices: Optional[Callable[[List[str]], None]] = None
+        # Async callback returning JPEG bytes (or None) for an on-demand snapshot.
+        self._capture_snapshot: Optional[Callable[[], Any]] = None
 
         # Tasks
         self._heartbeat_task: Optional[asyncio.Task] = None
@@ -565,6 +567,30 @@ class WebSocketClient:
             print(f"Classic BT known devices received: {len(devices)} MACs")
             if self._on_classic_bt_known_devices:
                 self._on_classic_bt_known_devices(devices)
+
+        elif msg_type == "capture_snapshot":
+            # Backend asked for an on-demand camera snapshot (e.g. occupancy
+            # check before a private announcement). Reply asynchronously so we
+            # never block the receive loop on camera capture.
+            asyncio.create_task(self._handle_capture_snapshot(data.get("request_id")))
+
+    async def _handle_capture_snapshot(self, request_id):
+        """Capture a snapshot and send it back as a snapshot_result. Always sends
+        a reply (image=None on failure / no camera) so the backend never hangs."""
+        image_b64 = None
+        try:
+            if self._capture_snapshot is not None:
+                jpeg = await self._capture_snapshot()
+                if jpeg:
+                    image_b64 = base64.b64encode(jpeg).decode("utf-8")
+        except Exception as e:  # noqa: BLE001
+            print(f"Snapshot capture failed: {e}")
+        try:
+            await self._send({
+                "type": "snapshot_result", "request_id": request_id, "image": image_b64,
+            })
+        except Exception as e:  # noqa: BLE001
+            print(f"Failed to send snapshot_result: {e}")
 
     async def _heartbeat_loop(self):
         """Background task sending periodic heartbeats with metrics"""

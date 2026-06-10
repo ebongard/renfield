@@ -3251,9 +3251,11 @@ class TestAnnounceInRoom:
 
     @staticmethod
     def _patch_deps(*, occupants, room_name="Arbeitszimmer", room_id=2,
-                    tts=b"WAVDATA", play_ok=True, name_to_id=None):
+                    tts=b"WAVDATA", play_ok=True, name_to_id=None,
+                    camera_sat=False, snapshot=None, people=None, fail_closed=False):
         import sys
         from types import ModuleType
+        from ha_glue.utils.config import ha_glue_settings
 
         mock_db = AsyncMock()
 
@@ -3285,6 +3287,17 @@ class TestAnnounceInRoom:
         dm = MagicMock()
         dm.get_devices_in_room = MagicMock(return_value=[])
 
+        # Camera occupancy check deps.
+        sat_mgr = MagicMock()
+        cam = MagicMock(satellite_id="sat-arbeitszimmer") if camera_sat else None
+        sat_mgr.get_camera_satellite_for_room = MagicMock(return_value=cam)
+        sat_mgr.request_snapshot = AsyncMock(return_value=snapshot)
+        ollama = MagicMock()
+        ollama.count_people_in_image = AsyncMock(return_value=people)
+        fake_main = ModuleType("main")
+        fake_main.app = MagicMock()
+        fake_main.app.state.ollama = ollama
+
         ensure = []
         for mod_name in [
             "services.database", "services.piper_service",
@@ -3304,6 +3317,9 @@ class TestAnnounceInRoom:
             patch("ha_glue.services.output_routing_service.OutputRoutingService", return_value=routing, create=True),
             patch("ha_glue.services.audio_output_service.get_audio_output_service", return_value=audio, create=True),
             patch("ha_glue.services.device_manager.get_device_manager", return_value=dm, create=True),
+            patch("ha_glue.services.satellite_manager.get_satellite_manager", return_value=sat_mgr, create=True),
+            patch.dict(sys.modules, {"main": fake_main}),
+            patch.object(ha_glue_settings, "announce_camera_check_fail_closed", fail_closed),
         ]
 
         class Combined:
@@ -3312,6 +3328,8 @@ class TestAnnounceInRoom:
                     p.__enter__()
                 self_.piper = piper
                 self_.audio = audio
+                self_.sat_mgr = sat_mgr
+                self_.ollama = ollama
                 return self_
 
             def __exit__(self_, *a):
@@ -3446,6 +3464,78 @@ class TestAnnounceInRoom:
             result = await internal_tools._announce_in_room({
                 "text": "vertraulich", "room_name": "Arbeitszimmer",
                 "privacy": "personal", "for_users": ["Eduard"], "force": "true",
+            })
+        assert result["success"] is True
+        deps.audio.play_audio.assert_awaited_once()
+
+    @pytest.mark.unit
+    async def test_camera_blocks_when_extra_person_seen(self, internal_tools):
+        """BLE gate passes (only the recipient is tracked) but the room camera
+        sees MORE people than tracked → an untracked bystander → blocked."""
+        occ = [MagicMock(user_id=2)]
+        with self._patch_deps(occupants=occ, name_to_id={"Eduard": 2},
+                              camera_sat=True, snapshot="IMG_B64", people=2) as deps:
+            result = await internal_tools._announce_in_room({
+                "text": "vertraulich", "room_name": "Arbeitszimmer",
+                "privacy": "personal", "for_users": ["Eduard"],
+            })
+        assert result["success"] is False
+        assert result.get("blocked") == "not_private"
+        assert result["data"]["people_seen"] == 2
+        deps.audio.play_audio.assert_not_called()
+
+    @pytest.mark.unit
+    async def test_camera_allows_when_count_matches(self, internal_tools):
+        """Camera sees exactly the tracked recipient(s) → announced."""
+        occ = [MagicMock(user_id=2)]
+        with self._patch_deps(occupants=occ, name_to_id={"Eduard": 2},
+                              camera_sat=True, snapshot="IMG_B64", people=1) as deps:
+            result = await internal_tools._announce_in_room({
+                "text": "vertraulich", "room_name": "Arbeitszimmer",
+                "privacy": "personal", "for_users": ["Eduard"],
+            })
+        assert result["success"] is True
+        deps.audio.play_audio.assert_awaited_once()
+
+    @pytest.mark.unit
+    async def test_camera_fail_open_when_snapshot_fails(self, internal_tools):
+        """Snapshot/vision unavailable + default fail-open → BLE decision stands
+        (announced)."""
+        occ = [MagicMock(user_id=2)]
+        with self._patch_deps(occupants=occ, name_to_id={"Eduard": 2},
+                              camera_sat=True, snapshot=None, people=None,
+                              fail_closed=False) as deps:
+            result = await internal_tools._announce_in_room({
+                "text": "vertraulich", "room_name": "Arbeitszimmer",
+                "privacy": "personal", "for_users": ["Eduard"],
+            })
+        assert result["success"] is True
+        deps.audio.play_audio.assert_awaited_once()
+
+    @pytest.mark.unit
+    async def test_camera_fail_closed_when_snapshot_fails(self, internal_tools):
+        """Snapshot/vision unavailable + fail-closed policy → blocked."""
+        occ = [MagicMock(user_id=2)]
+        with self._patch_deps(occupants=occ, name_to_id={"Eduard": 2},
+                              camera_sat=True, snapshot=None, people=None,
+                              fail_closed=True) as deps:
+            result = await internal_tools._announce_in_room({
+                "text": "vertraulich", "room_name": "Arbeitszimmer",
+                "privacy": "personal", "for_users": ["Eduard"],
+            })
+        assert result["success"] is False
+        assert result.get("blocked") == "not_private"
+        deps.audio.play_audio.assert_not_called()
+
+    @pytest.mark.unit
+    async def test_no_camera_falls_back_to_ble(self, internal_tools):
+        """No camera in the room → BLE gate decides (recipient alone → announced)."""
+        occ = [MagicMock(user_id=2)]
+        with self._patch_deps(occupants=occ, name_to_id={"Eduard": 2},
+                              camera_sat=False) as deps:
+            result = await internal_tools._announce_in_room({
+                "text": "vertraulich", "room_name": "Arbeitszimmer",
+                "privacy": "personal", "for_users": ["Eduard"],
             })
         assert result["success"] is True
         deps.audio.play_audio.assert_awaited_once()

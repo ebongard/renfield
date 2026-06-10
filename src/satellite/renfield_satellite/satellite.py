@@ -282,6 +282,8 @@ class Satellite:
         self.ws_client.on_ble_known_devices(self._on_ble_known_devices)
         # Classic BT known devices callback
         self.ws_client.on_classic_bt_known_devices(self._on_classic_bt_known_devices)
+        # On-demand camera snapshot (backend occupancy check for private announcements)
+        self.ws_client._capture_snapshot = self._capture_snapshot_for_request
 
         # Update manager progress callback
         self.update_manager.on_progress(self._on_update_progress)
@@ -428,6 +430,13 @@ class Satellite:
             await self._reconnect_with_discovery()
         finally:
             self._reconnecting = False
+
+    async def _capture_snapshot_for_request(self):
+        """Capture a JPEG for a backend on-demand snapshot request (or None if no
+        camera). Checked at call time since self.camera may be None if open() failed."""
+        if self.camera and self.camera.available:
+            return await self.camera.capture()
+        return None
 
     async def _reconnect_with_discovery(self):
         """

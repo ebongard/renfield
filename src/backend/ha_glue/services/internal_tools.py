@@ -443,6 +443,61 @@ class InternalToolService:
                             },
                         }
 
+                    # BLE gate passed. BLE only sees people with a tracked device —
+                    # so, if a camera is in the room, take a snapshot and count
+                    # people via the vision model to catch an UNTRACKED bystander.
+                    # (Snapshot is transient — never stored.) Fail policy on a
+                    # missing camera / failed snapshot or vision is configurable.
+                    from ha_glue.utils.config import ha_glue_settings as _ha
+                    if _ha.announce_camera_occupancy_check:
+                        from ha_glue.services.satellite_manager import get_satellite_manager
+                        sat_mgr = get_satellite_manager()
+                        cam_sat = sat_mgr.get_camera_satellite_for_room(room.id)
+                        if cam_sat is not None:
+                            img = await sat_mgr.request_snapshot(
+                                cam_sat.satellite_id, timeout=_ha.announce_snapshot_timeout
+                            )
+                            people = None
+                            if img:
+                                try:
+                                    from main import app as _app
+                                    _ollama = getattr(_app.state, "ollama", None)
+                                    if _ollama is not None:
+                                        people = await _ollama.count_people_in_image(img)
+                                except Exception:  # noqa: BLE001
+                                    people = None
+                            if people is not None and people > len(occupants):
+                                return {
+                                    "success": False, "action_taken": False,
+                                    "blocked": "not_private",
+                                    "message": (
+                                        f"Persönliche Nachricht NICHT laut angesagt — die Kamera in "
+                                        f"{room.name} sieht {people} Person(en), mehr als die "
+                                        f"{len(occupants)} bekannten Empfänger; es ist also jemand "
+                                        f"Unbekanntes im Raum. Sage NUR neutral an, dass eine Nachricht "
+                                        f"wartet (OHNE Inhalt); bei Zustimmung des Empfängers erneut "
+                                        f"mit force=true."
+                                    ),
+                                    "data": {
+                                        "room_name": room.name,
+                                        "people_seen": people,
+                                        "recipients_present": len(occupants),
+                                    },
+                                }
+                            if people is None and _ha.announce_camera_check_fail_closed:
+                                return {
+                                    "success": False, "action_taken": False,
+                                    "blocked": "not_private",
+                                    "message": (
+                                        f"Persönliche Nachricht NICHT laut angesagt — der Kamera-Check in "
+                                        f"{room.name} war nicht möglich (kein Bild/keine Auswertung) und "
+                                        f"die Policy ist fail-closed. Sage neutral an, dass eine Nachricht "
+                                        f"wartet; bei Zustimmung erneut mit force=true."
+                                    ),
+                                    "data": {"room_name": room.name, "camera_check": "failed"},
+                                }
+                            # else: fail-open — the BLE decision stands, announce.
+
                 tts_audio = await PiperService().synthesize_to_bytes(text)
                 if not tts_audio:
                     return {"success": False, "message": "TTS synthesis failed", "action_taken": False}

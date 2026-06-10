@@ -254,6 +254,49 @@ WICHTIGE REGELN FÜR ANTWORTEN:
             logger.error(f"Streaming Fehler: {e}")
             yield prompt_manager.get("chat", "error_fallback", lang=lang, default=f"Fehler: {e!s}", error=str(e))
 
+    async def count_people_in_image(self, image_b64: str) -> int | None:
+        """Count visible people in an image via the vision model (non-streaming).
+
+        Used by the announce privacy gate to catch people NOT tracked by BLE.
+        Returns the count, or None if no vision model / the call fails / the
+        answer can't be parsed (callers decide fail-open vs fail-closed).
+        """
+        import re as _re
+
+        vision_model = settings.ollama_vision_model
+        if not vision_model:
+            return None
+        if not await llm_circuit_breaker.allow_request():
+            logger.warning("🔴 LLM circuit breaker OPEN — skipping vision occupancy check")
+            return None
+        try:
+            prompt = (
+                "How many people (humans) are visible in this image? "
+                "Count only real people, not photos/posters/screens. "
+                "Answer with a single integer and nothing else."
+            )
+            messages = [{"role": "user", "content": prompt, "images": [image_b64]}]
+            if settings.ollama_vision_url:
+                from utils.llm_client import _make_client_with_fallback
+                vision_client = _make_client_with_fallback(settings.ollama_vision_url)
+            else:
+                vision_client = self.client
+
+            resp = await vision_client.chat(
+                model=vision_model,
+                messages=messages,
+                stream=False,
+                options={"num_ctx": settings.ollama_num_ctx},
+            )
+            await llm_circuit_breaker.record_success()
+            content = (resp.message.content if resp and resp.message else "") or ""
+            m = _re.search(r"\d+", content)
+            return int(m.group()) if m else None
+        except Exception as e:  # noqa: BLE001
+            await llm_circuit_breaker.record_failure()
+            logger.warning(f"Vision occupancy count failed: {e}")
+            return None
+
     async def chat_stream_with_image(
         self,
         message: str,

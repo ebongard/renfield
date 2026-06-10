@@ -97,6 +97,14 @@ class HaGlueSettings(BaseSettings):
     presence_webhook_secret: SecretStr | None = None    # Shared secret for webhook auth (X-Webhook-Secret header)
     presence_analytics_retention_days: int = 90         # Days to keep presence events for analytics
 
+    # === Announce / message-relay camera occupancy check ===
+    # For a personal announcement, after the BLE gate passes, optionally take a
+    # snapshot from the room's satellite camera and count people via the vision
+    # model — to catch a bystander NOT tracked by BLE. Off => BLE gate only.
+    announce_camera_occupancy_check: bool = True        # Use the camera check when a camera is in the room
+    announce_camera_check_fail_closed: bool = False     # On snapshot/vision failure: True=block, False=fall back to BLE gate
+    announce_snapshot_timeout: float = 8.0              # Seconds to wait for the satellite snapshot
+
     # === Media Follow Me (playback follows user between rooms) ===
     media_follow_enabled: bool = False                         # Master switch (requires presence_enabled)
     media_follow_suspend_timeout: float = 600.0                # Seconds before suspended session expires

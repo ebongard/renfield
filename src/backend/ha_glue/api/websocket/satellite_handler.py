@@ -691,6 +691,12 @@ Gib eine kurze, natürliche Antwort. KEIN JSON, nur Text."""
                     # Send heartbeat ack
                     await websocket.send_json({"type": "heartbeat_ack"})
 
+            # Reply to an on-demand camera snapshot request (announce privacy check)
+            elif msg_type == "snapshot_result":
+                satellite_manager.resolve_snapshot(
+                    data.get("request_id"), data.get("image")
+                )
+
             # Handle BLE presence scan results
             elif msg_type == "ble_presence":
                 if satellite_id and ha_glue_settings.presence_enabled:

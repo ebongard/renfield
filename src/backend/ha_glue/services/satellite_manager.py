@@ -134,6 +134,8 @@ class SatelliteManager:
         self.satellites: dict[str, SatelliteInfo] = {}
         self.sessions: dict[str, SatelliteSession] = {}
         self._lock = asyncio.Lock()
+        # On-demand camera snapshot requests: request_id → Future[image_b64|None].
+        self._pending_snapshots: dict[str, asyncio.Future] = {}
 
         # Configuration - use settings from config
         from utils.config import settings
@@ -688,6 +690,42 @@ class SatelliteManager:
     def get_satellite(self, satellite_id: str) -> SatelliteInfo | None:
         """Get satellite info by ID"""
         return self.satellites.get(satellite_id)
+
+    def get_camera_satellite_for_room(self, room_id: int) -> SatelliteInfo | None:
+        """Return a connected satellite in this room that has a camera, if any."""
+        if room_id is None:
+            return None
+        for sat in self.satellites.values():
+            if sat.room_id == room_id and sat.capabilities.has_camera:
+                return sat
+        return None
+
+    async def request_snapshot(self, satellite_id: str, timeout: float = 8.0) -> str | None:
+        """Ask a satellite to capture a camera snapshot NOW and return it (base64
+        JPEG), or None on no-camera/timeout/error. Backend→satellite request over
+        the WS; the reply arrives as a 'snapshot_result' message (resolved via
+        resolve_snapshot). The image is transient — never persisted."""
+        sat = self.satellites.get(satellite_id)
+        if sat is None or not sat.capabilities.has_camera:
+            return None
+        request_id = uuid.uuid4().hex
+        fut: asyncio.Future = asyncio.get_event_loop().create_future()
+        self._pending_snapshots[request_id] = fut
+        try:
+            await sat.websocket.send_json({
+                "type": "capture_snapshot", "request_id": request_id,
+            })
+            return await asyncio.wait_for(fut, timeout=timeout)
+        except (asyncio.TimeoutError, Exception):  # noqa: BLE001
+            return None
+        finally:
+            self._pending_snapshots.pop(request_id, None)
+
+    def resolve_snapshot(self, request_id: str, image_b64: str | None) -> None:
+        """Resolve a pending request_snapshot() future with the satellite's reply."""
+        fut = self._pending_snapshots.get(request_id)
+        if fut is not None and not fut.done():
+            fut.set_result(image_b64)
 
     async def cleanup_stale(self):
         """Remove stale satellites and timed-out sessions"""
