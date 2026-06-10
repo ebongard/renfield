@@ -20,6 +20,12 @@ server_url: "wss://renfield.local/ws/satellite"
 server_auto_discover: true
 server_auth_enabled: false
 server_verify_tls: false
+# Connection robustness (Pi Zero 2 W 2.4GHz WiFi is marginal — detect dead links
+# fast and self-heal instead of wedging). See docs/SATELLITE_CONNECTIVITY.md.
+server_ping_interval: 15          # WS keepalive cadence (s)
+server_ping_timeout: 8            # drop the link if no pong within (s)
+server_register_timeout: 15       # cap the post-connect register handshake (s)
+server_max_disconnected_seconds: 300  # exit→systemd restart if unreconnectable this long (0=off)
 
 # Wake word
 wakeword_model: "hey_renfield"

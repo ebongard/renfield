@@ -12,6 +12,10 @@ server:
   discovery_timeout: 10
   reconnect_interval: 5
   heartbeat_interval: 30
+  ping_interval: {{ server_ping_interval | default(15) }}
+  ping_timeout: {{ server_ping_timeout | default(8) }}
+  register_timeout: {{ server_register_timeout | default(15) }}
+  max_disconnected_seconds: {{ server_max_disconnected_seconds | default(300) }}
   auth_enabled: {{ server_auth_enabled | lower }}
   verify_tls: {{ server_verify_tls | lower }}
 

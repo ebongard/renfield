@@ -11,6 +11,7 @@ Orchestrates all satellite components:
 
 import asyncio
 import math
+import os
 import struct
 import time
 from enum import Enum
@@ -209,6 +210,9 @@ class Satellite:
             server_url=self.config.server.url,  # May be None if using auto-discovery
             reconnect_interval=self.config.server.reconnect_interval,
             heartbeat_interval=self.config.server.heartbeat_interval,
+            ping_interval=self.config.server.ping_interval,
+            ping_timeout=self.config.server.ping_timeout,
+            register_timeout=self.config.server.register_timeout,
             language=self.config.satellite.language,
             # Real hardware capabilities so the fleet page reflects THIS
             # device, not a hardcoded "3 LEDs" for every satellite.
@@ -434,8 +438,30 @@ class Satellite:
         """
         attempts = 0
         max_backoff = 60
+        disconnect_start = time.monotonic()
+        max_disconnected = getattr(self.config.server, "max_disconnected_seconds", 0)
 
         while self._running:
+            # Disconnect watchdog: if we've been unable to reconnect for too long,
+            # exit so systemd (Restart=always) brings up a FRESH process. This is
+            # the backstop for any in-process wedge the reconnect loop can't clear
+            # (a clean exit, never the SIGKILL-mid-restart that risks the SD card).
+            if max_disconnected and (time.monotonic() - disconnect_start) > max_disconnected:
+                # NEVER restart mid-OTA: the installer does a non-atomic
+                # rmtree+copytree of the install dir, so an os._exit during it
+                # would leave a half-written install — exactly the brick we're
+                # trying to avoid. Defer the watchdog (fresh window) until the
+                # update finishes.
+                if self.update_manager.current_stage != UpdateStage.IDLE:
+                    print("Disconnect watchdog deferred: OTA update in progress")
+                    disconnect_start = time.monotonic()
+                else:
+                    print(
+                        f"Disconnected >{max_disconnected}s after {attempts} attempts; "
+                        "exiting for a clean systemd restart"
+                    )
+                    os._exit(1)
+
             attempts += 1
             backoff = min(self.config.server.reconnect_interval * (2 ** (attempts - 1)), max_backoff)
 

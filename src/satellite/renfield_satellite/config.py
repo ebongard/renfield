@@ -31,6 +31,15 @@ class ServerConfig:
     discovery_timeout: float = 10.0  # Seconds to wait for discovery
     reconnect_interval: int = 5  # seconds
     heartbeat_interval: int = 30  # seconds
+    # Connection robustness (tuned for the Pi Zero 2 W's marginal 2.4GHz WiFi):
+    # faster dead-link detection + bounded handshake so a blip self-heals instead
+    # of wedging. See docs note in websocket_client.py.
+    ping_interval: int = 15  # WS keepalive ping cadence (was hardcoded 20)
+    ping_timeout: int = 8    # close the link if no pong within this (was 10)
+    register_timeout: float = 15.0  # cap the post-connect register handshake
+    # If the satellite cannot reconnect for this long, exit so systemd restarts a
+    # fresh process (clears any wedged in-process state). 0 disables.
+    max_disconnected_seconds: int = 300
     # Authentication (required when server has WS_AUTH_ENABLED=true)
     auth_enabled: bool = False  # Whether to fetch and use auth token
     auth_token: Optional[str] = None  # Pre-configured token (optional)
@@ -220,6 +229,10 @@ def load_config(config_path: Optional[str] = None) -> Config:
         config.server.discovery_timeout = srv.get("discovery_timeout", config.server.discovery_timeout)
         config.server.reconnect_interval = srv.get("reconnect_interval", config.server.reconnect_interval)
         config.server.heartbeat_interval = srv.get("heartbeat_interval", config.server.heartbeat_interval)
+        config.server.ping_interval = srv.get("ping_interval", config.server.ping_interval)
+        config.server.ping_timeout = srv.get("ping_timeout", config.server.ping_timeout)
+        config.server.register_timeout = srv.get("register_timeout", config.server.register_timeout)
+        config.server.max_disconnected_seconds = srv.get("max_disconnected_seconds", config.server.max_disconnected_seconds)
         config.server.auth_enabled = srv.get("auth_enabled", config.server.auth_enabled)
         config.server.verify_tls = srv.get("verify_tls", config.server.verify_tls)
         if "auth_token" in srv:

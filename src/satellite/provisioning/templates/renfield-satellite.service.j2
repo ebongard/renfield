@@ -5,6 +5,13 @@
 Description=Renfield Satellite Voice Assistant
 After=network-online.target sound.target
 Wants=network-online.target
+# The app self-exits after a prolonged disconnect (server.max_disconnected_seconds,
+# ~5 min apart) so systemd brings up a fresh process. Bound the start limit so
+# those slow, legitimate restarts always pass (≈1-2 per 10 min) but a pathological
+# fast crash-loop (which would re-init the AC108 driver every few seconds — a brick
+# risk) is stopped after a burst rather than hammering forever.
+StartLimitIntervalSec=600
+StartLimitBurst=10
 
 [Service]
 Type=simple

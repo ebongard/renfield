@@ -69,6 +69,9 @@ class WebSocketClient:
         heartbeat_interval: int = 30,
         language: str = "de",
         capabilities: Optional[Dict[str, Any]] = None,
+        ping_interval: int = 15,
+        ping_timeout: int = 8,
+        register_timeout: float = 15.0,
     ):
         """
         Initialize WebSocket client.
@@ -93,6 +96,11 @@ class WebSocketClient:
         self.heartbeat_interval = heartbeat_interval
         self.language = language
         self._capabilities = capabilities or {}
+        # Connection robustness knobs (see ServerConfig). Tighter ping = faster
+        # dead-link detection on lossy WiFi; register_timeout bounds the handshake.
+        self._ping_interval = ping_interval
+        self._ping_timeout = ping_timeout
+        self._register_timeout = register_timeout
 
         self._ws: Optional["WebSocketClientProtocol"] = None
         self._state = ConnectionState.DISCONNECTED
@@ -244,8 +252,8 @@ class WebSocketClient:
         try:
             # Build connection kwargs
             connect_kwargs = {
-                "ping_interval": 20,
-                "ping_timeout": 10,
+                "ping_interval": self._ping_interval,
+                "ping_timeout": self._ping_timeout,
             }
 
             # Pass auth token via header instead of URL query parameter
@@ -284,6 +292,14 @@ class WebSocketClient:
         except Exception as e:
             print(f"Connection failed: {e}")
             self._state = ConnectionState.DISCONNECTED
+            # Close any half-open socket (e.g. a register-timeout leaves the WS
+            # open) so it doesn't dangle until the next connect() cleanup.
+            if self._ws is not None:
+                try:
+                    await self._ws.close()
+                except Exception:
+                    pass
+                self._ws = None
             if self._on_error:
                 self._on_error(str(e))
             return False
@@ -336,8 +352,16 @@ class WebSocketClient:
 
         await self._send(message)
 
-        # Wait for ack
-        response = await self._ws.recv()
+        # Wait for ack — BOUNDED. Without a timeout a slow/hung backend (e.g.
+        # stuck creating the room row) would block this coroutine forever, wedging
+        # the satellite in CONNECTING with no reconnect ever firing. On timeout we
+        # raise, which propagates out of connect() → reconnect/backoff kicks in.
+        try:
+            response = await asyncio.wait_for(self._ws.recv(), timeout=self._register_timeout)
+        except asyncio.TimeoutError:
+            raise Exception(
+                f"register ack not received within {self._register_timeout}s"
+            )
         data = json.loads(response)
 
         if data.get("type") == "register_ack":
@@ -573,7 +597,18 @@ class WebSocketClient:
             except asyncio.CancelledError:
                 break
             except Exception as e:
-                print(f"Heartbeat error: {e}")
+                # A failed heartbeat send means the link is already dead. Don't
+                # swallow + keep looping (the old behavior left a zombie until the
+                # WS ping timeout fired ~30s later) — surface it as a disconnect so
+                # the reconnect path starts immediately.
+                print(f"Heartbeat send failed, treating as disconnect: {e}")
+                self._state = ConnectionState.DISCONNECTED
+                if self._on_disconnected:
+                    try:
+                        self._on_disconnected()
+                    except Exception:
+                        pass
+                break
 
     async def send_wakeword_detected(
         self,
