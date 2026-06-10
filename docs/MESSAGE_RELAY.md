@@ -92,6 +92,42 @@ are in the room but one carries no tracked device, the camera sees 2 while only 
 is tracked → blocked (→ the "message waiting" + `force` flow). Annoying but
 private; `force` resolves it.
 
+## TTS-Audio-Auslieferung an Renderer (DLNA / HA media_player)
+
+Wenn die Ansage auf einem DLNA-Renderer (statt einem Renfield-Satellite) landet,
+synthetisiert das Backend das WAV, legt es im TTS-Cache ab und übergibt dem
+Renderer eine **URL** (`/api/voice/tts-cache/{id}`), die der Renderer dann selbst
+**abruft**. Die URL baut `AudioOutputService._get_backend_url()` aus
+`ADVERTISE_SCHEME` + `ADVERTISE_HOST` (+ `ADVERTISE_PORT`).
+
+**Warum das früher still fehlschlug:** Mit `http://renfield.local` (Port 80) bekam
+der Renderer eine URL hinter dem Traefik-`http→https`-Redirect. Der HiFiBerry
+(gstreamer, event-silent) meldete `state=playing` **ohne Fehler**, rief die URL
+aber **nie** ab (0 GETs im Access-Log) → keine Audioausgabe, kein sichtbarer
+Fehler. Die einzige Bodenwahrheit ist das Backend-Access-Log.
+
+**Lösung (Prod):** `ADVERTISE_SCHEME=https`, `ADVERTISE_HOST=renfield.local`,
+`ADVERTISE_PORT=443`. Der Renderer holt `https://renfield.local/api/voice/tts-cache/…`
+über die bestehende `renfield-https` Ingress — kein eigener Traefik-Route, kein
+Plain-HTTP-Loch.
+
+**Pro-Renderer-Voraussetzung** (gemessen, nicht angenommen):
+
+| Renderer | löst `renfield.local` auf | akzeptiert self-signed cert | Setup |
+|---|---|---|---|
+| Linn / openHome | ✅ Router-DNS | ✅ (gemessen, ohne CA) | keins |
+| HiFiBerry (gstreamer) | ❌ `.local`→mDNS-Quirk | ❌ strikt | CA in `/etc/ssl/certs` **+** `/etc/hosts`-Eintrag `192.168.1.230 renfield.local` **+** `systemctl restart dlnampris.service` |
+| Fernseher / Samsung | ? | ? | ungetestet (Tech-Debt) |
+
+Hintergrund HiFiBerry: nsswitch ist `hosts: files resolve [!UNAVAIL=return] dns` —
+systemd-`resolve` greift `.local` als mDNS und liefert NOTFOUND, bevor `dns`
+gefragt wird; deshalb scheitert die Auflösung trotz vorhandenem DNS-Eintrag.
+`curl` umgeht das (eigener c-ares-Resolver), gstreamer (`getaddrinfo`) nicht.
+Diese Geräte-Eintragungen überleben einen Reboot, aber **nicht** ein
+HiFiBerryOS-Update (Tech-Debt: nach Update neu setzen).
+
+Mit `ADVERTISE_SCHEME=http` ist das Verhalten byte-identisch zu vorher.
+
 ## Where it lives
 
 - Tool + gate: `ha_glue/services/internal_tools.py` (`_announce_in_room`, `internal.announce_in_room`)

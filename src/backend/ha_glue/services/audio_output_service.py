@@ -304,14 +304,15 @@ class AudioOutputService:
 
         The scheme is ADVERTISE_SCHEME (http|https). https is only reachable by
         renderers that can resolve ADVERTISE_HOST and trust its TLS cert — see
-        docs/MESSAGE_RELAY.md ("TTS audio delivery to renderers").
+        docs/MESSAGE_RELAY.md ("TTS audio delivery to renderers"). Standard ports
+        (80/443) are omitted regardless of scheme, so an ADVERTISE_PORT left at a
+        standard value can't mismatch the scheme.
         """
         if settings.advertise_host:
-            scheme = (settings.advertise_scheme or "http").lower()
+            scheme = settings.advertise_scheme
             host = settings.advertise_host
             port = settings.advertise_port
-            default_port = 443 if scheme == "https" else 80
-            if port and port != default_port:
+            if port and port not in (80, 443):
                 return f"{scheme}://{host}:{port}"
             return f"{scheme}://{host}"
 

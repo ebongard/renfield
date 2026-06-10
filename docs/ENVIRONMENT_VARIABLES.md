@@ -897,33 +897,51 @@ ADVERTISE_IP=192.168.1.100
 
 ```bash
 # Hostname/IP die externe Dienste (HA Media Player, DLNA Renderer) erreichen können
-ADVERTISE_HOST=192.168.1.159
+ADVERTISE_HOST=renfield.local
 
-# Port für ADVERTISE_HOST (Default: 8000, setze 80 wenn über Nginx)
-ADVERTISE_PORT=80
+# URL-Schema (http|https) für die TTS-Audio-URL, die Renderer abrufen
+ADVERTISE_SCHEME=https
+
+# Port für ADVERTISE_HOST (Standard-Ports 80/443 werden in der URL weggelassen)
+ADVERTISE_PORT=443
 ```
+
+`ADVERTISE_HOST`/`ADVERTISE_SCHEME`/`ADVERTISE_PORT` bauen die URL, die das
+Backend an DLNA-Renderer und HA Media Player übergibt, damit diese die
+TTS-Audiodatei (`/api/voice/tts-cache/{id}`) abrufen
+(`AudioOutputService._get_backend_url()`).
 
 **Defaults:**
 - `ADVERTISE_HOST`: None (muss gesetzt werden für HA Media Player / DLNA Output)
+- `ADVERTISE_SCHEME`: `http` (Literal `http|https`; ein Tippfehler wird beim Start abgelehnt)
 - `ADVERTISE_PORT`: `8000`
 
-**Wann benötigt:**
-- Wenn TTS-Ausgabe auf Home Assistant Media Playern oder DLNA Renderern erfolgen soll
-- Der Wert muss eine Adresse sein, die Home Assistant erreichen kann (nicht `localhost`!)
+**Standard-Ports 80 und 443 werden in der URL immer weggelassen** — so kann ein
+`ADVERTISE_PORT`, das nicht zum Schema passt (z.B. `https` + `80`), keine kaputte
+URL `https://host:80` erzeugen. Nur Nicht-Standard-Ports (8000, 8443) erscheinen.
 
-**Beispiele:**
-```bash
-ADVERTISE_HOST=192.168.1.159      # IP-Adresse (empfohlen für DLNA)
-ADVERTISE_HOST=renfield.local     # mDNS Hostname (funktioniert NICHT für DLNA Renderer)
-```
+**Produktion (k8s, aktuell):** `ADVERTISE_HOST=renfield.local`,
+`ADVERTISE_SCHEME=https`, `ADVERTISE_PORT=443`. Die bestehende `renfield-https`
+Traefik-Ingress bedient `https://renfield.local/api/voice/tts-cache/…` (kein
+eigener Route nötig). Das Renfield-Zertifikat hat SAN `renfield.local` +
+`192.168.1.230`.
 
-**Wichtig:** DLNA-Renderer (z.B. HiFiBerry) können mDNS-Hostnamen (`.local`) oft
-nicht auflösen. **IP-Adresse verwenden** wenn DLNA-Ausgabe genutzt wird.
+**Voraussetzung pro Renderer (https):** der Renderer muss `renfield.local`
+auflösen UND dem Zertifikat vertrauen.
+- **Linn / openHome-Renderer:** funktioniert nativ — lösen `renfield.local` per
+  Router-DNS auf und akzeptieren das self-signed Zertifikat (gemessen).
+- **HiFiBerry (gmediarender/gstreamer):** braucht zwei Eintragungen auf dem
+  Gerät — die Renfield-CA im Trust-Store (`/etc/ssl/certs`) **und** einen
+  `/etc/hosts`-Eintrag `192.168.1.230 renfield.local` (systemd-resolved fängt
+  `.local` als mDNS ab und liefert NOTFOUND, bevor DNS gefragt wird). Danach
+  `systemctl restart dlnampris.service`, damit gstreamer den Trust-Store neu lädt.
+- **Fernseher / Samsung:** noch nicht getestet (Tech-Debt, `TODOS.md`).
 
-**Port 80 vs 8000:** Der Backend-Container exposed Port 8000 nur auf `127.0.0.1`.
-Für externe Zugriffe (DLNA, HA) muss der Traffic über Nginx (Port 80) laufen.
-Setze `ADVERTISE_PORT=80` in Produktion. Nginx leitet `/api/voice/tts-cache/`
-über plain HTTP (ohne HTTPS-Redirect) an den Backend weiter.
+Mit `ADVERTISE_SCHEME=http` (oder Default) verhält sich alles byte-identisch wie
+zuvor — eine reine Plain-HTTP-URL. Diese wird allerdings von Renderern nicht
+abgerufen, wenn sie hinter dem Traefik-https-Redirect liegt (stiller Fehler:
+der Renderer meldet „playing", lädt aber nie). Details + Messungen:
+`docs/MESSAGE_RELAY.md` → „TTS-Audio-Auslieferung an Renderer".
 
 **Ohne ADVERTISE_HOST:**
 - TTS wird nur auf Renfield-Geräten (Satellites, Web Panels) abgespielt

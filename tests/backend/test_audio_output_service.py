@@ -379,6 +379,19 @@ class TestBackendURL:
             svc = AudioOutputService()
             assert svc._get_backend_url() == "https://renfield.local:8443"
 
+    def test_url_https_with_leftover_port_80_omits_it(self):
+        """A standard port (80/443) is omitted regardless of scheme, so https left
+        with the http default port can't produce a broken https://host:80."""
+        mock_s = MagicMock()
+        mock_s.advertise_host = "renfield.local"
+        mock_s.advertise_port = 80
+        mock_s.advertise_scheme = "https"
+
+        with patch("ha_glue.services.audio_output_service.settings", mock_s), \
+             patch("ha_glue.services.audio_output_service.HomeAssistantClient"):
+            svc = AudioOutputService()
+            assert svc._get_backend_url() == "https://renfield.local"
+
     def test_url_falls_back_to_internal(self):
         """Falls back to backend_internal_url when advertise_host is None."""
         mock_s = MagicMock()
