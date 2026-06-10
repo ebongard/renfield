@@ -271,9 +271,9 @@ WICHTIGE REGELN FÜR ANTWORTEN:
             return None
         try:
             prompt = (
-                "How many people (humans) are visible in this image? "
-                "Count only real people, not photos/posters/screens. "
-                "Answer with a single integer and nothing else."
+                "How many people (humans) are physically present in this image? "
+                "Count only real people, not photos/posters/screens/reflections. "
+                "Answer with ONLY a single integer. /no_think"
             )
             messages = [{"role": "user", "content": prompt, "images": [image_b64]}]
             if settings.ollama_vision_url:
@@ -290,8 +290,11 @@ WICHTIGE REGELN FÜR ANTWORTEN:
             )
             await llm_circuit_breaker.record_success()
             content = (resp.message.content if resp and resp.message else "") or ""
-            m = _re.search(r"\d+", content)
-            return int(m.group()) if m else None
+            # qwen3-vl can emit a <think>…</think> block (with stray numbers); strip
+            # it, then take the LAST integer — the final answer, not a reasoning digit.
+            content = _re.sub(r"<think>.*?</think>", "", content, flags=_re.DOTALL | _re.IGNORECASE)
+            nums = _re.findall(r"\d+", content)
+            return int(nums[-1]) if nums else None
         except Exception as e:  # noqa: BLE001
             await llm_circuit_breaker.record_failure()
             logger.warning(f"Vision occupancy count failed: {e}")

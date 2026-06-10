@@ -21,6 +21,7 @@ Platform callers (agent_tools.py, action_executor.py, chat_handler.py)
 no longer import this module directly. They go through the hook system
 so platform-only deploys never reach the ha_glue package.
 """
+import asyncio
 import time
 
 from loguru import logger
@@ -463,8 +464,14 @@ class InternalToolService:
                                     from main import app as _app
                                     _ollama = getattr(_app.state, "ollama", None)
                                     if _ollama is not None:
-                                        people = await _ollama.count_people_in_image(img)
-                                except Exception:  # noqa: BLE001
+                                        # Bound the vision inference so a slow model
+                                        # can't hang the announce indefinitely; a
+                                        # timeout falls into the fail policy below.
+                                        people = await asyncio.wait_for(
+                                            _ollama.count_people_in_image(img),
+                                            timeout=_ha.announce_snapshot_timeout,
+                                        )
+                                except Exception:  # noqa: BLE001 (incl. TimeoutError)
                                     people = None
                             if people is not None and people > len(occupants):
                                 return {
@@ -481,7 +488,7 @@ class InternalToolService:
                                     "data": {
                                         "room_name": room.name,
                                         "people_seen": people,
-                                        "recipients_present": len(occupants),
+                                        "tracked_recipients": len(occupants),
                                     },
                                 }
                             if people is None and _ha.announce_camera_check_fail_closed:
