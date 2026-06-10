@@ -65,11 +65,11 @@ roles:
 
   presence:
     description:
-      de: "Anwesenheit: Wo ist eine Person, wer ist zuhause, in welchem Raum ist jemand"
-      en: "Presence: where is a person, who is home, which room is someone in"
+      de: "Anwesenheit & Nachrichten ausrichten: Wo ist eine Person, wer ist zuhause, in welchem Raum ist jemand; einer Person etwas ausrichten/Bescheid sagen/ansagen ('sag ihm/ihr ...', 'richte X aus')"
+      en: "Presence & relaying messages: where is a person, who is home, which room is someone in; relay/announce a message to a person ('tell him/her ...', 'let X know ...')"
     mcp_servers: []
-    internal_tools: [internal.get_user_location, internal.get_all_presence]
-    max_steps: 2
+    internal_tools: [internal.get_user_location, internal.get_all_presence, internal.announce_in_room]
+    max_steps: 5
     prompt_key: agent_prompt
 
   routine:
@@ -98,6 +98,6 @@ roles:
 
   conversation:
     description:
-      de: "Konversation: Smalltalk, Allgemeinwissen, Meinungen, keine Aktion noetig"
-      en: "Conversation: smalltalk, general knowledge, opinions, no action needed"
+      de: "Konversation: Smalltalk, Allgemeinwissen, Meinungen — KEINE Aktion und KEINE Weitergabe einer Nachricht an eine Person (eine Nachricht ausrichten gehoert zu 'presence')"
+      en: "Conversation: smalltalk, general knowledge, opinions — NO action and NOT relaying a message to a person (relaying a message belongs to 'presence')"
     # No agent loop - direct LLM response

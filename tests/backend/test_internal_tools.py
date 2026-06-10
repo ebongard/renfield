@@ -3239,3 +3239,213 @@ class TestRemoveRadioFavorite:
         })
         assert result["success"] is False
         assert "station_id" in result["message"]
+
+
+# ============================================================================
+# Test announce_in_room (relay-a-message primitive + privacy gate)
+# ============================================================================
+
+class TestAnnounceInRoom:
+    """internal.announce_in_room: TTS into a room, with the fail-closed privacy
+    gate (a personal message is NOT spoken aloud if the person isn't alone)."""
+
+    @staticmethod
+    def _patch_deps(*, occupants, room_name="Arbeitszimmer", room_id=2,
+                    tts=b"WAVDATA", play_ok=True, name_to_id=None):
+        import sys
+        from types import ModuleType
+
+        mock_db = AsyncMock()
+
+        @asynccontextmanager
+        async def mock_session():
+            yield mock_db
+
+        room = MagicMock(id=room_id, name=room_name)
+        mock_room_service = MagicMock()
+        mock_room_service.get_room_by_name = AsyncMock(return_value=room)
+        mock_room_service.get_room_by_alias = AsyncMock(return_value=None)
+
+        presence = MagicMock()
+        presence.get_room_occupants = MagicMock(return_value=occupants)
+        presence.find_user_by_name = MagicMock(side_effect=lambda n: (name_to_id or {}).get(n))
+
+        piper = MagicMock()
+        piper.synthesize_to_bytes = AsyncMock(return_value=tts)
+
+        decision = MagicMock()
+        decision.output_device = MagicMock()
+        decision.fallback_to_input = False
+        routing = MagicMock()
+        routing.get_audio_output_for_room = AsyncMock(return_value=decision)
+
+        audio = MagicMock()
+        audio.play_audio = AsyncMock(return_value=play_ok)
+
+        dm = MagicMock()
+        dm.get_devices_in_room = MagicMock(return_value=[])
+
+        ensure = []
+        for mod_name in [
+            "services.database", "services.piper_service",
+            "ha_glue.services.room_service", "ha_glue.services.presence_service",
+            "ha_glue.services.output_routing_service",
+            "ha_glue.services.audio_output_service", "ha_glue.services.device_manager",
+        ]:
+            if mod_name not in sys.modules:
+                sys.modules[mod_name] = ModuleType(mod_name)
+                ensure.append(mod_name)
+
+        patches = [
+            patch("services.database.AsyncSessionLocal", mock_session, create=True),
+            patch("services.piper_service.PiperService", return_value=piper, create=True),
+            patch("ha_glue.services.room_service.RoomService", return_value=mock_room_service, create=True),
+            patch("ha_glue.services.presence_service.get_presence_service", return_value=presence, create=True),
+            patch("ha_glue.services.output_routing_service.OutputRoutingService", return_value=routing, create=True),
+            patch("ha_glue.services.audio_output_service.get_audio_output_service", return_value=audio, create=True),
+            patch("ha_glue.services.device_manager.get_device_manager", return_value=dm, create=True),
+        ]
+
+        class Combined:
+            def __enter__(self_):
+                for p in patches:
+                    p.__enter__()
+                self_.piper = piper
+                self_.audio = audio
+                return self_
+
+            def __exit__(self_, *a):
+                for p in reversed(patches):
+                    p.__exit__(*a)
+                for m in ensure:
+                    sys.modules.pop(m, None)
+
+        return Combined()
+
+    @pytest.mark.unit
+    async def test_personal_blocked_when_not_alone(self, internal_tools):
+        """SAFETY: a personal message is NOT spoken aloud (no TTS) when others
+        are present in the room — returns blocked=not_private instead."""
+        occ = [MagicMock(user_name="evdb"), MagicMock(user_name="Jutta")]
+        with self._patch_deps(occupants=occ) as deps:
+            result = await internal_tools._announce_in_room({
+                "text": "Dein Steuerbescheid ist da", "room_name": "Arbeitszimmer",
+                "privacy": "personal",
+            })
+        assert result["success"] is False
+        assert result.get("blocked") == "not_private"
+        # Crucially: nothing was synthesized or played.
+        deps.piper.synthesize_to_bytes.assert_not_called()
+        deps.audio.play_audio.assert_not_called()
+
+    @pytest.mark.unit
+    async def test_personal_announced_when_recipient_alone(self, internal_tools):
+        """A personal message IS announced when the (only) person present is the
+        intended recipient."""
+        occ = [MagicMock(user_id=2)]
+        with self._patch_deps(occupants=occ, name_to_id={"Eduard": 2}) as deps:
+            result = await internal_tools._announce_in_room({
+                "text": "Dein Steuerbescheid ist da", "room_name": "Arbeitszimmer",
+                "privacy": "personal", "for_users": ["Eduard"],
+            })
+        assert result["success"] is True
+        deps.audio.play_audio.assert_awaited_once()
+
+    @pytest.mark.unit
+    async def test_personal_blocked_when_room_untracked(self, internal_tools):
+        """FAIL-CLOSED: nobody tracked in the room → personal message blocked
+        (can't prove the recipient is alone; an untracked bystander may be there)."""
+        with self._patch_deps(occupants=[], name_to_id={"Eduard": 2}) as deps:
+            result = await internal_tools._announce_in_room({
+                "text": "vertraulich", "room_name": "Arbeitszimmer",
+                "privacy": "personal", "for_users": ["Eduard"],
+            })
+        assert result["success"] is False
+        assert result.get("blocked") == "not_private"
+        deps.piper.synthesize_to_bytes.assert_not_called()
+
+    @pytest.mark.unit
+    async def test_personal_blocked_when_no_recipients_given(self, internal_tools):
+        """FAIL-CLOSED: privacy=personal without for_users → blocked (can't verify
+        who's allowed to hear it), even if only one person is present."""
+        occ = [MagicMock(user_id=2)]
+        with self._patch_deps(occupants=occ) as deps:
+            result = await internal_tools._announce_in_room({
+                "text": "vertraulich", "room_name": "Arbeitszimmer", "privacy": "personal",
+            })
+        assert result["success"] is False
+        assert result.get("blocked") == "not_private"
+        deps.piper.synthesize_to_bytes.assert_not_called()
+
+    @pytest.mark.unit
+    async def test_public_announced_even_with_others(self, internal_tools):
+        """A public message is announced regardless of who else is present."""
+        occ = [MagicMock(user_name="evdb"), MagicMock(user_name="Jutta")]
+        with self._patch_deps(occupants=occ) as deps:
+            result = await internal_tools._announce_in_room({
+                "text": "Das Essen ist fertig", "room_name": "Arbeitszimmer",
+                "privacy": "public",
+            })
+        assert result["success"] is True
+        deps.audio.play_audio.assert_awaited_once()
+
+    @pytest.mark.unit
+    async def test_default_privacy_is_public(self, internal_tools):
+        """No privacy arg → treated as public (announces with others present)."""
+        occ = [MagicMock(user_name="evdb"), MagicMock(user_name="Jutta")]
+        with self._patch_deps(occupants=occ) as deps:
+            result = await internal_tools._announce_in_room({
+                "text": "Das Essen ist fertig", "room_name": "Arbeitszimmer",
+            })
+        assert result["success"] is True
+        deps.audio.play_audio.assert_awaited_once()
+
+    @pytest.mark.unit
+    async def test_missing_text(self, internal_tools):
+        result = await internal_tools._announce_in_room({"room_name": "Arbeitszimmer"})
+        assert result["success"] is False and "text" in result["message"]
+
+    @pytest.mark.unit
+    async def test_missing_room(self, internal_tools):
+        result = await internal_tools._announce_in_room({"text": "hi"})
+        assert result["success"] is False and "room_name" in result["message"]
+
+    @pytest.mark.unit
+    async def test_personal_announced_for_two_recipients_both_present(self, internal_tools):
+        """Two intended recipients alone together → personal message IS announced."""
+        occ = [MagicMock(user_id=2), MagicMock(user_id=3)]
+        with self._patch_deps(occupants=occ, name_to_id={"Eduard": 2, "Jutta": 3}) as deps:
+            result = await internal_tools._announce_in_room({
+                "text": "vertraulich", "room_name": "Arbeitszimmer",
+                "privacy": "personal", "for_users": ["Eduard", "Jutta"],
+            })
+        assert result["success"] is True
+        deps.audio.play_audio.assert_awaited_once()
+
+    @pytest.mark.unit
+    async def test_personal_blocked_when_a_non_recipient_present(self, internal_tools):
+        """3 present, message for 2 of them → blocked (the 3rd isn't a recipient)."""
+        occ = [MagicMock(user_id=2), MagicMock(user_id=3), MagicMock(user_id=9)]
+        with self._patch_deps(occupants=occ, name_to_id={"Eduard": 2, "Jutta": 3}) as deps:
+            result = await internal_tools._announce_in_room({
+                "text": "vertraulich", "room_name": "Arbeitszimmer",
+                "privacy": "personal", "for_users": ["Eduard", "Jutta"],
+            })
+        assert result["success"] is False
+        assert result.get("blocked") == "not_private"
+        assert result["data"]["recipients_present"] == 2  # E + J present, X is the outsider
+        deps.piper.synthesize_to_bytes.assert_not_called()
+        deps.audio.play_audio.assert_not_called()
+
+    @pytest.mark.unit
+    async def test_force_bypasses_gate_after_consent(self, internal_tools):
+        """force=true announces a personal message even with non-recipients present
+        (used after the recipient consents to 'go ahead')."""
+        occ = [MagicMock(user_id=2), MagicMock(user_id=9)]
+        with self._patch_deps(occupants=occ, name_to_id={"Eduard": 2}) as deps:
+            result = await internal_tools._announce_in_room({
+                "text": "vertraulich", "room_name": "Arbeitszimmer",
+                "privacy": "personal", "for_users": ["Eduard"], "force": "true",
+            })
+        assert result["success"] is True
+        deps.audio.play_audio.assert_awaited_once()

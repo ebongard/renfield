@@ -54,6 +54,16 @@ class InternalToolService:
                 "user_name": "Name of the user to locate (username, first name, or last name)",
             },
         },
+        "internal.announce_in_room": {
+            "description": "Speak a text message out loud (TTS) on a room's audio device. Use it to relay a message to a person: find their room first (internal.get_user_location), then announce. Privacy: set privacy='personal' for personal/confidential content (when in doubt, do). A personal message is spoken ONLY if everyone currently in the room is an intended recipient (list them in for_users) — so two recipients together get it, but a non-recipient present blocks it (you get blocked='not_private'). When blocked: announce a NEUTRAL note that a message is waiting (privacy='public', NO content), and if the recipient says go ahead, call this again with force=true.",
+            "parameters": {
+                "text": "The message to speak aloud (required)",
+                "room_name": "The room to announce in (required) — e.g. the room the person is currently in",
+                "privacy": "'public' (default, anyone may overhear) or 'personal' (confidential)",
+                "for_users": "Intended recipient(s) — a name or list of names. A personal message plays only if everyone present is in this list.",
+                "force": "'true' to announce a personal message even if non-recipients are present — ONLY after the recipient has explicitly consented (default false)",
+            },
+        },
         "internal.get_all_presence": {
             "description": "Get all currently present users and their room locations. Use this when asked 'where is everyone?' or 'who is home?'.",
             "parameters": {},
@@ -132,6 +142,7 @@ class InternalToolService:
         "internal.play_in_room": "_play_in_room",
         "internal.get_user_location": "_get_user_location",
         "internal.get_all_presence": "_get_all_presence",
+        "internal.announce_in_room": "_announce_in_room",
         "internal.media_control": "_media_control",
         "internal.play_album_on_dlna": "_play_album_on_dlna",
         "internal.play_video_on_dlna": "_play_video_on_dlna",
@@ -330,6 +341,151 @@ class InternalToolService:
                 return room.id if room else None
         except Exception:
             return None
+
+    async def _announce_in_room(self, params: dict) -> dict:
+        """Speak a text message (TTS) on a room's audio device.
+
+        Privacy gate (FAIL-CLOSED): a message marked ``privacy="personal"`` is
+        spoken aloud ONLY if the room is private (the target is alone). If other
+        people are present it is NOT announced — we return a ``blocked`` status so
+        the agent can relay that back instead of broadcasting confidential content
+        to everyone in the room. ``privacy="public"`` always announces.
+
+        This is a single primitive (synthesize → resolve room device → play). The
+        person→room resolution + ordering is left to the agent (it calls
+        internal.get_user_location first), so nothing about the relay flow is
+        hardcoded here.
+        """
+        text = (params.get("text") or "").strip()
+        room_name = (params.get("room_name") or "").strip()
+        privacy = (params.get("privacy") or "public").strip().lower()
+        force = str(params.get("force", "false")).lower() in ("true", "1", "yes")
+
+        # Intended recipients (a name or list of names). A personal message is
+        # private-enough only if everyone present is one of these.
+        _fu = params.get("for_users")
+        if isinstance(_fu, str):
+            for_users = [n.strip() for n in _fu.split(",") if n.strip()]
+        elif isinstance(_fu, list):
+            for_users = [str(n).strip() for n in _fu if str(n).strip()]
+        else:
+            for_users = []
+
+        if not text:
+            return {"success": False, "message": "Parameter 'text' is required", "action_taken": False}
+        if not room_name:
+            return {"success": False, "message": "Parameter 'room_name' is required", "action_taken": False}
+
+        try:
+            import base64
+
+            from services.database import AsyncSessionLocal
+            from services.piper_service import PiperService
+            from ha_glue.services.audio_output_service import get_audio_output_service
+            from ha_glue.services.device_manager import get_device_manager
+            from ha_glue.services.output_routing_service import OutputRoutingService
+            from ha_glue.services.presence_service import get_presence_service
+            from ha_glue.services.room_service import RoomService
+
+            async with AsyncSessionLocal() as db:
+                room_service = RoomService(db)
+                room = await room_service.get_room_by_name(room_name) \
+                    or await room_service.get_room_by_alias(room_name)
+                if not room:
+                    return {"success": False, "message": f"Room '{room_name}' not found", "action_taken": False}
+
+                # --- Privacy gate (FAIL-CLOSED) ---
+                # A personal message is spoken aloud ONLY with POSITIVE proof the
+                # room is private: we know the recipients (allowed_ids), at least
+                # one person is tracked in the room, and EVERY tracked person is a
+                # recipient. Anything else (no/unresolvable recipients, nobody
+                # tracked, or a non-recipient present) blocks — we never fall back
+                # to a weaker "probably alone" guess. force=true bypasses (the
+                # recipient consented after being told a message is waiting).
+                # INHERENT LIMIT: presence only sees people with a tracked BLE
+                # device, so this can't detect an untracked bystander — it is
+                # best-effort, not a guarantee against every eavesdropper.
+                if privacy != "public" and not force:
+                    presence = get_presence_service()
+                    occupants = presence.get_room_occupants(room.id)
+                    allowed_ids = {
+                        uid for n in for_users
+                        if (uid := presence.find_user_by_name(n)) is not None
+                    }
+                    everyone_present_is_recipient = (
+                        bool(allowed_ids)
+                        and bool(occupants)
+                        and all(o.user_id in allowed_ids for o in occupants)
+                    )
+                    if not everyone_present_is_recipient:
+                        if not allowed_ids:
+                            why = "die Empfaenger sind nicht bekannt (gib sie in for_users an)"
+                        elif not occupants:
+                            why = f"in {room.name} ist niemand (mit getracktem Geraet) erkennbar anwesend"
+                        else:
+                            non_rec = sum(1 for o in occupants if o.user_id not in allowed_ids)
+                            why = f"in {room.name} ist/sind {non_rec} Nicht-Empfaenger-Person(en) anwesend"
+                        return {
+                            "success": False,
+                            "action_taken": False,
+                            "blocked": "not_private",
+                            "message": (
+                                f"Persönliche Nachricht NICHT laut angesagt ({why}). Gib NICHT den "
+                                f"Inhalt preis. Sage NUR neutral an, dass eine Nachricht wartet (OHNE "
+                                f"Inhalt), und frage, ob trotzdem vorgelesen werden soll. Bei "
+                                f"ausdrücklicher Zustimmung des Empfängers rufe announce_in_room erneut "
+                                f"mit force=true auf."
+                            ),
+                            "data": {
+                                "room_name": room.name,
+                                "occupants": len(occupants),
+                                "recipients_present": len(allowed_ids & {o.user_id for o in occupants}),
+                            },
+                        }
+
+                tts_audio = await PiperService().synthesize_to_bytes(text)
+                if not tts_audio:
+                    return {"success": False, "message": "TTS synthesis failed", "action_taken": False}
+
+                session_id = f"announce-{room.id}"
+                decision = await OutputRoutingService(db).get_audio_output_for_room(room.id)
+                if decision.output_device and not decision.fallback_to_input:
+                    ok = await get_audio_output_service().play_audio(
+                        audio_bytes=tts_audio,
+                        output_device=decision.output_device,
+                        session_id=session_id,
+                    )
+                    if ok:
+                        return {
+                            "success": True, "action_taken": True,
+                            "message": f"Nachricht in {room.name} angesagt",
+                            "data": {"room_name": room.name, "text": text, "privacy": privacy},
+                        }
+
+            # Fallback: send TTS to every speaker in the room directly.
+            device_manager = get_device_manager()
+            audio_b64 = base64.b64encode(tts_audio).decode("utf-8")
+            for device in device_manager.get_devices_in_room(room_name):
+                if device.capabilities.has_speaker:
+                    try:
+                        await device.websocket.send_json({
+                            "type": "tts_audio",
+                            "session_id": f"announce-{room_name}",
+                            "audio": audio_b64,
+                            "is_final": True,
+                        })
+                        return {
+                            "success": True, "action_taken": True,
+                            "message": f"Nachricht in {room_name} angesagt",
+                            "data": {"room_name": room_name, "text": text, "privacy": privacy},
+                        }
+                    except Exception:  # noqa: BLE001
+                        continue
+            return {"success": False, "message": f"Kein Lautsprecher in {room_name} verfügbar", "action_taken": False}
+
+        except Exception as e:  # noqa: BLE001
+            logger.error(f"Error announcing in room '{room_name}': {e}")
+            return {"success": False, "message": f"Error announcing: {e!s}", "action_taken": False}
 
     async def _register_media_follow(
         self, params: dict, room_name: str, media_type, **kwargs
