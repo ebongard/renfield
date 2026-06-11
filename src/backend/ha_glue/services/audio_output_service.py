@@ -149,7 +149,12 @@ class AudioOutputService:
             return False
 
         base_url = self._get_backend_url()
-        audio_url = f"{base_url}/api/voice/tts-cache/{audio_id}"
+        # `.wav` extension + the audio/x-wav mime hint below: DLNA renderers
+        # (notably Samsung TVs) reject an extensionless / wrong-mime resource
+        # with UPnP 716. audio/x-wav is the WAV mime Samsung advertises in
+        # GetProtocolInfo (audio/wav is NOT). The tts-cache route strips the
+        # trailing .wav. See docs/MESSAGE_RELAY.md.
+        audio_url = f"{base_url}/api/voice/tts-cache/{audio_id}.wav"
 
         try:
             from main import app
@@ -158,7 +163,7 @@ class AudioOutputService:
                 logger.warning(f"MCP manager not available for DLNA playback on {renderer_name}")
                 return False
 
-            tracks = [{"url": audio_url, "title": "Renfield TTS"}]
+            tracks = [{"url": audio_url, "title": "Renfield TTS", "mime_type": "audio/x-wav"}]
             logger.info(f"🔊 DLNA play_tracks: renderer={renderer_name}, url={audio_url}")
             result = await mcp_manager.execute_tool(
                 "mcp.dlna.play_tracks",
@@ -210,9 +215,10 @@ class AudioOutputService:
             return False
 
         # Build the URL for HA to fetch the audio
-        # Use the backend's advertise host or fallback to localhost
+        # Use the backend's advertise host or fallback to localhost.
+        # `.wav` extension so renderers/HA see a recognizable media URL.
         base_url = self._get_backend_url()
-        audio_url = f"{base_url}/api/voice/tts-cache/{audio_id}"
+        audio_url = f"{base_url}/api/voice/tts-cache/{audio_id}.wav"
 
         # Store original volume for restoration (if we're changing it)
         original_volume = None

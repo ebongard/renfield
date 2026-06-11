@@ -8,7 +8,7 @@ Multi-language support:
 from io import BytesIO
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, UploadFile
-from fastapi.responses import StreamingResponse
+from fastapi.responses import Response, StreamingResponse
 from loguru import logger
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -175,21 +175,30 @@ async def text_to_speech(request: Request, tts_request: TTSRequest, _user=Depend
         logger.error(f"❌ TTS Fehler: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
-@router.get("/tts-cache/{audio_id}")
-async def get_tts_cache(audio_id: str):
-    """Serve cached TTS audio files.
+@router.api_route("/tts-cache/{audio_id}", methods=["GET", "HEAD"])
+async def get_tts_cache(audio_id: str, request: Request):
+    """Serve cached TTS audio files for HA media players / DLNA renderers.
 
-    Used by HA media players that fetch pre-generated TTS via HTTP.
     The actual cache lookup runs through the `fetch_tts_audio_cache`
     hook so ha_glue owns the cache storage and platform has no
     direct coupling to `audio_output_service`. On pro deploys (no
     ha_glue handler), the endpoint returns 404 — which is fine
     because pro deploys don't have HA media players calling it.
+
+    DLNA renderers (notably Samsung TVs) send a **HEAD** before the GET and
+    treat any non-2xx HEAD as "resource not found" (UPnP error 716), so the
+    route serves HEAD too — returning the headers (Content-Type/-Length)
+    without a body. The mime is `audio/x-wav` (the WAV mime Samsung advertises
+    in GetProtocolInfo; `audio/wav` is rejected), and a trailing `.wav` in the
+    path is accepted + stripped so the URL can carry a recognizable extension.
     """
     from utils.hooks import run_hooks
 
+    # Accept (and strip) a trailing ".wav" so the advertised URL has an extension.
+    cache_id = audio_id[:-4] if audio_id.endswith(".wav") else audio_id
+
     audio_bytes = None
-    results = await run_hooks("fetch_tts_audio_cache", audio_id=audio_id)
+    results = await run_hooks("fetch_tts_audio_cache", audio_id=cache_id)
     for result in results:
         if isinstance(result, (bytes, bytearray)):
             audio_bytes = bytes(result)
@@ -203,13 +212,19 @@ async def get_tts_cache(audio_id: str):
     if not audio_bytes:
         raise HTTPException(status_code=404, detail="Audio not found or expired")
 
+    headers = {
+        "Content-Disposition": f"inline; filename={cache_id}.wav",
+        "Cache-Control": "no-cache",
+        "Content-Length": str(len(audio_bytes)),
+    }
+    # HEAD: same headers, no body (DLNA renderers probe with HEAD first).
+    if request.method == "HEAD":
+        return Response(status_code=200, media_type="audio/x-wav", headers=headers)
+
     return StreamingResponse(
         BytesIO(audio_bytes),
-        media_type="audio/wav",
-        headers={
-            "Content-Disposition": f"inline; filename={audio_id}.wav",
-            "Cache-Control": "no-cache",
-        },
+        media_type="audio/x-wav",
+        headers=headers,
     )
 
 

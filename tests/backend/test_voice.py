@@ -263,7 +263,53 @@ class TestTTSCacheAPI:
             _hooks["fetch_tts_audio_cache"].remove(_fake_fetch)
 
         assert response.status_code == 200
-        assert response.headers["content-type"] == "audio/wav"
+        # audio/x-wav: the WAV mime Samsung TVs advertise in GetProtocolInfo
+        # (audio/wav is rejected with UPnP 716).
+        assert response.headers["content-type"] == "audio/x-wav"
+        assert response.headers["content-length"] == str(len(cached_audio))
+
+    @pytest.mark.integration
+    async def test_tts_cache_head(self, async_client: AsyncClient):
+        """HEAD must succeed with headers but no body — DLNA renderers (Samsung)
+        probe with HEAD before GET and treat a non-2xx HEAD as 716."""
+        from utils.hooks import _hooks
+
+        cached_audio = b'RIFF' + b'\x00' * 100
+
+        async def _fake_fetch(*, audio_id):
+            return cached_audio
+
+        _hooks["fetch_tts_audio_cache"].append(_fake_fetch)
+        try:
+            response = await async_client.head("/api/voice/tts-cache/valid-audio-id")
+        finally:
+            _hooks["fetch_tts_audio_cache"].remove(_fake_fetch)
+
+        assert response.status_code == 200
+        assert response.headers["content-type"] == "audio/x-wav"
+        assert response.headers["content-length"] == str(len(cached_audio))
+        assert response.content == b""
+
+    @pytest.mark.integration
+    async def test_tts_cache_wav_suffix_stripped(self, async_client: AsyncClient):
+        """A trailing .wav in the path is accepted and stripped before the cache
+        lookup, so the advertised URL can carry a recognizable extension."""
+        from utils.hooks import _hooks
+
+        seen_ids = []
+
+        async def _fake_fetch(*, audio_id):
+            seen_ids.append(audio_id)
+            return b'RIFF' + b'\x00' * 100
+
+        _hooks["fetch_tts_audio_cache"].append(_fake_fetch)
+        try:
+            response = await async_client.get("/api/voice/tts-cache/valid-audio-id.wav")
+        finally:
+            _hooks["fetch_tts_audio_cache"].remove(_fake_fetch)
+
+        assert response.status_code == 200
+        assert seen_ids == ["valid-audio-id"]  # .wav stripped before lookup
 
 
 # ============================================================================
