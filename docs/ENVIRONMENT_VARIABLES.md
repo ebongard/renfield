@@ -900,15 +900,15 @@ ADVERTISE_IP=192.168.1.100
 ADVERTISE_HOST=renfield.local
 
 # URL-Schema (http|https) für die TTS-Audio-URL, die Renderer abrufen
-ADVERTISE_SCHEME=https
+ADVERTISE_SCHEME=http
 
 # Port für ADVERTISE_HOST (Standard-Ports 80/443 werden in der URL weggelassen)
-ADVERTISE_PORT=443
+ADVERTISE_PORT=80
 ```
 
 `ADVERTISE_HOST`/`ADVERTISE_SCHEME`/`ADVERTISE_PORT` bauen die URL, die das
 Backend an DLNA-Renderer und HA Media Player übergibt, damit diese die
-TTS-Audiodatei (`/api/voice/tts-cache/{id}`) abrufen
+TTS-Audiodatei (`/api/voice/tts-cache/{id}.wav`) abrufen
 (`AudioOutputService._get_backend_url()`).
 
 **Defaults:**
@@ -917,31 +917,27 @@ TTS-Audiodatei (`/api/voice/tts-cache/{id}`) abrufen
 - `ADVERTISE_PORT`: `8000`
 
 **Standard-Ports 80 und 443 werden in der URL immer weggelassen** — so kann ein
-`ADVERTISE_PORT`, das nicht zum Schema passt (z.B. `https` + `80`), keine kaputte
-URL `https://host:80` erzeugen. Nur Nicht-Standard-Ports (8000, 8443) erscheinen.
+`ADVERTISE_PORT`, das nicht zum Schema passt, keine kaputte URL erzeugen. Nur
+Nicht-Standard-Ports (8000, 8443) erscheinen.
 
 **Produktion (k8s, aktuell):** `ADVERTISE_HOST=renfield.local`,
-`ADVERTISE_SCHEME=https`, `ADVERTISE_PORT=443`. Die bestehende `renfield-https`
-Traefik-Ingress bedient `https://renfield.local/api/voice/tts-cache/…` (kein
-eigener Route nötig). Das Renfield-Zertifikat hat SAN `renfield.local` +
-`192.168.1.230`.
+`ADVERTISE_SCHEME=http`, `ADVERTISE_PORT=80` → `http://renfield.local/api/voice/tts-cache/{id}.wav`.
+Die `backend-tts-cache-http` IngressRoute (eigener `web`-Entrypoint-Route ohne
+`http→https`-Redirect) bedient diesen Pfad plain. **Bewusst http, nicht https:**
+Samsung-TVs akzeptieren das self-signed Zertifikat nicht; http funktioniert auf
+allen Renderern.
 
-**Voraussetzung pro Renderer (https):** der Renderer muss `renfield.local`
-auflösen UND dem Zertifikat vertrauen.
-- **Linn / openHome-Renderer:** funktioniert nativ — lösen `renfield.local` per
-  Router-DNS auf und akzeptieren das self-signed Zertifikat (gemessen).
-- **HiFiBerry (gmediarender/gstreamer):** braucht zwei Eintragungen auf dem
-  Gerät — die Renfield-CA im Trust-Store (`/etc/ssl/certs`) **und** einen
-  `/etc/hosts`-Eintrag `192.168.1.230 renfield.local` (systemd-resolved fängt
-  `.local` als mDNS ab und liefert NOTFOUND, bevor DNS gefragt wird). Danach
-  `systemctl restart dlnampris.service`, damit gstreamer den Trust-Store neu lädt.
-- **Fernseher / Samsung:** noch nicht getestet (Tech-Debt, `TODOS.md`).
+**Pro-Renderer-Status (gemessen über http://renfield.local):**
+- **Linn / openHome + Samsung TV (Q60CA / 8 Series):** funktionieren nativ — lösen
+  `renfield.local` per Router-DNS auf, kein Geräte-Setup. (Samsung erst nach dem
+  DLNA-Compliance-Fix: HEAD-Support + `audio/x-wav` + `.wav` — vorher UPnP 716.)
+- **HiFiBerry (gmediarender/gstreamer):** braucht nur den `/etc/hosts`-Eintrag
+  `192.168.1.230 renfield.local` (systemd-resolved fängt `.local` als mDNS ab) —
+  via `provision-hifiberry.yml`. **Über http keine CA nötig** (die war nur für die
+  https-Episode da).
+- **55" Signage Flip:** eigener Quirk (404 im dlna-mcp-Confirm), separat.
 
-Mit `ADVERTISE_SCHEME=http` (oder Default) verhält sich alles byte-identisch wie
-zuvor — eine reine Plain-HTTP-URL. Diese wird allerdings von Renderern nicht
-abgerufen, wenn sie hinter dem Traefik-https-Redirect liegt (stiller Fehler:
-der Renderer meldet „playing", lädt aber nie). Details + Messungen:
-`docs/MESSAGE_RELAY.md` → „TTS-Audio-Auslieferung an Renderer".
+Details + Messungen: `docs/MESSAGE_RELAY.md` → „TTS-Audio-Auslieferung an Renderer".
 
 **Ohne ADVERTISE_HOST:**
 - TTS wird nur auf Renfield-Geräten (Satellites, Web Panels) abgespielt

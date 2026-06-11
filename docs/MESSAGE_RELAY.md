@@ -96,37 +96,48 @@ private; `force` resolves it.
 
 Wenn die Ansage auf einem DLNA-Renderer (statt einem Renfield-Satellite) landet,
 synthetisiert das Backend das WAV, legt es im TTS-Cache ab und übergibt dem
-Renderer eine **URL** (`/api/voice/tts-cache/{id}`), die der Renderer dann selbst
-**abruft**. Die URL baut `AudioOutputService._get_backend_url()` aus
+Renderer eine **URL** (`/api/voice/tts-cache/{id}.wav`), die der Renderer dann
+selbst **abruft**. Die URL baut `AudioOutputService._get_backend_url()` aus
 `ADVERTISE_SCHEME` + `ADVERTISE_HOST` (+ `ADVERTISE_PORT`).
 
-**Warum das früher still fehlschlug:** Mit `http://renfield.local` (Port 80) bekam
-der Renderer eine URL hinter dem Traefik-`http→https`-Redirect. Der HiFiBerry
-(gstreamer, event-silent) meldete `state=playing` **ohne Fehler**, rief die URL
-aber **nie** ab (0 GETs im Access-Log) → keine Audioausgabe, kein sichtbarer
-Fehler. Die einzige Bodenwahrheit ist das Backend-Access-Log.
+**Auslieferung (Prod): `http://renfield.local/api/voice/tts-cache/{id}.wav`.**
+Plain http (kein https) — bedient von der `backend-tts-cache-http` IngressRoute
+(eigener Route auf dem `web`-Entrypoint, ohne den `http→https`-Redirect). Bewusst
+**kein https**, weil Samsung-TVs das self-signed Zertifikat nicht akzeptieren;
+http funktioniert dagegen auf **allen** Renderern. Auflösung von `renfield.local`:
+Linn/Samsung per Router-DNS, HiFiBerry per `/etc/hosts` (siehe
+`provision-hifiberry.yml` — der CA-Teil ist für http nicht mehr nötig, nur der
+`/etc/hosts`-Eintrag).
 
-**Lösung (Prod):** `ADVERTISE_SCHEME=https`, `ADVERTISE_HOST=renfield.local`,
-`ADVERTISE_PORT=443`. Der Renderer holt `https://renfield.local/api/voice/tts-cache/…`
-über die bestehende `renfield-https` Ingress — kein eigener Traefik-Route, kein
-Plain-HTTP-Loch.
+**Zwei stille Fehlerquellen, beide auf UNSERER Seite (gemessen):**
+1. **Falsche URL/Scheme.** Früher `http://renfield.local:80` hinter dem
+   Traefik-`http→https`-Redirect → der Renderer holte die URL nie (0 GETs); der
+   event-silent HiFiBerry meldete trotzdem `state=playing`. Einzige Bodenwahrheit
+   ist das Backend-Access-Log.
+2. **DLNA-Resource war non-compliant** → Samsung lehnte mit UPnP **716
+   „Resource not found"** ab (Linn/HiFiBerry sind lenient und schluckten es). Drei
+   Bugs, alle gefixt:
+   - **HEAD → 405.** DLNA-Renderer schicken ein HEAD vor dem GET; die
+     `/api/voice/tts-cache`-Route war GET-only. Jetzt GET **+ HEAD**.
+   - **Falscher MIME.** Das DIDL defaultete auf `audio/flac`; das `GetProtocolInfo`
+     des TVs listet **`audio/x-wav`** (nicht `audio/wav`/`flac`). Route liefert jetzt
+     `Content-Type: audio/x-wav` + `Content-Length`, und der DLNA-Play-Pfad gibt
+     `mime_type=audio/x-wav` mit (→ passendes protocolInfo).
+   - **Keine Extension.** URL endet jetzt auf `.wav` (Route akzeptiert + strippt sie).
 
-**Pro-Renderer-Voraussetzung** (gemessen, nicht angenommen):
+**Pro-Renderer-Status (gemessen über `http://renfield.local`):**
 
-| Renderer | löst `renfield.local` auf | akzeptiert self-signed cert | Setup |
+| Renderer | löst `renfield.local` | spielt TTS (http) | Setup |
 |---|---|---|---|
-| Linn / openHome | ✅ Router-DNS | ✅ (gemessen, ohne CA) | keins |
-| HiFiBerry (gstreamer) | ❌ `.local`→mDNS-Quirk | ❌ strikt | CA in `/etc/ssl/certs` **+** `/etc/hosts`-Eintrag `192.168.1.230 renfield.local` **+** `systemctl restart dlnampris.service` |
-| Fernseher / Samsung | ? | ? | ungetestet (Tech-Debt) |
+| Linn / openHome | ✅ Router-DNS | ✅ | keins |
+| Samsung TV (Q60CA / 8 Series) | ✅ Router-DNS | ✅ (nach HEAD/x-wav/.wav-Fix) | keins |
+| HiFiBerry (gstreamer) | per `/etc/hosts` | ✅ | `/etc/hosts`-Eintrag (`provision-hifiberry.yml`); **CA nicht mehr nötig** |
+| 55" Signage Flip | ✅ | ⚠️ eigener Quirk (404 im dlna-mcp-Confirm) — separat |
 
-Hintergrund HiFiBerry: nsswitch ist `hosts: files resolve [!UNAVAIL=return] dns` —
-systemd-`resolve` greift `.local` als mDNS und liefert NOTFOUND, bevor `dns`
-gefragt wird; deshalb scheitert die Auflösung trotz vorhandenem DNS-Eintrag.
-`curl` umgeht das (eigener c-ares-Resolver), gstreamer (`getaddrinfo`) nicht.
-Diese Geräte-Eintragungen überleben einen Reboot, aber **nicht** ein
-HiFiBerryOS-Update (Tech-Debt: nach Update neu setzen).
-
-Mit `ADVERTISE_SCHEME=http` ist das Verhalten byte-identisch zu vorher.
+Mit `ADVERTISE_SCHEME=http` (Default) byte-identisch zur Pre-https-Episode.
+Hintergrund HiFiBerry-`.local`: nsswitch `hosts: files resolve [!UNAVAIL=return] dns`
+→ systemd-`resolve` greift `.local` als mDNS (NOTFOUND vor `dns`); `curl`
+(c-ares) umgeht das, gstreamer (`getaddrinfo`) nicht → daher der `/etc/hosts`-Eintrag.
 
 ## Where it lives
 

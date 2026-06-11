@@ -20,6 +20,7 @@ resources:
   - middleware-https-redirect.yaml
   - ingress.yaml
   - external-llm-ingress.yaml
+  - backend-tts-cache-route.yaml
   - shared-pvcs.yaml
   - document-worker.yaml
 

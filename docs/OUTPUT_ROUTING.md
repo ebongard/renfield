@@ -31,18 +31,20 @@ Erste Marke: **Samsung TV** (`renfield-mcp-samsung`) — wird damit room-auswäh
 
 ### ADVERTISE_HOST Konfiguration
 
-Damit HA Media Player und DLNA Renderer die TTS-Audio-Dateien vom Renfield-Backend abrufen können, muss `ADVERTISE_HOST` in der `.env` Datei gesetzt werden:
+Damit HA Media Player und DLNA Renderer die TTS-Audio-Dateien vom Renfield-Backend abrufen können, müssen `ADVERTISE_HOST`/`ADVERTISE_SCHEME`/`ADVERTISE_PORT` gesetzt sein. Das Backend baut daraus die URL `…/api/voice/tts-cache/{id}.wav`, die der Renderer selbst abruft.
 
 ```bash
-# .env
-ADVERTISE_HOST=192.168.1.159  # IP-Adresse des Renfield-Servers
-ADVERTISE_PORT=80             # Port 80 = Nginx (empfohlen für Produktion)
+# .env (k8s-Prod-Werte)
+ADVERTISE_HOST=renfield.local  # per DNS (Linn/Samsung) bzw. /etc/hosts (HiFiBerry) auflösbar
+ADVERTISE_SCHEME=http          # NICHT https — Samsung-TVs akzeptieren self-signed nicht; http geht überall
+ADVERTISE_PORT=80
 ```
 
 **Wichtig:**
-- **IP-Adresse verwenden**, nicht mDNS (`.local`) — DLNA-Renderer können mDNS oft nicht auflösen
-- **Port 80** verwenden — Port 8000 ist nur auf `127.0.0.1` gebunden und von extern nicht erreichbar
-- Nginx muss `/api/voice/tts-cache/` über **plain HTTP** weiterleiten (ohne HTTPS-Redirect), da DLNA-Renderer kein HTTPS/self-signed Certs unterstützen
+- **`http`, nicht `https`** — DLNA-Renderer (v.a. Samsung-TVs) akzeptieren das self-signed Zertifikat nicht; plain http funktioniert auf allen Renderern.
+- Der Pfad `/api/voice/tts-cache/` muss **plain HTTP ohne HTTPS-Redirect** bedient werden — in k8s über die `backend-tts-cache-http` Traefik-IngressRoute (eigener `web`-Entrypoint-Route, `priority: 100`), nicht Nginx.
+- DLNA-Renderer schicken ein **HEAD vor dem GET** und verlangen `audio/x-wav` + eine `.wav`-Resource — die Route bedient das (sonst Samsung-UPnP-716). Details: `docs/MESSAGE_RELAY.md` → „TTS-Audio-Auslieferung an Renderer".
+- Geräte-Setup: Linn/Samsung brauchen keins; HiFiBerry braucht den `/etc/hosts`-Eintrag aus `provision-hifiberry.yml` (über http **keine CA** nötig).
 
 ## Konfiguration über das Frontend
 
@@ -272,20 +274,22 @@ User spricht zum Tablet: "Wie ist das Wetter?"
 
 ### TTS wird nicht auf HA Media Player / DLNA Renderer abgespielt
 
-1. **ADVERTISE_HOST prüfen:**
+1. **ADVERTISE_* prüfen:**
    ```bash
-   docker exec renfield-backend env | grep ADVERTISE
+   kubectl -n renfield exec deploy/backend -c backend -- env | grep ADVERTISE
    ```
-   Muss auf erreichbare IP gesetzt sein (nicht `.local` für DLNA!).
+   Prod: `ADVERTISE_HOST=renfield.local`, `ADVERTISE_SCHEME=http`, `ADVERTISE_PORT=80`.
 
 2. **Kann der Renderer die URL erreichen?**
    ```bash
-   # Von einem anderen Gerät im LAN testen:
-   curl http://<ADVERTISE_HOST>/api/voice/tts-cache/test
-   # Erwartung: 404 (Not Found) = Endpoint erreichbar
-   # 301 = HTTPS-Redirect (Nginx-Konfig prüfen)
-   # Connection refused = Port/IP falsch
+   # Von einem anderen Gerät im LAN testen (HEAD, wie ein DLNA-Renderer):
+   curl -I http://renfield.local/api/voice/tts-cache/test
+   # Erwartung: 404 (Not Found) = Endpoint erreichbar (HEAD wird bedient)
+   # 405 = HEAD nicht unterstützt (alte Version → Samsung-716)
+   # 301 = HTTPS-Redirect → die backend-tts-cache-http IngressRoute fehlt/greift nicht
+   # Connection refused = Route/Host falsch
    ```
+   Auf dem Renderer-Gerät selbst muss `renfield.local` auflösen (Linn/Samsung: Router-DNS; HiFiBerry: `/etc/hosts`).
 
 3. **Media Player Status prüfen:**
    ```bash

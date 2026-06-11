@@ -160,7 +160,8 @@ HOME_ASSISTANT_TOKEN=DEIN_HA_TOKEN_HIER
 # Zeroconf/mDNS für Satellites
 # -----------------------------------------------------------------------------
 ADVERTISE_HOST=renfield.local
-ADVERTISE_PORT=8000
+ADVERTISE_SCHEME=http   # http|https; http for DLNA-renderer TTS (Samsung can't do self-signed)
+ADVERTISE_PORT=8000     # k8s prod uses 80 for the DLNA-TTS URL (see docs/OUTPUT_ROUTING.md)
 
 # -----------------------------------------------------------------------------
 # Frigate (optional)

@@ -1,0 +1,22 @@
+# Plain-http (no https-redirect) route for the TTS audio cache so DLNA renderers
+# can fetch backend-served TTS over http://renfield.local/api/voice/tts-cache/{id}.wav
+# (ADVERTISE_SCHEME=http). DLNA renderers — notably Samsung TVs — can't use the
+# self-signed https cert, and plain http works on all renderers. This route lives
+# on the `web` entrypoint WITHOUT the renfield-https-redirect middleware, with a
+# high priority so it beats the host-level redirect router for this path only.
+# Everything else on http still redirects to https. See docs/MESSAGE_RELAY.md.
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: backend-tts-cache-http
+  namespace: renfield
+spec:
+  entryPoints:
+    - web
+  routes:
+    - match: "PathPrefix(`/api/voice/tts-cache`)"
+      kind: Rule
+      priority: 100
+      services:
+        - name: backend
+          port: 8000
