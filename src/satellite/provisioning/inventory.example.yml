@@ -34,3 +34,15 @@ all:
         #   ansible_host: 192.168.1.50
         #   ansible_user: pi
         #   hat_type: xvf3800-usb
+
+    # HiFiBerry DLNA renderers — NOT satellites. Provisioned by the separate
+    # provision-hifiberry.yml playbook (installs the renfield CA + /etc/hosts pin
+    # so gstreamer can fetch https TTS audio). Login user is root (HiFiBerryOS,
+    # no sudo) — run with --ask-pass. Re-run after a HiFiBerryOS update.
+    hifiberry:
+      vars:
+        ansible_user: root
+        ansible_python_interpreter: /usr/bin/python3
+      hosts:
+        hifiberry-livingroom:
+          ansible_host: hifiberry-livingroom.local

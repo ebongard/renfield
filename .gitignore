@@ -67,6 +67,9 @@ docs/private/
 *.pem
 *.key
 secrets/
+# Exception: the renfield TLS *public* cert (no private key) is committed so the
+# HiFiBerry provisioning playbook can install it into the renderer trust store.
+!src/satellite/provisioning/files/renfield-ca.pem
 
 # Coverage
 coverage/

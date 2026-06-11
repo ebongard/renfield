@@ -1,0 +1,111 @@
+---
+# Renfield HiFiBerry (DLNA renderer) CA + hostname provisioning
+#
+# WHY this exists
+# ---------------
+# The HiFiBerry runs gmediarender/gstreamer. Unlike curl it CANNOT fetch the
+# backend's https TTS-cache URL (`https://renfield.local/api/voice/tts-cache/...`,
+# set by ADVERTISE_SCHEME=https) out of the box, for two independent reasons:
+#   1. Resolution — nsswitch is `hosts: files resolve [!UNAVAIL=return] dns`, so
+#      systemd-resolved grabs the `.local` name as mDNS and returns NOTFOUND
+#      BEFORE plain DNS is tried. (curl works only because it uses its own
+#      c-ares resolver; gstreamer/getaddrinfo does not.)
+#   2. TLS — gstreamer/gnutls validates strictly and rejects the self-signed
+#      renfield certificate.
+# This playbook installs the renfield CA into the trust store AND pins
+# renfield.local -> the LB IP in /etc/hosts, then restarts the DLNA service so
+# gstreamer reloads its trust database. Without it, relay/announce TTS to the
+# HiFiBerry fails SILENTLY (the renderer reports state=playing, fetches nothing).
+#
+# Linn / openHome renderers need none of this (they resolve via DNS and accept
+# the self-signed cert natively). TVs are untested — see docs/MESSAGE_RELAY.md.
+#
+# IDEMPOTENT + re-runnable. A HiFiBerryOS update wipes these device-level edits,
+# so re-run this playbook after any OS update.
+#
+# Usage:
+#   ansible-playbook -i inventory.yml provision-hifiberry.yml --ask-pass --limit hifiberry-arbeitszimmer
+#   ansible-playbook -i inventory.yml provision-hifiberry.yml --ask-pass --check   # dry-run
+#
+# Tags: ca, hosts
+#
+# NOTE: files/renfield-ca.pem is the cluster's PUBLIC TLS cert (no private key),
+# valid to 2036. If the cluster TLS cert ever rotates, refresh it with:
+#   openssl s_client -connect 192.168.1.230:443 -servername renfield.local </dev/null 2>/dev/null \
+#     | openssl x509 -outform PEM > files/renfield-ca.pem
+#
+# See docs/MESSAGE_RELAY.md ("TTS audio delivery to renderers").
+
+- name: Provision HiFiBerry DLNA renderer for Renfield https TTS
+  hosts: hifiberry
+  become: false # the HiFiBerry login user is root; Buildroot has no sudo
+  gather_facts: false
+
+  vars:
+    renfield_advertise_host: renfield.local
+    renfield_advertise_ip: 192.168.1.230
+    renfield_ca_src: files/renfield-ca.pem
+    renfield_ca_path: /etc/ssl/certs/renfield-ca.pem
+    renfield_ca_bundle: /etc/ssl/certs/ca-certificates.crt
+    dlna_service: dlnampris.service
+
+  handlers:
+    # Graceful restart (systemd stop/start) — NOT a SIGKILL. The HiFiBerry is not
+    # a fragile Pi Zero satellite, but keep it graceful so the SD card syncs.
+    - name: restart dlna renderer
+      ansible.builtin.systemd:
+        name: "{{ dlna_service }}"
+        state: restarted
+
+  tasks:
+    - name: Install the renfield CA certificate
+      tags: [ca]
+      ansible.builtin.copy:
+        src: "{{ renfield_ca_src }}"
+        dest: "{{ renfield_ca_path }}"
+        owner: root
+        group: root
+        mode: "0644"
+      notify: restart dlna renderer
+
+    - name: Compute the CA subject hash (for the OpenSSL hashed-dir symlink)
+      tags: [ca]
+      ansible.builtin.command:
+        cmd: "openssl x509 -hash -noout -in {{ renfield_ca_src }}"
+      delegate_to: localhost
+      register: renfield_ca_hash
+      changed_when: false
+      check_mode: false # read-only; must run even in --check so the symlink task can template
+
+    - name: Link the CA into the OpenSSL hashed cert dir (SSL_CERT_DIR lookups)
+      tags: [ca]
+      ansible.builtin.file:
+        src: renfield-ca.pem # relative symlink within /etc/ssl/certs
+        dest: "/etc/ssl/certs/{{ renfield_ca_hash.stdout }}.0"
+        state: link
+        force: true
+      notify: restart dlna renderer
+
+    # NOTE: a host that was set up MANUALLY before this playbook existed may have
+    # the CA raw-appended (no markers) — blockinfile then adds a second, marked
+    # copy. Harmless (gnutls keys the trust store by fingerprint and ignores the
+    # dup); a post-OS-update / fresh host gets exactly one clean copy.
+    - name: Append the CA to the system bundle (gnutls/gstreamer reads this file)
+      tags: [ca]
+      ansible.builtin.blockinfile:
+        path: "{{ renfield_ca_bundle }}"
+        marker: "# {mark} RENFIELD CA (managed by Ansible)"
+        block: "{{ lookup('ansible.builtin.file', renfield_ca_src) }}"
+        create: false
+      notify: restart dlna renderer
+
+    - name: Pin renfield.local -> LB IP (systemd-resolved hijacks .local via mDNS)
+      tags: [hosts]
+      ansible.builtin.lineinfile:
+        path: /etc/hosts
+        # match the hostname as a token (allow a trailing alias/comment) so a
+        # pre-existing entry is replaced, never duplicated.
+        regexp: '^\d[\d.]*\s+{{ renfield_advertise_host | regex_escape }}(\s|$)'
+        line: "{{ renfield_advertise_ip }} {{ renfield_advertise_host }}"
+        state: present
+      notify: restart dlna renderer
