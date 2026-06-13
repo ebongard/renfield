@@ -141,7 +141,11 @@ async def on_presence_enter_room(**kwargs) -> None:
     """Hook listener for presence_enter_room — triggers handoff when speaker moves rooms."""
     from datetime import date
 
-    from models.database import AsyncSessionLocal
+    # AsyncSessionLocal lives in services.database. The old
+    # `from models.database import AsyncSessionLocal` raised ImportError on EVERY
+    # room change — and it sits OUTSIDE the try below, so it escaped the handler
+    # and surfaced as "Hook on_presence_enter_room failed" in run_hooks.
+    from services.database import AsyncSessionLocal
 
     user_id = kwargs.get("user_id")
     satellite_id = kwargs.get("satellite_id")

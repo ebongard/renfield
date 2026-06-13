@@ -3672,3 +3672,68 @@ class TestAnnounceInRoom:
             })
         assert result["success"] is True
         deps.audio.play_audio.assert_awaited_once()
+
+
+# ============================================================================
+# Media Follow Me — presence-derived session owner (option A)
+# ============================================================================
+
+class TestRegisterMediaFollowPresenceFallback:
+    """When playback has no authenticated chat user (AUTH disabled), the follow
+    session must be attributed to the user presence places in the playback room
+    — the SAME user_id that presence_leave_room later fires with — so leaving
+    actually stops the music."""
+
+    @pytest.mark.unit
+    def test_presence_room_user_single_vs_ambiguous(self, internal_tools, monkeypatch):
+        from types import SimpleNamespace
+        import ha_glue.services.presence_service as ps
+
+        class _PS:
+            def __init__(self, occ): self._occ = occ
+            def get_room_occupants(self, _rid): return self._occ
+
+        monkeypatch.setattr(ps, "get_presence_service", lambda: _PS([SimpleNamespace(user_id=7)]))
+        assert internal_tools._presence_room_user(2) == 7
+        # >1 occupant → ambiguous → None (never attribute the wrong person)
+        monkeypatch.setattr(ps, "get_presence_service",
+                            lambda: _PS([SimpleNamespace(user_id=7), SimpleNamespace(user_id=8)]))
+        assert internal_tools._presence_room_user(2) is None
+        # empty room → None
+        monkeypatch.setattr(ps, "get_presence_service", lambda: _PS([]))
+        assert internal_tools._presence_room_user(2) is None
+
+    def _wire(self, internal_tools, monkeypatch, presence_user, captured):
+        from ha_glue.utils.config import ha_glue_settings
+        import ha_glue.services.media_follow_service as mfs
+        monkeypatch.setattr(ha_glue_settings, "media_follow_enabled", True)
+        monkeypatch.setattr(internal_tools, "_get_room_id", AsyncMock(return_value=2))
+        monkeypatch.setattr(internal_tools, "_presence_room_user", lambda rid: presence_user)
+
+        class _MF:
+            def register_playback(self, **kw): captured.update(kw)
+
+        monkeypatch.setattr(mfs, "get_media_follow_service", lambda: _MF())
+
+    @pytest.mark.unit
+    async def test_falls_back_to_presence_room_user(self, internal_tools, monkeypatch):
+        captured: dict = {}
+        self._wire(internal_tools, monkeypatch, presence_user=7, captured=captured)
+        await internal_tools._register_media_follow({"user_id": None}, "Arbeitszimmer", "radio")
+        assert captured.get("user_id") == 7
+        assert captured.get("room_id") == 2
+        assert captured.get("room_name") == "Arbeitszimmer"
+
+    @pytest.mark.unit
+    async def test_chat_user_id_wins_over_presence(self, internal_tools, monkeypatch):
+        captured: dict = {}
+        self._wire(internal_tools, monkeypatch, presence_user=99, captured=captured)
+        await internal_tools._register_media_follow({"user_id": 5}, "Arbeitszimmer", "radio")
+        assert captured.get("user_id") == 5  # authenticated caller wins
+
+    @pytest.mark.unit
+    async def test_skips_when_no_user_resolvable(self, internal_tools, monkeypatch):
+        captured: dict = {}
+        self._wire(internal_tools, monkeypatch, presence_user=None, captured=captured)
+        await internal_tools._register_media_follow({"user_id": None}, "Arbeitszimmer", "radio")
+        assert captured == {}  # nothing registered (empty/ambiguous room)

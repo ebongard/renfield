@@ -274,3 +274,15 @@ async def test_handoff_auth_disabled_speaker_only(db_session):
     assert target.speaker_id == 5
     assert target.user_id is None
     assert target.context_vars == {"topic": "no-auth"}
+
+
+@pytest.mark.unit
+async def test_on_presence_enter_room_session_import_resolves():
+    """Regression: on_presence_enter_room imported AsyncSessionLocal from
+    models.database (wrong → ImportError on EVERY room change, escaping the
+    handler to run_hooks). The import sits above the satellite_id guard, so a
+    call with no satellite_id still executes it — returning without raising
+    proves it now resolves from services.database."""
+    from services.conversation_handoff import on_presence_enter_room
+    # no satellite_id → early return, but only AFTER the import line has run
+    await on_presence_enter_room(user_id=2, room_name="Arbeitszimmer")

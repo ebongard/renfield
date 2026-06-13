@@ -549,6 +549,26 @@ class InternalToolService:
             logger.error(f"Error announcing in room '{room_name}': {e}")
             return {"success": False, "message": f"Error announcing: {e!s}", "action_taken": False}
 
+    def _presence_room_user(self, room_id: int) -> int | None:
+        """The single user presence currently places in ``room_id``, else None.
+
+        Used to attribute a media session when there is no authenticated chat
+        user (AUTH disabled / single-user mode) — Media Follow Me keys sessions
+        on user_id and presence_leave_room fires with the presence-resolved
+        user_id, so the playback side must agree. Returns None when the room has
+        zero or ambiguous (>1) occupants, so we never attribute (and later stop)
+        the wrong person's music.
+        """
+        try:
+            from ha_glue.services.presence_service import get_presence_service
+
+            occupants = get_presence_service().get_room_occupants(room_id)
+            if len(occupants) == 1:
+                return occupants[0].user_id
+            return None
+        except Exception:
+            return None
+
     async def _register_media_follow(
         self, params: dict, room_name: str, media_type, **kwargs
     ) -> None:
@@ -557,25 +577,32 @@ class InternalToolService:
 
         if not _settings.media_follow_enabled:
             return
-        user_id = params.get("user_id")
-        if not user_id:
-            return
         try:
+            rid = await self._get_room_id(room_name)
+            if rid is None:
+                return
+            # Session owner = the authenticated chat caller when present;
+            # otherwise derive it from presence (whoever is in the playback
+            # room). Without this fallback, AUTH-disabled playback has
+            # user_id=None → no session is registered → leaving never stops the
+            # music, even though presence_leave_room fires with the real user.
+            user_id = params.get("user_id") or self._presence_room_user(rid)
+            if not user_id:
+                return
+
             from ha_glue.services.media_follow_service import MediaType, get_media_follow_service
 
             mf = get_media_follow_service()
             # Convert string to enum if needed
             if isinstance(media_type, str):
                 media_type = MediaType(media_type)
-            rid = await self._get_room_id(room_name)
-            if rid is not None:
-                mf.register_playback(
-                    user_id=int(user_id),
-                    room_id=rid,
-                    room_name=room_name,
-                    media_type=media_type,
-                    **kwargs,
-                )
+            mf.register_playback(
+                user_id=int(user_id),
+                room_id=rid,
+                room_name=room_name,
+                media_type=media_type,
+                **kwargs,
+            )
         except Exception as e:
             logger.debug(f"Media follow registration failed: {e}")
 
