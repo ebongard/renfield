@@ -91,11 +91,16 @@ class UpdateManager:
             # Try to detect install path
             self.install_path = self._detect_install_path()
 
-        # Backup path within installation directory (user has write access)
+        # Backup path — a SIBLING of the install dir, never inside it. A backup
+        # under install_path/.backup gets deleted by the rollback's own
+        # rmtree(install_path), so the restore then finds nothing and the whole
+        # install (venv included) is lost — this bricked a satellite in prod.
         if backup_path:
             self.backup_path = Path(backup_path)
         else:
-            self.backup_path = self.install_path / ".backup"
+            self.backup_path = self.install_path.parent / (
+                self.install_path.name + ".update-backup"
+            )
         self.service_name = service_name
 
         # State
@@ -351,42 +356,41 @@ class UpdateManager:
             raise UpdateError(UpdateStage.VERIFYING, str(e))
 
     def _create_backup(self):
-        """Create backup of current installation"""
-        self._report_progress(UpdateStage.BACKING_UP, 45, "Creating backup...")
+        """Back up only the parts of the install the update will replace.
 
-        def ignore_special_files(directory, files):
-            """Ignore special files that can't be copied (named pipes, sockets, etc.)"""
-            ignored = []
-            for f in files:
-                path = os.path.join(directory, f)
-                # Skip named pipes, sockets, device files
-                if os.path.exists(path):
-                    mode = os.stat(path).st_mode
-                    import stat
-                    if stat.S_ISFIFO(mode) or stat.S_ISSOCK(mode) or stat.S_ISBLK(mode) or stat.S_ISCHR(mode):
-                        ignored.append(f)
-                # Also skip common cache/temp directories
-                if f in ['__pycache__', '.pytest_cache', '.git', 'venv', '.backup']:
-                    ignored.append(f)
-            return ignored
+        _install_package swaps out exactly `renfield_satellite/` and
+        `requirements.txt` — nothing else. So the backup covers only those, NOT
+        the venv / config / models, which the update never touches and which MUST
+        survive a rollback. (The old code backed up the whole install_path but
+        excluded the venv, then the rollback rmtree'd the whole install_path —
+        deleting the venv it had no backup of. Net: a failed update bricked the
+        device.) The backup lives outside install_path (see __init__).
+        """
+        self._report_progress(UpdateStage.BACKING_UP, 45, "Creating backup...")
 
         try:
             # Remove old backup if exists
             if self.backup_path.exists():
                 shutil.rmtree(self.backup_path)
 
-            # Copy current installation to backup (ignoring special files)
-            if self.install_path.exists():
-                shutil.copytree(
-                    self.install_path,
-                    self.backup_path,
-                    ignore=ignore_special_files
-                )
-                self._backup_created = True
-                self._report_progress(UpdateStage.BACKING_UP, 55, "Backup created")
-            else:
+            code_dir = self.install_path / "renfield_satellite"
+            if not code_dir.exists():
                 # No existing installation to back up
                 self._report_progress(UpdateStage.BACKING_UP, 55, "No existing installation, skipping backup")
+                return
+
+            self.backup_path.mkdir(parents=True, exist_ok=True)
+            shutil.copytree(
+                code_dir,
+                self.backup_path / "renfield_satellite",
+                ignore=shutil.ignore_patterns("__pycache__", "*.pyc", ".pytest_cache"),
+            )
+            req = self.install_path / "requirements.txt"
+            if req.exists():
+                shutil.copy(req, self.backup_path / "requirements.txt")
+
+            self._backup_created = True
+            self._report_progress(UpdateStage.BACKING_UP, 55, "Backup created")
 
         except Exception as e:
             raise UpdateError(UpdateStage.BACKING_UP, str(e))
@@ -566,20 +570,29 @@ class UpdateManager:
             # Process might be killed by the restart, so don't raise
 
     def _rollback(self):
-        """Rollback to backup"""
+        """Restore the code + requirements from the external backup.
+
+        Only the items the update replaced are restored; the venv, config and
+        models are left untouched. NEVER rmtree install_path — doing that (with
+        an in-tree backup) is exactly what destroyed the install before.
+        """
         self._report_progress(UpdateStage.ROLLING_BACK, 0, "Rolling back...")
 
         try:
-            if not self.backup_path.exists():
+            backup_code = self.backup_path / "renfield_satellite"
+            if not backup_code.exists():
                 print("[Update] No backup to restore")
                 return
 
-            # Remove failed installation
-            if self.install_path.exists():
-                shutil.rmtree(self.install_path)
+            # Swap the failed code dir back for the backed-up one.
+            target_code = self.install_path / "renfield_satellite"
+            if target_code.exists():
+                shutil.rmtree(target_code)
+            shutil.copytree(backup_code, target_code)
 
-            # Restore from backup
-            shutil.copytree(self.backup_path, self.install_path)
+            backup_req = self.backup_path / "requirements.txt"
+            if backup_req.exists():
+                shutil.copy(backup_req, self.install_path / "requirements.txt")
 
             print("[Update] Rollback complete")
 

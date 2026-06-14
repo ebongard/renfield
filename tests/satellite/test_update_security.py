@@ -285,3 +285,74 @@ class TestSafePackagesWhitelist:
             assert pkg not in UpdateManager.SAFE_PACKAGES, (
                 f"'{pkg}' should not be in SAFE_PACKAGES"
             )
+
+
+# ============================================================================
+# Backup / Rollback Safety Tests (_create_backup, _rollback)
+# ============================================================================
+
+
+class TestBackupRollback:
+    """A failed update must roll back the CODE without nuking venv/config.
+
+    Regression guard for the prod incident: the backup lived at
+    install_path/.backup and the rollback rmtree'd the whole install_path —
+    deleting the venv (never backed up) and the backup itself, leaving an empty
+    install dir. The satellite only survived because its old process was still in
+    memory; a reboot would have bricked it.
+    """
+
+    def _make_install(self, tmp_path, version="1.0.0"):
+        install = tmp_path / "renfield-satellite"
+        (install / "renfield_satellite").mkdir(parents=True)
+        (install / "renfield_satellite" / "__init__.py").write_text(
+            f'__version__ = "{version}"\n'
+        )
+        (install / "requirements.txt").write_text("websockets>=12.0\n")
+        # The pieces the update must NOT touch:
+        (install / "venv" / "bin").mkdir(parents=True)
+        (install / "venv" / "bin" / "python").write_text("#!/bin/sh\n")
+        (install / "config").mkdir()
+        (install / "config" / "satellite.yaml").write_text("id: sat-test\n")
+        return install
+
+    @pytest.mark.satellite
+    def test_backup_lives_outside_install_path(self, tmp_path):
+        """The backup must NOT be created inside install_path."""
+        install = self._make_install(tmp_path)
+        mgr = UpdateManager(install_path=str(install))
+        assert install not in mgr.backup_path.parents, (
+            f"backup {mgr.backup_path} is inside install {install}"
+        )
+        mgr._create_backup()
+        assert (mgr.backup_path / "renfield_satellite" / "__init__.py").exists()
+        # venv must NOT be in the backup (we don't copy it) ...
+        assert not (mgr.backup_path / "venv").exists()
+
+    @pytest.mark.satellite
+    def test_rollback_restores_code_and_preserves_venv_config(self, tmp_path):
+        """Rollback restores old code AND leaves venv + config intact."""
+        install = self._make_install(tmp_path, version="1.0.0")
+        mgr = UpdateManager(install_path=str(install))
+        mgr._create_backup()
+
+        # Simulate a half-applied update: new code copied, venv/config still there.
+        (install / "renfield_satellite" / "__init__.py").write_text('__version__ = "2.0.0"\n')
+
+        mgr._rollback()
+
+        # Code reverted ...
+        assert '1.0.0' in (install / "renfield_satellite" / "__init__.py").read_text()
+        # ... and the things the update never touched survived.
+        assert (install / "venv" / "bin" / "python").exists()
+        assert (install / "config" / "satellite.yaml").exists()
+
+    @pytest.mark.satellite
+    def test_rollback_without_backup_is_noop(self, tmp_path):
+        """No backup → rollback leaves the install untouched (no rmtree)."""
+        install = self._make_install(tmp_path)
+        mgr = UpdateManager(install_path=str(install))
+        # No _create_backup() called.
+        mgr._rollback()
+        assert (install / "venv" / "bin" / "python").exists()
+        assert (install / "renfield_satellite" / "__init__.py").exists()

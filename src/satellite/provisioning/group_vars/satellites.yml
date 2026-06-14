@@ -72,6 +72,10 @@ satellite_system_packages:
 
 # Python packages (installed in venv)
 satellite_python_packages:
+  # setuptools<81 ships pkg_resources, which webrtcvad imports. Python 3.13
+  # venvs don't bundle setuptools and the latest (>=81) dropped pkg_resources,
+  # so without this a fresh venv crashes on `import webrtcvad`.
+  - "setuptools<81"
   - onnxruntime
   - pyaudio
   - numpy
