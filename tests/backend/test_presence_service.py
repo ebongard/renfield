@@ -112,6 +112,39 @@ class TestProcessBleReport:
         assert p.room_name == "Living Room"
 
     @pytest.mark.asyncio
+    async def test_single_stray_sighting_does_not_flip_committed_room(self, service_with_devices):
+        """A user solidly in one room must NOT switch on ONE stray sighting from
+        another satellite — even a stronger one. Regression for the flip-flop
+        (live 2026-06-14): the old hysteresis counter incremented on EVERY scan,
+        so once a user had been present a couple of scans it was always past the
+        threshold and the first stray detection flipped the room instantly (the
+        music jumped to a room the user was never in). The switch must require N
+        CONSECUTIVE scans of the same candidate; a stray resets when the current
+        room wins again."""
+        svc = service_with_devices
+        # Commit user 1 to room 10 over several scans.
+        for _ in range(4):
+            await svc.process_ble_report(
+                "sat-arb", 10, [{"mac": "AA:BB:CC:DD:EE:01", "rssi": -50}], "Arbeitszimmer"
+            )
+        assert svc.get_user_presence(1).room_id == 10
+
+        # ONE stronger stray sighting from room 20 — the OLD code flipped here.
+        await svc.process_ble_report(
+            "sat-wohn", 20, [{"mac": "AA:BB:CC:DD:EE:01", "rssi": -40}], "Wohnzimmer"
+        )
+        p = svc.get_user_presence(1)
+        assert p.room_id == 10, "single stray sighting must not flip the room"
+        assert p.pending_room_id == 20
+        assert p.pending_room_count == 1
+
+        # A SECOND consecutive room-20 sighting is a genuine move → switch.
+        await svc.process_ble_report(
+            "sat-wohn", 20, [{"mac": "AA:BB:CC:DD:EE:01", "rssi": -40}], "Wohnzimmer"
+        )
+        assert svc.get_user_presence(1).room_id == 20
+
+    @pytest.mark.asyncio
     async def test_multiple_devices_same_user(self, service_with_devices):
         """Any device from same user updates presence."""
         await service_with_devices.process_ble_report(

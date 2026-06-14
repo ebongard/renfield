@@ -35,7 +35,13 @@ class UserPresence:
     satellite_id: str | None = None
     confidence: float = 0.0
     last_seen: float = 0.0
-    consecutive_room_count: int = 0  # for hysteresis
+    consecutive_room_count: int = 0  # scans the user has held the CURRENT room
+    # Hysteresis candidate: the room currently challenging current.room_id and how
+    # many CONSECUTIVE scans it has won. A switch only happens when this reaches
+    # the threshold; it resets whenever the current room wins again — so a single
+    # stray sighting from an adjacent satellite can't flip the room.
+    pending_room_id: int | None = None
+    pending_room_count: int = 0
 
 
 class PresenceService:
@@ -254,13 +260,26 @@ class PresenceService:
         current.confidence = confidence
 
         if best_room_id == current.room_id:
-            # Same room — reinforce
+            # Same room — reinforce, and abandon any pending switch. This is the
+            # crux of the flip-flop fix: while the current room keeps winning, a
+            # stray candidate must NOT keep accumulating toward a switch.
             current.consecutive_room_count += 1
+            current.pending_room_id = None
+            current.pending_room_count = 0
             current.satellite_id = best_satellite_id
         else:
-            # Different room — apply hysteresis
-            current.consecutive_room_count += 1
-            if current.room_id is None or current.consecutive_room_count >= self._hysteresis_threshold:
+            # A different room is winning. Require N CONSECUTIVE scans of the SAME
+            # candidate before switching, so one stray detection from an adjacent
+            # satellite (common: the RSSI read is throttled, so most sightings
+            # report a flat synthetic value and adjacent rooms tie) can't flip the
+            # room. A different candidate resets the count.
+            if current.pending_room_id == best_room_id:
+                current.pending_room_count += 1
+            else:
+                current.pending_room_id = best_room_id
+                current.pending_room_count = 1
+
+            if current.room_id is None or current.pending_room_count >= self._hysteresis_threshold:
                 old_room_id = current.room_id
                 old_room_name = current.room_name
 
@@ -271,6 +290,8 @@ class PresenceService:
                 current.room_name = self._room_names.get(best_room_id) if best_room_id else None
                 current.satellite_id = best_satellite_id
                 current.consecutive_room_count = 1
+                current.pending_room_id = None
+                current.pending_room_count = 0
                 new_room = current.room_name or current.room_id
                 logger.debug(f"Presence: user {user_id} moved {old_room_name or old_room_id} → {new_room}")
 
