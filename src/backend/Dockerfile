@@ -180,6 +180,22 @@ COPY . .
 # the backend sources (synced from the repo's data/wakeword-models/ at build time).
 COPY wakeword-models /app/wakeword-models
 
+# Satellite source — bundled so the OTA update service can build update packages
+# (SatelliteUpdateService.build_update_package reads /app/satellite, and
+# get_latest_version reads its __version__). Without this the
+# /api/satellites/update-package endpoint 503s and the UI can't push updates.
+# Synced into the backend build context from the repo's src/satellite/ at build
+# time (the build context is src/backend/, like wakeword-models above).
+COPY satellite /app/satellite
+
+# Fail the build LOUDLY if the bundled source is missing or truncated (a partial
+# rsync would otherwise let COPY succeed, then silently degrade: get_latest_version
+# falls back to config and build_update_package would tar a corrupt tree). Assert
+# the package entrypoint exists and carries a parseable __version__.
+RUN test -f /app/satellite/renfield_satellite/__init__.py \
+    && grep -Eq '^__version__\s*=\s*["'"'"'][0-9]+(\.[0-9]+)*["'"'"']' /app/satellite/renfield_satellite/__init__.py \
+    || (echo "ERROR: /app/satellite missing or has no parseable __version__ — was src/satellite/ rsynced into the build context?" && exit 1)
+
 # Create non-root user for security
 RUN useradd --create-home --shell /bin/bash appuser \
     && chown -R appuser:appuser /app

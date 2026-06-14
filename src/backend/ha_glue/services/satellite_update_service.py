@@ -6,11 +6,20 @@ Manages update initiation and tracks update progress.
 """
 
 import hashlib
+import re
 import tarfile
 import tempfile
 import time
 from pathlib import Path
 from typing import Any
+
+# Match `__version__ = "1.4.0"` (single or double quotes), tolerating an inline
+# comment / trailing whitespace. Anchored at line start so __version_info__ or a
+# commented-out line can't match.
+_VERSION_RE = re.compile(r'^__version__\s*=\s*["\']([^"\']+)["\']')
+# A valid version is dotted digits — reject anything else so a malformed source
+# can't poison version comparison (int() parse) or the tarball filename.
+_VERSION_VALUE_RE = re.compile(r"^\d+(\.\d+)*$")
 
 from loguru import logger
 
@@ -41,8 +50,41 @@ class SatelliteUpdateService:
         logger.info("📦 SatelliteUpdateService initialized")
 
     def get_latest_version(self) -> str:
-        """Get the latest available satellite version from config"""
-        return ha_glue_settings.satellite_latest_version
+        """Latest available satellite version.
+
+        Read from the bundled satellite source (``__version__`` in
+        ``renfield_satellite/__init__.py``) so the advertised version is ALWAYS
+        exactly the package the OTA endpoint would actually serve. This kills the
+        drift class of bug where the source shipped a new version but the
+        ``satellite_latest_version`` env was never bumped (the UI then offered a
+        stale version, or — once it pointed below the deployed code — offered
+        nothing). Falls back to the configured value when the source isn't
+        bundled (local dev / a stripped image).
+        """
+        return self._read_source_version() or ha_glue_settings.satellite_latest_version
+
+    def _read_source_version(self) -> str | None:
+        """Parse ``__version__`` from the bundled satellite source, or None.
+
+        A plain line scan rather than an import — the satellite package pulls in
+        hardware deps (pyaudio, gpiozero, …) the backend image doesn't have.
+        """
+        init_file = self.satellite_source_path / "renfield_satellite" / "__init__.py"
+        try:
+            for line in init_file.read_text().splitlines():
+                m = _VERSION_RE.match(line)
+                if m:
+                    value = m.group(1).strip()
+                    # Reject a malformed value rather than let it disable OTA
+                    # (non-numeric breaks is_update_available's int() compare) or
+                    # flow unsanitized into the package filename.
+                    return value if _VERSION_VALUE_RE.match(value) else None
+        except (OSError, ValueError):
+            # OSError: missing/unreadable. ValueError (incl. UnicodeDecodeError):
+            # a corrupt/non-UTF8 file. Either way fall back to the config value
+            # rather than crash version resolution.
+            return None
+        return None
 
     def is_update_available(self, current_version: str) -> bool:
         """

@@ -70,6 +70,18 @@ rsync -avz --delete \
 # Rsync wakeword models INTO the backend build context (Dockerfile COPYs ./wakeword-models)
 rsync -avz \
   data/wakeword-models/ evdb@192.168.1.159:/tmp/renfield-build-vX.Y.Z/src/backend/wakeword-models/
+
+# Rsync the satellite source INTO the backend build context (Dockerfile COPYs ./satellite).
+# Bundled so the OTA update service can build /api/satellites/update-package AND so
+# get_latest_version reads __version__ from it (the advertised version can't drift from
+# the shipped package). Without this the OTA UI 503s — see references/satellite-deploy.md.
+# Exclude provisioning/ (gitignored ansible inventory with real household IPs — must not
+# be baked into the image) and tests/ — only renfield_satellite/ + requirements.txt +
+# setup.py are packaged by build_update_package anyway.
+rsync -avz --delete \
+  --exclude='__pycache__' --exclude='*.pyc' --exclude='.pytest_cache' \
+  --exclude='provisioning' --exclude='tests' \
+  src/satellite/ evdb@192.168.1.159:/tmp/renfield-build-vX.Y.Z/src/backend/satellite/
 ```
 
 ### Step 2 — On .159, build + push
@@ -361,8 +373,8 @@ curl -sI http://renfield.local/          # 308 → https
 
 1. ✅ Merge release commits into `main` (PR review done).
 2. ✅ Tag `vX.Y.Z` locally + push tag + create GitHub release.
-3. ✅ rsync `src/backend`, `src/frontend`, `data/wakeword-models` to `/tmp/renfield-build-vX.Y.Z` on .159 (the model dir lands INSIDE the backend build context as `wakeword-models/`).
-4. ✅ Verify staging — `Dockerfile`, `.dockerignore`, `wakeword-models/` (~9 files) all present; `config/mcp_servers.yaml` etc. NOT present (else the configmap mount breaks).
+3. ✅ rsync `src/backend`, `src/frontend`, `data/wakeword-models`, `src/satellite` to `/tmp/renfield-build-vX.Y.Z` on .159 (the model dir lands INSIDE the backend build context as `wakeword-models/`; the satellite source as `satellite/` — bundled for the OTA update package).
+4. ✅ Verify staging — `Dockerfile`, `.dockerignore`, `wakeword-models/` (~9 files), `satellite/renfield_satellite/__init__.py` all present; `config/mcp_servers.yaml` etc. NOT present (else the configmap mount breaks).
 5. ✅ Build backend (long if requirements.txt changed) and frontend (fast); build voice-server ONLY if `voice-server/` changed (its own `v0.1.x` tag).
 6. ✅ Push `:latest` + the pinned tag for each image built — verify each `digest:` line in the push output.
 7. ✅ Roll out: `rollout restart` backend, dlna-mcp, document-worker; `kubectl set image` for frontend (and voice-server if rebuilt) — both run pinned tags, so `rollout restart` is a no-op for them.

@@ -142,8 +142,15 @@ class TestSatelliteUpdateAPIFlow:
         )
 
         try:
-            # Step 1: Check versions - should show update available
-            with patch('ha_glue.services.satellite_update_service.ha_glue_settings') as mock_settings:
+            # Step 1: Check versions - should show update available.
+            # Force the bundled-source read off so the configured value drives
+            # the assertion (the deployed image bundles a real source whose
+            # __version__ would otherwise win — that path is covered separately).
+            with patch('ha_glue.services.satellite_update_service.ha_glue_settings') as mock_settings, \
+                 patch(
+                     'ha_glue.services.satellite_update_service.SatelliteUpdateService._read_source_version',
+                     return_value=None,
+                 ):
                 mock_settings.satellite_latest_version = "2.0.0"
 
                 response = await async_client.get("/api/satellites/versions")
@@ -304,7 +311,11 @@ class TestVersionComparisonIntegration:
 
         try:
             with patch('ha_glue.api.routes.satellites.ha_glue_settings') as mock_route_settings, \
-                 patch('ha_glue.services.satellite_update_service.ha_glue_settings') as mock_svc_settings:
+                 patch('ha_glue.services.satellite_update_service.ha_glue_settings') as mock_svc_settings, \
+                 patch(
+                     'ha_glue.services.satellite_update_service.SatelliteUpdateService._read_source_version',
+                     return_value=None,
+                 ):
                 mock_route_settings.satellite_latest_version = "2.0.0"
                 mock_svc_settings.satellite_latest_version = "2.0.0"
 
@@ -392,6 +403,47 @@ class TestUpdatePackageIntegration:
 
             response = await async_client.get("/api/satellites/update-package")
             assert response.status_code == 503
+
+    @pytest.mark.unit
+    def test_build_package_from_real_source(self, tmp_path):
+        """With a bundled source on disk, build a real tarball and read its version.
+
+        Regression guard for the OTA outage: the backend image shipped WITHOUT
+        the satellite source, so build_update_package returned None and
+        /update-package 503'd. This proves a present source yields a package
+        whose version matches the source __version__ (not a config value).
+        """
+        import tarfile
+
+        from ha_glue.services.satellite_update_service import SatelliteUpdateService
+
+        # Minimal but realistic bundled layout.
+        pkg = tmp_path / "renfield_satellite"
+        (pkg / "ble").mkdir(parents=True)
+        (pkg / "__init__.py").write_text('__version__ = "3.2.1"\n')
+        (pkg / "ble" / "classic_scanner.py").write_text("# scanner\n")
+        (tmp_path / "requirements.txt").write_text("loguru\n")
+
+        with patch('ha_glue.services.satellite_update_service.ha_glue_settings') as mock_settings:
+            mock_settings.satellite_latest_version = "0.0.1"  # stale config — must be ignored
+            mock_settings.satellite_package_cache_ttl = 300
+            service = SatelliteUpdateService()
+            service.satellite_source_path = tmp_path
+
+            # Version comes from the bundled source, not config.
+            assert service.get_latest_version() == "3.2.1"
+
+            # A real tarball is produced and contains the satellite package.
+            package_path = service.build_update_package()
+            assert package_path is not None and package_path.exists()
+            with tarfile.open(package_path, "r:gz") as tar:
+                names = tar.getnames()
+            assert "renfield_satellite/__init__.py" in names
+            assert "renfield_satellite/ble/classic_scanner.py" in names
+
+            info = service.get_package_info()
+            assert info["version"] == "3.2.1"
+            assert info["checksum"].startswith("sha256:")
 
 
 # =============================================================================

@@ -124,7 +124,12 @@ class HaGlueSettings(BaseSettings):
     jellyfin_user_id: str | None = None
 
     # === Satellite OTA Updates ===
-    satellite_latest_version: str = "1.0.0"  # Latest available satellite version
+    # FALLBACK only. The authoritative latest version is read at runtime from the
+    # bundled satellite source (__version__ in renfield_satellite/__init__.py) by
+    # SatelliteUpdateService.get_latest_version — so the advertised version can't
+    # drift from the package actually served. This value (or the
+    # SATELLITE_LATEST_VERSION env) is used only when the source isn't bundled.
+    satellite_latest_version: str = "1.4.0"  # Fallback latest satellite version
     satellite_package_cache_ttl: int = Field(default=300, ge=10, le=86400)
 
     # === Rooms ===

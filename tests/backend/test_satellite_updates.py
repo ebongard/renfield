@@ -8,10 +8,16 @@ Tests cover:
 - WebSocket message handling for updates
 """
 
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from httpx import AsyncClient
+
+# A source path guaranteed not to exist, so get_latest_version() falls back to
+# the configured value (these tests assert the config-fallback behavior, not the
+# bundled-source read which is covered separately below).
+_NO_SOURCE = Path("/nonexistent/satellite-source")
 
 # =============================================================================
 # SatelliteManager Version Tracking Tests
@@ -179,14 +185,91 @@ class TestSatelliteUpdateService:
     """Tests for SatelliteUpdateService"""
 
     @pytest.mark.unit
-    def test_get_latest_version(self):
-        """get_latest_version should return config value"""
+    def test_get_latest_version_falls_back_to_config(self):
+        """get_latest_version falls back to the config value when no source is bundled"""
         from ha_glue.services.satellite_update_service import SatelliteUpdateService
 
         with patch('ha_glue.services.satellite_update_service.ha_glue_settings') as mock_settings:
             mock_settings.satellite_latest_version = "2.0.0"
             service = SatelliteUpdateService()
+            service.satellite_source_path = _NO_SOURCE
             assert service.get_latest_version() == "2.0.0"
+
+    @pytest.mark.unit
+    def test_get_latest_version_reads_bundled_source(self, tmp_path):
+        """get_latest_version reads __version__ from the bundled source, ignoring config drift"""
+        from ha_glue.services.satellite_update_service import SatelliteUpdateService
+
+        # Lay out a fake bundled source: <root>/renfield_satellite/__init__.py
+        pkg = tmp_path / "renfield_satellite"
+        pkg.mkdir()
+        (pkg / "__init__.py").write_text('"""doc"""\n__version__ = "9.9.9"\n')
+
+        with patch('ha_glue.services.satellite_update_service.ha_glue_settings') as mock_settings:
+            # Config says something stale — the source must win.
+            mock_settings.satellite_latest_version = "1.0.0"
+            service = SatelliteUpdateService()
+            service.satellite_source_path = tmp_path
+            assert service.get_latest_version() == "9.9.9"
+
+    @pytest.mark.unit
+    def test_read_source_version_handles_missing_marker(self, tmp_path):
+        """_read_source_version returns None when __version__ is absent"""
+        from ha_glue.services.satellite_update_service import SatelliteUpdateService
+
+        pkg = tmp_path / "renfield_satellite"
+        pkg.mkdir()
+        (pkg / "__init__.py").write_text("# no version here\n")
+
+        service = SatelliteUpdateService()
+        service.satellite_source_path = tmp_path
+        assert service._read_source_version() is None
+
+    @pytest.mark.unit
+    def test_read_source_version_tolerates_inline_comment(self, tmp_path):
+        """An inline comment / extra whitespace must not corrupt the parsed version.
+
+        Regression guard: the old end-strip parser turned `__version__ = "1.4.0"  # x`
+        into `1.4.0"  # x`, which silently disabled OTA (non-numeric -> int() fails ->
+        is_update_available False for every satellite).
+        """
+        from ha_glue.services.satellite_update_service import SatelliteUpdateService
+
+        pkg = tmp_path / "renfield_satellite"
+        pkg.mkdir()
+        (pkg / "__init__.py").write_text('__version__ = "1.4.0"   # noqa: E501\n')
+
+        service = SatelliteUpdateService()
+        service.satellite_source_path = tmp_path
+        assert service._read_source_version() == "1.4.0"
+
+    @pytest.mark.unit
+    def test_read_source_version_rejects_non_numeric(self, tmp_path):
+        """A non-dotted-digit version is rejected (None) rather than poisoning compare."""
+        from ha_glue.services.satellite_update_service import SatelliteUpdateService
+
+        pkg = tmp_path / "renfield_satellite"
+        pkg.mkdir()
+        (pkg / "__init__.py").write_text('__version__ = "1.4.0-dev/oops"\n')
+
+        service = SatelliteUpdateService()
+        service.satellite_source_path = tmp_path
+        assert service._read_source_version() is None
+
+    @pytest.mark.unit
+    def test_read_source_version_ignores_version_info_sibling(self, tmp_path):
+        """__version_info__ must not be mistaken for __version__."""
+        from ha_glue.services.satellite_update_service import SatelliteUpdateService
+
+        pkg = tmp_path / "renfield_satellite"
+        pkg.mkdir()
+        (pkg / "__init__.py").write_text(
+            '__version_info__ = (1, 4, 0)\n__version__ = "1.4.0"\n'
+        )
+
+        service = SatelliteUpdateService()
+        service.satellite_source_path = tmp_path
+        assert service._read_source_version() == "1.4.0"
 
     @pytest.mark.unit
     def test_is_update_available_newer(self):
@@ -196,6 +279,7 @@ class TestSatelliteUpdateService:
         with patch('ha_glue.services.satellite_update_service.ha_glue_settings') as mock_settings:
             mock_settings.satellite_latest_version = "2.0.0"
             service = SatelliteUpdateService()
+            service.satellite_source_path = _NO_SOURCE
 
             assert service.is_update_available("1.0.0") is True
             assert service.is_update_available("1.9.9") is True
@@ -208,6 +292,7 @@ class TestSatelliteUpdateService:
         with patch('ha_glue.services.satellite_update_service.ha_glue_settings') as mock_settings:
             mock_settings.satellite_latest_version = "1.0.0"
             service = SatelliteUpdateService()
+            service.satellite_source_path = _NO_SOURCE
 
             assert service.is_update_available("1.0.0") is False
 
@@ -219,6 +304,7 @@ class TestSatelliteUpdateService:
         with patch('ha_glue.services.satellite_update_service.ha_glue_settings') as mock_settings:
             mock_settings.satellite_latest_version = "1.0.0"
             service = SatelliteUpdateService()
+            service.satellite_source_path = _NO_SOURCE
 
             assert service.is_update_available("2.0.0") is False
 
@@ -230,6 +316,7 @@ class TestSatelliteUpdateService:
         with patch('ha_glue.services.satellite_update_service.ha_glue_settings') as mock_settings:
             mock_settings.satellite_latest_version = "1.0.0"
             service = SatelliteUpdateService()
+            service.satellite_source_path = _NO_SOURCE
 
             assert service.is_update_available("unknown") is False
 

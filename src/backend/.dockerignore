@@ -28,3 +28,11 @@ htmlcov
 # Virtualenvs shouldn't leak into the image.
 .venv
 venv
+
+# The satellite source is synced into the build context as satellite/ and COPY'd
+# into the image for the OTA update package (build_update_package only needs
+# renfield_satellite/ + requirements.txt + setup.py). Keep the gitignored ansible
+# inventory (real household IPs/hostnames) and the satellite test suite OUT of the
+# image regardless of what the rsync left in the context.
+satellite/provisioning
+satellite/tests
