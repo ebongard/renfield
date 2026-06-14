@@ -19,6 +19,7 @@ On any failure after backup creation, the backup is restored automatically.
 import asyncio
 import hashlib
 import os
+import re
 import shutil
 import subprocess
 import tarfile
@@ -469,30 +470,65 @@ class UpdateManager:
         except Exception as e:
             raise UpdateError(UpdateStage.INSTALLING, str(e))
 
-    # Known-safe packages that may appear in satellite requirements
+    # Known-safe packages that may appear in satellite requirements.
+    # MUST stay in sync with src/satellite/requirements.txt — a missing entry
+    # makes the OTA installer reject the satellite's OWN dependency and roll the
+    # whole update back (the bug that blocked every OTA: soundcard / pymicro- /
+    # pyopen-wakeword / bleak were missing and RPi.GPIO failed name matching).
+    # Stored as written; compared after PEP 503 canonicalization, so RPi.GPIO,
+    # rpi-gpio and rpi_gpio all match. The regression test parses the real
+    # requirements.txt against this set.
     SAFE_PACKAGES = frozenset({
         "websockets", "aiohttp", "numpy", "onnxruntime",
-        "openwakeword", "webrtcvad", "noisereduce", "spidev",
+        "openwakeword", "pymicro-wakeword", "pyopen-wakeword",
+        "webrtcvad", "noisereduce", "spidev", "soundcard", "bleak",
         "lgpio", "python-mpv", "psutil", "pyyaml", "zeroconf",
-        "sounddevice", "pyaudio", "scipy", "librosa", "rpigpio",
+        "sounddevice", "pyaudio", "scipy", "librosa", "RPi.GPIO",
     })
+
+    @staticmethod
+    def _canonical_pkg(name: str) -> str:
+        """PEP 503 canonical project name: lowercase, collapse runs of -_. to -.
+
+        This is the rule pip/PyPI use to resolve a project, so the validator's
+        equivalence classes line up with what `pip install` actually fetches.
+        Deleting the separators instead (the earlier approach) would let
+        `s.o.u.n.d.c.a.r.d` collapse onto `soundcard` while pip resolves it to a
+        DISTINCT PyPI project an attacker could register — an OTA RCE bypass.
+        """
+        return re.sub(r"[-_.]+", "-", name.split("[")[0].strip().lower())
 
     def _install_requirements(self, req_file: Path):
         """Install requirements with package whitelist validation"""
+        safe = {self._canonical_pkg(p) for p in self.SAFE_PACKAGES}
         # Parse and validate packages
         packages = []
         with open(req_file, "r") as f:
-            for line in f:
-                line = line.strip()
-                if not line or line.startswith("#") or line.startswith("-"):
+            for raw in f:
+                # Strip inline comments (PEP 508 `pkg>=1  # note`) and trim.
+                line = raw.split("#", 1)[0].strip()
+                if not line:
                     continue
-                # Extract package name (before any version specifier)
-                pkg_name = line.split("==")[0].split(">=")[0].split("<=")[0].split("~=")[0].split("!=")[0].split("[")[0].strip().lower().replace("-", "").replace("_", "")
-                packages.append((pkg_name, line))
+                # Reject pip option / flag / file-redirection lines OUTRIGHT.
+                # `pip install -r <file>` honours options inside the file, so a
+                # silently-skipped `--index-url https://evil/…` would repoint the
+                # whole install at an attacker index — bypassing the name
+                # allowlist entirely. Fail closed.
+                if line.startswith("-"):
+                    raise UpdateError(
+                        UpdateStage.INSTALLING,
+                        f"Disallowed pip option in requirements: {line!r}",
+                    )
+                # Extract package name (before any version specifier / marker).
+                # `@`/whitespace are intentionally NOT split on, so a direct URL
+                # reference (`pkg @ https://evil/x.whl`) keeps the URL in the
+                # token and fails the allowlist instead of resolving to `pkg`.
+                pkg_name = line
+                for sep in ("==", ">=", "<=", "~=", "!=", ">", "<", ";"):
+                    pkg_name = pkg_name.split(sep)[0]
+                packages.append((self._canonical_pkg(pkg_name), line))
 
-        rejected = [(name, spec) for name, spec in packages
-                     if name.replace("-", "").replace("_", "") not in
-                     {p.replace("-", "").replace("_", "") for p in self.SAFE_PACKAGES}]
+        rejected = [(name, spec) for name, spec in packages if name not in safe]
         if rejected:
             rejected_names = [spec for _, spec in rejected]
             print(f"[Update] Rejected unknown packages: {rejected_names}")

