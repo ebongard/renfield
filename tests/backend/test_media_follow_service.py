@@ -199,13 +199,47 @@ class TestOnUserEnterRoom:
         mock_resume.assert_called_once_with(session, 20, "Wohnzimmer")
 
     @pytest.mark.asyncio
-    async def test_enter_no_suspended_session_no_action(self, playing_session):
-        """Playing session (not suspended) should not trigger resume."""
+    async def test_enter_different_room_while_playing_follows(self, playing_session):
+        """Playing in room A, enter room B with NO prior leave (the presence
+        stale-timeout ordering: the 'left A' event lags up to 120s behind the
+        real move, so the enter arrives while the session is still PLAYING).
+        Must treat it as a move — stop A and resume in B. Regression for the
+        2026-06-14 live-test bug where the lagging leave left the music stuck
+        SUSPENDED and it never followed."""
+        session = playing_session.get_session(1)  # PLAYING in room 10
+        mock_stop = AsyncMock()
         mock_resume = AsyncMock()
-        with patch.object(playing_session, "_resume_playback", mock_resume):
+        with patch.object(playing_session, "_stop_playback", mock_stop), \
+             patch.object(playing_session, "_resume_playback", mock_resume), \
+             patch("ha_glue.services.media_follow_service.ha_glue_settings") as s:
+            s.media_follow_resume_delay = 0
+            s.media_follow_suspend_timeout = 600.0
             await playing_session.on_user_enter_room(
                 user_id=1, room_id=20, room_name="Wohnzimmer"
             )
+        mock_stop.assert_called_once()  # old room stopped
+        mock_resume.assert_called_once_with(session, 20, "Wohnzimmer")
+
+    @pytest.mark.asyncio
+    async def test_enter_same_room_while_playing_no_action(self, playing_session):
+        """Entering the SAME room the session is already playing in is a no-op."""
+        mock_stop = AsyncMock()
+        mock_resume = AsyncMock()
+        with patch.object(playing_session, "_stop_playback", mock_stop), \
+             patch.object(playing_session, "_resume_playback", mock_resume):
+            await playing_session.on_user_enter_room(
+                user_id=1, room_id=10, room_name="Arbeitszimmer"
+            )
+        mock_stop.assert_not_called()
+        mock_resume.assert_not_called()
+        assert playing_session.get_session(1).state == SessionState.PLAYING
+
+    @pytest.mark.asyncio
+    async def test_enter_no_session_no_action(self, service):
+        """Entering a room with no media session does nothing."""
+        mock_resume = AsyncMock()
+        with patch.object(service, "_resume_playback", mock_resume):
+            await service.on_user_enter_room(user_id=99, room_id=20, room_name="X")
         mock_resume.assert_not_called()
 
     @pytest.mark.asyncio

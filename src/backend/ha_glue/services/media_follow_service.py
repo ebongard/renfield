@@ -149,15 +149,29 @@ class MediaFollowService:
         self, user_id: int, room_id: int, room_name: str, **kw
     ) -> None:
         """Called when a user enters a room (presence hook)."""
+        # Drop expired suspended sessions first, then look up the live one.
+        self._cleanup_expired_sessions()
         session = self._sessions.get(user_id)
-        if not session or session.state != SessionState.SUSPENDED:
+        if not session:
             return
 
-        # Cleanup expired sessions
-        self._cleanup_expired_sessions()
-        # Re-check after cleanup
-        session = self._sessions.get(user_id)
-        if not session or session.state != SessionState.SUSPENDED:
+        # Decide whether this enter should (re)start playback here:
+        #  - SUSPENDED: the user left elsewhere first (the leave fired) and is now
+        #    arriving — resume.
+        #  - PLAYING in a DIFFERENT room: the user moved but the matching 'leave'
+        #    has NOT fired yet. presence_stale_timeout (120s) means the old room's
+        #    satellite keeps seeing the device long after the move, so the enter
+        #    routinely arrives while the session is still PLAYING. Treat it as a
+        #    move: stop the old room, then resume here. Without this branch the
+        #    late leave suspends the session AFTER this enter already bailed, and
+        #    the music never follows (the live-test bug, 2026-06-14).
+        if session.state == SessionState.PLAYING:
+            if session.room_id == room_id:
+                return  # already playing in this room — nothing to do
+            await self._stop_playback(session)
+            session.state = SessionState.SUSPENDED
+            session.suspended_at = time.time()
+        elif session.state != SessionState.SUSPENDED:
             return
 
         # Check for conflict: another user playing in this room
