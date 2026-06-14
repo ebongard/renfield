@@ -220,6 +220,18 @@ async def ha_glue_on_startup(*, app: Any) -> None:
             "ha_glue.bootstrap: Zeroconf init failed"
         )
 
+    # --- Satellite LED night-dimming (backend-driven brightness push) ---
+    # Seeds the current daypart brightness and registers the `daypart_changed`
+    # hook so night transitions push a dimmed LED brightness to all satellites.
+    try:
+        from ha_glue.services.led_dimming_service import get_led_dimming_service
+
+        await get_led_dimming_service().initialize()
+    except Exception:  # noqa: BLE001
+        logger.opt(exception=True).warning(
+            "ha_glue.bootstrap: LED dimming init failed"
+        )
+
 
 async def _init_zeroconf(app: Any) -> None:
     """Start the Zeroconf mDNS service for satellite auto-discovery.

@@ -232,6 +232,10 @@ async def satellite_websocket(
                     device_type="satellite"
                 )
 
+                # Ride the current target LED brightness in the ack so a
+                # satellite reconnecting mid-night comes up already dimmed.
+                from ha_glue.services.led_dimming_service import get_led_dimming_service
+
                 await websocket.send_json({
                     "type": "register_ack",
                     "success": success,
@@ -239,6 +243,7 @@ async def satellite_websocket(
                     "room_id": room_id,
                     "protocol_version": settings.ws_protocol_version,
                     "model_download_url": "/api/settings/wakeword/models",
+                    "led_brightness": get_led_dimming_service().get_current_led_brightness(),
                 })
                 logger.info(f"📡 Satellite {satellite_id} registered from {room}")
 

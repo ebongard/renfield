@@ -53,6 +53,9 @@ vad:
 led:
   type: "{{ led_type | default('apa102') }}"
   brightness: {{ led_brightness }}
+  # Local default only — the live night brightness is pushed by the backend
+  # (led_night_brightness) over the WebSocket; this just documents the fallback.
+  night_brightness: {{ led_night_brightness | default(5) }}
   idle_color: "{{ led_idle_color | default('blue') }}"
   # num_leds is emitted for EVERY led_type so the satellite's capability
   # report (sent to the fleet page) reflects this device. Pre-fix the

@@ -39,6 +39,7 @@ vad_silero_threshold: 0.5
 
 # LED
 led_brightness: 20
+led_night_brightness: 5
 led_type: "apa102"
 
 # Display
