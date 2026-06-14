@@ -35,6 +35,7 @@ from .network.model_downloader import get_model_downloader, ModelDownloader
 from .wakeword.detector import MICRO_BUILTIN_MODELS
 from .ble.scanner import BLEScanner, BLEAK_AVAILABLE
 from .ble.classic_scanner import ClassicBTScanner
+from .ble.discovery_scanner import BTDiscoveryScanner
 from .update import UpdateManager, UpdateStage
 
 
@@ -265,6 +266,10 @@ class Satellite:
         elif self.config.ble.enabled:
             print("Warning: hcitool not found. Classic BT scanning disabled.")
 
+        # On-demand broad BT discovery scanner (backend "scan all bluetooth
+        # devices" request). Independent of the known-MAC presence scanners.
+        self.bt_discovery_scanner = BTDiscoveryScanner()
+
         # Wire up callbacks
         self._setup_callbacks()
 
@@ -290,6 +295,8 @@ class Satellite:
         self.ws_client.on_led_config(self._on_led_config_update)
         # On-demand camera snapshot (backend occupancy check for private announcements)
         self.ws_client._capture_snapshot = self._capture_snapshot_for_request
+        # On-demand Bluetooth discovery scan ("scan all bluetooth devices")
+        self.ws_client.on_bt_scan_request(self._handle_bt_scan_for_request)
 
         # Update manager progress callback
         self.update_manager.on_progress(self._on_update_progress)
@@ -443,6 +450,14 @@ class Satellite:
         if self.camera and self.camera.available:
             return await self.camera.capture()
         return None
+
+    async def _handle_bt_scan_for_request(self, params: dict) -> list[dict]:
+        """Run a broad BT discovery scan for a backend "scan all bluetooth
+        devices" request, returning the discovered device list (BLE + Classic)."""
+        return await self.bt_discovery_scanner.discover(
+            params.get("ble_duration", 10.0),
+            params.get("classic_timeout", 12.0),
+        )
 
     async def _reconnect_with_discovery(self):
         """

@@ -702,6 +702,14 @@ Gib eine kurze, natürliche Antwort. KEIN JSON, nur Text."""
                     data.get("request_id"), data.get("image")
                 )
 
+            # Reply to an on-demand Bluetooth discovery scan request
+            elif msg_type == "bt_scan_result":
+                satellite_manager.resolve_bt_scan(
+                    data.get("request_id"),
+                    data.get("devices", []),
+                    data.get("error"),
+                )
+
             # Handle BLE presence scan results
             elif msg_type == "ble_presence":
                 if satellite_id and ha_glue_settings.presence_enabled:

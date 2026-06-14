@@ -136,6 +136,13 @@ class InternalToolService:
                 "station_id": "TuneIn station ID to remove (required)",
             },
         },
+        "internal.bluetooth_scan": {
+            "description": "Scan for ALL nearby Bluetooth devices (broad discovery, NOT the known-presence whitelist). Use for 'scan all bluetooth devices' / 'welche Bluetooth-Geräte sind in der Nähe?'. The scan is fanned out to every satellite and runs a BLE + Classic discovery in each room. It is SLOW — 15-30 seconds — so call it ONCE and WAIT for the result; do NOT retry or call it repeatedly. Only devices that are actively advertising/discoverable appear (most phones are not discoverable over Classic and won't show up). Returns each device's MAC, name (if any), best RSSI, transport, OUI vendor, and which rooms saw it.",
+            "parameters": {
+                "ble_duration": "BLE listen time in seconds per satellite (default 10, max 20)",
+                "classic_timeout": "Classic inquiry time in seconds per satellite (default 12, max 20)",
+            },
+        },
         "internal.presence_history": {
             "description": "Query a user's PERSISTED presence history (survives restarts, unlike the live current-location tools). Use for 'where was X earlier/yesterday', 'when was X last in the kitchen', or 'who was in the living room this morning'. Accepts username or first/last name.",
             "parameters": {
@@ -163,6 +170,7 @@ class InternalToolService:
         "internal.list_radio_favorites": "_list_radio_favorites",
         "internal.remove_radio_favorite": "_remove_radio_favorite",
         "internal.presence_history": "_presence_history",
+        "internal.bluetooth_scan": "_bluetooth_scan",
     }
 
     async def execute(self, intent: str, parameters: dict) -> dict:
@@ -2676,5 +2684,75 @@ class InternalToolService:
             return {
                 "success": False,
                 "message": f"Error removing favorite: {e!s}",
+                "action_taken": False,
+            }
+
+    async def _bluetooth_scan(self, params: dict) -> dict:
+        """Fan a broad Bluetooth discovery scan out to every satellite and return
+        the aggregated device list. Gated on bt_scan_enabled. Slow (15-30s)."""
+        from ha_glue.utils.config import ha_glue_settings
+
+        if not ha_glue_settings.bt_scan_enabled:
+            return {
+                "success": False,
+                "message": "Bluetooth scanning is disabled",
+                "action_taken": False,
+            }
+
+        # Clamp the durations so a runaway value can't pin the BT controllers.
+        def _clamp(value, default: float) -> float:
+            try:
+                return max(1.0, min(20.0, float(value)))
+            except (ValueError, TypeError):
+                return default
+
+        ble_duration = _clamp(params.get("ble_duration"), 10.0)
+        classic_timeout = _clamp(params.get("classic_timeout"), 12.0)
+
+        try:
+            from ha_glue.services.bt_scan_service import BtScanService
+            from ha_glue.services.satellite_manager import get_satellite_manager
+
+            sat_mgr = get_satellite_manager()
+            data = await BtScanService().scan_all_satellites(
+                sat_mgr,
+                ble_duration=ble_duration,
+                classic_timeout=classic_timeout,
+                # Allow the satellite enough time for the sequential BLE+Classic scan.
+                per_sat_timeout=ble_duration + classic_timeout + 15.0,
+            )
+
+            if data["satellites_queried"] == 0:
+                return {
+                    "success": False,
+                    "message": "No satellites are connected to scan from",
+                    "action_taken": False,
+                    "data": data,
+                }
+            if data["satellites_responded"] == 0:
+                return {
+                    "success": False,
+                    "message": (
+                        f"None of the {data['satellites_queried']} satellite(s) responded "
+                        f"to the Bluetooth scan"
+                    ),
+                    "action_taken": False,
+                    "data": data,
+                }
+
+            return {
+                "success": True,
+                "message": (
+                    f"Found {data['total_devices']} Bluetooth device(s) across "
+                    f"{data['satellites_responded']}/{data['satellites_queried']} satellite(s)"
+                ),
+                "action_taken": True,
+                "data": data,
+            }
+        except Exception as e:  # noqa: BLE001
+            logger.error(f"Error running Bluetooth scan: {e}")
+            return {
+                "success": False,
+                "message": f"Error running Bluetooth scan: {e!s}",
                 "action_taken": False,
             }

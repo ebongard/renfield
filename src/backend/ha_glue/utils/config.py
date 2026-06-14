@@ -98,6 +98,7 @@ class HaGlueSettings(BaseSettings):
     presence_analytics_retention_days: int = 90         # Days to keep presence events for analytics
     presence_analytics_timezone: str = "Europe/Berlin"  # Local TZ for heatmap/forecast hour+day bucketing (events stored UTC)
     presence_history_enabled: bool = True               # Persistent presence-history timeline routes + agent tool (gate; events are always persisted)
+    bt_scan_enabled: bool = False                       # On-demand Bluetooth discovery scan ("scan all bluetooth devices") fanned out to satellites
 
     # === Announce / message-relay camera occupancy check ===
     # For a personal announcement, after the BLE gate passes, optionally take a

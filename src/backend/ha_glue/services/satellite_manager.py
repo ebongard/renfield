@@ -136,6 +136,7 @@ class SatelliteManager:
         self._lock = asyncio.Lock()
         # On-demand camera snapshot requests: request_id → Future[image_b64|None].
         self._pending_snapshots: dict[str, asyncio.Future] = {}
+        self._pending_bt_scans: dict[str, asyncio.Future] = {}
 
         # Configuration - use settings from config
         from utils.config import settings
@@ -726,6 +727,41 @@ class SatelliteManager:
         fut = self._pending_snapshots.get(request_id)
         if fut is not None and not fut.done():
             fut.set_result(image_b64)
+
+    async def request_bt_scan(
+        self, satellite_id: str, params: dict | None = None, timeout: float = 30.0
+    ) -> list | None:
+        """Ask a satellite to run a broad Bluetooth discovery scan NOW and return
+        the discovered device list, or None on unknown-satellite/timeout/error.
+        Backend→satellite request over the WS; the reply arrives as a
+        'bt_scan_result' message (resolved via resolve_bt_scan). Mirrors
+        request_snapshot."""
+        sat = self.satellites.get(satellite_id)
+        if sat is None:
+            return None
+        request_id = uuid.uuid4().hex
+        fut: asyncio.Future = asyncio.get_event_loop().create_future()
+        self._pending_bt_scans[request_id] = fut
+        try:
+            await sat.websocket.send_json({
+                "type": "bt_scan_request",
+                "request_id": request_id,
+                "params": params or {},
+            })
+            return await asyncio.wait_for(fut, timeout=timeout)
+        except (asyncio.TimeoutError, Exception):  # noqa: BLE001
+            return None
+        finally:
+            self._pending_bt_scans.pop(request_id, None)
+
+    def resolve_bt_scan(
+        self, request_id: str, devices: list | None, error: str | None
+    ) -> None:
+        """Resolve a pending request_bt_scan() future with the satellite's reply.
+        On a satellite-side error the device list is treated as empty."""
+        fut = self._pending_bt_scans.get(request_id)
+        if fut is not None and not fut.done():
+            fut.set_result([] if error else (devices or []))
 
     async def cleanup_stale(self):
         """Remove stale satellites and timed-out sessions"""
