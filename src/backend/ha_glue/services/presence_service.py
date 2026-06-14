@@ -320,6 +320,7 @@ class PresenceService:
                         "room_name": self._room_names.get(best_room_id),
                         "confidence": confidence,
                         "source": "ble",
+                        "satellite_id": best_satellite_id,
                     }))
                     if was_first:
                         self._pending_events.append(("presence_first_arrived", {

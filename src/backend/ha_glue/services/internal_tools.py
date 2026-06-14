@@ -136,6 +136,16 @@ class InternalToolService:
                 "station_id": "TuneIn station ID to remove (required)",
             },
         },
+        "internal.presence_history": {
+            "description": "Query a user's PERSISTED presence history (survives restarts, unlike the live current-location tools). Use for 'where was X earlier/yesterday', 'when was X last in the kitchen', or 'who was in the living room this morning'. Accepts username or first/last name.",
+            "parameters": {
+                "user_name": "Name of the user (username, first or last name). Required for 'timeline' and 'last_seen_by_room'.",
+                "room_name": "Room name to focus on. Required for 'who_was_in_room'; optional filter for 'timeline'.",
+                "since": "Start of the window as ISO8601 (e.g. 2026-06-14T08:00:00). Default: 24h ago.",
+                "until": "End of the window as ISO8601. Default: now.",
+                "query_type": "'timeline' (a user's room enter/leave events, default), 'last_seen_by_room' (per-room last seen for a user), or 'who_was_in_room' (everyone's events in a room over the window).",
+            },
+        },
     }
 
     _HANDLERS = {
@@ -152,6 +162,7 @@ class InternalToolService:
         "internal.save_radio_favorite": "_save_radio_favorite",
         "internal.list_radio_favorites": "_list_radio_favorites",
         "internal.remove_radio_favorite": "_remove_radio_favorite",
+        "internal.presence_history": "_presence_history",
     }
 
     async def execute(self, intent: str, parameters: dict) -> dict:
@@ -2140,6 +2151,183 @@ class InternalToolService:
             "message": f"{len(users)} user(s) detected at home",
             "action_taken": True,
             "data": {"users": users},
+        }
+
+    async def _presence_history(self, params: dict) -> dict:
+        """Query a user's PERSISTED presence history (timeline / last-seen /
+        who-was-in-room) — survives restarts, unlike the live presence tools."""
+        from datetime import UTC, datetime, timedelta
+
+        from ha_glue.utils.config import ha_glue_settings
+
+        if not ha_glue_settings.presence_history_enabled:
+            return {
+                "success": False,
+                "message": "Presence history is disabled",
+                "action_taken": False,
+            }
+
+        from ha_glue.services.presence_analytics import _analytics_tz, _to_local
+        from ha_glue.services.presence_service import get_presence_service
+
+        query_type = (params.get("query_type") or "timeline").strip().lower()
+        user_name = (params.get("user_name") or "").strip()
+        room_name = (params.get("room_name") or "").strip()
+
+        # Parse the ISO8601 window (default: last 24h, naive UTC to match storage).
+        def _parse_iso(value: str | None) -> datetime | None:
+            if not value:
+                return None
+            try:
+                dt = datetime.fromisoformat(value.strip().replace("Z", "+00:00"))
+            except ValueError:
+                return None
+            if dt.tzinfo is not None:
+                dt = dt.astimezone(UTC).replace(tzinfo=None)
+            return dt
+
+        now = datetime.now(UTC).replace(tzinfo=None)
+        until = _parse_iso(params.get("until")) or now
+        since = _parse_iso(params.get("since")) or (until - timedelta(hours=24))
+
+        tz = _analytics_tz()
+
+        def _fmt(dt: datetime | None) -> str:
+            if dt is None:
+                return "unknown"
+            return _to_local(dt, tz).strftime("%Y-%m-%d %H:%M")
+
+        presence_service = get_presence_service()
+
+        # Resolve the room filter (ILIKE) when given.
+        room_id = None
+        if room_name:
+            from sqlalchemy import select
+
+            from models.database import Room
+            from services.database import AsyncSessionLocal
+
+            async with AsyncSessionLocal() as db:
+                result = await db.execute(
+                    select(Room).where(Room.name.ilike(f"%{room_name}%"))
+                )
+                room = result.scalars().first()
+            if room is None:
+                return {
+                    "success": False,
+                    "message": f"Room '{room_name}' not found",
+                    "action_taken": False,
+                }
+            room_id = room.id
+
+        from ha_glue.services.presence_analytics import PresenceAnalyticsService
+        from services.database import AsyncSessionLocal
+
+        if query_type == "who_was_in_room":
+            if room_id is None:
+                return {
+                    "success": False,
+                    "message": "Parameter 'room_name' is required for 'who_was_in_room'",
+                    "action_taken": False,
+                }
+            async with AsyncSessionLocal() as db:
+                service = PresenceAnalyticsService(db)
+                events = await service.get_room_occupancy_window(
+                    room_id=room_id, since=since, until=until
+                )
+            names = []
+            for ev in events:
+                name = presence_service.get_display_name(ev["user_id"])
+                ev["user_name"] = name
+                if ev["event_type"] == "enter" and name not in names:
+                    names.append(name)
+            who = ", ".join(names) if names else "nobody"
+            summary = (
+                f"Between {_fmt(since)} and {_fmt(until)}, {room_name} was entered by: {who}."
+                if names
+                else f"No presence events for {room_name} between {_fmt(since)} and {_fmt(until)}."
+            )
+            return {
+                "success": True,
+                "message": f"{len(events)} event(s) in {room_name}",
+                "action_taken": True,
+                "data": {"room_name": room_name, "events": events},
+                "summary": summary,
+            }
+
+        # timeline / last_seen_by_room both need a resolved user.
+        if not user_name:
+            return {
+                "success": False,
+                "message": "Parameter 'user_name' is required",
+                "action_taken": False,
+            }
+        user_id = presence_service.find_user_by_name(user_name)
+        if user_id is None:
+            return {
+                "success": False,
+                "message": f"User '{user_name}' not found",
+                "action_taken": False,
+            }
+        display_name = presence_service.get_display_name(user_id)
+
+        if query_type == "last_seen_by_room":
+            async with AsyncSessionLocal() as db:
+                service = PresenceAnalyticsService(db)
+                rows = await service.get_last_seen_by_room(user_id=user_id)
+            if not rows:
+                return {
+                    "success": True,
+                    "message": f"No presence history for {display_name}",
+                    "action_taken": True,
+                    "data": {"user_name": display_name, "rooms": []},
+                    "summary": f"There is no recorded presence history for {display_name}.",
+                }
+            parts = [f"{r['room_name']} ({_fmt(r['last_seen'])})" for r in rows]
+            summary = f"{display_name} was last seen in: " + "; ".join(parts) + "."
+            return {
+                "success": True,
+                "message": f"{len(rows)} room(s) for {display_name}",
+                "action_taken": True,
+                "data": {"user_name": display_name, "rooms": rows},
+                "summary": summary,
+            }
+
+        # Default: timeline.
+        async with AsyncSessionLocal() as db:
+            service = PresenceAnalyticsService(db)
+            events = await service.get_timeline(
+                user_id=user_id,
+                since=since,
+                until=until,
+                room_id=room_id,
+                limit=100,
+            )
+        if not events:
+            return {
+                "success": True,
+                "message": f"No presence events for {display_name} in that window",
+                "action_taken": True,
+                "data": {"user_name": display_name, "events": events},
+                "summary": (
+                    f"{display_name} has no recorded presence events between "
+                    f"{_fmt(since)} and {_fmt(until)}."
+                ),
+            }
+        lines = [
+            f"{_fmt(ev['created_at'])}: {ev['event_type']} {ev['room_name'] or 'unknown room'}"
+            for ev in events
+        ]
+        summary = (
+            f"{display_name}'s presence between {_fmt(since)} and {_fmt(until)}:\n"
+            + "\n".join(lines)
+        )
+        return {
+            "success": True,
+            "message": f"{len(events)} event(s) for {display_name}",
+            "action_taken": True,
+            "data": {"user_name": display_name, "events": events},
+            "summary": summary,
         }
 
     # ── Radio tools ──────────────────────────────────────────────────────────

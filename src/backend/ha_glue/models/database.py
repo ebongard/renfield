@@ -409,10 +409,12 @@ class PresenceEvent(Base):
     event_type = Column(String(20), nullable=False)  # "enter" | "leave"
     source = Column(String(20), default="ble")        # "ble" | "voice" | "web"
     confidence = Column(Float, nullable=True)
+    satellite_id = Column(String(100), nullable=True)  # satellite producing the enter detection (NULL on leave/voice/web)
     created_at = Column(DateTime, default=_utcnow, index=True)
 
     __table_args__ = (
         Index("ix_presence_events_analytics", "user_id", "room_id", "created_at"),
+        Index("ix_presence_events_history", "user_id", "created_at"),
     )
 
 

@@ -74,6 +74,7 @@ async def _persist_event(event_type: str, **kwargs):
                 event_type=event_type,
                 source=kwargs.get("source", "ble"),
                 confidence=kwargs.get("confidence"),
+                satellite_id=kwargs.get("satellite_id"),
             )
             db.add(event)
             await db.commit()
@@ -236,6 +237,150 @@ class PresenceAnalyticsService:
         return [
             {"date": day, "enter_count": enter, "leave_count": leave}
             for day, (enter, leave) in sorted(by_date.items())
+        ]
+
+    async def get_timeline(
+        self,
+        user_id: int,
+        since: datetime | None = None,
+        until: datetime | None = None,
+        room_id: int | None = None,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> list[dict]:
+        """
+        Chronological presence-event timeline for a single user.
+
+        Returns rows oldest-first as dicts with all event fields plus the joined
+        room_name. ``since``/``until`` bound created_at (naive UTC); ``room_id``
+        restricts to one room. ``limit``/``offset`` page the result.
+        """
+        stmt = (
+            select(
+                PresenceEvent.id,
+                PresenceEvent.user_id,
+                PresenceEvent.room_id,
+                Room.name.label("room_name"),
+                PresenceEvent.event_type,
+                PresenceEvent.source,
+                PresenceEvent.confidence,
+                PresenceEvent.satellite_id,
+                PresenceEvent.created_at,
+            )
+            .join(Room, Room.id == PresenceEvent.room_id)
+            .where(PresenceEvent.user_id == user_id)
+        )
+
+        if since is not None:
+            stmt = stmt.where(PresenceEvent.created_at >= since)
+        if until is not None:
+            stmt = stmt.where(PresenceEvent.created_at <= until)
+        if room_id is not None:
+            stmt = stmt.where(PresenceEvent.room_id == room_id)
+
+        stmt = (
+            stmt.order_by(PresenceEvent.created_at.asc(), PresenceEvent.id.asc())
+            .limit(limit)
+            .offset(offset)
+        )
+
+        rows = (await self.db.execute(stmt)).all()
+        return [
+            {
+                "id": r.id,
+                "user_id": r.user_id,
+                "room_id": r.room_id,
+                "room_name": r.room_name,
+                "event_type": r.event_type,
+                "source": r.source,
+                "confidence": r.confidence,
+                "satellite_id": r.satellite_id,
+                "created_at": r.created_at,
+            }
+            for r in rows
+        ]
+
+    async def get_last_seen_by_room(self, user_id: int) -> list[dict]:
+        """
+        Most recent 'enter' time for the user in each room.
+
+        Returns list of {room_id, room_name, last_seen} ordered most-recent
+        first. 'leave' events are ignored. Empty list when the user has no
+        enter events.
+        """
+        from sqlalchemy import func
+
+        stmt = (
+            select(
+                PresenceEvent.room_id,
+                Room.name.label("room_name"),
+                func.max(PresenceEvent.created_at).label("last_seen"),
+            )
+            .join(Room, Room.id == PresenceEvent.room_id)
+            .where(
+                PresenceEvent.user_id == user_id,
+                PresenceEvent.event_type == "enter",
+            )
+            .group_by(PresenceEvent.room_id, Room.name)
+        )
+
+        rows = (await self.db.execute(stmt)).all()
+        out = [
+            {
+                "room_id": r.room_id,
+                "room_name": r.room_name,
+                "last_seen": r.last_seen,
+            }
+            for r in rows
+            if r.last_seen is not None
+        ]
+        out.sort(key=lambda d: d["last_seen"], reverse=True)
+        return out
+
+    async def get_room_occupancy_window(
+        self, room_id: int, since: datetime, until: datetime
+    ) -> list[dict]:
+        """
+        All users' enter/leave events for one room within a time window.
+
+        Returns rows chronological (oldest-first) so a caller can reconstruct
+        who was in the room and when over the window.
+        """
+        stmt = (
+            select(
+                PresenceEvent.id,
+                PresenceEvent.user_id,
+                PresenceEvent.room_id,
+                Room.name.label("room_name"),
+                PresenceEvent.event_type,
+                PresenceEvent.source,
+                PresenceEvent.confidence,
+                PresenceEvent.satellite_id,
+                PresenceEvent.created_at,
+            )
+            .join(Room, Room.id == PresenceEvent.room_id)
+            .where(
+                PresenceEvent.room_id == room_id,
+                PresenceEvent.created_at >= since,
+                PresenceEvent.created_at <= until,
+            )
+            .order_by(PresenceEvent.created_at.asc(), PresenceEvent.id.asc())
+        )
+
+        rows = (await self.db.execute(stmt)).all()
+        return [
+            {
+                "id": r.id,
+                "user_id": r.user_id,
+                "room_id": r.room_id,
+                "room_name": r.room_name,
+                "event_type": r.event_type,
+                "source": r.source,
+                "confidence": r.confidence,
+                "satellite_id": r.satellite_id,
+                "created_at": r.created_at,
+            }
+            for r in rows
         ]
 
     async def cleanup_old_events(self, retention_days: int | None = None) -> int:

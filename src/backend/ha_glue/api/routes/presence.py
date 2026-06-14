@@ -5,6 +5,8 @@ Endpoints for room occupancy, user presence, BLE device management,
 and presence analytics (heatmap, predictions).
 """
 
+from datetime import UTC, datetime, timedelta
+
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 from sqlalchemy import select
@@ -306,6 +308,18 @@ class DailySummary(BaseModel):
     leave_count: int
 
 
+class PresenceEventResponse(BaseModel):
+    id: int
+    user_id: int
+    room_id: int
+    room_name: str | None = None
+    event_type: str
+    source: str | None = None
+    confidence: float | None = None
+    satellite_id: str | None = None
+    created_at: datetime
+
+
 @router.get("/analytics/heatmap", response_model=list[HeatmapCell])
 async def get_heatmap(
     days: int = Query(default=30, ge=1, le=365),
@@ -342,3 +356,114 @@ async def get_daily_summary(
 
     service = PresenceAnalyticsService(db)
     return await service.get_daily_summary(days=days)
+
+
+# --- Persistent presence history (timeline / last-seen / room-window) ---
+
+
+def _resolve_history_target(user_id: int | None, current_user: "User | None") -> int:
+    """Resolve whose presence history to read, guarding against IDOR.
+
+    Self-lookups and single-user mode (``current_user`` None, AUTH off) are
+    unrestricted. Reading ANOTHER user's location history requires ROOMS_MANAGE
+    — otherwise any ROOMS_READ user could enumerate where anyone in the
+    household has been.
+    """
+    target = user_id if user_id is not None else (current_user.id if current_user else None)
+    if target is None:
+        raise HTTPException(status_code=400, detail="user_id is required")
+    if (
+        current_user is not None
+        and target != current_user.id
+        and not current_user.has_permission(Permission.ROOMS_MANAGE.value)
+    ):
+        raise HTTPException(
+            status_code=403,
+            detail="Reading another user's presence history requires ROOMS_MANAGE",
+        )
+    return target
+
+
+@router.get("/analytics/timeline", response_model=list[PresenceEventResponse])
+async def get_presence_timeline(
+    user_id: int | None = Query(default=None),
+    since: datetime | None = Query(default=None),
+    until: datetime | None = Query(default=None),
+    room_id: int | None = Query(default=None),
+    limit: int = Query(default=100, ge=1, le=1000),
+    offset: int = Query(default=0, ge=0),
+    db: AsyncSession = Depends(get_db),
+    current_user: User | None = Depends(require_permission(Permission.ROOMS_READ)),
+):
+    """Chronological presence-event timeline for a user.
+
+    Defaults to the authenticated user when ``user_id`` is omitted. In
+    single-user mode (AUTH_ENABLED=false) ``current_user`` is None.
+    """
+    if not ha_glue_settings.presence_history_enabled:
+        raise HTTPException(status_code=404, detail="Presence history is disabled")
+
+    target_user_id = _resolve_history_target(user_id, current_user)
+
+    from ha_glue.services.presence_analytics import PresenceAnalyticsService
+
+    service = PresenceAnalyticsService(db)
+    return await service.get_timeline(
+        user_id=target_user_id,
+        since=since,
+        until=until,
+        room_id=room_id,
+        limit=limit,
+        offset=offset,
+    )
+
+
+class LastSeenByRoomEntry(BaseModel):
+    room_id: int
+    room_name: str | None = None
+    last_seen: datetime
+
+
+@router.get("/analytics/last-seen-by-room", response_model=list[LastSeenByRoomEntry])
+async def get_last_seen_by_room(
+    user_id: int | None = Query(default=None),
+    db: AsyncSession = Depends(get_db),
+    current_user: User | None = Depends(require_permission(Permission.ROOMS_READ)),
+):
+    """Per-room most-recent 'enter' time for a user."""
+    if not ha_glue_settings.presence_history_enabled:
+        raise HTTPException(status_code=404, detail="Presence history is disabled")
+
+    target_user_id = _resolve_history_target(user_id, current_user)
+
+    from ha_glue.services.presence_analytics import PresenceAnalyticsService
+
+    service = PresenceAnalyticsService(db)
+    return await service.get_last_seen_by_room(user_id=target_user_id)
+
+
+@router.get("/analytics/room-window", response_model=list[PresenceEventResponse])
+async def get_room_window(
+    room_id: int = Query(...),
+    since: datetime | None = Query(default=None),
+    until: datetime | None = Query(default=None),
+    db: AsyncSession = Depends(get_db),
+    current_user: User | None = Depends(require_permission(Permission.ROOMS_MANAGE)),
+):
+    """All users' enter/leave events for a room within a window (admin).
+
+    ``since``/``until`` default to the last 24 hours when omitted.
+    """
+    if not ha_glue_settings.presence_history_enabled:
+        raise HTTPException(status_code=404, detail="Presence history is disabled")
+
+    now = datetime.now(UTC).replace(tzinfo=None)
+    if until is None:
+        until = now
+    if since is None:
+        since = until - timedelta(hours=24)
+
+    from ha_glue.services.presence_analytics import PresenceAnalyticsService
+
+    service = PresenceAnalyticsService(db)
+    return await service.get_room_occupancy_window(room_id=room_id, since=since, until=until)
