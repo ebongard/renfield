@@ -43,12 +43,25 @@ Over-the-Air (OTA) Updates für Renfield Satellites ermöglichen die Aktualisier
 
 ### Backend
 
-In `.env` die neueste verfügbare Version setzen:
+Die "neueste verfügbare Version" wird **aus der gebündelten Satellite-Quelle gelesen**
+(`__version__` in `renfield_satellite/__init__.py`) — nicht aus einer separaten
+Variable. Das Backend-Image bündelt die Satellite-Quelle nach `/app/satellite`
+(Dockerfile `COPY satellite /app/satellite`; die Quelle wird beim Build aus
+`src/satellite/` in den Build-Context gesynct — siehe `deploy-production` Skill),
+und `SatelliteUpdateService.get_latest_version()` liest die Version daraus. Dadurch
+kann die angebotene Version nie von dem tatsächlich ausgelieferten Paket abweichen.
+Ein neues Satellite-Release = `__version__` im Satellite-Repo erhöhen, Backend neu
+bauen — kein Env-Bump nötig.
 
 ```bash
-# Satellite OTA Updates
-SATELLITE_LATEST_VERSION=1.1.0
+# Optionaler Fallback NUR falls die Quelle nicht gebündelt ist (lokale Dev /
+# abgespecktes Image). Wird ignoriert, sobald /app/satellite vorhanden ist.
+SATELLITE_LATEST_VERSION=1.4.0
 ```
+
+> **Wichtig:** Ohne die gebündelte Quelle liefert `GET /api/satellites/update-package`
+> einen 503 (kein Paket baubar). Der Build bricht laut ab, wenn `src/satellite/`
+> nicht in den Build-Context gesynct wurde (Dockerfile-Assertion).
 
 ### Satellite
 
