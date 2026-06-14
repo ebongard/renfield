@@ -581,11 +581,17 @@ class InternalToolService:
             rid = await self._get_room_id(room_name)
             if rid is None:
                 return
-            # Session owner = the authenticated chat caller when present;
-            # otherwise derive it from presence (whoever is in the playback
-            # room). Without this fallback, AUTH-disabled playback has
-            # user_id=None → no session is registered → leaving never stops the
-            # music, even though presence_leave_room fires with the real user.
+            # Session owner: in practice always the presence-resolved occupant of
+            # the playback room. `params` never carries a user_id today (the
+            # dispatcher passes it as a kwarg, not in params, and the LLM tool
+            # schema has no user_id arg), so the `or` first operand is currently
+            # inert — kept only for a future authenticated-caller path. Without
+            # the presence fallback, AUTH-disabled playback has user_id=None → no
+            # session registered → leaving never stops the music, even though
+            # presence_leave_room fires with that same presence-resolved user.
+            # Caveat: presence is BLE-cadence (~30-60s), so "play then walk away
+            # immediately" may register no session if the scan hasn't yet placed
+            # the user in the room; >1 occupants → None (no follow, by design).
             user_id = params.get("user_id") or self._presence_room_user(rid)
             if not user_id:
                 return

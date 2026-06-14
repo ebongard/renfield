@@ -402,6 +402,32 @@ _DEFAULT_LLM_OPTIONS_TOOL_PRESELECT = {
     "temperature": 0, "num_predict": 120, "num_ctx": 4096,
 }
 
+# Hard workflow prerequisites: a tool the pre-selection LLM may pick cannot
+# function without its companion(s), so they are re-added even when the LLM
+# prunes them. STRUCTURAL dependencies, not preferences: internal.play_radio
+# plays a TuneIn station_id that ONLY mcp.radio.search_stations can resolve —
+# drop the search tool and the agent guesses an id and loops.
+_REQUIRED_TOOL_COMPANIONS: dict[str, tuple[str, ...]] = {
+    "internal.play_radio": ("mcp.radio.search_stations",),
+}
+
+
+def _with_required_companions(selected_names: list[str]) -> list[str]:
+    """Expand a selected-tool-name list with the structural prerequisites of any
+    selected tool (see ``_REQUIRED_TOOL_COMPANIONS``). Pure, order-stable, and
+    dedup-safe — unknown tools are untouched. Filtering to actually-available
+    tools happens at the call site, so naming a companion that the current role
+    lacks is harmless.
+    """
+    out = list(selected_names)
+    seen = set(out)
+    for name in selected_names:
+        for companion in _REQUIRED_TOOL_COMPANIONS.get(name, ()):
+            if companion not in seen:
+                out.append(companion)
+                seen.add(companion)
+    return out
+
 
 def _llm_options_or_default(prompt_key: str, fallback: dict) -> dict:
     """Resolve LLM options from prompts/agent.yaml, falling back to a default.
@@ -817,6 +843,11 @@ class AgentService:
             if not isinstance(selected, list) or not selected:
                 logger.warning(f"Tool pre-selection returned non-list: {response_text[:100]}")
                 return None
+
+            # Re-add any structural prerequisites the LLM pruned (e.g. it picked
+            # internal.play_radio but dropped mcp.radio.search_stations, which it
+            # needs to resolve the station_id). Filtered against the registry below.
+            selected = _with_required_companions(selected)
 
             # Filter to valid tool names
             filtered = {

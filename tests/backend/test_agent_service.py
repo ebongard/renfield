@@ -2388,3 +2388,31 @@ class TestTrajectoryStepRecording:
                       tool="x", success=True),
         ]
         assert outcome_from_steps(steps) == TRAJECTORY_OUTCOME_ABORT
+
+
+# ---------------------------------------------------------------------------
+# Tool pre-selection: structural companion re-inclusion
+# ---------------------------------------------------------------------------
+
+@pytest.mark.unit
+def test_with_required_companions_readds_radio_search():
+    """play_radio's station_id is unknowable without search_stations, so the
+    pre-selection must never end up with play_radio but no search tool."""
+    from services.agent_service import _with_required_companions
+
+    out = _with_required_companions(["internal.resolve_room_player", "internal.play_radio"])
+    assert "mcp.radio.search_stations" in out
+    # order-stable: companion appended, originals kept in order
+    assert out[:2] == ["internal.resolve_room_player", "internal.play_radio"]
+
+
+@pytest.mark.unit
+def test_with_required_companions_is_dedup_safe_and_inert():
+    from services.agent_service import _with_required_companions
+
+    # already present → no duplicate
+    out = _with_required_companions(["internal.play_radio", "mcp.radio.search_stations"])
+    assert out.count("mcp.radio.search_stations") == 1
+    # unrelated tools untouched
+    assert _with_required_companions(["internal.media_control"]) == ["internal.media_control"]
+    assert _with_required_companions([]) == []
