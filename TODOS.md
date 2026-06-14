@@ -33,6 +33,34 @@ _(no P1 items — WICHTIG sweep complete. W10 closed via #487 on 2026-04-27. `ta
 
 ## P2 — Scheduled follow-ups
 
+### Steuererklärung prep collector (household/employee)
+Origin: `/plan-eng-review` 2026-06-09. Collect + categorize tax-relevant info from the KB +
+Paperless corpus per Steuerjahr, surface gaps, produce a per-Anlage dossier. Renfield
+collects/organizes/flags; the human files (legal review gate). **P1 scoped LEAN** (no new
+subsystem — collides with the "LLM orchestrates" rule): tax-category enum in code injected
+into the Schicht A prompt → `documents.tax_categories` (JSONB, set at extraction, regenerates
+on re-ingest, `isinstance`-guarded + strict-enum-validated) → a `(tax_category, year)` filter
+on `document_fact_retrieval` (circle filter preserved — **regression test mandatory**) →
+agent-orchestrated dossier behind `STEUER_ASSISTANT_ENABLED`. Document-level category;
+year = best-effort doc date. **P1 does NOT sum** (outside-voice challenge 2026-06-09):
+it groups docs by Anlage, source-links each, and flags gaps — no totals, because
+`amount_value` has no sign/net convention and extraction may be incomplete (a summed
+total could be directionally wrong, e.g. a reimbursement inflating a deduction). Summing
+moves to P2 with per-category sign/net handling.
+- **[P1-ready] Build the lean P1** (T1 enum+prompt, T2 extractor+migration+GIN index, T3 retrieval filter + no-leak regression test, T4 dossier prompt + Schicht A eval cases, T5 flag). Group + source-link + flag; **no summing**. Outside-voice-adjusted directives baked in:
+  - **Payment-year caveat corpus-wide**, not §35a-only — §11 EStG Zufluss/Abflussprinzip applies to most household categories (Werbungskosten, Sonderausgaben, Spenden, haushaltsnah); the dossier states "year = document date; verify items near the Dec/Jan boundary were PAID in {year}" for all categories.
+  - **Gap detection needs a mechanism** — a static situation→expected-category constant (employee→Anlage N, kids→Anlage Kind, homeowner→§35a, …) the agent diffs against found categories; the "gaps" headline can't rest on bare LLM judgment.
+  - **Stamp the taxonomy year** on stored categories — German Anlage/Zeile line items change annually; without a version marker, `documents.tax_categories` skews silently across years.
+  - **Bescheinigung vs receipt** — the enum/prompt distinguishes authoritative statements (Lohnsteuer-/Spenden-/Vorsorge-Bescheinigung) from incidental invoices; don't treat a payslip like a parking receipt.
+  - **Test the COMPOSED WHERE clause** — the no-leak regression test must exercise the `(tax_category, year)` predicate concatenated onto `circles_clause` (AND/OR precedence), not just assert "circle filter still called."
+- **[P2] Docling+poppler union extractor — blocks trustworthy sums.** `docling-drops-positioned-text-layer-tokens` (10/10): Docling silently drops some right-aligned amounts; a tax sum can be silently low. P1 mitigates via source-links + advisory framing. Real fix: union a raw text-layer extractor (poppler/pymupdf) with Docling OCR at `services/document_processor.py`. Depends on: adding poppler/pymupdf to the Docling-only backend image.
+- **[P2] §35a payment-year precision (Zuflussprinzip).** Handwerker/haushaltsnahe count by payment year, not invoice date. P1 buckets by doc date + surfaces a caveat; P2 tracks the payment date and buckets by it.
+- **[P2] Category-override persistence across re-extraction.** `documents.tax_categories` regenerates on re-ingest, so a manual correction is lost (same as the per-fact tier override). Mirror the `tier_overridden` sticky-bit pattern (`tax_category_overridden`) if manual correction is added.
+- **[P2] Deterministic `/api/steuer/{year}` + Steuer lens (the "hybrid" tier).** Read-only endpoint summing per Anlage + the gap checklist over `document_facts`, plus a frontend lens (follow DESIGN.md — `renfield-design-system-locked`). Determinism for money where agent-eyeballed sums are risky. Promote once categories prove out.
+- **[P2] Per-category deductible-figure extraction.** §35a Lohnanteil split (labor only), medical netting (minus Kassen-Erstattung). P1 sums the doc's primary/agent-picked amount.
+- **[P2] Stored situation questionnaire.** P1 asks situation + non-doc inputs (commute km, home-office days) inline each time; persist a small profile if it gets repetitive.
+- **[P3] CSV/PDF dossier export + ELSTER/ERiC field mapping.** Export per-Anlage; optionally map to ELSTER fields. Filing stays out of scope.
+
 ### Paperless PR 4 inline follow-ups (documented in code, filed here)
 All three have clear triggers but were out of PR 4 scope. Inline `# ...` comments in the relevant files carry full context.
 - **Multi-replica `pg_try_advisory_lock`.** Current `asyncio.Lock` only covers a single process; k8s with >1 backend replica needs DB-level coordination. Source: `src/backend/services/paperless_ui_edit_sweeper.py` (top-of-file comment on `_sweep_lock`).
@@ -49,6 +77,22 @@ If ui_sweep noise shows up in real use, mark original sweep row `superseded=true
 - **High priority:** audio preprocessing (noise reduction) on backend for resource-constrained satellites — alternative: XVF3800 hardware AEC (see `docs/XVF3800_SATELLITE.md`)
 - **Medium priority:** Opus audio compression (~50% bandwidth) · echo cancellation (software WebRTC APM or XVF3800)
 - **Low priority:** 4-mic beamforming extension · custom wake-word training
+
+### Presence / Media-Follow — room-switch latency (~1-2 min on a genuine move)
+**Tech debt from the flip-flop fix (#777, v2.17.15).** Media Follow Me now correctly follows the user *and* no longer jumps to empty rooms, but a genuine room change takes **~1-2 min** before presence switches (and the music follows). Live-measured 2026-06-14: walked back to Arbeitszimmer, switch fired ~1-2 min later.
+- **Why:** the anti-flip-flop hysteresis (`presence_hysteresis_scans=2`) requires **2 consecutive scans** of the new room before switching, and the Classic-BT scan cadence is ~60-120s (`scan_interval*2`), so 2 confirmations ≈ 1-2 min. Amplified by the RSSI read being **throttled to 300s** (`classic_scanner.rssi_interval=300`) → most sightings report a flat `SYNTHETIC_RSSI=-50`, so adjacent rooms tie on strength and the system can only rely on the consecutive-scan count, not signal margin. This was a deliberate stability-over-responsiveness trade — the flip-flop (music to an empty room) was strictly worse.
+- **Improvement directions (pick per cost/benefit):**
+  - **Adaptive hysteresis:** switch in 1 scan when the new room's signal *decisively* beats the current (margin ≥ N dBm), else require 2. Needs real RSSI (see below).
+  - **Lower the RSSI-read throttle** (300s → e.g. 30-60s) so real distance-mapped RSSI discriminates adjacent rooms instead of synthetic -50 ties. Cost: more `hcitool rssi` ACL connections per device (the throttle was added to avoid hammering the phone link); measure phone-side impact first.
+  - **Faster scan cadence** on satellites (shorter `scan_interval`) so 2 consecutive confirmations happen sooner. Cost: more BT activity / battery on the Pi.
+  - **Better room resolution:** BLE beacons / fixed transmitters or per-room calibration to break the adjacent-room RSSI ambiguity at the source.
+- Files: `src/backend/ha_glue/services/presence_service.py::_assign_room` (hysteresis), `src/backend/ha_glue/utils/config.py` (`presence_hysteresis_scans`, `presence_stale_timeout`), `src/satellite/renfield_satellite/ble/classic_scanner.py` (`rssi_interval`, `SYNTHETIC_RSSI`).
+
+### TTS-Audio-Auslieferung an Renderer — RESOLVED über `http://renfield.local` (deployed v2.17.2)
+TTS-an-DLNA läuft über `http://renfield.local/api/voice/tts-cache/{id}.wav` (`ADVERTISE_SCHEME=http`, `backend-tts-cache-http` IngressRoute ohne Redirect). **Samsung-TVs funktionieren jetzt** (Q60CA + 8 Series gemessen ✅), Linn nativ ✅, HiFiBerry über `/etc/hosts` ✅. Der frühere Samsung-UPnP-716 war **kein** Samsung- oder dlna-mcp-Problem, sondern drei non-compliant Bits in der **Backend**-Resource (gefixt in `feat/dlna-samsung-head-mime`): HEAD→405 (Route war GET-only), MIME `audio/flac` statt `audio/x-wav` (laut `GetProtocolInfo` des TVs), keine `.wav`-Extension. https wurde zugunsten http aufgegeben (Samsung kann self-signed nicht; http ist universell). Offene Punkte:
+- **[P3] `55" Interactive Signage Flip` spielt TTS nicht** — eigener Quirk (404 im dlna-mcp-`_confirm_playback_started`, beide Schemata), separat zu untersuchen.
+- **[P3] `provision-hifiberry.yml` CA-Schritt ist jetzt überflüssig.** Über http braucht der HiFiBerry keine CA mehr, nur den `/etc/hosts`-Eintrag. Den CA-Teil aus dem Playbook entfernen (harmlos, aber unnötig). `/etc/hosts` bleibt nötig + wird bei OS-Update zurückgesetzt → Playbook nach Update neu laufen lassen.
+- **[P3] dlna-mcp default-audio-MIME ist `audio/flac`** (`metadata.py:_DEFAULT_AUDIO_MIME`) — falsch für nicht-flac-Resources. Für TTS jetzt umgangen (Renfield gibt `mime_type=audio/x-wav` mit), aber andere Caller (Jellyfin) treffen den Default. Sauber: aus der URL-Extension ableiten oder neutraler Default.
 
 ### EMPFEHLUNG audit findings — modernization + cleanup
 - **Primary source:** `tasks/audit-findings-plan.md` §EMPFEHLUNG, §Priorisierte Roadmap Phase 4-5
