@@ -60,6 +60,13 @@ HOOK_EVENTS: frozenset[str] = frozenset({
     "presence_leave_room",
     "presence_first_arrived",
     "presence_last_left",
+    # Time-of-day transition — fired by the lifecycle daypart watcher when the
+    # computed daypart changes (or on the first tick after boot). Lets features
+    # react to day/evening/night boundaries (e.g. satellite LED dimming).
+    # Kwargs: `previous: str` (the prior daypart, or None on first tick),
+    # `current: str` (the new daypart), `local_time: str` (HH:MM in the
+    # configured local timezone).
+    "daypart_changed",
     "compact_mcp_result",
     "authenticate",
     # Pluggable-auth identity resolution — fired ONCE by /auth/login after

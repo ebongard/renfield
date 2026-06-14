@@ -1032,6 +1032,7 @@ class AgentService:
         memory_context: str = "",
         document_context: str = "",
         personality_context: str = "",
+        time_context: str = "",
         context_vars_text: str = "",
         summary_text: str = "",
         user_id: int | None = None,
@@ -1221,6 +1222,7 @@ class AgentService:
             memory_context=memory_context,
             document_context=document_context,
             personality_context=personality_context,
+            time_context=time_context,
             tools_prompt=tools_prompt,
             self_learning_blocks=self_learning_blocks,
             history_prompt=history_prompt,
@@ -1238,6 +1240,7 @@ class AgentService:
                 memory_context=memory_context,
                 document_context=document_context,
                 personality_context=personality_context,
+                time_context=time_context,
                 tools_prompt=tools_prompt,
                 self_learning_blocks=self_learning_blocks,
                 history_prompt=history_prompt,
@@ -1257,6 +1260,7 @@ class AgentService:
         memory_context: str = "",
         document_context: str = "",
         personality_context: str = "",
+        time_context: str = "",
         user_permissions: list[str] | None = None,
         user_id: int | None = None,
         context_vars_text: str = "",
@@ -1298,6 +1302,7 @@ class AgentService:
                 memory_context=memory_context,
                 document_context=document_context,
                 personality_context=personality_context,
+                time_context=time_context,
                 user_permissions=user_permissions,
                 user_id=user_id,
                 context_vars_text=context_vars_text,
@@ -1390,6 +1395,7 @@ class AgentService:
         memory_context: str = "",
         document_context: str = "",
         personality_context: str = "",
+        time_context: str = "",
         user_permissions: list[str] | None = None,
         user_id: int | None = None,
         context_vars_text: str = "",
@@ -1411,6 +1417,7 @@ class AgentService:
             memory_context: Formatted memory section for the agent prompt
             document_context: Formatted document section for the agent prompt
             personality_context: Formatted personality section for the agent prompt
+            time_context: Formatted time-of-day section for the agent prompt
             user_permissions: User's permission strings for MCP access control.
                 None means no auth / allow all (backwards-compatible).
             user_id: Authenticated user ID for per-user tool filtering.
@@ -1484,11 +1491,12 @@ class AgentService:
             # (tool-health warnings, procedural skill injection) and to
             # _enforce_token_budget which re-invokes _build_agent_prompt up
             # to 5 times during reduction passes.
-            prompt = await self._build_agent_prompt(message, context, conversation_history, room_context=room_context, lang=lang, memory_context=memory_context, document_context=document_context, personality_context=personality_context, context_vars_text=context_vars_text, summary_text=summary_text, user_id=user_id)
+            prompt = await self._build_agent_prompt(message, context, conversation_history, room_context=room_context, lang=lang, memory_context=memory_context, document_context=document_context, personality_context=personality_context, time_context=time_context, context_vars_text=context_vars_text, summary_text=summary_text, user_id=user_id)
             prompt, memory_context, document_context, conversation_history = await self._enforce_token_budget(
                 prompt, context, message, conversation_history,
                 memory_context=memory_context, document_context=document_context, lang=lang,
                 room_context=room_context, personality_context=personality_context,
+                time_context=time_context,
                 context_vars_text=context_vars_text, summary_text=summary_text,
                 user_id=user_id,
             )

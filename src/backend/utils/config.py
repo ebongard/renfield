@@ -51,6 +51,14 @@ class Settings(BaseSettings):
     feature_knowledge: bool | None = None        # None = use edition default
     feature_knowledge_graph: bool | None = None  # None = use edition default
 
+    # Day/night awareness — time-of-day windows used by services/daypart_service.py
+    # to compute the current daypart (day/evening/night) for the agent prompt and
+    # the `daypart_changed` hook. Windows are HH:MM in the local timezone.
+    daypart_timezone: str = ""  # empty => reuse ha_glue presence_analytics_timezone, else UTC
+    daypart_night_start: str = "22:00"
+    daypart_night_end: str = "07:00"
+    daypart_evening_start: str = "18:00"
+
     # Datenbank - Einzelfelder für dynamischen DATABASE_URL-Aufbau
     database_url: str | None = None
     postgres_user: str = "renfield"

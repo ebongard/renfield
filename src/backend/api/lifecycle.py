@@ -155,6 +155,51 @@ def _schedule_whisper_preload():
         logger.warning(f"⚠️  Whisper-Preloading fehlgeschlagen: {e}")
 
 
+# Last-seen daypart for the watcher loop. Module-level so the loop closure
+# carries state across ticks; `None` until the first tick (which always fires
+# the hook because there is no prior value to compare against).
+_daypart_watcher_state: dict[str, str | None] = {"last": None}
+
+
+def _schedule_daypart_watcher():
+    """Watch for day/evening/night transitions and fire the `daypart_changed`
+    hook so features (e.g. satellite LED dimming) can react.
+
+    Runs at boot (so the first tick establishes the current daypart) and then
+    every 5 minutes. Stateless apart from the module-level last-seen daypart.
+    """
+
+    async def _tick():
+        from services.daypart_service import get_daypart_info
+        from utils.hooks import run_hooks
+
+        info = get_daypart_info()
+        current = info["daypart"]
+        local_time = info["local_time"]
+        previous = _daypart_watcher_state["last"]
+
+        if current != previous:
+            # run_hooks never raises — handler exceptions are logged inside.
+            await run_hooks(
+                "daypart_changed",
+                previous=previous,
+                current=current,
+                local_time=local_time,
+            )
+            _daypart_watcher_state["last"] = current
+            logger.info(
+                f"🌓 Daypart transition: {previous} → {current} (local {local_time})"
+            )
+
+    _spawn_periodic_task(
+        name="Daypart watcher",
+        interval=300,
+        work=_tick,
+        started_msg="✅ Daypart Watcher gestartet (alle 5 Minuten)",
+        run_at_boot=True,
+    )
+
+
 def _schedule_notification_cleanup():
     """Schedule periodic cleanup of expired notifications."""
     if not settings.proactive_enabled:
@@ -971,6 +1016,7 @@ async def lifespan(app: "FastAPI"):
     if settings.features["voice"]:
         _schedule_whisper_preload()
         _schedule_speaker_vocab_rebuild()
+    _schedule_daypart_watcher()
     _schedule_notification_cleanup()
     _schedule_reminder_checker()
     _schedule_notification_poller(app)

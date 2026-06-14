@@ -1093,6 +1093,12 @@ async def websocket_endpoint(
                     user_personality_style, user_personality_prompt, ollama.default_lang
                 )
 
+            # Build time-of-day context for agent prompts (day/evening/night).
+            # build_time_context wraps everything in try/except and returns ""
+            # on any error, so this can never break the agent path.
+            from services.daypart_service import build_time_context
+            time_context = build_time_context(lang=ollama.default_lang)
+
             # Get router from app state (initialized at startup if agent_enabled)
             agent_router = getattr(app.state, 'agent_router', None)
 
@@ -1400,6 +1406,7 @@ async def websocket_endpoint(
                             memory_context=memory_context,
                             document_context=document_context,
                             personality_context=personality_context,
+                            time_context=time_context,
                             user_permissions=user_permissions,
                             user_id=user_id,
                             context_vars_text=_context_vars_text,
@@ -1619,6 +1626,7 @@ async def websocket_endpoint(
                         memory_context=memory_context,
                         document_context=document_context,
                         personality_context=personality_context,
+                        time_context=time_context,
                         user_permissions=user_permissions,
                         user_id=user_id,
                         context_vars_text=_context_vars_text,

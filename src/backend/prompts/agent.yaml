@@ -4,7 +4,7 @@
 
 de:
   # Main agent prompt template
-  # Available variables: {message}, {conv_context}, {memory_context}, {document_context}, {personality_context}, {tools_prompt}, {self_learning_blocks}, {history_prompt}, {step_directive}
+  # Available variables: {message}, {conv_context}, {memory_context}, {document_context}, {time_context}, {personality_context}, {tools_prompt}, {self_learning_blocks}, {history_prompt}, {step_directive}
   agent_prompt: |
     Du bist ein Agent, der komplexe Aufgaben Schritt für Schritt löst.
 
@@ -27,6 +27,7 @@ de:
 
     {document_context}
 
+    {time_context}
     {personality_context}
 
     ANTWORT-FORMAT: Antworte mit GENAU EINEM JSON-Objekt.
@@ -93,6 +94,7 @@ de:
 
     {document_context}
 
+    {time_context}
     {personality_context}
 
     ANTWORT-FORMAT: Antworte mit GENAU EINEM JSON-Objekt.
@@ -152,6 +154,7 @@ de:
 
     {document_context}
 
+    {time_context}
     {personality_context}
 
     ANTWORT-FORMAT: Antworte mit GENAU EINEM JSON-Objekt.
@@ -201,6 +204,7 @@ de:
 
     {document_context}
 
+    {time_context}
     {personality_context}
 
     ANTWORT-FORMAT: Antworte mit GENAU EINEM JSON-Objekt.
@@ -258,6 +262,7 @@ de:
 
     {document_context}
 
+    {time_context}
     {personality_context}
 
     ANTWORT-FORMAT: Antworte mit GENAU EINEM JSON-Objekt.
@@ -338,6 +343,7 @@ de:
 
     {document_context}
 
+    {time_context}
     {personality_context}
 
     ANTWORT-FORMAT: Antworte mit GENAU EINEM JSON-Objekt.
@@ -441,6 +447,7 @@ de:
 
     {document_context}
 
+    {time_context}
     {personality_context}
 
     ANTWORT-FORMAT: Antworte mit GENAU EINEM JSON-Objekt.
@@ -595,7 +602,7 @@ de:
 
 en:
   # Main agent prompt template
-  # Available variables: {message}, {conv_context}, {memory_context}, {document_context}, {personality_context}, {tools_prompt}, {self_learning_blocks}, {history_prompt}, {step_directive}
+  # Available variables: {message}, {conv_context}, {memory_context}, {document_context}, {time_context}, {personality_context}, {tools_prompt}, {self_learning_blocks}, {history_prompt}, {step_directive}
   agent_prompt: |
     You are an agent that solves complex tasks step by step.
 
@@ -618,6 +625,7 @@ en:
 
     {document_context}
 
+    {time_context}
     {personality_context}
 
     RESPONSE FORMAT: Reply with EXACTLY ONE JSON object.
@@ -680,6 +688,7 @@ en:
 
     {document_context}
 
+    {time_context}
     {personality_context}
 
     RESPONSE FORMAT: Reply with EXACTLY ONE JSON object.
@@ -736,6 +745,7 @@ en:
 
     {document_context}
 
+    {time_context}
     {personality_context}
 
     RESPONSE FORMAT: Reply with EXACTLY ONE JSON object.
@@ -782,6 +792,7 @@ en:
 
     {document_context}
 
+    {time_context}
     {personality_context}
 
     RESPONSE FORMAT: Reply with EXACTLY ONE JSON object.
@@ -836,6 +847,7 @@ en:
 
     {document_context}
 
+    {time_context}
     {personality_context}
 
     RESPONSE FORMAT: Reply with EXACTLY ONE JSON object.
@@ -913,6 +925,7 @@ en:
 
     {document_context}
 
+    {time_context}
     {personality_context}
 
     RESPONSE FORMAT: Reply with EXACTLY ONE JSON object.
@@ -1013,6 +1026,7 @@ en:
 
     {document_context}
 
+    {time_context}
     {personality_context}
 
     RESPONSE FORMAT: Reply with EXACTLY ONE JSON object.
