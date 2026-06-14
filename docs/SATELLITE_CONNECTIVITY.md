@@ -30,7 +30,11 @@ each time; the room row is created on first connect (`ROOMS_AUTO_CREATE_FROM_SAT
 2. **mDNS / boot-window race.** `renfield.local` depends on Avahi + the cluster
    `mdns-responder`. At boot (before NTP/mDNS are ready) the handshake can time
    out — these failures appear only in the *satellite* journal, never in backend
-   logs (they never reach FastAPI).
+   logs (they never reach FastAPI). Concretely, the first 1–2
+   `getaddrinfo("renfield.local")` calls fail with `[Errno -2] Name or service
+   not known` for ~2-3s until Avahi's multicast cache warms, then resolve fine.
+   The reconnect loop recovers from this (≥ v1.4.1) — see *In-process wedges*
+   below for the strand bug where it didn't.
 3. **Device offline.** A powered-off / crashed / WiFi-disassociated Pi shows
    nothing in backend logs. Check it physically: `ping <ip>`, ARP, the LED. A
    4-mic-HAT unit can hit the AC108 + onnxruntime same-process kernel crash —
@@ -82,6 +86,16 @@ Client behavior fixes (shipped in the satellite package):
 - `_register()` recv is bounded by `register_timeout` (was unbounded).
 - A failed **heartbeat send now triggers reconnect immediately** (was swallowed,
   leaving a zombie connection until the WS ping timeout ~30 s later).
+- **Boot-time reconnect strand (≥ v1.4.1).** When the *first* connect failed at
+  boot (the cold-mDNS race above), the recovery loop was scheduled with a bare
+  `asyncio.create_task()` whose result was discarded; the event loop holds only
+  a weak reference, so it was garbage-collected before it ran. "will retry"
+  printed but the loop never executed (no `Reconnecting in Xs` line in the
+  journal) — the satellite was stranded in `idle` forever, while still showing
+  the blue idle LED (so it *looked* connected). Fixed by keeping a strong
+  reference (`_reconnect_task`) + the `_reconnecting` guard, and by making each
+  reconnect attempt exception-safe so a transient error can't kill the loop or
+  bypass the watchdog.
 - The disconnect watchdog (`max_disconnected_seconds`) exits → systemd
   `Restart=always` brings up a clean process. `StartLimitIntervalSec=0` in the
   unit ensures these legitimate restarts never trip systemd's burst limit.
