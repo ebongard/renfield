@@ -1225,8 +1225,10 @@ class InternalToolService:
         else:
             result = await self._media_control_ha(action, device_data, resolved_room_name, params)
 
-        # Clear media follow session on explicit stop
-        if action == "stop" and result.get("success"):
+        # Clear media follow session on explicit USER stop — but NOT when the stop
+        # is Media Follow's own suspend (_stop_playback sets _media_follow_internal),
+        # which would delete the session we're about to resume in the next room.
+        if action == "stop" and result.get("success") and not params.get("_media_follow_internal"):
             from ha_glue.utils.config import ha_glue_settings as _settings
             if _settings.media_follow_enabled:
                 try:

@@ -237,6 +237,12 @@ class MediaFollowService:
                 "action": "stop",
                 "room_name": session.room_name,
                 "force": "true",
+                # Mark this as Media Follow's OWN suspend-stop, not a user "stop".
+                # _media_control clears the follow session on a stop; without this
+                # marker the suspend would delete the very session we're about to
+                # resume in the next room, so the music never follows (live-test
+                # 2026-06-14).
+                "_media_follow_internal": True,
             })
             if not result.get("success"):
                 logger.warning(

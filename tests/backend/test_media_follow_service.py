@@ -136,6 +136,32 @@ class TestOnUserLeaveRoom:
         assert session.suspended_at is not None
 
     @pytest.mark.asyncio
+    async def test_suspend_does_not_clear_session(self, playing_session):
+        """on_user_leave_room's internal stop must NOT clear the session — it
+        must survive as SUSPENDED so the next room can resume it. Regression for
+        the live-test 2026-06-14: _stop_playback -> _media_control(action=stop)
+        was clearing the very session being suspended, so the music never
+        followed. The stop must carry the _media_follow_internal marker."""
+        captured = {}
+
+        async def fake_media_control(params):
+            captured.update(params)
+            return {"success": True}
+
+        with patch(
+            "ha_glue.services.internal_tools.InternalToolService._media_control",
+            side_effect=fake_media_control,
+        ), patch.object(playing_session, "_is_user_opted_in", return_value=True):
+            await playing_session.on_user_leave_room(
+                user_id=1, room_id=10, room_name="Arbeitszimmer"
+            )
+
+        s = playing_session.get_session(1)
+        assert s is not None, "session was cleared during suspend — nothing to follow"
+        assert s.state == SessionState.SUSPENDED
+        assert captured.get("_media_follow_internal") is True
+
+    @pytest.mark.asyncio
     async def test_leave_stops_playback(self, playing_session):
         mock_stop = AsyncMock()
         with patch.object(playing_session, "_is_user_opted_in", return_value=True), \
