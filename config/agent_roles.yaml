@@ -15,15 +15,17 @@
 roles:
   smart_home:
     description:
-      de: "Smart Home: Licht, Schalter, Sensoren, Heizung, Szenen steuern, Temperatur/Luftfeuchte in Raeumen abfragen (NICHT Musik/Medien, NICHT Aussenwetter)"
-      en: "Smart home: control lights, switches, sensors, heating, scenes, query temperature/humidity in rooms (NOT music/media, NOT outdoor weather)"
+      de: "Smart Home: Licht, Schalter, Sensoren, Heizung, Szenen steuern, Temperatur/Luftfeuchte in Raeumen abfragen, Bluetooth-Geraete in den Raeumen scannen (NICHT Musik/Medien, NICHT Aussenwetter)"
+      en: "Smart home: control lights, switches, sensors, heating, scenes, query temperature/humidity in rooms, scan for Bluetooth devices in the rooms (NOT music/media, NOT outdoor weather)"
     mcp_servers: [homeassistant]
     # internal.media_control is the canonical room-volume path (HA media_players
     # AND DLNA renderers). Volume commands ("lauter/leiser", "auf X% setzen")
     # route here as smart_home/volume_control, so the role needs it — otherwise
     # the agent has no working volume tool (HassSetVolume was removed because it
     # can't target DLNA renderers and bypasses room routing).
-    internal_tools: [internal.resolve_room_player, internal.play_in_room, internal.media_control]
+    # internal.bluetooth_scan: "scan all bluetooth devices" fans a discovery scan
+    # out to every satellite (gated by BT_SCAN_ENABLED).
+    internal_tools: [internal.resolve_room_player, internal.play_in_room, internal.media_control, internal.bluetooth_scan]
     max_steps: 4
     prompt_key: agent_prompt_smart_home
     model: "qwen3:8b"
@@ -68,7 +70,7 @@ roles:
       de: "Anwesenheit & Nachrichten ausrichten: Wo ist eine Person, wer ist zuhause, in welchem Raum ist jemand; einer Person etwas ausrichten/Bescheid sagen/ansagen ('sag ihm/ihr ...', 'richte X aus')"
       en: "Presence & relaying messages: where is a person, who is home, which room is someone in; relay/announce a message to a person ('tell him/her ...', 'let X know ...')"
     mcp_servers: []
-    internal_tools: [internal.get_user_location, internal.get_all_presence, internal.announce_in_room]
+    internal_tools: [internal.get_user_location, internal.get_all_presence, internal.announce_in_room, internal.presence_history]
     max_steps: 5
     prompt_key: agent_prompt
 
