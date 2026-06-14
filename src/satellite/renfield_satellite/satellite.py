@@ -83,6 +83,7 @@ class Satellite:
         self._reconnecting: bool = False  # Prevent duplicate reconnection attempts
         self._wakeword_pending: bool = False  # Prevent duplicate wakeword processing
         self._pending_snapshot: Optional[asyncio.Task] = None  # Background camera capture
+        self._reconnect_task: Optional[asyncio.Task] = None  # Startup-failure reconnect loop (kept referenced so asyncio doesn't GC it)
 
         # Metrics tracking
         self._last_wakeword: Optional[Dict[str, Any]] = None
@@ -374,7 +375,7 @@ class Satellite:
             self._set_state(SatelliteState.ERROR)
             self.leds.set_pattern(LEDPattern.ERROR)
             await asyncio.sleep(2)
-            asyncio.create_task(self._reconnect_with_discovery())
+            self._start_reconnect_loop()
 
         # Go to idle state
         self._set_state(SatelliteState.IDLE)
@@ -436,6 +437,27 @@ class Satellite:
         else:
             print("No Renfield server found on network")
             return None
+
+    def _start_reconnect_loop(self):
+        """Schedule the reconnect loop from the async run() context.
+
+        The first connect commonly fails at boot because mDNS resolution of the
+        server host (e.g. renfield.local) is cold for the first ~2-3s until
+        avahi's multicast cache warms — getaddrinfo raises
+        "[Errno -2] Name or service not known", then resolves fine seconds later.
+        The reconnect loop recovers from that, BUT it must actually run: a bare
+        asyncio.create_task() whose result is discarded is held only weakly by
+        the event loop and can be garbage-collected before it is ever scheduled,
+        which silently strands the satellite in idle forever ("will retry" never
+        happens). Keep a strong reference on self, and honor the _reconnecting
+        guard so a concurrent _on_disconnected does not spawn a duplicate loop.
+        """
+        if self._reconnecting:
+            return
+        self._reconnecting = True
+        self._reconnect_task = asyncio.create_task(
+            self._reconnect_with_discovery_wrapper()
+        )
 
     async def _reconnect_with_discovery_wrapper(self):
         """Wrapper for reconnection that resets the reconnecting flag"""
@@ -501,20 +523,30 @@ class Satellite:
             if not self._running:
                 break
 
-            # Re-discover server if auto-discovery is enabled and no URL set
-            if self.config.server.auto_discover and not self.config.server.url:
-                print("Re-discovering server...")
-                server_url = await self._discover_server()
-                if server_url:
-                    self.ws_client.set_server_url(server_url)
+            # Guard the whole attempt: a transient exception in discovery, token
+            # fetch, or connect must NOT escape the loop. If it did, the wrapper's
+            # finally would reset _reconnecting=False and the task would die — and
+            # on the startup-failure path there is no live receive loop left to
+            # re-fire _on_disconnected, so reconnection would never restart AND the
+            # disconnect watchdog above (which only runs inside this loop) would be
+            # bypassed. Swallow, log, and let the next iteration retry with backoff.
+            try:
+                # Re-discover server if auto-discovery is enabled and no URL set
+                if self.config.server.auto_discover and not self.config.server.url:
+                    print("Re-discovering server...")
+                    server_url = await self._discover_server()
+                    if server_url:
+                        self.ws_client.set_server_url(server_url)
 
-                    # Fetch new auth token if authentication is enabled
-                    if self.config.server.auth_enabled:
-                        await self._fetch_and_set_token(server_url)
+                        # Fetch new auth token if authentication is enabled
+                        if self.config.server.auth_enabled:
+                            await self._fetch_and_set_token(server_url)
 
-            # Try to connect
-            if await self.ws_client.connect():
-                return True
+                # Try to connect
+                if await self.ws_client.connect():
+                    return True
+            except Exception as e:
+                print(f"Reconnect attempt {attempts} errored: {e} - will retry")
 
         return False
 
