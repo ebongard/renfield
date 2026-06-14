@@ -835,6 +835,30 @@ PRESENCE_WEBHOOK_SECRET=""
 - `GET /api/presence/user/{id}` — Standort + allein?
 - `POST /api/presence/devices` — BLE-Gerät registrieren (Admin)
 
+### Präsenz-Historie (persistent, überlebt Neustarts)
+
+Jeder Raumwechsel (`enter`/`leave`) wird dauerhaft in `presence_events` protokolliert (inkl. `satellite_id`). Abfragbar als Zeitleiste — die In-Memory-Live-Präsenz bleibt davon unberührt.
+
+- **Chat-Tool** `internal.presence_history`: "Wo war Eduard heute?", "Wer war um 20 Uhr im Wohnzimmer?", "Wann war ich zuletzt in der Küche?".
+- **Routen** `GET /api/presence/analytics/{timeline,last-seen-by-room,room-window}`. Fremduser-Abfragen erfordern `ROOMS_MANAGE` (IDOR-Schutz); Selbst-Abfragen frei.
+- Flag `PRESENCE_HISTORY_ENABLED` (Default an, rein additiv).
+
+### Bluetooth-Geräte-Scan aus dem Chat
+
+"Scanne die Bluetooth-Geräte" → das Tool `internal.bluetooth_scan` fächert eine Discovery an alle Satelliten aus (Backend hat keine BT-Hardware). Jeder Satellit führt eine Classic-BT-Inquiry (`hcitool scan`) **und** eine BLE-Discovery (`BleakScanner`) aus; das Backend dedupliziert per MAC, behält das stärkste RSSI, sammelt pro Raum und löst die Herstellerkennung (OUI→Vendor) auf. Ergebnis: Adresse, Name (oft leer), Raum/Satellit, RSSI, Hersteller.
+
+Hinweise: nur **sichtbare/advertisende** Geräte erscheinen (die meisten Handys sind standardmäßig nicht auffindbar); ein Scan dauert ~15-30 s. Opt-in via `BT_SCAN_ENABLED` (zählt alle Geräte im Haus auf → Privatsphäre).
+
+## Tageszeit-Bewusstsein & LED-Nachtdimmung
+
+### Tag/Nacht-Bewusstsein
+
+Renfield kennt die Tageszeit (Tag / Abend / Nacht, aus konfigurierbaren Uhrzeit-Fenstern in der lokalen Zeitzone). Der Agent bekommt in **jedem** Prompt eine `ZEITKONTEXT`-Zeile ("Aktuelle Zeit: 22:14 Uhr (Nacht, Donnerstag)"), kann seine Antworten also tageszeitgerecht anpassen. Ein Hintergrund-Watcher (alle 5 Min) feuert bei Übergängen den `daypart_changed`-Hook, an den sich weitere Funktionen hängen. Konfiguration: `DAYPART_NIGHT_START`/`DAYPART_NIGHT_END`/`DAYPART_EVENING_START`/`DAYPART_TIMEZONE`.
+
+### LED-Nachtdimmung der Satelliten
+
+Bei Einbruch der Nacht (Übergang zu "Nacht") dimmt das Backend automatisch die LED-Ringe aller Satelliten (`LED_NIGHT_BRIGHTNESS`=5); jeder Übergang **aus** der Nacht stellt die Tageshelligkeit wieder her (`LED_DAY_BRIGHTNESS`=20). Symmetrisch — kein separates Morgen-Handling nötig. Die Animationen (Wake-Word, Zuhören, Sprechen) laufen weiter, nur gedimmt. Ein Satellit, der sich nachts neu verbindet, kommt bereits gedimmt hoch (die Helligkeit reist im `register_ack` mit). Backend-getrieben (eine Quelle der Wahrheit), reagiert auf `daypart_changed`.
+
 ## Hook System (Extension API)
 
 Async Hook-System für die Open-Core-Architektur. Externe Pakete registrieren Callbacks an 10 Lifecycle-Stellen — renfield crasht nie wegen eines Plugin-Fehlers.

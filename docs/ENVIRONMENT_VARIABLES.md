@@ -1485,6 +1485,46 @@ PLUGIN_MODULES=pkg_a.plugin:register,pkg_b.plugin:register
 
 ---
 
+## Tageszeit, LED-Nachtdimmung, Präsenz-Historie & Bluetooth-Scan
+
+```bash
+# --- Tag/Nacht-Bewusstsein (services/daypart_service.py) ---
+# Der Agent bekommt in jedem Prompt eine ZEITKONTEXT-Zeile (Tageszeit + Wochentag);
+# ein 5-Minuten-Watcher feuert bei Übergängen den daypart_changed-Hook. Immer aktiv
+# (kein Flag) — die Uhrzeit zu kennen ist immer korrekt. Fenster sind HH:MM lokal.
+DAYPART_NIGHT_START=22:00      # Beginn "Nacht"
+DAYPART_NIGHT_END=07:00        # Ende "Nacht" (umschlagend über Mitternacht, wenn > start)
+DAYPART_EVENING_START=18:00    # Beginn "Abend"
+DAYPART_TIMEZONE=              # leer => nutzt PRESENCE_ANALYTICS_TIMEZONE (Default Europe/Berlin), sonst UTC
+
+# --- LED-Nachtdimmung (ha_glue/services/led_dimming_service.py) ---
+# Backend-getrieben: bei daypart_changed wird die Helligkeit an alle Satelliten
+# über WS gepusht (led_config). register_ack trägt die aktuelle Helligkeit, damit
+# ein nachts neu verbindender Satellit gedimmt hochkommt. Symmetrisch: jeder
+# Übergang AUS der Nacht stellt LED_DAY_BRIGHTNESS wieder her. Werte 0-31.
+LED_DAY_BRIGHTNESS=20
+LED_NIGHT_BRIGHTNESS=5
+
+# --- Persistente Präsenz-Historie ---
+# presence_events bekommt eine satellite_id-Spalte (Migration pc20260616) + Timeline-
+# Routen unter /api/presence/analytics/ + das internal.presence_history Chat-Tool
+# ("Wo war X", "Wer war in Raum Y"). Fremduser-Abfragen brauchen ROOMS_MANAGE.
+# Die in-memory Live-Präsenz bleibt unberührt. Additiv → Default an.
+PRESENCE_HISTORY_ENABLED=true
+
+# --- Bluetooth-Geräte-Scan aus dem Chat ---
+# "Scanne die Bluetooth-Geräte" → internal.bluetooth_scan fächert eine Discovery
+# an alle Satelliten aus (neues bt_scan_request/bt_scan_result WS-Protokoll, wie
+# capture_snapshot). Jeder Satellit: Classic-BT-Inquiry (hcitool scan) + BLE
+# (BleakScanner). Backend dedupliziert per MAC, stärkstes RSSI, pro Raum, OUI→Hersteller.
+# Nur sichtbare/advertisende Geräte; ~15-30 s. Privacy: zählt alle Geräte im Haus auf
+# → Opt-in (Default aus). Das Tool muss in config/agent_roles.yaml der smart_home-Rolle
+# stehen (ConfigMap renfield-mcp-config, nicht im Image).
+BT_SCAN_ENABLED=false
+```
+
+---
+
 ## Best Practices
 
 ### 1. Niemals Secrets committen
