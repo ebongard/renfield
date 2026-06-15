@@ -1163,6 +1163,12 @@ async def websocket_endpoint(
             # Get router from app state (initialized at startup if agent_enabled)
             agent_router = getattr(app.state, 'agent_router', None)
 
+            # Resolved agent role for this turn — surfaced to the client (role badge)
+            # + persisted. Only assigned on the router path below; init None so the
+            # shortcut paths (which skip classification) don't NameError when the
+            # shared persistence/done blocks reference it.
+            role = None
+
             if not media_shortcut_handled and not paperless_confirm_handled and settings.agent_enabled and agent_router:
                 # === Unified Router Path ===
                 # Every message goes through router → specialized agent
@@ -1869,6 +1875,9 @@ WICHTIG: Nutze die ECHTEN Daten aus dem Ergebnis! Gib NUR die Antwort, KEIN JSON
             assistant_metadata = {
                 "intent": intent.get("intent") if intent else None,
                 "action_success": action_result.get("success") if action_result else None,
+                # Resolved agent role — persisted so the role badge rehydrates on
+                # history reload (unlike the live-only intentInfo). None on shortcut paths.
+                "agent_role": role.name if role else None,
             }
             if action_summary:
                 assistant_metadata["action_summary"] = action_summary
@@ -1992,6 +2001,11 @@ WICHTIG: Nutze die ECHTEN Daten aus dem Ergebnis! Gib NUR die Antwort, KEIN JSON
                     "intent": intent.get("intent"),
                     "confidence": intent.get("confidence", 0),
                 }
+            # Resolved agent role for the chat role badge (item 6). Frontend gates
+            # display on role_surfacing_enabled; always emitted so the flag flip
+            # needs no backend redeploy.
+            if role:
+                done_msg["role"] = role.name
             await websocket.send_json(done_msg)
 
             # Proactive feedback: ask user when action failed or returned empty

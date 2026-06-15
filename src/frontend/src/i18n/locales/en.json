@@ -135,6 +135,22 @@
     "followups": {
       "label": "Follow-up suggestions"
     },
+    "roleBadge": {
+      "pin": "Answered by {{role}} · pin for the next turn",
+      "pinned": "{{role}} pinned for the next turn"
+    },
+    "roles": {
+      "smart_home": "Smart Home",
+      "media": "Media",
+      "documents": "Documents",
+      "research": "Research",
+      "presence": "Presence",
+      "workflow": "Automation",
+      "general": "General",
+      "conversation": "Conversation",
+      "knowledge": "Knowledge",
+      "routine": "Routine"
+    },
     "palette": {
       "title": "Actions",
       "open": "Open action palette",

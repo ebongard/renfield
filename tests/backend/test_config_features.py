@@ -39,3 +39,18 @@ async def test_features_reports_schicht_a_flag(monkeypatch, enabled):
         app.dependency_overrides.clear()
     assert resp.status_code == 200
     assert resp.json()["schicht_a_extraction_enabled"] is enabled
+
+
+@pytest.mark.parametrize("enabled", [True, False])
+async def test_features_reports_role_surfacing_flag(monkeypatch, enabled):
+    """Item 6: the chat role badge is frontend-gated on this allowlisted flag."""
+    monkeypatch.setattr(settings, "role_surfacing_enabled", enabled)
+    from main import app
+    _auth_default(app)
+    try:
+        async with await _client(app) as c:
+            resp = await c.get("/api/config/features")
+    finally:
+        app.dependency_overrides.clear()
+    assert resp.status_code == 200
+    assert resp.json()["role_surfacing_enabled"] is enabled

@@ -135,6 +135,22 @@
     "followups": {
       "label": "Vorschläge für Folgefragen"
     },
+    "roleBadge": {
+      "pin": "Beantwortet von {{role}} · für die nächste Frage anheften",
+      "pinned": "{{role}} für die nächste Frage angeheftet"
+    },
+    "roles": {
+      "smart_home": "Smart Home",
+      "media": "Medien",
+      "documents": "Dokumente",
+      "research": "Recherche",
+      "presence": "Anwesenheit",
+      "workflow": "Automatisierung",
+      "general": "Allgemein",
+      "conversation": "Konversation",
+      "knowledge": "Wissen",
+      "routine": "Routine"
+    },
     "palette": {
       "title": "Aktionen",
       "open": "Aktionspalette öffnen",

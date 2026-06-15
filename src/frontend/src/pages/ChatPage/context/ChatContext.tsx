@@ -96,6 +96,8 @@ export interface ChatUiMessage {
   intentInfo?: IntentInfo;
   feedbackRequested?: boolean;
   userQuery?: string;
+  /** Resolved agent role that produced this answer (item 6 role badge). */
+  agentRole?: string;
   agentSteps?: AgentStep[];
   federationProgress?: Record<string, FederationProgressEntry>;
   attachments?: MessageAttachment[];
@@ -130,7 +132,7 @@ export function historyToUiMessage(m: {
   metadata?: unknown;
 }): ChatUiMessage {
   const meta = m.metadata as
-    | { attachments?: MessageAttachment[]; wb_entities?: TraceEntity[]; sources?: MessageSource[] }
+    | { attachments?: MessageAttachment[]; wb_entities?: TraceEntity[]; sources?: MessageSource[]; agent_role?: string }
     | undefined;
   return {
     role: m.role === 'system' ? 'assistant' : (m.role as 'user' | 'assistant'),
@@ -138,6 +140,8 @@ export function historyToUiMessage(m: {
     ...(meta?.attachments && meta.attachments.length > 0 && { attachments: meta.attachments }),
     ...(meta?.wb_entities && meta.wb_entities.length > 0 && { entities: meta.wb_entities }),
     ...(meta?.sources && meta.sources.length > 0 && { sources: meta.sources }),
+    // Role badge rehydration on history reload (item 6).
+    ...(meta?.agent_role && { agentRole: meta.agent_role }),
   };
 }
 
@@ -610,6 +614,11 @@ export function ChatProvider({ children }: ChatProviderProps) {
           ...lastMsg,
           streaming: false,
           intentInfo,
+          // Resolved agent role for the role badge (item 6). Present on router-path
+          // turns; absent on legacy/shortcut turns (→ no badge). On an orchestrated
+          // multi-domain turn this is the single primary-classified role (known
+          // limitation — the badge can under-represent a multi-sub-agent answer).
+          agentRole: data.role,
           userQuery: lastUserQueryRef.current || undefined,
           // F4c — any lingering per-peer progress lines belong only to
           // the live streaming phase; drop them when the message finalizes.

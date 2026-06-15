@@ -9,6 +9,8 @@ import EmailForwardDialog from './EmailForwardDialog';
 import PaperlessConfirmCard from './PaperlessConfirmCard';
 import SourceChips from '../../components/chat/SourceChips';
 import FollowupChips from '../../components/chat/FollowupChips';
+import AgentRoleBadge from '../../components/chat/AgentRoleBadge';
+import { useFeatureFlags } from '../../api/resources/brain';
 import { useChatContext } from './context/ChatContext';
 import { CitationChip } from '../../components/wissensbasis/CitationChip';
 import { useTraceQuery, type TraceEntity } from '../../api/resources/wissensbasis';
@@ -145,6 +147,8 @@ export default function ChatMessages() {
     handleSendViaEmail, emailDialog, confirmSendViaEmail, cancelEmailDialog,
     sendMessage, sessionId, submitPaperlessConfirm,
   } = useChatContext();
+  const { data: features } = useFeatureFlags();
+  const roleSurfacingEnabled = features?.role_surfacing_enabled ?? false;
   const scrollContainerRef = useRef<HTMLDivElement | null>(null);
 
   // Fetch the wissensbasis reasoning trace for this session so we can
@@ -403,6 +407,13 @@ export default function ChatMessages() {
                 <Volume2 className="w-3 h-3" aria-hidden="true" />
                 <span>{t('chat.readAloud')}</span>
               </button>
+            )}
+
+            {/* Agent-role badge (item 6) — which role answered; tap to pin next turn. */}
+            {message.role === 'assistant' && !message.streaming && roleSurfacingEnabled && message.agentRole && (
+              <div className="mt-2">
+                <AgentRoleBadge role={message.agentRole} />
+              </div>
             )}
 
             {/* Intent info + Correction Button */}

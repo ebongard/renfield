@@ -37,6 +37,8 @@ class FeatureFlags(BaseModel):
     # Gates the chat command palette UI (the `/`-trigger + touch button + overlay).
     # Off => no palette elements rendered. See utils/config.py::command_palette_enabled.
     command_palette_enabled: bool
+    # Gates the chat agent-role badge + role-pin. See utils/config.py::role_surfacing_enabled.
+    role_surfacing_enabled: bool
 
 
 @router.get("/features", response_model=FeatureFlags)
@@ -48,4 +50,5 @@ async def get_features(
         schicht_a_extraction_enabled=settings.schicht_a_extraction_enabled,
         wissen_workspace_enabled=settings.wissen_workspace_enabled,
         command_palette_enabled=settings.command_palette_enabled,
+        role_surfacing_enabled=settings.role_surfacing_enabled,
     )

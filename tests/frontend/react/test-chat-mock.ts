@@ -99,6 +99,17 @@ export const defaultChatContextValue: ChatContextValue = {
   speakText: async () => {},
   handleFeedbackSubmit: async () => {},
   regenerateWithCorrectedIntent: () => {},
+
+  // Paperless confirm card
+  submitPaperlessConfirm: () => {},
+
+  // Command palette / role surfacing (chat-ui items 4 + 6)
+  paletteOpen: false,
+  openPalette: () => {},
+  closePalette: () => {},
+  pendingRoleHint: null,
+  setRoleHint: () => {},
+  clearRoleHint: () => {},
 };
 
 /**

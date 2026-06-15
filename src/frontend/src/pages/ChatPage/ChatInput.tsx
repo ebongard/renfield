@@ -6,6 +6,7 @@ import apiClient from '../../utils/axios';
 import AudioVisualizer from './AudioVisualizer';
 import { useChatContext } from './context/ChatContext';
 import { useFeatureFlags } from '../../api/resources/brain';
+import { roleLabel } from '../../components/chat/AgentRoleBadge';
 
 interface KnowledgeBase {
   id: string;
@@ -23,6 +24,10 @@ export default function ChatInput() {
   } = useChatContext();
   const { data: features } = useFeatureFlags();
   const paletteEnabled = features?.command_palette_enabled ?? false;
+  // The pinned-role indicator is shared by the palette and the role badge (item 6),
+  // so show it whenever either feature is on — otherwise pinning from the role
+  // badge would set a hint with no visible confirmation.
+  const roleSurfacingEnabled = features?.role_surfacing_enabled ?? false;
 
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
@@ -266,11 +271,12 @@ export default function ChatInput() {
         </div>
       )}
 
-      {/* Command-palette role override for the next turn (dismissible). */}
-      {paletteEnabled && pendingRoleHint && (
+      {/* Role override for the next turn (dismissible) — set by the palette OR the
+          assistant role badge (item 6). */}
+      {(paletteEnabled || roleSurfacingEnabled) && pendingRoleHint && (
         <div className="mb-2 flex items-center gap-2">
           <span className="inline-flex items-center gap-1.5 px-2 py-1 rounded-full text-xs bg-primary-100 text-primary-800 dark:bg-primary-900/40 dark:text-primary-100">
-            {t('chat.palette.roleActive', { role: pendingRoleHint })}
+            {t('chat.palette.roleActive', { role: roleLabel(t, pendingRoleHint) })}
             <button
               type="button"
               onClick={() => clearRoleHint?.()}

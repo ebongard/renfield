@@ -371,6 +371,11 @@ class Settings(BaseSettings):
     # Frontend-only gate; the backend `role_hint` handling is always present
     # (no-op when absent), so flipping this needs no backend redeploy.
     command_palette_enabled: bool = False
+    # Gates the chat agent-role badge (item 6): shows which agent role answered +
+    # lets the user pin a role for the next turn (reuses role_hint). Frontend-only
+    # gate; the backend always emits the resolved role on the done frame + persists
+    # it, so flipping this needs no backend redeploy.
+    role_surfacing_enabled: bool = False
     # Generic output-provider registry for room media/control routing. When on,
     # room output discovery + dispatch route through the pluggable OutputProvider
     # registry (built-in renfield/HA + MCP-declared dlna/samsung/sonos via the

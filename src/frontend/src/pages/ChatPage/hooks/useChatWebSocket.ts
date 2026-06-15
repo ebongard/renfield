@@ -18,6 +18,8 @@ export interface DoneMessage extends BaseWsMessage {
   tts_handled?: boolean;
   intent?: { intent: string; confidence?: number };
   sources?: MessageSource[];
+  /** Resolved agent role for this turn (item 6 role badge). */
+  role?: string;
 }
 
 export interface FollowupsMessage extends BaseWsMessage {

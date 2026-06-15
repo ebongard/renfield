@@ -97,6 +97,8 @@ export interface FeatureFlags {
   wissen_workspace_enabled: boolean;
   /** Gates the chat command palette UI (`/`-trigger + touch button + overlay). */
   command_palette_enabled: boolean;
+  /** Gates the chat agent-role badge + role-pin (which role answered; tap to pin next turn). */
+  role_surfacing_enabled: boolean;
 }
 
 async function fetchAtomSearch(query: string): Promise<AtomMatch[]> {
