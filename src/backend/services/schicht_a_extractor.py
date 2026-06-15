@@ -139,6 +139,34 @@ def _squish(text: str) -> str:
     return re.sub(r"[^a-z0-9]", "", text.lower())
 
 
+def _fact_identity_key(
+    category: object, kind: object, normalized_value: object, value: object
+) -> tuple[str, str, str]:
+    """Stable cross-re-extraction identity for a fact row.
+
+    A re-extraction recreates the whole ``document_facts`` set from scratch
+    (new ids, new atoms), so a per-fact tier override (``tier_overridden``)
+    can only be carried forward by matching a freshly-extracted fact to its
+    prior version on *content* identity, not row id.
+
+    Identity = ``(category, kind, value-signature)`` where the value signature
+    prefers ``normalized_value`` (identifiers — the whitespace-collapsed form
+    is the stable anchor) and falls back to ``value`` (obligations / universals
+    whose value is a short summary). Both are ``_squish``-ed so arbitrary
+    poppler letter-spacing / case differences between two OCR passes don't
+    break the match. Deterministic regex facts (identifiers) match reliably;
+    LLM summaries may drift between passes — a drifted summary simply doesn't
+    match and the re-extracted fact reverts to the doc tier (the documented
+    fail-safe: never MORE visible than the parent doc).
+    """
+    sig_src = normalized_value if (normalized_value not in (None, "")) else value
+    return (
+        str(category or "").lower(),
+        str(kind or "").lower(),
+        _squish(str(sig_src or "")),
+    )
+
+
 # ---------------------------------------------------------------------------
 # Deterministic identifier extraction
 # ---------------------------------------------------------------------------
@@ -702,6 +730,15 @@ async def schicht_a_post_document_ingest_hook(
     for the document are purged (via the sanctioned AtomPurgeService) before
     re-extraction, so reindexing a document refreshes its facts instead of
     duplicating them.
+
+    Per-fact tier-override carry-over: before writing the fresh fact set, the
+    prior facts that carry an owner-set per-fact tier override
+    (``tier_overridden=True``) are snapshotted by content identity
+    (``_fact_identity_key``). Each re-extracted fact that matches a snapshotted
+    override re-acquires that tier + the sticky flag, so re-OCR/re-ingest no
+    longer silently resets a deliberate per-fact override to the document tier.
+    A fact whose content drifted enough not to match reverts to the doc tier
+    (fail-safe: never more visible than the parent doc by default).
     """
     if not settings.schicht_a_extraction_enabled:
         return
@@ -757,8 +794,34 @@ async def schicht_a_post_document_ingest_hook(
                 )
             )).scalars().all()
 
+            # Carry-over snapshot: a per-fact tier OVERRIDE (e.g. a public issuer
+            # on a private document) is bound to the current fact row, but a
+            # re-extraction recreates the fact set from scratch — without this it
+            # would silently reset to the doc tier (P2 follow-up, TODOS.md). Snapshot
+            # the prior OVERRIDDEN facts keyed by content identity so a re-extracted
+            # fact that matches re-acquires its override. Only overrides need carrying;
+            # non-overridden facts already follow the doc tier by default.
+            prior_overrides = (await db.execute(
+                select(
+                    DocumentFact.category,
+                    DocumentFact.kind,
+                    DocumentFact.normalized_value,
+                    DocumentFact.value,
+                    DocumentFact.circle_tier,
+                ).where(
+                    DocumentFact.document_id == document_id,
+                    DocumentFact.tier_overridden.is_(True),
+                )
+            )).all()
+            override_by_key: dict[tuple[str, str, str], int] = {
+                _fact_identity_key(r.category, r.kind, r.normalized_value, r.value):
+                    int(r.circle_tier)
+                for r in prior_overrides
+            }
+
             atom_svc = AtomService(db)
             stored = 0
+            carried_over = 0
             capped = result.facts[:_MAX_FACTS_PER_DOC]
             if len(result.facts) > _MAX_FACTS_PER_DOC:
                 logger.warning(
@@ -766,10 +829,25 @@ async def schicht_a_post_document_ingest_hook(
                     f"facts; capping at {_MAX_FACTS_PER_DOC}"
                 )
             for f in capped:
+                # If this fact matches a prior per-fact override, carry that tier
+                # + the sticky flag forward; otherwise it follows the doc tier.
+                # An override can never raise a fact ABOVE the document's own
+                # visibility intent in a way the owner didn't pick — they DID pick
+                # it (the prior PATCH), and a re-extraction must not silently undo
+                # that choice. (The override tier is whatever the owner set; it is
+                # NOT clamped to the doc tier — same as the live override.)
+                carried = override_by_key.get(
+                    _fact_identity_key(
+                        f.category, f.kind, f.normalized_value, f.value
+                    )
+                )
+                fact_tier = carried if carried is not None else tier
+                is_override = carried is not None
+
                 atom_id = await atom_svc.create_with_source(
                     atom_type=ATOM_TYPE_DOCUMENT_FACT,
                     owner_user_id=int(owner_id),
-                    tier=tier,
+                    tier=fact_tier,
                 )
                 row = DocumentFact(
                     document_id=document_id,
@@ -786,12 +864,15 @@ async def schicht_a_post_document_ingest_hook(
                     confidence=f.confidence,
                     source=f.source,
                     atom_id=atom_id,
-                    circle_tier=tier,
+                    circle_tier=fact_tier,
+                    tier_overridden=is_override,
                 )
                 db.add(row)
                 await db.flush()
                 await atom_svc.finalize_source_id(atom_id, row.id)
                 stored += 1
+                if is_override:
+                    carried_over += 1
 
             await db.commit()
 
@@ -814,7 +895,7 @@ async def schicht_a_post_document_ingest_hook(
 
             logger.info(
                 f"Schicht A: stored {stored} fact(s) for doc {document_id} "
-                f"(tier={tier})"
+                f"(tier={tier}, carried-over overrides={carried_over})"
             )
     except Exception as e:  # noqa: BLE001 — never fail the ingest on a fact miss
         logger.warning(f"Schicht A post_document_ingest hook failed: {e}")

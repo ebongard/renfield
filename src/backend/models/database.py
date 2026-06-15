@@ -1967,12 +1967,14 @@ class DocumentFact(Base):
     # issuer on an otherwise-private document) and the parent-document tier
     # cascade (AtomService.update_tier) MUST NOT overwrite it — sticky in both
     # directions for the life of this fact row, until explicitly reset to the
-    # document tier (reset_fact_tier). NOTE: re-ingest / re-OCR recreates the
-    # fact set from scratch (tier_overridden defaults False), so overrides do
-    # NOT survive a re-extraction — they are bound to the current fact set. A
-    # re-extracted fact reverts to its document's tier (never more visible than
-    # the parent doc). Carrying overrides across re-extraction is a P2 follow-up
-    # (TODOS.md).
+    # document tier (reset_fact_tier). Re-ingest / re-OCR recreates the fact set
+    # from scratch, but the Schicht A ingest hook CARRIES OVERRIDES FORWARD: it
+    # snapshots the prior overridden facts by content identity
+    # (schicht_a_extractor._fact_identity_key = category + kind + normalized/
+    # value signature) and re-applies tier_overridden + the override tier to a
+    # matching re-extracted fact. A fact whose content drifted enough not to
+    # match reverts to the document tier (fail-safe: never more visible than the
+    # parent doc by default).
     tier_overridden = Column(Boolean, nullable=False, default=False)
     created_at = Column(DateTime, default=_utcnow)
 
