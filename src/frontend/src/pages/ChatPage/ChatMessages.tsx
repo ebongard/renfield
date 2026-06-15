@@ -7,6 +7,7 @@ import IntentCorrectionButton from '../../components/IntentCorrectionButton';
 import AttachmentQuickActions from './AttachmentQuickActions';
 import EmailForwardDialog from './EmailForwardDialog';
 import PaperlessConfirmCard from './PaperlessConfirmCard';
+import SourceChips from '../../components/chat/SourceChips';
 import { useChatContext } from './context/ChatContext';
 import { CitationChip } from '../../components/wissensbasis/CitationChip';
 import { useTraceQuery, type TraceEntity } from '../../api/resources/wissensbasis';
@@ -312,6 +313,12 @@ export default function ChatMessages() {
             )}
 
             {message.role === 'assistant' ? renderMessageContent(message.content, t('chat.albumArt'), message.entities ?? chipEntities, `msg-${index}`) : <p className="whitespace-pre-wrap">{message.content}</p>}
+
+            {/* Provenance source chips — KB documents a knowledge-backed answer
+                used. Renders nothing when the turn had no sources. */}
+            {message.role === 'assistant' && !message.streaming && (
+              <SourceChips sources={message.sources} />
+            )}
 
             {/* Adaptive Card (from WebSocket card message) */}
             {message.card && (

@@ -1,6 +1,7 @@
 import { useState, useRef, useCallback, useEffect } from 'react';
 import { debug } from '../../../utils/debug';
 import { getWebSocketUrl } from '../../../utils/env';
+import type { MessageSource } from '../../../types/chat';
 
 export interface BaseWsMessage {
   type: string;
@@ -16,6 +17,7 @@ export interface DoneMessage extends BaseWsMessage {
   type: 'done';
   tts_handled?: boolean;
   intent?: { intent: string; confidence?: number };
+  sources?: MessageSource[];
 }
 
 export interface ActionWsMessage extends BaseWsMessage {

@@ -128,6 +128,10 @@
     "assistantResponse": "Response from {{appName}}",
     "readAloud": "Read aloud",
     "albumArt": "Album art",
+    "sources": {
+      "label": "Sources",
+      "more": "+{{count}} more"
+    },
     "intent": "Intent",
     "startConversation": "Start a conversation with {{appName}}",
     "useTextOrMic": "You can type text or use the microphone",

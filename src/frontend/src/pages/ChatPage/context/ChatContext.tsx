@@ -44,7 +44,7 @@ import type {
   UploadProcessedMessage,
 } from '../hooks/useChatWebSocket';
 import type { UploadStates, UploadedDocument } from '../hooks/useDocumentUpload';
-import type { Conversation } from '../../../types/chat';
+import type { Conversation, MessageSource } from '../../../types/chat';
 import type { TraceEntity } from '../../../api/resources/wissensbasis';
 import { useConfirmDialog } from '../../../components/ConfirmDialog';
 import { drainSentenceTts, type SentenceStreamState } from './sentenceStream';
@@ -114,6 +114,9 @@ export interface ChatUiMessage {
   // on_pre_save_message. Lets the chip renderer wrap mentions per bubble
   // instead of smearing the session-last reasoning trace across all of them.
   entities?: TraceEntity[];
+  // Provenance source chips — the KB documents a knowledge-backed answer drew
+  // on. Arrives on the `done` frame live; rehydrates from `metadata.sources`.
+  sources?: MessageSource[];
 }
 
 /** Map a persisted history message to the in-memory UI shape. */
@@ -123,13 +126,14 @@ export function historyToUiMessage(m: {
   metadata?: unknown;
 }): ChatUiMessage {
   const meta = m.metadata as
-    | { attachments?: MessageAttachment[]; wb_entities?: TraceEntity[] }
+    | { attachments?: MessageAttachment[]; wb_entities?: TraceEntity[]; sources?: MessageSource[] }
     | undefined;
   return {
     role: m.role === 'system' ? 'assistant' : (m.role as 'user' | 'assistant'),
     content: m.content,
     ...(meta?.attachments && meta.attachments.length > 0 && { attachments: meta.attachments }),
     ...(meta?.wb_entities && meta.wb_entities.length > 0 && { entities: meta.wb_entities }),
+    ...(meta?.sources && meta.sources.length > 0 && { sources: meta.sources }),
   };
 }
 
@@ -592,6 +596,8 @@ export function ChatProvider({ children }: ChatProviderProps) {
           // F4c — any lingering per-peer progress lines belong only to
           // the live streaming phase; drop them when the message finalizes.
           federationProgress: undefined,
+          // Provenance source chips for this turn (knowledge-backed answers).
+          ...(data.sources && data.sources.length > 0 && { sources: data.sources }),
         };
         lastIntentInfoRef.current = null;
 

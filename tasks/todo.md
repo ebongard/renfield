@@ -1,68 +1,62 @@
-# Generic Output Providers — implementation plan
+# Plan — Provenance chips in chat (roadmap item 7)
 
-Branch: `feat/output-providers`. Source of truth: `docs/design/output-providers.md`
-(eng-reviewed 2026-06-07). Big-bang feature PR, phases 1-4, all behind
-`OUTPUT_PROVIDERS_ENABLED` (additive schema only; destructive cleanup is a P2
-follow-up). Flag OFF = byte-identical to today.
+Source: `docs/design/chat-ui-modernization.md` Tier 1 item 7. First-slice build.
+Goal: show **which sources** a knowledge-backed chat answer used, as chips under
+the assistant turn (filename + access-tier), so the answer's provenance is visible.
 
-## Phase 1 — Foundation (config + Protocol + MCP registry)  ✅ DONE (20/20 tests green on .159)
-- [x] P1.1 `config.py`: `output_providers_enabled: bool = False`
-- [x] P1.2 `mcp_client.py`: `MCPServerConfig.output_provider: dict | None = None` + parse in `load_config`
-- [x] P1.3 new `ha_glue/services/output_providers.py`:
-      - dataclasses: `OutputTarget`, `MediaRef`, `PlayResult`, `ControlResult`, `TargetStatus`
-      - capability constants (audio/video/power/transport/queue) + `OutputProvider` Protocol
-      - `McpOutputProvider` (maps the 4 contract methods onto `mcp.<server>.<tool>`, envelope+shape normalize)
-      - `build_mcp_output_providers(mcp_manager)` → {key: McpOutputProvider} from stanzas
-      - NOTE: built-in renfield/HA adapters deferred to Phase 4 (aggregation), where their
-        discover() is consumed + dispatch wiring exists — not shipping half-baked stubs.
-- [x] P1.4 unit tests (`tests/backend/test_output_providers.py`): 20 tests — registry build,
-      capability parsing (known + unknown-kept), stanza validation (malformed/no-discover skipped),
-      McpOutputProvider discover/play/control/status normalization, tool-failure + transport-error
-      → OutputProviderError, payload extraction, target-shape normalization (contract + legacy).
+## Reality check (verified, corrects the roadmap doc)
+- `FactProvenance` is NOT reusable here — it renders deterministic(✓)/advisory(~),
+  not document-source chips. Source chips are a NEW small component reusing `TierBadge`.
+- NOT pure-frontend: `knowledge_tool.py` flattens `rag.search` results into a
+  `context` string and discards per-source structure; the chat stream/`Message`
+  carries no sources today. Needs backend capture + stream + persist.
+- Circle-safety: `rag.search(user_id=...)` already circle-filters retrieval, so
+  sources only contain rows the asker could already see — no `circle_sql` change,
+  no second read path.
 
-## Phase 2 — Additive model migration + dual-read  ✅ DONE (11 PG + 35 routing tests green on .159)
-- [x] P2.1 `RoomOutputDevice`: add `output_provider` + `output_target_id` columns (nullable)
-- [x] P2.2 migration `pc20260610_output_target` (additive add cols + CASE/COALESCE backfill; NO drop)
-- [x] P2.3 `target_id`/`target_type` props prefer new cols, fall back to old (dual-read)
-- [x] P2.4 `add_output_device` dual-writes the pair from a legacy arg + accepts an explicit
-      `(provider, target_id)` path (samsung, no legacy col); CRUD create/response schemas + route gain the pair
-- [x] P2.5 real-PG tests (`test_output_providers_phase2_pg.py`): backfill SQL across all 3 legacy
-      types + idempotent skip-already-paired, dual-read (prefer/fallback/both/empty), add_output_device
-      dual-write + explicit-pair + 3 validation paths. Full plugin-aware `alembic upgrade` verified at
-      deploy time (repo convention: ha_glue room tables live in a separate plugin migration tree, so a
-      core-only from-scratch upgrade can't build them — backfill LOGIC tested via create_all'd PG instead).
+## Backend
+- [x] `services/knowledge_tool.py` — returns `data.sources`: deduped
+  `[{document_id, filename, title, tier}]` from `rag.search` results (tier IS on
+  the result: `document.circle_tier`). `context` text unchanged.
+- [x] `api/websocket/chat_handler.py` — added `_extract_agent_sources()` helper +
+  shared `agent_tool_results` init; on the shared persist/done path, derives
+  sources from the turn's `internal.knowledge_search` tool results (deduped),
+  attaches to `assistant_metadata["sources"]` (persist) + `done_msg["sources"]`
+  (live). NOTE: agent loop runs in chat_handler, NOT agent_service — corrected
+  from the plan. Scope v1 = knowledge_search only.
 
-## Phase 3 — config-driven adapter + generic dispatch + power-on  ✅ DONE (58 tests; 0 regressions)
-- [x] P3a config-driven MCP adapter (bridge in renfield, not in MCP servers) — McpOutputProvider
-      maps contract↔native tools via per-method arg-templates; control per-action; 25 tests
-- [x] P3.1 `_resolve_room_player` + `_play_in_room` route via registry when flag on (samsung);
-      dlna/HA/renfield keep their legacy branches. `_check_device_availability` uses dual-read
-      target_type so generic-provider rows resolve as available.
-- [x] P3.2 power-on: status off/unreachable → control('on') → `_poll_provider_ready` (bounded by
-      boot_timeout, iteration-based) → play; never-wakes → honest "could not wake" error
-- [x] P3.4 samsung `output_provider` stanza (quoted "on"/"off" keys — YAML-bool footgun; parser
-      also coerces bool keys defensively). dlna stays legacy (gapless capability preserved).
-- [x] P3.5 tests: 9 dispatch (already-on / power-on / never-wakes / control-fail / play-fail /
-      non-power / poll bounds) + 25 adapter; existing internal_tools = same 6 pre-existing
-      stale-tree failures with AND without my change (proven zero regression).
-- N/A P3.3 shims: `internal.play_*_on_dlna` unchanged (dlna stays legacy this phase); they delegate
-      to the generic resolver only when dlna itself moves onto the contract (deferred w/ dlna).
+## Frontend
+- [x] `types/chat.ts` — added `MessageSource` + `sources?` on `ChatMessage` and
+  `ChatDoneMessage`.
+- [x] `components/chat/SourceChips.tsx` — NEW. Chip per source: filename +
+  `<TierBadge>` (when tier 0-4), links to `/knowledge?doc={id}`. Empty/undefined
+  → renders nothing. Dark mode + i18n (de+en `chat.sources.*`). Caps at 6 with
+  "+N weitere" expand. Clickable (chosen over labels-only).
+- [x] `pages/ChatPage/ChatMessages.tsx` — renders `<SourceChips>` under finished
+  assistant turns.
+- [x] `context/ChatContext.tsx` — `ChatUiMessage.sources`; `done` handler attaches
+  `data.sources`; `historyToUiMessage` rehydrates from `metadata.sources`.
+- [x] `hooks/useChatWebSocket.ts` — `DoneMessage.sources`.
 
-## Phase 4 — Aggregation + frontend  ✅ DONE (5 aggregation + 4 RTL tests; typecheck clean)
-- [x] P4.1 `get_aggregated_outputs` (built-ins via existing methods + registry providers via
-      parallel `asyncio.gather` discover, per-provider `output_provider_discover_timeout`,
-      **degraded-not-dropped**); `available-outputs` returns `output_targets` when flag on (None off).
-- [x] P4.2 `RoomOutputSettings.tsx` data-driven: generic mode (output_targets present) → one unified
-      picker over all providers + capability badges + unreachable-disabled + submits (provider,
-      target_id) pair; flag off → byte-identical legacy type-buttons. `roomOutputs.ts` types extended.
-- [x] P4.3 RTL (`RoomOutputSettings.test.tsx`, 4 tests): unified picker / no type-buttons / unreachable
-      disabled / submits the pair / legacy fallback when output_targets absent.
+## Tests
+- [x] Backend: `test_knowledge_tool.py` (structured deduped sources; no-results →
+  no key) + `test_chat_handler_provenance.py` (`_extract_agent_sources` dedupe,
+  ignores non-knowledge_search, empty/malformed). 11 passed on .159.
+- [x] Frontend RTL: `SourceChips.test.tsx` — renders/links, empty → nothing,
+  cap+overflow, tier-absent. 4 passed.
 
-## Gate
-- Flag OFF byte-identical ✅ (verified: dual-read identical, dispatch/aggregation gated, frontend legacy path).
-- Real-PG for migration ✅ (backfill logic + dual-read on real PG; full plugin-aware upgrade at deploy).
-- Totals: 85 backend + 4 RTL tests green; existing internal_tools = same 6 pre-existing stale-tree fails.
-- NEXT: /review + adversarial → docs sweep → one big-bang PR.
+## Out of scope (v1)
+- Clickable deep-link into `/wissen` (can be a fast-follow; v1 may ship labels).
+- document_fact / KG-edge provenance (knowledge_search only for v1).
+- Items 2/4/6 of the first slice (separate PRs).
 
-## Review (filled at the end)
-_(pending — run /review on the full branch diff)_
+## Review
+- Verified the "data exists / pure-frontend" roadmap claim was WRONG before coding:
+  `knowledge_search` discarded per-source structure; chat stream carried no sources;
+  `FactProvenance` is a deterministic/advisory glyph, not a document-source chip.
+- Circle-safety: sources come only from `rag.search(user_id=...)` which is already
+  circle-filtered — no `circle_sql` change, no second read path.
+- Tests green: backend 11/11 (.159), frontend 4/4 (isolated). `tsc` clean on the 5
+  changed files (2 pre-existing errors in untouched skills.ts/trajectories.ts).
+- Pending before deploy: `npm run build` (prod Tailwind pass — per the frontend
+  prod-build gate), and `/review`.

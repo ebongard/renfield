@@ -128,6 +128,10 @@
     "assistantResponse": "Antwort von {{appName}}",
     "readAloud": "Vorlesen",
     "albumArt": "Albumcover",
+    "sources": {
+      "label": "Quellen",
+      "more": "+{{count}} weitere"
+    },
     "intent": "Intent",
     "startConversation": "Starte ein Gespräch mit {{appName}}",
     "useTextOrMic": "Du kannst Text eingeben oder das Mikrofon nutzen",

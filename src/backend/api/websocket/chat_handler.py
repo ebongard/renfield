@@ -145,6 +145,32 @@ def _parse_mcp_raw_data(data: list) -> any:
         return None
 
 
+def _extract_agent_sources(tool_results: list) -> list[dict]:
+    """Collect provenance sources from this turn's knowledge_search tool results.
+
+    Returns a deduped (by document_id) list of {document_id, filename, title, tier}
+    for the chat "source chips" UI. The sources are already circle-filtered at
+    retrieval time (rag.search pins to the asker's user_id), so surfacing them is
+    pure display — no second permission path. Empty list when the turn used no
+    knowledge_search (the UI renders nothing for an empty list).
+    """
+    sources: list[dict] = []
+    seen: set = set()
+    for tool_name, data in tool_results:
+        if tool_name != "internal.knowledge_search" or not isinstance(data, dict):
+            continue
+        # `data` is the tool's INNER result dict (AgentStep.data = result["data"],
+        # set in agent_service), so `sources` lives at the top level here — NOT
+        # nested under another "data" key.
+        for src in data.get("sources") or []:
+            doc_id = src.get("document_id") if isinstance(src, dict) else None
+            if doc_id is None or doc_id in seen:
+                continue
+            seen.add(doc_id)
+            sources.append(src)
+    return sources
+
+
 def _build_agent_action_result(tool_results: list) -> dict:
     """Build a synthetic action_result from agent tool results for conversation history.
 
@@ -976,6 +1002,10 @@ async def websocket_endpoint(
             intent = None
             action_result = None
             agent_steps_count = 0
+            # Provenance sources (knowledge_search) for the chat source-chips UI.
+            # Shared init so the persist/done block can reference it on every path
+            # (the legacy non-agent path never touches agent_tool_results).
+            agent_tool_results: list = []
             media_shortcut_handled = False
             paperless_confirm_handled = False
             pending_confirm_token = None
@@ -1796,6 +1826,12 @@ WICHTIG: Nutze die ECHTEN Daten aus dem Ergebnis! Gib NUR die Antwort, KEIN JSON
             }
             if action_summary:
                 assistant_metadata["action_summary"] = action_summary
+            # Provenance: which documents this answer drew on (circle-filtered at
+            # retrieval). Persisted so chips rehydrate on history load; also sent
+            # on the `done` frame below for the live turn. Empty → key omitted.
+            agent_sources = _extract_agent_sources(agent_tool_results)
+            if agent_sources:
+                assistant_metadata["sources"] = agent_sources
 
             session_state.add_to_history("user", content)
             if full_response:
@@ -1902,6 +1938,8 @@ WICHTIG: Nutze die ECHTEN Daten aus dem Ergebnis! Gib NUR die Antwort, KEIN JSON
             }
             if agent_used:
                 done_msg["agent_steps"] = agent_steps_count
+            if agent_sources:
+                done_msg["sources"] = agent_sources
             # Include intent info for frontend feedback UI
             if intent:
                 done_msg["intent"] = {

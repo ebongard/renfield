@@ -5,6 +5,16 @@
 // Message role
 export type MessageRole = 'user' | 'assistant' | 'system';
 
+// Provenance source — a knowledge-base document a knowledge-backed answer drew
+// on. Surfaced as a "source chip" under the assistant turn. `tier` is the
+// circle access-tier (0=self … 4=public); null when the row carried no tier.
+export interface MessageSource {
+  document_id: number | string;
+  filename: string;
+  title: string;
+  tier?: number | null;
+}
+
 // Chat message
 export interface ChatMessage {
   id?: number;
@@ -13,6 +23,9 @@ export interface ChatMessage {
   content: string;
   created_at: string;
   metadata?: Record<string, unknown>;
+  // Provenance chips. On the live turn these arrive on the `done` frame; on
+  // history load they rehydrate from `metadata.sources`.
+  sources?: MessageSource[];
 }
 
 // Conversation summary
@@ -77,6 +90,8 @@ export interface ChatActionMessage {
 export interface ChatDoneMessage {
   type: 'done';
   tts_handled: boolean;
+  agent_steps?: number;
+  sources?: MessageSource[];
 }
 
 export interface ChatErrorMessage {

@@ -92,6 +92,68 @@ class TestKnowledgeSearch:
         )
 
     @pytest.mark.unit
+    async def test_returns_structured_sources(self):
+        """Results carry a deduped, document-keyed `sources` list for the chat
+        provenance-chips UI (filename, title, tier)."""
+        mock_rag = MagicMock()
+        mock_rag.search = AsyncMock(return_value=[
+            {
+                "chunk": {"content": "chunk A1"},
+                "document": {"id": 7, "filename": "rechnung.pdf", "title": "Rechnung März", "circle_tier": 2},
+            },
+            {  # second chunk of the SAME document → must dedupe to one source
+                "chunk": {"content": "chunk A2"},
+                "document": {"id": 7, "filename": "rechnung.pdf", "title": "Rechnung März", "circle_tier": 2},
+            },
+            {
+                "chunk": {"content": "chunk B1"},
+                "document": {"id": 9, "filename": "vertrag.pdf", "title": "Vertrag", "circle_tier": 0},
+            },
+        ])
+
+        mock_db = AsyncMock()
+
+        @asynccontextmanager
+        async def mock_session():
+            yield mock_db
+
+        stubs = _stub_db_and_rag_modules()
+        try:
+            with patch("services.database.AsyncSessionLocal", mock_session, create=True), \
+                 patch("services.rag_service.RAGService", return_value=mock_rag, create=True):
+                result = await knowledge_search({"query": "x"})
+        finally:
+            _teardown_stubs(stubs)
+
+        sources = result["data"]["sources"]
+        assert [s["document_id"] for s in sources] == [7, 9]  # deduped, order-preserved
+        assert sources[0] == {
+            "document_id": 7, "filename": "rechnung.pdf", "title": "Rechnung März", "tier": 2,
+        }
+        assert sources[1]["tier"] == 0
+
+    @pytest.mark.unit
+    async def test_no_results_has_no_sources(self):
+        """Empty search → no `sources` key (UI renders nothing)."""
+        mock_rag = MagicMock()
+        mock_rag.search = AsyncMock(return_value=[])
+        mock_db = AsyncMock()
+
+        @asynccontextmanager
+        async def mock_session():
+            yield mock_db
+
+        stubs = _stub_db_and_rag_modules()
+        try:
+            with patch("services.database.AsyncSessionLocal", mock_session, create=True), \
+                 patch("services.rag_service.RAGService", return_value=mock_rag, create=True):
+                result = await knowledge_search({"query": "nope"})
+        finally:
+            _teardown_stubs(stubs)
+
+        assert "sources" not in result["data"]
+
+    @pytest.mark.unit
     async def test_custom_top_k(self):
         """Custom top_k is forwarded to RAG search."""
         mock_rag = MagicMock()

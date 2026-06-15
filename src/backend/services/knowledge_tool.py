@@ -77,19 +77,32 @@ async def knowledge_search(params: dict) -> dict:
 
         if results:
             context_parts = []
+            # Structured per-document provenance for the chat "source chips" UI.
+            # rag.search already circle-filtered by user_id, so these only contain
+            # documents the asker may see — no extra permission check needed.
+            # Deduped by document_id (one chip per source document, not per chunk).
+            sources: list[dict] = []
+            seen_doc_ids: set = set()
             for r in results:
+                doc = r.get("document") if isinstance(r.get("document"), dict) else {}
                 content = (
                     r.get("chunk", {}).get("content", "")
                     if isinstance(r.get("chunk"), dict)
                     else r.get("content", "")
                 )
-                source = (
-                    r.get("document", {}).get("filename", "")
-                    if isinstance(r.get("document"), dict)
-                    else r.get("filename", "")
-                )
+                source = doc.get("filename", "") or r.get("filename", "")
                 if content:
                     context_parts.append(f"[{source}] {content[:500]}")
+
+                doc_id = doc.get("id")
+                if doc_id is not None and doc_id not in seen_doc_ids:
+                    seen_doc_ids.add(doc_id)
+                    sources.append({
+                        "document_id": doc_id,
+                        "filename": source,
+                        "title": doc.get("title") or source or f"Dokument {doc_id}",
+                        "tier": doc.get("circle_tier"),
+                    })
 
             return {
                 "success": True,
@@ -99,6 +112,7 @@ async def knowledge_search(params: dict) -> dict:
                     "query": query,
                     "results_count": len(results),
                     "context": "\n\n".join(context_parts),
+                    "sources": sources,
                 },
             }
         return {
