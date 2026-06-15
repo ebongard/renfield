@@ -41,4 +41,18 @@ describe('FollowupChips', () => {
     expect(ctx.setInput).toHaveBeenCalledWith('Und morgen?');
     expect(ctx.sendMessage).not.toHaveBeenCalled();
   });
+
+  it('shows the full suggestion text — long chips wrap, never clip', () => {
+    // Regression guard: a fixed `truncate max-w-[260px]` clipped long
+    // suggestions mid-word (e.g. "…noch nicht im Syst"). The text span must
+    // wrap, not truncate, and the full text stays available (button name + title).
+    const long = 'Welche Geräte sind noch nicht im System registriert worden?';
+    renderWithRouter(<FollowupChips followups={[long]} />);
+    const btn = screen.getByRole('button', { name: long });
+    expect(btn).toHaveAttribute('title', long);
+    const span = btn.querySelector('span');
+    expect(span).not.toBeNull();
+    expect(span?.className).toMatch(/whitespace-normal/);
+    expect(span?.className).not.toMatch(/truncate/);
+  });
 });

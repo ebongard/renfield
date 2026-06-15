@@ -24,10 +24,10 @@ export default function FollowupChips({ followups }: { followups?: string[] }) {
           type="button"
           onClick={() => setInput?.(text)}
           title={text}
-          className="inline-flex items-center gap-1 min-h-[44px] sm:min-h-0 px-3 py-1.5 rounded-full text-sm bg-primary-50 text-primary-700 hover:bg-primary-100 dark:bg-primary-900/30 dark:text-primary-200 dark:hover:bg-primary-900/50 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500"
+          className="inline-flex items-center gap-1 min-h-[44px] sm:min-h-0 px-3 py-1.5 rounded-full text-sm text-left bg-primary-50 text-primary-700 hover:bg-primary-100 dark:bg-primary-900/30 dark:text-primary-200 dark:hover:bg-primary-900/50 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500"
         >
           <CornerDownLeft className="w-3.5 h-3.5 flex-shrink-0 opacity-70" aria-hidden="true" />
-          <span className="truncate max-w-[260px]">{text}</span>
+          <span className="whitespace-normal break-words">{text}</span>
         </button>
       ))}
     </div>

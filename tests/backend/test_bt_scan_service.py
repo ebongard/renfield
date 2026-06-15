@@ -56,6 +56,7 @@ async def test_dedup_keeps_strongest_rssi_and_merges_rooms():
     dev = out["devices"][0]
     assert dev["mac"] == "11:22:33:44:55:66"
     assert dev["rssi_best"] == -40  # strongest wins
+    assert dev["room_best"] == "Office"  # -40 (Office) beat -70 (Kitchen)
     rooms = {r["room"] for r in dev["rooms"]}
     assert rooms == {"Kitchen", "Office"}
     assert len(dev["rooms"]) == 2
@@ -124,6 +125,31 @@ async def test_sorted_by_rssi_desc_none_last():
     assert macs[0] == "00:00:00:00:00:02"  # strongest first
     assert macs[1] == "00:00:00:00:00:01"
     assert macs[2] == "00:00:00:00:00:03"  # None RSSI last
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_room_best_picks_strongest_signal_room():
+    """room_best is the room whose satellite recorded the strongest RSSI; a
+    device with no RSSI anywhere (Classic) falls back to its first room."""
+    sats = [_sat("sat-a", "Kitchen"), _sat("sat-b", "Office"), _sat("sat-c", "Bedroom")]
+    scan_results = {
+        # Seen in all three; Office (-35) is the strongest -> room_best = Office.
+        "sat-a": [{"mac": "AA:AA:AA:AA:AA:AA", "name": "Watch", "rssi": -75, "transport": "BLE"}],
+        "sat-b": [
+            {"mac": "AA:AA:AA:AA:AA:AA", "name": "Watch", "rssi": -35, "transport": "BLE"},
+            # Classic device with no RSSI -> room_best falls back to the first room.
+            {"mac": "BB:BB:BB:BB:BB:BB", "name": "TV", "rssi": None, "transport": "Classic"},
+        ],
+        "sat-c": [{"mac": "AA:AA:AA:AA:AA:AA", "name": "Watch", "rssi": -60, "transport": "BLE"}],
+    }
+    mgr = _make_manager(sats, scan_results)
+
+    out = await BtScanService().scan_all_satellites(mgr)
+
+    by_mac = {d["mac"]: d for d in out["devices"]}
+    assert by_mac["AA:AA:AA:AA:AA:AA"]["room_best"] == "Office"
+    assert by_mac["BB:BB:BB:BB:BB:BB"]["room_best"] == "Office"  # only/first room
 
 
 @pytest.mark.unit

@@ -9,6 +9,8 @@ device lists into one deduplicated view:
 - dedup by MAC (case-insensitive, upper),
 - keep the strongest RSSI seen across all satellites,
 - record which room/satellite saw the device (and at what RSSI),
+- derive `room_best` = the room whose satellite recorded the strongest signal
+  (the device's most-likely location; the single unambiguous "where is it"),
 - annotate an OUI vendor from the MAC prefix.
 
 The LLM formats the returned dict for the user; this service does no
@@ -108,11 +110,16 @@ class BtScanService:
               "satellites_queried": int,
               "satellites_responded": int,
               "devices": [
-                {"mac", "name", "rssi_best", "transport", "vendor", "rooms": [
+                {"mac", "name", "rssi_best", "room_best", "transport", "vendor",
+                 "rooms": [
                     {"satellite_id", "room", "rssi"}, ...
                 ]}, ...  # sorted by rssi_best desc (None last)
               ],
             }
+
+        `room_best` is the room whose satellite recorded the strongest RSSI for
+        the device — the single unambiguous "where is it". It is the room the LLM
+        should report; the per-device `rooms` list is the full detection set.
         """
         import asyncio
 
@@ -165,6 +172,17 @@ class BtScanService:
                     "room": sat.room,
                     "rssi": rssi,
                 })
+
+        # Derive each device's most-likely room: the room whose satellite saw the
+        # strongest RSSI. Rooms with no RSSI (e.g. Classic with no signal reading)
+        # sort weakest; fall back to the first detecting room when none has RSSI.
+        for entry in agg.values():
+            rooms = entry["rooms"]
+            best = max(
+                rooms,
+                key=lambda r: (r["rssi"] is not None, r["rssi"] if r["rssi"] is not None else -9999),
+            )
+            entry["room_best"] = best["room"]
 
         # Strongest signal first; devices with no RSSI (e.g. Classic) sort last.
         devices = sorted(
