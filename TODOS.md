@@ -33,6 +33,18 @@ _(no P1 items — WICHTIG sweep complete. W10 closed via #487 on 2026-04-27. `ta
 
 ## P2 — Scheduled follow-ups
 
+### Chat-UI: validate the premise before scheduling the modernization roadmap
+Origin: `/plan-eng-review` 2026-06-15 on `docs/design/chat-ui-modernization.md`.
+**WHAT:** Instrument web-`/chat` interaction share vs voice/satellite turns (per household
+member) and establish an accessibility + mobile/PWA baseline, *before* committing any tier of
+the chat-UI roadmap. **WHY:** The roadmap rests on the unmeasured assumption that the web text
+chat is a high-value surface — but Renfield is voice-first, so much interaction may be
+voice/satellite. The outside-voice review flagged this as the load-bearing gap; the doc's tier
+order is explicitly **provisional until this data exists**. **CONTEXT:** primary source =
+`docs/design/chat-ui-modernization.md` (survey + 3-tier roadmap + Tier 0 cross-cutting a11y/
+mobile/voice-transcript/offline items). First slice *if* validated = follow-up chips → command
+palette → provenance chips. **DEPENDS ON:** nothing — this is the gate that unblocks the rest.
+
 ### Steuererklärung prep collector (household/employee)
 Origin: `/plan-eng-review` 2026-06-09. Collect + categorize tax-relevant info from the KB +
 Paperless corpus per Steuerjahr, surface gaps, produce a per-Anlage dossier. Renfield
