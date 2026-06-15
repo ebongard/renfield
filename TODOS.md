@@ -45,6 +45,24 @@ order is explicitly **provisional until this data exists**. **CONTEXT:** primary
 mobile/voice-transcript/offline items). First slice *if* validated = follow-up chips → command
 palette → provenance chips. **DEPENDS ON:** nothing — this is the gate that unblocks the rest.
 
+### BT-scan — deterministic per-room device-count reconciliation
+Origin: live browser verification of #787 (2026-06-15, backend v2.17.20).
+**WHAT:** Have the backend pre-compute the per-room device counts (named + unnamed) and the
+grand total, and pass them to the LLM as structured numbers (or render them deterministically),
+instead of relying on the chat model to tally `data.devices` into "N gefunden" + per-room counts.
+**WHY:** The #787 fix made the scan answer room-accurate and per-room-counted (big win over the
+old "only 3 of 17" + room confabulation), but on a live 25-device scan the small local model's
+itemized breakdown (3 named + 5+6+4 unnamed = 18) didn't reconcile to its own stated total (25).
+Cosmetic, not a regression — but a household user reading "25" then counting 18 looks sloppy.
+**PROS:** numbers always add up; removes the one remaining LLM-arithmetic dependency in the BT
+path. **CONS:** moves presentation logic backend-ward (the tool currently does no presentation,
+by design — `bt_scan_service` docstring); a structured count block is a small contract change the
+prompt must consume. **CONTEXT:** `services/bt_scan_service.py` already returns `total_devices`
++ per-device `room_best`/`rooms`; the per-room rollup is a trivial group-by on the existing data.
+Tool description (`ha_glue/services/internal_tools.py` `internal.bluetooth_scan`) already instructs
+the LLM to account for all devices — this replaces "instruct + hope" with computed counts.
+**DEPENDS ON:** nothing; standalone, gated `BT_SCAN_ENABLED`.
+
 ### Steuererklärung prep collector (household/employee)
 Origin: `/plan-eng-review` 2026-06-09. Collect + categorize tax-relevant info from the KB +
 Paperless corpus per Steuerjahr, surface gaps, produce a per-Anlage dossier. Renfield
