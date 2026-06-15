@@ -284,6 +284,22 @@ Folgefragen vor (Tipp füllt das Eingabefeld, kein Auto-Senden). Erzeugt einen
 (TTS-)Antworten übersprungen (Chips sind nur visuell). Auf einer ausgelasteten
 gemeinsamen GPU die zusätzliche Inferenzlast bedenken.
 
+### Befehlspalette (Command Palette)
+
+```bash
+COMMAND_PALETTE_ENABLED=false
+```
+
+**Default:** `false` (Opt-in/dark). Rein Frontend-Gate (`/api/config/features`) — das
+backendseitige `role_hint`-Handling ist immer aktiv (No-op ohne Hint), daher braucht
+das Umschalten **kein** Backend-Redeploy.
+
+**Wann aktivieren:** Blendet im Chat eine `/`-getriggerte (bzw. per Touch-Button
+geöffnete) Aktions-/Navigations-Palette ein. Tool-Aktionen werden ins Eingabefeld
+**vorbereitet** (kein Auto-Senden); der Anzeige-Filter folgt den Berechtigungen, die
+echte Rechte-Prüfung bleibt serverseitig. Der „Rolle setzen"-Hint ist eine weiche
+Routing-Präferenz für den nächsten Turn (keine Rechte-Eskalation).
+
 ---
 
 ### Proaktive Benachrichtigungen
