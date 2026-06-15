@@ -577,12 +577,27 @@ class ConversationMemoryService:
             # lives in the KG (entities + relations, extracted by the KG hook on
             # the SAME turn), so don't also store a flat duplicate. Preferences/
             # instructions/context/procedural stay flat (their object is often not
-            # a named entity). Off (default) => unchanged. Aggressive: enable only
-            # once KG capture of facts is validated, else a fact whose object is
-            # not a named entity is lost.
+            # a named entity). Off (default) => unchanged.
+            #
+            # RECALL-LOSS GUARD (memory_subsume_require_kg_relation, default on):
+            # the KG extraction is a SEPARATE, uncoordinated LLM call that only
+            # persists a relation when the fact's OBJECT is a named entity
+            # (a state/feeling — "müde", "krank", "gestresst" — yields no entity,
+            # no relation). Dropping the flat store for such a fact loses it
+            # silently and unrecoverably. The guard REDUCES (does not close) that
+            # loss: it keeps the fact flat when the subject is never-before-
+            # related (its entity carries 0 relations) — a subject-level proxy,
+            # not a per-fact guarantee (a state-fact about an already-related
+            # person is still subsumed-and-lost; the per-fact fix is a follow-up,
+            # TODOS.md). Measured loss: see tests/eval/subsume_recall_loss_eval.yaml.
             if settings.memory_subsume_to_kg and category == MEMORY_CATEGORY_FACT and subject:
-                logger.debug(f"📥 Subsuming fact to KG (skip flat memory): subject={subject!r}")
-                continue
+                if await self._subject_is_kg_representable(subject, user_id):
+                    logger.debug(f"📥 Subsuming fact to KG (skip flat memory): subject={subject!r}")
+                    continue
+                logger.debug(
+                    f"🛟 Subsume guard: keeping fact flat — KG has no relation for "
+                    f"subject={subject!r} (never-before-related subject)"
+                )
 
             # Clamp importance to valid range
             try:
@@ -669,6 +684,89 @@ class ConversationMemoryService:
                 f"Memory KG bridge failed for memory #{getattr(memory, 'id', '?')} "
                 f"subject={subject!r}: {e}"
             )
+
+    async def _subject_is_kg_representable(
+        self, subject: str | None, user_id: int | None
+    ) -> bool:
+        """Subsume recall-loss guard: does the KG already hold a relation for this subject?
+
+        This is a loss-REDUCTION proxy, NOT a per-fact guarantee. Recall loss is
+        per-FACT: a state/feeling fact whose object is not a named entity ("Anna
+        ist müde") produces no KG relation and is lost when subsumed — even if
+        Anna is an already-related person, so this guard returns True and STILL
+        lets that fact be dropped. What the guard actually protects is the
+        common-case worst loss: a fact about a NEVER-BEFORE-RELATED subject
+        (the subject entity carries 0 relations). For those it keeps the fact
+        flat (recoverable) rather than subsuming on faith. The real per-fact fix
+        is a follow-up (TODOS.md): subsume only when THIS turn captured a
+        relation for the subject, which needs coordinating the currently
+        uncoordinated memory-extract and KG-extract async tasks.
+
+        Selection mirrors ``KnowledgeGraphService.resolve_entity``'s exact-name
+        step so the same row is chosen: live + canonical (``canonical_id IS
+        NULL``), own-or-unowned, restricted to ``entity_type == 'person'`` (the
+        subsume target is always a named person), ordered
+        ``circle_tier ASC, mention_count DESC`` so a same-name homonym /
+        wrong-tier row can't be picked arbitrarily and cause a wrong-entity
+        false-positive (which would subsume the wrong person's fact = loss).
+        Note we do NOT chase surface-forms here (the subject came verbatim from
+        the memory extractor, already an exact name); a surface-form-only miss
+        just keeps the fact flat = fail-safe.
+
+        Same-turn race is intentional: the KG extraction for THIS turn runs as a
+        separate concurrent task on its own session, so relations it creates this
+        turn are intentionally invisible here. Consequence: the first fact about
+        a brand-new subject whose object IS an entity gets a harmless flat
+        duplicate (recoverable), never a loss — the safe direction.
+
+        Fail-safe: any miss / error / resolve-failure → False (keep the fact flat).
+        Disabling ``memory_subsume_require_kg_relation`` reverts to the legacy
+        unguarded behavior (always subsume a fact+subject). This guard does NOT
+        make ``memory_subsume_to_kg`` safe for multi-user (see TODOS.md).
+        """
+        if not settings.memory_subsume_require_kg_relation:
+            return True  # legacy unguarded subsume
+        if not subject or user_id is None:
+            return False
+        try:
+            from sqlalchemy import or_
+
+            from models.database import KGEntity, KGRelation
+            # Resolve the subject to a canonical PERSON entity WITHOUT creating
+            # one — mirror resolve_entity's exact-name step (live + canonical,
+            # own-or-unowned, person-typed, deterministic order).
+            ent_row = await self.db.execute(
+                select(KGEntity.id, KGEntity.canonical_id)
+                .where(
+                    func.lower(KGEntity.name) == subject.strip().lower(),
+                    KGEntity.is_active == True,  # noqa: E712
+                    KGEntity.canonical_id.is_(None),
+                    KGEntity.entity_type == "person",
+                    or_(KGEntity.user_id == user_id, KGEntity.user_id.is_(None)),
+                )
+                .order_by(KGEntity.circle_tier.asc(), KGEntity.mention_count.desc())
+                .limit(1)
+            )
+            row = ent_row.first()
+            if row is None:
+                return False
+            # canonical_id IS NULL is filtered above, so row.id is the survivor;
+            # keep the tombstone-follow defensively in case the filter is relaxed.
+            entity_id = row.canonical_id or row.id
+            rel = await self.db.execute(
+                select(KGRelation.id)
+                .where(
+                    KGRelation.user_id == user_id,
+                    KGRelation.subject_id == entity_id,
+                )
+                .limit(1)
+            )
+            return rel.first() is not None
+        except Exception as e:  # noqa: BLE001 — guard is best-effort, fail-safe to flat
+            logger.warning(
+                f"Subsume KG-representability probe failed for subject={subject!r}: {e}"
+            )
+            return False
 
     @staticmethod
     def _parse_extraction_response(raw_text: str) -> list[dict]:

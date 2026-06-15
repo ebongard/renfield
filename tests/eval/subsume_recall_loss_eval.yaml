@@ -1,0 +1,105 @@
+# Subsume recall-loss eval — Structured Memory Phase 3-subsume watch.
+#
+# MEASURES THE LOSS SURFACE of MEMORY_SUBSUME_TO_KG.
+#
+# When MEMORY_SUBSUME_TO_KG is on, the BACKGROUND extraction path drops the flat
+# store for any memory the v1 memory extractor labels (category=fact + subject).
+# The fact is then assumed to live in the KG. But the KG-extraction is a SEPARATE,
+# uncoordinated LLM call that only persists a relation when:
+#   (a) the LLM emits the object as an ENTITY (so entity_map[obj] exists), AND
+#   (b) both subject + object pass _is_valid_entity, AND
+#   (c) validate_kg_relation passes.
+# A fact whose OBJECT IS NOT A NAMED ENTITY (a state/feeling/transient attribute:
+# "müde", "krank", "gestresst") is the danger zone: memory subsumes it (skip flat)
+# but the KG never captures it -> SILENT, UNRECOVERABLE recall loss (flipping the
+# flag back does not re-extract).
+#
+# This eval runs BOTH extractors on the SAME conversation and, per case, asks:
+#   subsumed  := memory extractor produced any (category=fact, subject!=null) item
+#   captured  := KG extractor produced a relation whose subject matches that subject
+#   LOSS      := subsumed AND NOT captured   <-- a recall-loss case
+#
+# NOT a CI test — needs the prod extraction models. Run in a backend pod:
+#   kubectl -n renfield exec deploy/backend -c backend -- \
+#     python bin/run_subsume_recall_loss_eval.py /tests/eval/subsume_recall_loss_eval.yaml
+#
+# expect keys (per case):
+#   loss_expected: bool   — true if this shape is EXPECTED to be lost under
+#                           the unguarded subsume (documents the surface);
+#                           the SAFE outcome under the guard is "kept flat".
+#   note:          str    — human description of the fact shape
+
+cases:
+  # --- DANGER ZONE: fact about a named person, object = transient state/feeling ---
+  - id: state-tired-de
+    lang: de
+    user: "Anna ist heute müde."
+    assistant: "Verstanden."
+    expect: {loss_expected: true, note: "transient state, no object entity"}
+
+  - id: state-sick-de
+    lang: de
+    user: "Papa war gestern krank."
+    assistant: "Oh je."
+    expect: {loss_expected: true, note: "past transient state"}
+
+  - id: feeling-stressed-de
+    lang: de
+    user: "Jutta ist gerade ziemlich gestresst."
+    assistant: "Ok."
+    expect: {loss_expected: true, note: "feeling/mood, no object entity"}
+
+  - id: mood-happy-de
+    lang: de
+    user: "Tim ist heute sehr glücklich."
+    assistant: "Schön."
+    expect: {loss_expected: true, note: "mood adjective"}
+
+  - id: attribute-tall-de
+    lang: de
+    user: "Mein Bruder Tom ist sehr groß."
+    assistant: "Ok."
+    expect: {loss_expected: true, note: "physical attribute, adjective object"}
+
+  - id: state-busy-de
+    lang: de
+    user: "Anna hat diese Woche extrem viel zu tun."
+    assistant: "Verstanden."
+    expect: {loss_expected: true, note: "vague workload state, no object entity"}
+
+  - id: feeling-afraid-en
+    lang: en
+    user: "My daughter Mia is scared of dogs."
+    assistant: "Noted."
+    expect: {loss_expected: true, note: "emotion toward a generic category"}
+
+  - id: health-de
+    lang: de
+    user: "Oma Erika hat Rückenschmerzen."
+    assistant: "Das tut mir leid."
+    expect: {loss_expected: true, note: "ailment, no clean named-entity object"}
+
+  # --- CONTROL: fact about a named person, object IS a named entity (KG-safe) ---
+  - id: lives-in-de
+    lang: de
+    user: "Anna wohnt in Bonn."
+    assistant: "Ok."
+    expect: {loss_expected: false, note: "object Bonn is a place entity — KG captures it"}
+
+  - id: works-at-de
+    lang: de
+    user: "Mein Bruder Tom arbeitet bei Siemens."
+    assistant: "Ok."
+    expect: {loss_expected: false, note: "object Siemens is an org entity"}
+
+  - id: likes-jazz-de
+    lang: de
+    user: "Jutta mag Jazz."
+    assistant: "Schön."
+    expect: {loss_expected: false, note: "taste-as-relation, Jazz is a topic entity"}
+
+  - id: drives-car-de
+    lang: de
+    user: "Papa fährt einen BMW."
+    assistant: "Ok."
+    expect: {loss_expected: false, note: "object BMW is a product/org entity"}

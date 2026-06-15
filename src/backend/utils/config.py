@@ -527,6 +527,7 @@ class Settings(BaseSettings):
     kg_conflation_monitor_max_pairs: int = Field(default=100, ge=1, le=1000)         # Cap on pairs reported per user per scan
     memory_kg_bridge_enabled: bool = False                                       # Phase 3: link memory subjects to canonical KG entities (save-time + entity-augmented retrieval). Opt-in.
     memory_subsume_to_kg: bool = False                                           # Phase 3-subsume: decomposable facts (category=fact + subject) live in the KG only; skip the flat duplicate. Opt-in, aggressive.
+    memory_subsume_require_kg_relation: bool = True                              # Phase 3-subsume recall-loss REDUCER (subject-level proxy, NOT a per-fact guarantee): only drop the flat fact when the subject's person-entity already has >=1 relation — protects never-before-related subjects. A state/feeling fact about an already-related person is still subsumed-and-lost; per-fact fix is a TODOS follow-up. Off = legacy unguarded subsume. Does NOT make subsume multi-user-safe.
     memory_retrieval_subject_union_limit: int = Field(default=5, ge=1, le=50)    # Phase 3c: max deterministic subject-linked memories merged into retrieval per turn
 
     # Skill draft-gate shadow log (v2.10 admin console rollout). When True,
