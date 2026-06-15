@@ -369,6 +369,50 @@ curl -sk https://renfield.local/health   # {"status":"ok"}
 curl -sI http://renfield.local/          # 308 → https
 ```
 
+### Frontend PWA cache propagation (why a deploy may not reach the browser)
+
+The frontend is a **vite-plugin-pwa** PWA (`registerType: 'autoUpdate'`, Workbox
+`sw.js`/`registerSW.js`). The browser caches the service worker, and the SW
+precaches the app shell — so a freshly-deployed frontend can stay **invisible**
+until the SW re-fetches and detects a new build. The propagation rule lives in
+`src/frontend/nginx.conf` and is **load-bearing**:
+
+- **Content-hashed bundles** (`index-<hash>.js`, `workbox-<hash>.js`, css, fonts,
+  `.onnx`, `.wasm`) → `Cache-Control: public, immutable` 1y is **correct** (a new
+  deploy = a new filename, so the old immutable cache is simply never requested).
+- **Stable-named files MUST be `no-cache`**: `sw.js`, `registerSW.js`,
+  `index.html`, `manifest.webmanifest`. If the generic `\.(js|...)$` immutable
+  block matches `sw.js`/`registerSW.js`, the browser caches the SW for a year,
+  never re-fetches it, never detects the deploy, and serves the **stale shell**
+  across reloads — the regression fixed in #786 (frontend v2.15.11, 2026-06-15):
+  the command-palette/follow-up/provenance features were literally absent from
+  the served `index-<hash>.js` bundle until a manual SW unregister.
+- The `sw.js`/`registerSW.js` `no-cache` `location` must be declared **BEFORE**
+  the generic `.js` block — nginx picks the **first** matching regex location.
+- **nginx `add_header` inheritance trap:** once a `location` declares its own
+  `add_header`, it **stops inheriting** the server-level headers. So any location
+  that sets a `Cache-Control` header silently **drops** the security headers
+  (`X-Frame-Options`/`X-Content-Type-Options`/`X-XSS-Protection`) for that
+  response — re-declare them in every such location. Always `nginx -t` the config
+  (run it in a `nginx:1.28-alpine` container) before building the image.
+
+Verify the live headers from inside the cluster (renfield.local mDNS is flaky
+from the laptop):
+
+```bash
+kubectl -n renfield exec deploy/backend -c backend -- curl -sI http://frontend/sw.js
+# Expect: Cache-Control: no-cache, no-store, must-revalidate
+kubectl -n renfield exec deploy/backend -c backend -- curl -sI http://frontend/index.html
+# Expect: Cache-Control: no-cache, must-revalidate  + X-Frame-Options present
+kubectl -n renfield exec deploy/backend -c backend -- curl -sI http://frontend/assets/index-<hash>.js
+# Expect: Cache-Control: public, immutable
+```
+
+Propagation after a fix: existing clients self-heal on the browser's mandatory
+~24h SW byte-check (or a manual refresh); `autoUpdate` injects
+`skipWaiting`+`clientsClaim`, so a newly-detected SW activates on the next reload.
+An nginx-only change needs no backend rebuild — roll `deploy/frontend` only.
+
 ## End-to-end checklist (run through this every release)
 
 1. ✅ Merge release commits into `main` (PR review done).
@@ -382,6 +426,7 @@ curl -sI http://renfield.local/          # 308 → https
 9. ✅ Verify image digests across the rolled deploys match what was pushed.
 10. ✅ Backend health smoke (`curl -sS http://localhost:8000/health` inside the pod).
 11. ✅ Browser smoke for migrated pages / new features.
+11b. ✅ If the frontend image changed: verify PWA cache headers (`sw.js`/`registerSW.js`/`index.html` `no-cache`, hashed bundles `immutable`) so the deploy actually reaches the browser — see "Frontend PWA cache propagation".
 12. ✅ Cleanup `/tmp/renfield-build-vX.Y.Z` on .159.
 13. ✅ **Image retention on .159** — prune old backend/frontend tags (keep newest 3) + cap build cache (Step 3). Skipping this is what fills the build box to 90%.
 
