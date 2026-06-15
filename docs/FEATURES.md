@@ -19,6 +19,7 @@ Renfield ist ein vollständig offline-fähiger, selbst-gehosteter **digitaler As
 ### Rich Content in Chat-Nachrichten
 - **Album Art**: Jellyfin-Bild-URLs und gängige Bildformate (`.jpg`, `.png`, `.gif`, `.webp`) werden als Inline-Bilder gerendert statt als Klartext
 - **Collapsible Agent Steps**: Agent-Schritte (Tool-Calls + Ergebnisse) sind einklappbar — offen während der Verarbeitung, eingeklappt nach Abschluss
+- **Quellen-Chips**: Stützt sich eine Antwort auf die Wissensdatenbank (RAG), erscheinen unter der Antwort anklickbare Quellen-Chips — Dokumentname + Zugriffs-Tier (`TierBadge`), je verlinkt auf `/knowledge?doc={id}`. Nur die im Zug tatsächlich abgerufenen, bereits circle-gefilterten Dokumente erscheinen (keine zweite Berechtigungs-Prüfung); ohne KB-Treffer wird nichts gezeigt. Live über den `done`-Frame, persistiert in `message_metadata.sources` (rehydriert beim Laden der Historie).
 - **Credential Sanitization**: API-Keys und Tokens in MCP-Antworten werden automatisch aus der Chat-Anzeige redacted
 
 ### Chat-Historie
@@ -389,7 +390,7 @@ PDF, DOCX, PPTX, XLSX, HTML, Markdown, TXT — verarbeitet mit IBM Docling.
 - **Knowledge Bases** — Organisiere Dokumente in thematischen Sammlungen
 - **KB-Sharing** — Teile Wissensdatenbanken mit anderen Nutzern (RPBAC)
 - **Follow-up-Fragen** — RAG-Kontext bleibt für Nachfragen erhalten
-- **Quellen-Zitation** — Antworten verweisen auf Quelldokumente
+- **Quellen-Zitation** — wissensgestützte Chat-Antworten zeigen die verwendeten Dokumente als anklickbare **Quellen-Chips** (siehe „Rich Content in Chat-Nachrichten")
 - **Re-Embedding** — `POST /admin/reembed` nach Modellwechsel
 - **knowledge_search Agent Tool** — Internes Tool im Agent Loop für kombinierte Suche über RAG-Dokumente und MCP-Quellen (Paperless)
 - **EasyOCR Fallback** — Garbled PDFs werden automatisch mit EasyOCR nachverarbeitet für bessere Text-Extraktion

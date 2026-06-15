@@ -84,7 +84,7 @@ The agent loop sees a mix of MCP tools (`mcp.<server>.<tool>`) and `internal.*` 
 
 | Tool | Purpose | Source |
 |---|---|---|
-| `internal.knowledge_search` | Semantic RAG search over the user's knowledge base | `services/knowledge_tool.py` |
+| `internal.knowledge_search` | Semantic RAG search over the user's knowledge base; also returns structured `data.sources` (deduped per document) that `chat_handler._extract_agent_sources` surfaces as chat **provenance chips** | `services/knowledge_tool.py` |
 | `internal.list_my_memories` | Enumerate the asker's own conversation memories (preferences/facts/instructions) WITHOUT the per-turn `{memory_context}` vector threshold — backs broad self-knowledge queries ("Was weißt du über mich?") the small auto-injected snapshot can't answer. Reads only the authenticated user's own memories. | `services/memory_list_tool.py` |
 | `internal.forward_attachment_to_paperless` | Forward a chat-attached file to Paperless using real server-stored bytes — prevents the LLM from handling base64 payloads it can't actually see | `services/chat_upload_tool.py` |
 | `internal.ingest_file` | Interactive folder-ingest: the agent points at a file `path` on a watched share; pulls the bytes through the filesystem MCP (`mcp.files.read_file`, `truncate=False` — no 128 KB cap corruption) and runs them through the same `folder_ingest.ingest_document` bridge as the REST push (dedup / owner+tier / Paperless leg identical). Gated by `FOLDER_INGEST_ENABLED`. See `docs/FOLDER_INGEST.md`. | `services/folder_ingest_tool.py` |
