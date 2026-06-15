@@ -20,6 +20,7 @@ Renfield ist ein vollständig offline-fähiger, selbst-gehosteter **digitaler As
 - **Album Art**: Jellyfin-Bild-URLs und gängige Bildformate (`.jpg`, `.png`, `.gif`, `.webp`) werden als Inline-Bilder gerendert statt als Klartext
 - **Collapsible Agent Steps**: Agent-Schritte (Tool-Calls + Ergebnisse) sind einklappbar — offen während der Verarbeitung, eingeklappt nach Abschluss
 - **Quellen-Chips**: Stützt sich eine Antwort auf die Wissensdatenbank (RAG), erscheinen unter der Antwort anklickbare Quellen-Chips — Dokumentname + Zugriffs-Tier (`TierBadge`), je verlinkt auf `/knowledge?doc={id}`. Nur die im Zug tatsächlich abgerufenen, bereits circle-gefilterten Dokumente erscheinen (keine zweite Berechtigungs-Prüfung); ohne KB-Treffer wird nichts gezeigt. Live über den `done`-Frame, persistiert in `message_metadata.sources` (rehydriert beim Laden der Historie).
+- **Folgefragen-Chips** (`FOLLOWUP_CHIPS_ENABLED`, opt-in/dark): Nach einer Antwort schlägt ein kleiner Best-Effort-LLM-Aufruf 2-4 kurze Folgefragen vor, die unter der letzten Assistenten-Antwort als anklickbare Chips erscheinen; ein Tipp füllt das Eingabefeld (kein Auto-Senden). Im **Hintergrund nach dem `done`-Frame** erzeugt (verzögert die Antwort/TTS/Wakeword nie) und über einen separaten `followups`-Frame nachgereicht; bei gesprochenen (TTS-)Antworten, Fehler-Turns und sehr kurzen Antworten übersprungen. Ephemer (nicht persistiert).
 - **Credential Sanitization**: API-Keys und Tokens in MCP-Antworten werden automatisch aus der Chat-Anzeige redacted
 
 ### Chat-Historie

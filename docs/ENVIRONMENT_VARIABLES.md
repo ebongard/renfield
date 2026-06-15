@@ -262,6 +262,28 @@ Der Agent Loop ermöglicht komplexe, mehrstufige Anfragen mit bedingter Logik un
 
 Einfache Anfragen ("Schalte das Licht ein") nutzen weiterhin den schnellen Single-Intent-Pfad.
 
+### Folgefragen-Chips (Follow-up Chips)
+
+```bash
+FOLLOWUP_CHIPS_ENABLED=false
+FOLLOWUP_CHIPS_MODEL=            # leer → OLLAMA_INTENT_MODEL (kleines/schnelles Modell)
+FOLLOWUP_CHIPS_COUNT=3           # 1-5
+FOLLOWUP_CHIPS_TIMEOUT_SECONDS=5.0  # 1-30; Best-Effort-Obergrenze
+```
+
+**Defaults:**
+- `FOLLOWUP_CHIPS_ENABLED`: `false` (Opt-in/dark)
+- `FOLLOWUP_CHIPS_MODEL`: `""` (fällt auf `OLLAMA_INTENT_MODEL` zurück)
+- `FOLLOWUP_CHIPS_COUNT`: `3`
+- `FOLLOWUP_CHIPS_TIMEOUT_SECONDS`: `5.0`
+
+**Wann aktivieren:** Schlägt nach jeder substanziellen Chat-Antwort 2-4 anklickbare
+Folgefragen vor (Tipp füllt das Eingabefeld, kein Auto-Senden). Erzeugt einen
+**zusätzlichen kleinen LLM-Aufruf pro Turn** — läuft im Hintergrund nach dem
+`done`-Frame, verzögert also Antwort/TTS/Wakeword nicht. Bei gesprochenen
+(TTS-)Antworten übersprungen (Chips sind nur visuell). Auf einer ausgelasteten
+gemeinsamen GPU die zusätzliche Inferenzlast bedenken.
+
 ---
 
 ### Proaktive Benachrichtigungen
