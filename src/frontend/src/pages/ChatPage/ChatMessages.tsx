@@ -8,6 +8,7 @@ import AttachmentQuickActions from './AttachmentQuickActions';
 import EmailForwardDialog from './EmailForwardDialog';
 import PaperlessConfirmCard from './PaperlessConfirmCard';
 import SourceChips from '../../components/chat/SourceChips';
+import FollowupChips from '../../components/chat/FollowupChips';
 import { useChatContext } from './context/ChatContext';
 import { CitationChip } from '../../components/wissensbasis/CitationChip';
 import { useTraceQuery, type TraceEntity } from '../../api/resources/wissensbasis';
@@ -318,6 +319,12 @@ export default function ChatMessages() {
                 used. Renders nothing when the turn had no sources. */}
             {message.role === 'assistant' && !message.streaming && (
               <SourceChips sources={message.sources} />
+            )}
+
+            {/* Follow-up suggestion chips — only under the LAST finished
+                assistant turn (ephemeral; tapping fills the composer). */}
+            {message.role === 'assistant' && !message.streaming && index === messages.length - 1 && (
+              <FollowupChips followups={message.suggestedFollowups} />
             )}
 
             {/* Adaptive Card (from WebSocket card message) */}

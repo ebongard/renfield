@@ -20,6 +20,11 @@ export interface DoneMessage extends BaseWsMessage {
   sources?: MessageSource[];
 }
 
+export interface FollowupsMessage extends BaseWsMessage {
+  type: 'followups';
+  suggested_followups: string[];
+}
+
 export interface ActionWsMessage extends BaseWsMessage {
   type: 'action';
   intent: { intent?: string; confidence?: number; parameters?: Record<string, unknown> } | string;
@@ -164,6 +169,7 @@ interface UseChatWebSocketOptions {
   onAgentToolResult?: (data: AgentToolResultMessage) => void;
   onAgentFederationProgress?: (data: AgentFederationProgressMessage) => void;
   onCard?: (data: CardMessage) => void;
+  onFollowups?: (data: FollowupsMessage) => void;
 }
 
 /**
@@ -187,6 +193,7 @@ export function useChatWebSocket({
   onAgentToolResult,
   onAgentFederationProgress,
   onCard,
+  onFollowups,
 }: UseChatWebSocketOptions = {}) {
   const [wsConnected, setWsConnected] = useState(false);
   const wsRef = useRef<WebSocket | null>(null);
@@ -272,6 +279,8 @@ export function useChatWebSocket({
         const msg = data as AgentFederationProgressMessage;
         debug.log('Federation progress:', msg.peer_display_name, msg.label, `seq=${msg.sequence}`);
         onAgentFederationProgress?.(msg);
+      } else if (data.type === 'followups') {
+        onFollowups?.(data as FollowupsMessage);
       } else if (data.type === 'card') {
         debug.log('Card received');
         onCard?.(data as CardMessage);
@@ -297,7 +306,7 @@ export function useChatWebSocket({
     };
 
     wsRef.current = ws;
-  }, [onStreamChunk, onStreamDone, onAction, onRagContext, onIntentFeedbackRequest, onDocumentProcessing, onDocumentReady, onDocumentError, onUploadProcessed, onPaperlessCommitted, onPaperlessConfirmRequest, onAgentThinking, onAgentToolCall, onAgentToolResult, onAgentFederationProgress, onCard]);
+  }, [onStreamChunk, onStreamDone, onAction, onRagContext, onIntentFeedbackRequest, onDocumentProcessing, onDocumentReady, onDocumentError, onUploadProcessed, onPaperlessCommitted, onPaperlessConfirmRequest, onAgentThinking, onAgentToolCall, onAgentToolResult, onAgentFederationProgress, onCard, onFollowups]);
 
   useEffect(() => {
     connectWebSocket();

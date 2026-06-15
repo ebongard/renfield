@@ -1,62 +1,79 @@
-# Plan — Provenance chips in chat (roadmap item 7)
+# Plan — Follow-up suggestion chips (chat-ui roadmap item 2)
 
-Source: `docs/design/chat-ui-modernization.md` Tier 1 item 7. First-slice build.
-Goal: show **which sources** a knowledge-backed chat answer used, as chips under
-the assistant turn (filename + access-tier), so the answer's provenance is visible.
+Source: `docs/design/chat-ui-modernization.md` Tier 1 item 2. After an assistant
+answer, show 2-4 tappable follow-up suggestions under the turn.
 
-## Reality check (verified, corrects the roadmap doc)
-- `FactProvenance` is NOT reusable here — it renders deterministic(✓)/advisory(~),
-  not document-source chips. Source chips are a NEW small component reusing `TierBadge`.
-- NOT pure-frontend: `knowledge_tool.py` flattens `rag.search` results into a
-  `context` string and discards per-source structure; the chat stream/`Message`
-  carries no sources today. Needs backend capture + stream + persist.
-- Circle-safety: `rag.search(user_id=...)` already circle-filters retrieval, so
-  sources only contain rows the asker could already see — no `circle_sql` change,
-  no second read path.
+## Approach (decided with user, reverses the roadmap's "same generation" line)
+Generate in the **single shared seam** in `chat_handler` (after `full_response`,
+where every path — conversation / agent / RAG — converges), via ONE small
+best-effort call. NO agent-output-contract change. A parse/timeout failure just
+drops the chips (answer untouched). Gated + dark by default.
+
+Why not same-generation: a trailing-JSON-in-the-answer block touches every
+prompt, is fragile on local models the codebase already distrusts, and a bad
+parse could corrupt the visible answer. A dedicated call fails gracefully.
+
+## Decisions
+- **Ephemeral, NOT persisted.** Chips are next-step suggestions for the *live*
+  turn only → attach to the `done` frame, shown under the LAST assistant turn,
+  cleared on the next user send. (Unlike provenance chips, which persist.)
+  No `message_metadata`, no history rehydration.
+- **Tap = fill the composer + focus** (NOT auto-send) — safer for a household
+  (no accidental sends); user reviews/sends. (Speakable-for-voice = follow-up.)
+- **Best-effort + bounded** — `asyncio.wait_for(timeout)`, try/except; `done` is
+  never blocked beyond the timeout; empty list on any failure. Prose already
+  streamed, so only `done`+chips lag by ~one small-model inference.
 
 ## Backend
-- [x] `services/knowledge_tool.py` — returns `data.sources`: deduped
-  `[{document_id, filename, title, tier}]` from `rag.search` results (tier IS on
-  the result: `document.circle_tier`). `context` text unchanged.
-- [x] `api/websocket/chat_handler.py` — added `_extract_agent_sources()` helper +
-  shared `agent_tool_results` init; on the shared persist/done path, derives
-  sources from the turn's `internal.knowledge_search` tool results (deduped),
-  attaches to `assistant_metadata["sources"]` (persist) + `done_msg["sources"]`
-  (live). NOTE: agent loop runs in chat_handler, NOT agent_service — corrected
-  from the plan. Scope v1 = knowledge_search only.
+- [ ] `utils/config.py` — `followup_chips_enabled` (False/dark), `followup_chips_model`
+  (""→ `ollama_intent_model`), `followup_chips_count` (3), `followup_chips_timeout_seconds` (5).
+- [ ] `services/followup_service.py` (NEW) — `generate_followups(user_message, answer,
+  lang, *, model, count, timeout) -> list[str]`. Tight prompt → 2-4 short questions
+  in the user's language; tolerant parse (JSON array OR newline/bullet lines);
+  trims to `count`, drops empties/dupes/overlong; returns `[]` on ANY failure.
+- [ ] `chat_handler.py` — in the shared block (after `full_response`, near `done_msg`):
+  if `followup_chips_enabled` AND substantive non-error turn (full_response present,
+  `action_success` not False, len ≥ small floor), best-effort
+  `await asyncio.wait_for(generate_followups(...), timeout)` → `done_msg["suggested_followups"]`.
+  Wrapped try/except — never block `done`. (v1: all substantive turns; gate-by-intent = follow-up.)
 
 ## Frontend
-- [x] `types/chat.ts` — added `MessageSource` + `sources?` on `ChatMessage` and
-  `ChatDoneMessage`.
-- [x] `components/chat/SourceChips.tsx` — NEW. Chip per source: filename +
-  `<TierBadge>` (when tier 0-4), links to `/knowledge?doc={id}`. Empty/undefined
-  → renders nothing. Dark mode + i18n (de+en `chat.sources.*`). Caps at 6 with
-  "+N weitere" expand. Clickable (chosen over labels-only).
-- [x] `pages/ChatPage/ChatMessages.tsx` — renders `<SourceChips>` under finished
-  assistant turns.
-- [x] `context/ChatContext.tsx` — `ChatUiMessage.sources`; `done` handler attaches
-  `data.sources`; `historyToUiMessage` rehydrates from `metadata.sources`.
-- [x] `hooks/useChatWebSocket.ts` — `DoneMessage.sources`.
+- [ ] `types/chat.ts` — `ChatDoneMessage.suggested_followups?: string[]`.
+- [ ] `hooks/useChatWebSocket.ts` — `DoneMessage.suggested_followups?: string[]`.
+- [ ] `context/ChatContext.tsx` — `ChatUiMessage.suggestedFollowups?: string[]`; `done`
+  handler attaches `suggested_followups` to the completed msg; ensure only the LAST
+  assistant msg carries them (clear/none on older turns is automatic since not persisted).
+- [ ] `components/chat/FollowupChips.tsx` (NEW) — tappable chips; tap → `setInput(text)`
+  + focus composer (via context). Empty/undefined → renders nothing. 44px targets,
+  keyboard-focusable, dark mode + i18n.
+- [ ] `pages/ChatPage/ChatMessages.tsx` — render `<FollowupChips>` under the LAST
+  finished assistant turn only (index === last && !streaming).
 
 ## Tests
-- [x] Backend: `test_knowledge_tool.py` (structured deduped sources; no-results →
-  no key) + `test_chat_handler_provenance.py` (`_extract_agent_sources` dedupe,
-  ignores non-knowledge_search, empty/malformed). 11 passed on .159.
-- [x] Frontend RTL: `SourceChips.test.tsx` — renders/links, empty → nothing,
-  cap+overflow, tier-absent. 4 passed.
+- [ ] Backend: `followup_service` parses JSON + line formats → N chips; returns []
+  on garbage / timeout / empty; respects `count`. chat_handler attaches when flag on,
+  none when off / error turn (mock the service).
+- [ ] Frontend RTL: FollowupChips renders chips, empty → nothing, tap calls setInput.
 
 ## Out of scope (v1)
-- Clickable deep-link into `/wissen` (can be a fast-follow; v1 may ship labels).
-- document_fact / KG-edge provenance (knowledge_search only for v1).
-- Items 2/4/6 of the first slice (separate PRs).
+- Persistence / history rehydration (ephemeral by design).
+- Voice-speakable chips (roadmap noted; follow-up).
+- Auto-send on tap; gate-by-intent (generate-for-all is fine behind the flag).
+
+## Status: IMPLEMENTED
+- Backend: `config` flags + `services/followup_service.py` (NEW) + `chat_handler`
+  shared-seam best-effort call (bounded by `asyncio.wait_for`, try/except, gated).
+- Frontend: `types`/`useChatWebSocket` `suggested_followups`; `ChatContext`
+  `suggestedFollowups` + done-handler attach; `FollowupChips.tsx` (NEW, tap→setInput);
+  `ChatMessages` renders under the LAST finished assistant turn; i18n de+en.
+- Parser hardened: requires word content (drops "{}"/"[]"/"---" noise).
+- Tests: backend 8 (parse JSON/lines/dedupe/overlong/garbage + generate
+  success/empty/best-effort-fail), frontend 7 (FollowupChips 3 + SourceChips 4
+  still green). tsc clean on changed files.
 
 ## Review
-- Verified the "data exists / pure-frontend" roadmap claim was WRONG before coding:
-  `knowledge_search` discarded per-source structure; chat stream carried no sources;
-  `FactProvenance` is a deterministic/advisory glyph, not a document-source chip.
-- Circle-safety: sources come only from `rag.search(user_id=...)` which is already
-  circle-filtered — no `circle_sql` change, no second read path.
-- Tests green: backend 11/11 (.159), frontend 4/4 (isolated). `tsc` clean on the 5
-  changed files (2 pre-existing errors in untouched skills.ts/trajectories.ts).
-- Pending before deploy: `npm run build` (prod Tailwind pass — per the frontend
-  prod-build gate), and `/review`.
+- Reversed the roadmap's "same generation" line with the user — dedicated
+  best-effort call fails gracefully (no chips) vs a trailing block that could
+  corrupt the answer. Single seam covers all paths, no agent-contract change.
+- Ephemeral (done-frame only, last turn) — no persistence/rehydration.
+- Pending before deploy: `npm run build` (prod Tailwind) + `/review`.

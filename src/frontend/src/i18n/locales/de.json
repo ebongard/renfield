@@ -132,6 +132,9 @@
       "label": "Quellen",
       "more": "+{{count}} weitere"
     },
+    "followups": {
+      "label": "Vorschläge für Folgefragen"
+    },
     "intent": "Intent",
     "startConversation": "Starte ein Gespräch mit {{appName}}",
     "useTextOrMic": "Du kannst Text eingeben oder das Mikrofon nutzen",

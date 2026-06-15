@@ -36,6 +36,7 @@ import type {
   DocumentProcessingMessage,
   DocumentReadyMessage,
   DoneMessage,
+  FollowupsMessage,
   IntentFeedbackRequestMessage,
   PaperlessCommittedMessage,
   PaperlessConfirmField,
@@ -117,6 +118,9 @@ export interface ChatUiMessage {
   // Provenance source chips — the KB documents a knowledge-backed answer drew
   // on. Arrives on the `done` frame live; rehydrates from `metadata.sources`.
   sources?: MessageSource[];
+  // Ephemeral follow-up suggestion chips for this turn (NOT persisted — only
+  // the live last assistant turn carries them).
+  suggestedFollowups?: string[];
 }
 
 /** Map a persisted history message to the in-memory UI shape. */
@@ -598,6 +602,7 @@ export function ChatProvider({ children }: ChatProviderProps) {
           federationProgress: undefined,
           // Provenance source chips for this turn (knowledge-backed answers).
           ...(data.sources && data.sources.length > 0 && { sources: data.sources }),
+          // Follow-up chips arrive separately, AFTER `done`, via handleFollowups.
         };
         lastIntentInfoRef.current = null;
 
@@ -918,6 +923,23 @@ export function ChatProvider({ children }: ChatProviderProps) {
   }, []);
 
   // Adaptive Card from server (sent after orchestrated/single-role response)
+  // Follow-up suggestion chips arrive AFTER `done` (generated in the background
+  // so they never delay the turn). Attach to the most recent assistant message;
+  // ephemeral, so they're gone on reload.
+  const handleFollowups = useCallback((data: FollowupsMessage) => {
+    if (!data.suggested_followups || data.suggested_followups.length === 0) return;
+    setMessages((prev) => {
+      const updated = [...prev];
+      for (let i = updated.length - 1; i >= 0; i--) {
+        if (updated[i].role === 'assistant') {
+          updated[i] = { ...updated[i], suggestedFollowups: data.suggested_followups };
+          break;
+        }
+      }
+      return updated;
+    });
+  }, []);
+
   const handleCard = useCallback((data: CardMessage) => {
     if (!data.card) return;
     setMessages((prev) => {
@@ -985,6 +1007,7 @@ export function ChatProvider({ children }: ChatProviderProps) {
     onAgentToolResult: handleAgentToolResult,
     onAgentFederationProgress: handleAgentFederationProgress,
     onCard: handleCard,
+    onFollowups: handleFollowups,
     onPaperlessConfirmRequest: handlePaperlessConfirmRequest,
   });
 

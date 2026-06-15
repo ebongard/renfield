@@ -94,6 +94,13 @@ export interface ChatDoneMessage {
   sources?: MessageSource[];
 }
 
+// Ephemeral follow-up suggestion chips, pushed AFTER `done` (generated in the
+// background so it never delays the turn). Attaches to the last assistant turn.
+export interface ChatFollowupsMessage {
+  type: 'followups';
+  suggested_followups: string[];
+}
+
 export interface ChatErrorMessage {
   type: 'error';
   message: string;
@@ -121,5 +128,6 @@ export type ChatWebSocketMessage =
   | ChatStreamMessage
   | ChatActionMessage
   | ChatDoneMessage
+  | ChatFollowupsMessage
   | ChatErrorMessage
   | ChatFederationProgressMessage;

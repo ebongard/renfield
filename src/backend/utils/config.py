@@ -188,6 +188,15 @@ class Settings(BaseSettings):
     agent_model: str | None = None     # Optional: separate model for agent (default: ollama_model)
     agent_ollama_url: str | None = None # Optional: separate Ollama instance for agent (default: ollama_url)
 
+    # Follow-up suggestion chips (chat-ui roadmap item 2). Opt-in/dark. After an
+    # assistant answer, a small best-effort LLM call proposes 2-4 tappable
+    # follow-up questions, attached to the `done` frame (ephemeral, not persisted).
+    # Failure/timeout silently yields no chips — never blocks the turn.
+    followup_chips_enabled: bool = False
+    followup_chips_model: str = ""              # "" → ollama_intent_model (small/fast tier)
+    followup_chips_count: int = Field(default=3, ge=1, le=5)
+    followup_chips_timeout_seconds: float = Field(default=5.0, ge=1.0, le=30.0)
+
     # OpenAI-compatible LLM endpoint (e.g. llama-server). When set, the agent
     # tier (and optionally chat/RAG/intent via per-tier overrides below) routes
     # through this endpoint instead of Ollama. The URL must include the

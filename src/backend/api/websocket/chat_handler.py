@@ -289,6 +289,37 @@ async def _route_chat_tts_output(
     return False
 
 
+async def _followup_chips_background(
+    websocket,
+    user_message: str,
+    assistant_response: str,
+    lang: str,
+    model: str,
+    count: int,
+    timeout: float,
+) -> None:
+    """Background task: generate follow-up suggestion chips AFTER `done`, then
+    push them as a separate `followups` frame.
+
+    Off the turn's critical path on purpose — a synchronous pre-`done` call would
+    delay the spinner-off / TTS-resume / wakeword re-arm that the frontend gates
+    on `done` (harmful especially for voice turns, which can't use the chips).
+    Best-effort + bounded: no chips on any failure/timeout, never raises.
+    """
+    try:
+        from services.followup_service import generate_followups
+        chips = await asyncio.wait_for(
+            generate_followups(
+                user_message, assistant_response, lang=lang, model=model, count=count
+            ),
+            timeout=timeout,
+        )
+        if chips:
+            await websocket.send_json({"type": "followups", "suggested_followups": chips})
+    except Exception as e:  # noqa: BLE001 — best-effort; chips are optional
+        logger.debug(f"follow-up chips skipped: {e}")
+
+
 async def _extract_memories_background(
     user_message: str,
     assistant_response: str,
@@ -1992,6 +2023,31 @@ WICHTIG: Nutze die ECHTEN Daten aus dem Ergebnis! Gib NUR die Antwort, KEIN JSON
                 )
                 _background_tasks.add(task)
                 task.add_done_callback(_background_tasks.discard)
+
+            # Background: follow-up suggestion chips (opt-in/dark). Dispatched
+            # AFTER `done` so it never delays the turn (see _followup_chips_background).
+            # Skipped on error turns, trivially short answers, and spoken (TTS)
+            # turns — chips are a visual/tap affordance, useless + wasteful there.
+            if (
+                settings.followup_chips_enabled
+                and full_response
+                and len(full_response.strip()) >= 16
+                and not tts_handled_by_server
+                and (action_result is None or action_result.get("success") is not False)
+            ):
+                fu_task = asyncio.create_task(
+                    _followup_chips_background(
+                        websocket,
+                        content,
+                        full_response,
+                        lang=ollama.default_lang,
+                        model=settings.followup_chips_model or settings.ollama_intent_model,
+                        count=settings.followup_chips_count,
+                        timeout=settings.followup_chips_timeout_seconds,
+                    )
+                )
+                _background_tasks.add(fu_task)
+                fu_task.add_done_callback(_background_tasks.discard)
             else:
                 # WARN-level so the absence of extraction is auditable.
                 # The conversation/knowledge route can silently bypass this
