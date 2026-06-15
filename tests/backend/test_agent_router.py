@@ -473,6 +473,37 @@ class TestAgentRouter:
         assert role.name == "research"
 
     @pytest.mark.unit
+    def test_role_for_intent_maps_corrected_intents(self):
+        """role_for_intent maps the strings the intent-correction dropdown
+        produces to the owning agent role (backs 'Korrigieren & neu beantworten').
+        Backend-owned because agent_roles.yaml is the single source of truth."""
+        router = AgentRouter(SAMPLE_CONFIG)
+        # mcp.<server>.<tool> -> role whose mcp_servers contains <server>
+        assert router.role_for_intent("mcp.homeassistant.turn_on") == "smart_home"
+        assert router.role_for_intent("mcp.jellyfin.play") == "media"
+        assert router.role_for_intent("mcp.paperless.search") == "documents"
+        # internal.<x> -> role whose internal_tools lists it
+        assert router.role_for_intent("internal.get_user_location") == "presence"
+        # core intents (the dropdown emits these two + mcp.* — never internal.*)
+        assert router.role_for_intent("knowledge.ask") == "documents"
+        assert router.role_for_intent("general.conversation") == "general"
+        # a bare role name resolves to itself (role-key precedence — "conversation"
+        # is a real role, so it wins over the general.* fallback)
+        assert router.role_for_intent("conversation") == "conversation"
+        assert router.role_for_intent("research") == "research"
+
+    @pytest.mark.unit
+    def test_role_for_intent_unmappable_returns_none(self):
+        """An empty/unknown/unowned intent returns None so the caller falls
+        back to normal routing (no forced role) — graceful degradation."""
+        router = AgentRouter(SAMPLE_CONFIG)
+        assert router.role_for_intent(None) is None
+        assert router.role_for_intent("") is None
+        assert router.role_for_intent("mcp.nonexistent.tool") is None
+        assert router.role_for_intent("internal.unknown_tool") is None
+        assert router.role_for_intent("totally.unknown") is None
+
+    @pytest.mark.unit
     def test_role_descriptions_de(self):
         router = AgentRouter(SAMPLE_CONFIG)
         desc = router._build_role_descriptions("de")

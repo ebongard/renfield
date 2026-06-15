@@ -965,6 +965,7 @@
     "selectCorrectIntent": "Select correct intent:",
     "selectComplexity": "Select correct complexity:",
     "correctionSaved": "Correction saved! {{appName}} will learn from this.",
+    "regenerate": "Answer again",
     "proactiveQuestion": "Was this the right classification?",
     "intentConversation": "General conversation",
     "intentKnowledge": "Knowledge base",

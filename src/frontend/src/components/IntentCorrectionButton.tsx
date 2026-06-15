@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { AlertCircle, Check, ChevronDown } from 'lucide-react';
+import { AlertCircle, Check, ChevronDown, RefreshCw } from 'lucide-react';
 
 import axios from '../utils/axios';
 
@@ -78,6 +78,12 @@ interface IntentCorrectionButtonProps {
   detectedConfidence?: number | null;
   feedbackType?: FeedbackType;
   onCorrect?: CorrectionHandler;
+  /**
+   * Re-run this turn's original query forcing the corrected route. When
+   * provided, a "Neu beantworten" button appears after a correction is saved
+   * (the "Korrigieren & neu beantworten" flow). Omit to keep feedback-only.
+   */
+  onRegenerate?: (messageText: string, correctedIntent: string) => void;
   proactive?: boolean;
 }
 
@@ -87,12 +93,14 @@ export default function IntentCorrectionButton({
   detectedConfidence,
   feedbackType = 'intent',
   onCorrect,
+  onRegenerate,
   proactive = false,
 }: IntentCorrectionButtonProps) {
   const { t } = useTranslation();
   const [open, setOpen] = useState<boolean>(proactive);
   const [intentExpanded, setIntentExpanded] = useState<boolean>(false);
   const [submitted, setSubmitted] = useState<boolean>(false);
+  const [correctedValue, setCorrectedValue] = useState<string | null>(null);
   const [mcpOptions, setMcpOptions] = useState<McpOption[]>([]);
 
   useEffect(() => {
@@ -123,19 +131,38 @@ export default function IntentCorrectionButton({
 
   const options: IntentOption[] = feedbackType === 'complexity' ? complexityOptions : intentOptions;
 
-  const handleSelect = async (correctedValue: string): Promise<void> => {
+  const handleSelect = async (value: string): Promise<void> => {
     if (onCorrect) {
-      await onCorrect(messageText, feedbackType, detectedIntent, correctedValue);
+      await onCorrect(messageText, feedbackType, detectedIntent, value);
     }
+    setCorrectedValue(value);
     setSubmitted(true);
     setOpen(false);
   };
 
   if (submitted) {
+    // After saving the training-signal correction, offer to re-run the turn
+    // forcing the corrected route — the "Korrigieren & neu beantworten" combo.
+    // Only for intent corrections (a complexity tweak has no re-routable role).
+    const canRegenerate =
+      onRegenerate != null && feedbackType === 'intent' && correctedValue != null
+      && messageText.trim() !== '';  // no re-run target without the original query
     return (
-      <div className="mt-1 flex items-center space-x-1 text-xs text-green-600 dark:text-green-400">
-        <Check className="w-3 h-3" aria-hidden="true" />
-        <span>{t('feedback.correctionSaved')}</span>
+      <div className="mt-1 flex items-center gap-2 flex-wrap text-xs">
+        <span className="flex items-center space-x-1 text-green-600 dark:text-green-400">
+          <Check className="w-3 h-3" aria-hidden="true" />
+          <span>{t('feedback.correctionSaved')}</span>
+        </span>
+        {canRegenerate && (
+          <button
+            type="button"
+            onClick={() => onRegenerate!(messageText, correctedValue!)}
+            className="flex items-center space-x-1 text-primary-600 dark:text-primary-400 hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 rounded"
+          >
+            <RefreshCw className="w-3 h-3" aria-hidden="true" />
+            <span>{t('feedback.regenerate')}</span>
+          </button>
+        )}
       </div>
     );
   }

@@ -253,6 +253,7 @@ export interface ChatContextValue {
     originalValue: string | undefined,
     correctedValue: string,
   ) => Promise<void>;
+  regenerateWithCorrectedIntent: (text: string, correctedIntent: string) => void;
 }
 
 const ChatContext = createContext<ChatContextValue | null>(null);
@@ -461,7 +462,7 @@ export function ChatProvider({ children }: ChatProviderProps) {
   // Ref for sendMessageInternal (used by handleTranscription before
   // sendMessageInternal is declared below).
   const sendMessageInternalRef = useRef<
-    (text: string, fromVoice?: boolean, voiceMeta?: { speakerEmbedding?: number[] | null }) => Promise<void>
+    (text: string, fromVoice?: boolean, voiceMeta?: { speakerEmbedding?: number[] | null }, opts?: { correctedIntent?: string }) => Promise<void>
   >(
     async () => undefined,
   );
@@ -1407,6 +1408,7 @@ export function ChatProvider({ children }: ChatProviderProps) {
     text: string,
     fromVoice = false,
     voiceMeta?: { speakerEmbedding?: number[] | null },
+    opts?: { correctedIntent?: string },
   ): Promise<void> => {
     if (!text.trim()) return;
 
@@ -1439,8 +1441,14 @@ export function ChatProvider({ children }: ChatProviderProps) {
     lastUserQueryRef.current = text;
     lastIntentInfoRef.current = null;
 
-    // Capture current attachments before clearing
-    const currentAttachments = [...attachments];
+    // A "Korrigieren & neu beantworten" re-run is NOT a composer submit: it
+    // replays a past query, so it must NOT pull in whatever the user has since
+    // staged in the composer (wrong attachments on the old query) nor clear
+    // their in-progress draft. Only a real composer send touches that state.
+    const isRerun = !!opts?.correctedIntent;
+
+    // Capture current attachments before clearing (skip for an isolated re-run).
+    const currentAttachments = isRerun ? [] : [...attachments];
     const completedIds = currentAttachments
       .filter((a) => a.status === 'completed')
       .map((a) => a.id);
@@ -1451,8 +1459,10 @@ export function ChatProvider({ children }: ChatProviderProps) {
       ...(currentAttachments.length > 0 && { attachments: currentAttachments }),
     };
     setMessages((prev) => [...prev, userMessage]);
-    setInput('');
-    setAttachments([]);
+    if (!isRerun) {
+      setInput('');
+      setAttachments([]);
+    }
     setLoading(true);
 
     const previewText = text.length > 50 ? text.substring(0, 50) + '...' : text;
@@ -1496,6 +1506,9 @@ export function ChatProvider({ children }: ChatProviderProps) {
       }),
       // Command-palette role override for this turn (soft hint; backend validates).
       ...(pendingRoleHint && { role_hint: pendingRoleHint }),
+      // "Korrigieren & neu beantworten": the corrected intent is mapped to the
+      // owning agent role server-side and used as the route for this re-run.
+      ...(opts?.correctedIntent && { corrected_intent: opts.correctedIntent }),
     };
 
     // wsSendMessage re-checks readyState before .send() and returns false
@@ -1531,6 +1544,13 @@ export function ChatProvider({ children }: ChatProviderProps) {
   // Wire ref so handleTranscription (declared above) can call sendMessageInternal
   useEffect(() => {
     sendMessageInternalRef.current = sendMessageInternal;
+  }, [sendMessageInternal]);
+
+  // "Korrigieren & neu beantworten": re-run a turn's original query, forcing the
+  // route the user just corrected to (backend maps the intent → agent role). The
+  // feedback POST already happened in handleFeedbackSubmit; this is the re-answer.
+  const regenerateWithCorrectedIntent = useCallback((text: string, correctedIntent: string) => {
+    void sendMessageInternal(text, false, undefined, { correctedIntent });
   }, [sendMessageInternal]);
 
   // Summarize handler (must be after sendMessageInternal)
@@ -1719,8 +1739,10 @@ export function ChatProvider({ children }: ChatProviderProps) {
     // Actions
     speakText,
     handleFeedbackSubmit,
+    regenerateWithCorrectedIntent,
   }), [
     messages, loading, input, historyLoading, sendMessageInternal, submitPaperlessConfirm,
+    regenerateWithCorrectedIntent,
     paletteOpen, pendingRoleHint,
     sessionId, sidebarOpen, switchConversation, startNewChat, handleDeleteConversation,
     conversations, conversationsLoading,

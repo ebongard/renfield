@@ -965,6 +965,7 @@
     "selectCorrectIntent": "Richtigen Intent wählen:",
     "selectComplexity": "Richtige Einstufung wählen:",
     "correctionSaved": "Korrektur gespeichert! {{appName}} lernt daraus.",
+    "regenerate": "Neu beantworten",
     "proactiveQuestion": "War das die richtige Zuordnung?",
     "intentConversation": "Allgemeine Konversation",
     "intentKnowledge": "Wissensdatenbank",

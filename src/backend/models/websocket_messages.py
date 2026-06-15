@@ -193,6 +193,13 @@ class WSChatMessage(BaseModel):
     # palette's "switch agent role" action). Validated against agent_roles.yaml in
     # the handler; an unknown/None value is ignored and normal routing applies.
     role_hint: str | None = Field(None, max_length=64, description="Soft agent-role routing hint")
+    # "Korrigieren & neu beantworten": when the user corrects a mis-classified
+    # intent via the chat feedback control and re-runs the turn, the corrected
+    # intent string (e.g. "mcp.dlna.play_album", "knowledge.ask") rides here. The
+    # handler maps it to an agent role (agent_router.role_for_intent) and uses it
+    # as the role_hint. An explicit role_hint takes precedence; an unmappable
+    # value is ignored and normal routing applies.
+    corrected_intent: str | None = Field(None, max_length=128, description="Corrected intent to force-route a regenerated turn")
     # Phase B voice integration (B.4.a). Voice-server emits a 192-dim
     # ECAPA-TDNN speaker embedding on `final_transcript`; the frontend
     # forwards it here so the chat handler can resolve a Speaker DB row

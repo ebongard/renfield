@@ -98,6 +98,7 @@ export const defaultChatContextValue: ChatContextValue = {
   // Actions
   speakText: async () => {},
   handleFeedbackSubmit: async () => {},
+  regenerateWithCorrectedIntent: () => {},
 };
 
 /**

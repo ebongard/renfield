@@ -140,6 +140,7 @@ export default function ChatMessages() {
   const { t } = useTranslation();
   const {
     messages, loading, historyLoading, speakText, handleFeedbackSubmit,
+    regenerateWithCorrectedIntent,
     actionLoading, actionResult, indexToKb, sendToPaperless, sendToBoth, handleSummarize,
     handleSendViaEmail, emailDialog, confirmSendViaEmail, cancelEmailDialog,
     sendMessage, sessionId, submitPaperlessConfirm,
@@ -412,6 +413,7 @@ export default function ChatMessages() {
                 detectedConfidence={message.intentInfo.confidence}
                 feedbackType="intent"
                 onCorrect={handleFeedbackSubmit}
+                onRegenerate={regenerateWithCorrectedIntent}
                 proactive={message.feedbackRequested === true}
               />
             )}

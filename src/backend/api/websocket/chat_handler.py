@@ -1200,13 +1200,27 @@ async def websocket_endpoint(
                 except Exception as _e:
                     logger.debug(f"Entity resolution skipped: {_e}")
 
+                # Effective role hint: an explicit palette role_hint wins; else a
+                # "Korrigieren & neu beantworten" regenerate maps its corrected
+                # intent to the owning role (None = fall through to normal routing).
+                _role_hint = getattr(msg, "role_hint", None)
+                if not _role_hint:
+                    _corrected = getattr(msg, "corrected_intent", None)
+                    if _corrected:
+                        _role_hint = agent_router.role_for_intent(_corrected)
+                        # !r so an injected newline in the client string can't forge log lines.
+                        if _role_hint:
+                            logger.info(f"Regenerate: corrected intent {_corrected!r} → role '{_role_hint}'")
+                        else:
+                            logger.debug(f"Regenerate: corrected intent {_corrected!r} mapped to no role; normal routing")
+
                 # Context-aware classification (entity → continuity → semantic → LLM)
                 role = await agent_router.classify_with_context(
                     content, _resolved, ollama,
                     conversation_history=session_state.conversation_history if session_state.conversation_history else None,
                     context_vars=_ctx_vars,
                     lang=ollama.default_lang,
-                    role_hint=getattr(msg, "role_hint", None),
+                    role_hint=_role_hint,
                 )
                 logger.info(f"🎯 Router: '{content[:60]}...' → {role.name}")
 

@@ -187,4 +187,52 @@ describe('IntentCorrectionButton', () => {
 
     expect(screen.getByText('War das die richtige Zuordnung?')).toBeInTheDocument();
   });
+
+  it('offers "Neu beantworten" after a correction and re-runs with the corrected intent', async () => {
+    const onCorrect = vi.fn<CorrectionHandler>().mockResolvedValue(undefined);
+    const onRegenerate = vi.fn();
+
+    renderWithRouter(
+      <IntentCorrectionButton {...defaultProps} onCorrect={onCorrect} onRegenerate={onRegenerate} />
+    );
+
+    fireEvent.click(screen.getByText('Falsch erkannt?'));
+    fireEvent.click(screen.getByText('Allgemeine Konversation'));
+
+    // The regenerate affordance appears alongside the saved-confirmation.
+    const regen = await screen.findByText('Neu beantworten');
+    fireEvent.click(regen);
+
+    // Re-runs the ORIGINAL query forcing the corrected intent (backend maps → role).
+    expect(onRegenerate).toHaveBeenCalledWith('Was passierte 1989?', 'general.conversation');
+  });
+
+  it('does NOT offer "Neu beantworten" when there is no original query to re-run', async () => {
+    const onCorrect = vi.fn<CorrectionHandler>().mockResolvedValue(undefined);
+    const onRegenerate = vi.fn();
+
+    renderWithRouter(
+      <IntentCorrectionButton {...defaultProps} messageText="" onCorrect={onCorrect} onRegenerate={onRegenerate} />
+    );
+
+    fireEvent.click(screen.getByText('Falsch erkannt?'));
+    fireEvent.click(screen.getByText('Allgemeine Konversation'));
+
+    await screen.findByText('Korrektur gespeichert! Renfield lernt daraus.');
+    expect(screen.queryByText('Neu beantworten')).not.toBeInTheDocument();
+  });
+
+  it('does NOT offer "Neu beantworten" when onRegenerate is absent', async () => {
+    const onCorrect = vi.fn<CorrectionHandler>().mockResolvedValue(undefined);
+
+    renderWithRouter(
+      <IntentCorrectionButton {...defaultProps} onCorrect={onCorrect} />
+    );
+
+    fireEvent.click(screen.getByText('Falsch erkannt?'));
+    fireEvent.click(screen.getByText('Allgemeine Konversation'));
+
+    await screen.findByText('Korrektur gespeichert! Renfield lernt daraus.');
+    expect(screen.queryByText('Neu beantworten')).not.toBeInTheDocument();
+  });
 });
