@@ -135,6 +135,36 @@
     "followups": {
       "label": "Vorschläge für Folgefragen"
     },
+    "palette": {
+      "title": "Aktionen",
+      "open": "Aktionspalette öffnen",
+      "search": "Aktion suchen…",
+      "noResults": "Keine Aktion gefunden",
+      "roleActive": "Rolle: {{role}}",
+      "clearRole": "Rolle zurücksetzen",
+      "categories": { "navigate": "Navigation", "tool": "Aktion", "setRole": "Rolle" },
+      "actions": {
+        "knowledge": "Dokumente öffnen",
+        "brain": "Wissen öffnen",
+        "fristen": "Fristen öffnen",
+        "memory": "Erinnerungen öffnen",
+        "graph": "Wissensgraph öffnen",
+        "circles": "Circles-Einstellungen",
+        "homeassistant": "Smart Home öffnen",
+        "cameras": "Kameras öffnen",
+        "rooms": "Räume öffnen",
+        "btScan": "Bluetooth-Geräte scannen",
+        "goodNight": "Gute-Nacht-Routine starten",
+        "goodMorning": "Guten-Morgen-Routine starten",
+        "presence": "Wer ist zuhause?",
+        "searchDocs": "In Dokumenten suchen",
+        "roleSmartHome": "Rolle: Smart Home",
+        "roleMedia": "Rolle: Medien",
+        "roleDocuments": "Rolle: Dokumente",
+        "roleResearch": "Rolle: Recherche",
+        "roleGeneral": "Rolle: Allgemein"
+      }
+    },
     "intent": "Intent",
     "startConversation": "Starte ein Gespräch mit {{appName}}",
     "useTextOrMic": "Du kannst Text eingeben oder das Mikrofon nutzen",

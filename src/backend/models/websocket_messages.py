@@ -189,6 +189,10 @@ class WSChatMessage(BaseModel):
     knowledge_base_id: int | None = Field(None, description="Specific knowledge base to search")
     # Document upload context
     attachment_ids: list[int] | None = Field(None, description="IDs of uploaded documents to include as context")
+    # Command-palette role override: a soft routing hint for the next turn (the
+    # palette's "switch agent role" action). Validated against agent_roles.yaml in
+    # the handler; an unknown/None value is ignored and normal routing applies.
+    role_hint: str | None = Field(None, max_length=64, description="Soft agent-role routing hint")
     # Phase B voice integration (B.4.a). Voice-server emits a 192-dim
     # ECAPA-TDNN speaker embedding on `final_transcript`; the frontend
     # forwards it here so the chat handler can resolve a Speaker DB row

@@ -1206,6 +1206,7 @@ async def websocket_endpoint(
                     conversation_history=session_state.conversation_history if session_state.conversation_history else None,
                     context_vars=_ctx_vars,
                     lang=ollama.default_lang,
+                    role_hint=getattr(msg, "role_hint", None),
                 )
                 logger.info(f"🎯 Router: '{content[:60]}...' → {role.name}")
 

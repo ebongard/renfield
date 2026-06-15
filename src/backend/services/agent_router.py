@@ -245,6 +245,7 @@ class AgentRouter:
         conversation_history: list[dict] | None = None,
         context_vars: dict | None = None,
         lang: str = "de",
+        role_hint: str | None = None,
     ) -> AgentRole:
         """Context-aware classification with entity pre-routing and continuity.
 
@@ -265,6 +266,17 @@ class AgentRouter:
         Returns:
             The classified AgentRole
         """
+        # Layer 0: explicit user role hint (command palette "switch role" action).
+        # A soft preference — honored only if the role exists; unknown hints fall
+        # through to normal classification. Sub-intent still inferred for the role.
+        if role_hint and role_hint in self.roles:
+            role = self.roles[role_hint]
+            sub_intent = self._infer_sub_intent(
+                message, role.sub_intent_definitions or {}, lang,
+            ) if role.sub_intent_definitions else None
+            logger.info(f"Router role-hint: '{message[:60]}' -> '{role_hint}'")
+            return replace(role, sub_intent=sub_intent)
+
         # Layer 1: Entity ID routing — highest confidence, instant
         if resolved and resolved.entity_matches and resolved.inferred_domain:
             domain = resolved.inferred_domain

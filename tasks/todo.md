@@ -1,79 +1,67 @@
-# Plan — Follow-up suggestion chips (chat-ui roadmap item 2)
+# Plan — Command palette (chat-ui roadmap item 4)
 
-Source: `docs/design/chat-ui-modernization.md` Tier 1 item 2. After an assistant
-answer, show 2-4 tappable follow-up suggestions under the turn.
+Source: blueprint from feature-dev:code-architect agent (2026-06-15). `/` in the
+composer (or a touch button) opens an action+navigation palette. Dark-flagged.
 
-## Approach (decided with user, reverses the roadmap's "same generation" line)
-Generate in the **single shared seam** in `chat_handler` (after `full_response`,
-where every path — conversation / agent / RAG — converges), via ONE small
-best-effort call. NO agent-output-contract change. A parse/timeout failure just
-drops the chips (answer untouched). Gated + dark by default.
+## Locked decisions (with user)
+- Tool actions **stage into the composer** (no auto-send); user reviews + sends.
+  Navigate = immediate client nav. Set-role = stage a next-turn role hint.
+- Role hint = **next-turn only**, auto-clears on `done` (dismissible badge).
+- **Build now, dark** behind `command_palette_enabled` (frontend flag; backend
+  `role_hint` is always-present no-op when absent → flip needs no backend redeploy).
 
-Why not same-generation: a trailing-JSON-in-the-answer block touches every
-prompt, is fragile on local models the codebase already distrusts, and a bad
-parse could corrupt the visible answer. A dedicated call fails gracefully.
-
-## Decisions
-- **Ephemeral, NOT persisted.** Chips are next-step suggestions for the *live*
-  turn only → attach to the `done` frame, shown under the LAST assistant turn,
-  cleared on the next user send. (Unlike provenance chips, which persist.)
-  No `message_metadata`, no history rehydration.
-- **Tap = fill the composer + focus** (NOT auto-send) — safer for a household
-  (no accidental sends); user reviews/sends. (Speakable-for-voice = follow-up.)
-- **Best-effort + bounded** — `asyncio.wait_for(timeout)`, try/except; `done` is
-  never blocked beyond the timeout; empty list on any failure. Prose already
-  streamed, so only `done`+chips lag by ~one small-model inference.
+## Authz model
+- **Display** (frontend, UX courtesy): `usePaletteActions` filters the static
+  registry by `AuthContext.hasPermission/hasAnyPermission` + `isFeatureEnabled`.
+- **Execute** (real gate, server-side, unchanged): tool actions dispatch as
+  natural language via `sendMessage` → `agent_router` → `agent_roles.yaml` tool
+  gating → `require_permission`. The palette adds NO new dispatch path.
+- `AUTH_ENABLED=false` (prod) → hasPermission returns true → all actions visible.
 
 ## Backend
-- [ ] `utils/config.py` — `followup_chips_enabled` (False/dark), `followup_chips_model`
-  (""→ `ollama_intent_model`), `followup_chips_count` (3), `followup_chips_timeout_seconds` (5).
-- [ ] `services/followup_service.py` (NEW) — `generate_followups(user_message, answer,
-  lang, *, model, count, timeout) -> list[str]`. Tight prompt → 2-4 short questions
-  in the user's language; tolerant parse (JSON array OR newline/bullet lines);
-  trims to `count`, drops empties/dupes/overlong; returns `[]` on ANY failure.
-- [ ] `chat_handler.py` — in the shared block (after `full_response`, near `done_msg`):
-  if `followup_chips_enabled` AND substantive non-error turn (full_response present,
-  `action_success` not False, len ≥ small floor), best-effort
-  `await asyncio.wait_for(generate_followups(...), timeout)` → `done_msg["suggested_followups"]`.
-  Wrapped try/except — never block `done`. (v1: all substantive turns; gate-by-intent = follow-up.)
+- [ ] `utils/config.py` + `api/routes/config.py` (FeatureFlags) — `command_palette_enabled: bool = False`.
+- [ ] chat WS handler — accept optional `role_hint` on the `text` message; validate
+  against `agent_roles.yaml` role keys; pass as a soft routing hint to the router;
+  drop silently if unknown. Always present (no flag). Unit test.
 
 ## Frontend
-- [ ] `types/chat.ts` — `ChatDoneMessage.suggested_followups?: string[]`.
-- [ ] `hooks/useChatWebSocket.ts` — `DoneMessage.suggested_followups?: string[]`.
-- [ ] `context/ChatContext.tsx` — `ChatUiMessage.suggestedFollowups?: string[]`; `done`
-  handler attaches `suggested_followups` to the completed msg; ensure only the LAST
-  assistant msg carries them (clear/none on older turns is automatic since not persisted).
-- [ ] `components/chat/FollowupChips.tsx` (NEW) — tappable chips; tap → `setInput(text)`
-  + focus composer (via context). Empty/undefined → renders nothing. 44px targets,
-  keyboard-focusable, dark mode + i18n.
-- [ ] `pages/ChatPage/ChatMessages.tsx` — render `<FollowupChips>` under the LAST
-  finished assistant turn only (index === last && !streaming).
+- [ ] `components/chat/palette/paletteActions.ts` (NEW) — static `PaletteAction[]`.
+- [ ] `components/chat/palette/usePaletteActions.ts` (NEW) — filter by perms + flag + query.
+- [ ] `components/chat/palette/PaletteContext.tsx` (NEW) — open state + pendingRoleHint.
+- [ ] `components/chat/palette/CommandPalette.tsx` (NEW) — dialog overlay (portal),
+  search + grouped listbox, Arrow/Enter/Esc, focus trap+restore, warm empty state,
+  44px, dark + i18n. Navigate→useNavigate; tool→setInput (stage); set-role→hint.
+- [ ] `ChatInput.tsx` — `/`-key when empty + touch trigger button + role-hint badge.
+- [ ] `ChatPage/index.tsx` — PaletteProvider + mount CommandPalette portal (flag-gated).
+- [ ] `ChatContext.tsx` — inject `role_hint` from pendingRoleHint into the WS message; clear on `done`.
+- [ ] i18n de+en — `chat.palette.*`.
 
 ## Tests
-- [ ] Backend: `followup_service` parses JSON + line formats → N chips; returns []
-  on garbage / timeout / empty; respects `count`. chat_handler attaches when flag on,
-  none when off / error turn (mock the service).
-- [ ] Frontend RTL: FollowupChips renders chips, empty → nothing, tap calls setInput.
+- [ ] Backend unit: role_hint accepted (valid) / dropped (unknown) / None passes.
+- [ ] Frontend RTL `usePaletteActions.test.tsx` + `CommandPalette.test.tsx`.
 
 ## Out of scope (v1)
-- Persistence / history rehydration (ephemeral by design).
-- Voice-speakable chips (roadmap noted; follow-up).
-- Auto-send on tap; gate-by-intent (generate-for-all is fine behind the flag).
+- localStorage recents; per-user customisation; direct mcp.* dispatch; voice-trigger;
+  admin-management actions; multi-step-input actions.
 
 ## Status: IMPLEMENTED
-- Backend: `config` flags + `services/followup_service.py` (NEW) + `chat_handler`
-  shared-seam best-effort call (bounded by `asyncio.wait_for`, try/except, gated).
-- Frontend: `types`/`useChatWebSocket` `suggested_followups`; `ChatContext`
-  `suggestedFollowups` + done-handler attach; `FollowupChips.tsx` (NEW, tap→setInput);
-  `ChatMessages` renders under the LAST finished assistant turn; i18n de+en.
-- Parser hardened: requires word content (drops "{}"/"[]"/"---" noise).
-- Tests: backend 8 (parse JSON/lines/dedupe/overlong/garbage + generate
-  success/empty/best-effort-fail), frontend 7 (FollowupChips 3 + SourceChips 4
-  still green). tsc clean on changed files.
+- Backend: `command_palette_enabled` flag (config + FeatureFlags route); `role_hint`
+  on WSChatMessage → `classify_with_context` Layer-0 short-circuit (valid role) →
+  passed from chat_handler. Always-present (no flag); unknown hint falls through.
+- Frontend: palette state folded into ChatContext (open + pendingRoleHint, role_hint
+  injected on the WS frame + consumed next-turn); `paletteActions.ts` registry +
+  `usePaletteActions` perm/flag/query filter + `CommandPalette.tsx` overlay (portal,
+  search, arrow/enter nav, document-level Escape, focus restore, 44px, dark+i18n);
+  ChatInput `/`-trigger + touch button + role badge; mounted in ChatPage; i18n de+en.
+- Tool actions STAGE into composer (no auto-send); role hint next-turn-only; UI gated by flag.
 
 ## Review
-- Reversed the roadmap's "same generation" line with the user — dedicated
-  best-effort call fails gracefully (no chips) vs a trailing block that could
-  corrupt the answer. Single seam covers all paths, no agent-contract change.
-- Ephemeral (done-frame only, last turn) — no persistence/rehydration.
-- Pending before deploy: `npm run build` (prod Tailwind) + `/review`.
+- Authz: display filter is frontend UX (hasPermission); real gate stays server-side
+  (NL command → agent_router → agent_roles.yaml tool gating). No new dispatch path.
+- Improved on blueprint: palette state lives IN ChatContext (a nested PaletteContext
+  couldn't feed role_hint into ChatContext.sendMessageInternal). Escape made
+  document-level (robust modal close, not focus-dependent).
+- Tests: backend role_hint short-circuit (passed; 3 config-loading failures are
+  PRE-EXISTING — they read the ConfigMap-served agent_roles.yaml absent from the
+  build-box image). Frontend 18/18 (palette 7 + usePaletteActions 4 + chips 7). tsc clean.
+- Pending: `npm run build` (prod Tailwind) + `/review`.

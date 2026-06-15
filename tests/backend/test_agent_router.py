@@ -461,6 +461,18 @@ class TestAgentRouter:
         assert role.name == "general"
 
     @pytest.mark.unit
+    async def test_role_hint_honored_short_circuits(self):
+        """A valid command-palette role_hint routes to that role immediately,
+        before any entity/continuity/LLM layer (ollama is never touched).
+        An unknown hint fails the `role_hint in self.roles` guard and falls
+        through to normal classification."""
+        router = AgentRouter(SAMPLE_CONFIG)
+        role = await router.classify_with_context(
+            "irgendeine Nachricht", None, None, role_hint="research",
+        )
+        assert role.name == "research"
+
+    @pytest.mark.unit
     def test_role_descriptions_de(self):
         router = AgentRouter(SAMPLE_CONFIG)
         desc = router._build_role_descriptions("de")

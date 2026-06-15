@@ -8,6 +8,7 @@ import { useWissensbasisAvailable } from '../../api/resources/wissensbasis';
 import ChatHeader from './ChatHeader';
 import ChatMessages from './ChatMessages';
 import ChatInput from './ChatInput';
+import CommandPalette from '../../components/chat/palette/CommandPalette';
 import { ChatProvider, useChatContext } from './context/ChatContext';
 
 function ChatPageLayout() {
@@ -54,6 +55,9 @@ function ChatPageLayout() {
         <ChatMessages />
         <ChatInput />
       </div>
+
+      {/* Command palette overlay (portals to body; null unless opened). */}
+      <CommandPalette />
 
       {/* Wissensbasis side panel — A-LANDING composed view (A2 reasoning + A4 focus).
           Mounted only when the backend route is reachable (probed once via

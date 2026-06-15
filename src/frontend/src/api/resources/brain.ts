@@ -95,6 +95,8 @@ export interface FeatureFlags {
   schicht_a_extraction_enabled: boolean;
   /** Gates the unified /wissen workspace nav + routing (D10). */
   wissen_workspace_enabled: boolean;
+  /** Gates the chat command palette UI (`/`-trigger + touch button + overlay). */
+  command_palette_enabled: boolean;
 }
 
 async function fetchAtomSearch(query: string): Promise<AtomMatch[]> {

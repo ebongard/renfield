@@ -1,10 +1,11 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import type { ChangeEvent, DragEvent, KeyboardEvent } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Send, Mic, MicOff, BookOpen, ChevronDown, Paperclip, X, FileText, Loader, AlertCircle } from 'lucide-react';
+import { Send, Mic, MicOff, BookOpen, ChevronDown, Paperclip, X, FileText, Loader, AlertCircle, Command } from 'lucide-react';
 import apiClient from '../../utils/axios';
 import AudioVisualizer from './AudioVisualizer';
 import { useChatContext } from './context/ChatContext';
+import { useFeatureFlags } from '../../api/resources/brain';
 
 interface KnowledgeBase {
   id: string;
@@ -18,7 +19,10 @@ export default function ChatInput() {
     audioLevel, silenceTimeRemaining, partialText,
     useRag, toggleRag, selectedKnowledgeBase, setSelectedKnowledgeBase,
     attachments, uploading, uploadDocument, removeAttachment, uploadStates,
+    openPalette, pendingRoleHint, clearRoleHint,
   } = useChatContext();
+  const { data: features } = useFeatureFlags();
+  const paletteEnabled = features?.command_palette_enabled ?? false;
 
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
@@ -70,6 +74,13 @@ export default function ChatInput() {
       e.preventDefault();
       if (attachmentsProcessing) return;
       sendMessage?.(input, false);
+      return;
+    }
+    // `/` on an empty composer opens the command palette (desktop trigger).
+    // In a non-empty field it types normally.
+    if (paletteEnabled && e.key === '/' && input === '') {
+      e.preventDefault();
+      openPalette?.();
     }
   };
 
@@ -255,6 +266,23 @@ export default function ChatInput() {
         </div>
       )}
 
+      {/* Command-palette role override for the next turn (dismissible). */}
+      {paletteEnabled && pendingRoleHint && (
+        <div className="mb-2 flex items-center gap-2">
+          <span className="inline-flex items-center gap-1.5 px-2 py-1 rounded-full text-xs bg-primary-100 text-primary-800 dark:bg-primary-900/40 dark:text-primary-100">
+            {t('chat.palette.roleActive', { role: pendingRoleHint })}
+            <button
+              type="button"
+              onClick={() => clearRoleHint?.()}
+              aria-label={t('chat.palette.clearRole')}
+              className="hover:opacity-70 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 rounded"
+            >
+              <X className="w-3 h-3" aria-hidden="true" />
+            </button>
+          </span>
+        </div>
+      )}
+
       {/* Input Area */}
       <div className="flex items-center space-x-2">
         <label htmlFor="chat-input" className="sr-only">{t('chat.placeholder')}</label>
@@ -280,6 +308,19 @@ export default function ChatInput() {
           onChange={handleFileChange}
           multiple
         />
+
+        {/* Command palette touch trigger (the `/`-key is the desktop trigger). */}
+        {paletteEnabled && (
+          <button
+            type="button"
+            onClick={() => openPalette?.()}
+            disabled={loading || recording}
+            className="p-3 rounded-lg transition-colors bg-gray-200 hover:bg-gray-300 text-gray-600 dark:bg-gray-700 dark:hover:bg-gray-600 dark:text-gray-300 disabled:opacity-50 active:scale-95"
+            aria-label={t('chat.palette.open')}
+          >
+            <Command className="w-5 h-5" aria-hidden="true" />
+          </button>
+        )}
 
         <button
           onClick={() => fileInputRef.current?.click()}

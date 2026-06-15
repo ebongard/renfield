@@ -135,6 +135,36 @@
     "followups": {
       "label": "Follow-up suggestions"
     },
+    "palette": {
+      "title": "Actions",
+      "open": "Open action palette",
+      "search": "Search actions…",
+      "noResults": "No action found",
+      "roleActive": "Role: {{role}}",
+      "clearRole": "Clear role",
+      "categories": { "navigate": "Navigation", "tool": "Action", "setRole": "Role" },
+      "actions": {
+        "knowledge": "Open documents",
+        "brain": "Open knowledge",
+        "fristen": "Open deadlines",
+        "memory": "Open memories",
+        "graph": "Open knowledge graph",
+        "circles": "Circles settings",
+        "homeassistant": "Open smart home",
+        "cameras": "Open cameras",
+        "rooms": "Open rooms",
+        "btScan": "Scan Bluetooth devices",
+        "goodNight": "Start good-night routine",
+        "goodMorning": "Start good-morning routine",
+        "presence": "Who's home?",
+        "searchDocs": "Search documents",
+        "roleSmartHome": "Role: Smart home",
+        "roleMedia": "Role: Media",
+        "roleDocuments": "Role: Documents",
+        "roleResearch": "Role: Research",
+        "roleGeneral": "Role: General"
+      }
+    },
     "intent": "Intent",
     "startConversation": "Start a conversation with {{appName}}",
     "useTextOrMic": "You can type text or use the microphone",

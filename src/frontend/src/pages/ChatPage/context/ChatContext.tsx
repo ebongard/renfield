@@ -174,6 +174,14 @@ export interface ChatContextValue {
     payload: { decisions: { idx: number; action: string; value: string | null }[] } | { abort: true },
   ) => void;
 
+  // Command palette (chat-ui item 4)
+  paletteOpen: boolean;
+  openPalette: () => void;
+  closePalette: () => void;
+  pendingRoleHint: string | null;
+  setRoleHint: (roleId: string) => void;
+  clearRoleHint: () => void;
+
   // Session
   sessionId: string | null;
   sidebarOpen: boolean;
@@ -267,6 +275,11 @@ export function ChatProvider({ children }: ChatProviderProps) {
   const [messages, setMessages] = useState<ChatUiMessage[]>([]);
   const [loading, setLoading] = useState(false);
   const [input, setInput] = useState('');
+  // Command palette (chat-ui item 4): open state + a next-turn agent-role hint.
+  // The hint is consumed by the next sent message (role_hint on the WS frame),
+  // then cleared — "next turn only".
+  const [paletteOpen, setPaletteOpen] = useState(false);
+  const [pendingRoleHint, setPendingRoleHint] = useState<string | null>(null);
 
   // Session management
   const [sessionId, setSessionId] = useState<string | null>(() => {
@@ -1481,12 +1494,19 @@ export function ChatProvider({ children }: ChatProviderProps) {
       ...(voiceMeta?.speakerEmbedding && {
         speaker_embedding: voiceMeta.speakerEmbedding,
       }),
+      // Command-palette role override for this turn (soft hint; backend validates).
+      ...(pendingRoleHint && { role_hint: pendingRoleHint }),
     };
 
     // wsSendMessage re-checks readyState before .send() and returns false
     // if the socket isn't OPEN, so we close the race between whenReady()
     // resolving true and the actual transmit.
     if (isReady() && wsSendMessage(wsMessage)) {
+      // Consume the role hint ONLY on a confirmed WS send (the REST fallback
+      // below carries no role_hint). On a failed send the hint stays set + the
+      // badge stays visible, so the user's next attempt still applies the role
+      // instead of it silently vanishing.
+      if (pendingRoleHint) setPendingRoleHint(null);
       // The turn is now streaming over the WS; a mid-stream socket drop makes it
       // recoverable (the reconnect effect clears the spinner + notifies).
       wsStreamingTurnRef.current = true;
@@ -1506,7 +1526,7 @@ export function ChatProvider({ children }: ChatProviderProps) {
         setLoading(false);
       }
     }
-  }, [sessionId, messages.length, useRag, selectedKnowledgeBase, isReady, whenReady, wsSendMessage, addConversation, attachments, t]);
+  }, [sessionId, messages.length, useRag, selectedKnowledgeBase, isReady, whenReady, wsSendMessage, addConversation, attachments, t, pendingRoleHint]);
 
   // Wire ref so handleTranscription (declared above) can call sendMessageInternal
   useEffect(() => {
@@ -1629,6 +1649,14 @@ export function ChatProvider({ children }: ChatProviderProps) {
     sendMessage: sendMessageInternal,
     submitPaperlessConfirm,
 
+    // Command palette
+    paletteOpen,
+    openPalette: () => setPaletteOpen(true),
+    closePalette: () => setPaletteOpen(false),
+    pendingRoleHint,
+    setRoleHint: (roleId: string) => { setPendingRoleHint(roleId); setPaletteOpen(false); },
+    clearRoleHint: () => setPendingRoleHint(null),
+
     // Session
     sessionId,
     sidebarOpen,
@@ -1693,6 +1721,7 @@ export function ChatProvider({ children }: ChatProviderProps) {
     handleFeedbackSubmit,
   }), [
     messages, loading, input, historyLoading, sendMessageInternal, submitPaperlessConfirm,
+    paletteOpen, pendingRoleHint,
     sessionId, sidebarOpen, switchConversation, startNewChat, handleDeleteConversation,
     conversations, conversationsLoading,
     wsConnected,
