@@ -7,6 +7,20 @@ import App from './App';
 import './index.css';
 import './i18n';
 
+// Build stamp — also the PWA service-worker propagation lever.
+// The SW (vite-plugin-pwa, registerType:autoUpdate) PRECACHES index.html via
+// globPatterns, storing its response INCLUDING the CSP header captured at fetch
+// time. A change that touches only a non-bundled asset (e.g. the nginx CSP
+// header) leaves every built file byte-identical → the precache manifest and
+// sw.js don't change → autoUpdate never fires → existing clients keep serving
+// the stale-CSP shell. Bumping this string changes the JS bundle hash → rewrites
+// index.html's <script src> → index.html's revision changes → the SW re-precaches
+// it (re-fetching the current CSP) and propagates. So: when you change a served
+// HTTP header (CSP etc.) without any other frontend change, BUMP THIS so the fix
+// reaches existing PWA clients. See reference_pwa_sw_nocache_nginx.
+const __BUILD_STAMP__ = '2026-06-16.csp-blob-worklet';
+console.info(`Renfield frontend build ${__BUILD_STAMP__}`);
+
 // Edition selector for theme tokens. When VITE_APP_EDITION=pro, the
 // CSS attribute selector [data-edition="pro"] in index.css re-points
 // the gray-* palette to slate-* for a cooler enterprise feel —

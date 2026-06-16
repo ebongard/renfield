@@ -407,6 +407,27 @@ until the SW re-fetches and detects a new build. The propagation rule lives in
   html-minify can alter the bytes at build → recompute from the built
   `dist/index.html` or fall back to `'unsafe-inline'` on `script-src`) and
   `'wasm-unsafe-eval'` (absent → wakeword WASM compile is reported/blocked).
+  **A THIRD fragile surface, learned painfully (2026-06-16):** the wake-word
+  **AudioWorklet** is loaded from a `blob:` URL (`new Blob → createObjectURL →
+  audioWorklet.addModule`) and is governed by **`script-src`, NOT `worker-src`** —
+  so `script-src` needs **`blob:`** or wake word dies with `AbortError: Unable to
+  load a worklet's module`. This is a DISTINCT surface from the onnxruntime WASM
+  (`'wasm-unsafe-eval'`); verifying "WASM loaded" does NOT cover it. Always trigger
+  wake-word **enable** (the `addModule`), not just page load, when validating CSP —
+  Chrome reports a worklet CSP rejection as an `AbortError`, not always a clean
+  `securitypolicyviolation` event, so a violation-listener check can miss it.
+- **A header-only change (CSP etc.) does NOT propagate to existing PWA clients on its own.**
+  The SW precaches `index.html` (`globPatterns` includes `html`) **with its response headers**
+  (the CSP is captured at fetch time). A change touching only `nginx.conf` leaves every *built*
+  file byte-identical → the workbox precache manifest and `sw.js` are unchanged → `autoUpdate`
+  never fires → existing clients keep serving the **stale-CSP precached shell** (a fresh `nginx`
+  curl shows the new header, but the browser enforces the cached one — wake word stayed broken
+  after the blob-worklet CSP fix until this was understood). **Fix: pair any served-header change
+  with a frontend build bump** — bump `__BUILD_STAMP__` in `src/frontend/src/main.tsx` (its whole
+  purpose). That changes the JS bundle hash → rewrites index.html's `<script src>` → index.html's
+  revision changes → the SW re-precaches it (re-fetching the current header) and `autoUpdate`
+  propagates on the next visit. Verify the served `/assets/index-<hash>.js` filename actually
+  CHANGED after the build.
 
 Verify the live headers from inside the cluster (renfield.local mDNS is flaky
 from the laptop):
