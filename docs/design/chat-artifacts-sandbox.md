@@ -536,3 +536,130 @@ artifact editing/export, cross-conversation artifact reuse.
     Google Cloud iframe-sandbox tutorial.
   - Open WebUI `IFRAME_CSP` env var (injects meta-CSP into srcdoc artifact frames)
     — prior-art confirmation of the Lane B pattern.
+
+---
+
+## 8. Eng-review decisions (locked 2026-06-16, `/plan-eng-review`)
+
+These supersede/resolve the open questions in §7 and pin three architecture
+choices. The §1-§6 prose above is the exploration; this section is the contract.
+
+### Locked architecture decisions
+1. **Streaming KEPT, protocol now specified.** Artifacts MAY stream via multiple
+   `artifact` frames sharing one `id`. Protocol: first frame may carry `partial:true`;
+   subsequent same-`id` frames **append** for `table` (rows) / `list` (items) — never
+   re-parse, never replace; a frame with `partial:false` (or the turn's `done`/error)
+   **finalizes**. A `partial` artifact that never finalizes (turn errored mid-stream)
+   resolves to the **fallback** (§5), not a perpetual skeleton. Frames are applied in
+   arrival order; an out-of-order/duplicate `id` patch is idempotent (append is keyed
+   so re-delivery doesn't double-append). Client should **coalesce** rapid same-`id`
+   patches (one render per animation frame) to avoid render thrash.
+2. **`message_metadata.artifacts[]` — an ARRAY, keyed by `id`.** One assistant turn
+   MAY carry multiple artifacts (e.g. a `table` + a `chart`); the frontend renders
+   each in arrival order. Streaming patches (decision 1) match by `id` within the
+   array. Rehydrate maps `metadata.artifacts[]` in `historyToUiMessage`. (NOT a
+   singular field — avoids a later singular→array metadata migration.)
+3. **Schema validation split by concern (DRY).** The backend validates ONLY the
+   kind-allowlist + size/row/series/point caps (the DoS gate; cheap, no full shape).
+   The frontend `artifactSchema.ts` (zod) is the **authoritative shape validator** —
+   it is what renders, and a shape failure → fallback. This is an intentional
+   separation (backend = caps/DoS, frontend = shape/render), not duplication; no
+   shared-schema codegen.
+
+### Resolved open questions (§7)
+- **Q1 Lane B:** deferred / YAGNI — kept in the doc as the documented upgrade path,
+  built only on a concrete need + its own security review. Not in v1.
+- **Q2 chart:** **build all four kinds in v1**, `chart` **hand-rolled** bar/line SVG
+  from typed series (no charting dependency — PWA bundle discipline).
+- **Q3 CSP:** ship the baseline app-origin CSP as its **own small PR BEFORE** the
+  artifacts PR (closes a pre-existing gap; re-declared per-`location` for the nginx
+  `add_header` inheritance trap; verify header on `/`, `/index.html`, SPA fallback).
+- **Q4 production path:** artifacts are produced **only** from the hook/sub-intent/
+  orchestration path (typed dict return), **never** by parsing the agent free-text
+  answer and **not** from the `conversation` role in v1.
+- **Q5 flags:** **per-lane** — `artifacts_typed_enabled` (Lane A, shippable dark→on)
+  and `artifacts_html_sandbox_enabled` (Lane B, defaults off, gated on security review).
+
+### Test additions (mandatory, fold into §6)
+The §6 strategy is sound for the renderer/escape/fallback/CSP/a11y core. Add, from
+the decisions above:
+- **Streaming (decision 1):** multi-frame same-`id` append for table/list; idempotent
+  re-delivery (no double-append); out-of-order patch handling; a `partial` that never
+  finalizes → fallback (not perpetual skeleton).
+- **Multiple artifacts/turn (decision 2):** a turn emitting 2 artifacts renders both
+  in order; `metadata.artifacts[]` rehydrates on history reload (round-trip).
+- **Backend caps (decision 3):** backend rejects oversized (10k-row table, huge
+  series, too-many points) and unknown `kind` BEFORE emit; frontend zod rejects the
+  malformed shape → fallback.
+- **chart numeric validation:** non-numeric / `NaN` / `Infinity` `x,y` are
+  rejected/coerced (a huge value must not blow the SVG viewBox = DoS).
+- **Persistence round-trip:** an artifact survives history reload via
+  `historyToUiMessage` mapping `metadata.artifacts[]`.
+
+### Sequencing (build order)
+PR 1 — baseline CSP (Q3, standalone). PR 2 — Lane A artifacts (all four kinds, the
+`artifact` array frame + caps + zod + fallback + `artifacts_typed_enabled` flag).
+Lane B is a later, separate, security-reviewed PR if ever needed.
+
+### NOT in scope (v1)
+- Lane B free-form HTML/SVG sandboxed iframe (deferred — own security review).
+- Interactive/script-bearing artifacts (roadmap item 10 → option (c) separate origin).
+- Agent free-text → artifact extraction (prose parsing).
+- postMessage auto-resize (needs `allow-scripts`; with Lane B).
+- Voice/satellite artifact rendering (web-chat surface only, like cards); artifact
+  editing/export; cross-conversation artifact reuse.
+
+### What already exists (reused, not rebuilt)
+- `AdaptiveCardRenderer.tsx` — typed-JSON→React no-HTML-injection pattern = Lane A's model.
+- `FactSet` grid (in AdaptiveCardRenderer) — reuse for `keyvalue`; check for an
+  existing table renderer before building `TableArtifact` (reuse if present).
+- `card` WS frame + `chat_handler` emit + `utils/hooks.py` `{"card":...}` contract —
+  the `artifact` frame mirrors it.
+- `message_metadata` (sources/agentRole) persistence + `historyToUiMessage` rehydrate.
+- `CitationChip` `CITE_ENTITY_RE` — URL-scheme allow-list precedent.
+
+### Failure modes (each must fail closed)
+- Schema/shape invalid → fallback to escaped code block (never raw markup). **Covered.**
+- Sub-renderer throws → error boundary → fallback; thread does not crash. **Covered.**
+- Oversized payload → backend cap rejects before emit; client cap as backstop. **Add backend test.**
+- `partial` never finalizes → fallback after `done`/error. **Add test (decision 1).**
+- chart `NaN`/`Infinity` → viewBox DoS. **Add numeric-validation test.**
+None should be silent: each renders the visible "konnte nicht als Artefakt dargestellt
+werden" fallback.
+
+### Parallelization
+PR 1 (CSP, nginx-only) and the PR 2 backend lane (`artifact` frame + caps + persistence)
+are independent of the PR 2 frontend lane (renderer + sub-renderers + zod) **except**
+the wire contract (frame shape + `artifacts[]`). Lock the contract first, then:
+`Lane A: backend frame+caps+persist` ‖ `Lane B: frontend renderer+sub-renderers+zod`
+in parallel, integration-test on join. CSP PR is fully independent (ship anytime).
+
+### Implementation Tasks
+- [ ] **T1 (P1)** — infra/nginx — baseline app-origin CSP, its own PR, re-declared per
+  `location`. Verify: CSP header on `/`, `/index.html`, SPA fallback.
+- [ ] **T2 (P1)** — backend — `artifact` WS frame + `message_metadata.artifacts[]`
+  persistence/rehydrate + kind-allowlist & size/row/series/point caps; produced from the
+  hook/sub-intent path only. Verify: backend cap/kind reject test + persistence round-trip.
+- [ ] **T2b (P1)** — backend — streaming patch protocol (same-`id` append, idempotent,
+  finalize on `partial:false`/`done`). Verify: streaming + never-finalize tests.
+- [ ] **T3 (P1)** — frontend — `ArtifactRenderer` (error boundary + fallback) + `artifactSchema.ts`
+  zod (authoritative shape) + Table/List/KeyValue/Chart sub-renderers (chart = hand-rolled
+  SVG) + `artifacts_typed_enabled` flag. Verify: per-kind render, escape/injection negative
+  suite, URL-scheme drop, fallback, chart numeric validation, a11y (axe).
+- [ ] **T4 (P2)** — frontend — coalesce rapid same-`id` streaming patches (one render/frame).
+
+## GSTACK REVIEW REPORT
+
+| Review | Trigger | Why | Runs | Status | Findings |
+|--------|---------|-----|------|--------|----------|
+| CEO Review | `/plan-ceo-review` | Scope & strategy | 0 | — | — |
+| Codex Review | `/codex review` | Independent 2nd opinion | 0 | — | — |
+| Eng Review | `/plan-eng-review` | Architecture & tests (required) | 1 | CLEAR | 3 arch issues (all resolved), 7 test gaps added, 0 critical gaps |
+| Design Review | `/plan-design-review` | UI/UX gaps | 0 | — | (DESIGN.md fit covered in §5) |
+| DX Review | `/plan-devex-review` | Developer experience gaps | 0 | — | — |
+
+- **SCOPE:** all four kinds in v1 (chart hand-rolled, no dep); Lane B deferred (YAGNI).
+- **ARCH (locked §8):** streaming kept + protocol specified · `message_metadata.artifacts[]` array · schema split by concern (backend caps / frontend zod authoritative).
+- **SEQUENCING:** baseline CSP as its own PR first, then Lane A artifacts.
+- **UNRESOLVED:** none.
+- **VERDICT:** ENG CLEARED — design locked, ready to implement (PR 1 CSP → PR 2 Lane A artifacts). Outside voice not run (design already had an independent design-agent pass; offer stands if wanted).
