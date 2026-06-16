@@ -19,9 +19,9 @@ set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 CONF="$HERE/nginx.conf"
 IMG="nginx:1.28-alpine"
-HEADER="Content-Security-Policy-Report-Only"   # v1 ships Report-Only; flip to
-                                               # "Content-Security-Policy" here
-                                               # when the policy is enforced.
+HEADER="Content-Security-Policy"               # ENFORCING (v2). v1 shipped the
+                                               # "-Report-Only" variant; flipped
+                                               # after a clean browser-verify pass.
 
 # 0. nginx syntax must be valid.
 echo "[csp-test] nginx -t ..."
