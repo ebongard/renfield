@@ -87,6 +87,9 @@ def register() -> None:
             ha_deliver_notification,
             ha_get_connected_device_summary,
         )
+        from ha_glue.services.smarthome_status import (
+            ha_dispatch_smarthome_status,
+        )
 
         register_hook("intent_fallback_resolve", ha_intent_fallback)
         register_hook("build_entity_context", ha_build_entity_context)
@@ -100,6 +103,7 @@ def register() -> None:
         register_hook("fetch_tts_audio_cache", ha_fetch_tts_audio_cache)
         register_hook("get_connected_device_summary", ha_get_connected_device_summary)
         register_hook("deliver_notification", ha_deliver_notification)
+        register_hook("dispatch_sub_intent", ha_dispatch_smarthome_status)
         register_hook("register_tools", ha_glue_register_tools)
         register_hook("execute_tool", ha_glue_execute_tool)
         register_hook("startup", ha_glue_on_startup)
@@ -107,7 +111,7 @@ def register() -> None:
         register_hook("shutdown_finalize", ha_glue_on_shutdown_finalize)
         register_hook("register_routes", ha_glue_register_routes)
         logger.info(
-            "ha_glue.bootstrap: registered 17 handlers across 17 events"
+            "ha_glue.bootstrap: registered 18 handlers across 18 events"
         )
     except Exception:  # noqa: BLE001 — startup must never break on plugin error
         logger.opt(exception=True).warning(

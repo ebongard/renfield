@@ -29,6 +29,21 @@ roles:
     max_steps: 4
     prompt_key: agent_prompt_smart_home
     model: "qwen3:8b"
+    # Sub-intent dispatch: a "house status / device overview" request is fully
+    # handled by the ha_glue `dispatch_sub_intent` hook (handler smarthome_status),
+    # which returns prose + a typed `table` artifact (Lane A). This is the FIRST
+    # artifact producer. Actuation commands ("mach das Licht an") do NOT classify
+    # as `status` — they fall through to the normal agent loop. The dispatch handler
+    # is inert when ARTIFACTS_TYPED_ENABLED is off (declines, agent answers).
+    # NOTE: the description string doubles as comma-separated keywords for the
+    # router's _infer_sub_intent fast-path, so keep status/overview terms in it.
+    sub_intents:
+      status:
+        de: "Status, Übersicht, Überblick, Zustand, wie ist der status im haus, smart-home-status, geräteübersicht, alle geräte anzeigen, was ist an, gesamtüberblick"
+        en: "status, overview, summary, state of the house, smart home status, device overview, show all devices, what is on, whole house status"
+        dispatch:
+          type: handler
+          handler: smarthome_status
 
   research:
     description:
