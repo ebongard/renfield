@@ -648,6 +648,39 @@ in parallel, integration-test on join. CSP PR is fully independent (ship anytime
   suite, URL-scheme drop, fallback, chart numeric validation, a11y (axe).
 - [ ] **T4 (P2)** — frontend — coalesce rapid same-`id` streaming patches (one render/frame).
 
+## 9. Design-review decisions (locked 2026-06-16, `/plan-design-review`)
+
+Initial 8/10 → 9/10. Calibrated against `DESIGN.md`. Two genuine choices + four
+obvious fixes folded into §3-§5 above.
+
+- **Valid-but-empty artifacts → warm per-kind empty state.** A well-formed artifact
+  with no data (0-row `table`, 0-item `list`, 0-point `chart`) renders the artifact
+  frame + title + a quiet, kind-specific message ("Keine Zeilen" / "Keine Einträge" /
+  "Keine Datenpunkte") in the info/accent token — NOT an empty grid shell, NOT the
+  error fallback (empty ≠ render-failure; the artifact produced fine, it just had no
+  data — e.g. an empty shopping list is meaningful). Distinct state from schema-invalid
+  (→ fallback). i18n de+en.
+- **Responsive (wide artifact in the chat column) → horizontal scroll, bounded.**
+  `TableArtifact` wraps in an `overflow-x:auto` container bounded to the bubble width:
+  preserves all columns, touch-scrollable on mobile, shows a scroll affordance, never
+  widens the chat layout. `ChartArtifact` scales to container width via SVG `viewBox`
+  (never overflows). ~375px is the design target; applies at all viewports. (Rejected:
+  truncate-columns hides data; per-kind mobile reflow is heavy + changes identity.)
+- **"generiert" affordance.** A small DM Sans text label ("generiert") + a subtle
+  inline icon in the accent/info token — explicitly NOT icon-in-a-colored-circle
+  (AI-slop #3), not centered, not decorative; quiet metadata on the bounded `.card`.
+- **Design-system tokens (Pass 5).** `table`/`chart` numerics use DM Sans
+  `tabular-nums` (DESIGN.md §45/§72); Cormorant never on small artifact text (≥24px
+  display only); container = `.card` family at radius `lg`; every state has explicit
+  `dark:` variants; the loading skeleton respects `prefers-reduced-motion`.
+- **Chart visual spec (Pass 7).** Hand-rolled bar/line SVG: axes labelled from the
+  series data; gridlines minimal/optional; legend only when >1 series; values in
+  tabular-nums; the SVG carries `role="img"` + a `<title>`/`aria-label` summarizing it;
+  colors from the accent/data tokens (no new hues).
+- **Design NOT in scope:** mockups (token-bound in-bubble micro-components, AdaptiveCard
+  precedent); interactive/editable artifacts; per-kind mobile reflow (chose scroll);
+  Lane B sandbox visual theming (deferred with Lane B).
+
 ## GSTACK REVIEW REPORT
 
 | Review | Trigger | Why | Runs | Status | Findings |
@@ -655,11 +688,12 @@ in parallel, integration-test on join. CSP PR is fully independent (ship anytime
 | CEO Review | `/plan-ceo-review` | Scope & strategy | 0 | — | — |
 | Codex Review | `/codex review` | Independent 2nd opinion | 0 | — | — |
 | Eng Review | `/plan-eng-review` | Architecture & tests (required) | 1 | CLEAR | 3 arch issues (all resolved), 7 test gaps added, 0 critical gaps |
-| Design Review | `/plan-design-review` | UI/UX gaps | 0 | — | (DESIGN.md fit covered in §5) |
+| Design Review | `/plan-design-review` | UI/UX gaps | 1 | CLEAR | 8/10 → 9/10; 2 decisions (empty state, responsive) + 4 obvious fixes |
 | DX Review | `/plan-devex-review` | Developer experience gaps | 0 | — | — |
 
 - **SCOPE:** all four kinds in v1 (chart hand-rolled, no dep); Lane B deferred (YAGNI).
 - **ARCH (locked §8):** streaming kept + protocol specified · `message_metadata.artifacts[]` array · schema split by concern (backend caps / frontend zod authoritative).
+- **DESIGN (locked §9):** warm per-kind empty state · wide-artifact horizontal-scroll (bounded) · "generiert" affordance (no icon-in-circle) · tabular-nums + `.card`/`lg` tokens · chart a11y/visual spec.
 - **SEQUENCING:** baseline CSP as its own PR first, then Lane A artifacts.
 - **UNRESOLVED:** none.
-- **VERDICT:** ENG CLEARED — design locked, ready to implement (PR 1 CSP → PR 2 Lane A artifacts). Outside voice not run (design already had an independent design-agent pass; offer stands if wanted).
+- **VERDICT:** ENG + DESIGN CLEARED — design locked, ready to implement (PR 1 CSP → PR 2 Lane A artifacts). Outside voice not run (design already had an independent design-agent pass; offer stands if wanted).
