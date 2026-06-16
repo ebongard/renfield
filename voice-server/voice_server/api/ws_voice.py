@@ -36,6 +36,7 @@ import json
 import logging
 import time
 import uuid
+import weakref
 from dataclasses import dataclass, field
 
 import numpy as np
@@ -107,8 +108,34 @@ def _accumulated_seconds(state: SessionState) -> float:
     return total / 16000.0
 
 
+# Per-connection send serialization. TTS streams frames from a background
+# asyncio.Task (_run_tts) while the receive loop concurrently emits
+# partial_transcript / final_transcript / error frames. Two coroutines doing
+# `await ws.send_*` on the SAME websocket at once trips the `websockets` legacy
+# protocol drain assert (`_drain_helper: assert waiter is None or
+# waiter.cancelled()`) — surfaced as an empty-message AssertionError that the
+# generic handler reported to the client as `tts_failed:` (with no detail).
+# EVERY send funnels through exactly two raw sites — _send_json (send_text) and
+# _run_tts (send_bytes) — so guarding both with one per-ws lock serializes the
+# whole send surface. Keyed weakly by the WebSocket so the lock is per-connection
+# and is GC'd with it (no need to thread state through ~17 call sites; guarding
+# the two choke points is provably complete). Interleaving a text frame between
+# TTS audio frames is fine — the client demuxes by type; the lock only prevents
+# two *concurrent* drains.
+_ws_send_locks: "weakref.WeakKeyDictionary[WebSocket, asyncio.Lock]" = weakref.WeakKeyDictionary()
+
+
+def _send_lock_for(ws: WebSocket) -> asyncio.Lock:
+    lock = _ws_send_locks.get(ws)
+    if lock is None:
+        lock = asyncio.Lock()
+        _ws_send_locks[ws] = lock
+    return lock
+
+
 async def _send_json(ws: WebSocket, payload: dict) -> None:
-    await ws.send_text(json.dumps(payload, separators=(",", ":")))
+    async with _send_lock_for(ws):
+        await ws.send_text(json.dumps(payload, separators=(",", ":")))
 
 
 async def _send_error(ws: WebSocket, code: str, message: str, request_id: str | None = None) -> None:
@@ -260,7 +287,11 @@ async def _run_tts(
     rid = str(request_id)
     try:
         async for frame in tts.stream_sentences(text, request_id, language=language):
-            await ws.send_bytes(frame)
+            # Serialized against the receive loop's concurrent text sends
+            # (partial/final transcript) via the per-ws send lock — otherwise
+            # two simultaneous drains trip the websockets assert → tts_failed.
+            async with _send_lock_for(ws):
+                await ws.send_bytes(frame)
         await _send_json(ws, {"type": "tts_done", "request_id": rid})
     except asyncio.CancelledError:
         # CancelledError reaches here from two sources: a client `cancel`
