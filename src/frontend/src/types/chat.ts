@@ -101,6 +101,24 @@ export interface ChatFollowupsMessage {
   suggested_followups: string[];
 }
 
+// Chat artifact (Lane A: typed table/list/keyvalue/chart). The wire payload is
+// intentionally loosely typed (`data: unknown`) — the AUTHORITATIVE shape check
+// is the frontend `artifactSchema.ts` (zod) inside ArtifactRenderer; a bad shape
+// falls back to escaped text. `id` keys streaming patches + the persisted array.
+export interface ChatArtifactPayload {
+  id: string;
+  kind: string;
+  title?: string;
+  data: unknown;
+  partial?: boolean;
+}
+
+export interface ChatArtifactMessage {
+  type: 'artifact';
+  artifact: ChatArtifactPayload;
+  replace_text?: string;
+}
+
 export interface ChatErrorMessage {
   type: 'error';
   message: string;
@@ -129,5 +147,6 @@ export type ChatWebSocketMessage =
   | ChatActionMessage
   | ChatDoneMessage
   | ChatFollowupsMessage
+  | ChatArtifactMessage
   | ChatErrorMessage
   | ChatFederationProgressMessage;

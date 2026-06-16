@@ -135,6 +135,23 @@
     "followups": {
       "label": "Follow-up suggestions"
     },
+    "artifacts": {
+      "generated": "generated",
+      "loading": "Loading artifact",
+      "regionLabel": "Generated artifact: {{title}}",
+      "regionLabelUntitled": "Generated artifact",
+      "fallbackNote": "could not be displayed as an artifact",
+      "emptyTable": "No rows",
+      "emptyList": "No entries",
+      "emptyKeyValue": "No entries",
+      "emptyChart": "No data points",
+      "chartSummary": "{{type}} with {{count}} series",
+      "chartType": {
+        "bar": "Bar chart",
+        "line": "Line chart"
+      },
+      "seriesFallback": "Series {{n}}"
+    },
     "roleBadge": {
       "pin": "Answered by {{role}} · pin for the next turn",
       "pinned": "{{role}} pinned for the next turn"

@@ -382,6 +382,17 @@ class Settings(BaseSettings):
     # always present (harmless when unused), so flipping this needs no backend
     # redeploy. See docs/design/chat-ui-modernization.md.
     message_search_enabled: bool = False
+    # Chat artifacts Lane A (typed table/list/keyvalue/chart rendered as real
+    # React components — zero model HTML, React's escape boundary is the security
+    # story). Gates BOTH the backend `artifact` WS frame emit and the frontend
+    # renderer (exposed via /api/config/features). Ships dark; flip without a
+    # rebuild. See docs/design/chat-artifacts-sandbox.md §8.
+    artifacts_typed_enabled: bool = False
+    # Chat artifacts Lane B (free-form HTML/SVG in a sandboxed iframe). DEFERRED —
+    # NOT wired to anything in this delivery. Placeholder so the per-lane flag
+    # split (§8 Q5) exists; defaults off and requires its own security review
+    # before it is ever built/enabled. Do NOT enable.
+    artifacts_html_sandbox_enabled: bool = False
     # Generic output-provider registry for room media/control routing. When on,
     # room output discovery + dispatch route through the pluggable OutputProvider
     # registry (built-in renfield/HA + MCP-declared dlna/samsung/sonos via the

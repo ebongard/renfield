@@ -101,6 +101,8 @@ export interface FeatureFlags {
   role_surfacing_enabled: boolean;
   /** Gates the chat message-search UI (sidebar search field + results + jump-to-message). */
   message_search_enabled: boolean;
+  /** Gates chat artifacts Lane A (typed table/list/keyvalue/chart inline renderer). */
+  artifacts_typed_enabled: boolean;
 }
 
 async function fetchAtomSearch(query: string): Promise<AtomMatch[]> {

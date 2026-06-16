@@ -135,6 +135,23 @@
     "followups": {
       "label": "Vorschläge für Folgefragen"
     },
+    "artifacts": {
+      "generated": "generiert",
+      "loading": "Artefakt wird geladen",
+      "regionLabel": "Generiertes Artefakt: {{title}}",
+      "regionLabelUntitled": "Generiertes Artefakt",
+      "fallbackNote": "konnte nicht als Artefakt dargestellt werden",
+      "emptyTable": "Keine Zeilen",
+      "emptyList": "Keine Einträge",
+      "emptyKeyValue": "Keine Einträge",
+      "emptyChart": "Keine Datenpunkte",
+      "chartSummary": "{{type}} mit {{count}} Datenreihe(n)",
+      "chartType": {
+        "bar": "Balkendiagramm",
+        "line": "Liniendiagramm"
+      },
+      "seriesFallback": "Reihe {{n}}"
+    },
     "roleBadge": {
       "pin": "Beantwortet von {{role}} · für die nächste Frage anheften",
       "pinned": "{{role}} für die nächste Frage angeheftet"

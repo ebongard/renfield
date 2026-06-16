@@ -358,6 +358,8 @@ export const handlers: HttpHandler[] = [
       wissen_workspace_enabled: false,
       command_palette_enabled: false,
       role_surfacing_enabled: false,
+      message_search_enabled: false,
+      artifacts_typed_enabled: false,
     });
   }),
   // MCP API

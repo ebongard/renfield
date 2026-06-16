@@ -1095,6 +1095,33 @@ async def websocket_endpoint(
             # Shared init so the persist/done block can reference it on every path
             # (the legacy non-agent path never touches agent_tool_results).
             agent_tool_results: list = []
+            # Validated chat artifacts (Lane A typed table/list/keyvalue/chart)
+            # produced by the hook / sub-intent / orchestration card path this
+            # turn. Emitted as `artifact` WS frames and persisted into
+            # message_metadata["artifacts"] (array, keyed by id). Gated on
+            # settings.artifacts_typed_enabled. See services/artifact_service.py.
+            turn_artifacts: list[dict] = []
+
+            async def _emit_turn_artifacts(raw_artifacts: object) -> None:
+                """Validate (caps/kind), emit `artifact` frames, accumulate for persist.
+
+                Called from each producer path (sub-intent / orchestration /
+                build_assistant_card hook). No-op when the Lane A flag is off so
+                the feature ships dark. Validation drops rejects (logged); the
+                client zod validator owns shape (a shape it can't render → its
+                escaped-text fallback). Each accepted artifact is emitted on its
+                own frame and queued into ``turn_artifacts`` for persistence.
+                """
+                if not settings.artifacts_typed_enabled:
+                    return
+                from services.artifact_service import (
+                    build_artifact_frame,
+                    validate_artifacts,
+                )
+                for art in validate_artifacts(raw_artifacts):
+                    turn_artifacts.append(art)
+                    await websocket.send_json(build_artifact_frame(art))
+
             media_shortcut_handled = False
             paperless_confirm_handled = False
             pending_confirm_token = None
@@ -1429,6 +1456,9 @@ async def websocket_endpoint(
                                     # card's contents.
                                     card_msg["replace_text"] = replace_text
                                 await websocket.send_json(card_msg)
+                            # Typed artifacts (Lane A) — a sub-intent handler may
+                            # return an `artifacts` list alongside/instead of a card.
+                            await _emit_turn_artifacts(si_result.get("artifacts"))
                             logger.info(
                                 f"Sub-intent '{role.name}/{role.sub_intent}' "
                                 f"handled by plugin (answer_chars={len(full_response)}, "
@@ -1530,6 +1560,10 @@ async def websocket_endpoint(
                         deferred_card: dict | None = None
                         deferred_replace_text: str | None = None
                         deferred_paperless_confirm: dict | None = None
+                        # Typed artifacts (Lane A) carried on the `card` step's
+                        # data — deferred like the card so they land after the
+                        # synthesis text bubble they attach to.
+                        deferred_artifacts: object = None
 
                         async def _typing_callback() -> None:
                             await websocket.send_json({"type": "typing"})
@@ -1563,6 +1597,8 @@ async def websocket_endpoint(
                                 # 1-line lede via ``replace_text`` to
                                 # collapse the streamed synthesis bubble.
                                 deferred_replace_text = (step.data or {}).get("replace_text")
+                                # …and typed artifacts alongside the card.
+                                deferred_artifacts = (step.data or {}).get("artifacts")
                             elif step.step_type == "paperless_confirm":
                                 # Same deferral as `card` — the interactive
                                 # confirm card attaches to the latest assistant
@@ -1645,6 +1681,8 @@ async def websocket_endpoint(
                             if deferred_replace_text:
                                 card_msg["replace_text"] = deferred_replace_text
                             await websocket.send_json(card_msg)
+
+                        await _emit_turn_artifacts(deferred_artifacts)
 
                         if deferred_paperless_confirm:
                             from services.agent_service import AgentStep
@@ -1946,6 +1984,15 @@ WICHTIG: Nutze die ECHTEN Daten aus dem Ergebnis! Gib NUR die Antwort, KEIN JSON
             if agent_sources:
                 assistant_metadata["sources"] = agent_sources
 
+            # Typed artifacts (Lane A) produced this turn by the sub-intent /
+            # orchestration card path. Persisted as message_metadata["artifacts"]
+            # (array keyed by id) so they rehydrate on history reload, mirroring
+            # `sources`. Empty → key omitted. (Hook-path artifacts emit after this
+            # block and are live-only — see the build_assistant_card site.)
+            if turn_artifacts:
+                from services.artifact_service import merge_artifacts_into_metadata
+                merge_artifacts_into_metadata(assistant_metadata, turn_artifacts)
+
             session_state.add_to_history("user", content)
             if full_response:
                 session_state.add_to_history(
@@ -2037,6 +2084,15 @@ WICHTIG: Nutze die ECHTEN Daten aus dem Ergebnis! Gib NUR die Antwort, KEIN JSON
                         if _card_payload.get("replace_text"):
                             _ws_card["replace_text"] = _card_payload["replace_text"]
                         await websocket.send_json(_ws_card)
+                    # Typed artifacts (Lane A) on the same hook payload. NOTE:
+                    # this hook fires AFTER the assistant message was persisted
+                    # above, so a hook-produced artifact renders live this turn
+                    # but does NOT rehydrate on history reload (same property as
+                    # the card itself, which this path also never persists). The
+                    # persisted artifacts are the sub-intent / orchestration ones
+                    # captured into turn_artifacts before the metadata block.
+                    if isinstance(_card_payload, dict):
+                        await _emit_turn_artifacts(_card_payload.get("artifacts"))
                 except Exception as e:
                     # Never block `done` on a card-build/send failure.
                     logger.warning(

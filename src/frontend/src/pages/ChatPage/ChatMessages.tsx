@@ -10,6 +10,7 @@ import PaperlessConfirmCard from './PaperlessConfirmCard';
 import SourceChips from '../../components/chat/SourceChips';
 import FollowupChips from '../../components/chat/FollowupChips';
 import AgentRoleBadge from '../../components/chat/AgentRoleBadge';
+import ArtifactRenderer from '../../components/chat/artifacts/ArtifactRenderer';
 import { useFeatureFlags } from '../../api/resources/brain';
 import { useChatContext } from './context/ChatContext';
 import { CitationChip } from '../../components/wissensbasis/CitationChip';
@@ -150,6 +151,7 @@ export default function ChatMessages() {
   } = useChatContext();
   const { data: features } = useFeatureFlags();
   const roleSurfacingEnabled = features?.role_surfacing_enabled ?? false;
+  const artifactsEnabled = features?.artifacts_typed_enabled ?? false;
   const scrollContainerRef = useRef<HTMLDivElement | null>(null);
   // Per-message element refs so a search jump can scroll/focus a specific turn.
   const messageRefs = useRef<Array<HTMLDivElement | null>>([]);
@@ -371,6 +373,19 @@ export default function ChatMessages() {
                 <AdaptiveCardRenderer card={message.card} />
               </div>
             )}
+
+            {/* Typed artifacts (Lane A: table/list/keyvalue/chart). Inert when
+                the feature flag is off. Each renders in arrival order. `loading`
+                = the artifact is still streaming (partial); `finalized` = the
+                turn finished, so a stuck-partial resolves to the fallback. */}
+            {artifactsEnabled && message.role === 'assistant' && message.artifacts?.map((artifact) => (
+              <ArtifactRenderer
+                key={artifact.id}
+                artifact={artifact}
+                loading={artifact.partial === true && message.streaming === true}
+                finalized={message.streaming !== true}
+              />
+            ))}
 
             {/* Interactive Paperless cold-start confirm card */}
             {message.paperlessConfirm && (

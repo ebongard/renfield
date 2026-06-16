@@ -42,6 +42,10 @@ class FeatureFlags(BaseModel):
     # Gates the chat message-search UI (sidebar search field + results + jump-to-message).
     # Off => no search field rendered. See utils/config.py::message_search_enabled.
     message_search_enabled: bool
+    # Gates chat artifacts Lane A (typed table/list/keyvalue/chart inline renderer).
+    # Off => the ArtifactRenderer is inert (artifacts fall back to escaped text).
+    # See utils/config.py::artifacts_typed_enabled + docs/design/chat-artifacts-sandbox.md.
+    artifacts_typed_enabled: bool
 
 
 @router.get("/features", response_model=FeatureFlags)
@@ -55,4 +59,5 @@ async def get_features(
         command_palette_enabled=settings.command_palette_enabled,
         role_surfacing_enabled=settings.role_surfacing_enabled,
         message_search_enabled=settings.message_search_enabled,
+        artifacts_typed_enabled=settings.artifacts_typed_enabled,
     )

@@ -154,6 +154,23 @@ export interface CardMessage extends BaseWsMessage {
   replace_text?: string;
 }
 
+// Chat artifact frame (Lane A: typed table/list/keyvalue/chart). Mirrors the
+// `card` frame. Multiple same-`id` frames stream/patch one artifact (the first
+// may carry partial:true; later same-id frames append rows/items). The payload
+// `data` is loosely typed — ArtifactRenderer's zod schema is the authoritative
+// shape validator (a bad shape → escaped-text fallback).
+export interface ArtifactWsMessage extends BaseWsMessage {
+  type: 'artifact';
+  artifact: {
+    id: string;
+    kind: string;
+    title?: string;
+    data: unknown;
+    partial?: boolean;
+  };
+  replace_text?: string;
+}
+
 interface UseChatWebSocketOptions {
   onStreamChunk?: (content: string) => void;
   onStreamDone?: (data: DoneMessage) => void;
@@ -171,6 +188,7 @@ interface UseChatWebSocketOptions {
   onAgentToolResult?: (data: AgentToolResultMessage) => void;
   onAgentFederationProgress?: (data: AgentFederationProgressMessage) => void;
   onCard?: (data: CardMessage) => void;
+  onArtifact?: (data: ArtifactWsMessage) => void;
   onFollowups?: (data: FollowupsMessage) => void;
 }
 
@@ -195,6 +213,7 @@ export function useChatWebSocket({
   onAgentToolResult,
   onAgentFederationProgress,
   onCard,
+  onArtifact,
   onFollowups,
 }: UseChatWebSocketOptions = {}) {
   const [wsConnected, setWsConnected] = useState(false);
@@ -286,6 +305,10 @@ export function useChatWebSocket({
       } else if (data.type === 'card') {
         debug.log('Card received');
         onCard?.(data as CardMessage);
+      } else if (data.type === 'artifact') {
+        const msg = data as ArtifactWsMessage;
+        debug.log('Artifact received:', msg.artifact?.kind, msg.artifact?.id, msg.artifact?.partial ? '(partial)' : '');
+        onArtifact?.(msg);
       } else if (data.type === 'paperless_confirm_request') {
         const msg = data as PaperlessConfirmRequestMessage;
         debug.log('Paperless confirm request:', msg.filename, `${msg.fields?.length ?? 0} fields`);
@@ -308,7 +331,7 @@ export function useChatWebSocket({
     };
 
     wsRef.current = ws;
-  }, [onStreamChunk, onStreamDone, onAction, onRagContext, onIntentFeedbackRequest, onDocumentProcessing, onDocumentReady, onDocumentError, onUploadProcessed, onPaperlessCommitted, onPaperlessConfirmRequest, onAgentThinking, onAgentToolCall, onAgentToolResult, onAgentFederationProgress, onCard, onFollowups]);
+  }, [onStreamChunk, onStreamDone, onAction, onRagContext, onIntentFeedbackRequest, onDocumentProcessing, onDocumentReady, onDocumentError, onUploadProcessed, onPaperlessCommitted, onPaperlessConfirmRequest, onAgentThinking, onAgentToolCall, onAgentToolResult, onAgentFederationProgress, onCard, onArtifact, onFollowups]);
 
   useEffect(() => {
     connectWebSocket();

@@ -33,6 +33,7 @@
     "vitest": "^4.0.18"
   },
   "dependencies": {
-    "@tanstack/react-query": "^5.100.6"
+    "@tanstack/react-query": "^5.100.6",
+    "zod": "^3.25.76"
   }
 }

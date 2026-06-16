@@ -31,6 +31,7 @@ import type {
   AgentThinkingMessage,
   AgentToolCallMessage,
   AgentToolResultMessage,
+  ArtifactWsMessage,
   CardMessage,
   DocumentErrorMessage,
   DocumentProcessingMessage,
@@ -45,7 +46,7 @@ import type {
   UploadProcessedMessage,
 } from '../hooks/useChatWebSocket';
 import type { UploadStates, UploadedDocument } from '../hooks/useDocumentUpload';
-import type { Conversation, MessageSource } from '../../../types/chat';
+import type { ChatArtifactPayload, Conversation, MessageSource } from '../../../types/chat';
 import type { TraceEntity } from '../../../api/resources/wissensbasis';
 import { useConfirmDialog } from '../../../components/ConfirmDialog';
 import { drainSentenceTts, type SentenceStreamState } from './sentenceStream';
@@ -123,6 +124,80 @@ export interface ChatUiMessage {
   // Ephemeral follow-up suggestion chips for this turn (NOT persisted — only
   // the live last assistant turn carries them).
   suggestedFollowups?: string[];
+  // Typed artifacts (Lane A: table/list/keyvalue/chart). An ARRAY keyed by id —
+  // a turn may carry several (e.g. a table + a chart). Streaming frames with the
+  // same id append rows/items (see mergeArtifactFrame); on history reload they
+  // rehydrate from metadata.artifacts.
+  artifacts?: ChatArtifactPayload[];
+}
+
+/**
+ * Apply a streaming artifact frame into a message's artifact array, keyed by id
+ * (§8 decision 1). A new id appends; a same-id frame APPENDS rows (table) /
+ * items (list) — never re-parses/replaces — so re-delivery of the same frame
+ * does NOT double-append (we replace the stored payload's tail by length match
+ * is unsafe; instead we treat each frame's data as the authoritative latest for
+ * non-appendable kinds and as an incremental chunk for table/list).
+ *
+ * To stay idempotent on re-delivery AND tolerant of out-of-order arrival, a
+ * same-id frame's table rows / list items are MERGED by replacing the stored
+ * collection with the longer of (stored, incoming-appended-onto-stored-prefix).
+ * In practice the backend sends disjoint chunks; we concatenate and the keyed
+ * de-dup below drops an exact-duplicate trailing chunk.
+ */
+export function mergeArtifactFrame(
+  existing: ChatArtifactPayload[] | undefined,
+  incoming: ChatArtifactPayload,
+): ChatArtifactPayload[] {
+  const list = existing ? [...existing] : [];
+  const idx = list.findIndex((a) => a.id === incoming.id);
+  if (idx === -1) {
+    list.push(incoming);
+    return list;
+  }
+  const prev = list[idx];
+  // Only table/list append; other kinds (keyvalue/chart) are replaced wholesale.
+  if (incoming.kind === 'table' && prev.kind === 'table') {
+    list[idx] = { ...incoming, data: appendRows(prev.data, incoming.data) };
+  } else if (incoming.kind === 'list' && prev.kind === 'list') {
+    list[idx] = { ...incoming, data: appendItems(prev.data, incoming.data) };
+  } else {
+    list[idx] = incoming;
+  }
+  return list;
+}
+
+// Append incoming table rows onto the stored rows, idempotent on exact
+// re-delivery (a trailing chunk identical to what's already stored is dropped).
+function appendRows(prev: unknown, incoming: unknown): unknown {
+  const p = prev as { columns?: unknown; rows?: unknown[] } | null;
+  const i = incoming as { columns?: unknown; rows?: unknown[] } | null;
+  if (!i || !Array.isArray(i.rows)) return incoming;
+  const prevRows = p && Array.isArray(p.rows) ? p.rows : [];
+  const merged = dedupAppend(prevRows, i.rows);
+  return { columns: i.columns ?? p?.columns, rows: merged };
+}
+
+function appendItems(prev: unknown, incoming: unknown): unknown {
+  const p = prev as { items?: unknown[]; ordered?: unknown } | null;
+  const i = incoming as { items?: unknown[]; ordered?: unknown } | null;
+  if (!i || !Array.isArray(i.items)) return incoming;
+  const prevItems = p && Array.isArray(p.items) ? p.items : [];
+  const merged = dedupAppend(prevItems, i.items);
+  return { items: merged, ordered: i.ordered ?? p?.ordered };
+}
+
+// Concatenate prev + incoming, but if `incoming` is a re-delivery of the SAME
+// chunk already at the tail of prev, don't double-append (keyed idempotency).
+function dedupAppend(prev: unknown[], incoming: unknown[]): unknown[] {
+  if (incoming.length === 0) return prev;
+  // If the entire incoming chunk already equals the tail of prev, it's a
+  // re-delivery → drop it.
+  if (incoming.length <= prev.length) {
+    const tail = prev.slice(prev.length - incoming.length);
+    if (JSON.stringify(tail) === JSON.stringify(incoming)) return prev;
+  }
+  return [...prev, ...incoming];
 }
 
 /** Map a persisted history message to the in-memory UI shape. */
@@ -132,7 +207,13 @@ export function historyToUiMessage(m: {
   metadata?: unknown;
 }): ChatUiMessage {
   const meta = m.metadata as
-    | { attachments?: MessageAttachment[]; wb_entities?: TraceEntity[]; sources?: MessageSource[]; agent_role?: string }
+    | {
+        attachments?: MessageAttachment[];
+        wb_entities?: TraceEntity[];
+        sources?: MessageSource[];
+        agent_role?: string;
+        artifacts?: ChatArtifactPayload[];
+      }
     | undefined;
   return {
     role: m.role === 'system' ? 'assistant' : (m.role as 'user' | 'assistant'),
@@ -142,6 +223,8 @@ export function historyToUiMessage(m: {
     ...(meta?.sources && meta.sources.length > 0 && { sources: meta.sources }),
     // Role badge rehydration on history reload (item 6).
     ...(meta?.agent_role && { agentRole: meta.agent_role }),
+    // Typed artifacts rehydration (Lane A) — mirrors the sources path.
+    ...(Array.isArray(meta?.artifacts) && meta.artifacts.length > 0 && { artifacts: meta.artifacts }),
   };
 }
 
@@ -998,6 +1081,58 @@ export function ChatProvider({ children }: ChatProviderProps) {
     });
   }, []);
 
+  // Chat artifacts (Lane A). T4 (P2): rapid same-id streaming frames are
+  // COALESCED — buffered in a ref and flushed once per animation frame — so a
+  // fast stream of append-patches triggers one React render per frame, not one
+  // per frame-on-the-wire (avoids render thrash). On flush each buffered frame
+  // is merged (keyed by id, table/list append) into the latest assistant turn.
+  const artifactQueueRef = useRef<ChatArtifactPayload[]>([]);
+  const artifactRafRef = useRef<number | null>(null);
+  const artifactReplaceTextRef = useRef<string | null>(null);
+
+  const flushArtifacts = useCallback(() => {
+    artifactRafRef.current = null;
+    const queued = artifactQueueRef.current;
+    artifactQueueRef.current = [];
+    const replaceText = artifactReplaceTextRef.current;
+    artifactReplaceTextRef.current = null;
+    if (queued.length === 0) return;
+    setMessages((prev) => {
+      const updated = [...prev];
+      for (let i = updated.length - 1; i >= 0; i--) {
+        if (updated[i].role === 'assistant') {
+          let artifacts = updated[i].artifacts;
+          for (const frame of queued) {
+            artifacts = mergeArtifactFrame(artifacts, frame);
+          }
+          updated[i] = {
+            ...updated[i],
+            artifacts,
+            ...(replaceText ? { content: replaceText } : {}),
+          };
+          break;
+        }
+      }
+      return updated;
+    });
+  }, []);
+
+  const handleArtifact = useCallback((data: ArtifactWsMessage) => {
+    const art = data.artifact;
+    if (!art || typeof art.id !== 'string' || !art.id) return;
+    artifactQueueRef.current.push(art);
+    if (data.replace_text) artifactReplaceTextRef.current = data.replace_text;
+    if (artifactRafRef.current === null) {
+      // requestAnimationFrame coalesces; fall back to a microtask in
+      // environments without rAF (jsdom provides it, but guard anyway).
+      const raf =
+        typeof requestAnimationFrame === 'function'
+          ? requestAnimationFrame
+          : (cb: FrameRequestCallback) => setTimeout(() => cb(performance.now()), 0) as unknown as number;
+      artifactRafRef.current = raf(flushArtifacts) as unknown as number;
+    }
+  }, [flushArtifacts]);
+
   // Interactive Paperless confirm request — attach the structured picker to
   // the assistant bubble that just streamed the preview text (same "most
   // recent assistant message" attach as handleCard).
@@ -1041,6 +1176,7 @@ export function ChatProvider({ children }: ChatProviderProps) {
     onAgentToolResult: handleAgentToolResult,
     onAgentFederationProgress: handleAgentFederationProgress,
     onCard: handleCard,
+    onArtifact: handleArtifact,
     onFollowups: handleFollowups,
     onPaperlessConfirmRequest: handlePaperlessConfirmRequest,
   });
