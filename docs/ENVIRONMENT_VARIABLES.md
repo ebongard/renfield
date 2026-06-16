@@ -294,6 +294,19 @@ COMMAND_PALETTE_ENABLED=false
 backendseitige `role_hint`-Handling ist immer aktiv (No-op ohne Hint), daher braucht
 das Umschalten **kein** Backend-Redeploy.
 
+### Nachrichtensuche (Message Search)
+
+```bash
+MESSAGE_SEARCH_ENABLED=false
+```
+
+**Default:** `false` (Frontend-Gate via `/api/config/features`). Schaltet das
+Suchfeld in der Konversations-Seitenleiste frei. Der Backend-Endpunkt
+(`GET /api/chat/messages/search`) und die `messages.search_vector`-Spalte sind
+immer vorhanden (harmlos), daher braucht das Umschalten **kein** Backend-Redeploy —
+nur die Migration `pc20260617_messages_search_vector` muss angewendet sein. Suche ist
+strikt nach Konversations-Eigentümerschaft gefiltert (nicht über `circle_sql`).
+
 **Wann aktivieren:** Blendet im Chat eine `/`-getriggerte (bzw. per Touch-Button
 geöffnete) Aktions-/Navigations-Palette ein. Tool-Aktionen werden ins Eingabefeld
 **vorbereitet** (kein Auto-Senden); der Anzeige-Filter folgt den Berechtigungen, die
