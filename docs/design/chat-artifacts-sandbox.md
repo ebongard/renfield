@@ -677,6 +677,11 @@ obvious fixes folded into §3-§5 above.
   series data; gridlines minimal/optional; legend only when >1 series; values in
   tabular-nums; the SVG carries `role="img"` + a `<title>`/`aria-label` summarizing it;
   colors from the accent/data tokens (no new hues).
+- **Multi-series chart colorblind a11y (Pass 6, re-run).** A multi-series chart must
+  NOT distinguish series by color alone (WCAG 1.4.1). Differentiate by color PLUS a
+  non-color channel: **direct end-of-line labels** for line charts, **pattern/label**
+  for bars; the legend stays. Must remain readable in grayscale / for CVD users. The
+  hand-rolled SVG owns its rendering, so this is a cheap addition, not a dependency.
 - **Design NOT in scope:** mockups (token-bound in-bubble micro-components, AdaptiveCard
   precedent); interactive/editable artifacts; per-kind mobile reflow (chose scroll);
   Lane B sandbox visual theming (deferred with Lane B).
@@ -688,7 +693,7 @@ obvious fixes folded into §3-§5 above.
 | CEO Review | `/plan-ceo-review` | Scope & strategy | 0 | — | — |
 | Codex Review | `/codex review` | Independent 2nd opinion | 0 | — | — |
 | Eng Review | `/plan-eng-review` | Architecture & tests (required) | 1 | CLEAR | 3 arch issues (all resolved), 7 test gaps added, 0 critical gaps |
-| Design Review | `/plan-design-review` | UI/UX gaps | 1 | CLEAR | 8/10 → 9/10; 2 decisions (empty state, responsive) + 4 obvious fixes |
+| Design Review | `/plan-design-review` | UI/UX gaps | 2 | CLEAR | 8→9 (run 1: empty-state, responsive + 4 fixes); 9 (re-run: +multi-series chart colorblind a11y, WCAG 1.4.1) |
 | DX Review | `/plan-devex-review` | Developer experience gaps | 0 | — | — |
 
 - **SCOPE:** all four kinds in v1 (chart hand-rolled, no dep); Lane B deferred (YAGNI).
