@@ -326,6 +326,7 @@ async def _extract_memories_background(
     user_id: int | None,
     session_id: str | None,
     lang: str,
+    captured_kg_subjects: set[str] | None = None,
 ) -> None:
     """Background task: extract and save memories from a conversation exchange.
 
@@ -333,6 +334,12 @@ async def _extract_memories_background(
     failures of the LLM extractor or guard short-circuits are visible in
     production logs. Without this, missing memories look identical to a
     bug-skipped trigger.
+
+    ``captured_kg_subjects`` (Phase 3-subsume per-fact fix): when the chat
+    handler runs the `post_message`/KG extraction FIRST in the same ordered
+    background coroutine, the subject names the KG actually captured a relation
+    for this turn are threaded here so the subsume gate is per-fact, not a
+    subject-level proxy. None = uncoordinated → service falls back to the proxy.
     """
     logger.info(
         f"📝 Memory extraction starting (session={session_id}, user_id={user_id}, "
@@ -348,6 +355,7 @@ async def _extract_memories_background(
                 user_id=user_id,
                 session_id=session_id,
                 lang=lang,
+                captured_kg_subjects=captured_kg_subjects,
             )
             logger.info(
                 f"📝 Memory extraction done: extracted={len(memories)} "
@@ -355,6 +363,56 @@ async def _extract_memories_background(
             )
     except Exception as e:
         logger.warning(f"Memory extraction failed: {e}", exc_info=True)
+
+
+async def _extract_structured_background(
+    user_message: str,
+    assistant_response: str,
+    user_id: int | None,
+    session_id: str | None,
+    lang: str,
+) -> None:
+    """Ordered background coroutine for the Phase 3-subsume coordination.
+
+    Runs the `post_message` hooks FIRST (KG extraction + plugins like the twin),
+    capturing the subject NAMES of the relations the KG actually saved this turn
+    into a shared set, then runs memory extraction with that set so the subsume
+    gate is per (subject, turn): a state/attribute fact about a subject for whom
+    no relation was captured this turn is kept flat. (NOT truly per-fact — the
+    set holds subject names, not (subject, object) pairs, so a same-turn same-
+    subject state fact alongside an entity-object fact is still subsumed; see
+    ConversationMemoryService._should_subsume_fact.) KG extraction runs exactly
+    ONCE (in the hook); the set is the only cross-task signal — no double-extract.
+
+    Stays entirely in the background (this coroutine is spawned AFTER the `done`
+    frame), so re-sequencing KG-before-memory never delays the user response /
+    TTS / wakeword. Used ONLY when subsume coordination is active; otherwise the
+    two tasks stay independent + concurrent (legacy behavior, byte-identical).
+    """
+    from utils.hooks import run_hooks
+
+    captured_kg_subjects: set[str] = set()
+    # 1) post_message hooks first — KG populates the set. The hook reads it under
+    #    the kwarg name `captured_subjects` (see kg_post_message_hook). Plugins
+    #    (twin) ignore the extra kwarg (**kwargs). run_hooks never raises.
+    await run_hooks(
+        "post_message",
+        user_msg=user_message,
+        assistant_msg=assistant_response,
+        user_id=user_id,
+        session_id=session_id,
+        lang=lang,
+        captured_subjects=captured_kg_subjects,
+    )
+    # 2) memory extraction with the per-turn captured set as the subsume signal.
+    await _extract_memories_background(
+        user_message=user_message,
+        assistant_response=assistant_response,
+        user_id=user_id,
+        session_id=session_id,
+        lang=lang,
+        captured_kg_subjects=captured_kg_subjects,
+    )
 
 
 def _format_file_size(size_bytes: int | None) -> str:
@@ -2037,19 +2095,41 @@ WICHTIG: Nutze die ECHTEN Daten aus dem Ergebnis! Gib NUR die Antwort, KEIN JSON
                 and full_response
                 and _action_success is not False
             )
+            # Phase 3-subsume per-fact fix: when subsume is active we COORDINATE
+            # the KG (`post_message`) and memory extractors so the subsume gate is
+            # per-fact. The ordered coroutine runs KG first (populating the
+            # captured-subject set) then memory extraction with that set, and OWNS
+            # the post_message hook dispatch (so KG runs exactly once — the
+            # separate post_message spawn below is skipped). Off (default) =>
+            # the two tasks stay independent + concurrent (legacy, byte-identical).
+            _subsume_coordinate = bool(
+                getattr(settings, "memory_subsume_to_kg", False)
+            )
             if _mem_should_run:
                 logger.debug(
-                    f"📝 Scheduling memory extraction (session={msg_session_id})"
+                    f"📝 Scheduling memory extraction (session={msg_session_id}, "
+                    f"subsume_coordinate={_subsume_coordinate})"
                 )
-                task = asyncio.create_task(
-                    _extract_memories_background(
-                        user_message=content,
-                        assistant_response=full_response,
-                        user_id=user_id,
-                        session_id=msg_session_id,
-                        lang=ollama.default_lang,
+                if _subsume_coordinate:
+                    task = asyncio.create_task(
+                        _extract_structured_background(
+                            user_message=content,
+                            assistant_response=full_response,
+                            user_id=user_id,
+                            session_id=msg_session_id,
+                            lang=ollama.default_lang,
+                        )
                     )
-                )
+                else:
+                    task = asyncio.create_task(
+                        _extract_memories_background(
+                            user_message=content,
+                            assistant_response=full_response,
+                            user_id=user_id,
+                            session_id=msg_session_id,
+                            lang=ollama.default_lang,
+                        )
+                    )
                 _background_tasks.add(task)
                 task.add_done_callback(_background_tasks.discard)
 
@@ -2091,17 +2171,24 @@ WICHTIG: Nutze die ECHTEN Daten aus dem Ergebnis! Gib NUR die Antwort, KEIN JSON
                     f"action_success={_action_success}"
                 )
 
-            # Hook: post_message (fire-and-forget for plugins like renfield-twin)
-            from utils.hooks import run_hooks
-            _pm_task = asyncio.create_task(run_hooks(
-                "post_message",
-                user_msg=content,
-                assistant_msg=full_response,
-                user_id=user_id,
-                session_id=msg_session_id,
-            ))
-            _background_tasks.add(_pm_task)
-            _pm_task.add_done_callback(_background_tasks.discard)
+            # Hook: post_message (fire-and-forget for plugins like renfield-twin).
+            # Skipped ONLY when the subsume-coordination coroutine above already
+            # owns the post_message dispatch (it ran iff subsume is active AND
+            # memory extraction was scheduled this turn) — guarantees KG runs
+            # exactly once. If memory extraction was skipped (failed action /
+            # empty response), the coordinated coroutine never ran, so we still
+            # fire post_message here so KG + plugins are not starved.
+            if not (_subsume_coordinate and _mem_should_run):
+                from utils.hooks import run_hooks
+                _pm_task = asyncio.create_task(run_hooks(
+                    "post_message",
+                    user_msg=content,
+                    assistant_msg=full_response,
+                    user_id=user_id,
+                    session_id=msg_session_id,
+                ))
+                _background_tasks.add(_pm_task)
+                _pm_task.add_done_callback(_background_tasks.discard)
 
             logger.info(f"✅ WebSocket Response gesendet (tts_handled={tts_handled_by_server})")
 

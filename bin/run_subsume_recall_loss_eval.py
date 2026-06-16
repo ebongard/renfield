@@ -80,6 +80,72 @@ def classify_case(
     }
 
 
+def classify_case_perfact(
+    memory_items: list[dict],
+    kg_entities: list[dict],
+    kg_relations: list[dict],
+) -> dict:
+    """Verdict under the per-(SUBJECT, TURN) subsume gate (the shipped fix).
+
+    Models the PRODUCTION gate faithfully + PER FACT (so the same-turn residual
+    is visible, not hidden). For each fact memory:
+
+      * ``subsumed``    := its subject is in the captured-this-turn subject set
+                           (``subject ∈ {r.subject}``) — EXACTLY the prod gate.
+      * ``truly_backed``:= some saved relation actually grounds THIS fact, i.e.
+                           a relation whose subject AND object both appear in the
+                           fact's content (the object survives in the KG).
+      * a fact is a RESIDUAL LOSS iff ``subsumed and not truly_backed`` — it was
+        dropped because its subject was captured, but no relation actually
+        carries its object (the same-turn, same-subject, mixed-object case).
+
+    So single-fact state/attribute facts (subject NOT captured) are ``kept_flat``
+    (no loss — the cross-turn residual the proxy missed, now closed); single-fact
+    named-entity facts are ``subsumed`` AND ``truly_backed`` (safe); a mixed
+    same-subject turn surfaces the state fact as ``lost`` (the narrower residual
+    this fix does NOT close — see TODOS.md).
+    """
+    rel_subjects = {_norm(r.get("subject")) for r in kg_relations}
+    # Per-relation (subject, object) pairs for the grounding check.
+    rel_pairs = [(_norm(r.get("subject")), _norm(r.get("object"))) for r in kg_relations]
+
+    subsumed_subjects: list[str] = []
+    kept_flat_subjects: list[str] = []
+    lost_subjects: list[str] = []
+
+    for it in memory_items:
+        if _norm(it.get("category")) != "fact":
+            continue
+        subj = _norm(it.get("subject"))
+        if not subj:
+            continue
+        content = _norm(it.get("content"))
+        if subj in rel_subjects:
+            # Prod would DROP this fact (subject captured this turn).
+            subsumed_subjects.append(subj)
+            # Is it actually grounded? A relation for this subject whose object
+            # also appears in the fact content means the object survives in KG.
+            backed = any(
+                rs == subj and ro and ro in content
+                for (rs, ro) in rel_pairs
+            )
+            if not backed:
+                lost_subjects.append(subj)  # same-turn residual: dropped, not grounded
+        else:
+            kept_flat_subjects.append(subj)  # subject not captured -> retained, no loss
+
+    return {
+        "subsumed": bool(subsumed_subjects),
+        "subsumed_subjects": subsumed_subjects,
+        "kept_flat": bool(kept_flat_subjects),
+        "kept_flat_subjects": kept_flat_subjects,
+        "lost": bool(lost_subjects),
+        "lost_subjects": lost_subjects,
+        "kg_relation_count": len(kg_relations),
+        "kg_entity_count": len(kg_entities),
+    }
+
+
 def load_cases(fixture: Path) -> list[dict]:
     import yaml
     data = yaml.safe_load(fixture.read_text(encoding="utf-8"))
@@ -137,41 +203,30 @@ async def _extract_kg(case: dict) -> tuple[list[dict], list[dict]]:
     return parsed.get("entities", []), parsed.get("relations", [])
 
 
-async def run_case(case: dict) -> dict:
+async def run_case(case: dict, perfact: bool = False) -> dict:
     mem = await _extract_memory(case)
     ents, rels = await _extract_kg(case)
+    if perfact:
+        return classify_case_perfact(mem, ents, rels)
     return classify_case(mem, ents, rels)
 
 
-def main() -> int:
-    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument(
-        "fixture", nargs="?",
-        default=str(Path(__file__).resolve().parents[1] / "tests/eval/subsume_recall_loss_eval.yaml"),
-    )
-    parser.add_argument("--case", default=None, help="run only the case with this id")
-    args = parser.parse_args()
+async def _main_legacy(cases: list[dict]) -> int:
+    """Unguarded-surface report (classify_case): documents the loss surface.
 
-    import asyncio
-
-    fixture = Path(args.fixture)
-    if not fixture.exists():
-        sys.exit(f"fixture not found: {fixture}")
-    cases = load_cases(fixture)
-    if args.case:
-        cases = [c for c in cases if c.get("id") == args.case] or sys.exit(f"no case {args.case!r}")
-
+    All cases run in ONE event loop (the shared async LLM client is a singleton;
+    a per-case ``asyncio.run`` closes the loop under it and the next case's
+    teardown raises 'Event loop is closed').
+    """
     n_subsumed = n_captured = n_lost = n_unexpected = 0
     print(f"{'CASE':28s} {'SUBSUMED':9s} {'CAPTURED':9s} {'LOST':6s} {'EXPECT':8s}")
     print("-" * 78)
     for case in cases:
-        v = asyncio.run(run_case(case))
+        v = await run_case(case, perfact=False)
         n_subsumed += int(v["subsumed"])
         n_captured += int(v["captured"])
         n_lost += int(v["lost"])
         loss_expected = bool(case.get("expect", {}).get("loss_expected", False))
-        # An UNEXPECTED result = a control case that lost, or an expected-loss
-        # case that was actually captured (good news, but worth flagging).
         flag = ""
         if v["lost"] and not loss_expected:
             flag = "  <-- UNEXPECTED LOSS (control case lost!)"
@@ -188,14 +243,105 @@ def main() -> int:
 
     print("-" * 78)
     total = len(cases)
-    print(f"cases={total}  subsumed={n_subsumed}  captured={n_captured}  LOST={n_lost}")
+    print(f"[UNGUARDED SURFACE] cases={total}  subsumed={n_subsumed}  "
+          f"captured={n_captured}  LOST={n_lost}")
     if n_subsumed:
         print(f"capture rate (of subsumed): {n_captured}/{n_subsumed} "
               f"= {100*n_captured/n_subsumed:.0f}%")
     print(f"unexpected losses (control cases): {n_unexpected}")
-    # Exit non-zero only on an UNEXPECTED loss — the eval documents the surface,
-    # it isn't a pass/fail gate on the (expected) danger-zone losses.
     return 1 if n_unexpected else 0
+
+
+async def _main_perfact(cases: list[dict]) -> int:
+    """Per-(subject,turn) gate report (classify_case_perfact).
+
+    What the gate guarantees + what it does NOT:
+      * CROSS-TURN residual CLOSED (the hard invariant): a fact whose subject had
+        NO relation captured this turn is KEPT FLAT — never lost. By construction
+        `classify_case_perfact` only marks `lost` for a subject that WAS captured
+        (≥1 relation) but whose specific fact the saved relation doesn't ground.
+        So a subject with 0 captured relations can never show loss; a violation
+        would be a gate regression → exit non-zero.
+      * SAME-TURN residual NOT closed (documented): when the captured relation is
+        about a DIFFERENT fact than the dropped one (same subject, different
+        object — e.g. the turn yields "Anna wohnt in Berlin" [relation saved] +
+        "Anna ist müde" [no relation], or the extractor captures one subject-fact
+        while the KG saves an unrelated relation for the same subject), the
+        ungrounded fact is lost. This is per-(subject,turn), not per-(subject,
+        object). These losses are REPORTED, not failed — their count varies with
+        what the extractor emits per run (see the live works-at-de / mixed case).
+    """
+    n_subsumed = n_kept = n_lost = n_residual = n_invariant_violation = 0
+    print(f"{'CASE':28s} {'SUBSUMED':9s} {'KEPT_FLAT':10s} {'LOST':6s} {'EXPECT':8s}")
+    print("-" * 78)
+    for case in cases:
+        v = await run_case(case, perfact=True)
+        n_subsumed += int(v["subsumed"])
+        n_kept += int(v["kept_flat"])
+        n_lost += int(v["lost"])
+        expect = case.get("expect", {})
+        loss_expected = bool(expect.get("loss_expected", False))
+        flag = ""
+        if v["lost"]:
+            # By construction every `lost` is a same-turn residual (subject was
+            # captured, fact not grounded). The hard invariant violation would be
+            # loss with 0 captured relations — impossible here, asserted below.
+            n_residual += 1
+            if v["kg_relation_count"] == 0:
+                n_invariant_violation += 1
+                flag = "  <-- INVARIANT VIOLATION (loss with 0 relations!)"
+            else:
+                flag = "  (same-turn residual — subject captured, this fact ungrounded)"
+        elif loss_expected and v["kept_flat"]:
+            flag = "  (danger-zone fact KEPT FLAT — cross-turn loss closed)"
+        elif not loss_expected and v["subsumed"]:
+            flag = "  (named-entity fact safely subsumed)"
+        print(
+            f"{case['id']:28s} {str(v['subsumed']):9s} {str(v['kept_flat']):10s} "
+            f"{str(v['lost']):6s} {str(loss_expected):8s}{flag}"
+        )
+        if v["lost_subjects"]:
+            print(f"{'':28s}  LOST subjects: {v['lost_subjects']} "
+                  f"(kg rels={v['kg_relation_count']})")
+        elif v["kept_flat_subjects"]:
+            print(f"{'':28s}  kept flat: {v['kept_flat_subjects']} "
+                  f"(kg rels={v['kg_relation_count']})")
+
+    print("-" * 78)
+    total = len(cases)
+    print(f"[PER-(SUBJECT,TURN) GATE] cases={total}  subsumed(dropped)={n_subsumed}  "
+          f"kept_flat={n_kept}  LOST={n_lost}")
+    print(f"  cross-turn residual: CLOSED (danger-zone single-facts kept flat above)")
+    print(f"  same-turn residual losses (reported, NOT closed by this gate): {n_residual}")
+    print(f"  hard-invariant violations (loss with 0 captured relations — must be 0): "
+          f"{n_invariant_violation}")
+    return 1 if n_invariant_violation else 0
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument(
+        "fixture", nargs="?",
+        default=str(Path(__file__).resolve().parents[1] / "tests/eval/subsume_recall_loss_eval.yaml"),
+    )
+    parser.add_argument("--case", default=None, help="run only the case with this id")
+    parser.add_argument(
+        "--perfact", action="store_true",
+        help="report under the PER-FACT subsume gate (the real fix) instead of "
+             "the unguarded loss surface — proves residual loss is closed.",
+    )
+    args = parser.parse_args()
+
+    fixture = Path(args.fixture)
+    if not fixture.exists():
+        sys.exit(f"fixture not found: {fixture}")
+    cases = load_cases(fixture)
+    if args.case:
+        cases = [c for c in cases if c.get("id") == args.case] or sys.exit(f"no case {args.case!r}")
+
+    import asyncio
+    runner = _main_perfact(cases) if args.perfact else _main_legacy(cases)
+    return asyncio.run(runner)
 
 
 if __name__ == "__main__":

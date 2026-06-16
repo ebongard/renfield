@@ -217,3 +217,171 @@ class TestSubsumeRecallLossGuard:
         # guard disabled -> always True (legacy)
         monkeypatch.setattr(settings, "memory_subsume_require_kg_relation", False)
         assert await svc._subject_is_kg_representable("Unknown", owner.id) is True
+
+
+# Items for the per-fact tests: a state/attribute fact about a person (object is
+# NOT a named entity → the KG emits no relation) plus a named-entity-object fact.
+_PERFACT_ITEMS = [
+    # state fact about Anna — would be LOST under the subject-level proxy if Anna
+    # already has a relation; the per-fact gate keeps it flat.
+    {"content": "Anna ist müde", "category": "fact", "subject": "Anna", "importance": 0.5},
+    # named-entity-object fact about Tom — KG captures "Tom --arbeitet_bei--> Siemens".
+    {"content": "Tom arbeitet bei Siemens", "category": "fact", "subject": "Tom", "importance": 0.6},
+    {"content": "mag Jazz", "category": "preference", "subject": "Ich", "importance": 0.5},
+]
+
+
+def _svc_perfact(db, monkeypatch, *, subsume: bool, require_relation: bool = True):
+    """Like _svc but feeds the per-fact item set."""
+    svc = _svc(db, monkeypatch, subsume=subsume, require_relation=require_relation)
+    monkeypatch.setattr(
+        svc, "_parse_extraction_response", lambda raw: [dict(i) for i in _PERFACT_ITEMS]
+    )
+    return svc
+
+
+class TestSubsumePerFactGate:
+    """Phase 3-subsume PER-FACT fix: subsume a fact only when THIS turn's KG
+    extraction actually captured a relation for its subject (``captured_kg_subjects``),
+    not on the subject-level proxy. Closes the residual loss the proxy missed:
+    a state/attribute fact about an ALREADY-related person.
+    """
+
+    async def test_state_fact_about_already_related_person_kept_flat(
+        self, pg_db_session, monkeypatch
+    ):
+        """HEADLINE CASE — the residual loss the subject-level proxy guard missed.
+
+        Anna is ALREADY a related person in the KG (so the OLD proxy guard would
+        return True and drop "Anna ist müde" = silent loss). THIS turn the KG
+        captured a relation only for Tom (Tom→Siemens), NOT Anna. With the
+        per-fact gate, "Anna ist müde" is KEPT FLAT because anna is not in the
+        captured set, while "Tom arbeitet bei Siemens" IS subsumed.
+        """
+        owner = await _make_user(pg_db_session, "pf_anna")
+        # Anna already has a prior relation — the proxy guard would say "drop it".
+        await _seed_entity_with_relation(pg_db_session, owner.id, "Anna")
+        svc = _svc_perfact(pg_db_session, monkeypatch, subsume=True)
+        # This turn the KG captured a relation ONLY for Tom (not Anna).
+        captured = {"tom"}
+        saved = await svc._extract_and_save_v1_impl(
+            "u", "a", user_id=owner.id, captured_kg_subjects=captured
+        )
+        contents = {m.content for m in saved}
+        # Residual loss CLOSED: the state fact about the already-related Anna stays flat.
+        assert "Anna ist müde" in contents
+        # Named-entity-object fact captured this turn IS subsumed (KG owns it).
+        assert "Tom arbeitet bei Siemens" not in contents
+        # Preference always stays flat.
+        assert "mag Jazz" in contents
+
+    async def test_proxy_would_have_lost_it_contrast(self, pg_db_session, monkeypatch):
+        """Contrast: with NO per-turn coordination (captured_kg_subjects=None) the
+        OLD subject-level proxy runs and DROPS the state fact (the documented
+        residual loss) because Anna already has a relation. This is the behavior
+        the per-fact fix replaces on the coordinated path."""
+        owner = await _make_user(pg_db_session, "pf_proxy")
+        await _seed_entity_with_relation(pg_db_session, owner.id, "Anna")
+        svc = _svc_perfact(pg_db_session, monkeypatch, subsume=True)
+        saved = await svc._extract_and_save_v1_impl(
+            "u", "a", user_id=owner.id, captured_kg_subjects=None
+        )
+        contents = {m.content for m in saved}
+        # Proxy fallback: Anna is already-related → the state fact is LOST (dropped).
+        assert "Anna ist müde" not in contents
+
+    async def test_named_entity_fact_subsumed_when_captured(
+        self, pg_db_session, monkeypatch
+    ):
+        """A named-entity-object fact whose relation IS captured this turn is
+        subsumed (the duplicate-reduction still works)."""
+        owner = await _make_user(pg_db_session, "pf_tom")
+        svc = _svc_perfact(pg_db_session, monkeypatch, subsume=True)
+        captured = {"anna", "tom"}
+        saved = await svc._extract_and_save_v1_impl(
+            "u", "a", user_id=owner.id, captured_kg_subjects=captured
+        )
+        contents = {m.content for m in saved}
+        # Both facts captured this turn → both subsumed; only preference stays flat.
+        assert "Anna ist müde" not in contents
+        assert "Tom arbeitet bei Siemens" not in contents
+        assert "mag Jazz" in contents
+
+    async def test_empty_captured_set_keeps_all_facts_flat(
+        self, pg_db_session, monkeypatch
+    ):
+        """Coordinated turn where the KG captured NOTHING (empty set, not None):
+        every fact is kept flat — no loss. Distinguishes 'coordinated, nothing
+        captured' (keep all) from 'uncoordinated' (proxy fallback)."""
+        owner = await _make_user(pg_db_session, "pf_empty")
+        await _seed_entity_with_relation(pg_db_session, owner.id, "Anna")
+        svc = _svc_perfact(pg_db_session, monkeypatch, subsume=True)
+        saved = await svc._extract_and_save_v1_impl(
+            "u", "a", user_id=owner.id, captured_kg_subjects=set()
+        )
+        contents = {m.content for m in saved}
+        assert "Anna ist müde" in contents
+        assert "Tom arbeitet bei Siemens" in contents
+        assert "mag Jazz" in contents
+
+    async def test_flag_off_is_legacy_saves_everything(
+        self, pg_db_session, monkeypatch
+    ):
+        """Subsume OFF (default): every item saved flat, captured set ignored —
+        byte-identical to legacy behavior."""
+        owner = await _make_user(pg_db_session, "pf_off")
+        svc = _svc_perfact(pg_db_session, monkeypatch, subsume=False)
+        saved = await svc._extract_and_save_v1_impl(
+            "u", "a", user_id=owner.id, captured_kg_subjects={"anna", "tom"}
+        )
+        contents = {m.content for m in saved}
+        assert contents == {"Anna ist müde", "Tom arbeitet bei Siemens", "mag Jazz"}
+
+    async def test_should_subsume_fact_helper_direct(self, pg_db_session, monkeypatch):
+        """_should_subsume_fact decision matrix."""
+        owner = await _make_user(pg_db_session, "pf_helper")
+        await _seed_entity_with_relation(pg_db_session, owner.id, "Anna")
+        svc = ConversationMemoryService(pg_db_session)
+        monkeypatch.setattr(settings, "memory_subsume_require_kg_relation", True)
+        # Per-fact signal present (captured set is authoritative):
+        assert await svc._should_subsume_fact("Anna", owner.id, {"anna"}) is True
+        assert await svc._should_subsume_fact("Anna", owner.id, set()) is False
+        # case-insensitive
+        assert await svc._should_subsume_fact("ANNA", owner.id, {"anna"}) is True
+        # no subject -> never subsume
+        assert await svc._should_subsume_fact(None, owner.id, {"anna"}) is False
+        # uncoordinated (None) -> proxy fallback: Anna already-related -> True
+        assert await svc._should_subsume_fact("Anna", owner.id, None) is True
+        assert await svc._should_subsume_fact("Unknown", owner.id, None) is False
+        # guard disabled -> always True (legacy unguarded), even with empty set
+        monkeypatch.setattr(settings, "memory_subsume_require_kg_relation", False)
+        assert await svc._should_subsume_fact("Anything", owner.id, set()) is True
+
+    async def test_same_turn_same_subject_mixed_loses_state_fact(
+        self, pg_db_session, monkeypatch
+    ):
+        """DOCUMENTED RESIDUAL (NOT closed by this gate): a single turn stating
+        BOTH an entity-object fact AND a state fact about the SAME subject. The
+        entity-object fact's relation is captured (subject "anna" in the set), so
+        the per-(subject,turn) gate subsumes BOTH — the co-stated state fact is
+        dropped-and-lost. This asserts the limitation explicitly so it can't
+        silently change. Truly-per-fact would need a per-(subject,object) signal.
+        """
+        owner = await _make_user(pg_db_session, "pf_mixed")
+        svc = _svc(pg_db_session, monkeypatch, subsume=True, require_relation=True)
+        mixed_items = [
+            {"content": "Anna wohnt in Berlin", "category": "fact", "subject": "Anna", "importance": 0.6},
+            {"content": "Anna ist müde", "category": "fact", "subject": "Anna", "importance": 0.5},
+        ]
+        monkeypatch.setattr(
+            svc, "_parse_extraction_response", lambda raw: [dict(i) for i in mixed_items]
+        )
+        # "anna" captured this turn (the entity-object fact's relation was saved).
+        captured = {"anna"}
+        saved = await svc._extract_and_save_v1_impl(
+            "u", "a", user_id=owner.id, captured_kg_subjects=captured
+        )
+        contents = {m.content for m in saved}
+        # Both subsumed because the gate keys on the subject name, not the object:
+        assert "Anna wohnt in Berlin" not in contents   # legitimately captured
+        assert "Anna ist müde" not in contents          # RESIDUAL LOSS (documented)

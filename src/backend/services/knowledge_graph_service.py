@@ -1840,14 +1840,54 @@ async def kg_post_message_hook(
     session_id: str | None = None,
     **kwargs,
 ):
-    """Extract entities and relations from conversation (post_message hook)."""
+    """Extract entities and relations from conversation (post_message hook).
+
+    Subsume coordination seam (Phase 3-subsume per-SUBJECT-per-turn gate). The
+    chat handler may pass a mutable ``captured_subjects`` set via kwargs. When
+    present, this hook populates it — AFTER ``extract_and_save`` commits — with
+    the lowercased NAMES of the subject entity of every relation actually saved
+    THIS turn. The memory-extraction task (sequenced AFTER this hook in the SAME
+    background coroutine) reads that set to decide subsume per (subject, turn):
+    a fact memory is dropped-as-subsumed when its subject is in the captured
+    set, so a state/attribute fact about a subject for whom no relation was
+    saved this turn ("Anna ist müde") is kept flat even when Anna is an already-
+    related person (the cross-turn residual the prior subject-level proxy guard
+    missed).
+
+    NOT truly per-fact: the set holds subject NAMES, not (subject, object)
+    pairs, so a same-turn same-subject state fact alongside an entity-object
+    fact is still subsumed (narrower residual; see ``_should_subsume_fact``).
+
+    KG extraction still runs exactly ONCE (here) — the captured set is the only
+    cross-task signal, never a second extraction. Names are matched
+    case-insensitively against the memory extractor's verbatim ``subject``
+    (mirrors ``classify_case`` in run_subsume_recall_loss_eval.py).
+    """
+    captured_subjects = kwargs.get("captured_subjects")
     try:
         from services.database import AsyncSessionLocal
 
         async with AsyncSessionLocal() as db:
             svc = KnowledgeGraphService(db)
             lang = kwargs.get("lang", settings.default_language)
-            await svc.extract_and_save(user_msg, assistant_msg, user_id, session_id, lang)
+            entities, relations = await svc.extract_and_save(
+                user_msg, assistant_msg, user_id, session_id, lang
+            )
+            if captured_subjects is not None and relations:
+                # Map each saved relation's subject_id back to its entity name
+                # via the resolved-entity list returned by the same call. A
+                # relation's subject_id is the canonical survivor id; the
+                # entity objects in `entities` are exactly those resolved this
+                # turn, so this covers every relation we just saved.
+                id_to_name = {
+                    e.id: (e.name or "").strip().lower()
+                    for e in entities
+                    if getattr(e, "id", None) is not None
+                }
+                for r in relations:
+                    name = id_to_name.get(getattr(r, "subject_id", None))
+                    if name:
+                        captured_subjects.add(name)
     except Exception as e:
         logger.warning(f"KG post_message hook failed: {e}")
 

@@ -103,3 +103,20 @@ cases:
     user: "Papa fährt einen BMW."
     assistant: "Ok."
     expect: {loss_expected: false, note: "object BMW is a product/org entity"}
+
+  # --- DOCUMENTED RESIDUAL: same-turn, SAME subject, mixed object types ---
+  # One turn states BOTH an entity-object fact (Anna -wohnt_in-> Berlin, relation
+  # saved → "anna" in the captured set) AND a state fact (Anna ist müde, no
+  # relation). The per-(subject,turn) gate keys on the subject NAME, so it
+  # subsumes BOTH — the state fact is dropped without a backing relation. This is
+  # the narrower residual the fix does NOT close (truly-per-fact would need a
+  # per-(subject,object) signal). The eval surfaces it via the object-grounding
+  # check in classify_case_perfact (subsumed but not truly_backed → LOST).
+  - id: mixed-same-subject-de
+    lang: de
+    user: "Anna wohnt in Berlin und ist müde."
+    assistant: "Ok."
+    expect:
+      loss_expected: true
+      residual_expected: true
+      note: "same-turn same-subject mix: entity-object fact captures the subject, so the co-stated state fact is subsumed-and-lost — documented residual"
