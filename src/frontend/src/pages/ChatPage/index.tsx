@@ -17,6 +17,7 @@ function ChatPageLayout() {
     sidebarOpen, setSidebarOpen,
     conversations, conversationsLoading,
     sessionId, switchConversation, startNewChat, handleDeleteConversation,
+    jumpToMessage,
   } = useChatContext();
   // Hide the side panel + FAB when the Reva backend has
   // REVA_WISSENSBASIS_ENABLED=false. Otherwise users see permanently
@@ -47,6 +48,7 @@ function ChatPageLayout() {
         isOpen={sidebarOpen}
         onClose={() => setSidebarOpen(false)}
         loading={conversationsLoading}
+        onJumpToMessage={jumpToMessage}
       />
 
       {/* Main Chat Area */}

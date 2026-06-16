@@ -158,7 +158,11 @@
       "noResults": "Keine Aktion gefunden",
       "roleActive": "Rolle: {{role}}",
       "clearRole": "Rolle zurücksetzen",
-      "categories": { "navigate": "Navigation", "tool": "Aktion", "setRole": "Rolle" },
+      "categories": {
+        "navigate": "Navigation",
+        "tool": "Aktion",
+        "setRole": "Rolle"
+      },
       "actions": {
         "knowledge": "Dokumente öffnen",
         "brain": "Wissen öffnen",
@@ -266,7 +270,23 @@
     },
     "exampleWeather": "Wie wird das Wetter?",
     "exampleLight": "Schalte das Licht im Wohnzimmer ein",
-    "exampleMusic": "Spiel Jazz Musik"
+    "exampleMusic": "Spiel Jazz Musik",
+    "search": {
+      "placeholderGlobal": "Nachrichten durchsuchen…",
+      "placeholderInConversation": "In dieser Unterhaltung suchen…",
+      "clear": "Suche leeren",
+      "searching": "Suche läuft…",
+      "resultsLabel": "Suchergebnisse",
+      "roleUser": "Du",
+      "roleAssistant": "Renfield",
+      "moreResults": "Weitere Treffer vorhanden – Suche verfeinern",
+      "emptyTitle": "Keine Nachrichten zu „{{query}}“ gefunden",
+      "emptyHintGlobal": "Versuch andere Begriffe oder prüfe die Schreibweise.",
+      "emptyHintInConversation": "In dieser Unterhaltung gibt es keinen passenden Treffer.",
+      "noPermissionTitle": "Suche nicht verfügbar",
+      "noPermissionHint": "Bitte melde dich an, um deine Nachrichten zu durchsuchen.",
+      "error": "Die Suche ist fehlgeschlagen. Bitte versuch es erneut."
+    }
   },
   "voice": {
     "startRecording": "Sprachaufnahme starten",

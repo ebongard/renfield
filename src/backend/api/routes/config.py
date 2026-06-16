@@ -39,6 +39,9 @@ class FeatureFlags(BaseModel):
     command_palette_enabled: bool
     # Gates the chat agent-role badge + role-pin. See utils/config.py::role_surfacing_enabled.
     role_surfacing_enabled: bool
+    # Gates the chat message-search UI (sidebar search field + results + jump-to-message).
+    # Off => no search field rendered. See utils/config.py::message_search_enabled.
+    message_search_enabled: bool
 
 
 @router.get("/features", response_model=FeatureFlags)
@@ -51,4 +54,5 @@ async def get_features(
         wissen_workspace_enabled=settings.wissen_workspace_enabled,
         command_palette_enabled=settings.command_palette_enabled,
         role_surfacing_enabled=settings.role_surfacing_enabled,
+        message_search_enabled=settings.message_search_enabled,
     )

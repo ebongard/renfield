@@ -2,8 +2,10 @@ import { Loader, Plus, X } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 
 import { groupConversationsByDate } from '../hooks/useChatSessions';
+import { useFeatureFlags } from '../api/resources/brain';
 import type { Conversation, GroupedConversations } from '../types/chat';
 import ConversationItem from './ConversationItem';
+import ChatMessageSearch from './chat/ChatMessageSearch';
 
 /**
  * Sidebar component displaying conversation history.
@@ -18,6 +20,8 @@ interface ChatSidebarProps {
   isOpen: boolean;
   onClose: () => void;
   loading: boolean;
+  /** Jump to a matched message from message search (chat-ui item 3). */
+  onJumpToMessage?: (sessionId: string, messageIndex: number) => void;
 }
 
 type GroupedConversationsKey = keyof GroupedConversations;
@@ -31,8 +35,11 @@ export default function ChatSidebar({
   isOpen,
   onClose,
   loading,
+  onJumpToMessage,
 }: ChatSidebarProps) {
   const { t } = useTranslation();
+  const { data: features } = useFeatureFlags();
+  const messageSearchEnabled = features?.message_search_enabled ?? false;
   const grouped: GroupedConversations = groupConversationsByDate(conversations);
 
   const periodLabels: Record<GroupedConversationsKey, string> = {
@@ -86,6 +93,15 @@ export default function ChatSidebar({
             <span>{t('chat.newChat')}</span>
           </button>
         </div>
+
+        {/* Message search (chat-ui item 3) — dark behind message_search_enabled.
+            Global (cross-conversation) search; a result jumps to that message. */}
+        {messageSearchEnabled && onJumpToMessage && (
+          <ChatMessageSearch
+            scopeSessionId={null}
+            onJumpToMessage={onJumpToMessage}
+          />
+        )}
 
         <div className="flex-1 overflow-y-auto" role="list" aria-label={t('chat.conversations')}>
           {loading ? (

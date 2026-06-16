@@ -59,6 +59,19 @@ class Message(Base):
     timestamp = Column(DateTime, default=_utcnow)
     message_metadata = Column(JSON, nullable=True)  # Umbenannt von 'metadata'
 
+    # Full-text search vector for chat message search (roadmap item 3). Post-
+    # pc20260617 this is a Postgres GENERATED STORED column that unions
+    # to_tsvector across all FTS_LANGUAGES (DE/EN/FR/IT/ES/NL) over `content`.
+    # READ-ONLY from the app: Postgres rejects any INSERT/UPDATE that supplies a
+    # value. The FetchedValue() marker keeps the column out of ORM
+    # INSERTs/UPDATEs (same pattern as DocumentChunk / ConversationMemory /
+    # DocumentFact) so the message write sites in conversation_service /
+    # api/routes/chat.py work unchanged against the GENERATED schema. Sqlite
+    # test runs get a plain nullable column; the GENERATED DDL lives only in the
+    # migration. Search is scoped by conversation OWNERSHIP (messages are not
+    # atoms), NOT through circle_sql — see ConversationService.search_messages.
+    search_vector = Column(TSVECTOR, FetchedValue(), nullable=True)
+
     # Beziehungen
     conversation = relationship("Conversation", back_populates="messages")
 

@@ -194,6 +194,14 @@ export interface ChatContextValue {
   startNewChat: () => void;
   handleDeleteConversation: (id: string) => Promise<void>;
 
+  // Message search jump-to-message (chat-ui item 3). jumpToMessage switches to
+  // the target conversation (if needed) then arms pendingScrollIndex; once the
+  // history has loaded ChatMessages scrolls that message into view, focuses it,
+  // and calls clearPendingScroll.
+  pendingScrollIndex: number | null;
+  jumpToMessage: (targetSessionId: string, messageIndex: number) => Promise<void>;
+  clearPendingScroll: () => void;
+
   // Conversations
   conversations: Conversation[];
   conversationsLoading: boolean;
@@ -285,6 +293,9 @@ export function ChatProvider({ children }: ChatProviderProps) {
   // then cleared — "next turn only".
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [pendingRoleHint, setPendingRoleHint] = useState<string | null>(null);
+  // Message-search jump target: 0-based message index to scroll to once the
+  // active conversation's history is loaded (chat-ui item 3).
+  const [pendingScrollIndex, setPendingScrollIndex] = useState<number | null>(null);
 
   // Session management
   const [sessionId, setSessionId] = useState<string | null>(() => {
@@ -1638,6 +1649,26 @@ export function ChatProvider({ children }: ChatProviderProps) {
     }
   }, [sessionId, loadConversationHistory]);
 
+  // Jump to a specific message from a search result (chat-ui item 3). Switches
+  // to the target conversation if it isn't already active, then arms the
+  // pending-scroll index. When the target IS already active, switchConversation
+  // is a no-op (early return) so the messages are already loaded — arm the
+  // index directly. Either way ChatMessages consumes pendingScrollIndex once
+  // the history is present.
+  const jumpToMessage = useCallback(
+    async (targetSessionId: string, messageIndex: number) => {
+      if (targetSessionId !== sessionId) {
+        await switchConversation(targetSessionId);
+      } else {
+        setSidebarOpen(false);
+      }
+      setPendingScrollIndex(messageIndex);
+    },
+    [sessionId, switchConversation],
+  );
+
+  const clearPendingScroll = useCallback(() => setPendingScrollIndex(null), []);
+
   // Start new chat
   const startNewChat = useCallback(() => {
     const newId = `session-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
@@ -1693,6 +1724,11 @@ export function ChatProvider({ children }: ChatProviderProps) {
     switchConversation,
     startNewChat,
     handleDeleteConversation,
+
+    // Message search jump-to-message (chat-ui item 3)
+    pendingScrollIndex,
+    jumpToMessage,
+    clearPendingScroll,
 
     // Conversations (from useChatSessions)
     conversations,
@@ -1754,6 +1790,7 @@ export function ChatProvider({ children }: ChatProviderProps) {
     regenerateWithCorrectedIntent,
     paletteOpen, pendingRoleHint,
     sessionId, sidebarOpen, switchConversation, startNewChat, handleDeleteConversation,
+    pendingScrollIndex, jumpToMessage, clearPendingScroll,
     conversations, conversationsLoading,
     wsConnected,
     recording, audioLevel, silenceTimeRemaining, partialText, toggleRecording,

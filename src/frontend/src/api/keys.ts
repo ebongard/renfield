@@ -146,6 +146,8 @@ export const keys = {
     all: ['chatSessions'] as const,
     list: () => ['chatSessions', 'list'] as const,
     history: (id: string) => ['chatSessions', 'history', id] as const,
+    messageSearch: (q: string, sessionId: string | null) =>
+      ['chatSessions', 'messageSearch', q, sessionId ?? '__global__'] as const,
   },
   preferences: {
     all: ['preferences'] as const,

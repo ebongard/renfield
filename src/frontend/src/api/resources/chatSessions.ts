@@ -6,6 +6,63 @@ import { useApiQuery } from '../hooks';
 import { keys, STALE } from '../keys';
 import type { ChatMessage, Conversation, ChatSessionsResult } from '../../types/chat';
 
+/** One chat-message search hit (roadmap item 3). */
+export interface MessageSearchHit {
+  /** Owning conversation — switchConversation(session_id) loads it. */
+  session_id: string;
+  /** 0-based position in the conversation's timestamp-ASC history. */
+  message_index: number;
+  role: 'user' | 'assistant' | string;
+  content: string;
+  /** `<mark>`-highlighted snippet from the backend (HTML-safe, server-built). */
+  snippet: string;
+  timestamp: string | null;
+  rank: number;
+}
+
+export interface MessageSearchResult {
+  query: string;
+  results: MessageSearchHit[];
+  count: number;
+  has_more: boolean;
+}
+
+async function fetchMessageSearch(
+  q: string,
+  sessionId: string | null,
+): Promise<MessageSearchResult> {
+  const params: Record<string, string | number> = { q, limit: 25 };
+  if (sessionId) params.session_id = sessionId;
+  const response = await apiClient.get<MessageSearchResult>('/api/chat/messages/search', { params });
+  return response.data;
+}
+
+/**
+ * Full-text chat-message search (roadmap item 3).
+ *
+ * `sessionId` non-null ⇒ in-conversation search; null ⇒ global
+ * (cross-conversation). Disabled (no request) until `enabled` is true AND the
+ * trimmed query is ≥2 chars — the caller debounces the query upstream so this
+ * fires at most once per settled keystroke burst.
+ */
+export function useMessageSearch(
+  query: string,
+  sessionId: string | null,
+  enabled: boolean,
+) {
+  const trimmed = query.trim();
+  const active = enabled && trimmed.length >= 2;
+  return useApiQuery(
+    {
+      queryKey: keys.chatSessions.messageSearch(trimmed, sessionId),
+      queryFn: () => fetchMessageSearch(trimmed, sessionId),
+      enabled: active,
+      staleTime: STALE.DEFAULT,
+    },
+    'chat.search.error',
+  );
+}
+
 interface ConversationsResponse {
   conversations: Conversation[];
   total?: number;

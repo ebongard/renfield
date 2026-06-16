@@ -281,6 +281,49 @@ class TestChatSearchAPI:
         assert "count" in data
 
 
+class TestChatMessageSearchAPI:
+    """Tests für die Message-Suche API (GET /api/chat/messages/search, item 3)."""
+
+    @pytest.mark.integration
+    async def test_message_search_too_short_query(self, async_client: AsyncClient):
+        response = await async_client.get("/api/chat/messages/search?q=a")
+        assert response.status_code == 400
+
+    @pytest.mark.integration
+    async def test_message_search_returns_shape_and_finds_match(
+        self,
+        async_client: AsyncClient,
+        conversation_with_messages: Conversation,
+    ):
+        """Single-user mode (no auth) → sqlite FTS fallback finds the message."""
+        response = await async_client.get("/api/chat/messages/search?q=Licht")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["query"] == "Licht"
+        assert "results" in data and "count" in data and "has_more" in data
+        sessions = {r["session_id"] for r in data["results"]}
+        assert conversation_with_messages.session_id in sessions
+        # Every hit carries the jump-to-message metadata.
+        for r in data["results"]:
+            assert isinstance(r["message_index"], int)
+            assert "snippet" in r and "role" in r
+
+    @pytest.mark.integration
+    async def test_message_search_in_conversation_scope(
+        self,
+        async_client: AsyncClient,
+        conversation_with_messages: Conversation,
+    ):
+        response = await async_client.get(
+            f"/api/chat/messages/search?q=Licht&session_id={conversation_with_messages.session_id}"
+        )
+        assert response.status_code == 200
+        data = response.json()
+        assert {r["session_id"] for r in data["results"]} <= {
+            conversation_with_messages.session_id
+        }
+
+
 class TestChatCleanupAPI:
     """Tests für Cleanup API"""
 

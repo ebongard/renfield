@@ -1,4 +1,4 @@
-import { useRef, useEffect, useMemo, type ReactNode } from 'react';
+import { useRef, useEffect, useMemo, useState, type ReactNode } from 'react';
 import type { ReactElement } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Volume2, Loader, FileText, AlertCircle, CheckCircle, Search, CheckCircle2, XCircle, ChevronRight, Radio } from 'lucide-react';
@@ -146,10 +146,15 @@ export default function ChatMessages() {
     actionLoading, actionResult, indexToKb, sendToPaperless, sendToBoth, handleSummarize,
     handleSendViaEmail, emailDialog, confirmSendViaEmail, cancelEmailDialog,
     sendMessage, sessionId, submitPaperlessConfirm,
+    pendingScrollIndex, clearPendingScroll,
   } = useChatContext();
   const { data: features } = useFeatureFlags();
   const roleSurfacingEnabled = features?.role_surfacing_enabled ?? false;
   const scrollContainerRef = useRef<HTMLDivElement | null>(null);
+  // Per-message element refs so a search jump can scroll/focus a specific turn.
+  const messageRefs = useRef<Array<HTMLDivElement | null>>([]);
+  // Briefly highlighted message index (the jump target's ring), cleared on a timer.
+  const [flashIndex, setFlashIndex] = useState<number | null>(null);
 
   // Fetch the wissensbasis reasoning trace for this session so we can
   // wrap entity mentions in the assistant prose with CitationChips.
@@ -172,6 +177,28 @@ export default function ChatMessages() {
     const el = scrollContainerRef.current;
     if (el) el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' });
   }, [messages]);
+
+  // Jump-to-message (chat-ui item 3): when a search result arms
+  // pendingScrollIndex AND the target message is now loaded, scroll it into
+  // view, focus it (so keyboard focus returns to the thread, not stranded in
+  // the sidebar search field), flash a highlight ring, then clear the pending
+  // index so a later auto-scroll on new messages isn't fought. Out-of-range
+  // indices (history shorter than expected) are cleared without scrolling.
+  useEffect(() => {
+    if (pendingScrollIndex === null) return;
+    if (historyLoading) return; // wait until the switched history has loaded
+    const target = messageRefs.current[pendingScrollIndex];
+    if (target) {
+      target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      target.focus({ preventScroll: true });
+      setFlashIndex(pendingScrollIndex);
+      const tid = window.setTimeout(() => setFlashIndex(null), 2000);
+      clearPendingScroll();
+      return () => window.clearTimeout(tid);
+    }
+    // Index not present (stale/short history) — give up gracefully.
+    clearPendingScroll();
+  }, [pendingScrollIndex, historyLoading, messages, clearPendingScroll]);
 
   return (
     <div
@@ -222,7 +249,13 @@ export default function ChatMessages() {
       {messages.map((message, index) => (
         <div
           key={index}
-          className={`flex ${message.role === 'user' ? 'justify-end' : 'justify-start'}`}
+          ref={(el) => { messageRefs.current[index] = el; }}
+          tabIndex={-1}
+          className={`flex outline-none scroll-mt-4 ${message.role === 'user' ? 'justify-end' : 'justify-start'} ${
+            flashIndex === index
+              ? 'rounded-lg ring-2 ring-accent-400 dark:ring-accent-500 ring-offset-2 ring-offset-white dark:ring-offset-gray-800 transition-shadow'
+              : ''
+          }`}
           role="article"
           aria-label={message.role === 'user' ? t('chat.yourMessage') : t('chat.assistantResponse')}
         >

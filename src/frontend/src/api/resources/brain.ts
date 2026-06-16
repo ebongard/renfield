@@ -99,6 +99,8 @@ export interface FeatureFlags {
   command_palette_enabled: boolean;
   /** Gates the chat agent-role badge + role-pin (which role answered; tap to pin next turn). */
   role_surfacing_enabled: boolean;
+  /** Gates the chat message-search UI (sidebar search field + results + jump-to-message). */
+  message_search_enabled: boolean;
 }
 
 async function fetchAtomSearch(query: string): Promise<AtomMatch[]> {

@@ -110,6 +110,9 @@ export const defaultChatContextValue: ChatContextValue = {
   pendingRoleHint: null,
   setRoleHint: () => {},
   clearRoleHint: () => {},
+  pendingScrollIndex: null,
+  jumpToMessage: async () => {},
+  clearPendingScroll: () => {},
 };
 
 /**

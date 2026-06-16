@@ -376,6 +376,12 @@ class Settings(BaseSettings):
     # gate; the backend always emits the resolved role on the done frame + persists
     # it, so flipping this needs no backend redeploy.
     role_surfacing_enabled: bool = False
+    # Gates the chat message-search UI (item 3): the search field in the
+    # conversations sidebar + the results list + jump-to-message. Frontend-only
+    # gate; the backend search route + the messages.search_vector column are
+    # always present (harmless when unused), so flipping this needs no backend
+    # redeploy. See docs/design/chat-ui-modernization.md.
+    message_search_enabled: bool = False
     # Generic output-provider registry for room media/control routing. When on,
     # room output discovery + dispatch route through the pluggable OutputProvider
     # registry (built-in renfield/HA + MCP-declared dlna/samsung/sonos via the

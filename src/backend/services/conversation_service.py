@@ -4,14 +4,42 @@ Conversation Service - Manages conversation persistence
 Extracted from OllamaService for better separation of concerns.
 Handles all database operations for conversations and messages.
 """
+import re
 from datetime import UTC, datetime
+from typing import Any
 
 from loguru import logger
-from sqlalchemy import func, select
+from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 
 from models.database import Conversation, Message
+from services.fts_languages import build_tsquery_union_sql
+
+# Drop short tokens (≤2 chars) so single-letter / punctuation noise never
+# reaches the tsquery. Word characters only (German alphabet + digits), so the
+# joined " OR " string is safe to hand to websearch_to_tsquery verbatim (no
+# metachars can survive — same security argument as lexical_retrieval).
+_TOKEN_RE = re.compile(r"[A-Za-zÄÖÜäöüß0-9]{2,}")
+
+# Snippet highlight sentinels: non-printable control chars (STX / ETX) that
+# cannot occur in normal chat text. ts_headline wraps matched terms in these
+# instead of HTML, so the frontend can split + render the highlight with a real
+# React element — no HTML injection, no sanitizer dependency. Kept in sync with
+# the HL_START / HL_END constants in components/chat/ChatMessageSearch.tsx.
+_HL_START = chr(0x02)
+_HL_END = chr(0x03)
+
+
+def _significant_message_tokens(query: str) -> list[str]:
+    """Tokenize a message-search query into FTS-safe tokens.
+
+    Returns word-character tokens of length ≥2 — short enough to keep
+    proper-noun prefixes, no metacharacters so the joined OR string is safe
+    for ``websearch_to_tsquery``. Empty list ⇒ caller short-circuits to no
+    results.
+    """
+    return _TOKEN_RE.findall(query or "")
 
 
 class ConversationService:
@@ -562,3 +590,232 @@ class ConversationService:
         except Exception as e:
             logger.error(f"Fehler bei der Suche: {e}")
             return []
+
+    def _is_postgres(self) -> bool:
+        """True when the bound dialect is Postgres (FTS available)."""
+        try:
+            return self.db.bind.dialect.name == "postgresql"
+        except Exception:
+            return True
+
+    async def search_messages(
+        self,
+        query: str,
+        *,
+        user_id: int | None,
+        session_id: str | None = None,
+        limit: int = 20,
+        offset: int = 0,
+    ) -> dict[str, Any]:
+        """Full-text message search, scoped by conversation OWNERSHIP.
+
+        Roadmap item 3 (chat-UI modernization). Ranks matching ``messages``
+        with Postgres FTS (``ts_rank`` over the GENERATED multilingual
+        ``search_vector`` column) and returns enough per match to jump to it:
+        the owning ``session_id`` + a ``message_index`` (0-based position in the
+        conversation's ``timestamp ASC`` ordering — the SAME ordering
+        ``/api/chat/history`` returns, so the frontend can scroll to
+        ``messages[message_index]``) + a highlighted snippet.
+
+        Scoping (critical): ``messages`` is NOT an atom — it has no
+        ``circle_tier`` / ``atom_id``. This does NOT route through
+        ``services/circle_sql.py``. Access = the asker OWNS the conversation
+        (``Conversation.user_id == user_id``). In single-user mode
+        (``user_id is None``, AUTH_ENABLED=false) all conversations are in
+        scope, mirroring ``list_all`` / the existing ``/api/chat/search``
+        ownership filter.
+
+        Args:
+            query: search text (caller enforces a min length).
+            user_id: the asker's id; ``None`` = single-user mode (no filter).
+            session_id: when given, restrict to that one conversation
+                (in-conversation search); otherwise global (cross-conversation).
+            limit / offset: pagination.
+
+        Returns a dict ``{"results": [...], "count": n, "has_more": bool}``.
+        Each result: ``session_id``, ``message_index``, ``role``, ``content``,
+        ``snippet`` (HTML-safe, ``<mark>``-highlighted), ``timestamp``,
+        ``rank``. Returns an empty result set (never raises) on thin queries,
+        no significant tokens, or any DB error.
+        """
+        tokens = _significant_message_tokens(query)
+        if not tokens:
+            return {"results": [], "count": 0, "has_more": False}
+
+        try:
+            if not self._is_postgres():
+                return await self._search_messages_sqlite(
+                    tokens, user_id=user_id, session_id=session_id,
+                    limit=limit, offset=offset,
+                )
+
+            # Multilingual union (same pattern as the chunk/memory/fact paths).
+            # ``tokens`` are word-chars only, so " OR " join is websearch-safe.
+            or_query = " OR ".join(tokens)
+            tsq = build_tsquery_union_sql("or_query")
+
+            params: dict[str, Any] = {
+                "or_query": or_query,
+                "limit": limit,
+                # Over-fetch by one to compute has_more without a COUNT(*).
+                "fetch": limit + 1,
+                "offset": offset,
+            }
+
+            owner_clause = ""
+            if user_id is not None:
+                owner_clause = "AND c.user_id = :user_id"
+                params["user_id"] = user_id
+
+            session_clause = ""
+            if session_id is not None:
+                session_clause = "AND c.session_id = :session_id"
+                params["session_id"] = session_id
+
+            # ts_headline highlight markers: NON-PRINTABLE control sentinels
+            # (STX/ETX), NOT HTML. The frontend splits on them and renders the
+            # highlight with a real React element — so the snippet is never
+            # interpreted as markup (no dangerouslySetInnerHTML, no XSS surface,
+            # no HTML sanitizer dependency). STX/ETX cannot occur in normal chat
+            # text. Passed as a bound parameter (kept out of the f-string).
+            params["hl_opts"] = (
+                f"StartSel={_HL_START}, StopSel={_HL_END}, "
+                "MaxFragments=2, MaxWords=18, MinWords=5, ShortWord=2"
+            )
+
+            # message_index: 0-based position within the conversation in
+            # timestamp-ASC order (id as the stable tiebreaker — matches
+            # /api/chat/history which orders by timestamp ASC). Computed via a
+            # window function over the FULL message set, then we filter to the
+            # FTS matches. ts_headline produces the highlighted snippet from the
+            # SAME tsquery.
+            sql = text(f"""
+                WITH indexed AS (
+                    SELECT
+                        m.id AS id,
+                        m.role AS role,
+                        m.content AS content,
+                        m.timestamp AS timestamp,
+                        m.search_vector AS search_vector,
+                        c.session_id AS session_id,
+                        (row_number() OVER (
+                            PARTITION BY m.conversation_id
+                            ORDER BY m.timestamp ASC, m.id ASC
+                        ) - 1) AS message_index
+                    FROM messages m
+                    JOIN conversations c ON m.conversation_id = c.id
+                    WHERE 1=1 {owner_clause} {session_clause}
+                )
+                SELECT
+                    session_id,
+                    message_index,
+                    role,
+                    content,
+                    timestamp,
+                    ts_rank(search_vector, ({tsq})) AS rank,
+                    ts_headline('simple', content, ({tsq}), :hl_opts) AS snippet
+                FROM indexed
+                WHERE search_vector IS NOT NULL
+                  AND search_vector @@ ({tsq})
+                ORDER BY rank DESC, timestamp DESC
+                LIMIT :fetch OFFSET :offset
+            """)
+
+            result = await self.db.execute(sql, params)
+            rows = result.all()
+
+            has_more = len(rows) > limit
+            rows = rows[:limit]
+
+            results = [
+                {
+                    "session_id": r.session_id,
+                    "message_index": int(r.message_index),
+                    "role": r.role,
+                    "content": r.content,
+                    "snippet": r.snippet,
+                    "timestamp": r.timestamp.isoformat() if r.timestamp else None,
+                    "rank": float(r.rank) if r.rank is not None else 0.0,
+                }
+                for r in rows
+            ]
+            logger.info(
+                f"Message-Suche: {len(results)} Treffer für '{query[:50]}' "
+                f"(session={session_id or 'all'})"
+            )
+            return {"results": results, "count": len(results), "has_more": has_more}
+
+        except Exception as e:
+            logger.error(f"Fehler bei der Message-Suche: {e}")
+            return {"results": [], "count": 0, "has_more": False}
+
+    async def _search_messages_sqlite(
+        self,
+        tokens: list[str],
+        *,
+        user_id: int | None,
+        session_id: str | None,
+        limit: int,
+        offset: int,
+    ) -> dict[str, Any]:
+        """Sqlite test-harness fallback: token-OR LIKE, ownership-scoped.
+
+        No tsvector on sqlite. Match ANY token against ``content``, compute the
+        per-conversation message_index in Python (timestamp ASC, id tiebreak),
+        and a naive ``<mark>``-wrapped snippet. Rank = number of distinct tokens
+        matched. Same ownership scope as the Postgres path.
+        """
+        # Pull the owned (and optionally session-scoped) conversations and ALL
+        # their messages ordered timestamp-ASC so message_index is exact.
+        conv_q = select(Conversation.id, Conversation.session_id)
+        if user_id is not None:
+            conv_q = conv_q.where(Conversation.user_id == user_id)
+        if session_id is not None:
+            conv_q = conv_q.where(Conversation.session_id == session_id)
+        conv_rows = (await self.db.execute(conv_q)).all()
+        sessions_by_conv = {cid: sid for cid, sid in conv_rows}
+        if not sessions_by_conv:
+            return {"results": [], "count": 0, "has_more": False}
+
+        msg_q = (
+            select(Message)
+            .where(Message.conversation_id.in_(list(sessions_by_conv.keys())))
+            .order_by(Message.conversation_id, Message.timestamp.asc(), Message.id.asc())
+        )
+        msgs = (await self.db.execute(msg_q)).scalars().all()
+
+        lowered = [t.lower() for t in tokens]
+        matches: list[dict[str, Any]] = []
+        index_by_conv: dict[int, int] = {}
+        for m in msgs:
+            idx = index_by_conv.get(m.conversation_id, 0)
+            index_by_conv[m.conversation_id] = idx + 1
+            content = m.content or ""
+            cl = content.lower()
+            hit_count = sum(1 for t in lowered if t in cl)
+            if hit_count == 0:
+                continue
+            # Naive snippet: a window around the first matched token.
+            first_pos = min(
+                (cl.find(t) for t in lowered if cl.find(t) >= 0),
+                default=0,
+            )
+            start = max(0, first_pos - 30)
+            snippet = content[start:start + 120]
+            matches.append({
+                "session_id": sessions_by_conv[m.conversation_id],
+                "message_index": idx,
+                "role": m.role,
+                "content": content,
+                "snippet": snippet,
+                "timestamp": m.timestamp.isoformat() if m.timestamp else None,
+                "rank": float(hit_count),
+            })
+
+        matches.sort(key=lambda r: (-r["rank"], r["timestamp"] or ""), reverse=False)
+        # Re-sort: highest rank first, then newest first.
+        matches.sort(key=lambda r: (r["rank"], r["timestamp"] or ""), reverse=True)
+        window = matches[offset:offset + limit + 1]
+        has_more = len(window) > limit
+        window = window[:limit]
+        return {"results": window, "count": len(window), "has_more": has_more}

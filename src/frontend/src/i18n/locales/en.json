@@ -158,7 +158,11 @@
       "noResults": "No action found",
       "roleActive": "Role: {{role}}",
       "clearRole": "Clear role",
-      "categories": { "navigate": "Navigation", "tool": "Action", "setRole": "Role" },
+      "categories": {
+        "navigate": "Navigation",
+        "tool": "Action",
+        "setRole": "Role"
+      },
       "actions": {
         "knowledge": "Open documents",
         "brain": "Open knowledge",
@@ -266,7 +270,23 @@
     },
     "exampleWeather": "How's the weather?",
     "exampleLight": "Turn on the living room light",
-    "exampleMusic": "Play some jazz music"
+    "exampleMusic": "Play some jazz music",
+    "search": {
+      "placeholderGlobal": "Search messages…",
+      "placeholderInConversation": "Search this conversation…",
+      "clear": "Clear search",
+      "searching": "Searching…",
+      "resultsLabel": "Search results",
+      "roleUser": "You",
+      "roleAssistant": "Renfield",
+      "moreResults": "More matches available – refine your search",
+      "emptyTitle": "No messages found for “{{query}}”",
+      "emptyHintGlobal": "Try different terms or check the spelling.",
+      "emptyHintInConversation": "There's no matching message in this conversation.",
+      "noPermissionTitle": "Search unavailable",
+      "noPermissionHint": "Please sign in to search your messages.",
+      "error": "Search failed. Please try again."
+    }
   },
   "voice": {
     "startRecording": "Start voice recording",

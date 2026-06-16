@@ -425,6 +425,60 @@ async def search_conversations(
         logger.error(f"❌ Fehler bei der Suche: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
+@router.get("/messages/search")
+async def search_messages(
+    q: str,
+    session_id: str | None = None,
+    limit: int = 20,
+    offset: int = 0,
+    db: AsyncSession = Depends(get_db),
+    current_user: User | None = Depends(get_current_user),
+):
+    """Full-text search over chat messages (roadmap item 3).
+
+    In-conversation when ``session_id`` is given, global (cross-conversation)
+    otherwise. Ranked by Postgres FTS (``ts_rank``), paginated, and scoped by
+    **conversation ownership** — a user only ever matches messages in their
+    own conversations (``Conversation.user_id``). Messages are NOT atoms, so
+    this deliberately does NOT route through ``circle_sql``; ownership is the
+    correct and only access rule here.
+
+    In single-user mode (AUTH_ENABLED=false → ``current_user is None``) all
+    conversations are in scope, mirroring the other chat endpoints.
+
+    Returns ``{query, results, count, has_more}``. Each result carries the
+    owning ``session_id``, a 0-based ``message_index`` (position in the
+    conversation's ``timestamp ASC`` history — what the client jumps to), the
+    matched ``role`` / ``content``, a ``<mark>``-highlighted ``snippet``, the
+    ``timestamp`` and the FTS ``rank``.
+    """
+    if not q or len(q.strip()) < 2:
+        raise HTTPException(
+            status_code=400,
+            detail="Suchanfrage muss mindestens 2 Zeichen lang sein",
+        )
+
+    # Cap pagination to keep a single response bounded.
+    limit = max(1, min(limit, 50))
+    offset = max(0, offset)
+
+    try:
+        from services.conversation_service import ConversationService
+
+        service = ConversationService(db)
+        payload = await service.search_messages(
+            q.strip(),
+            user_id=current_user.id if current_user is not None else None,
+            session_id=session_id,
+            limit=limit,
+            offset=offset,
+        )
+        return {"query": q, **payload}
+    except Exception as e:
+        logger.error(f"❌ Fehler bei der Message-Suche: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @router.get("/stats")
 async def get_conversation_stats(
     db: AsyncSession = Depends(get_db),
