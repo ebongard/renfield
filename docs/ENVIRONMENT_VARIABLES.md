@@ -313,6 +313,31 @@ geöffnete) Aktions-/Navigations-Palette ein. Tool-Aktionen werden ins Eingabefe
 echte Rechte-Prüfung bleibt serverseitig. Der „Rolle setzen"-Hint ist eine weiche
 Routing-Präferenz für den nächsten Turn (keine Rechte-Eskalation).
 
+### Chat-Artefakte (Artifacts — Lane A)
+
+```bash
+ARTIFACTS_TYPED_ENABLED=false        # Lane A: typed table/list/keyvalue/chart inline
+ARTIFACTS_HTML_SANDBOX_ENABLED=false # Lane B: free-form HTML/SVG — NICHT verdrahtet, NICHT aktivieren
+```
+
+**Default:** beide `false` (Opt-in/dark). `ARTIFACTS_TYPED_ENABLED` schaltet die
+**Lane-A**-Artefakte frei: generierte Tabellen/Listen/Key-Value/Charts werden inline
+im Chat-Turn als **typisierte JSON-Daten → echte React-Komponenten** gerendert (kein
+Modell-HTML, kein Modell-SVG — React's Escape-Boundary ist die gesamte
+Sicherheitsstory; siehe `docs/design/chat-artifacts-sandbox.md`). Gated sind **beide**
+Seiten: der Backend-`artifact`-WS-Frame-Emit (nur aus dem Hook-/Sub-Intent-/
+Orchestrierungs-Pfad, nie aus Agent-Freitext) **und** der Frontend-Renderer
+(`/api/config/features`). Ungültige/zu große Payloads fallen auf einen escapten
+Code-Block zurück (fail-closed). Umschalten braucht **kein** Backend-Redeploy.
+
+`ARTIFACTS_HTML_SANDBOX_ENABLED` ist ein **Platzhalter** für die zurückgestellte
+**Lane B** (free-form HTML/SVG in einer sandboxed iframe) — in dieser Auslieferung an
+nichts verdrahtet, erfordert ein eigenes Security-Review vor dem Bau. **Nicht
+aktivieren.**
+
+**Voraussetzung (Lane A):** Die baseline-CSP in `nginx.conf` ist enforcing (Frontend
+≥ v2.15.16) — gute Hygiene für Lane A, Pflicht für ein späteres Lane B.
+
 ---
 
 ### Proaktive Benachrichtigungen
