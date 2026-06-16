@@ -395,6 +395,18 @@ until the SW re-fetches and detects a new build. The propagation rule lives in
   (`X-Frame-Options`/`X-Content-Type-Options`/`X-XSS-Protection`) for that
   response — re-declare them in every such location. Always `nginx -t` the config
   (run it in a `nginx:1.28-alpine` container) before building the image.
+- **Baseline CSP ships Report-Only first (`Content-Security-Policy-Report-Only`).**
+  The policy lives in the same `nginx.conf` (`map $host $csp`, re-declared per
+  `location` — same inheritance trap above). It is intentionally Report-Only so a
+  wrong directive **reports** to the browser console instead of breaking the PWA.
+  **Do NOT flip the header name to enforcing `Content-Security-Policy` blind** —
+  gate the flip on a clean browser-verification pass with DevTools console open:
+  exercise wakeword (the `'wasm-unsafe-eval'` onnxruntime path), voice, chat-WS,
+  TTS, and an SW update, and confirm **zero CSP violation reports**. The two
+  fragile directives to watch: the inline theme-script `sha256` hash (Vite's
+  html-minify can alter the bytes at build → recompute from the built
+  `dist/index.html` or fall back to `'unsafe-inline'` on `script-src`) and
+  `'wasm-unsafe-eval'` (absent → wakeword WASM compile is reported/blocked).
 
 Verify the live headers from inside the cluster (renfield.local mDNS is flaky
 from the laptop):
