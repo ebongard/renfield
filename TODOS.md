@@ -49,10 +49,14 @@ gen-UI-widgets(10).
 - ✅ **(3) Message search** — #793, `MESSAGE_SEARCH_ENABLED` (ON in prod). Postgres FTS over `messages.search_vector` (migration `pc20260617`), conversation-ownership-scoped (NOT circle_sql), jump-to-message, XSS-safe `<mark>`.
 - ✅ **(5) Artifacts — Lane A** — `ARTIFACTS_TYPED_ENABLED` (ON in prod), design `docs/design/chat-artifacts-sandbox.md` (eng+design review 9/10, #796/#797/#798). Chain: **baseline CSP** Report-Only #799 → enforcing #800 (prereq); **renderer + emit plumbing** #801 (typed table/list/keyvalue/chart → React, no model HTML; `artifact` WS frame; zod authoritative shape; fail-closed escaped-code fallback; `message_metadata.artifacts[]`); **first producer** smart-home status→table #802 (`smart_home/status` sub-intent — ConfigMap `agent_roles.yaml` patched in prod). Browser-verified live. Regression fixes alongside: blob-worklet CSP (#803) + PWA-propagation build-stamp (#804). **Lane B (free-form HTML/SVG sandboxed iframe) deliberately DEFERRED (YAGNI + own security review; `ARTIFACTS_HTML_SANDBOX_ENABLED` placeholder, unwired).**
 
+**ALSO SHIPPED (2026-06-17):**
+- ✅ **More artifact producers** — #813 (backend v2.17.29): 3 more smart-home producers exercise every Lane-A kind — `smart_home/sensors`→`keyvalue`, `smart_home/active_devices`→`list`, `smart_home/devices_per_room`→`chart` (all `dispatch_sub_intent`, real `get_entity_map()` data). Live-verified: the `chart` renders a real SVG bar chart in prod. ConfigMap `smart_home.sub_intents` patched.
+- ✅ **(8) Room-handoff affordance** — #814 (backend v2.17.29 / frontend v2.15.20), `ROOM_HANDOFF_ENABLED` (dark): inline "🔊 Wiedergabe folgt nach {room}" when Media-Follow moves playback (`media_handoff` frame, room-scoped, transient). The conversation-follows-presence (`continued`) case is a reserved frame-kind, backend trigger TBD.
+
 **NOT BUILT (remaining):**
 - ⬜ **(1) Message branching / edit-and-fork** (T1) — the only T1 item left; the heaviest (conversation-tree data model + UI). Not started.
-- ⬜ **(8) room-handoff, (9) shared-private, (10) generative-UI widgets** (T3) — unbuilt. (10) is gated on Lane B / option-(c) separate-origin per the artifacts design.
-- ⬜ **More artifact producers** — only smart-home-status emits an artifact so far; weekly-plan / shopping-list / a `chart` producer would exercise the other kinds. Backend persist is last-frame-wins per `id` (correct for whole-artifact producers; a future *streaming* producer needs server-side append).
+- ⬜ **(9) shared-private** (presupposes household-shared conversations, which don't exist), **(10) generative-UI widgets** (gated on Lane B / option-(c) separate-origin). Both T3.
+- Backend artifact persist is last-frame-wins per `id` (correct for whole-artifact producers; a future *streaming* producer needs server-side append).
 
 **PREMISE CAVEAT (still open, now scoped to the remainder):** the original gate — instrument web-`/chat` share vs voice/satellite turns + an a11y/mobile baseline *before* investing — was **never formally validated**; the user directed building the first slice + most of T2 directly, and they're live. The caveat now applies to deciding whether **(1) branching** and **T3** are worth the cost: Renfield is voice-first, so confirm the web chat is a high-value surface before taking on the branching data-model rebuild. **DEPENDS ON:** nothing.
 
