@@ -338,6 +338,23 @@ aktivieren.**
 **Voraussetzung (Lane A):** Die baseline-CSP in `nginx.conf` ist enforcing (Frontend
 ≥ v2.15.16) — gute Hygiene für Lane A, Pflicht für ein späteres Lane B.
 
+### Raum-Handoff-Hinweis (Chat-UI Item 8)
+
+```bash
+ROOM_HANDOFF_ENABLED=false
+```
+
+**Default:** `false` (Opt-in/dark). Schaltet die inline Chat-Anzeige frei, wenn die
+**Medienwiedergabe dem Nutzer in einen anderen Raum folgt** (Media-Follow): eine
+dezente Meta-Zeile "🔊 Wiedergabe folgt nach {Raum}" im Chat-Thread. Gated sind
+**beide** Seiten — der Backend-`media_handoff`-Frame (`media_follow_service`, emittiert
+NUR bei erfolgreichem Resume, **raum-scoped** an die Zielraum-Geräte = dieselbe
+Privacy-Reichweite wie der bestehende Info-Toast) **und** der Frontend-Renderer
+(`MediaHandoffIndicator`, `/api/config/features`). Transient (12 s TTL, max 3, nie in
+der Historie). Umschalten braucht **kein** Backend-Redeploy. (Der „conversation
+continued in {Raum}"-Fall ist als Frame-Kind `continued` reserviert, aber noch nicht
+backend-verdrahtet — Follow-up.)
+
 ---
 
 ### Proaktive Benachrichtigungen
