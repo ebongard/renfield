@@ -46,6 +46,11 @@ class FeatureFlags(BaseModel):
     # Off => the ArtifactRenderer is inert (artifacts fall back to escaped text).
     # See utils/config.py::artifacts_typed_enabled + docs/design/chat-artifacts-sandbox.md.
     artifacts_typed_enabled: bool
+    # Gates the chat room-handoff affordance (item 8): the quiet inline meta line
+    # shown when Media Follow moves the user's playback to a new room. Off => the
+    # `media_handoff` device-WS frame is never emitted and the indicator never
+    # renders. See utils/config.py::room_handoff_enabled.
+    room_handoff_enabled: bool
 
 
 @router.get("/features", response_model=FeatureFlags)
@@ -60,4 +65,5 @@ async def get_features(
         role_surfacing_enabled=settings.role_surfacing_enabled,
         message_search_enabled=settings.message_search_enabled,
         artifacts_typed_enabled=settings.artifacts_typed_enabled,
+        room_handoff_enabled=settings.room_handoff_enabled,
     )

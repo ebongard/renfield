@@ -128,6 +128,13 @@
     "assistantResponse": "Antwort von {{appName}}",
     "readAloud": "Vorlesen",
     "albumArt": "Albumcover",
+    "mediaHandoff": {
+      "followed": "Wiedergabe folgt nach {{room}}",
+      "followedUnknownRoom": "Wiedergabe folgt dir",
+      "continued": "Fortgesetzt in {{room}}",
+      "continuedUnknownRoom": "Wiedergabe fortgesetzt",
+      "ariaLabel": "Hinweis: Medienwiedergabe ist dir in einen anderen Raum gefolgt"
+    },
     "sources": {
       "label": "Quellen",
       "more": "+{{count}} weitere"

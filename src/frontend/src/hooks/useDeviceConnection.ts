@@ -385,6 +385,18 @@ export function useDeviceConnection({
             }));
             break;
 
+          case 'media_handoff':
+            // Media Follow moved the user's playback to the room they just
+            // entered (chat-ui item 8). Re-dispatch as a window CustomEvent so
+            // the chat thread can render a transient inline meta line, mirroring
+            // the 'notification' fan-out above. Decoupled from this hook so the
+            // chat page need not own a device connection.
+            debug.log('🔊 Media handoff received:', data.room);
+            window.dispatchEvent(new CustomEvent('renfield-media-handoff', {
+              detail: data
+            }));
+            break;
+
           case 'error':
             setError(new Error(data.message));
             onError(data as ErrorMessage);

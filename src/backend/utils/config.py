@@ -388,6 +388,15 @@ class Settings(BaseSettings):
     # renderer (exposed via /api/config/features). Ships dark; flip without a
     # rebuild. See docs/design/chat-artifacts-sandbox.md §8.
     artifacts_typed_enabled: bool = False
+    # Chat room-handoff affordance (item 8): a quiet inline meta line in the chat
+    # thread when Media Follow moves the user's OWN playback to the room they just
+    # entered ("🔊 Wiedergabe folgt nach {room}"). Gates BOTH the backend
+    # `media_handoff` device-WS frame emit and the frontend indicator (exposed via
+    # /api/config/features). Reuses the existing presence/Media-Follow data — no
+    # new presence mechanism. Surfaces only the acting user's own location, routed
+    # to the same room audience as the existing follow info push (no privacy
+    # widening). Ships dark; flip without a rebuild.
+    room_handoff_enabled: bool = False
     # Chat artifacts Lane B (free-form HTML/SVG in a sandboxed iframe). DEFERRED —
     # NOT wired to anything in this delivery. Placeholder so the per-lane flag
     # split (§8 Q5) exists; defaults off and requires its own security review

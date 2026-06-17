@@ -209,6 +209,25 @@ export interface NotificationMessage extends BaseWebSocketMessage {
   created_at: string;
 }
 
+// Server-pushed room-handoff event (chat-ui item 8). Emitted by Media Follow
+// when it moves the user's OWN playback to the room they just entered. Shape
+// mirrors the `media_handoff` frame built in
+// `src/backend/ha_glue/services/media_follow_service.py::_notify_user`.
+// Broadcast to the destination room only (the user's own location). Transient:
+// the chat thread renders it as a quiet, auto-fading inline meta line — never
+// persisted to conversation history.
+export interface MediaHandoffMessage extends BaseWebSocketMessage {
+  type: 'media_handoff';
+  // 'media_followed' = playback moved here on a room change. 'continued' is a
+  // reserved future kind (conversation-follows-presence); the renderer falls
+  // back to the generic label for any unknown kind.
+  kind: 'media_followed' | 'continued';
+  // The room the user just entered (their own location). May be empty/missing
+  // if the room name is unknown — the renderer then drops the room suffix.
+  room: string | null;
+  title: string;
+}
+
 export type WebSocketMessage =
   | RegisterMessage
   | RegisterAckMessage
@@ -223,4 +242,5 @@ export type WebSocketMessage =
   | HeartbeatMessage
   | HeartbeatAckMessage
   | ConfigUpdateMessage
-  | NotificationMessage;
+  | NotificationMessage
+  | MediaHandoffMessage;

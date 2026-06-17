@@ -432,19 +432,39 @@ class MediaFollowService:
     async def _notify_user(
         self, user_id: int, room_name: str, media_title: str
     ) -> None:
-        """Send an info notification to the user via Device WebSocket."""
+        """Notify the user that their playback has followed them via Device WS.
+
+        Two frames, both broadcast to the room the user just ENTERED (i.e. their
+        own current location — no other user's location is exposed, and the
+        audience is exactly the destination room, the same audience the legacy
+        ``info`` toast already reached):
+
+        * ``info`` — the existing transient toast (unconditional, back-compat).
+        * ``media_handoff`` — the typed frame backing the chat room-handoff
+          affordance (item 8). Emitted ONLY when ``ROOM_HANDOFF_ENABLED`` so the
+          feature ships dark. The chat thread renders it as a quiet inline meta
+          line ("🔊 Wiedergabe folgt nach {room}"). Transient — never persisted.
+        """
         try:
             from ha_glue.services.device_manager import get_device_manager
 
             dm = get_device_manager()
-            message = {
+            # Existing transient toast (unchanged).
+            await dm.broadcast_to_room(room_name, {
                 "type": "info",
                 "message": (
                     f"Musik folgt dir: '{media_title}' spielt jetzt im {room_name}"
                 ),
-            }
-            # Broadcast to the room the user just entered
-            await dm.broadcast_to_room(room_name, message)
+            })
+
+            # Typed room-handoff frame for the chat affordance (flag-gated, dark).
+            if settings.room_handoff_enabled:
+                await dm.broadcast_to_room(room_name, {
+                    "type": "media_handoff",
+                    "kind": "media_followed",   # vs a future "continued"
+                    "room": room_name,          # the room the user just entered
+                    "title": media_title,
+                })
         except Exception:
             # Non-critical — don't let notification failure break the flow
             logger.debug(f"🎵 Could not notify user {user_id} about media follow")

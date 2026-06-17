@@ -9,6 +9,7 @@ import EmailForwardDialog from './EmailForwardDialog';
 import PaperlessConfirmCard from './PaperlessConfirmCard';
 import SourceChips from '../../components/chat/SourceChips';
 import FollowupChips from '../../components/chat/FollowupChips';
+import MediaHandoffIndicator from '../../components/chat/MediaHandoffIndicator';
 import AgentRoleBadge from '../../components/chat/AgentRoleBadge';
 import ArtifactRenderer from '../../components/chat/artifacts/ArtifactRenderer';
 import { useFeatureFlags } from '../../api/resources/brain';
@@ -479,6 +480,12 @@ export default function ChatMessages() {
           </div>
         </div>
       ))}
+
+      {/* Room-handoff affordance (item 8): a quiet, transient inline meta line
+          when Media Follow moves the user's playback to the room they entered.
+          Self-gated on the room_handoff_enabled feature flag; renders nothing
+          when off or idle. Sits in the thread flow, not as a floating overlay. */}
+      <MediaHandoffIndicator />
 
       {/* Loading Indicator */}
       {loading && (

@@ -128,6 +128,13 @@
     "assistantResponse": "Response from {{appName}}",
     "readAloud": "Read aloud",
     "albumArt": "Album art",
+    "mediaHandoff": {
+      "followed": "Playback following you to {{room}}",
+      "followedUnknownRoom": "Playback is following you",
+      "continued": "Continued in {{room}}",
+      "continuedUnknownRoom": "Playback continued",
+      "ariaLabel": "Notice: media playback followed you to another room"
+    },
     "sources": {
       "label": "Sources",
       "more": "+{{count}} more"

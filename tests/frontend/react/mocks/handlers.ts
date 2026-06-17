@@ -360,6 +360,7 @@ export const handlers: HttpHandler[] = [
       role_surfacing_enabled: false,
       message_search_enabled: false,
       artifacts_typed_enabled: false,
+      room_handoff_enabled: false,
     });
   }),
   // MCP API
