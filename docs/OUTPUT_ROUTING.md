@@ -61,13 +61,18 @@ ADVERTISE_PORT=80
 
 ### Prioritätsreihenfolge
 
-Geräte werden in der konfigurierten Reihenfolge geprüft. Verwende die Pfeil-Buttons um die Priorität zu ändern. Das erste verfügbare Gerät wird verwendet.
+Geräte werden in der konfigurierten Reihenfolge geprüft. Verwende die Pfeil-Buttons um die Priorität zu ändern — **Position 1 = primäres Gerät**. Das erste verfügbare Gerät wird verwendet.
+
+**Qualitäts-Tiebreak:** Haben mehrere Geräte dieselbe Priorität (z. B. keines wurde geordnet — alle auf dem Default-Wert), entscheidet die **Audio-Qualität der Geräteklasse**: externer AV-Renderer (DLNA / Samsung / Sonos) > HA-`media_player` (Smart Speaker) > Renfield-Tablet/Satellit (interner Lautsprecher). So landet die Antwort in einem ungeordneten Raum automatisch auf dem hochwertigsten Gerät (z. B. der HiFiBerry statt dem Tablet). Die manuell gesetzte Priorität gewinnt immer zuerst; Qualität bricht nur Gleichstände (danach `id` für Determinismus).
 
 ## Routing-Algorithmus
 
 ```
-1. Hole alle konfigurierten Output-Geräte für Raum, sortiert nach Priorität
-2. Für jedes Gerät (in Prioritätsreihenfolge):
+1. Hole alle konfigurierten Output-Geräte für Raum, sortiert nach
+   (Priorität ASC, Audio-Qualität DESC, id ASC)
+   — Priorität = manuelle Primär-Reihenfolge; Qualität bricht Gleichstände
+     (externer Renderer > HA-Speaker > Renfield-Tablet)
+2. Für jedes Gerät (in dieser Reihenfolge):
    a. Prüfe Verfügbarkeit via HA API / DeviceManager
    b. Wenn verfügbar (idle/paused) → verwenden
    c. Wenn beschäftigt UND allow_interruption=True → verwenden
@@ -77,6 +82,8 @@ Geräte werden in der konfigurierten Reihenfolge geprüft. Verwende die Pfeil-Bu
    → Fallback auf Eingabegerät (wenn es Speaker hat)
 4. Wenn nichts verfügbar → Keine Audio-Ausgabe
 ```
+
+**Stationär vs. mobil:** Der Raumkontext wird per **IP des registrierten Raumgeräts** aufgelöst (`resolve_room_context_by_ip`). Ein nicht registriertes, mobiles Gerät (Handy/Laptop) trifft keinen Raum → kein Routing → die Antwort spielt im **Browser**. „Stationär" ≡ „als Raumgerät registriert". Chat-TTS wird serverseitig an `homeassistant`- **und** `dlna`-Ziele zugestellt (der Renderer bekommt die volle Antwort als einen Clip); `renfield`-Ziele = das Eingabegerät selbst → der Browser spielt.
 
 ### Verfügbarkeitsstatus
 

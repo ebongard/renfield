@@ -140,6 +140,30 @@ class OutputDecision:
     reason: str
 
 
+# Audio-quality rank by device class, used ONLY as a tiebreak between devices of
+# equal `priority` (the user-set primary ordering always wins first). Higher =
+# better. External AV renderers (DLNA / Samsung / Sonos / any generic provider)
+# are dedicated audio/AV hardware → highest; an HA media_player (smart speaker)
+# is mid; a Renfield tablet/satellite built-in speaker is lowest. So when a room
+# has several audio devices and the user hasn't ordered them (all default
+# priority), the answer goes to the best-quality device automatically.
+# (Within the same rank, `priority` then `id` keep it deterministic.)
+_AUDIO_QUALITY_RANK: dict[str, int] = {
+    "renfield": 1,
+    "homeassistant": 2,
+    "dlna": 3,
+    "samsung": 3,
+    "sonos": 3,
+}
+# Unknown / future providers are assumed to be dedicated external renderers
+# (the only known lower-quality classes are renfield + homeassistant).
+_DEFAULT_QUALITY_RANK = 3
+
+
+def _audio_quality_rank(device: RoomOutputDevice) -> int:
+    return _AUDIO_QUALITY_RANK.get(device.target_type, _DEFAULT_QUALITY_RANK)
+
+
 class OutputRoutingService:
     """
     Service for routing TTS/visual output to the best available device.
@@ -270,15 +294,22 @@ class OutputRoutingService:
         room_id: int,
         output_type: str
     ) -> list[RoomOutputDevice]:
-        """Get all configured output devices for a room, sorted by priority."""
+        """Configured output devices for a room, ordered by selection precedence.
+
+        Precedence: `priority` ASC (the user-set primary ordering — position #1
+        wins) THEN audio quality DESC as the tiebreak when devices share a
+        priority (e.g. all at the default), THEN `id` ASC for determinism. So a
+        room with an unordered HiFiBerry + a tablet auto-prefers the HiFiBerry.
+        """
         stmt = (
             select(RoomOutputDevice)
             .where(RoomOutputDevice.room_id == room_id)
             .where(RoomOutputDevice.output_type == output_type)
-            .order_by(RoomOutputDevice.priority)
         )
         result = await self.db.execute(stmt)
-        return list(result.scalars().all())
+        devices = list(result.scalars().all())
+        devices.sort(key=lambda d: (d.priority, -_audio_quality_rank(d), d.id))
+        return devices
 
     async def _check_device_availability(
         self,
