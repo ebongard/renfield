@@ -139,8 +139,9 @@ class OutputDeviceCreate(BaseModel):
 
     Identify the target EITHER by the generic ``(output_provider,
     output_target_id)`` pair (any provider, incl. samsung) OR by exactly one
-    legacy id column (the pair is dual-written from it). See
-    docs/design/output-providers.md.
+    legacy id field. The legacy fields are now pure INPUT ADAPTERS (the legacy
+    frontend picker still sends them) — the backend maps them onto the pair, the
+    sole persisted target identity. See docs/design/output-providers.md.
     """
     output_type: str = "audio"  # "audio" or "visual"
     renfield_device_id: str | None = None
@@ -164,7 +165,12 @@ class OutputDeviceUpdate(BaseModel):
 
 
 class OutputDeviceResponse(BaseModel):
-    """Response model for output device"""
+    """Response model for output device.
+
+    The three legacy brand fields are COMPUTED from the
+    ``(output_provider, output_target_id)`` pair (no longer columns), kept for
+    backward-compatible API shape. See docs/design/output-providers.md.
+    """
     id: int
     room_id: int
     output_type: str

@@ -149,9 +149,8 @@ GET /api/voice/tts-cache/{audio_id}
 CREATE TABLE room_output_devices (
     id SERIAL PRIMARY KEY,
     room_id INTEGER NOT NULL REFERENCES rooms(id),
-    renfield_device_id VARCHAR(100) REFERENCES room_devices(device_id),
-    ha_entity_id VARCHAR(255),
-    dlna_renderer_name VARCHAR(255),
+    output_provider VARCHAR(50),    -- "renfield" | "homeassistant" | "dlna" | "samsung" | "sonos" | …
+    output_target_id VARCHAR(255),  -- provider-scoped id (device_id / HA entity / renderer name / TV host …)
     output_type VARCHAR(20) NOT NULL DEFAULT 'audio',
     priority INTEGER NOT NULL DEFAULT 1,
     allow_interruption BOOLEAN DEFAULT FALSE,
@@ -163,15 +162,25 @@ CREATE TABLE room_output_devices (
 );
 ```
 
-**Hinweis:** Genau eines von `renfield_device_id`, `ha_entity_id` oder `dlna_renderer_name` muss gesetzt sein.
+**Hinweis:** Die Ausgabeziel-Identität ist das generische Paar
+`(output_provider, output_target_id)` — `output_provider` IST der `target_type`-
+Wertebereich. Die drei früheren markenspezifischen Spalten (`renfield_device_id`
+/ `ha_entity_id` / `dlna_renderer_name`) wurden nach der Prod-Soak in Migration
+`pc20260617b_drop_outlegacy` entfernt (siehe `docs/design/output-providers.md`).
+Die REST-API akzeptiert die alten Feldnamen weiterhin als reine
+Eingabe-Adapter und gibt sie aus dem Paar berechnet zurück
+(Abwärtskompatibilität).
 
 ### Gerätetypen
 
-| Typ | Identifikator | Discovery | Verfügbarkeitsprüfung |
+`output_provider` benennt den Typ, `output_target_id` den providerspezifischen Identifikator.
+
+| Typ | `output_provider` | Discovery | Verfügbarkeitsprüfung |
 |-----|---------------|-----------|----------------------|
-| Renfield | `renfield_device_id` | DeviceManager (WebSocket) | Echtzeit (online/offline) |
-| Home Assistant | `ha_entity_id` | HA API (`media_player.*`) | HA State API (idle/playing/off) |
-| DLNA | `dlna_renderer_name` | SSDP-Multicast via MCP | Immer `AVAILABLE` (kein Probing) |
+| Renfield | `renfield` | DeviceManager (WebSocket) | Echtzeit (online/offline) |
+| Home Assistant | `homeassistant` | HA API (`media_player.*`) | HA State API (idle/playing/off) |
+| DLNA | `dlna` | SSDP-Multicast via MCP | Immer `AVAILABLE` (kein Probing) |
+| Generisch (samsung/sonos/…) | Provider-Key aus `mcp_servers.yaml` | Provider-`discover()` | Provider-`status()` |
 
 ## DLNA Renderer
 

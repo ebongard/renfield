@@ -334,7 +334,8 @@ class TestOutputDeviceEndpoints:
         # Create output device
         output = RoomOutputDevice(
             room_id=test_room.id,
-            ha_entity_id="media_player.test",
+            output_provider="homeassistant",
+            output_target_id="media_player.test",
             priority=1
         )
         db_session.add(output)
@@ -364,7 +365,8 @@ class TestOutputDeviceEndpoints:
         # Create output device
         output = RoomOutputDevice(
             room_id=test_room.id,
-            ha_entity_id="media_player.to_delete",
+            output_provider="homeassistant",
+            output_target_id="media_player.to_delete",
             priority=1
         )
         db_session.add(output)
@@ -383,12 +385,14 @@ class TestOutputDeviceEndpoints:
         # Create multiple output devices
         output1 = RoomOutputDevice(
             room_id=test_room.id,
-            ha_entity_id="media_player.first",
+            output_provider="homeassistant",
+            output_target_id="media_player.first",
             priority=1
         )
         output2 = RoomOutputDevice(
             room_id=test_room.id,
-            ha_entity_id="media_player.second",
+            output_provider="homeassistant",
+            output_target_id="media_player.second",
             priority=2
         )
         db_session.add_all([output1, output2])

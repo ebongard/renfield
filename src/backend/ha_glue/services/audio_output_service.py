@@ -63,23 +63,26 @@ class AudioOutputService:
         Returns:
             True if audio was sent successfully
         """
+        # Target identity is the generic (output_provider, output_target_id) pair;
+        # target_id returns output_target_id (the device_id / renderer name /
+        # HA entity id, depending on the provider).
         if output_device.is_renfield_device:
             return await self._play_on_renfield_device(
                 audio_bytes=audio_bytes,
-                device_id=output_device.renfield_device_id,
+                device_id=output_device.target_id,
                 session_id=session_id
             )
         elif output_device.is_dlna_device:
             return await self._play_on_dlna_renderer(
                 audio_bytes=audio_bytes,
-                renderer_name=output_device.dlna_renderer_name,
+                renderer_name=output_device.target_id,
                 tts_volume=output_device.tts_volume,
                 session_id=session_id
             )
         else:
             return await self._play_on_ha_media_player(
                 audio_bytes=audio_bytes,
-                entity_id=output_device.ha_entity_id,
+                entity_id=output_device.target_id,
                 tts_volume=output_device.tts_volume,
                 session_id=session_id
             )

@@ -84,11 +84,12 @@ class TestResolveRoomPlayer:
         mock_room.name = "Arbeitszimmer"
 
         mock_output_device = MagicMock()
-        mock_output_device.ha_entity_id = "media_player.arbeitszimmer_speaker"
         mock_output_device.device_name = "Arbeitszimmer Speaker"
 
         mock_decision = MagicMock()
         mock_decision.output_device = mock_output_device
+        mock_decision.target_type = "homeassistant"
+        mock_decision.target_id = "media_player.arbeitszimmer_speaker"
         mock_decision.reason = "device_available"
 
         mock_room_service = MagicMock()
@@ -114,11 +115,12 @@ class TestResolveRoomPlayer:
         mock_room.name = "Wohnzimmer"
 
         mock_output_device = MagicMock()
-        mock_output_device.ha_entity_id = "media_player.wohnzimmer"
         mock_output_device.device_name = "Wohnzimmer Speaker"
 
         mock_decision = MagicMock()
         mock_decision.output_device = mock_output_device
+        mock_decision.target_type = "homeassistant"
+        mock_decision.target_id = "media_player.wohnzimmer"
         mock_decision.reason = "device_available"
 
         mock_room_service = MagicMock()
@@ -178,11 +180,13 @@ class TestResolveRoomPlayer:
         mock_room.name = "Küche"
 
         mock_output_device = MagicMock()
-        mock_output_device.ha_entity_id = None
         mock_output_device.device_name = "Satellite Küche"
 
         mock_decision = MagicMock()
         mock_decision.output_device = mock_output_device
+        # HA-typed decision with no resolvable entity id → "no HA media player".
+        mock_decision.target_type = "homeassistant"
+        mock_decision.target_id = None
         mock_decision.reason = "device_available"
 
         mock_room_service = MagicMock()
@@ -270,13 +274,12 @@ class TestResolveRoomPlayer:
         mock_room.name = "Garten"
 
         mock_output_device = MagicMock()
-        mock_output_device.ha_entity_id = None
-        mock_output_device.dlna_renderer_name = "HiFiBerry Garten"
         mock_output_device.device_name = "HiFiBerry Garten"
 
         mock_decision = MagicMock()
         mock_decision.output_device = mock_output_device
         mock_decision.target_type = "dlna"
+        mock_decision.target_id = "HiFiBerry Garten"  # DLNA target_id == renderer name
         mock_decision.reason = "device_available"
 
         mock_room_service = MagicMock()
@@ -2867,13 +2870,13 @@ class TestResolveRoomVisualPlayer:
         mock_room_service.get_room_by_alias = AsyncMock(return_value=None)
 
         mock_output_device = MagicMock()
-        mock_output_device.dlna_renderer_name = "Samsung TV"
         mock_output_device.device_name = "Samsung TV"
 
         mock_decision = MagicMock()
         mock_decision.reason = "ok"
         mock_decision.output_device = mock_output_device
         mock_decision.target_type = "dlna"
+        mock_decision.target_id = "Samsung TV"  # DLNA target_id == renderer name
 
         mock_routing_service = MagicMock()
         mock_routing_service.get_visual_output_for_room = AsyncMock(return_value=mock_decision)

@@ -255,15 +255,16 @@ class InternalToolService:
                         "status": "busy",
                     }
                     if busy_device:
-                        # Branch on dual-read target_type so generic-provider rows
-                        # (samsung/sonos) report their real type + id, not a null HA
-                        # entity. Legacy renfield/HA/dlna rows resolve identically.
+                        # Branch on target_type so each provider reports its real
+                        # type + id. Target identity is the (output_provider,
+                        # output_target_id) pair — target_id IS the renderer name
+                        # (dlna) / entity id (HA) / device id (renfield) etc.
                         tt = busy_device.target_type
                         data["target_type"] = tt
                         if tt == "dlna":
-                            data["dlna_renderer_name"] = busy_device.dlna_renderer_name
+                            data["dlna_renderer_name"] = busy_device.target_id
                         elif tt == "homeassistant":
-                            data["entity_id"] = busy_device.ha_entity_id
+                            data["entity_id"] = busy_device.target_id
                         else:
                             data["output_target_id"] = busy_device.target_id
                     else:
@@ -304,22 +305,23 @@ class InternalToolService:
                         },
                     }
 
-                # DLNA renderer — return target_type + renderer name
+                # DLNA renderer — return target_type + renderer name (target_id)
                 if decision.target_type == "dlna":
+                    renderer_name = decision.target_id
                     return {
                         "success": True,
-                        "message": f"Found DLNA renderer for {room.name}: {decision.output_device.dlna_renderer_name}",
+                        "message": f"Found DLNA renderer for {room.name}: {renderer_name}",
                         "action_taken": True,
                         "data": {
                             "target_type": "dlna",
-                            "dlna_renderer_name": decision.output_device.dlna_renderer_name,
+                            "dlna_renderer_name": renderer_name,
                             "room_name": room.name,
-                            "device_name": decision.output_device.device_name or decision.output_device.dlna_renderer_name,
+                            "device_name": decision.output_device.device_name or renderer_name,
                         },
                     }
 
-                # We need an HA entity for media playback
-                entity_id = decision.output_device.ha_entity_id
+                # We need an HA entity for media playback (target_id == entity id)
+                entity_id = decision.target_id
                 if not entity_id:
                     return {
                         "success": False,
@@ -1900,15 +1902,16 @@ class InternalToolService:
                     }
 
                 if decision.target_type == "dlna":
+                    renderer_name = decision.target_id  # DLNA target_id == renderer name
                     return {
                         "success": True,
-                        "message": f"Found visual DLNA renderer for {room.name}: {decision.output_device.dlna_renderer_name}",
+                        "message": f"Found visual DLNA renderer for {room.name}: {renderer_name}",
                         "action_taken": True,
                         "data": {
                             "target_type": "dlna",
-                            "dlna_renderer_name": decision.output_device.dlna_renderer_name,
+                            "dlna_renderer_name": renderer_name,
                             "room_name": room.name,
-                            "device_name": decision.output_device.device_name or decision.output_device.dlna_renderer_name,
+                            "device_name": decision.output_device.device_name or renderer_name,
                         },
                     }
 

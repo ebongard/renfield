@@ -37,19 +37,34 @@ def _make_output_device(
     renfield_device_id=None,
     ha_entity_id=None,
     dlna_renderer_name=None,
+    output_provider=None,
+    output_target_id=None,
     tts_volume=0.5,
 ):
-    """Create a mock RoomOutputDevice."""
+    """Create a mock RoomOutputDevice.
+
+    Target identity is the generic ``(output_provider, output_target_id)`` pair
+    (the legacy brand columns were dropped). The legacy kwargs remain as
+    convenience inputs, mapped onto the pair; ``play_audio`` reads ``target_id``.
+    """
+    if not output_provider:
+        if renfield_device_id:
+            output_provider, output_target_id = "renfield", renfield_device_id
+        elif ha_entity_id:
+            output_provider, output_target_id = "homeassistant", ha_entity_id
+        elif dlna_renderer_name:
+            output_provider, output_target_id = "dlna", dlna_renderer_name
     dev = MagicMock()
-    dev.renfield_device_id = renfield_device_id
-    dev.ha_entity_id = ha_entity_id
-    dev.dlna_renderer_name = dlna_renderer_name
+    dev.output_provider = output_provider
+    dev.output_target_id = output_target_id
+    dev.target_id = output_target_id or ""
     dev.tts_volume = tts_volume
     # play_audio dispatches on these three flags. They must be real bools —
     # a bare MagicMock attribute is truthy, which would route every device
     # down the renfield/DLNA branch regardless of intent.
-    dev.is_renfield_device = renfield_device_id is not None
-    dev.is_dlna_device = dlna_renderer_name is not None
+    dev.is_renfield_device = output_provider == "renfield"
+    dev.is_dlna_device = output_provider == "dlna"
+    dev.is_ha_device = output_provider == "homeassistant"
     return dev
 
 

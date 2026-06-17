@@ -292,8 +292,16 @@ class RoomOutputDevice(Base):
     Defines which devices should be used for TTS audio output in a room,
     with priority ordering and interruption settings.
 
-    Exactly one of renfield_device_id, ha_entity_id, or dlna_renderer_name
-    must be set.
+    The output target is the generic ``(output_provider, output_target_id)``
+    pair — ``output_provider`` IS the ``target_type`` value space
+    (``renfield`` | ``homeassistant`` | ``dlna`` | ``samsung`` | ``sonos`` | …)
+    and ``output_target_id`` is the provider-scoped id (device_id / HA entity id
+    / DLNA renderer name / TV host / …). See docs/design/output-providers.md.
+
+    The three legacy brand-identity columns (``renfield_device_id`` /
+    ``ha_entity_id`` / ``dlna_renderer_name``) were dropped in migration
+    ``pc20260617b_drop_outlegacy`` after the additive pair soaked in prod; all
+    reads now go through this pair.
     """
 
     __tablename__ = "room_output_devices"
@@ -301,16 +309,8 @@ class RoomOutputDevice(Base):
     id = Column(Integer, primary_key=True, index=True)
     room_id = Column(Integer, ForeignKey("rooms.id"), nullable=False, index=True)
 
-    renfield_device_id = Column(
-        String(100), ForeignKey("room_devices.device_id"), nullable=True
-    )
-    ha_entity_id = Column(String(255), nullable=True)
-    dlna_renderer_name = Column(String(255), nullable=True)
-
-    # Generic output-provider pair (docs/design/output-providers.md). Replaces the
-    # three brand columns above; both are populated during the dual-read soak
-    # (the legacy columns are dropped in a later PR). A provider with no legacy
-    # column (e.g. samsung) stores ONLY this pair.
+    # Generic output-provider pair (docs/design/output-providers.md). The sole
+    # target-identity columns since the legacy brand columns were dropped.
     output_provider = Column(String(50), nullable=True)
     output_target_id = Column(String(255), nullable=True)
 
@@ -330,45 +330,28 @@ class RoomOutputDevice(Base):
     updated_at = Column(DateTime, default=_utcnow, onupdate=_utcnow)
 
     room = relationship("Room", back_populates="output_devices")
-    renfield_device = relationship("RoomDevice", foreign_keys=[renfield_device_id])
 
     @property
     def is_renfield_device(self) -> bool:
-        return self.renfield_device_id is not None
+        return self.output_provider == "renfield"
 
     @property
     def is_ha_device(self) -> bool:
-        return self.ha_entity_id is not None
+        return self.output_provider == "homeassistant"
 
     @property
     def is_dlna_device(self) -> bool:
-        return self.dlna_renderer_name is not None
+        return self.output_provider == "dlna"
 
     @property
     def target_id(self) -> str:
-        # Dual-read: prefer the generic pair, fall back to the legacy columns so
-        # rows written either way (and un-backfilled rows) resolve identically.
-        return (
-            self.output_target_id
-            or self.renfield_device_id
-            or self.ha_entity_id
-            or self.dlna_renderer_name
-            or ""
-        )
+        return self.output_target_id or ""
 
     @property
     def target_type(self) -> str:
-        # Dual-read: prefer output_provider, fall back to inferring from the
-        # legacy columns. output_provider IS the target_type value space.
-        if self.output_provider:
-            return self.output_provider
-        if self.renfield_device_id:
-            return "renfield"
-        if self.ha_entity_id:
-            return "homeassistant"
-        if self.dlna_renderer_name:
-            return "dlna"
-        return "renfield"
+        # output_provider IS the target_type value space. Default to renfield
+        # for a malformed/empty row (mirrors the pre-cleanup behavior).
+        return self.output_provider or "renfield"
 
 
 # Legacy alias for backward compatibility (kept next to RoomDevice so the

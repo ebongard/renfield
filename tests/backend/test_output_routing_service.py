@@ -40,6 +40,8 @@ def _make_output_device(
     renfield_device_id=None,
     ha_entity_id=None,
     dlna_renderer_name=None,
+    output_provider=None,
+    output_target_id=None,
     priority=1,
     allow_interruption=False,
     is_enabled=True,
@@ -47,26 +49,35 @@ def _make_output_device(
     output_type="audio",
     tts_volume=0.5,
 ):
-    """Create a mock RoomOutputDevice."""
+    """Create a mock RoomOutputDevice.
+
+    Target identity is the generic ``(output_provider, output_target_id)`` pair
+    (the legacy brand columns were dropped). The legacy kwargs remain as
+    convenience inputs — they are mapped onto the pair so existing tests keep
+    reading naturally. The derived ``target_id`` / ``target_type`` / ``is_*``
+    mirror the real model properties.
+    """
+    if not output_provider:
+        if renfield_device_id:
+            output_provider, output_target_id = "renfield", renfield_device_id
+        elif ha_entity_id:
+            output_provider, output_target_id = "homeassistant", ha_entity_id
+        elif dlna_renderer_name:
+            output_provider, output_target_id = "dlna", dlna_renderer_name
     dev = MagicMock()
-    dev.renfield_device_id = renfield_device_id
-    dev.ha_entity_id = ha_entity_id
-    dev.dlna_renderer_name = dlna_renderer_name
+    dev.output_provider = output_provider
+    dev.output_target_id = output_target_id
     dev.priority = priority
     dev.allow_interruption = allow_interruption
     dev.is_enabled = is_enabled
     dev.device_name = device_name
     dev.output_type = output_type
     dev.tts_volume = tts_volume
-    dev.is_renfield_device = renfield_device_id is not None
-    dev.is_dlna_device = dlna_renderer_name is not None
-    dev.target_id = renfield_device_id or ha_entity_id or dlna_renderer_name or ""
-    dev.target_type = (
-        "renfield" if renfield_device_id
-        else "dlna" if dlna_renderer_name
-        else "homeassistant" if ha_entity_id
-        else "renfield"
-    )
+    dev.is_renfield_device = output_provider == "renfield"
+    dev.is_ha_device = output_provider == "homeassistant"
+    dev.is_dlna_device = output_provider == "dlna"
+    dev.target_id = output_target_id or ""
+    dev.target_type = output_provider or "renfield"
     return dev
 
 
@@ -207,7 +218,7 @@ class TestOutputRoutingDecisions:
         service._get_output_devices = AsyncMock(return_value=[dev1, dev2])
 
         async def availability_side_effect(device):
-            if device.ha_entity_id == "media_player.priority1":
+            if device.target_id == "media_player.priority1":
                 return DeviceAvailability.OFF
             return DeviceAvailability.AVAILABLE
 

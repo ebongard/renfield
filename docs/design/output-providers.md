@@ -215,12 +215,28 @@ clear here; any new strings go in both `de.json` + `en.json` as usual.)
    `internal.play_*_on_dlna` as thin shims delegating to it.
 4. **Frontend** — switch `RoomOutputSettings` to the aggregated list.
 
-**Follow-up PR (after soak):**
+**Follow-up PR (after soak) — SHIPPED (migration `pc20260617b_drop_outlegacy`):**
 
-5. **Destructive cleanup** — drop the three columns + the brand-specific internal
-   tools + the per-source discovery methods once dual-read has soaked in prod.
-   Separate PR so the irreversible `DROP COLUMN` is never bundled with the
-   feature and can be reverted independently.
+5. **Destructive cleanup** — drop the three legacy columns (+ the
+   `renfield_device_id` FK + the `renfield_device` relationship) once dual-read
+   soaked in prod (verified: 6/6 rows dual-written, 0 legacy-only). The model +
+   every reader (`OutputRoutingService`, `AudioOutputService`, the
+   `InternalToolService` resolve/dispatch paths, the rooms API) now read ONLY the
+   `(output_provider, output_target_id)` pair. Separate PR so the irreversible
+   `DROP COLUMN` is never bundled with the feature and can be reverted
+   independently (downgrade re-adds the columns + FK, but NOT the data).
+
+   **NOT removed (the generic path does not yet cover them):** the brand-specific
+   internal tools `internal.play_album_on_dlna` / `play_video_on_dlna` /
+   `play_from_server` and the per-source discovery methods. The tools do
+   Jellyfin/DLNA-server content orchestration (album track-fetch, video
+   stream-URL resolution, server object resolution) that `play_in_room` — which
+   plays a single pre-resolved URL — does NOT replicate; that orchestration
+   migration (§5: agent resolves media → `play_in_room`) was never built.
+   The discovery methods are still the built-in source consumed by the
+   `available-outputs` registry loop (`get_aggregated_outputs`) and the route's
+   primary response fields. Removing either would drop live functionality, so
+   they are KEPT pending the orchestration migration (re-tracked in TODOS.md).
 
 ## Outside-voice adjustments (noted, not yet design changes)
 

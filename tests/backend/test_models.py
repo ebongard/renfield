@@ -242,7 +242,8 @@ class TestRoomOutputDeviceModel:
         """Test: Output Device mit Renfield Device"""
         output = RoomOutputDevice(
             room_id=test_room.id,
-            renfield_device_id=test_device.device_id,
+            output_provider="renfield",
+            output_target_id=test_device.device_id,
             output_type=OUTPUT_TYPE_AUDIO,
             priority=1,
             allow_interruption=False,
@@ -262,7 +263,8 @@ class TestRoomOutputDeviceModel:
         """Test: Output Device mit Home Assistant Entity"""
         output = RoomOutputDevice(
             room_id=test_room.id,
-            ha_entity_id="media_player.sonos_living",
+            output_provider="homeassistant",
+            output_target_id="media_player.sonos_living",
             output_type=OUTPUT_TYPE_AUDIO,
             priority=2,
             allow_interruption=True,
@@ -282,17 +284,20 @@ class TestRoomOutputDeviceModel:
         """Test: Output Devices werden nach Priorität sortiert"""
         output1 = RoomOutputDevice(
             room_id=test_room.id,
-            ha_entity_id="media_player.low_prio",
+            output_provider="homeassistant",
+            output_target_id="media_player.low_prio",
             priority=3
         )
         output2 = RoomOutputDevice(
             room_id=test_room.id,
-            ha_entity_id="media_player.high_prio",
+            output_provider="homeassistant",
+            output_target_id="media_player.high_prio",
             priority=1
         )
         output3 = RoomOutputDevice(
             room_id=test_room.id,
-            ha_entity_id="media_player.mid_prio",
+            output_provider="homeassistant",
+            output_target_id="media_player.mid_prio",
             priority=2
         )
 
@@ -308,6 +313,60 @@ class TestRoomOutputDeviceModel:
 
         priorities = [od.priority for od in room.output_devices]
         assert priorities == [1, 2, 3]
+
+
+@pytest.mark.unit
+class TestRoomOutputDevicePairProperties:
+    """target_type / target_id / is_*_device derive ONLY from the generic
+    (output_provider, output_target_id) pair after the legacy brand columns were
+    dropped (docs/design/output-providers.md, migration pc20260617b)."""
+
+    def test_renfield(self):
+        d = RoomOutputDevice(output_provider="renfield", output_target_id="sat-1")
+        assert d.target_type == "renfield"
+        assert d.target_id == "sat-1"
+        assert d.is_renfield_device is True
+        assert d.is_ha_device is False
+        assert d.is_dlna_device is False
+
+    def test_homeassistant(self):
+        d = RoomOutputDevice(
+            output_provider="homeassistant", output_target_id="media_player.x"
+        )
+        assert d.target_type == "homeassistant"
+        assert d.target_id == "media_player.x"
+        assert d.is_ha_device is True
+        assert d.is_renfield_device is False
+        assert d.is_dlna_device is False
+
+    def test_dlna(self):
+        d = RoomOutputDevice(output_provider="dlna", output_target_id="HiFiBerry")
+        assert d.target_type == "dlna"
+        assert d.target_id == "HiFiBerry"
+        assert d.is_dlna_device is True
+        assert d.is_renfield_device is False
+        assert d.is_ha_device is False
+
+    def test_samsung_pair_only(self):
+        d = RoomOutputDevice(output_provider="samsung", output_target_id="192.168.1.47")
+        assert d.target_type == "samsung"
+        assert d.target_id == "192.168.1.47"
+        # No is_* flag matches a non-legacy provider.
+        assert d.is_renfield_device is False
+        assert d.is_ha_device is False
+        assert d.is_dlna_device is False
+
+    def test_sonos_pair_only(self):
+        d = RoomOutputDevice(output_provider="sonos", output_target_id="RINCON_1")
+        assert d.target_type == "sonos"
+        assert d.target_id == "RINCON_1"
+        assert d.is_dlna_device is False
+
+    def test_empty_row_defaults(self):
+        d = RoomOutputDevice()
+        assert d.target_id == ""
+        assert d.target_type == "renfield"
+        assert d.is_renfield_device is False  # output_provider is None, not "renfield"
 
 
 # ============================================================================

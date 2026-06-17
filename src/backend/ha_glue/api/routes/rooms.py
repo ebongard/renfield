@@ -717,16 +717,26 @@ async def move_device_to_room(
 # --- Output Device Endpoints ---
 
 def _output_device_to_response(device) -> OutputDeviceResponse:
-    """Convert RoomOutputDevice model to response"""
+    """Convert RoomOutputDevice model to response.
+
+    The three legacy brand fields (``renfield_device_id`` / ``ha_entity_id`` /
+    ``dlna_renderer_name``) are no longer columns — they are COMPUTED from the
+    ``(output_provider, output_target_id)`` pair purely for backward-compatible
+    API shape (older API consumers + the legacy frontend picker still read them).
+    Each is populated only when the provider matches; a non-legacy provider
+    (samsung/sonos) leaves all three None and is identified by the pair.
+    """
+    provider = device.output_provider
+    target_id = device.output_target_id
     return OutputDeviceResponse(
         id=device.id,
         room_id=device.room_id,
         output_type=device.output_type,
-        renfield_device_id=device.renfield_device_id,
-        ha_entity_id=device.ha_entity_id,
-        dlna_renderer_name=device.dlna_renderer_name,
-        output_provider=device.output_provider,
-        output_target_id=device.output_target_id,
+        renfield_device_id=target_id if provider == "renfield" else None,
+        ha_entity_id=target_id if provider == "homeassistant" else None,
+        dlna_renderer_name=target_id if provider == "dlna" else None,
+        output_provider=provider,
+        output_target_id=target_id,
         priority=device.priority,
         allow_interruption=device.allow_interruption,
         tts_volume=device.tts_volume,
