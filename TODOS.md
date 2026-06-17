@@ -33,17 +33,28 @@ _(no P1 items — WICHTIG sweep complete. W10 closed via #487 on 2026-04-27. `ta
 
 ## P2 — Scheduled follow-ups
 
-### Chat-UI: validate the premise before scheduling the modernization roadmap
-Origin: `/plan-eng-review` 2026-06-15 on `docs/design/chat-ui-modernization.md`.
-**WHAT:** Instrument web-`/chat` interaction share vs voice/satellite turns (per household
-member) and establish an accessibility + mobile/PWA baseline, *before* committing any tier of
-the chat-UI roadmap. **WHY:** The roadmap rests on the unmeasured assumption that the web text
-chat is a high-value surface — but Renfield is voice-first, so much interaction may be
-voice/satellite. The outside-voice review flagged this as the load-bearing gap; the doc's tier
-order is explicitly **provisional until this data exists**. **CONTEXT:** primary source =
-`docs/design/chat-ui-modernization.md` (survey + 3-tier roadmap + Tier 0 cross-cutting a11y/
-mobile/voice-transcript/offline items). First slice *if* validated = follow-up chips → command
-palette → provenance chips. **DEPENDS ON:** nothing — this is the gate that unblocks the rest.
+### Chat-UI modernization roadmap — progress ledger
+Origin: `/plan-eng-review` 2026-06-15 on `docs/design/chat-ui-modernization.md` (survey + 3-tier
+roadmap + Tier 0 cross-cutting a11y/mobile/voice-transcript/offline). Tiers: **T1** = branching(1)
+· follow-up-chips(2) · message-search(3) · command-palette(4); **T2** = artifacts(5) ·
+role-surfacing(6) · provenance-chips(7); **T3** = room-handoff(8) · shared-private(9) ·
+gen-UI-widgets(10).
+
+**SHIPPED + DEPLOYED (2026-06-15 → 2026-06-16):**
+- ✅ **(7) Provenance source chips** — #782, ALWAYS-ON. Knowledge-backed answers show source chips (filename + `TierBadge` → `/knowledge?doc={id}`); circle-safe via `rag.search(user_id)`.
+- ✅ **(2) Follow-up suggestion chips** — #784, `FOLLOWUP_CHIPS_ENABLED` (ON in prod). Best-effort small-model call in the background AFTER the `done` frame (never delays spinner/TTS/wakeword); skipped on TTS/error/short turns.
+- ✅ **(4) Command palette** — #785, `COMMAND_PALETTE_ENABLED` (ON in prod). `/` or touch button → action/nav palette; tool actions STAGE into composer (no auto-send); next-turn `role_hint` is routing-only (every tool still permission-gated).
+- ✅ **Correct-and-regenerate** (follow-on to 4/6) — #788. "Falsch erkannt?" also offers "Neu beantworten" → re-runs the turn forcing the corrected route (`corrected_intent` → most-specific role; reuses `role_hint`, routing-only).
+- ✅ **(6) Agent-role surfacing** — #790, `ROLE_SURFACING_ENABLED` (ON in prod). Badge of the resolved role per turn; tap pins it for next turn; emitted on `done` + persisted in `message_metadata.agent_role` (rehydrates).
+- ✅ **(3) Message search** — #793, `MESSAGE_SEARCH_ENABLED` (ON in prod). Postgres FTS over `messages.search_vector` (migration `pc20260617`), conversation-ownership-scoped (NOT circle_sql), jump-to-message, XSS-safe `<mark>`.
+- ✅ **(5) Artifacts — Lane A** — `ARTIFACTS_TYPED_ENABLED` (ON in prod), design `docs/design/chat-artifacts-sandbox.md` (eng+design review 9/10, #796/#797/#798). Chain: **baseline CSP** Report-Only #799 → enforcing #800 (prereq); **renderer + emit plumbing** #801 (typed table/list/keyvalue/chart → React, no model HTML; `artifact` WS frame; zod authoritative shape; fail-closed escaped-code fallback; `message_metadata.artifacts[]`); **first producer** smart-home status→table #802 (`smart_home/status` sub-intent — ConfigMap `agent_roles.yaml` patched in prod). Browser-verified live. Regression fixes alongside: blob-worklet CSP (#803) + PWA-propagation build-stamp (#804). **Lane B (free-form HTML/SVG sandboxed iframe) deliberately DEFERRED (YAGNI + own security review; `ARTIFACTS_HTML_SANDBOX_ENABLED` placeholder, unwired).**
+
+**NOT BUILT (remaining):**
+- ⬜ **(1) Message branching / edit-and-fork** (T1) — the only T1 item left; the heaviest (conversation-tree data model + UI). Not started.
+- ⬜ **(8) room-handoff, (9) shared-private, (10) generative-UI widgets** (T3) — unbuilt. (10) is gated on Lane B / option-(c) separate-origin per the artifacts design.
+- ⬜ **More artifact producers** — only smart-home-status emits an artifact so far; weekly-plan / shopping-list / a `chart` producer would exercise the other kinds. Backend persist is last-frame-wins per `id` (correct for whole-artifact producers; a future *streaming* producer needs server-side append).
+
+**PREMISE CAVEAT (still open, now scoped to the remainder):** the original gate — instrument web-`/chat` share vs voice/satellite turns + an a11y/mobile baseline *before* investing — was **never formally validated**; the user directed building the first slice + most of T2 directly, and they're live. The caveat now applies to deciding whether **(1) branching** and **T3** are worth the cost: Renfield is voice-first, so confirm the web chat is a high-value surface before taking on the branching data-model rebuild. **DEPENDS ON:** nothing.
 
 ### BT-scan — deterministic per-room device-count reconciliation
 Origin: live browser verification of #787 (2026-06-15, backend v2.17.20).
