@@ -106,7 +106,7 @@ moves to P2 with per-category sign/net handling.
 All three have clear triggers but were out of PR 4 scope. Inline `# ...` comments in the relevant files carry full context.
 - **Multi-replica `pg_try_advisory_lock`.** Current `asyncio.Lock` only covers a single process; k8s with >1 backend replica needs DB-level coordination. Source: `src/backend/services/paperless_ui_edit_sweeper.py` (top-of-file comment on `_sweep_lock`).
 - **Multi-user attribution in ui_sweep rows.** Attribution seam exists (`_resolve_editor_user_id`); needs MCP `owner` exposure + Paperless↔Renfield user-mapping table to actually resolve the editor. Source: `src/backend/services/paperless_ui_edit_sweeper.py` (docstring on `_build_example_row` + `_resolve_editor_user_id`).
-- **Narrow MCP `get_document_metadata` tool or `include_content=False` flag.** Eliminates the 10 KB response-truncation path entirely. Lives in the `renfield-mcp-paperless` upstream repo. Source: `src/backend/services/paperless_ui_edit_sweeper.py` comment on `_TRUNCATION_MARKER`.
+- ~~**Narrow MCP `get_document_metadata` tool or `include_content=False` flag.**~~ **MOSTLY DONE (2026-06-17 sweep):** the `include_content=False` half SHIPPED — the sweeper calls `get_document(..., include_content=False)` (paperless-mcp ≥ v1.7.0), so the truncation path is now a defensive fallback only (`_TRUNCATION_MARKER` retained for older MCP versions). The dedicated narrow `get_document_metadata` tool was NOT built and is now **low-value** (the flag already eliminates truncation). Drop unless a future need arises.
 
 ### Paperless PR 4b — No-re-edit filter (superseded flag)
 If ui_sweep noise shows up in real use, mark original sweep row `superseded=true` when same field edited again later.
@@ -160,8 +160,8 @@ The main PR ships Skills Inbox + Tool-Health + Trajectories + Curator Runbook wi
 v2.10.4 shipped the per-chunk OCR-quality gate at ingestion + the doc-level re-OCR convergence trigger. The cleanup of the EXISTING corpus and operator-facing tooling were explicitly deferred per the 2026-05-26 `/plan-eng-review` of the brain-quality plan (subagent flagged 4 correctness issues in the cleanup script that justify splitting).
 
 - ~~**Cleanup script `bin/purge_low_quality_chunks.py` with the 4 correctness guards.**~~ **SHIPPED (2026-05-27, branch `feat/ocr-cleanup-history`).** History-table architecture (`document_processing_history` via `DocumentProcessingHistoryService`) plus the script. Guards delivered: (a) ✅ `parent_chunk_id` CASCADE in `pc20260530`. (b) ✅ Two-layer lock — `pg_try_advisory_lock` (script-vs-script, dedicated asyncpg connection bypasses the engine's checkin-hook that drops advisory locks) + `SELECT FOR UPDATE NOWAIT` on the documents row (script-vs-API). (c) ✅ `has_force_ocr_succeeded(doc_id)` over the partial index — idempotent across runs, with zombie-row safety (status='processing' doesn't count). (d) **Deferred** — startup sweep is documented in the service docstring; the cleanup-script's idempotence guard already covers crashed-mid-batch zombies on the next run, so the lifecycle.py change is cosmetic and out of scope for v1.
-- **Admin UX for low-quality OCR documents in the Paperless Audit page.** WHAT: per-doc badge when ≥30% chunks were dropped at ingest (or when `status='failed' AND error_message LIKE 'ocr_quality%'`). Click → trigger re-OCR job, OR mark `quality_ignored` to skip in the future cleanup-script run. WHY: operator wants to triage problem docs in the UI, not via SQL. **Depends on:** cleanup-script TODO above (shared quality-marker schema). **Trigger:** after cleanup-script lands AND we have real frequency data on quality-failed docs.
-- **OCR engine evaluation / swap (easyocr → tesseract / docling default / cloud).** WHAT: benchmark current `easyocr` vs `tesseract` vs `docling-default-OCR` on the historical garbage docs; if a swap reduces failure rate by >50%, plan the migration. WHY: root cause of the OCR quality problem is upstream engine quality; everything else (heuristic filter, re-OCR trigger, retrieval filter) is a layered workaround. **Cons:** offline-first ethos limits cloud options; days of benchmarking + integration work. **Trigger:** scale-driven — defer until ≥hundreds of operator-flagged quality failures justify the migration cost.
+- **Admin UX for low-quality OCR documents in the Paperless Audit page.** WHAT: per-doc badge when ≥30% chunks were dropped at ingest (the `document_processing_history.chunks_dropped_low_quality` column exists but isn't surfaced in `paperless_audit_service`) or when `status='failed' AND error_message LIKE 'ocr_quality%'`. Click → trigger re-OCR job, OR mark `quality_ignored` (no such column yet) to skip in the future cleanup-script run. WHY: operator wants to triage problem docs in the UI, not via SQL. **NOTE (2026-06-17 sweep): now ACTIONABLE** — its only hard dependency, the cleanup script, has landed (#629), so the "after cleanup-script lands" trigger has fired; only "real frequency data" remains as soft justification. (The existing `PaperlessAuditPage` re-OCR is the *separate* pre-existing 1–5 advisory `ocr_quality` score, not this badge.)
+- **OCR engine evaluation / swap.** WHAT: benchmark the current OCR engine on the historical garbage docs; if an alternative reduces failure rate by >50%, plan the migration. WHY: root cause of the OCR quality problem is upstream engine quality; everything else (heuristic filter, re-OCR trigger, retrieval filter) is a layered workaround. **NOTE (2026-06-17 sweep): premise refreshed** — the engine is **already docling-based** (`document_processor.py`: docling `OcrAutoOptions`/`EasyOcrOptions`, `ocr_engine` ∈ `docling`/`docling_full_page_ocr`/`poppler_text_layer`), NOT the bare `easyocr` the old WHAT assumed, so the "easyocr→docling-default" comparison is moot; reframe as "docling-OCR vs tesseract/cloud" if pursued. **Cons:** offline-first ethos limits cloud options; days of benchmarking + integration. **Trigger:** scale-driven — defer until ≥hundreds of operator-flagged quality failures justify the cost.
 
 ### Schicht A field extractor — follow-ups
 The hybrid extractor (deterministic Steuernummer/IBAN with whitespace normalization + LLM obligations/universal facts) landed as a `post_document_ingest` consumer storing `document_fact` atoms. Opt-in: `schicht_a_extraction_enabled` (now ENABLED in prod). **Read layer SHIPPED in #643 / v2.10.14 (2026-05-31):** `DocumentFactRetrieval` (FTS + identifier-ILIKE + `facts_for_document` + `obligations`), `document_fact` fused into `/brain` RRF (green "Fakt" badge), the `update_tier`→`invalidate_for_atom` fact-cache fix, the circle_sql null-KB owner fallback, and the `GET /api/atoms/documents/{id}/facts` + `/api/atoms/obligations` routes. Remaining items below are the **UI surfaces + the proactive notifier** (the read path they sit on is now live).
@@ -339,10 +339,8 @@ chosen option = disable-embedding-for-person + prompt + de-magnetize backfill):
     `get_relevant_atoms`/`get_relevant_context`~~ **FIXED 2026-06-06**
     (`fix/kg-name-map-circle-leak`; see the Phase 4 follow-ups section above).
 
-### Paperless PR 5 — Interactive confirm card
-In-chat card with per-field controls, tag chips, storage-path tree; structured-payload callback instead of free-text.
-- **Primary source:** `docs/design/paperless-llm-metadata.md` §Implementation plan → PR 5, §302-324
-- **Gate:** build ONLY if cold-start data from PR 2 shows users rubber-stamp free-text confirms they can't easily edit, OR first-impression quality becomes a stated concern. Confirm is cold-start-only (first 10 uploads/user) so most users never see it.
+### ~~Paperless PR 5 — Interactive confirm card~~ ✅ SHIPPED #662 (closed in the 2026-06-17 reconciliation sweep)
+Shipped via #662 (`2ecffd9` "interactive confirm card replaces typed choice syntax" + `a685836` + review fixes `cdf29b4`); `paperless_commit_tool.py` carries the structured confirm-card path (maps the card's structured decisions). Cold-start threshold made configurable in #661. The gate fired; entry obsolete.
 
 ### Paperless kNN tier (pre-LLM voter)
 Embed each new upload, find k nearest Paperless docs already archived, copy dominant metadata pattern when top-k agree.
@@ -383,26 +381,8 @@ Embed each new upload, find k nearest Paperless docs already archived, copy domi
 
 **SOURCE:** `~/.gstack/projects/ebongard-renfield/evdb-main-design-20260419-190713-second-brain-circles.md` v2.5 section
 
-### MCPManager Streaming Surface
-
-**WHAT:** Add `execute_tool_streaming(name, args, on_progress) -> AsyncIterator[ProgressChunk | FinalResult]` to `services/mcp_client.py:MCPManager`. Existing `execute_tool` returns one dict and exits — there's no streaming progress callback API.
-
-**WHY:** Required for v2 federation streaming UX (per design doc decision C-Build). Also generally useful for any long-running MCP tool: streaming TTS, long n8n workflow execution, video generation, large file uploads, pipeline observability.
-
-**PROS:**
-- Unblocks v2 federation streaming progress chunks ("waking up... retrieving... synthesizing...")
-- Generic capability — every future long-running MCP tool wants this
-- Additive to existing API (old `execute_tool` callers keep working)
-
-**CONS:**
-- ~2-3 weeks of MCP infra work
-- Requires every MCP transport (stdio, streamable_http) to support the streaming contract
-- Frontend + agent loop need to consume streamed results — non-trivial wiring
-
-**CONTEXT:**
-- Current `execute_tool` at `services/mcp_client.py:1038`: returns `{"success": bool, "message": str, "data": Any}` synchronously
-- The MCP SDK's `ClientSession` does support streaming responses — the limitation is on the Renfield wrapper, not the protocol
-- Choice C-Build in the eng-review committed to this work for v2 federation
+### ~~MCPManager Streaming Surface~~ ✅ SHIPPED #406/#407/#412 (closed in the 2026-06-17 reconciliation sweep)
+Shipped via the v2-federation chain: `execute_tool_streaming(...) -> AsyncIterator[ProgressChunk | FinalResult]` exists in `services/mcp_client.py` (with `progress_sink`, `_execute_tool_streaming_impl`, and the locked chunk vocabulary in `services/mcp_streaming.PROGRESS_LABELS`). #406 (`e98e372` "streaming surface — F1 of v2 federation") + #407 + #412. The exact API this item requested is built.
 
 **DEPENDS ON:**
 - Independent of v1 work; can start in parallel with v1 Lane C (frontend)
