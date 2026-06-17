@@ -19,6 +19,28 @@ def internal_tools():
     return InternalToolService()
 
 
+@pytest.fixture(autouse=True)
+def _stub_room_id_db():
+    """Stub ``_get_room_id`` so tests never open a real DB connection.
+
+    ``_get_room_id`` opens a REAL ``AsyncSessionLocal()`` (asyncpg SSL connect to
+    Postgres). The play paths reach it via ``_register_media_follow`` and it
+    isn't mocked by the per-class ``_patch_main_app`` helpers. Left live, every
+    such test leaks a real Postgres connection; under pytest-asyncio's per-test
+    event loops these accumulate and trip a latent OpenSSL/asyncpg
+    use-after-free → process SEGFAULT (faulthandler points at asyncpg
+    ``_create_ssl_connection``; a segfault is NOT caught by the method's
+    ``try/except``). Stubbing ``_get_room_id`` (the actual DB choke point) rather
+    than ``_register_media_follow`` keeps that method's real presence-fallback
+    logic testable — the ``TestRegisterMediaFollowPresenceFallback`` class sets
+    its own per-instance ``_get_room_id`` mock, which overrides this class-level
+    default.
+    """
+    from unittest.mock import AsyncMock as _AsyncMock
+    with patch.object(InternalToolService, "_get_room_id", new_callable=_AsyncMock, return_value=1):
+        yield
+
+
 import sys
 from types import ModuleType
 
