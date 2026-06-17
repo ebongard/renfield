@@ -30,6 +30,8 @@ async def ha_chat_context_established(
     room_id: int,
     room_name: str | None = None,
     lang: str = "de",
+    speaker_info: dict | None = None,
+    **_: object,
 ) -> None:
     """Register BLE voice-auth presence when a user speaks from a known room.
 

@@ -83,14 +83,26 @@ async def ha_route_chat_tts_to_device_output(
                 f"{decision.target_type}:{decision.target_id}"
             )
 
-            # Only handle server-side if we have a configured HA output device
-            # (Renfield devices would be the input device itself in this case)
+            # Deliver server-side to any configured ROOM output device that
+            # audio_output_service.play_audio can drive — both HA media players
+            # AND DLNA renderers (HiFiBerry / Samsung / Sonos via the dlna MCP).
+            # `target_type == "renfield"` is deliberately NOT here: a renfield
+            # device IS the input device (the browser/satellite that asked), so
+            # it plays locally — returning False lets the frontend handle it.
+            # (Bug fix: this used to gate on `== "homeassistant"` only, so a room
+            # whose output device is a DLNA renderer fell through to False and the
+            # answer played in the BROWSER instead of the room speaker — and the
+            # browser's sentence-chunked stream then cut off after sentence 1 when
+            # the open mic heard it and barge-in cancelled the rest. play_audio
+            # already dispatches DLNA vs HA by output_device type.)
             if (
                 decision.output_device
                 and not decision.fallback_to_input
-                and decision.target_type == "homeassistant"
+                and decision.target_type in ("homeassistant", "dlna")
             ):
-                # Generate TTS via the platform Piper service
+                # Generate TTS via the platform Piper service — the FULL answer
+                # as one clip (not sentence-chunked), so it plays through to the
+                # end on the renderer.
                 from services.piper_service import get_piper_service
                 piper = get_piper_service()
                 tts_audio = await piper.synthesize_to_bytes(response_text)
@@ -104,7 +116,9 @@ async def ha_route_chat_tts_to_device_output(
                     )
 
                     if success:
-                        logger.info(f"🔊 TTS sent to HA media player: {decision.target_id}")
+                        logger.info(
+                            f"🔊 TTS sent to {decision.target_type} output: {decision.target_id}"
+                        )
                         return True
                     logger.warning(
                         f"Failed to send TTS to {decision.target_id}, "
