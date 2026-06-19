@@ -30,6 +30,7 @@ export default function ChatInput() {
   const roleSurfacingEnabled = features?.role_surfacing_enabled ?? false;
 
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const textareaRef = useRef<HTMLTextAreaElement | null>(null);
 
   const [knowledgeBases, setKnowledgeBases] = useState<KnowledgeBase[]>([]);
   const [showRagSettings, setShowRagSettings] = useState(false);
@@ -68,13 +69,24 @@ export default function ChatInput() {
     }
   }, [useRag, knowledgeBases.length]);
 
+  // Auto-grow the composer with its content: reset to one line, then expand to
+  // fit up to ~6 lines (then it scrolls). Re-runs whenever the value changes,
+  // so clearing after send shrinks it back to a single line.
+  useEffect(() => {
+    const el = textareaRef.current;
+    if (!el) return;
+    el.style.height = 'auto';
+    const maxHeight = 168; // ~6 lines
+    el.style.height = `${Math.min(el.scrollHeight, maxHeight)}px`;
+  }, [input]);
+
   // Gate send while any attachment is still extracting (status "processing").
   // Sending now would silently drop it from attachment_ids — the assistant
   // would answer as if no file were attached. A failed attachment doesn't block
   // (it can't be sent anyway); the user removes it or sends without it.
   const attachmentsProcessing = attachments.some((a) => a.status === 'processing');
 
-  const handleKeyDown = (e: KeyboardEvent<HTMLInputElement>) => {
+  const handleKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
       if (attachmentsProcessing) return;
@@ -290,16 +302,17 @@ export default function ChatInput() {
       )}
 
       {/* Input Area */}
-      <div className="flex items-center space-x-2">
+      <div className="flex items-end space-x-2">
         <label htmlFor="chat-input" className="sr-only">{t('chat.placeholder')}</label>
-        <input
+        <textarea
           id="chat-input"
-          type="text"
+          ref={textareaRef}
+          rows={1}
           value={input}
           onChange={(e) => setInput?.(e.target.value)}
           onKeyDown={handleKeyDown}
           placeholder={t('chat.placeholder')}
-          className="input flex-1"
+          className="input flex-1 resize-none overflow-y-auto leading-6"
           disabled={loading || recording}
           aria-describedby={loading ? 'chat-loading-hint' : undefined}
         />
