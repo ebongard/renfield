@@ -34,6 +34,7 @@ from models.database import (
     ConversationMemory,
     KGEntity,
     KGRelation,
+    MemoryHistory,
     Message,
     Role,
     User,
@@ -745,11 +746,13 @@ class TestDeleteBranchGuardsPostgres:
 @pytest.mark.backend
 @pytest.mark.database
 class TestDeleteBranchSqlite:
-    async def test_delete_branch_clears_memory_and_detaches_kg_no_fk_block(
+    async def test_delete_branch_softdeletes_memory_and_detaches_kg_no_fk_block(
         self, db_session: AsyncSession
     ):
-        # PRAGMA FK ON so an un-cleaned memory/relation ref to the deleted message
-        # would FK-block — a clean delete proves the pre-delete cleanup works.
+        # PRAGMA FK ON so an un-handled memory/relation ref to the deleted message
+        # would FK-block. The memory also carries a memory_history row (RESTRICT
+        # FK) — a HARD delete of the memory would FK-block on that; the soft-delete
+        # + detach must succeed. This is the P1 the first cut missed.
         await db_session.execute(text("PRAGMA foreign_keys=ON"))
         role = Role(name="delbr-role", description="r")
         db_session.add(role)
@@ -770,22 +773,34 @@ class TestDeleteBranchSqlite:
             user_id=u.id, content="branch fact",
             source_message_id=m_a.id, is_active=True, circle_tier=0,
         )
+        db_session.add(mem)
+        await db_session.flush()
+        # The audit-trail row that makes a hard delete impossible (RESTRICT FK).
+        hist = MemoryHistory(memory_id=mem.id, action="created")
         rel = KGRelation(
             user_id=u.id, subject_id=e1.id, predicate="knows", object_id=e2.id,
             source_message_id=m_a.id, circle_tier=0,
         )
-        db_session.add_all([mem, rel])
+        db_session.add_all([hist, rel])
         await db_session.flush()
 
         status = await svc.delete_branch("delbr", m_a.id, user_id=u.id)
         assert status == "ok"
-        # Message gone, branch-local memory gone, KG provenance detached (row kept).
+        # Message gone; memory SOFT-deleted (kept, is_active=False, detached) so
+        # the memory_history + atoms FKs don't block; KG provenance detached.
         assert (await db_session.execute(
             select(Message.id).where(Message.id == m_a.id)
         )).scalar_one_or_none() is None
+        mem_row = (await db_session.execute(
+            select(ConversationMemory.is_active, ConversationMemory.source_message_id)
+            .where(ConversationMemory.id == mem.id)
+        )).one()
+        assert mem_row.is_active is False
+        assert mem_row.source_message_id is None
+        # Audit-trail row survives (the memory wasn't hard-deleted).
         assert (await db_session.execute(
-            select(ConversationMemory.id).where(ConversationMemory.id == mem.id)
-        )).scalar_one_or_none() is None
+            select(MemoryHistory.id).where(MemoryHistory.id == hist.id)
+        )).scalar_one_or_none() is not None
         assert (await db_session.execute(
             select(KGRelation.source_message_id).where(KGRelation.id == rel.id)
         )).scalar_one() is None

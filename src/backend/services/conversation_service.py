@@ -595,14 +595,17 @@ class ConversationService:
           the one they are viewing, so the active leaf can never be orphaned.
         - ``"ok"`` (→ 200): the message and all descendants are deleted.
 
-        Two FK hazards are handled before the message delete (both
-        ``messages.id`` references lack ``ON DELETE`` rules): branch-local
-        ``conversation_memories`` (``source_message_id`` in the subtree) are
-        **deleted** with the branch (they describe a turn that no longer
-        exists), while ``kg_relations`` provenance is **detached**
-        (``source_message_id`` → NULL) rather than deleting canonical graph
-        data. Messages are then removed by explicit subtree-id list (dialect
-        independent — does not rely on the self-FK CASCADE).
+        Two ``messages.id`` references lack ``ON DELETE`` rules and would block
+        the message delete; both are handled by **soft-delete + detach** before
+        it, mirroring the system's soft-delete posture (``_apply_delete_v2``):
+        branch-local ``conversation_memories`` are flipped ``is_active=False``
+        AND ``source_message_id=NULL`` (a hard delete would hit the
+        ``memory_history`` RESTRICT FK and orphan the memory's ``atoms`` row),
+        and ``kg_relations`` provenance is detached (``source_message_id`` →
+        NULL) to keep canonical graph data. Messages are then removed by explicit
+        subtree-id list (dialect independent — does not rely on the self-FK
+        CASCADE). ``recompute`` won't resurrect the detached memories (their NULL
+        source can't join the active path).
         """
         from sqlalchemy import delete as sa_delete
         from sqlalchemy import update
@@ -639,11 +642,14 @@ class ConversationService:
             # works in the test harness.
             subtree_ids = [message_id]
 
-        # 1) Branch-local memories go with the branch.
+        # 1) Soft-delete + detach branch-local memories (NOT a hard delete —
+        #    that would hit the memory_history RESTRICT FK and orphan the atoms
+        #    row). is_active=False removes them from retrieval; NULL source frees
+        #    the messages FK.
         await self.db.execute(
-            sa_delete(ConversationMemory).where(
-                ConversationMemory.source_message_id.in_(subtree_ids)
-            )
+            update(ConversationMemory)
+            .where(ConversationMemory.source_message_id.in_(subtree_ids))
+            .values(is_active=False, source_message_id=None)
         )
         # 2) Detach KG-relation provenance (keep canonical graph data).
         await self.db.execute(
