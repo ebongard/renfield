@@ -69,15 +69,38 @@ recursive-CTE conversation scoping is the second layer. (A cross-conversation
 IDOR — unscoped fork target + an unscoped recursive step — was caught in review
 and fixed before merge; regression-tested on Postgres.)
 
-## Documented limitations / Phase 2
-- **Deactivate-at-fork race:** a still-running background extraction for the
-  abandoned turn could re-add an active memory after deactivation. Narrow; left
-  for Phase 2.
-- **Phase 2** = fork-from-*any* prior message + the multi-sibling branch
-  switcher (`‹2/3›`) in `ChatHeader.tsx` + delete-branch. The switcher will need
-  memory **reactivation** (or active-path-scoped retrieval) since revisiting an
-  abandoned branch must restore its memories — deactivate-at-fork is only safe
-  in Phase 1 because you can't navigate back to an abandoned branch.
+## Phase 2 (SHIPPED) — fork-from-any + switcher + delete + symmetric memory
+
+- **fork-from-ANY message** — edit any user turn / regenerate any finished
+  assistant turn (the Phase-1 latest-only gate is removed). The backend already
+  accepted any in-session `fork_from_message_id`.
+- **Per-message `‹ n/m ›` branch switcher** (NOT the `ChatHeader.tsx` global one
+  the survey suggested — per-message at the fork point is the standard, more
+  usable pattern and handles multiple fork points). Rendered on any message with
+  siblings; ◂/▸ call `PUT …/active-leaf` with the chosen sibling; history reloads.
+  Role-aware contrast (holds on the user bubble), keyboard-reachable, 44px targets.
+- **Symmetric memory recompute** (`recompute_memory_activation`) replaces
+  Phase-1's one-way `deactivate_memories_for_abandoned_subtree`:
+  `is_active = (source_message_id ∈ active_path)` for every memory in the
+  conversation, re-derived on every fork AND switch. This adds the missing
+  **reactivation** half (revisiting a branch restores its memories) and **closes
+  the deactivate-at-fork race** — truth is re-derived from the current leaf each
+  time, and the background extraction additionally recomputes at its commit
+  (flag-gated), so whichever of fork/extraction commits last wins.
+- **`set_active_leaf`** resolves the target to its subtree's **deepest leaf**
+  (`_deepest_leaf_message_id`) so switching activates the whole continuation of
+  the chosen branch, then recomputes memory activation.
+- **Delete-branch** — `DELETE /api/chat/{session_id}/branch/{message_id}`:
+  ownership-gated (404), refuses a message on the active path (409 — the frontend
+  switches to a sibling first), deletes the subtree. Branch-local memories are
+  **soft-deleted + detached** (`is_active=False`, `source_message_id=NULL` —
+  mirrors `_apply_delete_v2`; a hard delete would hit the `memory_history`
+  RESTRICT FK and orphan the `atoms` row), KG-relation provenance is detached.
+
+**Tests:** `tests/backend/test_chat_branching.py` adds the Phase-2 PG/sqlite
+cases (symmetric recompute deactivate+reactivate, deepest-leaf, branch metadata,
+delete-branch guards + FK-safe soft-delete with a `memory_history` row), 26 pass.
+Frontend `ChatMessages.branching.test.tsx`: fork-from-any, switcher nav, delete.
 
 ## Tests
 `tests/backend/test_chat_branching.py` (sqlite tree-maintenance + deletion FK
