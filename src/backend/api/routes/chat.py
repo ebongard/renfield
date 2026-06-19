@@ -263,7 +263,11 @@ async def get_history(
         # leaf / pre-backfill / sqlite) → flat fallback.
         from services.conversation_service import ConversationService
 
-        active_ids = await ConversationService(db).active_path_message_ids(conversation)
+        _bsvc = ConversationService(db)
+        active_ids = await _bsvc.active_path_message_ids(conversation)
+        # Chat branching (Phase 2): per-message sibling info for the ‹n/m›
+        # switcher. Empty for a linear/sqlite conversation → no switchers shown.
+        branch_meta = await _bsvc.branch_metadata(conversation, active_ids)
         if active_ids:
             window_ids = active_ids[:limit]
             result = await db.execute(
@@ -308,6 +312,9 @@ async def get_history(
                     "content": msg.content,
                     "timestamp": msg.timestamp.isoformat(),
                     "metadata": msg.message_metadata,  # Spalte heißt message_metadata
+                    # Chat branching (Phase 2): {index,count,sibling_ids} when this
+                    # message has sibling branches; absent otherwise.
+                    **({"branch": branch_meta[msg.id]} if msg.id in branch_meta else {}),
                     **({"attachments": [
                         attachments_map[aid]
                         for aid in msg.message_metadata.get("attachment_ids", [])
@@ -533,6 +540,46 @@ async def set_active_leaf(
     except Exception as e:
         logger.error(f"❌ Fehler beim Setzen des aktiven Branch: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.delete("/{session_id}/branch/{message_id}")
+async def delete_branch(
+    session_id: str,
+    message_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User | None = Depends(get_current_user),
+):
+    """Delete a branch — ``message_id`` and its whole subtree (chat branching,
+    Phase 2).
+
+    Ownership-gated like the other chat routes. A missing/unowned conversation
+    or a message foreign to it → 404 (no existence oracle). A message on the
+    CURRENT active path → 409 (switch to another branch before deleting the one
+    you're viewing, so the active leaf can't be orphaned). Branch-local memories
+    are removed with the branch; KG-relation provenance is detached.
+    """
+    try:
+        from services.conversation_service import ConversationService
+
+        status = await ConversationService(db).delete_branch(
+            session_id,
+            message_id,
+            user_id=current_user.id if current_user is not None else None,
+        )
+        if status == "not_found":
+            raise HTTPException(status_code=404, detail="Konversation oder Nachricht nicht gefunden")
+        if status == "active":
+            raise HTTPException(
+                status_code=409,
+                detail="Aktiver Branch kann nicht gelöscht werden — wechsle zuerst zu einem anderen Branch",
+            )
+        return {"success": True}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"❌ Fehler beim Löschen des Branch: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
 
 @router.get("/stats")
 async def get_conversation_stats(

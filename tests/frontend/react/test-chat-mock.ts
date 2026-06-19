@@ -102,6 +102,9 @@ export const defaultChatContextValue: ChatContextValue = {
   // Chat branching (Phase 1)
   editAndResubmit: () => {},
   regenerateTurn: () => {},
+  // Chat branching (Phase 2)
+  switchBranch: async () => {},
+  deleteBranch: async () => {},
 
   // Paperless confirm card
   submitPaperlessConfirm: () => {},

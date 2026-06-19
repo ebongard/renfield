@@ -131,6 +131,14 @@
     "editMessage": "Edit message",
     "resubmit": "Resubmit",
     "regenerate": "Regenerate",
+    "branch": {
+      "group": "Branch navigation",
+      "previous": "Previous branch",
+      "next": "Next branch",
+      "position": "{{current}}/{{total}}",
+      "delete": "Delete this branch",
+      "deleteConfirm": "Delete this branch and all its replies? This cannot be undone."
+    },
     "albumArt": "Album art",
     "mediaHandoff": {
       "followed": "Playback following you to {{room}}",

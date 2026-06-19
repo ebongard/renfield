@@ -46,7 +46,7 @@ import type {
   UploadProcessedMessage,
 } from '../hooks/useChatWebSocket';
 import type { UploadStates, UploadedDocument } from '../hooks/useDocumentUpload';
-import type { ChatArtifactPayload, Conversation, MessageSource } from '../../../types/chat';
+import type { BranchInfo, ChatArtifactPayload, Conversation, MessageSource } from '../../../types/chat';
 import type { TraceEntity } from '../../../api/resources/wissensbasis';
 import { useConfirmDialog } from '../../../components/ConfirmDialog';
 import { drainSentenceTts, type SentenceStreamState } from './sentenceStream';
@@ -134,6 +134,10 @@ export interface ChatUiMessage {
   // same id append rows/items (see mergeArtifactFrame); on history reload they
   // rehydrate from metadata.artifacts.
   artifacts?: ChatArtifactPayload[];
+  // Chat branching (Phase 2): sibling-branch info for the ‹n/m› switcher.
+  // Present only on a history message that has >1 sibling. Server-computed;
+  // not carried on the live `done` frame (a fork reloads history to refresh it).
+  branch?: BranchInfo;
 }
 
 /**
@@ -211,6 +215,7 @@ export function historyToUiMessage(m: {
   role: string;
   content: string;
   metadata?: unknown;
+  branch?: BranchInfo;
 }): ChatUiMessage {
   const meta = m.metadata as
     | {
@@ -232,6 +237,8 @@ export function historyToUiMessage(m: {
     ...(meta?.agent_role && { agentRole: meta.agent_role }),
     // Typed artifacts rehydration (Lane A) — mirrors the sources path.
     ...(Array.isArray(meta?.artifacts) && meta.artifacts.length > 0 && { artifacts: meta.artifacts }),
+    // Chat branching (Phase 2): sibling-branch switcher info (top-level, not in metadata).
+    ...(m.branch && m.branch.count > 1 && { branch: m.branch }),
   };
 }
 
@@ -361,6 +368,10 @@ export interface ChatContextValue {
   // (forks a new assistant sibling under the same user message).
   editAndResubmit: (messageIndex: number, newText: string) => void;
   regenerateTurn: (assistantIndex: number) => void;
+  // Chat branching (Phase 2): switch the active branch to a sibling message;
+  // delete a branch (switching to a sibling first). Both reload history.
+  switchBranch: (messageId: number) => Promise<void>;
+  deleteBranch: (deleteMessageId: number, switchToMessageId: number) => Promise<void>;
 }
 
 const ChatContext = createContext<ChatContextValue | null>(null);
@@ -1787,6 +1798,48 @@ export function ChatProvider({ children }: ChatProviderProps) {
     });
   }, [messages, sendMessageInternal]);
 
+  // Chat branching (Phase 2): re-fetch the active branch from the server and
+  // replace the thread. Used after a branch switch / delete so the active path
+  // AND the ‹n/m› switcher metadata are authoritative (a fork/switch reshapes
+  // the tree in ways the client can't fully recompute locally).
+  const reloadHistory = useCallback(async () => {
+    if (!sessionId) return;
+    try {
+      const history = await loadConversationHistory(sessionId);
+      setMessages(history.map(historyToUiMessage));
+    } catch (err) {
+      console.error('Failed to reload history after branch change:', err);
+    }
+  }, [sessionId, loadConversationHistory]);
+
+  // Switch the active branch to the sibling identified by `messageId` (the ◂/▸
+  // switcher). The backend repoints the active leaf to that sibling's subtree
+  // tip and recomputes branch memory activation; we reload to render it.
+  const switchBranch = useCallback(async (messageId: number) => {
+    if (!sessionId) return;
+    try {
+      await apiClient.put(`/api/chat/${sessionId}/active-leaf`, { message_id: messageId });
+      await reloadHistory();
+    } catch (err) {
+      console.error('Failed to switch branch:', err);
+    }
+  }, [sessionId, reloadHistory]);
+
+  // Delete the branch rooted at `deleteMessageId`, first switching to the
+  // sibling `switchToMessageId` so the deleted branch is no longer on the active
+  // path (the backend refuses to delete an active-path message → 409). Reload
+  // after so the switcher reflects the reduced sibling set.
+  const deleteBranch = useCallback(async (deleteMessageId: number, switchToMessageId: number) => {
+    if (!sessionId) return;
+    try {
+      await apiClient.put(`/api/chat/${sessionId}/active-leaf`, { message_id: switchToMessageId });
+      await apiClient.delete(`/api/chat/${sessionId}/branch/${deleteMessageId}`);
+      await reloadHistory();
+    } catch (err) {
+      console.error('Failed to delete branch:', err);
+    }
+  }, [sessionId, reloadHistory]);
+
   // Summarize handler (must be after sendMessageInternal)
   const handleSummarize = useCallback((uploadId: string) => {
     let filename: string | null = null;
@@ -2001,10 +2054,13 @@ export function ChatProvider({ children }: ChatProviderProps) {
     regenerateWithCorrectedIntent,
     editAndResubmit,
     regenerateTurn,
+    switchBranch,
+    deleteBranch,
   }), [
     messages, loading, input, historyLoading, sendMessageInternal, submitPaperlessConfirm,
     regenerateWithCorrectedIntent,
     editAndResubmit, regenerateTurn,
+    switchBranch, deleteBranch,
     paletteOpen, pendingRoleHint,
     sessionId, sidebarOpen, switchConversation, startNewChat, handleDeleteConversation,
     pendingScrollIndex, jumpToMessage, clearPendingScroll,

@@ -159,6 +159,152 @@ class ConversationService:
         rows = await self.db.execute(sql, {"root_id": root_message_id})
         return [int(r[0]) for r in rows.all()]
 
+    async def _deepest_leaf_message_id(self, message_id: int) -> int:
+        """Resolve ``message_id``'s subtree to its TIP — the descendant with the
+        greatest ``(timestamp, id)`` (chat branching Phase 2, the switcher).
+
+        Switching the active branch to a sibling means making that sibling's
+        whole continuation active, so the active leaf must move to the tip of
+        the sibling's subtree, not the sibling row itself. If the subtree has
+        its own forks, the most recent message wins (deterministic). A message
+        with no descendants resolves to itself. Postgres-only walk; on sqlite
+        (test harness) returns ``message_id`` unchanged.
+        """
+        if not self._is_postgres():
+            return message_id
+        sql = text("""
+            WITH RECURSIVE subtree(id, conversation_id, timestamp, depth) AS (
+                SELECT m.id, m.conversation_id, m.timestamp, 0
+                FROM messages m WHERE m.id = :root_id
+                UNION ALL
+                SELECT c.id, c.conversation_id, c.timestamp, s.depth + 1
+                FROM messages c
+                JOIN subtree s ON c.parent_message_id = s.id
+                WHERE s.depth < 10000
+                  AND c.conversation_id = s.conversation_id
+            )
+            SELECT id FROM subtree
+            ORDER BY timestamp DESC, id DESC
+            LIMIT 1
+        """)
+        row = (await self.db.execute(sql, {"root_id": message_id})).first()
+        return int(row[0]) if row else message_id
+
+    async def recompute_memory_activation(self, conversation: Conversation) -> int:
+        """Symmetric memory-activation recompute (chat branching Phase 2).
+
+        Sets ``is_active = (source_message_id ∈ active_path)`` for EVERY
+        ``ConversationMemory`` whose source message belongs to this
+        conversation. This SUBSUMES Phase-1's one-way
+        ``deactivate_memories_for_abandoned_subtree`` and adds the missing
+        half — **reactivation** when a branch is switched back — in one
+        idempotent, deterministic pass keyed on the conversation's current
+        active leaf.
+
+        Because truth is re-derived from the active leaf on every call, this
+        also closes the Phase-1 deactivate-at-fork RACE: a background extraction
+        that wrongly (re)activated an abandoned-branch memory is corrected by the
+        next fork/switch recompute. (The extraction write is additionally
+        guarded to only set ``is_active=True`` for a source still on the active
+        path — defense in depth.)
+
+        Returns the number of rows whose ``is_active`` flipped. No internal
+        commit — the caller commits as part of its transaction. Postgres-only
+        (the active-path CTE is PG-only); a NULL leaf / sqlite / empty path is a
+        safe no-op (it must NEVER deactivate everything just because the path
+        couldn't be computed).
+        """
+        from sqlalchemy import update
+
+        from models.database import ConversationMemory
+
+        active_ids = await self.active_path_message_ids(conversation)
+        if not active_ids:
+            # NULL leaf, pre-backfill, sqlite, or empty conversation → nothing
+            # to recompute. Crucially NOT "deactivate all" — an uncomputable
+            # path must leave the is_active flags untouched.
+            return 0
+        active_set = set(active_ids)
+
+        rows = (
+            await self.db.execute(
+                select(
+                    ConversationMemory.id,
+                    ConversationMemory.source_message_id,
+                    ConversationMemory.is_active,
+                )
+                .join(Message, ConversationMemory.source_message_id == Message.id)
+                .where(Message.conversation_id == conversation.id)
+            )
+        ).all()
+
+        to_activate = [
+            r.id for r in rows if r.source_message_id in active_set and not r.is_active
+        ]
+        to_deactivate = [
+            r.id for r in rows if r.source_message_id not in active_set and r.is_active
+        ]
+
+        if to_activate:
+            await self.db.execute(
+                update(ConversationMemory)
+                .where(ConversationMemory.id.in_(to_activate))
+                .values(is_active=True)
+            )
+        if to_deactivate:
+            await self.db.execute(
+                update(ConversationMemory)
+                .where(ConversationMemory.id.in_(to_deactivate))
+                .values(is_active=False)
+            )
+
+        changed = len(to_activate) + len(to_deactivate)
+        if changed:
+            logger.info(
+                "🌿 Branch recompute: %d memory(s) reactivated, %d deactivated "
+                "(conversation %s, active path %d msgs)",
+                len(to_activate), len(to_deactivate), conversation.id, len(active_ids),
+            )
+        return changed
+
+    async def branch_metadata(
+        self, conversation: Conversation, active_ids: list[int]
+    ) -> dict[int, dict]:
+        """Per active-path message, the sibling-branch info for the Phase-2
+        ``‹ n/m ›`` switcher: ``{message_id: {index, count, sibling_ids}}``.
+
+        A message has siblings when ≥2 messages share its ``parent_message_id``
+        (NULL-parent roots are grouped together as conversation-level siblings).
+        Messages with no siblings are omitted — the frontend renders a switcher
+        only for the keys present. ``sibling_ids`` is ordered ``(timestamp, id)``
+        so ◂/▸ navigation is stable, and ``index`` is this message's position in
+        that order. Dialect-independent (no CTE); ``active_ids == []`` (sqlite /
+        null leaf) yields ``{}``.
+        """
+        rows = (
+            await self.db.execute(
+                select(Message.id, Message.parent_message_id)
+                .where(Message.conversation_id == conversation.id)
+                .order_by(Message.timestamp.asc(), Message.id.asc())
+            )
+        ).all()
+        children: dict[int | None, list[int]] = {}
+        parent_of: dict[int, int | None] = {}
+        for mid, pid in rows:
+            children.setdefault(pid, []).append(mid)
+            parent_of[mid] = pid
+
+        out: dict[int, dict] = {}
+        for mid in active_ids:
+            sibs = children.get(parent_of.get(mid))
+            if sibs and len(sibs) > 1:
+                out[mid] = {
+                    "index": sibs.index(mid),
+                    "count": len(sibs),
+                    "sibling_ids": sibs,
+                }
+        return out
+
     async def load_context(
         self,
         session_id: str,
@@ -392,14 +538,22 @@ class ConversationService:
     async def set_active_leaf(
         self, session_id: str, message_id: int, *, user_id: int | None = None
     ) -> bool:
-        """Switch a conversation's active branch to the branch ending at
-        ``message_id`` (chat branching, the active-leaf endpoint).
+        """Switch a conversation's active branch to the one passing through
+        ``message_id`` (chat branching active-leaf endpoint; the Phase-2 `‹n/m›`
+        switcher targets the sibling at the fork point).
 
         Validates that ``message_id`` belongs to the conversation (and, when
-        ``user_id`` is given, that the caller owns the conversation) before
-        repointing ``active_leaf_message_id``. Returns False (caller → 404) when
-        the conversation is missing, unowned, or the message is foreign. No
-        generation; commits the leaf change.
+        ``user_id`` is given, that the caller owns the conversation), then
+        repoints ``active_leaf_message_id`` to the **tip** of ``message_id``'s
+        subtree (`_deepest_leaf_message_id`) so the whole continuation of the
+        chosen branch becomes active — not just the fork-point row. A message
+        that is already a leaf resolves to itself, so Phase-1's
+        edit/regenerate (which targets the freshly-saved leaf) is unchanged.
+
+        After repointing, **recompute memory activation** for the new branch so
+        memories on the now-active path are reactivated and off-path ones
+        deactivated. Returns False (caller → 404) when the conversation is
+        missing, unowned, or the message is foreign. Commits the change.
         """
         result = await self.db.execute(
             select(Conversation).where(Conversation.session_id == session_id)
@@ -419,10 +573,95 @@ class ConversationService:
         if msg_result.scalar_one_or_none() is None:
             return False
 
-        conversation.active_leaf_message_id = message_id
+        leaf_id = await self._deepest_leaf_message_id(message_id)
+        conversation.active_leaf_message_id = leaf_id
         conversation.updated_at = datetime.now(UTC).replace(tzinfo=None)
+        # Reactivate/deactivate memories to match the newly-active branch.
+        await self.recompute_memory_activation(conversation)
         await self.db.commit()
         return True
+
+    async def delete_branch(
+        self, session_id: str, message_id: int, *, user_id: int | None = None
+    ) -> str:
+        """Delete a branch — ``message_id`` plus its whole subtree (chat
+        branching Phase 2, delete-branch).
+
+        Returns a status string the route maps to HTTP:
+        - ``"not_found"`` (→ 404): conversation missing/unowned, or the message
+          is foreign to the conversation.
+        - ``"active"`` (→ 409): ``message_id`` is ON the current active path —
+          refused. The user must switch to a different branch before deleting
+          the one they are viewing, so the active leaf can never be orphaned.
+        - ``"ok"`` (→ 200): the message and all descendants are deleted.
+
+        Two FK hazards are handled before the message delete (both
+        ``messages.id`` references lack ``ON DELETE`` rules): branch-local
+        ``conversation_memories`` (``source_message_id`` in the subtree) are
+        **deleted** with the branch (they describe a turn that no longer
+        exists), while ``kg_relations`` provenance is **detached**
+        (``source_message_id`` → NULL) rather than deleting canonical graph
+        data. Messages are then removed by explicit subtree-id list (dialect
+        independent — does not rely on the self-FK CASCADE).
+        """
+        from sqlalchemy import delete as sa_delete
+        from sqlalchemy import update
+
+        from models.database import ConversationMemory, KGRelation
+
+        result = await self.db.execute(
+            select(Conversation).where(Conversation.session_id == session_id)
+        )
+        conversation = result.scalar_one_or_none()
+        if not conversation:
+            return "not_found"
+        if user_id is not None and conversation.user_id != user_id:
+            return "not_found"
+
+        msg_result = await self.db.execute(
+            select(Message.id).where(
+                Message.id == message_id,
+                Message.conversation_id == conversation.id,
+            )
+        )
+        if msg_result.scalar_one_or_none() is None:
+            return "not_found"
+
+        # Refuse deleting any message on the active path (PG; on sqlite the path
+        # is [] so the guard is inert and tests target PG for this property).
+        active_ids = await self.active_path_message_ids(conversation)
+        if message_id in set(active_ids):
+            return "active"
+
+        subtree_ids = await self._abandoned_subtree_message_ids(message_id)
+        if not subtree_ids:
+            # sqlite / no-CTE: fall back to the single row so the delete still
+            # works in the test harness.
+            subtree_ids = [message_id]
+
+        # 1) Branch-local memories go with the branch.
+        await self.db.execute(
+            sa_delete(ConversationMemory).where(
+                ConversationMemory.source_message_id.in_(subtree_ids)
+            )
+        )
+        # 2) Detach KG-relation provenance (keep canonical graph data).
+        await self.db.execute(
+            update(KGRelation)
+            .where(KGRelation.source_message_id.in_(subtree_ids))
+            .values(source_message_id=None)
+        )
+        # 3) Delete the subtree messages explicitly.
+        await self.db.execute(
+            sa_delete(Message).where(Message.id.in_(subtree_ids))
+        )
+        conversation.updated_at = datetime.now(UTC).replace(tzinfo=None)
+        await self.db.commit()
+        logger.info(
+            "🌿 Branch deleted: msg %s + %d descendant(s) in conversation %s",
+            message_id, len(subtree_ids) - 1, conversation.id,
+        )
+        return "ok"
 
     async def associate_speaker(
         self,

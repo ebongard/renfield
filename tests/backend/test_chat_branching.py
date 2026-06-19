@@ -29,8 +29,47 @@ import pytest
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from models.database import Conversation, ConversationMemory, Message, Role, User
+from models.database import (
+    Conversation,
+    ConversationMemory,
+    KGEntity,
+    KGRelation,
+    Message,
+    Role,
+    User,
+)
 from services.conversation_service import ConversationService
+
+
+async def _is_active(db: AsyncSession, mem_id: int) -> bool:
+    return (
+        await db.execute(
+            select(ConversationMemory.is_active).where(
+                ConversationMemory.id == mem_id
+            )
+        )
+    ).scalar_one()
+
+
+async def _fork_tree(db: AsyncSession, session_id: str, user_id: int):
+    """u0 (root) with TWO assistant siblings a_x, a_y (a regenerate-style fork).
+    Returns (conv, u0, a_x, a_y). Leaf left unset — the caller points it at the
+    branch under test."""
+    conv = Conversation(session_id=session_id, user_id=user_id)
+    db.add(conv)
+    await db.flush()
+    base = datetime(2026, 4, 1, 10, 0, 0)
+    u0 = Message(conversation_id=conv.id, role="user", content="frage",
+                 timestamp=base, parent_message_id=None)
+    db.add(u0)
+    await db.flush()
+    a_x = Message(conversation_id=conv.id, role="assistant", content="antwort x",
+                  timestamp=base + timedelta(minutes=1), parent_message_id=u0.id)
+    a_y = Message(conversation_id=conv.id, role="assistant", content="antwort y",
+                  timestamp=base + timedelta(minutes=2), parent_message_id=u0.id)
+    db.add_all([a_x, a_y])
+    await db.flush()
+    return conv, u0, a_x, a_y
 
 
 # ===========================================================================
@@ -545,3 +584,214 @@ class TestDeletionFkPostgres:
             )
         ).scalar()
         assert remaining == 0
+
+
+# ===========================================================================
+# Phase 2 — symmetric memory recompute (deactivate AND reactivate)
+# ===========================================================================
+@pytest.mark.postgres
+@pytest.mark.asyncio
+@pytest.mark.backend
+class TestRecomputeMemoryActivationPostgres:
+    async def test_recompute_is_symmetric_deactivate_then_reactivate(
+        self, pg_db_session: AsyncSession, branch_user
+    ):
+        conv, u0, a_x, a_y = await _fork_tree(pg_db_session, "pg-recompute", branch_user)
+        mem_x = ConversationMemory(
+            user_id=branch_user, content="fact x",
+            source_message_id=a_x.id, is_active=True, circle_tier=0,
+        )
+        mem_y = ConversationMemory(
+            user_id=branch_user, content="fact y",
+            source_message_id=a_y.id, is_active=True, circle_tier=0,
+        )
+        pg_db_session.add_all([mem_x, mem_y])
+        await pg_db_session.flush()
+        svc = ConversationService(pg_db_session)
+
+        # Branch X active → mem_x stays active, mem_y deactivated (1 flip).
+        conv.active_leaf_message_id = a_x.id
+        await pg_db_session.flush()
+        changed = await svc.recompute_memory_activation(conv)
+        await pg_db_session.flush()
+        assert changed == 1
+        assert await _is_active(pg_db_session, mem_x.id) is True
+        assert await _is_active(pg_db_session, mem_y.id) is False
+
+        # Switch to branch Y → mem_y REACTIVATED, mem_x deactivated (2 flips).
+        # This is the half Phase 1's one-way deactivate could not do.
+        conv.active_leaf_message_id = a_y.id
+        await pg_db_session.flush()
+        changed2 = await svc.recompute_memory_activation(conv)
+        await pg_db_session.flush()
+        assert changed2 == 2
+        assert await _is_active(pg_db_session, mem_x.id) is False
+        assert await _is_active(pg_db_session, mem_y.id) is True
+
+    async def test_recompute_null_leaf_is_noop(
+        self, pg_db_session: AsyncSession, branch_user
+    ):
+        # An uncomputable path (null leaf) must NEVER deactivate everything.
+        conv = Conversation(session_id="pg-recompute-null", user_id=branch_user)
+        pg_db_session.add(conv)
+        await pg_db_session.flush()
+        m = Message(conversation_id=conv.id, role="user", content="x",
+                    timestamp=datetime(2026, 4, 2, 10, 0, 0), parent_message_id=None)
+        pg_db_session.add(m)
+        await pg_db_session.flush()
+        mem = ConversationMemory(
+            user_id=branch_user, content="f",
+            source_message_id=m.id, is_active=True, circle_tier=0,
+        )
+        pg_db_session.add(mem)
+        await pg_db_session.flush()
+        svc = ConversationService(pg_db_session)
+        assert conv.active_leaf_message_id is None
+        assert await svc.recompute_memory_activation(conv) == 0
+        assert await _is_active(pg_db_session, mem.id) is True
+
+
+# ===========================================================================
+# Phase 2 — deepest-leaf resolution (the switch-to-sibling target)
+# ===========================================================================
+@pytest.mark.postgres
+@pytest.mark.asyncio
+@pytest.mark.backend
+class TestDeepestLeafPostgres:
+    async def test_deepest_leaf_returns_subtree_tip(
+        self, pg_db_session: AsyncSession, branch_user
+    ):
+        conv, ids = await _linear_conv(pg_db_session, "pg-deep", branch_user, 4)
+        svc = ConversationService(pg_db_session)
+        # Subtree tip of the root = the last message; a leaf resolves to itself.
+        assert await svc._deepest_leaf_message_id(ids[0]) == ids[3]
+        assert await svc._deepest_leaf_message_id(ids[3]) == ids[3]
+
+    async def test_deepest_leaf_picks_latest_when_subtree_forks(
+        self, pg_db_session: AsyncSession, branch_user
+    ):
+        conv, u0, a_x, a_y = await _fork_tree(pg_db_session, "pg-deep-fork", branch_user)
+        svc = ConversationService(pg_db_session)
+        # u0's subtree {u0, a_x, a_y}; tip = a_y (latest timestamp).
+        assert await svc._deepest_leaf_message_id(u0.id) == a_y.id
+
+
+# ===========================================================================
+# Phase 2 — branch metadata for the ‹n/m› switcher
+# ===========================================================================
+@pytest.mark.postgres
+@pytest.mark.asyncio
+@pytest.mark.backend
+class TestBranchMetadataPostgres:
+    async def test_branch_metadata_reports_siblings(
+        self, pg_db_session: AsyncSession, branch_user
+    ):
+        conv, u0, a_x, a_y = await _fork_tree(pg_db_session, "pg-meta", branch_user)
+        conv.active_leaf_message_id = a_y.id
+        await pg_db_session.flush()
+        svc = ConversationService(pg_db_session)
+        active = await svc.active_path_message_ids(conv)  # [u0, a_y]
+        meta = await svc.branch_metadata(conv, active)
+        # The single root u0 has no siblings → omitted; a_y has sibling a_x.
+        assert u0.id not in meta
+        assert a_y.id in meta
+        assert meta[a_y.id]["count"] == 2
+        # (timestamp, id) order → [a_x, a_y]; a_y is index 1.
+        assert meta[a_y.id]["sibling_ids"] == [a_x.id, a_y.id]
+        assert meta[a_y.id]["index"] == 1
+
+    async def test_branch_metadata_linear_is_empty(
+        self, pg_db_session: AsyncSession, branch_user
+    ):
+        conv, ids = await _linear_conv(pg_db_session, "pg-meta-lin", branch_user, 4)
+        svc = ConversationService(pg_db_session)
+        active = await svc.active_path_message_ids(conv)
+        assert await svc.branch_metadata(conv, active) == {}
+
+
+# ===========================================================================
+# Phase 2 — delete-branch guards (PG; early returns, no commit → isolation-safe)
+# ===========================================================================
+@pytest.mark.postgres
+@pytest.mark.asyncio
+@pytest.mark.backend
+class TestDeleteBranchGuardsPostgres:
+    async def test_delete_active_path_message_refused(
+        self, pg_db_session: AsyncSession, branch_user
+    ):
+        conv, ids = await _linear_conv(pg_db_session, "pg-del-active", branch_user, 4)
+        svc = ConversationService(pg_db_session)
+        # ids[2] is on the (linear) active path → "active": refused, no commit.
+        status = await svc.delete_branch("pg-del-active", ids[2], user_id=branch_user)
+        assert status == "active"
+        still = (
+            await pg_db_session.execute(select(Message.id).where(Message.id == ids[2]))
+        ).scalar_one_or_none()
+        assert still == ids[2]
+
+    async def test_delete_foreign_or_unowned_not_found(
+        self, pg_db_session: AsyncSession, branch_user
+    ):
+        conv, ids = await _linear_conv(pg_db_session, "pg-del-foreign", branch_user, 2)
+        svc = ConversationService(pg_db_session)
+        assert await svc.delete_branch("pg-del-foreign", 99999999, user_id=branch_user) == "not_found"
+        assert await svc.delete_branch("pg-del-foreign", ids[0], user_id=424242) == "not_found"
+
+
+# ===========================================================================
+# Phase 2 — delete-branch happy path (sqlite; commits + exercises the FK
+# hazards: memory delete + KG-relation provenance detach with FK enforcement).
+# ===========================================================================
+@pytest.mark.backend
+@pytest.mark.database
+class TestDeleteBranchSqlite:
+    async def test_delete_branch_clears_memory_and_detaches_kg_no_fk_block(
+        self, db_session: AsyncSession
+    ):
+        # PRAGMA FK ON so an un-cleaned memory/relation ref to the deleted message
+        # would FK-block — a clean delete proves the pre-delete cleanup works.
+        await db_session.execute(text("PRAGMA foreign_keys=ON"))
+        role = Role(name="delbr-role", description="r")
+        db_session.add(role)
+        await db_session.flush()
+        u = User(username="delbr-u", email="delbr-u@example.invalid",
+                 password_hash="x", is_active=True, role_id=role.id)
+        db_session.add(u)
+        await db_session.flush()
+        svc = ConversationService(db_session)
+        await svc.save_message("delbr", "user", "frage", user_id=u.id)
+        m_a = await svc.save_message("delbr", "assistant", "antwort", user_id=u.id)
+
+        e1 = KGEntity(user_id=u.id, name="E1", entity_type="thing", circle_tier=0)
+        e2 = KGEntity(user_id=u.id, name="E2", entity_type="thing", circle_tier=0)
+        db_session.add_all([e1, e2])
+        await db_session.flush()
+        mem = ConversationMemory(
+            user_id=u.id, content="branch fact",
+            source_message_id=m_a.id, is_active=True, circle_tier=0,
+        )
+        rel = KGRelation(
+            user_id=u.id, subject_id=e1.id, predicate="knows", object_id=e2.id,
+            source_message_id=m_a.id, circle_tier=0,
+        )
+        db_session.add_all([mem, rel])
+        await db_session.flush()
+
+        status = await svc.delete_branch("delbr", m_a.id, user_id=u.id)
+        assert status == "ok"
+        # Message gone, branch-local memory gone, KG provenance detached (row kept).
+        assert (await db_session.execute(
+            select(Message.id).where(Message.id == m_a.id)
+        )).scalar_one_or_none() is None
+        assert (await db_session.execute(
+            select(ConversationMemory.id).where(ConversationMemory.id == mem.id)
+        )).scalar_one_or_none() is None
+        assert (await db_session.execute(
+            select(KGRelation.source_message_id).where(KGRelation.id == rel.id)
+        )).scalar_one() is None
+
+    async def test_delete_branch_ownership_and_missing(self, db_session: AsyncSession):
+        svc = ConversationService(db_session)
+        m = await svc.save_message("delbr2", "user", "x", user_id=5)
+        assert await svc.delete_branch("delbr2", m.id, user_id=999) == "not_found"
+        assert await svc.delete_branch("nope", 1, user_id=5) == "not_found"

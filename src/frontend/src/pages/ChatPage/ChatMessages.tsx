@@ -1,7 +1,7 @@
 import { useRef, useEffect, useMemo, useState, type ReactNode } from 'react';
 import type { ReactElement } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Volume2, Loader, FileText, AlertCircle, CheckCircle, Search, CheckCircle2, XCircle, ChevronRight, Radio, Pencil, RotateCcw } from 'lucide-react';
+import { Volume2, Loader, FileText, AlertCircle, CheckCircle, Search, CheckCircle2, XCircle, ChevronRight, ChevronLeft, Radio, Pencil, RotateCcw, Trash2 } from 'lucide-react';
 import AdaptiveCardRenderer from '../../components/AdaptiveCardRenderer';
 import IntentCorrectionButton from '../../components/IntentCorrectionButton';
 import AttachmentQuickActions from './AttachmentQuickActions';
@@ -149,7 +149,7 @@ export default function ChatMessages() {
     handleSendViaEmail, emailDialog, confirmSendViaEmail, cancelEmailDialog,
     sendMessage, sessionId, submitPaperlessConfirm,
     pendingScrollIndex, clearPendingScroll,
-    editAndResubmit, regenerateTurn,
+    editAndResubmit, regenerateTurn, switchBranch, deleteBranch,
   } = useChatContext();
   const { data: features } = useFeatureFlags();
   const roleSurfacingEnabled = features?.role_surfacing_enabled ?? false;
@@ -160,21 +160,9 @@ export default function ChatMessages() {
   const [editingIndex, setEditingIndex] = useState<number | null>(null);
   const [editDraft, setEditDraft] = useState('');
 
-  // Phase 1 gating: only the LATEST user message is editable and the LATEST
-  // assistant turn is regenerable (mid-conversation forking + the multi-sibling
-  // switcher are Phase 2). Compute those indices once per render.
-  const lastUserIndex = useMemo(() => {
-    for (let i = messages.length - 1; i >= 0; i--) {
-      if (messages[i].role === 'user') return i;
-    }
-    return -1;
-  }, [messages]);
-  const lastAssistantIndex = useMemo(() => {
-    for (let i = messages.length - 1; i >= 0; i--) {
-      if (messages[i].role === 'assistant') return i;
-    }
-    return -1;
-  }, [messages]);
+  // Phase 2: fork-from-ANY message — any user turn is editable, any finished
+  // assistant turn is regenerable (the per-message ‹n/m› switcher below lets the
+  // user navigate the resulting sibling branches).
   const scrollContainerRef = useRef<HTMLDivElement | null>(null);
   // Per-message element refs so a search jump can scroll/focus a specific turn.
   const messageRefs = useRef<Array<HTMLDivElement | null>>([]);
@@ -428,10 +416,65 @@ export default function ChatMessages() {
                 <p className="whitespace-pre-wrap">{message.content}</p>
               )}
 
-            {/* Edit affordance (chat branching, Phase 1): only on the LATEST
-                user message, dark behind chat_branching_enabled. Keyboard-
+            {/* Branch switcher (chat branching, Phase 2): ◂ n/m ▸ + delete, on
+                any message that has sibling branches. Keyboard-reachable;
+                role-aware colors so contrast holds on the user bubble too. */}
+            {branchingEnabled && message.branch && message.branch.count > 1
+              && typeof message.id === 'number' && !loading && (() => {
+              const onUserBubble = message.role === 'user';
+              const navClass = onUserBubble
+                ? 'text-white/80 hover:bg-white/20 focus:ring-white/50'
+                : 'text-gray-500 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-700 focus:ring-accent-400';
+              const br = message.branch;
+              const msgId = message.id;
+              return (
+                <div
+                  className={`mt-2 inline-flex items-center gap-1 text-xs ${onUserBubble ? 'text-white/80' : 'text-gray-500 dark:text-gray-400'}`}
+                  role="group"
+                  aria-label={t('chat.branch.group')}
+                >
+                  <button
+                    type="button"
+                    onClick={() => { const p = br.sibling_ids[br.index - 1]; if (typeof p === 'number') void switchBranch(p); }}
+                    disabled={br.index === 0}
+                    className={`p-1.5 rounded disabled:opacity-30 disabled:cursor-not-allowed focus:outline-none focus:ring-2 ${navClass}`}
+                    aria-label={t('chat.branch.previous')}
+                  >
+                    <ChevronLeft className="w-4 h-4" aria-hidden="true" />
+                  </button>
+                  <span className="tabular-nums px-0.5" aria-live="polite">
+                    {t('chat.branch.position', { current: br.index + 1, total: br.count })}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => { const n = br.sibling_ids[br.index + 1]; if (typeof n === 'number') void switchBranch(n); }}
+                    disabled={br.index === br.count - 1}
+                    className={`p-1.5 rounded disabled:opacity-30 disabled:cursor-not-allowed focus:outline-none focus:ring-2 ${navClass}`}
+                    aria-label={t('chat.branch.next')}
+                  >
+                    <ChevronRight className="w-4 h-4" aria-hidden="true" />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const neighbor = br.sibling_ids[br.index - 1] ?? br.sibling_ids[br.index + 1];
+                      if (typeof neighbor === 'number' && window.confirm(t('chat.branch.deleteConfirm'))) {
+                        void deleteBranch(msgId, neighbor);
+                      }
+                    }}
+                    className={`p-1.5 ml-1 rounded focus:outline-none focus:ring-2 ${onUserBubble ? 'text-white/80 hover:bg-white/20 focus:ring-white/50' : 'text-gray-400 hover:text-red-500 dark:hover:text-red-400 hover:bg-gray-200 dark:hover:bg-gray-700 focus:ring-red-400'}`}
+                    aria-label={t('chat.branch.delete')}
+                  >
+                    <Trash2 className="w-3.5 h-3.5" aria-hidden="true" />
+                  </button>
+                </div>
+              );
+            })()}
+
+            {/* Edit affordance (chat branching): any user message (Phase 2 —
+                fork-from-any), dark behind chat_branching_enabled. Keyboard-
                 reachable (a real focusable button, not hover-only). */}
-            {branchingEnabled && message.role === 'user' && index === lastUserIndex
+            {branchingEnabled && message.role === 'user'
               && editingIndex !== index && !loading && (
               <button
                 type="button"
@@ -546,11 +589,11 @@ export default function ChatMessages() {
               </button>
             )}
 
-            {/* Regenerate affordance (chat branching, Phase 1): only on the
-                LATEST assistant turn, dark behind chat_branching_enabled.
+            {/* Regenerate affordance (chat branching): any finished assistant
+                turn (Phase 2 — fork-from-any), dark behind chat_branching_enabled.
                 Keyboard-reachable. Re-runs the same user query → new sibling. */}
             {branchingEnabled && message.role === 'assistant' && !message.streaming
-              && index === lastAssistantIndex && !loading && (
+              && !loading && (
               <button
                 type="button"
                 onClick={() => regenerateTurn(index)}

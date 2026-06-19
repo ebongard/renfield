@@ -16,6 +16,15 @@ export interface MessageSource {
 }
 
 // Chat message
+// Chat branching (Phase 2): sibling-branch info for the ‹n/m› switcher. Present
+// on a history message only when it has >1 sibling under the same parent.
+// `sibling_ids` is ordered (timestamp, id); `index` is this message's position.
+export interface BranchInfo {
+  index: number;
+  count: number;
+  sibling_ids: number[];
+}
+
 export interface ChatMessage {
   id?: number;
   session_id: string;
@@ -26,6 +35,8 @@ export interface ChatMessage {
   // Provenance chips. On the live turn these arrive on the `done` frame; on
   // history load they rehydrate from `metadata.sources`.
   sources?: MessageSource[];
+  // Chat branching (Phase 2): sibling-branch info (absent when no siblings).
+  branch?: BranchInfo;
 }
 
 // Conversation summary

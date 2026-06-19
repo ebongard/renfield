@@ -131,6 +131,14 @@
     "editMessage": "Nachricht bearbeiten",
     "resubmit": "Erneut senden",
     "regenerate": "Neu generieren",
+    "branch": {
+      "group": "Branch-Navigation",
+      "previous": "Vorheriger Branch",
+      "next": "Nächster Branch",
+      "position": "{{current}}/{{total}}",
+      "delete": "Diesen Branch löschen",
+      "deleteConfirm": "Diesen Branch und alle Antworten darin löschen? Das kann nicht rückgängig gemacht werden."
+    },
     "albumArt": "Albumcover",
     "mediaHandoff": {
       "followed": "Wiedergabe folgt nach {{room}}",

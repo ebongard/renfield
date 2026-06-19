@@ -361,6 +361,33 @@ async def _extract_memories_background(
                 f"📝 Memory extraction done: extracted={len(memories)} "
                 f"(session={session_id})"
             )
+            # Chat branching (Phase 2) race guard: a fork/switch may have landed
+            # WHILE this background extraction ran, so re-derive is_active from the
+            # conversation's CURRENT active leaf. Idempotent — whichever of
+            # extraction/fork commits last re-fixes truth, so a memory written for
+            # an abandoned turn can't linger active. Flag-gated → zero cost when
+            # branching is off (the prod default).
+            if session_id and settings.chat_branching_enabled:
+                try:
+                    from sqlalchemy import select
+
+                    from models.database import Conversation as _Conv
+                    from services.conversation_service import (
+                        ConversationService as _CS,
+                    )
+                    _conv = (
+                        await db.execute(
+                            select(_Conv).where(_Conv.session_id == session_id)
+                        )
+                    ).scalar_one_or_none()
+                    if _conv is not None:
+                        _changed = await _CS(db).recompute_memory_activation(_conv)
+                        if _changed:
+                            await db.commit()
+                except Exception as _ge:  # noqa: BLE001
+                    logger.warning(
+                        f"⚠️ Post-extraction branch recompute failed: {_ge}"
+                    )
     except Exception as e:
         logger.warning(f"Memory extraction failed: {e}", exc_info=True)
 
@@ -2032,7 +2059,6 @@ WICHTIG: Nutze die ECHTEN Daten aus dem Ergebnis! Gib NUR die Antwort, KEIN JSON
                         regenerate_mode = False
                         assistant_parent_id: int | None = None
                         if fork_from_message_id is not None:
-                            _bsvc = ConversationService(db_session)
                             # SECURITY (IDOR): scope the fork-target lookup to the
                             # CALLER'S conversation. The client controls
                             # fork_from_message_id, so an unscoped lookup would let
@@ -2067,37 +2093,14 @@ WICHTIG: Nutze die ECHTEN Daten aus dem Ergebnis! Gib NUR die Antwort, KEIN JSON
                                 )
                                 fork_from_message_id = None
                             else:
+                                # Phase 2: the abandoned branch's memories are no
+                                # longer deactivated one-way here. A single
+                                # SYMMETRIC recompute runs AFTER the new turn is
+                                # saved (so it keys on the new active leaf) — it
+                                # deactivates the abandoned subtree AND reactivates
+                                # whatever is back on-path, in one idempotent pass.
+                                # See the recompute_memory_activation call below.
                                 regenerate_mode = _fork_msg == "user"
-                                # Abandoned root = the message on the CURRENT active
-                                # path whose parent is fork_from (the sibling we are
-                                # replacing). Deactivate its subtree's memories. The
-                                # query is session-scoped, so even a same-conversation
-                                # fork can never reach into another conversation.
-                                try:
-                                    _abandoned = (
-                                        await db_session.execute(
-                                            select(Message.id)
-                                            .join(
-                                                Conversation,
-                                                Message.conversation_id == Conversation.id,
-                                            )
-                                            .where(
-                                                Conversation.session_id == msg_session_id,
-                                                Message.parent_message_id
-                                                == fork_from_message_id,
-                                            )
-                                        )
-                                    ).scalars().all()
-                                    for _aid in _abandoned:
-                                        await _bsvc.deactivate_memories_for_abandoned_subtree(
-                                            _aid
-                                        )
-                                    if _abandoned:
-                                        await db_session.commit()
-                                except Exception as _de:  # noqa: BLE001
-                                    logger.warning(
-                                        f"⚠️ Fork memory-deactivation failed: {_de}"
-                                    )
 
                         # Save user message
                         user_metadata = {}
@@ -2132,6 +2135,34 @@ WICHTIG: Nutze die ECHTEN Daten aus dem Ergebnis! Gib NUR die Antwort, KEIN JSON
                         )
                         saved_assistant_message_id = _asst_msg.id
                         logger.debug(f"💾 Messages saved to DB: session_id={msg_session_id}, user_id={user_id}")
+
+                        # Chat branching (Phase 2): on a fork, recompute memory
+                        # activation from the NEW active leaf (root→this turn).
+                        # Symmetric + idempotent — deactivates the abandoned
+                        # sibling subtree and reactivates anything now back
+                        # on-path, replacing Phase-1's pre-save one-way deactivate
+                        # and closing its race. No-op on a normal append (active
+                        # path == all messages). save_message already committed the
+                        # new leaf, so reload the conversation to read it.
+                        if fork_from_message_id is not None:
+                            try:
+                                _conv = (
+                                    await db_session.execute(
+                                        select(Conversation).where(
+                                            Conversation.session_id == msg_session_id
+                                        )
+                                    )
+                                ).scalar_one_or_none()
+                                if _conv is not None:
+                                    _changed = await ConversationService(
+                                        db_session
+                                    ).recompute_memory_activation(_conv)
+                                    if _changed:
+                                        await db_session.commit()
+                            except Exception as _re:  # noqa: BLE001
+                                logger.warning(
+                                    f"⚠️ Fork memory recompute failed: {_re}"
+                                )
 
                         # Trigger summary generation if conversation is long enough
                         if settings.conversation_summary_threshold > 0:
