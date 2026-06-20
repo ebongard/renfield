@@ -18,7 +18,7 @@ import './i18n';
 // it (re-fetching the current CSP) and propagates. So: when you change a served
 // HTTP header (CSP etc.) without any other frontend change, BUMP THIS so the fix
 // reaches existing PWA clients. See reference_pwa_sw_nocache_nginx.
-const __BUILD_STAMP__ = '2026-06-19.chat-branching-phase2';
+const __BUILD_STAMP__ = '2026-06-20.branch-switcher-fork-reload';
 console.info(`Renfield frontend build ${__BUILD_STAMP__}`);
 
 // Edition selector for theme tokens. When VITE_APP_EDITION=pro, the

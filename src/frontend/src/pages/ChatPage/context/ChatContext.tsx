@@ -593,6 +593,15 @@ export function ChatProvider({ children }: ChatProviderProps) {
   // to a no-op; assigned after speakText is declared below.
   const speakTextRef = useRef<(text: string) => Promise<void>>(async () => undefined);
 
+  // Chat branching (Phase 2): when the in-flight turn is a FORK (edit/regenerate),
+  // its `done` frame has created a new sibling — but the WS stream carries no
+  // branch metadata, so the ‹n/m› switcher only appears once history is reloaded.
+  // `sendMessageInternal` arms this flag for a forked turn; `handleStreamDone`
+  // reloads history once when it sees it set (via reloadHistoryRef — reloadHistory
+  // is declared further below, same forward-reference pattern as speakTextRef).
+  const pendingForkReloadRef = useRef(false);
+  const reloadHistoryRef = useRef<() => Promise<void>>(async () => undefined);
+
   // Sentence-streaming auto-TTS (option A). Tracks accumulated chat
   // content so we can dispatch each completed sentence as its own
   // tts_request as the LLM streams. The voice-server's tts handler
@@ -845,6 +854,14 @@ export function ChatProvider({ children }: ChatProviderProps) {
     // Turn finished cleanly — no longer a live WS stream for reconnect to interrupt.
     wsStreamingTurnRef.current = false;
     setLoading(false);
+
+    // Chat branching (Phase 2): a forked turn just landed — reload history so the
+    // new sibling's ‹n/m› switcher renders immediately (the WS stream carries no
+    // branch metadata). One-shot; ignored on a normal append.
+    if (pendingForkReloadRef.current) {
+      pendingForkReloadRef.current = false;
+      void reloadHistoryRef.current();
+    }
   }, [resumeWakeWord]);
 
   // Sentence boundary regex for streaming TTS dispatch. Matches a
@@ -1727,6 +1744,12 @@ export function ChatProvider({ children }: ChatProviderProps) {
       // The turn is now streaming over the WS; a mid-stream socket drop makes it
       // recoverable (the reconnect effect clears the spinner + notifies).
       wsStreamingTurnRef.current = true;
+      // Chat branching (Phase 2): a forked turn → reload history on `done` so the
+      // new sibling's ‹n/m› switcher renders immediately. Armed only on a
+      // confirmed WS send (the REST fallback doesn't carry the fork).
+      if (typeof opts?.forkFromMessageId === 'number') {
+        pendingForkReloadRef.current = true;
+      }
       setRagSources([]);
     } else {
       try {
@@ -1811,6 +1834,8 @@ export function ChatProvider({ children }: ChatProviderProps) {
       console.error('Failed to reload history after branch change:', err);
     }
   }, [sessionId, loadConversationHistory]);
+  // Expose to handleStreamDone (declared earlier) via the forward-ref.
+  reloadHistoryRef.current = reloadHistory;
 
   // Switch the active branch to the sibling identified by `messageId` (the ◂/▸
   // switcher). The backend repoints the active leaf to that sibling's subtree
