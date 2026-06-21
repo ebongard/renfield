@@ -12,7 +12,7 @@
  * (not pulled from ChatContext) so the artifact layer stays decoupled/testable;
  * when absent the controls render disabled.
  */
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Lightbulb, Play, Loader, Thermometer, Minus, Plus } from 'lucide-react';
 import type { DeviceControlData, DeviceControlDevice } from './artifactSchema';
@@ -53,6 +53,14 @@ export default function DeviceControlArtifact({
   );
   const [pending, setPending] = useState<Set<string>>(() => new Set());
   const brightnessTimers = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
+
+  // Cancel any pending debounced brightness sends on unmount (e.g. the user
+  // switches conversations mid-drag) so a stale timer can't fire an unintended
+  // device_action after the widget is gone.
+  useEffect(() => {
+    const timers = brightnessTimers.current;
+    return () => Object.values(timers).forEach(clearTimeout);
+  }, []);
 
   const setBusy = (id: string, busy: boolean) =>
     setPending((prev) => {

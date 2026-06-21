@@ -947,7 +947,11 @@ async def websocket_endpoint(
                 da_value = data.get("value")  # optional numeric (brightness / temperature)
                 if (not isinstance(entity_id, str) or not entity_id or len(entity_id) > 255
                         or not isinstance(action, str) or not action
-                        or (da_value is not None and not isinstance(da_value, (int, float)))):
+                        # bool is an int subclass — exclude it so `value: true`
+                        # can't slip through as a numeric (mirrors _require_str /
+                        # _finite_number in artifact_service).
+                        or (da_value is not None and (isinstance(da_value, bool)
+                                                      or not isinstance(da_value, (int, float))))):
                     await send_ws_error(
                         websocket, WSErrorCode.INVALID_MESSAGE,
                         "device_action requires 'entity_id' (≤255 chars), 'action', optional numeric 'value'",

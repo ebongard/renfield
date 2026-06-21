@@ -1276,6 +1276,11 @@ export function ChatProvider({ children }: ChatProviderProps) {
       });
       if (!ok) return Promise.resolve({ success: false });
       return new Promise((resolve) => {
+        // Settle any earlier in-flight action for this entity so its promise
+        // doesn't orphan (idle until the 6s timeout) when a new one overwrites
+        // the resolver — one device_action_result per entity arrives at a time.
+        const prev = deviceActionResolversRef.current.get(entityId);
+        if (prev) prev({ success: false });
         deviceActionResolversRef.current.set(entityId, resolve);
         setTimeout(() => {
           if (deviceActionResolversRef.current.has(entityId)) {
