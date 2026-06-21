@@ -16,7 +16,7 @@
  */
 import { z } from 'zod';
 
-export const ARTIFACT_KINDS = ['table', 'list', 'keyvalue', 'chart'] as const;
+export const ARTIFACT_KINDS = ['table', 'list', 'keyvalue', 'chart', 'weather'] as const;
 export type ArtifactKind = (typeof ARTIFACT_KINDS)[number];
 
 // A finite number — rejects NaN / ±Infinity so a coordinate can never blow the
@@ -47,6 +47,32 @@ export const chartDataSchema = z.object({
   series: z.array(chartSeriesSchema),
 });
 
+// Weather widget (Gen-UI). `code` is a WMO weather code → condition icon.
+export const weatherCurrentSchema = z.object({
+  temp: finiteNumber,
+  unit: z.string(),
+  code: z.number(),
+  condition: z.string(),
+  feelsLike: finiteNumber.optional(),
+  humidity: finiteNumber.optional(),
+  windSpeed: finiteNumber.optional(),
+  high: finiteNumber.optional(),
+  low: finiteNumber.optional(),
+});
+export const weatherForecastSchema = z.object({
+  date: z.string(),
+  code: z.number(),
+  high: finiteNumber,
+  low: finiteNumber,
+  condition: z.string().optional(),
+  precipChance: finiteNumber.optional(),
+});
+export const weatherDataSchema = z.object({
+  location: z.string(),
+  current: weatherCurrentSchema,
+  forecast: z.array(weatherForecastSchema).optional(),
+});
+
 // Discriminated union on `kind` so a malformed `data` for the declared kind is
 // a clean parse failure (→ fallback), not a wrong-renderer dispatch.
 const baseFields = {
@@ -60,6 +86,7 @@ export const artifactSchema = z.discriminatedUnion('kind', [
   z.object({ ...baseFields, kind: z.literal('list'), data: listDataSchema }),
   z.object({ ...baseFields, kind: z.literal('keyvalue'), data: keyValueDataSchema }),
   z.object({ ...baseFields, kind: z.literal('chart'), data: chartDataSchema }),
+  z.object({ ...baseFields, kind: z.literal('weather'), data: weatherDataSchema }),
 ]);
 
 export type ChatArtifact = z.infer<typeof artifactSchema>;
@@ -67,6 +94,7 @@ export type TableData = z.infer<typeof tableDataSchema>;
 export type ListData = z.infer<typeof listDataSchema>;
 export type KeyValueData = z.infer<typeof keyValueDataSchema>;
 export type ChartData = z.infer<typeof chartDataSchema>;
+export type WeatherData = z.infer<typeof weatherDataSchema>;
 export type ChartSeries = z.infer<typeof chartSeriesSchema>;
 
 /** Parse an unknown payload into a typed artifact, or null on any shape failure. */

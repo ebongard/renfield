@@ -18,6 +18,29 @@ describe('artifactSchema — authoritative shape validation', () => {
     expect(parseArtifact({ id: 'c', kind: 'chart', data: { chartType: 'bar', series: [{ label: 's', points: [{ x: 0, y: 1 }] }] } })).not.toBeNull();
   });
 
+  it('accepts a well-formed weather widget (minimal + full)', () => {
+    expect(parseArtifact({
+      id: 'w', kind: 'weather',
+      data: { location: 'Berlin', current: { temp: 18, unit: '°C', code: 3, condition: 'Bedeckt' } },
+    })).not.toBeNull();
+    expect(parseArtifact({
+      id: 'w2', kind: 'weather', title: 'Berlin',
+      data: {
+        location: 'Berlin',
+        current: { temp: 18, unit: '°C', code: 61, condition: 'Regen', feelsLike: 16, humidity: 80, windSpeed: 12, high: 20, low: 11 },
+        forecast: [{ date: '2026-06-21', code: 1, high: 22, low: 12, condition: 'Heiter', precipChance: 10 }],
+      },
+    })).not.toBeNull();
+  });
+
+  it('rejects a weather widget missing current or with a non-finite temp', () => {
+    expect(parseArtifact({ id: 'w', kind: 'weather', data: { location: 'Berlin' } })).toBeNull();
+    expect(parseArtifact({
+      id: 'w', kind: 'weather',
+      data: { location: 'Berlin', current: { temp: NaN, unit: '°C', code: 0, condition: 'x' } },
+    })).toBeNull();
+  });
+
   it('rejects unknown kind, missing id, wrong data shape', () => {
     expect(parseArtifact({ id: 'x', kind: 'html', data: {} })).toBeNull();
     expect(parseArtifact({ kind: 'list', data: { items: [] } })).toBeNull();

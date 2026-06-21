@@ -127,6 +127,22 @@ class ActionExecutor:
                 user_id=user_id,
             )
 
+        # Platform-owned Gen-UI widget tools: the agent renders a table / list
+        # widget from data it computed, or a weather widget from the Open-Meteo
+        # MCP. Each returns data={"artifacts": [...]}, which the chat handler
+        # collects from the tool result and emits. weather_widget needs the MCP
+        # manager (injected here, like ingest_file); the render tools are pure
+        # validation.
+        if intent == "internal.render_table":
+            from services.widget_tools import render_table
+            return await render_table(parameters)
+        if intent == "internal.render_list":
+            from services.widget_tools import render_list
+            return await render_list(parameters)
+        if intent == "internal.weather_widget":
+            from services.widget_tools import weather_widget
+            return await weather_widget(parameters, mcp_manager=self.mcp_manager)
+
         # Other `internal.*` intents (room resolution, media playback,
         # presence, radio) live in ha_glue and are dispatched via the
         # `execute_tool` hook. Platform-only deploys without ha_glue fall

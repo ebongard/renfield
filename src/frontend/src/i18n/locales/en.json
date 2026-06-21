@@ -164,6 +164,9 @@
       "emptyList": "No entries",
       "emptyKeyValue": "No entries",
       "emptyChart": "No data points",
+      "weather": {
+        "feelsLike": "Feels like {{temp}}"
+      },
       "chartSummary": "{{type}} with {{count}} series",
       "chartType": {
         "bar": "Bar chart",

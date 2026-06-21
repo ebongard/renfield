@@ -75,6 +75,10 @@ roles:
       de: "Recherche: Websuche, Nachrichten, Aussenwetter/Wettervorhersage (NICHT Raumtemperatur)"
       en: "Research: web search, news, outdoor weather/forecast (NOT room temperature)"
     mcp_servers: [search, news, weather]
+    # internal.weather_widget wraps mcp.weather.get_weather + renders a weather
+    # widget (prefer it over the raw MCP for weather questions). render_table/
+    # render_list let research answers come back as widgets.
+    internal_tools: [internal.weather_widget, internal.render_table, internal.render_list]
     max_steps: 6
     prompt_key: agent_prompt_research
 
@@ -83,7 +87,7 @@ roles:
       de: "Dokumente und E-Mail: Suche in Wissensdatenbank und Paperless, Download, Versand"
       en: "Documents and email: search knowledge base and Paperless, download, send"
     mcp_servers: [paperless, email]
-    internal_tools: [internal.knowledge_search, internal.forward_attachment_to_paperless]
+    internal_tools: [internal.knowledge_search, internal.forward_attachment_to_paperless, internal.render_table, internal.render_list]
     max_steps: 8
     prompt_key: agent_prompt_documents
 
@@ -119,7 +123,7 @@ roles:
       de: "Routinen: Gute-Nacht-Routine, Guten-Morgen-Routine, Schlafenszeit, Aufstehen — mehrstufige Smart-Home-Ablaeufe mit Statusbericht"
       en: "Routines: good-night routine, good-morning routine, bedtime, waking up — multi-step smart home sequences with status briefing"
     mcp_servers: [homeassistant, calendar, weather, jellyfin, dlna, radio, samsung]
-    internal_tools: [internal.get_all_presence, internal.get_user_location, internal.resolve_room_player, internal.media_control, internal.play_in_room, internal.play_radio]
+    internal_tools: [internal.get_all_presence, internal.get_user_location, internal.resolve_room_player, internal.media_control, internal.play_in_room, internal.play_radio, internal.weather_widget]
     max_steps: 15
     prompt_key: agent_prompt_routine
 

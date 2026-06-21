@@ -29,7 +29,73 @@ def _table(rows):
 
 @pytest.mark.unit
 def test_allowed_kinds_are_exactly_lane_a():
-    assert ALLOWED_KINDS == frozenset({"table", "list", "keyvalue", "chart"})
+    assert ALLOWED_KINDS == frozenset({"table", "list", "keyvalue", "chart", "weather"})
+
+
+# --- weather widget (Gen-UI kind) ------------------------------------------
+
+def _weather(**over):
+    data = {
+        "location": "Berlin",
+        "current": {"temp": 18.0, "unit": "°C", "code": 3, "condition": "Bedeckt"},
+    }
+    data.update(over)
+    return {"id": "art_w", "kind": "weather", "data": data}
+
+
+@pytest.mark.unit
+def test_weather_minimal_valid():
+    out = validate_artifact(_weather())
+    assert out["kind"] == "weather"
+    assert out["data"]["location"] == "Berlin"
+    assert out["data"]["current"]["temp"] == 18.0
+    assert out["data"]["current"]["code"] == 3
+    # No optional fields / forecast when not supplied.
+    assert "forecast" not in out["data"]
+    assert "feelsLike" not in out["data"]["current"]
+
+
+@pytest.mark.unit
+def test_weather_optional_current_fields_and_forecast():
+    out = validate_artifact(_weather(
+        current={
+            "temp": 18, "unit": "°C", "code": 61, "condition": "Regen",
+            "feelsLike": 16, "humidity": 80, "windSpeed": 12, "high": 20, "low": 11,
+        },
+        forecast=[
+            {"date": "2026-06-21", "code": 1, "high": 22, "low": 12,
+             "condition": "Heiter", "precipChance": 10},
+            {"date": "2026-06-22", "code": 80, "high": 19, "low": 13},
+        ],
+    ))
+    cur = out["data"]["current"]
+    assert (cur["feelsLike"], cur["humidity"], cur["windSpeed"]) == (16, 80, 12)
+    assert (cur["high"], cur["low"]) == (20, 11)
+    assert len(out["data"]["forecast"]) == 2
+    assert out["data"]["forecast"][0]["precipChance"] == 10
+    # A forecast entry without optional condition/precipChance keeps them absent.
+    assert "condition" not in out["data"]["forecast"][1]
+
+
+@pytest.mark.unit
+def test_weather_missing_current_rejected():
+    with pytest.raises(ArtifactRejected):
+        validate_artifact({"id": "x", "kind": "weather", "data": {"location": "Berlin"}})
+
+
+@pytest.mark.unit
+def test_weather_nonfinite_temp_rejected():
+    with pytest.raises(ArtifactRejected):
+        validate_artifact(_weather(current={"temp": float("nan"), "unit": "°C", "code": 0, "condition": "x"}))
+
+
+@pytest.mark.unit
+def test_weather_forecast_cap():
+    from services.artifact_service import MAX_FORECAST_DAYS
+    days = [{"date": f"2026-06-{d:02d}", "code": 0, "high": 20, "low": 10}
+            for d in range(1, MAX_FORECAST_DAYS + 3)]
+    with pytest.raises(ArtifactRejected):
+        validate_artifact(_weather(forecast=days))
 
 
 @pytest.mark.unit

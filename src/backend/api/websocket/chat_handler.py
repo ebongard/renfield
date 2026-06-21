@@ -171,6 +171,25 @@ def _extract_agent_sources(tool_results: list) -> list[dict]:
     return sources
 
 
+def _collect_tool_artifacts(tool_results: list) -> list:
+    """Gen-UI: gather typed artifacts a tool emitted in its result ``data``.
+
+    The render/weather widget tools return ``data={"artifacts": [...]}``; the
+    agent loop already collects every tool result's data into
+    ``agent_tool_results``. This flattens the artifacts out so the chat handler
+    can hand them to ``_emit_turn_artifacts`` (which re-validates + emits +
+    persists, same path as the sub-intent producers). Empty when no tool emitted
+    an artifact — a no-op for ordinary turns.
+    """
+    artifacts: list = []
+    for _tool, data in tool_results:
+        if isinstance(data, dict):
+            arts = data.get("artifacts")
+            if isinstance(arts, list):
+                artifacts.extend(arts)
+    return artifacts
+
+
 def _build_agent_action_result(tool_results: list) -> dict:
     """Build a synthetic action_result from agent tool results for conversation history.
 
@@ -1718,6 +1737,9 @@ async def websocket_endpoint(
                             await websocket.send_json(card_msg)
 
                         await _emit_turn_artifacts(deferred_artifacts)
+                        # Gen-UI: also emit widgets a sub-agent rendered via a
+                        # render/weather tool during orchestration.
+                        await _emit_turn_artifacts(_collect_tool_artifacts(agent_tool_results))
 
                         if deferred_paperless_confirm:
                             from services.agent_service import AgentStep
@@ -1867,6 +1889,10 @@ async def websocket_endpoint(
                     # Build action summary from agent tool results for conversation history
                     if agent_tool_results:
                         action_result = _build_agent_action_result(agent_tool_results)
+
+                    # Gen-UI: emit any typed widgets the agent rendered via the
+                    # render_table / render_list / weather_widget tools.
+                    await _emit_turn_artifacts(_collect_tool_artifacts(agent_tool_results))
 
                     logger.info(f"🤖 Agent [{role.name}] abgeschlossen: {agent_steps_count} Steps")
 

@@ -164,6 +164,9 @@
       "emptyList": "Keine Einträge",
       "emptyKeyValue": "Keine Einträge",
       "emptyChart": "Keine Datenpunkte",
+      "weather": {
+        "feelsLike": "Gefühlt {{temp}}"
+      },
       "chartSummary": "{{type}} mit {{count}} Datenreihe(n)",
       "chartType": {
         "bar": "Balkendiagramm",

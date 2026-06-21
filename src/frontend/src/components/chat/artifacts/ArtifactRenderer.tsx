@@ -23,6 +23,7 @@ import TableArtifact from './TableArtifact';
 import ListArtifact from './ListArtifact';
 import KeyValueArtifact from './KeyValueArtifact';
 import ChartArtifact from './ChartArtifact';
+import WeatherArtifact from './WeatherArtifact';
 
 export interface ArtifactRendererProps {
   /** The raw artifact payload (from a WS frame or rehydrated metadata). */
@@ -83,6 +84,8 @@ function ArtifactBody({ artifact }: { artifact: ChatArtifact }) {
       return <KeyValueArtifact data={artifact.data} />;
     case 'chart':
       return <ChartArtifact data={artifact.data} title={artifact.title} />;
+    case 'weather':
+      return <WeatherArtifact data={artifact.data} />;
     default:
       // Unreachable — the zod discriminated union rejects unknown kinds before
       // we get here — but exhaustiveness keeps it honest.

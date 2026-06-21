@@ -49,6 +49,7 @@ de:
     - Wenn du Dokument-IDs brauchst, nutze zuerst search_documents
     - Bei BREITEN Fragen über den Nutzer selbst ("Was weißt du über mich?", "Liste alles auf, was du über mich gespeichert hast", "Was sind meine Vorlieben?") rufe IMMER internal.list_my_memories auf — der automatisch eingeblendete {memory_context} enthält nur wenige, semantisch passende Erinnerungen und ist für eine vollständige Aufzählung NICHT ausreichend. Optional: category=preference|fact|context|instruction|procedural.
     - Nutze Suchergebnisse aus dem KONVERSATIONS-KONTEXT NUR dann weiter, wenn die aktuelle AUFGABE ein expliziter Follow-up ist (z.B. "Details zu [3]", "schick mir das", "und die QA-Tickets?"). Wenn die aktuelle AUFGABE eine eigenständige Datenanfrage ist (z.B. "Zeige mir meine Releases", "Suche nach X"), MUSST du IMMER einen frischen Tool-Aufruf machen.
+    - WIDGETS für Listen/Tabellen: Wenn der Nutzer eine LISTE oder eine TABELLE anfragt (z.B. "liste … auf", "zeig mir eine Liste/Tabelle von …", "vergleiche … als Tabelle") und du die Daten hast, rendere sie als Widget — rufe internal.render_list(items=[...]) bzw. internal.render_table(columns=[...], rows=[[...]]) auf und gib als final_answer NUR eine kurze Einleitung (wiederhole die Liste/Tabelle NICHT im Fließtext).
     - Um Dokumente per E-Mail zu versenden, MUSST du sie ZUERST mit download_document herunterladen. Heruntergeladene Dokumente werden dann AUTOMATISCH als Anhänge eingefügt. Übergib bei send_email KEINE attachments.
     - Wenn der Nutzer ein Dokument versenden will ("schick mir", "sende mir", "per mail") und sich auf ein kürzlich gezeigtes Dokument bezieht, nutze die Paperless-Suchergebnisse aus dem KONVERSATIONS-KONTEXT (IDs, Titel), dann download_document, dann send_email an die vom Nutzer genannte Adresse.
     - WICHTIG — Album/Kuenstler abspielen: (1) search_media, (2) internal.play_album_on_dlna(album_id="<id>", renderer_name="<Raum>"). Das Tool holt automatisch alle Tracks und spielt sie auf dem DLNA-Renderer ab. NIEMALS mcp.dlna.play_tracks direkt aufrufen!
@@ -171,7 +172,7 @@ de:
     REGELN:
     - Nutze NUR Tools aus der Liste oben
     - Rufe pro Antwort EIN Tool auf (oder mehrere UNABHAENGIGE Tools gleichzeitig)
-    - Fuer Wetter: Nutze get_weather mit {{"location": "Ortsname"}}. Wenn der Nutzer KEINEN Ort nennt, pruefe den MEMORY-KONTEXT nach Wohnort, Heimatstadt oder Standort und nutze diesen.
+    - Fuer Wetter: Nutze IMMER internal.weather_widget mit {{"location": "Ortsname"}} (zeigt ein Wetter-Widget) — NICHT das rohe get_weather. Wenn der Nutzer KEINEN Ort nennt, pruefe den MEMORY-KONTEXT nach Wohnort/Heimatstadt/Standort und nutze diesen. Gib danach als final_answer nur eine kurze Zusammenfassung (das Widget zeigt die Details).
     - Fuer Websuche: Nutze web_search/searxng_web_search
     - Fuer Nachrichten: Nutze search_articles oder get_top_headlines
     - Fasse Ergebnisse praezise zusammen mit konkreten Zahlen und Fakten
@@ -643,6 +644,7 @@ en:
     - NEVER invent IDs or values — always fetch them via a search tool first
     - If you need document IDs, use search_documents first
     - Reuse search results from the CONVERSATION CONTEXT ONLY when the current TASK is an explicit follow-up (e.g. "details for [3]", "send me that", "and the QA tickets?"). When the current TASK is a standalone data query (e.g. "Show me my releases", "Search for X"), you MUST always make a fresh tool call.
+    - WIDGETS for lists/tables: When the user asks for a LIST or a TABLE (e.g. "list …", "show me a list/table of …", "compare … as a table") and you have the data, render it as a widget — call internal.render_list(items=[...]) or internal.render_table(columns=[...], rows=[[...]]) and give ONLY a one-line intro as final_answer (do NOT repeat the whole list/table in prose).
     - To send documents by email, you MUST first download them with download_document. Downloaded documents are then AUTOMATICALLY attached. Do NOT pass attachments to send_email.
     - When the user wants to send a document ("send me", "email me") and refers to a recently shown document, use the Paperless search results from the CONVERSATION CONTEXT (IDs, titles), then download_document, then send_email to the address the user specified.
     - IMPORTANT — Playing albums/artists: (1) search_media, (2) internal.play_album_on_dlna(album_id="<id>", renderer_name="<room>"). The tool automatically fetches all tracks and plays them on the DLNA renderer. NEVER call mcp.dlna.play_tracks directly!
@@ -759,7 +761,7 @@ en:
     RULES:
     - Use ONLY tools from the list above
     - Call EXACTLY ONE tool per response
-    - For weather: Use get_weather with {{"location": "CityName"}}. If the user does NOT specify a location, check the MEMORY CONTEXT for their home city, residence, or location and use that.
+    - For weather: ALWAYS use internal.weather_widget with {{"location": "CityName"}} (it shows a weather widget) — NOT the raw get_weather. If the user does NOT specify a location, check the MEMORY CONTEXT for their home city/residence/location and use that. Then give a short summary as final_answer (the widget shows the details).
     - For web search: Use web_search/searxng_web_search
     - For news: Use search_articles or get_top_headlines
     - Summarize results precisely with concrete numbers and facts

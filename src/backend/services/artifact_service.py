@@ -41,7 +41,7 @@ import logging
 logger = logging.getLogger(__name__)
 
 # --- The kind allowlist (Lane A only; html/svg are Lane B and rejected here) ---
-ALLOWED_KINDS: frozenset[str] = frozenset({"table", "list", "keyvalue", "chart"})
+ALLOWED_KINDS: frozenset[str] = frozenset({"table", "list", "keyvalue", "chart", "weather"})
 
 # --- DoS caps (the backend's ONLY validation responsibility) -----------------
 # Generous enough for the motivated use cases (weekly plan ~7 rows, shopping
@@ -55,6 +55,7 @@ MAX_CHART_SERIES = 12           # series in a chart
 MAX_CHART_POINTS = 500          # points per series
 MAX_CELL_CHARS = 2000           # any single string cell / value / label
 MAX_TITLE_CHARS = 300           # the artifact title
+MAX_FORECAST_DAYS = 16          # weather forecast entries (Open-Meteo's max)
 
 # A turn may legitimately carry a couple of artifacts (table + chart); cap the
 # count so a single turn can't fan out hundreds of frames.
@@ -196,11 +197,78 @@ def _validate_chart(data: object) -> dict:
     return {"chartType": chart_type, "series": out_series}
 
 
+def _opt_finite(value: object, *, field: str) -> float | None:
+    """A finite number when present, else None (for optional weather fields)."""
+    if value is None:
+        return None
+    return _finite_number(value, field=field)
+
+
+def _validate_weather(data: object) -> dict:
+    """A weather widget (Gen-UI): a location + current conditions + a short
+    daily forecast. Numbers stay numeric (the renderer formats them); strings
+    are bounded; the forecast is capped. The WMO ``code`` (int) drives the
+    frontend's condition icon — an unknown code falls back to a neutral icon.
+    """
+    if not isinstance(data, dict):
+        raise ArtifactRejected("weather.data: not an object")
+    location = _require_str(
+        data.get("location", ""), field="weather.location", max_chars=MAX_CELL_CHARS
+    )
+    cur = data.get("current")
+    if not isinstance(cur, dict):
+        raise ArtifactRejected("weather.current: must be an object")
+    out_current: dict = {
+        "temp": _finite_number(cur.get("temp"), field="weather.current.temp"),
+        "unit": _require_str(cur.get("unit", "°C"), field="weather.current.unit", max_chars=8),
+        "code": int(_finite_number(cur.get("code", 0), field="weather.current.code")),
+        "condition": _require_str(
+            cur.get("condition", ""), field="weather.current.condition", max_chars=MAX_CELL_CHARS
+        ),
+    }
+    for opt in ("feelsLike", "humidity", "windSpeed", "high", "low"):
+        v = _opt_finite(cur.get(opt), field=f"weather.current.{opt}")
+        if v is not None:
+            out_current[opt] = v
+
+    out: dict = {"location": location, "current": out_current}
+
+    forecast = data.get("forecast")
+    if isinstance(forecast, list):
+        if len(forecast) > MAX_FORECAST_DAYS:
+            raise ArtifactRejected(
+                f"weather: {len(forecast)} forecast days exceeds cap {MAX_FORECAST_DAYS}"
+            )
+        out_forecast: list[dict] = []
+        for d in forecast:
+            if not isinstance(d, dict):
+                raise ArtifactRejected("weather.forecast[]: not an object")
+            entry: dict = {
+                "date": _require_str(d.get("date", ""), field="weather.forecast.date", max_chars=64),
+                "code": int(_finite_number(d.get("code", 0), field="weather.forecast.code")),
+                "high": _finite_number(d.get("high"), field="weather.forecast.high"),
+                "low": _finite_number(d.get("low"), field="weather.forecast.low"),
+            }
+            cond = d.get("condition")
+            if cond is not None:
+                entry["condition"] = _require_str(
+                    cond, field="weather.forecast.condition", max_chars=MAX_CELL_CHARS
+                )
+            pc = _opt_finite(d.get("precipChance"), field="weather.forecast.precipChance")
+            if pc is not None:
+                entry["precipChance"] = pc
+            out_forecast.append(entry)
+        out["forecast"] = out_forecast
+
+    return out
+
+
 _VALIDATORS = {
     "table": _validate_table,
     "list": _validate_list,
     "keyvalue": _validate_keyvalue,
     "chart": _validate_chart,
+    "weather": _validate_weather,
 }
 
 

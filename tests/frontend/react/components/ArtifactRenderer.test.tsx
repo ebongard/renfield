@@ -80,6 +80,35 @@ describe('ArtifactRenderer — per-kind render', () => {
     expect(screen.getAllByRole('listitem').length).toBeGreaterThanOrEqual(2);
   });
 
+  it('renders a weather widget: current temp/condition + a forecast row', () => {
+    renderArtifact({
+      id: 'aw', kind: 'weather', title: 'Berlin',
+      data: {
+        location: 'Berlin',
+        current: { temp: 18.4, unit: '°C', code: 3, condition: 'Bedeckt', humidity: 72, high: 20, low: 11 },
+        forecast: [
+          { date: '2026-06-21', code: 1, high: 23, low: 12, condition: 'Heiter' },
+          { date: '2026-06-22', code: 80, high: 19, low: 13, condition: 'Schauer', precipChance: 60 },
+        ],
+      },
+    });
+    // Current temp is rounded + carries the unit; condition shown.
+    expect(screen.getByText('18°C')).toBeInTheDocument();
+    expect(screen.getByText('Bedeckt')).toBeInTheDocument();
+    // Forecast highs render (rounded).
+    expect(screen.getByText('23°C')).toBeInTheDocument();
+    // Precip chance shown for the rainy day.
+    expect(screen.getByText('60%')).toBeInTheDocument();
+  });
+
+  it('weather widget renders the condition text as inert escaped text', () => {
+    renderArtifact({
+      id: 'awx', kind: 'weather',
+      data: { location: 'X', current: { temp: 1, unit: '°C', code: 0, condition: XSS } },
+    });
+    expect(screen.getByText(XSS)).toBeInTheDocument();
+  });
+
   it('region carries the generated aria-label + the "generiert" affordance', () => {
     renderArtifact({ id: 'a6', kind: 'list', title: 'Einkauf', data: { items: ['x'] } });
     expect(screen.getByRole('region', { name: /Generiertes Artefakt: Einkauf/ })).toBeInTheDocument();
