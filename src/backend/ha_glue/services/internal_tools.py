@@ -469,10 +469,12 @@ class InternalToolService:
             from ha_glue.integrations.homeassistant import HomeAssistantClient
             ha = HomeAssistantClient()
             # Existence probe — a non-existent entity_id (or a state read failure)
-            # must not actuate. None → reject.
+            # must not actuate. None → reject. Also yields the PRIOR state so we
+            # can resolve the new state deterministically (below).
             state = await ha.get_state(entity_id)
             if not state:
                 return {"success": False, "message": f"Gerät {entity_id} nicht gefunden", "action_taken": False}
+            prior = (state or {}).get("state", "unknown")
 
             if domain == "scene":
                 ok = await ha.call_service("scene", "turn_on", entity_id)
@@ -481,10 +483,18 @@ class InternalToolService:
             if not ok:
                 return {"success": False, "message": f"Schalten von {entity_id} fehlgeschlagen", "action_taken": False}
 
-            # Re-read so the widget reconciles to the real new state. A scene has
-            # no on/off state — report 'on' transiently for UI feedback.
-            new_state = await ha.get_state(entity_id)
-            resolved = (new_state or {}).get("state", "unknown") if domain != "scene" else "on"
+            # Resolve the new state from the ACTION, not a re-read: HA's state
+            # store lags the service call, so an immediate get_state returns the
+            # PRE-change value and the widget would snap back. The action makes
+            # the new state deterministic (toggle inverts the prior state).
+            if domain == "scene" or action == "turn_on":
+                resolved = "on"
+            elif action == "turn_off":
+                resolved = "off"
+            elif action == "toggle":
+                resolved = "off" if prior == "on" else "on"
+            else:
+                resolved = prior
             return {
                 "success": True,
                 "action_taken": True,

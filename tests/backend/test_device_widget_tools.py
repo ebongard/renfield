@@ -56,16 +56,30 @@ async def test_device_action_rejects_nonexistent_entity():
 
 @pytest.mark.unit
 @pytest.mark.asyncio
-async def test_device_action_toggle_calls_ha_and_returns_state():
+async def test_device_action_toggle_inverts_prior_state_deterministically():
     svc = InternalToolService()
     ha = _ha_mock()
-    ha.get_state = AsyncMock(side_effect=[{"state": "off"}, {"state": "on"}])  # probe, then re-read
+    # Single probe (prior=off); the new state is computed from the action (toggle
+    # → on), NOT a re-read (HA's state store lags the service call).
+    ha.get_state = AsyncMock(return_value={"state": "off"})
     with patch("ha_glue.integrations.homeassistant.HomeAssistantClient", return_value=ha):
         out = await svc._device_action({"entity_id": "light.wz", "action": "toggle"})
     assert out["success"] is True
     ha.call_service.assert_awaited_once_with("light", "toggle", "light.wz")
+    assert ha.get_state.await_count == 1  # no second re-read
     assert out["data"]["state"] == "on"
     assert out["data"]["entity_id"] == "light.wz"
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_device_action_turn_off_resolves_off():
+    svc = InternalToolService()
+    ha = _ha_mock()
+    ha.get_state = AsyncMock(return_value={"state": "on"})
+    with patch("ha_glue.integrations.homeassistant.HomeAssistantClient", return_value=ha):
+        out = await svc._device_action({"entity_id": "switch.x", "action": "turn_off"})
+    assert out["data"]["state"] == "off"
 
 
 @pytest.mark.unit
