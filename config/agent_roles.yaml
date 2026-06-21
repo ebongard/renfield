@@ -135,8 +135,8 @@ roles:
 
   general:
     description:
-      de: "Allgemein: Komplexe oder domainuebergreifende Anfragen"
-      en: "General: complex or cross-domain queries"
+      de: "Allgemein: Komplexe oder domainuebergreifende Anfragen; AUCH wenn der Nutzer Daten oder Fakten ausdruecklich als LISTE oder TABELLE dargestellt haben moechte (z.B. 'liste ... auf', 'zeig mir eine Liste/Tabelle von ...', 'erstelle eine Tabelle mit/der ...', 'vergleiche ... als Tabelle')"
+      en: "General: complex or cross-domain queries; ALSO when the user explicitly wants data or facts shown as a LIST or TABLE (e.g. 'list ...', 'show me a list/table of ...', 'create a table of ...', 'compare ... as a table')"
     mcp_servers: null
     internal_tools: null
     max_steps: 12
@@ -144,6 +144,6 @@ roles:
 
   conversation:
     description:
-      de: "Konversation & Texterstellung: Smalltalk, Allgemeinwissen, Meinungen, sowie das Verfassen/Erstellen von Texten, Dokumenten, Fragebögen, Checklisten, Konzepten, Plänen, Vorlagen — KEINE Aktion und KEINE Weitergabe einer Nachricht an eine Person (eine Nachricht ausrichten gehoert zu 'presence')"
-      en: "Conversation & writing: smalltalk, general knowledge, opinions, and writing/creating text, documents, questionnaires, checklists, concepts, plans, templates — NO action and NOT relaying a message to a person (relaying a message belongs to 'presence')"
+      de: "Konversation & Texterstellung: Smalltalk, Allgemeinwissen, Meinungen, sowie das Verfassen/Erstellen von Texten, Dokumenten, Fragebögen, Checklisten, Konzepten, Plänen, Vorlagen — KEINE Aktion und KEINE Weitergabe einer Nachricht an eine Person (eine Nachricht ausrichten gehoert zu 'presence'). NICHT hierher, wenn der Nutzer Daten/Fakten ausdruecklich als LISTE oder TABELLE dargestellt haben moechte (das gehoert zu 'general')"
+      en: "Conversation & writing: smalltalk, general knowledge, opinions, and writing/creating text, documents, questionnaires, checklists, concepts, plans, templates — NO action and NOT relaying a message to a person (relaying a message belongs to 'presence'). NOT here when the user explicitly wants data/facts shown as a LIST or TABLE (that belongs to 'general')"
     # No agent loop - direct LLM response
