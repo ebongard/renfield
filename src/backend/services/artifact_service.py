@@ -42,7 +42,7 @@ logger = logging.getLogger(__name__)
 
 # --- The kind allowlist (Lane A only; html/svg are Lane B and rejected here) ---
 ALLOWED_KINDS: frozenset[str] = frozenset(
-    {"table", "list", "keyvalue", "chart", "weather", "device_control"}
+    {"table", "list", "keyvalue", "chart", "weather", "device_control", "presence_map"}
 )
 
 # --- DoS caps (the backend's ONLY validation responsibility) -----------------
@@ -59,13 +59,15 @@ MAX_CELL_CHARS = 2000           # any single string cell / value / label
 MAX_TITLE_CHARS = 300           # the artifact title
 MAX_FORECAST_DAYS = 16          # weather forecast entries (Open-Meteo's max)
 MAX_DEVICES = 60                # controllable devices in a device_control widget
+MAX_PRESENCE_ROOMS = 60         # rooms in a presence_map widget
+MAX_PRESENCE_USERS = 50         # users in one room of a presence_map widget
 
 # The domains a device_control widget may render a control for. This is a
 # RENDER allowlist only — the actuation handler re-checks domain+action+entity
 # server-side under the HA_CONTROL permission gate (the gate is in chat_handler's
 # device_action frame route; the allowlist is in
 # ha_glue/services/internal_tools.py::_device_action).
-CONTROLLABLE_DOMAINS: frozenset[str] = frozenset({"light", "switch", "scene"})
+CONTROLLABLE_DOMAINS: frozenset[str] = frozenset({"light", "switch", "scene", "climate"})
 
 # A turn may legitimately carry a couple of artifacts (table + chart); cap the
 # count so a single turn can't fan out hundreds of frames.
@@ -298,15 +300,51 @@ def _validate_device_control(data: object) -> dict:
         domain = entity_id.split(".")[0] if "." in entity_id else ""
         if domain not in CONTROLLABLE_DOMAINS:
             continue  # render only the controllable subset
-        out_devices.append({
+        dev: dict = {
             "entity_id": entity_id,
             "domain": domain,
             "name": _require_str(d.get("name", entity_id), field="device.name", max_chars=MAX_CELL_CHARS),
             "state": _require_str(d.get("state", "unknown"), field="device.state", max_chars=64),
-            **({"room": _require_str(d["room"], field="device.room", max_chars=MAX_CELL_CHARS)}
-               if d.get("room") else {}),
-        })
+        }
+        if d.get("room"):
+            dev["room"] = _require_str(d["room"], field="device.room", max_chars=MAX_CELL_CHARS)
+        # Optional continuous-control fields: brightness (lights, 0-100) and the
+        # climate setpoint set (currentTemp/targetTemp/minTemp/maxTemp/tempStep).
+        # Numeric, finite when present; the frontend renders a slider / stepper.
+        for fld in ("brightness", "currentTemp", "targetTemp", "minTemp", "maxTemp", "tempStep"):
+            v = _opt_finite(d.get(fld), field=f"device.{fld}")
+            if v is not None:
+                dev[fld] = v
+        out_devices.append(dev)
     return {"devices": out_devices}
+
+
+def _validate_presence_map(data: object) -> dict:
+    """A read-only presence map: rooms, each with the people currently present.
+    Pure presentation of live presence data (no actions). Capped per the DoS
+    gate; strings bounded.
+    """
+    if not isinstance(data, dict):
+        raise ArtifactRejected("presence_map.data: not an object")
+    rooms = data.get("rooms")
+    if not isinstance(rooms, list):
+        raise ArtifactRejected("presence_map.data: rooms must be a list")
+    if len(rooms) > MAX_PRESENCE_ROOMS:
+        raise ArtifactRejected(f"presence_map: {len(rooms)} rooms exceeds cap {MAX_PRESENCE_ROOMS}")
+    out_rooms: list[dict] = []
+    for r in rooms:
+        if not isinstance(r, dict):
+            raise ArtifactRejected("presence_map.room: not an object")
+        users = r.get("users", [])
+        if not isinstance(users, list):
+            raise ArtifactRejected("presence_map.room.users: must be a list")
+        if len(users) > MAX_PRESENCE_USERS:
+            raise ArtifactRejected(f"presence_map: {len(users)} users exceeds cap {MAX_PRESENCE_USERS}")
+        out_rooms.append({
+            "room": _require_str(r.get("room", ""), field="presence_map.room", max_chars=MAX_CELL_CHARS),
+            "users": [_require_str(u, field="presence_map.user", max_chars=MAX_CELL_CHARS) for u in users],
+        })
+    return {"rooms": out_rooms}
 
 
 _VALIDATORS = {
@@ -316,6 +354,7 @@ _VALIDATORS = {
     "chart": _validate_chart,
     "weather": _validate_weather,
     "device_control": _validate_device_control,
+    "presence_map": _validate_presence_map,
 }
 
 

@@ -170,7 +170,14 @@
       "deviceControl": {
         "empty": "Keine schaltbaren Geräte gefunden",
         "run": "Szene {{name}} ausführen",
-        "runLabel": "Ausführen"
+        "runLabel": "Ausführen",
+        "brightness": "Helligkeit von {{name}}",
+        "tempDown": "Sollwert von {{name}} senken",
+        "tempUp": "Sollwert von {{name}} erhöhen"
+      },
+      "presenceMap": {
+        "empty": "Aktuell ist niemand zuhause erkennbar",
+        "nobody": "leer"
       },
       "chartSummary": "{{type}} mit {{count}} Datenreihe(n)",
       "chartType": {

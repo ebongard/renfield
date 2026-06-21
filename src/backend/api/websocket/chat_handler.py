@@ -944,11 +944,13 @@ async def websocket_endpoint(
                 da_user_id = auth_result.get("user_id") if isinstance(auth_result, dict) else None
                 entity_id = data.get("entity_id")
                 action = data.get("action")
+                da_value = data.get("value")  # optional numeric (brightness / temperature)
                 if (not isinstance(entity_id, str) or not entity_id or len(entity_id) > 255
-                        or not isinstance(action, str) or not action):
+                        or not isinstance(action, str) or not action
+                        or (da_value is not None and not isinstance(da_value, (int, float)))):
                     await send_ws_error(
                         websocket, WSErrorCode.INVALID_MESSAGE,
-                        "device_action requires 'entity_id' (≤255 chars) and 'action'",
+                        "device_action requires 'entity_id' (≤255 chars), 'action', optional numeric 'value'",
                     )
                     continue
                 # AUTH-enabled mode: a frame with NO resolved human user is a
@@ -992,21 +994,31 @@ async def websocket_endpoint(
 
                     from services.action_executor import ActionExecutor
                     _mcp = getattr(app.state, "mcp_manager", None)
+                    _params: dict = {"entity_id": entity_id, "action": action}
+                    if da_value is not None:
+                        _params["value"] = da_value
                     _res = await ActionExecutor(mcp_manager=_mcp).execute(
                         {
                             "intent": "internal.device_action",
-                            "parameters": {"entity_id": entity_id, "action": action},
+                            "parameters": _params,
                             "confidence": 1.0,
                         },
                         user_id=da_user_id,
                     )
-                    await websocket.send_json({
+                    _rdata = _res.get("data") or {}
+                    _frame: dict = {
                         "type": "device_action_result",
                         "entity_id": entity_id,
                         "success": bool(_res.get("success")),
-                        "state": (_res.get("data") or {}).get("state"),
+                        "state": _rdata.get("state"),
                         "message": _res.get("message", ""),
-                    })
+                    }
+                    # Echo the resolved continuous value so the slider/stepper reconciles.
+                    if "brightness" in _rdata:
+                        _frame["brightness"] = _rdata["brightness"]
+                    if "targetTemp" in _rdata:
+                        _frame["targetTemp"] = _rdata["targetTemp"]
+                    await websocket.send_json(_frame)
                 except Exception as e:  # noqa: BLE001
                     logger.warning(f"⚠️ device_action failed: {e}")
                     await websocket.send_json({

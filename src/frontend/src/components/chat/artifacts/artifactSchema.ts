@@ -16,7 +16,7 @@
  */
 import { z } from 'zod';
 
-export const ARTIFACT_KINDS = ['table', 'list', 'keyvalue', 'chart', 'weather', 'device_control'] as const;
+export const ARTIFACT_KINDS = ['table', 'list', 'keyvalue', 'chart', 'weather', 'device_control', 'presence_map'] as const;
 export type ArtifactKind = (typeof ARTIFACT_KINDS)[number];
 
 // A finite number — rejects NaN / ±Infinity so a coordinate can never blow the
@@ -82,9 +82,21 @@ export const deviceControlDeviceSchema = z.object({
   name: z.string(),
   state: z.string(),
   room: z.string().optional(),
+  // Continuous controls: brightness (lights, 0-100) + the climate setpoint set.
+  brightness: finiteNumber.optional(),
+  currentTemp: finiteNumber.optional(),
+  targetTemp: finiteNumber.optional(),
+  minTemp: finiteNumber.optional(),
+  maxTemp: finiteNumber.optional(),
+  tempStep: finiteNumber.optional(),
 });
 export const deviceControlDataSchema = z.object({
   devices: z.array(deviceControlDeviceSchema),
+});
+
+// Read-only presence map (Gen-UI): rooms → who's present.
+export const presenceMapDataSchema = z.object({
+  rooms: z.array(z.object({ room: z.string(), users: z.array(z.string()) })),
 });
 
 // Discriminated union on `kind` so a malformed `data` for the declared kind is
@@ -102,6 +114,7 @@ export const artifactSchema = z.discriminatedUnion('kind', [
   z.object({ ...baseFields, kind: z.literal('chart'), data: chartDataSchema }),
   z.object({ ...baseFields, kind: z.literal('weather'), data: weatherDataSchema }),
   z.object({ ...baseFields, kind: z.literal('device_control'), data: deviceControlDataSchema }),
+  z.object({ ...baseFields, kind: z.literal('presence_map'), data: presenceMapDataSchema }),
 ]);
 
 export type ChatArtifact = z.infer<typeof artifactSchema>;
@@ -112,6 +125,7 @@ export type ChartData = z.infer<typeof chartDataSchema>;
 export type WeatherData = z.infer<typeof weatherDataSchema>;
 export type DeviceControlData = z.infer<typeof deviceControlDataSchema>;
 export type DeviceControlDevice = z.infer<typeof deviceControlDeviceSchema>;
+export type PresenceMapData = z.infer<typeof presenceMapDataSchema>;
 export type ChartSeries = z.infer<typeof chartSeriesSchema>;
 
 /** Parse an unknown payload into a typed artifact, or null on any shape failure. */

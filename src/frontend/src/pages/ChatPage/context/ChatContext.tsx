@@ -48,6 +48,7 @@ import type {
 } from '../hooks/useChatWebSocket';
 import type { UploadStates, UploadedDocument } from '../hooks/useDocumentUpload';
 import type { BranchInfo, ChatArtifactPayload, Conversation, MessageSource } from '../../../types/chat';
+import type { DeviceActionResult } from '../../../components/chat/artifacts/DeviceControlArtifact';
 import type { TraceEntity } from '../../../api/resources/wissensbasis';
 import { useConfirmDialog } from '../../../components/ConfirmDialog';
 import { drainSentenceTts, type SentenceStreamState } from './sentenceStream';
@@ -373,9 +374,9 @@ export interface ChatContextValue {
   // delete a branch (switching to a sibling first). Both reload history.
   switchBranch: (messageId: number) => Promise<void>;
   deleteBranch: (deleteMessageId: number, switchToMessageId: number) => Promise<void>;
-  // Interactive device widget (Gen-UI): toggle/run a device; resolves with the
-  // re-read state. Gated server-side on HA_CONTROL.
-  sendDeviceAction: (entityId: string, action: string) => Promise<{ success: boolean; state?: string }>;
+  // Interactive device widget (Gen-UI): toggle/run/dim/set-temperature a device;
+  // resolves with the resolved state/value. Gated server-side on HA_CONTROL.
+  sendDeviceAction: (entityId: string, action: string, value?: number) => Promise<DeviceActionResult>;
 }
 
 const ChatContext = createContext<ChatContextValue | null>(null);
@@ -1222,12 +1223,17 @@ export function ChatProvider({ children }: ChatProviderProps) {
   // Interactive device widget (Gen-UI): resolvers keyed by entity_id so a
   // toggle click's `sendDeviceAction` promise settles when the matching
   // `device_action_result` frame arrives. One in-flight action per entity.
-  const deviceActionResolversRef = useRef<Map<string, (r: { success: boolean; state?: string }) => void>>(new Map());
+  const deviceActionResolversRef = useRef<Map<string, (r: DeviceActionResult) => void>>(new Map());
   const handleDeviceActionResult = useCallback((data: DeviceActionResultMessage) => {
     const resolve = deviceActionResolversRef.current.get(data.entity_id);
     if (resolve) {
       deviceActionResolversRef.current.delete(data.entity_id);
-      resolve({ success: !!data.success, state: data.state });
+      resolve({
+        success: !!data.success,
+        state: data.state,
+        brightness: data.brightness,
+        targetTemp: data.targetTemp,
+      });
     }
   }, []);
 
@@ -1260,12 +1266,13 @@ export function ChatProvider({ children }: ChatProviderProps) {
   // grants no control the user lacks via the agent). Resolves {success:false}
   // on a non-OPEN socket or a 6 s timeout so the widget can revert/clear.
   const sendDeviceAction = useCallback(
-    (entityId: string, action: string): Promise<{ success: boolean; state?: string }> => {
+    (entityId: string, action: string, value?: number): Promise<DeviceActionResult> => {
       const ok = wsSendMessage({
         type: 'device_action',
         session_id: sessionId,
         entity_id: entityId,
         action,
+        ...(typeof value === 'number' && { value }),
       });
       if (!ok) return Promise.resolve({ success: false });
       return new Promise((resolve) => {

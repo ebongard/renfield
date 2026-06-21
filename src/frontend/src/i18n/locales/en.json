@@ -170,7 +170,14 @@
       "deviceControl": {
         "empty": "No controllable devices found",
         "run": "Run scene {{name}}",
-        "runLabel": "Run"
+        "runLabel": "Run",
+        "brightness": "Brightness of {{name}}",
+        "tempDown": "Lower {{name}} setpoint",
+        "tempUp": "Raise {{name}} setpoint"
+      },
+      "presenceMap": {
+        "empty": "Nobody detected at home right now",
+        "nobody": "empty"
       },
       "chartSummary": "{{type}} with {{count}} series",
       "chartType": {

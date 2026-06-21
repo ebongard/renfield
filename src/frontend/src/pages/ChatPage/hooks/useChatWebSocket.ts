@@ -175,12 +175,14 @@ export interface ArtifactWsMessage extends BaseWsMessage {
   replace_text?: string;
 }
 
-/** Result of an interactive device-control widget click (Gen-UI). */
+/** Result of an interactive device-control widget interaction (Gen-UI). */
 export interface DeviceActionResultMessage extends BaseWsMessage {
   type: 'device_action_result';
   entity_id: string;
   success: boolean;
   state?: string;
+  brightness?: number;
+  targetTemp?: number;
   message?: string;
 }
 

@@ -33,16 +33,25 @@ describe('artifactSchema — authoritative shape validation', () => {
     })).not.toBeNull();
   });
 
-  it('accepts a device_control widget', () => {
+  it('accepts a device_control widget (incl. brightness + climate fields)', () => {
     expect(parseArtifact({
       id: 'dc', kind: 'device_control',
       data: { devices: [
-        { entity_id: 'light.wz', domain: 'light', name: 'Licht', state: 'on', room: 'WZ' },
+        { entity_id: 'light.wz', domain: 'light', name: 'Licht', state: 'on', room: 'WZ', brightness: 70 },
         { entity_id: 'scene.abend', domain: 'scene', name: 'Abend', state: 'x' },
+        { entity_id: 'climate.wz', domain: 'climate', name: 'Heizung', state: 'heat', currentTemp: 19, targetTemp: 21, minTemp: 5, maxTemp: 30, tempStep: 0.5 },
       ] },
     })).not.toBeNull();
     // devices must be an array of the device shape.
     expect(parseArtifact({ id: 'dc', kind: 'device_control', data: { devices: 'no' } })).toBeNull();
+  });
+
+  it('accepts a presence_map widget', () => {
+    expect(parseArtifact({
+      id: 'pm', kind: 'presence_map',
+      data: { rooms: [{ room: 'WZ', users: ['Eduard'] }, { room: 'Küche', users: [] }] },
+    })).not.toBeNull();
+    expect(parseArtifact({ id: 'pm', kind: 'presence_map', data: { rooms: 'no' } })).toBeNull();
   });
 
   it('rejects a weather widget missing current or with a non-finite temp', () => {

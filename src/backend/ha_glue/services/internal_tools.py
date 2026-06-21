@@ -144,10 +144,14 @@ class InternalToolService:
             },
         },
         "internal.device_controls": {
-            "description": "Show an INTERACTIVE device-control widget — clickable on/off toggles for lights and switches, plus 'run' buttons for scenes — so the user can operate devices by tapping. Use it when the user wants to CONTROL/OPERATE devices via a panel ('steuere die Lichter', 'zeig mir die Lichtsteuerung', 'gib mir die Schalter fürs Wohnzimmer', 'show me the light controls'). NOT for a one-off command like 'mach das Licht an' (do that directly with HassTurnOn), and NOT for a read-only status overview (that is the status sub-intent). Optionally pass a room to scope it. After it renders give a one-line final_answer (the widget IS the answer).",
+            "description": "Show an INTERACTIVE device-control widget — clickable on/off toggles for lights and switches, a brightness slider for lights, 'run' buttons for scenes, and a thermostat setpoint for climate — so the user can operate devices by tapping. Use it when the user wants to CONTROL/OPERATE devices via a panel ('steuere die Lichter', 'zeig mir die Lichtsteuerung', 'gib mir die Schalter fürs Wohnzimmer', 'dimme das Licht', 'thermostat einstellen', 'show me the light controls'). NOT for a one-off command like 'mach das Licht an' (do that directly with HassTurnOn), and NOT for a read-only status overview (that is the status sub-intent). Optionally pass a room to scope it. After it renders give a one-line final_answer (the widget IS the answer).",
             "parameters": {
                 "room": "Optional room name to scope the controls to (e.g. 'Wohnzimmer'). Omit to show all controllable devices.",
             },
+        },
+        "internal.presence_map": {
+            "description": "Show a PRESENCE-MAP widget — a read-only overview of which rooms currently have which people present. Use it for 'wer ist wo?', 'zeig mir wer zuhause ist', 'who is home', 'show me where everyone is'. The widget renders rooms with the present users; give a one-line final_answer alongside.",
+            "parameters": {},
         },
         "internal.presence_history": {
             "description": "Query a user's PERSISTED presence history (survives restarts, unlike the live current-location tools). Use for 'where was X earlier/yesterday', 'when was X last in the kitchen', or 'who was in the living room this morning'. Accepts username or first/last name.",
@@ -178,6 +182,7 @@ class InternalToolService:
         "internal.presence_history": "_presence_history",
         "internal.bluetooth_scan": "_bluetooth_scan",
         "internal.device_controls": "_device_controls",
+        "internal.presence_map": "_presence_map",
         # NOT in TOOLS — not agent-advertised. Dispatched only by the chat
         # handler's `device_action` WS-frame route (after the HA_CONTROL gate),
         # never chosen by the agent.
@@ -379,19 +384,53 @@ class InternalToolService:
     # _CONTROL_DOMAINS / _DOMAIN_ACTIONS are the SERVER-SIDE actuation allowlist
     # for the device_action frame. The HA_CONTROL permission gate lives in the
     # chat handler (it has user_permissions); this is the second layer — a click
-    # can only ever turn_on/off/toggle a real light/switch or activate a real
-    # scene, never an arbitrary call_service.
-    _CONTROL_DOMAINS = frozenset({"light", "switch", "scene"})
+    # can only ever turn_on/off/toggle/dim a real light, toggle a switch, run a
+    # real scene, or set a real climate setpoint — never an arbitrary call_service.
+    _CONTROL_DOMAINS = frozenset({"light", "switch", "scene", "climate"})
     _DOMAIN_ACTIONS = {
-        "light": frozenset({"turn_on", "turn_off", "toggle"}),
+        "light": frozenset({"turn_on", "turn_off", "toggle", "set_brightness"}),
         "switch": frozenset({"turn_on", "turn_off", "toggle"}),
         "scene": frozenset({"activate"}),
+        "climate": frozenset({"set_temperature"}),
     }
 
+    def _build_control_device(self, ha, st: dict, room_filter: str) -> dict | None:
+        """Map one raw HA state dict → a device_control device (with continuous-
+        control attributes), or None if not controllable / filtered out by room.
+        ``ha`` is a HomeAssistantClient (for _extract_room)."""
+        entity_id = st.get("entity_id", "")
+        domain = entity_id.split(".")[0] if "." in entity_id else ""
+        if domain not in self._CONTROL_DOMAINS:
+            return None
+        attrs = st.get("attributes", {}) or {}
+        name = attrs.get("friendly_name") or entity_id
+        rm = ha._extract_room(entity_id, name)
+        if room_filter and (rm or "").lower() != room_filter:
+            return None
+        state = st.get("state", "unknown")
+        dev: dict = {"entity_id": entity_id, "domain": domain, "name": name, "state": state}
+        if rm:
+            dev["room"] = rm
+        if domain == "light" and state == "on":
+            b = attrs.get("brightness")
+            if isinstance(b, (int, float)):  # HA brightness is 0-255
+                dev["brightness"] = max(0, min(100, round(b / 255 * 100)))
+        elif domain == "climate":
+            for src, dst in (
+                ("current_temperature", "currentTemp"), ("temperature", "targetTemp"),
+                ("min_temp", "minTemp"), ("max_temp", "maxTemp"), ("target_temp_step", "tempStep"),
+            ):
+                v = attrs.get(src)
+                if isinstance(v, (int, float)):
+                    dev[dst] = v
+        return dev
+
     async def _device_controls(self, params: dict) -> dict:
-        """Producer: build an interactive `device_control` artifact from the HA
-        entity map (controllable lights/switches/scenes), optionally scoped to a
-        room. Returns ``data={"artifacts":[...]}`` so the chat handler emits it.
+        """Producer: build an interactive `device_control` artifact from FRESH HA
+        states (lights/switches/scenes/climate), optionally scoped to a room.
+        Reads ``get_states()`` directly (NOT the 60s entity-map cache) so the
+        widget's initial toggle/slider values match reality — this is a deliberate
+        user request, not the per-turn intent map. ``data={"artifacts":[...]}``.
         """
         from utils.config import settings
         if not settings.artifacts_typed_enabled:
@@ -400,28 +439,20 @@ class InternalToolService:
         room = (params.get("room") or "").strip().lower()
         try:
             from ha_glue.integrations.homeassistant import HomeAssistantClient
-            entity_map = await HomeAssistantClient().get_entity_map()
+            ha = HomeAssistantClient()
+            states = await ha.get_states()
         except Exception as e:  # noqa: BLE001
-            logger.warning(f"device_controls: HA entity map fetch failed: {e}")
+            logger.warning(f"device_controls: HA states fetch failed: {e}")
             return {
                 "success": False,
                 "message": "Die Geräteliste konnte gerade nicht geladen werden.",
                 "action_taken": False,
             }
 
-        devices = []
-        for e in entity_map:
-            if e.get("domain") not in self._CONTROL_DOMAINS:
-                continue
-            if room and (e.get("room") or "").lower() != room:
-                continue
-            devices.append({
-                "entity_id": e.get("entity_id", ""),
-                "domain": e.get("domain", ""),
-                "name": e.get("friendly_name") or e.get("entity_id", ""),
-                "state": e.get("state", "unknown"),
-                **({"room": e["room"]} if e.get("room") else {}),
-            })
+        devices = [
+            d for st in (states or [])
+            if (d := self._build_control_device(ha, st, room)) is not None
+        ]
 
         if not devices:
             where = f" in {params.get('room')}" if room else ""
@@ -447,16 +478,20 @@ class InternalToolService:
         }
 
     async def _device_action(self, params: dict) -> dict:
-        """Actuate one device from a widget click (the `device_action` frame).
+        """Actuate one device from a widget interaction (the `device_action`
+        frame): on/off/toggle, run-scene, set-brightness (lights), set-temperature
+        (climate).
 
         SECURITY: the HA_CONTROL permission gate already ran in the chat handler.
-        Here we enforce the second layer — the entity's domain + the action must
-        be in the allowlist, AND the entity must actually exist in HA (a get_state
-        probe) — so a crafted frame can't drive an arbitrary service. Returns the
-        re-read state so the widget reflects reality.
+        Here we enforce the second layer — domain+action must be in the allowlist,
+        the entity must exist (get_state probe), and any numeric value is range-
+        validated/clamped — so a crafted frame can't drive an arbitrary service.
+        The new state is resolved from the ACTION (HA's state store lags the
+        service call) so the widget reconciles correctly.
         """
         entity_id = (params.get("entity_id") or "").strip()
         action = (params.get("action") or "").strip().lower()
+        value = params.get("value")
         if not entity_id or "." not in entity_id:
             return {"success": False, "message": "Ungültige entity_id", "action_taken": False}
         domain = entity_id.split(".")[0]
@@ -469,13 +504,50 @@ class InternalToolService:
             from ha_glue.integrations.homeassistant import HomeAssistantClient
             ha = HomeAssistantClient()
             # Existence probe — a non-existent entity_id (or a state read failure)
-            # must not actuate. None → reject. Also yields the PRIOR state so we
-            # can resolve the new state deterministically (below).
+            # must not actuate. None → reject. Yields the prior state + attrs.
             state = await ha.get_state(entity_id)
             if not state:
                 return {"success": False, "message": f"Gerät {entity_id} nicht gefunden", "action_taken": False}
             prior = (state or {}).get("state", "unknown")
+            attrs = (state or {}).get("attributes", {}) or {}
 
+            # --- continuous-value actions ---
+            if action == "set_brightness":
+                try:
+                    pct = int(round(float(value)))
+                except (ValueError, TypeError):
+                    return {"success": False, "message": "Helligkeit erfordert einen Zahlenwert 0-100", "action_taken": False}
+                pct = max(0, min(100, pct))
+                if pct <= 0:
+                    ok = await ha.call_service("light", "turn_off", entity_id)
+                    data = {"entity_id": entity_id, "state": "off"}
+                else:
+                    ok = await ha.call_service("light", "turn_on", entity_id, {"brightness_pct": pct})
+                    data = {"entity_id": entity_id, "state": "on", "brightness": pct}
+                if not ok:
+                    return {"success": False, "message": f"Helligkeit für {entity_id} fehlgeschlagen", "action_taken": False}
+                return {"success": True, "action_taken": True, "message": f"{entity_id} → {pct}%", "data": data}
+
+            if action == "set_temperature":
+                try:
+                    temp = float(value)
+                except (ValueError, TypeError):
+                    return {"success": False, "message": "Temperatur erfordert einen Zahlenwert", "action_taken": False}
+                # Clamp to the entity's own bounds when known (defaults are a sane
+                # household range so a missing min/max can't push an extreme value).
+                lo = attrs.get("min_temp"); hi = attrs.get("max_temp")
+                lo = lo if isinstance(lo, (int, float)) else 5.0
+                hi = hi if isinstance(hi, (int, float)) else 35.0
+                temp = max(lo, min(hi, temp))
+                ok = await ha.call_service("climate", "set_temperature", entity_id, {"temperature": temp})
+                if not ok:
+                    return {"success": False, "message": f"Temperatur für {entity_id} fehlgeschlagen", "action_taken": False}
+                # climate state is the hvac mode (unchanged by a setpoint); echo
+                # the new target so the stepper reconciles.
+                return {"success": True, "action_taken": True, "message": f"{entity_id} → {temp}°",
+                        "data": {"entity_id": entity_id, "state": prior, "targetTemp": temp}}
+
+            # --- on/off/toggle/scene ---
             if domain == "scene":
                 ok = await ha.call_service("scene", "turn_on", entity_id)
             else:
@@ -483,10 +555,7 @@ class InternalToolService:
             if not ok:
                 return {"success": False, "message": f"Schalten von {entity_id} fehlgeschlagen", "action_taken": False}
 
-            # Resolve the new state from the ACTION, not a re-read: HA's state
-            # store lags the service call, so an immediate get_state returns the
-            # PRE-change value and the widget would snap back. The action makes
-            # the new state deterministic (toggle inverts the prior state).
+            # New state from the action (not a stale re-read; toggle inverts prior).
             if domain == "scene" or action == "turn_on":
                 resolved = "on"
             elif action == "turn_off":
@@ -498,12 +567,53 @@ class InternalToolService:
             return {
                 "success": True,
                 "action_taken": True,
-                "message": f"{entity_id}{f' → {action}'}",
+                "message": f"{entity_id} → {action}",
                 "data": {"entity_id": entity_id, "state": resolved},
             }
         except Exception as e:  # noqa: BLE001
             logger.error(f"device_action {action} on {entity_id} failed: {e}")
             return {"success": False, "message": f"Fehler: {e!s}", "action_taken": False}
+
+    async def _presence_map(self, params: dict) -> dict:
+        """Producer: a read-only `presence_map` widget (rooms → who's present)
+        from the live presence service. ``data={"artifacts":[...]}``.
+        """
+        from utils.config import settings
+        if not settings.artifacts_typed_enabled:
+            return {"success": True, "message": "", "action_taken": False}
+        try:
+            from ha_glue.services.presence_service import get_presence_service
+            ps = get_presence_service()
+            all_presence = ps.get_all_presence()
+        except Exception as e:  # noqa: BLE001
+            logger.warning(f"presence_map: presence fetch failed: {e}")
+            return {"success": False, "message": "Anwesenheit konnte nicht geladen werden.", "action_taken": False}
+
+        if not all_presence:
+            return {
+                "success": True, "action_taken": False,
+                "message": "Aktuell ist niemand (mit getracktem Gerät) zuhause erkennbar.",
+            }
+        # Group present users by room.
+        by_room: dict[str, list[str]] = {}
+        for user_id, presence in all_presence.items():
+            room = presence.room_name or "Unbekannt"
+            by_room.setdefault(room, []).append(ps.get_display_name(user_id))
+
+        rooms = [{"room": r, "users": sorted(u)} for r, u in sorted(by_room.items())]
+        import uuid
+        artifact = {
+            "id": f"art_presence_{uuid.uuid4().hex[:12]}",
+            "kind": "presence_map",
+            "title": "Wer ist wo",
+            "data": {"rooms": rooms},
+        }
+        total = sum(len(r["users"]) for r in rooms)
+        return {
+            "success": True, "action_taken": False,
+            "message": f"{total} Person(en) in {len(rooms)} Raum/Räumen.",
+            "data": {"artifacts": [artifact]},
+        }
 
     async def _announce_in_room(self, params: dict) -> dict:
         """Speak a text message (TTS) on a room's audio device.

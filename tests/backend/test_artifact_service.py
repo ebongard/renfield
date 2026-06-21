@@ -30,7 +30,7 @@ def _table(rows):
 @pytest.mark.unit
 def test_allowed_kinds_are_exactly_lane_a():
     assert ALLOWED_KINDS == frozenset(
-        {"table", "list", "keyvalue", "chart", "weather", "device_control"}
+        {"table", "list", "keyvalue", "chart", "weather", "device_control", "presence_map"}
     )
 
 
@@ -142,6 +142,48 @@ def test_device_control_cap():
 def test_device_control_empty_is_valid():
     out = validate_artifact(_devctl([]))
     assert out["data"]["devices"] == []
+
+
+@pytest.mark.unit
+def test_device_control_brightness_and_climate_fields():
+    out = validate_artifact(_devctl([
+        {"entity_id": "light.wz", "domain": "light", "name": "Licht", "state": "on", "brightness": 60},
+        {"entity_id": "climate.wz", "domain": "climate", "name": "Heizung", "state": "heat",
+         "currentTemp": 19.5, "targetTemp": 21, "minTemp": 5, "maxTemp": 30, "tempStep": 0.5},
+    ]))
+    light, climate = out["data"]["devices"]
+    assert light["brightness"] == 60
+    assert (climate["currentTemp"], climate["targetTemp"]) == (19.5, 21)
+    assert (climate["minTemp"], climate["maxTemp"], climate["tempStep"]) == (5, 30, 0.5)
+
+
+@pytest.mark.unit
+def test_device_control_climate_now_controllable():
+    # climate was added to CONTROLLABLE_DOMAINS for the thermostat setpoint.
+    out = validate_artifact(_devctl([
+        {"entity_id": "climate.wz", "domain": "climate", "name": "Heizung", "state": "heat"},
+    ]))
+    assert [d["entity_id"] for d in out["data"]["devices"]] == ["climate.wz"]
+
+
+# --- presence_map (read-only Gen-UI kind) ----------------------------------
+
+@pytest.mark.unit
+def test_presence_map_valid():
+    out = validate_artifact({"id": "art_p", "kind": "presence_map", "data": {"rooms": [
+        {"room": "Wohnzimmer", "users": ["Eduard", "Anna"]},
+        {"room": "Küche", "users": []},
+    ]}})
+    assert out["data"]["rooms"][0]["users"] == ["Eduard", "Anna"]
+    assert out["data"]["rooms"][1]["users"] == []
+
+
+@pytest.mark.unit
+def test_presence_map_room_cap():
+    from services.artifact_service import MAX_PRESENCE_ROOMS
+    rooms = [{"room": f"R{i}", "users": []} for i in range(MAX_PRESENCE_ROOMS + 2)]
+    with pytest.raises(ArtifactRejected):
+        validate_artifact({"id": "x", "kind": "presence_map", "data": {"rooms": rooms}})
 
 
 @pytest.mark.unit

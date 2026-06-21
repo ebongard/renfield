@@ -114,7 +114,7 @@ roles:
       de: "Anwesenheit & Nachrichten ausrichten: Wo ist eine Person, wer ist zuhause, in welchem Raum ist jemand; einer Person etwas ausrichten/Bescheid sagen/ansagen ('sag ihm/ihr ...', 'richte X aus')"
       en: "Presence & relaying messages: where is a person, who is home, which room is someone in; relay/announce a message to a person ('tell him/her ...', 'let X know ...')"
     mcp_servers: []
-    internal_tools: [internal.get_user_location, internal.get_all_presence, internal.announce_in_room, internal.presence_history]
+    internal_tools: [internal.get_user_location, internal.get_all_presence, internal.announce_in_room, internal.presence_history, internal.presence_map]
     max_steps: 5
     prompt_key: agent_prompt
 

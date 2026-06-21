@@ -139,6 +139,57 @@ describe('ArtifactRenderer — per-kind render', () => {
     expect(onDeviceAction).toHaveBeenCalledWith('scene.abend', 'activate');
   });
 
+  it('device_control: an on-light shows a brightness slider that sends set_brightness (debounced)', async () => {
+    const onDeviceAction = vi.fn().mockResolvedValue({ success: true, state: 'on', brightness: 40 });
+    renderWithRouter(
+      <ArtifactRenderer
+        finalized
+        onDeviceAction={onDeviceAction}
+        artifact={{
+          id: 'adcb', kind: 'device_control',
+          data: { devices: [{ entity_id: 'light.wz', domain: 'light', name: 'Licht WZ', state: 'on', brightness: 80 }] },
+        }}
+      />,
+    );
+    const slider = screen.getByRole('slider', { name: /Helligkeit von Licht WZ|Brightness of Licht WZ/i });
+    expect(slider).toHaveValue('80');
+    const { fireEvent } = await import('@testing-library/react');
+    fireEvent.change(slider, { target: { value: '40' } });
+    await new Promise((r) => setTimeout(r, 450)); // debounce window
+    expect(onDeviceAction).toHaveBeenCalledWith('light.wz', 'set_brightness', 40);
+  });
+
+  it('device_control: a climate row shows a setpoint stepper that sends set_temperature', async () => {
+    const onDeviceAction = vi.fn().mockResolvedValue({ success: true, targetTemp: 21.5 });
+    renderWithRouter(
+      <ArtifactRenderer
+        finalized
+        onDeviceAction={onDeviceAction}
+        artifact={{
+          id: 'adct', kind: 'device_control',
+          data: { devices: [{ entity_id: 'climate.wz', domain: 'climate', name: 'Heizung', state: 'heat', currentTemp: 19, targetTemp: 21, minTemp: 5, maxTemp: 30, tempStep: 0.5 }] },
+        }}
+      />,
+    );
+    const up = screen.getByRole('button', { name: /erhöhen|Raise/i });
+    await userEvent.click(up);
+    expect(onDeviceAction).toHaveBeenCalledWith('climate.wz', 'set_temperature', 21.5);
+  });
+
+  it('renders a presence_map widget: rooms with present users', () => {
+    renderArtifact({
+      id: 'apm', kind: 'presence_map', title: 'Wer ist wo',
+      data: { rooms: [
+        { room: 'Wohnzimmer', users: ['Eduard', 'Anna'] },
+        { room: 'Küche', users: [] },
+      ] },
+    });
+    expect(screen.getByText('Wohnzimmer')).toBeInTheDocument();
+    expect(screen.getByText('Eduard')).toBeInTheDocument();
+    expect(screen.getByText('Anna')).toBeInTheDocument();
+    expect(screen.getByText('Küche')).toBeInTheDocument();
+  });
+
   it('device_control controls are disabled without an action handler', () => {
     renderArtifact({
       id: 'adc2', kind: 'device_control',
