@@ -167,6 +167,11 @@
       "weather": {
         "feelsLike": "Feels like {{temp}}"
       },
+      "deviceControl": {
+        "empty": "No controllable devices found",
+        "run": "Run scene {{name}}",
+        "runLabel": "Run"
+      },
       "chartSummary": "{{type}} with {{count}} series",
       "chartType": {
         "bar": "Bar chart",

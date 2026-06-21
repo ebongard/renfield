@@ -41,7 +41,9 @@ import logging
 logger = logging.getLogger(__name__)
 
 # --- The kind allowlist (Lane A only; html/svg are Lane B and rejected here) ---
-ALLOWED_KINDS: frozenset[str] = frozenset({"table", "list", "keyvalue", "chart", "weather"})
+ALLOWED_KINDS: frozenset[str] = frozenset(
+    {"table", "list", "keyvalue", "chart", "weather", "device_control"}
+)
 
 # --- DoS caps (the backend's ONLY validation responsibility) -----------------
 # Generous enough for the motivated use cases (weekly plan ~7 rows, shopping
@@ -56,6 +58,12 @@ MAX_CHART_POINTS = 500          # points per series
 MAX_CELL_CHARS = 2000           # any single string cell / value / label
 MAX_TITLE_CHARS = 300           # the artifact title
 MAX_FORECAST_DAYS = 16          # weather forecast entries (Open-Meteo's max)
+MAX_DEVICES = 60                # controllable devices in a device_control widget
+
+# The domains a device_control widget may render a control for. This is a
+# RENDER allowlist only — the actuation handler re-checks domain+action+entity
+# server-side under the HA_CONTROL permission (services/device_action_service.py).
+CONTROLLABLE_DOMAINS: frozenset[str] = frozenset({"light", "switch", "scene"})
 
 # A turn may legitimately carry a couple of artifacts (table + chart); cap the
 # count so a single turn can't fan out hundreds of frames.
@@ -263,12 +271,49 @@ def _validate_weather(data: object) -> dict:
     return out
 
 
+def _validate_device_control(data: object) -> dict:
+    """An INTERACTIVE device-control widget: a list of controllable HA devices
+    (lights/switches → on/off toggle; scenes → activate). This validator is the
+    DoS/shape gate only — clicking a control sends a separate `device_action` WS
+    frame that is RE-VALIDATED server-side (HA_CONTROL permission + domain/action/
+    entity allowlist in `device_action_service`); the widget cannot itself grant
+    any control the user doesn't already have via the agent. A device whose
+    domain isn't in `CONTROLLABLE_DOMAINS` is dropped (not rejected) so a mixed
+    entity map still renders the controllable subset.
+    """
+    if not isinstance(data, dict):
+        raise ArtifactRejected("device_control.data: not an object")
+    devices = data.get("devices")
+    if not isinstance(devices, list):
+        raise ArtifactRejected("device_control.data: devices must be a list")
+    if len(devices) > MAX_DEVICES:
+        raise ArtifactRejected(f"device_control: {len(devices)} devices exceeds cap {MAX_DEVICES}")
+    out_devices: list[dict] = []
+    for d in devices:
+        if not isinstance(d, dict):
+            raise ArtifactRejected("device_control.device: not an object")
+        entity_id = _require_str(d.get("entity_id", ""), field="device.entity_id", max_chars=255)
+        domain = entity_id.split(".")[0] if "." in entity_id else ""
+        if domain not in CONTROLLABLE_DOMAINS:
+            continue  # render only the controllable subset
+        out_devices.append({
+            "entity_id": entity_id,
+            "domain": domain,
+            "name": _require_str(d.get("name", entity_id), field="device.name", max_chars=MAX_CELL_CHARS),
+            "state": _require_str(d.get("state", "unknown"), field="device.state", max_chars=64),
+            **({"room": _require_str(d["room"], field="device.room", max_chars=MAX_CELL_CHARS)}
+               if d.get("room") else {}),
+        })
+    return {"devices": out_devices}
+
+
 _VALIDATORS = {
     "table": _validate_table,
     "list": _validate_list,
     "keyvalue": _validate_keyvalue,
     "chart": _validate_chart,
     "weather": _validate_weather,
+    "device_control": _validate_device_control,
 }
 
 

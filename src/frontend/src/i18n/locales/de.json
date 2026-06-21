@@ -167,6 +167,11 @@
       "weather": {
         "feelsLike": "Gefühlt {{temp}}"
       },
+      "deviceControl": {
+        "empty": "Keine schaltbaren Geräte gefunden",
+        "run": "Szene {{name}} ausführen",
+        "runLabel": "Ausführen"
+      },
       "chartSummary": "{{type}} mit {{count}} Datenreihe(n)",
       "chartType": {
         "bar": "Balkendiagramm",

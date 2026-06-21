@@ -149,7 +149,7 @@ export default function ChatMessages() {
     handleSendViaEmail, emailDialog, confirmSendViaEmail, cancelEmailDialog,
     sendMessage, sessionId, submitPaperlessConfirm,
     pendingScrollIndex, clearPendingScroll,
-    editAndResubmit, regenerateTurn, switchBranch, deleteBranch,
+    editAndResubmit, regenerateTurn, switchBranch, deleteBranch, sendDeviceAction,
   } = useChatContext();
   const { data: features } = useFeatureFlags();
   const roleSurfacingEnabled = features?.role_surfacing_enabled ?? false;
@@ -516,6 +516,7 @@ export default function ChatMessages() {
                 artifact={artifact}
                 loading={artifact.partial === true && message.streaming === true}
                 finalized={message.streaming !== true}
+                onDeviceAction={sendDeviceAction}
               />
             ))}
 

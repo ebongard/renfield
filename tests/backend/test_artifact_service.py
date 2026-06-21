@@ -29,7 +29,9 @@ def _table(rows):
 
 @pytest.mark.unit
 def test_allowed_kinds_are_exactly_lane_a():
-    assert ALLOWED_KINDS == frozenset({"table", "list", "keyvalue", "chart", "weather"})
+    assert ALLOWED_KINDS == frozenset(
+        {"table", "list", "keyvalue", "chart", "weather", "device_control"}
+    )
 
 
 # --- weather widget (Gen-UI kind) ------------------------------------------
@@ -96,6 +98,50 @@ def test_weather_forecast_cap():
             for d in range(1, MAX_FORECAST_DAYS + 3)]
     with pytest.raises(ArtifactRejected):
         validate_artifact(_weather(forecast=days))
+
+
+# --- device_control (interactive Gen-UI kind) ------------------------------
+
+def _devctl(devices):
+    return {"id": "art_dc", "kind": "device_control", "data": {"devices": devices}}
+
+
+@pytest.mark.unit
+def test_device_control_valid():
+    out = validate_artifact(_devctl([
+        {"entity_id": "light.wz", "domain": "light", "name": "Licht WZ", "state": "on", "room": "Wohnzimmer"},
+        {"entity_id": "switch.kaffee", "domain": "switch", "name": "Kaffee", "state": "off"},
+        {"entity_id": "scene.abend", "domain": "scene", "name": "Abend", "state": "scening"},
+    ]))
+    ids = [d["entity_id"] for d in out["data"]["devices"]]
+    assert ids == ["light.wz", "switch.kaffee", "scene.abend"]
+    assert out["data"]["devices"][0]["room"] == "Wohnzimmer"
+
+
+@pytest.mark.unit
+def test_device_control_drops_uncontrollable_domains():
+    # A sensor / media_player is not a controllable domain → dropped (not rejected).
+    out = validate_artifact(_devctl([
+        {"entity_id": "light.wz", "domain": "light", "name": "Licht", "state": "on"},
+        {"entity_id": "sensor.temp", "domain": "sensor", "name": "Temp", "state": "21"},
+        {"entity_id": "media_player.tv", "domain": "media_player", "name": "TV", "state": "playing"},
+    ]))
+    assert [d["entity_id"] for d in out["data"]["devices"]] == ["light.wz"]
+
+
+@pytest.mark.unit
+def test_device_control_cap():
+    from services.artifact_service import MAX_DEVICES
+    devices = [{"entity_id": f"light.l{i}", "domain": "light", "name": f"L{i}", "state": "off"}
+               for i in range(MAX_DEVICES + 5)]
+    with pytest.raises(ArtifactRejected):
+        validate_artifact(_devctl(devices))
+
+
+@pytest.mark.unit
+def test_device_control_empty_is_valid():
+    out = validate_artifact(_devctl([]))
+    assert out["data"]["devices"] == []
 
 
 @pytest.mark.unit

@@ -24,6 +24,7 @@ import ListArtifact from './ListArtifact';
 import KeyValueArtifact from './KeyValueArtifact';
 import ChartArtifact from './ChartArtifact';
 import WeatherArtifact from './WeatherArtifact';
+import DeviceControlArtifact, { type DeviceActionFn } from './DeviceControlArtifact';
 
 export interface ArtifactRendererProps {
   /** The raw artifact payload (from a WS frame or rehydrated metadata). */
@@ -35,6 +36,9 @@ export interface ArtifactRendererProps {
    * at that point resolves to the fallback, not a perpetual skeleton.
    */
   finalized?: boolean;
+  /** Interactive device-control widget: toggle/run handler (Gen-UI). When
+   *  absent the controls render disabled. */
+  onDeviceAction?: DeviceActionFn;
 }
 
 /** Render any unknown value as an inert, escaped monospace code block. */
@@ -74,7 +78,7 @@ function LoadingSkeleton() {
 }
 
 /** Dispatch a validated artifact to its typed sub-renderer. */
-function ArtifactBody({ artifact }: { artifact: ChatArtifact }) {
+function ArtifactBody({ artifact, onDeviceAction }: { artifact: ChatArtifact; onDeviceAction?: DeviceActionFn }) {
   switch (artifact.kind) {
     case 'table':
       return <TableArtifact data={artifact.data} />;
@@ -86,6 +90,8 @@ function ArtifactBody({ artifact }: { artifact: ChatArtifact }) {
       return <ChartArtifact data={artifact.data} title={artifact.title} />;
     case 'weather':
       return <WeatherArtifact data={artifact.data} />;
+    case 'device_control':
+      return <DeviceControlArtifact data={artifact.data} onAction={onDeviceAction} />;
     default:
       // Unreachable — the zod discriminated union rejects unknown kinds before
       // we get here — but exhaustiveness keeps it honest.
@@ -151,7 +157,7 @@ function ArtifactShell({ title, children }: { title?: string; children: ReactNod
   );
 }
 
-export default function ArtifactRenderer({ artifact, loading, finalized }: ArtifactRendererProps) {
+export default function ArtifactRenderer({ artifact, loading, finalized, onDeviceAction }: ArtifactRendererProps) {
   const parsed = parseArtifact(artifact);
 
   // Loading: a still-streaming partial that hasn't finalized → skeleton.
@@ -186,7 +192,7 @@ export default function ArtifactRenderer({ artifact, loading, finalized }: Artif
   return (
     <ArtifactShell title={parsed.title}>
       <ArtifactErrorBoundary fallback={<FallbackBlock raw={artifact} />}>
-        <ArtifactBody artifact={parsed} />
+        <ArtifactBody artifact={parsed} onDeviceAction={onDeviceAction} />
       </ArtifactErrorBoundary>
     </ArtifactShell>
   );

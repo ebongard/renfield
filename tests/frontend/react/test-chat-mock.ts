@@ -105,6 +105,8 @@ export const defaultChatContextValue: ChatContextValue = {
   // Chat branching (Phase 2)
   switchBranch: async () => {},
   deleteBranch: async () => {},
+  // Interactive device widget (Gen-UI)
+  sendDeviceAction: async () => ({ success: true }),
 
   // Paperless confirm card
   submitPaperlessConfirm: () => {},

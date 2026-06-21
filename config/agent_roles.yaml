@@ -25,7 +25,7 @@ roles:
     # can't target DLNA renderers and bypasses room routing).
     # internal.bluetooth_scan: "scan all bluetooth devices" fans a discovery scan
     # out to every satellite (gated by BT_SCAN_ENABLED).
-    internal_tools: [internal.resolve_room_player, internal.play_in_room, internal.media_control, internal.bluetooth_scan]
+    internal_tools: [internal.resolve_room_player, internal.play_in_room, internal.media_control, internal.bluetooth_scan, internal.device_controls]
     max_steps: 4
     prompt_key: agent_prompt_smart_home
     model: "qwen3:8b"

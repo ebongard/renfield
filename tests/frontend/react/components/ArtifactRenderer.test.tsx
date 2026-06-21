@@ -7,8 +7,9 @@
  * region aria-label) rather than jest-axe (not a project dependency), matching
  * the existing component-test idiom (e.g. SourceChips.test.tsx).
  */
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { screen, within } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import ArtifactRenderer from '../../../../src/frontend/src/components/chat/artifacts/ArtifactRenderer';
 import { renderWithRouter } from '../test-utils';
 
@@ -107,6 +108,43 @@ describe('ArtifactRenderer — per-kind render', () => {
       data: { location: 'X', current: { temp: 1, unit: '°C', code: 0, condition: XSS } },
     });
     expect(screen.getByText(XSS)).toBeInTheDocument();
+  });
+
+  it('renders a device_control widget: switches for light/switch + a run button for scene', async () => {
+    const onDeviceAction = vi.fn().mockResolvedValue({ success: true, state: 'off' });
+    renderWithRouter(
+      <ArtifactRenderer
+        finalized
+        onDeviceAction={onDeviceAction}
+        artifact={{
+          id: 'adc', kind: 'device_control', title: 'Gerätesteuerung',
+          data: { devices: [
+            { entity_id: 'light.wz', domain: 'light', name: 'Licht WZ', state: 'on' },
+            { entity_id: 'scene.abend', domain: 'scene', name: 'Abend', state: 'x' },
+          ] },
+        }}
+      />,
+    );
+    // A light renders a switch reflecting its on state.
+    const sw = screen.getByRole('switch', { name: 'Licht WZ' });
+    expect(sw).toHaveAttribute('aria-checked', 'true');
+    // A scene renders a run button.
+    const runBtn = screen.getByRole('button', { name: /Szene Abend ausführen|Run scene Abend/i });
+    expect(runBtn).toBeInTheDocument();
+
+    // Clicking the switch fires a toggle action; the scene button an activate.
+    await userEvent.click(sw);
+    expect(onDeviceAction).toHaveBeenCalledWith('light.wz', 'toggle');
+    await userEvent.click(runBtn);
+    expect(onDeviceAction).toHaveBeenCalledWith('scene.abend', 'activate');
+  });
+
+  it('device_control controls are disabled without an action handler', () => {
+    renderArtifact({
+      id: 'adc2', kind: 'device_control',
+      data: { devices: [{ entity_id: 'switch.x', domain: 'switch', name: 'Schalter', state: 'off' }] },
+    });
+    expect(screen.getByRole('switch', { name: 'Schalter' })).toBeDisabled();
   });
 
   it('region carries the generated aria-label + the "generiert" affordance', () => {

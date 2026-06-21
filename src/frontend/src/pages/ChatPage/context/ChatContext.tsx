@@ -33,6 +33,7 @@ import type {
   AgentToolResultMessage,
   ArtifactWsMessage,
   CardMessage,
+  DeviceActionResultMessage,
   DocumentErrorMessage,
   DocumentProcessingMessage,
   DocumentReadyMessage,
@@ -372,6 +373,9 @@ export interface ChatContextValue {
   // delete a branch (switching to a sibling first). Both reload history.
   switchBranch: (messageId: number) => Promise<void>;
   deleteBranch: (deleteMessageId: number, switchToMessageId: number) => Promise<void>;
+  // Interactive device widget (Gen-UI): toggle/run a device; resolves with the
+  // re-read state. Gated server-side on HA_CONTROL.
+  sendDeviceAction: (entityId: string, action: string) => Promise<{ success: boolean; state?: string }>;
 }
 
 const ChatContext = createContext<ChatContextValue | null>(null);
@@ -1215,6 +1219,18 @@ export function ChatProvider({ children }: ChatProviderProps) {
     });
   }, []);
 
+  // Interactive device widget (Gen-UI): resolvers keyed by entity_id so a
+  // toggle click's `sendDeviceAction` promise settles when the matching
+  // `device_action_result` frame arrives. One in-flight action per entity.
+  const deviceActionResolversRef = useRef<Map<string, (r: { success: boolean; state?: string }) => void>>(new Map());
+  const handleDeviceActionResult = useCallback((data: DeviceActionResultMessage) => {
+    const resolve = deviceActionResolversRef.current.get(data.entity_id);
+    if (resolve) {
+      deviceActionResolversRef.current.delete(data.entity_id);
+      resolve({ success: !!data.success, state: data.state });
+    }
+  }, []);
+
   // WebSocket hook
   const { wsConnected, sendMessage: wsSendMessage, isReady, whenReady } = useChatWebSocket({
     onStreamChunk: handleStreamChunk,
@@ -1235,7 +1251,35 @@ export function ChatProvider({ children }: ChatProviderProps) {
     onArtifact: handleArtifact,
     onFollowups: handleFollowups,
     onPaperlessConfirmRequest: handlePaperlessConfirmRequest,
+    onDeviceActionResult: handleDeviceActionResult,
   });
+
+  // Interactive device widget: send a toggle/run action over the WS and resolve
+  // when the backend's `device_action_result` frame returns the new state. The
+  // backend gates on HA_CONTROL + re-validates the entity/action (the widget
+  // grants no control the user lacks via the agent). Resolves {success:false}
+  // on a non-OPEN socket or a 6 s timeout so the widget can revert/clear.
+  const sendDeviceAction = useCallback(
+    (entityId: string, action: string): Promise<{ success: boolean; state?: string }> => {
+      const ok = wsSendMessage({
+        type: 'device_action',
+        session_id: sessionId,
+        entity_id: entityId,
+        action,
+      });
+      if (!ok) return Promise.resolve({ success: false });
+      return new Promise((resolve) => {
+        deviceActionResolversRef.current.set(entityId, resolve);
+        setTimeout(() => {
+          if (deviceActionResolversRef.current.has(entityId)) {
+            deviceActionResolversRef.current.delete(entityId);
+            resolve({ success: false });
+          }
+        }, 6000);
+      });
+    },
+    [wsSendMessage, sessionId],
+  );
 
   // Submit the user's structured Paperless-confirm decision over the WS. The
   // backend routes the {type:"paperless_confirm"} frame straight to
@@ -2081,11 +2125,12 @@ export function ChatProvider({ children }: ChatProviderProps) {
     regenerateTurn,
     switchBranch,
     deleteBranch,
+    sendDeviceAction,
   }), [
     messages, loading, input, historyLoading, sendMessageInternal, submitPaperlessConfirm,
     regenerateWithCorrectedIntent,
     editAndResubmit, regenerateTurn,
-    switchBranch, deleteBranch,
+    switchBranch, deleteBranch, sendDeviceAction,
     paletteOpen, pendingRoleHint,
     sessionId, sidebarOpen, switchConversation, startNewChat, handleDeleteConversation,
     pendingScrollIndex, jumpToMessage, clearPendingScroll,

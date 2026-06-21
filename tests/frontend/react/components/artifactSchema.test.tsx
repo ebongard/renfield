@@ -33,6 +33,18 @@ describe('artifactSchema — authoritative shape validation', () => {
     })).not.toBeNull();
   });
 
+  it('accepts a device_control widget', () => {
+    expect(parseArtifact({
+      id: 'dc', kind: 'device_control',
+      data: { devices: [
+        { entity_id: 'light.wz', domain: 'light', name: 'Licht', state: 'on', room: 'WZ' },
+        { entity_id: 'scene.abend', domain: 'scene', name: 'Abend', state: 'x' },
+      ] },
+    })).not.toBeNull();
+    // devices must be an array of the device shape.
+    expect(parseArtifact({ id: 'dc', kind: 'device_control', data: { devices: 'no' } })).toBeNull();
+  });
+
   it('rejects a weather widget missing current or with a non-finite temp', () => {
     expect(parseArtifact({ id: 'w', kind: 'weather', data: { location: 'Berlin' } })).toBeNull();
     expect(parseArtifact({

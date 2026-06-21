@@ -16,7 +16,7 @@
  */
 import { z } from 'zod';
 
-export const ARTIFACT_KINDS = ['table', 'list', 'keyvalue', 'chart', 'weather'] as const;
+export const ARTIFACT_KINDS = ['table', 'list', 'keyvalue', 'chart', 'weather', 'device_control'] as const;
 export type ArtifactKind = (typeof ARTIFACT_KINDS)[number];
 
 // A finite number — rejects NaN / ±Infinity so a coordinate can never blow the
@@ -73,6 +73,20 @@ export const weatherDataSchema = z.object({
   forecast: z.array(weatherForecastSchema).optional(),
 });
 
+// Interactive device-control widget (Gen-UI). A device whose domain isn't a
+// controllable one is dropped backend-side; the renderer shows a toggle for
+// light/switch and a run button for scene.
+export const deviceControlDeviceSchema = z.object({
+  entity_id: z.string(),
+  domain: z.string(),
+  name: z.string(),
+  state: z.string(),
+  room: z.string().optional(),
+});
+export const deviceControlDataSchema = z.object({
+  devices: z.array(deviceControlDeviceSchema),
+});
+
 // Discriminated union on `kind` so a malformed `data` for the declared kind is
 // a clean parse failure (→ fallback), not a wrong-renderer dispatch.
 const baseFields = {
@@ -87,6 +101,7 @@ export const artifactSchema = z.discriminatedUnion('kind', [
   z.object({ ...baseFields, kind: z.literal('keyvalue'), data: keyValueDataSchema }),
   z.object({ ...baseFields, kind: z.literal('chart'), data: chartDataSchema }),
   z.object({ ...baseFields, kind: z.literal('weather'), data: weatherDataSchema }),
+  z.object({ ...baseFields, kind: z.literal('device_control'), data: deviceControlDataSchema }),
 ]);
 
 export type ChatArtifact = z.infer<typeof artifactSchema>;
@@ -95,6 +110,8 @@ export type ListData = z.infer<typeof listDataSchema>;
 export type KeyValueData = z.infer<typeof keyValueDataSchema>;
 export type ChartData = z.infer<typeof chartDataSchema>;
 export type WeatherData = z.infer<typeof weatherDataSchema>;
+export type DeviceControlData = z.infer<typeof deviceControlDataSchema>;
+export type DeviceControlDevice = z.infer<typeof deviceControlDeviceSchema>;
 export type ChartSeries = z.infer<typeof chartSeriesSchema>;
 
 /** Parse an unknown payload into a typed artifact, or null on any shape failure. */

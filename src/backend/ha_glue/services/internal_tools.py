@@ -143,6 +143,12 @@ class InternalToolService:
                 "classic_timeout": "Classic inquiry time in seconds per satellite (default 12, max 20)",
             },
         },
+        "internal.device_controls": {
+            "description": "Show an INTERACTIVE device-control widget — clickable on/off toggles for lights and switches, plus 'run' buttons for scenes — so the user can operate devices by tapping. Use it when the user wants to CONTROL/OPERATE devices via a panel ('steuere die Lichter', 'zeig mir die Lichtsteuerung', 'gib mir die Schalter fürs Wohnzimmer', 'show me the light controls'). NOT for a one-off command like 'mach das Licht an' (do that directly with HassTurnOn), and NOT for a read-only status overview (that is the status sub-intent). Optionally pass a room to scope it. After it renders give a one-line final_answer (the widget IS the answer).",
+            "parameters": {
+                "room": "Optional room name to scope the controls to (e.g. 'Wohnzimmer'). Omit to show all controllable devices.",
+            },
+        },
         "internal.presence_history": {
             "description": "Query a user's PERSISTED presence history (survives restarts, unlike the live current-location tools). Use for 'where was X earlier/yesterday', 'when was X last in the kitchen', or 'who was in the living room this morning'. Accepts username or first/last name.",
             "parameters": {
@@ -171,6 +177,11 @@ class InternalToolService:
         "internal.remove_radio_favorite": "_remove_radio_favorite",
         "internal.presence_history": "_presence_history",
         "internal.bluetooth_scan": "_bluetooth_scan",
+        "internal.device_controls": "_device_controls",
+        # NOT in TOOLS — not agent-advertised. Dispatched only by the chat
+        # handler's `device_action` WS-frame route (after the HA_CONTROL gate),
+        # never chosen by the agent.
+        "internal.device_action": "_device_action",
     }
 
     async def execute(self, intent: str, parameters: dict) -> dict:
@@ -363,6 +374,126 @@ class InternalToolService:
                 return room.id if room else None
         except Exception:
             return None
+
+    # --- Interactive device-control widget (Gen-UI item 10) -----------------
+    # _CONTROL_DOMAINS / _DOMAIN_ACTIONS are the SERVER-SIDE actuation allowlist
+    # for the device_action frame. The HA_CONTROL permission gate lives in the
+    # chat handler (it has user_permissions); this is the second layer — a click
+    # can only ever turn_on/off/toggle a real light/switch or activate a real
+    # scene, never an arbitrary call_service.
+    _CONTROL_DOMAINS = frozenset({"light", "switch", "scene"})
+    _DOMAIN_ACTIONS = {
+        "light": frozenset({"turn_on", "turn_off", "toggle"}),
+        "switch": frozenset({"turn_on", "turn_off", "toggle"}),
+        "scene": frozenset({"activate"}),
+    }
+
+    async def _device_controls(self, params: dict) -> dict:
+        """Producer: build an interactive `device_control` artifact from the HA
+        entity map (controllable lights/switches/scenes), optionally scoped to a
+        room. Returns ``data={"artifacts":[...]}`` so the chat handler emits it.
+        """
+        from utils.config import settings
+        if not settings.artifacts_typed_enabled:
+            return {"success": True, "message": "", "action_taken": False}
+
+        room = (params.get("room") or "").strip().lower()
+        try:
+            from ha_glue.integrations.homeassistant import HomeAssistantClient
+            entity_map = await HomeAssistantClient().get_entity_map()
+        except Exception as e:  # noqa: BLE001
+            logger.warning(f"device_controls: HA entity map fetch failed: {e}")
+            return {
+                "success": False,
+                "message": "Die Geräteliste konnte gerade nicht geladen werden.",
+                "action_taken": False,
+            }
+
+        devices = []
+        for e in entity_map:
+            if e.get("domain") not in self._CONTROL_DOMAINS:
+                continue
+            if room and (e.get("room") or "").lower() != room:
+                continue
+            devices.append({
+                "entity_id": e.get("entity_id", ""),
+                "domain": e.get("domain", ""),
+                "name": e.get("friendly_name") or e.get("entity_id", ""),
+                "state": e.get("state", "unknown"),
+                **({"room": e["room"]} if e.get("room") else {}),
+            })
+
+        if not devices:
+            where = f" in {params.get('room')}" if room else ""
+            return {
+                "success": True,
+                "action_taken": False,
+                "message": f"Ich habe keine schaltbaren Geräte{where} gefunden.",
+            }
+
+        import uuid
+        title = "Gerätesteuerung" + (f" – {params.get('room')}" if room else "")
+        artifact = {
+            "id": f"art_devctl_{uuid.uuid4().hex[:12]}",
+            "kind": "device_control",
+            "title": title,
+            "data": {"devices": devices},
+        }
+        return {
+            "success": True,
+            "action_taken": False,
+            "message": f"Hier ist die Steuerung für {len(devices)} Gerät(e).",
+            "data": {"artifacts": [artifact]},
+        }
+
+    async def _device_action(self, params: dict) -> dict:
+        """Actuate one device from a widget click (the `device_action` frame).
+
+        SECURITY: the HA_CONTROL permission gate already ran in the chat handler.
+        Here we enforce the second layer — the entity's domain + the action must
+        be in the allowlist, AND the entity must actually exist in HA (a get_state
+        probe) — so a crafted frame can't drive an arbitrary service. Returns the
+        re-read state so the widget reflects reality.
+        """
+        entity_id = (params.get("entity_id") or "").strip()
+        action = (params.get("action") or "").strip().lower()
+        if not entity_id or "." not in entity_id:
+            return {"success": False, "message": "Ungültige entity_id", "action_taken": False}
+        domain = entity_id.split(".")[0]
+        if domain not in self._CONTROL_DOMAINS:
+            return {"success": False, "message": f"Domain '{domain}' ist nicht schaltbar", "action_taken": False}
+        if action not in self._DOMAIN_ACTIONS.get(domain, frozenset()):
+            return {"success": False, "message": f"Aktion '{action}' ist für {domain} nicht erlaubt", "action_taken": False}
+
+        try:
+            from ha_glue.integrations.homeassistant import HomeAssistantClient
+            ha = HomeAssistantClient()
+            # Existence probe — a non-existent entity_id (or a state read failure)
+            # must not actuate. None → reject.
+            state = await ha.get_state(entity_id)
+            if not state:
+                return {"success": False, "message": f"Gerät {entity_id} nicht gefunden", "action_taken": False}
+
+            if domain == "scene":
+                ok = await ha.call_service("scene", "turn_on", entity_id)
+            else:
+                ok = await ha.call_service(domain, action, entity_id)
+            if not ok:
+                return {"success": False, "message": f"Schalten von {entity_id} fehlgeschlagen", "action_taken": False}
+
+            # Re-read so the widget reconciles to the real new state. A scene has
+            # no on/off state — report 'on' transiently for UI feedback.
+            new_state = await ha.get_state(entity_id)
+            resolved = (new_state or {}).get("state", "unknown") if domain != "scene" else "on"
+            return {
+                "success": True,
+                "action_taken": True,
+                "message": f"{entity_id}{f' → {action}'}",
+                "data": {"entity_id": entity_id, "state": resolved},
+            }
+        except Exception as e:  # noqa: BLE001
+            logger.error(f"device_action {action} on {entity_id} failed: {e}")
+            return {"success": False, "message": f"Fehler: {e!s}", "action_taken": False}
 
     async def _announce_in_room(self, params: dict) -> dict:
         """Speak a text message (TTS) on a room's audio device.

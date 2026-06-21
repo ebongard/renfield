@@ -175,6 +175,15 @@ export interface ArtifactWsMessage extends BaseWsMessage {
   replace_text?: string;
 }
 
+/** Result of an interactive device-control widget click (Gen-UI). */
+export interface DeviceActionResultMessage extends BaseWsMessage {
+  type: 'device_action_result';
+  entity_id: string;
+  success: boolean;
+  state?: string;
+  message?: string;
+}
+
 interface UseChatWebSocketOptions {
   onStreamChunk?: (content: string) => void;
   onStreamDone?: (data: DoneMessage) => void;
@@ -194,6 +203,7 @@ interface UseChatWebSocketOptions {
   onCard?: (data: CardMessage) => void;
   onArtifact?: (data: ArtifactWsMessage) => void;
   onFollowups?: (data: FollowupsMessage) => void;
+  onDeviceActionResult?: (data: DeviceActionResultMessage) => void;
 }
 
 /**
@@ -219,6 +229,7 @@ export function useChatWebSocket({
   onCard,
   onArtifact,
   onFollowups,
+  onDeviceActionResult,
 }: UseChatWebSocketOptions = {}) {
   const [wsConnected, setWsConnected] = useState(false);
   const wsRef = useRef<WebSocket | null>(null);
@@ -317,6 +328,8 @@ export function useChatWebSocket({
         const msg = data as PaperlessConfirmRequestMessage;
         debug.log('Paperless confirm request:', msg.filename, `${msg.fields?.length ?? 0} fields`);
         onPaperlessConfirmRequest?.(msg);
+      } else if (data.type === 'device_action_result') {
+        onDeviceActionResult?.(data as DeviceActionResultMessage);
       }
     };
 
@@ -335,7 +348,7 @@ export function useChatWebSocket({
     };
 
     wsRef.current = ws;
-  }, [onStreamChunk, onStreamDone, onAction, onRagContext, onIntentFeedbackRequest, onDocumentProcessing, onDocumentReady, onDocumentError, onUploadProcessed, onPaperlessCommitted, onPaperlessConfirmRequest, onAgentThinking, onAgentToolCall, onAgentToolResult, onAgentFederationProgress, onCard, onArtifact, onFollowups]);
+  }, [onStreamChunk, onStreamDone, onAction, onRagContext, onIntentFeedbackRequest, onDocumentProcessing, onDocumentReady, onDocumentError, onUploadProcessed, onPaperlessCommitted, onPaperlessConfirmRequest, onAgentThinking, onAgentToolCall, onAgentToolResult, onAgentFederationProgress, onCard, onArtifact, onFollowups, onDeviceActionResult]);
 
   useEffect(() => {
     connectWebSocket();
