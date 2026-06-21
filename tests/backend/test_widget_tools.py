@@ -176,6 +176,23 @@ async def test_weather_widget_location_error_surfaced():
 
 @pytest.mark.unit
 @pytest.mark.asyncio
+async def test_weather_widget_non_dict_location_does_not_crash():
+    # A truthy non-dict `location` (defensive: shouldn't happen with the real
+    # MCP) must not AttributeError — the guard coerces it to {}.
+    mcp = _FakeMCP({
+        "location": "Berlin",  # string, not a dict
+        "current": {"temperature": 18, "weather_code": 0, "weather_description": "Klar"},
+        "daily": [{"date": "2026-06-20", "temp_max": 20, "temp_min": 10, "weather_code": 0}],
+    })
+    out = await weather_widget({"location": "Berlin"}, mcp_manager=mcp)
+    assert out["success"] is True
+    art = out["data"]["artifacts"][0]
+    assert art["kind"] == "weather"
+    assert art["data"]["location"] == ""  # non-dict location → empty, not a crash
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
 async def test_weather_widget_no_current_falls_back_to_raw():
     # No current block → no artifact, but the raw data is handed back so the
     # agent can still answer in prose.

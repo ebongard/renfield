@@ -235,7 +235,7 @@ def _build_weather_artifact(raw: dict) -> dict | None:
             entry["precipChance"] = d["precipitation_probability"]
         forecast.append(entry)
 
-    loc = raw.get("location") or {}
+    loc = raw.get("location") if isinstance(raw.get("location"), dict) else {}
     artifact: dict = {
         "id": _art_id("weather"),
         "kind": "weather",
@@ -310,7 +310,8 @@ async def weather_widget(parameters: dict, *, mcp_manager) -> dict:
             "data": {"weather": raw},
         }
 
-    loc_name = (raw.get("location") or {}).get("name", location)
+    _loc = raw.get("location") if isinstance(raw.get("location"), dict) else {}
+    loc_name = _loc.get("name", location)
     return {
         "success": True,
         "message": f"Showing the weather for {loc_name}.",

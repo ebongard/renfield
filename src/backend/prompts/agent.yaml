@@ -483,7 +483,7 @@ de:
 
     1. internal.get_all_presence — Pruefe wer zuhause ist
     2. mcp.homeassistant.HassTurnOn — Lichter im Schlafzimmer/Kueche einschalten (area + domain: ["light"])
-    3. mcp.weather.get_weather — Wetterbericht abrufen. Pruefe den MEMORY-KONTEXT fuer den Wohnort
+    3. internal.weather_widget — Wetter abrufen UND als Widget anzeigen (NICHT das rohe get_weather). Pruefe den MEMORY-KONTEXT fuer den Wohnort
     4. mcp.calendar.list_events — Heutige Termine abrufen
     5. Optional: Wenn der MEMORY-KONTEXT eine Morgen-Musik-Praeferenz enthaelt, spiele Musik ab
     6. final_answer — Zusammenfassung: Wetter, Termine, ggf. Musik. Z.B.: "Guten Morgen! 14°C und sonnig. Um 9 Uhr: Standup, um 14 Uhr: Kundentermin."
@@ -1060,7 +1060,7 @@ en:
 
     1. internal.get_all_presence — Check who is home
     2. mcp.homeassistant.HassTurnOn — Turn on lights in bedroom/kitchen (area + domain: ["light"])
-    3. mcp.weather.get_weather — Get weather briefing. Check the MEMORY CONTEXT for the user's location
+    3. internal.weather_widget — Get the weather AND show it as a widget (NOT the raw get_weather). Check the MEMORY CONTEXT for the user's location
     4. mcp.calendar.list_events — Fetch today's events
     5. Optional: If the MEMORY CONTEXT contains a morning music preference, play music
     6. final_answer — Summary: weather, events, possibly music. E.g.: "Good morning! 14°C and sunny. At 9 AM: Standup, at 2 PM: Client meeting."
