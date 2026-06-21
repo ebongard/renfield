@@ -935,18 +935,37 @@ async def websocket_endpoint(
             # re-validates domain/action/entity before calling HA. The widget can
             # grant NO control the user doesn't already have via the agent (same
             # HA_CONTROL gate). Handled before WSChatMessage validation.
+            # NOTE (by design): this direct, authenticated click does NOT fire the
+            # `verify_tool_call` hook (which only runs on the agent's `mcp.*`
+            # path). A plugin voice-2FA gate on agent-issued HA calls therefore
+            # does not intercept widget clicks — that gate is for LLM/voice-
+            # originated actions, not a deliberate tap; HA_CONTROL is the gate here.
             if isinstance(data, dict) and data.get("type") == "device_action":
                 da_user_id = auth_result.get("user_id") if isinstance(auth_result, dict) else None
                 entity_id = data.get("entity_id")
                 action = data.get("action")
-                if not entity_id or not action:
+                if (not isinstance(entity_id, str) or not entity_id or len(entity_id) > 255
+                        or not isinstance(action, str) or not action):
                     await send_ws_error(
                         websocket, WSErrorCode.INVALID_MESSAGE,
-                        "device_action requires 'entity_id' and 'action'",
+                        "device_action requires 'entity_id' (≤255 chars) and 'action'",
                     )
                     continue
-                # HA_CONTROL gate. user_permissions is None in single-user /
-                # AUTH-disabled mode (parity with the agent's unrestricted
+                # AUTH-enabled mode: a frame with NO resolved human user is a
+                # device/satellite token (user_id=None) — NOT a person with a
+                # permission list. Deny: only TRUE single-user mode (auth
+                # disabled) may actuate without HA_CONTROL. (A da_perms=None below
+                # is otherwise reachable by such a token and would skip the gate.)
+                if settings.auth_enabled and da_user_id is None:
+                    await websocket.send_json({
+                        "type": "device_action_result",
+                        "entity_id": entity_id,
+                        "success": False,
+                        "message": "Keine Berechtigung zum Steuern von Geräten.",
+                    })
+                    continue
+                # HA_CONTROL gate. da_perms is None ONLY in auth-disabled
+                # single-user mode now (parity with the agent's unrestricted
                 # actuation there); when a permission list exists, HA_CONTROL is
                 # required — fail-closed.
                 try:

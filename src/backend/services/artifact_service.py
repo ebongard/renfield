@@ -62,7 +62,9 @@ MAX_DEVICES = 60                # controllable devices in a device_control widge
 
 # The domains a device_control widget may render a control for. This is a
 # RENDER allowlist only — the actuation handler re-checks domain+action+entity
-# server-side under the HA_CONTROL permission (services/device_action_service.py).
+# server-side under the HA_CONTROL permission gate (the gate is in chat_handler's
+# device_action frame route; the allowlist is in
+# ha_glue/services/internal_tools.py::_device_action).
 CONTROLLABLE_DOMAINS: frozenset[str] = frozenset({"light", "switch", "scene"})
 
 # A turn may legitimately carry a couple of artifacts (table + chart); cap the
