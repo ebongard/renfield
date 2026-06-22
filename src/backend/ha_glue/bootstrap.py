@@ -500,10 +500,21 @@ async def ha_glue_register_tools(*, registry: Any, **_: Any) -> None:
     logger.debug(f"ha_glue: registered {added} internal.* tools with agent registry")
 
 
+# Internal tools that speak TTS into room speakers — a house-wide control
+# action — and so are permission-gated on HA_CONTROL (mirrors the device_action
+# frame gate in chat_handler). announce_in_room targets one room, broadcast_
+# announcement fans out to every occupied room.
+_HA_CONTROL_GATED_TOOLS = frozenset({
+    "internal.announce_in_room",
+    "internal.broadcast_announcement",
+})
+
+
 async def ha_glue_execute_tool(
     *,
     intent: str,
     parameters: dict,
+    user_permissions: list[str] | None = None,
     **_: Any,
 ) -> dict | None:
     """Dispatch `internal.*` intents to the ha_glue InternalToolService.
@@ -521,6 +532,31 @@ async def ha_glue_execute_tool(
     if intent == "internal.knowledge_search":
         # Platform owns this tool — let the direct dispatch handle it.
         return None
+
+    # Permission gate (fail-closed) for the announce/broadcast tools. They route
+    # TTS into room speakers, so an authenticated user needs HA_CONTROL — the
+    # same permission the device_action frame gate requires. `user_permissions`
+    # is None ONLY in auth-disabled single-user mode OR an unidentified voice
+    # turn (no JWT / low-confidence speaker), where the agent actuates freely
+    # anyway and a spoken "Ansage an alle" must keep working; physical voice
+    # presence is its own authorization. When a permission list IS present (an
+    # authenticated user), HA_CONTROL is required — so a low-privilege account
+    # (e.g. a Gast with ha.read) cannot drive house-wide TTS.
+    if intent in _HA_CONTROL_GATED_TOOLS and user_permissions is not None:
+        from models.permissions import Permission, has_permission
+        if not has_permission(user_permissions, Permission.HA_CONTROL):
+            logger.warning(
+                f"🔒 Denied {intent}: user lacks HA_CONTROL "
+                f"(has {len(user_permissions)} permission(s))"
+            )
+            return {
+                "success": False,
+                "action_taken": False,
+                "message": (
+                    "Keine Berechtigung für Durchsagen/Ansagen "
+                    "(HA_CONTROL erforderlich)."
+                ),
+            }
 
     from ha_glue.services.internal_tools import InternalToolService
 

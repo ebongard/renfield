@@ -33,6 +33,25 @@ tools), so "Sag ihm …" no longer lands in the tool-less chat path. Routing is 
 the LLM classifier reading these descriptions — there are no hardcoded trigger
 phrases.
 
+## Permission gate (HA_CONTROL, fail-closed)
+
+Both `announce_in_room` and `broadcast_announcement` route TTS into room
+speakers — a house-wide control action — so they are permission-gated in the
+`execute_tool` hook (`ha_glue_execute_tool`, `_HA_CONTROL_GATED_TOOLS`) on the
+**same `HA_CONTROL`** the `device_action` frame requires:
+
+- `user_permissions is None` → **allowed**. This is auth-disabled single-user
+  mode OR an unidentified voice turn (no JWT / low-confidence speaker), where the
+  agent actuates freely anyway and a spoken *"Ansage an alle"* must keep working —
+  physical voice presence in the home is its own authorization.
+- `user_permissions` present (an authenticated user) → **`HA_CONTROL` required**,
+  else denied. So a low-privilege account (e.g. a `Gast` with `ha.read`) cannot
+  drive room or house-wide TTS, while `Familie`/`Admin` (`ha.full` ⊇ `ha.control`)
+  can. Runs BEFORE the tool body, so nothing is synthesized or routed on a denial.
+
+This is the outermost gate; the privacy gate below still applies to a permitted
+single-room `personal` announce.
+
 ## Privacy gate (FAIL-CLOSED)
 
 `privacy="public"` (default) is always announced. `privacy="personal"`
@@ -189,9 +208,11 @@ resolved room id), failing only if none accept.
 
 ## Where it lives
 
-- Tools + gate + shared core: `ha_glue/services/internal_tools.py`
+- Tools + privacy gate + shared core: `ha_glue/services/internal_tools.py`
   (`_announce_core`, `_announce_in_room`/`internal.announce_in_room`,
   `_broadcast_announcement`/`internal.broadcast_announcement`)
+- HA_CONTROL permission gate: `ha_glue/bootstrap.py::ha_glue_execute_tool`
+  (`_HA_CONTROL_GATED_TOOLS`) — `tests/backend/test_internal_tools.py::TestAnnouncePermissionGate`
 - Delivery primitives (reused): `PiperService`, `OutputRoutingService.get_audio_output_for_room`, `AudioOutputService.play_audio`
 - Presence: `PresenceService.get_all_presence` / `get_room_occupants` / `find_user_by_name`
 - Routing: `config/agent_roles.yaml` (`presence` / `conversation` roles)

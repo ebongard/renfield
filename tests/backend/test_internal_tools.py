@@ -4068,6 +4068,92 @@ class TestBroadcastAnnouncement:
         assert "(10/10)" in result["message"]
 
 
+class TestAnnouncePermissionGate:
+    """The announce/broadcast tools route TTS into rooms → gated on HA_CONTROL
+    in ha_glue_execute_tool (the execute_tool hook). user_permissions=None
+    (auth-disabled / unidentified voice) is allowed; an authenticated user
+    needs HA_CONTROL."""
+
+    @staticmethod
+    def _patch_dispatch():
+        """Stub InternalToolService.execute so we test ONLY the gate, not the
+        tool body. Returns the patch + the recording mock."""
+        from ha_glue.services.internal_tools import InternalToolService
+        executed = AsyncMock(return_value={"success": True, "action_taken": True, "message": "ok"})
+        return patch.object(InternalToolService, "execute", executed), executed
+
+    @pytest.mark.unit
+    @pytest.mark.parametrize("intent", [
+        "internal.announce_in_room", "internal.broadcast_announcement",
+    ])
+    async def test_denied_when_authenticated_user_lacks_ha_control(self, intent):
+        from ha_glue.bootstrap import ha_glue_execute_tool
+        p, executed = self._patch_dispatch()
+        with p:
+            result = await ha_glue_execute_tool(
+                intent=intent, parameters={"text": "hi", "room_name": "Küche"},
+                user_permissions=["ha.read", "kb.own"], user_id=7,
+            )
+        assert result["success"] is False
+        assert "Berechtigung" in result["message"]
+        executed.assert_not_awaited()  # blocked BEFORE the tool ran
+
+    @pytest.mark.unit
+    @pytest.mark.parametrize("intent", [
+        "internal.announce_in_room", "internal.broadcast_announcement",
+    ])
+    async def test_allowed_with_ha_control(self, intent):
+        from ha_glue.bootstrap import ha_glue_execute_tool
+        p, executed = self._patch_dispatch()
+        with p:
+            result = await ha_glue_execute_tool(
+                intent=intent, parameters={"text": "hi"},
+                user_permissions=["ha.control"], user_id=7,
+            )
+        assert result["success"] is True
+        executed.assert_awaited_once()
+
+    @pytest.mark.unit
+    async def test_allowed_with_ha_full_via_hierarchy(self):
+        """ha.full implies ha.control through the permission hierarchy."""
+        from ha_glue.bootstrap import ha_glue_execute_tool
+        p, executed = self._patch_dispatch()
+        with p:
+            result = await ha_glue_execute_tool(
+                intent="internal.broadcast_announcement", parameters={"text": "hi"},
+                user_permissions=["ha.full"], user_id=1,
+            )
+        assert result["success"] is True
+        executed.assert_awaited_once()
+
+    @pytest.mark.unit
+    async def test_allowed_when_permissions_none(self):
+        """user_permissions=None → auth-disabled / unidentified voice → allowed
+        (voice 'Ansage an alle' must keep working)."""
+        from ha_glue.bootstrap import ha_glue_execute_tool
+        p, executed = self._patch_dispatch()
+        with p:
+            result = await ha_glue_execute_tool(
+                intent="internal.broadcast_announcement", parameters={"text": "hi"},
+                user_permissions=None, user_id=None,
+            )
+        assert result["success"] is True
+        executed.assert_awaited_once()
+
+    @pytest.mark.unit
+    async def test_non_gated_internal_tool_not_affected(self):
+        """A non-announce internal tool runs even without HA_CONTROL."""
+        from ha_glue.bootstrap import ha_glue_execute_tool
+        p, executed = self._patch_dispatch()
+        with p:
+            result = await ha_glue_execute_tool(
+                intent="internal.get_all_presence", parameters={},
+                user_permissions=["ha.read"], user_id=7,
+            )
+        assert result["success"] is True
+        executed.assert_awaited_once()
+
+
 # ============================================================================
 # Media Follow Me — presence-derived session owner (option A)
 # ============================================================================
