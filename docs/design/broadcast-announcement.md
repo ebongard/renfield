@@ -154,3 +154,63 @@ Launch A and B in parallel; A is the critical path.
 Eng review (`/plan-eng-review`): **CLEARED**, 0 critical gaps. Outside-voice
 (Claude subagent) drove the public-only decision and corrected the
 `_announce_core` session ownership. No UI scope → no design review needed.
+
+## `/autoplan` addendum (CEO + Eng dual voices, @ d735367)
+
+Re-reviewed via `/autoplan` (CEO + Eng phases; Design/DX out of scope). Codex
+unavailable → subagent-only. Every claim below was verified against the actual
+code, not the doc's prose.
+
+**Strategy/taste calls — reviewed and KEPT as planned** (decided by the owner;
+recorded so the rationale survives):
+- **Targeting = occupied rooms** (not all-speaker rooms). The CEO voice argued
+  the competitor default is all-speaker (reaches phoneless people); owner keeps
+  presence-based targeting with the honest-summary limitation. Documented blind
+  spot stands: a phoneless person's room is invisible.
+- **At-least-once** (no TTL dedup). Accepted; a re-fire is audible. Mitigation
+  remains the per-room summary discouraging agent retry.
+- **Ungated** (no permission gate). Broadcast inherits single-announce's
+  current ungated model. NOTE: this means any `presence`-role turn can fan TTS
+  to the whole house; revisit auth for *both* announce tools together later.
+- **Fallback fix bundled** into this PR (not split out).
+
+**Mechanical correctness fixes — MUST apply during implementation** (verified
+bugs/gaps, not preferences):
+
+1. **`_announce_core` contract.** Signature `_announce_core(room_name: str, text,
+   audio_bytes: bytes | None, privacy, for_users, force)`. `audio_bytes=None` →
+   core synthesizes internally; single-announce passes `None` and keeps its
+   **post-privacy-gate lazy synth** (so a blocked `personal` message wastes no
+   synth — the current ordering at `internal_tools.py:780` is preserved).
+   Broadcast pre-synthesizes once and passes bytes. The privacy/camera gate stays
+   in the single-announce caller, NOT in `_announce_core`.
+2. **Fallback must key on the resolved room, not the raw param.** The existing
+   fallback (`internal_tools.py:799-818`) keys on the raw `room_name` string
+   (`get_devices_in_room(room_name)`, `session_id=f"announce-{room_name}"`).
+   After extraction it must use the resolved `room.name` / `room.id` (and the
+   primary path's `f"announce-{room.id}"` session id) so presence `room_name` ≠
+   canonical `room.name` can't silently find zero devices. Add a test for that
+   mismatch.
+3. **`room_name` is nullable with a valid `room_id`** (`presence_service.py:34`,
+   `:340` — name-cache miss → `None`). Resolve the name from `room_id` *inside*
+   core; skip `room_id=None`; in the summary fall back to canonical `room.name`,
+   never print "None". Add the `room_name=None / room_id set` test (the listed
+   test 4 only covers `room_id=None`).
+4. **Pin the semaphore cap** (currently "small", unspecified) to a concrete value
+   (e.g. 3–4) and document its relationship to the async pool. Before claiming
+   "own session per room closes concurrency", **audit `AudioOutputService.play_audio`**
+   (a process singleton called N× concurrently) for shared mutable state across
+   distinct `session_id`s, and add a concurrency-**interleave** test (not just the
+   semaphore-cap assertion).
+5. **Test plan additions:** synth-failure-aborts-whole-broadcast (claimed in the
+   failure table, absent from the numbered list); no-synth-on-personal-block
+   regression for single-announce; `room_name=None`; **fallback NOT entered when
+   the primary path succeeded** (proves no double-send); all-rooms-fail → honest
+   "0/N" summary, not a crash.
+6. **Stale references in this doc:** `_announce_in_room` is at `:618` (not `:508`),
+   the fallback at `:799-818` (not `:692-707`). Also: the routing eval
+   (`bin/run_*_eval.py`, item 5) has **no existing runner** — `bin/` holds only
+   kg/memory eval runners; either add `bin/run_routing_eval.py` (Lane B scope) or
+   name the intent-routing mechanism it plugs into. And `prompts/agent.yaml`
+   (item 3) is **image-baked, not ConfigMap-served** (unlike `agent_roles.yaml`),
+   so it does NOT need the live-ConfigMap patch — only `agent_roles.yaml` does.
