@@ -184,6 +184,42 @@
     "expected_keywords": [],
     "should_refuse": false
   },
+  {
+    "id": "presence_003",
+    "category": "presence",
+    "input": "Ansage an alle: Mittagessen",
+    "lang": "de",
+    "expected_role": "presence",
+    "expected_keywords": [],
+    "should_refuse": false
+  },
+  {
+    "id": "presence_004",
+    "category": "presence",
+    "input": "Sag allen Bescheid, das Essen ist fertig",
+    "lang": "de",
+    "expected_role": "presence",
+    "expected_keywords": [],
+    "should_refuse": false
+  },
+  {
+    "id": "presence_005",
+    "category": "presence",
+    "input": "Ruf alle zum Essen",
+    "lang": "de",
+    "expected_role": "presence",
+    "expected_keywords": [],
+    "should_refuse": false
+  },
+  {
+    "id": "presence_006",
+    "category": "presence",
+    "input": "Tell everyone dinner is ready",
+    "lang": "en",
+    "expected_role": "presence",
+    "expected_keywords": [],
+    "should_refuse": false
+  },
 
   {
     "id": "knowledge_001",

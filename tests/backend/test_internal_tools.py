@@ -3699,6 +3699,375 @@ class TestAnnounceInRoom:
         deps.audio.play_audio.assert_awaited_once()
 
 
+class TestAnnounceFallbackAllSpeakers:
+    """The raw-speaker fallback (reached only when the primary routing path did
+    NOT deliver) must play on ALL speakers in the room, not just the first to
+    answer — and must NOT run at all when the primary path succeeded."""
+
+    @staticmethod
+    def _speaker():
+        d = MagicMock()
+        d.capabilities.has_speaker = True
+        d.websocket.send_json = AsyncMock()
+        return d
+
+    @staticmethod
+    def _patch(*, devices, room_id=2, room_name="Arbeitszimmer", play_ok_primary=False):
+        import sys
+        from types import ModuleType
+
+        mock_db = AsyncMock()
+
+        @asynccontextmanager
+        async def mock_session():
+            yield mock_db
+
+        room = MagicMock(id=room_id, name=room_name)
+        room_service = MagicMock()
+        room_service.get_room_by_name = AsyncMock(return_value=room)
+        room_service.get_room_by_alias = AsyncMock(return_value=None)
+
+        presence = MagicMock()  # public path → privacy gate skipped, presence unused
+
+        piper = MagicMock()
+        piper.synthesize_to_bytes = AsyncMock(return_value=b"WAV")
+
+        decision = MagicMock()
+        # output_device present but play_audio False (play_ok_primary=False) →
+        # primary path does NOT return success → fallback runs.
+        decision.output_device = MagicMock()
+        decision.fallback_to_input = False
+        routing = MagicMock()
+        routing.get_audio_output_for_room = AsyncMock(return_value=decision)
+
+        audio = MagicMock()
+        audio.play_audio = AsyncMock(return_value=play_ok_primary)
+
+        dm = MagicMock()
+        dm.get_devices_in_room_by_id = MagicMock(return_value=devices)
+        dm.get_devices_in_room = MagicMock(return_value=[])
+
+        ensure = []
+        for mod_name in [
+            "services.database", "services.piper_service",
+            "ha_glue.services.room_service", "ha_glue.services.presence_service",
+            "ha_glue.services.output_routing_service",
+            "ha_glue.services.audio_output_service", "ha_glue.services.device_manager",
+        ]:
+            if mod_name not in sys.modules:
+                sys.modules[mod_name] = ModuleType(mod_name)
+                ensure.append(mod_name)
+
+        patches = [
+            patch("services.database.AsyncSessionLocal", mock_session, create=True),
+            patch("services.piper_service.PiperService", return_value=piper, create=True),
+            patch("ha_glue.services.room_service.RoomService", return_value=room_service, create=True),
+            patch("ha_glue.services.presence_service.get_presence_service", return_value=presence, create=True),
+            patch("ha_glue.services.output_routing_service.OutputRoutingService", return_value=routing, create=True),
+            patch("ha_glue.services.audio_output_service.get_audio_output_service", return_value=audio, create=True),
+            patch("ha_glue.services.device_manager.get_device_manager", return_value=dm, create=True),
+        ]
+
+        class Combined:
+            def __enter__(self_):
+                for p in patches:
+                    p.__enter__()
+                self_.dm = dm
+                self_.audio = audio
+                return self_
+
+            def __exit__(self_, *a):
+                for p in reversed(patches):
+                    p.__exit__(*a)
+                for m in ensure:
+                    sys.modules.pop(m, None)
+
+        return Combined()
+
+    @pytest.mark.unit
+    async def test_fallback_sends_to_all_speakers(self, internal_tools):
+        """A room with 2 raw speakers → BOTH receive the send (the bug played
+        only on the first)."""
+        s1, s2 = self._speaker(), self._speaker()
+        with self._patch(devices=[s1, s2], play_ok_primary=False):
+            result = await internal_tools._announce_in_room({
+                "text": "Hallo", "room_name": "Arbeitszimmer", "privacy": "public",
+            })
+        assert result["success"] is True
+        s1.websocket.send_json.assert_awaited_once()
+        s2.websocket.send_json.assert_awaited_once()
+
+    @pytest.mark.unit
+    async def test_fallback_keys_on_room_id(self, internal_tools):
+        """Fallback looks up speakers by resolved room id, not the raw param."""
+        s1 = self._speaker()
+        with self._patch(devices=[s1], play_ok_primary=False) as deps:
+            await internal_tools._announce_in_room({
+                "text": "Hallo", "room_name": "Arbeitszimmer", "privacy": "public",
+            })
+        deps.dm.get_devices_in_room_by_id.assert_called_once_with(2)
+
+    @pytest.mark.unit
+    async def test_fallback_not_entered_when_primary_succeeds(self, internal_tools):
+        """Primary routing delivered → fallback never runs (no double-send)."""
+        s1 = self._speaker()
+        with self._patch(devices=[s1], play_ok_primary=True) as deps:
+            result = await internal_tools._announce_in_room({
+                "text": "Hallo", "room_name": "Arbeitszimmer", "privacy": "public",
+            })
+        assert result["success"] is True
+        deps.audio.play_audio.assert_awaited_once()
+        deps.dm.get_devices_in_room_by_id.assert_not_called()
+        s1.websocket.send_json.assert_not_awaited()
+
+    @pytest.mark.unit
+    async def test_fallback_fails_when_no_speaker_accepts(self, internal_tools):
+        """Every speaker's send raises → honest failure, not a false success."""
+        bad = MagicMock()
+        bad.capabilities.has_speaker = True
+        bad.websocket.send_json = AsyncMock(side_effect=RuntimeError("dead link"))
+        with self._patch(devices=[bad], play_ok_primary=False):
+            result = await internal_tools._announce_in_room({
+                "text": "Hallo", "room_name": "Arbeitszimmer", "privacy": "public",
+            })
+        assert result["success"] is False
+        assert "Lautsprecher" in result["message"]
+
+
+class TestBroadcastAnnouncement:
+    """internal.broadcast_announcement: public-only fan-out to every occupied
+    room. These isolate the broadcast orchestration by mocking _announce_core
+    (the per-room work is covered by TestAnnounceInRoom)."""
+
+    @staticmethod
+    def _pres(room_id, room_name="X"):
+        return MagicMock(room_id=room_id, room_name=room_name)
+
+    @staticmethod
+    def _patch(*, presence_map, rooms_by_id, tts=b"WAV"):
+        """presence_map: {user_id: UserPresence-like}; rooms_by_id: {id: name}
+        for RoomService.get_room (name=None → room not found)."""
+        import sys
+        from types import ModuleType
+
+        mock_db = AsyncMock()
+
+        @asynccontextmanager
+        async def mock_session():
+            yield mock_db
+
+        presence = MagicMock()
+        presence.get_all_presence = MagicMock(return_value=presence_map)
+
+        async def _get_room(rid):
+            name = rooms_by_id.get(rid)
+            if name is None:
+                return None
+            # NB: ``name`` is a reserved MagicMock ctor kwarg — assign after.
+            room = MagicMock(id=rid)
+            room.name = name
+            return room
+
+        room_service = MagicMock()
+        room_service.get_room = AsyncMock(side_effect=_get_room)
+
+        piper = MagicMock()
+        piper.synthesize_to_bytes = AsyncMock(return_value=tts)
+
+        ensure = []
+        for mod_name in [
+            "services.database", "services.piper_service",
+            "ha_glue.services.room_service", "ha_glue.services.presence_service",
+        ]:
+            if mod_name not in sys.modules:
+                sys.modules[mod_name] = ModuleType(mod_name)
+                ensure.append(mod_name)
+
+        patches = [
+            patch("services.database.AsyncSessionLocal", mock_session, create=True),
+            patch("services.piper_service.PiperService", return_value=piper, create=True),
+            patch("ha_glue.services.room_service.RoomService", return_value=room_service, create=True),
+            patch("ha_glue.services.presence_service.get_presence_service", return_value=presence, create=True),
+        ]
+
+        class Combined:
+            def __enter__(self_):
+                for p in patches:
+                    p.__enter__()
+                self_.piper = piper
+                self_.room_service = room_service
+                return self_
+
+            def __exit__(self_, *a):
+                for p in reversed(patches):
+                    p.__exit__(*a)
+                for m in ensure:
+                    sys.modules.pop(m, None)
+
+        return Combined()
+
+    @pytest.mark.unit
+    async def test_two_rooms_two_plays(self, internal_tools):
+        presence_map = {1: self._pres(2, "Arbeitszimmer"), 2: self._pres(3, "Küche")}
+        rooms = {2: "Arbeitszimmer", 3: "Küche"}
+        core = AsyncMock(return_value={"success": True})
+        with self._patch(presence_map=presence_map, rooms_by_id=rooms):
+            internal_tools._announce_core = core
+            result = await internal_tools._broadcast_announcement({"text": "Mittagessen"})
+        assert result["success"] is True
+        assert core.await_count == 2
+        assert "Arbeitszimmer" in result["message"] and "Küche" in result["message"]
+        assert "(2/2)" in result["message"]
+
+    @pytest.mark.unit
+    async def test_dedup_same_room(self, internal_tools):
+        """Two users in the same room → ONE play."""
+        presence_map = {1: self._pres(2, "Arbeitszimmer"), 2: self._pres(2, "Arbeitszimmer")}
+        core = AsyncMock(return_value={"success": True})
+        with self._patch(presence_map=presence_map, rooms_by_id={2: "Arbeitszimmer"}):
+            internal_tools._announce_core = core
+            result = await internal_tools._broadcast_announcement({"text": "Mittagessen"})
+        assert core.await_count == 1
+        assert "(1/1)" in result["message"]
+
+    @pytest.mark.unit
+    async def test_nobody_present_no_synth(self, internal_tools):
+        """Empty presence → no-op, NO synth, NO core call."""
+        core = AsyncMock(return_value={"success": True})
+        with self._patch(presence_map={}, rooms_by_id={}) as deps:
+            internal_tools._announce_core = core
+            result = await internal_tools._broadcast_announcement({"text": "Mittagessen"})
+        assert result["success"] is True
+        assert result["action_taken"] is False
+        assert "niemand" in result["message"].lower()
+        deps.piper.synthesize_to_bytes.assert_not_called()
+        core.assert_not_awaited()
+
+    @pytest.mark.unit
+    async def test_room_id_none_skipped(self, internal_tools):
+        """A presence with room_id=None is skipped; only the real room plays."""
+        presence_map = {1: self._pres(None, None), 2: self._pres(2, "Arbeitszimmer")}
+        core = AsyncMock(return_value={"success": True})
+        with self._patch(presence_map=presence_map, rooms_by_id={2: "Arbeitszimmer"}):
+            internal_tools._announce_core = core
+            result = await internal_tools._broadcast_announcement({"text": "Mittagessen"})
+        assert core.await_count == 1
+        assert "(1/1)" in result["message"]
+
+    @pytest.mark.unit
+    async def test_room_name_none_resolved_from_id(self, internal_tools):
+        """Presence room_name=None but room_id set → name resolved from id (the
+        canonical name, never None)."""
+        presence_map = {1: self._pres(5, None)}
+        core = AsyncMock(return_value={"success": True})
+        with self._patch(presence_map=presence_map, rooms_by_id={5: "Schlafzimmer"}):
+            internal_tools._announce_core = core
+            result = await internal_tools._broadcast_announcement({"text": "Mittagessen"})
+        assert core.await_count == 1
+        assert core.await_args.kwargs["room_name"] == "Schlafzimmer"
+        assert "Schlafzimmer" in result["message"]
+        assert "None" not in result["message"]
+
+    @pytest.mark.unit
+    async def test_synth_called_once(self, internal_tools):
+        """TTS is synthesized exactly ONCE regardless of room count."""
+        presence_map = {1: self._pres(2, "A"), 2: self._pres(3, "B"), 3: self._pres(4, "C")}
+        rooms = {2: "A", 3: "B", 4: "C"}
+        core = AsyncMock(return_value={"success": True})
+        with self._patch(presence_map=presence_map, rooms_by_id=rooms) as deps:
+            internal_tools._announce_core = core
+            await internal_tools._broadcast_announcement({"text": "Mittagessen"})
+        deps.piper.synthesize_to_bytes.assert_awaited_once()
+
+    @pytest.mark.unit
+    async def test_core_called_public_with_shared_bytes(self, internal_tools):
+        """Each room gets the SAME pre-synthesized bytes, privacy=public, no recipients."""
+        presence_map = {1: self._pres(2, "A")}
+        core = AsyncMock(return_value={"success": True})
+        with self._patch(presence_map=presence_map, rooms_by_id={2: "A"}, tts=b"SYNTH"):
+            internal_tools._announce_core = core
+            await internal_tools._broadcast_announcement({"text": "Mittagessen"})
+        kw = core.await_args.kwargs
+        assert kw["audio_bytes"] == b"SYNTH"
+        assert kw["privacy"] == "public"
+        assert kw["for_users"] == []
+        assert kw["force"] is False
+
+    @pytest.mark.unit
+    async def test_one_room_throws_others_complete(self, internal_tools):
+        """One room raises → others still play; summary names the failed room."""
+        presence_map = {1: self._pres(2, "Arbeitszimmer"), 2: self._pres(3, "Küche")}
+        rooms = {2: "Arbeitszimmer", 3: "Küche"}
+
+        async def _core(**kwargs):
+            if kwargs["room_name"] == "Küche":
+                raise RuntimeError("router down")
+            return {"success": True}
+
+        with self._patch(presence_map=presence_map, rooms_by_id=rooms):
+            internal_tools._announce_core = _core
+            result = await internal_tools._broadcast_announcement({"text": "Mittagessen"})
+        assert result["success"] is True  # at least one reached
+        assert result["data"]["reached"] == ["Arbeitszimmer"]
+        assert result["data"]["failed"] == ["Küche"]
+        assert "Nicht erreicht: Küche" in result["message"]
+
+    @pytest.mark.unit
+    async def test_all_rooms_fail_honest_summary(self, internal_tools):
+        """Every room fails → success False with an honest 0/N summary, no crash."""
+        presence_map = {1: self._pres(2, "Arbeitszimmer"), 2: self._pres(3, "Küche")}
+        rooms = {2: "Arbeitszimmer", 3: "Küche"}
+        core = AsyncMock(return_value={"success": False})
+        with self._patch(presence_map=presence_map, rooms_by_id=rooms):
+            internal_tools._announce_core = core
+            result = await internal_tools._broadcast_announcement({"text": "Mittagessen"})
+        assert result["success"] is False
+        assert "(0/2)" in result["message"]
+        assert "Nicht erreicht" in result["message"]
+
+    @pytest.mark.unit
+    async def test_personal_rejected_at_boundary(self, internal_tools):
+        """privacy=personal → rejected before any presence/synth/fan-out."""
+        core = AsyncMock(return_value={"success": True})
+        with self._patch(presence_map={1: self._pres(2, "A")}, rooms_by_id={2: "A"}) as deps:
+            internal_tools._announce_core = core
+            result = await internal_tools._broadcast_announcement({
+                "text": "vertraulich", "privacy": "personal",
+            })
+        assert result["success"] is False
+        assert "announce_in_room" in result["message"]
+        core.assert_not_awaited()
+        deps.piper.synthesize_to_bytes.assert_not_called()
+
+    @pytest.mark.unit
+    async def test_missing_text(self, internal_tools):
+        result = await internal_tools._broadcast_announcement({})
+        assert result["success"] is False and "text" in result["message"]
+
+    @pytest.mark.unit
+    async def test_semaphore_bounds_concurrency(self, internal_tools):
+        """Concurrency never exceeds _BROADCAST_CONCURRENCY across many rooms,
+        and the fan-out IS actually parallel (not serialized)."""
+        import asyncio
+        presence_map = {uid: self._pres(uid + 1, f"Room{uid}") for uid in range(1, 11)}  # 10 rooms
+        rooms = {uid + 1: f"Room{uid}" for uid in range(1, 11)}
+        state = {"cur": 0, "max": 0}
+
+        async def _core(**kwargs):
+            state["cur"] += 1
+            state["max"] = max(state["max"], state["cur"])
+            await asyncio.sleep(0.01)
+            state["cur"] -= 1
+            return {"success": True}
+
+        with self._patch(presence_map=presence_map, rooms_by_id=rooms):
+            internal_tools._announce_core = _core
+            result = await internal_tools._broadcast_announcement({"text": "Mittagessen"})
+        assert state["max"] <= internal_tools._BROADCAST_CONCURRENCY
+        assert state["max"] > 1  # genuinely concurrent, not serialized
+        assert "(10/10)" in result["message"]
+
+
 # ============================================================================
 # Media Follow Me — presence-derived session owner (option A)
 # ============================================================================

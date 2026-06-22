@@ -1,6 +1,8 @@
 # Broadcast Announcement (announce to all occupied rooms)
 
-Status: **PLANNED** (reviewed via `/plan-eng-review`, not yet implemented).
+Status: **IMPLEMENTED** (reviewed via `/plan-eng-review` + `/autoplan`; all 6
+`/autoplan` mechanical fixes applied — see addendum). 32 tests green on `.159`
+(16 existing relay regression + 12 broadcast + 4 fallback) + 6 routing-eval cases.
 Scope: backend internal tool + agent routing only — no frontend.
 
 ## Problem

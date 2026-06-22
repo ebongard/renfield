@@ -111,10 +111,10 @@ roles:
 
   presence:
     description:
-      de: "Anwesenheit & Nachrichten ausrichten: Wo ist eine Person, wer ist zuhause, in welchem Raum ist jemand; einer Person etwas ausrichten/Bescheid sagen/ansagen ('sag ihm/ihr ...', 'richte X aus')"
-      en: "Presence & relaying messages: where is a person, who is home, which room is someone in; relay/announce a message to a person ('tell him/her ...', 'let X know ...')"
+      de: "Anwesenheit & Nachrichten ausrichten: Wo ist eine Person, wer ist zuhause, in welchem Raum ist jemand; einer Person etwas ausrichten/Bescheid sagen/ansagen ('sag ihm/ihr ...', 'richte X aus'); ODER eine Rundansage an ALLE im Haus ('Ansage an alle', 'sag allen Bescheid', 'ruf alle zum Essen', 'Durchsage')"
+      en: "Presence & relaying messages: where is a person, who is home, which room is someone in; relay/announce a message to a person ('tell him/her ...', 'let X know ...'); OR a house-wide announcement to EVERYONE ('announce to all', 'tell everyone', 'call everyone for dinner')"
     mcp_servers: []
-    internal_tools: [internal.get_user_location, internal.get_all_presence, internal.announce_in_room, internal.presence_history, internal.presence_map]
+    internal_tools: [internal.get_user_location, internal.get_all_presence, internal.announce_in_room, internal.broadcast_announcement, internal.presence_history, internal.presence_map]
     max_steps: 5
     prompt_key: agent_prompt
 

@@ -65,6 +65,12 @@ class InternalToolService:
                 "force": "'true' to announce a personal message even if non-recipients are present — ONLY after the recipient has explicitly consented (default false)",
             },
         },
+        "internal.broadcast_announcement": {
+            "description": "Speak a text message OUT LOUD (TTS) in EVERY room where someone is currently present — a house-wide announcement. Use it ONLY for an explicit announcement to everybody: 'Ansage an alle', 'sag allen Bescheid', 'ruf alle zum Essen', 'tell everyone …'. PUBLIC ONLY — it REFUSES confidential content (privacy='personal' is rejected; for that use announce_in_room, the targeted relay). It fans out to all occupied rooms with NO consent dialog. Coverage is presence-based: only rooms with a BLE-tracked person are reached, so a person WITHOUT a tracked device is not covered — the result names exactly which rooms were reached; relay that honestly and do NOT claim everyone heard it. This is DIFFERENT from announce_in_room (which targets ONE room/person) — never confuse the two. Do NOT retry on a partial result (it would re-announce in the rooms that already played).",
+            "parameters": {
+                "text": "The message to speak aloud in every occupied room (required)",
+            },
+        },
         "internal.get_all_presence": {
             "description": "Get all currently present users and their room locations. Use this when asked 'where is everyone?' or 'who is home?'.",
             "parameters": {},
@@ -171,6 +177,7 @@ class InternalToolService:
         "internal.get_user_location": "_get_user_location",
         "internal.get_all_presence": "_get_all_presence",
         "internal.announce_in_room": "_announce_in_room",
+        "internal.broadcast_announcement": "_broadcast_announcement",
         "internal.media_control": "_media_control",
         "internal.play_album_on_dlna": "_play_album_on_dlna",
         "internal.play_video_on_dlna": "_play_video_on_dlna",
@@ -615,6 +622,12 @@ class InternalToolService:
             "data": {"artifacts": [artifact]},
         }
 
+    # Bound on concurrent per-room announces during a broadcast. Each
+    # _announce_core opens its OWN AsyncSession (an AsyncSession is not
+    # concurrency-safe), so this caps simultaneous sessions + WS fan-out well
+    # below the async pool's safe concurrency for a household (~≤6 rooms).
+    _BROADCAST_CONCURRENCY = 4
+
     async def _announce_in_room(self, params: dict) -> dict:
         """Speak a text message (TTS) on a room's audio device.
 
@@ -627,7 +640,10 @@ class InternalToolService:
         This is a single primitive (synthesize → resolve room device → play). The
         person→room resolution + ordering is left to the agent (it calls
         internal.get_user_location first), so nothing about the relay flow is
-        hardcoded here.
+        hardcoded here. The actual work lives in ``_announce_core`` (shared with
+        the broadcast fan-out); single-announce passes ``audio_bytes=None`` so the
+        TTS synth stays LAZY — a personal message blocked by the privacy gate
+        never wastes a synth.
         """
         text = (params.get("text") or "").strip()
         room_name = (params.get("room_name") or "").strip()
@@ -649,6 +665,30 @@ class InternalToolService:
         if not room_name:
             return {"success": False, "message": "Parameter 'room_name' is required", "action_taken": False}
 
+        return await self._announce_core(
+            room_name=room_name, text=text, audio_bytes=None,
+            privacy=privacy, for_users=for_users, force=force,
+        )
+
+    async def _announce_core(
+        self,
+        room_name: str,
+        text: str,
+        audio_bytes: bytes | None,
+        privacy: str,
+        for_users: list[str],
+        force: bool,
+    ) -> dict:
+        """Resolve a room, run the privacy gate, synth (or reuse pre-synth bytes),
+        and play TTS in that ONE room — opening its OWN database session.
+
+        Shared by ``_announce_in_room`` (single; ``audio_bytes=None`` → lazy synth
+        AFTER the gate) and ``_broadcast_announcement`` (public-only fan-out that
+        synthesizes ONCE and passes the same bytes to every room). It opens its own
+        ``AsyncSessionLocal`` because an ``AsyncSession`` is not concurrency-safe,
+        so the parallel broadcast cannot share one. The privacy gate self-skips on
+        ``privacy='public'``; broadcast always passes public.
+        """
         try:
             import base64
 
@@ -666,6 +706,11 @@ class InternalToolService:
                     or await room_service.get_room_by_alias(room_name)
                 if not room:
                     return {"success": False, "message": f"Room '{room_name}' not found", "action_taken": False}
+
+                # Canonical room identity captured as plain locals so the
+                # post-session fallback never touches a detached ORM instance.
+                resolved_room_id = room.id
+                resolved_room_name = room.name
 
                 # --- Privacy gate (FAIL-CLOSED) ---
                 # A personal message is spoken aloud ONLY with POSITIVE proof the
@@ -777,7 +822,11 @@ class InternalToolService:
                                 }
                             # else: fail-open — the BLE decision stands, announce.
 
-                tts_audio = await PiperService().synthesize_to_bytes(text)
+                # Lazy synth: single-announce passes None and synthesizes HERE
+                # (after the gate, so a blocked personal message wastes none);
+                # broadcast passes pre-synthesized bytes and reuses them.
+                tts_audio = audio_bytes if audio_bytes is not None \
+                    else await PiperService().synthesize_to_bytes(text)
                 if not tts_audio:
                     return {"success": False, "message": "TTS synthesis failed", "action_taken": False}
 
@@ -796,30 +845,135 @@ class InternalToolService:
                             "data": {"room_name": room.name, "text": text, "privacy": privacy},
                         }
 
-            # Fallback: send TTS to every speaker in the room directly.
+            # Fallback (only reached when the primary routing path did NOT
+            # deliver): send TTS to EVERY speaker in the room directly. Key on the
+            # resolved room id — the raw param string may differ from the
+            # canonical name — and send to ALL speakers, failing only if none
+            # accept (a room with 2+ raw satellite speakers must all play, not
+            # just the first one to answer).
             device_manager = get_device_manager()
             audio_b64 = base64.b64encode(tts_audio).decode("utf-8")
-            for device in device_manager.get_devices_in_room(room_name):
+            any_ok = False
+            for device in device_manager.get_devices_in_room_by_id(resolved_room_id):
                 if device.capabilities.has_speaker:
                     try:
                         await device.websocket.send_json({
                             "type": "tts_audio",
-                            "session_id": f"announce-{room_name}",
+                            "session_id": f"announce-{resolved_room_id}",
                             "audio": audio_b64,
                             "is_final": True,
                         })
-                        return {
-                            "success": True, "action_taken": True,
-                            "message": f"Nachricht in {room_name} angesagt",
-                            "data": {"room_name": room_name, "text": text, "privacy": privacy},
-                        }
-                    except Exception:  # noqa: BLE001
+                        any_ok = True
+                    except Exception:  # noqa: BLE001 — one dead link must not skip the rest
                         continue
-            return {"success": False, "message": f"Kein Lautsprecher in {room_name} verfügbar", "action_taken": False}
+            if any_ok:
+                return {
+                    "success": True, "action_taken": True,
+                    "message": f"Nachricht in {resolved_room_name} angesagt",
+                    "data": {"room_name": resolved_room_name, "text": text, "privacy": privacy},
+                }
+            return {"success": False, "message": f"Kein Lautsprecher in {resolved_room_name} verfügbar", "action_taken": False}
 
         except Exception as e:  # noqa: BLE001
             logger.error(f"Error announcing in room '{room_name}': {e}")
             return {"success": False, "message": f"Error announcing: {e!s}", "action_taken": False}
+
+    async def _broadcast_announcement(self, params: dict) -> dict:
+        """Speak a PUBLIC announcement (TTS) in every room where someone is
+        currently present — a house-wide fan-out over ``_announce_core``.
+
+        Public-only by design (decision: no N-way GPU vision-storm, no
+        semantically-incoherent house-wide confidential message): a
+        ``privacy='personal'`` request is rejected at this boundary; the targeted
+        relay (``announce_in_room``) still handles confidential content.
+
+        Flow: ``get_all_presence()`` → dedup occupied rooms by ``room_id`` (skip
+        ``room_id=None``) → resolve each room's CANONICAL name from its id (never
+        trust the nullable presence ``room_name``) → synthesize TTS ONCE → a
+        semaphore-bounded ``asyncio.gather`` of ``_announce_core`` per room (each
+        its own session) → swallow per-room errors → honest per-room summary.
+        """
+        text = (params.get("text") or "").strip()
+        privacy = (params.get("privacy") or "public").strip().lower()
+        if not text:
+            return {"success": False, "message": "Parameter 'text' is required", "action_taken": False}
+        if privacy == "personal":
+            return {
+                "success": False, "action_taken": False,
+                "message": (
+                    "Eine Rundansage ist immer öffentlich — für vertrauliche Inhalte "
+                    "nutze announce_in_room (die gezielte Nachricht an eine Person)."
+                ),
+            }
+
+        try:
+            from services.database import AsyncSessionLocal
+            from services.piper_service import PiperService
+            from ha_glue.services.presence_service import get_presence_service
+            from ha_glue.services.room_service import RoomService
+
+            presence = get_presence_service()
+            all_presence = presence.get_all_presence()
+            # Dedup occupied rooms by id; skip a None room_id (user is "home" but
+            # not placed in any room).
+            room_ids = {p.room_id for p in all_presence.values() if p.room_id is not None}
+            if not room_ids:
+                return {
+                    "success": True, "action_taken": False,
+                    "message": "Es ist niemand (mit getracktem Gerät) anwesend.",
+                }
+
+            # Resolve canonical names from ids in ONE session (presence room_name
+            # is nullable; a non-resolving id is dropped). No synth yet.
+            rooms: list[tuple[int, str]] = []
+            async with AsyncSessionLocal() as db:
+                room_service = RoomService(db)
+                for rid in room_ids:
+                    room = await room_service.get_room(rid)
+                    if room is not None:
+                        rooms.append((rid, room.name))
+            if not rooms:
+                return {
+                    "success": True, "action_taken": False,
+                    "message": "Es ist niemand (mit getracktem Gerät) anwesend.",
+                }
+
+            # Synthesize ONCE; abort the whole broadcast on synth failure.
+            tts_audio = await PiperService().synthesize_to_bytes(text)
+            if not tts_audio:
+                return {"success": False, "action_taken": False, "message": "TTS synthesis failed"}
+
+            sem = asyncio.Semaphore(self._BROADCAST_CONCURRENCY)
+
+            async def _one(room_name: str) -> tuple[str, bool]:
+                async with sem:
+                    try:
+                        res = await self._announce_core(
+                            room_name=room_name, text=text, audio_bytes=tts_audio,
+                            privacy="public", for_users=[], force=False,
+                        )
+                        return (room_name, bool(res.get("success")))
+                    except Exception as e:  # noqa: BLE001 — one room must not break the rest
+                        logger.warning(f"broadcast: room '{room_name}' failed: {e}")
+                        return (room_name, False)
+
+            results = await asyncio.gather(*[_one(rn) for _rid, rn in rooms])
+            reached = [rn for rn, ok in results if ok]
+            failed = [rn for rn, ok in results if not ok]
+            total = len(results)
+
+            msg = f"Angesagt in: {', '.join(reached) or '—'} ({len(reached)}/{total})."
+            if failed:
+                msg += f" Nicht erreicht: {', '.join(failed)}."
+            return {
+                "success": bool(reached),
+                "action_taken": bool(reached),
+                "message": msg,
+                "data": {"reached": reached, "failed": failed, "text": text},
+            }
+        except Exception as e:  # noqa: BLE001
+            logger.error(f"Error broadcasting announcement: {e}")
+            return {"success": False, "message": f"Error broadcasting: {e!s}", "action_taken": False}
 
     def _presence_room_user(self, room_id: int) -> int | None:
         """The single user presence currently places in ``room_id``, else None.

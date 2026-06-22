@@ -139,11 +139,63 @@ Hintergrund HiFiBerry-`.local`: nsswitch `hosts: files resolve [!UNAVAIL=return]
 → systemd-`resolve` greift `.local` als mDNS (NOTFOUND vor `dns`); `curl`
 (c-ares) umgeht das, gstreamer (`getaddrinfo`) nicht → daher der `/etc/hosts`-Eintrag.
 
+## Broadcast to everyone (`internal.broadcast_announcement`)
+
+The **targeted** relay above speaks into ONE room. The **broadcast** variant
+fans a public announcement out to **every room where someone is currently
+present** — for *"Ansage an alle: Mittagessen"*, *"sag allen Bescheid"*,
+*"ruf alle zum Essen"*, *"tell everyone …"*.
+
+Flow (`_broadcast_announcement`):
+
+```
+"Ansage an alle: Mittagessen"
+  → presence role → internal.broadcast_announcement(text="Mittagessen")
+  → get_all_presence() → dedup occupied rooms by room_id (skip room_id=None)
+  → resolve each room's CANONICAL name from its id (presence room_name is nullable)
+  → PiperService.synthesize_to_bytes(text)                       [ONCE]
+  → semaphore-bounded (cap 4) asyncio.gather of _announce_core per room:
+       _announce_core(Arbeitszimmer, …, privacy="public", audio_bytes=<once>)  [own session]
+       _announce_core(Küche,          …, privacy="public", audio_bytes=<once>)  [own session]
+  → "Angesagt in: Arbeitszimmer, Küche (2/2)."   (failed rooms → "Nicht erreicht: …")
+```
+
+Design decisions:
+
+- **Shared core.** Both tools run through `_announce_core(room_name, text,
+  audio_bytes, privacy, for_users, force)`, which opens its **own**
+  `AsyncSessionLocal` (an `AsyncSession` is not concurrency-safe, so the parallel
+  broadcast cannot share one). Single-announce passes `audio_bytes=None` → synth
+  stays LAZY (a personal message blocked by the gate wastes no synth); broadcast
+  synthesizes ONCE and passes the bytes to every room.
+- **Public-only.** A broadcast **rejects `privacy='personal'`** at the tool
+  boundary (no N-way GPU vision-storm, no semantically-incoherent house-wide
+  confidential message). The targeted relay still handles confidential content.
+  So broadcast runs NO BLE/camera privacy gate (the gate self-skips on public).
+- **Honest summary.** Reports the room names actually reached, not a people
+  ratio — presence only sees BLE-tracked devices, so a phoneless person's room is
+  invisible. Empty presence → *"niemand anwesend"* (no synth).
+- **At-least-once.** No idempotency key: a partial result names the reached/failed
+  rooms and the agent is told NOT to retry (a re-fire would re-announce in the
+  rooms that already played). Documented limitation.
+- **Same role, not a new one.** Broadcast lives in the `presence` role alongside
+  the targeted relay; the agent disambiguates by tool description + the prompt's
+  broadcast-vs-targeted guidance, NOT by role routing.
+
+While in the code we also fixed a pre-existing bug in the targeted relay's
+raw-speaker fallback: it returned after the FIRST speaker, so a room with 2+ raw
+satellite speakers only played on one. It now sends to ALL speakers (keyed on the
+resolved room id), failing only if none accept.
+
 ## Where it lives
 
-- Tool + gate: `ha_glue/services/internal_tools.py` (`_announce_in_room`, `internal.announce_in_room`)
+- Tools + gate + shared core: `ha_glue/services/internal_tools.py`
+  (`_announce_core`, `_announce_in_room`/`internal.announce_in_room`,
+  `_broadcast_announcement`/`internal.broadcast_announcement`)
 - Delivery primitives (reused): `PiperService`, `OutputRoutingService.get_audio_output_for_room`, `AudioOutputService.play_audio`
-- Presence: `PresenceService.get_room_occupants` / `find_user_by_name`
+- Presence: `PresenceService.get_all_presence` / `get_room_occupants` / `find_user_by_name`
 - Routing: `config/agent_roles.yaml` (`presence` / `conversation` roles)
-- Agent guidance: `prompts/agent.yaml` (relay + confidentiality rules, DE + EN)
-- Tests: `tests/backend/test_internal_tools.py::TestAnnounceInRoom`
+- Agent guidance: `prompts/agent.yaml` (relay + confidentiality + broadcast rules, DE + EN)
+- Tests: `tests/backend/test_internal_tools.py::TestAnnounceInRoom` (targeted),
+  `::TestBroadcastAnnouncement`, `::TestAnnounceFallbackAllSpeakers`;
+  routing: `tests/eval/golden_dataset.json` (`presence_003`–`presence_006`)
