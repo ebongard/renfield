@@ -196,13 +196,21 @@ enviro_phat_enabled: false
 
 # BLE Presence Detection
 ble_enabled: true
-ble_scan_interval: 30
+# Fleet-wide fast presence: continuous scanner + 3s report cadence, matching the
+# Esszimmer k8s pod. Measured 2026-07-09: Wohnzimmer (30s periodic) reported 10x
+# slower than Esszimmer (3s), which biased the backend room-arbitration toward
+# whichever satellite reported more often (a 3s sat gets 10 filter updates per 1
+# from a 30s sat → it holds/steals the room regardless of true signal). Equalising
+# the cadence is the real fix; continuous makes a 3s poll near-free (in-memory
+# snapshot of an always-running BleakScanner, no extra radio bursts).
+ble_scan_interval: 3
 ble_scan_duration: 5
 ble_rssi_threshold: -80
 # Continuous BLE scanning (one long-running BleakScanner + smoothed EWMA RSSI)
-# instead of periodic discover() bursts. Off by default (Pi Zero 2 W keeps the
-# simple periodic path); opt in per-host (e.g. BT 5.x / mains-powered nodes).
-ble_continuous: false
+# instead of periodic discover() bursts. On fleet-wide so scan_interval=3 is a
+# cheap in-memory poll rather than a 3s radio burst (proven on the Pi Zero 2 W
+# BT 4.2 radio by the Wohnzimmer node, which has run continuous steadily).
+ble_continuous: true
 ble_smoothing_alpha: 0.4
 ble_freshness_seconds: 20.0
 
