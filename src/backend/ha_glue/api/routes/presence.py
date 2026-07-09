@@ -5,6 +5,7 @@ Endpoints for room occupancy, user presence, BLE device management,
 and presence analytics (heatmap, predictions).
 """
 
+import time
 from datetime import UTC, datetime, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -74,6 +75,48 @@ class PresenceStatusResponse(BaseModel):
 async def get_presence_status():
     """Check whether presence detection is enabled."""
     return PresenceStatusResponse(enabled=ha_glue_settings.presence_enabled)
+
+
+# --- Diagnostics: raw per-satellite RSSI sightings ---
+
+
+@router.get("/debug/sightings")
+async def get_debug_sightings():
+    """Read-only diagnostic: the in-memory recent BLE sightings per tracked
+    device, exposing every satellite's raw RSSI + timestamp so a per-satellite
+    RSSI-over-time chart can be built. No secrets — RSSI + satellite id only.
+    Also returns each device's current per-room filtered RSSI (the value the
+    switch margin compares) and the resolved winning room."""
+    presence = get_presence_service()
+    now = time.time()
+    out = []
+    for key, sightings in presence._sightings.items():
+        uid = presence._user_for_key(key)
+        cur = presence._presence.get(uid) if uid is not None else None
+        out.append({
+            "key": key,
+            "user_id": uid,
+            "user_name": presence.get_user_name(uid) if uid is not None else None,
+            "current_room_id": cur.room_id if cur else None,
+            "current_room_name": cur.room_name if cur else None,
+            "current_confidence": round(cur.confidence, 3) if cur else None,
+            "filtered_by_room": {
+                (presence._room_names.get(rid, str(rid))): round(v, 2)
+                for rid, v in (cur.room_rssi_filtered.items() if cur else {})
+            },
+            "sightings": [
+                {
+                    "satellite_id": s.satellite_id,
+                    "room_id": s.room_id,
+                    "room_name": presence._room_names.get(s.room_id) if s.room_id else None,
+                    "rssi": s.rssi,
+                    "timestamp": round(s.timestamp, 3),
+                    "age_s": round(now - s.timestamp, 2),
+                }
+                for s in sorted(sightings, key=lambda x: x.timestamp)
+            ],
+        })
+    return {"now": round(now, 3), "devices": out}
 
 
 # --- Room occupancy ---
