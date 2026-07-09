@@ -96,7 +96,7 @@ class HaGlueSettings(BaseSettings):
     # ESPresense/Bermuda approach). Each room's mean RSSI is smoothed with a
     # fast attack (approaching a room) / slow release (leaving), and a room only
     # WINS if its filtered value beats the current room by the enter margin.
-    presence_rssi_filter_enabled: bool = True           # False → legacy raw-mean + N-consecutive-scan behavior
+    presence_rssi_filter_enabled: bool = True           # ACTIVE by default (live real-world validation). True → asymmetric-filter + margin path; False → legacy raw-mean + N-consecutive-scan behavior. Set PRESENCE_RSSI_FILTER_ENABLED=false to instantly fall back to legacy. See TODOS #10 for the behaviors to watch + tune against.
     presence_rssi_filter_alpha_up: float = 0.5          # EWMA weight when a room's signal is STRENGTHENING (fast — snappy room entry)
     presence_rssi_filter_alpha_down: float = 0.1        # EWMA weight when WEAKENING (slow — damps departures + strays)
     presence_filter_fresh_seconds: float = 35.0         # a room not heard within this is treated as fading and decays toward the floor
