@@ -33,6 +33,11 @@ def service():
     svc._hysteresis_threshold = 2
     svc._stale_timeout = 120.0
     svc._rssi_threshold = -80
+    svc._filter_enabled = False
+    svc._filter_alpha_up = 0.5
+    svc._filter_alpha_down = 0.1
+    svc._filter_fresh_seconds = 35.0
+    svc._switch_enter_margin_db = 8.0
     svc._room_names = {}
     svc._user_names = {}
     svc._pending_events = []

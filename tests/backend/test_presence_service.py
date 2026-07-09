@@ -27,6 +27,11 @@ def service():
     svc._hysteresis_threshold = 2
     svc._stale_timeout = 120.0
     svc._rssi_threshold = -80
+    svc._filter_enabled = False
+    svc._filter_alpha_up = 0.5
+    svc._filter_alpha_down = 0.1
+    svc._filter_fresh_seconds = 35.0
+    svc._switch_enter_margin_db = 8.0
     svc._room_names = {}
     svc._user_names = {}
     svc._user_first_names = {}
@@ -195,6 +200,75 @@ class TestHysteresis:
         p = service_with_devices.get_user_presence(1)
         assert p.room_id == 10
         assert p.consecutive_room_count > 1
+
+
+@pytest.mark.unit
+class TestRssiFilterHysteresis:
+    """#10 asymmetric RSSI filter + margin hysteresis (the DEFAULT path in prod).
+    A first-seen room seeds at the RSSI floor (so a single stray can't win), and a
+    switch needs the challenger's FILTERED value to clear the enter margin."""
+
+    def _svc(self, service_with_devices):
+        svc = service_with_devices
+        svc._filter_enabled = True
+        svc._filter_alpha_up = 0.5
+        svc._filter_alpha_down = 0.1
+        svc._filter_fresh_seconds = 35.0
+        svc._switch_enter_margin_db = 8.0
+        return svc
+
+    def _age_room(self, svc, mac, room_id, seconds):
+        for s in svc._sightings.get(mac, []):
+            if s.room_id == room_id:
+                s.timestamp -= seconds
+
+    @pytest.mark.asyncio
+    async def test_first_room_assigned_immediately(self, service_with_devices):
+        svc = self._svc(service_with_devices)
+        await svc.process_ble_report("sat-a", 10, [{"mac": "AA:BB:CC:DD:EE:01", "rssi": -55}], "A")
+        assert svc.get_user_presence(1).room_id == 10
+
+    @pytest.mark.asyncio
+    async def test_single_strong_stray_damped_no_flip(self, service_with_devices):
+        """Core flip-flop guard: user solidly in room 10; a SINGLE strong stray
+        (-40) from room 20 must NOT flip — the new room seeds at the floor, so one
+        reading can't clear the current room."""
+        svc = self._svc(service_with_devices)
+        for _ in range(5):
+            await svc.process_ble_report("sat-a", 10, [{"mac": "AA:BB:CC:DD:EE:01", "rssi": -50}], "A")
+        assert svc.get_user_presence(1).room_id == 10
+        await svc.process_ble_report("sat-b", 20, [{"mac": "AA:BB:CC:DD:EE:01", "rssi": -40}], "B")
+        assert svc.get_user_presence(1).room_id == 10, "single strong stray must not flip"
+
+    @pytest.mark.asyncio
+    async def test_sustained_move_eventually_switches(self, service_with_devices):
+        """A genuine move — the old room goes silent (decays), the new room is
+        sustained — switches once the new room's filtered value clears the margin."""
+        svc = self._svc(service_with_devices)
+        for _ in range(5):
+            await svc.process_ble_report("sat-a", 10, [{"mac": "AA:BB:CC:DD:EE:01", "rssi": -50}], "A")
+        assert svc.get_user_presence(1).room_id == 10
+        switched = False
+        for _ in range(6):
+            self._age_room(svc, "AA:BB:CC:DD:EE:01", 10, 40)  # A goes silent
+            await svc.process_ble_report("sat-b", 20, [{"mac": "AA:BB:CC:DD:EE:01", "rssi": -45}], "B")
+            if svc.get_user_presence(1).room_id == 20:
+                switched = True
+                break
+        assert switched, "sustained move should switch within a few scans"
+
+    @pytest.mark.asyncio
+    async def test_filter_disabled_uses_legacy_two_scan(self, service_with_devices):
+        """filter off → legacy N-consecutive-scan behavior (a stray flips only on
+        the 2nd consecutive same-room reading, not the 1st)."""
+        svc = service_with_devices
+        svc._filter_enabled = False
+        for _ in range(3):
+            await svc.process_ble_report("sat-a", 10, [{"mac": "AA:BB:CC:DD:EE:01", "rssi": -50}], "A")
+        await svc.process_ble_report("sat-b", 20, [{"mac": "AA:BB:CC:DD:EE:01", "rssi": -40}], "B")
+        assert svc.get_user_presence(1).room_id == 10, "1 scan not enough (legacy)"
+        await svc.process_ble_report("sat-b", 20, [{"mac": "AA:BB:CC:DD:EE:01", "rssi": -40}], "B")
+        assert svc.get_user_presence(1).room_id == 20, "2nd consecutive → switch (legacy)"
 
 
 @pytest.mark.unit

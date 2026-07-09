@@ -518,8 +518,14 @@ Siehe `docs/PROACTIVE_SCHEDULING_TEMPLATES.md` für fertige Templates.
 # 3. Web Auth Presence: Authentifizierte Web-Nutzer mit Raum-Kontext aktualisieren den Raum sofort
 PRESENCE_ENABLED=false
 PRESENCE_STALE_TIMEOUT=120               # Sekunden bis Benutzer als abwesend markiert
-PRESENCE_HYSTERESIS_SCANS=2              # Aufeinanderfolgende Scans vor Raumwechsel
+PRESENCE_HYSTERESIS_SCANS=2              # Aufeinanderfolgende Scans vor Raumwechsel (Legacy-Fallback, nur wenn der RSSI-Filter aus ist)
 PRESENCE_RSSI_THRESHOLD=-80              # dBm, schwächere Signale werden für Raumzuweisung ignoriert
+# Asymmetrischer RSSI-Filter + Margin-Hysterese (#10, ESPresense/Bermuda-Ansatz)
+PRESENCE_RSSI_FILTER_ENABLED=true       # false → Legacy raw-mean + N-Scan-Verhalten
+PRESENCE_RSSI_FILTER_ALPHA_UP=0.5       # EWMA-Gewicht wenn ein Raum STÄRKER wird (schnell — snappy beim Betreten)
+PRESENCE_RSSI_FILTER_ALPHA_DOWN=0.1     # EWMA-Gewicht wenn SCHWÄCHER (langsam — dämpft Abgänge + Streu-Werte)
+PRESENCE_FILTER_FRESH_SECONDS=35.0      # ein Raum, der so lange nicht gehört wurde, verfällt Richtung Boden
+PRESENCE_SWITCH_ENTER_MARGIN_DB=8.0     # dB, um die der GEFILTERTE Wert des Herausforderers den aktuellen Raum schlagen muss (ersetzt den Scan-Count)
 PRESENCE_HOUSEHOLD_ROLES="Admin,Familie" # Rollen die als Haushaltsmitglieder gelten (für Privacy-TTS)
 PRESENCE_ANALYTICS_TIMEZONE="Europe/Berlin" # Lokale Zeitzone für Heatmap-/Prognose-Stunden+Tage (Events werden UTC gespeichert); ungültiger Wert => UTC
 

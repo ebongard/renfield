@@ -90,8 +90,17 @@ class HaGlueSettings(BaseSettings):
     # === Presence Detection (BLE-based room-level) ===
     presence_enabled: bool = False                      # Master-Switch for BLE presence detection
     presence_stale_timeout: int = 120                   # Seconds before user marked absent
-    presence_hysteresis_scans: int = 2                  # Consecutive scans before room change
+    presence_hysteresis_scans: int = 2                  # Consecutive scans before room change (legacy fallback when the RSSI filter is disabled)
     presence_rssi_threshold: int = -80                  # dBm, signals weaker than this are ignored
+    # Asymmetric RSSI filter + margin hysteresis (#10 — the field-standard
+    # ESPresense/Bermuda approach). Each room's mean RSSI is smoothed with a
+    # fast attack (approaching a room) / slow release (leaving), and a room only
+    # WINS if its filtered value beats the current room by the enter margin.
+    presence_rssi_filter_enabled: bool = True           # False → legacy raw-mean + N-consecutive-scan behavior
+    presence_rssi_filter_alpha_up: float = 0.5          # EWMA weight when a room's signal is STRENGTHENING (fast — snappy room entry)
+    presence_rssi_filter_alpha_down: float = 0.1        # EWMA weight when WEAKENING (slow — damps departures + strays)
+    presence_filter_fresh_seconds: float = 35.0         # a room not heard within this is treated as fading and decays toward the floor
+    presence_switch_enter_margin_db: float = 8.0        # dB the challenger's FILTERED value must beat the current room by to switch (replaces the scan count)
     presence_household_roles: str = "Admin,Familie"     # Roles considered household members for privacy TTS
     presence_webhook_url: str = ""                      # URL to POST presence events (empty = disabled)
     presence_webhook_secret: SecretStr | None = None    # Shared secret for webhook auth (X-Webhook-Secret header)

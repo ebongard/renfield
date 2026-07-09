@@ -7,7 +7,7 @@ satellites for robust room assignment with hysteresis to prevent room flicker.
 """
 
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from loguru import logger
 from sqlalchemy import select
@@ -70,6 +70,10 @@ class UserPresence:
     # stray sighting from an adjacent satellite can't flip the room.
     pending_room_id: int | None = None
     pending_room_count: int = 0
+    # #10 asymmetric RSSI filter: room_id → smoothed RSSI (fast attack / slow
+    # release). Drives margin-based room selection instead of the raw-mean +
+    # scan-count scheme. Empty when the filter is disabled.
+    room_rssi_filtered: dict[int, float] = field(default_factory=dict)
 
 
 class PresenceService:
@@ -89,6 +93,12 @@ class PresenceService:
         self._hysteresis_threshold: int = ha_glue_settings.presence_hysteresis_scans
         self._stale_timeout: float = float(ha_glue_settings.presence_stale_timeout)
         self._rssi_threshold: int = ha_glue_settings.presence_rssi_threshold
+        # #10 asymmetric RSSI filter + margin hysteresis
+        self._filter_enabled: bool = bool(ha_glue_settings.presence_rssi_filter_enabled)
+        self._filter_alpha_up: float = float(ha_glue_settings.presence_rssi_filter_alpha_up)
+        self._filter_alpha_down: float = float(ha_glue_settings.presence_rssi_filter_alpha_down)
+        self._filter_fresh_seconds: float = float(ha_glue_settings.presence_filter_fresh_seconds)
+        self._switch_enter_margin_db: float = float(ha_glue_settings.presence_switch_enter_margin_db)
         self._room_names: dict[int, str] = {}            # room_id → name cache
         self._user_names: dict[int, str] = {}            # user_id → username
         self._user_first_names: dict[int, str] = {}      # user_id → first_name
@@ -265,6 +275,62 @@ class PresenceService:
             return getattr(self, "_irk_label_to_user", {}).get(key[4:])
         return self._mac_to_user.get(key)
 
+    @staticmethod
+    def _select_room_legacy(room_rssi: dict[int, list[int]]) -> tuple[int | None, list[int]]:
+        """Legacy selection: per-room mean RSSI + 5 dB per extra satellite, argmax."""
+        best_room_id, best_score, best_rssi_values = None, float("-inf"), []
+        for room_id, vals in room_rssi.items():
+            score = sum(vals) / len(vals) + 5 * (len(vals) - 1)
+            if score > best_score:
+                best_score, best_room_id, best_rssi_values = score, room_id, vals
+        return best_room_id, best_rssi_values
+
+    def _select_room_filtered(
+        self,
+        current: "UserPresence",
+        room_raw_mean: dict[int, float],
+        room_last_ts: dict[int, float],
+        room_rssi: dict[int, list[int]],
+    ) -> tuple[int | None, list[int]]:
+        """#10 selection: asymmetric-EWMA-smoothed per-room RSSI, argmax.
+
+        Fast attack (a room STRENGTHENING → snappy entry) / slow release (a room
+        WEAKENING → damps departures + strays). A room not heard within
+        ``filter_fresh_seconds`` decays toward the RSSI floor (so a room the user
+        left fades). A first-ever sighting of a room starts at the FLOOR — never
+        at full strength — so a single strong stray can't win on one scan."""
+        floor = float(self._rssi_threshold)
+        now = max(room_last_ts.values()) if room_last_ts else 0.0
+        filt = current.room_rssi_filtered
+        for room, raw in room_raw_mean.items():
+            fresh = (now - room_last_ts.get(room, 0.0)) <= self._filter_fresh_seconds
+            prev = filt.get(room, floor)  # new room seeds at the floor → damped
+            if not fresh:
+                filt[room] = self._filter_alpha_down * floor + (1 - self._filter_alpha_down) * prev
+            else:
+                alpha = self._filter_alpha_up if raw >= prev else self._filter_alpha_down
+                filt[room] = alpha * raw + (1 - alpha) * prev
+        # Drop rooms that have aged out of the sighting window entirely.
+        for room in list(filt.keys()):
+            if room not in room_raw_mean:
+                del filt[room]
+        if not filt:
+            return None, []
+        best_room_id = max(filt, key=lambda r: filt[r])
+        return best_room_id, room_rssi.get(best_room_id, [])
+
+    def _should_switch_filtered(self, current: "UserPresence", best_room_id: int) -> bool:
+        """Switch only when the challenger's FILTERED value beats the current
+        room by the enter margin — or the current room has aged out entirely
+        (user left it). Replaces the N-consecutive-scan count."""
+        if current.room_id is None:
+            return True
+        filt = current.room_rssi_filtered
+        if current.room_id not in filt:
+            return True  # current room no longer heard at all → follow the signal
+        return (filt.get(best_room_id, float("-inf")) - filt[current.room_id]
+                >= self._switch_enter_margin_db)
+
     def _assign_room(self, mac: str):
         """Assign a user to a room based on multi-satellite RSSI aggregation with hysteresis."""
         user_id = self._user_for_key(mac)
@@ -297,20 +363,32 @@ class PresenceService:
         if not room_rssi:
             return
 
-        # Score each room: mean RSSI + multi-satellite bonus (5 dBm per extra satellite)
-        best_room_id = None
-        best_score = float("-inf")
-        best_rssi_values: list[int] = []
+        # --- Room selection --------------------------------------------------
+        # Per-room raw mean + the room's freshest sighting time (the filter uses
+        # the latter to decay a room the current satellite stops hearing).
+        room_raw_mean: dict[int, float] = {
+            r: sum(v) / len(v) for r, v in room_rssi.items()
+        }
+        room_last_ts: dict[int, float] = {}
+        for (r, _sat), s in latest_per_key.items():
+            if s.timestamp > room_last_ts.get(r, 0.0):
+                room_last_ts[r] = s.timestamp
 
-        for room_id, rssi_values in room_rssi.items():
-            mean_rssi = sum(rssi_values) / len(rssi_values)
-            score = mean_rssi + 5 * (len(rssi_values) - 1)
-            if score > best_score:
-                best_score = score
-                best_room_id = room_id
-                best_rssi_values = rssi_values
+        current = self._presence.get(user_id)
+        if current is None:
+            current = UserPresence(user_id=user_id)
+            self._presence[user_id] = current
 
-        # Find strongest satellite_id in the winning room
+        if self._filter_enabled:
+            best_room_id, best_rssi_values = self._select_room_filtered(
+                current, room_raw_mean, room_last_ts, room_rssi
+            )
+        else:
+            best_room_id, best_rssi_values = self._select_room_legacy(room_rssi)
+        if best_room_id is None or not best_rssi_values:
+            return
+
+        # Strongest satellite + freshest timestamp in the winning room
         best_satellite_id = None
         best_sat_rssi = float("-inf")
         best_timestamp = 0.0
@@ -322,11 +400,6 @@ class PresenceService:
                 if s.timestamp > best_timestamp:
                     best_timestamp = s.timestamp
 
-        current = self._presence.get(user_id)
-        if current is None:
-            current = UserPresence(user_id=user_id)
-            self._presence[user_id] = current
-
         current.last_seen = best_timestamp
 
         # Confidence: RSSI component (70%) + satellite count component (30%)
@@ -334,81 +407,83 @@ class PresenceService:
         rssi_conf = max(0.0, min(1.0, (mean_rssi + 90) / 60.0))
         sat_factor = min(1.0, len(best_rssi_values) / 3.0)
         confidence = rssi_conf * 0.7 + sat_factor * 0.3
-
         current.confidence = confidence
 
+        # --- Same room? reinforce and stop -----------------------------------
         if best_room_id == current.room_id:
-            # Same room — reinforce, and abandon any pending switch. This is the
-            # crux of the flip-flop fix: while the current room keeps winning, a
-            # stray candidate must NOT keep accumulating toward a switch.
             current.consecutive_room_count += 1
             current.pending_room_id = None
             current.pending_room_count = 0
             current.satellite_id = best_satellite_id
+            return
+
+        # --- Switch decision -------------------------------------------------
+        if self._filter_enabled:
+            # Margin hysteresis: the challenger's FILTERED value must beat the
+            # current room by the enter margin (a single stray is damped below it).
+            should_switch = self._should_switch_filtered(current, best_room_id)
         else:
-            # A different room is winning. Require N CONSECUTIVE scans of the SAME
-            # candidate before switching, so one stray detection from an adjacent
-            # satellite (common: the RSSI read is throttled, so most sightings
-            # report a flat synthetic value and adjacent rooms tie) can't flip the
-            # room. A different candidate resets the count.
+            # Legacy: N CONSECUTIVE scans of the same candidate (a stray resets it).
             if current.pending_room_id == best_room_id:
                 current.pending_room_count += 1
             else:
                 current.pending_room_id = best_room_id
                 current.pending_room_count = 1
+            should_switch = (current.room_id is None
+                             or current.pending_room_count >= self._hysteresis_threshold)
 
-            if current.room_id is None or current.pending_room_count >= self._hysteresis_threshold:
-                old_room_id = current.room_id
-                old_room_name = current.room_name
+        if not should_switch:
+            return
 
-                # Check if house was empty before this user (first_arrived detection)
-                was_first = old_room_id is None and len(self._presence) == 1
+        # --- Execute the room change + events --------------------------------
+        old_room_id = current.room_id
+        old_room_name = current.room_name
+        was_first = old_room_id is None and len(self._presence) == 1
 
-                current.room_id = best_room_id
-                current.room_name = self._room_names.get(best_room_id) if best_room_id else None
-                current.satellite_id = best_satellite_id
-                current.consecutive_room_count = 1
-                current.pending_room_id = None
-                current.pending_room_count = 0
-                new_room = current.room_name or current.room_id
-                logger.debug(f"Presence: user {user_id} moved {old_room_name or old_room_id} → {new_room}")
+        current.room_id = best_room_id
+        current.room_name = self._room_names.get(best_room_id) if best_room_id else None
+        current.satellite_id = best_satellite_id
+        current.consecutive_room_count = 1
+        current.pending_room_id = None
+        current.pending_room_count = 0
+        new_room = current.room_name or current.room_id
+        logger.debug(f"Presence: user {user_id} moved {old_room_name or old_room_id} → {new_room}")
 
-                # Fire leave event for old room
-                if old_room_id is not None and old_room_id != best_room_id:
-                    self._pending_events.append(("presence_leave_room", {
-                        "user_id": user_id,
-                        "user_name": self.get_user_name(user_id),
-                        "room_id": old_room_id,
-                        "room_name": old_room_name,
-                        "source": "ble",
-                    }))
-                    # Check if old room is now empty
-                    if not self.get_room_occupants(old_room_id):
-                        self._pending_events.append(("presence_last_left", {
-                            "room_id": old_room_id,
-                            "room_name": old_room_name,
-                        }))
+        # Fire leave event for old room
+        if old_room_id is not None and old_room_id != best_room_id:
+            self._pending_events.append(("presence_leave_room", {
+                "user_id": user_id,
+                "user_name": self.get_user_name(user_id),
+                "room_id": old_room_id,
+                "room_name": old_room_name,
+                "source": "ble",
+            }))
+            # Check if old room is now empty
+            if not self.get_room_occupants(old_room_id):
+                self._pending_events.append(("presence_last_left", {
+                    "room_id": old_room_id,
+                    "room_name": old_room_name,
+                }))
 
-                # Fire enter event for new room
-                if best_room_id is not None:
-                    self._pending_events.append(("presence_enter_room", {
-                        "user_id": user_id,
-                        "user_name": self.get_user_name(user_id),
-                        "room_id": best_room_id,
-                        "room_name": self._room_names.get(best_room_id),
-                        "confidence": confidence,
-                        "source": "ble",
-                        "satellite_id": best_satellite_id,
-                    }))
-                    if was_first:
-                        self._pending_events.append(("presence_first_arrived", {
-                            "user_id": user_id,
-                            "user_name": self.get_user_name(user_id),
-                            "room_id": best_room_id,
-                            "room_name": self._room_names.get(best_room_id),
-                            "source": "ble",
-                        }))
-            # else: not enough consecutive scans, keep current room
+        # Fire enter event for new room
+        if best_room_id is not None:
+            self._pending_events.append(("presence_enter_room", {
+                "user_id": user_id,
+                "user_name": self.get_user_name(user_id),
+                "room_id": best_room_id,
+                "room_name": self._room_names.get(best_room_id),
+                "confidence": confidence,
+                "source": "ble",
+                "satellite_id": best_satellite_id,
+            }))
+            if was_first:
+                self._pending_events.append(("presence_first_arrived", {
+                    "user_id": user_id,
+                    "user_name": self.get_user_name(user_id),
+                    "room_id": best_room_id,
+                    "room_name": self._room_names.get(best_room_id),
+                    "source": "ble",
+                }))
 
     def _cleanup_stale(self, now: float):
         """Mark users as absent if not seen recently."""
