@@ -87,15 +87,6 @@ def register() -> None:
             ha_deliver_notification,
             ha_get_connected_device_summary,
         )
-        from ha_glue.services.smarthome_status import (
-            ha_dispatch_smarthome_status,
-        )
-        from ha_glue.services.smarthome_artifacts import (
-            ha_dispatch_active_devices,
-            ha_dispatch_devices_per_room,
-            ha_dispatch_sensors,
-        )
-
         register_hook("intent_fallback_resolve", ha_intent_fallback)
         register_hook("build_entity_context", ha_build_entity_context)
         register_hook("validate_classified_intent", ha_validate_classified_intent)
@@ -108,13 +99,12 @@ def register() -> None:
         register_hook("fetch_tts_audio_cache", ha_fetch_tts_audio_cache)
         register_hook("get_connected_device_summary", ha_get_connected_device_summary)
         register_hook("deliver_notification", ha_deliver_notification)
-        register_hook("dispatch_sub_intent", ha_dispatch_smarthome_status)
-        # Three more Lane A artifact producers (keyvalue / list / chart). Each is
-        # its own dispatch_sub_intent handler that declines unless it owns the
-        # classified smart_home sub-intent — so all four coexist on the one hook.
-        register_hook("dispatch_sub_intent", ha_dispatch_sensors)
-        register_hook("dispatch_sub_intent", ha_dispatch_active_devices)
-        register_hook("dispatch_sub_intent", ha_dispatch_devices_per_room)
+        # NOTE: the four "read-only smart-home overview" surfaces (status / sensors /
+        # active_devices / devices_per_room) used to register as dispatch_sub_intent
+        # hooks here — router short-circuits that answered BEFORE the LLM and misfired
+        # on router mis-classification (e.g. "Wie spät ist es?" → sensors). They are
+        # now the ONE agent-callable tool internal.smart_home_overview (registered via
+        # register_tools below), so the LLM decides when an overview is wanted.
         register_hook("register_tools", ha_glue_register_tools)
         register_hook("execute_tool", ha_glue_execute_tool)
         register_hook("startup", ha_glue_on_startup)
@@ -122,7 +112,7 @@ def register() -> None:
         register_hook("shutdown_finalize", ha_glue_on_shutdown_finalize)
         register_hook("register_routes", ha_glue_register_routes)
         logger.info(
-            "ha_glue.bootstrap: registered 21 handlers across 18 events"
+            "ha_glue.bootstrap: registered 18 handlers across 18 events"
         )
     except Exception:  # noqa: BLE001 — startup must never break on plugin error
         logger.opt(exception=True).warning(

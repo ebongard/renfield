@@ -1,41 +1,30 @@
 """
-Smart-home status → typed `table` artifact (the first Lane A artifact producer).
+Smart-home status → typed `table` artifact builder (a Lane A artifact producer).
 
-This is the FIRST thing in Renfield that emits a chat artifact (PR #801 added the
-plumbing — `services/artifact_service.py` + the three `_emit_turn_artifacts` seams
-in `chat_handler.py` — but nothing produced one). A natural German status/overview
-request ("Wie ist der Status im Haus?", "Zeig mir den Smart-Home-Status",
-"Übersicht der Geräte") now returns a prose answer AND a typed `table` artifact
-that renders inline + persists + rehydrates on history reload.
-
-Seam: the **`dispatch_sub_intent` hook** (`smart_home/status`, handler
-``smarthome_status``). The chat handler's sub-intent path accumulates the returned
-``artifacts`` into ``turn_artifacts`` BEFORE the assistant message is persisted, so
-this rehydrates on reload (unlike the live-only ``build_assistant_card`` hook). The
-orchestration card path was rejected: it only fires for multi-domain queries when
-``agent_orchestrator_enabled`` is set, and a status request is single-domain.
+``build_status_table`` turns the Home Assistant entity map into ONE typed `table`
+artifact (room × device × state). It is called by the agent-callable
+``internal.smart_home_overview`` tool (view=``status``) in
+``ha_glue/services/internal_tools.py`` — the AGENT decides when to show the
+overview, so this module is now a pure builder with no router/dispatch coupling.
+(It used to own a ``dispatch_sub_intent`` hook that short-circuited the agent loop;
+that misfired on router mis-classification and was removed — the LLM decides now.)
 
 Data source: ``HomeAssistantClient.get_entity_map()`` — the SAME cached (60s TTL)
-entity view the intent recognizer uses. No new HA client, no new MCP call. Each
-entry already carries ``entity_id``, ``friendly_name``, ``domain``, ``room`` and
-``state``.
+entity view the intent recognizer uses (the tool fetches it via ``_safe_entity_map``
+in ``smarthome_artifacts``). Each entry already carries ``entity_id``,
+``friendly_name``, ``domain``, ``room`` and ``state``.
 
 Shape: a `table` (not `keyvalue`) because the data is three-dimensional
 (room × device × state); a flat key/value list would either lose the room grouping
 or collide keys for same-named devices in different rooms.
 
-The producer is INERT when ``settings.artifacts_typed_enabled`` is off — it returns
-``handled=False`` (declines the turn so the normal agent answers) WITHOUT doing the
-HA fetch, so the feature ships dark with zero extra HA load.
+``build_status_table`` returns ``None`` when there is nothing to show (HA
+unavailable / empty map) so the tool answers prose-only — never a crash, never an
+empty table.
 """
 from __future__ import annotations
 
 import uuid
-from typing import Any
-
-from loguru import logger
-
-from utils.config import settings
 
 # How many device rows we put in the artifact before truncating. Well under the
 # backend table cap (MAX_TABLE_ROWS = 200); a household with more entities than
@@ -169,57 +158,3 @@ def _prose(rows: int, total: int, truncated: bool, lang: str) -> str:
     if truncated:
         base += f" (There are {total} devices in total — the table shows the first {rows}.)"
     return base
-
-
-async def ha_dispatch_smarthome_status(
-    *,
-    role: str = "",
-    sub_intent: str = "",
-    handler_name: str = "",
-    message: str = "",
-    lang: str = "de",
-    **_: Any,
-) -> dict | None:
-    """`dispatch_sub_intent` handler — owns the smart-home status/overview turn.
-
-    Declines (returns ``None``) unless the router classified this as
-    ``smart_home/status`` with our handler name AND the typed-artifacts flag is on.
-    Declining lets the normal smart_home agent answer (so an actuation command like
-    "mach das Licht an" — which never classifies as the ``status`` sub-intent —
-    still actuates). On HA-unavailable it returns prose only (no artifact),
-    never a crash.
-    """
-    # Only our sub-intent. Be lenient on handler_name (config may omit it) but
-    # strict on the role + sub_intent pair.
-    if role != "smart_home" or sub_intent != "status":
-        return None
-    if handler_name and handler_name != "smarthome_status":
-        return None
-
-    # Dark when the flag is off — decline WITHOUT touching HA so there is zero
-    # extra load and the agent answers normally.
-    if not settings.artifacts_typed_enabled:
-        return None
-
-    try:
-        from ha_glue.integrations.homeassistant import HomeAssistantClient
-        entity_map = await HomeAssistantClient().get_entity_map()
-    except Exception as e:  # noqa: BLE001 — HA down must degrade to prose, not crash
-        logger.warning(f"smarthome_status: HA entity map fetch failed: {e}")
-        entity_map = []
-
-    artifact = build_status_table(entity_map, lang=lang)
-    if artifact is None:
-        # HA unavailable / no devices → prose-only, no artifact.
-        return {"handled": True, "answer": _prose(0, 0, False, lang), "card": None}
-
-    truncated = bool(artifact.pop("_truncated", False))
-    total = int(artifact.pop("_total", len(artifact["data"]["rows"])))
-    rows = len(artifact["data"]["rows"])
-
-    return {
-        "handled": True,
-        "answer": _prose(rows, total, truncated, lang),
-        "card": None,
-        "artifacts": [artifact],
-    }

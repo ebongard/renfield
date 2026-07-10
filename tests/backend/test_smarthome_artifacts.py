@@ -1,23 +1,17 @@
 """
-Tests for the three additional Lane A artifact producers (keyvalue / list / chart)
+Tests for the three additional Lane A artifact BUILDERS (keyvalue / list / chart)
 in ``ha_glue.services.smarthome_artifacts``.
 
-Each producer mirrors the FIRST one (``smarthome_status`` → table). For every one
-we cover, per the task brief:
-  * builds a well-formed artifact of the right KIND for its trigger (mocked data),
-    and the artifact passes ``validate_artifacts`` (within the backend caps);
-  * returns NO artifact (graceful, prose-only) on empty / unavailable data;
-  * the dispatch handler is INERT (declines, returns None) when the flag is off,
-    WITHOUT touching HA (so a broken flag gate would crash — no HA patched);
-  * declines for any role / sub_intent / handler that isn't its own.
+These builders back the agent-callable ``internal.smart_home_overview`` tool (views
+``sensors`` / ``active_devices`` / ``devices_per_room``). The tool-level tests
+(dispatch, HA-unavailable, flag-off, view routing) live in
+``test_device_widget_tools.py``; here we cover each builder in isolation:
 
-Plus a shared ``_infer_sub_intent`` block that proves the new sub-intents fire on
-their German triggers and do NOT fire on actuation commands or on each other's
-triggers.
-
-The HA fetch is mocked everywhere (the producers call ``_safe_entity_map`` which
-lazily imports ``HomeAssistantClient`` — we patch that symbol), so no real asyncpg
-or HA connect happens (test-isolation lesson).
+  * builds a well-formed artifact of the right KIND for its data (mocked entity
+    map), and the artifact passes ``validate_artifacts`` (within the backend caps);
+  * returns ``None`` (graceful — the tool answers prose-only) on empty / no-match
+    data;
+  * truncation over the per-kind cap is honest (flagged, never silent).
 """
 import pytest
 
@@ -28,9 +22,6 @@ from ha_glue.services.smarthome_artifacts import (
     build_active_list,
     build_devices_per_room_chart,
     build_sensor_keyvalue,
-    ha_dispatch_active_devices,
-    ha_dispatch_devices_per_room,
-    ha_dispatch_sensors,
 )
 from services.artifact_service import (
     MAX_CHART_POINTS,
@@ -66,33 +57,8 @@ _ENTITY_MAP = [
 ]
 
 
-class _FakeHAClient:
-    def __init__(self, entity_map):
-        self._entity_map = entity_map
-
-    async def get_entity_map(self):
-        return self._entity_map
-
-
-def _patch_ha(monkeypatch, entity_map=None, *, raises=False):
-    """Patch the HomeAssistantClient the producers import lazily."""
-    import ha_glue.integrations.homeassistant as ha_mod
-
-    def _factory():
-        if raises:
-            raise RuntimeError("HA unreachable")
-        return _FakeHAClient(entity_map if entity_map is not None else [])
-
-    monkeypatch.setattr(ha_mod, "HomeAssistantClient", _factory)
-
-
-def _enable_flag(monkeypatch, value=True):
-    from utils.config import settings
-    monkeypatch.setattr(settings, "artifacts_typed_enabled", value, raising=False)
-
-
 # ===========================================================================
-# Producer 1: sensors → keyvalue
+# Builder 1: sensors → keyvalue
 # ===========================================================================
 
 @pytest.mark.unit
@@ -161,75 +127,8 @@ def test_build_sensor_keyvalue_truncates_over_cap():
     assert len(art["data"]["pairs"]) <= MAX_KEYVALUE_PAIRS
 
 
-@pytest.mark.unit
-async def test_dispatch_sensors_returns_artifact(monkeypatch):
-    _enable_flag(monkeypatch, True)
-    _patch_ha(monkeypatch, _ENTITY_MAP)
-    res = await ha_dispatch_sensors(
-        role="smart_home", sub_intent="sensors",
-        handler_name="smarthome_sensors", lang="de",
-    )
-    assert res["handled"] is True
-    assert res["card"] is None
-    assert isinstance(res["answer"], str) and res["answer"]
-    arts = res["artifacts"]
-    assert len(arts) == 1 and arts[0]["kind"] == "keyvalue"
-    assert "_truncated" not in arts[0] and "_count" not in arts[0]
-    assert len(validate_artifacts(arts)) == 1
-
-
-@pytest.mark.unit
-async def test_dispatch_sensors_ha_unavailable_graceful(monkeypatch):
-    _enable_flag(monkeypatch, True)
-    _patch_ha(monkeypatch, raises=True)
-    res = await ha_dispatch_sensors(
-        role="smart_home", sub_intent="sensors",
-        handler_name="smarthome_sensors", lang="de",
-    )
-    assert res["handled"] is True
-    assert "artifacts" not in res
-    assert res["answer"]
-
-
-@pytest.mark.unit
-async def test_dispatch_sensors_empty_graceful(monkeypatch):
-    _enable_flag(monkeypatch, True)
-    _patch_ha(monkeypatch, [])
-    res = await ha_dispatch_sensors(
-        role="smart_home", sub_intent="sensors",
-        handler_name="smarthome_sensors", lang="de",
-    )
-    assert res["handled"] is True
-    assert "artifacts" not in res
-
-
-@pytest.mark.unit
-async def test_dispatch_sensors_inert_when_flag_off(monkeypatch):
-    _enable_flag(monkeypatch, False)
-    # No HA patched — if the flag gate were broken, this would raise.
-    res = await ha_dispatch_sensors(
-        role="smart_home", sub_intent="sensors",
-        handler_name="smarthome_sensors", lang="de",
-    )
-    assert res is None
-
-
-@pytest.mark.unit
-async def test_dispatch_sensors_declines_other_sub_intent(monkeypatch):
-    _enable_flag(monkeypatch, True)
-    assert await ha_dispatch_sensors(
-        role="smart_home", sub_intent="status",
-        handler_name="smarthome_sensors", lang="de") is None
-    assert await ha_dispatch_sensors(
-        role="media", sub_intent="sensors",
-        handler_name="smarthome_sensors", lang="de") is None
-    assert await ha_dispatch_sensors(
-        role="smart_home", sub_intent="sensors",
-        handler_name="something_else", lang="de") is None
-
-
 # ===========================================================================
-# Producer 2: active_devices → list
+# Builder 2: active_devices → list
 # ===========================================================================
 
 @pytest.mark.unit
@@ -302,72 +201,8 @@ def test_build_active_list_truncates_over_cap():
     assert len(art["data"]["items"]) <= MAX_LIST_ITEMS
 
 
-@pytest.mark.unit
-async def test_dispatch_active_returns_artifact(monkeypatch):
-    _enable_flag(monkeypatch, True)
-    _patch_ha(monkeypatch, _ENTITY_MAP)
-    res = await ha_dispatch_active_devices(
-        role="smart_home", sub_intent="active_devices",
-        handler_name="smarthome_active_devices", lang="de",
-    )
-    assert res["handled"] is True and res["card"] is None
-    arts = res["artifacts"]
-    assert len(arts) == 1 and arts[0]["kind"] == "list"
-    assert "_truncated" not in arts[0] and "_count" not in arts[0]
-    assert len(validate_artifacts(arts)) == 1
-
-
-@pytest.mark.unit
-async def test_dispatch_active_nothing_on_prose_only(monkeypatch):
-    _enable_flag(monkeypatch, True)
-    all_off = [
-        {"entity_id": "light.x", "friendly_name": "Lampe", "domain": "light",
-         "room": "wohnzimmer", "state": "off"},
-    ]
-    _patch_ha(monkeypatch, all_off)
-    res = await ha_dispatch_active_devices(
-        role="smart_home", sub_intent="active_devices",
-        handler_name="smarthome_active_devices", lang="de",
-    )
-    assert res["handled"] is True
-    assert "artifacts" not in res
-    assert "nichts" in res["answer"].lower()
-
-
-@pytest.mark.unit
-async def test_dispatch_active_ha_unavailable_graceful(monkeypatch):
-    _enable_flag(monkeypatch, True)
-    _patch_ha(monkeypatch, raises=True)
-    res = await ha_dispatch_active_devices(
-        role="smart_home", sub_intent="active_devices",
-        handler_name="smarthome_active_devices", lang="de",
-    )
-    assert res["handled"] is True and "artifacts" not in res
-
-
-@pytest.mark.unit
-async def test_dispatch_active_inert_when_flag_off(monkeypatch):
-    _enable_flag(monkeypatch, False)
-    res = await ha_dispatch_active_devices(
-        role="smart_home", sub_intent="active_devices",
-        handler_name="smarthome_active_devices", lang="de",
-    )
-    assert res is None
-
-
-@pytest.mark.unit
-async def test_dispatch_active_declines_other_sub_intent(monkeypatch):
-    _enable_flag(monkeypatch, True)
-    assert await ha_dispatch_active_devices(
-        role="smart_home", sub_intent="status",
-        handler_name="smarthome_active_devices", lang="de") is None
-    assert await ha_dispatch_active_devices(
-        role="media", sub_intent="active_devices",
-        handler_name="smarthome_active_devices", lang="de") is None
-
-
 # ===========================================================================
-# Producer 3: devices_per_room → chart
+# Builder 3: devices_per_room → chart
 # ===========================================================================
 
 @pytest.mark.unit
@@ -386,7 +221,6 @@ def test_build_chart_well_formed():
     # every x/y is a finite float
     for p in points:
         assert isinstance(p["x"], float) and isinstance(p["y"], float)
-    # counts: wohnzimmer=3 (light, media_player, 2 sensors=4?) — recompute honestly.
     # wohnzimmer: light.wohnzimmer, media_player.wohnzimmer_tv,
     #             sensor.wohnzimmer_temp, sensor.wohnzimmer_hum = 4
     # küche: light.kueche, switch.kueche_kaffee = 2
@@ -438,130 +272,3 @@ def test_build_chart_truncates_over_cap():
     assert len(pts) == MAX_ROOM_BARS
     assert art["_truncated"] is True
     assert len(pts) <= MAX_CHART_POINTS
-
-
-@pytest.mark.unit
-async def test_dispatch_chart_returns_artifact(monkeypatch):
-    _enable_flag(monkeypatch, True)
-    _patch_ha(monkeypatch, _ENTITY_MAP)
-    res = await ha_dispatch_devices_per_room(
-        role="smart_home", sub_intent="devices_per_room",
-        handler_name="smarthome_devices_per_room", lang="de",
-    )
-    assert res["handled"] is True and res["card"] is None
-    arts = res["artifacts"]
-    assert len(arts) == 1 and arts[0]["kind"] == "chart"
-    # internal hint keys stripped
-    assert "_room_labels" not in arts[0]
-    assert "_truncated" not in arts[0] and "_count" not in arts[0]
-    # legend prose names the rooms left-to-right
-    assert "Wohnzimmer" in res["answer"]
-    assert len(validate_artifacts(arts)) == 1
-
-
-@pytest.mark.unit
-async def test_dispatch_chart_ha_unavailable_graceful(monkeypatch):
-    _enable_flag(monkeypatch, True)
-    _patch_ha(monkeypatch, raises=True)
-    res = await ha_dispatch_devices_per_room(
-        role="smart_home", sub_intent="devices_per_room",
-        handler_name="smarthome_devices_per_room", lang="de",
-    )
-    assert res["handled"] is True and "artifacts" not in res
-
-
-@pytest.mark.unit
-async def test_dispatch_chart_empty_graceful(monkeypatch):
-    _enable_flag(monkeypatch, True)
-    _patch_ha(monkeypatch, [])
-    res = await ha_dispatch_devices_per_room(
-        role="smart_home", sub_intent="devices_per_room",
-        handler_name="smarthome_devices_per_room", lang="de",
-    )
-    assert res["handled"] is True and "artifacts" not in res
-
-
-@pytest.mark.unit
-async def test_dispatch_chart_inert_when_flag_off(monkeypatch):
-    _enable_flag(monkeypatch, False)
-    res = await ha_dispatch_devices_per_room(
-        role="smart_home", sub_intent="devices_per_room",
-        handler_name="smarthome_devices_per_room", lang="de",
-    )
-    assert res is None
-
-
-@pytest.mark.unit
-async def test_dispatch_chart_declines_other_sub_intent(monkeypatch):
-    _enable_flag(monkeypatch, True)
-    assert await ha_dispatch_devices_per_room(
-        role="smart_home", sub_intent="status",
-        handler_name="smarthome_devices_per_room", lang="de") is None
-
-
-# ===========================================================================
-# Sub-intent routing: _infer_sub_intent over the configured keyword sets
-# ===========================================================================
-
-def _all_sub_intent_definitions():
-    """The four smart_home sub_intent definitions exactly as agent_router parses
-    them from agent_roles.yaml (de/en keyword strings)."""
-    return {
-        "status": {
-            "de": ("Status, Übersicht, Überblick, Zustand, wie ist der status im haus, "
-                   "smart-home-status, geräteübersicht, alle geräte anzeigen, gesamtüberblick"),
-            "en": ("status, overview, summary, state of the house, smart home status, "
-                   "device overview, show all devices, whole house status"),
-        },
-        "sensors": {
-            "de": ("Sensorwerte, Temperaturen, Temperatur in den räumen, wie warm ist es, "
-                   "wie warm ist es in den räumen, luftfeuchte, luftfeuchtigkeit, "
-                   "raumtemperatur, messwerte"),
-            "en": ("sensor readings, temperatures, temperature in the rooms, how warm is it, "
-                   "how warm is it in the rooms, humidity, air humidity, room temperature, "
-                   "measured values"),
-        },
-        "active_devices": {
-            "de": ("Was ist gerade an, was ist an, was läuft gerade, welche geräte sind "
-                   "eingeschaltet, was ist eingeschaltet, welche geräte laufen, was ist aktiv"),
-            "en": ("what is on, what is currently on, what is running, which devices are "
-                   "switched on, which devices are on, which devices are running, "
-                   "what is active"),
-        },
-        "devices_per_room": {
-            "de": ("Geräte pro Raum, wie viele geräte pro raum, anzahl geräte je raum, "
-                   "geräteverteilung, wie viele geräte gibt es pro raum, geräte je raum"),
-            "en": ("devices per room, how many devices per room, device count per room, "
-                   "device distribution, how many devices are there per room, devices by room"),
-        },
-    }
-
-
-@pytest.mark.unit
-@pytest.mark.parametrize("msg,expected", [
-    ("Wie sind die Temperaturen?", "sensors"),
-    ("Zeig mir die Sensorwerte", "sensors"),
-    ("Wie warm ist es in den Räumen?", "sensors"),
-    ("Was ist gerade an?", "active_devices"),
-    ("Welche Geräte sind eingeschaltet?", "active_devices"),
-    ("Was läuft gerade?", "active_devices"),
-    ("Geräte pro Raum bitte", "devices_per_room"),
-    ("Wie viele Geräte pro Raum gibt es?", "devices_per_room"),
-    ("Gib mir einen Überblick", "status"),
-    ("Smart-Home-Status", "status"),
-])
-def test_infer_sub_intent_routes_to_correct_producer(msg, expected):
-    from services.agent_router import AgentRouter
-    assert AgentRouter._infer_sub_intent(msg, _all_sub_intent_definitions(), "de") == expected
-
-
-@pytest.mark.unit
-@pytest.mark.parametrize("msg", [
-    "mach das Licht an",
-    "schalte die Heizung aus",
-    "dimme das Wohnzimmer auf 50%",
-    "spiel Musik im Bad",
-])
-def test_infer_sub_intent_does_not_fire_on_actuation(msg):
-    from services.agent_router import AgentRouter
-    assert AgentRouter._infer_sub_intent(msg, _all_sub_intent_definitions(), "de") is None

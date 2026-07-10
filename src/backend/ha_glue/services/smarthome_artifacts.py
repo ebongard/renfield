@@ -1,52 +1,42 @@
 """
-Three more Lane A artifact producers — lighting up the `keyvalue`, `list` and
+Three more Lane A artifact builders — lighting up the `keyvalue`, `list` and
 `chart` renderers with REAL Home Assistant data.
 
-These mirror the FIRST producer (``smarthome_status.py`` → `table`) exactly:
+These mirror the FIRST builder (``smarthome_status.py`` → `table`):
 
-  * each is a ``dispatch_sub_intent`` hook for a distinct ``smart_home/<x>``
-    sub-intent and returns ``{"handled": True, "answer": <prose>, "card": None,
-    "artifacts": [<typed dict>]}``;
+  * ``build_sensor_keyvalue`` / ``build_active_list`` /
+    ``build_devices_per_room_chart`` each turn the HA entity map into ONE typed
+    artifact dict (with internal ``_truncated``/``_count``/``_room_labels`` hint
+    keys the caller pops before emit);
+  * they are called by the agent-callable ``internal.smart_home_overview`` tool
+    (views ``sensors`` / ``active_devices`` / ``devices_per_room``) in
+    ``ha_glue/services/internal_tools.py`` — the AGENT decides when to show an
+    overview, so these are now pure builders with no router/dispatch coupling.
+    (They used to own ``dispatch_sub_intent`` hooks that short-circuited the agent
+    loop and misfired on router mis-classification; those were removed.)
   * the single data source is ``HomeAssistantClient.get_entity_map()`` — the SAME
-    cached (60s TTL) entity view ``smarthome_status`` uses. No new HA client, no
-    new MCP call, no DB session (so none of the asyncpg-under-pytest segfault
-    risk);
-  * each is INERT when ``settings.artifacts_typed_enabled`` is off — it returns
-    ``None`` (declines, the normal agent answers) BEFORE touching HA, so the
-    feature ships dark with zero extra HA load;
-  * each degrades gracefully (prose only, no artifact) when HA is unavailable or
-    the relevant data is empty — never a crash, never an empty artifact;
-  * each produces localized (de/en) prose, like ``smarthome_status``.
+    cached (60s TTL) entity view ``smarthome_status`` uses, fetched via
+    ``_safe_entity_map`` below. No new HA client, no new MCP call, no DB session;
+  * each returns ``None`` when there is nothing to show, so the tool degrades
+    gracefully to prose-only — never a crash, never an empty artifact;
+  * each produces localized (de/en) prose via the ``_*_prose`` helpers.
 
-The three producers:
+The three builders:
 
-  1. ``smart_home/sensors``        → `keyvalue` (room → temperature · humidity)
-  2. ``smart_home/active_devices`` → `list`     ("<Raum>: <Gerät>" currently on)
-  3. ``smart_home/devices_per_room`` → `chart`  (bar: device count per room)
+  1. sensors          → `keyvalue` (room → temperature · humidity)
+  2. active_devices   → `list`     ("<Raum>: <Gerät>" currently on)
+  3. devices_per_room → `chart`    (bar: device count per room)
 
-CHART SOURCE CHOICE: device-count-per-room (option (a) in the brief). It is real,
-numeric, and derivable from the cached ``get_entity_map()`` alone — no history and
-no presence-analytics DB plumbing (option (b) would need an ``AsyncSessionLocal``
-session in the producer path, which the test-isolation lesson warns against and
-which adds latency to a chat turn). A count-per-room bar exercises the hand-rolled
-SVG bar chart + its CVD-safe palette with honest data.
-
-Why these don't collide with actuation or with ``smart_home/status``: the router's
-``_infer_sub_intent`` scores each sub-intent by how many of its comma-separated
-keywords appear in the message and picks the highest. Each producer's keyword set
-(in ``agent_roles.yaml``) is built from terms unique to it ("sensorwerte",
-"temperaturen" / "eingeschaltet", "gerade an" / "geräte pro raum", "wie viele
-geräte") and contains NO actuation verb ("mach … an", "schalte", "dimme"), so an
-actuation command scores zero on all of them and falls through to the agent loop.
+CHART SOURCE CHOICE: device-count-per-room. It is real, numeric, and derivable from
+the cached ``get_entity_map()`` alone — no history and no presence-analytics DB
+plumbing. A count-per-room bar exercises the hand-rolled SVG bar chart + its
+CVD-safe palette with honest data.
 """
 from __future__ import annotations
 
 import uuid
-from typing import Any
 
 from loguru import logger
-
-from utils.config import settings
 
 # --- caps (kept well under the artifact_service backend caps) ----------------
 # keyvalue: MAX_KEYVALUE_PAIRS=100 — a household has far fewer rooms.
@@ -223,36 +213,6 @@ def _sensors_prose(count: int, truncated: bool, lang: str) -> str:
     return base
 
 
-async def ha_dispatch_sensors(
-    *,
-    role: str = "",
-    sub_intent: str = "",
-    handler_name: str = "",
-    lang: str = "de",
-    **_: Any,
-) -> dict | None:
-    """`dispatch_sub_intent` handler for ``smart_home/sensors`` → `keyvalue`."""
-    if role != "smart_home" or sub_intent != "sensors":
-        return None
-    if handler_name and handler_name != "smarthome_sensors":
-        return None
-    if not settings.artifacts_typed_enabled:
-        return None
-
-    entity_map = await _safe_entity_map("sensors")
-    artifact = build_sensor_keyvalue(entity_map, lang=lang)
-    if artifact is None:
-        return {"handled": True, "answer": _sensors_prose(0, False, lang), "card": None}
-    truncated = bool(artifact.pop("_truncated", False))
-    count = int(artifact.pop("_count", len(artifact["data"]["pairs"])))
-    return {
-        "handled": True,
-        "answer": _sensors_prose(count, truncated, lang),
-        "card": None,
-        "artifacts": [artifact],
-    }
-
-
 # ===========================================================================
 # Producer 2: active_devices → `list` ("<Raum>: <Gerät>" currently on)
 # ===========================================================================
@@ -321,37 +281,6 @@ def _active_prose(count: int, truncated: bool, lang: str) -> str:
     if truncated:
         base += f" (Truncated to the first {count}.)"
     return base
-
-
-async def ha_dispatch_active_devices(
-    *,
-    role: str = "",
-    sub_intent: str = "",
-    handler_name: str = "",
-    lang: str = "de",
-    **_: Any,
-) -> dict | None:
-    """`dispatch_sub_intent` handler for ``smart_home/active_devices`` → `list`."""
-    if role != "smart_home" or sub_intent != "active_devices":
-        return None
-    if handler_name and handler_name != "smarthome_active_devices":
-        return None
-    if not settings.artifacts_typed_enabled:
-        return None
-
-    entity_map = await _safe_entity_map("active_devices")
-    artifact = build_active_list(entity_map, lang=lang)
-    if artifact is None:
-        # Either HA empty or nothing on — both answer "nothing is on" in prose.
-        return {"handled": True, "answer": _active_prose(0, False, lang), "card": None}
-    truncated = bool(artifact.pop("_truncated", False))
-    count = int(artifact.pop("_count", len(artifact["data"]["items"])))
-    return {
-        "handled": True,
-        "answer": _active_prose(count, truncated, lang),
-        "card": None,
-        "artifacts": [artifact],
-    }
 
 
 # ===========================================================================
@@ -425,38 +354,6 @@ def _devperroom_prose(room_labels: list[str], counts_for_rooms: list[int],
     if truncated:
         base += f" (Truncated to the first {len(room_labels)} rooms.)"
     return base
-
-
-async def ha_dispatch_devices_per_room(
-    *,
-    role: str = "",
-    sub_intent: str = "",
-    handler_name: str = "",
-    lang: str = "de",
-    **_: Any,
-) -> dict | None:
-    """`dispatch_sub_intent` handler for ``smart_home/devices_per_room`` → `chart`."""
-    if role != "smart_home" or sub_intent != "devices_per_room":
-        return None
-    if handler_name and handler_name != "smarthome_devices_per_room":
-        return None
-    if not settings.artifacts_typed_enabled:
-        return None
-
-    entity_map = await _safe_entity_map("devices_per_room")
-    artifact = build_devices_per_room_chart(entity_map, lang=lang)
-    if artifact is None:
-        return {"handled": True, "answer": _devperroom_prose([], [], False, lang), "card": None}
-    room_labels = artifact.pop("_room_labels", [])
-    truncated = bool(artifact.pop("_truncated", False))
-    artifact.pop("_count", None)
-    counts = [int(p["y"]) for p in artifact["data"]["series"][0]["points"]]
-    return {
-        "handled": True,
-        "answer": _devperroom_prose(room_labels, counts, truncated, lang),
-        "card": None,
-        "artifacts": [artifact],
-    }
 
 
 # ===========================================================================

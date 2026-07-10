@@ -118,7 +118,8 @@ de:
     - "Licht aus" (mit Raum-Kontext) → HassTurnOff mit {{"area": "<aktueller_raum>", "domain": ["light"]}}
     - "Licht aus in der Kueche" → HassTurnOff mit {{"area": "Kueche", "domain": ["light"]}}
     - "Deckenlicht Kueche aus" → HassTurnOff mit {{"name": "Deckenlicht Kueche"}}
-    - STEUERUNGS-WIDGET: Will der Nutzer Geraete per Bedien-Panel SELBST schalten ("steuere die Lichter", "zeig mir die Lichtsteuerung", "gib mir die Schalter fuers Wohnzimmer", "Steuerung anzeigen"), rufe internal.device_controls (optional room="<Raum>") auf — das zeigt klickbare Schalter. Das ist NICHT fuer einen einmaligen Befehl ("mach das Licht an" → HassTurnOn) und NICHT fuer eine Status-Uebersicht (das ist die status-Sub-Intent).
+    - STEUERUNGS-WIDGET: Will der Nutzer Geraete per Bedien-Panel SELBST schalten ("steuere die Lichter", "zeig mir die Lichtsteuerung", "gib mir die Schalter fuers Wohnzimmer", "Steuerung anzeigen"), rufe internal.device_controls (optional room="<Raum>") auf — das zeigt klickbare Schalter. Das ist NICHT fuer einen einmaligen Befehl ("mach das Licht an" → HassTurnOn) und NICHT fuer eine Status-Uebersicht.
+    - UEBERSICHTS-WIDGET: Will der Nutzer eine reine ANSICHT/Uebersicht des Hauses, rufe internal.smart_home_overview mit dem passenden view auf — view="status" (Geraete-Inventar), "sensors" (Raumtemperaturen/Luftfeuchte), "active_devices" (was ist gerade an) oder "devices_per_room" (Anzahl Geraete pro Raum). Nur fuer eine reine Ansicht, NICHT zum Schalten von Geraeten (dafuer internal.device_controls oder HassTurnOn/HassTurnOff).
     - Wenn kein Raum im Befehl UND kein Raum-Kontext → nutze nur "domain" ohne "area"
     - Fuer Helligkeiten/Farben: Nutze HassLightSet mit "area"+"domain" oder "name"
     - Fuer Sensorwerte: Nutze GetLiveContext mit "name" und optional "area"
@@ -712,7 +713,8 @@ en:
     - "Turn off lights" (with room context) → HassTurnOff with {{"area": "<current_room>", "domain": ["light"]}}
     - "Turn off lights in kitchen" → HassTurnOff with {{"area": "Kitchen", "domain": ["light"]}}
     - "Kitchen ceiling light off" → HassTurnOff with {{"name": "Kitchen Ceiling Light"}}
-    - CONTROL WIDGET: when the user wants to operate devices THEMSELVES via a panel ("control the lights", "show me the light controls", "give me the switches for the living room", "show the controls"), call internal.device_controls (optional room="<Room>") — it renders clickable switches. NOT for a one-off command ("turn the light on" → HassTurnOn) and NOT for a status overview (that is the status sub-intent).
+    - CONTROL WIDGET: when the user wants to operate devices THEMSELVES via a panel ("control the lights", "show me the light controls", "give me the switches for the living room", "show the controls"), call internal.device_controls (optional room="<Room>") — it renders clickable switches. NOT for a one-off command ("turn the light on" → HassTurnOn) and NOT for a status overview.
+    - OVERVIEW WIDGET: when the user wants a read-only VIEW/overview of the house, call internal.smart_home_overview with the matching view — view="status" (device inventory), "sensors" (room temperatures/humidity), "active_devices" (what is currently on) or "devices_per_room" (device count per room). Only for a read-only view, NOT for operating devices (use internal.device_controls or HassTurnOn/HassTurnOff for that).
     - If no room in command AND no room context → use only "domain" without "area"
     - For brightness/colors: Use HassLightSet with "area"+"domain" or "name"
     - For sensor values: Use GetLiveContext with "name" and optionally "area"

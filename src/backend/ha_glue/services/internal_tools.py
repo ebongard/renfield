@@ -159,6 +159,24 @@ class InternalToolService:
             "description": "Show a PRESENCE-MAP widget — a read-only overview of which rooms currently have which people present. Use it for 'wer ist wo?', 'zeig mir wer zuhause ist', 'who is home', 'show me where everyone is'. The widget renders rooms with the present users; give a one-line final_answer alongside.",
             "parameters": {},
         },
+        "internal.smart_home_overview": {
+            "description": (
+                "Show a READ-ONLY smart-home OVERVIEW widget of the current state of the house. "
+                "Use it ONLY when the user asks to SEE an overview of the home — a device inventory, "
+                "the room temperatures/humidity, what is currently switched on, or how many devices are "
+                "in each room. Pick the matching `view`:\n"
+                "  • 'status'          — full device inventory table (room × device × state)\n"
+                "  • 'sensors'         — per-room temperature/humidity readings\n"
+                "  • 'active_devices'  — which controllable devices are currently on\n"
+                "  • 'devices_per_room'— bar chart of the device count per room\n"
+                "This is NOT for controlling/operating devices (that is internal.device_controls) and NOT "
+                "for a one-off command like 'mach das Licht an' (do that directly with HassTurnOn). "
+                "The widget IS the answer — after it renders, give a one-line final_answer alongside it."
+            ),
+            "parameters": {
+                "view": "Which overview to show: 'status' (default), 'sensors', 'active_devices', or 'devices_per_room'.",
+            },
+        },
         "internal.presence_history": {
             "description": "Query a user's PERSISTED presence history (survives restarts, unlike the live current-location tools). Use for 'where was X earlier/yesterday', 'when was X last in the kitchen', or 'who was in the living room this morning'. Accepts username or first/last name.",
             "parameters": {
@@ -190,6 +208,7 @@ class InternalToolService:
         "internal.bluetooth_scan": "_bluetooth_scan",
         "internal.device_controls": "_device_controls",
         "internal.presence_map": "_presence_map",
+        "internal.smart_home_overview": "_smart_home_overview",
         # NOT in TOOLS — not agent-advertised. Dispatched only by the chat
         # handler's `device_action` WS-frame route (after the HA_CONTROL gate),
         # never chosen by the agent.
@@ -621,6 +640,111 @@ class InternalToolService:
             "message": f"{total} Person(en) in {len(rooms)} Raum/Räumen.",
             "data": {"artifacts": [artifact]},
         }
+
+    # The four read-only smart-home OVERVIEW views this tool can render. Each is a
+    # (builder, prose, internal-hint-keys, empty-prose) recipe over the SAME cached
+    # HA entity map. These used to be four router short-circuits (dispatch_sub_intent
+    # hooks) that fired BEFORE the LLM — which mis-fired whenever the fallible router
+    # mis-classified a message (e.g. "Wie spät ist es?" → sensors). They are now ONE
+    # agent-callable tool, so the LLM — seeing the real query + {time_context} —
+    # decides when an overview is actually wanted. NO topic/keyword special-casing
+    # lives here: the tool just builds the requested view.
+    _OVERVIEW_VIEWS = frozenset({"status", "sensors", "active_devices", "devices_per_room"})
+
+    async def _smart_home_overview(self, params: dict) -> dict:
+        """Producer: a read-only smart-home OVERVIEW — one of four `view`s
+        (status/sensors/active_devices/devices_per_room) over the cached HA entity
+        map. Always returns a prose lede; ATTACHES a typed Lane-A artifact only when
+        ``artifacts_typed_enabled`` is on (flag off → prose-only, still a real
+        answer). Distinguishes an HA outage ("couldn't read the house") from a
+        genuinely-empty view ("nothing is on"). Language follows
+        ``settings.default_language``. The AGENT decides when to call it; this method
+        does NO query interpretation."""
+        from utils.config import settings
+
+        # Language follows the deployment default (the removed dispatch path used
+        # ollama.default_lang = settings.default_language); an explicit params["lang"]
+        # still overrides (used by tests). NOT hardcoded German — the builders and
+        # prose helpers are de/en, and hardcoding "de" made the en paths dead.
+        lang = str(params.get("lang") or settings.default_language or "de")
+
+        view = str(params.get("view") or "status").strip().lower()
+        if view not in self._OVERVIEW_VIEWS:
+            view = "status"  # unknown view → the full status overview
+
+        from ha_glue.services.smarthome_artifacts import (
+            _active_prose,
+            _devperroom_prose,
+            _safe_entity_map,
+            _sensors_prose,
+            build_active_list,
+            build_devices_per_room_chart,
+            build_sensor_keyvalue,
+        )
+        from ha_glue.services.smarthome_status import (
+            _prose as _status_prose,
+            build_status_table,
+        )
+
+        # `_safe_entity_map` never raises — it returns [] on any HA failure. Treat
+        # an empty map as "couldn't read the house" so an HA OUTAGE never
+        # masquerades as "nothing is on" / "no sensors". A builder returning None
+        # AFTER a non-empty map is the genuine-empty case (handled per-view below).
+        entity_map = await _safe_entity_map(f"overview:{view}")
+        if not entity_map:
+            return {
+                "success": True, "action_taken": False,
+                "message": (
+                    "Ich konnte den aktuellen Hausstatus gerade nicht abrufen."
+                    if lang.startswith("de") else
+                    "I couldn't read the current house state right now."
+                ),
+            }
+
+        # Each view: build the artifact, and prepare BOTH the populated lede and
+        # the genuine-empty lede (used when the builder returns None despite a
+        # readable house).
+        if view == "status":
+            artifact = build_status_table(entity_map, lang=lang)
+            empty_msg = _status_prose(0, 0, False, lang)
+            if artifact is not None:
+                truncated = bool(artifact.pop("_truncated", False))
+                total = int(artifact.pop("_total", len(artifact["data"]["rows"])))
+                message = _status_prose(len(artifact["data"]["rows"]), total, truncated, lang)
+        elif view == "sensors":
+            artifact = build_sensor_keyvalue(entity_map, lang=lang)
+            empty_msg = _sensors_prose(0, False, lang)
+            if artifact is not None:
+                truncated = bool(artifact.pop("_truncated", False))
+                count = int(artifact.pop("_count", len(artifact["data"]["pairs"])))
+                message = _sensors_prose(count, truncated, lang)
+        elif view == "active_devices":
+            artifact = build_active_list(entity_map, lang=lang)
+            empty_msg = _active_prose(0, False, lang)  # house read OK, nothing on
+            if artifact is not None:
+                truncated = bool(artifact.pop("_truncated", False))
+                count = int(artifact.pop("_count", len(artifact["data"]["items"])))
+                message = _active_prose(count, truncated, lang)
+        else:  # devices_per_room
+            artifact = build_devices_per_room_chart(entity_map, lang=lang)
+            empty_msg = _devperroom_prose([], [], False, lang)
+            if artifact is not None:
+                room_labels = artifact.pop("_room_labels", [])
+                truncated = bool(artifact.pop("_truncated", False))
+                artifact.pop("_count", None)
+                counts = [int(p["y"]) for p in artifact["data"]["series"][0]["points"]]
+                message = _devperroom_prose(room_labels, counts, truncated, lang)
+
+        if artifact is None:
+            return {"success": True, "action_taken": False, "message": empty_msg}
+
+        result = {"success": True, "action_taken": False, "message": message}
+        # Attach the typed artifact ONLY when the renderer is enabled; the prose
+        # lede is always returned, so a flag-off deployment still gets a real
+        # answer (better than the empty result the first cut returned).
+        if settings.artifacts_typed_enabled:
+            result["data"] = {"artifacts": [artifact]}
+        return result
 
     # Bound on concurrent per-room announces during a broadcast. Each
     # _announce_core opens its OWN AsyncSession (an AsyncSession is not

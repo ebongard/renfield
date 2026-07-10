@@ -25,50 +25,19 @@ roles:
     # can't target DLNA renderers and bypasses room routing).
     # internal.bluetooth_scan: "scan all bluetooth devices" fans a discovery scan
     # out to every satellite (gated by BT_SCAN_ENABLED).
-    internal_tools: [internal.resolve_room_player, internal.play_in_room, internal.media_control, internal.bluetooth_scan, internal.device_controls]
+    # internal.smart_home_overview: the four "read-only smart-home overview" views
+    # (status / sensors / active_devices / devices_per_room). These USED to be
+    # router short-circuits (dispatch_sub_intent hooks / sub_intents keyword sets)
+    # that answered BEFORE the LLM ran — which misfired whenever the fallible router
+    # mis-classified a message (e.g. "Wie spät ist es?" → sensors dumped room
+    # temperatures instead of the time). They are now this ONE agent-callable tool,
+    # so the LLM — seeing the real query + {time_context} — decides when to show an
+    # overview. Each view builds a typed Lane A artifact; inert when
+    # ARTIFACTS_TYPED_ENABLED is off. No sub_intents block on this role anymore.
+    internal_tools: [internal.resolve_room_player, internal.play_in_room, internal.media_control, internal.bluetooth_scan, internal.device_controls, internal.smart_home_overview]
     max_steps: 4
     prompt_key: agent_prompt_smart_home
     model: "qwen3:8b"
-    # Sub-intent dispatch: four "read-only smart-home overview" requests are fully
-    # handled by ha_glue `dispatch_sub_intent` hooks, each returning prose + ONE
-    # typed Lane A artifact. Actuation commands ("mach das Licht an") match NONE of
-    # these keyword sets (no actuation verbs appear) and fall through to the normal
-    # agent loop. Every handler is inert when ARTIFACTS_TYPED_ENABLED is off
-    # (declines → agent answers).
-    # NOTE: each description string doubles as comma-separated keywords for the
-    # router's _infer_sub_intent fast-path (the sub-intent with the MOST keyword
-    # hits wins), so the keyword sets are kept disjoint per sub-intent:
-    #   status         → table    (full device inventory, room×device×state)
-    #   sensors        → keyvalue  (per-room temperature/humidity readings)
-    #   active_devices → list      (controllable devices currently on)
-    #   devices_per_room → chart   (bar: device count per room)
-    # "was ist an / was ist gerade an" deliberately lives ONLY on active_devices
-    # (its true meaning) so it never collides with the status overview.
-    sub_intents:
-      status:
-        de: "Status, Übersicht, Überblick, Zustand, wie ist der status im haus, smart-home-status, geräteübersicht, alle geräte anzeigen, gesamtüberblick"
-        en: "status, overview, summary, state of the house, smart home status, device overview, show all devices, whole house status"
-        dispatch:
-          type: handler
-          handler: smarthome_status
-      sensors:
-        de: "Sensorwerte, Temperaturen, Temperatur in den räumen, wie warm ist es, wie warm ist es in den räumen, luftfeuchte, luftfeuchtigkeit, raumtemperatur, messwerte"
-        en: "sensor readings, temperatures, temperature in the rooms, how warm is it, how warm is it in the rooms, humidity, air humidity, room temperature, measured values"
-        dispatch:
-          type: handler
-          handler: smarthome_sensors
-      active_devices:
-        de: "Was ist gerade an, was ist an, was läuft gerade, welche geräte sind eingeschaltet, was ist eingeschaltet, welche geräte laufen, was ist aktiv"
-        en: "what is on, what is currently on, what is running, which devices are switched on, which devices are on, which devices are running, what is active"
-        dispatch:
-          type: handler
-          handler: smarthome_active_devices
-      devices_per_room:
-        de: "Geräte pro Raum, wie viele geräte pro raum, anzahl geräte je raum, geräteverteilung, wie viele geräte gibt es pro raum, geräte je raum"
-        en: "devices per room, how many devices per room, device count per room, device distribution, how many devices are there per room, devices by room"
-        dispatch:
-          type: handler
-          handler: smarthome_devices_per_room
 
   research:
     description:
