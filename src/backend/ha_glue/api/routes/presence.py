@@ -5,6 +5,7 @@ Endpoints for room occupancy, user presence, BLE device management,
 and presence analytics (heatmap, predictions).
 """
 
+import hashlib
 import time
 from datetime import UTC, datetime, timedelta
 
@@ -80,13 +81,30 @@ async def get_presence_status():
 # --- Diagnostics: raw per-satellite RSSI sightings ---
 
 
+def _redact_device_key(key: str) -> str:
+    """Stable, non-reversible short id for a device sighting key so the
+    diagnostic can tell devices apart WITHOUT leaking the raw MAC or the
+    user-chosen `irk:<label>` nickname (both are device-fingerprinting PII).
+    Prefixed so an admin still sees whether it was MAC- or IRK-resolved."""
+    prefix = "irk" if key.startswith("irk:") else "mac"
+    digest = hashlib.sha256(key.encode()).hexdigest()[:8]
+    return f"{prefix}:{digest}"
+
+
 @router.get("/debug/sightings")
-async def get_debug_sightings():
-    """Read-only diagnostic: the in-memory recent BLE sightings per tracked
-    device, exposing every satellite's raw RSSI + timestamp so a per-satellite
-    RSSI-over-time chart can be built. No secrets — RSSI + satellite id only.
-    Also returns each device's current per-room filtered RSSI (the value the
-    switch margin compares) and the resolved winning room."""
+async def get_debug_sightings(
+    current_user: User = Depends(require_permission(Permission.ADMIN)),
+):
+    """ADMIN-only diagnostic: the in-memory recent BLE sightings per tracked
+    device — every satellite's raw RSSI + timestamp — so a per-satellite
+    RSSI-over-time chart can be built, plus each device's current per-room
+    filtered RSSI (the value the switch margin compares) and resolved room.
+
+    Exposes cross-user presence + movement traces, so it is gated on ADMIN like
+    the device/IRK management endpoints in this router. The per-device `key` is
+    a redacted hash (never the raw MAC / IRK label)."""
+    if not ha_glue_settings.presence_enabled:
+        return {"now": round(time.time(), 3), "devices": []}
     presence = get_presence_service()
     now = time.time()
     out = []
@@ -94,7 +112,7 @@ async def get_debug_sightings():
         uid = presence._user_for_key(key)
         cur = presence._presence.get(uid) if uid is not None else None
         out.append({
-            "key": key,
+            "key": _redact_device_key(key),
             "user_id": uid,
             "user_name": presence.get_user_name(uid) if uid is not None else None,
             "current_room_id": cur.room_id if cur else None,
@@ -108,7 +126,8 @@ async def get_debug_sightings():
                 {
                     "satellite_id": s.satellite_id,
                     "room_id": s.room_id,
-                    "room_name": presence._room_names.get(s.room_id) if s.room_id else None,
+                    "room_name": (presence._room_names.get(s.room_id)
+                                  if s.room_id is not None else None),
                     "rssi": s.rssi,
                     "timestamp": round(s.timestamp, 3),
                     "age_s": round(now - s.timestamp, 2),

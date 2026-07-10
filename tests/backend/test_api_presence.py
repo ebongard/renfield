@@ -224,3 +224,61 @@ class TestAPIDeviceUpdate:
 
         device = await service.update_device(999, "classic_bt", mock_db)
         assert device is None
+
+
+@pytest.mark.unit
+class TestDebugSightings:
+    """Tests for GET /api/presence/debug/sightings (ADMIN diagnostic)."""
+
+    def test_redact_key_masks_mac(self):
+        """A raw MAC key is hashed to `mac:<8hex>` and never leaked verbatim."""
+        from ha_glue.api.routes.presence import _redact_device_key
+        raw = "AA:BB:CC:DD:EE:01"
+        red = _redact_device_key(raw)
+        assert red.startswith("mac:")
+        assert len(red) == len("mac:") + 8
+        assert raw not in red
+        # stable + non-reversible-looking
+        assert red == _redact_device_key(raw)
+
+    def test_redact_key_masks_irk_label(self):
+        """An `irk:<label>` key keeps the irk prefix but hides the nickname."""
+        from ha_glue.api.routes.presence import _redact_device_key
+        red = _redact_device_key("irk:evdb-iphone")
+        assert red.startswith("irk:")
+        assert "evdb-iphone" not in red
+
+    @pytest.mark.asyncio
+    async def test_disabled_returns_empty(self, service, monkeypatch):
+        """Honors the presence_enabled kill-switch like the sibling GETs."""
+        import ha_glue.api.routes.presence as route
+        monkeypatch.setattr(route.ha_glue_settings, "presence_enabled", False)
+        res = await route.get_debug_sightings(current_user=MagicMock())
+        assert res["devices"] == []
+
+    @pytest.mark.asyncio
+    async def test_shapes_and_redacts(self, service, monkeypatch):
+        """Populated sightings surface per-satellite RSSI with a redacted key
+        and resolved room name (incl. a room whose id is 0)."""
+        import ha_glue.api.routes.presence as route
+        from ha_glue.services.presence_service import DeviceSighting
+        service._room_names = {0: "Flur", 10: "Kitchen"}
+        service._sightings = {
+            "AA:BB:CC:DD:EE:01": [
+                DeviceSighting("sat-1", 10, -55, 1000.0),
+                DeviceSighting("sat-2", 0, -70, 1001.0),
+            ]
+        }
+        monkeypatch.setattr(route.ha_glue_settings, "presence_enabled", True)
+        monkeypatch.setattr(route, "get_presence_service", lambda: service)
+        res = await route.get_debug_sightings(current_user=MagicMock())
+
+        assert len(res["devices"]) == 1
+        dev = res["devices"][0]
+        assert dev["key"].startswith("mac:")
+        assert "AA:BB:CC:DD:EE:01" not in dev["key"]
+        sats = {s["satellite_id"]: s for s in dev["sightings"]}
+        assert sats["sat-1"]["rssi"] == -55
+        assert sats["sat-1"]["room_name"] == "Kitchen"
+        # room_id 0 must resolve (not treated as falsy → None)
+        assert sats["sat-2"]["room_name"] == "Flur"

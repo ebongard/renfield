@@ -1350,8 +1350,13 @@ class Satellite:
                     if continuous:
                         # idempotent: starts once, then just refreshes the
                         # known-MAC whitelist the callback filters on
-                        await self.ble_scanner.start_continuous(self._ble_known_macs)
-                        devices = self.ble_scanner.get_readings()
+                        started = await self.ble_scanner.start_continuous(self._ble_known_macs)
+                        # Fall back to a periodic discover() burst if the
+                        # continuous scanner can't run on this adapter —
+                        # otherwise get_readings() returns [] every cycle and the
+                        # room goes SILENTLY BLE-presence-blind (no error).
+                        devices = (self.ble_scanner.get_readings() if started
+                                   else await self.ble_scanner.scan(self._ble_known_macs))
                     else:
                         devices = await self.ble_scanner.scan(self._ble_known_macs)
                     if devices:
@@ -1377,8 +1382,12 @@ class Satellite:
         print("Classic BT scan loop started")
         try:
             while self._running:
-                # Classic BT scans are slower, use double the BLE interval
-                await asyncio.sleep(self.config.ble.scan_interval * 2)
+                # Classic BT inquiry is blocking + monopolizes the single shared
+                # radio for seconds, so keep it on its own slow cadence (>=60s)
+                # DECOUPLED from the BLE scan_interval: a fast BLE interval (e.g.
+                # 3s continuous) must not 10x the Classic-BT loop and starve the
+                # BLE scanner on the same adapter.
+                await asyncio.sleep(max(self.config.ble.scan_interval * 2, 60))
                 if not self._running or not self.ws_client.is_connected:
                     continue
                 if not self._classic_bt_known_macs:
