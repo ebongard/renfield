@@ -10,6 +10,7 @@
  * - GET /api/wissensbasis/me/mix → A2/A4 layout split for the user's role
  */
 
+import { useFeatureFlags } from './brain';
 import apiClient from '../../utils/axios';
 import { useApiQuery } from '../hooks';
 import { STALE } from '../keys';
@@ -230,30 +231,25 @@ export function useRoleMixQuery(role: string | null, enabled = true) {
 }
 
 /**
- * Check whether the Wissensbasis feature is enabled on the backend.
+ * Check whether the richer Reva Wissensbasis surface (/trace + /me/mix) is
+ * available on the backend.
  *
- * The backend gates the entire `/api/wissensbasis/*` surface on the
- * `REVA_WISSENSBASIS_ENABLED` env var: routes return 404 when off and
- * authenticated 200/data when on. Frontend probes /me/mix once per
- * session and treats 404 as "feature off".
+ * Reads the `wissensbasis_reva_available` flag from `/api/config/features`
+ * (the backend reports whether the Reva-only /me/mix route is mounted). This
+ * REPLACES the previous approach of PROBING /me/mix and treating a 404 as
+ * "off": that probe 404s by design in standalone Renfield and spammed the
+ * browser console with "Failed to load resource" + "API Error" lines. Reading
+ * a 200 config flag keeps the console clean and makes availability
+ * deterministic (no transient-true window that would briefly mount the
+ * Reva-only side panel and fire its own /trace 404).
  *
- * Use this to hide the nav entry + skip mounting the side panel when
- * the backend is gated, avoiding empty-placeholder UX in flag-off
- * environments. Returns:
- *   - undefined while the probe is in flight (don't flash nav entry)
- *   - true  when reachable (200) or auth-gated (401, meaning route is mounted)
- *   - false on 404 (route gated off)
+ * Returns:
+ *   - undefined while the feature flags are loading (don't flash the nav entry)
+ *   - true  when the Reva Wissensbasis routes are mounted
+ *   - false in standalone Renfield (routes absent)
  */
 export function useWissensbasisAvailable(): boolean | undefined {
-  // Reuses the role-mix query — it's the cheapest probe and operators
-  // already pay for it on first nav. CONFIG staleness keeps it cheap.
-  const q = useRoleMixQuery(null);
-  if (q.isLoading) return undefined;
-  // 404 = feature gated off → unavailable.
-  // Any other state (200 success, 401 unauth, 5xx server error) means
-  // the route is mounted on the backend, so the feature is "available"
-  // even if the user can't load data right now.
-  const status = (q.error as { response?: { status?: number } } | null)?.response?.status;
-  if (status === 404) return false;
-  return true;
+  const { data, isLoading } = useFeatureFlags();
+  if (isLoading || !data) return undefined;
+  return data.wissensbasis_reva_available;
 }

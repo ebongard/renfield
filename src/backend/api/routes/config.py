@@ -17,7 +17,7 @@ sees the same flags.
 """
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel
 
 from models.database import User
@@ -25,6 +25,21 @@ from services.auth_service import get_user_or_default
 from utils.config import settings
 
 router = APIRouter()
+
+# The richer Reva Wissensbasis surface (`/api/wissensbasis/trace` + `/me/mix`)
+# is injected by the Reva adapter and is ABSENT in standalone Renfield, which
+# only mounts /graph, /focus, /search. We expose its availability here so the
+# frontend can hide the Reva-only side panels WITHOUT probing /me/mix — that
+# probe 404s by design in standalone and spammed the browser console with red
+# "Failed to load resource" + "API Error" lines. Detect by route presence.
+_REVA_WISSENSBASIS_PROBE_PATH = "/api/wissensbasis/me/mix"
+
+
+def _reva_wissensbasis_mounted(request: Request) -> bool:
+    return any(
+        getattr(r, "path", None) == _REVA_WISSENSBASIS_PROBE_PATH
+        for r in request.app.routes
+    )
 
 
 class FeatureFlags(BaseModel):
@@ -56,10 +71,15 @@ class FeatureFlags(BaseModel):
     # fork_from_message_id. The conversation tree + active-path query are always
     # on. See utils/config.py::chat_branching_enabled.
     chat_branching_enabled: bool
+    # True when the Reva-only Wissensbasis surface (/trace + /me/mix) is mounted
+    # (Reva adapter present). Standalone Renfield => False. Lets the frontend
+    # hide the Reva-only side panels without probing an endpoint that 404s.
+    wissensbasis_reva_available: bool
 
 
 @router.get("/features", response_model=FeatureFlags)
 async def get_features(
+    request: Request,
     _current_user: User = Depends(get_user_or_default),
 ) -> FeatureFlags:
     """Return the frontend-visible feature-flag allowlist."""
@@ -72,4 +92,5 @@ async def get_features(
         artifacts_typed_enabled=settings.artifacts_typed_enabled,
         room_handoff_enabled=settings.room_handoff_enabled,
         chat_branching_enabled=settings.chat_branching_enabled,
+        wissensbasis_reva_available=_reva_wissensbasis_mounted(request),
     )

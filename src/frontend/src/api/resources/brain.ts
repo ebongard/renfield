@@ -107,6 +107,10 @@ export interface FeatureFlags {
   room_handoff_enabled: boolean;
   /** Gates the chat message-branching UI (edit/regenerate per-message fork actions). */
   chat_branching_enabled: boolean;
+  /** True when the Reva-only Wissensbasis surface (/trace + /me/mix) is mounted.
+   *  Standalone Renfield => false. Lets the frontend hide the Reva-only side
+   *  panels without probing an endpoint that 404s (console-noise fix). */
+  wissensbasis_reva_available: boolean;
 }
 
 async function fetchAtomSearch(query: string): Promise<AtomMatch[]> {
