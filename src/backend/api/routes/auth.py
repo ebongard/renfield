@@ -227,6 +227,32 @@ async def refresh_token(
             headers={"WWW-Authenticate": "Bearer"},
         )
 
+    # #698: refresh-token rotation WITH reuse-detection. A refresh token is
+    # single-use. (1) If its jti is already blacklisted it was spent (rotated) or
+    # revoked → this is a replay of a stolen/old token → reject. (2) Otherwise
+    # blacklist it now so it can never be replayed. NB: decode_token() only
+    # validates signature/exp and does NOT consult the blacklist (that check lives
+    # in get_current_user, for access tokens), so /refresh must do it explicitly.
+    # is_blacklisted() fails CLOSED — a Redis outage rejects refresh (re-login)
+    # rather than silently honoring a possibly-revoked token. Without this a
+    # stolen refresh token stayed valid its full 30-day life, revocable only by
+    # rotating SECRET_KEY.
+    old_jti = payload.get("jti")
+    old_exp = payload.get("exp")
+    if old_jti:
+        from services.token_blacklist import token_blacklist
+        if await token_blacklist.is_blacklisted(old_jti):
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Refresh token already used or revoked",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+        if old_exp:
+            import time
+            ttl = int(old_exp - time.time())
+            if ttl > 0:
+                await token_blacklist.add(old_jti, ttl)
+
     # Create new tokens
     access_token = create_access_token(
         data={"sub": str(user.id), "username": user.username}

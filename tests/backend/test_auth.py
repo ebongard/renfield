@@ -247,6 +247,76 @@ class TestJWTTokens:
         assert decode_token("") is None
 
 
+class TestRefreshTokenRotation:
+    """#698 — /refresh rotates the refresh token and detects reuse."""
+
+    @staticmethod
+    def _real_request():
+        # slowapi's @limiter.limit on /refresh requires a real starlette Request
+        # (keyed by client IP; conftest resets the limiter between tests).
+        from starlette.requests import Request
+        from services.api_rate_limiter import limiter as app_limiter
+        state = type("S", (), {})()
+        state.limiter = app_limiter
+        app = type("A", (), {})()
+        app.state = state
+        return Request({
+            "type": "http", "method": "POST", "path": "/api/auth/refresh",
+            "headers": [], "client": ("127.0.0.1", 12345), "app": app,
+        })
+
+    @pytest.mark.asyncio
+    async def test_refresh_rotates_and_detects_reuse(self, monkeypatch):
+        from unittest.mock import AsyncMock, MagicMock
+
+        from fastapi import HTTPException
+
+        from api.routes import auth as auth_route
+        from services import token_blacklist as tb_mod
+        from services.api_rate_limiter import limiter as app_limiter
+        from services.auth_service import create_refresh_token, decode_token
+
+        # Bypass the slowapi @limiter.limit on /refresh when calling the handler
+        # directly (its wrapper guards everything behind `if self.enabled`).
+        monkeypatch.setattr(app_limiter, "enabled", False)
+
+        # In-memory blacklist (the handler does `from services.token_blacklist
+        # import token_blacklist` at call time, so patching the module attr works)
+        class FakeBlacklist:
+            def __init__(self):
+                self._s = set()
+
+            async def add(self, jti, ttl):
+                self._s.add(jti)
+
+            async def is_blacklisted(self, jti):
+                return jti in self._s
+
+        monkeypatch.setattr(tb_mod, "token_blacklist", FakeBlacklist())
+
+        user = MagicMock(id=123, is_active=True, username="u")
+
+        async def fake_get_user(db, uid):
+            return user
+        monkeypatch.setattr(auth_route, "get_user_by_id", fake_get_user)
+
+        old = create_refresh_token(123)
+        req = auth_route.RefreshRequest(refresh_token=old)
+
+        # First refresh succeeds and returns a NEW (rotated) refresh token
+        resp = await auth_route.refresh_token(request=self._real_request(), refresh_request=req, db=AsyncMock())
+        assert resp.refresh_token != old
+
+        # The old token's jti is now blacklisted (single-use spent)
+        old_jti = decode_token(old)["jti"]
+        assert await tb_mod.token_blacklist.is_blacklisted(old_jti)
+
+        # Reuse of the old (rotated) token is rejected — 401, no new tokens minted
+        with pytest.raises(HTTPException) as exc:
+            await auth_route.refresh_token(MagicMock(), req, db=AsyncMock())
+        assert exc.value.status_code == 401
+
+
 # ============================================================================
 # Role Model Tests
 # ============================================================================
