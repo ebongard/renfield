@@ -40,11 +40,13 @@ data:
       codec: opus                 # C1 binary Opus transport → voice-server /stt-opus
       sample_rate: 16000
       chunk_size: 1280
-      channels: 1                 # XVF3800 delivers a single post-DSP stream
+      channels: 2                 # XVF3800 capture is STEREO (ch0=clean beam, ch1=AEC residual)
+      combine: "select"           # pick a single channel (the beam) — no downmix
+      select_channel: 0           # ch0 = the clean beamformed stream
       physical_mics: 4            # reported as array-size capability
       use_arecord: false          # USB UAC device; no AC108 in-process crash
-      device: "default"           # /etc/asound.conf maps default → XVF3800 (dsnoop)
-      playback_device: "default"  # → XVF3800 out jack (dmix); needs a speaker plugged in
+      device: "default"           # /etc/asound.conf maps default → plain plug → hw:Array (2ch)
+      playback_device: "default"  # → XVF3800 out jack (plain plug); needs a speaker plugged in
       beamforming:
         enabled: false            # XVF3800 does beamforming + AEC in hardware
     wakeword:
@@ -120,7 +122,7 @@ spec:
                     values: ["arm64"]
       containers:
         - name: satellite
-          image: renfield/satellite:esszimmer-v7
+          image: renfield/satellite:esszimmer-v8
           imagePullPolicy: Never   # imported into node containerd (k8s.io ns)
           securityContext:
             privileged: true        # raw /dev access for USB audio + xvf_host
