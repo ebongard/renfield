@@ -161,15 +161,19 @@ class InternalToolService:
         },
         "internal.smart_home_overview": {
             "description": (
-                "Show a READ-ONLY smart-home OVERVIEW widget of the current state of the house. "
-                "Use it ONLY when the user asks to SEE an overview of the home — a device inventory, "
-                "the room temperatures/humidity, what is currently switched on, or how many devices are "
-                "in each room. Pick the matching `view`:\n"
+                "Show the user a smart-home OVERVIEW widget — room sensor readings & "
+                "temperatures/humidity, the device-status inventory, what is currently switched ON, "
+                "or a devices-per-room chart. This is the PREFERRED, REQUIRED way to ANSWER any "
+                "'show me / zeig mir / wie warm ist es / Sensorwerte / was ist an / Übersicht / "
+                "Status' request about the home's current state — it renders a typed widget. "
+                "Do NOT use raw state tools (GetLiveContext / GetLiveState) to ANSWER these requests; "
+                "those are for YOUR OWN internal lookups before an action, not for showing the user. "
+                "Pick the matching `view`:\n"
                 "  • 'status'          — full device inventory table (room × device × state)\n"
                 "  • 'sensors'         — per-room temperature/humidity readings\n"
                 "  • 'active_devices'  — which controllable devices are currently on\n"
                 "  • 'devices_per_room'— bar chart of the device count per room\n"
-                "This is NOT for controlling/operating devices (that is internal.device_controls) and NOT "
+                "NOT for controlling/operating devices (that is internal.device_controls) and NOT "
                 "for a one-off command like 'mach das Licht an' (do that directly with HassTurnOn). "
                 "The widget IS the answer — after it renders, give a one-line final_answer alongside it."
             ),

@@ -122,7 +122,7 @@ de:
     - UEBERSICHTS-WIDGET: Will der Nutzer eine reine ANSICHT/Uebersicht des Hauses, rufe internal.smart_home_overview mit dem passenden view auf — view="status" (Geraete-Inventar), "sensors" (Raumtemperaturen/Luftfeuchte), "active_devices" (was ist gerade an) oder "devices_per_room" (Anzahl Geraete pro Raum). Nur fuer eine reine Ansicht, NICHT zum Schalten von Geraeten (dafuer internal.device_controls oder HassTurnOn/HassTurnOff).
     - Wenn kein Raum im Befehl UND kein Raum-Kontext → nutze nur "domain" ohne "area"
     - Fuer Helligkeiten/Farben: Nutze HassLightSet mit "area"+"domain" oder "name"
-    - Fuer Sensorwerte: Nutze GetLiveContext mit "name" und optional "area"
+    - Sensorwerte/Temperaturen ZEIGEN (der Nutzer will sie SEHEN: "zeig mir die Sensorwerte", "wie warm ist es in den Raeumen", "Raumtemperaturen"): rufe internal.smart_home_overview view="sensors" auf — das rendert ein Widget. GetLiveContext (name/optional area) NUR fuer deine EIGENE interne Abfrage eines EINZELNEN Sensors vor einer Aktion, NICHT um dem Nutzer eine Werte-Uebersicht zu praesentieren.
     - Uebergib NIEMALS "device_class"
     - Lautstaerke eines Raum-Players: Nutze internal.media_control mit room_name (NICHT HassSetVolume/HassSetPosition). "auf X% setzen" → action="volume", volume=X; "um X% leiser/lauter" → action="volume", volume_step=-X / +X (Prozentpunkte). z.B. {{"action": "internal.media_control", "parameters": {{"action": "volume", "volume_step": -20, "room_name": "<aktueller_raum>"}}}}
     - Stummschalten: "mute"/"stumm" → internal.media_control action="mute"; "unmute"/"Ton an" → action="unmute" (mit room_name). NICHT pause oder volume=0 dafuer verwenden.
@@ -717,7 +717,7 @@ en:
     - OVERVIEW WIDGET: when the user wants a read-only VIEW/overview of the house, call internal.smart_home_overview with the matching view — view="status" (device inventory), "sensors" (room temperatures/humidity), "active_devices" (what is currently on) or "devices_per_room" (device count per room). Only for a read-only view, NOT for operating devices (use internal.device_controls or HassTurnOn/HassTurnOff for that).
     - If no room in command AND no room context → use only "domain" without "area"
     - For brightness/colors: Use HassLightSet with "area"+"domain" or "name"
-    - For sensor values: Use GetLiveContext with "name" and optionally "area"
+    - To SHOW sensor values/temperatures (the user wants to SEE them: "show me the sensor values", "how warm is it in the rooms", "room temperatures"): call internal.smart_home_overview view="sensors" — it renders a widget. Use GetLiveContext (name/optional area) ONLY for your OWN internal lookup of a SINGLE sensor before an action, NOT to present a values overview to the user.
     - NEVER pass "device_class"
     - Volume of a room player: Use internal.media_control with room_name (NOT HassSetVolume/HassSetPosition). "set to X%" → action="volume", volume=X; "X% quieter/louder" → action="volume", volume_step=-X / +X (percentage points). e.g. {{"action": "internal.media_control", "parameters": {{"action": "volume", "volume_step": -20, "room_name": "<current_room>"}}}}
     - Mute: "mute" → internal.media_control action="mute"; "unmute" → action="unmute" (with room_name). Do NOT use pause or volume=0 to mute.
