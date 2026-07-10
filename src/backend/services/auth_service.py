@@ -8,7 +8,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Union
 from uuid import uuid4
 
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import OAuth2PasswordBearer
 from jose import JWTError, jwt
 from loguru import logger
@@ -31,6 +31,17 @@ oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/auth/login", auto_error=Fals
 
 # JWT configuration
 ALGORITHM = "HS256"
+
+# Endpoints a user with must_change_password=True may still reach (#694). A
+# flagged user is otherwise 403'd until they rotate their password — but they
+# must be able to actually DO the rotation (change-password), see their own
+# state (me/status), and log out. Matched on the full request path.
+_PASSWORD_CHANGE_ALLOWED_PATHS = frozenset({
+    "/api/auth/change-password",
+    "/api/auth/me",
+    "/api/auth/status",
+    "/api/auth/logout",
+})
 
 
 # =============================================================================
@@ -193,13 +204,18 @@ async def get_user_by_username(db: AsyncSession, username: str) -> User | None:
 
 async def get_current_user(
     token: str = Depends(oauth2_scheme),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    request: Request = None,
 ) -> User | None:
     """
     FastAPI dependency to get the current authenticated user.
 
     If auth is disabled, returns None (endpoints should handle this).
     If auth is enabled but token is invalid/missing, raises 401.
+
+    ``request`` is auto-injected by FastAPI when this is used as a dependency;
+    it is optional so the direct positional call in ``get_optional_user`` keeps
+    working. It is used only to enforce ``must_change_password`` (#694).
     """
     # If auth is disabled, return None (anonymous access)
     if not settings.auth_enabled:
@@ -256,17 +272,42 @@ async def get_current_user(
         )
 
     if not user.is_active:
+        from utils.metrics import record_authz_denied
+        record_authz_denied("inactive_account")
+        logger.warning(f"Access denied: inactive account (user_id={user.id})")
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="User account is disabled"
         )
+
+    # Enforce forced password rotation (#694). A user flagged
+    # must_change_password may reach only the allowlisted endpoints (change the
+    # password, read own state, log out); everything else is 403 until they
+    # rotate. Enforced here — the single chokepoint every authenticated route
+    # passes through — using DB truth rather than a token claim, so a token
+    # minted before the flag was set is still blocked. `request` is None only on
+    # the internal get_optional_user path, which is fine to leave unenforced
+    # (those endpoints already tolerate anonymous callers).
+    if user.must_change_password and request is not None:
+        if request.url.path not in _PASSWORD_CHANGE_ALLOWED_PATHS:
+            from utils.metrics import record_authz_denied
+            record_authz_denied("password_change_required")
+            logger.warning(
+                f"Access denied: password change required "
+                f"(user_id={user.id}, path={request.url.path})"
+            )
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="password_change_required",
+            )
 
     return user
 
 
 async def get_optional_user(
     token: str = Depends(oauth2_scheme),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    request: Request = None,
 ) -> User | None:
     """
     FastAPI dependency to optionally get the current user.
@@ -278,8 +319,16 @@ async def get_optional_user(
         return None
 
     try:
-        return await get_current_user(token, db)
-    except HTTPException:
+        return await get_current_user(token, db, request)
+    except HTTPException as exc:
+        # A missing/invalid token → anonymous (the point of "optional"). But a
+        # must_change_password user must NOT be silently downgraded to anonymous
+        # here (#694 review): that would let an optional-auth endpoint serve its
+        # anonymous branch to a flagged user instead of blocking them. Re-raise
+        # the forced-rotation 403 so the gate holds consistently across required
+        # and optional auth.
+        if exc.status_code == status.HTTP_403_FORBIDDEN and exc.detail == "password_change_required":
+            raise
         return None
 
 
@@ -382,6 +431,11 @@ def require_permission(permission: Union[Permission, str]):
         perm_value = permission.value if isinstance(permission, Permission) else permission
 
         if not user.has_permission(perm_value):
+            from utils.metrics import record_authz_denied
+            record_authz_denied(perm_value)
+            logger.warning(
+                f"Authz denied: user_id={user.id} lacks permission {perm_value!r}"
+            )
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail=f"Permission required: {perm_value}"
@@ -416,6 +470,11 @@ def require_any_permission(permissions: list[Union[Permission, str]]):
                 return user
 
         perm_values = [p.value if isinstance(p, Permission) else p for p in permissions]
+        from utils.metrics import record_authz_denied
+        record_authz_denied(",".join(perm_values))
+        logger.warning(
+            f"Authz denied: user_id={user.id} lacks any of {perm_values!r}"
+        )
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail=f"One of these permissions required: {perm_values}"

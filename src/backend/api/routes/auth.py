@@ -48,6 +48,10 @@ class TokenResponse(BaseModel):
     refresh_token: str
     token_type: str = "bearer"
     expires_in: int  # seconds
+    # #694: tells the client the user must rotate their password before the
+    # token unlocks anything beyond /change-password. Enforced server-side in
+    # get_current_user; this flag lets the SPA redirect straight to the form.
+    must_change_password: bool = False
 
 
 class RefreshRequest(BaseModel):
@@ -126,6 +130,24 @@ async def login(
     # See auth/login_flow.py for the full resolution + standalone-fallback
     # contract.
     from auth.login_flow import resolve_login
+    from services.login_lockout import login_lockout
+    from utils.metrics import record_login_failure
+
+    # Account lockout (#693): a locked username is rejected BEFORE the credential
+    # walk (so a lockout also stops password-guessing that happens to be
+    # correct). Response is the SAME opaque 401 as bad credentials — never a
+    # distinct status — so it is not a username-enumeration oracle. The event is
+    # observable via the log + metric, not the response.
+    if await login_lockout.is_locked(form_data.username):
+        record_login_failure("locked_out")
+        logger.warning(
+            f"Login rejected: account locked out (username={form_data.username!r})"
+        )
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Incorrect username or password",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
 
     outcome = await resolve_login(
         db=db,
@@ -137,6 +159,12 @@ async def login(
     if outcome is None:
         # Bad credentials OR a registered post_authenticate consumer declined
         # to resolve — both are an opaque 401 (do not leak which).
+        record_login_failure("bad_credentials")
+        tripped = await login_lockout.record_failure(form_data.username)
+        logger.warning(
+            f"Login failed: bad credentials (username={form_data.username!r})"
+            + (" — account now locked out" if tripped else "")
+        )
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Incorrect username or password",
@@ -152,11 +180,22 @@ async def login(
     # disabled account exists (no user-enumeration oracle).
     user = await get_user_by_id(db, outcome.user_id)
     if not user or not user.is_active:
+        # A disabled/vanished account is the SAME opaque 401 (no 403) so login
+        # never leaks that the account exists. A failed attempt here still counts
+        # toward lockout (a valid-username-but-disabled probe is still a probe).
+        record_login_failure("inactive")
+        await login_lockout.record_failure(form_data.username)
+        logger.warning(
+            f"Login failed: account missing or inactive (username={form_data.username!r})"
+        )
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Incorrect username or password",
             headers={"WWW-Authenticate": "Bearer"},
         )
+
+    # Successful auth — clear any accumulated lockout state for this username.
+    await login_lockout.clear(form_data.username)
 
     # Update last login time
     user.last_login = datetime.now(UTC).replace(tzinfo=None)
@@ -179,7 +218,8 @@ async def login(
         access_token=access_token,
         refresh_token=refresh_token,
         token_type="bearer",
-        expires_in=settings.access_token_expire_minutes * 60
+        expires_in=settings.access_token_expire_minutes * 60,
+        must_change_password=user.must_change_password,
     )
 
 
@@ -263,7 +303,11 @@ async def refresh_token(
         access_token=access_token,
         refresh_token=new_refresh_token,
         token_type="bearer",
-        expires_in=settings.access_token_expire_minutes * 60
+        expires_in=settings.access_token_expire_minutes * 60,
+        # #694: a token refresh must carry the still-current flag, else the SPA
+        # would think rotation is done and stop redirecting to /change-password
+        # (while the server keeps returning opaque 403s).
+        must_change_password=user.must_change_password,
     )
 
 

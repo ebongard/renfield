@@ -40,6 +40,8 @@ _injection_attempts_total = None
 _budget_reductions_total = None
 _output_guard_violations_total = None
 _auth_provider_unreachable_total = None
+_login_failure_total = None
+_authz_denied_total = None
 _kg_conflation_candidates = None
 _speaker_inprocess_embedding_blocked_total = None
 
@@ -56,6 +58,7 @@ def _init_metrics():
     global _agent_outcome_total, _injection_attempts_total
     global _budget_reductions_total, _output_guard_violations_total
     global _auth_provider_unreachable_total
+    global _login_failure_total, _authz_denied_total
     global _kg_conflation_candidates
     global _speaker_inprocess_embedding_blocked_total
 
@@ -174,6 +177,25 @@ def _init_metrics():
             "errored or timed out (fail-open). A non-zero rate means a "
             "provider is silently down.",
             ["provider_id"],
+        )
+
+        # Auth observability (#696). Failed logins and authz denials were
+        # previously silent (no log, no metric), leaving credential-stuffing and
+        # privilege-probing invisible to monitoring. Labels are low-cardinality
+        # reason/permission strings — never the username or token (no PII, no
+        # enumeration oracle from the metrics surface).
+        _login_failure_total = Counter(
+            "renfield_login_failure_total",
+            "Failed login attempts by reason (bad_credentials, inactive, "
+            "locked_out, provider_declined).",
+            ["reason"],
+        )
+
+        _authz_denied_total = Counter(
+            "renfield_authz_denied_total",
+            "Authorization denials (HTTP 403) by the permission that was "
+            "required (or 'inactive_account' / 'unauthenticated').",
+            ["permission"],
         )
 
         _speaker_inprocess_embedding_blocked_total = Counter(
@@ -312,6 +334,28 @@ def record_auth_provider_unreachable(provider_id: str):
     if not _metrics_initialized:
         return
     _auth_provider_unreachable_total.labels(provider_id=provider_id).inc()
+
+
+def record_login_failure(reason: str):
+    """Record a failed login attempt (#696).
+
+    `reason` is a low-cardinality label: "bad_credentials", "inactive",
+    "locked_out", or "provider_declined". Never pass the username.
+    """
+    if not _metrics_initialized:
+        return
+    _login_failure_total.labels(reason=reason).inc()
+
+
+def record_authz_denied(permission: str):
+    """Record an authorization denial / HTTP 403 (#696).
+
+    `permission` is the required permission string, or "inactive_account" /
+    "unauthenticated" for the non-permission 401/403 paths.
+    """
+    if not _metrics_initialized:
+        return
+    _authz_denied_total.labels(permission=permission).inc()
 
 
 def record_speaker_inprocess_embedding_blocked(path: str):

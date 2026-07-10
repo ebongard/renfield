@@ -49,33 +49,71 @@ def _is_trusted_proxy(ip: str) -> bool:
 
 def get_client_ip(request: Request) -> str:
     """
-    Get client IP address from request.
-    Only reads forwarded headers when the direct client IP is in trusted_proxies.
+    Resolve the client IP used as the rate-limit key.
+
+    When ``TRUSTED_PROXIES`` is CONFIGURED, resolution is spoof-resistant:
+    ``X-Forwarded-For`` is client-controllable, so we only trust hops we put
+    there ourselves. The direct peer must itself be a trusted proxy, and we walk
+    the XFF chain RIGHT-to-LEFT returning the first address that is NOT a trusted
+    proxy — the right-most-untrusted address, the genuine client as seen from our
+    trust boundary. An attacker can prepend arbitrary left-most entries but
+    cannot inject an untrusted address to the right of our own proxy hop.
+
+    When ``TRUSTED_PROXIES`` is EMPTY (the default) we keep the legacy,
+    backwards-compatible behavior: read ``X-Forwarded-For[0]`` / ``X-Real-IP``,
+    trusting all proxies. This preserves per-client keying behind a reverse
+    proxy (Traefik/nginx) out of the box — flipping to "use the direct socket
+    IP" would collapse every client into the proxy's single IP bucket and turn
+    the shared per-IP limit into a cluster-wide DoS. The trade-off is that the
+    empty default is spoofable (a client can forge ``X-Forwarded-For[0]``); set
+    ``TRUSTED_PROXIES`` to the proxy's network to get the spoof-resistant
+    right-most-untrusted walk. See docs/SECURITY.md.
     """
     direct_ip = get_remote_address(request)
 
+    networks = _get_trusted_networks()
+    if not networks:
+        # Legacy path: no trusted proxies configured → trust all, take the
+        # left-most forwarded entry (backwards-compatible per-client keying).
+        forwarded_for = request.headers.get("X-Forwarded-For")
+        if forwarded_for:
+            first = forwarded_for.split(",")[0].strip()
+            if first:
+                return first
+        real_ip = request.headers.get("X-Real-IP")
+        if real_ip and real_ip.strip():
+            return real_ip.strip()
+        return direct_ip
+
+    # Configured path: the direct peer must itself be a trusted proxy; otherwise
+    # the request did not come through our proxy and its forwarded headers are
+    # untrustworthy → key on the direct socket IP.
     if not _is_trusted_proxy(direct_ip):
         return direct_ip
 
-    # Check for X-Forwarded-For header (nginx, load balancer)
     forwarded_for = request.headers.get("X-Forwarded-For")
     if forwarded_for:
-        return forwarded_for.split(",")[0].strip()
+        # Right-to-left: skip our own trusted proxy hops, return the first
+        # untrusted address (the real client from our boundary's perspective).
+        for hop in reversed([h.strip() for h in forwarded_for.split(",") if h.strip()]):
+            if not _is_trusted_proxy(hop):
+                return hop
+        # Whole chain is trusted proxies (unusual) → fall through to direct_ip.
 
-    # Check for X-Real-IP header
     real_ip = request.headers.get("X-Real-IP")
-    if real_ip:
-        return real_ip
+    if real_ip and not _is_trusted_proxy(real_ip.strip()):
+        return real_ip.strip()
 
     return direct_ip
 
 
-# Create limiter instance with custom key function
+# Create limiter instance with custom key function. storage_uri is env-driven
+# (#693): "memory://" per-pod by default, Redis for shared per-cluster limiting.
 limiter = Limiter(
     key_func=get_client_ip,
     default_limits=[settings.api_rate_limit_default] if settings.api_rate_limit_enabled else [],
     enabled=settings.api_rate_limit_enabled,
-    storage_uri="memory://",  # In-memory storage (use Redis for production clusters)
+    storage_uri=settings.api_rate_limit_storage_uri,
 )
 
 

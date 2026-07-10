@@ -194,6 +194,16 @@ async def authenticate_websocket(
         if not user.is_active:
             logger.debug(f"WebSocket JWT auth: user_id={user_id_int} disabled")
             return None
+        # Forced password rotation (#694) also gates the WS surface — otherwise a
+        # flagged user could open /ws/chat and drive the full agent without ever
+        # rotating, bypassing the HTTP get_current_user gate. Rejecting the WS
+        # connection forces them through the HTTP /change-password flow first.
+        if user.must_change_password:
+            logger.warning(
+                f"WebSocket JWT auth: user_id={user_id_int} must change password "
+                "— rejecting connection until rotated"
+            )
+            return None
 
         logger.debug(f"WebSocket authenticated via JWT: user_id={user.id}")
         return {

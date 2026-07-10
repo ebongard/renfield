@@ -743,7 +743,11 @@ Siehe [SECRETS_MANAGEMENT.md](SECRETS_MANAGEMENT.md) für Details.
 
 ### Weitere Sicherheitsfeatures
 - **CORS**: Konfigurierbare Origins (`CORS_ORIGINS`)
-- **Trusted Proxies**: CIDR-basiert (`TRUSTED_PROXIES`)
+- **Trusted Proxies**: CIDR-basiert (`TRUSTED_PROXIES`) — gesetzt: spoof-sicherer Rechts-nach-Links-XFF-Durchlauf; leer: legacy `X-Forwarded-For[0]` (rückwärtskompatibel, spoofbar)
+- **Rate-Limit-Storage**: per-Pod (`memory://`) oder per-Cluster (`API_RATE_LIMIT_STORAGE_URI=${REDIS_URL}`)
+- **Account Lockout**: Pro-Username-Sperre nach Fehl-Logins (`LOGIN_LOCKOUT_ENABLED`, Redis, fail-open)
+- **Auth-Observability**: `renfield_login_failure_total` / `renfield_authz_denied_total` + strukturierte Logs auf 401/403
+- **Forced Password Rotation**: `must_change_password` serverseitig erzwungen (Allowlist bis zur Rotation)
 - **WebSocket Auth**: Optional aktivierbar (`WS_AUTH_ENABLED`)
 - **Passwort-Hashing**: bcrypt
 - **MCP Response Limits**: Max Response-Größe begrenzt (`MCP_MAX_RESPONSE_SIZE`)

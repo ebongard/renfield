@@ -81,58 +81,118 @@ def _make_request(headers: dict | None = None, client_host: str = "10.0.0.1") ->
 # get_client_ip tests
 # =============================================================================
 
+@pytest.fixture
+def _trusted(monkeypatch):
+    """Set TRUSTED_PROXIES and reset the module-level network cache.
+
+    #693: get_client_ip only honors forwarded headers when the direct peer is a
+    configured trusted proxy, and walks the chain right-to-left. These tests
+    drive that from a controlled trusted-proxy config.
+    """
+    import services.api_rate_limiter as arl
+
+    def _set(cidrs: str):
+        monkeypatch.setattr(arl.settings, "trusted_proxies", cidrs, raising=False)
+        arl._trusted_networks = None  # bust the lazy cache
+        return arl
+
+    yield _set
+    arl._trusted_networks = None  # restore lazy re-read for other tests
+
+
 class TestGetClientIp:
-    """Tests for the get_client_ip function."""
+    """Tests for the get_client_ip function (#693 right-most-untrusted walk)."""
 
     @pytest.mark.unit
-    def test_x_forwarded_for_single_ip(self):
-        """Should extract IP from X-Forwarded-For header."""
-        request = _make_request(headers={"X-Forwarded-For": "203.0.113.50"})
-        assert get_client_ip(request) == "203.0.113.50"
+    def test_no_trusted_proxies_legacy_reads_xff_first(self, _trusted):
+        """Empty TRUSTED_PROXIES = legacy backwards-compatible behavior.
 
-    @pytest.mark.unit
-    def test_x_forwarded_for_multiple_ips(self):
-        """Should take first IP from X-Forwarded-For chain."""
+        Reads X-Forwarded-For[0] so per-client keying keeps working behind a
+        proxy out of the box (flipping to direct-IP would collapse all clients
+        into the proxy's single bucket — a cluster-wide DoS). This path is
+        spoofable by design; TRUSTED_PROXIES enables the spoof-resistant walk.
+        """
+        _trusted("")
         request = _make_request(
-            headers={"X-Forwarded-For": "203.0.113.50, 70.41.3.18, 150.172.238.178"}
+            headers={"X-Forwarded-For": "203.0.113.50, 10.0.0.1", "X-Real-IP": "198.51.100.1"},
+            client_host="10.0.0.1",
         )
         assert get_client_ip(request) == "203.0.113.50"
 
     @pytest.mark.unit
-    def test_x_forwarded_for_with_spaces(self):
-        """Should strip whitespace from X-Forwarded-For value."""
-        request = _make_request(headers={"X-Forwarded-For": "  203.0.113.50 , 10.0.0.1"})
+    def test_no_trusted_proxies_falls_back_to_direct_when_no_headers(self, _trusted):
+        """Empty TRUSTED_PROXIES + no forwarded headers → direct socket IP."""
+        _trusted("")
+        request = _make_request(client_host="192.168.1.42")
+        assert get_client_ip(request) == "192.168.1.42"
+
+    @pytest.mark.unit
+    def test_untrusted_direct_peer_ignores_forwarded_headers(self, _trusted):
+        """A direct peer NOT in TRUSTED_PROXIES → its XFF is untrusted → direct IP."""
+        _trusted("172.18.0.0/16")
+        request = _make_request(
+            headers={"X-Forwarded-For": "203.0.113.50"},
+            client_host="8.8.8.8",  # not in the trusted range
+        )
+        assert get_client_ip(request) == "8.8.8.8"
+
+    @pytest.mark.unit
+    def test_trusted_proxy_single_client(self, _trusted):
+        """Trusted proxy forwarding one client → that client IP."""
+        _trusted("172.18.0.0/16")
+        request = _make_request(
+            headers={"X-Forwarded-For": "203.0.113.50"},
+            client_host="172.18.0.9",
+        )
         assert get_client_ip(request) == "203.0.113.50"
 
     @pytest.mark.unit
-    def test_x_real_ip_header(self):
-        """Should use X-Real-IP when X-Forwarded-For is absent."""
-        request = _make_request(headers={"X-Real-IP": "198.51.100.1"})
+    def test_right_most_untrusted_is_returned(self, _trusted):
+        """Walk right-to-left: return the right-most address NOT a trusted proxy.
+
+        Chain: realclient, proxy1(trusted), proxy2(trusted). The right-most
+        untrusted entry is `realclient`.
+        """
+        _trusted("172.18.0.0/16")
+        request = _make_request(
+            headers={"X-Forwarded-For": "203.0.113.50, 172.18.0.7, 172.18.0.8"},
+            client_host="172.18.0.9",
+        )
+        assert get_client_ip(request) == "203.0.113.50"
+
+    @pytest.mark.unit
+    def test_spoofed_left_entries_are_ignored(self, _trusted):
+        """An attacker prepending fake left-most entries cannot change identity.
+
+        The attacker's real address (right-most, appended by our trusted proxy)
+        is what we key on; the injected `1.2.3.4` left entry is ignored.
+        """
+        _trusted("172.18.0.0/16")
+        request = _make_request(
+            headers={"X-Forwarded-For": "1.2.3.4, 203.0.113.50"},
+            client_host="172.18.0.9",
+        )
+        assert get_client_ip(request) == "203.0.113.50"
+
+    @pytest.mark.unit
+    def test_x_real_ip_used_when_no_xff(self, _trusted):
+        """Trusted proxy with only X-Real-IP → that IP."""
+        _trusted("172.18.0.0/16")
+        request = _make_request(
+            headers={"X-Real-IP": "198.51.100.1"},
+            client_host="172.18.0.9",
+        )
         assert get_client_ip(request) == "198.51.100.1"
 
     @pytest.mark.unit
-    def test_x_forwarded_for_takes_priority_over_x_real_ip(self):
-        """X-Forwarded-For should have priority over X-Real-IP."""
-        request = _make_request(headers={
-            "X-Forwarded-For": "203.0.113.50",
-            "X-Real-IP": "198.51.100.1",
-        })
-        assert get_client_ip(request) == "203.0.113.50"
-
-    @pytest.mark.unit
-    def test_fallback_to_remote_address(self):
-        """Should fall back to direct client IP when no proxy headers."""
-        request = _make_request(client_host="192.168.1.42")
-        with patch("services.api_rate_limiter.get_remote_address", return_value="192.168.1.42"):
-            ip = get_client_ip(request)
-        assert ip == "192.168.1.42"
-
-    @pytest.mark.unit
-    def test_empty_forwarded_for_uses_real_ip(self):
-        """Empty X-Forwarded-For should fall through to X-Real-IP."""
-        # An empty string is falsy, so it should skip to X-Real-IP
-        request = _make_request(headers={"X-Forwarded-For": "", "X-Real-IP": "10.20.30.40"})
-        assert get_client_ip(request) == "10.20.30.40"
+    def test_all_hops_trusted_falls_back_to_direct(self, _trusted):
+        """If the whole XFF chain is trusted proxies, fall back to the direct IP."""
+        _trusted("172.18.0.0/16")
+        request = _make_request(
+            headers={"X-Forwarded-For": "172.18.0.5, 172.18.0.6"},
+            client_host="172.18.0.9",
+        )
+        assert get_client_ip(request) == "172.18.0.9"
 
 
 # =============================================================================

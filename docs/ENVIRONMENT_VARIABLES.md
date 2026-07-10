@@ -1244,9 +1244,11 @@ python3 -c "import secrets; print(secrets.token_urlsafe(64))"
 TRUSTED_PROXIES=172.18.0.0/16,127.0.0.1
 ```
 
-**Default:** `""` (leer = alle Proxies vertraut, rückwärtskompatibel)
+**Default:** `""` (leer = alle Proxies vertraut, `X-Forwarded-For[0]` wird gelesen, rückwärtskompatibel — **spoofbar**)
 
-**Wann setzen:** Hinter einem Reverse Proxy (nginx, Traefik), damit Rate Limiting die echte Client-IP nutzt statt der Proxy-IP. Nur wenn `TRUSTED_PROXIES` konfiguriert ist, werden `X-Forwarded-For` / `X-Real-IP` Header gelesen.
+**Wann setzen:** Hinter einem Reverse Proxy (nginx, Traefik), um die **spoof-sichere** Client-IP-Auflösung zu aktivieren. Ist `TRUSTED_PROXIES` gesetzt, werden `X-Forwarded-For` / `X-Real-IP` nur gelesen, wenn der direkte Peer eine Trusted-Proxy-CIDR ist, und die Client-IP wird durch **Rechts-nach-Links-Durchlauf** der XFF-Kette ermittelt (die rechteste Adresse, die **kein** Trusted Proxy ist) — so kann keine gefälschte XFF-Identität eingeschleust werden.
+
+> **Hinweis (#693):** Der leere Default bleibt bewusst rückwärtskompatibel (liest `X-Forwarded-For[0]`), damit per-Client-Limiting hinter einem Proxy out-of-the-box funktioniert — ein Umschalten auf die direkte Socket-IP würde alle Clients in den einen IP-Bucket des Proxys zusammenfallen lassen (cluster-weiter Rate-Limit-DoS). Die Härtung ist opt-in über `TRUSTED_PROXIES` (z. B. beim Auth-on-Cutover).
 
 ### REST API Rate Limiting
 
@@ -1261,7 +1263,31 @@ API_RATE_LIMIT_VOICE=30/minute
 API_RATE_LIMIT_CHAT=60/minute
 API_RATE_LIMIT_ADMIN=200/minute
 API_RATE_LIMIT_INGEST=1200/minute     # folder-/email-ingest PUSH-Routen (token-auth, MCP-Semaphor bändigt Durchsatz)
+
+# Storage-Backend des Rate-Limiters (slowapi/limits-URI)
+API_RATE_LIMIT_STORAGE_URI=memory://  # per-Pod; für per-Cluster: ${REDIS_URL}
 ```
+
+**`API_RATE_LIMIT_STORAGE_URI`** (Default `memory://`): Zähler sind standardmäßig
+pro Pod. Ein Multi-Replica-Deployment zählt zu niedrig (jeder Pod limitiert
+eigenständig) — auf die Redis-URL setzen (z. B. `redis://redis:6379`) für
+geteiltes **per-Cluster**-Limiting, sobald mehr als ein Backend-Pod läuft.
+
+### Account Lockout (Login)
+
+```bash
+LOGIN_LOCKOUT_ENABLED=true            # Pro-Username-Sperre nach wiederholten Fehlversuchen
+LOGIN_LOCKOUT_MAX_ATTEMPTS=5          # Fehlversuche im Fenster bis zur Sperre
+LOGIN_LOCKOUT_WINDOW_SECONDS=900      # rollierendes Fehler-Fenster
+LOGIN_LOCKOUT_DURATION_SECONDS=900    # Sperrdauer nach Auslösung
+```
+
+Ergänzt das per-IP-Rate-Limit: sperrt einen **Username** nach wiederholten
+Fehl-Logins (stoppt Credential-Stuffing über wechselnde Quell-IPs). Redis-basiert
+(`services/login_lockout.py`), **fail-OPEN** bei Redis-Ausfall (ein Ausfall darf
+nicht den ganzen Haushalt aussperren). Eine gesperrte Anmeldung liefert dasselbe
+opake 401 wie falsche Zugangsdaten (kein Enumerations-Oracle); sichtbar nur über
+Log + `renfield_login_failure_total{reason="locked_out"}`.
 
 `API_RATE_LIMIT_INGEST` gilt für die `/document`-Push-Routen von folder- und
 email-ingest. Diese werden vom vertrauenswürdigen, Bearer-authentifizierten MCP

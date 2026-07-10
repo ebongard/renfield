@@ -107,6 +107,23 @@ Rate limiting is enabled by default (`API_RATE_LIMIT_ENABLED=true`) using slowap
 | Chat | 60/minute | `API_RATE_LIMIT_CHAT` |
 | Admin | 200/minute | `API_RATE_LIMIT_ADMIN` |
 
+**Storage backend (`API_RATE_LIMIT_STORAGE_URI`, default `memory://`).** Counters are per-pod by default. A multi-replica deploy under-counts (each pod limits independently), so set this to the Redis URL (e.g. `${REDIS_URL}`) for shared **per-cluster** limiting once more than one backend pod runs.
+
+### Account Lockout
+
+Beyond the per-IP request cap, a **username** is locked after repeated failed logins (`LOGIN_LOCKOUT_ENABLED=true`), which stops credential-stuffing that rotates source IPs against one account.
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `LOGIN_LOCKOUT_ENABLED` | true | Enable per-username lockout |
+| `LOGIN_LOCKOUT_MAX_ATTEMPTS` | 5 | Failures within the window before locking |
+| `LOGIN_LOCKOUT_WINDOW_SECONDS` | 900 | Rolling failure window |
+| `LOGIN_LOCKOUT_DURATION_SECONDS` | 900 | Lock duration once tripped |
+
+- Keyed on the normalized username, Redis-backed (`services/login_lockout.py`), **fails OPEN** on a Redis outage (a blip must not lock out the household; the per-IP limit remains the backstop).
+- A locked login returns the **same opaque 401** as bad credentials (no username-enumeration oracle). The event is surfaced via logging + the `login_failure_total{reason="locked_out"}` metric.
+- Trade-off: an attacker who knows a username can lock that user out for at most the duration (bounded, env-disable-able). This is the standard lockout trade-off, accepted over unbounded credential-stuffing.
+
 ### WebSocket
 
 WebSocket rate limiting uses a sliding window algorithm (`WS_RATE_LIMIT_ENABLED=true`):
@@ -127,8 +144,23 @@ When behind a reverse proxy (nginx, Traefik), configure `TRUSTED_PROXIES` so rat
 TRUSTED_PROXIES=172.18.0.0/16,127.0.0.1
 ```
 
-- Only reads `X-Forwarded-For` / `X-Real-IP` headers when the direct client IP is in a trusted network
-- If `TRUSTED_PROXIES` is empty (default), all proxies are trusted (backwards-compatible)
+- **When `TRUSTED_PROXIES` is configured** (spoof-resistant, #693): reads `X-Forwarded-For` / `X-Real-IP` only when the direct peer is a trusted proxy, and resolves the client by walking the `X-Forwarded-For` chain **right-to-left, returning the right-most address that is NOT a trusted proxy** (the genuine client from our trust boundary). An attacker cannot inject an untrusted address to the right of our own proxy hop, so `X-Forwarded-For` cannot be spoofed to change rate-limit identity.
+- **When `TRUSTED_PROXIES` is empty (default):** legacy backwards-compatible behavior — all proxies are trusted and `X-Forwarded-For[0]` (the left-most entry) is used. This preserves per-client keying behind a proxy out of the box, but **is spoofable** (a client can forge `X-Forwarded-For[0]`). Set `TRUSTED_PROXIES` to the proxy's network to get the spoof-resistant walk above. (Flipping the empty default to "use the direct socket IP" would collapse every client into the proxy's single IP bucket — a cluster-wide rate-limit DoS — so the default stays legacy; hardening is opt-in via `TRUSTED_PROXIES` at the auth-on cutover.)
+
+## Auth Observability
+
+Failed logins and authorization denials emit structured logs and Prometheus counters (`METRICS_ENABLED=true`) so credential-stuffing and privilege-probing are visible to monitoring. Responses stay opaque; only the telemetry distinguishes cases.
+
+| Metric | Labels | Fires on |
+|--------|--------|----------|
+| `renfield_login_failure_total` | `reason` (`bad_credentials`, `inactive`, `locked_out`) | Each failed `/auth/login` |
+| `renfield_authz_denied_total` | `permission` (required perm, or `inactive_account` / `password_change_required`) | Each 403 from `require_permission` / `require_any_permission` / the disabled-account + forced-rotation gates |
+
+Labels are low-cardinality strings — never the username or token.
+
+## Forced Password Rotation
+
+A user with `must_change_password=true` (e.g. a bootstrapped admin with an auto-generated password) is enforced server-side in `get_current_user` (#694): every authenticated route returns `403 password_change_required` **except** an allowlist (`/api/auth/change-password`, `/api/auth/me`, `/api/auth/status`, `/api/auth/logout`), until the password is rotated via `/api/auth/change-password` (which clears the flag). Enforcement uses DB truth, so a token minted before the flag was set is still blocked. The `/auth/login` response carries `must_change_password` so the client can redirect straight to the change form.
 
 ## Circuit Breaker
 

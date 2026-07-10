@@ -909,6 +909,28 @@ class Settings(BaseSettings):
     # ceiling lets the MCP semaphore govern legit throughput while still capping a
     # leaked-token flood (the DB pool is the harder backstop). Env-tunable.
     api_rate_limit_ingest: str = "1200/minute"
+    # Storage backend for the REST rate limiter (slowapi/limits URI). Default
+    # "memory://" = per-pod counters (backwards-compatible; a multi-replica
+    # deploy under-counts because each pod limits independently). Set to the
+    # Redis URL (e.g. ${REDIS_URL}) for shared per-CLUSTER limiting so the auth
+    # limit holds across replicas — required once the multi-user clone runs >1
+    # backend pod (#693). limits accepts "redis://host:port/db".
+    api_rate_limit_storage_uri: str = "memory://"
+
+    # Account lockout — throttle credential-stuffing beyond the per-IP rate
+    # limit by locking a USERNAME after repeated failures (#693). Keyed on the
+    # normalized username (not IP), so it survives an attacker rotating IPs; the
+    # per-IP api_rate_limit_auth still caps request volume. Bounded duration +
+    # env-disable keep the username-targeted-DoS surface small (an attacker who
+    # knows a username can lock that user out for at most the duration). Backed
+    # by Redis (fail-OPEN on outage — a Redis blip must not lock out the whole
+    # household). Controlled solely by this flag; it is harmless-but-dormant in
+    # the auth-off posture (nobody logs in), so it is not additionally gated on
+    # auth_enabled.
+    login_lockout_enabled: bool = True
+    login_lockout_max_attempts: int = 5        # failures within the window → lock
+    login_lockout_window_seconds: int = 900    # 15 min rolling failure window
+    login_lockout_duration_seconds: int = 900  # 15 min lock once tripped
 
     # WebSocket Connection Limits
     ws_max_connections_per_ip: int = 10
