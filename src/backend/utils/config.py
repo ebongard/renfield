@@ -788,6 +788,16 @@ class Settings(BaseSettings):
     # plugin sets the binding. Matched by spec.startswith(prefix).
     plugin_mcp_bindings: str = ""
 
+    # === Deployment environment ===
+    # Deployment posture marker: "development" (default) | "dev" | "test" |
+    # "staging" | "production" | "prod". Read by the security validators below —
+    # a real-deployment value (production/prod/staging) ARMS the insecure-JWT-key
+    # boot guard even when auth is off (#692) and gates the changeme-default
+    # warning. Previously read only via os.getenv at validation time; now a
+    # tracked Settings field so it is introspectable + documented and can be set
+    # in the ConfigMap alongside the other posture keys (#697). Env: RENFIELD_ENV.
+    renfield_env: str = "development"
+
     # === Authentication ===
     # Set to True to enable authentication (default: False for development)
     auth_enabled: bool = False
@@ -1133,7 +1143,7 @@ class Settings(BaseSettings):
         `"staging"`, or `"prod"`). Tests can opt in to the warning path
         by setting RENFIELD_ENV explicitly.
         """
-        env = os.getenv("RENFIELD_ENV", "development").lower()
+        env = self.renfield_env.lower()
         if env in {"development", "dev", "test"}:
             return self
 
@@ -1180,7 +1190,7 @@ class Settings(BaseSettings):
         arms once an operator declares production, at which point a strong
         SECRET_KEY must already be provisioned.
         """
-        env = os.getenv("RENFIELD_ENV", "development").lower()
+        env = self.renfield_env.lower()
         is_real_env = env in {"production", "prod", "staging"}
         if not (self.auth_enabled or is_real_env):
             return self
@@ -1207,6 +1217,57 @@ class Settings(BaseSettings):
                 f"RENFIELD_ENV={env!r}) — refusing to start. A weak/known key lets an "
                 "attacker forge JWTs. Set SECRET_KEY to a strong random value "
                 "(>= 32 random chars, env var or Docker secret)."
+            )
+        return self
+
+    @model_validator(mode="after")
+    def assert_auth_config_consistency(self) -> "Settings":
+        """Security (#697): fail loud on an incoherent auth posture, warn on soft
+        misconfigurations. Prevents a deploy that *looks* authenticated but has a
+        security control silently disabled.
+
+        HARD FAIL — ``AUTH_ENABLED=true`` with ``WS_AUTH_ENABLED=false``. HTTP
+        routes would authenticate, but the WebSocket surface (the primary chat
+        channel) would not: ``authenticate_websocket`` short-circuits to
+        auth-skipped, so no ``user_id`` resolves and the WS chat-session
+        ownership check (#657) becomes a no-op — any LAN client could then
+        register against another user's conversation. Multi-user auth REQUIRES
+        both flags on together; refuse to boot on the mismatch rather than run
+        with a phantom control.
+
+        WARN (not fatal — may be intentional in some deploys):
+        - ``AUTH_ENABLED=true`` with wildcard ``CORS_ORIGINS='*'`` — with Bearer
+          tokens this is less severe than with cookies, but a real deployment
+          should pin origins.
+        - A real ``RENFIELD_ENV`` (production/prod/staging) with
+          ``ALLOW_REGISTRATION=true`` — open self-registration in a multi-user
+          deployment lets anyone mint a Gast account.
+
+        The current single-user posture (auth off) trips nothing: every check is
+        gated on ``auth_enabled`` (or a production env), so an all-false config
+        is byte-identical.
+        """
+        if self.auth_enabled and not self.ws_auth_enabled:
+            raise ValueError(
+                "Inconsistent auth config: AUTH_ENABLED=true but "
+                "WS_AUTH_ENABLED=false — the WebSocket surface would be "
+                "unauthenticated and the WS chat-session ownership check (#657) "
+                "silently disabled. Set WS_AUTH_ENABLED=true when enabling auth "
+                "(refusing to start with a phantom security control)."
+            )
+
+        if self.auth_enabled and self.cors_origins.strip() == "*":
+            logger.warning(
+                "⚠ AUTH_ENABLED=true with CORS_ORIGINS='*' (wildcard). A real "
+                "deployment should pin CORS_ORIGINS to the frontend origin(s)."
+            )
+
+        env = self.renfield_env.lower()
+        if env in {"production", "prod", "staging"} and self.allow_registration:
+            logger.warning(
+                f"⚠ RENFIELD_ENV={self.renfield_env!r} with ALLOW_REGISTRATION=true "
+                "— open self-registration lets anyone create an account. Set "
+                "ALLOW_REGISTRATION=false unless self-signup is intended."
             )
         return self
 

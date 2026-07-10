@@ -1322,6 +1322,20 @@ EMBEDDING_DIMENSION=768
 
 ---
 
+### Deployment-Posture (`RENFIELD_ENV`)
+
+```bash
+# Deployment-Marker: development (Default) | dev | test | staging | production | prod
+RENFIELD_ENV=development
+```
+
+Jetzt ein **getracktes Settings-Feld** (#697, vorher nur via `os.getenv` gelesen), damit es introspektierbar/dokumentiert ist und in der ConfigMap neben den übrigen Posture-Keys gesetzt werden kann. Ein Real-Deployment-Wert (`production`/`prod`/`staging`) **scharfschaltet die JWT-Key-Boot-Sperre** auch bei ausgeschalteter Auth (#692) — vorher einen starken `SECRET_KEY` (>= 32 Zeichen) bereitstellen, sonst bootet das Backend nicht.
+
+**Konsistenz-Assertion (#697, `assert_auth_config_consistency`):**
+- **HARTER Boot-Fehler:** `AUTH_ENABLED=true` mit `WS_AUTH_ENABLED=false` — der WebSocket-Chat wäre unauthentifiziert und der WS-Session-Ownership-Check (#657) still deaktiviert. Beide Flags müssen gemeinsam an.
+- **WARN (nicht fatal):** `AUTH_ENABLED=true` mit `CORS_ORIGINS='*'`; `RENFIELD_ENV=production` mit `ALLOW_REGISTRATION=true`.
+- Bei der aktuellen Auth-off-Posture (alles false) greift nichts — byte-identisch.
+
 ### Authentication (RPBAC)
 
 ```bash

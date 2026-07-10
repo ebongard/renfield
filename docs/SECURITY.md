@@ -162,6 +162,17 @@ Labels are low-cardinality strings — never the username or token.
 
 A user with `must_change_password=true` (e.g. a bootstrapped admin with an auto-generated password) is enforced server-side in `get_current_user` (#694): every authenticated route returns `403 password_change_required` **except** an allowlist (`/api/auth/change-password`, `/api/auth/me`, `/api/auth/status`, `/api/auth/logout`), until the password is rotated via `/api/auth/change-password` (which clears the flag). Enforcement uses DB truth, so a token minted before the flag was set is still blocked. The `/auth/login` response carries `must_change_password` so the client can redirect straight to the change form.
 
+## Auth Config Posture
+
+The deployment posture is set **explicitly** in the ConfigMap (`k8s/configmap.yaml`) rather than left to code defaults, so the running state is auditable (#697): `RENFIELD_ENV`, `AUTH_ENABLED`, `WS_AUTH_ENABLED`, `ALLOW_REGISTRATION`, `CORS_ORIGINS`, `TRUSTED_PROXIES`, `API_RATE_LIMIT_STORAGE_URI`. Current values are the deliberate single-user, auth-off LAN posture (byte-identical to the code defaults).
+
+A startup validator (`assert_auth_config_consistency` in `utils/config.py`) **refuses to boot** on an incoherent combo:
+
+- **Hard fail:** `AUTH_ENABLED=true` with `WS_AUTH_ENABLED=false` — the WebSocket chat surface would be unauthenticated and the WS session-ownership check (#657) silently disabled. The two flags must be enabled together.
+- **Warn:** `AUTH_ENABLED=true` with wildcard `CORS_ORIGINS='*'`; a production `RENFIELD_ENV` with `ALLOW_REGISTRATION=true`.
+
+`RENFIELD_ENV` is a tracked setting; a real-deployment value (production/prod/staging) also arms the insecure-`SECRET_KEY` boot guard (#692), so a strong key must be provisioned before the auth-on cutover. The ConfigMap carries a commented **AUTH-ON CUTOVER** checklist of the values to flip together.
+
 ## Circuit Breaker
 
 The circuit breaker protects against cascading failures when the LLM or agent loop is unavailable.

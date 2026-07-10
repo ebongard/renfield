@@ -6,6 +6,32 @@ metadata:
   labels:
     app.kubernetes.io/part-of: renfield
 data:
+  # === Auth / deployment posture (#697) ===
+  # These are set EXPLICITLY (not left to code defaults) so the running posture
+  # is auditable from the ConfigMap. Current values = the deliberate single-user,
+  # auth-off LAN posture — byte-identical to the code defaults, so setting them
+  # here changes nothing today. The consistency validator in utils/config.py
+  # (assert_auth_config_consistency) hard-fails on an incoherent combo.
+  RENFIELD_ENV: "development"       # NOT "production" — that arms the insecure-JWT-key boot guard; flip only with a strong SECRET_KEY (see cutover below)
+  AUTH_ENABLED: "false"            # single-user LAN; the whole multi-user surface is gated on this
+  WS_AUTH_ENABLED: "false"        # MUST flip to "true" together with AUTH_ENABLED (validator enforces)
+  ALLOW_REGISTRATION: "true"       # harmless while auth is off; set "false" at cutover unless self-signup is wanted
+  CORS_ORIGINS: "*"               # pin to the frontend origin at cutover
+  TRUSTED_PROXIES: ""             # empty = legacy XFF[0] (per-client keying behind Traefik); set to the Traefik pod CIDR for the spoof-resistant walk (#693)
+  API_RATE_LIMIT_STORAGE_URI: "memory://"   # per-pod; set to "redis://redis:6379" for shared per-cluster limiting when >1 backend pod runs
+  #
+  # ── AUTH-ON CUTOVER (xidra multi-user) — do NOT flip piecemeal ──────────────
+  # Provision a strong SECRET_KEY (>= 32 random chars) in the renfield-secrets
+  # Secret FIRST, then set together:
+  #   RENFIELD_ENV: "production"      (arms the SECRET_KEY boot guard — #692)
+  #   AUTH_ENABLED: "true"
+  #   WS_AUTH_ENABLED: "true"         (required with AUTH_ENABLED — validator hard-fails otherwise)
+  #   ALLOW_REGISTRATION: "false"
+  #   CORS_ORIGINS: "https://renfield.local"   (or the real origin)
+  #   TRUSTED_PROXIES: "<Traefik pod CIDR>"    (verify live: kubectl get pod -n kube-system -l app.kubernetes.io/name=traefik -o wide)
+  #   API_RATE_LIMIT_STORAGE_URI: "redis://redis:6379"
+  # ────────────────────────────────────────────────────────────────────────────
+
   # Infra endpoints (cluster-internal DNS)
   DATABASE_URL: "postgresql+asyncpg://renfield:__PG_PASSWORD__@postgres:5432/renfield"
   REDIS_URL: "redis://redis:6379"

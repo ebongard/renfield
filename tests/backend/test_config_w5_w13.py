@@ -125,11 +125,18 @@ def test_w13_warns_in_production_when_postgres_password_is_changeme(monkeypatch)
     # explicitly to their class-level placeholder defaults (read live from
     # model_fields so this never drifts from the real default strings).
     placeholders = {}
-    for field_name in ("postgres_password", "secret_key", "default_admin_password"):
+    for field_name in ("postgres_password", "default_admin_password"):
         default = Settings.model_fields[field_name].default
         placeholders[field_name] = (
             default.get_secret_value() if hasattr(default, "get_secret_value") else default
         )
+    # secret_key must be STRONG here: #692's fail_closed_on_insecure_jwt_key
+    # HARD-RAISES on a production env + placeholder secret_key, which would
+    # propagate out of Settings(...) before this test can assert the W13 warn.
+    # The two guards share the production trigger; W13 is about the OTHER
+    # placeholder secrets (postgres_password / default_admin_password), so keep
+    # those placeholder and clear the JWT-key guard with a strong key.
+    placeholders["secret_key"] = "x" * 48
 
     captured = io.StringIO()
     sink_id = logger.add(captured, level="WARNING", format="{level}|{message}")
