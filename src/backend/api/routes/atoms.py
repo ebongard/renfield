@@ -190,16 +190,19 @@ async def query_atoms(
     """
     Query atoms accessible to the current user.
 
-    For now this returns un-filtered top-k matches across all sources;
-    the per-source circle_tier filter is wired up in Lane C alongside the
-    legacy-consumer rewrite. Until then `q` is passed through to the
-    Lane-A retrieval modules and results come back un-circle-filtered.
+    Results ARE circle-filtered (Lane C is wired): ``asker_id`` is passed to
+    every source (RAG / KG / memory / lexical / document-fact), each of which
+    constrains rows through ``services/circle_sql.py`` — owner OR public-tier OR
+    explicit grant OR tier-reach. So the caller only ever sees atoms it may
+    access; no source returns un-circle-filtered chunks (#695).
     """
     if top_k < 1 or top_k > 100:
         raise HTTPException(status_code=400, detail="top_k must be between 1 and 100")
 
     store = PolymorphicAtomStore(db)
-    # max_visible_tier=4 (public) until per-owner filtering is wired in Lane C.
+    # asker_id drives the actual per-source circle filter. max_visible_tier is
+    # currently not consulted by query() (the reach is computed per-owner inside
+    # each source's circle_sql clause); it is passed for signature-compat only.
     matches = await store.query(
         q,
         asker_id=current_user.id,

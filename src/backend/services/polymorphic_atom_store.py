@@ -70,17 +70,19 @@ class PolymorphicAtomStore:
         """
         Query each source in parallel; merge with RRF; return top_k.
 
-        max_visible_tier is the integer tier index the asker can reach in
-        the relevant atom owner's circles. For multi-owner queries (the
-        common case), this is computed per-source via CircleResolver inside
-        each retrieval module's filter clause.
+        Circle filtering (Lane C) is applied per source: rag / kg / memory /
+        lexical / document-fact retrieval all receive ``asker_id`` and constrain
+        results via ``circle_sql`` (owner + public-tier + explicit grants + tier
+        reach), which computes the asker's reach per-owner. A ``None`` asker
+        reduces every source to public-tier only. (RAG search previously omitted
+        ``user_id`` here and returned unfiltered chunks — fixed in #695 so no
+        source bypasses the circle filter.)
 
-        Circle filtering (Lane C) is applied per source: rag / kg / memory
-        retrieval all receive ``asker_id`` and constrain results via
-        ``circle_sql`` (owner + public-tier + explicit grants + tier reach).
-        A ``None`` asker reduces every source to public-tier only. (RAG search
-        previously omitted ``user_id`` here and returned unfiltered chunks —
-        fixed in #695 so no source bypasses the circle filter.)
+        ``max_visible_tier`` is currently NOT consulted: the effective reach is
+        derived per-owner inside each source's ``circle_sql`` clause from
+        ``asker_id``, not from a single scalar tier. The parameter is retained
+        for call-site compatibility (route + federation responder) and may back
+        a future global tier ceiling; do not read it as the active filter.
         """
         from services.document_fact_retrieval import DocumentFactRetrieval
         from services.kg_retrieval import KGRetrieval
