@@ -15,7 +15,7 @@ import ArtifactRenderer from '../../components/chat/artifacts/ArtifactRenderer';
 import { useFeatureFlags } from '../../api/resources/brain';
 import { useChatContext } from './context/ChatContext';
 import { CitationChip } from '../../components/wissensbasis/CitationChip';
-import { useTraceQuery, type TraceEntity } from '../../api/resources/wissensbasis';
+import { useTraceQuery, useWissensbasisAvailable, type TraceEntity } from '../../api/resources/wissensbasis';
 
 const IMAGE_URL_RE = /https?:\/\/[^\s)]+?\/Items\/[^\s)]+?\/Images\/[^\s)]+|https?:\/\/[^\s)]+\.(?:jpg|jpeg|png|gif|webp)(?:\?[^\s)]*)?/i;
 
@@ -173,8 +173,12 @@ export default function ChatMessages() {
   // wrap entity mentions in the assistant prose with CitationChips.
   // The trace is rebuilt server-side on every agent turn (drained from
   // the wb_annotations accumulator) so the entity list stays current.
-  // useTraceQuery gates on sessionId — null/missing returns empty data.
-  const traceQ = useTraceQuery(sessionId);
+  // Gate on Reva-Wissensbasis availability: /trace is a Reva-only route that
+  // 404s in standalone Renfield, so skip the request entirely when the feature
+  // is off (avoids console 404 noise). CitationChips only exist with Reva
+  // anyway. useTraceQuery also gates on sessionId (null → empty data).
+  const wissensbasisAvailable = useWissensbasisAvailable();
+  const traceQ = useTraceQuery(sessionId, wissensbasisAvailable === true);
   const chipEntities = useMemo(
     () => traceQ.data?.trace?.entities ?? [],
     [traceQ.data?.trace?.entities],
