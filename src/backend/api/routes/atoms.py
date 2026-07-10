@@ -51,6 +51,44 @@ router = APIRouter()
 
 
 # =============================================================================
+# Ownership guard (#445)
+# =============================================================================
+
+async def load_owned_atom(
+    db: AsyncSession,
+    atom_id: str,
+    user: User,
+    *,
+    for_update: bool = False,
+    not_found_detail: str = "Atom not found",
+) -> AtomModel:
+    """Load an ``atoms`` row and assert ``user`` owns it, else raise 404.
+
+    The single ownership chokepoint for atom-mutating routes (#445). Every
+    write/tier route that reaches ``AtomService`` must resolve its target
+    through this helper so a new route cannot forget the check — the authz
+    lives in one reviewed place instead of being copy-pasted per route.
+
+    Returns a **uniform 404** (never 403) for both "no such atom" and "not
+    yours", so an attacker cannot use the response to probe which atom_ids
+    exist (existence-oracle defense — matches the pre-existing per-route
+    behavior this consolidates).
+
+    ``for_update=True`` issues ``SELECT ... FOR UPDATE`` so the row is locked
+    from this check through the caller's subsequent write, closing the
+    owner-check→mutate TOCTOU (per PR #402 review SHOULD-FIX #6). Use it on any
+    route that mutates the atom after loading it.
+    """
+    stmt = select(AtomModel).where(AtomModel.atom_id == atom_id)
+    if for_update:
+        stmt = stmt.with_for_update()
+    atom_orm = (await db.execute(stmt)).scalar_one_or_none()
+    if atom_orm is None or atom_orm.owner_user_id != user.id:
+        raise HTTPException(status_code=404, detail=not_found_detail)
+    return atom_orm
+
+
+# =============================================================================
 # Schemas
 # =============================================================================
 
@@ -496,12 +534,12 @@ async def reset_fact_tier(
     )).scalar_one_or_none()
     if fact is None:
         raise HTTPException(status_code=404, detail="Fact not found")
-    # Lock the fact's atom + verify ownership (mirrors the tier-PATCH route).
-    atom_orm = (await db.execute(
-        select(AtomModel).where(AtomModel.atom_id == fact.atom_id).with_for_update()
-    )).scalar_one_or_none()
-    if atom_orm is None or atom_orm.owner_user_id != current_user.id:
-        raise HTTPException(status_code=404, detail="Fact not found")
+    # Lock the fact's atom + verify ownership (shared #445 guard); "Fact not
+    # found" keeps the fact-centric existence-oracle defense.
+    await load_owned_atom(
+        db, fact.atom_id, current_user,
+        for_update=True, not_found_detail="Fact not found",
+    )
 
     new_tier = await AtomService(db).reset_fact_tier(fact_id)
     return FactTierResetResponse(
@@ -546,16 +584,10 @@ async def update_atom_tier(
     until the transaction commits, eliminating the TOCTOU between the
     owner check and the update_tier call (per PR #402 review SHOULD-FIX #6).
     """
-    # SELECT FOR UPDATE locks the row until commit; concurrent deletes/owner
-    # changes block until we're done.
-    atom_orm = (await db.execute(
-        select(AtomModel).where(AtomModel.atom_id == atom_id).with_for_update()
-    )).scalar_one_or_none()
-    if atom_orm is None:
-        raise HTTPException(status_code=404, detail="Atom not found")
-    if atom_orm.owner_user_id != current_user.id:
-        # Uniform 404 to avoid leaking owner identity.
-        raise HTTPException(status_code=404, detail="Atom not found")
+    # SELECT FOR UPDATE locks the row from the ownership check through the
+    # update_tier write (shared #445 guard); concurrent deletes/owner changes
+    # block until we're done.
+    await load_owned_atom(db, atom_id, current_user, for_update=True)
 
     service = AtomService(db)
     await service.update_tier(atom_id, body.policy)
@@ -578,13 +610,10 @@ async def delete_atom(
     Soft-delete an atom (marks source row inactive). Owner-only.
     The atoms row stays for audit trail.
     """
-    atom_orm = (await db.execute(
-        select(AtomModel).where(AtomModel.atom_id == atom_id)
-    )).scalar_one_or_none()
-    if atom_orm is None:
-        raise HTTPException(status_code=404, detail="Atom not found")
-    if atom_orm.owner_user_id != current_user.id:
-        raise HTTPException(status_code=404, detail="Atom not found")
+    # Shared #445 guard. for_update locks the row through the soft-delete write
+    # (the prior version did a plain SELECT, leaving a small owner-check→delete
+    # TOCTOU; the lock closes it — same hardening as the tier PATCH).
+    await load_owned_atom(db, atom_id, current_user, for_update=True)
 
     service = AtomService(db)
     await service.soft_delete(atom_id)

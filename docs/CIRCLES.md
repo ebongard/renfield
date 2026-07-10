@@ -148,9 +148,14 @@ Shared Komponenten: `TierBadge` + `TierPicker` + `FactProvenance` (✓ determini
 
 ---
 
+## Object-Level Authorization (Owner-Guard, #445)
+
+Circle-Reach regelt *Lesen*. **Schreiben/Ändern eines Atoms ist strikt Owner-only** und wird an *einer* Stelle erzwungen: dem Shared-Helper `load_owned_atom(db, atom_id, user, *, for_update, not_found_detail)` in `api/routes/atoms.py`. Jede atom-mutierende Route (`PATCH /api/atoms/{id}/tier`, `DELETE /api/atoms/{id}`, Fakt-Tier-Reset) löst ihr Ziel darüber auf, statt den Owner-Check pro Route zu kopieren — so kann eine neue Schreib-Route den Check nicht vergessen. Der Helper liefert ein **uniformes 404** (nie 403) für „existiert nicht" *und* „gehört dir nicht" (Existenz-Oracle-Abwehr) und sperrt die Zeile per `SELECT … FOR UPDATE` von der Owner-Prüfung bis zum Schreiben (TOCTOU-Schutz). `upsert_atom`/`create_with_source` sind interne Schreib-Primitive ohne User-facing Route; ihr Owner stammt aus dem authentifizierten Ingest-Kontext.
+
 ## Anti-Patterns
 
 - **Direkter INSERT in Source-Tabellen** — umgeht AtomService, produziert inkonsistente denormalisierte Spalten. Review blockiert.
+- **Atom-Schreib-Route ohne `load_owned_atom`** — der Owner-Check gehört an den geteilten Chokepoint, nicht pro Route dupliziert (#445).
 - **Retrieval mit `user_id=None` im auth-enabled Modus** — reduziert die Ergebnisse still auf Tier 4 alleine. Jede `rag.search()`-Call-Site muss den Asker übergeben.
 - **Tier auf Source-Tabelle statt über AtomService ändern** — die `atoms.policy`-Quelle bleibt dann falsch.
 - **Circles mit RPBAC verwechseln** — RPBAC (`docs/ACCESS_CONTROL.md`) ist eine Schicht darunter (*kann der Nutzer überhaupt mit Renfield sprechen?*); Circles ist darüber (*wessen Wissen bekommt er zu sehen?*).
