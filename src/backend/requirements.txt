@@ -74,7 +74,7 @@ python-dotenv>=1.0.0
 pydantic>=2.9.0
 pydantic-settings>=2.1.0
 email-validator>=2.1.0
-python-jose[cryptography]>=3.3.0
+python-jose[cryptography]>=3.3.0,<4     # JWT verify — upper-bound the major (supply-chain: no silent 4.x)
 passlib[bcrypt]>=1.7.4
 bcrypt==4.0.1  # Pin to avoid compatibility issues with passlib
 python-dateutil>=2.8.2
@@ -85,14 +85,19 @@ mcp>=1.26.0
 jsonschema>=4.21.0            # JSON Schema validation for MCP tool inputs
 
 # MCP Servers (standalone packages)
-renfield-mcp-weather @ https://github.com/ebongard/renfield_mcp_weather/archive/refs/heads/main.tar.gz
+# SUPPLY-CHAIN (#684): pinned to immutable commit SHAs, NOT moving heads/main —
+# a force-push/compromise upstream must not silently land in the backend image
+# (these run in-process). To update one: `git ls-remote https://github.com/
+# ebongard/<repo>.git HEAD` and swap the SHA below (reviewed, not automatic).
+# SHAs pinned 2026-07-10 (= each repo's then-current main; no code change).
+renfield-mcp-weather @ https://github.com/ebongard/renfield_mcp_weather/archive/e833caa77e3a13b5ca0a2095f56e3521d74ac1da.tar.gz
 renfield-mcp-paperless @ https://github.com/ebongard/renfield-mcp-paperless/archive/refs/tags/v1.8.0.tar.gz
-renfield-mcp-mail @ https://github.com/ebongard/renfield-mcp-mail/archive/refs/heads/main.tar.gz
+renfield-mcp-mail @ https://github.com/ebongard/renfield-mcp-mail/archive/f3c6729330a406b7e7e654ef0538add2d5885db5.tar.gz
 aiosmtplib>=3.0                  # Required by renfield-mcp-mail (not auto-resolved from archive installs)
-renfield-mcp-jellyfin @ https://github.com/ebongard/renfield-mcp-jellyfin/archive/refs/heads/main.tar.gz
-renfield-mcp-tunein @ https://github.com/ebongard/renfield-mcp-tunein/archive/refs/heads/main.tar.gz
-renfield-mcp-calendar @ https://github.com/ebongard/renfield-mcp-calendar/archive/refs/heads/main.tar.gz
-renfield-mcp-tracking @ https://github.com/ebongard/renfield-mcp-tracking/archive/refs/heads/main.tar.gz
+renfield-mcp-jellyfin @ https://github.com/ebongard/renfield-mcp-jellyfin/archive/04200885102351bfeed4d35e3378540e4ffa8e6a.tar.gz
+renfield-mcp-tunein @ https://github.com/ebongard/renfield-mcp-tunein/archive/fa0a9295d9c7dc1217d029f7176f892c6662e24e.tar.gz
+renfield-mcp-calendar @ https://github.com/ebongard/renfield-mcp-calendar/archive/9d4064e917b564eb50f450e33be276781c99dc74.tar.gz
+renfield-mcp-tracking @ https://github.com/ebongard/renfield-mcp-tracking/archive/4f39df231e4855ff978cb2de5f772c68fdb8de56.tar.gz
 # renfield-mcp-dlna moved to a DEDICATED image (registry/renfield/dlna-mcp, see
 # renfield-mcp-dlna/Dockerfile). The backend reaches dlna over HTTP only (never
 # imports it), so the package + its deps (async-upnp-client, python-didl-lite)
