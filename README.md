@@ -249,6 +249,9 @@ Renfield is an independent open-source project. It is not affiliated with, endor
 - [n8n](https://n8n.io/) — Workflow automation
 - [SearXNG](https://docs.searxng.org/) — Metasearch engine
 - [OpenWakeWord](https://github.com/dscripka/openWakeWord) — Wake word detection
+- [Bleak](https://github.com/hbldh/bleak) — Cross-platform BLE scanning (satellite presence)
+- [ESPresense](https://github.com/ESPresense/ESPresense) — Inspiration for the asymmetric RSSI room-arbitration approach
+- [Bermuda](https://github.com/agittins/bermuda) — Inspiration for BLE IRK/RPA identity resolution (Home Assistant Private BLE Device)
 
 ## License
 

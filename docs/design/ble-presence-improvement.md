@@ -41,7 +41,16 @@ stronger BT radio than the Pi-Zero fleet — and a good primary anchor.
   path when `continuous: false` (default → fleet byte-identical).
 - Config plumbed through `BLEConfig`, `load_config`, the Ansible template +
   group_vars (`ble_continuous` etc.).
-- **Latency** also reduced independently by `scan_interval 30→3` on the A733.
+- **Latency** reduced by `scan_interval 30→3`. **Fleet-equalised 2026-07-10**
+  (`group_vars`: `ble_scan_interval 30→3` + `ble_continuous true` for ALL sats;
+  was only the A733/Esszimmer before). **The report loop `sleep(scan_interval)`
+  gates the report cadence in BOTH modes** — continuous only steadies RSSI (EWMA),
+  it does NOT lower the report rate. So the 3s-Esszimmer / 30s-Pi split meant a
+  10× report asymmetry that biased room-arbitration toward the chattier satellite
+  (measured root cause of the "phone in Wohnzimmer shows Esszimmer" mislocation;
+  diagnosed via the read-only `GET /api/presence/debug/sightings` + an RSSI-over-
+  time chart). Equalising cadence fixed it; continuous makes the 3s poll near-free
+  (in-memory snapshot, no extra radio bursts — verified on Pi Zero 2 W BT 4.2).
 
 ### Phase 1b — AdvertisementMonitor passive offload  ⏳ DEFERRED
 Use BlueZ passive scanning (`scanning_mode="passive"` + `or_patterns`, kernel

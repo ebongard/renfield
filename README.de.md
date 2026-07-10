@@ -461,6 +461,9 @@ curl -X POST "http://localhost:8000/admin/reembed"
 - [n8n](https://n8n.io/) — Workflow Automation
 - [SearXNG](https://docs.searxng.org/) — Metasearch Engine
 - [OpenWakeWord](https://github.com/dscripka/openWakeWord) — Wake Word Detection
+- [Bleak](https://github.com/hbldh/bleak) — Plattformübergreifendes BLE-Scanning (Satelliten-Präsenz)
+- [ESPresense](https://github.com/ESPresense/ESPresense) — Vorbild für die asymmetrische RSSI-Raumzuordnung
+- [Bermuda](https://github.com/agittins/bermuda) — Vorbild für BLE-IRK/RPA-Identitätsauflösung (Home Assistant Private BLE Device)
 
 ## Lizenz
 
