@@ -63,6 +63,10 @@ pids/
 # Private documents (not for repo)
 docs/private/
 
+# xidra business instance — PRIVATE infra manifests/config, NEVER public GitHub
+k8s/xidra/
+config/xidra/
+
 # Secrets (should use .env)
 *.pem
 *.key
