@@ -128,6 +128,15 @@ For K8s this means:
 
 A follow-up that consolidates all 41 migrations into a single clean baseline is tracked separately.
 
+> **Auth-on instances (`AUTH_ENABLED=true` / `RENFIELD_ENV=production`):** the v2.20.0 boot
+> guard (`fail_closed_on_insecure_jwt_key`) validates `SECRET_KEY` at `Settings()` init, which
+> fires for *every* backend-image workload — not just the API, but the `document-worker` and the
+> `alembic-upgrade` Job (they import the config). All three manifests inject `secret-key` from
+> `renfield-secrets` (`optional: true` → inject-if-present, so auth-off installs are unaffected).
+> Any new backend-image Job/CronJob must do the same or it crashes with *"SECRET_KEY is insecure:
+> still the placeholder default"*. Provision a strong `secret-key` (≥32 random chars) **before**
+> arming `RENFIELD_ENV=production`, and flip `AUTH_ENABLED` + `WS_AUTH_ENABLED` together.
+
 ## Secrets
 
 The `renfield-secrets` Secret holds:
