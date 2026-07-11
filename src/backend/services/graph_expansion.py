@@ -38,22 +38,30 @@ from services.atom_types import Atom, AtomMatch
 from utils.config import settings
 
 
-def _entity_filter(asker_id: int | None) -> tuple[str, dict[str, Any]]:
-    """Circle WHERE-fragment for kg_entities alias ``e`` (mirrors kg_retrieval)."""
-    if not settings.auth_enabled:
+def _entity_filter(
+    asker_id: int | None, enforce_circles: bool = False
+) -> tuple[str, dict[str, Any]]:
+    """Circle WHERE-fragment for kg_entities alias ``e`` (mirrors kg_retrieval).
+
+    ``enforce_circles`` (federation): keep the peer-scoped circle filter active
+    even with auth off (drops the owner + explicit-grant branches).
+    """
+    if not settings.auth_enabled and not enforce_circles:
         return ("", {})
     if asker_id is None:
         return ("AND e.circle_tier = :pub_tier", {"pub_tier": TIER_PUBLIC})
     from services.circle_sql import kg_entities_circles_filter
-    clause, params = kg_entities_circles_filter(asker_id, alias="e")
+    clause, params = kg_entities_circles_filter(asker_id, alias="e", peer_scoped=enforce_circles)
     return (f"AND {clause}", params)
 
 
-async def _accessible(db: AsyncSession, ids: list[int], asker_id: int | None) -> dict[int, dict[str, Any]]:
+async def _accessible(
+    db: AsyncSession, ids: list[int], asker_id: int | None, enforce_circles: bool = False
+) -> dict[int, dict[str, Any]]:
     """Of ``ids``, the live canonical entities the asker may see (kg_node shape)."""
     if not ids:
         return {}
-    efilter, eparams = _entity_filter(asker_id)
+    efilter, eparams = _entity_filter(asker_id, enforce_circles)
     rows = (await db.execute(text(f"""
         SELECT e.id, e.name, e.entity_type, e.circle_tier
         FROM kg_entities e
@@ -118,9 +126,14 @@ async def expand_fused(
     max_pivots: int = 8,
     max_hops: int = 2,
     max_expanded: int = 15,
+    enforce_circles: bool = False,
 ) -> list[AtomMatch]:
     """Post-RRF expansion. Returns NEW kg_node/kg_edge atoms (decay-scored,
-    provenance-marked) to append to ``merged``. [] if flag off / nothing to do."""
+    provenance-marked) to append to ``merged``. [] if flag off / nothing to do.
+
+    ``enforce_circles`` (federation): every hop's circle filter stays peer-scoped
+    even with auth off — otherwise expansion re-opens the leak the fused clause
+    closed."""
     if not settings.graph_expansion_enabled:
         return []
 
@@ -158,7 +171,7 @@ async def expand_fused(
                     best[far] = max(best.get(far, 0.0), origin[near])
         if not best:
             break
-        acc = await _accessible(db, list(best), asker_id)   # circle filter at THIS hop
+        acc = await _accessible(db, list(best), asker_id, enforce_circles)   # circle filter at THIS hop
         for eid, ent in acc.items():
             seen.add(eid)
             ent["_score"] = best[eid] / (1 + hop)
@@ -187,7 +200,7 @@ async def expand_fused(
     names = {e["id"]: e.get("name", "") for e in top}
     pivot_only = [eid for eid, _ in pivots if eid not in names]  # pivot names not in `accessible`
     if pivot_only:
-        for eid, ent in (await _accessible(db, pivot_only, asker_id)).items():
+        for eid, ent in (await _accessible(db, pivot_only, asker_id, enforce_circles)).items():
             names[eid] = ent.get("name", "")
     for r in await _edges_within(db, list(node_ids)):
         if r["subject_id"] in names and r["object_id"] in names:

@@ -350,6 +350,7 @@ class SkillService:
         *,
         top_k: int | None = None,
         threshold: float | None = None,
+        enforce_circles: bool = False,
     ) -> list[dict]:
         """Return top-K active skills closest to the message.
 
@@ -357,8 +358,11 @@ class SkillService:
           - asker's own skills (user_id = asker_id), OR
           - public seed skills (user_id IS NULL AND circle_tier = 4)
 
-        AUTH_ENABLED=false short-circuits to "all active skills" — same
-        single-user fallback the other retrieval modules use.
+        AUTH_ENABLED=false short-circuits to "all active skills" (via the
+        ``:asker IS NULL`` arm) — same single-user fallback the other
+        retrieval modules use — UNLESS ``enforce_circles`` (federation), which
+        drops BOTH the null-asker arm and the owner-equality arm (id-collision
+        safe) and keeps only the public-seed + tier-membership arms.
 
         v1 does NOT yet honor tier-reach via circle memberships for
         cross-user skills. That's a follow-up; today, skills owned by
@@ -372,13 +376,14 @@ class SkillService:
             threshold = settings.skill_inject_similarity_threshold
 
         # Defense-in-depth: a None asker only collapses the filter to
-        # "everything visible" when auth is OFF. With auth ON, a None
-        # asker means a code-path bug (a caller forgot to thread user_id);
-        # rather than leak every user's tier-0 self-skills, return [].
-        if asker_id is None and settings.auth_enabled:
+        # "everything visible" when auth is OFF. With auth ON — or on a
+        # federation (``enforce_circles``) query — a None asker means a
+        # code-path bug (a caller forgot to thread user_id); rather than
+        # leak every user's tier-0 self-skills, return [].
+        if asker_id is None and (settings.auth_enabled or enforce_circles):
             logger.warning(
                 "🧠 SkillService.find_similar called with asker_id=None while "
-                "AUTH_ENABLED=true — returning [] to avoid cross-user leak"
+                "AUTH_ENABLED=true or enforce_circles — returning [] to avoid leak"
             )
             return []
 
@@ -429,6 +434,38 @@ class SkillService:
         # a wrong-width vector aborts at the SELECT instead of casting
         # to a width that misses the index entirely.
         dim = EMBEDDING_DIMENSION
+
+        # Visibility arms. `enforce_circles` (federation) DROPS the null-asker
+        # bypass arm AND the `user_id = :asker` owner arm — both are id-collision
+        # sinks for a peer asker (see circle_sql peer_scoped rationale). The
+        # public-seed and tier-membership arms are collision-safe and kept.
+        seed_arm = "(user_id IS NULL AND source = :seed AND circle_tier = 4)"
+        membership_arm = (
+            "EXISTS ("
+            "  SELECT 1 FROM circle_memberships cm"
+            "  WHERE cm.circle_owner_id = procedural_skills.user_id"
+            "    AND cm.member_user_id = CAST(:asker AS INTEGER)"
+            "    AND cm.dimension = 'tier'"
+            "    AND (cm.value::text)::int <= procedural_skills.circle_tier"
+            ")"
+        )
+        if enforce_circles:
+            visibility_sql = f"{seed_arm} OR {membership_arm}"
+        else:
+            # :asker is cast to integer at every site. asyncpg renders each
+            # named-param occurrence as a distinct positional placeholder and asks
+            # Postgres to infer its type; the bare ``$n IS NULL`` arm carries no
+            # type context, so the server aborts the Parse with "could not
+            # determine data type of parameter". An explicit CAST pins the type
+            # and is a no-op for the column-compared arms (user_id /
+            # member_user_id are both INTEGER).
+            visibility_sql = (
+                "CAST(:asker AS INTEGER) IS NULL "
+                "OR user_id = CAST(:asker AS INTEGER) "
+                f"OR {seed_arm} "
+                f"OR {membership_arm}"
+            )
+
         # ``:status_filter`` is a SQL ARRAY so the same statement can drive
         # both the production query (status='approved' only) and the shadow
         # query (relaxed to all statuses) — keeps the optimizer plan stable
@@ -441,26 +478,7 @@ class SkillService:
             FROM procedural_skills
             WHERE status = ANY(:status_filter)
               AND embedding IS NOT NULL
-              AND (
-                -- :asker is cast to integer at every site. asyncpg renders
-                -- each named-param occurrence as a distinct positional
-                -- placeholder and asks Postgres to infer its type; the bare
-                -- ``$n IS NULL`` arm carries no type context, so the server
-                -- aborts the Parse with "could not determine data type of
-                -- parameter". An explicit CAST pins the type and is a no-op
-                -- for the column-compared arms (user_id / member_user_id are
-                -- both INTEGER).
-                CAST(:asker AS INTEGER) IS NULL
-                OR user_id = CAST(:asker AS INTEGER)
-                OR (user_id IS NULL AND source = :seed AND circle_tier = 4)
-                OR EXISTS (
-                    SELECT 1 FROM circle_memberships cm
-                    WHERE cm.circle_owner_id = procedural_skills.user_id
-                      AND cm.member_user_id = CAST(:asker AS INTEGER)
-                      AND cm.dimension = 'tier'
-                      AND (cm.value::text)::int <= procedural_skills.circle_tier
-                )
-              )
+              AND ({visibility_sql})
             ORDER BY embedding::halfvec({dim}) <=> CAST(:embedding AS vector)::halfvec({dim})
             LIMIT :limit
         """)

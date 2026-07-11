@@ -473,6 +473,13 @@ class FederationQueryResponder:
             asker_id=pending.asker_local_user_id or 0,
             max_visible_tier=pending.max_visible_tier,
             top_k=10,
+            # FEDERATION: force peer-scoped circle enforcement regardless of
+            # settings.auth_enabled. A federated peer is never the local single
+            # user — without this, an auth-off (household) responder bypasses ALL
+            # circle filters and leaks its entire brain, and even with auth on the
+            # remote-supplied asker_id can collide with a local owner id. See
+            # PolymorphicAtomStore.query + circle_sql peer_scoped.
+            enforce_circles=True,
         )
 
     async def _synthesize(self, query: str, matches: list) -> str:

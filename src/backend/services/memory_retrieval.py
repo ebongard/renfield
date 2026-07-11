@@ -111,9 +111,13 @@ class MemoryRetrieval:
         limit: int | None = None,
         threshold: float | None = None,
         ranker: str = "default",
+        enforce_circles: bool = False,
     ) -> list[dict]:
         """
         Retrieve relevant memories using cosine similarity search.
+
+        ``enforce_circles`` (federation): force peer-scoped circle filtering even
+        when ``AUTH_ENABLED=false``. Default False = today's behavior.
 
         Lane C: `user_id` is the asker. Results include the asker's own
         memories + public-tier + explicit-grant + tier-membership reachable
@@ -144,7 +148,7 @@ class MemoryRetrieval:
             return []
 
         embedding_str = f"[{','.join(map(str, query_embedding))}]"
-        circles_clause, circles_params = self._memory_circles_filter(user_id)
+        circles_clause, circles_params = self._memory_circles_filter(user_id, enforce_circles)
 
         if ranker == "recency_aware":
             recall_k = max(int(settings.memory_retrieval_recall_k), int(limit))
@@ -236,7 +240,9 @@ class MemoryRetrieval:
             union_limit = min(max(int(settings.memory_retrieval_subject_union_limit), 1), limit)
             existing_ids = {m["id"] for m in memories}
             subject_hits = [
-                h for h in await self._subject_linked_memories(message, user_id, union_limit)
+                h for h in await self._subject_linked_memories(
+                    message, user_id, union_limit, enforce_circles=enforce_circles
+                )
                 if h["id"] not in existing_ids
             ]
             if subject_hits:
@@ -392,18 +398,20 @@ class MemoryRetrieval:
 
     async def _subject_linked_memories(
         self, message: str, user_id: int | None, limit: int,
+        enforce_circles: bool = False,
     ) -> list[dict]:
         """Deterministic memories whose subject entity is named in the query (Phase 3c).
 
         Closes the embedding-recall tail: a fact about a named subject is
         returned even when its wording is far from the query. Tombstone-safe
         (COALESCE(canonical_id, id) chase) and circle-filtered via the SAME
-        clause as the embedding path — the union must never bypass circle access.
+        clause as the embedding path — the union must never bypass circle access
+        (incl. the federation ``enforce_circles`` peer scope).
         """
         eids = await self._find_query_entities(message, user_id)
         if not eids:
             return []
-        clause, cparams = self._memory_circles_filter(user_id)
+        clause, cparams = self._memory_circles_filter(user_id, enforce_circles)
         sql = text(f"""
             SELECT id, content, category, importance, access_count, created_at, subject_name
             FROM conversation_memories m
@@ -468,20 +476,24 @@ class MemoryRetrieval:
         } for row in rows]
 
     @staticmethod
-    def _memory_circles_filter(user_id: int | None) -> tuple[str, dict[str, Any]]:
+    def _memory_circles_filter(
+        user_id: int | None, enforce_circles: bool = False
+    ) -> tuple[str, dict[str, Any]]:
         """
         Build the conversation_memories WHERE-fragment + bind params for circle access.
 
-        AUTH_ENABLED=false: full bypass (single-user mode sees everything).
+        AUTH_ENABLED=false: full bypass (single-user mode sees everything) — UNLESS
+        ``enforce_circles`` (federation), which keeps the peer-scoped filter active.
         Anonymous-but-auth-on (`user_id is None`): only public-tier memories.
-        Authenticated callers: standard 4-branch OR via
-        `circle_sql.conversation_memories_circles_filter`.
+        Authenticated callers (or ``enforce_circles``): via
+        `circle_sql.conversation_memories_circles_filter` (peer-scoped drops the
+        owner + explicit-grant branches).
         """
-        if not settings.auth_enabled:
+        if not settings.auth_enabled and not enforce_circles:
             return ("TRUE", {})
         if user_id is None:
             return ("m.circle_tier = :asker_id_pub", {"asker_id_pub": TIER_PUBLIC})
-        return conversation_memories_circles_filter(user_id, alias="m")
+        return conversation_memories_circles_filter(user_id, alias="m", peer_scoped=enforce_circles)
 
     async def retrieve_for_prompt(
         self,

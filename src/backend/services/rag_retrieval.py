@@ -108,9 +108,14 @@ class RAGRetrieval:
         knowledge_base_id: int | None = None,
         similarity_threshold: float | None = None,
         user_id: int | None = None,
+        enforce_circles: bool = False,
     ) -> list[dict[str, Any]]:
         """
         Search relevant chunks for a query.
+
+        ``enforce_circles`` (federation): force circle filtering even when
+        ``AUTH_ENABLED=false`` and scope it peer-safely (drops owner/grant
+        branches). Default False = today's behavior, byte-identical.
 
         Hybrid (dense + BM25 via RRF) by default; falls back to BM25-only
         when embedding generation fails. Optional rerank pass + either
@@ -135,7 +140,7 @@ class RAGRetrieval:
             query_embedding = None
 
         if query_embedding is None:
-            results = await self._search_bm25(query, top_k, knowledge_base_id, user_id)
+            results = await self._search_bm25(query, top_k, knowledge_base_id, user_id, enforce_circles)
             logger.info(
                 f"📚 RAG BM25-only Fallback: query='{query[:50]}', kb_id={knowledge_base_id}, "
                 f"found={len(results)}"
@@ -143,9 +148,11 @@ class RAGRetrieval:
         elif settings.rag_hybrid_enabled:
             candidate_k = top_k * 3
             dense_results = await self._search_dense(
-                query_embedding, candidate_k, knowledge_base_id, threshold, user_id
+                query_embedding, candidate_k, knowledge_base_id, threshold, user_id, enforce_circles
             )
-            bm25_results = await self._search_bm25(query, candidate_k, knowledge_base_id, user_id)
+            bm25_results = await self._search_bm25(
+                query, candidate_k, knowledge_base_id, user_id, enforce_circles
+            )
             results = self._reciprocal_rank_fusion(dense_results, bm25_results, top_k)
             logger.info(
                 f"📚 RAG Hybrid Search: query='{query[:50]}', kb_id={knowledge_base_id}, "
@@ -153,7 +160,7 @@ class RAGRetrieval:
             )
         else:
             results = await self._search_dense(
-                query_embedding, top_k, knowledge_base_id, threshold, user_id
+                query_embedding, top_k, knowledge_base_id, threshold, user_id, enforce_circles
             )
             logger.info(
                 f"📚 RAG Dense Search: query='{query[:50]}', kb_id={knowledge_base_id}, "
@@ -183,10 +190,11 @@ class RAGRetrieval:
         knowledge_base_id: int | None = None,
         threshold: float | None = None,
         user_id: int | None = None,
+        enforce_circles: bool = False,
     ) -> list[dict[str, Any]]:
         embedding_str = f"[{','.join(map(str, query_embedding))}]"
         kb_filter = "AND d.knowledge_base_id = :kb_id" if knowledge_base_id else ""
-        circles_clause, circles_params = self._chunk_circles_filter(user_id)
+        circles_clause, circles_params = self._chunk_circles_filter(user_id, enforce_circles)
 
         # LEFT JOIN on knowledge_bases so documents without a KB (legacy
         # direct-upload path where knowledge_base_id IS NULL) are still
@@ -279,9 +287,10 @@ class RAGRetrieval:
         top_k: int,
         knowledge_base_id: int | None = None,
         user_id: int | None = None,
+        enforce_circles: bool = False,
     ) -> list[dict[str, Any]]:
         kb_filter = "AND d.knowledge_base_id = :kb_id" if knowledge_base_id else ""
-        circles_clause, circles_params = self._chunk_circles_filter(user_id)
+        circles_clause, circles_params = self._chunk_circles_filter(user_id, enforce_circles)
 
         # OR-match: any query term can match; ts_rank_cd ranks by coverage.
         # Tokens are split on whitespace and rejoined with " OR " for
@@ -606,31 +615,38 @@ class RAGRetrieval:
         top_k: int | None = None,
         knowledge_base_id: int | None = None,
         user_id: int | None = None,
+        enforce_circles: bool = False,
     ) -> str:
         """Search + format into a prompt-ready context string with source attribution."""
-        results = await self.search(query, top_k, knowledge_base_id, user_id=user_id)
+        results = await self.search(
+            query, top_k, knowledge_base_id, user_id=user_id, enforce_circles=enforce_circles
+        )
         return self.format_context_from_results(results)
 
     @staticmethod
-    def _chunk_circles_filter(user_id: int | None) -> tuple[str, dict[str, Any]]:
+    def _chunk_circles_filter(
+        user_id: int | None, enforce_circles: bool = False
+    ) -> tuple[str, dict[str, Any]]:
         """
         Build the document_chunks WHERE-fragment + bind params for circle access.
 
-        Single-user/AUTH_ENABLED=false: full bypass (filter always-true). Matches
-        the legacy `check_kb_access` shape — "auth disabled = full access".
+        Single-user/AUTH_ENABLED=false: full bypass (filter always-true) — UNLESS
+        ``enforce_circles`` (federation), which keeps the peer-scoped circle filter
+        active even with auth off. Matches the legacy `check_kb_access` shape —
+        "auth disabled = full access" — for local callers only.
 
         Anonymous authenticated callers (`user_id is None` while auth is on):
         only public-tier chunks reachable.
 
-        Authenticated callers: delegates to
-        `circle_sql.document_chunks_circles_filter` (owner / public /
-        explicit-grant / tier-membership 4-branch OR).
+        Authenticated callers (or ``enforce_circles``): delegates to
+        `circle_sql.document_chunks_circles_filter`. With ``enforce_circles`` the
+        clause is peer-scoped (owner + explicit-grant branches dropped).
         """
-        if not settings.auth_enabled:
+        if not settings.auth_enabled and not enforce_circles:
             return ("TRUE", {})
         if user_id is None:
             return ("dc.circle_tier = :asker_id_pub", {"asker_id_pub": TIER_PUBLIC})
-        return document_chunks_circles_filter(user_id)
+        return document_chunks_circles_filter(user_id, peer_scoped=enforce_circles)
 
     def format_context_from_results(self, results: list[dict[str, Any]]) -> str:
         """Format pre-fetched search results into context string without re-searching.

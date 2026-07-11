@@ -101,6 +101,70 @@ class TestCirclesFilterClause:
         assert "atoms a ON a.atom_id = g.atom_id" in clause
 
 
+class TestPeerScoped:
+    """peer_scoped=True (federation) MUST drop the owner-equality and
+    explicit-grant branches — a federated asker_id originates from
+    PeerUser.remote_user_id and can equal a real local owner id (the FK on
+    circle_memberships.member_user_id forces it to a local users.id). Only the
+    public-tier branch and the pairing tier-membership EXISTS are collision-safe.
+    """
+
+    def test_peer_scoped_omits_owner_branch(self):
+        clause = circles_filter_clause(table_alias="e", source_table_value="kg_entities", peer_scoped=True)
+        assert "e.user_id = :asker_id" not in clause
+
+    def test_peer_scoped_omits_explicit_grant_branch(self):
+        clause = circles_filter_clause(table_alias="e", source_table_value="kg_entities", peer_scoped=True)
+        assert "atom_explicit_grants" not in clause
+
+    def test_peer_scoped_omits_owner_branch_with_kb_alias(self):
+        # Document path: owner is on the joined kb table — must also be dropped.
+        clause = circles_filter_clause(
+            table_alias="dc", owner_col="owner_id", source_table_value="documents",
+            owner_table_alias="kb", source_id_expr="d.id", owner_atom_id_expr="d.atom_id",
+            peer_scoped=True,
+        )
+        assert "kb.owner_id = :asker_id" not in clause
+        assert "atom_explicit_grants" not in clause
+        # The null-KB atom-owner fallback is part of the owner branch → also gone.
+        assert "atoms da" not in clause
+
+    def test_peer_scoped_keeps_public_and_membership_branches(self):
+        clause = circles_filter_clause(table_alias="e", source_table_value="kg_entities", peer_scoped=True)
+        assert "e.circle_tier = :asker_id_pub" in clause
+        assert "circle_memberships cm" in clause
+        assert "(cm.value::text)::int <= e.circle_tier" in clause
+
+    def test_peer_scoped_clause_is_exactly_two_branches(self):
+        clause = circles_filter_clause(table_alias="e", source_table_value="kg_entities", peer_scoped=True)
+        # Provably: (public) OR (tier-membership EXISTS) — nothing else. The only
+        # top-level OR joins the public branch directly to the membership EXISTS.
+        assert clause.startswith("(") and clause.endswith(")")
+        assert "e.circle_tier = :asker_id_pub OR EXISTS" in clause
+
+    def test_default_is_byte_identical_to_no_kwarg(self):
+        # Regression guard: omitting peer_scoped == peer_scoped=False == today.
+        for src in ("", "kg_entities"):
+            assert (
+                circles_filter_clause(table_alias="e", source_table_value=src)
+                == circles_filter_clause(table_alias="e", source_table_value=src, peer_scoped=False)
+            )
+
+    def test_wrappers_forward_peer_scoped(self):
+        for wrapper in (
+            kg_entities_circles_filter, kg_relations_circles_filter,
+            conversation_memories_circles_filter,
+        ):
+            clause, _ = wrapper(42, peer_scoped=True)
+            assert "atom_explicit_grants" not in clause
+            assert "circle_memberships cm" in clause
+        # document_chunks wrapper (kb-owner + atom-owner fallback both dropped)
+        clause, _ = document_chunks_circles_filter(42, peer_scoped=True)
+        assert "kb.owner_id = :asker_id" not in clause
+        assert "atoms da" not in clause
+        assert "atom_explicit_grants" not in clause
+
+
 class TestCirclesFilterParams:
     def test_default_params(self):
         params = circles_filter_params(asker_id=42)

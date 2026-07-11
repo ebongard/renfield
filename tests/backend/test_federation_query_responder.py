@@ -579,3 +579,60 @@ class TestProgressRateLimit:
         for i in range(10):
             await FederationQueryResponder._emit_progress(pending, PROGRESS_LABEL_SYNTHESIZING)
         assert pending.progress_count == MAX_PROGRESS_UPDATES
+
+
+class TestEnforceCirclesOnRetrieve:
+    """The responder's retrieval MUST run PolymorphicAtomStore.query with
+    enforce_circles=True — otherwise an auth-off (household) responder bypasses
+    every circle filter and leaks its whole brain, and even with auth on the
+    remote-supplied asker_id can collide with a local owner id (see the
+    circle_sql peer_scoped fix)."""
+
+    @pytest.mark.asyncio
+    @pytest.mark.unit
+    async def test_retrieve_forces_enforce_circles_true(self, responder_identity, monkeypatch):
+        from services.federation_pending_store import _PendingRequest
+        import services.polymorphic_atom_store as pas
+
+        captured = {}
+
+        class _FakeStore:
+            def __init__(self, session):
+                pass
+
+            async def query(self, query_text, *, asker_id, max_visible_tier, top_k, enforce_circles=False):
+                captured["enforce_circles"] = enforce_circles
+                captured["asker_id"] = asker_id
+                captured["max_visible_tier"] = max_visible_tier
+                return []
+
+        monkeypatch.setattr(pas, "PolymorphicAtomStore", _FakeStore)
+
+        responder = FederationQueryResponder(db=MagicMock())
+        pending = _PendingRequest(
+            request_id="r1",
+            asker_pubkey="ab" * 32,
+            peer_user_id=77,
+            asker_local_user_id=42,
+            max_visible_tier=2,
+            query="what does the household know?",
+            initiated_at=time.time(),
+        )
+
+        # _retrieve opens its own AsyncSessionLocal; patch it to a dummy CM.
+        import services.federation_query_responder as fqr
+
+        class _DummySession:
+            async def __aenter__(self):
+                return MagicMock()
+
+            async def __aexit__(self, *a):
+                return False
+
+        monkeypatch.setattr(fqr, "AsyncSessionLocal", lambda: _DummySession())
+
+        async with fqr.AsyncSessionLocal() as session:
+            await responder._retrieve(session, pending)
+
+        assert captured["enforce_circles"] is True
+        assert captured["asker_id"] == 42

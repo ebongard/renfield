@@ -170,7 +170,7 @@ class KGRetrieval:
             return []
 
     async def _resolve_entity_names(
-        self, ids, user_id: int | None
+        self, ids, user_id: int | None, enforce_circles: bool = False
     ) -> dict[int, str]:
         """Resolve entity ids → names, circle-filtered by the asker's access.
 
@@ -178,7 +178,8 @@ class KGRetrieval:
         ``"?"`` so a visible relation can't disclose the NAME of an endpoint
         entity in a circle the asker can't reach. Same per-node visibility gate
         as ``kg_graph_service.focus`` (auth-off → all, anonymous → public-only,
-        authenticated → the standard kg_entities circle filter).
+        authenticated → the standard kg_entities circle filter). ``enforce_circles``
+        (federation) keeps the peer-scoped filter active even with auth off.
         """
         from services.circle_sql import kg_entities_circles_filter
 
@@ -189,13 +190,15 @@ class KGRetrieval:
             KGEntity.is_active == True,  # noqa: E712
             KGEntity.id.in_(ids),
         )
-        if not settings.auth_enabled:
+        if not settings.auth_enabled and not enforce_circles:
             pass
         elif user_id is None:
             from models.database import TIER_PUBLIC
             base = base.where(KGEntity.circle_tier == TIER_PUBLIC)
         else:
-            clause, params = kg_entities_circles_filter(user_id, alias="kg_entities")
+            clause, params = kg_entities_circles_filter(
+                user_id, alias="kg_entities", peer_scoped=enforce_circles
+            )
             base = base.where(text(clause).bindparams(**params))
         rows = (await self.db.execute(base)).all()
         return {r.id: r.name for r in rows}
@@ -206,6 +209,7 @@ class KGRetrieval:
         user_id: int | None = None,
         user_role: str | None = None,  # kept for back-compat; ignored under circles
         lang: str = "de",
+        enforce_circles: bool = False,
     ) -> str | None:
         """
         Retrieve relevant graph triples for a query, filtered by circle access.
@@ -234,10 +238,12 @@ class KGRetrieval:
         threshold = settings.kg_retrieval_threshold
         max_triples = settings.kg_max_context_triples
 
-        # AUTH_ENABLED=false → full bypass (single-user mode sees everything).
+        # AUTH_ENABLED=false → full bypass (single-user mode sees everything),
+        # UNLESS enforce_circles (federation) keeps the peer-scoped filter active.
         # Anonymous-but-auth-on (`user_id is None`) → public-tier only.
-        # Authenticated → standard 4-branch OR via circle_sql helpers.
-        if not settings.auth_enabled:
+        # Authenticated (or enforce_circles) → circle_sql helpers (peer-scoped
+        # drops the owner + explicit-grant branches).
+        if not settings.auth_enabled and not enforce_circles:
             entity_filter = ""
             entity_params: dict[str, Any] = {}
             relation_filter_clause = ""
@@ -249,10 +255,14 @@ class KGRetrieval:
             relation_filter_clause = "AND r.circle_tier = :pub_tier"
             relation_params = {"pub_tier": TIER_PUBLIC}
         else:
-            ent_clause, ent_params = kg_entities_circles_filter(user_id, alias="e")
+            ent_clause, ent_params = kg_entities_circles_filter(
+                user_id, alias="e", peer_scoped=enforce_circles
+            )
             entity_filter = f"AND {ent_clause}"
             entity_params = ent_params
-            rel_clause, rel_params = kg_relations_circles_filter(user_id, alias="r")
+            rel_clause, rel_params = kg_relations_circles_filter(
+                user_id, alias="r", peer_scoped=enforce_circles
+            )
             relation_filter_clause = f"AND {rel_clause}"
             relation_params = rel_params
 
@@ -343,7 +353,9 @@ class KGRetrieval:
             entity_ids.add(r.subject_id)
             entity_ids.add(r.object_id)
 
-        entity_map = await self._resolve_entity_names(entity_ids, user_id)
+        entity_map = await self._resolve_entity_names(
+            entity_ids, user_id, enforce_circles=enforce_circles
+        )
 
         # Format triples
         triples = []
@@ -378,6 +390,7 @@ class KGRetrieval:
         query: str,
         user_id: int | None = None,
         lang: str = "de",
+        enforce_circles: bool = False,
     ) -> dict[str, list[dict[str, Any]]]:
         """
         Structured sibling of ``get_relevant_context``: returns the matched
@@ -406,7 +419,7 @@ class KGRetrieval:
         threshold = settings.kg_retrieval_threshold
         max_triples = settings.kg_max_context_triples
 
-        if not settings.auth_enabled:
+        if not settings.auth_enabled and not enforce_circles:
             entity_filter = ""
             entity_params: dict[str, Any] = {}
             relation_filter_clause = ""
@@ -418,10 +431,14 @@ class KGRetrieval:
             relation_filter_clause = "AND r.circle_tier = :pub_tier"
             relation_params = {"pub_tier": TIER_PUBLIC}
         else:
-            ent_clause, ent_params = kg_entities_circles_filter(user_id, alias="e")
+            ent_clause, ent_params = kg_entities_circles_filter(
+                user_id, alias="e", peer_scoped=enforce_circles
+            )
             entity_filter = f"AND {ent_clause}"
             entity_params = ent_params
-            rel_clause, rel_params = kg_relations_circles_filter(user_id, alias="r")
+            rel_clause, rel_params = kg_relations_circles_filter(
+                user_id, alias="r", peer_scoped=enforce_circles
+            )
             relation_filter_clause = f"AND {rel_clause}"
             relation_params = rel_params
 
@@ -489,7 +506,9 @@ class KGRetrieval:
         name_map = {eid: e["name"] for eid, e in entities.items()}
         missing = {i for i in needed_ids if i not in name_map}
         if missing:
-            name_map.update(await self._resolve_entity_names(missing, user_id))
+            name_map.update(await self._resolve_entity_names(
+                missing, user_id, enforce_circles=enforce_circles
+            ))
 
         relations = [
             {

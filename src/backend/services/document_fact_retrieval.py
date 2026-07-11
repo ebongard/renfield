@@ -124,19 +124,22 @@ class DocumentFactRetrieval:
     # Circle filter gate (mirrors RAGRetrieval._chunk_circles_filter)
     # ------------------------------------------------------------------ #
     @staticmethod
-    def _facts_circles_filter(user_id: int | None) -> tuple[str, dict[str, Any]]:
+    def _facts_circles_filter(
+        user_id: int | None, enforce_circles: bool = False
+    ) -> tuple[str, dict[str, Any]]:
         """WHERE-fragment + params for circle access on ``document_facts``.
 
-        AUTH_ENABLED=false → full bypass. Anonymous authed caller
+        AUTH_ENABLED=false → full bypass, UNLESS ``enforce_circles`` (federation),
+        which keeps the peer-scoped filter active. Anonymous authed caller
         (``user_id is None`` while auth is on) → public-tier only.
-        Authenticated caller → the parent-Document 4-branch OR (owner /
-        public / explicit-grant / tier-reach) via ``circle_sql``.
+        Authenticated caller (or ``enforce_circles``) → the parent-Document OR via
+        ``circle_sql`` (peer-scoped drops the owner + explicit-grant branches).
         """
-        if not settings.auth_enabled:
+        if not settings.auth_enabled and not enforce_circles:
             return ("TRUE", {})
         if user_id is None:
             return ("df.circle_tier = :asker_id_pub", {"asker_id_pub": TIER_PUBLIC})
-        return document_facts_circles_filter(user_id)
+        return document_facts_circles_filter(user_id, peer_scoped=enforce_circles)
 
     def _is_postgres(self) -> bool:
         return (
@@ -173,12 +176,14 @@ class DocumentFactRetrieval:
         *,
         asker_id: int | None,
         top_k: int,
+        enforce_circles: bool = False,
     ) -> list[dict[str, Any]]:
         """Keyword search over facts: FTS on ``search_vector`` plus an
         identifier-ILIKE branch (added only for identifier-shaped queries).
 
-        Returns ``[]`` for thin queries, on any DB error, and for the
-        no-significant-token / no-identifier-token case.
+        ``enforce_circles`` (federation): keep peer-scoped circle filtering even
+        with auth off. Returns ``[]`` for thin queries, on any DB error, and for
+        the no-significant-token / no-identifier-token case.
         """
         fts_tokens = _significant_tokens(query)
         ident_tokens = _identifier_tokens(query)
@@ -186,9 +191,11 @@ class DocumentFactRetrieval:
             return []
 
         if not self._is_postgres():
-            return await self._search_sqlite(fts_tokens, ident_tokens, asker_id, top_k)
+            return await self._search_sqlite(
+                fts_tokens, ident_tokens, asker_id, top_k, enforce_circles
+            )
 
-        circles_clause, circles_params = self._facts_circles_filter(asker_id)
+        circles_clause, circles_params = self._facts_circles_filter(asker_id, enforce_circles)
         params: dict[str, Any] = {"limit": top_k, **circles_params}
         match_parts: list[str] = []
         rank_terms: list[str] = []
@@ -242,19 +249,20 @@ class DocumentFactRetrieval:
         ident_tokens: list[str],
         asker_id: int | None,
         top_k: int,
+        enforce_circles: bool = False,
     ) -> list[dict[str, Any]]:
         """Sqlite test-harness fallback: token-OR LIKE with a match-count rank.
 
         No tsvector on sqlite — match all tokens (prose + identifier) against
         value / normalized_value / excerpt with a CASE-sum rank (rows matching
         more distinct tokens rank higher). The circle filter reduces to the
-        auth-off bypass in the unit suite; if auth is on the same clause runs
-        (sqlite is permissive about the json cast).
+        auth-off bypass in the unit suite (unless ``enforce_circles``); if auth
+        is on the same clause runs (sqlite is permissive about the json cast).
         """
         tokens = list(dict.fromkeys([*fts_tokens, *ident_tokens]))
         if not tokens:
             return []
-        circles_clause, circles_params = self._facts_circles_filter(asker_id)
+        circles_clause, circles_params = self._facts_circles_filter(asker_id, enforce_circles)
         params: dict[str, Any] = {"limit": top_k, **circles_params}
         match_terms: list[str] = []
         count_terms: list[str] = []

@@ -45,6 +45,7 @@ def circles_filter_clause(
     owner_table_alias: str | None = None,
     source_id_expr: str | None = None,
     owner_atom_id_expr: str | None = None,
+    peer_scoped: bool = False,
 ) -> str:
     """
     Build a parameterized WHERE-clause snippet that enforces circle access.
@@ -95,6 +96,26 @@ def circles_filter_clause(
                            is NULL so the owner can never reach their own content
                            via the KB-owner branch. The atom-owner fallback keeps
                            ownership intact for KB-less documents. (CM-1 fix.)
+        peer_scoped:       when True, DROP the owner-equality and explicit-grant
+                           branches entirely, leaving only ``public-tier OR
+                           tier-membership EXISTS``. Used for FEDERATION queries,
+                           where ``:{asker_param}`` originates from
+                           ``PeerUser.remote_user_id`` — a REMOTE-controlled
+                           integer written into the FK-constrained
+                           ``circle_memberships.member_user_id`` column at pairing
+                           time (see ``pairing_service``). In a single-user
+                           household that FK forces the value to equal the local
+                           owner's own ``users.id``, so the raw equality checks
+                           ``owner_col = :asker`` and ``granted_to_user_id = :asker``
+                           would authorize a peer as if it were the owner — a
+                           full-brain leak. The tier-membership EXISTS is safe to
+                           keep: it matches ONE specific ``(circle_owner_id,
+                           member_user_id, dimension='tier')`` row the local owner
+                           deliberately created at pairing with a chosen tier, not
+                           an arbitrary owned/granted row. Removing (not merely
+                           neutralizing) the two equality branches makes the peer
+                           clause provably ``(tier = public) OR (tier-membership)``
+                           regardless of ``auth_enabled``.
     """
     owner_alias = owner_table_alias or table_alias
     sid_expr = source_id_expr or f"{table_alias}.id"
@@ -114,14 +135,20 @@ def circles_filter_clause(
             f"))"
         )
 
+    # Public-tier atoms accessible to anyone (paired or not). Always present.
     parts = [
-        owner_branch,
-        # Public-tier atoms accessible to anyone.
         f"{table_alias}.{tier_col} = :{asker_param}_pub",
     ]
+    # Owner-equality branch — SUPPRESSED for peer_scoped (federation) queries:
+    # the asker_id is a remote-controlled value that can equal the local owner id
+    # (see peer_scoped in the docstring). A federated peer is never the local owner.
+    if not peer_scoped:
+        parts.insert(0, owner_branch)
 
-    if source_table_value:
+    if source_table_value and not peer_scoped:
         # Per-resource explicit grant — MAX-permissive with tier check.
+        # SUPPRESSED for peer_scoped: `granted_to_user_id = :asker` is the same
+        # raw-equality collision class as the owner branch.
         # `source_table_value` flows through a bind param (`{asker_param}_src`)
         # so even if a future caller forwards user-supplied input, there's no
         # SQL injection sink. `owner_col`, `tier_col`, `sid_expr` remain
@@ -201,24 +228,40 @@ def circles_filter_params(
 # =============================================================================
 
 
-def kg_entities_circles_filter(asker_id: int, alias: str = "e") -> tuple[str, dict[str, Any]]:
-    """Returns (clause, params) for circle-filtering kg_entities."""
+def kg_entities_circles_filter(
+    asker_id: int, alias: str = "e", *, peer_scoped: bool = False
+) -> tuple[str, dict[str, Any]]:
+    """Returns (clause, params) for circle-filtering kg_entities.
+
+    ``peer_scoped`` (federation): drop the owner + explicit-grant branches —
+    see ``circles_filter_clause``.
+    """
     src = "kg_entities"
-    clause = circles_filter_clause(table_alias=alias, source_table_value=src)
+    clause = circles_filter_clause(table_alias=alias, source_table_value=src, peer_scoped=peer_scoped)
     return clause, circles_filter_params(asker_id, source_table_value=src)
 
 
-def kg_relations_circles_filter(asker_id: int, alias: str = "r") -> tuple[str, dict[str, Any]]:
-    """Returns (clause, params) for circle-filtering kg_relations."""
+def kg_relations_circles_filter(
+    asker_id: int, alias: str = "r", *, peer_scoped: bool = False
+) -> tuple[str, dict[str, Any]]:
+    """Returns (clause, params) for circle-filtering kg_relations.
+
+    ``peer_scoped`` (federation): drop the owner + explicit-grant branches.
+    """
     src = "kg_relations"
-    clause = circles_filter_clause(table_alias=alias, source_table_value=src)
+    clause = circles_filter_clause(table_alias=alias, source_table_value=src, peer_scoped=peer_scoped)
     return clause, circles_filter_params(asker_id, source_table_value=src)
 
 
-def conversation_memories_circles_filter(asker_id: int, alias: str = "m") -> tuple[str, dict[str, Any]]:
-    """Returns (clause, params) for circle-filtering conversation_memories."""
+def conversation_memories_circles_filter(
+    asker_id: int, alias: str = "m", *, peer_scoped: bool = False
+) -> tuple[str, dict[str, Any]]:
+    """Returns (clause, params) for circle-filtering conversation_memories.
+
+    ``peer_scoped`` (federation): drop the owner + explicit-grant branches.
+    """
     src = "conversation_memories"
-    clause = circles_filter_clause(table_alias=alias, source_table_value=src)
+    clause = circles_filter_clause(table_alias=alias, source_table_value=src, peer_scoped=peer_scoped)
     return clause, circles_filter_params(asker_id, source_table_value=src)
 
 
@@ -228,9 +271,13 @@ def document_chunks_circles_filter(
     chunk_alias: str = "dc",
     doc_alias: str = "d",
     kb_alias: str = "kb",
+    peer_scoped: bool = False,
 ) -> tuple[str, dict[str, Any]]:
     """
     Returns (clause, params) for circle-filtering document_chunks.
+
+    ``peer_scoped`` (federation): drop the owner + explicit-grant branches —
+    see ``circles_filter_clause``.
 
     Post-atoms-per-document (pc20260423): the access-control unit is the
     parent Document. ``atom_explicit_grants`` hang on ``atoms`` rows with
@@ -263,6 +310,7 @@ def document_chunks_circles_filter(
         owner_table_alias=kb_alias,
         source_id_expr=f"{doc_alias}.id",
         owner_atom_id_expr=f"{doc_alias}.atom_id",
+        peer_scoped=peer_scoped,
     )
     return clause, circles_filter_params(asker_id, source_table_value=src)
 
@@ -273,9 +321,13 @@ def document_facts_circles_filter(
     fact_alias: str = "df",
     doc_alias: str = "d",
     kb_alias: str = "kb",
+    peer_scoped: bool = False,
 ) -> tuple[str, dict[str, Any]]:
     """
     Returns (clause, params) for circle-filtering ``document_facts``.
+
+    ``peer_scoped`` (federation): drop the owner + explicit-grant branches —
+    see ``circles_filter_clause``.
 
     A Schicht A fact inherits the access policy of its parent Document — the
     same access unit as ``document_chunks``. ``atom_explicit_grants`` hang on
@@ -304,5 +356,6 @@ def document_facts_circles_filter(
         owner_table_alias=kb_alias,
         source_id_expr=f"{doc_alias}.id",
         owner_atom_id_expr=f"{doc_alias}.atom_id",
+        peer_scoped=peer_scoped,
     )
     return clause, circles_filter_params(asker_id, source_table_value=src)
