@@ -91,7 +91,7 @@ const mainNavigationConfig: NavItemConfig[] = [
 ];
 
 const adminNavigationConfig: NavItemConfig[] = [
-  { nameKey: 'nav.kiosk', href: '/kiosk', icon: Radar, permission: ['admin'] },
+  { nameKey: 'nav.kiosk', href: '/kiosk', icon: Radar, permission: ['admin'], feature: 'satellites' },
   { nameKey: 'nav.rooms', href: '/rooms', icon: DoorOpen, permission: ['rooms.read', 'rooms.manage'], feature: 'smart_home' },
   { nameKey: 'nav.speakers', href: '/speakers', icon: Users, permission: ['speakers.own', 'speakers.all'], feature: 'voice' },
   { nameKey: 'nav.smarthome', href: '/homeassistant', icon: Lightbulb, permission: ['ha.read', 'ha.control', 'ha.full'], feature: 'smart_home' },
@@ -101,7 +101,7 @@ const adminNavigationConfig: NavItemConfig[] = [
   { nameKey: 'nav.users', href: '/admin/users', icon: UserCog, permission: ['admin'] },
   { nameKey: 'nav.roles', href: '/admin/roles', icon: Shield, permission: ['admin'] },
   { nameKey: 'nav.satellites', href: '/admin/satellites', icon: Satellite, permission: ['admin'], feature: 'satellites' },
-  { nameKey: 'nav.presence', href: '/admin/presence', icon: MapPin, permission: ['admin'] },
+  { nameKey: 'nav.presence', href: '/admin/presence', icon: MapPin, permission: ['admin'], feature: 'smart_home' },
   { nameKey: 'nav.paperlessAudit', href: '/admin/paperless-audit', icon: FileSearch, permission: ['admin'] },
   { nameKey: 'nav.maintenance', href: '/admin/maintenance', icon: Wrench, permission: ['admin'] },
   { nameKey: 'nav.settings', href: '/admin/settings', icon: Settings, permission: ['admin'] },
