@@ -81,6 +81,13 @@ spec:
             - name: POSTGRES_PASSWORD
               valueFrom:
                 secretKeyRef: {name: renfield-secrets, key: postgres-password}
+            # The v2.20.0 boot guard (fail_closed_on_insecure_jwt_key) validates
+            # SECRET_KEY at Settings() init — the worker imports config too, so it
+            # crashes on any AUTH_ENABLED / RENFIELD_ENV=production instance without
+            # this. optional:true = inject-if-present (auth-off installs unaffected).
+            - name: SECRET_KEY
+              valueFrom:
+                secretKeyRef: {name: renfield-secrets, key: secret-key, optional: true}
             - name: DATABASE_URL
               value: postgresql+asyncpg://renfield:$(POSTGRES_PASSWORD)@postgres:5432/renfield
             # Integration secrets mirror the backend so Docling/RAG code paths

@@ -43,6 +43,18 @@ spec:
                 secretKeyRef:
                   name: renfield-secrets
                   key: postgres-password
+            # The v2.20.0 boot guard (fail_closed_on_insecure_jwt_key) validates
+            # SECRET_KEY at Settings() init — which alembic/env.py triggers by
+            # importing models.database. Without this, `alembic upgrade` fails on
+            # any AUTH_ENABLED / RENFIELD_ENV=production instance (the household is
+            # auth-off, so it never hit this). optional:true = inject-if-present:
+            # auth-off installs without the key still run (the guard stays dormant).
+            - name: SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: renfield-secrets
+                  key: secret-key
+                  optional: true
             - name: DATABASE_URL
               value: postgresql+asyncpg://renfield:$(POSTGRES_PASSWORD)@postgres:5432/renfield
           resources:

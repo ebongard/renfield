@@ -379,6 +379,18 @@ kubectl -n renfield delete job alembic-upgrade
 
 The job uses the same backend image; if you just pushed a new image, run migrations **before** the deployment restart so the new code doesn't hit an old schema. The Job's `backoffLimit: 2` means 3 attempts max — failures are usually a chain conflict (see check above) or a missed env var, not a transient retry-able problem.
 
+### Standing up a NEW instance (auth-on / separate namespace)
+
+The household runs `AUTH_ENABLED=false`, so its deploy path never exercises the auth-on boot guards. A **new isolated instance** (a business/multi-user clone in its own namespace, `RENFIELD_ENV=production` + `AUTH_ENABLED=true`) hits three traps the household hides — all learned standing up `renfield-xidra` (2026-07-11):
+
+1. **`SECRET_KEY` in every backend-image workload.** The v2.20.0 boot guard (`fail_closed_on_insecure_jwt_key`) validates `SECRET_KEY` at `Settings()` init — which fires for **any** process that imports the config, not just the API: the `document-worker` and the `alembic-upgrade` Job included. `k8s/backend.yaml` injects it; `k8s/document-worker.yaml` and `k8s/alembic-upgrade-job.yaml` now do too (`optional: true` — inject-if-present, so auth-off installs are unaffected). If you add a new backend-image Job/CronJob, inject `secret-key` from `renfield-secrets` or it crashes with *"SECRET_KEY is insecure: still the placeholder default"*.
+
+2. **A fresh DB self-bootstraps — do NOT run the `alembic-upgrade` Job on an empty DB.** `init_db()` (backend startup) runs `Base.metadata.create_all` + stamps alembic HEAD; the 41-migration history is *skipped*. Running `alembic upgrade head` from empty instead fails on `room_output_devices` (FK → `rooms`, which no migration creates — it's `create_all`-only). Just deploy the backend; it builds the schema itself. The migration Job is for **existing** DBs applying **new** migrations only (see its header).
+
+3. **`AUTH_ENABLED` + `WS_AUTH_ENABLED` flip together, strong key first.** `assert_auth_config_consistency` rejects a partial combo; provision a `secret-key` ≥32 random chars **before** arming `RENFIELD_ENV=production`.
+
+(Cross-namespace: the shared GPU/model tier — ollama/searxng — must be FQDN-qualified in the ConfigMap AND in the `wait-for-deps` init container, which wgets a bare `ollama:11434` that would resolve to the wrong namespace.)
+
 ### ConfigMap changes
 
 When `config/mcp_servers.yaml` / `config/agent_roles.yaml` / `config/kg_scopes.yaml` / `config/mail_accounts.*.yaml` change in the repo, rewrite the `renfield-mcp-config` ConfigMap **before** the rolling restart — otherwise pods get stuck in `ContainerCreating` on a missing subPath:
