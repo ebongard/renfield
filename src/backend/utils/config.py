@@ -745,6 +745,15 @@ class Settings(BaseSettings):
     # across workers (replay defense).
     federation_pending_use_redis: bool = False
 
+    # Federation (F-ID-1 — person-scoped identity links).
+    # Default off (DARK): the responder ignores any `querier_ref` in a query
+    # envelope and always serves the peer-scoped public/guest fallback, and the
+    # asker never attaches a `querier_ref` — byte-identical to pre-F-ID-1. When
+    # on, a query whose `querier_ref` matches a `federation_user_links` row is
+    # served AS the mapped local user (full circle reach). Design:
+    # docs/design/federation-identity-mapping.md.
+    federation_identity_links_enabled: bool = False
+
     # Monitoring
     metrics_enabled: bool = False  # Enable Prometheus /metrics endpoint
 

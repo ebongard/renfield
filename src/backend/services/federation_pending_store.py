@@ -71,6 +71,10 @@ class _PendingRequest:
     max_visible_tier: int
     query: str
     initiated_at: float
+    # F-ID-1: True = peer-scoped fallback (public/guest); False = the querier was
+    # identity-mapped to `asker_local_user_id`, so run AS that local user with
+    # full circle reach. Defaults True so any un-updated caller stays fail-closed.
+    enforce_circles: bool = True
     status: str = STATUS_PROCESSING
     progress_label: str = PROGRESS_LABEL_RETRIEVING
     progress_count: int = 0

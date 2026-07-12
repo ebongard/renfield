@@ -115,6 +115,16 @@ class QueryBrainInitiateRequest(BaseModel):
     # as trust claims; only the envelope's `asker_pubkey` signature
     # is authoritative. Max 10 at schema level bounds path growth.
     path: list[str] = Field(default_factory=list, max_length=10)
+    # F-ID-1 (person-scoped federation) — OPTIONAL opaque per-(peer, person)
+    # token identifying WHICH person on the asker instance is querying. When
+    # present AND the responder has a matching `federation_user_links` row, the
+    # responder serves AS that mapped local user (full circle reach) instead of
+    # the peer-scoped public/guest fallback. Absent (default None) → today's
+    # fallback behavior. Signed (see initiate_canonical_payload) ONLY when set,
+    # so a flag-off asker's payload is byte-identical to pre-F-ID-1 and a
+    # stripping attack breaks the signature. Design:
+    # docs/design/federation-identity-mapping.md.
+    querier_ref: str | None = Field(default=None, max_length=128)
     signature: str = Field(..., min_length=128, max_length=128)  # hex
 
 
@@ -188,7 +198,7 @@ def initiate_canonical_payload(req: QueryBrainInitiateRequest) -> dict[str, Any]
     after the fact to bypass cycle detection / hop budget. `path` is
     encoded in order (it's a call chain, not a set).
     """
-    return {
+    payload: dict[str, Any] = {
         "version": req.version,
         "asker_pubkey": req.asker_pubkey,
         "query": req.query,
@@ -197,6 +207,14 @@ def initiate_canonical_payload(req: QueryBrainInitiateRequest) -> dict[str, Any]
         "depth": req.depth,
         "path": list(req.path),  # copy so later mutations don't alias
     }
+    # F-ID-1: include querier_ref in the signed bytes ONLY when set. Keeps a
+    # flag-off / no-person asker byte-identical to the pre-F-ID-1 payload
+    # (backward-compatible signatures), while still binding the ref under the
+    # signature when it IS sent — stripping it flips the responder's recomputed
+    # payload and fails verification.
+    if req.querier_ref is not None:
+        payload["querier_ref"] = req.querier_ref
+    return payload
 
 
 def retrieve_canonical_payload(req: QueryBrainRetrieveRequest) -> dict[str, Any]:

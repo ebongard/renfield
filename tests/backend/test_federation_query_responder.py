@@ -55,6 +55,7 @@ from services.mcp_streaming import (
     PROGRESS_LABEL_SYNTHESIZING,
 )
 from services.pairing_service import _canonical_bytes
+from utils.config import settings
 
 
 # =============================================================================
@@ -124,12 +125,15 @@ def _sign_initiate(
     timestamp: int | None = None,
     depth: int = 3,
     path: list[str] | None = None,
+    querier_ref: str | None = None,
 ) -> QueryBrainInitiateRequest:
     """Build a signed v2 initiate envelope.
 
     `path` defaults to `[asker.pubkey]` — the realistic first-hop shape
     after F5a. Tests that want to exercise cycle detection pass an
-    explicit `path` carrying the responder's own pubkey.
+    explicit `path` carrying the responder's own pubkey. `querier_ref`
+    (F-ID-1) is folded into the signed bytes ONLY when set, mirroring
+    initiate_canonical_payload's conditional inclusion.
     """
     import secrets
 
@@ -143,6 +147,8 @@ def _sign_initiate(
         "depth": depth,
         "path": path if path is not None else [my_pubkey],
     }
+    if querier_ref is not None:
+        unsigned["querier_ref"] = querier_ref
     sig = asker.sign(_canonical_bytes(unsigned)).hex()
     return QueryBrainInitiateRequest(**unsigned, signature=sig)
 
@@ -636,3 +642,119 @@ class TestEnforceCirclesOnRetrieve:
 
         assert captured["enforce_circles"] is True
         assert captured["asker_id"] == 42
+
+
+class TestPersonScopedMapping:
+    """F-ID-1: a querier_ref that maps (via federation_user_links) to a local
+    user must serve AS that user (enforce_circles=False); everything else —
+    flag off, no ref, no link — must fall back to the peer-scoped path
+    (enforce_circles=True). The pending record carries the decision."""
+
+    @pytest.mark.asyncio
+    @pytest.mark.unit
+    async def test_flag_off_ignores_querier_ref_and_falls_back(
+        self, responder_identity, asker_identity, mock_db_with_peer, monkeypatch,
+    ):
+        monkeypatch.setattr(settings, "federation_identity_links_enabled", False)
+        responder = FederationQueryResponder(db=mock_db_with_peer)
+        responder._run_query = AsyncMock()
+
+        req = _sign_initiate(asker_identity, querier_ref="deadbeef" * 8)
+        resp = await responder.handle_initiate(req)
+
+        pending = await get_pending_store().get(resp.request_id)
+        assert pending.enforce_circles is True                 # fallback
+        assert pending.asker_local_user_id == 42               # peer.remote_user_id echo
+
+    @pytest.mark.asyncio
+    @pytest.mark.unit
+    async def test_flag_on_no_link_falls_back(
+        self, responder_identity, asker_identity, mock_db_with_peer, monkeypatch,
+    ):
+        monkeypatch.setattr(settings, "federation_identity_links_enabled", True)
+        # resolve_linked_user is imported inside _handle_initiate — patch at source.
+        import services.federation_identity_link as fil
+        monkeypatch.setattr(fil, "resolve_linked_user", AsyncMock(return_value=None))
+
+        responder = FederationQueryResponder(db=mock_db_with_peer)
+        responder._run_query = AsyncMock()
+
+        req = _sign_initiate(asker_identity, querier_ref="deadbeef" * 8)
+        resp = await responder.handle_initiate(req)
+
+        pending = await get_pending_store().get(resp.request_id)
+        assert pending.enforce_circles is True                 # fallback
+        assert pending.asker_local_user_id == 42
+
+    @pytest.mark.asyncio
+    @pytest.mark.unit
+    async def test_flag_on_with_link_maps_to_local_user(
+        self, responder_identity, asker_identity, mock_db_with_peer, monkeypatch,
+    ):
+        monkeypatch.setattr(settings, "federation_identity_links_enabled", True)
+        import services.federation_identity_link as fil
+        monkeypatch.setattr(fil, "resolve_linked_user", AsyncMock(return_value=99))
+
+        responder = FederationQueryResponder(db=mock_db_with_peer)
+        responder._run_query = AsyncMock()
+
+        req = _sign_initiate(asker_identity, querier_ref="cafebabe" * 8)
+        resp = await responder.handle_initiate(req)
+
+        pending = await get_pending_store().get(resp.request_id)
+        assert pending.enforce_circles is False                # MAPPED — run as the user
+        assert pending.asker_local_user_id == 99               # the linked local user
+
+    @pytest.mark.asyncio
+    @pytest.mark.unit
+    async def test_no_querier_ref_never_consults_links(
+        self, responder_identity, asker_identity, mock_db_with_peer, monkeypatch,
+    ):
+        monkeypatch.setattr(settings, "federation_identity_links_enabled", True)
+        import services.federation_identity_link as fil
+        spy = AsyncMock(return_value=99)
+        monkeypatch.setattr(fil, "resolve_linked_user", spy)
+
+        responder = FederationQueryResponder(db=mock_db_with_peer)
+        responder._run_query = AsyncMock()
+
+        req = _sign_initiate(asker_identity)  # no querier_ref
+        resp = await responder.handle_initiate(req)
+
+        spy.assert_not_awaited()                               # short-circuit on empty ref
+        pending = await get_pending_store().get(resp.request_id)
+        assert pending.enforce_circles is True
+
+
+class TestQuerierRefCanonicalPayload:
+    """The querier_ref must be in the signed bytes ONLY when set — so a flag-off
+    asker's payload is byte-identical to pre-F-ID-1 (backward-compatible
+    signatures) and a stripped ref flips the verifier's recomputed payload."""
+
+    @pytest.mark.unit
+    def test_absent_querier_ref_omitted_from_payload(self, asker_identity):
+        req = _sign_initiate(asker_identity)  # no querier_ref
+        payload = initiate_canonical_payload(req)
+        assert "querier_ref" not in payload
+
+    @pytest.mark.unit
+    def test_present_querier_ref_included_in_payload(self, asker_identity):
+        req = _sign_initiate(asker_identity, querier_ref="abc123" * 4)
+        payload = initiate_canonical_payload(req)
+        assert payload["querier_ref"] == "abc123" * 4
+
+    @pytest.mark.unit
+    def test_signature_covers_querier_ref(self, asker_identity):
+        # A ref-bearing envelope verifies; stripping the ref (recompute without
+        # it) breaks verification — proving the ref is bound under the signature.
+        req = _sign_initiate(asker_identity, querier_ref="feed" * 8)
+        good = _canonical_bytes(initiate_canonical_payload(req))
+        assert FederationIdentity.verify(
+            bytes.fromhex(req.asker_pubkey), bytes.fromhex(req.signature), good
+        )
+        stripped = dict(initiate_canonical_payload(req))
+        stripped.pop("querier_ref")
+        assert not FederationIdentity.verify(
+            bytes.fromhex(req.asker_pubkey), bytes.fromhex(req.signature),
+            _canonical_bytes(stripped),
+        )

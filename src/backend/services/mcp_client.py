@@ -1825,7 +1825,9 @@ class MCPManager:
         asker = FederationQueryAsker()
         final_item: dict | None = None
         try:
-            async for item in asker.query_peer(peer, query_text):
+            # F-ID-1: pass the authenticated asker so the asker side can attach
+            # the person-scoped querier_ref (dark unless the link + flag exist).
+            async for item in asker.query_peer(peer, query_text, user_id=user_id):
                 # F4c — relay ProgressChunks to the chat WS sink if one was
                 # threaded in. Enrich with stable peer identity (remote_pubkey)
                 # so the frontend can key status lines per-peer even when the

@@ -2396,6 +2396,49 @@ class PeerUser(Base):
     owner = relationship("User", foreign_keys=[circle_owner_id])
 
 
+class FederationUserLink(Base):
+    """Cross-instance person link for person-scoped federation (F-ID-1).
+
+    Maps an opaque per-(peer, person) ``querier_ref`` token to a LOCAL user.
+    The SAME table serves both perspectives of a pairing:
+      - As RESPONDER: (peer_id, querier_ref) -> local_user_id. An incoming
+        federated query carrying ``querier_ref`` is served AS ``local_user_id``
+        with full circle reach — NOT the peer-scoped public/guest fallback.
+      - As ASKER: (peer_id, local_user_id) -> querier_ref. When ``local_user_id``
+        federates a query to ``peer_id``, the outgoing envelope carries the ref.
+
+    ``querier_ref`` is a shared opaque token agreed at link time; it is NOT the
+    raw remote user id (avoids the multi-peer integer-collision class). A NULL
+    ``local_user_id`` (owner deleted, ON DELETE SET NULL) demotes the link to
+    unmapped → fallback (fail-closed). Design:
+    docs/design/federation-identity-mapping.md.
+    """
+    __tablename__ = "federation_user_links"
+
+    id = Column(Integer, primary_key=True, index=True)
+    peer_id = Column(
+        Integer, ForeignKey("peer_users.id", ondelete="CASCADE"),
+        nullable=False, index=True,
+    )
+    querier_ref = Column(String(128), nullable=False)
+    local_user_id = Column(
+        Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True,
+    )
+    created_by = Column(
+        Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True,
+    )
+    created_at = Column(DateTime, default=_utcnow, nullable=False)
+
+    __table_args__ = (
+        # Responder lookup + one local user per ref per peer.
+        Index("uq_fed_user_links_peer_ref", "peer_id", "querier_ref", unique=True),
+        # Asker lookup (peer, local user) -> ref.
+        Index("ix_fed_user_links_peer_local", "peer_id", "local_user_id"),
+    )
+
+    peer = relationship("PeerUser", foreign_keys=[peer_id])
+
+
 class FederationQueryLog(Base):
     """
     Asker-side audit row for each federated query.

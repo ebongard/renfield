@@ -28,6 +28,7 @@ from api.routes import (
     federation_audit,
     federation_pairing,
     federation_query,
+    federation_user_links,
     feedback,
     folder_ingest,
     intents,
@@ -205,6 +206,7 @@ app.include_router(circles.router, prefix="/api/circles", tags=["Circles - Membe
 app.include_router(federation_pairing.router, prefix="/api/federation", tags=["Federation - Pairing"])
 app.include_router(federation_query.router, prefix="/api/federation", tags=["Federation - Query"])
 app.include_router(federation_audit.router, prefix="/api/federation", tags=["Federation - Audit"])
+app.include_router(federation_user_links.router, prefix="/api/federation", tags=["Federation - Identity Links"])
 
 # WebSocket Routers
 app.include_router(chat_router, tags=["WebSocket Chat"])

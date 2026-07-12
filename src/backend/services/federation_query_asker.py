@@ -112,11 +112,19 @@ class FederationQueryAsker:
         self._client = client
 
     async def query_peer(
-        self, peer: PeerUser, query_text: str,
+        self, peer: PeerUser, query_text: str, user_id: int | None = None,
     ) -> AsyncIterator[ProgressChunk | dict[str, Any]]:
         """
         Drive a federated query against `peer`. Yields ProgressChunks
         during polling and a final FinalResult dict at the end.
+
+        F-ID-1: `user_id` is the authenticated asker (this instance's local
+        user). When `federation_identity_links_enabled` and this user has a
+        `federation_user_links` row for `peer`, we attach the opaque
+        `querier_ref` so the responder can serve AS the mapped remote user.
+        No link / flag off / anonymous → no ref → the responder's peer-scoped
+        fallback (byte-identical to pre-F-ID-1). Design:
+        docs/design/federation-identity-mapping.md.
 
         The FinalResult shape matches `MCPManager.execute_tool`'s
         contract — `{"success": bool, "message": str, "data": Any}` —
@@ -133,9 +141,24 @@ class FederationQueryAsker:
             yield _final_error("Peer has no usable transport endpoint")
             return
 
+        # F-ID-1: resolve the opaque per-(peer, person) querier_ref for the
+        # authenticated asker. Fail-open to None (fallback) on any error — a
+        # link-lookup hiccup must never break federation.
+        querier_ref: str | None = None
+        if settings.federation_identity_links_enabled and user_id is not None:
+            try:
+                from services.database import AsyncSessionLocal
+                from services.federation_identity_link import resolve_querier_ref
+                async with AsyncSessionLocal() as session:
+                    querier_ref = await resolve_querier_ref(
+                        session, peer_id=peer.id, local_user_id=user_id,
+                    )
+            except Exception as e:  # noqa: BLE001
+                logger.warning(f"Federation querier_ref resolve failed (fallback): {e}")
+
         if self._client is not None:
             # Injected client (test path) — don't own its lifecycle.
-            async for item in self._run(self._client, peer, endpoint, query_text):
+            async for item in self._run(self._client, peer, endpoint, query_text, querier_ref):
                 yield item
             return
 
@@ -147,7 +170,7 @@ class FederationQueryAsker:
             client_kwargs["verify"] = verify
 
         async with httpx.AsyncClient(**client_kwargs) as client:
-            async for item in self._run(client, peer, endpoint, query_text):
+            async for item in self._run(client, peer, endpoint, query_text, querier_ref):
                 yield item
 
     async def _run(
@@ -156,6 +179,7 @@ class FederationQueryAsker:
         peer: PeerUser,
         endpoint: str,
         query_text: str,
+        querier_ref: str | None = None,
     ) -> AsyncIterator[ProgressChunk | dict[str, Any]]:
         """Shared query loop for both owned + injected client paths."""
         # F5d — TLS cert-pin pre-flight. If the peer has a fingerprint
@@ -181,7 +205,7 @@ class FederationQueryAsker:
                 )
                 return
 
-        initiate_resp = await self._initiate(client, endpoint, query_text)
+        initiate_resp = await self._initiate(client, endpoint, query_text, querier_ref)
         if initiate_resp is None:
             yield _final_error("Peer rejected initiate")
             return
@@ -241,6 +265,7 @@ class FederationQueryAsker:
         client: httpx.AsyncClient,
         endpoint: str,
         query_text: str,
+        querier_ref: str | None = None,
     ) -> QueryBrainInitiateResponse | None:
         """Sign + POST the initiate request. Returns None on HTTP error.
 
@@ -256,7 +281,7 @@ class FederationQueryAsker:
         any specific cascade design.
         """
         my_pubkey = self.identity.public_key_hex()
-        unsigned = {
+        unsigned: dict[str, Any] = {
             "version": 2,
             "asker_pubkey": my_pubkey,
             "query": query_text,
@@ -265,6 +290,11 @@ class FederationQueryAsker:
             "depth": settings.federation_max_depth,
             "path": [my_pubkey],
         }
+        # F-ID-1: fold querier_ref into the SIGNED bytes only when set — mirrors
+        # initiate_canonical_payload's conditional inclusion so signer + verifier
+        # produce identical bytes, and a flag-off asker stays byte-identical.
+        if querier_ref is not None:
+            unsigned["querier_ref"] = querier_ref
         signature = self.identity.sign(_canonical_bytes(unsigned)).hex()
         req = QueryBrainInitiateRequest(**unsigned, signature=signature)
 

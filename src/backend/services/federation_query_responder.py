@@ -292,21 +292,36 @@ class FederationQueryResponder:
 
         peer = await self._lookup_peer(req.asker_pubkey)
 
-        # Resolve the asker's local visible tier. The responder granted
-        # the asker a tier via CircleMembership when they paired (F2).
-        # Use that as `max_visible_tier`. The asker's own user_id on
-        # OUR side is the PeerUser.remote_user_id echo (cosmetic), but
-        # the actual membership lookup keys on (circle_owner_id, member_user_id).
-        # We don't have a stable remote-user-id ↔ local-user-id map, so
-        # the membership is keyed on peer.remote_user_id directly: the
-        # pairing flow wrote CircleMembership(
-        #   circle_owner_id=responder, member_user_id=remote_user_id
-        # ). Look that up.
-        asker_local_user_id = peer.remote_user_id
-        max_visible_tier = await self._resolve_asker_tier(
-            owner_user_id=peer.circle_owner_id,
-            member_user_id=peer.remote_user_id,
-        )
+        # F-ID-1 (person-scoped federation): if the envelope names a person
+        # (`querier_ref`) AND we have a link mapping it to a LOCAL user, serve
+        # the query AS that user — full circle reach (their own atoms + grants +
+        # memberships), NOT the peer-scoped public/guest fallback. Gated dark by
+        # `federation_identity_links_enabled`; a stripped/absent ref, a missing
+        # link, or a NULLed local user all fail closed to the fallback below.
+        # Design: docs/design/federation-identity-mapping.md.
+        mapped_user_id: int | None = None
+        if settings.federation_identity_links_enabled and req.querier_ref:
+            from services.federation_identity_link import resolve_linked_user
+            mapped_user_id = await resolve_linked_user(
+                self.db, peer_id=peer.id, querier_ref=req.querier_ref,
+            )
+
+        if mapped_user_id is not None:
+            # MAPPED — run as the local user with full circle semantics.
+            asker_local_user_id = mapped_user_id
+            max_visible_tier = 0          # not consulted when enforce_circles=False
+            enforce_circles = False
+        else:
+            # FALLBACK — the peer-scoped path (PR #957). The responder granted
+            # the whole peer instance a tier via CircleMembership at pairing;
+            # the asker's id on OUR side is the PeerUser.remote_user_id echo, and
+            # the membership lookup keys on (circle_owner_id, member_user_id).
+            asker_local_user_id = peer.remote_user_id
+            max_visible_tier = await self._resolve_asker_tier(
+                owner_user_id=peer.circle_owner_id,
+                member_user_id=peer.remote_user_id,
+            )
+            enforce_circles = True
 
         request_id = str(uuid.uuid4())
         await _prune_expired(now=now)
@@ -318,6 +333,7 @@ class FederationQueryResponder:
             max_visible_tier=max_visible_tier,
             query=req.query,
             initiated_at=now,
+            enforce_circles=enforce_circles,
         ))
 
         # Schedule the background work. The task is fire-and-forget —
@@ -473,13 +489,15 @@ class FederationQueryResponder:
             asker_id=pending.asker_local_user_id or 0,
             max_visible_tier=pending.max_visible_tier,
             top_k=10,
-            # FEDERATION: force peer-scoped circle enforcement regardless of
-            # settings.auth_enabled. A federated peer is never the local single
-            # user — without this, an auth-off (household) responder bypasses ALL
-            # circle filters and leaks its entire brain, and even with auth on the
-            # remote-supplied asker_id can collide with a local owner id. See
-            # PolymorphicAtomStore.query + circle_sql peer_scoped.
-            enforce_circles=True,
+            # FALLBACK (enforce_circles=True): peer-scoped circle enforcement
+            # regardless of settings.auth_enabled — a federated peer is never the
+            # local single user, so without it an auth-off responder leaks its
+            # whole brain and a colliding asker_id could hit the owner branch
+            # (PR #957 + circle_sql peer_scoped).
+            # MAPPED (enforce_circles=False, F-ID-1): the querier was identity-
+            # linked to `asker_local_user_id`, so run AS that user with full
+            # circle reach. Set in _handle_initiate; defaults True (fail-closed).
+            enforce_circles=pending.enforce_circles,
         )
 
     async def _synthesize(self, query: str, matches: list) -> str:
