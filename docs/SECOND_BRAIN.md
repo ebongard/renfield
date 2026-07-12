@@ -132,6 +132,8 @@ Auf der KG-Seite werden Entitäten **kanonisiert**: Schreibvarianten sammeln sic
 
 Zwei paarweise verbundene Renfield-Instanzen können Queries über die Circle-Grenze schicken: Nutzer A auf Maschine M1 fragt, Nutzer B auf M2 antwortet aus seinem Second Brain — aber nur mit Atomen, für die B's Circles den Leseranger A enthalten. Details siehe [`FEDERATION_MULTI_PEER.md`](FEDERATION_MULTI_PEER.md). Der Circle-Filter läuft dabei **auf der Responder-Seite** — A bekommt nie zu sehen, was er nicht sehen darf, nicht weil M1 filtert, sondern weil M2 gar nichts anderes zurückgibt.
 
+**Peer-Scope — der Responder-Filter gilt IMMER, auch bei `AUTH_ENABLED=false`.** Der Responder ruft `PolymorphicAtomStore.query(..., enforce_circles=True)`. Das schaltet den Single-User-Bypass ab (eine `auth_enabled=false`-Instanz „sieht" lokal alles — ein föderierter Peer ist aber nie der lokale Single-User) **und** läuft *peer-scoped*: die `circle_sql`-Zweige „Owner-Gleichheit" (`owner = :asker`) und „expliziter Grant" werden **weggelassen**, es bleibt beweisbar nur `(public-Tier) ODER (Paarungs-Tier-Mitgliedschaft)`. Grund: die `asker_id` des Peers stammt aus `PeerUser.remote_user_id` — ein FK-gebundener lokaler `users.id`, der in einem Single-User-Haushalt strukturell mit der Owner-ID kollidiert; ohne Peer-Scope würde der Owner-Zweig den Peer als Eigentümer autorisieren (voller Brain-Leak). Jeder nicht-föderierte Aufrufer (REST `/api/atoms`, Agent-Pfad) nutzt `enforce_circles=False` → byte-identisch wie zuvor. Siehe `services/circle_sql.py` (`peer_scoped`) + `services/polymorphic_atom_store.py`.
+
 ---
 
 ## Daten-Besitz

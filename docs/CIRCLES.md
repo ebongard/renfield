@@ -35,6 +35,8 @@ Die Vier-Zweig-Logik wird einmal zentral formuliert in `services/circle_sql.py` 
 
 **Edge-Case — Single-User-Mode**: bei `AUTH_ENABLED=false` wird die gesamte Filterlogik übersprungen (OR-Short-Circuit). Ein einzelner Nutzer sieht alles, unabhängig von Tiers.
 
+**Ausnahme — Federation (`enforce_circles` / `peer_scoped`)**: der Single-User-Bypass gilt **nur für lokale Aufrufer**. Eine föderierte Peer-Query läuft mit `enforce_circles=True` durch `PolymorphicAtomStore.query` → jedes Retrieval-Modul filtert weiter, auch bei `AUTH_ENABLED=false`. Zusätzlich läuft der Filter *peer-scoped*: `circle_sql.circles_filter_clause(peer_scoped=True)` **entfernt** die Zweige „Owner-Gleichheit" und „expliziter Grant" und lässt nur `(public) ODER (Tier-Mitgliedschaft aus der Paarung)` übrig. Das ist die Kollisions-Verteidigung: die föderierte `asker_id` = `PeerUser.remote_user_id` ist ein FK-gebundener lokaler `users.id`, der im Single-User-Haushalt strukturell = Owner-ID ist — ohne Peer-Scope würde der Owner-Zweig den Peer als Eigentümer autorisieren. Nur `public`-Tier und die bei der Paarung gesetzte `CircleMembership`-Zeile sind kollisionssicher.
+
 ---
 
 ## Atoms — der polymorphe Identitätsträger
