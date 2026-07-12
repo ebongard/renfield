@@ -22,7 +22,7 @@ Design: docs/design/federation-identity-mapping.md.
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException, Request
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -36,7 +36,6 @@ from services.federation_identity_link import (
     delete_link,
     list_links,
 )
-from utils.config import settings
 
 router = APIRouter()
 
@@ -45,8 +44,10 @@ class CreateLinkRequest(BaseModel):
     peer_id: int
     local_user_id: int
     # Omit to MINT a fresh ref (first side of a pairing); pass the minted ref
-    # when creating the mirror link on the other instance.
-    querier_ref: str | None = None
+    # when creating the mirror link on the other instance. Bounded to the DB
+    # column width (String(128)) so an oversized ref is a clean 422, not a 500
+    # DataError the IntegrityError handler wouldn't catch.
+    querier_ref: str | None = Field(default=None, max_length=128)
 
 
 class LinkResponse(BaseModel):
@@ -85,12 +86,9 @@ async def create_user_link(
     admin: User = Depends(require_permission(Permission.ADMIN)),
 ) -> LinkResponse:
     """Assert a person link. Validates the peer + local user exist. 409 if a link
-    already exists for (peer, querier_ref)."""
-    if not settings.federation_identity_links_enabled:
-        # The row can be created while dark, but flag it so the operator knows
-        # it won't take effect until the feature is enabled.
-        pass
-
+    already exists for (peer, querier_ref). Links may be created while the feature
+    is dark (`federation_identity_links_enabled=False`); they take effect only
+    once it's enabled."""
     peer = (await db.execute(
         select(PeerUser).where(PeerUser.id == body.peer_id, PeerUser.revoked_at.is_(None))
     )).scalar_one_or_none()

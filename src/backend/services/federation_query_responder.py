@@ -299,8 +299,20 @@ class FederationQueryResponder:
         # `federation_identity_links_enabled`; a stripped/absent ref, a missing
         # link, or a NULLed local user all fail closed to the fallback below.
         # Design: docs/design/federation-identity-mapping.md.
+        # The mapped path (enforce_circles=False = run AS the local user) is only
+        # meaningful — and only SAFE — when auth is ON. Under AUTH_ENABLED=false
+        # there are no per-user circles to enforce, and enforce_circles=False
+        # would hit the single-user `return ("TRUE", {})` bypass in every
+        # retrieval module → the WHOLE brain (every member, every tier), not the
+        # mapped user's reach. That is exactly the leak the fallback path (#957)
+        # was built to prevent, so on an auth-off responder we refuse to map and
+        # serve the peer-scoped fallback instead.
         mapped_user_id: int | None = None
-        if settings.federation_identity_links_enabled and req.querier_ref:
+        if (
+            settings.federation_identity_links_enabled
+            and settings.auth_enabled
+            and req.querier_ref
+        ):
             from services.federation_identity_link import resolve_linked_user
             mapped_user_id = await resolve_linked_user(
                 self.db, peer_id=peer.id, querier_ref=req.querier_ref,

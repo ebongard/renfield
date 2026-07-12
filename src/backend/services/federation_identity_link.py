@@ -65,12 +65,16 @@ async def resolve_querier_ref(
     """
     if local_user_id is None:
         return None
+    # (peer_id, local_user_id) is NOT unique — only (peer_id, querier_ref) is —
+    # so an admin MAY have created two refs for one (peer, user). Take the first
+    # deterministically rather than raising MultipleResultsFound (which would
+    # fail the query closed to fallback, but noisily).
     return (await db.execute(
         select(FederationUserLink.querier_ref).where(
             FederationUserLink.peer_id == peer_id,
             FederationUserLink.local_user_id == local_user_id,
-        )
-    )).scalar_one_or_none()
+        ).order_by(FederationUserLink.id).limit(1)
+    )).scalars().first()
 
 
 # ---------------------------------------------------------------------------

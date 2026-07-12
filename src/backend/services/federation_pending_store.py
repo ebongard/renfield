@@ -94,9 +94,16 @@ def _to_jsonable(pr: _PendingRequest) -> dict:
 
 def _from_jsonable(d: dict) -> _PendingRequest:
     """Reverse of `_to_jsonable`. Accepts either dataclass-asdict or
-    raw dict provenance entries."""
+    raw dict provenance entries.
+
+    Forward-compat: DROP unknown keys so a row serialized by a NEWER code
+    version (extra fields) doesn't `TypeError` when read by an OLDER worker
+    during a rolling deploy on the Redis backend. Missing keys still fall back
+    to the dataclass defaults (the common older-row case)."""
+    from dataclasses import fields as _dc_fields
     prov_dicts = d.pop("provenance", [])
-    pr = _PendingRequest(**d)
+    known = {f.name for f in _dc_fields(_PendingRequest)}
+    pr = _PendingRequest(**{k: v for k, v in d.items() if k in known})
     pr.provenance = [Provenance(**p) for p in prov_dicts]
     return pr
 

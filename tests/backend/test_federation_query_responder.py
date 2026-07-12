@@ -672,6 +672,7 @@ class TestPersonScopedMapping:
         self, responder_identity, asker_identity, mock_db_with_peer, monkeypatch,
     ):
         monkeypatch.setattr(settings, "federation_identity_links_enabled", True)
+        monkeypatch.setattr(settings, "auth_enabled", True)
         # resolve_linked_user is imported inside _handle_initiate — patch at source.
         import services.federation_identity_link as fil
         monkeypatch.setattr(fil, "resolve_linked_user", AsyncMock(return_value=None))
@@ -692,6 +693,7 @@ class TestPersonScopedMapping:
         self, responder_identity, asker_identity, mock_db_with_peer, monkeypatch,
     ):
         monkeypatch.setattr(settings, "federation_identity_links_enabled", True)
+        monkeypatch.setattr(settings, "auth_enabled", True)
         import services.federation_identity_link as fil
         monkeypatch.setattr(fil, "resolve_linked_user", AsyncMock(return_value=99))
 
@@ -704,6 +706,31 @@ class TestPersonScopedMapping:
         pending = await get_pending_store().get(resp.request_id)
         assert pending.enforce_circles is False                # MAPPED — run as the user
         assert pending.asker_local_user_id == 99               # the linked local user
+
+    @pytest.mark.asyncio
+    @pytest.mark.unit
+    async def test_auth_off_never_maps_even_with_link(
+        self, responder_identity, asker_identity, mock_db_with_peer, monkeypatch,
+    ):
+        # SECURITY: under AUTH_ENABLED=false, enforce_circles=False would hit the
+        # single-user full-bypass and leak the WHOLE brain. The mapped path must
+        # be refused (fall back to peer-scoped) regardless of a matching link.
+        monkeypatch.setattr(settings, "federation_identity_links_enabled", True)
+        monkeypatch.setattr(settings, "auth_enabled", False)
+        import services.federation_identity_link as fil
+        spy = AsyncMock(return_value=99)
+        monkeypatch.setattr(fil, "resolve_linked_user", spy)
+
+        responder = FederationQueryResponder(db=mock_db_with_peer)
+        responder._run_query = AsyncMock()
+
+        req = _sign_initiate(asker_identity, querier_ref="cafebabe" * 8)
+        resp = await responder.handle_initiate(req)
+
+        spy.assert_not_awaited()                               # never even consults the link
+        pending = await get_pending_store().get(resp.request_id)
+        assert pending.enforce_circles is True                 # forced fallback
+        assert pending.asker_local_user_id == 42               # peer echo, not the linked user
 
     @pytest.mark.asyncio
     @pytest.mark.unit

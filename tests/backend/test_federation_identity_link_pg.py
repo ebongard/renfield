@@ -68,11 +68,15 @@ async def test_resolve_fail_closed(pg_db_session, linked_world):
 
 
 async def test_mint_is_unique_and_opaque(pg_db_session, linked_world):
-    a, b = mint_querier_ref(), mint_querier_ref()
-    assert a != b
-    assert len(a) == 64  # 32 bytes hex
-    # Not derivable from any local id.
-    assert str(linked_world["person_id"]) not in a
+    # 256-bit random hex: unique per call, fixed length, hex charset. (A
+    # substring check against a short numeric id is meaningless here — single
+    # decimal digits appear in 64-char random hex ~99% of the time; opaqueness
+    # is proven by "not derived from the id at all" = randomness + uniqueness.)
+    mints = {mint_querier_ref() for _ in range(50)}
+    assert len(mints) == 50                       # all unique
+    for m in mints:
+        assert len(m) == 64                       # 32 bytes hex
+        assert all(c in "0123456789abcdef" for c in m)
 
 
 async def test_delete_reverts_to_fallback(pg_db_session, linked_world):
