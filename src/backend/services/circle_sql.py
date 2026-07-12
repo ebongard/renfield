@@ -238,7 +238,12 @@ def kg_entities_circles_filter(
     """
     src = "kg_entities"
     clause = circles_filter_clause(table_alias=alias, source_table_value=src, peer_scoped=peer_scoped)
-    return clause, circles_filter_params(asker_id, source_table_value=src)
+    # peer_scoped drops the explicit-grant branch (the only consumer of the
+    # `_src` bind), so omit it — otherwise a strict `text(clause).bindparams()`
+    # caller (kg_retrieval._resolve_entity_names) raises on the unreferenced name.
+    return clause, circles_filter_params(
+        asker_id, source_table_value=("" if peer_scoped else src)
+    )
 
 
 def kg_relations_circles_filter(
@@ -250,7 +255,12 @@ def kg_relations_circles_filter(
     """
     src = "kg_relations"
     clause = circles_filter_clause(table_alias=alias, source_table_value=src, peer_scoped=peer_scoped)
-    return clause, circles_filter_params(asker_id, source_table_value=src)
+    # peer_scoped drops the explicit-grant branch (the only consumer of the
+    # `_src` bind), so omit it — otherwise a strict `text(clause).bindparams()`
+    # caller (kg_retrieval._resolve_entity_names) raises on the unreferenced name.
+    return clause, circles_filter_params(
+        asker_id, source_table_value=("" if peer_scoped else src)
+    )
 
 
 def conversation_memories_circles_filter(
@@ -262,7 +272,12 @@ def conversation_memories_circles_filter(
     """
     src = "conversation_memories"
     clause = circles_filter_clause(table_alias=alias, source_table_value=src, peer_scoped=peer_scoped)
-    return clause, circles_filter_params(asker_id, source_table_value=src)
+    # peer_scoped drops the explicit-grant branch (the only consumer of the
+    # `_src` bind), so omit it — otherwise a strict `text(clause).bindparams()`
+    # caller (kg_retrieval._resolve_entity_names) raises on the unreferenced name.
+    return clause, circles_filter_params(
+        asker_id, source_table_value=("" if peer_scoped else src)
+    )
 
 
 def document_chunks_circles_filter(
@@ -312,7 +327,12 @@ def document_chunks_circles_filter(
         owner_atom_id_expr=f"{doc_alias}.atom_id",
         peer_scoped=peer_scoped,
     )
-    return clause, circles_filter_params(asker_id, source_table_value=src)
+    # peer_scoped drops the explicit-grant branch (the only consumer of the
+    # `_src` bind), so omit it — otherwise a strict `text(clause).bindparams()`
+    # caller (kg_retrieval._resolve_entity_names) raises on the unreferenced name.
+    return clause, circles_filter_params(
+        asker_id, source_table_value=("" if peer_scoped else src)
+    )
 
 
 def document_facts_circles_filter(
@@ -358,4 +378,9 @@ def document_facts_circles_filter(
         owner_atom_id_expr=f"{doc_alias}.atom_id",
         peer_scoped=peer_scoped,
     )
-    return clause, circles_filter_params(asker_id, source_table_value=src)
+    # peer_scoped drops the explicit-grant branch (the only consumer of the
+    # `_src` bind), so omit it — otherwise a strict `text(clause).bindparams()`
+    # caller (kg_retrieval._resolve_entity_names) raises on the unreferenced name.
+    return clause, circles_filter_params(
+        asker_id, source_table_value=("" if peer_scoped else src)
+    )

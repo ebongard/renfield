@@ -150,6 +150,30 @@ class TestPeerScoped:
                 == circles_filter_clause(table_alias="e", source_table_value=src, peer_scoped=False)
             )
 
+    def test_peer_scoped_params_omit_unused_src_bind(self):
+        # Regression: peer_scoped drops the explicit-grant branch (the only
+        # consumer of :asker_id_src). The params dict must NOT carry asker_id_src,
+        # or a strict text(clause).bindparams(**params) caller
+        # (kg_retrieval._resolve_entity_names) raises on the unreferenced name.
+        for wrapper in (
+            kg_entities_circles_filter, kg_relations_circles_filter,
+            conversation_memories_circles_filter,
+        ):
+            clause, params = wrapper(42, peer_scoped=True)
+            assert "asker_id_src" not in params
+            # Every emitted bind must be referenced by the clause (bindparams-safe).
+            for key in params:
+                assert f":{key}" in clause, f"{key} emitted but not in clause"
+        clause, params = document_chunks_circles_filter(42, peer_scoped=True)
+        assert "asker_id_src" not in params
+        for key in params:
+            assert f":{key}" in clause
+
+    def test_non_peer_scoped_params_still_include_src(self):
+        # Guard the other direction: normal callers keep the grant bind.
+        _, params = kg_entities_circles_filter(42)
+        assert params.get("asker_id_src") == "kg_entities"
+
     def test_wrappers_forward_peer_scoped(self):
         for wrapper in (
             kg_entities_circles_filter, kg_relations_circles_filter,
