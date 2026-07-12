@@ -45,6 +45,12 @@ Origin: `/review` of PR #957 (federation responder circle-enforcement). The peer
 - **WHY:** Correctness + isolation once federation grows past a single peer. Same identity-namespace class as the deferred N-peer items in `docs/FEDERATION_MULTI_PEER.md`.
 - **DEPENDS ON:** touches pairing (`pairing_service`), the `circle_memberships.member_user_id` FK semantics, and the responder — coordinate with the multi-peer topology work.
 
+### Person-scoped federation (cross-instance identity mapping) — DESIGN done, build deferred
+Origin: linking the personal↔business instances (2026-07-12). The desired model is per-person: a person with accounts on BOTH instances sees, from either side, what that person is entitled to see on the other; everyone else sees only public. Current federation is instance-to-instance single-tier and carries no per-person identity — and the personal instance is auth-off (no "persons" at all). Design: [`docs/design/federation-identity-mapping.md`](docs/design/federation-identity-mapping.md).
+- **WHAT:** `federation_user_links` map + a signed `querier_ref` in the query envelope + responder mapped/fallback branch (mapped → `enforce_circles=False` as the local user; unmapped → the shipped `peer_scoped` fallback). Link established by a consent-signed double-login handshake.
+- **PREREQ (P0):** personal instance → auth-on (real per-person accounts). Big separate track (see deploy-production "Standing up a NEW instance (auth-on)").
+- **WHY:** the peer-scoped fix (PR #957) only gives the public/guest fallback; the person-mapping exception is the actual product ask. Unifies with the multi-peer `remote_user_id` collision item (both = "federated identity is not a local integer").
+
 ### Graph-expansion relation-tier filtering for the non-federation (household/auth-on) path
 Origin: `/review` of PR #957. `graph_expansion._edges_within` + the BFS frontier query now peer-tier-filter relations, but ONLY on the federation (`enforce_circles`) path (kept byte-identical for `/api/atoms`). On the auth-on household path, entities are circle-filtered but relations are NOT — so a household member who can see two entities can see a relation between them even if that relation's own `circle_tier` is stricter (independently PATCH-able). Pre-existing, not a federation leak, but the same disclosure class.
 - **WHAT:** Extend `_relation_filter` to also apply on the auth-on path (mirror `_entity_filter`'s `auth_enabled`-gated activation), with a regression check that household members lose stricter-tiered relations between visible endpoints.
