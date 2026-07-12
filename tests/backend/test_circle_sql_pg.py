@@ -543,3 +543,84 @@ async def test_document_chunks_stranger_sees_neither_self_chunk(
     visible = await _run_chunk_clause_for(pg_db_session, seeded_document_world["stranger_id"])
     assert seeded_document_world["chunk_kb_id"] not in visible
     assert seeded_document_world["chunk_null_id"] not in visible
+
+
+# ---------------------------------------------------------------------------
+# peer_scoped (federation) — the collision + explicit-grant suppression proof.
+#
+# A federated asker_id comes from PeerUser.remote_user_id, an FK-constrained
+# local users.id that structurally collides with the owner's own id in a
+# single-user household. peer_scoped MUST drop the owner-equality and
+# explicit-grant branches so a colliding/granted asker sees ONLY public +
+# pairing tier-membership.
+# ---------------------------------------------------------------------------
+
+
+async def _run_kg_clause_peer_scoped(session: AsyncSession, asker_id: int) -> set[int]:
+    clause, params = kg_entities_circles_filter(asker_id=asker_id, peer_scoped=True)
+    sql = f"SELECT e.id FROM kg_entities e WHERE e.is_active AND ({clause})"
+    result = await session.execute(text(sql), params)
+    return {row.id for row in result.all()}
+
+
+async def test_peer_scoped_colliding_asker_id_denied_owner_branch(
+    pg_db_session: AsyncSession,
+    seeded_circle_world: dict,
+) -> None:
+    """THE core fix: asker_id == owner_id (the FK-forced collision) must NOT
+    unlock the owner's own atoms under peer_scoped. With the owner branch
+    dropped and no membership row for the owner-as-member, only public is left.
+    """
+    owner_id = seeded_circle_world["owner_id"]
+
+    # Sanity: WITHOUT peer_scoped, that same id is the owner → sees everything.
+    unscoped = await _run_kg_clause_for(pg_db_session, owner_id)
+    assert seeded_circle_world["kg_self_id"] in unscoped
+
+    # WITH peer_scoped: the colliding id sees ONLY public.
+    visible = await _run_kg_clause_peer_scoped(pg_db_session, owner_id)
+    assert seeded_circle_world["kg_self_id"] not in visible, (
+        "peer_scoped must NOT let a colliding asker_id reach owner self atoms"
+    )
+    assert seeded_circle_world["kg_household_id"] not in visible
+    assert seeded_circle_world["kg_extended_id"] not in visible
+    assert visible == {seeded_circle_world["kg_public_id"]}
+
+
+async def test_peer_scoped_drops_explicit_grant(
+    pg_db_session: AsyncSession,
+    seeded_circle_world: dict,
+) -> None:
+    """The explicit-grant branch is also an asker-id equality sink → dropped.
+
+    `stranger` has an explicit grant to the tier-0 self entity. Unscoped they
+    see it; peer_scoped they do not (only public remains).
+    """
+    stranger_id = seeded_circle_world["stranger_id"]
+
+    unscoped = await _run_kg_clause_for(pg_db_session, stranger_id)
+    assert seeded_circle_world["kg_self_id"] in unscoped, (
+        "precondition: stranger sees self entity via explicit grant when unscoped"
+    )
+
+    visible = await _run_kg_clause_peer_scoped(pg_db_session, stranger_id)
+    assert seeded_circle_world["kg_self_id"] not in visible, (
+        "peer_scoped must drop the explicit-grant branch"
+    )
+    assert visible == {seeded_circle_world["kg_public_id"]}
+
+
+async def test_peer_scoped_membership_still_reaches_granted_tier(
+    pg_db_session: AsyncSession,
+    seeded_circle_world: dict,
+) -> None:
+    """The safe branch survives: a peer granted tier=2 (household) still reaches
+    household + extended + public via the pairing tier-membership EXISTS — and
+    still NOT the owner's tier-0 self atom.
+    """
+    member_id = seeded_circle_world["member_household_id"]
+    visible = await _run_kg_clause_peer_scoped(pg_db_session, member_id)
+    assert seeded_circle_world["kg_self_id"] not in visible
+    assert seeded_circle_world["kg_household_id"] in visible
+    assert seeded_circle_world["kg_extended_id"] in visible
+    assert seeded_circle_world["kg_public_id"] in visible
