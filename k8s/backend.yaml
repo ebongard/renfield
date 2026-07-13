@@ -94,6 +94,11 @@ spec:
             - configMapRef:
                 name: renfield-env
           env:
+            # Loader prefers this RO mounted key when present (see the
+            # federation-identity volumeMount below); falls back to generating at
+            # the writable default when the secret isn't provisioned yet.
+            - name: FEDERATION_IDENTITY_PERSISTED_KEY_PATH
+              value: "/app/federation-identity/federation_identity_key"
             - name: POSTGRES_PASSWORD
               valueFrom:
                 secretKeyRef:
@@ -212,16 +217,18 @@ spec:
               subPath: mail_accounts.yaml
               readOnly: true
             # Federation Ed25519 identity key — PERSISTED so the pubkey (and thus
-            # every peer pairing) survives restarts. The default /app/secrets is
-            # ephemeral, so without this the key regenerates on each deploy and
-            # breaks federation. Operator-provisioned:
-            #   kubectl -n renfield create secret generic federation-identity \
-            #     --from-file=federation_identity_key=<32-byte-key>
-            # optional: true so a pod without the secret still boots (regenerates
-            # ephemerally, i.e. legacy behavior).
+            # every peer pairing) survives restarts. The writable default
+            # /app/secrets is ephemeral, so without a persisted key it regenerates
+            # on each deploy and breaks federation. This mounts the operator-
+            # provisioned `federation-identity` Secret as a whole RO dir (NOT
+            # subPath: an OPTIONAL subPath secret fails pod creation when absent).
+            # FEDERATION_IDENTITY_PERSISTED_KEY_PATH (set below) points the loader
+            # at the mounted file; when the secret is absent this is an empty RO
+            # dir and the loader falls back to generating ephemerally.
+            # Provision with bin/provision_federation_identity.py (NOT a hand
+            # `kubectl create --from-file`, which appends a newline → 33 bytes).
             - name: federation-identity
-              mountPath: /app/secrets/federation_identity_key
-              subPath: federation_identity_key
+              mountPath: /app/federation-identity
               readOnly: true
           livenessProbe:
             httpGet:

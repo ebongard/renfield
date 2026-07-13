@@ -53,11 +53,6 @@ def _pubkey_hex(raw: bytes) -> str:
     return ed25519.Ed25519PrivateKey.from_private_bytes(raw).public_key().public_bytes_raw().hex()
 
 
-def _secret_exists(context: str, namespace: str) -> bool:
-    r = _kubectl(context, namespace, ["get", "secret", SECRET_NAME, "-o", "name"])
-    return r.returncode == 0
-
-
 def _verify(context: str, namespace: str) -> None:
     r = _kubectl(context, namespace, ["get", "secret", SECRET_NAME, "-o", f"jsonpath={{.data.{KEY_FIELD}}}"])
     if r.returncode != 0 or not r.stdout.strip():
@@ -69,17 +64,9 @@ def _verify(context: str, namespace: str) -> None:
 
 
 def _provision(context: str, namespace: str, force: bool) -> None:
-    exists = _secret_exists(context, namespace)
-    if exists and not force:
+    if force:
         print(
-            f"✓ {namespace}/{SECRET_NAME} already exists — leaving it untouched.\n"
-            f"  (Rotating the key changes the pubkey and BREAKS every existing pairing.\n"
-            f"   Use --force to rotate deliberately, or --verify to inspect.)"
-        )
-        return
-    if exists and force:
-        print(
-            f"⚠  --force: ROTATING {namespace}/{SECRET_NAME}.\n"
+            f"⚠  --force: ROTATING {namespace}/{SECRET_NAME} (if it exists).\n"
             f"   This changes this instance's federation pubkey and BREAKS EVERY\n"
             f"   EXISTING PAIRING. You must re-pair afterwards. Continuing..."
         )
@@ -96,9 +83,20 @@ def _provision(context: str, namespace: str, force: bool) -> None:
         "type": "Opaque",
         "data": {KEY_FIELD: base64.b64encode(raw).decode("ascii")},
     }
-    r = _kubectl(context, namespace, ["apply", "-f", "-"], input=json.dumps(manifest))
+    # `create` (not `apply`) is the rotation guard: it FAILS with AlreadyExists
+    # rather than silently upserting, so a flaky/ambiguous `get` can never lead to
+    # overwriting a live key. --force does an explicit delete-then-create.
+    if force:
+        _kubectl(context, namespace, ["delete", "secret", SECRET_NAME, "--ignore-not-found"])
+    r = _kubectl(context, namespace, ["create", "-f", "-"], input=json.dumps(manifest))
     if r.returncode != 0:
-        sys.exit(f"✗ kubectl apply failed: {r.stderr.strip()}")
+        if "AlreadyExists" in (r.stderr or ""):
+            sys.exit(
+                f"✓ {namespace}/{SECRET_NAME} already exists — refusing to overwrite.\n"
+                f"  (Rotating changes the pubkey and BREAKS every existing pairing.\n"
+                f"   Use --force to rotate deliberately, or --verify to inspect.)"
+            )
+        sys.exit(f"✗ kubectl create failed: {r.stderr.strip()}")
     print(
         f"✓ provisioned {namespace}/{SECRET_NAME} (pubkey={_pubkey_hex(raw)}).\n"
         f"  Roll the backend to load it: kubectl -n {namespace} rollout restart deploy/backend"

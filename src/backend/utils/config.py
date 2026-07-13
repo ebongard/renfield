@@ -762,6 +762,13 @@ class Settings(BaseSettings):
     # peer pairing — survives restarts. See docs/design/federation-identity-mapping.md.
     federation_identity_key_path: str = "/app/secrets/federation_identity_key"
 
+    # The READ-ONLY mounted persisted key location (the `federation-identity`
+    # Secret, mounted as a whole dir — NOT subPath). When this file exists it is
+    # PREFERRED over the writable path above (a provisioned instance loads the
+    # durable key); when absent (secret not provisioned yet) the loader falls
+    # through to the writable path and generates ephemerally. Empty = no mount.
+    federation_identity_persisted_key_path: str = ""
+
     # When set, the backend FAILS TO BOOT if the federation identity key was
     # generated fresh at startup instead of loaded from a persisted mount — i.e.
     # the operator forgot to provision the `federation-identity` secret. Default

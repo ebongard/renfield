@@ -147,12 +147,12 @@ Sequenced as **1+2 first** (delivers a working, user-establishable *public↔pub
               settings.federation_identity_key_path ─┤ 2. else the setting
               _DEFAULT_KEY_PATH ──────────────────┘ 3. else /app/secrets/…
                                                 ▼
-                        Secret `federation-identity` mounted (subPath, RO)
-                        at /app/secrets/federation_identity_key  → STABLE pubkey
+                        Secret `federation-identity` mounted (whole RO dir, no subPath)
+                        at /app/federation-identity/  → persisted-key path preferred → STABLE pubkey
 ```
 
 - **Code (done, uncommitted):** `federation_identity_key_path` setting + `_resolve_key_path()` (explicit-init > setting > default). Tests: precedence.
-- **Manifest (done, uncommitted):** optional `federation-identity` secret mount (subPath, RO, `optional: true`) in `k8s/backend.yaml`; mirror into the xidra private manifest.
+- **Manifest (done, uncommitted):** optional `federation-identity` secret mounted as a **whole RO dir** (`optional: true`, NOT `subPath` — an optional subPath secret fails pod creation when absent) at `/app/federation-identity/` in `k8s/backend.yaml`, with `FEDERATION_IDENTITY_PERSISTED_KEY_PATH` pointing the loader at the mounted file; falls back to the writable ephemeral path when the secret isn't provisioned. Mirror into the xidra private manifest. Two-path split (RO mount preferred, writable generate fallback) is what keeps a pre-provision pod booting (review fix 2026-07-13).
 **Storage decision (2026-07-13):** operator-provisioned **k8s Secret** (etcd-backed, RWX-ready for future multi-replica), NOT a self-bootstrapping PVC. The Secret's extra ceremony (a provisioning step) is accepted for the etcd backup + multi-replica headroom.
 
 - **A1 — rotation-safe provisioning:** `bin/provision_federation_identity.py --namespace <ns>` generates an Ed25519 key and `kubectl create secret`s it. **Emits EXACTLY 32 raw bytes — no trailing newline** (the loader `_load_existing` hard-rejects `len(raw) != 32` at `federation_identity.py:176`, so a naive `kubectl create secret --from-file=<file-with-newline>` = 33 bytes = ValueError = federation dead; the script writes the raw key itself so this can't happen). **create-if-absent** (refuses to overwrite; rotating re-pairs everyone). `--force` rotates behind a loud warning. `--verify` loads-and-prints the resulting pubkey to confirm the 32-byte round-trip.

@@ -103,12 +103,28 @@ _loaded_from_disk: bool | None = None
 
 
 def _resolve_key_path() -> Path:
-    """The key file to load/create: an explicit init() path wins (tests), else
-    the `federation_identity_key_path` setting, else the hardcoded default."""
+    """The key file to load/create, in precedence order:
+
+    1. explicit init() path (tests / callers) — wins outright.
+    2. `federation_identity_persisted_key_path` IF that file exists — the RO
+       secret mount. Preferred so a provisioned instance LOADS the durable key.
+    3. `federation_identity_key_path` (writable, default /app/secrets/…) — the
+       GENERATE target when no persisted key is mounted yet.
+
+    Splitting (2) read-only mount from (3) writable generate target is what lets
+    the secret mount be a plain RO dir (NOT a subPath): an OPTIONAL subPath secret
+    fails pod creation when absent, whereas an absent whole-dir optional secret is
+    just an empty RO dir → we fall through to (3) and generate ephemerally (the
+    documented pre-provision behavior). The boot guard then flags the ephemeral
+    key when persistence is required.
+    """
     if _configured_path is not None:
         return _configured_path
     try:
         from utils.config import settings
+        persisted = settings.federation_identity_persisted_key_path
+        if persisted and Path(persisted).exists():
+            return Path(persisted)
         return Path(settings.federation_identity_key_path or _DEFAULT_KEY_PATH)
     except Exception:  # noqa: BLE001 — config import must never break identity load
         return _DEFAULT_KEY_PATH
@@ -236,7 +252,11 @@ def _load_or_generate(path: Path) -> FederationIdentity:
     except FileExistsError:
         # Another process raced us to the create. Their key is now on
         # disk; read it (they had no way to tell us which pubkey they
-        # wrote, so our in-memory `private_key` is discarded).
+        # wrote, so our in-memory `private_key` is discarded). The key IS
+        # now on disk, so mark loaded-from-disk True (matters only for a
+        # future shared-writable-volume multi-replica setup; single-replica
+        # Recreate never reaches this branch).
+        _loaded_from_disk = True
         logger.info(
             f"🔑 Federation identity: lost create race at {path}; "
             f"loading the winner's key"

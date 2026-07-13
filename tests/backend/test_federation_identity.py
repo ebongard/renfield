@@ -66,7 +66,31 @@ class TestResolveKeyPath:
     def test_default_when_setting_blank(self, monkeypatch):
         init_federation_identity(None)
         monkeypatch.setattr(settings, "federation_identity_key_path", "")
+        monkeypatch.setattr(settings, "federation_identity_persisted_key_path", "")
         assert _resolve_key_path() == fed._DEFAULT_KEY_PATH
+
+    @pytest.mark.unit
+    def test_persisted_path_preferred_when_file_exists(self, tmp_path, monkeypatch):
+        # The RO mounted key (persisted) is preferred over the writable generate path.
+        init_federation_identity(None)
+        persisted = tmp_path / "mounted" / "federation_identity_key"
+        persisted.parent.mkdir()
+        persisted.write_bytes(_raw32())
+        monkeypatch.setattr(settings, "federation_identity_persisted_key_path", str(persisted))
+        monkeypatch.setattr(settings, "federation_identity_key_path", str(tmp_path / "writable_key"))
+        assert _resolve_key_path() == persisted
+
+    @pytest.mark.unit
+    def test_persisted_path_absent_falls_back_to_writable(self, tmp_path, monkeypatch):
+        # Secret not provisioned yet: persisted path set but the file is absent →
+        # fall through to the writable generate path (the pre-provision behavior).
+        init_federation_identity(None)
+        writable = tmp_path / "writable_key"
+        monkeypatch.setattr(
+            settings, "federation_identity_persisted_key_path", str(tmp_path / "mount" / "absent")
+        )
+        monkeypatch.setattr(settings, "federation_identity_key_path", str(writable))
+        assert _resolve_key_path() == writable
 
 
 class TestLoadOrGenerate:
