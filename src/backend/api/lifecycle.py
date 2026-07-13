@@ -817,6 +817,36 @@ def _schedule_kiosk_internal_health_refresh(app):
     )
 
 
+def _schedule_kiosk_peer_status_refresh(app):
+    """Backend-internal refresher → PUSHES a ``peer_status_changed`` delta to the
+    kiosk hub when federation-peer reachability changes.
+
+    Same no-poll model as the weather + internal-health refreshers: peer
+    ``last_seen_at`` has no push of its own, so a backend timer recomputes
+    reachability and streams only actual changes to the wall displays. Diff-gated
+    in ``refresh_and_push_peer_status``; skipped when no wall display is connected.
+    """
+    from api.websocket.kiosk_data import _PEER_STATUS_REFRESH_SECONDS
+
+    async def _tick():
+        from api.websocket.kiosk_data import refresh_and_push_peer_status
+        from api.websocket.kiosk_handler import _kiosk_clients
+
+        if not _kiosk_clients:
+            return
+        await refresh_and_push_peer_status()
+
+    _spawn_periodic_task(
+        name="Kiosk peer-status refresh",
+        interval=_PEER_STATUS_REFRESH_SECONDS,
+        work=_tick,
+        started_msg=(
+            f"Kiosk peer-status refresher gestartet "
+            f"(interval={_PEER_STATUS_REFRESH_SECONDS}s)"
+        ),
+    )
+
+
 def _schedule_notification_poller(app):
     """Start the MCP notification poller for servers with notifications enabled."""
     if not settings.notification_poller_enabled:
@@ -1177,6 +1207,7 @@ async def lifespan(app: "FastAPI"):
     _schedule_obligation_calendar_sync(app)
     _schedule_kiosk_weather_refresh(app)
     _schedule_kiosk_internal_health_refresh(app)
+    _schedule_kiosk_peer_status_refresh(app)
 
     # Self-learning Phase 1: load bundled seed skills into the database.
     # Idempotent — seeds with a matching title are skipped, so re-running

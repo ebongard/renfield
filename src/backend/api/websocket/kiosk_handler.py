@@ -52,8 +52,10 @@ each into the same reducer-held model. Every event is CONTENT-FREE.
     web-chat turn counter, so the core shows "processing" while Renfield handles
     a TYPED turn (voice already drives the core via satellite_state). Snapshot
     carries ``chat_active``.
-  * ``peer_status_changed`` — see the plan §1.4/§9; REMAINING (needs a small
-    backend-internal reachability timer — no discrete federation event exists).
+  * ``peer_status_changed`` — ``{type, peers:[…]}`` — pushed when federation-peer
+    reachability changes. A backend timer recomputes it (no discrete federation
+    event exists) and diff-pushes; the kiosk peer nodes go green/red live instead
+    of only on reconnect. See ``kiosk_data.refresh_and_push_peer_status``.
 """
 
 import asyncio
@@ -184,13 +186,6 @@ async def _broadcast_consumer() -> None:
 # Tools whose per-(user,tool) success rate is below this are "degraded" in the
 # aggregated, user-id-free kiosk health view.
 _TOOL_HEALTH_DEGRADED_BELOW = 0.5
-
-# A federation peer is shown "reachable" if it was seen within this window. The
-# snapshot has no live heartbeat probe (peer reachability transitions are a
-# later delta phase, see the plan §1.6/§9); last-seen recency is the honest
-# best-effort signal at hydrate time.
-_PEER_REACHABLE_WITHIN_SECONDS = 300
-
 
 def build_presence_payload(presence) -> dict:
     """Content-free rooms→occupant-count rollup of the live presence map.
@@ -334,40 +329,11 @@ async def build_kiosk_snapshot(app) -> dict:
         logger.debug(f"kiosk snapshot: activity unavailable: {e}")
 
     # --- Federation peers (reachability, no message content) -------------
+    # Shared with the peer_status_changed refresher so snapshot + delta agree.
     try:
-        from sqlalchemy import select
+        from api.websocket.kiosk_data import compute_peer_status
 
-        from models.database import PeerUser
-
-        now = datetime.now(UTC)
-        async with AsyncSessionLocal() as db:
-            rows = (
-                await db.execute(
-                    select(PeerUser).where(PeerUser.revoked_at.is_(None))
-                )
-            ).scalars().all()
-        peers: list[dict] = []
-        seen_peers: set = set()
-        for peer in rows:
-            # Different circle owners can pair with the same remote node; the
-            # kiosk shows one node per remote identity.
-            if peer.remote_pubkey in seen_peers:
-                continue
-            seen_peers.add(peer.remote_pubkey)
-            last_seen = peer.last_seen_at
-            reachable = False
-            if last_seen is not None:
-                ls = last_seen if last_seen.tzinfo else last_seen.replace(tzinfo=UTC)
-                reachable = (now - ls).total_seconds() < _PEER_REACHABLE_WITHIN_SECONDS
-            peers.append(
-                {
-                    "id": peer.id,
-                    "name": peer.remote_display_name,
-                    "last_seen_at": last_seen.isoformat() if last_seen else None,
-                    "reachable": reachable,
-                }
-            )
-        snapshot["peers"] = peers
+        snapshot["peers"] = await compute_peer_status()
     except Exception as e:
         logger.debug(f"kiosk snapshot: peers unavailable: {e}")
 
@@ -456,9 +422,10 @@ async def kiosk_live(
     # Reset the internal-health diff-gate so the next refresher tick re-pushes the
     # current verdicts — the gate isn't advanced while no kiosk is connected, so
     # it can hold a stale pre-gap value that would otherwise suppress a real delta.
-    from api.websocket.kiosk_data import reset_internal_health_gate
+    from api.websocket.kiosk_data import reset_internal_health_gate, reset_peer_status_gate
 
     reset_internal_health_gate()
+    reset_peer_status_gate()
     logger.info(f"🖥️ Kiosk display connected ({len(_kiosk_clients)} total)")
 
     try:

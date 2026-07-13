@@ -222,6 +222,11 @@ interface InternalHealthChangedDelta {
   subsystems?: KioskInternalHealth[];
 }
 
+interface PeerStatusChangedDelta {
+  type: 'peer_status_changed';
+  peers?: KioskPeer[];
+}
+
 interface TurnActivityDelta {
   type: 'turn_activity';
   role: string;
@@ -240,6 +245,7 @@ type KioskMessage =
   | ToolHealthChangedDelta
   | WeatherUpdatedDelta
   | InternalHealthChangedDelta
+  | PeerStatusChangedDelta
   | TurnActivityDelta
   | ChatActivityDelta
   | { type: string; [key: string]: unknown };
@@ -437,6 +443,13 @@ function reduce(state: KioskLiveModel, msg: KioskMessage): KioskLiveModel {
       // change (diff-gated), so we never merge partial verdicts.
       const delta = msg as InternalHealthChangedDelta;
       return { ...state, internalHealth: foldInternalHealth(delta.subsystems) };
+    }
+
+    case 'peer_status_changed': {
+      // Full replace — backend diff-pushes the whole peer set on any reachability
+      // change, so peer nodes go green/red live instead of only on reconnect.
+      const delta = msg as PeerStatusChangedDelta;
+      return { ...state, peers: delta.peers ?? [] };
     }
 
     case 'chat_activity': {

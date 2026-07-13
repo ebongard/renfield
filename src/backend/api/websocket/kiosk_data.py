@@ -365,6 +365,93 @@ async def refresh_and_push_internal_health() -> None:
 
 
 # ---------------------------------------------------------------------------
+# Federation-peer reachability. The peer set has no push of its own (last_seen_at
+# is written only when a remote peer queries us), so a backend timer recomputes
+# reachability and streams a ``peer_status_changed`` delta on change — closing
+# the deferred kiosk peer-liveness gap so the wall board's peer nodes go
+# green/red live instead of only on kiosk reconnect + a frontend wall-clock decay.
+# ---------------------------------------------------------------------------
+
+# A peer is "reachable" if it queried THIS instance within this many seconds.
+_PEER_REACHABLE_WITHIN_SECONDS = 300
+
+# How often the backend recomputes peer reachability for the push refresher. The
+# reachability window is 5 min; a 60s tick surfaces a peer going quiet within a
+# glance without hammering the DB.
+_PEER_STATUS_REFRESH_SECONDS = 60
+
+# Last peer list PUSHED to the kiosk hub (diff-gate). None until the first push.
+_peer_status_last_pushed: list[dict] | None = None
+
+
+def reset_peer_status_gate() -> None:
+    """Force the next refresher tick to re-push peer status (same no-client-gap
+    rationale as reset_internal_health_gate)."""
+    global _peer_status_last_pushed
+    _peer_status_last_pushed = None
+
+
+async def compute_peer_status() -> list[dict]:
+    """Content-free federation-peer reachability for the kiosk.
+
+    One node per remote identity (dedup by pubkey); ``reachable`` = the peer
+    queried THIS instance within :data:`_PEER_REACHABLE_WITHIN_SECONDS`. No
+    pubkey, no message content. Shared by the snapshot builder and the refresher.
+    """
+    from datetime import UTC
+
+    from models.database import PeerUser
+    from services.database import AsyncSessionLocal
+
+    now = datetime.now(UTC)
+    async with AsyncSessionLocal() as db:
+        rows = (
+            await db.execute(select(PeerUser).where(PeerUser.revoked_at.is_(None)))
+        ).scalars().all()
+    peers: list[dict] = []
+    seen: set = set()
+    for peer in rows:
+        # Different circle owners can pair with the same remote node; the kiosk
+        # shows one node per remote identity.
+        if peer.remote_pubkey in seen:
+            continue
+        seen.add(peer.remote_pubkey)
+        last_seen = peer.last_seen_at
+        reachable = False
+        if last_seen is not None:
+            ls = last_seen if last_seen.tzinfo else last_seen.replace(tzinfo=UTC)
+            reachable = (now - ls).total_seconds() < _PEER_REACHABLE_WITHIN_SECONDS
+        peers.append(
+            {
+                "id": peer.id,
+                "name": peer.remote_display_name,
+                "last_seen_at": last_seen.isoformat() if last_seen else None,
+                "reachable": reachable,
+            }
+        )
+    return peers
+
+
+async def refresh_and_push_peer_status() -> None:
+    """Recompute peer reachability → PUSH a ``peer_status_changed`` delta on
+    change. Diff-gated, fire-and-forget — same pattern as the internal-health and
+    weather refreshers."""
+    global _peer_status_last_pushed
+    peers = await compute_peer_status()
+    if peers == _peer_status_last_pushed:
+        return
+    try:
+        from api.websocket.kiosk_handler import broadcast_kiosk_event
+
+        await broadcast_kiosk_event({"type": "peer_status_changed", "peers": peers})
+    except Exception as e:
+        # Do NOT advance the gate on a failed broadcast (see internal-health).
+        logger.debug(f"kiosk peer_status_changed broadcast failed: {e}")
+        return
+    _peer_status_last_pushed = peers
+
+
+# ---------------------------------------------------------------------------
 # Ambient kiosk weather tile. Read-only, degrades to None (never an error) when
 # the feature is off or the source is unavailable, so the kiosk hides the tile.
 # ---------------------------------------------------------------------------
