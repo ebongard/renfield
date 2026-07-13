@@ -21,6 +21,10 @@ data:
   # safe to set "true" AFTER the federation-identity Secret is provisioned
   # (bin/provision_federation_identity.py) — else the boot guard aborts startup.
   FEDERATION_REQUIRE_PERSISTENT_IDENTITY: "true"
+  # This instance's own reachable URL, advertised to a peer at pairing so the
+  # peer's transport_config gets a usable endpoint (without it a UI pairing yields
+  # no endpoint → federation unusable). Same-cluster peers use the internal svc DNS.
+  FEDERATION_ADVERTISED_URL: "http://backend.renfield.svc.cluster.local:8000"
   ALLOW_REGISTRATION: "true"       # harmless while auth is off; set "false" at cutover unless self-signup is wanted
   CORS_ORIGINS: "*"               # pin to the frontend origin at cutover
   TRUSTED_PROXIES: ""             # empty = legacy XFF[0] (per-client keying behind Traefik); set to the Traefik pod CIDR for the spoof-resistant walk (#693)
