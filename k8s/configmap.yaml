@@ -15,6 +15,12 @@ data:
   RENFIELD_ENV: "development"       # NOT "production" — that arms the insecure-JWT-key boot guard; flip only with a strong SECRET_KEY (see cutover below)
   AUTH_ENABLED: "false"            # single-user LAN; the whole multi-user surface is gated on this
   WS_AUTH_ENABLED: "false"        # MUST flip to "true" together with AUTH_ENABLED (validator enforces)
+  # This instance federates → require the persisted identity key so a
+  # mis-provisioned pod FAILS BOOT (enforce_persistent_identity) instead of
+  # silently regenerating ephemerally and breaking pairings a deploy later. Only
+  # safe to set "true" AFTER the federation-identity Secret is provisioned
+  # (bin/provision_federation_identity.py) — else the boot guard aborts startup.
+  FEDERATION_REQUIRE_PERSISTENT_IDENTITY: "true"
   ALLOW_REGISTRATION: "true"       # harmless while auth is off; set "false" at cutover unless self-signup is wanted
   CORS_ORIGINS: "*"               # pin to the frontend origin at cutover
   TRUSTED_PROXIES: ""             # empty = legacy XFF[0] (per-client keying behind Traefik); set to the Traefik pod CIDR for the spoof-resistant walk (#693)
