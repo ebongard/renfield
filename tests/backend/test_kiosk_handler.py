@@ -375,6 +375,10 @@ async def test_snapshot_shape_with_all_sources_down(monkeypatch):
     # Force the tool-health / activity / peers / weather / now-playing sources
     # to their degraded empty branches by making their imports/queries fail.
     monkeypatch.setattr(kiosk, "AsyncSessionLocal", _boom, raising=True)
+    # Peers moved to the shared kiosk_data.compute_peer_status (its own session,
+    # not kiosk.AsyncSessionLocal), so neutralize it explicitly for the no-db path.
+    import api.websocket.kiosk_data as kiosk_data
+    monkeypatch.setattr(kiosk_data, "compute_peer_status", _boom, raising=True)
 
     snap = await build_kiosk_snapshot(_FakeApp())
 
