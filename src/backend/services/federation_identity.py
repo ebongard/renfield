@@ -32,8 +32,11 @@ from cryptography.hazmat.primitives.asymmetric import ed25519
 from loguru import logger
 
 
-# Path is overridable for tests via `init_federation_identity(path=...)`.
-# Defaults to `secrets/federation_identity_key` next to the other secrets.
+# Path is overridable for tests via `init_federation_identity(path=...)` and in
+# production via the `federation_identity_key_path` setting (so an operator can
+# point it at a PERSISTED secret mount — the default /app/secrets is ephemeral
+# container storage, so the key would otherwise regenerate on every restart and
+# break every pairing on the next deploy).
 _DEFAULT_KEY_PATH = Path("/app/secrets/federation_identity_key")
 
 
@@ -89,7 +92,26 @@ class FederationIdentity:
 
 _instance_lock = threading.Lock()
 _instance: FederationIdentity | None = None
-_configured_path: Path = _DEFAULT_KEY_PATH
+# None = not explicitly initialized → resolve from settings at load time (below).
+# A test (or explicit caller) may pin an exact path via init_federation_identity.
+_configured_path: Path | None = None
+# Set by _load_or_generate the first (and only) time it runs per process:
+# True  = the key ALREADY existed at boot → persisted (a mounted secret/PVC).
+# False = we generated a fresh key at boot → EPHEMERAL (regenerates each restart).
+# None  = identity not loaded yet. The boot guard reads this after first load.
+_loaded_from_disk: bool | None = None
+
+
+def _resolve_key_path() -> Path:
+    """The key file to load/create: an explicit init() path wins (tests), else
+    the `federation_identity_key_path` setting, else the hardcoded default."""
+    if _configured_path is not None:
+        return _configured_path
+    try:
+        from utils.config import settings
+        return Path(settings.federation_identity_key_path or _DEFAULT_KEY_PATH)
+    except Exception:  # noqa: BLE001 — config import must never break identity load
+        return _DEFAULT_KEY_PATH
 
 
 def init_federation_identity(path: Path | str | None = None) -> None:
@@ -105,10 +127,8 @@ def init_federation_identity(path: Path | str | None = None) -> None:
             "init_federation_identity: singleton already loaded; "
             "call before first get_federation_identity()."
         )
-    if path is None:
-        _configured_path = _DEFAULT_KEY_PATH
-    else:
-        _configured_path = Path(path)
+    # None → clear any explicit pin so the path resolves from settings.
+    _configured_path = None if path is None else Path(path)
 
 
 def reset_federation_identity_for_tests() -> None:
@@ -117,8 +137,9 @@ def reset_federation_identity_for_tests() -> None:
     `init_federation_identity` call succeeds. Never call from
     production code.
     """
-    global _instance
+    global _instance, _loaded_from_disk
     _instance = None
+    _loaded_from_disk = None
 
 
 def get_federation_identity() -> FederationIdentity:
@@ -132,8 +153,32 @@ def get_federation_identity() -> FederationIdentity:
     with _instance_lock:
         if _instance is not None:
             return _instance
-        _instance = _load_or_generate(_configured_path)
+        _instance = _load_or_generate(_resolve_key_path())
         return _instance
+
+
+def enforce_persistent_identity() -> None:
+    """Boot guard: if `federation_require_persistent_identity` is set, FAIL fast
+    unless the federation key was loaded from a persisted path (not freshly
+    generated this boot). Ephemeral keys regenerate on every restart → the pubkey
+    changes → every existing pairing breaks on the next deploy, silently. A hard
+    fail at boot beats a WARNING nobody reads surfacing as broken pairings a
+    deploy later. Call once at startup (after config load). No-op when the setting
+    is off (default) — legacy/non-federating instances are unaffected.
+    """
+    from utils.config import settings
+    if not getattr(settings, "federation_require_persistent_identity", False):
+        return
+    get_federation_identity()  # force the one-time load so _loaded_from_disk is set
+    if _loaded_from_disk is not True:
+        raise RuntimeError(
+            "federation_require_persistent_identity is set but the federation "
+            f"identity key at {_resolve_key_path()} was GENERATED at boot, not "
+            "loaded from a persisted mount — it will regenerate on the next "
+            "restart and break every pairing. Provision the persisted key "
+            "(bin/provision_federation_identity.py) or unset the requirement."
+        )
+    logger.info("🔑 Federation identity verified persistent (boot guard passed)")
 
 
 def _load_or_generate(path: Path) -> FederationIdentity:
@@ -154,6 +199,8 @@ def _load_or_generate(path: Path) -> FederationIdentity:
         PrivateFormat,
     )
 
+    global _loaded_from_disk
+
     path.parent.mkdir(parents=True, exist_ok=True)
 
     def _load_existing() -> FederationIdentity:
@@ -161,15 +208,23 @@ def _load_or_generate(path: Path) -> FederationIdentity:
         if len(raw) != 32:
             raise ValueError(
                 f"federation_identity: {path} exists but is {len(raw)} bytes, "
-                f"expected 32 (Ed25519 private key). Refusing to overwrite."
+                f"expected 32 (Ed25519 private key). A common cause is a trailing "
+                f"newline from `kubectl create secret --from-file` — the key file "
+                f"must be EXACTLY 32 raw bytes (use bin/provision_federation_identity.py)."
             )
         return FederationIdentity(ed25519.Ed25519PrivateKey.from_private_bytes(raw))
 
     if path.exists():
         identity = _load_existing()
+        _loaded_from_disk = True  # key was ALREADY on disk at boot → persisted
         logger.info(f"🔑 Federation identity loaded from {path}")
         return identity
 
+    # No key at this path → generate one. On a persisted mount this branch is
+    # never taken (the secret file exists); taking it means the key is EPHEMERAL
+    # (regenerates every restart) — the boot guard flags this when federation
+    # requires a stable identity.
+    _loaded_from_disk = False
     private_key = ed25519.Ed25519PrivateKey.generate()
     raw = private_key.private_bytes(
         encoding=Encoding.Raw,

@@ -1082,6 +1082,17 @@ async def lifespan(app: "FastAPI"):
         )
         raise SystemExit(1)
 
+    # Block startup if federation requires a persisted identity but the key was
+    # generated ephemerally (operator forgot to provision the secret). Loud boot
+    # failure beats silently-broken pairings a deploy later. No-op unless
+    # federation_require_persistent_identity is set.
+    from services.federation_identity import enforce_persistent_identity
+    try:
+        enforce_persistent_identity()
+    except RuntimeError as e:
+        logger.critical(str(e))
+        raise SystemExit(1) from e
+
     # Warn about insecure defaults when auth is enabled
     if settings.auth_enabled:
         if not settings.ws_auth_enabled:

@@ -391,6 +391,18 @@ The household runs `AUTH_ENABLED=false`, so its deploy path never exercises the 
 
 (Cross-namespace: the shared GPU/model tier — ollama/searxng — must be FQDN-qualified in the ConfigMap AND in the `wait-for-deps` init container, which wgets a bare `ollama:11434` that would resolve to the wrong namespace.)
 
+### Federation identity (persisted key) — required before any instance pairs
+
+The federation Ed25519 identity key defaults to `/app/secrets/federation_identity_key`, which is **ephemeral container storage** — it regenerates on every restart, so the pubkey changes and any peer pairing breaks on the next deploy. `k8s/backend.yaml` mounts an **optional** `federation-identity` Secret there (`subPath`, RO). Provision it **once per namespace** before pairing, via the committed script (NOT a hand `kubectl create secret --from-file`, which appends a newline → 33 bytes → boot failure):
+
+```bash
+bin/provision_federation_identity.py -n renfield          # generate + create the Secret (create-if-absent)
+bin/provision_federation_identity.py -n renfield --verify # confirm 32 bytes + print pubkey
+kubectl -n renfield rollout restart deploy/backend        # load the persisted key
+```
+
+Then set `FEDERATION_REQUIRE_PERSISTENT_IDENTITY=true` on any instance that pairs, so a missing/mis-provisioned key **fails boot loudly** (`enforce_persistent_identity`) instead of silently breaking pairings a deploy later. **Rotation (`--force`) is destructive** — it re-pairs everyone for that instance (same class as `SECRET_KEY`↔IRKs). The xidra private manifest needs the same mount. Design: `docs/design/federation-identity-mapping.md` §8.
+
 ### ConfigMap changes
 
 When `config/mcp_servers.yaml` / `config/agent_roles.yaml` / `config/kg_scopes.yaml` / `config/mail_accounts.*.yaml` change in the repo, rewrite the `renfield-mcp-config` ConfigMap **before** the rolling restart — otherwise pods get stuck in `ContainerCreating` on a missing subPath:

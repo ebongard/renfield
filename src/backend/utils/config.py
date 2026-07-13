@@ -754,6 +754,22 @@ class Settings(BaseSettings):
     # docs/design/federation-identity-mapping.md.
     federation_identity_links_enabled: bool = False
 
+    # Federation — where this instance's Ed25519 identity private key lives.
+    # MUST point at PERSISTENT storage in production: the default /app/secrets is
+    # ephemeral container FS, so the key regenerates on every restart and the
+    # pubkey changes → every existing pairing breaks on the next deploy. Point it
+    # at a mounted secret (operator-provisioned) so the identity — and thus every
+    # peer pairing — survives restarts. See docs/design/federation-identity-mapping.md.
+    federation_identity_key_path: str = "/app/secrets/federation_identity_key"
+
+    # When set, the backend FAILS TO BOOT if the federation identity key was
+    # generated fresh at startup instead of loaded from a persisted mount — i.e.
+    # the operator forgot to provision the `federation-identity` secret. Default
+    # off so non-federating instances are unaffected; set true on any instance
+    # that actually pairs, so a misprovision is loud (boot failure) instead of
+    # silent (broken pairings one deploy later). See enforce_persistent_identity().
+    federation_require_persistent_identity: bool = False
+
     # Monitoring
     metrics_enabled: bool = False  # Enable Prometheus /metrics endpoint
 

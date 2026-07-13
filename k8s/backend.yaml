@@ -211,6 +211,18 @@ spec:
               mountPath: /app/config/mail_accounts.yaml
               subPath: mail_accounts.yaml
               readOnly: true
+            # Federation Ed25519 identity key — PERSISTED so the pubkey (and thus
+            # every peer pairing) survives restarts. The default /app/secrets is
+            # ephemeral, so without this the key regenerates on each deploy and
+            # breaks federation. Operator-provisioned:
+            #   kubectl -n renfield create secret generic federation-identity \
+            #     --from-file=federation_identity_key=<32-byte-key>
+            # optional: true so a pod without the secret still boots (regenerates
+            # ephemerally, i.e. legacy behavior).
+            - name: federation-identity
+              mountPath: /app/secrets/federation_identity_key
+              subPath: federation_identity_key
+              readOnly: true
           livenessProbe:
             httpGet:
               path: /health
@@ -258,3 +270,10 @@ spec:
         - name: mcp-config
           configMap:
             name: renfield-mcp-config
+        # Persisted federation identity key (see the volumeMount above).
+        # optional: true → pods boot even before the secret is provisioned.
+        - name: federation-identity
+          secret:
+            secretName: federation-identity
+            optional: true
+            defaultMode: 0600

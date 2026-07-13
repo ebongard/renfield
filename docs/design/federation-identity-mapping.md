@@ -126,4 +126,60 @@ The unmapped path is exactly the current PR-#957 behavior. The instance-level `C
 
 ---
 
-*Nothing here is built. The shipped peer_scoped fix (PR #957) is the fallback foundation; this doc is the plan for the person-mapping exception on top of it.*
+## 8. Implementation plan — making it user-establishable (eng-reviewed 2026-07-13)
+
+F-ID-1 (schema + `querier_ref` envelope + responder mapped/fallback branch + admin CRUD) is **merged + deployed dark**. But a real user can't *establish* a connection yet — pairing has never worked end-to-end, and the only way to create a link is an admin DB write. Two discoveries forced this plan:
+
+1. **The federation identity key is ephemeral.** `federation_identity._DEFAULT_KEY_PATH = /app/secrets/federation_identity_key` is on the container FS (no volume mount), so it **regenerates on every restart** — the pubkey changes and any `peer_users.remote_pubkey` pairing breaks on the next deploy. This is why federation has been "population of 1."
+2. **Pairing produces a dead peer — but the plumbing already exists.** The offer/accept ALREADY sign `offered_endpoints`/`accepted_endpoints` in the canonical payload (`pairing_service.py:280,285,342,346`, shipped #408/#421) and `_with_tofu_fingerprint` ALREADY persists them into `transport_config` (`:318,382`). The gap is narrow: **nothing supplies a value** — every caller passes `[]`, so `transport_config.endpoints=[]` → `_select_endpoint → None` → "Peer has no usable transport endpoint" (the code even logs this at `:197`). So PR-B is a *value-supply* change, NOT a wire-format/signing change (outside-voice correction 2026-07-13).
+
+**Hard rule (learned the hard way):** establishing/enabling a connection MUST be a reproducible product/ops mechanism — never a `kubectl exec` DB insert, `kubectl patch`, or hand-captured secret. Config + committed manifests + an idempotent provisioning script + user-facing flows.
+
+Sequenced as **1+2 first** (delivers a working, user-establishable *public↔public* link and proves the transport live), **then Piece 3** (person-mapping) on the proven foundation.
+
+### PR-A — Durable federation identity
+
+```
+                 boot                         load-or-generate
+ backend  ──▶ get_federation_identity() ──▶ _resolve_key_path()
+                                                │
+              init(path) explicit (tests) ──────┤ 1. explicit init path wins
+              settings.federation_identity_key_path ─┤ 2. else the setting
+              _DEFAULT_KEY_PATH ──────────────────┘ 3. else /app/secrets/…
+                                                ▼
+                        Secret `federation-identity` mounted (subPath, RO)
+                        at /app/secrets/federation_identity_key  → STABLE pubkey
+```
+
+- **Code (done, uncommitted):** `federation_identity_key_path` setting + `_resolve_key_path()` (explicit-init > setting > default). Tests: precedence.
+- **Manifest (done, uncommitted):** optional `federation-identity` secret mount (subPath, RO, `optional: true`) in `k8s/backend.yaml`; mirror into the xidra private manifest.
+**Storage decision (2026-07-13):** operator-provisioned **k8s Secret** (etcd-backed, RWX-ready for future multi-replica), NOT a self-bootstrapping PVC. The Secret's extra ceremony (a provisioning step) is accepted for the etcd backup + multi-replica headroom.
+
+- **A1 — rotation-safe provisioning:** `bin/provision_federation_identity.py --namespace <ns>` generates an Ed25519 key and `kubectl create secret`s it. **Emits EXACTLY 32 raw bytes — no trailing newline** (the loader `_load_existing` hard-rejects `len(raw) != 32` at `federation_identity.py:176`, so a naive `kubectl create secret --from-file=<file-with-newline>` = 33 bytes = ValueError = federation dead; the script writes the raw key itself so this can't happen). **create-if-absent** (refuses to overwrite; rotating re-pairs everyone). `--force` rotates behind a loud warning. `--verify` loads-and-prints the resulting pubkey to confirm the 32-byte round-trip.
+- **A2 — no silent misconfig (HARD FAIL, not just a log):** a `federation_require_persistent_identity` setting (default false; set true on federating instances) makes boot **fail** if the identity key was freshly generated rather than loaded from the persisted mount. A WARNING log alone is the silent-failure class the project's own lessons warn against (nobody reads WARNINGs; the symptom surfaces a deploy later as broken pairings). `_load_or_generate` returns whether it loaded-vs-generated so the boot guard can act.
+- **Deploy:** PR → build/deploy → operator runs the script once per namespace, then rolls. Rotation is destructive to pairings (same class as `SECRET_KEY`↔IRKs) — documented. Backend deploys `Recreate`, so the ephemeral→persisted transition has no old/new-pod pubkey-overlap window.
+
+**Tests (PR-A):** `_resolve_key_path` precedence · key **round-trip** (script output → `_load_or_generate` → identical pubkey) · idempotency (2nd run no-op) · `--force` rotates.
+
+### PR-B — Pairing supplies a working transport (value-supply, NOT a wire-format change)
+
+The offer/accept already sign + persist endpoints (§discovery 2). PR-B only makes callers *supply a value*:
+
+- **A3:** `federation_advertised_url` setting (per-instance default) **+** optional per-pairing UI override in PairInitiator/Responder (kept per 2026-07-13 decision, for future cross-internet per-peer values). Precedence: UI override > setting default.
+- The route/service defaults `offered_endpoints`/`accepted_endpoints` from that resolved value when the caller doesn't provide one; the endpoint then flows through the **already-signed, already-persisted** path (no signing/persist code to add — it exists at `pairing_service.py:280,318`).
+- Same-cluster household↔xidra uses internal `http://backend.<ns>.svc.cluster.local:8000`; the setting also accepts a public `https://` URL for future cross-internet federation.
+
+**Tests (PR-B):** endpoint defaulted from `federation_advertised_url` into the offer/accept · UI-override > setting precedence · the resolved endpoint IS covered by the existing signature (regression: strip → verify-fail — proving we didn't weaken the shipped signing) · **PG integration**: pairing persists `transport_config.endpoints` and `_select_endpoint` returns a usable URL (the "no usable endpoint" regression is closed) · backward-compat: an explicit endpoint-less pairing still succeeds.
+
+**Failure modes:** operator forgets the secret → ephemeral key → pairing dies silently on redeploy → **mitigated by A2 warning + `--verify`**. Misconfigured advertised URL → pairing succeeds, first query fails at transport (acceptable signal; pair-time reachability probe deferred P3). Endpoint tamper → signature fail (covered).
+
+### NOT in scope (deferred)
+- **Piece 3 / F-ID-2** person-link handshake (xidra generate-offer + household admin-map UI) — layered after 1+2 are proven live.
+- Pair-time endpoint reachability probe (P3).
+- Cross-internet TLS-pinned transport (setting already accepts https; TOFU pin path exists).
+
+---
+
+**Honest status (outside-voice, 2026-07-13):** F-ID-1's mapped-path code (#959) was merged + deployed **dark before a single real federated query ever crossed the link** — the transport has been "population of 1" the whole time (`_select_endpoint` returned None). So F-ID-1 is *untested end-to-end*; the first working pairing (PR-B) may surface bugs in code already in production. Sequence discipline: land PR-A + PR-B, **prove one public↔public query round-trips**, and only THEN trust any of the mapped-path (Piece 3) code.
+
+*F-ID-1 shipped dark (PR #957 fallback + #959 mapped path). §8 is the eng-reviewed + outside-reviewed plan (2026-07-13) to make it user-establishable: PR-A durable identity (etcd Secret + rotation-safe script + hard-fail boot guard), PR-B pairing value-supply (advertised-url setting + UI override), then Piece 3.*
