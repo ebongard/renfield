@@ -39,6 +39,7 @@ import {
   ClipboardList,
   Hammer,
   Radar,
+  FolderKanban,
 } from 'lucide-react';
 import DeviceStatus from './DeviceStatus';
 import ThemeToggle from './ThemeToggle';
@@ -180,8 +181,12 @@ export default function Layout({ children }: LayoutProps) {
   // legacy flat nav. The flag resolving late just reveals the collapse once.
   const { data: featureFlags } = useFeatureFlags();
   const wissenWorkspace = featureFlags?.wissen_workspace_enabled ?? false;
+  // Business-instance Phase 1: append the Projects entry only when the runtime flag is on.
+  // Gated off the typed /api/config/features flag (NOT item.feature — the
+  // AuthContext feature map defaults missing keys to true, so it can't hide it).
+  const projectsEnabled = featureFlags?.projects_enabled ?? false;
 
-  const mainNavSource: NavItemConfig[] = wissenWorkspace
+  const baseMainNav: NavItemConfig[] = wissenWorkspace
     ? (() => {
         const out: NavItemConfig[] = [];
         let inserted = false;
@@ -198,6 +203,10 @@ export default function Layout({ children }: LayoutProps) {
         return out;
       })()
     : mainNavigationConfig;
+
+  const mainNavSource: NavItemConfig[] = projectsEnabled
+    ? [...baseMainNav, { nameKey: 'nav.projects', href: '/projects', icon: FolderKanban }]
+    : baseMainNav;
 
   const mainNavigation: NavItem[] = mainNavSource.map((item) => ({
     ...item,

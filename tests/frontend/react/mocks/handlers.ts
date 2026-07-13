@@ -362,6 +362,7 @@ export const handlers: HttpHandler[] = [
       artifacts_typed_enabled: false,
       room_handoff_enabled: false,
       chat_branching_enabled: false,
+      projects_enabled: false,
     });
   }),
   // MCP API

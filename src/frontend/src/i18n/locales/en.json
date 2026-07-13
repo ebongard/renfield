@@ -35,6 +35,7 @@
     "chat": "Chat",
     "knowledge": "Knowledge",
     "tasks": "Tasks",
+    "projects": "Projects",
     "cameras": "Cameras",
     "rooms": "Rooms",
     "speakers": "Speakers",
@@ -572,6 +573,24 @@
     "reviewBucketFailed": "Could not load the review queue.",
     "promoteFailed": "Promotion failed.",
     "dismissFailed": "Dismiss failed."
+  },
+  "projects": {
+    "title": "Projects",
+    "subtitle": "Create projects and manage their knowledge base",
+    "createTitle": "Create a new project",
+    "namePlaceholder": "Project name",
+    "descriptionPlaceholder": "Description (optional)",
+    "create": "Create project",
+    "creating": "Creating...",
+    "loading": "Loading projects...",
+    "noProjects": "No projects yet",
+    "noProjectsDesc": "Create a project to give it its own knowledge base and history.",
+    "documentCount": "{{count}} documents",
+    "documentCount_one": "{{count}} document",
+    "created": "Created",
+    "failedToLoad": "Could not load projects",
+    "failedToSave": "Could not save project",
+    "failedToDelete": "Could not delete project"
   },
   "tasks": {
     "title": "Tasks",

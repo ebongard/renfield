@@ -456,6 +456,12 @@ class Settings(BaseSettings):
     # backfill makes flag-off byte-identical to pre-branching. Ships dark; flip
     # without a rebuild. See docs/design/chat-ui-modernization.md.
     chat_branching_enabled: bool = False
+    # Business-instance Projects — Phase 1: a minimal Project model +
+    # one KnowledgeBase per project + CRUD. Gates BOTH the backend /api/projects
+    # routes (404 when off) and the frontend /projects nav (exposed via
+    # /api/config/features). Off => the household instance is byte-identical.
+    # See the business-instance plan §7.1.
+    projects_enabled: bool = False
     # Chat artifacts Lane B (free-form HTML/SVG in a sandboxed iframe). DEFERRED —
     # NOT wired to anything in this delivery. Placeholder so the per-lane flag
     # split (§8 Q5) exists; defaults off and requires its own security review

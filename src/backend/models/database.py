@@ -311,6 +311,40 @@ class KnowledgeBase(Base):
     # legacy permissions by creating one grant per (chunk, user, permission).
 
 
+class Project(Base):
+    """Business-instance project (Phase 1).
+
+    A lightweight container that owns exactly ONE KnowledgeBase (``knowledge_base_id``,
+    1:1 — enforced in ``services/project_service.py``), giving a project its own
+    tier-scoped document/chat history for RAG. Meetings, timeline, and the
+    minutes pipeline are later phases (business-instance plan §7) and are NOT
+    modelled here.
+
+    Gated by ``settings.projects_enabled``; the household instance leaves it off.
+    """
+    __tablename__ = "projects"
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String(255), nullable=False)
+    description = Column(Text, nullable=True)
+
+    # Ownership (nullable for auth-disabled single-user deploys, mirrors KnowledgeBase).
+    owner_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
+
+    # The project's dedicated KnowledgeBase (1:1). Nullable so a half-built row is
+    # never a hard failure; the service always links a fresh KB on create.
+    knowledge_base_id = Column(Integer, ForeignKey("knowledge_bases.id", ondelete="SET NULL"), nullable=True, index=True)
+
+    # Circles v1 tier for team/project access. Default 2 = household/team.
+    circle_tier = Column(Integer, nullable=False, default=2)
+
+    status = Column(String(50), nullable=False, default="active")
+
+    created_at = Column(DateTime, default=_utcnow)
+
+    knowledge_base = relationship("KnowledgeBase", foreign_keys=[knowledge_base_id])
+
+
 class Document(Base):
     """Hochgeladene Dokumente (Metadaten)"""
     __tablename__ = "documents"

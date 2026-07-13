@@ -35,6 +35,7 @@
     "chat": "Chat",
     "knowledge": "Wissen",
     "tasks": "Aufgaben",
+    "projects": "Projekte",
     "cameras": "Kameras",
     "rooms": "Räume",
     "speakers": "Sprecher",
@@ -572,6 +573,24 @@
     "reviewBucketFailed": "Überprüfungs-Warteschlange konnte nicht geladen werden.",
     "promoteFailed": "Übernahme fehlgeschlagen.",
     "dismissFailed": "Verwerfen fehlgeschlagen."
+  },
+  "projects": {
+    "title": "Projekte",
+    "subtitle": "Projekte anlegen und deren Wissensbasis verwalten",
+    "createTitle": "Neues Projekt anlegen",
+    "namePlaceholder": "Projektname",
+    "descriptionPlaceholder": "Beschreibung (optional)",
+    "create": "Projekt anlegen",
+    "creating": "Wird angelegt...",
+    "loading": "Lade Projekte...",
+    "noProjects": "Keine Projekte vorhanden",
+    "noProjectsDesc": "Lege ein Projekt an, um eine eigene Wissensbasis und Verlauf zu erhalten.",
+    "documentCount": "{{count}} Dokumente",
+    "documentCount_one": "{{count}} Dokument",
+    "created": "Erstellt",
+    "failedToLoad": "Projekte konnten nicht geladen werden",
+    "failedToSave": "Projekt konnte nicht gespeichert werden",
+    "failedToDelete": "Projekt konnte nicht gelöscht werden"
   },
   "tasks": {
     "title": "Aufgaben",

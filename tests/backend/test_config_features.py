@@ -56,6 +56,21 @@ async def test_features_reports_role_surfacing_flag(monkeypatch, enabled):
     assert resp.json()["role_surfacing_enabled"] is enabled
 
 
+@pytest.mark.parametrize("enabled", [True, False])
+async def test_features_reports_projects_flag(monkeypatch, enabled):
+    """Business-instance Phase 1: the /projects nav is frontend-gated on this allowlisted flag."""
+    monkeypatch.setattr(settings, "projects_enabled", enabled)
+    from main import app
+    _auth_default(app)
+    try:
+        async with await _client(app) as c:
+            resp = await c.get("/api/config/features")
+    finally:
+        app.dependency_overrides.clear()
+    assert resp.status_code == 200
+    assert resp.json()["projects_enabled"] is enabled
+
+
 async def test_features_wissensbasis_reva_false_in_standalone():
     """Standalone Renfield does NOT mount the Reva-only /me/mix route, so the
     flag is False — the frontend then hides the Reva panels WITHOUT probing an

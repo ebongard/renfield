@@ -18,6 +18,7 @@ import { queryClient } from './api/queryClient';
 
 // Lazy-loaded admin/secondary pages
 const TasksPage = lazy(() => import('./pages/TasksPage'));
+const ProjectsPage = lazy(() => import('./pages/ProjectsPage'));
 const CameraPage = lazy(() => import('./pages/CameraPage'));
 const HomeAssistantPage = lazy(() => import('./pages/HomeAssistantPage'));
 const SpeakersPage = lazy(() => import('./pages/SpeakersPage'));
@@ -60,6 +61,9 @@ function AppRoutes() {
   // safe default, so a slow/failed flag fetch never breaks navigation.
   const { data: featureFlags } = useFeatureFlags();
   const wissenWorkspace = featureFlags?.wissen_workspace_enabled ?? false;
+  // Business-instance Phase 1: the /projects surface is gated by a runtime flag
+  // (/api/config/features). Off (the household default) => the route is absent.
+  const projectsEnabled = featureFlags?.projects_enabled ?? false;
 
   return (
     <Routes>
@@ -86,6 +90,13 @@ function AppRoutes() {
             } />
             <Route path="/chat" element={<Navigate to="/" replace />} />
             <Route path="/tasks" element={<TasksPage />} />
+            {projectsEnabled && (
+              <Route path="/projects" element={
+                <ProtectedRoute>
+                  <ProjectsPage />
+                </ProtectedRoute>
+              } />
+            )}
             {isFeatureEnabled('cameras') && (
               <Route path="/camera" element={
                 <ProtectedRoute permission={['cam.view', 'cam.full']} requireAny>

@@ -116,6 +116,11 @@ export const keys = {
     all: ['tasks'] as const,
     list: (filter?: string) => ['tasks', 'list', { filter }] as const,
   },
+  projects: {
+    all: ['projects'] as const,
+    list: () => ['projects', 'list'] as const,
+    detail: (id: number) => ['projects', 'detail', id] as const,
+  },
   cameras: {
     all: ['cameras'] as const,
     list: () => ['cameras', 'list'] as const,
