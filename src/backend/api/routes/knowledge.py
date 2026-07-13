@@ -19,6 +19,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.database import Document, KnowledgeBase, User
 from models.permissions import Permission, has_permission
+from services.atom_service import AtomService
 from services.auth_service import get_optional_user
 from services.database import get_db
 from services.progress import DocumentProgress
@@ -90,6 +91,7 @@ async def _augment_with_progress(
 
 # Import all schemas from separate file
 from .knowledge_schemas import (
+    BulkSetDocumentTierRequest,
     DocumentResponse,
     KBPermissionCreate,
     KBPermissionResponse,
@@ -101,6 +103,7 @@ from .knowledge_schemas import (
     SearchResult,
     SearchResultChunk,
     SearchResultDocument,
+    SetDocumentTierRequest,
     StatsResponse,
 )
 
@@ -508,6 +511,10 @@ def _doc_to_response_kwargs(doc: Document) -> dict:
         "knowledge_base_id": doc.knowledge_base_id,
         "created_at": doc.created_at.isoformat() if doc.created_at else "",
         "processed_at": doc.processed_at.isoformat() if doc.processed_at else None,
+        # Circle visibility for the tier-control UX. Denormalized on the
+        # documents row; atom_id may be NULL on legacy / global-RAG docs.
+        "circle_tier": doc.circle_tier or 0,
+        "atom_id": str(doc.atom_id) if doc.atom_id else None,
     }
 
 
@@ -742,6 +749,135 @@ async def move_documents(
         }
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
+
+
+# =============================================================================
+# Document visibility (circle tier) — tier-control UX
+# =============================================================================
+
+async def _assert_document_tier_write(
+    doc: Document, user: User | None, db: AsyncSession
+) -> None:
+    """Owner/write gate for changing a document's circle tier.
+
+    Mirrors the established bar: a ``kb.own`` baseline (as ``move_documents``)
+    plus per-document KB write access (as ``reindex_document``). KB-less
+    (global-RAG) docs are gated by the ``kb.own`` baseline alone — there is no
+    KB ACL to consult, and tiering is owner-scoped by construction. No-op when
+    auth is disabled (single-user mode).
+    """
+    if not settings.auth_enabled:
+        return
+    if not user:
+        raise HTTPException(status_code=401, detail="Authentication required")
+    if not has_permission(user.get_permissions(), Permission.KB_OWN):
+        raise HTTPException(status_code=403, detail="Permission required: kb.own or higher")
+    if doc.knowledge_base_id:
+        kb = (await db.execute(
+            select(KnowledgeBase).where(KnowledgeBase.id == doc.knowledge_base_id)
+        )).scalar_one_or_none()
+        if kb and not await check_kb_access(kb, user, "write", db):
+            raise HTTPException(status_code=403, detail="No write access to this document")
+
+
+async def _ensure_document_atom(doc: Document, rag: RAGService, db: AsyncSession) -> str:
+    """Resolve the document's atoms-row UUID, minting one if absent.
+
+    Normally-ingested docs already carry ``atom_id`` (set at create time), so
+    this is a no-op lookup. Legacy / KB-less docs may have ``atom_id = NULL``
+    (the ``circle_sql`` owner-branch atom fallback exists precisely for these);
+    for those we mint a ``kb_document`` atom owned by the resolved owner so the
+    tier PATCH has a real atoms row to update + cascade from. ``documents.atom_id``
+    is a nullable FK, so we pass the real ``source_id`` upfront (no placeholder
+    dance).
+    """
+    if doc.atom_id:
+        return str(doc.atom_id)
+    atom_svc = AtomService(db)
+    kb_owner: int | None = None
+    if doc.knowledge_base_id:
+        kb_owner = (await db.execute(
+            select(KnowledgeBase.owner_id).where(KnowledgeBase.id == doc.knowledge_base_id)
+        )).scalar()
+    owner = await rag._resolve_owner_user_id(kb_owner)
+    if owner is None:
+        raise HTTPException(
+            status_code=409,
+            detail="Document has no owner to attach visibility to — reindex it first",
+        )
+    atom_id = await atom_svc.create_with_source(
+        atom_type="kb_document",
+        owner_user_id=owner,
+        tier=doc.circle_tier or 0,
+        source_id=doc.id,
+    )
+    doc.atom_id = atom_id
+    await db.flush()
+    return atom_id
+
+
+@router.patch("/documents/{document_id}/tier", response_model=DocumentResponse)
+async def set_document_tier(
+    document_id: int,
+    body: SetDocumentTierRequest,
+    rag: RAGService = Depends(get_rag_service),
+    user: User | None = Depends(get_optional_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Set a document's circle tier (0 self … 4 public). Owner-gated.
+
+    Resolves (or mints) the document's ``kb_document`` atom and delegates to
+    ``AtomService.update_tier``, which cascades the new tier to the document's
+    chunks + non-overridden facts. This keeps the frontend out of the atom-UUID
+    id-space and closes the null-``atom_id`` gap the raw ``/api/atoms`` route
+    can't handle for KB-less docs.
+    """
+    doc = await rag.get_document(document_id)
+    if not doc:
+        raise HTTPException(status_code=404, detail=f"Dokument {document_id} nicht gefunden")
+    await _assert_document_tier_write(doc, user, db)
+
+    atom_id = await _ensure_document_atom(doc, rag, db)
+    await AtomService(db).update_tier(atom_id, {"tier": body.tier})
+    await db.commit()
+
+    # update_tier issues raw Core UPDATEs that don't expire ORM-tracked rows,
+    # and the session runs expire_on_commit=False — so without expiring, the
+    # re-read would return the identity-map-cached doc with its pre-update tier.
+    db.expire_all()
+    fresh = await rag.get_document(document_id)
+    return DocumentResponse(**_doc_to_response_kwargs(fresh))
+
+
+@router.post("/documents/tier")
+async def bulk_set_document_tier(
+    request: BulkSetDocumentTierRequest,
+    rag: RAGService = Depends(get_rag_service),
+    user: User | None = Depends(get_optional_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Set the circle tier for several documents at once. Owner-gated per doc.
+
+    Mirrors ``/documents/move``: a single round-trip for a bulk selection.
+    Documents the caller can't write are skipped (not fatal); missing ids are
+    skipped. Returns the count actually updated.
+    """
+    updated = 0
+    for doc_id in request.document_ids:
+        doc = await rag.get_document(doc_id)
+        if not doc:
+            continue
+        try:
+            await _assert_document_tier_write(doc, user, db)
+        except HTTPException as e:
+            if e.status_code == 401:
+                raise
+            continue  # 403 → skip this doc, keep going
+        atom_id = await _ensure_document_atom(doc, rag, db)
+        await AtomService(db).update_tier(atom_id, {"tier": request.tier})
+        updated += 1
+    await db.commit()
+    return {"message": f"{updated} Dokument(e) aktualisiert", "updated_count": updated, "tier": request.tier}
 
 
 # =============================================================================

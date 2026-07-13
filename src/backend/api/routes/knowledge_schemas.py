@@ -79,12 +79,30 @@ class DocumentResponse(BaseModel):
     knowledge_base_id: int | None
     created_at: str
     processed_at: str | None
+    # Circle visibility (tier-control UX). circle_tier is the document's
+    # denormalized tier (0 self … 4 public); atom_id is its atoms-row UUID
+    # (nullable for legacy / global-RAG docs that were never atom-registered).
+    # Both default so flag-off / legacy callers still serialize cleanly.
+    circle_tier: int = 0
+    atom_id: str | None = None
     # Live progress fields (#388). All three default to None so legacy
     # callers that don't augment the response (flag off path) still
     # serialize cleanly.
     stage: str | None = None
     pages: DocumentProgressPages | None = None
     queue_position: int | None = None
+
+
+class SetDocumentTierRequest(BaseModel):
+    """Set a single document's circle tier (0 self … 4 public)."""
+    tier: int = Field(..., ge=0, le=4)
+
+
+class BulkSetDocumentTierRequest(BaseModel):
+    """Set the circle tier for several documents at once (mirrors
+    MoveDocumentsRequest's bulk shape)."""
+    document_ids: list[int] = Field(..., min_length=1)
+    tier: int = Field(..., ge=0, le=4)
 
 
 # --- Search Models ---
