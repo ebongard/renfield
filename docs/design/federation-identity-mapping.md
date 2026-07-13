@@ -183,3 +183,89 @@ The offer/accept already sign + persist endpoints (§discovery 2). PR-B only mak
 **Honest status (outside-voice, 2026-07-13):** F-ID-1's mapped-path code (#959) was merged + deployed **dark before a single real federated query ever crossed the link** — the transport has been "population of 1" the whole time (`_select_endpoint` returned None). So F-ID-1 is *untested end-to-end*; the first working pairing (PR-B) may surface bugs in code already in production. Sequence discipline: land PR-A + PR-B, **prove one public↔public query round-trips**, and only THEN trust any of the mapped-path (Piece 3) code.
 
 *F-ID-1 shipped dark (PR #957 fallback + #959 mapped path). §8 is the eng-reviewed + outside-reviewed plan (2026-07-13) to make it user-establishable: PR-A durable identity (etcd Secret + rotation-safe script + hard-fail boot guard), PR-B pairing value-supply (advertised-url setting + UI override), then Piece 3.*
+
+---
+
+## 9. Piece 3 — user-establishable person link (F-ID-2 build plan, 2026-07-13)
+
+**Status update (2026-07-13):** PR-A + PR-B are deployed, and a public↔public
+query has now **round-tripped bidirectionally, live** (household↔xidra: signed,
+circle-filtered, provenance-backed — a public document returned a real
+synthesized answer). The §8 sequence gate ("prove one public↔public query, THEN
+trust the mapped-path code") is **PASSED**. Piece 3 is unblocked.
+
+### What already exists (F-ID-1, shipped dark)
+- `federation_user_links` table (migration `pc20260619`-era) + model.
+- `services/federation_identity_link.py`: `mint_querier_ref` (256-bit),
+  `resolve_querier_ref` (asker: `(peer,user)→ref`), `resolve_linked_user`
+  (responder: `(peer,ref)→user`), `create_link`/`list_links`/`delete_link`.
+- Signed `querier_ref` envelope (asker attaches; responder maps/falls back —
+  `federation_query_responder._handle_initiate`, `enforce_circles=False` on the
+  mapped path, auth-on only).
+- **Admin-CRUD route** `api/routes/federation_user_links.py` (ADMIN-gated).
+
+### The actual gap
+A working link needs **matching rows on BOTH instances with the same `querier_ref` T**:
+- asker M1: `(peer=M2, ref=T, local_user=U)` → `resolve_querier_ref` attaches T.
+- responder M2: `(peer=M1, ref=T, local_user=X)` → `resolve_linked_user(T)=X`.
+
+Today the only way to create those is the admin CRUD — an admin hand-copies a
+token between two instances (option B, "admin assertion"). That is exactly the
+DB-write-by-another-name the "NO SHORTCUTS" rule forbids: it trusts an admin, not
+a proof of same-person, and is not user-establishable. **The code itself flags
+this:** *"Admin CRUD … F-ID-2 replaces this with a consent-signed double-login
+handshake."*
+
+### The build — consent-signed double-login handshake (§4.2 option A)
+Mirror the instance-pairing QR dance, but run it while authenticated as **U on M1
+AND X on M2**, so each side signs its own half and neither can forge the other's.
+
+1. **Link-offer (on M1, as U):** `POST /api/federation/links/offer` → returns a
+   payload signed by M1's (now durable, PR-A) instance key: `{peer_pubkey_of_M2,
+   querier_ref: T=mint(), stated_by: U, nonce, expires_at}`. M1 does **not** write
+   its row yet (avoid a half-link if the user abandons). Render as QR + JSON like
+   `PairInitiatorModal`.
+2. **Link-accept (on M2, as X):** `POST /api/federation/links/accept` with the
+   offer → M2 verifies M1's signature + that the offer names M2's pubkey, then
+   **atomically** `create_link(peer=<M1 peer row>, ref=T, local_user=X,
+   created_by=X)` and returns a payload signed by M2's key confirming acceptance
+   (`{ref: T, responder_confirm, nonce}`). This is X consenting "T is me here."
+3. **Link-complete (back on M1, as U):** `POST /api/federation/links/complete`
+   with M2's confirmation → M1 verifies M2's signature, then `create_link(
+   peer=<M2 peer row>, ref=T, local_user=U, created_by=U)`. Both rows now exist
+   with the same T; the link is live.
+
+**Security (extends §5):** the link only rises above peer-scoped reach because
+(a) both halves are consent-signed by the respective instance keys — durable now,
+so a link can't silently break (PR-A); (b) it required an authenticated session
+on *each* side (proof of both-account control), not an email claim; (c) it stays
+read-only `query_brain` with redacted provenance; (d) revocable either side
+(`delete_link` already exists → immediate; also purge in-flight like `revoke_peer`).
+Fail-closed everywhere: unverified signature / expired / wrong-peer / nonce-replay
+→ reject, no row written. `querier_ref` stays opaque + per-(peer,user).
+
+### Frontend
+- New `LinkIdentityModal` pair (initiator/responder) on the Circles settings page,
+  reusing the `PairInitiator/ResponderModal` QR+paste scaffold and the
+  offer→accept→complete step machine.
+- A **"Verknüpfte Identitäten"** management list (view/revoke) — the honest,
+  user-facing replacement for the admin-CRUD page; keep admin CRUD as a break-glass
+  surface only.
+
+### Tests
+- Handshake happy path writes both rows with identical `T`; a mapped query then
+  reaches X's owner-tier content (vs public-only before the link).
+- Forged/edited/expired offer or confirm → reject, **no** row written (no half-link).
+- Revoke either side → subsequent query falls back to peer-scoped.
+- Wrong-peer offer (M2 pubkey mismatch) → reject.
+
+### Prerequisite
+P0 still holds: the **personal** instance must run auth-on for a *person* to be
+mapped (xidra already is; household is single-user/auth-off, so household→xidra
+person-mapping needs the household auth-on cutover first — the deferred item in
+`project_security_sprint_inflight`). The handshake code can land + be tested
+between two auth-on instances before that cutover.
+
+*Piece 3 is the deferred payoff: it turns the proven public↔public transport into
+a genuine same-person private-brain bridge, established through a consent handshake
+in the UI — no DB write, no admin trust.*
