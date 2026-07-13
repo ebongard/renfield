@@ -38,9 +38,21 @@ from services.pairing_service import (
     PairingResponse,
     PairingService,
 )
+from utils.config import settings
 
 
 router = APIRouter()
+
+
+def _resolve_advertised_endpoints(provided: list[dict]) -> list[dict]:
+    """The endpoints THIS instance advertises during pairing. A per-pairing UI
+    override wins; else fall back to the `federation_advertised_url` setting;
+    else advertise nothing (legacy — the peer gets no usable endpoint)."""
+    if provided:
+        return provided
+    if settings.federation_advertised_url:
+        return [{"url": settings.federation_advertised_url}]
+    return []
 
 
 # =============================================================================
@@ -117,7 +129,7 @@ async def create_pair_offer(
     return svc.create_offer(
         current_user=current_user,
         display_name=body.display_name,
-        offered_endpoints=body.offered_endpoints,
+        offered_endpoints=_resolve_advertised_endpoints(body.offered_endpoints),
     )
 
 
@@ -134,7 +146,7 @@ async def accept_pair_offer(
             current_user=current_user,
             offer=body.offer,
             my_tier_for_you=body.my_tier_for_you,
-            accepted_endpoints=body.accepted_endpoints,
+            accepted_endpoints=_resolve_advertised_endpoints(body.accepted_endpoints),
         )
     except PairingError as e:
         logger.warning(f"Pairing accept failed for user {current_user.id}: {e}")

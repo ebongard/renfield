@@ -421,3 +421,59 @@ class TestFullHandshakeRoundtrip:
         svc_bob._upsert_circle_membership.assert_awaited_once()
 
         reset_federation_identity_for_tests()
+
+
+class TestAdvertisedEndpointResolution:
+    """PR-B: pairing supplies a working transport. The endpoint plumbing
+    (sign + persist) already shipped (#408/#421); these verify the value-supply:
+    a per-pairing UI override wins, else federation_advertised_url, else empty.
+    """
+
+    @pytest.mark.unit
+    def test_ui_override_wins(self, monkeypatch):
+        from api.routes.federation_pairing import _resolve_advertised_endpoints
+        from utils.config import settings
+        monkeypatch.setattr(settings, "federation_advertised_url", "http://from-setting:8000")
+        provided = [{"url": "http://ui-override:8000"}]
+        assert _resolve_advertised_endpoints(provided) == provided
+
+    @pytest.mark.unit
+    def test_defaults_from_setting_when_none_provided(self, monkeypatch):
+        from api.routes.federation_pairing import _resolve_advertised_endpoints
+        from utils.config import settings
+        monkeypatch.setattr(
+            settings, "federation_advertised_url",
+            "http://backend.renfield.svc.cluster.local:8000",
+        )
+        assert _resolve_advertised_endpoints([]) == [
+            {"url": "http://backend.renfield.svc.cluster.local:8000"}
+        ]
+
+    @pytest.mark.unit
+    def test_empty_when_neither(self, monkeypatch):
+        from api.routes.federation_pairing import _resolve_advertised_endpoints
+        from utils.config import settings
+        monkeypatch.setattr(settings, "federation_advertised_url", "")
+        assert _resolve_advertised_endpoints([]) == []
+
+    @pytest.mark.unit
+    def test_resolved_endpoint_rides_signed_offer(self, tmp_identity, mock_user):
+        # The supplied endpoint must be COVERED by the offer signature (it's part
+        # of the canonical payload — shipped plumbing; regression-guard it).
+        svc = PairingService(db=MagicMock())
+        eps = [{"url": "http://backend.renfield.svc.cluster.local:8000"}]
+        offer = svc.create_offer(current_user=mock_user, offered_endpoints=eps)
+        assert offer.offered_endpoints == eps
+        unsigned = offer.model_dump(exclude={"signature"})
+        assert FederationIdentity.verify(
+            bytes.fromhex(offer.initiator_pubkey),
+            bytes.fromhex(offer.signature),
+            _canonical_bytes(unsigned),
+        )
+        # Stripping the endpoint breaks verification → it IS bound by the signature.
+        stripped = {**unsigned, "offered_endpoints": []}
+        assert not FederationIdentity.verify(
+            bytes.fromhex(offer.initiator_pubkey),
+            bytes.fromhex(offer.signature),
+            _canonical_bytes(stripped),
+        )

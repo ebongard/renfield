@@ -58,6 +58,9 @@ export default function PairResponderModal({ isOpen, onClose, onPaired }: PairRe
   const [responseData, setResponseData] = useState<PairingResponseData | null>(null);
 
   const [copied, setCopied] = useState(false);
+  // Optional per-pairing override of the reachable endpoint the peer will use to
+  // query us. Blank → the backend defaults from FEDERATION_ADVERTISED_URL.
+  const [advertisedUrl, setAdvertisedUrl] = useState('');
 
   const reset = () => {
     setStep('paste_offer');
@@ -112,9 +115,11 @@ export default function PairResponderModal({ isOpen, onClose, onPaired }: PairRe
     try {
       setLoading(true);
       setError(null);
+      const trimmed = advertisedUrl.trim();
       const resp = await apiClient.post<PairingResponseData>('/api/federation/pair/accept', {
         offer: parsedOffer,
         my_tier_for_you: tier,
+        accepted_endpoints: trimmed ? [{ url: trimmed }] : [],
       });
       setResponseData(resp.data);
       setStep('show_response');
@@ -194,6 +199,22 @@ export default function PairResponderModal({ isOpen, onClose, onPaired }: PairRe
               {t('circles.pairTierForThem')}
             </label>
             <TierPicker value={tier} onChange={setTier} disabled={loading} />
+          </div>
+          <div>
+            <label htmlFor="pair-accept-advertised-url" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+              {t('circles.pairAdvertisedUrlLabel')}
+            </label>
+            <input
+              id="pair-accept-advertised-url"
+              type="text"
+              value={advertisedUrl}
+              onChange={(e) => setAdvertisedUrl(e.target.value)}
+              placeholder={t('circles.pairAdvertisedUrlPlaceholder')}
+              className="input w-full"
+            />
+            <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+              {t('circles.pairAdvertisedUrlHelp')}
+            </p>
           </div>
           <div className="flex justify-between gap-2">
             <button

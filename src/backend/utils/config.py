@@ -754,6 +754,17 @@ class Settings(BaseSettings):
     # docs/design/federation-identity-mapping.md.
     federation_identity_links_enabled: bool = False
 
+    # This instance's OWN reachable URL, advertised to a peer during pairing so
+    # the peer's PeerUser.transport_config gets a usable endpoint (without it, a
+    # UI pairing yields transport_config.endpoints=[] → _select_endpoint→None →
+    # "Peer has no usable transport endpoint" — why federation has been
+    # population-of-1). The pairing offer/accept already SIGN + PERSIST endpoints
+    # (#408/#421); this setting just supplies the value a caller didn't override.
+    # Same-cluster peers use the internal svc DNS, e.g.
+    #   http://backend.renfield.svc.cluster.local:8000
+    # A per-pairing UI field can override it. Empty = advertise nothing (legacy).
+    federation_advertised_url: str = ""
+
     # Federation — where this instance's Ed25519 identity private key lives.
     # MUST point at PERSISTENT storage in production: the default /app/secrets is
     # ephemeral container FS, so the key regenerates on every restart and the
