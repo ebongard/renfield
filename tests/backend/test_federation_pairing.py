@@ -457,6 +457,20 @@ class TestAdvertisedEndpointResolution:
         assert _resolve_advertised_endpoints([]) == []
 
     @pytest.mark.unit
+    def test_blank_url_override_is_scrubbed_and_falls_through(self, monkeypatch):
+        # A raw API caller posting a blank/garbage endpoint must NOT persist it
+        # (would resolve to "" and break the peer's transport); it re-falls-through
+        # to the setting.
+        from api.routes.federation_pairing import _resolve_advertised_endpoints
+        from utils.config import settings
+        monkeypatch.setattr(settings, "federation_advertised_url", "http://fallback:8000")
+        assert _resolve_advertised_endpoints([{"url": "  "}]) == [{"url": "http://fallback:8000"}]
+        assert _resolve_advertised_endpoints([{}]) == [{"url": "http://fallback:8000"}]
+        # And when there's no setting either → empty (not a garbage endpoint).
+        monkeypatch.setattr(settings, "federation_advertised_url", "")
+        assert _resolve_advertised_endpoints([{"url": ""}]) == []
+
+    @pytest.mark.unit
     def test_resolved_endpoint_rides_signed_offer(self, tmp_identity, mock_user):
         # The supplied endpoint must be COVERED by the offer signature (it's part
         # of the canonical payload — shipped plumbing; regression-guard it).

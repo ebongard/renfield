@@ -71,6 +71,7 @@ export default function PairResponderModal({ isOpen, onClose, onPaired }: PairRe
     setTier(2);
     setResponseData(null);
     setCopied(false);
+    setAdvertisedUrl('');  // don't re-advertise a URL typed for a prior peer
   };
 
   const handleClose = () => {

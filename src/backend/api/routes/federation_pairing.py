@@ -47,9 +47,16 @@ router = APIRouter()
 def _resolve_advertised_endpoints(provided: list[dict]) -> list[dict]:
     """The endpoints THIS instance advertises during pairing. A per-pairing UI
     override wins; else fall back to the `federation_advertised_url` setting;
-    else advertise nothing (legacy — the peer gets no usable endpoint)."""
-    if provided:
-        return provided
+    else advertise nothing (legacy — the peer gets no usable endpoint).
+
+    `provided` is scrubbed of entries with a blank/missing `url` before it counts
+    as an override — the UI already guards this, but a raw API caller posting
+    `[{"url": ""}]` / `[{}]` would otherwise persist a garbage endpoint that
+    resolves to "" and silently breaks the peer's transport. An all-blank
+    override re-falls-through to the setting."""
+    cleaned = [e for e in provided if isinstance(e, dict) and str(e.get("url", "")).strip()]
+    if cleaned:
+        return cleaned
     if settings.federation_advertised_url:
         return [{"url": settings.federation_advertised_url}]
     return []
