@@ -42,6 +42,16 @@ BSTATE="${RENFIELD_WD_BSTATE:-/run/renfield-net-watchdog.backend-fails}"
 BBUDGET="${RENFIELD_WD_BBUDGET:-/var/lib/renfield/net-watchdog-restarts}"
 UPTIME_FILE="${RENFIELD_WD_UPTIME_FILE:-/proc/uptime}"
 
+# Tier-1 reachability anchor (host:port). ICMP-ping the gateway is the primary
+# "network stack alive" signal, but it is a FALSE signal on networks whose
+# gateway FILTERS ICMP — the gateway forwards traffic fine yet never answers a
+# ping, so the Pi reboot-loops a perfectly healthy board (observed 2026-07-13:
+# gateway 100% ICMP loss, TCP + WebSocket healthy). So the network also counts as
+# alive if a TCP handshake to this anchor completes. Point it at the ingress LB,
+# which stays up independent of the backend pod (a backend redeploy must NOT be a
+# reboot signal — the original design intent). Empty → ICMP-only (legacy).
+ANCHOR="${RENFIELD_WD_ANCHOR:-{{ net_watchdog_anchor | default('') }}}"
+
 # --- Tier 2 helper: is the satellite actually talking to the backend? ---------
 # True iff the service's MAIN process holds an ESTABLISHED connection to the
 # backend ingress on $BACKEND_PORT. Matching the service PID (not just any
@@ -88,6 +98,20 @@ check_backend_link() {
     systemctl restart "$SVC"
 }
 
+# --- Tier 1 helper: is the local network / IP stack alive? --------------------
+# ICMP ping to the gateway (fast path), OR — for ICMP-filtering gateways — a TCP
+# handshake to $ANCHOR. A completed handshake proves the Wi-Fi/IP stack + default
+# route work; a genuinely wedged stack fails BOTH and correctly triggers a
+# reboot. Uses bash /dev/tcp so no extra package is needed; `timeout` bounds it.
+network_alive() {
+    ping -c 2 -W 3 "$TARGET" >/dev/null 2>&1 && return 0
+    if [ -n "$ANCHOR" ]; then
+        local h="${ANCHOR%%:*}" p="${ANCHOR##*:}"
+        timeout 3 bash -c "exec 3<>/dev/tcp/$h/$p" 2>/dev/null && return 0
+    fi
+    return 1
+}
+
 # Derive the IPv4 default gateway if no explicit target was given.
 if [ -z "$TARGET" ]; then
     TARGET=$(ip -4 route 2>/dev/null | awk '/^default/{print $3; exit}')
@@ -101,7 +125,7 @@ fi
 up=$(cut -d. -f1 "$UPTIME_FILE" 2>/dev/null || echo 0)
 [ "$up" -lt 600 ] && exit 0
 
-if ping -c 2 -W 3 "$TARGET" >/dev/null 2>&1; then
+if network_alive; then
     # Network healthy → clear the gateway fail counter AND refill the reboot
     # budget, then check the higher-level backend link (Tier 2).
     rm -f "$STATE" "$BUDGET"
@@ -111,7 +135,7 @@ fi
 
 fails=$(( $(cat "$STATE" 2>/dev/null || echo 0) + 1 ))
 echo "$fails" > "$STATE"
-logger -t renfield-net-watchdog "gateway $TARGET unreachable ($fails/$THRESHOLD)"
+logger -t renfield-net-watchdog "network unreachable via gateway $TARGET + anchor ${ANCHOR:-none} ($fails/$THRESHOLD)"
 [ "$fails" -lt "$THRESHOLD" ] && exit 0
 
 # Threshold reached. Spend from the persistent reboot budget so a gateway that

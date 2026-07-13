@@ -55,6 +55,12 @@ net_watchdog_target: ""
 net_watchdog_fail_threshold: 5
 net_watchdog_max_reboots: 3        # stop rebooting after this many — a gateway down
                                    # for hours won't be fixed by it; a good ping refills
+# Tier-1 reachability anchor (host:port). ICMP-ping the gateway is a FALSE signal
+# on nets whose gateway filters ICMP (it forwards traffic but never answers pings
+# → the Pi reboot-loops a healthy board, observed 2026-07-13). The network also
+# counts as alive if a TCP handshake to this anchor completes. Point it at the
+# ingress LB (up independent of the backend pod). Empty = ICMP-only (legacy).
+net_watchdog_anchor: "192.168.1.230:443"
 
 # Tier-2 backend-link watchdog (same timer/script): when the gateway IS reachable
 # but the satellite process is running yet holds NO connection to the backend
