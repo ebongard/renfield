@@ -1089,8 +1089,12 @@ async def lifespan(app: "FastAPI"):
     from services.federation_identity import enforce_persistent_identity
     try:
         enforce_persistent_identity()
-    except RuntimeError as e:
-        logger.critical(str(e))
+    except (RuntimeError, ValueError) as e:
+        # RuntimeError = ephemeral-key-when-required; ValueError = the provisioned
+        # persisted key is malformed (e.g. 33-byte trailing-newline). Both are a
+        # clean, deliberate boot failure — never a silent ephemeral fallback that
+        # would break pairings.
+        logger.critical(f"Federation identity check failed: {e}")
         raise SystemExit(1) from e
 
     # Warn about insecure defaults when auth is enabled

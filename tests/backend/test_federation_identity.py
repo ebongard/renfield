@@ -131,6 +131,20 @@ class TestLoadOrGenerate:
         with pytest.raises(ValueError, match="32"):
             get_federation_identity()
 
+    @pytest.mark.unit
+    def test_corrupt_persisted_key_rejected_not_silently_ephemeral(self, tmp_path, monkeypatch):
+        # A malformed PROVISIONED key (resolver picks the persisted mount because
+        # it exists) must FAIL — never silently fall back to an ephemeral key that
+        # would break pairings.
+        init_federation_identity(None)
+        persisted = tmp_path / "mount" / "federation_identity_key"
+        persisted.parent.mkdir()
+        persisted.write_bytes(_raw32() + b"\n")  # 33-byte corrupt provisioned key
+        monkeypatch.setattr(settings, "federation_identity_persisted_key_path", str(persisted))
+        monkeypatch.setattr(settings, "federation_identity_key_path", str(tmp_path / "writable"))
+        with pytest.raises(ValueError, match="32"):
+            get_federation_identity()
+
 
 class TestPersistenceBootGuard:
     @pytest.mark.unit
@@ -153,3 +167,16 @@ class TestPersistenceBootGuard:
         keyfile.write_bytes(_raw32())  # persisted 32-byte key present at boot
         init_federation_identity(keyfile)
         enforce_persistent_identity()  # loaded-from-disk → must NOT raise
+
+    @pytest.mark.unit
+    def test_corrupt_persisted_key_surfaces_as_valueerror(self, tmp_path, monkeypatch):
+        # The boot guard (require=true) hits a corrupt persisted key → ValueError.
+        # lifecycle.py catches (RuntimeError, ValueError) → clean SystemExit(1),
+        # never a silent ephemeral fallback. Here we assert the ValueError escapes
+        # so the lifecycle handler has something to catch.
+        monkeypatch.setattr(settings, "federation_require_persistent_identity", True)
+        keyfile = tmp_path / "federation_identity_key"
+        keyfile.write_bytes(_raw32() + b"\n")  # corrupt (33 bytes)
+        init_federation_identity(keyfile)
+        with pytest.raises(ValueError, match="32"):
+            enforce_persistent_identity()

@@ -87,15 +87,20 @@ def _provision(context: str, namespace: str, force: bool) -> None:
     # rather than silently upserting, so a flaky/ambiguous `get` can never lead to
     # overwriting a live key. --force does an explicit delete-then-create.
     if force:
-        _kubectl(context, namespace, ["delete", "secret", SECRET_NAME, "--ignore-not-found"])
+        d = _kubectl(context, namespace, ["delete", "secret", SECRET_NAME, "--ignore-not-found"])
+        if d.returncode != 0:
+            sys.exit(f"✗ --force delete failed (secret NOT rotated): {d.stderr.strip()}")
     r = _kubectl(context, namespace, ["create", "-f", "-"], input=json.dumps(manifest))
     if r.returncode != 0:
         if "AlreadyExists" in (r.stderr or ""):
-            sys.exit(
-                f"✓ {namespace}/{SECRET_NAME} already exists — refusing to overwrite.\n"
-                f"  (Rotating changes the pubkey and BREAKS every existing pairing.\n"
-                f"   Use --force to rotate deliberately, or --verify to inspect.)"
+            # Idempotent success: the key is already provisioned. Exit 0 so a
+            # `provision && rollout` chain / CI re-run doesn't break on a
+            # already-good instance. Rotating requires the explicit --force.
+            print(
+                f"✓ {namespace}/{SECRET_NAME} already provisioned — leaving it untouched "
+                f"(rotating breaks pairings; use --force to rotate, --verify to inspect)."
             )
+            return
         sys.exit(f"✗ kubectl create failed: {r.stderr.strip()}")
     print(
         f"✓ provisioned {namespace}/{SECRET_NAME} (pubkey={_pubkey_hex(raw)}).\n"
