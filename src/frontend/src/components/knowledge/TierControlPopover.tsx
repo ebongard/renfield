@@ -45,6 +45,10 @@ export default function TierControlPopover({
   const popoverId = useId();
 
   const current = Math.max(0, Math.min(4, Number(tier) || 0)) as CircleTier;
+  // Bulk mode (labelled trigger) has no meaningful "current" — the selection
+  // applies to N docs at various tiers — so every pick must commit, including
+  // tier 0. Single mode short-circuits a no-op re-pick of the current tier.
+  const isBulk = triggerLabel != null;
 
   // Close on outside click + Esc; restore focus to the trigger on Esc.
   useEffect(() => {
@@ -67,7 +71,7 @@ export default function TierControlPopover({
   }, [open]);
 
   const handlePick = async (next: CircleTier) => {
-    if (next === current) {
+    if (!isBulk && next === current) {
       setOpen(false);
       return;
     }

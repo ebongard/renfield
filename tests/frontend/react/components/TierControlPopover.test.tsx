@@ -37,6 +37,16 @@ describe('TierControlPopover', () => {
     await waitFor(() => expect(onChange).toHaveBeenCalledWith(4));
   });
 
+  it('bulk mode commits every pick, including tier 0 (no current to compare)', () => {
+    const onChange = vi.fn();
+    renderWithProviders(
+      <TierControlPopover tier={0} triggerLabel="Sichtbarkeit setzen" onChange={onChange} />,
+    );
+    fireEvent.click(screen.getByRole('button', { name: /Sichtbarkeit setzen/i }));
+    fireEvent.click(screen.getByRole('radio', { name: /Privat/i }));
+    expect(onChange).toHaveBeenCalledWith(0);
+  });
+
   it('does NOT commit → public when the confirmation is declined', async () => {
     const onChange = vi.fn();
     const confirmPublic = vi.fn().mockResolvedValue(false);
