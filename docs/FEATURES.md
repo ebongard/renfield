@@ -103,6 +103,17 @@ Eigentum und Sichtbarkeit wird über die **Circles** modelliert — eine fünfst
 
 Siehe [CIRCLES.md](CIRCLES.md) für Datenmodell, Services, Routen und Frontend-Seiten.
 
+## Projekte (Business-Instanz, `projects_enabled`, opt-in/dark)
+
+Ein minimales **Projekt**-Modell für Business-Instanzen (Phase 1): jedes Projekt besitzt genau **eine** eigene KnowledgeBase (1:1, tier-gescoped auf `circle_tier`, Default 2 = Team/Haushalt), sodass Chat- und Dokument-Verlauf pro Projekt getrennt für RAG nutzbar werden. CRUD über `/api/projects` (`POST` legt Projekt + KB an, `GET` listet owner-scoped, `GET /{id}` owner-gated 404, `DELETE` entfernt nur die Projekt-Zeile und **behält** KB + Dokumente). Die `/projects`-Seite (Liste + Anlege-Formular) ist über dasselbe Flag gegated.
+
+- **Dark by default**: `PROJECTS_ENABLED=false` → alle Routen 404, kein Nav-Eintrag, Household-Instanz byte-identisch. Kein Codebase-Fork — rein additiv hinter dem Flag.
+- **Owner-scoped**: Auth an → nur eigene Projekte; `AUTH_ENABLED=false` (Single-User) sieht alle. Der Anleger besitzt Projekt und KB.
+- **1:1-Invariante** in `services/project_service.py`: frische KB pro Projekt, kollisionssichere KB-Namen über die Projekt-ID, Projekt + KB in einer Transaktion.
+- **Später (nicht Teil dieser Phase)**: Meeting-Transkription + Diarisierung, `Meeting`-Modell, Projekt-Timeline, Protokoll-Pipeline (Zusammenfassung/Entscheidungen/Action-Items), Notizen.
+
+Migration `pc20260713_projects`.
+
 ## Konversations-Gedächtnis (Langzeit)
 
 Renfield kann sich Dinge über Nutzer langfristig merken — Präferenzen, Fakten und Anweisungen werden als semantische Embeddings gespeichert und bei relevanten zukünftigen Gesprächen automatisch eingeblendet.

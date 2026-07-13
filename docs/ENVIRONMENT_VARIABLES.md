@@ -320,6 +320,22 @@ immer vorhanden (harmlos), daher braucht das Umschalten **kein** Backend-Redeplo
 nur die Migration `pc20260617_messages_search_vector` muss angewendet sein. Suche ist
 strikt nach Konversations-Eigentümerschaft gefiltert (nicht über `circle_sql`).
 
+### Projekte (Business-Instanz, Phase 1)
+
+```bash
+PROJECTS_ENABLED=false
+```
+
+**Default:** `false` (Opt-in/dark; auch via `/api/config/features` ans Frontend gemeldet).
+Schaltet das minimale **Projekt**-Modell frei: pro Projekt genau **eine** dedizierte
+KnowledgeBase (1:1) plus CRUD (`/api/projects`) und die `/projects`-Seite. Ist das Flag
+aus, geben alle `/api/projects`-Routen 404 zurück und der Nav-Eintrag fehlt — die
+Household-Instanz ist byte-identisch. Owner-scoped (Auth an → nur eigene Projekte;
+Auth aus → Single-User sieht alle). Das Löschen eines Projekts entfernt nur die
+Projekt-Zeile, **nicht** die KnowledgeBase oder deren Dokumente. Meetings,
+Transkription, Timeline und die Protokoll-Pipeline sind spätere Phasen. Migration
+`pc20260713_projects`.
+
 **Wann aktivieren:** Blendet im Chat eine `/`-getriggerte (bzw. per Touch-Button
 geöffnete) Aktions-/Navigations-Palette ein. Tool-Aktionen werden ins Eingabefeld
 **vorbereitet** (kein Auto-Senden); der Anzeige-Filter folgt den Berechtigungen, die
