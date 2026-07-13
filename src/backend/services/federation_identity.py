@@ -123,7 +123,12 @@ def _resolve_key_path() -> Path:
     try:
         from utils.config import settings
         persisted = settings.federation_identity_persisted_key_path
-        if persisted and Path(persisted).exists():
+        # `.is_file()`, NOT `.exists()`: an ABSENT optional secret volume leaves a
+        # DIRECTORY at the key path (verified on the live cluster — kubelet
+        # projects an empty dir), and `.exists()` is True for a directory →
+        # loading it would IsADirectoryError. A real provisioned key is a file
+        # (a symlink-to-file for a secret projection, which is_file() follows).
+        if persisted and Path(persisted).is_file():
             return Path(persisted)
         return Path(settings.federation_identity_key_path or _DEFAULT_KEY_PATH)
     except Exception:  # noqa: BLE001 — config import must never break identity load

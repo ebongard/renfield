@@ -92,6 +92,20 @@ class TestResolveKeyPath:
         monkeypatch.setattr(settings, "federation_identity_key_path", str(writable))
         assert _resolve_key_path() == writable
 
+    @pytest.mark.unit
+    def test_persisted_path_directory_falls_back_to_writable(self, tmp_path, monkeypatch):
+        # REGRESSION (caught in live deploy): an ABSENT optional secret volume
+        # leaves a DIRECTORY at the key path. `.exists()` is True for a dir, so the
+        # resolver MUST use `.is_file()` and fall through, else it picks the dir
+        # and loading IsADirectoryErrors.
+        init_federation_identity(None)
+        as_dir = tmp_path / "mount" / "federation_identity_key"
+        as_dir.mkdir(parents=True)  # a directory, not a file
+        writable = tmp_path / "writable_key"
+        monkeypatch.setattr(settings, "federation_identity_persisted_key_path", str(as_dir))
+        monkeypatch.setattr(settings, "federation_identity_key_path", str(writable))
+        assert _resolve_key_path() == writable
+
 
 class TestLoadOrGenerate:
     @pytest.mark.unit
