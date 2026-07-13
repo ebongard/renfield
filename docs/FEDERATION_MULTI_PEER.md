@@ -2,6 +2,10 @@
 
 Status: **open / revisit**. Captured during F4c design so we can come back to it.
 
+> To actually **pair two instances**, see the user-facing runbook
+> [`FEDERATION_PAIRING.md`](FEDERATION_PAIRING.md). This note is about what
+> happens *after* pairing when more than two instances are involved.
+
 ## Why this note exists
 
 The v2 federation work (lanes F1–F4) was scoped around a **single asker ↔ single responder** handshake. Once pairing is stable and chat relay is wired, two topologies become realistic that we have NOT fully designed for:
