@@ -627,6 +627,16 @@
     "page": "Page",
     "section": "Section",
     "loadingDocuments": "Loading documents...",
+    "createdAt": "Created: {{date}}",
+    "visibility": {
+      "hint": "Tap the visibility badge to choose who can see a document.",
+      "bulkSet": "Set visibility",
+      "changed": "Visibility changed:",
+      "undo": "Undo",
+      "makePublicConfirmTitle": "Make publicly visible?",
+      "makePublicConfirmBody": "Public documents are visible to everyone — including paired instances. Continue?",
+      "makePublicConfirm": "Make public"
+    },
     "noDocuments": "No documents found",
     "uploadToFill": "Upload a document to fill the knowledge base.",
     "statusCompleted": "Completed",

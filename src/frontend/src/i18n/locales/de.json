@@ -627,6 +627,16 @@
     "page": "Seite",
     "section": "Abschnitt",
     "loadingDocuments": "Lade Dokumente...",
+    "createdAt": "Erstellt: {{date}}",
+    "visibility": {
+      "hint": "Tippe auf das Sichtbarkeits-Abzeichen, um festzulegen, wer ein Dokument sehen darf.",
+      "bulkSet": "Sichtbarkeit setzen",
+      "changed": "Sichtbarkeit geändert:",
+      "undo": "Rückgängig",
+      "makePublicConfirmTitle": "Öffentlich sichtbar machen?",
+      "makePublicConfirmBody": "Öffentliche Dokumente sind für alle sichtbar — auch für gekoppelte Instanzen. Fortfahren?",
+      "makePublicConfirm": "Öffentlich machen"
+    },
     "noDocuments": "Keine Dokumente gefunden",
     "uploadToFill": "Laden Sie ein Dokument hoch, um die Wissensdatenbank zu füllen.",
     "statusCompleted": "Abgeschlossen",

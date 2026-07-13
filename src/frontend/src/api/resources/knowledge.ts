@@ -58,6 +58,10 @@ export interface DocumentRow {
   // title → filename. Prefer this over title/filename when rendering.
   display_name?: string;
   created_at?: string;
+  // Circle visibility (tier-control UX). circle_tier is the document's tier
+  // (0 self … 4 public); atom_id is its atoms-row UUID (null on legacy docs).
+  circle_tier?: number;
+  atom_id?: string | null;
 }
 
 interface DocsFilter {
@@ -132,6 +136,21 @@ async function moveDocumentsRequest({ documentIds, targetKbId }: MoveDocumentsIn
   const response = await apiClient.post<{ moved_count: number }>('/api/knowledge/documents/move', {
     document_ids: documentIds,
     target_knowledge_base_id: targetKbId,
+  });
+  return response.data;
+}
+
+async function setDocumentTierRequest({ id, tier }: { id: number; tier: number }): Promise<DocumentRow> {
+  const response = await apiClient.patch<DocumentRow>(`/api/knowledge/documents/${id}/tier`, { tier });
+  return response.data;
+}
+
+async function bulkSetDocumentTierRequest(
+  { ids, tier }: { ids: number[]; tier: number },
+): Promise<{ updated_count: number }> {
+  const response = await apiClient.post<{ updated_count: number }>('/api/knowledge/documents/tier', {
+    document_ids: ids,
+    tier,
   });
   return response.data;
 }
@@ -237,6 +256,32 @@ export function useMoveKnowledgeDocuments() {
   return useApiMutation(
     {
       mutationFn: moveDocumentsRequest,
+      onSuccess: () => {
+        queryClient.invalidateQueries({ queryKey: keys.knowledge.all });
+      },
+    },
+    'common.error',
+  );
+}
+
+export function useSetDocumentTier() {
+  const queryClient = useQueryClient();
+  return useApiMutation(
+    {
+      mutationFn: setDocumentTierRequest,
+      onSuccess: () => {
+        queryClient.invalidateQueries({ queryKey: keys.knowledge.all });
+      },
+    },
+    'common.error',
+  );
+}
+
+export function useBulkSetDocumentTier() {
+  const queryClient = useQueryClient();
+  return useApiMutation(
+    {
+      mutationFn: bulkSetDocumentTierRequest,
       onSuccess: () => {
         queryClient.invalidateQueries({ queryKey: keys.knowledge.all });
       },

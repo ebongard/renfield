@@ -45,11 +45,16 @@ import {
   useDeleteKnowledgeDocument,
   useReindexKnowledgeDocument,
   useMoveKnowledgeDocuments,
+  useSetDocumentTier,
+  useBulkSetDocumentTier,
   type StatusFilter,
   type SearchResultChunk,
   type DocumentRow,
 } from '../api/resources/knowledge';
 import { keys } from '../api/keys';
+import TierControlPopover from '../components/knowledge/TierControlPopover';
+import TierChangeToast, { TIER_UNDO_WINDOW_MS } from '../components/knowledge/TierChangeToast';
+import type { CircleTier } from '../components/TierBadge';
 import { useLensContext } from '../context/LensContext';
 
 interface DuplicateErrorPayload {
@@ -59,8 +64,19 @@ interface DuplicateErrorPayload {
   message?: string;
 }
 
+// Literal class map so Tailwind's content scanner keeps these utilities — a
+// constructed `tier-ring-${n}` would be purged (same reason TierBadge uses a
+// literal TIER_CLASS map). The 4px left edge is DESIGN.md's access signal.
+const TIER_RING_CLASS: Record<number, string> = {
+  0: 'tier-ring-0',
+  1: 'tier-ring-1',
+  2: 'tier-ring-2',
+  3: 'tier-ring-3',
+  4: 'tier-ring-4',
+};
+
 export default function KnowledgePage() {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const { confirm, ConfirmDialogComponent } = useConfirmDialog();
   const queryClient = useQueryClient();
   // Embedded as the Documents lens: the workspace omnisearch (?q=) is the single
@@ -95,6 +111,55 @@ export default function KnowledgePage() {
   // Move / Bulk selection state
   const [selectedDocs, setSelectedDocs] = useState<Set<number>>(new Set());
   const [showMoveDropdown, setShowMoveDropdown] = useState<number | 'bulk' | null>(null);
+
+  // Visibility (circle tier) control
+  const setDocTier = useSetDocumentTier();
+  const bulkSetDocTier = useBulkSetDocumentTier();
+  const [tierToast, setTierToast] = useState<{ docId: number; prevTier: CircleTier; newTier: CircleTier } | null>(null);
+  const tierToastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => () => {
+    if (tierToastTimer.current) clearTimeout(tierToastTimer.current);
+  }, []);
+
+  // Warning confirm gate for making a document publicly visible (federation
+  // peers can then read it) — the one privacy-sensitive transition.
+  const confirmPublicTier = () =>
+    confirm({
+      title: t('knowledge.visibility.makePublicConfirmTitle'),
+      message: t('knowledge.visibility.makePublicConfirmBody'),
+      confirmLabel: t('knowledge.visibility.makePublicConfirm'),
+      variant: 'warning',
+    });
+
+  const showTierToast = (docId: number, prevTier: CircleTier, newTier: CircleTier) => {
+    if (tierToastTimer.current) clearTimeout(tierToastTimer.current);
+    setTierToast({ docId, prevTier, newTier });
+    tierToastTimer.current = setTimeout(() => setTierToast(null), TIER_UNDO_WINDOW_MS);
+  };
+
+  const handleSetDocTier = (doc: DocumentRow, newTier: CircleTier) => {
+    const prevTier = (doc.circle_tier ?? 0) as CircleTier;
+    setDocTier
+      .mutateAsync({ id: doc.id, tier: newTier })
+      .then(() => showTierToast(doc.id, prevTier, newTier))
+      .catch(() => {
+        /* error surfaced via the mutation's errorMessage */
+      });
+  };
+
+  const handleUndoTier = () => {
+    if (!tierToast) return;
+    const { docId, prevTier } = tierToast;
+    if (tierToastTimer.current) clearTimeout(tierToastTimer.current);
+    setTierToast(null);
+    setDocTier.mutate({ id: docId, tier: prevTier });
+  };
+
+  const handleBulkTier = (newTier: CircleTier) => {
+    if (selectedDocs.size === 0) return;
+    bulkSetDocTier.mutate({ ids: [...selectedDocs], tier: newTier });
+  };
 
   const documentsQuery = useKnowledgeDocumentsQuery({
     knowledgeBaseId: selectedKnowledgeBase,
@@ -502,10 +567,10 @@ export default function KnowledgePage() {
               </div>
             </div>
           </div>
-          <div className="card bg-linear-to-br from-purple-100 to-purple-50 dark:from-purple-900/50 dark:to-purple-800/30">
+          <div className="card bg-linear-to-br from-accent-100 to-accent-50 dark:from-accent-900/50 dark:to-accent-800/30">
             <div className="flex items-center gap-3">
-              <div className="p-2 bg-purple-200 dark:bg-purple-600/30 rounded-lg">
-                <Layers className="w-6 h-6 text-purple-600 dark:text-purple-400" />
+              <div className="p-2 bg-accent-200 dark:bg-accent-600/30 rounded-lg">
+                <Layers className="w-6 h-6 text-accent-600 dark:text-accent-400" />
               </div>
               <div>
                 <div className="text-2xl font-bold text-gray-900 dark:text-white">{stats.chunk_count}</div>
@@ -726,26 +791,40 @@ export default function KnowledgePage() {
             <span className="text-sm font-medium text-primary-700 dark:text-primary-300">
               {selectedDocs.size} {t('knowledge.documents').toLowerCase()}
             </span>
-            <div className="relative">
-              <button
-                onClick={() => setShowMoveDropdown(showMoveDropdown === 'bulk' ? null : 'bulk')}
-                className="btn-primary flex items-center gap-2 text-sm"
-              >
-                <ArrowRightLeft className="w-4 h-4" />
-                {t('knowledge.moveDocuments', { count: selectedDocs.size })}
-              </button>
-              {showMoveDropdown === 'bulk' && (
-                <MoveKbDropdown
-                  docIds={[...selectedDocs]}
-                  onClose={() => setShowMoveDropdown(null)}
-                />
-              )}
+            <div className="flex items-center gap-2">
+              <TierControlPopover
+                tier={0}
+                triggerLabel={t('knowledge.visibility.bulkSet')}
+                onChange={handleBulkTier}
+                confirmPublic={confirmPublicTier}
+                busy={bulkSetDocTier.isPending}
+              />
+              <div className="relative">
+                <button
+                  onClick={() => setShowMoveDropdown(showMoveDropdown === 'bulk' ? null : 'bulk')}
+                  className="btn-primary flex items-center gap-2 text-sm"
+                >
+                  <ArrowRightLeft className="w-4 h-4" />
+                  {t('knowledge.moveDocuments', { count: selectedDocs.size })}
+                </button>
+                {showMoveDropdown === 'bulk' && (
+                  <MoveKbDropdown
+                    docIds={[...selectedDocs]}
+                    onClose={() => setShowMoveDropdown(null)}
+                  />
+                )}
+              </div>
             </div>
           </div>
         </div>
       )}
 
       {/* Documents List */}
+      {!loading && documents.length > 0 && (
+        <p className="text-sm text-gray-500 dark:text-gray-400 -mb-1">
+          {t('knowledge.visibility.hint')}
+        </p>
+      )}
       <div className="space-y-4">
         {loading ? (
           <div className="card text-center py-12">
@@ -789,7 +868,7 @@ export default function KnowledgePage() {
               <div
                 key={doc.id}
                 id={`doc-${doc.id}`}
-                className="group card transition-shadow"
+                className={`group card transition-shadow ${TIER_RING_CLASS[doc.circle_tier ?? 0] ?? TIER_RING_CLASS[0]}`}
               >
                 <div className="flex items-start space-x-4">
                   {knowledgeBases.length > 0 && (
@@ -819,7 +898,9 @@ export default function KnowledgePage() {
                     </div>
                     {doc.created_at && (
                       <p className="text-xs text-gray-400 dark:text-gray-500 mt-1">
-                        Erstellt: {new Date(doc.created_at).toLocaleString('de-DE')}
+                        {t('knowledge.createdAt', {
+                          date: new Date(doc.created_at).toLocaleString(i18n.language),
+                        })}
                       </p>
                     )}
                     {doc.status === 'failed' && doc.error_message && (
@@ -853,6 +934,12 @@ export default function KnowledgePage() {
                     />
                   </div>
                   <div className="flex items-center gap-2">
+                    <TierControlPopover
+                      tier={doc.circle_tier ?? 0}
+                      onChange={(tier) => handleSetDocTier(doc, tier)}
+                      confirmPublic={confirmPublicTier}
+                      busy={setDocTier.isPending}
+                    />
                     <StatusBadge doc={doc} filename={doc.filename} />
                     <div className="flex items-center gap-2 opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity">
                       {knowledgeBases.length > 0 && (
@@ -897,6 +984,9 @@ export default function KnowledgePage() {
       </div>
 
       {ConfirmDialogComponent}
+      {tierToast && (
+        <TierChangeToast tier={tierToast.newTier} onUndo={handleUndoTier} />
+      )}
       {duplicate && (
         <DuplicateDialog
           existing={duplicate}
