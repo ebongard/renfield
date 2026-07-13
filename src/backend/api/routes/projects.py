@@ -22,7 +22,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from models.database import Project, User
 from services.auth_service import get_optional_user
 from services.database import get_db
-from services.project_service import create_project, document_count_for_kb
+from services.project_service import (
+    create_project,
+    document_count_for_kb,
+    document_counts_for_kbs,
+)
 from utils.config import settings
 
 router = APIRouter()
@@ -53,7 +57,13 @@ class ProjectResponse(BaseModel):
     document_count: int
 
 
-async def _to_response(db: AsyncSession, project: Project) -> ProjectResponse:
+async def _to_response(
+    db: AsyncSession, project: Project, *, document_count: int | None = None
+) -> ProjectResponse:
+    # `document_count` lets the list route pass a pre-batched count (avoiding an
+    # N+1); single-project routes leave it None and issue one COUNT.
+    if document_count is None:
+        document_count = await document_count_for_kb(db, project.knowledge_base_id)
     return ProjectResponse(
         id=project.id,
         name=project.name,
@@ -63,7 +73,7 @@ async def _to_response(db: AsyncSession, project: Project) -> ProjectResponse:
         circle_tier=project.circle_tier,
         status=project.status,
         created_at=project.created_at.isoformat() if project.created_at else "",
-        document_count=await document_count_for_kb(db, project.knowledge_base_id),
+        document_count=document_count,
     )
 
 
@@ -108,7 +118,11 @@ async def list_projects_route(
 
     result = await db.execute(stmt)
     projects = result.scalars().all()
-    return [await _to_response(db, p) for p in projects]
+    counts = await document_counts_for_kbs(db, [p.knowledge_base_id for p in projects])
+    return [
+        await _to_response(db, p, document_count=counts.get(p.knowledge_base_id, 0))
+        for p in projects
+    ]
 
 
 async def _get_owned_project(

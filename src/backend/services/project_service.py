@@ -42,8 +42,13 @@ async def create_project(
     db.add(project)
     await db.flush()  # assign project.id for the unique KB name
 
+    # KnowledgeBase.name is String(255). The `#<id>` suffix is what guarantees
+    # uniqueness, so cap ONLY the human part to keep the composed name within
+    # the column limit — a 255-char project name must not overflow it (→ 500).
+    prefix, suffix = "Projekt: ", f" #{project.id}"
+    max_name = 255 - len(prefix) - len(suffix)
     kb = KnowledgeBase(
-        name=f"Projekt: {name} #{project.id}",
+        name=f"{prefix}{name[:max_name]}{suffix}",
         description=f"Wissensbasis für Projekt '{name}'",
         owner_id=owner_id,
         default_circle_tier=circle_tier,
@@ -65,3 +70,19 @@ async def document_count_for_kb(db: AsyncSession, kb_id: int | None) -> int:
         select(func.count(Document.id)).where(Document.knowledge_base_id == kb_id)
     )
     return int(result.scalar_one() or 0)
+
+
+async def document_counts_for_kbs(
+    db: AsyncSession, kb_ids: list[int | None]
+) -> dict[int, int]:
+    """Batch document counts for many KBs in ONE grouped query (avoids the N+1
+    the list route would otherwise fire — one COUNT per project)."""
+    ids = [k for k in kb_ids if k is not None]
+    if not ids:
+        return {}
+    result = await db.execute(
+        select(Document.knowledge_base_id, func.count(Document.id))
+        .where(Document.knowledge_base_id.in_(ids))
+        .group_by(Document.knowledge_base_id)
+    )
+    return {kb_id: int(count) for kb_id, count in result.all()}

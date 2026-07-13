@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import pytest
 
-from models.database import KnowledgeBase, Project, User
+from models.database import Document, KnowledgeBase, Project, User
 from utils.config import settings
 
 pytestmark = [pytest.mark.asyncio]
@@ -163,3 +163,41 @@ async def test_delete_owner_gated_under_auth(async_client, monkeypatch):
 
     _override_user(user_a)
     assert (await async_client.delete(f"/api/projects/{pid}")).status_code == 200
+
+
+# ---------------------------------------------------------------------------
+# Regression: KB name must not overflow KnowledgeBase.name (String(255))
+# ---------------------------------------------------------------------------
+
+async def test_max_length_name_does_not_overflow_kb_name(async_client, db_session, monkeypatch):
+    """A 255-char project name (the schema max) must not push the composed KB
+    name past its 255-char column — the `#<id>` uniqueness suffix stays intact.
+    (SQLite doesn't enforce VARCHAR length, so assert the length directly.)"""
+    _enable(monkeypatch, auth=False)
+    long_name = "x" * 255
+    resp = await async_client.post("/api/projects", json={"name": long_name})
+    assert resp.status_code == 200, resp.text
+    kb_id = resp.json()["knowledge_base_id"]
+    kb = await db_session.get(KnowledgeBase, kb_id)
+    assert len(kb.name) <= 255
+    assert kb.name.endswith(f"#{resp.json()['id']}")  # unique suffix preserved
+
+
+# ---------------------------------------------------------------------------
+# document_count reflects the project's KB (batch path in the list route)
+# ---------------------------------------------------------------------------
+
+async def test_list_reports_document_count(async_client, db_session, monkeypatch):
+    _enable(monkeypatch, auth=False)
+    created = (await async_client.post("/api/projects", json={"name": "Docs"})).json()
+    kb_id = created["knowledge_base_id"]
+    db_session.add_all([
+        Document(filename="a.pdf", file_path="/x/a.pdf", knowledge_base_id=kb_id, status="completed"),
+        Document(filename="b.pdf", file_path="/x/b.pdf", knowledge_base_id=kb_id, status="completed"),
+    ])
+    await db_session.commit()
+
+    listing = await async_client.get("/api/projects")
+    assert listing.status_code == 200
+    row = next(p for p in listing.json() if p["id"] == created["id"])
+    assert row["document_count"] == 2
