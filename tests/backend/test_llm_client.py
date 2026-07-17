@@ -1084,3 +1084,76 @@ class TestGetDefaultClientRoutesToOpenAI:
         assert isinstance(embed, OpenAICompatibleClient)
         assert embed._base_url == "http://embed:8080/v1"
         assert embed._default_model == "qwen3-embedding"
+
+
+# ============================================================================
+# Reasoning-effort control + dedicated client (OpenRouter latency fixes)
+# ============================================================================
+
+class TestReasoningEffortExtraBody:
+    """llm_openai_reasoning_effort must reach the request extra_body — and
+    ONLY when explicitly configured (local llama-server deployments stay
+    byte-identical with the default None)."""
+
+    def _client_with_mock_create(self):
+        client = OpenAICompatibleClient.__new__(OpenAICompatibleClient)
+        client._default_model = "m"
+        inner = MagicMock()
+        inner.chat.completions.create = AsyncMock(return_value=MagicMock(choices=[]))
+        client._client = inner
+        return client, inner
+
+    @pytest.mark.unit
+    @patch("utils.llm_client.settings")
+    async def test_reasoning_effort_emitted_when_set(self, mock_settings):
+        mock_settings.llm_openai_reasoning_effort = "low"
+        client, inner = self._client_with_mock_create()
+        with patch.object(OpenAICompatibleClient, "_wrap_response", return_value=MagicMock()):
+            await client.chat(model="m", messages=[{"role": "user", "content": "hi"}])
+        _, kwargs = inner.chat.completions.create.call_args
+        assert kwargs["extra_body"] == {"reasoning_effort": "low"}
+
+    @pytest.mark.unit
+    @patch("utils.llm_client.settings")
+    async def test_no_extra_body_when_unset(self, mock_settings):
+        mock_settings.llm_openai_reasoning_effort = None
+        client, inner = self._client_with_mock_create()
+        with patch.object(OpenAICompatibleClient, "_wrap_response", return_value=MagicMock()):
+            await client.chat(model="m", messages=[{"role": "user", "content": "hi"}])
+        _, kwargs = inner.chat.completions.create.call_args
+        assert kwargs["extra_body"] is None
+
+    @pytest.mark.unit
+    @patch("utils.llm_client.settings")
+    async def test_reasoning_effort_composes_with_think_flag(self, mock_settings):
+        mock_settings.llm_openai_reasoning_effort = "low"
+        client, inner = self._client_with_mock_create()
+        with patch.object(OpenAICompatibleClient, "_wrap_response", return_value=MagicMock()):
+            await client.chat(model="m", messages=[{"role": "user", "content": "hi"}], think=False)
+        _, kwargs = inner.chat.completions.create.call_args
+        assert kwargs["extra_body"]["reasoning_effort"] == "low"
+        assert kwargs["extra_body"]["chat_template_kwargs"] == {"enable_thinking": False}
+
+
+class TestGetDedicatedClient:
+    """get_dedicated_client() must bypass the OpenAI-tier short-circuit."""
+
+    @pytest.mark.unit
+    @patch("ollama.AsyncClient")
+    @patch("utils.llm_client.settings")
+    def test_dedicated_url_wins_over_openai_tier(self, mock_settings, mock_cls):
+        from utils.llm_client import get_dedicated_client
+
+        mock_settings.llm_openai_base_url = "https://openrouter.ai/api/v1"
+        mock_settings.llm_openai_for_agent = None
+        mock_settings.ollama_fallback_url = ""
+        mock_settings.ollama_connect_timeout = 10.0
+        mock_settings.ollama_read_timeout = 300.0
+        sentinel = MagicMock()
+        mock_cls.return_value = sentinel
+
+        result = get_dedicated_client("http://router-ollama:11434")
+
+        args, kwargs = mock_cls.call_args
+        assert kwargs.get("host") == "http://router-ollama:11434"
+        assert result is sentinel

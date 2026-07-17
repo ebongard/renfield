@@ -254,6 +254,15 @@ class Settings(BaseSettings):
     llm_openai_base_url: str | None = None
     llm_openai_api_key: SecretStr | None = None    # Any non-empty string is accepted by llama-server
     llm_openai_model: str = "qwen3.6"               # Logical model name exposed by the server (`--alias`)
+    # Reasoning-effort control for reasoning models behind the OpenAI-compat
+    # endpoint ("minimal"/"low"/"medium"/"high"/"none"; provider-dependent).
+    # Emitted as `reasoning_effort` in the request body ONLY when set —
+    # OpenRouter/OpenAI-style APIs honor it, llama-server ignores unknown
+    # fields, and the default (None) keeps local deployments byte-identical.
+    # Without it, reasoning models (GLM-5.x, Kimi, DeepSeek) run at their
+    # default (high) effort: measured ~30s time-to-first-token per agent
+    # step, ~100s per multi-step turn.
+    llm_openai_reasoning_effort: str | None = None
     # Per-tier opt-in: when True, that tier uses llm_openai_base_url instead of Ollama.
     # `agent` defaults to True if llm_openai_base_url is set; chat/rag/intent default
     # to following the agent setting unless explicitly overridden.

@@ -353,6 +353,11 @@ class OpenAICompatibleClient:
         oa_messages = self._convert_messages(messages)
         oa_kwargs = self._options_to_openai(options, kwargs)
         extra_body = self._think_extra_body(kwargs)
+        if settings.llm_openai_reasoning_effort:
+            # Cap reasoning-model effort (see config.llm_openai_reasoning_effort).
+            # Single emit point: both the blocking and streaming paths below
+            # pass this extra_body through.
+            extra_body["reasoning_effort"] = settings.llm_openai_reasoning_effort
 
         # Tools: Ollama accepts a `tools` list with the OpenAI function schema
         # already, so pass through. tool_choice maps directly.

@@ -418,7 +418,13 @@ _DEFAULT_LLM_OPTIONS_SUMMARY = {
     "temperature": 0.3, "num_predict": 1500, "num_ctx": 32768,
 }
 _DEFAULT_LLM_OPTIONS_TOOL_PRESELECT = {
-    "temperature": 0, "num_predict": 120, "num_ctx": 4096,
+    # 512, not 120: reasoning models spend completion budget on hidden
+    # reasoning tokens BEFORE the visible JSON. At 120 the entire budget was
+    # consumed by reasoning and the content came back empty, so pre-selection
+    # failed to parse on every turn (wasting the call and stuffing ALL tools
+    # into the agent prompt). 512 survives moderate reasoning while keeping
+    # the call cheap; non-reasoning models are unaffected (they stop early).
+    "temperature": 0, "num_predict": 512, "num_ctx": 4096,
 }
 
 # Hard workflow prerequisites: a tool the pre-selection LLM may pick cannot
