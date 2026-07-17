@@ -59,6 +59,7 @@ already work via existing paths; this adds the multi-speaker piece.
    │  file_to_paperless=False for transcripts.
    ▼
  GET /api/meetings/{id} — status poll (pending/processing/completed/failed), owner-gated
+ GET /api/meetings     — owner-scoped list, newest-first, capped 1-200 (backs the frontend list; added PR-3)
 ```
 
 **Re-attribution** (pseudonym → person, or fixing a name): update segments → re-render →

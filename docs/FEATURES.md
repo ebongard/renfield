@@ -118,13 +118,14 @@ Migration `pc20260713_projects`.
 
 Eine Mehrsprecher-Aufnahme hochladen → sprecher-attribuiertes Transkript in der Wissensbasis (RAG). Spike-gated gebaut (die `tests/eval/diarization/gates.yaml`-Gates bestanden 2026-07-14). Design: [`design/meeting-transcription.md`](design/meeting-transcription.md).
 
-- **Upload** `POST /api/meetings/transcribe`: Einwilligung (`consent_confirmed`) ist Pflicht (sonst 422); mehrstündiges Audio wird chunk-weise auf die geteilte Uploads-PVC gestreamt (nie ganz im RAM), 202 `{id}`. Owner-gated Status-Poll `GET /api/meetings/{id}` (+ `/segments`).
+- **Upload** `POST /api/meetings/transcribe`: Einwilligung (`consent_confirmed`) ist Pflicht (sonst 422); mehrstündiges Audio wird chunk-weise auf die geteilte Uploads-PVC gestreamt (nie ganz im RAM), 202 `{id}`. Owner-gated Status-Poll `GET /api/meetings/{id}` (+ `/segments`) und owner-gated Liste `GET /api/meetings` (neueste zuerst, 1-200).
 - **Worker** (`workers/meeting_worker.py`, `k8s/meeting-worker.yaml`, replicas:1): eigener Redis-Stream `renfield:tasks:meeting`; klont den Document-Worker plus einen **Row-Level-`status`+`heartbeat_at`-In-Flight-Guard** (4h-Jobs), Poison-Pill-Quarantäne und eine **4xx-terminal / 5xx-retryable**-Klassifikation (eine kaputte Aufnahme scheitert schnell statt die GPU endlos zu belasten).
 - **voice-server** `POST /transcribe-meeting`: pyannote-Diarisierung + faster-whisper-Wort-Timestamps + eine **reine, fixture-getestete** `align_words_to_segments` + per-Cluster-ECAPA im ONNX-`/stt`-Raum. pyannote lädt nur bei `MEETING_ENABLED`; das Image backt GPU-torch cu128 + das pyannote-Modell (BuildKit-Secret).
 - **Attribution**: ehrliche Pseudonyme ("Sprecher N") + Ein-Klick-Human-Labeling (`POST /api/meetings/{id}/relabel` → Re-Render → **Reindex in-place**, stabile `transcript_document_id`). Auto-Match ist DEFERRED (`meeting_auto_match_enabled` dark).
 - **Ingest**: in eine dedizierte „Meetings"-KB via `folder_ingest.ingest_document` mit `source="meeting_transcript"` (neue `documents.source`-Spalte, Migration `pc20260714b`), das **Schicht-A abschaltet** (D14 — keine Phantom-Fristen aus Small Talk) und `file_to_paperless=False`.
 - **Retention**: `retention_until` beim Upload aus `meeting_retention_days` gestempelt; ein täglicher Job (`services/meeting_retention.py`) löscht abgelaufene Transkripte (über den Dokument-Lösch-Pfad) + Segmente + Audio, und räumt Audio abgeschlossener/fehlgeschlagener Meetings nach `meeting_audio_grace_days` (`meeting_keep_audio` opt-in).
-- **Dark by default** → beide Instanzen byte-identisch bis die Flags umgelegt werden. Migrationen `pc20260714_meetings` + `pc20260714b_document_source`.
+- **Frontend** (`pages/MeetingsPage.tsx`, PR-3): flag-gated auf `meeting_transcription_enabled` (aus `/api/config/features` — Nav+Route fehlen, wenn aus). Upload-Formular mit **Pflicht-Einwilligungs-Checkbox**, Status-Liste, die nur pollt, solange eine Aufnahme pending/processing ist, Aufklappen einer fertigen Besprechung → Transkript-Turns + Sprecher-Umbenennung + Deep-Link zu `/knowledge?doc=`.
+- **Dark by default** → beide Instanzen byte-identisch bis die Flags umgelegt werden. Migrationen `pc20260714_meetings` + `pc20260714b_document_source`. PR-1 Backend + PR-2 voice-server + PR-3 Frontend dark gelandet; der Flag-Flip ist der verbleibende Schritt.
 
 ## Konversations-Gedächtnis (Langzeit)
 
