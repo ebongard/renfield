@@ -462,6 +462,27 @@ class Settings(BaseSettings):
     # /api/config/features). Off => the household instance is byte-identical.
     # See the business-instance plan §7.1.
     projects_enabled: bool = False
+    # Meeting transcription §2 — upload a multi-speaker recording -> diarized,
+    # speaker-attributed transcript in the KB. Gates the /api/meetings routes
+    # (404 when off), the meeting worker, and the frontend surface (via
+    # /api/config/features). Off => both instances are byte-identical.
+    # See docs/design/meeting-transcription.md.
+    meeting_transcription_enabled: bool = False
+    # faster-whisper model for meeting batch ASR ("" => reuse the STT default).
+    # A larger model (e.g. large-v3-turbo) trades GPU-seconds for accuracy; set
+    # from the spike results. Loaded/unloaded per job on the voice-server.
+    meeting_whisper_model: str = ""
+    # Hard duration ceiling (hours) enforced at upload; also derives the worker's
+    # stream visibility window. >4h is a documented escalation (chunked path).
+    meeting_max_duration_h: int = Field(default=4, ge=1, le=12)
+    # Auto-match diarized clusters to enrolled speakers. DEFERRED/dark: the spike
+    # separation gate was insufficient-data on synthetic audio, so the matcher is
+    # NOT built yet — pseudonyms ("Sprecher N") + human labeling is the product.
+    meeting_auto_match_enabled: bool = False
+    # Keep the original audio after a completed transcript (opt-in); default is to
+    # delete it after the grace window below.
+    meeting_keep_audio: bool = False
+    meeting_audio_grace_days: int = Field(default=7, ge=0, le=365)
     # Chat artifacts Lane B (free-form HTML/SVG in a sandboxed iframe). DEFERRED —
     # NOT wired to anything in this delivery. Placeholder so the per-lane flag
     # split (§8 Q5) exists; defaults off and requires its own security review

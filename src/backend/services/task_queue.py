@@ -357,3 +357,39 @@ class DocumentTaskQueue:
     async def close(self) -> None:
         if self._owns_client:
             await self.redis_client.aclose()
+
+
+class MeetingTaskQueue(DocumentTaskQueue):
+    """Durable queue for §2 meeting-transcription jobs.
+
+    Same Redis-Streams durability contract as ``DocumentTaskQueue`` (a crash
+    leaves the entry in the PEL, recovered via ``reclaim_stale``), on a
+    DEDICATED stream + consumer group so meeting jobs never share a visibility
+    window with document ingestion. The visibility window is sized to the max
+    meeting duration (jobs run far longer than OCR), so a genuinely-running job
+    is never spuriously reclaimed out from under itself mid-run.
+
+    Payload carries the audio PATH, never the bytes (the worker reads it off the
+    shared uploads PVC).
+    """
+
+    DEFAULT_STREAM = "renfield:tasks:meeting"
+    DEFAULT_GROUP = "meetingworker"
+
+    def __init__(
+        self,
+        redis_client: aioredis.Redis | None = None,
+        consumer_id: str = "worker-local",
+        visibility_ms: int | None = None,
+    ):
+        if visibility_ms is None:
+            # cap (h) -> ms, + 50% margin so a job running right up to the cap is
+            # still "fresh" and not reclaimed by a concurrent reaper.
+            visibility_ms = int(settings.meeting_max_duration_h * 3600 * 1000 * 1.5)
+        super().__init__(
+            redis_client=redis_client,
+            consumer_id=consumer_id,
+            stream_key=self.DEFAULT_STREAM,
+            group_name=self.DEFAULT_GROUP,
+            visibility_ms=visibility_ms,
+        )

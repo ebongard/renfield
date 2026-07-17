@@ -196,6 +196,7 @@ async def ingest_document(
     default_tier: int | None = None,
     file_to_paperless: bool = False,
     force_ocr: bool = False,
+    source: str | None = None,
 ) -> IngestResult:
     """Run the folder-ingest pipeline for one pushed file and return the
     4-state result (D9). See the module docstring for the contract.
@@ -311,6 +312,7 @@ async def ingest_document(
                 file_hash=file_hash,
                 owner_user_id_override=owner_user_id,  # D4: configured owner
                 circle_tier_override=default_tier,  # D4: configured tier
+                source=source,  # §2 D14: e.g. "meeting_transcript"
             )
         except DuplicateDocumentError as dup:
             # Lost-race: a concurrent push committed the same (hash, kb)

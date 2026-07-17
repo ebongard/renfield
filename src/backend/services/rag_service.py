@@ -268,6 +268,7 @@ class RAGService:
         file_hash: str | None = None,
         owner_user_id_override: int | None = None,
         circle_tier_override: int | None = None,
+        source: str | None = None,
     ) -> Document:
         """Insert a ``Document`` row with status=pending and return it.
 
@@ -334,6 +335,7 @@ class RAGService:
             status=DOC_STATUS_PENDING,
             atom_id=atom_id,
             circle_tier=kb_default_tier,
+            source=source,
         )
         self.db.add(doc)
         await self.db.commit()
@@ -356,6 +358,7 @@ class RAGService:
         file_hash: str | None = None,
         owner_user_id_override: int | None = None,
         circle_tier_override: int | None = None,
+        source: str | None = None,
     ) -> Document:
         """:meth:`create_document_record` plus concurrent-hash-race handling.
 
@@ -378,6 +381,7 @@ class RAGService:
                 file_hash=file_hash,
                 owner_user_id_override=owner_user_id_override,
                 circle_tier_override=circle_tier_override,
+                source=source,
             )
         except IntegrityError as ie:
             orig_err = str(ie.orig) if ie.orig else str(ie)
@@ -551,6 +555,10 @@ class RAGService:
                                 # **kwargs; it reads entity-rich chunks, not fields.
                                 field_text=field_text,
                                 lang=doc_lang,
+                                # Ingest provenance (§2 D14): lets the Schicht-A
+                                # hook skip meeting transcripts. KG hook ignores
+                                # it via **kwargs.
+                                source=doc.source,
                             )
                         )
                         _background_tasks.add(_task)

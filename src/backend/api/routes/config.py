@@ -74,6 +74,10 @@ class FeatureFlags(BaseModel):
     # Gates the /projects nav + page (business-instance Phase 1). Off => no
     # Projects nav entry rendered. See utils/config.py::projects_enabled.
     projects_enabled: bool
+    # Gates the §2 meeting-transcription surface (upload + status + speaker
+    # labeling). Off => no Meetings nav/page. See utils/config.py::
+    # meeting_transcription_enabled + docs/design/meeting-transcription.md.
+    meeting_transcription_enabled: bool
     # True when the Reva-only Wissensbasis surface (/trace + /me/mix) is mounted
     # (Reva adapter present). Standalone Renfield => False. Lets the frontend
     # hide the Reva-only side panels without probing an endpoint that 404s.
@@ -96,5 +100,6 @@ async def get_features(
         room_handoff_enabled=settings.room_handoff_enabled,
         chat_branching_enabled=settings.chat_branching_enabled,
         projects_enabled=settings.projects_enabled,
+        meeting_transcription_enabled=settings.meeting_transcription_enabled,
         wissensbasis_reva_available=_reva_wissensbasis_mounted(request),
     )

@@ -345,6 +345,60 @@ class Project(Base):
     knowledge_base = relationship("KnowledgeBase", foreign_keys=[knowledge_base_id])
 
 
+class Meeting(Base):
+    """Multi-speaker meeting recording → speaker-attributed transcript (§2).
+
+    Lean §2 schema (docs/design/meeting-transcription.md): an uploaded recording
+    becomes a ``pending`` row, a dedicated Redis-Streams worker runs
+    diarization + ASR on the voice-server, and the rendered transcript is
+    ingested into the target KB as ``transcript_document_id``. Gated by
+    ``settings.meeting_transcription_enabled``; both instances leave it off.
+
+    NO ``project_id`` / minutes fields yet — those are additive later phases.
+    ``consent_confirmed`` is REQUIRED at upload from day one (DE workplace
+    recording — designed in, not bolted on).
+    """
+    __tablename__ = "meetings"
+
+    id = Column(Integer, primary_key=True, index=True)
+
+    # Ownership (nullable for auth-disabled single-user deploys, mirrors Project).
+    owner_user_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
+
+    # Circles v1 tier. Default 2 = household/team — a meeting is a shared artifact.
+    circle_tier = Column(Integer, nullable=False, default=2)
+
+    title = Column(String(255), nullable=True)
+    date = Column(Date, nullable=True)  # meeting date (distinct from created_at)
+
+    # Pipeline state machine: pending -> processing -> completed | failed.
+    status = Column(String(50), nullable=False, default="pending", index=True)
+    error = Column(Text, nullable=True)
+
+    # Row-level in-flight guard (design D13): the worker refreshes this while a
+    # (up to meeting_max_duration_h) job runs, so a redelivery can tell a
+    # genuinely-running job (fresh heartbeat -> wait) from a dead one (retry).
+    heartbeat_at = Column(DateTime, nullable=True)
+
+    # Diarized + attributed transcript turns (list of {speaker, start_s, end_s,
+    # text, ...}). Null until the worker completes. cross-dialect JSONB.
+    segments = Column(JSON().with_variant(JSONB(), "postgresql"), nullable=True)
+
+    # The ingested transcript Document (1:1). Stays STABLE across re-attribution
+    # (re-render overwrites the file + reindexes, never a new ingest_document).
+    transcript_document_id = Column(Integer, ForeignKey("documents.id", ondelete="SET NULL"), nullable=True, index=True)
+
+    # Consent is mandatory at upload (route rejects false with 422); the column
+    # default is false so a row can never exist claiming consent it never got.
+    consent_confirmed = Column(Boolean, nullable=False, default=False, server_default="false")
+    consent_note = Column(Text, nullable=True)
+
+    # Retention mechanism (not a status): a daily job deletes meetings past this.
+    retention_until = Column(DateTime, nullable=True)
+
+    created_at = Column(DateTime, default=_utcnow)
+
+
 class Document(Base):
     """Hochgeladene Dokumente (Metadaten)"""
     __tablename__ = "documents"
@@ -386,6 +440,13 @@ class Document(Base):
     author = Column(String(255), nullable=True)
     page_count = Column(Integer, nullable=True)
     chunk_count = Column(Integer, default=0)
+
+    # Ingest provenance (§2 D14): NULL for legacy/normal-upload docs;
+    # "meeting_transcript" marks a §2 transcript so the Schicht-A extraction
+    # hook SKIPS it — no phantom obligations/calendar events mined from meeting
+    # small talk (purpose-built action-item extraction comes with the minutes
+    # phase). Additive; migration pc20260714b_document_source.
+    source = Column(String(30), nullable=True)
 
     # Folder-ingest Paperless leg (D2/D10). Tracks whether this document has
     # been filed into Paperless by the folder-ingest bridge, so a re-pushed

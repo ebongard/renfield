@@ -346,6 +346,35 @@ def _schedule_upload_cleanup():
     )
 
 
+def _schedule_meeting_retention():
+    """Daily §2 meeting retention: audio grace cleanup + full purge past
+    retention_until. run_at_boot so a pod recycled more often than a day still
+    runs it (see #678)."""
+    if not settings.meeting_transcription_enabled:
+        return
+
+    async def _tick():
+        from services.meeting_retention import cleanup_meetings
+
+        audio_deleted, meetings_purged = await cleanup_meetings()
+        if audio_deleted or meetings_purged:
+            logger.info(
+                f"Meeting retention: {audio_deleted} audio file(s) freed, "
+                f"{meetings_purged} meeting(s) purged"
+            )
+
+    _spawn_periodic_task(
+        name="Meeting retention",
+        interval=86400,
+        work=_tick,
+        run_at_boot=True,
+        started_msg=(
+            f"Meeting Retention Scheduler gestartet "
+            f"(audio-grace={settings.meeting_audio_grace_days}d, täglich)"
+        ),
+    )
+
+
 def _schedule_federation_audit_cleanup():
     """F4d — periodic retention prune of the federation query audit log.
 
@@ -1194,6 +1223,7 @@ async def lifespan(app: "FastAPI"):
     _schedule_notification_poller(app)
     _schedule_memory_cleanup()
     _schedule_upload_cleanup()
+    _schedule_meeting_retention()
     _schedule_federation_audit_cleanup()
     _schedule_trajectory_cleanup()
     _schedule_skill_curator()

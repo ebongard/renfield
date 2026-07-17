@@ -886,6 +886,11 @@ async def schicht_a_post_document_ingest_hook(
     """
     if not settings.schicht_a_extraction_enabled:
         return
+    # §2 D14: never mine facts from a meeting transcript — small talk would
+    # spawn phantom obligations/calendar events. Purpose-built action-item
+    # extraction ships with the minutes phase, not here.
+    if kwargs.get("source") == "meeting_transcript":
+        return
     if document_id is None or not (field_text or "").strip():
         return
 

@@ -19,6 +19,7 @@ because the satellite uses cookie/session auth that isn't a JWT.
 from __future__ import annotations
 
 import logging
+import os
 from typing import Any
 
 import httpx
@@ -28,6 +29,10 @@ from utils.config import settings
 logger = logging.getLogger(__name__)
 
 DEFAULT_TIMEOUT_S = 60.0
+# Batch diarization + ASR runs on up to meeting_max_duration_h of audio, so the
+# meeting endpoint needs a far larger ceiling than the one-shot STT/TTS default.
+# Sized to the cap + a 10-min margin (recomputed per call from settings).
+_MEETING_TIMEOUT_MARGIN_S = 600.0
 
 
 class VoiceServerError(Exception):
@@ -133,3 +138,49 @@ async def tts(
             f"voice-server TTS returned {resp.status_code}: {resp.text[:300]}"
         )
     return resp.content
+
+
+async def transcribe_meeting(
+    audio_path: str,
+    *,
+    auth_token: str,
+    whisper_model: str | None = None,
+    num_speakers: int | None = None,
+    timeout_s: float | None = None,
+) -> dict[str, Any]:
+    """POST a meeting recording (by PATH, streamed) to /transcribe-meeting.
+
+    Long-running batch call (diarization + ASR + per-cluster ECAPA on the whole
+    recording). Returns the diarized result, e.g.
+    ``{"segments": [{"speaker": "SPEAKER_00", "start_s", "end_s", "text",
+    "embedding"?}, ...], "num_speakers": N, "duration_s": ...}``.
+
+    The voice-server endpoint lands in PR 2; this client is the backend seam.
+    """
+    if timeout_s is None:
+        timeout_s = settings.meeting_max_duration_h * 3600 + _MEETING_TIMEOUT_MARGIN_S
+    url = f"{_base_url()}/transcribe-meeting"
+    headers = {"Authorization": f"Bearer {auth_token}"}
+    data: dict[str, Any] = {}
+    if whisper_model:
+        data["whisper_model"] = whisper_model
+    if num_speakers:
+        data["num_speakers"] = str(num_speakers)
+
+    async with httpx.AsyncClient(timeout=timeout_s) as client:
+        try:
+            with open(audio_path, "rb") as fh:
+                files = {
+                    "audio": (os.path.basename(audio_path), fh, "application/octet-stream")
+                }
+                resp = await client.post(url, headers=headers, files=files, data=data)
+        except FileNotFoundError as e:
+            raise VoiceServerError(f"meeting audio missing: {e}") from e
+        except httpx.HTTPError as e:
+            raise VoiceServerError(f"voice-server transcribe-meeting unreachable: {e}") from e
+
+    if resp.status_code != 200:
+        raise VoiceServerError(
+            f"voice-server transcribe-meeting returned {resp.status_code}: {resp.text[:300]}"
+        )
+    return resp.json()

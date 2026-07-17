@@ -33,6 +33,7 @@ from api.routes import (
     folder_ingest,
     intents,
     knowledge,
+    meetings,
     memory,
     notifications,
     preferences,
@@ -194,6 +195,7 @@ app.include_router(email_ingest.router, prefix="/api/email-ingest", tags=["Email
 app.include_router(memory.router, prefix="/api/memory", tags=["Memory"])
 app.include_router(preferences.router, prefix="/api/preferences", tags=["Preferences"])
 app.include_router(projects.router, prefix="/api/projects", tags=["Projects"])
+app.include_router(meetings.router, prefix="/api/meetings", tags=["Meetings"])
 app.include_router(mcp_routes.router, prefix="/api/mcp", tags=["MCP"])
 app.include_router(intents.router, prefix="/api/intents", tags=["Intents"])
 app.include_router(feedback.router, prefix="/api/feedback", tags=["Feedback"])
