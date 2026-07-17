@@ -206,3 +206,51 @@ data:
   # Logging
   LOG_LEVEL: "INFO"
   DO_NOT_TRACK: "1"
+
+  # === Feature flags backported from live 2026-07-17 (config-drift reconcile) ===
+  # These were kubectl-patched onto the live renfield-env ConfigMap over months
+  # of feature rollouts and never committed, so git had drifted to a strict
+  # subset of prod (42 live-only keys). Backported verbatim here so git is the
+  # source of truth again. Sensitive per-instance values (mailbox JSON, weather
+  # location, twin endpoints/bindings) are deliberately NOT here — they live in
+  # the renfield-env-private Secret, out of public git. See
+  # k8s/renfield-env-private.secret.example.yaml. RULE: flip flags in git + apply,
+  # never `kubectl patch` the live ConfigMap (that is how this drift happened).
+  ARTIFACTS_TYPED_ENABLED: "true"
+  BT_SCAN_ENABLED: "true"
+  CHAT_BRANCHING_ENABLED: "true"
+  COMMAND_PALETTE_ENABLED: "true"
+  DUCK_ON_LISTEN_ENABLED: "true"
+  EMAIL_INGEST_ENABLED: "true"
+  FILES_MCP_ENABLED: "true"
+  FOLDER_INGEST_ENABLED: "true"
+  FOLLOWUP_CHIPS_ENABLED: "true"
+  GRAPH_EXPANSION_ENABLED: "true"
+  KG_CONFLATION_MONITOR_ENABLED: "true"
+  KG_RECONCILER_ENABLED: "true"
+  MEMORY_EXTRACTION_V2_SHADOW: "true"
+  MEMORY_KG_BRIDGE_ENABLED: "true"
+  MEMORY_SUBSUME_TO_KG: "true"
+  MESSAGE_SEARCH_ENABLED: "true"
+  OBLIGATION_DIGEST_ENABLED: "true"
+  OBLIGATION_NOTIFIER_ENABLED: "true"
+  OUTPUT_PROVIDERS_ENABLED: "true"
+  PAPERLESS_AUDIT_ENABLED: "true"
+  PROACTIVE_ENABLED: "true"
+  PROACTIVE_SEMANTIC_DEDUP_ENABLED: "true"
+  ROLE_SURFACING_ENABLED: "true"
+  ROOM_HANDOFF_ENABLED: "true"
+  SATELLITE_ENROLLMENT_ENABLED: "true"
+  SCHICHT_A_EXTRACTION_ENABLED: "true"
+  SKILLS_ENABLED: "true"
+  SKILL_CURATOR_ENABLED: "true"
+  SPEAKER_CONTROLLED_ENROLLMENT_ENABLED: "true"
+  TOOL_HEALTH_TRACKING_ENABLED: "true"
+  TRAJECTORY_CAPTURE_ENABLED: "true"
+  WISSEN_WORKSPACE_ENABLED: "true"
+  PRESENCE_SWITCH_ENTER_MARGIN_DB: "4"
+
+  # === §2 meeting transcription — flip ON for the household, 2026-07-17 ===
+  # Frontend + backend + voice-server all shipped dark; this turns the feature on.
+  # voice-server also needs MEETING_ENABLED=true (k8s/voice-server.yaml).
+  MEETING_TRANSCRIPTION_ENABLED: "true"

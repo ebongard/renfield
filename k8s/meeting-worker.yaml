@@ -64,6 +64,9 @@ spec:
           command: ["python", "-m", "workers.meeting_worker"]
           envFrom:
             - configMapRef: {name: renfield-env}
+            # Private per-instance config (out of public git); optional so the
+            # pod boots without it. See k8s/renfield-env-private.secret.example.yaml.
+            - secretRef: {name: renfield-env-private, optional: true}
           env:
             - name: POD_NAME
               valueFrom: {fieldRef: {fieldPath: metadata.name}}

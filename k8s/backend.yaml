@@ -93,6 +93,13 @@ spec:
           envFrom:
             - configMapRef:
                 name: renfield-env
+            # Private per-instance config (mailbox JSON, weather location, twin
+            # endpoints/bindings) — kept out of public git. optional so a cluster
+            # without it still boots with those features dark. See
+            # k8s/renfield-env-private.secret.example.yaml.
+            - secretRef:
+                name: renfield-env-private
+                optional: true
           env:
             # Loader prefers this RO mounted key when present (see the
             # federation-identity volumeMount below); falls back to generating at

@@ -71,6 +71,10 @@ config/xidra/
 *.pem
 *.key
 secrets/
+# Real private-config Secret (mailbox/weather/twin values) — NEVER public git.
+# Only the redacted .example.yaml is committed. See k8s/configmap.yaml header.
+k8s/renfield-env-private.secret.yaml
+k8s/secrets.yaml
 # Exception: the renfield TLS *public* cert (no private key) is committed so the
 # HiFiBerry provisioning playbook can install it into the renderer trust store.
 !src/satellite/provisioning/files/renfield-ca.pem

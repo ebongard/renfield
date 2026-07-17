@@ -65,7 +65,7 @@ spec:
         fsGroup: 1000
       containers:
         - name: voice-server
-          image: registry.treehouse.x-idra.de/renfield/voice-server:v0.1.5
+          image: registry.treehouse.x-idra.de/renfield/voice-server:v0.2.0
           # NOTE: until the release process pins immutable image digests,
           # use Always to avoid silently running a stale rebuild under the
           # same tag.
@@ -112,7 +112,7 @@ spec:
             # to turn it on. HF_TOKEN backs a cold-cache pyannote download
             # (the model is baked into the image; optional at runtime).
             - name: MEETING_ENABLED
-              value: "false"
+              value: "true"
             - name: HF_TOKEN
               valueFrom:
                 secretKeyRef:
