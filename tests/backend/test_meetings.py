@@ -271,6 +271,41 @@ class TestMeetingRoutes:
         rows = (await async_client.get("/api/meetings")).json()
         assert len(rows) >= 1
 
+    async def test_delete_owner_gated_removes_row_and_audio(
+        self, async_client, monkeypatch, tmp_path
+    ):
+        import os
+        from models.database import User
+
+        _enable(monkeypatch, tmp_path, auth=True)
+        user_a = User(id=1, username="a", password_hash="x", is_active=True, role_id=1)
+        user_b = User(id=2, username="b", password_hash="x", is_active=True, role_id=1)
+
+        _override_user(user_a)
+        created = await async_client.post(
+            "/api/meetings/transcribe",
+            files={"audio": _wav()}, data={"consent_confirmed": "true"},
+        )
+        mid = created.json()["id"]
+        audio = os.path.join(str(tmp_path), "meetings", f"meeting-{mid}.wav")
+        assert os.path.exists(audio)
+
+        # user B cannot delete A's meeting (owner-gated 404), and A's audio survives
+        _override_user(user_b)
+        assert (await async_client.delete(f"/api/meetings/{mid}")).status_code == 404
+        assert os.path.exists(audio)
+
+        # owner A deletes it -> row + audio gone
+        _override_user(user_a)
+        r = await async_client.delete(f"/api/meetings/{mid}")
+        assert r.status_code == 200 and r.json()["status"] == "deleted"
+        assert (await async_client.get(f"/api/meetings/{mid}")).status_code == 404
+        assert not os.path.exists(audio)
+
+    async def test_delete_404_when_flag_off(self, async_client, monkeypatch):
+        monkeypatch.setattr(settings, "meeting_transcription_enabled", False)
+        assert (await async_client.delete("/api/meetings/1")).status_code == 404
+
     async def test_list_limit_caps_rows_and_rejects_out_of_range(
         self, async_client, monkeypatch, tmp_path
     ):

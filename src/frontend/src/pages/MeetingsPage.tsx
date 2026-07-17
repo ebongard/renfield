@@ -3,13 +3,13 @@ import { useTranslation } from 'react-i18next';
 import { Link } from 'react-router';
 import {
   Mic, Loader, Clock, CheckCircle, AlertCircle, XCircle,
-  Upload, ChevronDown, ChevronRight, FileText, Users, Check,
+  Upload, ChevronDown, ChevronRight, FileText, Users, Check, Trash2, X,
 } from 'lucide-react';
 
 import PageHeader from '../components/PageHeader';
 import { formatDate, formatDateTime } from '../utils/datetime';
 import {
-  useMeetingsQuery, useUploadMeeting, useMeetingSegments, useRelabelSpeaker,
+  useMeetingsQuery, useUploadMeeting, useMeetingSegments, useRelabelSpeaker, useDeleteMeeting,
   type Meeting, type MeetingSegment,
 } from '../api/resources/meetings';
 
@@ -149,7 +149,19 @@ function TranscriptView({ meetingId }: { meetingId: number }) {
 function MeetingCard({ meeting }: { meeting: Meeting }) {
   const { t } = useTranslation();
   const [expanded, setExpanded] = useState(false);
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
+  const deleteMeeting = useDeleteMeeting();
   const canExpand = meeting.status === 'completed';
+
+  const handleDelete = async () => {
+    if (deleteMeeting.isPending) return;
+    try {
+      await deleteMeeting.mutateAsync(meeting.id);
+      // Row disappears when the list refetches; nothing else to do.
+    } catch {
+      setConfirmingDelete(false); // surfaced via errorMessage below
+    }
+  };
 
   return (
     <div className="card">
@@ -178,11 +190,49 @@ function MeetingCard({ meeting }: { meeting: Meeting }) {
             </div>
           </div>
         </button>
-        <StatusBadge status={meeting.status} />
+        <div className="flex items-center gap-2 shrink-0">
+          <StatusBadge status={meeting.status} />
+          {confirmingDelete ? (
+            <span className="inline-flex items-center gap-1">
+              <button
+                type="button"
+                className="p-1 rounded text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/30"
+                onClick={handleDelete}
+                disabled={deleteMeeting.isPending}
+                aria-label={t('meetings.confirmDelete')}
+                title={t('meetings.confirmDelete')}
+              >
+                {deleteMeeting.isPending ? <Loader className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />}
+              </button>
+              <button
+                type="button"
+                className="p-1 rounded text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-700"
+                onClick={() => setConfirmingDelete(false)}
+                aria-label={t('meetings.cancelDelete')}
+                title={t('meetings.cancelDelete')}
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </span>
+          ) : (
+            <button
+              type="button"
+              className="p-1 rounded text-gray-400 hover:text-red-600 dark:hover:text-red-400 hover:bg-gray-100 dark:hover:bg-gray-700"
+              onClick={() => setConfirmingDelete(true)}
+              aria-label={t('meetings.delete')}
+              title={t('meetings.delete')}
+            >
+              <Trash2 className="w-4 h-4" />
+            </button>
+          )}
+        </div>
       </div>
 
       {meeting.status === 'failed' && meeting.error && (
         <p className="mt-2 text-sm text-red-600 dark:text-red-400">{meeting.error}</p>
+      )}
+      {deleteMeeting.errorMessage && (
+        <p className="mt-2 text-sm text-red-600 dark:text-red-400">{deleteMeeting.errorMessage}</p>
       )}
 
       {canExpand && meeting.transcript_document_id != null && (

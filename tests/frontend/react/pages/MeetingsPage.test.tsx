@@ -130,6 +130,31 @@ describe('MeetingsPage', () => {
     expect(sentConsent).toBe('true');
   });
 
+  it('deletes a meeting after an inline confirm', async () => {
+    let deleted: number | null = null;
+    const store: Meeting[] = [mkMeeting({ id: 8, title: 'ToDelete', status: 'completed' })];
+    server.use(
+      http.get(`${BASE_URL}/api/meetings`, () => HttpResponse.json(store)),
+      http.delete(`${BASE_URL}/api/meetings/8`, () => {
+        deleted = 8;
+        store.length = 0;
+        return HttpResponse.json({ status: 'deleted', id: 8 });
+      }),
+    );
+
+    renderWithProviders(<MeetingsPage />);
+    const user = userEvent.setup();
+
+    await waitFor(() => expect(screen.getByText('ToDelete')).toBeInTheDocument());
+    // First click reveals the confirm; the DELETE only fires on the confirm click.
+    await user.click(screen.getByRole('button', { name: i18n.t('meetings.delete') }));
+    expect(deleted).toBeNull();
+    await user.click(screen.getByRole('button', { name: i18n.t('meetings.confirmDelete') }));
+
+    await waitFor(() => expect(deleted).toBe(8));
+    await waitFor(() => expect(screen.getByText(i18n.t('meetings.empty'))).toBeInTheDocument());
+  });
+
   it('expands a completed meeting to show its transcript and relabels a speaker', async () => {
     let relabeled: { speaker_key: string; label: string } | null = null;
     server.use(

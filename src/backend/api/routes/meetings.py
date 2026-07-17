@@ -269,6 +269,23 @@ async def get_meeting(
     return _to_response(meeting)
 
 
+@router.delete("/{meeting_id}")
+async def delete_meeting(
+    meeting_id: int,
+    user: User | None = Depends(get_optional_user),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Delete a meeting whole — transcript document (chunks/facts purged), audio,
+    and the row. Owner-gated 404. Any status (a queued/failed meeting has no
+    transcript yet; purge_meeting handles a null document id)."""
+    _require_enabled()
+    meeting = await _get_owned_meeting(meeting_id, user, db)
+    from services.meeting_retention import purge_meeting
+
+    await purge_meeting(db, meeting.id, meeting.transcript_document_id)
+    return {"status": "deleted", "id": meeting_id}
+
+
 class RelabelRequest(BaseModel):
     speaker_key: str  # the stable diarization cluster id (segments[].speaker_key)
     label: str = Field(min_length=1, max_length=100)

@@ -75,6 +75,10 @@ async function fetchSegments(meetingId: number): Promise<MeetingSegment[]> {
   return response.data?.segments ?? [];
 }
 
+async function deleteMeetingRequest(meetingId: number): Promise<void> {
+  await apiClient.delete(`/api/meetings/${meetingId}`);
+}
+
 async function relabelRequest(input: RelabelInput): Promise<Meeting> {
   const response = await apiClient.post<Meeting>(
     `/api/meetings/${input.meetingId}/relabel`,
@@ -120,6 +124,19 @@ export function useUploadMeeting() {
       },
     },
     'meetings.failedToUpload',
+  );
+}
+
+export function useDeleteMeeting() {
+  const queryClient = useQueryClient();
+  return useApiMutation(
+    {
+      mutationFn: deleteMeetingRequest,
+      onSuccess: () => {
+        queryClient.invalidateQueries({ queryKey: keys.meetings.all });
+      },
+    },
+    'meetings.failedToDelete',
   );
 }
 

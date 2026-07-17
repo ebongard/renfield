@@ -616,6 +616,9 @@
     "relabelPlaceholder": "Person's name",
     "relabelAria": "Rename {{speaker}}",
     "relabelSave": "Save",
+    "delete": "Delete",
+    "confirmDelete": "Confirm delete",
+    "cancelDelete": "Cancel",
     "status": {
       "pending": "Queued",
       "processing": "Processing",
@@ -625,7 +628,8 @@
     "failedToLoad": "Could not load meetings",
     "failedToLoadSegments": "Could not load transcript",
     "failedToUpload": "Could not upload recording",
-    "failedToRelabel": "Could not rename speaker"
+    "failedToRelabel": "Could not rename speaker",
+    "failedToDelete": "Could not delete meeting"
   },
   "tasks": {
     "title": "Tasks",

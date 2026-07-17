@@ -44,6 +44,27 @@ def _delete_audio(meeting_id: int) -> bool:
     return removed
 
 
+async def purge_meeting(
+    db, meeting_id: int, transcript_document_id: int | None
+) -> None:
+    """Delete a meeting whole: its transcript Document via the sanctioned
+    document-delete path (purges chunks/facts), its audio file(s), and the row.
+    Commits. Raises on failure (caller decides whether to roll back / skip).
+
+    Shared by the full-retention sweep and ``DELETE /api/meetings/{id}`` so the
+    cascade lives in one place.
+    """
+    if transcript_document_id is not None:
+        from services.rag_service import RAGService
+
+        await RAGService(db).delete_document(transcript_document_id)
+    _delete_audio(meeting_id)
+    m = await db.get(Meeting, meeting_id)
+    if m is not None:
+        await db.delete(m)
+    await db.commit()
+
+
 async def cleanup_meetings() -> tuple[int, int]:
     """Run both mechanisms. Returns ``(audio_deleted, meetings_purged)``."""
     audio_deleted = 0
@@ -86,15 +107,7 @@ async def cleanup_meetings() -> tuple[int, int]:
         ).all()
         for meeting_id, transcript_document_id in expired:
             try:
-                if transcript_document_id is not None:
-                    from services.rag_service import RAGService
-
-                    await RAGService(db).delete_document(transcript_document_id)
-                _delete_audio(meeting_id)
-                m = await db.get(Meeting, meeting_id)
-                if m is not None:
-                    await db.delete(m)
-                await db.commit()
+                await purge_meeting(db, meeting_id, transcript_document_id)
                 meetings_purged += 1
             except Exception as e:  # noqa: BLE001 - one bad row must not block the sweep
                 logger.warning(f"meeting retention: purge of meeting {meeting_id} failed: {e}")
