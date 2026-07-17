@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import os
 from datetime import date as date_cls
+from datetime import datetime, timedelta
 
 import aiofiles
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Response, UploadFile
@@ -143,6 +144,13 @@ async def transcribe_meeting(
             detail={"message": "meeting worker unavailable", "retryable": True},
         )
 
+    # Full-retention deadline, stamped at upload (0 = retain forever). The daily
+    # retention job purges the transcript + segments + audio + row past this — a
+    # consent-gated recording must not persist indefinitely.
+    retention_until = None
+    if settings.meeting_retention_days > 0:
+        retention_until = datetime.utcnow() + timedelta(days=settings.meeting_retention_days)
+
     # Create the row first (cheap INSERT) so the audio is named by a durable id;
     # a stream failure below flips it to failed rather than orphaning a file.
     meeting = Meeting(
@@ -152,6 +160,7 @@ async def transcribe_meeting(
         date=meeting_date,
         consent_confirmed=True,
         consent_note=consent_note,
+        retention_until=retention_until,
     )
     db.add(meeting)
     await db.commit()
@@ -188,8 +197,22 @@ async def transcribe_meeting(
         raise HTTPException(status_code=422, detail="empty audio file")
 
     # Enqueue the PATH, not the bytes (worker reads it off the shared PVC).
-    queue = MeetingTaskQueue(redis_client=get_redis())
-    await queue.enqueue({"meeting_id": meeting.id, "audio_path": audio_path})
+    # Wrap it: a Redis outage here would otherwise strand a pending row + orphan
+    # the audio with nothing to recover it (retention only touches completed /
+    # retention_until rows). Clean up and 503 (retryable) instead.
+    try:
+        queue = MeetingTaskQueue(redis_client=get_redis())
+        await queue.enqueue({"meeting_id": meeting.id, "audio_path": audio_path})
+    except Exception as e:  # noqa: BLE001
+        _safe_unlink(audio_path)
+        meeting.status = "failed"
+        meeting.error = f"enqueue failed: {e}"
+        await db.commit()
+        logger.error(f"meeting {meeting.id}: enqueue failed: {e}")
+        raise HTTPException(
+            status_code=503,
+            detail={"message": "could not queue meeting", "retryable": True},
+        )
 
     logger.info(f"meeting {meeting.id} queued ({written} bytes, ext={ext})")
     response.status_code = 202

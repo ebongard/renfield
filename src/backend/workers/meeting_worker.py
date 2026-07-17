@@ -58,17 +58,22 @@ HEARTBEAT_TTL_S = 90
 ROW_HEARTBEAT_REFRESH_S = 30
 ROW_HEARTBEAT_STALE_S = 120
 
+# Reclaim a crashed job's PEL entry after this idle (NOT the 6h stream visibility
+# window). Decoupling makes the two-layer design actually recover fast: the entry
+# is re-read within minutes, and the row-heartbeat "wait" guard leaves a
+# genuinely-live job (fresh heartbeat) in the PEL so a short window can't steal
+# it. Safe only at replicas=1 (the read loop is blocked during a job, so periodic
+# reclaim can't run mid-job) — which the k8s manifest pins.
+_RECLAIM_MIN_IDLE_MS = ROW_HEARTBEAT_STALE_S * 1000
+
 
 def _pod_name() -> str:
     return os.environ.get("POD_NAME") or os.environ.get("HOSTNAME", "worker-local")
 
 
-# Infra blips → RETRYABLE (left un-ACKed for reclaim). VoiceServerError is
-# included: a voice-server restart mid-job should retry, not quarantine. A
-# genuinely unprocessable audio redelivers until the poison cap, then quarantines.
+# Infra blips → RETRYABLE (left un-ACKed for reclaim). Everything else terminal.
 _TRANSIENT_EXC: tuple[type[BaseException], ...] = (
     asyncio.TimeoutError,
-    VoiceServerError,
     redis_exceptions.ConnectionError,
     redis_exceptions.TimeoutError,
     OperationalError,
@@ -78,7 +83,16 @@ _TRANSIENT_EXC: tuple[type[BaseException], ...] = (
 
 
 def _is_transient_error(exc: BaseException) -> bool:
-    return isinstance(exc, _TRANSIENT_EXC)
+    if isinstance(exc, _TRANSIENT_EXC):
+        return True
+    # voice-server: unreachable (status_code None) or 5xx = retryable (restart /
+    # model-loading). A 4xx is TERMINAL — a corrupt / undecodable / over-length
+    # recording will fail identically forever, so mark the meeting failed and ACK
+    # instead of re-burning the GPU every reclaim window. Mirrors the document
+    # worker's Ollama 5xx/4xx split.
+    if isinstance(exc, VoiceServerError):
+        return exc.status_code is None or exc.status_code >= 500
+    return False
 
 
 async def _mark_meeting_failed(meeting_id, error: BaseException) -> bool:
@@ -284,7 +298,7 @@ async def main() -> None:
     stop_event = asyncio.Event()
     heartbeat_task = asyncio.create_task(_heartbeat_loop(redis, stop_event, consumer))
 
-    reclaimed = await queue.reclaim_stale()
+    reclaimed = await queue.reclaim_stale(min_idle_ms=_RECLAIM_MIN_IDLE_MS)
     if reclaimed:
         logger.warning(f"reclaimed {len(reclaimed)} pending meeting entries on startup")
         for entry in reclaimed:
@@ -304,7 +318,7 @@ async def main() -> None:
             if reclaim_interval > 0 and time.monotonic() - last_reclaim >= reclaim_interval:
                 last_reclaim = time.monotonic()
                 try:
-                    for stale in await queue.reclaim_stale():
+                    for stale in await queue.reclaim_stale(min_idle_ms=_RECLAIM_MIN_IDLE_MS):
                         await _process_entry(redis, queue, stale)
                 except Exception as e:  # noqa: BLE001
                     logger.warning(f"periodic reclaim failed: {e}")

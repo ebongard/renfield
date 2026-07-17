@@ -792,6 +792,12 @@ DOC_STATUS_PROCESSING = "processing"
 DOC_STATUS_COMPLETED = "completed"
 DOC_STATUS_FAILED = "failed"
 
+# §2 D14: the Document.source value for an ingested meeting transcript. Defined
+# here (low-level, no service imports) so both the pipeline that SETS it and the
+# Schicht-A hook that GATES on it share one constant — a rename can't silently
+# re-open fact-mining on meeting small talk.
+MEETING_TRANSCRIPT_SOURCE = "meeting_transcript"
+
 DOC_STATUSES = [DOC_STATUS_PENDING, DOC_STATUS_PROCESSING, DOC_STATUS_COMPLETED, DOC_STATUS_FAILED]
 
 # Folder-ingest Paperless leg state (Document.paperless_state). NULL = the

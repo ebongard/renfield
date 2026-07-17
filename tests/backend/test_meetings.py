@@ -670,3 +670,178 @@ class TestMeetingRetention:
         assert meetings_purged == 1
         assert purged == [77]                # transcript doc deleted via RAGService
         assert await db_session.get(Meeting, expired_id) is None  # row purged
+
+    async def test_failed_meeting_audio_is_freed(self, db_session, monkeypatch, tmp_path):
+        """A worker-FAILED meeting's audio is freed by the grace sweep, not just
+        completed ones (the upload route only unlinks on upload failure)."""
+        from datetime import datetime, timedelta
+
+        from services import meeting_retention as mr
+
+        monkeypatch.setattr(mr, "AsyncSessionLocal", lambda: _SessionCtx(db_session))
+        monkeypatch.setattr(mr.settings, "upload_dir", str(tmp_path))
+        monkeypatch.setattr(mr.settings, "meeting_keep_audio", False)
+        monkeypatch.setattr(mr.settings, "meeting_audio_grace_days", 7)
+        (tmp_path / "meetings").mkdir()
+
+        failed = Meeting(status="failed", created_at=datetime.utcnow() - timedelta(days=30))
+        db_session.add(failed)
+        await db_session.commit()
+        audio = tmp_path / "meetings" / f"meeting-{failed.id}.wav"
+        audio.write_bytes(b"aud")
+
+        await mr.cleanup_meetings()
+        assert not audio.exists()
+
+    async def test_one_bad_purge_does_not_abort_sweep(self, monkeypatch, tmp_path):
+        """A delete_document failure on one expired meeting rolls back + continues;
+        a second expired meeting still gets purged. Uses an ISOLATED engine so
+        the per-meeting commit/rollback are real (the shared session can't model
+        a rollback without breaking the outer test transaction)."""
+        from datetime import datetime, timedelta
+
+        from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+        from sqlalchemy.pool import StaticPool
+
+        from models.database import Base
+        from services import meeting_retention as mr
+
+        engine = create_async_engine(
+            "sqlite+aiosqlite:///:memory:",
+            connect_args={"check_same_thread": False},
+            poolclass=StaticPool,
+        )
+        async with engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)
+        maker = async_sessionmaker(engine, expire_on_commit=False)
+
+        monkeypatch.setattr(mr, "AsyncSessionLocal", maker)
+        monkeypatch.setattr(mr.settings, "upload_dir", str(tmp_path))
+        monkeypatch.setattr(mr.settings, "meeting_keep_audio", True)  # isolate mechanism 2
+        (tmp_path / "meetings").mkdir()
+
+        async def _delete(self, doc_id):
+            if doc_id == 111:
+                raise RuntimeError("boom")
+            return True
+
+        monkeypatch.setattr("services.rag_service.RAGService.delete_document", _delete)
+        past = datetime.utcnow() - timedelta(days=1)
+        async with maker() as s:
+            bad = Meeting(status="completed", transcript_document_id=111, retention_until=past)
+            good = Meeting(status="completed", transcript_document_id=222, retention_until=past)
+            s.add_all([bad, good])
+            await s.commit()
+            bad_id, good_id = bad.id, good.id
+
+        _audio, purged = await mr.cleanup_meetings()
+
+        async with maker() as s:
+            assert await s.get(Meeting, good_id) is None     # purged
+            assert await s.get(Meeting, bad_id) is not None  # rolled back, retried next sweep
+        assert purged == 1
+        await engine.dispose()
+
+
+# ---------------------------------------------------------------------------
+# Review-fix regression tests
+# ---------------------------------------------------------------------------
+
+def test_voiceservererror_terminal_vs_transient():
+    """4xx = terminal (bad audio fails fast), 5xx / unreachable = retryable."""
+    import workers.meeting_worker as mw
+    from services.voice_server_client import VoiceServerError
+
+    assert mw._is_transient_error(VoiceServerError("bad", status_code=400)) is False
+    assert mw._is_transient_error(VoiceServerError("unproc", status_code=422)) is False
+    assert mw._is_transient_error(VoiceServerError("down", status_code=503)) is True
+    assert mw._is_transient_error(VoiceServerError("unreachable")) is True  # status None
+
+
+def test_render_marker_makes_identical_transcripts_hash_distinct():
+    from services.meeting_pipeline import render_transcript_markdown
+
+    m1 = Meeting(id=1, title="Weekly")
+    m2 = Meeting(id=2, title="Weekly")
+    segs = [{"speaker": "Sprecher 1", "text": "same words"}]
+    md1 = render_transcript_markdown(m1, segs)
+    md2 = render_transcript_markdown(m2, segs)
+    assert "meeting-id: 1" in md1 and "meeting-id: 2" in md2
+    assert md1 != md2  # identical title + content still yields distinct bytes
+
+
+@pytest.mark.database
+@pytest.mark.asyncio
+class TestReviewFixes:
+    async def test_reprocess_overwrites_not_reingest(self, db_session, monkeypatch):
+        """A redelivery of a meeting that ALREADY has a transcript doc overwrites
+        in place (no second ingest_document → no orphaned doc)."""
+        from services import meeting_pipeline as mp
+
+        monkeypatch.setattr(mp, "AsyncSessionLocal", lambda: _SessionCtx(db_session))
+
+        async def _fake_transcribe(path, **kw):
+            return {"segments": [{"speaker": "SPEAKER_00", "text": "hi"}]}
+
+        overwrote, ingested = [], []
+
+        async def _fake_overwrite(db, meeting, segments):
+            overwrote.append(meeting.id)
+
+        async def _fake_ingest(db, meeting, markdown):
+            ingested.append(meeting.id)
+            return 1
+
+        monkeypatch.setattr(mp, "transcribe_meeting", _fake_transcribe)
+        monkeypatch.setattr(mp, "_overwrite_transcript_and_reindex", _fake_overwrite)
+        monkeypatch.setattr(mp, "_ingest_transcript", _fake_ingest)
+
+        m = Meeting(status="processing", transcript_document_id=55)  # already ingested
+        db_session.add(m)
+        await db_session.commit()
+
+        await mp.process_meeting(m.id, "/x/a.wav")
+        assert overwrote == [m.id]   # overwrite-in-place path
+        assert ingested == []        # NOT re-ingested
+        await db_session.refresh(m)
+        assert m.status == "completed"
+
+    async def test_upload_stamps_retention_until(self, async_client, db_session, monkeypatch, tmp_path):
+        from sqlalchemy import select as _sel
+
+        _enable(monkeypatch, tmp_path, auth=False)
+        monkeypatch.setattr(settings, "meeting_retention_days", 365)
+        r = await async_client.post(
+            "/api/meetings/transcribe",
+            files={"audio": _wav()}, data={"consent_confirmed": "true"},
+        )
+        assert r.status_code == 202
+        m = (await db_session.execute(_sel(Meeting).where(Meeting.id == r.json()["id"]))).scalar_one()
+        assert m.retention_until is not None
+
+    async def test_enqueue_failure_503_fails_row_and_unlinks_audio(
+        self, async_client, db_session, monkeypatch, tmp_path
+    ):
+        import glob as _glob
+        from sqlalchemy import select as _sel
+
+        from api.routes import meetings as meetings_mod
+
+        _enable(monkeypatch, tmp_path, auth=False)
+
+        class _BoomQueue:
+            def __init__(self, *a, **k):
+                pass
+
+            async def enqueue(self, params):
+                raise RuntimeError("redis down")
+
+        monkeypatch.setattr(meetings_mod, "MeetingTaskQueue", _BoomQueue)
+        r = await async_client.post(
+            "/api/meetings/transcribe",
+            files={"audio": _wav()}, data={"consent_confirmed": "true"},
+        )
+        assert r.status_code == 503
+        m = (await db_session.execute(_sel(Meeting))).scalars().first()
+        assert m is not None and m.status == "failed"
+        assert _glob.glob(str(tmp_path / "meetings" / f"meeting-{m.id}.*")) == []  # audio cleaned

@@ -889,7 +889,9 @@ async def schicht_a_post_document_ingest_hook(
     # §2 D14: never mine facts from a meeting transcript — small talk would
     # spawn phantom obligations/calendar events. Purpose-built action-item
     # extraction ships with the minutes phase, not here.
-    if kwargs.get("source") == "meeting_transcript":
+    from models.database import MEETING_TRANSCRIPT_SOURCE
+
+    if kwargs.get("source") == MEETING_TRANSCRIPT_SOURCE:
         return
     if document_id is None or not (field_text or "").strip():
         return

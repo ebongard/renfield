@@ -483,6 +483,12 @@ class Settings(BaseSettings):
     # delete it after the grace window below.
     meeting_keep_audio: bool = False
     meeting_audio_grace_days: int = Field(default=7, ge=0, le=365)
+    # Full-retention window (days): a meeting's retention_until is stamped at
+    # upload to created_at + this, and the daily retention job then purges the
+    # transcript + segments (incl. ECAPA embeddings) + audio + row past it.
+    # 0 = retain forever (retention_until left NULL). Consent-gated DE workplace
+    # recordings should NOT be 0.
+    meeting_retention_days: int = Field(default=365, ge=0, le=3650)
     # Chat artifacts Lane B (free-form HTML/SVG in a sandboxed iframe). DEFERRED —
     # NOT wired to anything in this delivery. Placeholder so the per-lane flag
     # split (§8 Q5) exists; defaults off and requires its own security review

@@ -36,7 +36,16 @@ _MEETING_TIMEOUT_MARGIN_S = 600.0
 
 
 class VoiceServerError(Exception):
-    """Voice-server returned a non-2xx response or was unreachable."""
+    """Voice-server returned a non-2xx response or was unreachable.
+
+    ``status_code`` carries the HTTP status when the server responded (so callers
+    can split retryable 5xx / unreachable from terminal 4xx); None when the
+    server was unreachable (connect/timeout — always retryable).
+    """
+
+    def __init__(self, message: str, *, status_code: int | None = None) -> None:
+        super().__init__(message)
+        self.status_code = status_code
 
 
 def _base_url() -> str:
@@ -175,12 +184,15 @@ async def transcribe_meeting(
                 }
                 resp = await client.post(url, headers=headers, files=files, data=data)
         except FileNotFoundError as e:
-            raise VoiceServerError(f"meeting audio missing: {e}") from e
+            # A missing audio file is terminal — retrying won't conjure it back.
+            raise VoiceServerError(f"meeting audio missing: {e}", status_code=400) from e
         except httpx.HTTPError as e:
+            # Unreachable (connect/timeout) — always retryable (status_code=None).
             raise VoiceServerError(f"voice-server transcribe-meeting unreachable: {e}") from e
 
     if resp.status_code != 200:
         raise VoiceServerError(
-            f"voice-server transcribe-meeting returned {resp.status_code}: {resp.text[:300]}"
+            f"voice-server transcribe-meeting returned {resp.status_code}: {resp.text[:300]}",
+            status_code=resp.status_code,
         )
     return resp.json()

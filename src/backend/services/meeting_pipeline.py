@@ -15,15 +15,15 @@ from __future__ import annotations
 from loguru import logger
 from sqlalchemy import select
 
-from models.database import KnowledgeBase, Meeting
+from models.database import MEETING_TRANSCRIPT_SOURCE, KnowledgeBase, Meeting
 from services.database import AsyncSessionLocal
 from services.voice_server_client import transcribe_meeting
 from utils.config import settings
 
 # Provenance marker on the ingested transcript Document (§2 D14): the Schicht-A
-# hook skips docs with this source, so meeting small talk never spawns phantom
-# obligations/calendar events.
-MEETING_SOURCE = "meeting_transcript"
+# hook skips docs with this source (single constant shared with the hook, so a
+# rename can't silently re-open fact-mining on meeting small talk).
+MEETING_SOURCE = MEETING_TRANSCRIPT_SOURCE
 _MEETINGS_KB_NAME = "Meetings"
 
 
@@ -60,6 +60,10 @@ def render_transcript_markdown(meeting: Meeting, segments: list[dict]) -> str:
     transcript (the document body ingested into the KB)."""
     lines: list[str] = []
     title = meeting.title or f"Meeting {meeting.id}"
+    # Hidden per-meeting marker: makes the content hash UNIQUE per meeting so the
+    # (file_hash, kb_id) dedup in the shared Meetings KB can never cross-link two
+    # owners' byte-identical transcripts to one Document.
+    lines.append(f"<!-- meeting-id: {meeting.id} -->")
     lines.append(f"# {title}")
     if meeting.date:
         lines.append(f"\n_{meeting.date.isoformat()}_")
@@ -110,22 +114,54 @@ async def _ingest_transcript(db, meeting: Meeting, markdown: str) -> int | None:
     return result.document_id
 
 
+async def _overwrite_transcript_and_reindex(db, meeting: Meeting, segments: list[dict]) -> None:
+    """Overwrite the existing transcript Document's file with the re-rendered
+    markdown and trigger the reindex path (stable ``transcript_document_id``).
+
+    Shared by re-attribution AND a crash-redelivery reprocess — NEVER a second
+    ``ingest_document`` (diarization is non-deterministic run-to-run, so a
+    re-ingest of drifted content would mint a second doc and orphan the first).
+
+    Ordering: the file is written BEFORE the DB commit, so a write failure
+    aborts (raises) before any state is persisted — segments/doc-status never
+    end up inconsistent with the on-disk transcript. Requires
+    ``meeting.segments`` already mutated in-memory (committed here, together
+    with ``doc.status``)."""
+    import aiofiles
+
+    from models.database import DOC_STATUS_PENDING, Document
+    from services.redis_client import get_redis
+    from services.task_queue import DocumentTaskQueue
+
+    doc = await db.get(Document, meeting.transcript_document_id)
+    if doc is None or not doc.file_path:
+        # doc deleted out of band (FK SET NULL) — just persist the segments.
+        await db.commit()
+        return
+
+    markdown = render_transcript_markdown(meeting, segments)
+    async with aiofiles.open(doc.file_path, "wb") as f:
+        await f.write(markdown.encode("utf-8"))
+    doc.status = DOC_STATUS_PENDING
+    await db.commit()  # persists meeting.segments + doc.status together
+
+    queue = DocumentTaskQueue(redis_client=get_redis())
+    await queue.enqueue({
+        "document_id": doc.id,
+        "force_ocr": False,
+        "user_id": meeting.owner_user_id,
+        "trigger": "user_reindex",
+    })
+
+
 async def reattribute(db, meeting: Meeting, speaker_key: str, new_label: str) -> bool:
     """Relabel one speaker cluster (pseudonym → person, or fix a name).
 
-    Rewrites every segment whose ``speaker_key`` matches, re-renders the
-    transcript, OVERWRITES the existing transcript Document's file in place, and
-    triggers the REINDEX path (never a new ingest_document — a content change
-    would mint a second doc and orphan the first). ``transcript_document_id``
-    stays stable. Returns False if no segment matched the cluster.
+    Rewrites every segment whose ``speaker_key`` matches, then overwrites the
+    transcript in place + reindexes (stable ``transcript_document_id``).
+    Returns False if no segment matched the cluster.
     """
     from sqlalchemy.orm.attributes import flag_modified
-
-    import aiofiles
-
-    from models.database import Document
-    from services.redis_client import get_redis
-    from services.task_queue import DocumentTaskQueue
 
     segments = [dict(s) for s in (meeting.segments or [])]
     changed = False
@@ -138,25 +174,10 @@ async def reattribute(db, meeting: Meeting, speaker_key: str, new_label: str) ->
 
     meeting.segments = segments
     flag_modified(meeting, "segments")
-    await db.commit()
-
-    # Overwrite the transcript file + reindex (content changed → reindex, NOT
-    # a second ingest). Schicht-A stays gated off (Document.source persists).
     if meeting.transcript_document_id:
-        doc = await db.get(Document, meeting.transcript_document_id)
-        if doc is not None and doc.file_path:
-            markdown = render_transcript_markdown(meeting, segments)
-            async with aiofiles.open(doc.file_path, "wb") as f:
-                await f.write(markdown.encode("utf-8"))
-            doc.status = "pending"
-            await db.commit()
-            queue = DocumentTaskQueue(redis_client=get_redis())
-            await queue.enqueue({
-                "document_id": doc.id,
-                "force_ocr": False,
-                "user_id": meeting.owner_user_id,
-                "trigger": "user_reindex",
-            })
+        await _overwrite_transcript_and_reindex(db, meeting, segments)
+    else:
+        await db.commit()
     return True
 
 
@@ -183,15 +204,23 @@ async def process_meeting(meeting_id: int, audio_path: str) -> None:
         segments = apply_pseudonyms(raw_segments)
         meeting.segments = segments
 
-        markdown = render_transcript_markdown(meeting, segments)
-        doc_id = await _ingest_transcript(db, meeting, markdown)
-        if doc_id is not None:
-            meeting.transcript_document_id = doc_id
+        if meeting.transcript_document_id:
+            # Crash-redelivery reprocess: a prior attempt already ingested the
+            # transcript but died before status=completed. Overwrite that doc in
+            # place — re-ingesting drifted (non-deterministic) diarization output
+            # would orphan the first doc.
+            await _overwrite_transcript_and_reindex(db, meeting, segments)
+        else:
+            markdown = render_transcript_markdown(meeting, segments)
+            doc_id = await _ingest_transcript(db, meeting, markdown)
+            if doc_id is not None:
+                meeting.transcript_document_id = doc_id
 
         meeting.status = "completed"
         meeting.error = None
         await db.commit()
         logger.info(
             f"meeting {meeting_id}: {len(segments)} segments, "
-            f"{len({s['speaker'] for s in segments})} speaker(s), doc={doc_id}"
+            f"{len({s['speaker'] for s in segments})} speaker(s), "
+            f"doc={meeting.transcript_document_id}"
         )

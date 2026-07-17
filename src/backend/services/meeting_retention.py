@@ -52,44 +52,53 @@ async def cleanup_meetings() -> tuple[int, int]:
 
     async with AsyncSessionLocal() as db:
         # 1. Audio grace cleanup (unless the deployment opts to keep audio).
+        # Includes FAILED meetings: a worker-failed transcription leaves its
+        # audio on the PVC (the upload route only unlinks on UPLOAD failure), so
+        # the grace sweep must free it too — not just completed ones.
         if not settings.meeting_keep_audio:
             cutoff = now - timedelta(days=settings.meeting_audio_grace_days)
-            completed = (
+            done = (
                 await db.execute(
                     select(Meeting).where(
-                        Meeting.status == "completed",
+                        Meeting.status.in_(("completed", "failed")),
                         Meeting.created_at < cutoff,
                     )
                 )
             ).scalars().all()
-            for m in completed:
+            for m in done:
                 if _delete_audio(m.id):
                     audio_deleted += 1
 
-        # 2. Full retention: purge meetings past retention_until.
+        # 2. Full retention: purge meetings past retention_until. Each is purged
+        # in its OWN commit so one bad row can't abort the sweep — delete_document
+        # commits on the shared session, and a mid-op failure would poison it, so
+        # a failure rolls back and skips (retried next sweep). We loop over plain
+        # (id, doc_id) tuples and re-fetch each row fresh: holding ORM objects
+        # across a rollback expires them, and the next attribute access would
+        # trigger lazy IO → MissingGreenlet.
         expired = (
             await db.execute(
-                select(Meeting).where(
+                select(Meeting.id, Meeting.transcript_document_id).where(
                     Meeting.retention_until.is_not(None),
                     Meeting.retention_until <= now,
                 )
             )
-        ).scalars().all()
-        for m in expired:
-            if m.transcript_document_id is not None:
-                try:
+        ).all()
+        for meeting_id, transcript_document_id in expired:
+            try:
+                if transcript_document_id is not None:
                     from services.rag_service import RAGService
 
-                    await RAGService(db).delete_document(m.transcript_document_id)
-                except Exception as e:  # noqa: BLE001 - never let one bad row block the sweep
-                    logger.warning(
-                        f"meeting retention: delete_document {m.transcript_document_id} "
-                        f"for meeting {m.id} failed: {e}"
-                    )
-            _delete_audio(m.id)
-            await db.delete(m)
-            meetings_purged += 1
-
-        await db.commit()
+                    await RAGService(db).delete_document(transcript_document_id)
+                _delete_audio(meeting_id)
+                m = await db.get(Meeting, meeting_id)
+                if m is not None:
+                    await db.delete(m)
+                await db.commit()
+                meetings_purged += 1
+            except Exception as e:  # noqa: BLE001 - one bad row must not block the sweep
+                logger.warning(f"meeting retention: purge of meeting {meeting_id} failed: {e}")
+                await db.rollback()
+                continue
 
     return audio_deleted, meetings_purged
