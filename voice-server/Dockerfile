@@ -79,22 +79,15 @@ RUN pip install speechbrain>=1.0
 RUN pip install "pyannote.audio>=3.1,<4" "huggingface_hub<0.26"
 
 # Bake the gated pyannote diarization model into the image (offline-first). Uses
-# a BuildKit secret so the HF token never lands in image history. Skipped (with
-# a loud echo) when no secret is passed — the runtime then downloads on warmup
-# if MEETING_ENABLED + HF_TOKEN are set and the cache is cold.
+# a BuildKit secret so the HF token never lands in image history. No secret →
+# the script skips cleanly (exit 0) and the runtime downloads on warmup via
+# HF_TOKEN when MEETING_ENABLED. Done via a committed script (NOT a heredoc in a
+# RUN) — a heredoc under a `\`-continued RUN is a Dockerfile parse hazard.
 ENV HF_HOME=/opt/hf-cache
+COPY scripts/bake_pyannote.py /tmp/bake_pyannote.py
 RUN --mount=type=secret,id=hf_token \
-    HF_TOKEN="$(cat /run/secrets/hf_token 2>/dev/null || true)"; \
-    if [ -n "$HF_TOKEN" ]; then \
-      python - "$HF_TOKEN" <<'PY' || echo "[bake] pyannote model bake FAILED — will download on warmup"; \
-import sys, torch
-_o = torch.load
-torch.load = lambda *a, **k: _o(*a, **{**k, "weights_only": False})
-from pyannote.audio import Pipeline
-p = Pipeline.from_pretrained("pyannote/speaker-diarization-3.1", use_auth_token=sys.argv[1])
-print("[bake] pyannote model cached:", p is not None)
-PY
-    else echo "[bake] no hf_token build secret — pyannote model not baked"; fi
+    HF_TOKEN="$(cat /run/secrets/hf_token 2>/dev/null || true)" python /tmp/bake_pyannote.py \
+    || echo "[bake] pyannote bake failed — model downloads on warmup"
 
 # cuDNN is required by onnxruntime-gpu's CUDAExecutionProvider but is
 # NOT included in nvidia/cuda:12.6-runtime base. Pull it via pip wheel.
