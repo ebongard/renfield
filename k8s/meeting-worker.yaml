@@ -51,7 +51,10 @@ spec:
               echo "waiting for postgres..."; until nc -z postgres 5432; do sleep 1; done
               echo "waiting for redis...";    until nc -z redis 6379;    do sleep 1; done
               # The meeting worker's downstream is the voice-server (diarization+ASR).
-              echo "waiting for voice-server..."; until nc -z voice-server 8080; do sleep 2; done
+              # Use the FQDN so this resolves from ANY namespace — the household
+              # runs the voice-server in `renfield`, and other instances (e.g.
+              # renfield-xidra) reach it cross-namespace via the same name.
+              echo "waiting for voice-server..."; until nc -z voice-server.renfield 8080; do sleep 2; done
               echo "deps ready"
           resources:
             requests: {cpu: 10m, memory: 16Mi}
