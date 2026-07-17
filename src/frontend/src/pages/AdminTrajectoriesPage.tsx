@@ -4,6 +4,7 @@ import { Download, Flag, Search } from 'lucide-react';
 
 import AdminListPageShell from '../components/AdminListPageShell';
 import StepTimeline from '../components/StepTimeline';
+import { formatDateTime } from '../utils/datetime';
 import {
   buildTrajectoryExportUrl,
   useFlagTrajectory,
@@ -18,7 +19,7 @@ const OUTCOME_FILTERS: (TrajectoryOutcome | 'all')[] = ['all', 'success', 'tool_
 function formatTimestamp(value: string | null): string {
   if (!value) return '—';
   try {
-    return new Date(value).toLocaleString();
+    return formatDateTime(value);
   } catch {
     return value;
   }

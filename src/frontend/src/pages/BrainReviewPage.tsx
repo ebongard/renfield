@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Inbox, Calendar } from 'lucide-react';
 import PageHeader from '../components/PageHeader';
+import { formatDateTime } from '../utils/datetime';
 import LensFrame from '../components/wissen/LensFrame';
 import MergeProposalsSection from '../components/MergeProposalsSection';
 import Alert from '../components/Alert';
@@ -74,7 +75,7 @@ export default function BrainReviewPage() {
     if (!iso) return '';
     try {
       const locale = i18n.language === 'de' ? 'de-DE' : 'en-US';
-      return new Date(iso).toLocaleString(locale, {
+      return formatDateTime(iso, locale, {
         dateStyle: 'medium',
         timeStyle: 'short',
       });

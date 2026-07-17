@@ -16,6 +16,7 @@
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Link } from 'react-router';
+import { formatDate } from '../../utils/datetime';
 import { Clock, Eye, MoreHorizontal } from 'lucide-react';
 
 import { CitationChip } from './CitationChip';
@@ -242,7 +243,7 @@ function formatTimestamp(iso: string, locale: string): string {
       const hrs = Math.floor(deltaMin / 60);
       return locale.startsWith('de') ? `vor ${hrs} Std` : `${hrs}h ago`;
     }
-    return new Date(iso).toLocaleDateString(locale, {
+    return formatDate(iso, locale, {
       year: 'numeric',
       month: 'short',
       day: 'numeric',

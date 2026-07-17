@@ -10,6 +10,7 @@ import {
   User,
 } from 'lucide-react';
 import Modal from '../components/Modal';
+import { formatDate as formatCalendarDate } from '../utils/datetime';
 import PageHeader from '../components/PageHeader';
 import Alert from '../components/Alert';
 import Badge from '../components/Badge';
@@ -127,7 +128,7 @@ export default function MemoryPage() {
 
   const formatDate = (dateStr?: string): string => {
     if (!dateStr) return '-';
-    return new Date(dateStr).toLocaleDateString();
+    return formatCalendarDate(dateStr);
   };
 
   const ImportanceDots = ({ value }: { value: number }) => {

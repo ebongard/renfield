@@ -2,12 +2,13 @@ import { useTranslation } from 'react-i18next';
 import { Play, AlertTriangle, CheckCircle2, Loader2 } from 'lucide-react';
 
 import AdminListPageShell from '../components/AdminListPageShell';
+import { formatDateTime } from '../utils/datetime';
 import { useCuratorRunsQuery, useRunCurator, type CuratorRun } from '../api/resources/curator';
 
 function formatTimestamp(value: string | null): string {
   if (!value) return '—';
   try {
-    return new Date(value).toLocaleString();
+    return formatDateTime(value);
   } catch {
     return value;
   }

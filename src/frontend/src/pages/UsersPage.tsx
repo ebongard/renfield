@@ -8,6 +8,7 @@ import type { FormEvent } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useAuth } from '../context/AuthContext';
 import { extractApiError, extractFieldErrors } from '../utils/axios';
+import { formatDateTime } from '../utils/datetime';
 import Modal from '../components/Modal';
 import PageHeader from '../components/PageHeader';
 import Alert from '../components/Alert';
@@ -409,7 +410,7 @@ export default function UsersPage() {
 
               {user.last_login && (
                 <div className="mt-3 pt-3 border-t border-gray-200 dark:border-gray-700 text-sm text-gray-400 dark:text-gray-500">
-                  {t('users.lastLogin')}: {new Date(user.last_login).toLocaleString(i18n.language)}
+                  {t('users.lastLogin')}: {formatDateTime(user.last_login, i18n.language)}
                 </div>
               )}
             </div>

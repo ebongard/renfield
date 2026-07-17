@@ -1,12 +1,13 @@
 import { useTranslation } from 'react-i18next';
 
 import AdminListPageShell from '../components/AdminListPageShell';
+import { formatDateTime } from '../utils/datetime';
 import { useToolStatsQuery } from '../api/resources/toolHealth';
 
 function formatTimestamp(value: string | null): string {
   if (!value) return '—';
   try {
-    return new Date(value).toLocaleString();
+    return formatDateTime(value);
   } catch {
     return value;
   }

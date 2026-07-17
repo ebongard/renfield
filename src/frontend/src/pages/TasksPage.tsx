@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { CheckSquare, Clock, CheckCircle, XCircle, Loader } from 'lucide-react';
 import PageHeader from '../components/PageHeader';
+import { formatDateTime } from '../utils/datetime';
 import Badge from '../components/Badge';
 import { useTasksQuery, type TaskStatus, type TaskFilter } from '../api/resources/tasks';
 
@@ -82,11 +83,11 @@ export default function TasksPage() {
                     {t('tasks.taskType', { type: task.task_type })}
                   </p>
                   <p className="text-xs text-gray-500">
-                    {t('tasks.created')}: {new Date(task.created_at).toLocaleString()}
+                    {t('tasks.created')}: {formatDateTime(task.created_at)}
                   </p>
                   {task.completed_at && (
                     <p className="text-xs text-gray-500">
-                      {t('tasks.completed')}: {new Date(task.completed_at).toLocaleString()}
+                      {t('tasks.completed')}: {formatDateTime(task.completed_at)}
                     </p>
                   )}
                 </div>

@@ -7,6 +7,7 @@ import {
 } from 'lucide-react';
 
 import PageHeader from '../components/PageHeader';
+import { formatDate, formatDateTime } from '../utils/datetime';
 import {
   useMeetingsQuery, useUploadMeeting, useMeetingSegments, useRelabelSpeaker,
   type Meeting, type MeetingSegment,
@@ -80,7 +81,10 @@ function SpeakerLabels({ meetingId, segments }: { meetingId: number; segments: M
             className="input flex-1"
             type="text"
             value={drafts[sp.key] ?? ''}
-            onChange={(e) => setDrafts((d) => ({ ...d, [sp.key]: e.target.value }))}
+            onChange={(e) => {
+              setDrafts((d) => ({ ...d, [sp.key]: e.target.value }));
+              if (savedKey === sp.key) setSavedKey(null);
+            }}
             placeholder={t('meetings.relabelPlaceholder')}
             aria-label={t('meetings.relabelAria', { speaker: sp.name })}
             maxLength={100}
@@ -167,8 +171,10 @@ function MeetingCard({ meeting }: { meeting: Meeting }) {
               {meeting.title || t('meetings.untitled')}
             </h3>
             <div className="flex items-center gap-3 text-xs text-gray-500 dark:text-gray-400 mt-0.5">
-              {meeting.date && <span>{new Date(meeting.date).toLocaleDateString()}</span>}
-              <span>{t('meetings.uploaded')}: {new Date(meeting.created_at).toLocaleString()}</span>
+              {meeting.date && <span>{formatDate(meeting.date)}</span>}
+              {meeting.created_at && (
+                <span>{t('meetings.uploaded')}: {formatDateTime(meeting.created_at)}</span>
+              )}
             </div>
           </div>
         </button>

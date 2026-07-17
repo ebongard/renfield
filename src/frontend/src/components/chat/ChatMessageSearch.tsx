@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Search, X, Loader, MessageSquare } from 'lucide-react';
+import { formatDate } from '../../utils/datetime';
 
 import { useMessageSearch, type MessageSearchHit } from '../../api/resources/chatSessions';
 
@@ -269,7 +270,7 @@ export default function ChatMessageSearch({
                       </span>
                       {hit.timestamp && (
                         <span className="text-[11px] text-gray-400 dark:text-gray-500">
-                          {new Date(hit.timestamp).toLocaleDateString()}
+                          {formatDate(hit.timestamp)}
                         </span>
                       )}
                     </div>

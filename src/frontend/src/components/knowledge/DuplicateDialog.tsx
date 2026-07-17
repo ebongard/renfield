@@ -14,6 +14,7 @@
  */
 import { MouseEvent, useEffect, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
+import { formatDateTime } from '../../utils/datetime';
 
 export interface ExistingDocument {
   id: number | string;
@@ -87,9 +88,7 @@ export default function DuplicateDialog({ existing, onClose, onJump }: Duplicate
 
   if (!existing) return null;
 
-  const uploadedAt = existing.uploaded_at
-    ? new Date(existing.uploaded_at).toLocaleString(i18n.language || 'de')
-    : '';
+  const uploadedAt = formatDateTime(existing.uploaded_at, i18n.language || 'de');
 
   return (
     <div

@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
+import { formatTime } from '../utils/datetime';
 import { RefreshCw, CheckCircle2, XCircle } from 'lucide-react';
 import {
   useRoutingTracesQuery,
@@ -105,7 +106,7 @@ export default function RoutingDashboardPage() {
                 className="border-b border-gray-100 dark:border-gray-800 hover:bg-gray-50 dark:hover:bg-gray-800/50"
               >
                 <td className="py-2 pr-4 text-xs text-gray-400 whitespace-nowrap">
-                  {trace.created_at ? new Date(trace.created_at).toLocaleTimeString() : '-'}
+                  {trace.created_at ? formatTime(trace.created_at) : '-'}
                 </td>
                 <td className="py-2 pr-4 max-w-xs truncate text-gray-700 dark:text-gray-300">
                   {trace.message}

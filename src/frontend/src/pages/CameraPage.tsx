@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Camera, RefreshCw, User, Car, Dog } from 'lucide-react';
 import PageHeader from '../components/PageHeader';
+import { formatDateTime } from '../utils/datetime';
 import { useCamerasQuery, useCameraEventsQuery } from '../api/resources/cameras';
 
 type CameraLabel = 'person' | 'car' | 'dog' | 'cat';
@@ -112,7 +113,7 @@ export default function CameraPage() {
                 </div>
                 <div className="text-right">
                   <p className="text-sm text-gray-500 dark:text-gray-400">
-                    {new Date(event.start_time * 1000).toLocaleString(i18n.language === 'de' ? 'de-DE' : 'en-US')}
+                    {formatDateTime(event.start_time * 1000, i18n.language === 'de' ? 'de-DE' : 'en-US')}
                   </p>
                   {event.score && (
                     <p className="text-xs text-gray-400 dark:text-gray-500">

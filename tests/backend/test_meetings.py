@@ -271,6 +271,22 @@ class TestMeetingRoutes:
         rows = (await async_client.get("/api/meetings")).json()
         assert len(rows) >= 1
 
+    async def test_list_limit_caps_rows_and_rejects_out_of_range(
+        self, async_client, monkeypatch, tmp_path
+    ):
+        _enable(monkeypatch, tmp_path, auth=False)
+        _override_user(None)
+        for _ in range(3):
+            await async_client.post(
+                "/api/meetings/transcribe",
+                files={"audio": _wav()}, data={"consent_confirmed": "true"},
+            )
+        # limit actually caps the returned rows
+        assert len((await async_client.get("/api/meetings?limit=2")).json()) == 2
+        # out-of-range limits are 422 (ge=1, le=200)
+        assert (await async_client.get("/api/meetings?limit=0")).status_code == 422
+        assert (await async_client.get("/api/meetings?limit=201")).status_code == 422
+
 
 # ---------------------------------------------------------------------------
 # Pipeline pure functions — pseudonyms + render (no GPU, no DB)

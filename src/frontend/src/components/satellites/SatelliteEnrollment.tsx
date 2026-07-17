@@ -10,6 +10,7 @@
  */
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
+import { formatDateTime } from '../../utils/datetime';
 
 import {
   useSatelliteEnrollmentsQuery,
@@ -96,7 +97,7 @@ export default function SatelliteEnrollment() {
   };
 
   const fmt = (iso: string | null) =>
-    iso ? new Date(iso).toLocaleString() : t('satellites.enrollment.never');
+    iso ? formatDateTime(iso) : t('satellites.enrollment.never');
 
   return (
     <section className="card mt-6">

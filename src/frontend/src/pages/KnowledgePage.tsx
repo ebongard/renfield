@@ -21,6 +21,7 @@ import {
   ArrowRightLeft,
 } from 'lucide-react';
 import apiClient from '../utils/axios';
+import { formatDateTime } from '../utils/datetime';
 import { extractApiError } from '../utils/axios';
 import { useConfirmDialog } from '../components/ConfirmDialog';
 import PageHeader from '../components/PageHeader';
@@ -899,7 +900,7 @@ export default function KnowledgePage() {
                     {doc.created_at && (
                       <p className="text-xs text-gray-400 dark:text-gray-500 mt-1">
                         {t('knowledge.createdAt', {
-                          date: new Date(doc.created_at).toLocaleString(i18n.language),
+                          date: formatDateTime(doc.created_at, i18n.language),
                         })}
                       </p>
                     )}

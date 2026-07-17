@@ -5,6 +5,7 @@ import {
   ChevronLeft, ChevronRight, ArrowRight, Lock, Users, Plus, GitBranch,
 } from 'lucide-react';
 import { extractApiError } from '../utils/axios';
+import { formatDate } from '../utils/datetime';
 import Modal from '../components/Modal';
 import PageHeader from '../components/PageHeader';
 import Alert from '../components/Alert';
@@ -542,7 +543,7 @@ export default function KnowledgeGraphPage() {
                         </td>
                         <td className="py-3 px-3 text-sm text-gray-600 dark:text-gray-300">{entity.mention_count}</td>
                         <td className="py-3 px-3 text-sm text-gray-500 dark:text-gray-400">
-                          {entity.last_seen_at ? new Date(entity.last_seen_at).toLocaleDateString() : '-'}
+                          {entity.last_seen_at ? formatDate(entity.last_seen_at) : '-'}
                         </td>
                         <td className="py-3 px-3 text-right">
                           {!mergeMode && (

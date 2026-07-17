@@ -42,6 +42,41 @@ describe('MeetingsPage', () => {
     expect(screen.getByText(i18n.t('meetings.status.processing'))).toBeInTheDocument();
   });
 
+  it('renders a failed meeting with its error and no expand affordance', async () => {
+    server.use(
+      http.get(`${BASE_URL}/api/meetings`, () =>
+        HttpResponse.json([
+          mkMeeting({ id: 3, title: 'Broken', status: 'failed', error: 'audio exceeds size limit', transcript_document_id: null }),
+        ]),
+      ),
+    );
+
+    renderWithProviders(<MeetingsPage />);
+
+    await waitFor(() => expect(screen.getByText('Broken')).toBeInTheDocument());
+    expect(screen.getByText('audio exceeds size limit')).toBeInTheDocument();
+    expect(screen.getByText(i18n.t('meetings.status.failed'))).toBeInTheDocument();
+    // A failed meeting is not expandable → its title button is disabled.
+    expect(screen.getByRole('button', { name: /Broken/ })).toBeDisabled();
+  });
+
+  it('shows the error state when the list fails to load', async () => {
+    // A 500 with no extractable detail → the query wrapper falls back to the
+    // localized meetings.failedToLoad message.
+    server.use(
+      http.get(`${BASE_URL}/api/meetings`, () => HttpResponse.json({}, { status: 500 })),
+    );
+
+    renderWithProviders(<MeetingsPage />);
+
+    await waitFor(
+      () => expect(screen.getByText(i18n.t('meetings.failedToLoad'))).toBeInTheDocument(),
+      { timeout: 3000 },
+    );
+    // The empty-state must NOT show when the list errored.
+    expect(screen.queryByText(i18n.t('meetings.empty'))).not.toBeInTheDocument();
+  });
+
   it('shows the empty state when there are no meetings', async () => {
     server.use(http.get(`${BASE_URL}/api/meetings`, () => HttpResponse.json([])));
 

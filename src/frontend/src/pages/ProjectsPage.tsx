@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next';
 import { FolderKanban, FileText, Loader, XCircle, Plus } from 'lucide-react';
 
 import PageHeader from '../components/PageHeader';
+import { formatDate } from '../utils/datetime';
 import TierBadge from '../components/TierBadge';
 import { useProjectsQuery, useCreateProject } from '../api/resources/projects';
 
@@ -111,7 +112,7 @@ export default function ProjectsPage() {
                       <FileText className="w-3.5 h-3.5" />
                       {t('projects.documentCount', { count: project.document_count })}
                     </span>
-                    <span>{t('projects.created')}: {new Date(project.created_at).toLocaleDateString()}</span>
+                    <span>{t('projects.created')}: {formatDate(project.created_at)}</span>
                   </div>
                 </div>
                 <TierBadge tier={project.circle_tier} />
