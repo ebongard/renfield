@@ -106,6 +106,19 @@ spec:
                 secretKeyRef:
                   name: renfield-secrets
                   key: secret-key
+            # §2 meeting diarization. Dark by default — MEETING_ENABLED=false
+            # means the pyannote pipeline is never loaded, so a non-meeting
+            # deployment is byte-identical. Flip to "true" (+ the meeting image)
+            # to turn it on. HF_TOKEN backs a cold-cache pyannote download
+            # (the model is baked into the image; optional at runtime).
+            - name: MEETING_ENABLED
+              value: "false"
+            - name: HF_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: hf-token
+                  key: HF_TOKEN
+                  optional: true
           resources:
             requests:
               cpu: "2"

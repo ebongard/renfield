@@ -16,6 +16,7 @@ Until B.4.c lands, Traefik does NOT route `/api/voice/*` to voice-server
 
 from __future__ import annotations
 
+import asyncio
 import io
 import logging
 import wave
@@ -157,6 +158,98 @@ async def _transcribe_and_embed(
         audio_duration_s=float(pcm.size) / 16000.0,
         speaker_embedding=embedding,
     )
+
+
+class MeetingSegmentOut(BaseModel):
+    speaker: str  # raw diarization cluster id (SPEAKER_00…); backend applies pseudonyms
+    start_s: float
+    end_s: float
+    text: str
+    embedding: list[float] | None = None
+
+
+class MeetingTranscribeResponse(BaseModel):
+    segments: list[MeetingSegmentOut]
+    num_speakers: int
+    duration_s: float
+
+
+@router.post("/transcribe-meeting", response_model=MeetingTranscribeResponse)
+async def transcribe_meeting_endpoint(
+    request: Request,
+    audio: UploadFile = File(...),
+    whisper_model: str | None = Form(default=None),
+    _user: dict = Depends(_require_token),
+) -> MeetingTranscribeResponse:
+    """Batch diarization + ASR over a whole meeting recording (§2).
+
+    Returns raw speaker-CLUSTER-attributed segments (SPEAKER_00…) + a per-cluster
+    ECAPA embedding. The backend applies pseudonyms / human labels — voice-server
+    stays stateless (same contract boundary as /stt).
+    """
+    from voice_server.services.meeting_service import MeetingDiarizationService
+
+    meeting: MeetingDiarizationService | None = getattr(request.app.state, "meeting", None)
+    if meeting is None or not meeting.ready:
+        raise HTTPException(status_code=503, detail="meeting diarization not available")
+
+    audio_bytes = await audio.read()
+    if not audio_bytes:
+        raise HTTPException(status_code=400, detail="empty audio")
+    try:
+        pcm = await decode_audio_to_pcm(audio_bytes)
+    except OneshotDecodeError as e:
+        # A recording the decoder can't parse is terminal (4xx) — the backend
+        # worker maps 4xx to a failed meeting, not an infinite retry.
+        logger.warning("meeting decode failed: %s", e)
+        raise HTTPException(status_code=400, detail=f"audio decode failed: {e}") from e
+    if pcm.size == 0:
+        raise HTTPException(status_code=400, detail="empty PCM after decode")
+
+    # ASR model: a per-job model when requested/configured (kept off the resident
+    # slot so a larger model doesn't contend with live STT), else the resident one.
+    loop = asyncio.get_running_loop()
+    model_name = (whisper_model or "").strip() or _settings_meeting_model()
+    per_job_model = None
+    try:
+        if model_name:
+            from faster_whisper import WhisperModel
+
+            from voice_server.config import settings as _s
+
+            per_job_model = await loop.run_in_executor(
+                None,
+                lambda: WhisperModel(
+                    model_name, device=_s.whisper_device, compute_type=_s.whisper_compute_type
+                ),
+            )
+            asr_model = per_job_model
+        else:
+            asr_model = request.app.state.stt._model  # resident faster-whisper
+
+        segments = await meeting.transcribe(
+            pcm, whisper_model=asr_model, speaker_service=request.app.state.speaker
+        )
+    except HTTPException:
+        raise
+    except Exception as e:  # noqa: BLE001
+        logger.exception("meeting transcription failed")
+        raise HTTPException(status_code=500, detail=f"transcription failed: {e}") from e
+    finally:
+        if per_job_model is not None:
+            del per_job_model  # unload; free VRAM for the next job / live STT
+
+    return MeetingTranscribeResponse(
+        segments=[MeetingSegmentOut(**s) for s in segments],
+        num_speakers=len({s["speaker"] for s in segments}),
+        duration_s=round(float(pcm.size) / 16000.0, 3),
+    )
+
+
+def _settings_meeting_model() -> str:
+    from voice_server.config import settings as _s
+
+    return (_s.meeting_whisper_model or "").strip()
 
 
 class TTSRequest(BaseModel):

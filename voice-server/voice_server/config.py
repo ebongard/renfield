@@ -49,6 +49,19 @@ class Settings(BaseSettings):
     speaker_model_path: Path = Path("/mnt/llm/voice/ecapa_tdnn.onnx")
     speaker_providers: list[str] = ["CUDAExecutionProvider", "CPUExecutionProvider"]
 
+    # Meeting diarization (§2) — pyannote turns + faster-whisper words →
+    # speaker-attributed segments. The pyannote pipeline is loaded at warmup
+    # ONLY when meeting_enabled (it's ~2 GB VRAM and useless on a non-meeting
+    # deployment). meeting_whisper_model="" reuses the resident STT model; set a
+    # larger one (e.g. large-v3-turbo) to trade GPU-seconds for accuracy — loaded
+    # per job so it doesn't sit resident contending with live satellite STT.
+    meeting_enabled: bool = False
+    meeting_diarization_model: str = "pyannote/speaker-diarization-3.1"
+    meeting_whisper_model: str = ""
+    # HF token for the gated pyannote model at warmup (offline-first: the model
+    # is baked into the image, so this only matters if the cache is cold).
+    hf_token: SecretStr | None = None
+
     # TTS (B.1)
     piper_voices_dir: Path = Path("/mnt/llm/voice/piper")
     piper_default_voice_de: str = "de_DE-thorsten-medium"

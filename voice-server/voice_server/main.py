@@ -60,6 +60,14 @@ async def lifespan(app: FastAPI):
 
     await app.state.stt.warmup()
     await app.state.speaker.warmup()
+
+    # Meeting diarization (§2): only loads pyannote (~2 GB VRAM) when enabled, so
+    # a non-meeting deployment is unaffected. warmup() no-ops when off.
+    from voice_server.services.meeting_service import MeetingDiarizationService
+
+    app.state.meeting = MeetingDiarizationService()
+    await app.state.meeting.warmup()
+
     logger.info("voice-server ready")
     try:
         yield
@@ -78,11 +86,14 @@ app = FastAPI(
 async def health() -> dict[str, object]:
     stt_ready = getattr(app.state, "stt", None) is not None and app.state.stt.ready
     spk_ready = getattr(app.state, "speaker", None) is not None and app.state.speaker.ready
+    meeting = getattr(app.state, "meeting", None)
     return {
         "status": "ok" if (stt_ready and spk_ready) else "warming",
         "version": __version__,
         "stt_ready": stt_ready,
         "speaker_ready": spk_ready,
+        # informational — meeting diarization is off unless MEETING_ENABLED
+        "meeting_ready": meeting is not None and meeting.ready,
     }
 
 

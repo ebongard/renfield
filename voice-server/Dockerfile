@@ -51,16 +51,17 @@ ENV LD_LIBRARY_PATH=/usr/local/cuda/lib64:/opt/venv/lib/python3.12/site-packages
 WORKDIR /app
 COPY requirements.txt /app/requirements.txt
 
-# torch is used ONLY for speechbrain's compute_features +
-# mean_var_norm CPU preproc (per design § B.1.0 — ECAPA features
-# run on CPU before the ONNX call). STT uses CTranslate2; ECAPA
-# inference uses onnxruntime-gpu. So we install CPU torch
-# (~150 MB) instead of the cu124 wheel (~5 GB) — keeps every
-# layer well below Harbor's ~2.5 GB practical limit.
 RUN pip install --upgrade pip wheel
 
-RUN pip install --index-url https://download.pytorch.org/whl/cpu \
-        torch>=2.4 torchaudio>=2.4
+# GPU torch (cu128). Historically this was CPU-only torch (~150 MB) because torch
+# served only speechbrain's CPU ECAPA preproc. §2 meeting diarization runs
+# pyannote's neural pipeline ON THE GPU, which needs GPU torch. cu128 runs on
+# both the gpu-3 Ada card (sm_89) and Blackwell (sm_120) — one pyannote
+# integration for §2 + the planned streaming-diarization feature. This is a
+# ~6 GB layer (over Harbor's ~2.5 GB comfort limit, same as the backend image's
+# large layers — the push is slow but works); kept in its OWN layer.
+RUN pip install --index-url https://download.pytorch.org/whl/cu128 \
+        torch==2.7.1 torchaudio==2.7.1
 
 RUN pip install \
         numpy>=1.26 \
@@ -70,6 +71,30 @@ RUN pip install \
 # speechbrain pulls in plain `onnxruntime` (CPU) as a transitive. Install
 # it BEFORE onnxruntime-gpu so the GPU wheel wins the final import path.
 RUN pip install speechbrain>=1.0
+
+# pyannote.audio for §2 meeting diarization. Pin huggingface_hub<0.26: pyannote
+# 3.x internally calls hf_hub_download(use_auth_token=...) which hub 0.26+
+# removed (validated in the spike). Own layer, BEFORE the final onnxruntime-gpu
+# cleanup because pyannote transitively pulls CPU onnxruntime.
+RUN pip install "pyannote.audio>=3.1,<4" "huggingface_hub<0.26"
+
+# Bake the gated pyannote diarization model into the image (offline-first). Uses
+# a BuildKit secret so the HF token never lands in image history. Skipped (with
+# a loud echo) when no secret is passed — the runtime then downloads on warmup
+# if MEETING_ENABLED + HF_TOKEN are set and the cache is cold.
+ENV HF_HOME=/opt/hf-cache
+RUN --mount=type=secret,id=hf_token \
+    HF_TOKEN="$(cat /run/secrets/hf_token 2>/dev/null || true)"; \
+    if [ -n "$HF_TOKEN" ]; then \
+      python - "$HF_TOKEN" <<'PY' || echo "[bake] pyannote model bake FAILED — will download on warmup"; \
+import sys, torch
+_o = torch.load
+torch.load = lambda *a, **k: _o(*a, **{**k, "weights_only": False})
+from pyannote.audio import Pipeline
+p = Pipeline.from_pretrained("pyannote/speaker-diarization-3.1", use_auth_token=sys.argv[1])
+print("[bake] pyannote model cached:", p is not None)
+PY
+    else echo "[bake] no hf_token build secret — pyannote model not baked"; fi
 
 # cuDNN is required by onnxruntime-gpu's CUDAExecutionProvider but is
 # NOT included in nvidia/cuda:12.6-runtime base. Pull it via pip wheel.
