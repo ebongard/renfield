@@ -42,6 +42,7 @@ from utils.llm_client import (
     extract_response_content,
     get_agent_client,
     get_classification_chat_kwargs,
+    get_dedicated_client,
 )
 
 if TYPE_CHECKING:
@@ -542,7 +543,14 @@ class AgentRouter:
         # Priority: agent_router_model/url > agent_model/url > intent_model > default
         router_url = settings.agent_router_url or settings.agent_ollama_url
         router_model = settings.agent_router_model or settings.ollama_intent_model or settings.ollama_model
-        if router_url:
+        if settings.agent_router_url:
+            # A DEDICATED router endpoint always wins. get_agent_client would
+            # short-circuit to the OpenAI-compat endpoint whenever the agent
+            # tier uses one, sending this small local router model to an
+            # external API that validates model IDs (400) — the router must
+            # keep classifying locally regardless of where the agent lives.
+            client = get_dedicated_client(settings.agent_router_url)
+        elif router_url:
             client, _ = get_agent_client(fallback_url=router_url)
         else:
             client = ollama.client

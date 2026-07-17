@@ -164,6 +164,18 @@ def _make_client_with_fallback(primary_url: str) -> LLMClient:
     return primary
 
 
+def get_dedicated_client(url: str) -> LLMClient:
+    """Client bound to an explicit URL, bypassing the OpenAI-tier short-circuit.
+
+    For callers with their own dedicated endpoint (e.g. the router's
+    ``AGENT_ROUTER_URL``) that must NOT follow the agent tier to an external
+    OpenAI-compatible API: those callers use small local model names which
+    external APIs reject with 400. llama-server ignores the requested model
+    name, which masked this for local deployments.
+    """
+    return _make_client_with_fallback(url)
+
+
 def get_default_client() -> LLMClient:
     """Return the client for the default chat tier.
 
