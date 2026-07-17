@@ -1103,33 +1103,36 @@ class TestReasoningEffortExtraBody:
         client._client = inner
         return client, inner
 
+    def _run_chat(self, client, **chat_kwargs):
+        import asyncio
+
+        with patch.object(OpenAICompatibleClient, "_wrap_response", return_value=MagicMock()):
+            asyncio.run(client.chat(model="m", messages=[{"role": "user", "content": "hi"}], **chat_kwargs))
+
     @pytest.mark.unit
     @patch("utils.llm_client.settings")
-    async def test_reasoning_effort_emitted_when_set(self, mock_settings):
+    def test_reasoning_effort_emitted_when_set(self, mock_settings):
         mock_settings.llm_openai_reasoning_effort = "low"
         client, inner = self._client_with_mock_create()
-        with patch.object(OpenAICompatibleClient, "_wrap_response", return_value=MagicMock()):
-            await client.chat(model="m", messages=[{"role": "user", "content": "hi"}])
+        self._run_chat(client)
         _, kwargs = inner.chat.completions.create.call_args
         assert kwargs["extra_body"] == {"reasoning_effort": "low"}
 
     @pytest.mark.unit
     @patch("utils.llm_client.settings")
-    async def test_no_extra_body_when_unset(self, mock_settings):
+    def test_no_extra_body_when_unset(self, mock_settings):
         mock_settings.llm_openai_reasoning_effort = None
         client, inner = self._client_with_mock_create()
-        with patch.object(OpenAICompatibleClient, "_wrap_response", return_value=MagicMock()):
-            await client.chat(model="m", messages=[{"role": "user", "content": "hi"}])
+        self._run_chat(client)
         _, kwargs = inner.chat.completions.create.call_args
         assert kwargs["extra_body"] is None
 
     @pytest.mark.unit
     @patch("utils.llm_client.settings")
-    async def test_reasoning_effort_composes_with_think_flag(self, mock_settings):
+    def test_reasoning_effort_composes_with_think_flag(self, mock_settings):
         mock_settings.llm_openai_reasoning_effort = "low"
         client, inner = self._client_with_mock_create()
-        with patch.object(OpenAICompatibleClient, "_wrap_response", return_value=MagicMock()):
-            await client.chat(model="m", messages=[{"role": "user", "content": "hi"}], think=False)
+        self._run_chat(client, think=False)
         _, kwargs = inner.chat.completions.create.call_args
         assert kwargs["extra_body"]["reasoning_effort"] == "low"
         assert kwargs["extra_body"]["chat_template_kwargs"] == {"enable_thinking": False}
