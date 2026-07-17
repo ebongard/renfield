@@ -1,6 +1,7 @@
 import axios, { AxiosInstance, InternalAxiosRequestConfig, AxiosResponse, AxiosError } from 'axios';
 
 import { getApiBaseUrl } from './env';
+import { ACCESS_TOKEN_KEY } from './authTokens';
 
 // Axios Instance mit Base URL
 const apiClient: AxiosInstance = axios.create({
@@ -11,10 +12,23 @@ const apiClient: AxiosInstance = axios.create({
   }
 });
 
-// Request Interceptor
+// Request Interceptor — attach the bearer token from localStorage on EVERY
+// request. This is registered at module scope (when apiClient is created,
+// before any React component mounts), so it CANNOT race the app's first
+// authenticated queries. Previously the token was attached only by an
+// interceptor AuthContext registered inside a useEffect; a child component's
+// query effect (e.g. useFeatureFlags → /api/config/features) runs before the
+// parent AuthContext's effect, so on an auth-on instance with a token already
+// in localStorage that first request went out unauthenticated → 401 → and
+// because react-query does not retry 401s, the feature flags cached as `false`
+// (hiding e.g. the Meetings/Wissen nav). Reading from localStorage here removes
+// that ordering dependency entirely.
 apiClient.interceptors.request.use(
   (config: InternalAxiosRequestConfig) => {
-    // Hier könnte Auth-Token hinzugefügt werden
+    const token = localStorage.getItem(ACCESS_TOKEN_KEY);
+    if (token && !config.headers.Authorization) {
+      config.headers.Authorization = `Bearer ${token}`;
+    }
     return config;
   },
   (error: AxiosError) => {

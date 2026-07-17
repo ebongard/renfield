@@ -6,6 +6,7 @@
  */
 import { createContext, useContext, useState, useEffect, useCallback, ReactNode } from 'react';
 import apiClient from '../utils/axios';
+import { ACCESS_TOKEN_KEY, REFRESH_TOKEN_KEY } from '../utils/authTokens';
 import type { User, LoginResponse } from '../types/api';
 
 // Auth user with permissions
@@ -34,10 +35,6 @@ export interface AuthContextValue {
 }
 
 const AuthContext = createContext<AuthContextValue | null>(null);
-
-// Token storage keys
-const ACCESS_TOKEN_KEY = 'renfield_access_token';
-const REFRESH_TOKEN_KEY = 'renfield_refresh_token';
 
 interface AuthProviderProps {
   children: ReactNode;
@@ -222,22 +219,11 @@ export function AuthProvider({ children }: AuthProviderProps) {
   }, [fetchUser]);
 
   // Setup axios interceptor for auth header
-  useEffect(() => {
-    const interceptor = apiClient.interceptors.request.use(
-      (config) => {
-        const token = getAccessToken();
-        if (token && !config.headers.Authorization) {
-          config.headers.Authorization = `Bearer ${token}`;
-        }
-        return config;
-      },
-      (error) => Promise.reject(error)
-    );
-
-    return () => {
-      apiClient.interceptors.request.eject(interceptor);
-    };
-  }, [getAccessToken]);
+  // NOTE: the request interceptor that attaches the access token now lives at
+  // module scope in utils/axios.ts, so it is registered before any component
+  // mounts and cannot race the app's first authenticated queries. (It used to
+  // be registered here in a useEffect, which children's query effects could
+  // beat → 401 → feature flags cached false on auth-on instances.)
 
   // Setup response interceptor for token refresh
   useEffect(() => {
