@@ -18,9 +18,10 @@ from datetime import date as date_cls
 from datetime import datetime, timedelta
 
 import aiofiles
-from fastapi import APIRouter, Depends, File, Form, HTTPException, Response, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Response, UploadFile
 from loguru import logger
 from pydantic import BaseModel, Field
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.database import Meeting, User
@@ -217,6 +218,27 @@ async def transcribe_meeting(
     logger.info(f"meeting {meeting.id} queued ({written} bytes, ext={ext})")
     response.status_code = 202
     return _to_response(meeting)
+
+
+@router.get("", response_model=list[MeetingResponse])
+async def list_meetings(
+    limit: int = Query(100, ge=1, le=200),
+    user: User | None = Depends(get_optional_user),
+    db: AsyncSession = Depends(get_db),
+) -> list[MeetingResponse]:
+    """List the caller's meetings, newest first (owner-scoped 404-free — an
+    unauthenticated caller under auth just gets an empty list). Backs the
+    Meetings page; the frontend polls it while any row is pending/processing."""
+    _require_enabled()
+
+    stmt = select(Meeting).order_by(Meeting.created_at.desc()).limit(limit)
+    if settings.auth_enabled:
+        if not user:
+            return []
+        stmt = stmt.where(Meeting.owner_user_id == user.id)
+
+    result = await db.execute(stmt)
+    return [_to_response(m) for m in result.scalars().all()]
 
 
 async def _get_owned_meeting(

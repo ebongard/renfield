@@ -226,6 +226,51 @@ class TestMeetingRoutes:
         _override_user(user_a)
         assert (await async_client.get("/api/meetings/999999")).status_code == 404
 
+    async def test_list_404_when_flag_off(self, async_client, monkeypatch):
+        monkeypatch.setattr(settings, "meeting_transcription_enabled", False)
+        assert (await async_client.get("/api/meetings")).status_code == 404
+
+    async def test_list_owner_scoped_newest_first(
+        self, async_client, monkeypatch, tmp_path
+    ):
+        from models.database import User
+
+        _enable(monkeypatch, tmp_path, auth=True)
+        user_a = User(id=1, username="a", password_hash="x", is_active=True, role_id=1)
+        user_b = User(id=2, username="b", password_hash="x", is_active=True, role_id=1)
+
+        # A uploads two, B uploads one
+        _override_user(user_a)
+        first = (await async_client.post(
+            "/api/meetings/transcribe",
+            files={"audio": _wav()}, data={"consent_confirmed": "true", "title": "First"},
+        )).json()["id"]
+        second = (await async_client.post(
+            "/api/meetings/transcribe",
+            files={"audio": _wav()}, data={"consent_confirmed": "true", "title": "Second"},
+        )).json()["id"]
+        _override_user(user_b)
+        await async_client.post(
+            "/api/meetings/transcribe",
+            files={"audio": _wav()}, data={"consent_confirmed": "true", "title": "B-only"},
+        )
+
+        # A sees only A's meetings, newest first
+        _override_user(user_a)
+        rows = (await async_client.get("/api/meetings")).json()
+        assert [r["id"] for r in rows] == [second, first]
+        assert {r["title"] for r in rows} == {"First", "Second"}
+
+    async def test_list_auth_off_sees_all(self, async_client, monkeypatch, tmp_path):
+        _enable(monkeypatch, tmp_path, auth=False)
+        _override_user(None)
+        await async_client.post(
+            "/api/meetings/transcribe",
+            files={"audio": _wav()}, data={"consent_confirmed": "true"},
+        )
+        rows = (await async_client.get("/api/meetings")).json()
+        assert len(rows) >= 1
+
 
 # ---------------------------------------------------------------------------
 # Pipeline pure functions — pseudonyms + render (no GPU, no DB)

@@ -19,6 +19,7 @@ import { queryClient } from './api/queryClient';
 // Lazy-loaded admin/secondary pages
 const TasksPage = lazy(() => import('./pages/TasksPage'));
 const ProjectsPage = lazy(() => import('./pages/ProjectsPage'));
+const MeetingsPage = lazy(() => import('./pages/MeetingsPage'));
 const CameraPage = lazy(() => import('./pages/CameraPage'));
 const HomeAssistantPage = lazy(() => import('./pages/HomeAssistantPage'));
 const SpeakersPage = lazy(() => import('./pages/SpeakersPage'));
@@ -64,6 +65,9 @@ function AppRoutes() {
   // Business-instance Phase 1: the /projects surface is gated by a runtime flag
   // (/api/config/features). Off (the household default) => the route is absent.
   const projectsEnabled = featureFlags?.projects_enabled ?? false;
+  // §2 meeting transcription: the /meetings surface is gated by a runtime flag
+  // (/api/config/features). Off (the default on both instances) => route absent.
+  const meetingsEnabled = featureFlags?.meeting_transcription_enabled ?? false;
 
   return (
     <Routes>
@@ -94,6 +98,13 @@ function AppRoutes() {
               <Route path="/projects" element={
                 <ProtectedRoute>
                   <ProjectsPage />
+                </ProtectedRoute>
+              } />
+            )}
+            {meetingsEnabled && (
+              <Route path="/meetings" element={
+                <ProtectedRoute>
+                  <MeetingsPage />
                 </ProtectedRoute>
               } />
             )}

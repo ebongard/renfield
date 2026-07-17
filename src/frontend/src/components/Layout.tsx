@@ -40,6 +40,7 @@ import {
   Hammer,
   Radar,
   FolderKanban,
+  Mic,
 } from 'lucide-react';
 import DeviceStatus from './DeviceStatus';
 import ThemeToggle from './ThemeToggle';
@@ -185,6 +186,8 @@ export default function Layout({ children }: LayoutProps) {
   // Gated off the typed /api/config/features flag (NOT item.feature — the
   // AuthContext feature map defaults missing keys to true, so it can't hide it).
   const projectsEnabled = featureFlags?.projects_enabled ?? false;
+  // §2 meeting transcription: append the Meetings entry only when the flag is on.
+  const meetingsEnabled = featureFlags?.meeting_transcription_enabled ?? false;
 
   const baseMainNav: NavItemConfig[] = wissenWorkspace
     ? (() => {
@@ -204,9 +207,11 @@ export default function Layout({ children }: LayoutProps) {
       })()
     : mainNavigationConfig;
 
-  const mainNavSource: NavItemConfig[] = projectsEnabled
-    ? [...baseMainNav, { nameKey: 'nav.projects', href: '/projects', icon: FolderKanban }]
-    : baseMainNav;
+  const mainNavSource: NavItemConfig[] = [
+    ...baseMainNav,
+    ...(projectsEnabled ? [{ nameKey: 'nav.projects', href: '/projects', icon: FolderKanban }] : []),
+    ...(meetingsEnabled ? [{ nameKey: 'nav.meetings', href: '/meetings', icon: Mic }] : []),
+  ];
 
   const mainNavigation: NavItem[] = mainNavSource.map((item) => ({
     ...item,

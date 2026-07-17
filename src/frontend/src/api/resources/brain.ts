@@ -109,6 +109,8 @@ export interface FeatureFlags {
   chat_branching_enabled: boolean;
   /** Gates the /projects nav + page (business-instance Phase 1). */
   projects_enabled: boolean;
+  /** Gates the §2 meeting-transcription nav + page (upload + status + speaker labeling). */
+  meeting_transcription_enabled: boolean;
   /** True when the Reva-only Wissensbasis surface (/trace + /me/mix) is mounted.
    *  Standalone Renfield => false. Lets the frontend hide the Reva-only side
    *  panels without probing an endpoint that 404s (console-noise fix). */

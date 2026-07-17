@@ -121,6 +121,11 @@ export const keys = {
     list: () => ['projects', 'list'] as const,
     detail: (id: number) => ['projects', 'detail', id] as const,
   },
+  meetings: {
+    all: ['meetings'] as const,
+    list: () => ['meetings', 'list'] as const,
+    segments: (id: number) => ['meetings', id, 'segments'] as const,
+  },
   cameras: {
     all: ['cameras'] as const,
     list: () => ['cameras', 'list'] as const,
