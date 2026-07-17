@@ -656,6 +656,17 @@ angezeigt). Rollout gestaffelt: dark → Flotte einschreiben → `…_ENABLED=tr
 # Voice-Server neu bauen/ausrollen, dann SATELLITE_OPUS_ENABLED=true.
 SATELLITE_OPUS_ENABLED=false
 
+# Voice-Server-Auth. Default true = das Backend signiert für jeden Voice-Server-
+# Call (STT/TTS/Meeting) ein Service-JWT mit dem eigenen SECRET_KEY, das der
+# Voice-Server im local-Modus validiert. Auf false setzen, wenn diese Instanz den
+# Voice-Server EINER ANDEREN Instanz mitbenutzt (z.B. renfield-xidra → Household-
+# Voice-Server): der eigene SECRET_KEY unterscheidet sich, ein selbst signiertes
+# Token würde an der Signaturprüfung scheitern (401) — auch bei auth_required=false
+# (das überspringt Auth nur bei FEHLENDEM Token). false → Backend sendet KEIN
+# Token → auth_required=false-Voice-Server behandelt den Call als anonym. Interim
+# bis zum Voice-Server-Topologie-Redesign (echte Multi-Tenant-Auth).
+VOICE_SERVER_AUTH_ENABLED=true
+
 # P0 Fail-loud-Fallback: das In-Process-SpeechBrain-ECAPA und das
 # voice-server-ONNX-ECAPA teilen KEINEN Repräsentationsraum. Default aus =
 # das Backend verweigert SpeechBrain-Embeddings (Extraktion/Vergleich/
