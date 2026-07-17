@@ -28,7 +28,16 @@ _MEETINGS_KB_NAME = "Meetings"
 
 
 def _service_token() -> str:
-    """Mint a short-lived service-account JWT for the pod-to-pod voice-server call."""
+    """Mint a short-lived service-account JWT for the pod-to-pod voice-server call.
+
+    Returns "" when ``voice_server_auth_enabled`` is off (this instance shares
+    another instance's voice-server, so our SECRET_KEY-signed token would 401 on
+    signature verification) — the client then sends no token and the
+    auth_required=false voice-server treats the call as anonymous."""
+    from utils.config import settings
+
+    if not settings.voice_server_auth_enabled:
+        return ""
     from services.auth_service import create_access_token
 
     return create_access_token({"sub": "service:meeting", "scope": "voice"})

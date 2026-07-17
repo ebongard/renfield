@@ -54,6 +54,14 @@ def _base_url() -> str:
     return settings.voice_server_url.rstrip("/")
 
 
+def _auth_headers(auth_token: str) -> dict[str, str]:
+    """Bearer header — omitted entirely when the token is empty, so a voice-server
+    running auth_required=false treats the call as anonymous instead of trying
+    (and failing) to validate an empty/foreign token. Callers gate the token on
+    ``settings.voice_server_auth_enabled``."""
+    return {"Authorization": f"Bearer {auth_token}"} if auth_token else {}
+
+
 async def stt(
     audio_bytes: bytes,
     *,
@@ -68,7 +76,7 @@ async def stt(
     Returns {text, language, speaker_embedding?, audio_duration_s}.
     """
     url = f"{_base_url()}/api/voice/stt"
-    headers = {"Authorization": f"Bearer {auth_token}"}
+    headers = _auth_headers(auth_token)
     files = {"audio": (filename, audio_bytes, content_type)}
     data: dict[str, Any] = {}
     if language:
@@ -102,7 +110,7 @@ async def stt_opus(
     shape as stt(): {text, language, speaker_embedding?, audio_duration_s}.
     """
     url = f"{_base_url()}/api/voice/stt-opus"
-    headers = {"Authorization": f"Bearer {auth_token}"}
+    headers = _auth_headers(auth_token)
     files = {"audio": ("satellite_audio.opus", opus_blob, "application/octet-stream")}
     data: dict[str, Any] = {}
     if language:
@@ -131,7 +139,7 @@ async def tts(
 ) -> bytes:
     """POST text to voice-server /api/voice/tts. Returns full WAV bytes."""
     url = f"{_base_url()}/api/voice/tts"
-    headers = {"Authorization": f"Bearer {auth_token}"}
+    headers = _auth_headers(auth_token)
     payload: dict[str, Any] = {"text": text}
     if language:
         payload["language"] = language
@@ -169,7 +177,7 @@ async def transcribe_meeting(
     if timeout_s is None:
         timeout_s = settings.meeting_max_duration_h * 3600 + _MEETING_TIMEOUT_MARGIN_S
     url = f"{_base_url()}/transcribe-meeting"
-    headers = {"Authorization": f"Bearer {auth_token}"}
+    headers = _auth_headers(auth_token)
     data: dict[str, Any] = {}
     if whisper_model:
         data["whisper_model"] = whisper_model

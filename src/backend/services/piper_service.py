@@ -273,9 +273,14 @@ class PiperService:
         from services.auth_service import create_access_token
         from services.voice_server_client import VoiceServerError, tts as vs_tts
 
-        # Service-account token signed with the platform SECRET_KEY,
-        # which voice-server validates in local mode.
-        token = create_access_token({"sub": "service:piper", "scope": "voice"})
+        # Service-account token signed with the platform SECRET_KEY, which the
+        # voice-server validates in local mode. "" when voice_server_auth_enabled
+        # is off (shared/foreign voice-server) → client sends no token → anonymous.
+        token = (
+            create_access_token({"sub": "service:piper", "scope": "voice"})
+            if settings.voice_server_auth_enabled
+            else ""
+        )
         try:
             return await vs_tts(text, language=language, auth_token=token)
         except VoiceServerError as e:

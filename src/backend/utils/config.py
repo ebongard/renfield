@@ -118,6 +118,16 @@ class Settings(BaseSettings):
     # voice-server deployment.
     voice_server_url: str | None = None
 
+    # When False, the backend sends NO bearer token to the voice-server, so a
+    # voice-server running auth_required=false treats the call as anonymous.
+    # Set False on an instance that shares ANOTHER instance's voice-server: its
+    # own SECRET_KEY differs, so a token it minted would fail signature
+    # verification (401) even though the voice-server is "unauthenticated" (that
+    # flag only skips auth for a MISSING token, not a present-but-invalid one).
+    # Default True = the normal same-instance path (local-mode JWT validation).
+    # Interim until the shared voice-server gets real multi-tenant auth.
+    voice_server_auth_enabled: bool = True
+
     # Home Assistant / Frigate settings moved to ha_glue/utils/config.py
     # (see `HaGlueSettings`). Access via:
     #     from ha_glue.utils.config import ha_glue_settings

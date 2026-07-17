@@ -327,6 +327,26 @@ class TestMeetingRoutes:
 # Pipeline pure functions — pseudonyms + render (no GPU, no DB)
 # ---------------------------------------------------------------------------
 
+class TestVoiceServerAuthGate:
+    """voice_server_auth_enabled=False → no token sent → voice-server anonymous
+    (for an instance sharing another instance's voice-server)."""
+
+    def test_auth_headers_omit_empty_token(self):
+        from services.voice_server_client import _auth_headers
+
+        assert _auth_headers("") == {}
+        assert _auth_headers("tok") == {"Authorization": "Bearer tok"}
+
+    def test_service_token_empty_when_auth_disabled(self, monkeypatch):
+        from services import meeting_pipeline
+
+        monkeypatch.setattr(settings, "voice_server_auth_enabled", False)
+        assert meeting_pipeline._service_token() == ""
+
+        monkeypatch.setattr(settings, "voice_server_auth_enabled", True)
+        assert meeting_pipeline._service_token()  # a real (non-empty) JWT
+
+
 class TestPseudonyms:
     def test_stable_first_appearance_mapping(self):
         from services.meeting_pipeline import apply_pseudonyms

@@ -51,7 +51,12 @@ from services.audio_preprocessor import AudioPreprocessor
 # worker, scheduled jobs) need a service-account token signed with the
 # same SECRET_KEY voice-server validates against.
 def _get_service_token() -> str:
-    """Mint a short-lived service-account JWT for cross-pod auth."""
+    """Mint a short-lived service-account JWT for cross-pod auth. Returns "" when
+    ``voice_server_auth_enabled`` is off (shared/foreign voice-server) so the
+    client sends no token and the call is treated as anonymous."""
+    from utils.config import settings
+    if not settings.voice_server_auth_enabled:
+        return ""
     from services.auth_service import create_access_token
     return create_access_token({"sub": "service:whisper", "scope": "voice"})
 
