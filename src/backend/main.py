@@ -32,6 +32,7 @@ from api.routes import (
     feedback,
     folder_ingest,
     intents,
+    internal_auth,
     knowledge,
     meetings,
     memory,
@@ -175,6 +176,9 @@ setup_rate_limiter(app)
 
 # REST API Routers
 app.include_router(auth.router, prefix="/api/auth", tags=["Authentication"])
+# Unauthenticated-by-design token oracle for downstream services (voice-server
+# callback/registry auth) — opaque 401s; constrain reach at the network layer.
+app.include_router(internal_auth.router, prefix="/api/internal", tags=["Internal"])
 app.include_router(roles.router, prefix="/api/roles", tags=["Roles"])
 app.include_router(users.router, prefix="/api/users", tags=["Users"])
 app.include_router(chat.router, prefix="/api/chat", tags=["Chat"])
