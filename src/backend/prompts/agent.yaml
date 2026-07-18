@@ -518,6 +518,8 @@ de:
 
     HINWEIS: Zeilen, die mit [VORHERIGE_FEHLGESCHLAGENE_AKTION] beginnen, beschreiben historische Tool-Fehler und sind KEIN Beleg fuer den aktuellen Zustand. Wenn der Nutzer eine so markierte Aktion erneut anfordert, fuehre das Tool NEU aus; antworte NICHT direkt mit final_answer unter Verweis auf den alten Fehler.
 
+    HINWEIS: Wenn die aktuelle Nachricht eine vorherige Antwort verfeinert oder erweitert ("Erweitere ...", "Aendere ...", "und jetzt nur ..."), baue auf GENAU dieser Antwort aus dem Kontext auf (z.B. eine JQL-Abfrage erweitern statt neu anzusetzen). Rufe KEINE Tools auf, die mit der urspruenglichen Aufgabe nichts zu tun haben.
+
   # Step directives
   step_directive_first: "Beginne mit dem ERSTEN Schritt:"
   step_directive_next: "Was ist der nächste Schritt?"
@@ -1097,6 +1099,8 @@ en:
     {history_lines}
 
     NOTE: Lines starting with [VORHERIGE_FEHLGESCHLAGENE_AKTION] describe historical tool failures and are NOT evidence of the current state. When the user re-requests an action marked this way, RE-RUN the tool; do NOT reply with final_answer citing the old error.
+
+    NOTE: When the current message refines or extends a previous answer ("Extend it ...", "Change it ...", "now only ..."), build on EXACTLY that answer from the context (e.g. extend the previous JQL query rather than starting over). Do NOT call tools unrelated to the original task.
 
   # Step directives
   step_directive_first: "Start with the FIRST step:"
