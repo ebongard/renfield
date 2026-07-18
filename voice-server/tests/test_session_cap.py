@@ -41,6 +41,9 @@ class _FakeWS:
         self.app = app
         self.accepted = False
         self.closed: tuple | None = None
+        # Real ASGI websockets always carry a scope; registry auth reads
+        # scope["server"] to detect the anonymous listener port.
+        self.scope: dict = {}
 
     async def accept(self):
         self.accepted = True

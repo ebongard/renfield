@@ -9,8 +9,41 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Literal
 
-from pydantic import SecretStr, model_validator
+from pydantic import BaseModel, SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+class AuthClient(BaseModel):
+    """One row of the registry auth client map (AUTH_MODE=registry).
+
+    Exactly one of the two shapes is valid:
+      {"verify_url": "http://backend.example/api/internal/auth/verify"}
+        — tokens from this client are POSTed to ITS OWN backend for
+          verification; voice-server holds no signing keys.
+      {"anonymous": true}
+        — this client may connect without a token, but ONLY via the
+          dedicated anonymous listener port (`anon_port`), which the
+          deployment restricts with a NetworkPolicy. Exists for the
+          household deployment whose identity model is voice-biometric +
+          presence, not JWT login.
+    """
+
+    verify_url: str | None = None
+    anonymous: bool = False
+
+    @model_validator(mode="after")
+    def _exactly_one_shape(self) -> "AuthClient":
+        if self.anonymous and self.verify_url:
+            raise ValueError(
+                "auth client row must be EITHER anonymous OR verify_url, not both"
+            )
+        if not self.anonymous and not self.verify_url:
+            raise ValueError(
+                "auth client row needs verify_url (or anonymous: true)"
+            )
+        if self.verify_url and not self.verify_url.startswith(("http://", "https://")):
+            raise ValueError(f"verify_url must be http(s), got: {self.verify_url}")
+        return self
 
 
 class Settings(BaseSettings):
@@ -33,10 +66,25 @@ class Settings(BaseSettings):
     # still applied when a token IS provided so the same image
     # runs in both modes.
     auth_required: bool = True
-    auth_mode: Literal["local", "callback"] = "local"
+    auth_mode: Literal["local", "callback", "registry"] = "local"
     secret_key: SecretStr = SecretStr("changeme-in-production")
     jwt_algorithm: str = "HS256"
     auth_callback_url: str | None = None  # used when auth_mode=callback
+
+    # Multi-client registry (auth_mode=registry). Env AUTH_CLIENTS is a JSON
+    # object mapping client-id → row, e.g.
+    #   AUTH_CLIENTS='{"reva": {"verify_url": "http://192.168.99.101/api/internal/auth/verify"},
+    #                  "renfield": {"anonymous": true}}'
+    # REST callers identify via the `X-Voice-Client` header, WS via `?client=`.
+    # Every request MUST name a registered client; per-user identity is
+    # namespaced (client_id, user_id) — user 5 of one product is never user 5
+    # of another.
+    auth_clients: dict[str, AuthClient] = {}
+    # Second listener where `anonymous: true` rows are honored. The k8s
+    # deployment points a separate ClusterIP Service here and restricts it
+    # with a NetworkPolicy; the primary port NEVER serves anonymous registry
+    # clients, so an ingress-reachable request can't claim the anonymous row.
+    anon_port: int = 8081
 
     # STT (D1) — accepts a local path OR an HF model id (downloads to HF cache)
     whisper_model: str = "Systran/faster-whisper-medium"
@@ -96,6 +144,26 @@ class Settings(BaseSettings):
                     "auth_required=true and auth_mode=local — refusing to start. "
                     "Set a strong random SECRET_KEY (or auth_required=false for "
                     "cluster-internal deployments)."
+                )
+        return self
+
+    @model_validator(mode="after")
+    def _fail_closed_on_empty_registry(self) -> "Settings":
+        """Registry mode with no clients would reject every request — that is a
+        deploy-time misconfiguration (e.g. an `apply -k` wiping AUTH_CLIENTS to
+        empty), not a runtime condition. Refuse to start so it can't ship dark.
+        """
+        if self.auth_mode == "registry":
+            if not self.auth_clients:
+                raise ValueError(
+                    "auth_mode=registry but AUTH_CLIENTS is empty — refusing to "
+                    "start. Register at least one client "
+                    '(e.g. {"reva": {"verify_url": "http://..."}}).'
+                )
+            if self.anon_port == self.port:
+                raise ValueError(
+                    "anon_port must differ from the primary port — the anonymous "
+                    "listener is a separate NetworkPolicy-enforceable boundary."
                 )
         return self
 

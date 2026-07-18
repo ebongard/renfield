@@ -68,10 +68,46 @@ async def lifespan(app: FastAPI):
     app.state.meeting = MeetingDiarizationService()
     await app.state.meeting.warmup()
 
+    # Registry mode with an anonymous client row (D16: the household has no
+    # user logins) serves the SAME app on a second port. The deployment
+    # fences that port with a NetworkPolicy + a dedicated ClusterIP Service;
+    # auth binds anonymous rows to it via the ASGI server scope, so the
+    # primary (ingress-reachable) port never honors them. lifespan="off" —
+    # app.state is already initialized by THIS lifespan; a second run would
+    # reload the models.
+    anon_server = None
+    anon_task = None
+    if settings.auth_mode == "registry" and any(
+        c.anonymous for c in settings.auth_clients.values()
+    ):
+        import asyncio
+
+        import uvicorn
+
+        anon_config = uvicorn.Config(
+            app,
+            host=settings.host,
+            port=settings.anon_port,
+            log_level=settings.log_level.lower(),
+            lifespan="off",
+        )
+        anon_server = uvicorn.Server(anon_config)
+        # The primary uvicorn process owns signal handling.
+        anon_server.install_signal_handlers = lambda: None  # type: ignore[method-assign]
+        anon_task = asyncio.get_running_loop().create_task(anon_server.serve())
+        logger.info("anonymous-client listener on :%d", settings.anon_port)
+
     logger.info("voice-server ready")
     try:
         yield
     finally:
+        if anon_server is not None:
+            anon_server.should_exit = True
+            if anon_task is not None:
+                try:
+                    await anon_task
+                except Exception:  # noqa: BLE001 — shutdown path, log only
+                    logger.exception("anon listener shutdown error")
         logger.info("voice-server shutting down")
 
 

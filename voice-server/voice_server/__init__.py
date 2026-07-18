@@ -7,4 +7,6 @@ Stateless — no DB, no Redis. Frontend talks directly via /ws/voice.
 See docs/VOICE_PIPELINE_DESIGN.md § "Phase B" for the full architecture.
 """
 
-__version__ = "0.1.0"
+# Kept in sync with the image tag by bin/release-voice-server.sh (extraction
+# plan T4). 0.3.0 = registry auth mode (multi-client consolidation).
+__version__ = "0.3.0"

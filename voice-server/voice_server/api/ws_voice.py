@@ -43,6 +43,10 @@ import numpy as np
 from fastapi import APIRouter, Query, WebSocket, WebSocketDisconnect, status
 
 from voice_server.auth import AuthError, authenticate
+# NOTE: also fixes a latent NameError — the M4 session-cap check below
+# referenced `settings` without importing it, so every /ws/voice connect
+# in v0.2.0 raised NameError once a session got past auth.
+from voice_server.config import settings
 from voice_server.services.audio_decoder import AudioDecoder
 from voice_server.services.stt_service import STTService
 from voice_server.services.tts_service import TTSService
@@ -386,14 +390,24 @@ async def _close_decoder(state: SessionState) -> None:
 
 
 @router.websocket("/ws/voice")
-async def ws_voice(websocket: WebSocket, token: str | None = Query(default=None)) -> None:
+async def ws_voice(
+    websocket: WebSocket,
+    token: str | None = Query(default=None),
+    client: str | None = Query(default=None),
+) -> None:
     # Starlette requires accept() before any close(). For an auth
     # rejection we accept-then-close-with-policy-violation.
     # token defaults to None so AUTH_REQUIRED=false deployments can
     # connect without a query param — auth.authenticate() short-circuits
     # to anonymous when both token is empty and auth_required is False.
+    # `client` names the registry row in AUTH_MODE=registry (ignored by
+    # local/callback modes); the local listener port decides whether an
+    # anonymous registry row may be honored (see auth._validate_registry).
+    server = websocket.scope.get("server") or (None, None)
     try:
-        payload = await authenticate(token or "")
+        payload = await authenticate(
+            token or "", client, via_anon_port=server[1] == settings.anon_port
+        )
     except AuthError as e:
         await websocket.accept()
         await websocket.close(code=status.WS_1008_POLICY_VIOLATION, reason=str(e))

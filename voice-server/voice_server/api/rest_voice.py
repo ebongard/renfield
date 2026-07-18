@@ -27,6 +27,7 @@ from fastapi.responses import Response
 from pydantic import BaseModel
 
 from voice_server.auth import AuthError, authenticate
+from voice_server.config import settings
 from voice_server.services.audio_oneshot import OneshotDecodeError, decode_audio_to_pcm
 from voice_server.services.opus_decode import (
     OpusDecodeError,
@@ -41,17 +42,34 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
-async def _require_token(authorization: str | None = Header(default=None)) -> dict:
-    if not authorization or not authorization.lower().startswith("bearer "):
-        # Match WebSocket path: defer to authenticate() so auth_required=False
-        # treats missing tokens as anonymous instead of rejecting.
-        try:
-            return await authenticate("")
-        except AuthError as e:
-            raise HTTPException(status_code=401, detail=str(e)) from e
-    token = authorization.split(" ", 1)[1].strip()
+def _via_anon_port(request: Request) -> bool:
+    """True when the request arrived on the dedicated anonymous listener.
+
+    The ASGI `server` scope is the LOCAL listening socket (host, port), so it
+    cannot be spoofed by a client the way a header could — the deployment
+    fences the anon port with a NetworkPolicy and this check binds the
+    anonymous registry rows to that fence.
+    """
+    server = request.scope.get("server") or (None, None)
+    return server[1] == settings.anon_port
+
+
+async def _require_token(
+    request: Request,
+    authorization: str | None = Header(default=None),
+    x_voice_client: str | None = Header(default=None, alias="X-Voice-Client"),
+) -> dict:
+    token = ""
+    if authorization and authorization.lower().startswith("bearer "):
+        token = authorization.split(" ", 1)[1].strip()
+    # Match WebSocket path: defer to authenticate() so auth_required=False
+    # (local/callback) treats missing tokens as anonymous instead of
+    # rejecting. In registry mode client id + listener port drive the
+    # decision; local/callback ignore both extra args.
     try:
-        return await authenticate(token)
+        return await authenticate(
+            token, x_voice_client, via_anon_port=_via_anon_port(request)
+        )
     except AuthError as e:
         raise HTTPException(status_code=401, detail=str(e)) from e
 
