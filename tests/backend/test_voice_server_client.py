@@ -82,6 +82,46 @@ async def test_stt_posts_multipart_with_bearer(monkeypatch) -> None:
 
 @pytest.mark.unit
 @pytest.mark.asyncio
+async def test_stt_sends_x_voice_client_when_configured(monkeypatch) -> None:
+    # Registry auth: the shared voice-server routes verification by client id.
+    from utils.config import settings
+    monkeypatch.setattr(settings, "voice_client_id", "reva")
+
+    captured: dict = {}
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        captured["client"] = request.headers.get("x-voice-client")
+        captured["auth"] = request.headers.get("authorization")
+        return httpx.Response(200, json={"text": "x", "language": "de", "audio_duration_s": 0.1})
+
+    _patch_async_client(monkeypatch, handler)
+    from services.voice_server_client import stt
+    await stt(_make_silence_wav(), auth_token="tok")
+    assert captured["client"] == "reva"
+    assert captured["auth"] == "Bearer tok"
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_stt_omits_x_voice_client_when_unset(monkeypatch) -> None:
+    # Legacy single-tenant (local/callback) voice-servers must be unaffected.
+    from utils.config import settings
+    monkeypatch.setattr(settings, "voice_client_id", "")
+
+    captured: dict = {}
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        captured["has_client"] = "x-voice-client" in request.headers
+        return httpx.Response(200, json={"text": "x", "language": "de", "audio_duration_s": 0.1})
+
+    _patch_async_client(monkeypatch, handler)
+    from services.voice_server_client import stt
+    await stt(_make_silence_wav(), auth_token="tok")
+    assert captured["has_client"] is False
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
 async def test_stt_raises_on_non_2xx(monkeypatch) -> None:
     async def handler(_: httpx.Request) -> httpx.Response:
         return httpx.Response(503, text="model loading")
