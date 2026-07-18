@@ -255,6 +255,37 @@ AGENT_ROUTER_TIMEOUT=30.0
 - `AGENT_CONV_CONTEXT_MESSAGES`: `6`
 - `AGENT_ROUTER_TIMEOUT`: `30.0`
 
+### OpenAI-kompatibler LLM-Endpoint (llama-server / vLLM / OpenRouter)
+
+```bash
+# Basis-URL eines OpenAI-kompatiblen Endpoints. Wenn gesetzt, nutzt der
+# Agent-Tier (und standardmäßig chat/rag/intent/kg/memory) diesen Endpoint
+# statt Ollama. Per-Tier abschaltbar: LLM_OPENAI_FOR_{AGENT,CHAT,RAG,INTENT,KG,MEMORY}=false
+# LLM_OPENAI_BASE_URL=http://cuda.local:8081/v1
+
+# Bearer-Key für externe APIs (OpenRouter, vLLM mit Auth). llama-server
+# ignoriert den Wert; ohne Key wird "no-key" gesendet.
+# LLM_OPENAI_API_KEY=sk-or-...
+
+# Logischer Modellname des Endpoints (llama-server --alias)
+# LLM_OPENAI_MODEL=qwen3.6
+
+# Reasoning-Budget für Reasoning-Modelle hinter dem Endpoint
+# ("minimal"/"low"/"medium"/"high"/"none", providerabhängig). Wird NUR bei
+# gesetztem Wert als `reasoning_effort` im Request-Body mitgesendet —
+# llama-server ignoriert unbekannte Felder, lokale Deployments bleiben
+# byte-identisch. Ohne diesen Wert laufen Reasoning-Modelle (GLM-5.x, Kimi,
+# DeepSeek, GPT-5.x) auf ihrem Default-Effort: gemessen ~30s Time-to-First-
+# Token pro Agent-Step, ~100s pro Multi-Step-Turn.
+# LLM_OPENAI_REASONING_EFFORT=low
+```
+
+**Defaults:**
+- `LLM_OPENAI_BASE_URL`: None (Ollama wird verwendet)
+- `LLM_OPENAI_API_KEY`: None (sendet "no-key")
+- `LLM_OPENAI_MODEL`: `qwen3.6`
+- `LLM_OPENAI_REASONING_EFFORT`: None (kein reasoning_effort im Request)
+
 **Wann aktivieren:**
 Der Agent Loop ermöglicht komplexe, mehrstufige Anfragen mit bedingter Logik und Tool-Verkettung:
 - "Wie ist das Wetter in Berlin und wenn es kälter als 10 Grad ist, suche ein Hotel"
