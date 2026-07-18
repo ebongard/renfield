@@ -9,15 +9,36 @@ Endpoints:
 
 from __future__ import annotations
 
+import contextlib
 import logging
 from contextlib import asynccontextmanager
 
+import uvicorn
 from fastapi import FastAPI
 
 from voice_server import __version__
 from voice_server.config import settings
 
 logger = logging.getLogger("voice_server")
+
+
+class _AnonServer(uvicorn.Server):
+    """In-process second listener that does NOT own process signals.
+
+    uvicorn >= 0.30 registers SIGTERM/SIGINT handlers unconditionally inside
+    serve() via the capture_signals() context manager (the old
+    Server.install_signal_handlers hook no longer exists). Without this
+    override the anon listener — started AFTER the primary — would overwrite
+    the primary's handlers, so a K8s SIGTERM would flip the ANON server's
+    should_exit, the primary would never drain, and kubelet would SIGKILL
+    both at the grace deadline (PR #987 review finding 1). The primary
+    server owns signals; this one is stopped explicitly in the lifespan
+    finally.
+    """
+
+    @contextlib.contextmanager
+    def capture_signals(self):
+        yield
 
 
 @asynccontextmanager
@@ -81,8 +102,7 @@ async def lifespan(app: FastAPI):
         c.anonymous for c in settings.auth_clients.values()
     ):
         import asyncio
-
-        import uvicorn
+        import time as _time
 
         anon_config = uvicorn.Config(
             app,
@@ -91,10 +111,34 @@ async def lifespan(app: FastAPI):
             log_level=settings.log_level.lower(),
             lifespan="off",
         )
-        anon_server = uvicorn.Server(anon_config)
-        # The primary uvicorn process owns signal handling.
-        anon_server.install_signal_handlers = lambda: None  # type: ignore[method-assign]
-        anon_task = asyncio.get_running_loop().create_task(anon_server.serve())
+        anon_server = _AnonServer(anon_config)
+
+        async def _serve_anon() -> None:
+            # uvicorn calls sys.exit() on a bind failure; keep that (and any
+            # other BaseException) inside this task so it can't tear through
+            # the shared event loop, and let the started-wait below turn it
+            # into a loud lifespan failure.
+            try:
+                await anon_server.serve()
+            except asyncio.CancelledError:
+                raise
+            except BaseException:  # noqa: BLE001 — includes SystemExit
+                logger.exception("anonymous-client listener crashed")
+
+        anon_task = asyncio.get_running_loop().create_task(_serve_anon())
+
+        # Fail LOUD if the anon port can't bind (same philosophy as the
+        # opuslib boot check above): a dead household listener behind a green
+        # /health is exactly the silent-failure class this project is
+        # digging out of. Lifespan failure → non-ready pod → visible.
+        deadline = _time.monotonic() + 10.0
+        while not anon_server.started:
+            if anon_task.done() or _time.monotonic() > deadline:
+                raise RuntimeError(
+                    f"anonymous-client listener failed to start on "
+                    f":{settings.anon_port}"
+                )
+            await asyncio.sleep(0.05)
         logger.info("anonymous-client listener on :%d", settings.anon_port)
 
     logger.info("voice-server ready")

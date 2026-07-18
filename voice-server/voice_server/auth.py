@@ -99,7 +99,10 @@ async def _post_verify(url: str, token: str) -> tuple[int, Any]:
             resp = await client.post(url, json={"token": token})
         except httpx.HTTPError as e:
             logger.warning("auth callback HTTP error: %s", e)
-            raise AuthError(f"auth callback unreachable: {e}") from e
+            # Deliberately generic: the exception string embeds the verify
+            # URL, and AuthError text reaches callers via 401 detail / WS
+            # close reason — don't leak internal endpoints.
+            raise AuthError("auth callback unreachable") from e
     try:
         payload = resp.json()
     except ValueError:
