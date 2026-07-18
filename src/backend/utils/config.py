@@ -261,8 +261,10 @@ class Settings(BaseSettings):
     # fields, and the default (None) keeps local deployments byte-identical.
     # Without it, reasoning models (GLM-5.x, Kimi, DeepSeek) run at their
     # default (high) effort: measured ~30s time-to-first-token per agent
-    # step, ~100s per multi-step turn.
-    llm_openai_reasoning_effort: str | None = None
+    # step, ~100s per multi-step turn. Literal-validated: a typo here would
+    # otherwise 400 EVERY call on enum-validating providers across all tiers
+    # riding the endpoint.
+    llm_openai_reasoning_effort: Literal["minimal", "low", "medium", "high", "none"] | None = None
     # Per-tier opt-in: when True, that tier uses llm_openai_base_url instead of Ollama.
     # `agent` defaults to True if llm_openai_base_url is set; chat/rag/intent default
     # to following the agent setting unless explicitly overridden.

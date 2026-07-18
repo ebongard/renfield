@@ -1139,16 +1139,17 @@ class TestReasoningEffortExtraBody:
 
 
 class TestGetDedicatedClient:
-    """get_dedicated_client() must bypass the OpenAI-tier short-circuit."""
+    """get_dedicated_client() builds a client for exactly the given URL — it
+    has no OpenAI-tier branch by construction (the seam that decides is in
+    AgentRouter.classify, covered by test_agent_router.py's
+    test_router_uses_dedicated_url / _falls_back_to_agent_ollama_url)."""
 
     @pytest.mark.unit
     @patch("ollama.AsyncClient")
     @patch("utils.llm_client.settings")
-    def test_dedicated_url_wins_over_openai_tier(self, mock_settings, mock_cls):
+    def test_binds_explicit_url(self, mock_settings, mock_cls):
         from utils.llm_client import get_dedicated_client
 
-        mock_settings.llm_openai_base_url = "https://openrouter.ai/api/v1"
-        mock_settings.llm_openai_for_agent = None
         mock_settings.ollama_fallback_url = ""
         mock_settings.ollama_connect_timeout = 10.0
         mock_settings.ollama_read_timeout = 300.0
@@ -1160,3 +1161,20 @@ class TestGetDedicatedClient:
         args, kwargs = mock_cls.call_args
         assert kwargs.get("host") == "http://router-ollama:11434"
         assert result is sentinel
+
+    @pytest.mark.unit
+    @patch("ollama.AsyncClient")
+    @patch("utils.llm_client.settings")
+    def test_fallback_wrapping_applies(self, mock_settings, mock_cls):
+        """A configured OLLAMA_FALLBACK_URL wraps the dedicated client, same
+        as every other _make_client_with_fallback consumer."""
+        from utils.llm_client import _FallbackLLMClient, get_dedicated_client
+
+        mock_settings.ollama_fallback_url = "http://backup:11434"
+        mock_settings.ollama_connect_timeout = 10.0
+        mock_settings.ollama_read_timeout = 300.0
+        mock_cls.return_value = MagicMock()
+
+        result = get_dedicated_client("http://router-ollama:11434")
+
+        assert isinstance(result, _FallbackLLMClient)

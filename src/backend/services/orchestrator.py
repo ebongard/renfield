@@ -18,7 +18,12 @@ from loguru import logger
 
 from services.prompt_manager import prompt_manager
 from utils.config import settings
-from utils.llm_client import extract_response_content, get_agent_client, get_classification_chat_kwargs
+from utils.llm_client import (
+    extract_response_content,
+    get_agent_client,
+    get_classification_chat_kwargs,
+    use_openai_for_tier,
+)
 
 
 # Strip "_Quelle: ..._" / "_Source: ..._" lines that synthesizer LLMs
@@ -182,7 +187,15 @@ class QueryOrchestrator:
         if primary_role is not None:
             planner_model = getattr(primary_role, "model", None)
             planner_url = getattr(primary_role, "ollama_url", None)
-        planner_model = planner_model or settings.ollama_model
+        # Same last-resort rule as AgentService._run_impl: when the agent tier
+        # rides an OpenAI-compat endpoint, the default must be that endpoint's
+        # model — an Ollama model name sent to an external API that validates
+        # model IDs 400s, and the except below would silently disable
+        # multi-role orchestration on every turn.
+        if use_openai_for_tier("agent"):
+            planner_model = planner_model or settings.agent_model or settings.llm_openai_model
+        else:
+            planner_model = planner_model or settings.ollama_model
         planner_url = planner_url or settings.agent_ollama_url
 
         if not planner_model:

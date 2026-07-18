@@ -1381,7 +1381,10 @@ class TestRouterModelSettings:
     @pytest.mark.unit
     @pytest.mark.asyncio
     async def test_router_uses_dedicated_url(self):
-        """agent_router_url routes to a separate Ollama instance."""
+        """agent_router_url binds the router directly to its own endpoint —
+        bypassing get_agent_client's OpenAI-tier short-circuit (which would
+        send the small router model to an external API that validates model
+        IDs)."""
         router = AgentRouter(SAMPLE_CONFIG)
         mock_response = MagicMock()
         mock_response.message.content = '{"role": "conversation"}'
@@ -1391,7 +1394,7 @@ class TestRouterModelSettings:
         ollama = make_mock_ollama('{"role": "conversation"}')
 
         with patch("services.agent_router.settings") as s, \
-             patch("services.agent_router.get_agent_client", return_value=(mock_client, None)) as gac:
+             patch("services.agent_router.get_dedicated_client", return_value=mock_client) as gdc:
             s.agent_router_model = "qwen3:1.7b"
             s.agent_router_url = "http://fast-gpu:11434"
             s.agent_ollama_url = "http://main-gpu:11434"
@@ -1399,9 +1402,36 @@ class TestRouterModelSettings:
             s.ollama_model = "llama3.2:3b"
 
             await router.classify("Hallo", ollama)
-            gac.assert_called_once_with(fallback_url="http://fast-gpu:11434")
+            gdc.assert_called_once_with("http://fast-gpu:11434")
             call_kwargs = mock_client.chat.call_args
             assert call_kwargs.kwargs["model"] == "qwen3:1.7b"
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_router_falls_back_to_agent_ollama_url_dedicated(self):
+        """Without agent_router_url, the AGENT_OLLAMA_URL fallback must ALSO
+        bypass the OpenAI-tier short-circuit — same 400-model-mismatch class
+        for the second config shape."""
+        router = AgentRouter(SAMPLE_CONFIG)
+        mock_response = MagicMock()
+        mock_response.message.content = '{"role": "conversation"}'
+        mock_client = AsyncMock()
+        mock_client.chat = AsyncMock(return_value=mock_response)
+
+        ollama = make_mock_ollama('{"role": "conversation"}')
+
+        with patch("services.agent_router.settings") as s, \
+             patch("services.agent_router.get_dedicated_client", return_value=mock_client) as gdc:
+            s.agent_router_model = None
+            s.agent_router_url = None
+            s.agent_ollama_url = "http://main-gpu:11434"
+            s.ollama_intent_model = "qwen3:8b"
+            s.ollama_model = "llama3.2:3b"
+
+            await router.classify("Hallo", ollama)
+            gdc.assert_called_once_with("http://main-gpu:11434")
+            call_kwargs = mock_client.chat.call_args
+            assert call_kwargs.kwargs["model"] == "qwen3:8b"
 
 
 # ============================================================================

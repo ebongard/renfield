@@ -543,15 +543,17 @@ class AgentRouter:
         # Priority: agent_router_model/url > agent_model/url > intent_model > default
         router_url = settings.agent_router_url or settings.agent_ollama_url
         router_model = settings.agent_router_model or settings.ollama_intent_model or settings.ollama_model
-        if settings.agent_router_url:
-            # A DEDICATED router endpoint always wins. get_agent_client would
-            # short-circuit to the OpenAI-compat endpoint whenever the agent
-            # tier uses one, sending this small local router model to an
+        if router_url:
+            # An explicitly configured router endpoint (AGENT_ROUTER_URL,
+            # falling back to AGENT_OLLAMA_URL) always wins. get_agent_client
+            # would short-circuit to the OpenAI-compat endpoint whenever the
+            # agent tier uses one, sending this small local router model to an
             # external API that validates model IDs (400) — the router must
-            # keep classifying locally regardless of where the agent lives.
-            client = get_dedicated_client(settings.agent_router_url)
-        elif router_url:
-            client, _ = get_agent_client(fallback_url=router_url)
+            # keep classifying on its configured endpoint regardless of where
+            # the agent lives. (llama-server URLs still work: create_llm_client
+            # picks the OpenAI-compat adapter for /v1 URLs, and llama-server
+            # ignores the requested model name.)
+            client = get_dedicated_client(router_url)
         else:
             client = ollama.client
 
