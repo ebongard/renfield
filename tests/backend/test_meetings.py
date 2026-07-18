@@ -961,3 +961,139 @@ class TestReviewFixes:
         m = (await db_session.execute(_sel(Meeting))).scalars().first()
         assert m is not None and m.status == "failed"
         assert _glob.glob(str(tmp_path / "meetings" / f"meeting-{m.id}.*")) == []  # audio cleaned
+
+
+# ---------------------------------------------------------------------------
+# §2 Phase 3 — minutes (pure functions + routes)
+# ---------------------------------------------------------------------------
+
+class TestMeetingMinutesUnit:
+    def test_render_minutes_markdown(self):
+        from services.meeting_minutes import empty_minutes, render_minutes_markdown
+
+        assert render_minutes_markdown(empty_minutes()) == ""
+        md = render_minutes_markdown({
+            "summary": "Kurzfassung.",
+            "decisions": [{"text": "X beschlossen", "made_by": "Anna"}],
+            "action_items": [{"text": "Doku fertig", "owner": "Bob", "due_hint": "Freitag"}],
+        })
+        for needle in ("Protokoll", "Kurzfassung.", "X beschlossen", "Anna", "Bob", "Freitag"):
+            assert needle in md
+
+    async def test_extractor_normalizes_good_json(self, monkeypatch):
+        from types import SimpleNamespace
+
+        from services.meeting_minutes import MinutesExtractor
+
+        monkeypatch.setattr(settings, "ollama_chat_model", "test-model")
+
+        class _FakeLLM:
+            async def chat(self, **k):
+                return SimpleNamespace(message=SimpleNamespace(content=(
+                    '{"summary":"S","decisions":["D1"],'
+                    '"action_items":[{"text":"A1","owner":"Bob","due_hint":"heute"}]}'
+                )))
+
+        m = await MinutesExtractor(llm_client=_FakeLLM()).extract(
+            [{"speaker": "Sprecher 1", "text": "Wir machen X."}]
+        )
+        assert m["summary"] == "S"
+        assert m["decisions"] == [{"text": "D1", "made_by": ""}]  # bare string coerced
+        assert m["action_items"][0] == {"text": "A1", "owner": "Bob", "due_hint": "heute"}
+
+    async def test_extractor_falls_back_to_empty(self, monkeypatch):
+        from types import SimpleNamespace
+
+        from services.meeting_minutes import MinutesExtractor
+
+        monkeypatch.setattr(settings, "ollama_chat_model", "test-model")
+
+        class _BadLLM:
+            async def chat(self, **k):
+                return SimpleNamespace(message=SimpleNamespace(content="not json at all"))
+
+        empty = {"summary": "", "decisions": [], "action_items": []}
+        assert await MinutesExtractor(llm_client=_BadLLM()).extract(
+            [{"speaker": "S1", "text": "x"}]
+        ) == empty
+        # empty transcript → empty, no LLM call needed
+        assert await MinutesExtractor().extract([]) == empty
+
+
+@pytest.mark.asyncio
+class TestMeetingMinutesRoutes:
+    async def _seed_completed(self, db_session):
+        from models.database import Meeting
+
+        m = Meeting(
+            status="completed", consent_confirmed=True,
+            segments=[{"speaker": "Sprecher 1", "speaker_key": "S1", "text": "Wir machen X."}],
+        )
+        db_session.add(m)
+        await db_session.commit()
+        await db_session.refresh(m)
+        return m
+
+    async def test_minutes_404_when_flag_off(self, async_client, monkeypatch, tmp_path):
+        # transcription on, minutes flag OFF (default)
+        _enable(monkeypatch, tmp_path, auth=False)
+        _override_user(None)
+        assert (await async_client.post("/api/meetings/1/minutes/generate")).status_code == 404
+
+    async def test_generate_409_when_not_completed(
+        self, async_client, db_session, monkeypatch, tmp_path
+    ):
+        from models.database import Meeting
+
+        _enable(monkeypatch, tmp_path, auth=False)
+        monkeypatch.setattr(settings, "meeting_minutes_enabled", True)
+        _override_user(None)
+        m = Meeting(status="pending", consent_confirmed=True)
+        db_session.add(m)
+        await db_session.commit()
+        await db_session.refresh(m)
+        assert (await async_client.post(f"/api/meetings/{m.id}/minutes/generate")).status_code == 409
+
+    async def test_generate_edit_confirm_flow(
+        self, async_client, db_session, monkeypatch, tmp_path
+    ):
+        _enable(monkeypatch, tmp_path, auth=False)
+        monkeypatch.setattr(settings, "meeting_minutes_enabled", True)
+        _override_user(None)
+        m = await self._seed_completed(db_session)
+
+        # mock the extractor (no LLM) + the reindex (no doc/redis)
+        from services import meeting_minutes, meeting_pipeline
+
+        async def _fake_extract(self, segs, *, lang="de"):
+            return {"summary": "S", "decisions": [{"text": "D", "made_by": ""}], "action_items": []}
+
+        async def _fake_reindex(db, meeting, segments):
+            return None
+
+        monkeypatch.setattr(meeting_minutes.MinutesExtractor, "extract", _fake_extract)
+        monkeypatch.setattr(meeting_pipeline, "_overwrite_transcript_and_reindex", _fake_reindex)
+
+        # generate -> draft
+        r = await async_client.post(f"/api/meetings/{m.id}/minutes/generate")
+        assert r.status_code == 200 and r.json()["minutes_status"] == "draft"
+        assert r.json()["minutes"]["summary"] == "S"
+
+        # edit -> stays draft, content replaced
+        r = await async_client.put(
+            f"/api/meetings/{m.id}/minutes",
+            json={"summary": "Edited", "decisions": [], "action_items": []},
+        )
+        assert r.status_code == 200 and r.json()["minutes"]["summary"] == "Edited"
+
+        # confirm -> confirmed
+        r = await async_client.post(f"/api/meetings/{m.id}/minutes/confirm")
+        assert r.status_code == 200 and r.json()["minutes_status"] == "confirmed"
+
+        # confirm again -> 409 (not draft)
+        assert (await async_client.post(f"/api/meetings/{m.id}/minutes/confirm")).status_code == 409
+
+        # delete -> none
+        r = await async_client.delete(f"/api/meetings/{m.id}/minutes")
+        assert r.status_code == 200 and r.json()["minutes_status"] == "none"
+        assert r.json()["minutes"] is None

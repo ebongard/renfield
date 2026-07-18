@@ -489,6 +489,9 @@ class Settings(BaseSettings):
     # /api/config/features). Off => both instances are byte-identical.
     # See docs/design/meeting-transcription.md.
     meeting_transcription_enabled: bool = False
+    # §2 Phase 3: minutes pipeline (summary/decisions/action-items with human
+    # confirm) on a completed transcript. Dark by default; needs a chat model.
+    meeting_minutes_enabled: bool = False
     # faster-whisper model for meeting batch ASR ("" => reuse the STT default).
     # A larger model (e.g. large-v3-turbo) trades GPU-seconds for accuracy; set
     # from the spike results. Loaded/unloaded per job on the voice-server.

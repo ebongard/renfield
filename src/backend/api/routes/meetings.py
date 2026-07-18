@@ -322,3 +322,137 @@ async def relabel_speaker(
     if not ok:
         raise HTTPException(status_code=404, detail="speaker not found")
     return _to_response(meeting)
+
+
+# --------------------------------------------------------------------------- #
+# §2 Phase 3 — minutes (summary / decisions / action-items with human confirm)
+# --------------------------------------------------------------------------- #
+
+class _Decision(BaseModel):
+    text: str = Field(min_length=1, max_length=1000)
+    made_by: str = Field(default="", max_length=200)
+
+
+class _ActionItem(BaseModel):
+    text: str = Field(min_length=1, max_length=1000)
+    owner: str = Field(default="", max_length=200)
+    due_hint: str = Field(default="", max_length=200)
+
+
+class MinutesBody(BaseModel):
+    summary: str = Field(default="", max_length=4000)
+    decisions: list[_Decision] = Field(default_factory=list, max_length=100)
+    action_items: list[_ActionItem] = Field(default_factory=list, max_length=200)
+
+
+class MinutesResponse(BaseModel):
+    id: int
+    minutes_status: str
+    minutes: dict | None
+
+
+def _require_minutes_enabled() -> None:
+    _require_enabled()
+    if not settings.meeting_minutes_enabled:
+        raise HTTPException(status_code=404, detail="Meeting minutes are not enabled")
+
+
+def _minutes_response(m: Meeting) -> MinutesResponse:
+    return MinutesResponse(id=m.id, minutes_status=m.minutes_status, minutes=m.minutes)
+
+
+@router.post("/{meeting_id}/minutes/generate", response_model=MinutesResponse)
+async def generate_minutes(
+    meeting_id: int,
+    user: User | None = Depends(get_optional_user),
+    db: AsyncSession = Depends(get_db),
+) -> MinutesResponse:
+    """Extract DRAFT minutes from a completed meeting's transcript (owner-gated).
+    409 if the meeting isn't completed. Re-running overwrites the draft."""
+    _require_minutes_enabled()
+    meeting = await _get_owned_meeting(meeting_id, user, db)
+    if meeting.status != "completed":
+        raise HTTPException(status_code=409, detail="meeting not completed")
+
+    from services.meeting_minutes import MinutesExtractor
+
+    draft = await MinutesExtractor().extract(meeting.segments or [])
+    meeting.minutes = draft
+    meeting.minutes_status = "draft"
+    meeting.minutes_generated_at = datetime.utcnow()
+    meeting.minutes_confirmed_at = None
+    await db.commit()
+    return _minutes_response(meeting)
+
+
+@router.get("/{meeting_id}/minutes", response_model=MinutesResponse)
+async def get_minutes(
+    meeting_id: int,
+    user: User | None = Depends(get_optional_user),
+    db: AsyncSession = Depends(get_db),
+) -> MinutesResponse:
+    """Current minutes + status (owner-gated 404)."""
+    _require_minutes_enabled()
+    meeting = await _get_owned_meeting(meeting_id, user, db)
+    return _minutes_response(meeting)
+
+
+@router.put("/{meeting_id}/minutes", response_model=MinutesResponse)
+async def update_minutes(
+    meeting_id: int,
+    body: MinutesBody,
+    user: User | None = Depends(get_optional_user),
+    db: AsyncSession = Depends(get_db),
+) -> MinutesResponse:
+    """Owner edits the draft. 409 unless status is draft (confirmed minutes are
+    re-opened by editing → back to draft, so a re-confirm re-renders)."""
+    _require_minutes_enabled()
+    meeting = await _get_owned_meeting(meeting_id, user, db)
+    if meeting.minutes_status not in ("draft", "confirmed"):
+        raise HTTPException(status_code=409, detail="no minutes to edit — generate first")
+    meeting.minutes = body.model_dump()
+    meeting.minutes_status = "draft"
+    meeting.minutes_confirmed_at = None
+    await db.commit()
+    return _minutes_response(meeting)
+
+
+@router.post("/{meeting_id}/minutes/confirm", response_model=MinutesResponse)
+async def confirm_minutes(
+    meeting_id: int,
+    user: User | None = Depends(get_optional_user),
+    db: AsyncSession = Depends(get_db),
+) -> MinutesResponse:
+    """Confirm the draft → renders the minutes into the transcript document (same
+    stable-doc reindex path as re-attribution). 409 unless status is draft."""
+    _require_minutes_enabled()
+    meeting = await _get_owned_meeting(meeting_id, user, db)
+    if meeting.minutes_status != "draft":
+        raise HTTPException(status_code=409, detail="minutes not in draft state")
+
+    meeting.minutes_status = "confirmed"
+    meeting.minutes_confirmed_at = datetime.utcnow()
+    # Re-render the transcript doc WITH the confirmed minutes + reindex in place
+    # (commits meeting + doc status). No new ingest — stable transcript_document_id.
+    from services.meeting_pipeline import _overwrite_transcript_and_reindex
+
+    await _overwrite_transcript_and_reindex(db, meeting, meeting.segments or [])
+    return _minutes_response(meeting)
+
+
+@router.delete("/{meeting_id}/minutes", response_model=MinutesResponse)
+async def delete_minutes(
+    meeting_id: int,
+    user: User | None = Depends(get_optional_user),
+    db: AsyncSession = Depends(get_db),
+) -> MinutesResponse:
+    """Discard minutes → back to none. Does NOT strip already-confirmed minutes
+    from the transcript document (a subsequent relabel/reindex would drop them)."""
+    _require_minutes_enabled()
+    meeting = await _get_owned_meeting(meeting_id, user, db)
+    meeting.minutes = None
+    meeting.minutes_status = "none"
+    meeting.minutes_generated_at = None
+    meeting.minutes_confirmed_at = None
+    await db.commit()
+    return _minutes_response(meeting)

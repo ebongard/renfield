@@ -396,6 +396,16 @@ class Meeting(Base):
     # Retention mechanism (not a status): a daily job deletes meetings past this.
     retention_until = Column(DateTime, nullable=True)
 
+    # === Phase 3: minutes (summary / decisions / action-items), additive ===
+    # Draft or confirmed minutes as {summary, decisions[], action_items[]} — one
+    # JSONB blob (v1; promote to a child table only if per-item state is needed).
+    # minutes_status gates the UI + ingest: none -> draft (LLM produced, awaiting
+    # human confirm) -> confirmed (rendered into the transcript document).
+    minutes = Column(JSON().with_variant(JSONB(), "postgresql"), nullable=True)
+    minutes_status = Column(String(20), nullable=False, default="none", server_default="none")
+    minutes_generated_at = Column(DateTime, nullable=True)
+    minutes_confirmed_at = Column(DateTime, nullable=True)
+
     created_at = Column(DateTime, default=_utcnow)
 
 

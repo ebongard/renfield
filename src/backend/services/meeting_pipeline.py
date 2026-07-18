@@ -83,7 +83,17 @@ def render_transcript_markdown(meeting: Meeting, segments: list[dict]) -> str:
         if not text:
             continue
         lines.append(f"**{speaker}:** {text}")
-    return "\n".join(lines).strip() + "\n"
+    body = "\n".join(lines).strip() + "\n"
+
+    # Phase 3: append CONFIRMED minutes to the same document (D-M2 — one KB
+    # artifact per meeting). Draft minutes are never rendered into the doc.
+    if getattr(meeting, "minutes_status", "none") == "confirmed" and meeting.minutes:
+        from services.meeting_minutes import render_minutes_markdown
+
+        section = render_minutes_markdown(meeting.minutes)
+        if section:
+            body = body.rstrip() + "\n\n" + section
+    return body
 
 
 async def _resolve_meetings_kb(db) -> KnowledgeBase:
