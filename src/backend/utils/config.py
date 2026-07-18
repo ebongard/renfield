@@ -128,6 +128,14 @@ class Settings(BaseSettings):
     # Interim until the shared voice-server gets real multi-tenant auth.
     voice_server_auth_enabled: bool = True
 
+    # Client id for the shared voice-server's registry auth (AUTH_MODE=registry).
+    # When set, the backend sends it as the X-Voice-Client header on every
+    # voice-server call so the server routes token verification to THIS product's
+    # backend (or honors its anonymous row). Empty = omit the header, which keeps
+    # the legacy local/callback single-tenant voice-servers working unchanged.
+    # Each deployment sets its own: reva=reva, xidra=xidra, household=renfield.
+    voice_client_id: str = ""
+
     # Home Assistant / Frigate settings moved to ha_glue/utils/config.py
     # (see `HaGlueSettings`). Access via:
     #     from ha_glue.utils.config import ha_glue_settings

@@ -58,8 +58,16 @@ def _auth_headers(auth_token: str) -> dict[str, str]:
     """Bearer header — omitted entirely when the token is empty, so a voice-server
     running auth_required=false treats the call as anonymous instead of trying
     (and failing) to validate an empty/foreign token. Callers gate the token on
-    ``settings.voice_server_auth_enabled``."""
-    return {"Authorization": f"Bearer {auth_token}"} if auth_token else {}
+    ``settings.voice_server_auth_enabled``.
+
+    Also carries the registry client id (X-Voice-Client) when configured, so the
+    shared multi-tenant voice-server can route this call to the right product's
+    verify endpoint / anonymous row. Omitted when unset → legacy single-tenant
+    (local/callback) voice-servers are unaffected."""
+    headers = {"Authorization": f"Bearer {auth_token}"} if auth_token else {}
+    if settings.voice_client_id:
+        headers["X-Voice-Client"] = settings.voice_client_id
+    return headers
 
 
 async def stt(
