@@ -34,11 +34,12 @@ def registry_mode(monkeypatch):
 
 
 def _stub_verify(monkeypatch, responses):
-    """responses: url → (status, payload) or an Exception to raise."""
+    """responses: url → (status, payload) or an Exception to raise.
+    Records (url, token, secret) per call so tests can assert the header."""
     calls = []
 
-    async def fake_post_verify(url, token):
-        calls.append((url, token))
+    async def fake_post_verify(url, token, secret=None):
+        calls.append((url, token, secret))
         r = responses[url]
         if isinstance(r, Exception):
             raise r
@@ -114,7 +115,8 @@ async def test_token_routed_to_the_named_clients_verify_url(registry_mode, monke
     payload = await authenticate("tok-a", "reva")
     assert payload["user_id"] == "42"
     assert payload["client_id"] == "reva"
-    assert calls == [("http://reva.example/api/internal/auth/verify", "tok-a")]
+    # no verify_secret configured on this row → no header sent
+    assert calls == [("http://reva.example/api/internal/auth/verify", "tok-a", None)]
 
 
 @pytest.mark.asyncio
@@ -187,6 +189,44 @@ async def test_anonymous_row_ignores_supplied_token(registry_mode):
 
 
 # --------------------------------------------------- legacy-mode regression
+
+@pytest.mark.asyncio
+async def test_registry_row_verify_secret_sent_as_header_arg(monkeypatch):
+    from pydantic import SecretStr
+    reg = dict(_REGISTRY)
+    reg["reva"] = AuthClient(
+        verify_url="http://reva.example/api/internal/auth/verify",
+        verify_secret=SecretStr("shared-xyz"),
+    )
+    monkeypatch.setattr(settings, "auth_mode", "registry")
+    monkeypatch.setattr(settings, "auth_clients", reg)
+    monkeypatch.setattr(settings, "anon_port", 8081)
+    calls = _stub_verify(monkeypatch, {
+        "http://reva.example/api/internal/auth/verify": (200, {"user_id": "42"}),
+    })
+    await authenticate("tok-a", "reva")
+    # the per-client secret is threaded down to _post_verify (→ X-Verify-Secret)
+    assert calls == [("http://reva.example/api/internal/auth/verify", "tok-a", "shared-xyz")]
+
+
+def test_verify_secret_without_verify_url_rejected():
+    from pydantic import SecretStr
+    with pytest.raises(ValueError):
+        AuthClient(anonymous=True, verify_secret=SecretStr("x"))
+
+
+@pytest.mark.asyncio
+async def test_callback_mode_sends_configured_secret(monkeypatch):
+    from pydantic import SecretStr
+    monkeypatch.setattr(settings, "auth_mode", "callback")
+    monkeypatch.setattr(settings, "auth_callback_url", "http://backend.example/verify")
+    monkeypatch.setattr(settings, "auth_callback_secret", SecretStr("cb-secret"))
+    calls = _stub_verify(monkeypatch, {
+        "http://backend.example/verify": (200, {"user_id": "7"}),
+    })
+    await authenticate("tok")
+    assert calls[0] == ("http://backend.example/verify", "tok", "cb-secret")
+
 
 @pytest.mark.asyncio
 async def test_local_mode_ignores_client_id_and_port(monkeypatch):

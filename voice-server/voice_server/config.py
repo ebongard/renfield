@@ -30,6 +30,11 @@ class AuthClient(BaseModel):
 
     verify_url: str | None = None
     anonymous: bool = False
+    # Optional shared secret sent as the X-Verify-Secret header on this
+    # client's verify POST. The client's backend gates its (unauthenticated-
+    # by-design) verify endpoint on it — closes the token oracle to anyone who
+    # can merely reach the endpoint. Only meaningful with verify_url.
+    verify_secret: SecretStr | None = None
 
     @model_validator(mode="after")
     def _exactly_one_shape(self) -> "AuthClient":
@@ -43,6 +48,8 @@ class AuthClient(BaseModel):
             )
         if self.verify_url and not self.verify_url.startswith(("http://", "https://")):
             raise ValueError(f"verify_url must be http(s), got: {self.verify_url}")
+        if self.verify_secret and not self.verify_url:
+            raise ValueError("verify_secret is only valid with verify_url")
         return self
 
 
@@ -70,6 +77,10 @@ class Settings(BaseSettings):
     secret_key: SecretStr = SecretStr("changeme-in-production")
     jwt_algorithm: str = "HS256"
     auth_callback_url: str | None = None  # used when auth_mode=callback
+    # Shared secret sent as X-Verify-Secret on the callback POST (auth_mode=
+    # callback). The registry mode carries its own per-client verify_secret in
+    # each AuthClient row instead.
+    auth_callback_secret: SecretStr | None = None
 
     # Multi-client registry (auth_mode=registry). Env AUTH_CLIENTS is a JSON
     # object mapping client-id → row, e.g.

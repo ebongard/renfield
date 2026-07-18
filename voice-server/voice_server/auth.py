@@ -90,13 +90,14 @@ def _validate_local(token: str) -> dict[str, Any]:
         raise AuthError(f"invalid token: {e}") from e
 
 
-async def _post_verify(url: str, token: str) -> tuple[int, Any]:
+async def _post_verify(url: str, token: str, secret: str | None = None) -> tuple[int, Any]:
     """POST a token to a verify endpoint. Split out so tests can stub the
     network without an HTTP server. Returns (status_code, parsed_json);
     raises AuthError on transport failure."""
+    headers = {"X-Verify-Secret": secret} if secret else None
     async with httpx.AsyncClient(timeout=5.0) as client:
         try:
-            resp = await client.post(url, json={"token": token})
+            resp = await client.post(url, json={"token": token}, headers=headers)
         except httpx.HTTPError as e:
             logger.warning("auth callback HTTP error: %s", e)
             # Deliberately generic: the exception string embeds the verify
@@ -113,11 +114,16 @@ async def _post_verify(url: str, token: str) -> tuple[int, Any]:
 async def _validate_callback(token: str) -> dict[str, Any]:
     if not settings.auth_callback_url:
         raise AuthError("auth_mode=callback but auth_callback_url is empty")
-    return await _verify_via(settings.auth_callback_url, token)
+    secret = (
+        settings.auth_callback_secret.get_secret_value()
+        if settings.auth_callback_secret
+        else None
+    )
+    return await _verify_via(settings.auth_callback_url, token, secret)
 
 
-async def _verify_via(url: str, token: str) -> dict[str, Any]:
-    status_code, payload = await _post_verify(url, token)
+async def _verify_via(url: str, token: str, secret: str | None = None) -> dict[str, Any]:
+    status_code, payload = await _post_verify(url, token, secret)
     if status_code != 200:
         raise AuthError(f"auth callback rejected token: {status_code}")
     # Pinned contract: a verify endpoint returns a JSON object with user_id.
@@ -164,6 +170,7 @@ async def _validate_registry(
 
     if not token:
         raise AuthError("missing token")
-    payload = await _verify_via(row.verify_url, token)  # type: ignore[arg-type]
+    secret = row.verify_secret.get_secret_value() if row.verify_secret else None
+    payload = await _verify_via(row.verify_url, token, secret)  # type: ignore[arg-type]
     payload["client_id"] = client_id
     return payload

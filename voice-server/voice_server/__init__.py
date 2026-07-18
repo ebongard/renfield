@@ -8,5 +8,5 @@ See docs/VOICE_PIPELINE_DESIGN.md § "Phase B" for the full architecture.
 """
 
 # Kept in sync with the image tag by bin/release-voice-server.sh (extraction
-# plan T4). 0.3.0 = registry auth mode (multi-client consolidation).
-__version__ = "0.3.0"
+# plan T4). 0.3.0 = registry auth mode; 0.3.1 = X-Verify-Secret header (T11).
+__version__ = "0.3.1"

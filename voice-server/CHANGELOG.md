@@ -3,6 +3,17 @@
 Releases via `bin/release-voice-server.sh` — the script refuses to release a
 version without a section here. Pushed digests live in `RELEASES.md`.
 
+## [0.3.1] — 2026-07-18
+
+- **X-Verify-Secret header** (extraction plan T11): registry rows gain an
+  optional `verify_secret`, and `callback` mode an optional
+  `AUTH_CALLBACK_SECRET`; when set, voice-server sends the secret as the
+  `X-Verify-Secret` header on the verify POST. The client backend gates its
+  (unauthenticated-by-design, now cross-cluster-reachable) verify endpoint on
+  it — closes the token oracle without depending on source-IP allowlisting
+  (prod Traefik is externalTrafficPolicy: Cluster, so an IP allowlist would
+  match SNAT'd node IPs). Opt-in; unset = no header (backward compatible).
+
 ## [0.3.0] — 2026-07-18
 
 - **AUTH_MODE=registry**: one shared instance authenticates N client products.
