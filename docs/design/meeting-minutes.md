@@ -1,9 +1,14 @@
-# §2 Phase 3 — Meeting Minutes Pipeline (PLAN)
+# §2 Phase 3 — Meeting Minutes Pipeline
 
-> Status: **PLAN / not started.** Builds on Phase 2 (meeting transcription + diarization,
-> live on household + xidra). Turns a completed, speaker-attributed transcript into
-> structured **minutes** — summary + decisions + action-items — with a **human-confirm**
-> gate before anything is finalized or ingested. Flag-gated, dark by default.
+> Status: **SHIPPED, dark by default** (`MEETING_MINUTES_ENABLED` / frontend
+> `meeting_minutes_enabled`). Backend in PR #984 (routes + `MinutesExtractor` +
+> migration `pc20260718_meeting_minutes` + `meeting_minutes.yaml` prompts); frontend
+> in PR-B #986 (`MinutesPanel` in `pages/MeetingsPage.tsx` + `useMinutes`/generate/
+> update/confirm/delete hooks + i18n + RTL). Builds on Phase 2 (meeting transcription +
+> diarization, live on household + xidra). Turns a completed, speaker-attributed
+> transcript into structured **minutes** — summary + decisions + action-items — with a
+> **human-confirm** gate before anything is folded into the transcript document. The
+> flag-flip (per instance) is the remaining step.
 
 ## Goal & scope
 

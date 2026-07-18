@@ -127,6 +127,15 @@ Eine Mehrsprecher-Aufnahme hochladen → sprecher-attribuiertes Transkript in de
 - **Frontend** (`pages/MeetingsPage.tsx`, PR-3): flag-gated auf `meeting_transcription_enabled` (aus `/api/config/features` — Nav+Route fehlen, wenn aus). Upload-Formular mit **Pflicht-Einwilligungs-Checkbox**, Status-Liste, die nur pollt, solange eine Aufnahme pending/processing ist, Aufklappen einer fertigen Besprechung → Transkript-Turns + Sprecher-Umbenennung + Deep-Link zu `/knowledge?doc=`.
 - **Dark by default** → beide Instanzen byte-identisch bis die Flags umgelegt werden. Migrationen `pc20260714_meetings` + `pc20260714b_document_source`. PR-1 Backend + PR-2 voice-server + PR-3 Frontend dark gelandet; der Flag-Flip ist der verbleibende Schritt.
 
+### Meeting-Protokoll (§2 Phase 3, `MEETING_MINUTES_ENABLED` / Frontend `meeting_minutes_enabled`, dark by default)
+
+Aus einem fertigen, sprecher-attribuierten Transkript ein strukturiertes **Protokoll** erzeugen — Zusammenfassung + Entscheidungen + Aufgaben (Action-Items) — mit **Human-Confirm-Gate**, bevor irgendetwas ins Transkript-Dokument übernommen wird. Design: [`design/meeting-minutes.md`](design/meeting-minutes.md). Backend PR #984, Frontend PR-B #986.
+
+- **Lifecycle** `minutes_status`: `none` → `draft` → `confirmed`. `POST /api/meetings/{id}/minutes/generate` (409, wenn nicht `completed`) lässt eine **`MinutesExtractor`**-LLM-Passage (spiegelt `schicht_a_extractor`, strikte JSON-Schema-Prompts `prompts/meeting_minutes.yaml`) einen Entwurf erzeugen; `GET/PUT …/minutes` liest/editiert; `POST …/minutes/confirm` (409, wenn nicht `draft`) rendert das Protokoll **in dasselbe Transkript-Dokument** (gleicher stabiler `transcript_document_id`-Reindex-Pfad wie die Re-Attribution — kein zweiter Ingest); `DELETE …/minutes` verwirft den Entwurf. Alles owner-gated 404. Neue Spalten `minutes`/`minutes_status`/`minutes_generated_at`/`minutes_confirmed_at` (Migration `pc20260718_meeting_minutes`, additiv).
+- **Action-Items sind meeting-scoped** — bewusst KEINE Fristen/Obligations für die `/brain/fristen`-Agenda (`due_hint` ist ein WORTLAUT-Hinweis, kein berechnetes Datum).
+- **Frontend** (`MinutesPanel` in `pages/MeetingsPage.tsx`, flag-gated auf `meeting_minutes_enabled`): auf einer aufgeklappten fertigen Besprechung — `none` → „Protokoll erzeugen"; `draft` → editierbare Zusammenfassung + Entscheidungen[] + Aufgaben[] mit Add/Remove, „Entwurf speichern"/„Bestätigen"/„Neu erzeugen"/„Verwerfen"; `confirmed` → Read-only + „Bestätigt"-Badge + „Bearbeiten". **Bestätigen speichert offene Edits automatisch zuerst** (kein stiller Datenverlust). Typed JSON in/out (React-Escape-Grenze), keine Model-HTML.
+- **Dark by default** → `meeting_minutes_enabled=false` auf beiden Instanzen; Panel fehlt, bis der Flag umgelegt wird.
+
 ## Konversations-Gedächtnis (Langzeit)
 
 Renfield kann sich Dinge über Nutzer langfristig merken — Präferenzen, Fakten und Anweisungen werden als semantische Embeddings gespeichert und bei relevanten zukünftigen Gesprächen automatisch eingeblendet.
