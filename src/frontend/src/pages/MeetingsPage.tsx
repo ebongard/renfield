@@ -190,9 +190,26 @@ function MinutesPanel({ meetingId }: { meetingId: number }) {
 
   const patch = (next: Partial<MinutesBody>) => setBody((b) => ({ ...b, ...next }));
 
+  // Dirty = the on-screen body diverges from the last server-saved body. Key
+  // order is stable (backend + emptyMinutes + patch all preserve it), so a
+  // serialized compare is reliable; a rare false-positive only costs one extra PUT.
+  const dirty = JSON.stringify(body) !== serverKey;
+
   const onGenerate = () => { if (!isBusy) generate.mutate(meetingId); };
   const onSave = () => { if (!isBusy) update.mutate({ meetingId, body }); };
-  const onConfirm = () => { if (!isBusy) confirm.mutate(meetingId); };
+  // Confirm must persist live edits FIRST — otherwise the backend confirms the
+  // last-saved draft and the reseed effect silently discards the user's edits
+  // (the "generate → tweak → Confirm" data-loss path). PUT reverts to draft, so
+  // the immediately-following confirm (which requires draft) still succeeds.
+  const onConfirm = async () => {
+    if (isBusy) return;
+    try {
+      if (dirty) await update.mutateAsync({ meetingId, body });
+      await confirm.mutateAsync(meetingId);
+    } catch {
+      // Surfaced via update/confirm.errorMessage; state stays editable.
+    }
+  };
   const onDiscard = () => { if (!isBusy) discard.mutate(meetingId); };
 
   const header = (
@@ -397,6 +414,7 @@ function MinutesForm({
           value={body.summary}
           onChange={(e) => onChange({ summary: e.target.value })}
           placeholder={t('meetings.minutes.summaryPlaceholder')}
+          aria-label={t('meetings.minutes.summary')}
           rows={3}
           maxLength={4000}
           disabled={disabled}

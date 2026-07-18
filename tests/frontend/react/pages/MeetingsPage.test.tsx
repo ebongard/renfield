@@ -314,6 +314,46 @@ describe('MeetingsPage — minutes (§2 Phase 3)', () => {
     );
   });
 
+  it('auto-saves unsaved edits when confirming directly (no explicit Save)', async () => {
+    // Regression: Confirm must persist the live edit first, else the backend
+    // confirms the last-saved draft and the reseed silently drops the edit.
+    let saved: { summary: string } | null = null;
+    let confirmedAfterSave = false;
+    let state = {
+      id: 6,
+      minutes_status: 'draft' as string,
+      minutes: { summary: 'Roh-Entwurf.', decisions: [], action_items: [] } as unknown,
+    };
+    useMinutesEnabled(6);
+    server.use(
+      http.get(`${BASE_URL}/api/meetings/6/minutes`, () => HttpResponse.json(state)),
+      http.put(`${BASE_URL}/api/meetings/6/minutes`, async ({ request }) => {
+        saved = (await request.json()) as typeof saved;
+        state = { id: 6, minutes_status: 'draft', minutes: saved };
+        return HttpResponse.json(state);
+      }),
+      http.post(`${BASE_URL}/api/meetings/6/minutes/confirm`, () => {
+        // Confirm must arrive AFTER the edit was persisted.
+        confirmedAfterSave = saved?.summary === 'Von Hand editiert.';
+        state = { ...state, minutes_status: 'confirmed' };
+        return HttpResponse.json(state);
+      }),
+    );
+
+    renderWithProviders(<MeetingsPage />);
+    const user = userEvent.setup();
+
+    await user.click(await screen.findByText('Review'));
+    const summary = await screen.findByPlaceholderText(i18n.t('meetings.minutes.summaryPlaceholder'));
+    await user.clear(summary);
+    await user.type(summary, 'Von Hand editiert.');
+    // Click Confirm WITHOUT clicking Save first.
+    await user.click(screen.getByRole('button', { name: i18n.t('meetings.minutes.confirm') }));
+
+    await waitFor(() => expect(saved?.summary).toBe('Von Hand editiert.'));
+    await waitFor(() => expect(confirmedAfterSave).toBe(true));
+  });
+
   it('discards minutes back to the generate state', async () => {
     let discarded = false;
     let state = {
