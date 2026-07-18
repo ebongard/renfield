@@ -195,3 +195,154 @@ describe('MeetingsPage', () => {
     await waitFor(() => expect(relabeled).toEqual({ speaker_key: 'S1', label: 'Anna' }));
   });
 });
+
+/** Enable the minutes feature flag and stub the transcript segments so a
+ *  completed meeting can be expanded down to the minutes panel. */
+function useMinutesEnabled(meetingId = 6) {
+  server.use(
+    http.get(`${BASE_URL}/api/config/features`, () =>
+      HttpResponse.json({
+        schicht_a_extraction_enabled: false,
+        wissen_workspace_enabled: false,
+        command_palette_enabled: false,
+        role_surfacing_enabled: false,
+        message_search_enabled: false,
+        artifacts_typed_enabled: false,
+        room_handoff_enabled: false,
+        chat_branching_enabled: false,
+        projects_enabled: false,
+        meeting_transcription_enabled: true,
+        meeting_minutes_enabled: true,
+      }),
+    ),
+    http.get(`${BASE_URL}/api/meetings`, () =>
+      HttpResponse.json([mkMeeting({ id: meetingId, title: 'Review', status: 'completed' })]),
+    ),
+    http.get(`${BASE_URL}/api/meetings/${meetingId}/segments`, () =>
+      HttpResponse.json({
+        id: meetingId,
+        status: 'completed',
+        segments: [
+          { speaker: 'Sprecher 1', speaker_key: 'S1', start_s: 0, end_s: 2, text: 'Los gehts.' },
+        ],
+      }),
+    ),
+  );
+}
+
+describe('MeetingsPage — minutes (§2 Phase 3)', () => {
+  it('hides the minutes panel when the flag is off', async () => {
+    // Default /api/config/features handler has meeting_minutes_enabled: false.
+    server.use(
+      http.get(`${BASE_URL}/api/meetings`, () =>
+        HttpResponse.json([mkMeeting({ id: 9, title: 'NoMinutes', status: 'completed' })]),
+      ),
+      http.get(`${BASE_URL}/api/meetings/9/segments`, () =>
+        HttpResponse.json({ id: 9, status: 'completed', segments: [] }),
+      ),
+    );
+    renderWithProviders(<MeetingsPage />);
+    const user = userEvent.setup();
+
+    await user.click(await screen.findByText('NoMinutes'));
+    // The transcript loads, but the minutes panel title is never rendered.
+    await waitFor(() =>
+      expect(screen.getByText(i18n.t('meetings.noSegments'))).toBeInTheDocument(),
+    );
+    expect(screen.queryByText(i18n.t('meetings.minutes.title'))).not.toBeInTheDocument();
+  });
+
+  it('generates, edits, and confirms minutes', async () => {
+    let saved: { summary: string; decisions: unknown[]; action_items: unknown[] } | null = null;
+    let confirmed = false;
+    let generateCalls = 0;
+    // Server-side minutes state the handlers mutate as the flow progresses.
+    let state = { id: 6, minutes_status: 'none' as string, minutes: null as unknown };
+
+    useMinutesEnabled(6);
+    server.use(
+      http.get(`${BASE_URL}/api/meetings/6/minutes`, () => HttpResponse.json(state)),
+      http.post(`${BASE_URL}/api/meetings/6/minutes/generate`, () => {
+        generateCalls += 1;
+        state = {
+          id: 6,
+          minutes_status: 'draft',
+          minutes: { summary: 'Wir haben X beschlossen.', decisions: [], action_items: [] },
+        };
+        return HttpResponse.json(state);
+      }),
+      http.put(`${BASE_URL}/api/meetings/6/minutes`, async ({ request }) => {
+        saved = (await request.json()) as typeof saved;
+        state = { id: 6, minutes_status: 'draft', minutes: saved };
+        return HttpResponse.json(state);
+      }),
+      http.post(`${BASE_URL}/api/meetings/6/minutes/confirm`, () => {
+        confirmed = true;
+        state = { ...state, minutes_status: 'confirmed' };
+        return HttpResponse.json(state);
+      }),
+    );
+
+    renderWithProviders(<MeetingsPage />);
+    const user = userEvent.setup();
+
+    // Expand the completed meeting → the minutes panel shows the Generate CTA.
+    await user.click(await screen.findByText('Review'));
+    const generateBtn = await screen.findByRole('button', {
+      name: i18n.t('meetings.minutes.generate'),
+    });
+    await user.click(generateBtn);
+    expect(generateCalls).toBe(1);
+
+    // Draft renders in the editable summary field.
+    const summary = await screen.findByPlaceholderText(i18n.t('meetings.minutes.summaryPlaceholder'));
+    await waitFor(() =>
+      expect((summary as HTMLTextAreaElement).value).toBe('Wir haben X beschlossen.'),
+    );
+
+    // Edit the summary and Save → PUT carries the edit.
+    await user.clear(summary);
+    await user.type(summary, 'Korrigierte Zusammenfassung.');
+    await user.click(screen.getByRole('button', { name: i18n.t('meetings.minutes.save') }));
+    await waitFor(() => expect(saved?.summary).toBe('Korrigierte Zusammenfassung.'));
+
+    // Confirm → POST confirm, then the confirmed badge appears.
+    await user.click(screen.getByRole('button', { name: i18n.t('meetings.minutes.confirm') }));
+    await waitFor(() => expect(confirmed).toBe(true));
+    await waitFor(() =>
+      expect(screen.getByText(i18n.t('meetings.minutes.confirmedBadge'))).toBeInTheDocument(),
+    );
+  });
+
+  it('discards minutes back to the generate state', async () => {
+    let discarded = false;
+    let state = {
+      id: 6,
+      minutes_status: 'draft' as string,
+      minutes: { summary: 'Entwurf.', decisions: [], action_items: [] } as unknown,
+    };
+    useMinutesEnabled(6);
+    server.use(
+      http.get(`${BASE_URL}/api/meetings/6/minutes`, () => HttpResponse.json(state)),
+      http.delete(`${BASE_URL}/api/meetings/6/minutes`, () => {
+        discarded = true;
+        state = { id: 6, minutes_status: 'none', minutes: null };
+        return HttpResponse.json(state);
+      }),
+    );
+
+    renderWithProviders(<MeetingsPage />);
+    const user = userEvent.setup();
+
+    await user.click(await screen.findByText('Review'));
+    // Draft loads → discard it.
+    await user.click(await screen.findByRole('button', { name: i18n.t('meetings.minutes.discard') }));
+    await waitFor(() => expect(discarded).toBe(true));
+    // Back to the Generate CTA.
+    await waitFor(() =>
+      expect(
+        screen.getByRole('button', { name: i18n.t('meetings.minutes.generate') }),
+      ).toBeInTheDocument(),
+    );
+  });
+});

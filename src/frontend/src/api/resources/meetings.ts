@@ -154,3 +154,135 @@ export function useRelabelSpeaker() {
     'meetings.failedToRelabel',
   );
 }
+
+// --------------------------------------------------------------------------- //
+// §2 Phase 3 — minutes (summary / decisions / action-items with human confirm)
+// --------------------------------------------------------------------------- //
+
+/** One decision recorded in the minutes (mirrors _Decision in meetings.py). */
+export interface MinutesDecision {
+  text: string;
+  made_by: string; // person named in the transcript, or "" (unknown)
+}
+
+/** One agreed action-item (mirrors _ActionItem). due_hint is a VERBATIM hint
+ *  ("bis Freitag"), NOT a computed date — action-items are meeting-scoped and
+ *  deliberately NOT obligations for the Fristen agenda. */
+export interface MinutesActionItem {
+  text: string;
+  owner: string;
+  due_hint: string;
+}
+
+/** The minutes body — the editable draft shape (mirrors MinutesBody). */
+export interface MinutesBody {
+  summary: string;
+  decisions: MinutesDecision[];
+  action_items: MinutesActionItem[];
+}
+
+/** none → not generated; draft → editable/unconfirmed; confirmed → rendered into
+ *  the transcript document. Mirrors Meeting.minutes_status. */
+export type MinutesStatus = 'none' | 'draft' | 'confirmed';
+
+/** Mirrors MinutesResponse in meetings.py. `minutes` is null until generated. */
+export interface Minutes {
+  id: number;
+  minutes_status: MinutesStatus;
+  minutes: MinutesBody | null;
+}
+
+async function fetchMinutes(meetingId: number): Promise<Minutes> {
+  const response = await apiClient.get<Minutes>(`/api/meetings/${meetingId}/minutes`);
+  return response.data;
+}
+
+async function generateMinutesRequest(meetingId: number): Promise<Minutes> {
+  const response = await apiClient.post<Minutes>(`/api/meetings/${meetingId}/minutes/generate`);
+  return response.data;
+}
+
+async function updateMinutesRequest(input: { meetingId: number; body: MinutesBody }): Promise<Minutes> {
+  const response = await apiClient.put<Minutes>(`/api/meetings/${input.meetingId}/minutes`, input.body);
+  return response.data;
+}
+
+async function confirmMinutesRequest(meetingId: number): Promise<Minutes> {
+  const response = await apiClient.post<Minutes>(`/api/meetings/${meetingId}/minutes/confirm`);
+  return response.data;
+}
+
+async function deleteMinutesRequest(meetingId: number): Promise<Minutes> {
+  const response = await apiClient.delete<Minutes>(`/api/meetings/${meetingId}/minutes`);
+  return response.data;
+}
+
+/** Load current minutes + status. Enabled-gated (only fetched for a completed,
+ *  expanded meeting when the minutes feature flag is on). */
+export function useMinutes(meetingId: number | null, enabled: boolean) {
+  return useApiQuery(
+    {
+      queryKey: keys.meetings.minutes(meetingId ?? 0),
+      queryFn: () => fetchMinutes(meetingId as number),
+      staleTime: STALE.DEFAULT,
+      enabled: enabled && meetingId != null,
+    },
+    'meetings.minutes.failedToLoad',
+  );
+}
+
+/** Confirming re-renders + reindexes the transcript document in place, so the
+ *  minutes AND the list (transcript_document_id is stable, but status/reindex
+ *  ripple) get invalidated on every write. */
+function invalidateMinutes(queryClient: ReturnType<typeof useQueryClient>, meetingId: number) {
+  queryClient.invalidateQueries({ queryKey: keys.meetings.minutes(meetingId) });
+  queryClient.invalidateQueries({ queryKey: keys.meetings.list() });
+}
+
+export function useGenerateMinutes() {
+  const queryClient = useQueryClient();
+  return useApiMutation(
+    {
+      mutationFn: generateMinutesRequest,
+      onSuccess: (data) => invalidateMinutes(queryClient, data.id),
+    },
+    'meetings.minutes.failedToGenerate',
+  );
+}
+
+export function useUpdateMinutes() {
+  const queryClient = useQueryClient();
+  return useApiMutation(
+    {
+      mutationFn: updateMinutesRequest,
+      onSuccess: (data) => invalidateMinutes(queryClient, data.id),
+    },
+    'meetings.minutes.failedToSave',
+  );
+}
+
+export function useConfirmMinutes() {
+  const queryClient = useQueryClient();
+  return useApiMutation(
+    {
+      mutationFn: confirmMinutesRequest,
+      onSuccess: (data) => {
+        invalidateMinutes(queryClient, data.id);
+        // Confirm folds the minutes into the transcript doc → refresh segments too.
+        queryClient.invalidateQueries({ queryKey: keys.meetings.segments(data.id) });
+      },
+    },
+    'meetings.minutes.failedToConfirm',
+  );
+}
+
+export function useDeleteMinutes() {
+  const queryClient = useQueryClient();
+  return useApiMutation(
+    {
+      mutationFn: deleteMinutesRequest,
+      onSuccess: (data) => invalidateMinutes(queryClient, data.id),
+    },
+    'meetings.minutes.failedToDelete',
+  );
+}

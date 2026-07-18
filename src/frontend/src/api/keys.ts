@@ -125,6 +125,7 @@ export const keys = {
     all: ['meetings'] as const,
     list: () => ['meetings', 'list'] as const,
     segments: (id: number) => ['meetings', id, 'segments'] as const,
+    minutes: (id: number) => ['meetings', id, 'minutes'] as const,
   },
   cameras: {
     all: ['cameras'] as const,

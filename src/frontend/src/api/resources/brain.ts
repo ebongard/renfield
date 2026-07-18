@@ -111,6 +111,8 @@ export interface FeatureFlags {
   projects_enabled: boolean;
   /** Gates the §2 meeting-transcription nav + page (upload + status + speaker labeling). */
   meeting_transcription_enabled: boolean;
+  /** Gates the §2 Phase 3 minutes UI (generate/edit/confirm on a completed meeting). */
+  meeting_minutes_enabled: boolean;
   /** True when the Reva-only Wissensbasis surface (/trace + /me/mix) is mounted.
    *  Standalone Renfield => false. Lets the frontend hide the Reva-only side
    *  panels without probing an endpoint that 404s (console-noise fix). */
