@@ -3,6 +3,15 @@
 Releases via `bin/release-voice-server.sh` — the script refuses to release a
 version without a section here. Pushed digests live in `RELEASES.md`.
 
+## [0.3.2] — 2026-07-19
+
+- **`anon_default_client`** (household migration T31): on the anon listener
+  only, a request with no `X-Voice-Client` defaults to the configured client
+  id (must be an `anonymous: true` row). Lets a caller that predates the
+  X-Voice-Client header (the renfield household backend) use the shared
+  instance via the NetworkPolicy-fenced anon port without a rebuild. Empty =
+  off; never applies on the primary port.
+
 ## [0.3.1] — 2026-07-18
 
 - **X-Verify-Secret header** (extraction plan T11): registry rows gain an

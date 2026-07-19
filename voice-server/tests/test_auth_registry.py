@@ -181,6 +181,32 @@ async def test_anonymous_row_rejected_on_primary_port(registry_mode):
 
 
 @pytest.mark.asyncio
+async def test_anon_default_client_fills_missing_id_on_anon_port(registry_mode, monkeypatch):
+    # Household migration T31: no X-Voice-Client on the anon port defaults to
+    # the configured client (an anonymous row) → accepted.
+    monkeypatch.setattr(settings, "anon_default_client", "renfield")
+    payload = await authenticate("", None, via_anon_port=True)
+    assert payload["user_id"] == "anonymous"
+    assert payload["client_id"] == "renfield"
+
+
+@pytest.mark.asyncio
+async def test_anon_default_client_does_not_apply_on_primary_port(registry_mode, monkeypatch):
+    # The default is anon-port-only: a missing client id on the primary
+    # (ingress-reachable) port is still rejected.
+    monkeypatch.setattr(settings, "anon_default_client", "renfield")
+    with pytest.raises(AuthError, match="client id"):
+        await authenticate("", None, via_anon_port=False)
+
+
+@pytest.mark.asyncio
+async def test_anon_default_client_unset_still_rejects_missing_id(registry_mode):
+    # Default off (empty) → missing client id rejected as before.
+    with pytest.raises(AuthError, match="client id"):
+        await authenticate("", None, via_anon_port=True)
+
+
+@pytest.mark.asyncio
 async def test_anonymous_row_ignores_supplied_token(registry_mode):
     # Household has no signing keys to validate against; a stray token is
     # ignored rather than routed anywhere.

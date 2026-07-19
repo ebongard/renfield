@@ -96,6 +96,12 @@ class Settings(BaseSettings):
     # with a NetworkPolicy; the primary port NEVER serves anonymous registry
     # clients, so an ingress-reachable request can't claim the anonymous row.
     anon_port: int = 8081
+    # On the anon listener, a request with NO X-Voice-Client defaults to this
+    # client id. Lets a caller that predates the X-Voice-Client header (e.g.
+    # the renfield household backend) use the shared instance via the fenced
+    # anon port. Must name an `anonymous: true` row. Empty = off (missing
+    # client id is rejected as usual).
+    anon_default_client: str = ""
 
     # STT (D1) — accepts a local path OR an HF model id (downloads to HF cache)
     whisper_model: str = "Systran/faster-whisper-medium"

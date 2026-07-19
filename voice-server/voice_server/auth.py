@@ -137,6 +137,15 @@ async def _verify_via(url: str, token: str, secret: str | None = None) -> dict[s
 async def _validate_registry(
     token: str, client_id: str | None, via_anon_port: bool
 ) -> dict[str, Any]:
+    # On the anon listener only, a MISSING client id may default to a
+    # configured one — lets a caller that predates the X-Voice-Client header
+    # (e.g. the renfield household backend) use the shared instance. Safe
+    # because the anon port is NetworkPolicy-fenced; the defaulted id must be
+    # an `anonymous: true` row (checked below). Never applies on the primary
+    # (ingress-reachable) port.
+    if not client_id and via_anon_port and settings.anon_default_client:
+        client_id = settings.anon_default_client
+
     if not client_id:
         raise AuthError(
             "registry auth requires a client id "
