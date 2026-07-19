@@ -28,7 +28,7 @@ from pydantic import BaseModel
 
 from voice_server.auth import AuthError, authenticate
 from voice_server.config import settings
-from voice_server.services.audio_oneshot import OneshotDecodeError, decode_audio_to_pcm
+from voice_server.services.audio_oneshot import OneshotDecodeError, decode_upload_to_pcm
 from voice_server.services.opus_decode import (
     OpusDecodeError,
     OpusUnavailableError,
@@ -89,18 +89,13 @@ async def stt_endpoint(
     _user: dict = Depends(_require_token),
 ) -> STTResponse:
     """Transcribe a single audio file. One-shot (not streaming)."""
-    audio_bytes = await audio.read()
-    if not audio_bytes:
-        raise HTTPException(status_code=400, detail="empty audio")
-
-    # REST gives us a complete file — let ffmpeg auto-detect the container
-    # and codec. The streaming AudioDecoder pins -f to a codec hint
-    # because chunks can't be auto-detected, but that hint over-constrains
-    # full-file uploads (e.g. browser MediaRecorder webm/opus rejected by
-    # `-f webm`). The one-shot decoder also captures stderr so failures
-    # produce a real error message instead of silent 0 PCM.
+    # REST gives us a complete file — stream it to a seekable temp file and let
+    # ffmpeg auto-detect the container/codec. A seekable file (not a stdin pipe)
+    # is required for MP4/m4a (moov-at-end) and is harmless for every other
+    # container; the one-shot decoder also captures stderr so failures produce a
+    # real error message instead of silent 0 PCM.
     try:
-        pcm = await decode_audio_to_pcm(audio_bytes)
+        pcm = await decode_upload_to_pcm(audio)
     except OneshotDecodeError as e:
         logger.warning("STT decode failed: %s", e)
         raise HTTPException(status_code=400, detail=f"audio decode failed: {e}") from e
@@ -211,11 +206,13 @@ async def transcribe_meeting_endpoint(
     if meeting is None or not meeting.ready:
         raise HTTPException(status_code=503, detail="meeting diarization not available")
 
-    audio_bytes = await audio.read()
-    if not audio_bytes:
-        raise HTTPException(status_code=400, detail="empty audio")
+    # Stream the whole recording to a seekable temp file (never the whole file
+    # in RAM — a meeting can be multi-hour) and decode from there. The seekable
+    # file is what makes phone/Mac m4a (moov-at-end) decode at all. A generous
+    # decode budget covers long recordings (ffmpeg decode runs far faster than
+    # realtime, but a multi-hour file still needs headroom over the 30 s default).
     try:
-        pcm = await decode_audio_to_pcm(audio_bytes)
+        pcm = await decode_upload_to_pcm(audio, timeout_s=600.0)
     except OneshotDecodeError as e:
         # A recording the decoder can't parse is terminal (4xx) — the backend
         # worker maps 4xx to a failed meeting, not an infinite retry.

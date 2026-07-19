@@ -3,6 +3,24 @@
 Releases via `bin/release-voice-server.sh` — the script refuses to release a
 version without a section here. Pushed digests live in `RELEASES.md`.
 
+## [0.3.3] — 2026-07-19
+
+- **One-shot decode reads a seekable file, not a stdin pipe.** `/api/voice/stt`
+  and `/transcribe-meeting` streamed the whole upload into RAM and fed it to
+  `ffmpeg -i pipe:0`. A pipe is not seekable, so a normal phone/Mac **m4a**
+  (AAC in MP4 with the `moov` index atom at the END of the file, past ffmpeg's
+  ~5 MB probe window) decoded to zero PCM — `offset 0x2c: partial file /
+  Invalid data` — and failed every meeting uploaded from an iPhone/Mac. The
+  one-shot decoder now streams the upload to a seekable temp file in fixed-size
+  chunks and runs `ffmpeg -i <file>`; MP4/m4a decode correctly and a multi-hour
+  meeting no longer sits whole in RAM on the media layer. Every other container
+  (wav/webm/opus/mp3/flac) is unaffected — they decode from a file just as well.
+  New `decode_upload_to_pcm` (preferred, chunked-stream entry); `decode_audio_to_pcm`
+  kept for byte-callers, now also file-backed. `VOICE_ONESHOT_SPOOL_DIR` steers
+  the temp file onto a disk-backed volume (keep multi-hour spools off a tmpfs).
+  Regression test synthesizes a >6 MB moov-at-end m4a. Streaming WS path
+  (`audio_decoder.py`) is unchanged (live chunks are inherently non-seekable).
+
 ## [0.3.2] — 2026-07-19
 
 - **`anon_default_client`** (household migration T31): on the anon listener
