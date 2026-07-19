@@ -763,6 +763,17 @@ class Settings(BaseSettings):
     # After a task has been delivered more than this many times it is quarantined
     # (the doc is marked failed and the entry ACKed) instead of re-processed.
     worker_max_deliveries: int = 3
+    # Transient-retry cap for the MEETING worker: a voice-server 5xx / unreachable
+    # is left in the PEL for reclaim (a restart/model-load DOES recover). But an
+    # unbounded transient loop — e.g. a CUDA-OOM that surfaces as a 500 the OOM
+    # markers miss, or a pod-killing OOM seen as "unreachable" — would re-burn the
+    # shared GPU every reclaim window forever (crash_count never trips the poison
+    # guard because transient leaves are excluded from it). After this many
+    # transient leaves the meeting is quarantined (marked failed) so it can't
+    # thrash indefinitely. Generous vs worker_max_deliveries: a legit voice-server
+    # outage (rolling restart / redeploy) should get several reclaim windows
+    # (~120 s each) to recover before we give up on the recording.
+    meeting_worker_max_transient_retries: int = 10
 
     # Email-mailbox auto-ingest (Phase 1; ships dark). The dedicated
     # renfield-mcp-email-ingest watcher PUSHES attachments to

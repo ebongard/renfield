@@ -504,6 +504,42 @@ class TestMeetingProcessEntry:
         assert marked and marked[0][0] == 5
         q.ack.assert_awaited_once_with("2-0")
 
+    async def test_transient_retry_cap_quarantines(self, monkeypatch):
+        """A job that keeps failing transiently (voice-server 5xx / unreachable)
+        is quarantined once transient leaves exceed the cap — the message-
+        independent backstop that stops an OOM-thrash the markers miss."""
+        from unittest.mock import AsyncMock, MagicMock
+
+        import workers.meeting_worker as mw
+        from services.task_queue import StreamEntry
+
+        monkeypatch.setattr(mw.settings, "worker_max_deliveries", 3)
+        monkeypatch.setattr(mw.settings, "meeting_worker_max_transient_retries", 10)
+        marked = []
+
+        async def _fake_mark(mid, err):
+            marked.append((mid, str(err)))
+            return True
+
+        monkeypatch.setattr(mw, "_mark_meeting_failed", _fake_mark)
+        # A quarantined entry must NOT reach the claim/process path.
+        monkeypatch.setattr(
+            mw, "_claim_meeting_row",
+            MagicMock(side_effect=AssertionError("must not claim a quarantined entry")),
+        )
+        redis, q = self._fakes()
+        redis.get = AsyncMock(return_value="11")  # 11 transient leaves > cap 10
+        # crash_count = delivery_count - transient_leaves = 12 - 11 = 1 (< crash cap),
+        # so the CRASH guard does not trip — only the transient cap should.
+        entry = StreamEntry(
+            entry_id="8-0",
+            params={"meeting_id": 7, "audio_path": "/x/meeting-7.wav"},
+            delivery_count=12,
+        )
+        await mw._process_entry(redis, q, entry)
+        assert marked and marked[0][0] == 7 and "transient" in marked[0][1].lower()
+        q.ack.assert_awaited_once_with("8-0")
+
     async def test_completed_skip_acks_without_processing(self, monkeypatch):
         import workers.meeting_worker as mw
         from services.task_queue import StreamEntry
@@ -896,6 +932,16 @@ def test_cuda_oom_is_terminal_not_retried():
     # A generic 5xx (restart / model-loading) stays retryable.
     assert mw._is_transient_error(
         VoiceServerError('returned 500: {"detail":"model still loading"}', status_code=500)
+    ) is True
+    # Markers are narrow: a NON-OOM cuDNN/cuBLAS init error (model-load race /
+    # driver settle window) stays RETRYABLE — it recovers on retry and fails
+    # fast without thrashing. Only true exhaustion / dead-context is terminal.
+    assert mw._is_transient_error(
+        VoiceServerError(
+            'returned 500: {"detail":"transcription failed: '
+            'cuDNN error: CUDNN_STATUS_NOT_INITIALIZED"}',
+            status_code=500,
+        )
     ) is True
 
 
