@@ -14,7 +14,7 @@ plan §7) and are NOT here.
 """
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -151,6 +151,35 @@ async def get_project_route(
     _require_enabled()
     project = await _get_owned_project(project_id, user, db)
     return await _to_response(db, project)
+
+
+class TimelineEvent(BaseModel):
+    kind: str  # document | meeting | decision | chat
+    id: str    # kind-scoped stable id (e.g. "meeting-3", "decision-3-0")
+    ts: str    # ISO timestamp (empty when the source row is undated)
+    title: str
+    subtitle: str | None = None
+    document_id: int | None = None            # deep-link → /knowledge?doc=
+    meeting_id: int | None = None             # deep-link → /meetings
+    conversation_session_id: str | None = None
+
+
+@router.get("/{project_id}/timeline", response_model=list[TimelineEvent])
+async def project_timeline_route(
+    project_id: int,
+    limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),
+    user: User | None = Depends(get_optional_user),
+    db: AsyncSession = Depends(get_db),
+) -> list[TimelineEvent]:
+    """Chronological (newest-first) merged feed for the project — its documents,
+    meetings, confirmed-minutes decisions, and scoped chat. Owner-gated 404."""
+    _require_enabled()
+    project = await _get_owned_project(project_id, user, db)
+    from services.project_timeline import get_project_timeline
+
+    events = await get_project_timeline(db, project, limit=limit, offset=offset)
+    return [TimelineEvent(**e) for e in events]
 
 
 @router.delete("/{project_id}")

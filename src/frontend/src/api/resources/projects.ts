@@ -24,8 +24,31 @@ export interface ProjectInput {
   circle_tier?: number;
 }
 
+/** One merged project-timeline event (Phase 4A). Mirrors TimelineEvent in
+ *  api/routes/projects.py — a document/meeting/decision/chat, newest-first. */
+export interface TimelineEvent {
+  kind: 'document' | 'meeting' | 'decision' | 'chat';
+  id: string;
+  ts: string;
+  title: string;
+  subtitle: string | null;
+  document_id: number | null;
+  meeting_id: number | null;
+  conversation_session_id: string | null;
+}
+
 async function fetchProjects(): Promise<Project[]> {
   const response = await apiClient.get<Project[]>('/api/projects');
+  return Array.isArray(response.data) ? response.data : [];
+}
+
+async function fetchProject(id: number): Promise<Project> {
+  const response = await apiClient.get<Project>(`/api/projects/${id}`);
+  return response.data;
+}
+
+async function fetchTimeline(id: number): Promise<TimelineEvent[]> {
+  const response = await apiClient.get<TimelineEvent[]>(`/api/projects/${id}/timeline`);
   return Array.isArray(response.data) ? response.data : [];
 }
 
@@ -46,6 +69,30 @@ export function useProjectsQuery() {
       staleTime: STALE.DEFAULT,
     },
     'projects.failedToLoad',
+  );
+}
+
+export function useProjectQuery(id: number | null) {
+  return useApiQuery(
+    {
+      queryKey: keys.projects.detail(id ?? 0),
+      queryFn: () => fetchProject(id as number),
+      staleTime: STALE.DEFAULT,
+      enabled: id != null,
+    },
+    'projects.failedToLoad',
+  );
+}
+
+export function useProjectTimeline(id: number | null) {
+  return useApiQuery(
+    {
+      queryKey: keys.projects.timeline(id ?? 0),
+      queryFn: () => fetchTimeline(id as number),
+      staleTime: STALE.DEFAULT,
+      enabled: id != null,
+    },
+    'projects.failedToLoadTimeline',
   );
 }
 

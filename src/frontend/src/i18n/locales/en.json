@@ -591,7 +591,22 @@
     "created": "Created",
     "failedToLoad": "Could not load projects",
     "failedToSave": "Could not save project",
-    "failedToDelete": "Could not delete project"
+    "failedToDelete": "Could not delete project",
+    "failedToLoadTimeline": "Could not load the timeline",
+    "backToList": "Back to projects",
+    "notFound": "Project not found",
+    "timeline": {
+      "title": "Timeline",
+      "subtitle": "This project's documents, meetings, decisions and chats",
+      "empty": "No activity yet",
+      "emptyDesc": "Once documents are ingested, meetings recorded, or chats scoped to this project, they show up here.",
+      "kind": {
+        "document": "Document",
+        "meeting": "Meeting",
+        "decision": "Decision",
+        "chat": "Chat"
+      }
+    }
   },
   "meetings": {
     "title": "Meetings",

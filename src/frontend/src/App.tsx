@@ -19,6 +19,7 @@ import { queryClient } from './api/queryClient';
 // Lazy-loaded admin/secondary pages
 const TasksPage = lazy(() => import('./pages/TasksPage'));
 const ProjectsPage = lazy(() => import('./pages/ProjectsPage'));
+const ProjectDetailPage = lazy(() => import('./pages/ProjectDetailPage'));
 const MeetingsPage = lazy(() => import('./pages/MeetingsPage'));
 const CameraPage = lazy(() => import('./pages/CameraPage'));
 const HomeAssistantPage = lazy(() => import('./pages/HomeAssistantPage'));
@@ -98,6 +99,13 @@ function AppRoutes() {
               <Route path="/projects" element={
                 <ProtectedRoute>
                   <ProjectsPage />
+                </ProtectedRoute>
+              } />
+            )}
+            {projectsEnabled && (
+              <Route path="/projects/:id" element={
+                <ProtectedRoute>
+                  <ProjectDetailPage />
                 </ProtectedRoute>
               } />
             )}

@@ -1,6 +1,7 @@
 import { useState, type FormEvent } from 'react';
 import { useTranslation } from 'react-i18next';
-import { FolderKanban, FileText, Loader, XCircle, Plus } from 'lucide-react';
+import { Link } from 'react-router';
+import { FolderKanban, FileText, Loader, XCircle, Plus, ChevronRight } from 'lucide-react';
 
 import PageHeader from '../components/PageHeader';
 import { formatDate } from '../utils/datetime';
@@ -96,7 +97,11 @@ export default function ProjectsPage() {
           </div>
         ) : (
           projects.map((project) => (
-            <div key={project.id} className="card">
+            <Link
+              key={project.id}
+              to={`/projects/${project.id}`}
+              className="card block hover:border-primary-300 dark:hover:border-primary-700 transition-colors"
+            >
               <div className="flex items-start justify-between gap-4">
                 <div className="min-w-0">
                   <h3 className="text-base font-semibold text-gray-900 dark:text-white mb-1 truncate">
@@ -115,9 +120,12 @@ export default function ProjectsPage() {
                     <span>{t('projects.created')}: {formatDate(project.created_at)}</span>
                   </div>
                 </div>
-                <TierBadge tier={project.circle_tier} />
+                <div className="flex items-center gap-2 shrink-0">
+                  <TierBadge tier={project.circle_tier} />
+                  <ChevronRight className="w-4 h-4 text-gray-400" />
+                </div>
               </div>
-            </div>
+            </Link>
           ))
         )}
       </div>

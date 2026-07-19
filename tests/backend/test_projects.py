@@ -119,6 +119,60 @@ async def test_get_missing_project_404(async_client, monkeypatch):
 
 
 # ---------------------------------------------------------------------------
+# Timeline (Phase 4A) — merged doc + meeting + decision + chat feed
+# ---------------------------------------------------------------------------
+
+async def test_timeline_merges_sources_newest_first(async_client, db_session, monkeypatch):
+    from datetime import datetime
+
+    from models.database import Conversation, Meeting
+
+    _enable(monkeypatch, auth=False)
+    created = (await async_client.post("/api/projects", json={"name": "TL"})).json()
+    pid, kb_id = created["id"], created["knowledge_base_id"]
+
+    # A document in the project KB.
+    db_session.add(Document(
+        filename="spec.pdf", title="Spec", file_path="/x/spec.pdf", knowledge_base_id=kb_id,
+        status="completed", created_at=datetime(2026, 7, 10, 9, 0),
+    ))
+    # A completed meeting scoped to the project, with one confirmed decision.
+    db_session.add(Meeting(
+        id=501, title="Kickoff", status="completed", project_id=pid,
+        created_at=datetime(2026, 7, 12, 10, 0),
+        minutes_status="confirmed",
+        minutes={"summary": "s", "decisions": [{"text": "Ship it", "made_by": "Anna"}],
+                 "action_items": []},
+        minutes_confirmed_at=datetime(2026, 7, 12, 11, 0),
+    ))
+    # A chat conversation scoped to the project (newest).
+    db_session.add(Conversation(
+        session_id="sess-tl", project_id=pid, summary="planning chat",
+        created_at=datetime(2026, 7, 13, 8, 0), updated_at=datetime(2026, 7, 13, 8, 0),
+    ))
+    await db_session.commit()
+
+    resp = await async_client.get(f"/api/projects/{pid}/timeline")
+    assert resp.status_code == 200
+    events = resp.json()
+    kinds = [e["kind"] for e in events]
+    assert set(kinds) == {"document", "meeting", "decision", "chat"}
+    # Newest-first: the 07-13 chat leads; the 07-10 document is last.
+    assert kinds[0] == "chat"
+    assert kinds[-1] == "document"
+    # The decision carries its text + attribution and links back to the meeting.
+    dec = next(e for e in events if e["kind"] == "decision")
+    assert dec["title"] == "Ship it" and dec["subtitle"] == "Anna" and dec["meeting_id"] == 501
+
+
+async def test_timeline_owner_gated_and_flag_gated(async_client, monkeypatch):
+    _enable(monkeypatch, auth=False)
+    assert (await async_client.get("/api/projects/999999/timeline")).status_code == 404
+    monkeypatch.setattr(settings, "projects_enabled", False)
+    assert (await async_client.get("/api/projects/1/timeline")).status_code == 404
+
+
+# ---------------------------------------------------------------------------
 # Owner scoping under auth
 # ---------------------------------------------------------------------------
 

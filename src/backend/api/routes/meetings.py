@@ -90,6 +90,7 @@ class MeetingResponse(BaseModel):
     date: str | None
     error: str | None
     transcript_document_id: int | None
+    project_id: int | None
     created_at: str
 
 
@@ -101,6 +102,7 @@ def _to_response(m: Meeting) -> MeetingResponse:
         date=m.date.isoformat() if m.date else None,
         error=m.error,
         transcript_document_id=m.transcript_document_id,
+        project_id=m.project_id,
         created_at=m.created_at.isoformat() if m.created_at else "",
     )
 
@@ -113,13 +115,26 @@ async def transcribe_meeting(
     title: str | None = Form(None),
     date: str | None = Form(None),
     consent_note: str | None = Form(None),
+    project_id: int | None = Form(None),
     user: User | None = Depends(get_optional_user),
     db: AsyncSession = Depends(get_db),
 ) -> MeetingResponse:
-    """Upload a recording for transcription. Returns 202 with the meeting id to poll."""
+    """Upload a recording for transcription. Returns 202 with the meeting id to poll.
+
+    Optional ``project_id`` (Phase 4A) scopes the meeting to a Project so it
+    surfaces on ``/projects/{id}/timeline``; owner-validated when provided."""
     _require_enabled()
     if settings.auth_enabled and not user:
         raise HTTPException(status_code=401, detail="Authentication required")
+
+    # Validate an optional project scope: it must exist and (auth on) be the
+    # caller's, so a meeting can't be attached to someone else's project.
+    if project_id is not None:
+        from models.database import Project
+
+        project = await db.get(Project, project_id)
+        if project is None or (settings.auth_enabled and user and project.owner_id != user.id):
+            raise HTTPException(status_code=404, detail="Project not found")
 
     # Consent is mandatory from day one (DE workplace recording — designed in).
     if not consent_confirmed:
@@ -162,6 +177,7 @@ async def transcribe_meeting(
         consent_confirmed=True,
         consent_note=consent_note,
         retention_until=retention_until,
+        project_id=project_id,
     )
     db.add(meeting)
     await db.commit()

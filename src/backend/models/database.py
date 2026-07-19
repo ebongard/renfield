@@ -39,6 +39,13 @@ class Conversation(Base):
     user_id = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
     speaker_id = Column(Integer, ForeignKey("speakers.id", ondelete="SET NULL"), nullable=True, index=True)
 
+    # Optional business-instance Project scope (Phase 4A). SET NULL so deleting a
+    # project de-scopes the chat rather than cascading it away. Lets a
+    # conversation surface on the project's /projects/{id} timeline.
+    project_id = Column(
+        Integer, ForeignKey("projects.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+
     # Conversation state (survives history truncation)
     context_vars = Column(JSON, nullable=True)   # Pinned structured state (entities, focus)
     summary = Column(Text, nullable=True)         # LLM-generated summary of older messages
@@ -354,7 +361,6 @@ class Meeting(Base):
     ingested into the target KB as ``transcript_document_id``. Gated by
     ``settings.meeting_transcription_enabled``; both instances leave it off.
 
-    NO ``project_id`` / minutes fields yet — those are additive later phases.
     ``consent_confirmed`` is REQUIRED at upload from day one (DE workplace
     recording — designed in, not bolted on).
     """
@@ -364,6 +370,12 @@ class Meeting(Base):
 
     # Ownership (nullable for auth-disabled single-user deploys, mirrors Project).
     owner_user_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
+
+    # Optional business-instance Project scope (Phase 4A). SET NULL so deleting a
+    # project de-scopes the meeting. Surfaces the meeting on /projects/{id} timeline.
+    project_id = Column(
+        Integer, ForeignKey("projects.id", ondelete="SET NULL"), nullable=True, index=True
+    )
 
     # Circles v1 tier. Default 2 = household/team — a meeting is a shared artifact.
     circle_tier = Column(Integer, nullable=False, default=2)

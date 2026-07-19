@@ -120,6 +120,7 @@ export const keys = {
     all: ['projects'] as const,
     list: () => ['projects', 'list'] as const,
     detail: (id: number) => ['projects', 'detail', id] as const,
+    timeline: (id: number) => ['projects', id, 'timeline'] as const,
   },
   meetings: {
     all: ['meetings'] as const,

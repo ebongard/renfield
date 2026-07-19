@@ -591,7 +591,22 @@
     "created": "Erstellt",
     "failedToLoad": "Projekte konnten nicht geladen werden",
     "failedToSave": "Projekt konnte nicht gespeichert werden",
-    "failedToDelete": "Projekt konnte nicht gelöscht werden"
+    "failedToDelete": "Projekt konnte nicht gelöscht werden",
+    "failedToLoadTimeline": "Verlauf konnte nicht geladen werden",
+    "backToList": "Zurück zu den Projekten",
+    "notFound": "Projekt nicht gefunden",
+    "timeline": {
+      "title": "Verlauf",
+      "subtitle": "Dokumente, Besprechungen, Entscheidungen und Chats dieses Projekts",
+      "empty": "Noch keine Aktivität",
+      "emptyDesc": "Sobald Dokumente ingestiert, Besprechungen aufgenommen oder Chats zugeordnet werden, erscheinen sie hier.",
+      "kind": {
+        "document": "Dokument",
+        "meeting": "Besprechung",
+        "decision": "Entscheidung",
+        "chat": "Chat"
+      }
+    }
   },
   "meetings": {
     "title": "Besprechungen",
