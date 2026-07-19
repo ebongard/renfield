@@ -128,11 +128,16 @@ function buildVoiceWsUrl(token: string | null): string {
   // append /ws/voice. Mirror useDeviceConnection's pattern.
   // Token is omitted entirely when null so voice-server's
   // auth_required=False path works for AUTH_ENABLED=false deployments.
+  // VITE_VOICE_CLIENT_ID (when set) is sent as ?client= so a shared
+  // multi-tenant voice-server (AUTH_MODE=registry) routes verification to
+  // this product; omitted → legacy single-tenant voice-servers unaffected.
   const base = getWebSocketUrl().replace(/\/ws$/, '');
-  if (token) {
-    return `${base}/ws/voice?token=${encodeURIComponent(token)}`;
-  }
-  return `${base}/ws/voice`;
+  const clientId = import.meta.env.VITE_VOICE_CLIENT_ID as string | undefined;
+  const params = new URLSearchParams();
+  if (token) params.set('token', token);
+  if (clientId) params.set('client', clientId);
+  const qs = params.toString();
+  return qs ? `${base}/ws/voice?${qs}` : `${base}/ws/voice`;
 }
 
 function bytesToUuid(bytes: Uint8Array): string {

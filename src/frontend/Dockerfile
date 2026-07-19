@@ -63,6 +63,10 @@ ARG VITE_CHAT_STARTERS=
 # /ws/voice WebSocket UI (live partial transcripts, sub-second TTS
 # first-byte). Default unset = legacy REST path (request-response).
 ARG VITE_FEATURE_VOICE_STREAM=
+# Registry client id for a shared multi-tenant voice-server. When set, the
+# webchat /ws/voice connection sends ?client=<id> so the server routes token
+# verification to this product. Unset = omitted (legacy single-tenant path).
+ARG VITE_VOICE_CLIENT_ID=
 # Edition selector for translation overlays. "community" (default) keeps
 # the household-flavored Circles vocabulary (tier 2 = "Household",
 # settings = "Circles & Members"). "pro" loads the de.pro.json /
@@ -89,6 +93,7 @@ ENV VITE_APP_NAME=${VITE_APP_NAME}
 ENV VITE_APP_LOGO_URL=${VITE_APP_LOGO_URL}
 ENV VITE_CHAT_STARTERS=${VITE_CHAT_STARTERS}
 ENV VITE_FEATURE_VOICE_STREAM=${VITE_FEATURE_VOICE_STREAM}
+ENV VITE_VOICE_CLIENT_ID=${VITE_VOICE_CLIENT_ID}
 ENV VITE_APP_EDITION=${VITE_APP_EDITION}
 ENV VITE_APP_TENANT_NAME=${VITE_APP_TENANT_NAME}
 ENV VITE_OIDC_ENABLED=${VITE_OIDC_ENABLED}
