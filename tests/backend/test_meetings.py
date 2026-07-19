@@ -874,6 +874,31 @@ def test_voiceservererror_terminal_vs_transient():
     assert mw._is_transient_error(VoiceServerError("unreachable")) is True  # status None
 
 
+def test_cuda_oom_is_terminal_not_retried():
+    """A CUDA OOM / dead-context error comes back as 500 but must be TERMINAL —
+    retrying the identical job just re-OOMs the shared GPU forever (the reclaim
+    loop). Regression for the meeting-8/9/10 GPU-thrash incident."""
+    import workers.meeting_worker as mw
+    from services.voice_server_client import VoiceServerError
+
+    oom = VoiceServerError(
+        'voice-server transcribe-meeting returned 500: '
+        '{"detail":"transcription failed: CUDA failed with error out of memory"}',
+        status_code=500,
+    )
+    bad_device = VoiceServerError(
+        'returned 500: {"detail":"transcription failed: parallel_for failed: '
+        'cudaErrorInvalidDevice: invalid device ordinal"}',
+        status_code=500,
+    )
+    assert mw._is_transient_error(oom) is False          # 5xx, but GPU-terminal
+    assert mw._is_transient_error(bad_device) is False
+    # A generic 5xx (restart / model-loading) stays retryable.
+    assert mw._is_transient_error(
+        VoiceServerError('returned 500: {"detail":"model still loading"}', status_code=500)
+    ) is True
+
+
 def test_render_marker_makes_identical_transcripts_hash_distinct():
     from services.meeting_pipeline import render_transcript_markdown
 
