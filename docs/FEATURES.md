@@ -110,9 +110,13 @@ Ein minimales **Projekt**-Modell für Business-Instanzen (Phase 1): jedes Projek
 - **Dark by default**: `PROJECTS_ENABLED=false` → alle Routen 404, kein Nav-Eintrag, Household-Instanz byte-identisch. Kein Codebase-Fork — rein additiv hinter dem Flag.
 - **Owner-scoped**: Auth an → nur eigene Projekte; `AUTH_ENABLED=false` (Single-User) sieht alle. Der Anleger besitzt Projekt und KB.
 - **1:1-Invariante** in `services/project_service.py`: frische KB pro Projekt, kollisionssichere KB-Namen über die Projekt-ID, Projekt + KB in einer Transaktion.
-- **Später (nicht Teil dieser Phase)**: Projekt-Timeline, Protokoll-Pipeline (Zusammenfassung/Entscheidungen/Action-Items), Notizen. (Meeting-Transkription + `Meeting`-Modell sind inzwischen gebaut — siehe unten.)
+- **Später (nicht Teil dieser Phase)**: Notizen (als 5. atom_type geplant). Protokoll-Pipeline (Zusammenfassung/Entscheidungen/Action-Items) + Meeting-Transkription sind inzwischen gebaut — siehe unten.
 
 Migration `pc20260713_projects`.
+
+### Projekt-Timeline (Phase 4A, `projects_enabled`, migration `pc20260719_project_links`)
+
+Jedes Projekt hat unter `/projects/{id}` einen **chronologischen Verlauf** (neueste zuerst), der die projekt-zugehörigen Artefakte zu EINEM Feed zusammenführt: **Dokumente** (aus der 1:1-KB des Projekts), **Besprechungen** (`Meeting.project_id`), **Entscheidungen** (aus den bestätigten Minutes eines Meetings flach gezogen) und **Chats** (`Conversation.project_id`). `GET /api/projects/{id}/timeline` (owner-gated 404, paginiert) fragt jede Quelle einzeln ab und merge-sortiert in Python (heterogene Zeilen teilen keine SQL-Projektion), per-Quelle gedeckelt — spiegelt das Presence-Analytics-Single-Scan-Muster als Multi-Source-Merge. Migration `pc20260719_project_links` fügt ein nullable `project_id` (FK `ON DELETE SET NULL`) an `meetings` + `conversations`. Meeting-Upload akzeptiert ein optionales owner-validiertes `project_id`. **Frontend**: `ProjectDetailPage` (Klick-Durchgriff aus der Projektliste, Timeline-Zeilen mit Icon je Typ + Deep-Links nach `/knowledge?doc=` / `/meetings`). Dokumente füllen die Timeline heute schon (Ingest in die Projekt-KB); ein Projekt-Picker in der Meetings/Chat-UI zum Setzen von `project_id` ist ein kleiner Follow-up. Dark by default.
 
 ## Meeting-Transkription + Diarisierung (§2, `MEETING_TRANSCRIPTION_ENABLED` / voice-server `MEETING_ENABLED`, dark by default)
 
