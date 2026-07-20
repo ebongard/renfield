@@ -38,7 +38,16 @@ export default function AuthCallback() {
 
     const code = params.get('code');
     const state = params.get('state');
-    const from = params.get('from') || '/';
+    // Only ever navigate to a same-site absolute path. Reject protocol-relative
+    // (`//evil.com`), backslash-tricks (`/\evil.com`) and any `scheme:` target so
+    // a hostile `from` in the callback URL can't become an open redirect —
+    // defense in depth (the exchange already gates on state, and react-router
+    // would throw on a cross-origin push, but neither should be load-bearing).
+    const rawFrom = params.get('from') || '/';
+    const from =
+      rawFrom.startsWith('/') && !rawFrom.startsWith('//') && !rawFrom.startsWith('/\\')
+        ? rawFrom
+        : '/';
     const { verifier, state: storedState } = readPkce();
 
     // Reject anything we didn't initiate: missing pieces, or a state that does

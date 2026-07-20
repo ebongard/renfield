@@ -76,6 +76,22 @@ describe('AuthCallback (SSO one-time-code exchange)', () => {
     expect(sessionStorage.getItem('renfield_pkce_verifier')).toBeNull();
   });
 
+  it('sanitizes a hostile `from` to an internal path (no open redirect)', async () => {
+    storePkce('a'.repeat(64), 'the-state');
+    searchParams = new URLSearchParams({ code: 'one-time', state: 'the-state', from: '//evil.com' });
+    server.use(
+      http.post(`${BASE_URL}/api/auth/sso/exchange`, () =>
+        HttpResponse.json({ access_token: 'AT', refresh_token: 'RT', token_type: 'bearer', expires_in: 60 })),
+    );
+
+    renderWithProviders(<AuthCallback />);
+
+    // Navigates HOME, never to the protocol-relative off-site target.
+    await waitFor(() => expect(mockNavigate).toHaveBeenCalled());
+    expect(mockNavigate).toHaveBeenCalledWith('/', { replace: true });
+    expect(mockNavigate).not.toHaveBeenCalledWith('//evil.com', expect.anything());
+  });
+
   it('rejects a state mismatch without calling the backend', async () => {
     storePkce('a'.repeat(64), 'my-state');
     searchParams = new URLSearchParams({ code: 'x', state: 'attacker-state' });

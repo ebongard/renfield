@@ -120,17 +120,23 @@ All new surface lives beside the existing provider registry so both Renfield's
 own redirect providers and the Reva emitter share it.
 
 1. **One-time code store** — `services/sso_handoff_store.py`, backed by Redis
-   (already in-cluster). Key `sso:handoff:<code>` → JSON `{user_id, access_token,
-   refresh_token, expires_in, code_challenge, state, provider}`; `SET … EX 60 NX`;
+   (already in-cluster). Key `sso:handoff:<code>` → JSON `{user_id,
+   code_challenge, state, provider}` — a session **reference, NOT the tokens**
+   (the tokens are minted at exchange time, §2, so no JWT ever sits in Redis and a
+   ≤TTL Redis peek yields no usable session). `SET … EX 60 NX` (the write is
+   verified — a collision raises rather than redirecting with an un-stored code);
    read via **`GETDEL`** (atomic single-use — a replayed code finds nothing).
    `code` = 256-bit URL-safe random. No DB table (ephemeral, self-expiring).
 
 2. **`POST /api/auth/sso/exchange`** (`api/routes/auth.py`) — body `{code,
-   code_verifier, state}`. Steps: `GETDEL` the code (404/400 opaque on miss);
-   constant-time check `sha256_b64url(code_verifier) == code_challenge`; check
-   `state`; return `TokenResponse{access_token, refresh_token, expires_in}` —
-   **the same shape `/login` already returns**, so the SPA stores it identically.
-   Rate-limited (`api_rate_limit_auth`) and lockout-aware.
+   code_verifier, state}`. Steps: `GETDEL` the code (opaque 400 on miss/used);
+   constant-time `sha256_b64url(code_verifier) == code_challenge` (verifier is
+   RFC-7636 charset-validated, so a non-ASCII verifier is a clean 400, not a 500);
+   constant-time `state`; re-load + re-validate the user (`is_active`); **mint the
+   access/refresh JWTs now** and return `TokenResponse{access_token,
+   refresh_token, expires_in, must_change_password}` — **the same shape `/login`
+   already returns**, with a current `must_change_password`. Rate-limited
+   (`api_rate_limit_auth`).
 
 3. **Code issuance at the OIDC callback.** Wherever the ProviderResult →
    `post_authenticate` → JWT mint completes (Renfield-side for its own providers;

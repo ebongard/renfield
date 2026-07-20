@@ -361,18 +361,24 @@ async def sso_exchange(
     if not hmac.compare_digest(exchange.state, session.state):
         raise bad
 
-    # The session was minted at callback time; re-check the user is still valid.
+    # Re-validate the user and mint the tokens NOW (not at callback time), so no
+    # token ever sat in Redis and must_change_password reflects current state.
     user = await get_user_by_id(db, session.user_id)
     if not user or not user.is_active:
         raise bad
 
+    access_token = create_access_token(
+        data={"sub": str(user.id), "username": user.username}
+    )
+    refresh_token = create_refresh_token(user.id)
+
     logger.info(f"SSO hand-off exchanged: user={user.username} provider={session.provider!r}")
     return TokenResponse(
-        access_token=session.access_token,
-        refresh_token=session.refresh_token,
+        access_token=access_token,
+        refresh_token=refresh_token,
         token_type="bearer",
-        expires_in=session.expires_in,
-        must_change_password=session.must_change_password,
+        expires_in=settings.access_token_expire_minutes * 60,
+        must_change_password=user.must_change_password,
     )
 
 

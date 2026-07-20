@@ -62,6 +62,10 @@ def test_pkce_s256_roundtrip_and_rejections():
     assert verify_pkce_s256("b" * 64, ch) is False          # wrong verifier
     assert verify_pkce_s256("short", ch) is False            # < 43 chars → rejected
     assert verify_pkce_s256(_VERIFIER, "") is False          # no challenge
+    # Non-ASCII verifier of a valid LENGTH must be rejected as False (not blow up
+    # on encode("ascii") → 500). RFC 7636 restricts the charset to unreserved.
+    assert verify_pkce_s256("ä" * 64, ch) is False
+    assert verify_pkce_s256("a" * 42 + "!", ch) is False     # invalid char
 
 
 async def test_store_is_single_use(fake_redis, monkeypatch):
@@ -70,23 +74,21 @@ async def test_store_is_single_use(fake_redis, monkeypatch):
     )
     monkeypatch.setattr(settings, "sso_handoff_ttl_seconds", 60)
     sess = HandoffSession(
-        user_id=1, access_token="at", refresh_token="rt", expires_in=3600,
-        code_challenge=_challenge_for(_VERIFIER), state="st", provider="entra",
+        user_id=1, code_challenge=_challenge_for(_VERIFIER), state="st", provider="entra",
     )
     code = await issue_handoff_code(sess)
     assert code
     got = await consume_handoff_code(code)
-    assert got is not None and got.access_token == "at" and got.state == "st"
+    assert got is not None and got.user_id == 1 and got.state == "st"
     # Second consume finds nothing — single use (atomic GETDEL).
     assert await consume_handoff_code(code) is None
     assert await consume_handoff_code("never-issued") is None
 
 
-async def _issue(db, *, state="st", challenge=None):
+async def _issue(db, *, state="st", challenge=None, user_id=1):
     from services.sso_handoff_store import HandoffSession, issue_handoff_code
     return await issue_handoff_code(HandoffSession(
-        user_id=1, access_token="the-access", refresh_token="the-refresh",
-        expires_in=1234, code_challenge=challenge or _challenge_for(_VERIFIER),
+        user_id=user_id, code_challenge=challenge or _challenge_for(_VERIFIER),
         state=state, provider="entra",
     ))
 
@@ -106,9 +108,33 @@ async def test_exchange_happy_path(async_client, db_session, fake_redis, monkeyp
         "code": code, "code_verifier": _VERIFIER, "state": "st"})
     assert r.status_code == 200, r.text
     body = r.json()
-    assert body["access_token"] == "the-access"
-    assert body["refresh_token"] == "the-refresh"
-    assert body["expires_in"] == 1234 and body["token_type"] == "bearer"
+    # Tokens are minted fresh at exchange time (never stored in Redis) — decode
+    # the access token and confirm it's for the resolved user.
+    from services.auth_service import decode_token
+    payload = decode_token(body["access_token"])
+    assert payload and payload["sub"] == "1"
+    assert body["refresh_token"] and body["token_type"] == "bearer"
+    assert body["expires_in"] == settings.access_token_expire_minutes * 60
+
+
+async def test_exchange_inactive_user_is_rejected(async_client, db_session, fake_redis, monkeypatch):
+    """Re-validation at exchange time: a user deactivated after the code was
+    issued cannot exchange it (opaque 400)."""
+    monkeypatch.setattr(settings, "sso_handoff_enabled", True)
+    db_session.add(User(id=1, username="off", password_hash="x", is_active=False, role_id=1))
+    await db_session.commit()
+    code = await _issue(db_session)
+    assert (await async_client.post("/api/auth/sso/exchange", json={
+        "code": code, "code_verifier": _VERIFIER, "state": "st"})).status_code == 400
+
+
+async def test_exchange_non_ascii_verifier_is_400_not_500(async_client, db_session, fake_redis, monkeypatch):
+    """A non-ASCII verifier of valid length is a clean opaque 400, never a 500."""
+    monkeypatch.setattr(settings, "sso_handoff_enabled", True)
+    await _seed_user(db_session)
+    code = await _issue(db_session)
+    assert (await async_client.post("/api/auth/sso/exchange", json={
+        "code": code, "code_verifier": "ä" * 64, "state": "st"})).status_code == 400
 
 
 async def test_exchange_replay_is_rejected(async_client, db_session, fake_redis, monkeypatch):

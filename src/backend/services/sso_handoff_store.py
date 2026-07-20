@@ -24,6 +24,7 @@ import base64
 import hashlib
 import hmac
 import json
+import re
 import secrets
 from dataclasses import dataclass
 
@@ -33,6 +34,18 @@ from services.redis_client import get_redis
 from utils.config import settings
 
 _KEY_PREFIX = "sso:handoff:"
+
+# RFC 7636 code_verifier grammar: 43-128 chars from the unreserved set. Enforcing
+# the charset (not just the length) means a non-ASCII verifier is rejected here as
+# a clean False rather than blowing up `verifier.encode("ascii")` downstream with
+# an uncaught UnicodeError (which would 500 instead of the uniform opaque 400).
+_VERIFIER_RE = re.compile(r"^[A-Za-z0-9._~-]{43,128}$")
+
+
+class HandoffCodeCollision(RuntimeError):
+    """A freshly generated code already existed (astronomically unlikely at 256
+    bits). Raised so the caller regenerates rather than redirecting with a code
+    that was never actually stored (a silent, un-exchangeable login)."""
 
 
 def s256_challenge(verifier: str) -> str:
@@ -44,24 +57,26 @@ def s256_challenge(verifier: str) -> str:
 def verify_pkce_s256(verifier: str, challenge: str) -> bool:
     """Constant-time check that ``verifier`` matches the stored S256 ``challenge``.
 
-    A too-short verifier is rejected outright (RFC 7636 requires 43-128 chars),
-    so a caller can't degrade PKCE by sending a trivial verifier."""
-    if not verifier or not challenge or not (43 <= len(verifier) <= 128):
+    Rejects a verifier that violates the RFC 7636 grammar (wrong length OR
+    non-unreserved chars) outright, so a caller can't degrade PKCE with a trivial
+    verifier and a non-ASCII verifier can't reach `encode("ascii")`."""
+    if not challenge or not verifier or not _VERIFIER_RE.match(verifier):
         return False
     return hmac.compare_digest(s256_challenge(verifier), challenge)
 
 
 @dataclass(frozen=True)
 class HandoffSession:
-    """The minted session stashed under a one-time code (what /exchange returns)."""
+    """A session *reference* stashed under a one-time code — NOT the tokens.
+
+    The exchange endpoint mints the access/refresh JWTs fresh at exchange time
+    from ``user_id`` (re-validating the user), so no token ever sits in Redis and
+    the returned ``must_change_password`` is always current. Redis holds only the
+    resolved identity + the PKCE/CSRF binding for the ≤TTL window."""
     user_id: int
-    access_token: str
-    refresh_token: str
-    expires_in: int
     code_challenge: str  # S256(code_verifier), base64url, no padding
     state: str
     provider: str
-    must_change_password: bool = False
 
 
 def _key(code: str) -> str:
@@ -73,22 +88,24 @@ async def issue_handoff_code(session: HandoffSession) -> str:
 
     The code is a 256-bit URL-safe token — the only thing that rides in the
     redirect URL. Called by the OIDC/redirect-provider callback (the emitter)
-    after it has minted the app session. Caller redirects to
+    after it has resolved the user. Caller redirects to
     ``…/auth/callback?code=<code>&state=<session.state>``.
+
+    Raises :class:`HandoffCodeCollision` if the NX write finds the code already
+    present, so the emitter never redirects with an un-stored (dead) code.
     """
     code = secrets.token_urlsafe(32)  # 256 bits
     payload = json.dumps({
         "user_id": session.user_id,
-        "access_token": session.access_token,
-        "refresh_token": session.refresh_token,
-        "expires_in": session.expires_in,
         "code_challenge": session.code_challenge,
         "state": session.state,
         "provider": session.provider,
-        "must_change_password": session.must_change_password,
     })
-    # NX so a (astronomically unlikely) code collision never clobbers a live one.
-    await get_redis().set(_key(code), payload, ex=settings.sso_handoff_ttl_seconds, nx=True)
+    stored = await get_redis().set(
+        _key(code), payload, ex=settings.sso_handoff_ttl_seconds, nx=True,
+    )
+    if not stored:
+        raise HandoffCodeCollision(code)
     return code
 
 
@@ -110,13 +127,9 @@ async def consume_handoff_code(code: str) -> HandoffSession | None:
         d = json.loads(raw)
         return HandoffSession(
             user_id=int(d["user_id"]),
-            access_token=d["access_token"],
-            refresh_token=d["refresh_token"],
-            expires_in=int(d["expires_in"]),
             code_challenge=d["code_challenge"],
             state=d["state"],
             provider=d.get("provider", ""),
-            must_change_password=bool(d.get("must_change_password", False)),
         )
     except (json.JSONDecodeError, KeyError, ValueError) as e:
         logger.warning(f"sso handoff: corrupt payload discarded: {e}")
