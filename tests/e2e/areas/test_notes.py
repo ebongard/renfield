@@ -46,20 +46,27 @@ def _delete_note(page, title: str) -> None:
     page.get_by_role("heading", name=title).wait_for(state="detached", timeout=15_000)
 
 
+def _open_notes(page):
+    """Open the Notes surface. Works whether `/notes` is the flat page (workspace
+    off) or redirects into the `/wissen/notes` lens (workspace on) — anchor on the
+    create form ("Notiz anlegen"), which is present in both layouts."""
+    page.goto(f"{BASE_URL}/notes", wait_until="networkidle", timeout=20_000)
+    page.get_by_role("button", name="Notiz anlegen").wait_for(timeout=15_000)
+
+
 def test_notes_nav_visible(authenticated_page):
-    """The Notizen nav entry renders for an authenticated user (feature on)."""
-    authenticated_page.goto(f"{BASE_URL}/notes", wait_until="networkidle", timeout=20_000)
-    # PageHeader title confirms the route rendered (not a login redirect).
-    authenticated_page.get_by_role("heading", name="Notizen").first.wait_for(timeout=15_000)
+    """The Notes surface renders for an authenticated user (feature on)."""
+    _open_notes(authenticated_page)
+    # A "Notizen" link exists in both layouts (standalone nav OR the Wissen lens rail).
     assert authenticated_page.get_by_role("link", name="Notizen").first.is_visible()
+    assert authenticated_page.get_by_placeholder("Titel").is_visible()
 
 
 def test_notes_create_link_backlink_delete(authenticated_page):
     """Create two notes, link Alpha -> [[Beta]], verify the backlink on Beta,
     then delete both. Full KG-substrate link round trip through the real UI."""
     page = authenticated_page
-    page.goto(f"{BASE_URL}/notes", wait_until="networkidle", timeout=20_000)
-    page.get_by_role("heading", name="Notizen").first.wait_for(timeout=15_000)
+    _open_notes(page)
 
     # Defensive cleanup of any leftover from a previous aborted run.
     for title in (_ALPHA, _BETA):
