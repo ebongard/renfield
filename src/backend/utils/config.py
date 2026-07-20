@@ -497,6 +497,10 @@ class Settings(BaseSettings):
     # surface (via /api/config/features). Off => byte-identical. See
     # docs/design/notes-atom.md.
     notes_enabled: bool = False
+    # Dense semantic search over notes (RRF-fused with the FTS branch). When off,
+    # note retrieval is FTS-only (4B.1 behavior). Requires notes_enabled + an
+    # embed model; degrades gracefully to FTS if the embed call fails.
+    notes_semantic_search_enabled: bool = True
     # Meeting transcription §2 — upload a multi-speaker recording -> diarized,
     # speaker-attributed transcript in the KB. Gates the /api/meetings routes
     # (404 when off), the meeting worker, and the frontend surface (via

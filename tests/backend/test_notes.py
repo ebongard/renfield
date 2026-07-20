@@ -181,6 +181,48 @@ async def test_duplicate_title_conflicts_409(async_client, monkeypatch):
     assert clash.status_code == 409
 
 
+def test_rrf_fuse_combines_fts_and_dense_branches():
+    """RRF fusion: a note ranking well in BOTH branches beats one in a single
+    branch (pure function — no DB)."""
+    from types import SimpleNamespace
+
+    from services.note_retrieval import NoteRetrieval
+
+    def row(i: int):
+        return SimpleNamespace(
+            id=i, atom_id=f"a{i}", owner_user_id=1, project_id=None,
+            title=f"t{i}", body="b", circle_tier=0,
+        )
+
+    nr = NoteRetrieval(db=None)  # type: ignore[arg-type]  (_rrf_fuse ignores db)
+    fts = [row(1), row(2), row(3)]     # id1 best lexically
+    dense = [row(3), row(1), row(4)]   # id3 best semantically
+    out = nr._rrf_fuse([fts, dense], top_k=3)
+    ids = [d["id"] for d in out]
+    # 1 (ranks 1+2) and 3 (ranks 3+1) appear in both → lead; 2 and 4 (single list) trail.
+    assert set(ids[:2]) == {1, 3}
+    assert len(out) == 3
+    assert out[0]["similarity"] >= out[1]["similarity"]  # fused score, descending
+
+
+async def test_create_skips_embedding_on_sqlite_but_stays_fts_searchable(
+    async_client, db_session, monkeypatch
+):
+    """Semantic search ON but the sqlite harness has no pgvector → embed-on-write
+    is skipped gracefully (embedding stays NULL, no crash) and the note is still
+    found via FTS. Postgres dense retrieval is verified on deploy."""
+    _enable(monkeypatch, auth=False)
+    monkeypatch.setattr(settings, "notes_semantic_search_enabled", True)
+    resp = await async_client.post("/api/notes", json={"title": "Emb", "body": "hallo welt"})
+    assert resp.status_code == 200
+    note = await db_session.get(Note, resp.json()["id"])
+    assert note is not None and note.embedding is None  # skipped on sqlite
+
+    from services.note_retrieval import NoteRetrieval
+    hits = await NoteRetrieval(db_session).search("hallo", asker_id=None, top_k=5)
+    assert any(h["title"] == "Emb" for h in hits)
+
+
 async def test_note_retrieval_finds_and_circle_filters(async_client, db_session, monkeypatch):
     from services.note_retrieval import NoteRetrieval
 

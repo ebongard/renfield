@@ -2246,10 +2246,11 @@ class Note(Base):
     substrate (a ``kg_entities`` mirror per note + ``kg_relations`` predicate
     ``note_link``) in Phase 4B.2 — see ``docs/design/notes-atom.md``.
 
-    **4B.1 retrieval is FTS-only** (an FTS ``search_vector`` over title+body, like
-    ``document_facts``); a dense ``embedding`` column + halfvec HNSW index is a
-    documented follow-up (avoids the 768/2560 dimension-split migration in the
-    first slice).
+    **Retrieval is hybrid** (dense-embedding slice): a dense ``embedding`` (halfvec
+    HNSW, queried via a halfvec cast) RRF-fused with the lexical ``search_vector``
+    FTS over title+body — mirrors the memory/RAG dense pattern. 4B.1 shipped
+    FTS-only; the embedding column + index were added in the dense slice
+    (``pc20260721``). Gated by ``notes_semantic_search_enabled``.
     """
     __tablename__ = "notes"
 
@@ -2260,6 +2261,15 @@ class Note(Base):
     project_id = Column(Integer, ForeignKey("projects.id", ondelete="SET NULL"), nullable=True, index=True)
     title = Column(String(255), nullable=False)
     body = Column(Text, nullable=False, default="", server_default="")
+    # Dense semantic retrieval (Phase 4B — dense-embedding slice). Written by
+    # NoteService from title+body via get_embed_client() (best-effort — NULL when
+    # the embed model is unreachable, and FTS still covers the note). Queried by
+    # NoteRetrieval's dense branch via a halfvec cast (halfvec HNSW index in the
+    # migration — the document_chunks pattern for >2000-dim embeddings).
+    embedding = Column(
+        Vector(EMBEDDING_DIMENSION) if PGVECTOR_AVAILABLE else Text,
+        nullable=True,
+    )
     # FTS over title+body — a GENERATED tsvector column created in the migration
     # (SQLAlchemy never writes it; FetchedValue marks it read-only, mirrors
     # DocumentChunk.search_vector / messages.search_vector).

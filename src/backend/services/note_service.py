@@ -17,6 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.database import ATOM_TYPE_NOTE, Note
 from services.atom_service import AtomService
+from utils.config import settings
 
 
 class NoteTitleConflict(Exception):
@@ -48,6 +49,30 @@ async def _sync_links_best_effort(db: AsyncSession, note: Note, owner_id: int | 
             await sync_note_links(db, note, owner_id=owner_id)
     except Exception as e:  # noqa: BLE001
         logger.warning(f"note {note.id}: [[link]] sync failed (note saved anyway): {e}")
+
+
+async def _embed_note_best_effort(db: AsyncSession, note: Note) -> None:
+    """Compute + store the note's dense embedding from title+body (Postgres only).
+
+    Best-effort: an unreachable embed model leaves ``embedding`` NULL and the FTS
+    branch still covers the note. Skipped on sqlite (no pgvector — the column is
+    Text) and when ``notes_semantic_search_enabled`` is off. The value is written
+    on the same flush the caller later commits."""
+    if not settings.notes_semantic_search_enabled:
+        return
+    if db.bind is None or db.bind.dialect.name != "postgresql":
+        return
+    text_in = f"{note.title}\n{note.body or ''}".strip()
+    if not text_in:
+        return
+    try:
+        from utils.llm_client import get_embed_client
+        client = get_embed_client()
+        resp = await client.embeddings(model=settings.ollama_embed_model, prompt=text_in)
+        note.embedding = resp.embedding
+        await db.flush()
+    except Exception as e:  # noqa: BLE001
+        logger.warning(f"note {note.id}: embedding failed (FTS still covers it): {e}")
 
 
 async def create_note(
@@ -84,6 +109,7 @@ async def create_note(
     db.add(note)
     await db.flush()
     await atom_svc.finalize_source_id(atom_id, note.id)
+    await _embed_note_best_effort(db, note)
     await _sync_links_best_effort(db, note, owner_id)
     return note
 
@@ -117,8 +143,9 @@ async def update_note(
         # but the in-session ORM object is stale — refresh it to match.
         await db.refresh(note, attribute_names=["circle_tier"])
     await db.flush()
-    # Re-sync links when the title (the [[link]] key) or body changed.
+    # Re-embed + re-sync links when the content (title/body) changed.
     if title is not None or body is not None:
+        await _embed_note_best_effort(db, note)
         await _sync_links_best_effort(db, note, note.owner_user_id)
     return note
 
