@@ -17,6 +17,8 @@ Dieses Dokument beschreibt das Zusammenspiel. Für die einzelnen Subsysteme exis
 
 Jede dieser Zeilen trägt zwei denormalisierte Spalten: `atom_id` (Verweis auf die polymorphe Registry) und `circle_tier`. Das lässt ein Retrieval in einem einzigen SQL-Statement sowohl joinen als auch zugriffskontrollieren.
 
+> **Der Satz ist inzwischen größer als „vier".** Der polymorphe RRF-Store fusioniert heute weitere strukturierte Atom-Quellen: **Schicht-A-Fakten** (`document_facts`, `atom_type='document_fact'`), **prozedurale Skills** (`procedural_skills`), und — Phase 4B — handgeschriebene **Notizen** (`notes`, `atom_type='note'`) als erstklassiger, kreis-getierter Atom mit `[[bidirektionalen Verlinkungen]]` auf dem KG-Substrat (Notiz ↔ `kg_entities`, Link ↔ `kg_relations`). Siehe `docs/design/notes-atom.md` + `docs/FEATURES.md`. Das Grundprinzip — je eine Quelltabelle, gehoben über `atom_id` + `circle_tier` in eine gemeinsame zugriffskontrollierte Retrieval-Ebene — bleibt für alle identisch.
+
 ---
 
 ## Gemeinsame Identität — der Atoms-Layer
