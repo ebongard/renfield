@@ -121,7 +121,9 @@
       "oidc_idp_error": "Identitätsanbieter hat einen Fehler zurückgegeben. Bitte erneut versuchen.",
       "oidc_cancelled": "Anmeldung wurde abgebrochen.",
       "oidc_internal": "Ein interner Fehler ist aufgetreten. Bitte erneut versuchen oder Support kontaktieren."
-    }
+    },
+    "completingSignIn": "Anmeldung wird abgeschlossen …",
+    "signInFailed": "Anmeldung fehlgeschlagen. Bitte erneut versuchen."
   },
   "chat": {
     "title": "Chat",

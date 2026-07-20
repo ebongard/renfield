@@ -118,7 +118,9 @@
       "oidc_idp_error": "Il provider di identità ha restituito un errore. Riprova.",
       "oidc_cancelled": "Accesso annullato.",
       "oidc_internal": "Errore interno. Riprova o contatta il supporto."
-    }
+    },
+    "completingSignIn": "Completamento accesso …",
+    "signInFailed": "Accesso non riuscito. Riprova."
   },
   "chat": {
     "title": "Chat",

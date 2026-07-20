@@ -931,6 +931,15 @@ class Settings(BaseSettings):
     access_token_expire_minutes: int = 60 * 24  # 24 hours
     refresh_token_expire_days: int = 30
 
+    # SSO token hand-off hardening — replaces the URL-fragment token hand-off
+    # (implicit flow) with a one-time, single-use, PKCE-bound code exchanged over
+    # POST (a token never rides in a URL). Gates POST /api/auth/sso/exchange
+    # (404 when off) and the issue helper. Dark by default; the legacy fragment
+    # path stays until every emitter emits ?code=. See
+    # docs/design/sso-token-handoff-hardening.md.
+    sso_handoff_enabled: bool = False
+    sso_handoff_ttl_seconds: int = 60  # single-use code lifetime
+
     # Password policy
     password_min_length: int = 8
 

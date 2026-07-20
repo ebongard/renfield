@@ -21,6 +21,7 @@ const TasksPage = lazy(() => import('./pages/TasksPage'));
 const ProjectsPage = lazy(() => import('./pages/ProjectsPage'));
 const ProjectDetailPage = lazy(() => import('./pages/ProjectDetailPage'));
 const NotesPage = lazy(() => import('./pages/NotesPage'));
+const AuthCallback = lazy(() => import('./pages/AuthCallback'));
 const MeetingsPage = lazy(() => import('./pages/MeetingsPage'));
 const CameraPage = lazy(() => import('./pages/CameraPage'));
 const HomeAssistantPage = lazy(() => import('./pages/HomeAssistantPage'));
@@ -77,6 +78,8 @@ function AppRoutes() {
       {/* Public routes without layout */}
       <Route path="/login" element={<LoginPage />} />
       <Route path="/register" element={<RegisterPage />} />
+      {/* SSO one-time-code callback (token-in-URL replacement) — no layout. */}
+      <Route path="/auth/callback" element={<AuthCallback />} />
 
       {/* Fullscreen wall-display kiosk — deliberately OUTSIDE the app Layout
           (no sidebar/header). Admin-gated (auth-off = open, like the board). */}

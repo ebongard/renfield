@@ -121,7 +121,9 @@
       "oidc_idp_error": "Identity provider returned an error. Try again.",
       "oidc_cancelled": "Login was cancelled.",
       "oidc_internal": "An internal error occurred. Try again or contact support."
-    }
+    },
+    "completingSignIn": "Completing sign-in …",
+    "signInFailed": "Sign-in failed. Please try again."
   },
   "chat": {
     "title": "Chat",
