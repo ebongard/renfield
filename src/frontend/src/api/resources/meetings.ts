@@ -55,7 +55,8 @@ async function fetchMeetings(): Promise<Meeting[]> {
   return Array.isArray(response.data) ? response.data : [];
 }
 
-async function uploadMeetingRequest(input: MeetingUploadInput): Promise<Meeting> {
+// Exported for the timeout regression test (see meetings.upload.test.ts).
+export async function uploadMeetingRequest(input: MeetingUploadInput): Promise<Meeting> {
   const formData = new FormData();
   formData.append('audio', input.audio);
   formData.append('consent_confirmed', String(input.consentConfirmed));
@@ -64,6 +65,11 @@ async function uploadMeetingRequest(input: MeetingUploadInput): Promise<Meeting>
   if (input.consentNote) formData.append('consent_note', input.consentNote);
   const response = await apiClient.post<Meeting>('/api/meetings/transcribe', formData, {
     headers: { 'Content-Type': 'multipart/form-data' },
+    // Meeting recordings are large (multi-hour → hundreds of MB). The shared
+    // apiClient default (30s) aborts a big/slow upload client-side before it
+    // finishes — no request completes, no meeting row, no server error. Disable
+    // the timeout for THIS request so the upload runs to completion.
+    timeout: 0,
   });
   return response.data;
 }
