@@ -25,6 +25,16 @@ from voice_server.config import settings
 logger = logging.getLogger(__name__)
 
 
+def cap_clip(audio: np.ndarray, max_samples: int) -> np.ndarray:
+    """Return a CENTERED window of at most ``max_samples`` (skips a noisy
+    intro/outro); passes a short clip through. PURE — fixture-tested. Bounds the
+    ECAPA input so its GPU activations can't balloon on a multi-minute clip."""
+    if max_samples <= 0 or audio.size <= max_samples:
+        return audio
+    start = (audio.size - max_samples) // 2
+    return audio[start:start + max_samples]
+
+
 class SpeakerService:
     def __init__(self) -> None:
         self._session = None
@@ -91,6 +101,12 @@ class SpeakerService:
             raise RuntimeError("SpeakerService not ready")
         if audio_pcm.size == 0:
             raise ValueError("empty audio")
+
+        # Cap the clip: ECAPA gains nothing past ~30 s but its TDNN activations
+        # grow with input length (a multi-minute clip needs GBs of GPU in a single
+        # conv node, retained by onnxruntime's arena — the meeting OOM). A meeting
+        # concatenates a speaker's WHOLE audio, so this cap is load-bearing.
+        audio_pcm = cap_clip(audio_pcm, int(settings.speaker_embed_max_seconds * 16000))
 
         wave = torch.from_numpy(audio_pcm.astype(np.float32)).unsqueeze(0)
         feats = self._encoder.mods.compute_features(wave)

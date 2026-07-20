@@ -3,6 +3,21 @@
 Releases via `bin/release-voice-server.sh` — the script refuses to release a
 version without a section here. Pushed digests live in `RELEASES.md`.
 
+## [0.3.6] — 2026-07-20
+
+- **THE meeting-OOM root fix: cap the ECAPA embedding input.** Traced the 14 GB
+  balloon by elimination — whisper peaks ~1 GB and frees on `del`; pyannote held
+  only 86 MB (per the OOM's own "86 MiB by PyTorch, 15.27 GiB non-PyTorch"). The
+  hog is **ECAPA on onnxruntime-CUDA**: a meeting concatenates a speaker's WHOLE
+  audio and feeds it to ECAPA, whose TDNN activations grow with length — a 15-min
+  clip needs **>3 GB in a single conv `Pad` node** (measured), retained by
+  onnxruntime's arena. Speaker embeddings gain nothing past ~30 s, so
+  `speaker_service` now caps the clip to a centered `speaker_embed_max_seconds`
+  (30 s) window — defense-in-depth in the shared service (live STT already sends
+  short clips). New pure `cap_clip` helper (fixture-tested). This, not v0.3.5's
+  chunking, is what stops the OOM; chunking stays as multi-hour hygiene for
+  pyannote/whisper.
+
 ## [0.3.5] — 2026-07-20
 
 - **Chunked meeting transcription (bounded GPU peak, multi-hour).** A recording

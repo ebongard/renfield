@@ -113,6 +113,12 @@ class Settings(BaseSettings):
     # Speaker (D4)
     speaker_model_path: Path = Path("/mnt/llm/voice/ecapa_tdnn.onnx")
     speaker_providers: list[str] = ["CUDAExecutionProvider", "CPUExecutionProvider"]
+    # Cap the audio fed to ECAPA. The embedding is trained on ~3 s utterances and
+    # doesn't improve past ~30 s, but the TDNN's GPU activations grow with input
+    # length (a 15-min clip needs >3 GB in a single conv node, retained by
+    # onnxruntime's arena → the meeting-transcription OOM). A meeting concatenates
+    # a speaker's WHOLE audio, so this cap is load-bearing, not just hygiene.
+    speaker_embed_max_seconds: float = 30.0
 
     # Meeting diarization (§2) — pyannote turns + faster-whisper words →
     # speaker-attributed segments. The pyannote pipeline is loaded at warmup
@@ -123,12 +129,14 @@ class Settings(BaseSettings):
     meeting_enabled: bool = False
     meeting_diarization_model: str = "pyannote/speaker-diarization-3.1"
     meeting_whisper_model: str = ""
-    # Chunked transcription: recordings longer than this are diarized + ASR'd in
-    # bounded time-windows (peak VRAM ∝ window, not whole recording — so a
-    # multi-hour meeting fits a shared GPU and CTranslate2 doesn't retain a huge
-    # workspace). Chunk-local speakers are stitched into global ones by ECAPA
-    # cosine ≥ meeting_speaker_match_threshold. 0 disables chunking (single pass).
-    meeting_chunk_seconds: int = 480          # 8 min → ~3-4 GB peak
+    # Chunked transcription BACKSTOP for pathologically-long recordings. With the
+    # ECAPA input cap (speaker_embed_max_seconds), single-pass is memory-safe for
+    # normal meetings — and pyannote's GLOBAL diarization is more accurate than
+    # per-chunk diarize + cross-chunk stitch. So chunking only kicks in past this
+    # threshold, where whole-recording pyannote/whisper could get unwieldy; then
+    # chunk-local speakers are stitched by ECAPA cosine ≥ the threshold below.
+    # 0 disables chunking entirely (always single pass).
+    meeting_chunk_seconds: int = 3600         # ≤1 h → accurate single pass
     meeting_speaker_match_threshold: float = 0.55
     # HF token for the gated pyannote model at warmup (offline-first: the model
     # is baked into the image, so this only matters if the cache is cold).
