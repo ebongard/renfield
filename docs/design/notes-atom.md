@@ -147,8 +147,16 @@ indexes.
   are searchable + tiered. NO links yet.
 - **4B.2 — `[[links]]`:** parser + resolve (Option A or B) + backlinks + timeline
   5th source + `/wissen/graph` note nodes.
-- **4B.3 — editor polish:** markdown preview, `[[ ]]` typeahead, backlinks panel,
-  Notizen lens.
+- **4B.3 — editor polish (SHIPPED):** markdown preview + card rendering
+  (`react-markdown` + `remark-gfm` + a `remarkWikilink` plugin → `[[Target]]`
+  chips; `NoteMarkdown` renders to real React elements so the strict CSP holds,
+  scoped `.note-md` styling since no typography plugin), `[[ ]]` **title
+  typeahead** in the editor (`NoteBodyEditor` — dropdown over existing note
+  titles, ↑↓/Enter/click insert), backlinks panel (already in 4B.2), and the
+  **`/wissen` Notizen lens** (`lenses.ts` `notizen`, `note`→`notes` segment,
+  `/notes`→`/wissen/notes` redirect + nav collapse when the workspace is on).
+  Deferred: a dedicated `note` branch in the Wissen detail drawer (generic
+  fallback works today) + dense-embedding semantic search (4B.1 shipped FTS-only).
 
 **Gate:** `notes_enabled` (opt-in/dark), like every other feature.
 

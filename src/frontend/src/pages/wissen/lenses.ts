@@ -5,6 +5,7 @@ import {
   Brain,
   CalendarClock,
   Inbox,
+  NotebookPen,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import type { AtomType } from '../../api/resources/brain';
@@ -71,6 +72,14 @@ export const LENSES: LensDef[] = [
     labelKey: 'lens.erinnerungen',
     icon: Brain,
     atomTypes: ['conversation_memory'],
+  },
+  {
+    key: 'notizen',
+    segment: 'notes',
+    labelKey: 'lens.notizen',
+    icon: NotebookPen,
+    feature: 'notes',
+    atomTypes: ['note'],
   },
   {
     key: 'fristen',

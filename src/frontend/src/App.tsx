@@ -114,7 +114,9 @@ function AppRoutes() {
                 </ProtectedRoute>
               } />
             )}
-            {notesEnabled && (
+            {/* Flat /notes only when the unified workspace is OFF; when it's on,
+                /notes redirects into the Notizen lens (see the wissen branch). */}
+            {notesEnabled && !wissenWorkspace && (
               <Route path="/notes" element={
                 <ProtectedRoute>
                   <NotesPage />
@@ -172,6 +174,13 @@ function AppRoutes() {
                     <Route path="graph" element={<KnowledgeGraphPage />} />
                   )}
                   <Route path="erinnerungen" element={<MemoryPage />} />
+                  {notesEnabled && (
+                    <Route path="notes" element={
+                      <ProtectedRoute>
+                        <NotesPage />
+                      </ProtectedRoute>
+                    } />
+                  )}
                   <Route path="fristen" element={<ObligationsPage />} />
                   <Route path="review" element={
                     <ProtectedRoute>
@@ -180,6 +189,9 @@ function AppRoutes() {
                   } />
                 </Route>
                 {/* Old corpus routes → workspace lenses (search + hash preserved). */}
+                {notesEnabled && (
+                  <Route path="/notes" element={<RedirectPreserving to="/wissen/notes" />} />
+                )}
                 <Route path="/knowledge" element={<RedirectPreserving to="/wissen/dokumente" />} />
                 <Route path="/memory" element={<RedirectPreserving to="/wissen/erinnerungen" />} />
                 <Route path="/knowledge-graph" element={<RedirectPreserving to="/wissen/graph" />} />

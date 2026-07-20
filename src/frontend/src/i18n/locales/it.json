@@ -1837,7 +1837,8 @@
       "tier": "Visibilità",
       "openInDocs": "Apri in Documenti",
       "openInGraph": "Apri nel Grafo"
-    }
+    },
+    "notizen": "Note"
   },
   "kiosk": {
     "loading": "Attivazione del centro di comando…",
@@ -1892,5 +1893,11 @@
       "entities": "Entità",
       "feedback": "Feedback"
     }
+  },
+  "notes": {
+    "preview": "Anteprima",
+    "emptyPreview": "Niente da mostrare",
+    "edit": "Modifica",
+    "cancel": "Annulla"
   }
 }

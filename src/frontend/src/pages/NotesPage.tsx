@@ -1,18 +1,31 @@
-import { useState, type FormEvent } from 'react';
+import { useMemo, useState, type FormEvent } from 'react';
 import { useTranslation } from 'react-i18next';
 import {
-  NotebookPen, Loader, XCircle, Plus, Pencil, Trash2, Check, X,
+  NotebookPen, Loader, XCircle, Plus, Pencil, Trash2, Check, X, Eye,
 } from 'lucide-react';
 
 import { ArrowUpRight, ArrowDownLeft } from 'lucide-react';
 
 import PageHeader from '../components/PageHeader';
 import TierBadge from '../components/TierBadge';
+import NoteMarkdown from '../components/NoteMarkdown';
+import NoteBodyEditor from '../components/NoteBodyEditor';
 import { formatDateTime } from '../utils/datetime';
 import {
   useNotesQuery, useCreateNote, useUpdateNote, useDeleteNote, useNoteLinks,
   type Note, type NoteLink,
 } from '../api/resources/notes';
+
+/** Scroll to (and briefly highlight) the card of the note titled `title`. */
+function scrollToNoteTitle(title: string, notes: Note[]): void {
+  const target = notes.find((n) => n.title.toLowerCase() === title.toLowerCase());
+  if (!target) return;
+  const el = document.getElementById(`note-card-${target.id}`);
+  if (!el) return;
+  el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  el.classList.add('ring-2', 'ring-primary-400');
+  window.setTimeout(() => el.classList.remove('ring-2', 'ring-primary-400'), 1500);
+}
 
 /** Outgoing [[links]] + backlinks for a note. Dangling links (note_id null)
  *  render muted; resolved links are plain chips. */
@@ -57,11 +70,18 @@ function NoteLinksPanel({ noteId, visible }: { noteId: number; visible: boolean 
 }
 
 /** One note card: read view + inline edit + inline-confirm delete. */
-function NoteCard({ note }: { note: Note }) {
+function NoteCard({
+  note, titles, onOpenNote,
+}: {
+  note: Note;
+  titles: string[];
+  onOpenNote: (title: string) => void;
+}) {
   const { t } = useTranslation();
   const update = useUpdateNote();
   const del = useDeleteNote();
   const [editing, setEditing] = useState(false);
+  const [preview, setPreview] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [title, setTitle] = useState(note.title);
   const [body, setBody] = useState(note.body);
@@ -86,7 +106,7 @@ function NoteCard({ note }: { note: Note }) {
   };
 
   return (
-    <div className="card">
+    <div id={`note-card-${note.id}`} className="card transition-shadow">
       {editing ? (
         <div className="space-y-2">
           <input
@@ -96,13 +116,37 @@ function NoteCard({ note }: { note: Note }) {
             aria-label={t('notes.titlePlaceholder')}
             maxLength={255}
           />
-          <textarea
-            className="input font-mono text-sm"
-            value={body}
-            onChange={(e) => setBody(e.target.value)}
-            aria-label={t('notes.bodyPlaceholder')}
-            rows={6}
-          />
+          <div className="flex items-center gap-3 text-xs">
+            <button
+              type="button"
+              className={preview ? 'text-gray-500 dark:text-gray-400' : 'font-semibold text-primary-600 dark:text-primary-400'}
+              onClick={() => setPreview(false)}
+            >
+              {t('notes.edit')}
+            </button>
+            <button
+              type="button"
+              className={`inline-flex items-center gap-1 ${preview ? 'font-semibold text-primary-600 dark:text-primary-400' : 'text-gray-500 dark:text-gray-400'}`}
+              onClick={() => setPreview(true)}
+            >
+              <Eye className="w-3.5 h-3.5" /> {t('notes.preview')}
+            </button>
+          </div>
+          {preview ? (
+            <div className="input min-h-24">
+              {body.trim()
+                ? <NoteMarkdown body={body} onWikilink={onOpenNote} />
+                : <span className="text-sm text-gray-400">{t('notes.emptyPreview')}</span>}
+            </div>
+          ) : (
+            <NoteBodyEditor
+              value={body}
+              onChange={setBody}
+              titles={titles}
+              ariaLabel={t('notes.bodyPlaceholder')}
+              rows={6}
+            />
+          )}
           {update.errorMessage && (
             <p className="text-sm text-red-600 dark:text-red-400">{update.errorMessage}</p>
           )}
@@ -134,9 +178,9 @@ function NoteCard({ note }: { note: Note }) {
                 {note.title}
               </h3>
               {note.body && (
-                <p className="text-sm text-gray-500 dark:text-gray-400 mt-1 whitespace-pre-wrap line-clamp-4">
-                  {note.body}
-                </p>
+                <div className="mt-1">
+                  <NoteMarkdown body={note.body} onWikilink={onOpenNote} />
+                </div>
               )}
               <p className="text-xs text-gray-400 mt-2">
                 {t('notes.updated')}: {formatDateTime(note.updated_at)}
@@ -206,6 +250,8 @@ export default function NotesPage() {
 
   const [title, setTitle] = useState('');
   const [body, setBody] = useState('');
+  const titles = useMemo(() => notes.map((n) => n.title), [notes]);
+  const openNote = (t: string) => scrollToNoteTitle(t, notes);
 
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
@@ -236,12 +282,12 @@ export default function NotesPage() {
           aria-label={t('notes.titlePlaceholder')}
           maxLength={255}
         />
-        <textarea
-          className="input font-mono text-sm"
+        <NoteBodyEditor
           value={body}
-          onChange={(e) => setBody(e.target.value)}
+          onChange={setBody}
+          titles={titles}
           placeholder={t('notes.bodyPlaceholder')}
-          aria-label={t('notes.bodyPlaceholder')}
+          ariaLabel={t('notes.bodyPlaceholder')}
           rows={4}
         />
         {create.errorMessage && (
@@ -275,7 +321,9 @@ export default function NotesPage() {
             <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">{t('notes.emptyDesc')}</p>
           </div>
         ) : (
-          notes.map((n) => <NoteCard key={n.id} note={n} />)
+          notes.map((n) => (
+            <NoteCard key={n.id} note={n} titles={titles} onOpenNote={openNote} />
+          ))
         )}
       </div>
     </div>

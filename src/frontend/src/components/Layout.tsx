@@ -213,7 +213,9 @@ export default function Layout({ children }: LayoutProps) {
   const mainNavSource: NavItemConfig[] = [
     ...baseMainNav,
     ...(projectsEnabled ? [{ nameKey: 'nav.projects', href: '/projects', icon: FolderKanban }] : []),
-    ...(notesEnabled ? [{ nameKey: 'nav.notes', href: '/notes', icon: NotebookPen }] : []),
+    // When the unified workspace is on, Notizen lives in the Wissen rail (not a
+    // standalone sidebar entry) — mirrors how the other corpus surfaces collapse.
+    ...(notesEnabled && !wissenWorkspace ? [{ nameKey: 'nav.notes', href: '/notes', icon: NotebookPen }] : []),
     ...(meetingsEnabled ? [{ nameKey: 'nav.meetings', href: '/meetings', icon: Mic }] : []),
   ];
 

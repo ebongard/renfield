@@ -87,6 +87,36 @@
   }
 }
 
+/* Rendered note markdown (react-markdown → real elements). The Tailwind
+   typography plugin isn't installed, so style the common block/inline elements
+   here with design tokens. Scoped to `.note-md` so it never leaks into chat. */
+.note-md {
+  @apply text-sm text-gray-700 dark:text-gray-300 leading-relaxed break-words;
+}
+.note-md > :first-child { @apply mt-0; }
+.note-md > :last-child { @apply mb-0; }
+.note-md h1 { @apply text-lg font-semibold text-gray-900 dark:text-white mt-4 mb-2; }
+.note-md h2 { @apply text-base font-semibold text-gray-900 dark:text-white mt-4 mb-2; }
+.note-md h3 { @apply text-sm font-semibold text-gray-900 dark:text-white mt-3 mb-1.5; }
+.note-md p { @apply my-2; }
+.note-md ul { @apply list-disc pl-5 my-2 space-y-1; }
+.note-md ol { @apply list-decimal pl-5 my-2 space-y-1; }
+.note-md li { @apply marker:text-gray-400; }
+.note-md a { @apply text-primary-600 dark:text-primary-400 underline underline-offset-2 hover:text-primary-700; }
+.note-md code { @apply px-1 py-0.5 rounded bg-gray-100 dark:bg-gray-700 font-mono text-[0.85em]; }
+.note-md pre { @apply p-3 my-2 rounded-lg bg-gray-100 dark:bg-gray-900 overflow-x-auto; }
+.note-md pre code { @apply p-0 bg-transparent; }
+.note-md blockquote { @apply border-l-2 border-gray-300 dark:border-gray-600 pl-3 my-2 text-gray-500 dark:text-gray-400 italic; }
+.note-md hr { @apply my-4 border-gray-200 dark:border-gray-700; }
+.note-md table { @apply my-2 w-full text-left border-collapse; }
+.note-md th, .note-md td { @apply border border-gray-200 dark:border-gray-700 px-2 py-1; }
+.note-md th { @apply bg-gray-50 dark:bg-gray-800 font-medium; }
+/* A [[wikilink]] chip — inline, sits on the text baseline. */
+.note-md .note-wikilink {
+  @apply inline items-center rounded px-1 bg-pink-50 dark:bg-pink-900/20
+         text-pink-700 dark:text-pink-300 no-underline hover:bg-pink-100 dark:hover:bg-pink-900/40;
+}
+
 @utility btn {
   @apply px-4 py-2 rounded-lg font-medium active:scale-[0.97] transition-all;
 }

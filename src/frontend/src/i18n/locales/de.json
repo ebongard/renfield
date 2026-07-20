@@ -637,7 +637,9 @@
       "outgoing": "Verlinkt",
       "backlinks": "Verlinkt von",
       "dangling": "Notiz existiert noch nicht"
-    }
+    },
+    "preview": "Vorschau",
+    "emptyPreview": "Nichts zu zeigen"
   },
   "meetings": {
     "title": "Besprechungen",
@@ -2029,7 +2031,8 @@
       "tier": "Sichtbarkeit",
       "openInDocs": "In Dokumenten öffnen",
       "openInGraph": "Im Graph öffnen"
-    }
+    },
+    "notizen": "Notizen"
   },
   "kiosk": {
     "loading": "Kommandozentrale wird geweckt…",

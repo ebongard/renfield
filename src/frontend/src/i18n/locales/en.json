@@ -637,7 +637,9 @@
       "outgoing": "Links",
       "backlinks": "Linked from",
       "dangling": "Note does not exist yet"
-    }
+    },
+    "preview": "Preview",
+    "emptyPreview": "Nothing to preview"
   },
   "meetings": {
     "title": "Meetings",
@@ -2029,7 +2031,8 @@
       "tier": "Visibility",
       "openInDocs": "Open in Documents",
       "openInGraph": "Open in Graph"
-    }
+    },
+    "notizen": "Notes"
   },
   "kiosk": {
     "loading": "Waking the command center…",
