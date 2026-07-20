@@ -910,6 +910,49 @@ Verbindung + Routing-`id`, KEIN owner/tier/kb) leben ausschließlich im Watcher.
 
 ---
 
+### Projekte, Notizen & Besprechungen (Second Brain, v2.21.0)
+
+Second-Brain-Erweiterungen: 1:1-**Projekte** mit eigener KB + Timeline, hand­geschriebene **Notizen** als 5. `atom_type` (kreis-getiert, `[[Verlinkungen]]`) und **Meeting-Transkription** (Diarisierung → sprecher-attribuiertes Transkript in der KB) inkl. **Protokoll**-Pipeline. Alle dark by default (der Config-Default bleibt `false`, damit neue Instanzen byte-identisch starten); Haushalt (`renfield`) + xidra sind selektiv umgelegt. Details: `docs/FEATURES.md`, `docs/design/notes-atom.md`, `docs/design/meeting-transcription.md`, `docs/design/meeting-minutes.md`.
+
+```bash
+# Projekte (Phase 1 + Timeline 4A) — /api/projects-Routen + /projects-Nav
+PROJECTS_ENABLED=false
+
+# Notizen (Phase 4B) — /api/notes + note-RRF-Quelle + /wissen Notizen-Lens
+NOTES_ENABLED=false
+# Dense semantische Suche über Notizen (RRF-fusioniert mit FTS). Aus = FTS-only.
+# Braucht NOTES_ENABLED + ein Embed-Modell; degradiert bei Embed-Ausfall auf FTS.
+NOTES_SEMANTIC_SEARCH_ENABLED=true
+
+# Meeting-Transkription §2 — /api/meetings + Meeting-Worker + Frontend
+MEETING_TRANSCRIPTION_ENABLED=false
+# §2 Phase 3: Protokoll (Zusammenfassung/Entscheidungen/Aufgaben, Human-Confirm)
+MEETING_MINUTES_ENABLED=false
+# faster-whisper-Modell für Batch-ASR ("" → STT-Default wiederverwenden)
+MEETING_WHISPER_MODEL=
+# Harte Obergrenze (Stunden), am Upload erzwungen; >4h ist die chunked-Eskalation
+MEETING_MAX_DURATION_H=4              # 1-12
+# Auto-Match diarisierter Cluster an enrollte Sprecher — DEFERRED/dark (noch nicht gebaut)
+MEETING_AUTO_MATCH_ENABLED=false
+# Originalaudio nach fertigem Transkript behalten (opt-in); sonst nach Grace-Fenster gelöscht
+MEETING_KEEP_AUDIO=false
+MEETING_AUDIO_GRACE_DAYS=7           # 0-365
+# Voll-Retention (Tage): retention_until = created_at + dies; täglicher Job purged danach
+# Transkript + Segmente (inkl. ECAPA-Embeddings) + Audio + Zeile. 0 = für immer behalten
+# (einwilligungspflichtige DE-Aufnahmen NICHT auf 0 setzen).
+MEETING_RETENTION_DAYS=365           # 0-3650
+```
+
+> **voice-server-seitig** (eigene Config `voice-server/voice_server/config.py`, NICHT diese Backend-`.env`): `MEETING_ENABLED` lädt pyannote nur bei Bedarf; `SPEAKER_EMBED_MAX_SECONDS=30` deckelt die ECAPA-Eingabe (die Meeting-GPU-OOM-Ursache — ein Meeting reicht das GESAMTE Audio eines Sprechers ans Embedding); `MEETING_CHUNK_SECONDS=3600` ist der Chunking-Backstop für pathologisch lange Aufnahmen, `MEETING_SPEAKER_MATCH_THRESHOLD=0.55` das Cross-Chunk-Stitch-Cosine.
+
+**Defaults:**
+- `PROJECTS_ENABLED`: `false` · `NOTES_ENABLED`: `false` · `NOTES_SEMANTIC_SEARCH_ENABLED`: `true`
+- `MEETING_TRANSCRIPTION_ENABLED`: `false` · `MEETING_MINUTES_ENABLED`: `false` · `MEETING_AUTO_MATCH_ENABLED`: `false`
+- `MEETING_WHISPER_MODEL`: `""` · `MEETING_MAX_DURATION_H`: `4`
+- `MEETING_KEEP_AUDIO`: `false` · `MEETING_AUDIO_GRACE_DAYS`: `7` · `MEETING_RETENTION_DAYS`: `365`
+
+---
+
 ### Conversation Memory (Langzeitgedaechtnis)
 
 ```bash
@@ -1450,6 +1493,13 @@ OAUTH_APPLE_TEAM_ID=
 OAUTH_APPLE_KEY_ID=
 OAUTH_APPLE_PRIVATE_KEY=
 OAUTH_APPLE_REDIRECT_URI=
+
+# SSO-Token-Hand-off (Reva → Renfield) — one-time authorization code + PKCE.
+# Ersetzt das URL-Fragment-Hand-off (#access_token=, OAuth-Implicit-Flow, Token
+# in der URL). Dark by default; der Legacy-Fragment-Handler bleibt, bis der
+# Emitter (Reva) auf ?code= migriert ist. Aktiviert POST /api/auth/sso/exchange
+# (404 wenn aus). Design: docs/design/sso-token-handoff-hardening.md.
+SSO_HANDOFF_ENABLED=false
 ```
 
 **Defaults:**
@@ -1465,6 +1515,7 @@ OAUTH_APPLE_REDIRECT_URI=
 - `AUTH_PROVIDER_TIMEOUT_SECONDS`: `10.0`
 - `LDAP_AUTH_ENABLED`: `false` · `LDAP_AUTH_USER_FILTER`: `(uid={username})` · `LDAP_CONNECT_TIMEOUT`: `5` · `LDAP_RECEIVE_TIMEOUT`: `10`
 - `OAUTH_{GOOGLE,GITHUB,APPLE}_ENABLED`: `false` (all social providers disabled by default — enabling is a config-only change)
+- `SSO_HANDOFF_ENABLED`: `false` (dark bis der Reva-Emitter auf `?code=` cutovert; Legacy-Fragment-Handler bleibt bis dahin)
 
 **Produktion:**
 ```bash
