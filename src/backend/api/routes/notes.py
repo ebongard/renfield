@@ -12,7 +12,7 @@ when auth is on; auth-disabled single-user mode sees all (mirrors projects.py).
 """
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
@@ -25,6 +25,7 @@ from services.note_service import (
     NoteTitleConflict,
     create_note,
     delete_note,
+    embed_note_by_id,
     update_note,
 )
 from utils.config import settings
@@ -91,6 +92,7 @@ async def _get_owned_note(note_id: int, user: User | None, db: AsyncSession) -> 
 @router.post("", response_model=NoteResponse)
 async def create_note_route(
     data: NoteCreate,
+    background_tasks: BackgroundTasks,
     user: User | None = Depends(get_optional_user),
     db: AsyncSession = Depends(get_db),
 ) -> NoteResponse:
@@ -117,6 +119,9 @@ async def create_note_route(
         await db.rollback()
         raise HTTPException(status_code=409, detail="A note with this title already exists")
     await db.refresh(note)
+    # Dense embedding runs AFTER the response (own session) — never on the request tx.
+    if settings.notes_semantic_search_enabled:
+        background_tasks.add_task(embed_note_by_id, note.id)
     return _to_response(note)
 
 
@@ -184,6 +189,7 @@ async def get_note_links_route(
 async def update_note_route(
     note_id: int,
     data: NoteUpdate,
+    background_tasks: BackgroundTasks,
     user: User | None = Depends(get_optional_user),
     db: AsyncSession = Depends(get_db),
 ) -> NoteResponse:
@@ -206,6 +212,9 @@ async def update_note_route(
         await db.rollback()
         raise HTTPException(status_code=409, detail="A note with this title already exists")
     await db.refresh(note)
+    # Re-embed off the request tx when the content (title/body) changed.
+    if settings.notes_semantic_search_enabled and (data.title is not None or data.body is not None):
+        background_tasks.add_task(embed_note_by_id, note.id)
     return _to_response(note)
 
 

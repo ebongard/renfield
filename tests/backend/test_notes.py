@@ -205,12 +205,37 @@ def test_rrf_fuse_combines_fts_and_dense_branches():
     assert out[0]["similarity"] >= out[1]["similarity"]  # fused score, descending
 
 
+async def test_dense_and_fts_branches_apply_identical_circle_filter(monkeypatch):
+    """Access-safety: the dense branch must circle-filter EXACTLY like FTS, so a
+    higher-tier note can't leak in via semantic match. Assert both branches send
+    the same circle bind-params + clause to the DB (no Postgres needed)."""
+    from services.note_retrieval import NoteRetrieval
+
+    monkeypatch.setattr(settings, "auth_enabled", True)  # non-trivial 4-branch filter
+    captured: list[tuple[str, dict]] = []
+
+    async def fake_fetch(self, sql, params):
+        captured.append((str(sql), params))
+        return []
+
+    monkeypatch.setattr(NoteRetrieval, "_fetch", fake_fetch)
+    nr = NoteRetrieval(db=None)  # type: ignore[arg-type]
+    await nr._fts_search(["foo"], asker_id=7, limit=5, enforce_circles=False)
+    await nr._dense_search([0.1, 0.2, 0.3, 0.4], asker_id=7, limit=5, enforce_circles=False)
+
+    (fts_sql, fts_params), (dense_sql, dense_params) = captured[0], captured[1]
+    branch_only = {"limit", "or_query", "qemb"}
+    circle = lambda p: {k: v for k, v in p.items() if k not in branch_only}
+    assert circle(fts_params) == circle(dense_params) and circle(fts_params)  # non-empty + equal
+    assert "circle_tier" in fts_sql and "circle_tier" in dense_sql
+
+
 async def test_create_skips_embedding_on_sqlite_but_stays_fts_searchable(
     async_client, db_session, monkeypatch
 ):
-    """Semantic search ON but the sqlite harness has no pgvector → embed-on-write
-    is skipped gracefully (embedding stays NULL, no crash) and the note is still
-    found via FTS. Postgres dense retrieval is verified on deploy."""
+    """Semantic search ON but the sqlite harness has no pgvector → the background
+    embed task skips gracefully (embedding stays NULL, no crash) and the note is
+    still found via FTS. Postgres dense retrieval is verified on deploy."""
     _enable(monkeypatch, auth=False)
     monkeypatch.setattr(settings, "notes_semantic_search_enabled", True)
     resp = await async_client.post("/api/notes", json={"title": "Emb", "body": "hallo welt"})
