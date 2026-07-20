@@ -126,6 +126,7 @@ export const keys = {
     all: ['notes'] as const,
     list: () => ['notes', 'list'] as const,
     detail: (id: number) => ['notes', 'detail', id] as const,
+    links: (id: number) => ['notes', id, 'links'] as const,
   },
   meetings: {
     all: ['meetings'] as const,

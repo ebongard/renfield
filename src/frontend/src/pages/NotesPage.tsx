@@ -4,12 +4,57 @@ import {
   NotebookPen, Loader, XCircle, Plus, Pencil, Trash2, Check, X,
 } from 'lucide-react';
 
+import { ArrowUpRight, ArrowDownLeft } from 'lucide-react';
+
 import PageHeader from '../components/PageHeader';
 import TierBadge from '../components/TierBadge';
 import { formatDateTime } from '../utils/datetime';
 import {
-  useNotesQuery, useCreateNote, useUpdateNote, useDeleteNote, type Note,
+  useNotesQuery, useCreateNote, useUpdateNote, useDeleteNote, useNoteLinks,
+  type Note, type NoteLink,
 } from '../api/resources/notes';
+
+/** Outgoing [[links]] + backlinks for a note. Dangling links (note_id null)
+ *  render muted; resolved links are plain chips. */
+function NoteLinksPanel({ noteId, visible }: { noteId: number; visible: boolean }) {
+  const { t } = useTranslation();
+  const linksQuery = useNoteLinks(noteId, visible);
+  const links = linksQuery.data;
+  if (!links || (links.outgoing.length === 0 && links.backlinks.length === 0)) return null;
+
+  const chip = (l: NoteLink, key: string) => (
+    <span
+      key={key}
+      className={`inline-flex items-center rounded px-1.5 py-0.5 text-xs ${
+        l.note_id != null
+          ? 'bg-pink-50 dark:bg-pink-900/20 text-pink-700 dark:text-pink-300'
+          : 'bg-gray-100 dark:bg-gray-700 text-gray-400 dark:text-gray-500 line-through'
+      }`}
+      title={l.note_id == null ? t('notes.links.dangling') : undefined}
+    >
+      {l.title}
+    </span>
+  );
+
+  return (
+    <div className="mt-3 pt-3 border-t border-gray-200 dark:border-gray-700 space-y-1.5">
+      {links.outgoing.length > 0 && (
+        <div className="flex items-center gap-1.5 flex-wrap text-xs text-gray-500 dark:text-gray-400">
+          <ArrowUpRight className="w-3.5 h-3.5" aria-hidden="true" />
+          <span>{t('notes.links.outgoing')}:</span>
+          {links.outgoing.map((l, i) => chip(l, `o-${i}`))}
+        </div>
+      )}
+      {links.backlinks.length > 0 && (
+        <div className="flex items-center gap-1.5 flex-wrap text-xs text-gray-500 dark:text-gray-400">
+          <ArrowDownLeft className="w-3.5 h-3.5" aria-hidden="true" />
+          <span>{t('notes.links.backlinks')}:</span>
+          {links.backlinks.map((l, i) => chip(l, `b-${i}`))}
+        </div>
+      )}
+    </div>
+  );
+}
 
 /** One note card: read view + inline edit + inline-confirm delete. */
 function NoteCard({ note }: { note: Note }) {
@@ -146,6 +191,7 @@ function NoteCard({ note }: { note: Note }) {
           {del.errorMessage && (
             <p className="mt-2 text-sm text-red-600 dark:text-red-400">{del.errorMessage}</p>
           )}
+          <NoteLinksPanel noteId={note.id} visible={!editing} />
         </>
       )}
     </div>

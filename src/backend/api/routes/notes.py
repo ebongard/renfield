@@ -140,6 +140,37 @@ async def get_note_route(
     return _to_response(note)
 
 
+class NoteLink(BaseModel):
+    title: str
+    note_id: int | None  # None = a dangling [[link]] to a not-yet-written note
+
+
+class NoteLinksResponse(BaseModel):
+    outgoing: list[NoteLink]   # this note's [[Target]] links
+    backlinks: list[NoteLink]  # notes that link TO this note
+
+
+@router.get("/{note_id}/links", response_model=NoteLinksResponse)
+async def get_note_links_route(
+    note_id: int,
+    user: User | None = Depends(get_optional_user),
+    db: AsyncSession = Depends(get_db),
+) -> NoteLinksResponse:
+    """The note's outgoing ``[[links]]`` + its backlinks (Phase 4B.2, KG-substrate).
+    Owner-gated 404."""
+    _require_enabled()
+    note = await _get_owned_note(note_id, user, db)
+    from services.note_links import backlinks, outgoing_links
+
+    owner = note.owner_user_id
+    out = await outgoing_links(db, note, owner_id=owner)
+    back = await backlinks(db, note, owner_id=owner)
+    return NoteLinksResponse(
+        outgoing=[NoteLink(**x) for x in out],
+        backlinks=[NoteLink(**x) for x in back],
+    )
+
+
 @router.put("/{note_id}", response_model=NoteResponse)
 async def update_note_route(
     note_id: int,

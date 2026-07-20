@@ -1,7 +1,7 @@
 import { useTranslation } from 'react-i18next';
 import { Link, useParams } from 'react-router';
 import {
-  FolderKanban, FileText, Mic, Gavel, MessageSquare, Loader, XCircle, ArrowLeft,
+  FolderKanban, FileText, Mic, Gavel, MessageSquare, NotebookPen, Loader, XCircle, ArrowLeft,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 
@@ -18,6 +18,7 @@ const KIND_META: Record<TimelineEvent['kind'], { Icon: LucideIcon; cls: string }
   meeting: { Icon: Mic, cls: 'text-primary-600 dark:text-primary-400' },
   decision: { Icon: Gavel, cls: 'text-amber-600 dark:text-amber-400' },
   chat: { Icon: MessageSquare, cls: 'text-green-600 dark:text-green-400' },
+  note: { Icon: NotebookPen, cls: 'text-pink-600 dark:text-pink-400' },
 };
 
 /** A single timeline row; deep-links to the underlying artifact where one exists. */

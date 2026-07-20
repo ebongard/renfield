@@ -32,9 +32,26 @@ export interface NoteUpdateInput {
   circle_tier?: number;
 }
 
+/** A [[link]] endpoint of a note. note_id null = a dangling link (target not yet
+ *  written). Mirrors NoteLink in api/routes/notes.py. */
+export interface NoteLink {
+  title: string;
+  note_id: number | null;
+}
+
+export interface NoteLinks {
+  outgoing: NoteLink[];   // this note's [[Target]] links
+  backlinks: NoteLink[];  // notes that link TO this note
+}
+
 async function fetchNotes(): Promise<Note[]> {
   const response = await apiClient.get<Note[]>('/api/notes');
   return Array.isArray(response.data) ? response.data : [];
+}
+
+async function fetchNoteLinks(id: number): Promise<NoteLinks> {
+  const response = await apiClient.get<NoteLinks>(`/api/notes/${id}/links`);
+  return response.data;
 }
 
 async function createNoteRequest(input: NoteCreateInput): Promise<Note> {
@@ -56,6 +73,18 @@ export function useNotesQuery() {
   return useApiQuery(
     { queryKey: keys.notes.list(), queryFn: fetchNotes, staleTime: STALE.DEFAULT },
     'notes.failedToLoad',
+  );
+}
+
+export function useNoteLinks(id: number, enabled: boolean) {
+  return useApiQuery(
+    {
+      queryKey: keys.notes.links(id),
+      queryFn: () => fetchNoteLinks(id),
+      staleTime: STALE.DEFAULT,
+      enabled,
+    },
+    'notes.failedToLoadLinks',
   );
 }
 

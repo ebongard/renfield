@@ -27,7 +27,7 @@ export interface ProjectInput {
 /** One merged project-timeline event (Phase 4A). Mirrors TimelineEvent in
  *  api/routes/projects.py — a document/meeting/decision/chat, newest-first. */
 export interface TimelineEvent {
-  kind: 'document' | 'meeting' | 'decision' | 'chat';
+  kind: 'document' | 'meeting' | 'decision' | 'chat' | 'note';
   id: string;
   ts: string;
   title: string;

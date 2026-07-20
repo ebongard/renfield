@@ -605,7 +605,8 @@
         "document": "Dokument",
         "meeting": "Besprechung",
         "decision": "Entscheidung",
-        "chat": "Chat"
+        "chat": "Chat",
+        "note": "Notiz"
       }
     }
   },
@@ -628,7 +629,13 @@
     "emptyDesc": "Lege eine Notiz an. Notizen sind durchsuchbar und tragen eine Kreis-Stufe.",
     "failedToLoad": "Notizen konnten nicht geladen werden",
     "failedToSave": "Notiz konnte nicht gespeichert werden",
-    "failedToDelete": "Notiz konnte nicht gelöscht werden"
+    "failedToDelete": "Notiz konnte nicht gelöscht werden",
+    "failedToLoadLinks": "Verknüpfungen konnten nicht geladen werden",
+    "links": {
+      "outgoing": "Verlinkt",
+      "backlinks": "Verlinkt von",
+      "dangling": "Notiz existiert noch nicht"
+    }
   },
   "meetings": {
     "title": "Besprechungen",

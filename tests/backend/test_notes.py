@@ -91,6 +91,37 @@ async def test_owner_scoping_under_auth(async_client, monkeypatch):
     assert all(n["id"] != nid for n in (await async_client.get("/api/notes")).json())
 
 
+async def test_note_links_backlinks_and_stale_removal(async_client, monkeypatch):
+    """[[links]] (4B.2): outgoing links resolve to notes, the target sees a
+    backlink, and removing the [[link]] on edit clears both sides."""
+    _enable(monkeypatch, auth=False)
+    beta = (await async_client.post("/api/notes", json={"title": "Beta", "body": "b"})).json()
+    alpha = (await async_client.post(
+        "/api/notes", json={"title": "Alpha", "body": "see [[Beta]] for details"},
+    )).json()
+
+    a_links = (await async_client.get(f"/api/notes/{alpha['id']}/links")).json()
+    assert a_links["outgoing"] == [{"title": "Beta", "note_id": beta["id"]}]
+
+    b_links = (await async_client.get(f"/api/notes/{beta['id']}/links")).json()
+    assert b_links["backlinks"] == [{"title": "Alpha", "note_id": alpha["id"]}]
+
+    # Remove the [[link]] → outgoing + the backlink both clear.
+    await async_client.put(f"/api/notes/{alpha['id']}", json={"body": "no link now"})
+    assert (await async_client.get(f"/api/notes/{alpha['id']}/links")).json()["outgoing"] == []
+    assert (await async_client.get(f"/api/notes/{beta['id']}/links")).json()["backlinks"] == []
+
+
+async def test_dangling_link_has_null_note_id(async_client, monkeypatch):
+    """A [[Target]] with no existing note is a dangling link (note_id=None)."""
+    _enable(monkeypatch, auth=False)
+    a = (await async_client.post(
+        "/api/notes", json={"title": "Solo", "body": "points at [[Nowhere]]"},
+    )).json()
+    links = (await async_client.get(f"/api/notes/{a['id']}/links")).json()
+    assert links["outgoing"] == [{"title": "Nowhere", "note_id": None}]
+
+
 async def test_note_retrieval_finds_and_circle_filters(async_client, db_session, monkeypatch):
     from services.note_retrieval import NoteRetrieval
 

@@ -46,6 +46,25 @@ describe('NotesPage', () => {
     await waitFor(() => expect(screen.getByText('Fresh')).toBeInTheDocument());
   });
 
+  it("renders a note's [[links]] panel (outgoing + backlinks)", async () => {
+    server.use(
+      http.get(`${BASE_URL}/api/notes`, () =>
+        HttpResponse.json([mkNote({ id: 3, title: 'Hub', body: 'see [[Spoke]]' })]),
+      ),
+      http.get(`${BASE_URL}/api/notes/3/links`, () =>
+        HttpResponse.json({
+          outgoing: [{ title: 'Spoke', note_id: 4 }],
+          backlinks: [{ title: 'Home', note_id: 5 }],
+        }),
+      ),
+    );
+    renderWithProviders(<NotesPage />);
+    await waitFor(() => expect(screen.getByText('Hub')).toBeInTheDocument());
+    // Both link directions surface their target titles.
+    await waitFor(() => expect(screen.getByText('Spoke')).toBeInTheDocument());
+    expect(screen.getByText('Home')).toBeInTheDocument();
+  });
+
   it('shows the empty state', async () => {
     server.use(http.get(`${BASE_URL}/api/notes`, () => HttpResponse.json([])));
     renderWithProviders(<NotesPage />);

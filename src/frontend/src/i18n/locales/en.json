@@ -605,7 +605,8 @@
         "document": "Document",
         "meeting": "Meeting",
         "decision": "Decision",
-        "chat": "Chat"
+        "chat": "Chat",
+        "note": "Note"
       }
     }
   },
@@ -628,7 +629,13 @@
     "emptyDesc": "Create a note. Notes are searchable and carry a circle tier.",
     "failedToLoad": "Could not load notes",
     "failedToSave": "Could not save the note",
-    "failedToDelete": "Could not delete the note"
+    "failedToDelete": "Could not delete the note",
+    "failedToLoadLinks": "Could not load links",
+    "links": {
+      "outgoing": "Links",
+      "backlinks": "Linked from",
+      "dangling": "Note does not exist yet"
+    }
   },
   "meetings": {
     "title": "Meetings",

@@ -24,7 +24,8 @@ from datetime import datetime
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from models.database import Conversation, Document, Meeting, Project
+from models.database import Conversation, Document, Meeting, Note, Project
+from utils.config import settings
 
 # Per-source fetch cap (offset + limit, bounded) so a huge corpus can't pull
 # everything into memory for a paged view. A timeline is a browse surface, not a
@@ -147,6 +148,30 @@ async def get_project_timeline(
             "meeting_id": None,
             "conversation_session_id": c.session_id,
         })
+
+    # --- notes (Phase 4B, gated so a 4A-only DB without the notes table is safe) #
+    if settings.notes_enabled:
+        notes = (
+            await db.execute(
+                select(Note)
+                .where(Note.project_id == project.id)
+                .order_by(Note.updated_at.desc())
+                .limit(fetch)
+            )
+        ).scalars().all()
+        for n in notes:
+            n_ts = _as_dt(n.updated_at) or _as_dt(n.created_at)
+            events.append({
+                "_ts": n_ts,
+                "kind": "note",
+                "id": f"note-{n.id}",
+                "ts": n_ts.isoformat() if n_ts else "",
+                "title": n.title,
+                "subtitle": None,
+                "document_id": None,
+                "meeting_id": None,
+                "conversation_session_id": None,
+            })
 
     # Merge-sort newest-first (undated rows sink to the bottom), then slice.
     events.sort(key=lambda e: (e["_ts"] is not None, e["_ts"] or datetime.min), reverse=True)

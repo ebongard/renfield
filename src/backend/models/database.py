@@ -1696,7 +1696,7 @@ MEMORY_CHANGED_BY_RESOLUTION = "contradiction_resolution"
 # ==========================================================================
 
 # Entity Type Constants
-KG_ENTITY_TYPES = ["person", "place", "organization", "thing", "event", "concept"]
+KG_ENTITY_TYPES = ["person", "place", "organization", "thing", "event", "concept", "note"]
 
 class KGEntity(Base):
     """Named entity extracted from conversations for the Knowledge Graph."""
