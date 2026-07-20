@@ -122,6 +122,65 @@ async def test_dangling_link_has_null_note_id(async_client, monkeypatch):
     assert links["outgoing"] == [{"title": "Nowhere", "note_id": None}]
 
 
+async def test_resave_does_not_duplicate_link_entities_with_seeded_user(
+    async_client, db_session, monkeypatch
+):
+    """P1 regression: in auth-off mode with a real user in the DB, re-saving a
+    linked note must NOT mint duplicate note-typed KG entities.
+
+    resolve_entity MATCHES on the raw user_id (None → user_id IS NULL) but CREATES
+    on _resolve_owner_user_id(user_id) (None → the first/bootstrap user's id). If
+    sync passes the raw None, match looks under NULL, misses the row it created
+    under the real id, and mints a fresh duplicate on every save. The earlier tests
+    hid this because their users table was empty (_resolve_owner_user_id(None)
+    stayed None, so match+create agreed on NULL). Seed a user and the divergence
+    bites — the fix resolves the owner ONCE up front so both sides agree.
+    """
+    from sqlalchemy import func, select
+
+    from models.database import KGEntity
+
+    _enable(monkeypatch, auth=False)
+    db_session.add(User(id=1, username="owner", password_hash="x", is_active=True, role_id=1))
+    await db_session.commit()
+
+    def _note_entity_count() -> "object":
+        return select(func.count()).select_from(KGEntity).where(KGEntity.entity_type == "note")
+
+    alpha = (await async_client.post(
+        "/api/notes", json={"title": "Alpha", "body": "see [[Beta]]"},
+    )).json()
+    # Two note-entities so far: Alpha (source) + Beta (dangling stub target).
+    assert (await db_session.execute(_note_entity_count())).scalar() == 2
+
+    # Re-save twice with the SAME link — must NOT create new entities each time.
+    for _ in range(2):
+        await async_client.put(f"/api/notes/{alpha['id']}", json={"body": "see [[Beta]] again"})
+    assert (await db_session.execute(_note_entity_count())).scalar() == 2
+
+    # And the backlink still resolves (no orphaned relations from a duplicate source).
+    beta = (await async_client.post("/api/notes", json={"title": "Beta", "body": "b"})).json()
+    b_links = (await async_client.get(f"/api/notes/{beta['id']}/links")).json()
+    assert b_links["backlinks"] == [{"title": "Alpha", "note_id": alpha["id"]}]
+
+
+async def test_duplicate_title_conflicts_409(async_client, monkeypatch):
+    """P2b: a second note with the same (case-insensitive) title is a 409 — the
+    title is the [[link]] key, so it must be unique per owner. Enforced in the
+    service (works in auth-off / NULL-owner, which the Postgres partial index and
+    the SQLite harness both miss)."""
+    _enable(monkeypatch, auth=False)
+    first = await async_client.post("/api/notes", json={"title": "Roadmap", "body": "one"})
+    assert first.status_code == 200
+    dup = await async_client.post("/api/notes", json={"title": "roadmap", "body": "two"})
+    assert dup.status_code == 409
+
+    # Renaming another note onto an existing title also 409s.
+    other = (await async_client.post("/api/notes", json={"title": "Other", "body": "x"})).json()
+    clash = await async_client.put(f"/api/notes/{other['id']}", json={"title": "Roadmap"})
+    assert clash.status_code == 409
+
+
 async def test_note_retrieval_finds_and_circle_filters(async_client, db_session, monkeypatch):
     from services.note_retrieval import NoteRetrieval
 

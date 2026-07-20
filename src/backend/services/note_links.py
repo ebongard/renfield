@@ -48,14 +48,14 @@ def parse_links(body: str) -> list[str]:
     return out
 
 
-async def _note_entity(kg, note: Note, owner_id: int | None) -> KGEntity:
-    """Resolve (or create) the note's own KG mirror entity. use_embedding=False —
-    notes resolve by exact title / surface-form, never fuzzy similarity."""
+async def _resolve_note_entity(kg, name: str, tier: int, eff_owner: int | None) -> KGEntity:
+    """Resolve (or create) a note-mirror entity. use_embedding=False — notes
+    resolve by exact title / surface-form, never fuzzy similarity."""
     return await kg.resolve_entity(
-        name=note.title,
+        name=name,
         entity_type=_NOTE_TYPE,
-        user_id=owner_id,
-        create_tier=note.circle_tier,
+        user_id=eff_owner,
+        create_tier=tier,
         match_entity_type=True,
         use_embedding=False,
     )
@@ -72,16 +72,20 @@ async def sync_note_links(db: AsyncSession, note: Note, *, owner_id: int | None)
     from services.knowledge_graph_service import KnowledgeGraphService
 
     kg = KnowledgeGraphService(db)
-    src = await _note_entity(kg, note, owner_id)
+    # Resolve the concrete owner ONCE and reuse it for every resolve_entity call.
+    # resolve_entity's MATCH keys on the raw user_id (None → user_id IS NULL) but
+    # its CREATE keys on _resolve_owner_user_id(user_id) (None → bootstrap admin) —
+    # so passing the raw None in auth-off makes match miss the admin-owned row and
+    # mint a DUPLICATE note-entity on every re-save (orphaning prior note_links).
+    # Passing the already-resolved owner makes match + create agree.
+    eff = await kg._resolve_owner_user_id(owner_id)
+    src = await _resolve_note_entity(kg, note.title, note.circle_tier, eff)
 
     target_ids: set[int] = set()
     for title in parse_links(note.body or ""):
         if title.lower() == (note.title or "").lower():
             continue  # a note doesn't link to itself
-        tgt = await kg.resolve_entity(
-            name=title, entity_type=_NOTE_TYPE, user_id=owner_id,
-            create_tier=note.circle_tier, match_entity_type=True, use_embedding=False,
-        )
+        tgt = await _resolve_note_entity(kg, title, note.circle_tier, eff)
         if tgt.id == src.id:
             continue
         await kg.save_relation(

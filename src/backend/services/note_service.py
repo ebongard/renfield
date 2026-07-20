@@ -12,10 +12,29 @@ here. FTS ``search_vector`` is a GENERATED column, so writes never touch it.
 from __future__ import annotations
 
 from loguru import logger
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.database import ATOM_TYPE_NOTE, Note
 from services.atom_service import AtomService
+
+
+class NoteTitleConflict(Exception):
+    """The owner already has a note with this (case-insensitive) title. The
+    title is the [[link]] key, so it must resolve to ONE note per owner — the
+    Postgres unique index treats a NULL owner (auth-off) as distinct and the
+    sqlite harness builds no index at all, so uniqueness is enforced HERE too."""
+
+
+async def _title_taken(
+    db: AsyncSession, *, title: str, owner_id: int | None, exclude_id: int | None = None
+) -> bool:
+    conds = [func.lower(Note.title) == title.lower()]
+    conds.append(Note.owner_user_id.is_(None) if owner_id is None else Note.owner_user_id == owner_id)
+    if exclude_id is not None:
+        conds.append(Note.id != exclude_id)
+    row = (await db.execute(select(Note.id).where(*conds).limit(1))).first()
+    return row is not None
 
 
 async def _sync_links_best_effort(db: AsyncSession, note: Note, owner_id: int | None) -> None:
@@ -46,6 +65,8 @@ async def create_note(
     requires an owner, so we fall back to 0 there (mirrors how other single-user
     atom writers seed ownership).
     """
+    if await _title_taken(db, title=title, owner_id=owner_id):
+        raise NoteTitleConflict(title)
     atom_svc = AtomService(db)
     atom_id = await atom_svc.create_with_source(
         atom_type=ATOM_TYPE_NOTE,
@@ -81,6 +102,9 @@ async def update_note(
     ``AtomService.update_tier`` so the atom policy + denormalized column stay in
     lockstep. ``project_id_set`` distinguishes "clear the project" (None) from
     "leave unchanged". Caller commits."""
+    if title is not None and title.lower() != (note.title or "").lower():
+        if await _title_taken(db, title=title, owner_id=note.owner_user_id, exclude_id=note.id):
+            raise NoteTitleConflict(title)
     if title is not None:
         note.title = title
     if body is not None:

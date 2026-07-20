@@ -209,6 +209,10 @@ class KgReconcilerService:
             WHERE a.user_id = :uid
               AND a.is_active = true AND b.is_active = true
               AND a.canonical_id IS NULL AND b.canonical_id IS NULL
+              -- Notes (Phase 4B) resolve by EXACT title only (resolve stores an
+              -- embedding but never matches on it); two distinct-titled notes must
+              -- never auto-merge/propose. Exclude note-typed entities from candidacy.
+              AND a.entity_type <> 'note' AND b.entity_type <> 'note'
               AND (1 - (a.embedding::halfvec({dim}) <=> b.embedding::halfvec({dim}))) >= :cand
               AND NOT EXISTS (
                   SELECT 1 FROM kg_merge_proposals p

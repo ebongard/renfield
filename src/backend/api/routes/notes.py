@@ -21,7 +21,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from models.database import Note, User
 from services.auth_service import get_optional_user
 from services.database import get_db
-from services.note_service import create_note, delete_note, update_note
+from services.note_service import (
+    NoteTitleConflict,
+    create_note,
+    delete_note,
+    update_note,
+)
 from utils.config import settings
 
 router = APIRouter()
@@ -104,7 +109,11 @@ async def create_note_route(
             project_id=data.project_id,
         )
         await db.commit()
+    except NoteTitleConflict:
+        await db.rollback()
+        raise HTTPException(status_code=409, detail="A note with this title already exists")
     except IntegrityError:
+        # Backstop for the concurrent-insert race the service check can't see.
         await db.rollback()
         raise HTTPException(status_code=409, detail="A note with this title already exists")
     await db.refresh(note)
@@ -189,7 +198,11 @@ async def update_note_route(
             circle_tier=data.circle_tier,
         )
         await db.commit()
+    except NoteTitleConflict:
+        await db.rollback()
+        raise HTTPException(status_code=409, detail="A note with this title already exists")
     except IntegrityError:
+        # Backstop for the concurrent-update race the service check can't see.
         await db.rollback()
         raise HTTPException(status_code=409, detail="A note with this title already exists")
     await db.refresh(note)

@@ -100,6 +100,10 @@ class KgConflationMonitor:
               AND a.entity_type <> 'person' AND b.entity_type <> 'person'
               AND NOT (a.entity_types::jsonb @> '["person"]'::jsonb)
               AND NOT (b.entity_types::jsonb @> '["person"]'::jsonb)
+              -- Notes (Phase 4B) resolve by EXACT title only (resolve stores an
+              -- embedding but never matches on it); two distinct-titled notes must
+              -- never be flagged/merged as near-duplicates. Exclude them like persons.
+              AND a.entity_type <> 'note' AND b.entity_type <> 'note'
               AND (1 - (a.embedding::halfvec({dim}) <=> b.embedding::halfvec({dim})))
                   >= :thresh
             ORDER BY similarity DESC
