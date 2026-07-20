@@ -3,6 +3,23 @@
 Releases via `bin/release-voice-server.sh` — the script refuses to release a
 version without a section here. Pushed digests live in `RELEASES.md`.
 
+## [0.3.5] — 2026-07-20
+
+- **Chunked meeting transcription (bounded GPU peak, multi-hour).** A recording
+  longer than `meeting_chunk_seconds` (default 480 s) is diarized + ASR'd in
+  bounded time-windows, so peak VRAM is ∝ the window, not the whole recording —
+  the real fix for the CUDA-OOM: an 8-min window peaks ~3–4 GB, so a multi-hour
+  meeting fits a shared GPU AND CTranslate2 never retains a 14 GB workspace that
+  starves the next meeting / live STT (v0.3.4's `empty_cache` only freed the torch
+  side; the whisper peak still ballooned with recording length). Each window is
+  diarized independently, so chunk-local speakers are stitched into GLOBAL
+  speakers by ECAPA cosine ≥ `meeting_speaker_match_threshold` (0.55) via a
+  running-centroid `SpeakerRegistry`. Short recordings stay a single pass
+  (pyannote labels used directly — byte-identical to before). New pure,
+  fixture-tested cores: `SpeakerRegistry`, `_chunk_bounds`,
+  `_merge_adjacent_same_speaker`. New config: `meeting_chunk_seconds`,
+  `meeting_speaker_match_threshold`.
+
 ## [0.3.4] — 2026-07-20
 
 - **Meeting transcription: free the CUDA cache between diarization and ASR.**

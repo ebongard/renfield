@@ -1,12 +1,23 @@
 """Meeting diarization + ASR (§2).
 
 Runs pyannote.audio speaker diarization + faster-whisper word-level ASR over a
-whole meeting recording and aligns them into speaker-attributed segments, with a
-per-cluster ECAPA embedding (same ONNX space as ``/api/voice/stt``).
+meeting recording and aligns them into speaker-attributed segments, with a
+per-speaker ECAPA embedding (same ONNX space as ``/api/voice/stt``).
 
-The alignment is a PURE function (``align_words_to_segments``) — fixture-unit
-tested with no GPU. The GPU glue (pyannote pipeline load + diarize, faster-whisper
-word timestamps) lives in ``MeetingDiarizationService``.
+**Chunked for long recordings.** A recording longer than ``meeting_chunk_seconds``
+is diarized + transcribed in bounded time-windows so peak VRAM is ∝ the window,
+not the whole recording — a multi-hour meeting fits a shared GPU, and CTranslate2
+never retains a huge workspace that starves the next meeting or live STT. Each
+window is diarized independently (chunk-local speaker labels), so the local
+speakers are stitched into GLOBAL speakers by ECAPA cosine similarity
+(``SpeakerRegistry``). A short recording is a single pass (pyannote labels used
+directly, byte-identical to the pre-chunking behaviour).
+
+The correctness cores are PURE and fixture-unit-tested with no GPU:
+``align_words_to_segments`` (word→turn), ``SpeakerRegistry`` (cross-chunk speaker
+stitching), ``_chunk_bounds``, ``_merge_adjacent_same_speaker``. The GPU glue
+(pyannote load + diarize, faster-whisper words, per-window orchestration) lives in
+``MeetingDiarizationService``.
 
 Model loading: the pyannote pipeline is baked into the image (offline-first) and
 loaded once at warmup when ``meeting_enabled``. The ASR model is the resident STT
@@ -109,6 +120,91 @@ def align_words_to_segments(words: list[Word], turns: list[Turn]) -> list[Meetin
     return segments
 
 
+def _l2norm(v: np.ndarray) -> np.ndarray:
+    """Unit-normalize (so dot product == cosine); safe on a zero vector."""
+    n = float(np.linalg.norm(v))
+    return v / n if n > 0 else v
+
+
+class SpeakerRegistry:
+    """Online cross-chunk speaker stitching (PURE — no GPU/IO, fixture-tested).
+
+    Chunked transcription diarizes each window independently, so the same person
+    is a different chunk-local label per window. This maps each chunk-local
+    speaker (via its ECAPA embedding) to a GLOBAL speaker: greedy nearest-centroid
+    match if cosine ≥ ``threshold``, else a new global speaker. Centroids are a
+    running mean over the matched embeddings (re-normalized), so a speaker's
+    identity firms up across the meeting. A local speaker with no embedding
+    (silent/too-short clip) always gets its own global label (never mis-merged)."""
+
+    def __init__(self, threshold: float) -> None:
+        self.threshold = threshold
+        self._centroids: list[np.ndarray] = []
+        self._counts: list[int] = []
+        self._labels: list[str] = []
+
+    def _new_label(self) -> str:
+        label = f"SPEAKER_{len(self._labels):02d}"
+        return label
+
+    def assign(self, embedding: np.ndarray | None) -> str:
+        if embedding is None:
+            label = self._new_label()
+            self._centroids.append(np.zeros(0, dtype=np.float32))
+            self._counts.append(0)
+            self._labels.append(label)
+            return label
+        v = _l2norm(np.asarray(embedding, dtype=np.float32))
+        best_i, best_sim = -1, -1.0
+        for i, c in enumerate(self._centroids):
+            if c.size == 0:
+                continue
+            sim = float(np.dot(v, c))
+            if sim > best_sim:
+                best_sim, best_i = sim, i
+        if best_i >= 0 and best_sim >= self.threshold:
+            n = self._counts[best_i]
+            self._centroids[best_i] = _l2norm((self._centroids[best_i] * n + v) / (n + 1))
+            self._counts[best_i] = n + 1
+            return self._labels[best_i]
+        label = self._new_label()
+        self._centroids.append(v)
+        self._counts.append(1)
+        self._labels.append(label)
+        return label
+
+    def centroid(self, label: str) -> list[float] | None:
+        try:
+            i = self._labels.index(label)
+        except ValueError:
+            return None
+        c = self._centroids[i]
+        return c.tolist() if c.size else None
+
+
+def _chunk_bounds(total_samples: int, chunk_samples: int) -> list[tuple[int, int]]:
+    """Non-overlapping [start, end) sample windows covering the whole recording
+    (last window is short). PURE. ``chunk_samples <= 0`` → one window (no chunking)."""
+    if chunk_samples <= 0 or total_samples <= chunk_samples:
+        return [(0, total_samples)]
+    return [(s, min(s + chunk_samples, total_samples))
+            for s in range(0, total_samples, chunk_samples)]
+
+
+def _merge_adjacent_same_speaker(segments: list[MeetingSegment]) -> list[MeetingSegment]:
+    """Merge consecutive segments with the same (global) speaker — e.g. a turn
+    split across a chunk boundary. PURE. Assumes segments are time-ordered."""
+    merged: list[MeetingSegment] = []
+    for s in segments:
+        if merged and merged[-1].speaker == s.speaker:
+            prev = merged[-1]
+            prev.text = (prev.text + " " + s.text).strip()
+            prev.end_s = s.end_s
+        else:
+            merged.append(s)
+    return merged
+
+
 class MeetingDiarizationService:
     """Loads pyannote at warmup (when meeting_enabled); runs the batch pipeline."""
 
@@ -197,50 +293,92 @@ class MeetingDiarizationService:
         except Exception:  # noqa: BLE001 — never let cleanup break a transcription
             pass
 
-    async def transcribe(self, pcm: np.ndarray, *, whisper_model, speaker_service) -> list[dict]:
-        """Diarize + transcribe + align + per-cluster embed. Returns a list of
-        segment dicts: {speaker(cluster id), start_s, end_s, text, embedding}."""
-        if not self.ready or self._pipeline is None:
-            raise RuntimeError("MeetingDiarizationService not ready")
+    async def _process_window(
+        self, pcm: np.ndarray, *, whisper_model, speaker_service
+    ) -> tuple[list[MeetingSegment], dict[str, np.ndarray | None]]:
+        """Diarize + ASR + align ONE audio window → window-local segments (labels
+        + timestamps relative to the window) + a per-local-speaker ECAPA embedding.
+        Peak VRAM is bounded by the window length. Caller offsets timestamps and
+        stitches local→global speakers (chunked path) or uses labels as-is."""
         loop = asyncio.get_running_loop()
-        async with self._lock:  # one batch job at a time (semaphore=1)
-            turns = await loop.run_in_executor(None, self._diarize_sync, pcm)
-            # Release pyannote's torch cache BEFORE whisper so CTranslate2's
-            # (separate-pool) encode has room — this is the OOM fix.
-            self._free_cuda_cache()
-            words = await loop.run_in_executor(
-                None, self._transcribe_words_sync, pcm, whisper_model
-            )
-        # Release the job's allocations so they don't accumulate across meetings
-        # (and starve the other services sharing this GPU).
+        turns = await loop.run_in_executor(None, self._diarize_sync, pcm)
+        # Release pyannote's torch cache BEFORE whisper so CTranslate2's
+        # (separate-pool) encode has room — the OOM guard, per window.
+        self._free_cuda_cache()
+        words = await loop.run_in_executor(None, self._transcribe_words_sync, pcm, whisper_model)
         self._free_cuda_cache()
 
         segments = align_words_to_segments(words, turns)
-
-        # Per-cluster ECAPA embedding: concatenate each speaker's audio windows.
-        embeddings: dict[str, list[float] | None] = {}
+        embeddings: dict[str, np.ndarray | None] = {}
         for speaker in {s.speaker for s in segments}:
             clip = _concat_speaker_audio(pcm, [s for s in segments if s.speaker == speaker])
             if clip.size == 0:
                 embeddings[speaker] = None
                 continue
             try:
-                emb = await speaker_service.embed(clip)
-                embeddings[speaker] = emb.tolist()
-            except Exception as e:  # noqa: BLE001 - embedding is best-effort
+                embeddings[speaker] = await speaker_service.embed(clip)
+            except Exception as e:  # noqa: BLE001 — embedding is best-effort
                 logger.warning("cluster embed failed for %s: %s", speaker, e)
                 embeddings[speaker] = None
+        return segments, embeddings
 
-        return [
-            {
-                "speaker": s.speaker,
-                "start_s": round(s.start_s, 3),
-                "end_s": round(s.end_s, 3),
-                "text": s.text,
-                "embedding": embeddings.get(s.speaker),
-            }
-            for s in segments
-        ]
+    @staticmethod
+    def _seg_dict(s: MeetingSegment, embedding) -> dict:
+        emb = embedding.tolist() if isinstance(embedding, np.ndarray) else embedding
+        return {
+            "speaker": s.speaker,
+            "start_s": round(s.start_s, 3),
+            "end_s": round(s.end_s, 3),
+            "text": s.text,
+            "embedding": emb,
+        }
+
+    async def transcribe(self, pcm: np.ndarray, *, whisper_model, speaker_service) -> list[dict]:
+        """Diarize + transcribe + align + per-speaker embed → segment dicts
+        {speaker, start_s, end_s, text, embedding}.
+
+        Recordings longer than ``meeting_chunk_seconds`` are processed in bounded
+        windows (peak VRAM ∝ window, not the whole recording) and the chunk-local
+        speakers are stitched into GLOBAL speakers by ECAPA cosine — so a
+        multi-hour meeting fits a shared GPU and repeated meetings don't starve
+        it. A short recording is a single pass (pyannote's labels used directly)."""
+        if not self.ready or self._pipeline is None:
+            raise RuntimeError("MeetingDiarizationService not ready")
+
+        chunk_samples = max(0, int(settings.meeting_chunk_seconds)) * SAMPLE_RATE
+        bounds = _chunk_bounds(int(pcm.size), chunk_samples)
+
+        async with self._lock:  # one meeting job monopolises the GPU
+            if len(bounds) == 1:
+                segments, embeddings = await self._process_window(
+                    pcm, whisper_model=whisper_model, speaker_service=speaker_service
+                )
+                return [self._seg_dict(s, embeddings.get(s.speaker)) for s in segments]
+
+            # Chunked: process each window, stitch local speakers → global.
+            registry = SpeakerRegistry(float(settings.meeting_speaker_match_threshold))
+            all_segments: list[MeetingSegment] = []
+            for idx, (a, b) in enumerate(bounds):
+                offset_s = a / SAMPLE_RATE
+                segments, embeddings = await self._process_window(
+                    pcm[a:b], whisper_model=whisper_model, speaker_service=speaker_service
+                )
+                # Assign in a deterministic order so stitching is reproducible.
+                local_to_global = {
+                    loc: registry.assign(embeddings.get(loc)) for loc in sorted(embeddings)
+                }
+                for s in segments:
+                    s.speaker = local_to_global.get(s.speaker, s.speaker)
+                    s.start_s += offset_s
+                    s.end_s += offset_s
+                all_segments.extend(segments)
+                logger.info(
+                    "meeting chunk %d/%d done (%.0f–%.0fs, %d segments)",
+                    idx + 1, len(bounds), offset_s, b / SAMPLE_RATE, len(segments),
+                )
+
+            all_segments = _merge_adjacent_same_speaker(all_segments)
+            return [self._seg_dict(s, registry.centroid(s.speaker)) for s in all_segments]
 
 
 def _concat_speaker_audio(pcm: np.ndarray, segments: list[MeetingSegment]) -> np.ndarray:

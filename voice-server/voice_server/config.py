@@ -123,6 +123,13 @@ class Settings(BaseSettings):
     meeting_enabled: bool = False
     meeting_diarization_model: str = "pyannote/speaker-diarization-3.1"
     meeting_whisper_model: str = ""
+    # Chunked transcription: recordings longer than this are diarized + ASR'd in
+    # bounded time-windows (peak VRAM ∝ window, not whole recording — so a
+    # multi-hour meeting fits a shared GPU and CTranslate2 doesn't retain a huge
+    # workspace). Chunk-local speakers are stitched into global ones by ECAPA
+    # cosine ≥ meeting_speaker_match_threshold. 0 disables chunking (single pass).
+    meeting_chunk_seconds: int = 480          # 8 min → ~3-4 GB peak
+    meeting_speaker_match_threshold: float = 0.55
     # HF token for the gated pyannote model at warmup (offline-first: the model
     # is baked into the image, so this only matters if the cache is cold).
     hf_token: SecretStr | None = None

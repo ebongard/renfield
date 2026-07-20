@@ -1,9 +1,15 @@
 """Unit tests for the meeting word→speaker alignment (pure logic, no GPU)."""
 
+import numpy as np
+
 from voice_server.services.meeting_service import (
     MeetingDiarizationService,
+    MeetingSegment,
+    SpeakerRegistry,
     Turn,
     Word,
+    _chunk_bounds,
+    _merge_adjacent_same_speaker,
     align_words_to_segments,
 )
 
@@ -12,6 +18,60 @@ def test_free_cuda_cache_is_safe_without_gpu():
     """The OOM-mitigation cache free is best-effort: it must never raise when
     there's no CUDA (build/test box), so it can't break a transcription."""
     MeetingDiarizationService._free_cuda_cache()  # no exception = pass
+
+
+# --- chunked transcription: pure stitching/boundary logic (no GPU) ---
+
+def test_chunk_bounds_covers_recording_with_short_last_window():
+    assert _chunk_bounds(1000, 400) == [(0, 400), (400, 800), (800, 1000)]
+    assert _chunk_bounds(300, 400) == [(0, 300)]      # shorter than a chunk → one pass
+    assert _chunk_bounds(1000, 0) == [(0, 1000)]      # chunking disabled → one pass
+
+
+def _emb(*vals):
+    return np.asarray(vals, dtype=np.float32)
+
+
+def test_speaker_registry_stitches_same_voice_across_chunks():
+    """A voice that reappears in a later chunk (near-identical embedding) maps to
+    the SAME global speaker; a distinct voice gets its own."""
+    reg = SpeakerRegistry(threshold=0.7)
+    a1 = reg.assign(_emb(1.0, 0.0, 0.0))   # voice A, chunk 1
+    b1 = reg.assign(_emb(0.0, 1.0, 0.0))   # voice B, chunk 1
+    a2 = reg.assign(_emb(0.98, 0.02, 0.0)) # voice A again, chunk 2 (cos≈1)
+    c = reg.assign(_emb(0.0, 0.0, 1.0))    # voice C
+    assert a1 == a2         # stitched
+    assert b1 != a1 and c != a1 and c != b1
+    assert {a1, b1, c} == {"SPEAKER_00", "SPEAKER_01", "SPEAKER_02"}
+
+
+def test_speaker_registry_below_threshold_makes_new_speaker():
+    reg = SpeakerRegistry(threshold=0.9)
+    x = reg.assign(_emb(1.0, 0.0))
+    y = reg.assign(_emb(0.6, 0.8))   # cos 0.6 < 0.9 → distinct
+    assert x != y
+
+
+def test_speaker_registry_none_embedding_never_merges():
+    """A silent/too-short local speaker (no embedding) always gets its own label
+    — never mis-merged into someone else."""
+    reg = SpeakerRegistry(threshold=0.5)
+    a = reg.assign(_emb(1.0, 0.0))
+    n1 = reg.assign(None)
+    n2 = reg.assign(None)
+    assert len({a, n1, n2}) == 3
+    assert reg.centroid(n1) is None
+
+
+def test_merge_adjacent_same_speaker_joins_across_boundary():
+    segs = [
+        MeetingSegment("SPEAKER_00", 0.0, 5.0, "hallo"),
+        MeetingSegment("SPEAKER_00", 5.0, 8.0, "welt"),   # same speaker, next chunk
+        MeetingSegment("SPEAKER_01", 8.0, 9.0, "ja"),
+    ]
+    merged = _merge_adjacent_same_speaker(segs)
+    assert [s.speaker for s in merged] == ["SPEAKER_00", "SPEAKER_01"]
+    assert merged[0].text == "hallo welt" and merged[0].end_s == 8.0
 
 
 def _w(text, a, b):
