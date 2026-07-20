@@ -166,6 +166,22 @@ group→role **authz seam is defined in docstrings only**, not implemented this
 delivery (`extras["ldap_member_of"]` is carried but unused). New config:
 `ldap_auth_*`, `oauth_{google,github,apple}_*`, `auth_provider_timeout_seconds`.
 
+### SSO token hand-off — one-time code + PKCE (`SSO_HANDOFF_ENABLED`, dark)
+
+Replaces the URL-fragment token hand-off (`main.tsx` `#access_token=`, OAuth
+implicit flow — token in the URL + a token-injection sink) with a
+Backend-for-Frontend **one-time authorization code + PKCE** exchange: the emitter
+stashes a session *reference* (`services/sso_handoff_store.py`, single-use 60s
+Redis code bound to an S256 `code_challenge` + `state`, atomic `GETDEL`) and
+redirects with only `?code=&state=`; the SPA (`pages/AuthCallback.tsx`,
+`/auth/callback`) POSTs `{code, code_verifier, state}` to
+`POST /api/auth/sso/exchange`, which burns the code, verifies PKCE + state
+(constant-time), re-validates the user, and **mints the JWTs at exchange time**
+(no token ever in Redis or a URL). Gated `sso_handoff_enabled` (404 when off),
+**dark by default**; the legacy fragment handler stays until the emitter (Reva)
+is migrated onto `?code=`, then it is removed (cutover in the design doc). Design
++ threat model + cross-repo emitter contract: `docs/design/sso-token-handoff-hardening.md`.
+
 ### Circles v1 (access tiers)
 
 Detailed user-facing and architectural documentation: [`docs/CIRCLES.md`](docs/CIRCLES.md). Narrative of the broader knowledge system (the four subsystems circles protect): [`docs/SECOND_BRAIN.md`](docs/SECOND_BRAIN.md). Code-level summary below.
