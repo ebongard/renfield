@@ -1495,7 +1495,8 @@
       "kg_node": "Entità",
       "kg_edge": "Relazione",
       "conversation_memory": "Memoria",
-      "document_fact": "Fatto"
+      "document_fact": "Fatto",
+      "note": "Nota"
     },
     "source": {
       "deterministic": "verificato",

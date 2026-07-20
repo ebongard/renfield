@@ -36,6 +36,7 @@
     "knowledge": "Knowledge",
     "tasks": "Tasks",
     "projects": "Projects",
+    "notes": "Notes",
     "meetings": "Meetings",
     "cameras": "Cameras",
     "rooms": "Rooms",
@@ -607,6 +608,27 @@
         "chat": "Chat"
       }
     }
+  },
+  "notes": {
+    "title": "Notes",
+    "subtitle": "Hand-authored markdown notes — searchable in your second brain",
+    "createTitle": "New note",
+    "titlePlaceholder": "Title",
+    "bodyPlaceholder": "Body (markdown)",
+    "create": "Create note",
+    "creating": "Creating …",
+    "save": "Save",
+    "cancel": "Cancel",
+    "edit": "Edit",
+    "delete": "Delete",
+    "confirmDelete": "Confirm delete",
+    "updated": "Updated",
+    "loading": "Loading notes …",
+    "empty": "No notes yet",
+    "emptyDesc": "Create a note. Notes are searchable and carry a circle tier.",
+    "failedToLoad": "Could not load notes",
+    "failedToSave": "Could not save the note",
+    "failedToDelete": "Could not delete the note"
   },
   "meetings": {
     "title": "Meetings",
@@ -1655,7 +1677,8 @@
       "kg_node": "Entity",
       "kg_edge": "Relation",
       "conversation_memory": "Memory",
-      "document_fact": "Fact"
+      "document_fact": "Fact",
+      "note": "Note"
     },
     "source": {
       "deterministic": "verified",

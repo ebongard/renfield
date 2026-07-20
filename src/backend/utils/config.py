@@ -491,6 +491,12 @@ class Settings(BaseSettings):
     # /api/config/features). Off => the household instance is byte-identical.
     # See the business-instance plan §7.1.
     projects_enabled: bool = False
+    # Notes (Phase 4B) — hand-authored atomic notes as a 5th atom_type
+    # (circles + polymorphic RRF + /brain). Gates the /api/notes routes (404 when
+    # off), the notes RRF source in polymorphic_atom_store, and the frontend
+    # surface (via /api/config/features). Off => byte-identical. See
+    # docs/design/notes-atom.md.
+    notes_enabled: bool = False
     # Meeting transcription §2 — upload a multi-speaker recording -> diarized,
     # speaker-attributed transcript in the KB. Gates the /api/meetings routes
     # (404 when off), the meeting worker, and the frontend surface (via

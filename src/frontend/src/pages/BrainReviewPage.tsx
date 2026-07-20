@@ -24,6 +24,7 @@ const ATOM_TYPE_COLORS: Record<AtomType, BadgeColor> = {
   kg_edge: 'purple',
   conversation_memory: 'teal',
   document_fact: 'green',
+  note: 'pink',
 };
 
 const DAY_OPTIONS = [1, 3, 7, 14, 30];

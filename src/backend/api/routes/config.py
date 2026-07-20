@@ -74,6 +74,9 @@ class FeatureFlags(BaseModel):
     # Gates the /projects nav + page (business-instance Phase 1). Off => no
     # Projects nav entry rendered. See utils/config.py::projects_enabled.
     projects_enabled: bool
+    # Gates the /notes nav + page (Phase 4B, Notes as a 5th atom_type). Off => no
+    # Notes nav/page + the note atom-source stays dark. See utils/config.py::notes_enabled.
+    notes_enabled: bool
     # Gates the §2 meeting-transcription surface (upload + status + speaker
     # labeling). Off => no Meetings nav/page. See utils/config.py::
     # meeting_transcription_enabled + docs/design/meeting-transcription.md.
@@ -103,6 +106,7 @@ async def get_features(
         room_handoff_enabled=settings.room_handoff_enabled,
         chat_branching_enabled=settings.chat_branching_enabled,
         projects_enabled=settings.projects_enabled,
+        notes_enabled=settings.notes_enabled,
         meeting_transcription_enabled=settings.meeting_transcription_enabled,
         meeting_minutes_enabled=settings.meeting_minutes_enabled,
         wissensbasis_reva_available=_reva_wissensbasis_mounted(request),

@@ -2001,6 +2001,7 @@ ATOM_TYPE_KG_EDGE = "kg_edge"
 ATOM_TYPE_CONVERSATION_MEMORY = "conversation_memory"
 ATOM_TYPE_PROCEDURAL_SKILL = "procedural_skill"
 ATOM_TYPE_DOCUMENT_FACT = "document_fact"
+ATOM_TYPE_NOTE = "note"
 
 # DocumentFact.category discriminators (Schicht A). 'identifier' = a deterministic
 # regex hit (Steuernummer, IBAN, Rechnungsnummer); 'obligation' = an LLM-extracted
@@ -2228,6 +2229,45 @@ class DocumentFact(Base):
     )
 
     document = relationship("Document", foreign_keys=[document_id])
+
+
+class Note(Base):
+    """A hand-authored atomic note (Phase 4B — Notes as a 5th atom_type).
+
+    First-class atom (``atom_type='note'``): every row is wrapped by an
+    :class:`Atom` so the note is circle-tiered, participates in the polymorphic
+    RRF store, and surfaces on ``/brain`` / a ``/wissen`` lens. Writers go through
+    ``NoteService`` → ``AtomService.create_with_source`` / ``finalize_source_id``
+    (never a direct INSERT — the same rule as every atom source; ``atom_id`` is
+    NOT NULL). Directly owned + tiered (no KB indirection).
+
+    ``title`` is the ``[[link]]`` key (unique per owner, case-insensitive). The
+    note's body is markdown; ``[[Target]]`` links are materialized on the KG
+    substrate (a ``kg_entities`` mirror per note + ``kg_relations`` predicate
+    ``note_link``) in Phase 4B.2 — see ``docs/design/notes-atom.md``.
+
+    **4B.1 retrieval is FTS-only** (an FTS ``search_vector`` over title+body, like
+    ``document_facts``); a dense ``embedding`` column + halfvec HNSW index is a
+    documented follow-up (avoids the 768/2560 dimension-split migration in the
+    first slice).
+    """
+    __tablename__ = "notes"
+
+    id = Column(Integer, primary_key=True, index=True)
+    owner_user_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
+    # Optional Project scope (Phase 4A synergy): a scoped note joins the
+    # /projects/{id} timeline as a 5th source.
+    project_id = Column(Integer, ForeignKey("projects.id", ondelete="SET NULL"), nullable=True, index=True)
+    title = Column(String(255), nullable=False)
+    body = Column(Text, nullable=False, default="", server_default="")
+    # FTS over title+body — a GENERATED tsvector column created in the migration
+    # (SQLAlchemy never writes it; FetchedValue marks it read-only, mirrors
+    # DocumentChunk.search_vector / messages.search_vector).
+    search_vector = Column(TSVECTOR, FetchedValue(), nullable=True)
+    atom_id = Column(String(36), ForeignKey("atoms.atom_id", ondelete="CASCADE"), nullable=False, index=True)
+    circle_tier = Column(Integer, nullable=False, default=0)
+    created_at = Column(DateTime, default=_utcnow)
+    updated_at = Column(DateTime, default=_utcnow, onupdate=_utcnow)
 
 
 class ObligationAcknowledgement(Base):

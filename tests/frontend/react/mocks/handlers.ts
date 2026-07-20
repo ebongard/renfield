@@ -363,6 +363,7 @@ export const handlers: HttpHandler[] = [
       room_handoff_enabled: false,
       chat_branching_enabled: false,
       projects_enabled: false,
+      notes_enabled: false,
       meeting_transcription_enabled: false,
       meeting_minutes_enabled: false,
     });

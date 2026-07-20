@@ -41,6 +41,7 @@ import {
   Radar,
   FolderKanban,
   Mic,
+  NotebookPen,
 } from 'lucide-react';
 import DeviceStatus from './DeviceStatus';
 import ThemeToggle from './ThemeToggle';
@@ -188,6 +189,8 @@ export default function Layout({ children }: LayoutProps) {
   const projectsEnabled = featureFlags?.projects_enabled ?? false;
   // §2 meeting transcription: append the Meetings entry only when the flag is on.
   const meetingsEnabled = featureFlags?.meeting_transcription_enabled ?? false;
+  // Phase 4B: the Notes entry appears only when the flag is on.
+  const notesEnabled = featureFlags?.notes_enabled ?? false;
 
   const baseMainNav: NavItemConfig[] = wissenWorkspace
     ? (() => {
@@ -210,6 +213,7 @@ export default function Layout({ children }: LayoutProps) {
   const mainNavSource: NavItemConfig[] = [
     ...baseMainNav,
     ...(projectsEnabled ? [{ nameKey: 'nav.projects', href: '/projects', icon: FolderKanban }] : []),
+    ...(notesEnabled ? [{ nameKey: 'nav.notes', href: '/notes', icon: NotebookPen }] : []),
     ...(meetingsEnabled ? [{ nameKey: 'nav.meetings', href: '/meetings', icon: Mic }] : []),
   ];
 

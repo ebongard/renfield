@@ -280,6 +280,25 @@ def conversation_memories_circles_filter(
     )
 
 
+def notes_circles_filter(
+    asker_id: int, alias: str = "n", *, peer_scoped: bool = False
+) -> tuple[str, dict[str, Any]]:
+    """Returns (clause, params) for circle-filtering the ``notes`` table (Phase 4B).
+
+    Directly owned (``owner_user_id``, unlike the default ``user_id``); a note is
+    a first-class atom, so the standard 4-branch filter applies. ``peer_scoped``
+    (federation): drop the owner + explicit-grant branches.
+    """
+    src = "notes"
+    clause = circles_filter_clause(
+        table_alias=alias, owner_col="owner_user_id",
+        source_table_value=src, peer_scoped=peer_scoped,
+    )
+    return clause, circles_filter_params(
+        asker_id, source_table_value=("" if peer_scoped else src)
+    )
+
+
 def document_chunks_circles_filter(
     asker_id: int,
     *,

@@ -10,7 +10,8 @@ export type AtomType =
   | 'kg_node'
   | 'kg_edge'
   | 'conversation_memory'
-  | 'document_fact';
+  | 'document_fact'
+  | 'note';
 
 export interface AtomMatch {
   atom: {
@@ -109,6 +110,8 @@ export interface FeatureFlags {
   chat_branching_enabled: boolean;
   /** Gates the /projects nav + page (business-instance Phase 1). */
   projects_enabled: boolean;
+  /** Gates the /notes nav + page + the note atom-source (Phase 4B). */
+  notes_enabled: boolean;
   /** Gates the §2 meeting-transcription nav + page (upload + status + speaker labeling). */
   meeting_transcription_enabled: boolean;
   /** Gates the §2 Phase 3 minutes UI (generate/edit/confirm on a completed meeting). */

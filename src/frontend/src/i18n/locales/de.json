@@ -36,6 +36,7 @@
     "knowledge": "Wissen",
     "tasks": "Aufgaben",
     "projects": "Projekte",
+    "notes": "Notizen",
     "meetings": "Besprechungen",
     "cameras": "Kameras",
     "rooms": "Räume",
@@ -607,6 +608,27 @@
         "chat": "Chat"
       }
     }
+  },
+  "notes": {
+    "title": "Notizen",
+    "subtitle": "Handgeschriebene Markdown-Notizen — durchsuchbar im Zweiten Gehirn",
+    "createTitle": "Neue Notiz",
+    "titlePlaceholder": "Titel",
+    "bodyPlaceholder": "Inhalt (Markdown)",
+    "create": "Notiz anlegen",
+    "creating": "Wird angelegt …",
+    "save": "Speichern",
+    "cancel": "Abbrechen",
+    "edit": "Bearbeiten",
+    "delete": "Löschen",
+    "confirmDelete": "Löschen bestätigen",
+    "updated": "Aktualisiert",
+    "loading": "Lade Notizen …",
+    "empty": "Keine Notizen vorhanden",
+    "emptyDesc": "Lege eine Notiz an. Notizen sind durchsuchbar und tragen eine Kreis-Stufe.",
+    "failedToLoad": "Notizen konnten nicht geladen werden",
+    "failedToSave": "Notiz konnte nicht gespeichert werden",
+    "failedToDelete": "Notiz konnte nicht gelöscht werden"
   },
   "meetings": {
     "title": "Besprechungen",
@@ -1655,7 +1677,8 @@
       "kg_node": "Entität",
       "kg_edge": "Beziehung",
       "conversation_memory": "Erinnerung",
-      "document_fact": "Fakt"
+      "document_fact": "Fakt",
+      "note": "Notiz"
     },
     "source": {
       "deterministic": "verlässlich",

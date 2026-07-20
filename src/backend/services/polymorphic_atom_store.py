@@ -101,6 +101,7 @@ class PolymorphicAtomStore:
         from services.kg_retrieval import KGRetrieval
         from services.lexical_retrieval import LexicalRetrieval
         from services.memory_retrieval import MemoryRetrieval
+        from services.note_retrieval import NoteRetrieval
         from services.rag_retrieval import RAGRetrieval
         from services.skill_service import SkillService
 
@@ -155,6 +156,19 @@ class PolymorphicAtomStore:
                 return []
             skill_task = _empty()
 
+        # Phase 4B: hand-authored notes are atoms too — an eighth source so notes
+        # surface in /brain via the same RRF fusion (FTS keyword retrieval; a
+        # note's parent has no separate embedding). Gated on notes_enabled so the
+        # existing seven-source behavior is unchanged when off.
+        if settings.notes_enabled:
+            note_task = NoteRetrieval(self.db).search(
+                query_text, asker_id=asker_id, top_k=candidate_k, enforce_circles=enforce_circles,
+            )
+        else:
+            async def _empty_notes():
+                return []
+            note_task = _empty_notes()
+
         # Per PR #402 review SHOULD-FIX #9: gather(return_exceptions=True) does NOT raise,
         # so the previous try/except wrapper around it was dead code that swallowed
         # programmer errors (e.g., import failure on the lazy-imported retrieval modules).
@@ -163,9 +177,11 @@ class PolymorphicAtomStore:
         (
             rag_results, kg_atoms, memory_results,
             lexical_chunks, lexical_memories, skill_results, document_fact_results,
+            note_results,
         ) = await asyncio.gather(
             rag_task, kg_task, memory_task,
             lexical_chunks_task, lexical_memories_task, skill_task, document_fact_task,
+            note_task,
             return_exceptions=True,
         )
 
@@ -176,12 +192,13 @@ class PolymorphicAtomStore:
         lexical_memory_matches = _wrap_memory_results(lexical_memories)
         skill_matches = _wrap_skill_results(skill_results)
         document_fact_matches = _wrap_document_fact_results(document_fact_results)
+        note_matches = _wrap_note_results(note_results)
 
         merged = _rrf_merge(
             [
                 rag_matches, kg_matches, memory_matches,
                 lexical_chunk_matches, lexical_memory_matches,
-                skill_matches, document_fact_matches,
+                skill_matches, document_fact_matches, note_matches,
             ],
             top_k=top_k,
             k=settings.rag_hybrid_rrf_k,
@@ -448,6 +465,44 @@ def _wrap_document_fact_results(fact_results: Any) -> list[AtomMatch]:
                     },
                 ),
                 score=float(f.get("similarity", 0.0)),
+                snippet=snippet[:200],
+                rank=rank,
+            )
+        )
+    return matches
+
+
+def _wrap_note_results(note_results: Any) -> list[AtomMatch]:
+    """Convert NoteRetrieval.search output -> list[AtomMatch] (Phase 4B).
+
+    Each note carries its real ``atom_id`` (the note atom), so cross-source
+    duplicates fuse correctly in RRF. The payload gives the /brain + /wissen
+    drawer the note's title + snippet + project scope. Exceptions / empty -> [].
+    """
+    if isinstance(note_results, Exception) or not note_results:
+        return []
+    matches: list[AtomMatch] = []
+    now = _now()
+    for rank, n in enumerate(note_results, start=1):
+        atom_id = n.get("atom_id") or f"note:{n.get('id', 0)}"
+        title = n.get("title") or ""
+        snippet = n.get("snippet") or title
+        matches.append(
+            AtomMatch(
+                atom=Atom(
+                    atom_id=str(atom_id),
+                    atom_type="note",
+                    owner_user_id=int(n.get("owner_user_id") or 0),
+                    policy={"tier": n.get("circle_tier", 0)},
+                    created_at=now,
+                    updated_at=now,
+                    payload={
+                        "note_id": n.get("id"),
+                        "title": title,
+                        "project_id": n.get("project_id"),
+                    },
+                ),
+                score=float(n.get("similarity", 0.0)),
                 snippet=snippet[:200],
                 rank=rank,
             )

@@ -122,6 +122,11 @@ export const keys = {
     detail: (id: number) => ['projects', 'detail', id] as const,
     timeline: (id: number) => ['projects', id, 'timeline'] as const,
   },
+  notes: {
+    all: ['notes'] as const,
+    list: () => ['notes', 'list'] as const,
+    detail: (id: number) => ['notes', 'detail', id] as const,
+  },
   meetings: {
     all: ['meetings'] as const,
     list: () => ['meetings', 'list'] as const,
