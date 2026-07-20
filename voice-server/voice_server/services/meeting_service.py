@@ -183,6 +183,20 @@ class MeetingDiarizationService:
                 words.append(Word(text=w.word, start_s=float(w.start), end_s=float(w.end)))
         return words
 
+    @staticmethod
+    def _free_cuda_cache() -> None:
+        """Return torch's caching-allocator memory to CUDA. pyannote diarization
+        (torch) holds a large cache after running; faster-whisper (CTranslate2)
+        allocates from a SEPARATE CUDA pool, so without this the whisper `encode`
+        OOMs on a full GPU even though the diarization tensors are already dead —
+        the failure mode on a ~32-min recording. Best-effort / CUDA-only."""
+        try:
+            import torch
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+        except Exception:  # noqa: BLE001 — never let cleanup break a transcription
+            pass
+
     async def transcribe(self, pcm: np.ndarray, *, whisper_model, speaker_service) -> list[dict]:
         """Diarize + transcribe + align + per-cluster embed. Returns a list of
         segment dicts: {speaker(cluster id), start_s, end_s, text, embedding}."""
@@ -191,9 +205,15 @@ class MeetingDiarizationService:
         loop = asyncio.get_running_loop()
         async with self._lock:  # one batch job at a time (semaphore=1)
             turns = await loop.run_in_executor(None, self._diarize_sync, pcm)
+            # Release pyannote's torch cache BEFORE whisper so CTranslate2's
+            # (separate-pool) encode has room — this is the OOM fix.
+            self._free_cuda_cache()
             words = await loop.run_in_executor(
                 None, self._transcribe_words_sync, pcm, whisper_model
             )
+        # Release the job's allocations so they don't accumulate across meetings
+        # (and starve the other services sharing this GPU).
+        self._free_cuda_cache()
 
         segments = align_words_to_segments(words, turns)
 

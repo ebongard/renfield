@@ -3,6 +3,18 @@
 Releases via `bin/release-voice-server.sh` — the script refuses to release a
 version without a section here. Pushed digests live in `RELEASES.md`.
 
+## [0.3.4] — 2026-07-20
+
+- **Meeting transcription: free the CUDA cache between diarization and ASR.**
+  `MeetingDiarizationService.transcribe` ran pyannote (torch) then faster-whisper
+  (CTranslate2, a SEPARATE CUDA pool). On a busy shared GPU, pyannote's torch
+  caching-allocator memory left no room for whisper's `encode`, OOM-ing a ~32-min
+  recording (`CUDA failed with error out of memory`) even though the diarization
+  tensors were already dead. Added `torch.cuda.empty_cache()` after diarization
+  (before whisper) and after each job, so the cache doesn't starve whisper or the
+  other services sharing the GPU. Best-effort / CUDA-only. Pairs with
+  `PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True` on the deployment.
+
 ## [0.3.3] — 2026-07-19
 
 - **One-shot decode reads a seekable file, not a stdin pipe.** `/api/voice/stt`

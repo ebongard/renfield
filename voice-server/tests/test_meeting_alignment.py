@@ -1,10 +1,17 @@
 """Unit tests for the meeting word→speaker alignment (pure logic, no GPU)."""
 
 from voice_server.services.meeting_service import (
+    MeetingDiarizationService,
     Turn,
     Word,
     align_words_to_segments,
 )
+
+
+def test_free_cuda_cache_is_safe_without_gpu():
+    """The OOM-mitigation cache free is best-effort: it must never raise when
+    there's no CUDA (build/test box), so it can't break a transcription."""
+    MeetingDiarizationService._free_cuda_cache()  # no exception = pass
 
 
 def _w(text, a, b):
