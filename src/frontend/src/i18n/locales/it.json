@@ -1898,6 +1898,29 @@
     "preview": "Anteprima",
     "emptyPreview": "Niente da mostrare",
     "edit": "Modifica",
-    "cancel": "Annulla"
+    "cancel": "Annulla",
+    "title": "Note",
+    "subtitle": "Note Markdown scritte a mano — ricercabili nel Secondo Cervello",
+    "createTitle": "Nuova nota",
+    "titlePlaceholder": "Titolo",
+    "bodyPlaceholder": "Contenuto (Markdown)",
+    "create": "Crea nota",
+    "creating": "Creazione …",
+    "save": "Salva",
+    "delete": "Elimina",
+    "confirmDelete": "Conferma eliminazione",
+    "updated": "Aggiornata",
+    "loading": "Caricamento …",
+    "empty": "Nessuna nota",
+    "emptyDesc": "Crea una nota. Le note sono ricercabili e portano un livello di cerchia.",
+    "links": {
+      "outgoing": "Collega",
+      "backlinks": "Collegata da",
+      "dangling": "Nota non ancora creata"
+    },
+    "failedToLoad": "Impossibile caricare le note",
+    "failedToSave": "Impossibile salvare la nota",
+    "failedToDelete": "Impossibile eliminare la nota",
+    "failedToLoadLinks": "Impossibile caricare i collegamenti"
   }
 }

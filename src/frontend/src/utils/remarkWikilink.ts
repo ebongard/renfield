@@ -37,6 +37,10 @@ function splitTextNode(value: string): MdNode[] {
   return parts;
 }
 
+// Node types we must NOT turn a `[[x]]` inside into a link: existing links
+// (a link inside a link is invalid mdast → nested <a>) and their reference form.
+const SKIP_TYPES = new Set(['link', 'linkReference']);
+
 function walk(node: MdNode): void {
   if (!node.children) return;
   const out: MdNode[] = [];
@@ -44,7 +48,8 @@ function walk(node: MdNode): void {
     if (child.type === 'text' && child.value && child.value.includes('[[')) {
       out.push(...splitTextNode(child.value));
     } else {
-      walk(child);
+      // Recurse into containers, but never into an existing link (would nest).
+      if (!SKIP_TYPES.has(child.type)) walk(child);
       out.push(child);
     }
   }

@@ -1183,6 +1183,13 @@ class Settings(BaseSettings):
             "tasks": getattr(self, 'feature_tasks', None) if getattr(self, 'feature_tasks', None) is not None else defaults.get("tasks", True),
             "knowledge": getattr(self, 'feature_knowledge', None) if getattr(self, 'feature_knowledge', None) is not None else defaults.get("knowledge", True),
             "knowledge_graph": getattr(self, 'feature_knowledge_graph', None) if getattr(self, 'feature_knowledge_graph', None) is not None else defaults.get("knowledge_graph", True),
+            # Notes is gated by its own flag (not an edition default). It must be
+            # present here so the frontend `isFeatureEnabled('notes')` — which the
+            # /wissen Notizen lens visibility uses — agrees with `notes_enabled`
+            # (the route gate via /api/config/features). Without it an unknown key
+            # defaults to visible, so with the workspace ON but notes OFF (the
+            # household default) the lens would show and dead-end on a blank route.
+            "notes": self.notes_enabled,
         }
 
     @property

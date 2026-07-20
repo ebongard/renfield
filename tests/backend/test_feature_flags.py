@@ -28,6 +28,7 @@ class TestEditionPresets:
             "tasks": True,
             "knowledge": True,
             "knowledge_graph": True,
+            "notes": False,
         }
 
     def test_pro_edition_disables_home_features(self):
@@ -47,6 +48,7 @@ class TestEditionPresets:
             "tasks": False,
             "knowledge": False,
             "knowledge_graph": False,
+            "notes": False,
         }
 
     def test_unknown_edition_falls_back_to_pro(self):
@@ -60,6 +62,7 @@ class TestEditionPresets:
             "tasks": False,
             "knowledge": False,
             "knowledge_graph": False,
+            "notes": False,
         }
 
     def test_default_edition_is_community(self):
@@ -117,6 +120,7 @@ class TestFeatureOverrides:
             "tasks": False,
             "knowledge": False,
             "knowledge_graph": False,
+            "notes": False,
         }
 
     def test_none_means_use_default(self):
@@ -217,6 +221,7 @@ class TestAuthStatusFeatures:
             "tasks": True,
             "knowledge": True,
             "knowledge_graph": True,
+            "notes": False,
         }
 
     def test_pro_features_for_status(self):
@@ -231,6 +236,7 @@ class TestAuthStatusFeatures:
             "tasks": False,
             "knowledge": False,
             "knowledge_graph": False,
+            "notes": False,
         }
 
     def test_override_in_features_for_status(self):
@@ -239,6 +245,13 @@ class TestAuthStatusFeatures:
         features = s.features
         assert features["cameras"] is True
         assert features["smart_home"] is False
+
+    def test_notes_feature_tracks_notes_enabled(self):
+        """`features['notes']` mirrors `notes_enabled` (so the frontend
+        isFeatureEnabled('notes') — the /wissen Notizen lens gate — agrees with
+        the route's notes_enabled gate). Off by default; True when enabled."""
+        assert Settings(_env_file=None).features["notes"] is False
+        assert Settings(notes_enabled=True, _env_file=None).features["notes"] is True
 
 
 # ============================================================================
@@ -269,9 +282,15 @@ class TestRouteGuards:
         assert s.features["voice"] is False
 
     def test_all_routes_mounted_when_community(self):
-        """All feature routes should be mounted in community edition."""
+        """All EDITION feature routes are mounted in community edition.
+
+        `notes` is named in the map (so `isFeatureEnabled('notes')` never
+        defaults to a leaky True) but is gated by its own `notes_enabled` flag,
+        not the edition — so it's off by default even in community. Exclude it
+        from the "edition enables everything" check."""
         s = Settings(renfield_edition="community", _env_file=None)
-        assert all(s.features.values())
+        assert all(v for k, v in s.features.items() if k != "notes")
+        assert s.features["notes"] is False  # flag-gated, off by default
 
 
 # ============================================================================
@@ -298,6 +317,7 @@ class TestFeaturesPropertyConsistency:
             "tasks",
             "knowledge",
             "knowledge_graph",
+            "notes",
         }
         for edition in ["community", "pro", "enterprise"]:
             s = Settings(renfield_edition=edition, _env_file=None)

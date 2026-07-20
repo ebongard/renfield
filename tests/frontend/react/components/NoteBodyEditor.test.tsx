@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { render, screen, fireEvent } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { useState } from 'react';
 
@@ -30,6 +30,18 @@ describe('NoteBodyEditor [[ ]] typeahead', () => {
 
     await user.click(screen.getByRole('option', { name: 'Roadmap' }));
     expect(ta.value).toBe('siehe [[Roadmap]]');
+  });
+
+  it('does not double the closing `]]` when picking inside a pre-closed link', async () => {
+    // Caret placement is unreliable through userEvent here, so drive the value +
+    // selection directly: a pre-closed `[[Road]]` with the caret before the `]]`.
+    render(<Harness titles={['Roadmap']} />);
+    const ta = screen.getByLabelText('body') as HTMLTextAreaElement;
+    fireEvent.change(ta, { target: { value: '[[Road]]' } });
+    ta.setSelectionRange(6, 6);               // between `Road` and `]]`
+    fireEvent.keyUp(ta, { key: 'd' });        // triggers the query detection
+    fireEvent.mouseDown(await screen.findByRole('option', { name: 'Roadmap' }));
+    expect(ta.value).toBe('[[Roadmap]]');     // NOT `[[Roadmap]]]]`
   });
 
   it('shows no dropdown when the caret is not inside an open `[[`', async () => {

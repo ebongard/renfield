@@ -55,9 +55,14 @@ export default function NoteBodyEditor({
     const m = live.slice(0, pos).match(/\[\[([^\][]*)$/);
     if (!m) return;
     const start = pos - m[1].length;
-    const next = live.slice(0, start) + title + ']]' + live.slice(pos);
+    // Don't double the closing `]]` if the caret already sits before one
+    // (e.g. picking a title inside a pre-closed `[[Ro]]`).
+    const closer = live.slice(pos, pos + 2) === ']]' ? '' : ']]';
+    const next = live.slice(0, start) + title + closer + live.slice(pos);
     onChange(next);
     setQuery(null);
+    // Caret lands just past the closing `]]` either way (inserted, or the
+    // pre-existing one we reused).
     const caret = start + title.length + 2;
     requestAnimationFrame(() => {
       el.focus();
