@@ -136,15 +136,20 @@ def _login_for_token(browser) -> str:
     over the same `/api/auth/login` OAuth2-password endpoint the UI uses, without
     scraping brittle form selectors. The password is read from the process env
     only; it is never logged. Returns the JWT string (kept in-process)."""
-    req = browser.new_context(ignore_https_errors=True).request
-    resp = req.post(
-        f"{BASE_URL}/api/auth/login",
-        form={"username": E2E_USERNAME, "password": E2E_PASSWORD},
-    )
-    assert resp.ok, f"E2E login failed: HTTP {resp.status} (check E2E_USERNAME/E2E_PASSWORD)"
-    token = resp.json().get("access_token")
-    assert token, "login response had no access_token"
-    return token
+    # Own context, closed in finally — a bare `browser.new_context().request`
+    # would orphan the context for the whole session.
+    ctx = browser.new_context(ignore_https_errors=True)
+    try:
+        resp = ctx.request.post(
+            f"{BASE_URL}/api/auth/login",
+            form={"username": E2E_USERNAME, "password": E2E_PASSWORD},
+        )
+        assert resp.ok, f"E2E login failed: HTTP {resp.status} (check E2E_USERNAME/E2E_PASSWORD)"
+        token = resp.json().get("access_token")
+        assert token, "login response had no access_token"
+        return token
+    finally:
+        ctx.close()
 
 
 @pytest.fixture(scope="session")
