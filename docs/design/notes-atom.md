@@ -156,7 +156,12 @@ indexes.
   **`/wissen` Notizen lens** (`lenses.ts` `notizen`, `note`→`notes` segment,
   `/notes`→`/wissen/notes` redirect + nav collapse when the workspace is on).
   Deferred: a dedicated `note` branch in the Wissen detail drawer (generic
-  fallback works today) + dense-embedding semantic search (4B.1 shipped FTS-only).
+  fallback works today).
+- **Dense embedding (SHIPPED):** `notes.embedding` (halfvec HNSW, migration
+  `pc20260721`) + a dense retrieval branch RRF-fused with the FTS branch in
+  `NoteRetrieval`; `note_service` embeds title+body on write (best-effort,
+  Postgres-only, `notes_semantic_search_enabled`); `bin/backfill_note_embeddings.py`
+  for historical notes. Notes without an embedding are still found via FTS.
 
 **Gate:** `notes_enabled` (opt-in/dark), like every other feature.
 
