@@ -204,6 +204,20 @@ async def authenticate_websocket(
                 "— rejecting connection until rotated"
             )
             return None
+        # Revoked (logged-out) token must not open a WS either (audit review):
+        # logout blacklists the jti, and get_current_user rejects it on REST — the
+        # WS surface must match, else a "logged-out" session keeps a live socket.
+        # is_blacklisted fails CLOSED (rejects on Redis outage), same as REST.
+        from services.token_blacklist import token_blacklist as _blacklist
+        _jti = payload.get("jti")
+        if _jti and await _blacklist.is_blacklisted(_jti):
+            logger.debug(f"WebSocket JWT auth: user_id={user_id_int} token revoked — rejecting")
+            return None
+        # Session-revocation epoch (security audit H3/H4): a token minted before
+        # the user's token_epoch was bumped (password change) can't (re)connect.
+        if int(payload.get("epoch", 0) or 0) < int(getattr(user, "token_epoch", 0) or 0):
+            logger.debug(f"WebSocket JWT auth: user_id={user_id_int} epoch stale — rejecting")
+            return None
 
         logger.debug(f"WebSocket authenticated via JWT: user_id={user.id}")
         return {

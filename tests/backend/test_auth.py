@@ -294,7 +294,11 @@ class TestRefreshTokenRotation:
 
         monkeypatch.setattr(tb_mod, "token_blacklist", FakeBlacklist())
 
-        user = MagicMock(id=123, is_active=True, username="u")
+        # token_epoch=0 is required now that /refresh enforces the session-
+        # revocation epoch (security audit H3/H4): a bare MagicMock would
+        # auto-vivify token_epoch and MagicMock.__int__() returns 1, spuriously
+        # rejecting the freshly-minted (epoch-0) token as revoked.
+        user = MagicMock(id=123, is_active=True, username="u", token_epoch=0)
 
         async def fake_get_user(db, uid):
             return user

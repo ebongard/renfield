@@ -263,6 +263,37 @@ def has_all_permissions(user_permissions: list[str], required: list[Permission])
     return all(has_permission(user_permissions, perm) for perm in required)
 
 
+def missing_grantable_permissions(
+    caller_permissions: list[str], requested: list[str]
+) -> list[str]:
+    """
+    Return the subset of ``requested`` permissions the caller may NOT grant.
+
+    Enforces the **grant-only-what-you-hold** invariant for role/user
+    administration (security audit H1/H2): a caller may assign to a role or a
+    user only permissions the caller themselves possesses, so a delegated
+    ``roles.manage``/``users.manage`` holder cannot escalate to ``admin`` (or any
+    permission above their own) by editing a role's permission list or assigning
+    a more-privileged role.
+
+    - ``admin`` is a superset: an admin caller may grant anything (returns []).
+    - Hierarchy and MCP wildcards are honored via :func:`has_permission`
+      (e.g. a caller with ``kb.all`` may grant ``kb.shared``; ``mcp.*`` may
+      grant ``mcp.weather``).
+
+    Args:
+        caller_permissions: Permissions the acting user currently holds.
+        requested: The permission strings being assigned/granted.
+
+    Returns:
+        The requested permissions the caller does not hold (empty = all allowed).
+    """
+    # An admin holds everything and may grant anything.
+    if has_permission(caller_permissions, Permission.ADMIN):
+        return []
+    return [perm for perm in requested if not has_permission(caller_permissions, perm)]
+
+
 def get_all_permissions() -> list[dict]:
     """
     Get all available permissions with descriptions.

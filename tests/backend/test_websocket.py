@@ -556,6 +556,12 @@ class TestWebSocketAuthentication:
         fake_user = MagicMock()
         fake_user.id = 7  # int, as it would come from the DB column
         fake_user.is_active = True
+        fake_user.must_change_password = False
+        # token_epoch=0 like a real User row: the WS JWT path now enforces the
+        # session-revocation epoch (audit H3/H4); a bare MagicMock would
+        # auto-vivify it and MagicMock.__int__() returns 1, spuriously rejecting
+        # the epoch-0 token.
+        fake_user.token_epoch = 0
 
         ws = MagicMock()
         ws.headers = {}
@@ -582,6 +588,79 @@ class TestWebSocketAuthentication:
             "asyncpg rejects str for integer columns."
         )
         assert result.get("authenticated") is True
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_authenticate_websocket_accepts_ws_scoped_token(self):
+        """M2: the short-lived scope='ws' token from /api/ws/token must be
+        ACCEPTED on the WS handshake (that is its whole purpose)."""
+        from unittest.mock import AsyncMock, MagicMock, patch
+
+        from services.auth_service import create_ws_token_jwt
+        from services.websocket_auth import authenticate_websocket
+        from utils.config import settings
+
+        tok = create_ws_token_jwt(7, token_epoch=0)
+        fake_user = MagicMock(id=7, is_active=True, must_change_password=False, token_epoch=0)
+        ws = MagicMock(); ws.headers = {}
+        original = settings.ws_auth_enabled
+        settings.ws_auth_enabled = True
+        try:
+            with patch("services.auth_service.get_user_by_id", new=AsyncMock(return_value=fake_user)), \
+                 patch("services.database.AsyncSessionLocal", new=_fake_session_local()), \
+                 patch("services.token_blacklist.token_blacklist.is_blacklisted", new=AsyncMock(return_value=False)):
+                result = await authenticate_websocket(ws, token=tok)
+        finally:
+            settings.ws_auth_enabled = original
+        assert result is not None and result.get("user_id") == 7
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_authenticate_websocket_rejects_stale_epoch(self):
+        """H3/H4: a token minted before token_epoch was bumped can't (re)connect."""
+        from unittest.mock import AsyncMock, MagicMock, patch
+
+        from services.auth_service import create_access_token
+        from services.websocket_auth import authenticate_websocket
+        from utils.config import settings
+
+        tok = create_access_token({"sub": "7"}, token_epoch=2)  # < user's 3
+        fake_user = MagicMock(id=7, is_active=True, must_change_password=False, token_epoch=3)
+        ws = MagicMock(); ws.headers = {}
+        original = settings.ws_auth_enabled
+        settings.ws_auth_enabled = True
+        try:
+            with patch("services.auth_service.get_user_by_id", new=AsyncMock(return_value=fake_user)), \
+                 patch("services.database.AsyncSessionLocal", new=_fake_session_local()), \
+                 patch("services.token_blacklist.token_blacklist.is_blacklisted", new=AsyncMock(return_value=False)):
+                result = await authenticate_websocket(ws, token=tok)
+        finally:
+            settings.ws_auth_enabled = original
+        assert result is None
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_authenticate_websocket_rejects_blacklisted(self):
+        """A logged-out (blacklisted) token must not open a WS."""
+        from unittest.mock import AsyncMock, MagicMock, patch
+
+        from services.auth_service import create_access_token
+        from services.websocket_auth import authenticate_websocket
+        from utils.config import settings
+
+        tok = create_access_token({"sub": "7"}, token_epoch=0)
+        fake_user = MagicMock(id=7, is_active=True, must_change_password=False, token_epoch=0)
+        ws = MagicMock(); ws.headers = {}
+        original = settings.ws_auth_enabled
+        settings.ws_auth_enabled = True
+        try:
+            with patch("services.auth_service.get_user_by_id", new=AsyncMock(return_value=fake_user)), \
+                 patch("services.database.AsyncSessionLocal", new=_fake_session_local()), \
+                 patch("services.token_blacklist.token_blacklist.is_blacklisted", new=AsyncMock(return_value=True)):
+                result = await authenticate_websocket(ws, token=tok)
+        finally:
+            settings.ws_auth_enabled = original
+        assert result is None
 
     @pytest.mark.unit
     @pytest.mark.asyncio

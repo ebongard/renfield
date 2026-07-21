@@ -1543,8 +1543,17 @@ ALLOW_REGISTRATION=false  # Nur Admin erstellt Benutzer
 # WebSocket Authentifizierung aktivieren (für Produktion empfohlen!)
 WS_AUTH_ENABLED=false
 
-# Token-Gültigkeitsdauer in Minuten
+# Token-Gültigkeitsdauer in Minuten (Geräte-Token-Store)
 WS_TOKEN_EXPIRE_MINUTES=60
+
+# Lebensdauer des kurzlebigen, WS-scoped Access-JWT, das der Browser von
+# POST /api/ws/token holt und als ?token= an die WebSocket-URL hängt
+# (Security-Audit M2, Backend-Groundwork). Bewusst winzig: lange genug zum
+# Öffnen des Sockets, viel zu kurz, um aus einem Proxy-Access-Log geerntet
+# nützlich zu sein. get_current_user LEHNT einen scope="ws"-Token auf der REST-
+# API AB. Ein Reconnect holt einen frischen. (Der Browser-Client-Wechsel auf
+# diesen Token ist M2-frontend — noch nicht verdrahtet.)
+WS_JWT_EXPIRE_SECONDS=90
 
 # Rate Limiting aktivieren
 WS_RATE_LIMIT_ENABLED=true
@@ -1569,6 +1578,7 @@ WS_PROTOCOL_VERSION=1.0
 **Defaults:**
 - `WS_AUTH_ENABLED`: `false` (für Entwicklung)
 - `WS_TOKEN_EXPIRE_MINUTES`: `60`
+- `WS_JWT_EXPIRE_SECONDS`: `90`
 - `WS_RATE_LIMIT_ENABLED`: `true`
 - `WS_RATE_LIMIT_PER_SECOND`: `50` (Audio-Streaming benötigt ~12.5/Sek.)
 - `WS_RATE_LIMIT_PER_MINUTE`: `1000`

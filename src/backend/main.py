@@ -442,15 +442,20 @@ async def create_ws_token(
     if current_user is None:
         raise HTTPException(status_code=401, detail="Authentication required")
 
-    token_store = get_token_store()
-    token = token_store.create_token(
-        device_id=device_id,
-        device_type=device_type
-    )
+    # Security audit M2: return a SHORT-LIVED, WS-scoped access JWT bound to this
+    # user (not the full 24h API access token, and not the in-memory device token
+    # which would be lost on the single-replica Recreate restart). The browser
+    # passes it as ?token= on the WebSocket URL; even if harvested from a proxy
+    # access log it expires in ~90s and get_current_user rejects its "ws" scope on
+    # the REST API. authenticate_websocket (Strategy 1) accepts it as a normal
+    # access token after the usual user existence/active/rotation checks.
+    from services.auth_service import create_ws_token_jwt
+
+    token = create_ws_token_jwt(current_user.id, token_epoch=current_user.token_epoch)
 
     return {
         "token": token,
-        "expires_in": settings.ws_token_expire_minutes * 60,
+        "expires_in": settings.ws_jwt_expire_seconds,
         "protocol_version": settings.ws_protocol_version
     }
 

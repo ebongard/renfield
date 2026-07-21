@@ -16,8 +16,14 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.database import Role, User
-from models.permissions import Permission, get_all_permissions, get_mcp_permissions
-from services.auth_service import require_permission
+from models.permissions import (
+    Permission,
+    get_all_permissions,
+    get_mcp_permissions,
+    has_permission,
+    missing_grantable_permissions,
+)
+from services.auth_service import active_admin_ids, require_permission
 from services.database import get_db
 
 router = APIRouter()
@@ -164,6 +170,20 @@ async def create_role(
                 detail=f"Invalid permission: {perm}"
             )
 
+    # Grant-only-what-you-hold (security audit H1): a non-admin roles.manage
+    # holder cannot mint a role carrying permissions above their own (e.g. admin).
+    # user is None only in auth-off / single-user mode → no caller authority to
+    # constrain, allow (mirrors users.py::_reject_role_escalation).
+    if user is not None:
+        not_grantable = missing_grantable_permissions(
+            user.get_permissions(), request.permissions
+        )
+        if not_grantable:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"Cannot grant permissions you do not hold: {sorted(not_grantable)}",
+            )
+
     # Create role
     role = Role(
         name=request.name,
@@ -245,6 +265,59 @@ async def update_role(
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail=f"Invalid permission: {perm}"
                 )
+
+        # Caller-authority checks apply only when auth is on (user is None in
+        # auth-off / single-user mode → no caller to constrain, allow; mirrors
+        # users.py::_reject_role_escalation). Without this guard, auth-off role
+        # edits would fail-closed (empty perms → grant-only rejects everything).
+        if user is not None:
+            caller_perms = user.get_permissions()
+
+            # Grant-only-what-you-hold (security audit H1): the core privilege-
+            # escalation fix. A roles.manage holder editing ANY role (their own
+            # included) cannot inject a permission they do not themselves hold —
+            # closing "PATCH my own role to add admin → instance takeover".
+            not_grantable = missing_grantable_permissions(caller_perms, request.permissions)
+            if not_grantable:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail=f"Cannot grant permissions you do not hold: {sorted(not_grantable)}",
+                )
+
+            # Editing a SYSTEM role's permission set has global blast radius (every
+            # user carrying that shared role). Require full admin to do it, so a
+            # delegated roles.manager can't weaken/rewrite the built-in roles.
+            if role.is_system and set(request.permissions) != set(role.permissions or []):
+                if not has_permission(caller_perms, Permission.ADMIN):
+                    raise HTTPException(
+                        status_code=status.HTTP_403_FORBIDDEN,
+                        detail="Only an admin may change a system role's permissions",
+                    )
+
+        # Last-admin guard (security audit M5): if this edit strips `admin` from a
+        # role that currently grants it, refuse when it would leave the instance
+        # with no active admin reachable via any other role.
+        strips_admin = has_permission(role.permissions or [], Permission.ADMIN) and (
+            not has_permission(request.permissions, Permission.ADMIN)
+        )
+        if strips_admin:
+            admin_ids = await active_admin_ids(db)
+            holders = {
+                r[0]
+                for r in (
+                    await db.execute(
+                        select(User.id).where(
+                            User.role_id == role.id, User.is_active.is_(True)
+                        )
+                    )
+                ).all()
+            }
+            if not (admin_ids - holders):
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Refusing: this would leave the instance with no admin",
+                )
+
         role.permissions = request.permissions
 
     await db.commit()

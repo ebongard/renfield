@@ -25,6 +25,15 @@ from utils.config import settings
 # Password hashing context
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
+# Precomputed bcrypt hash used to equalize login timing on the "user not found"
+# path (security audit M3). Without it, authenticate_user early-returns for an
+# unknown username WITHOUT running bcrypt (~0ms) while a real username spends a
+# full bcrypt round (~250ms) — a timing oracle that enumerates valid usernames,
+# defeating the deliberately-opaque 401. We run one throwaway verify against this
+# hash on the not-found branch so both branches cost the same. Computed once at
+# import (a single bcrypt round) to stay valid against the live bcrypt backend.
+_DUMMY_PASSWORD_HASH = pwd_context.hash("renfield-login-timing-equalizer")
+
 # OAuth2 scheme for token extraction
 # tokenUrl is the endpoint where users can get a token
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/auth/login", auto_error=False)
@@ -76,7 +85,8 @@ def validate_password(password: str) -> tuple[bool, str]:
 
 def create_access_token(
     data: dict,
-    expires_delta: timedelta | None = None
+    expires_delta: timedelta | None = None,
+    token_epoch: int | None = None,
 ) -> str:
     """
     Create a JWT access token.
@@ -84,6 +94,11 @@ def create_access_token(
     Args:
         data: Payload data (should include "sub" for user identification)
         expires_delta: Optional custom expiration time
+        token_epoch: The user's current ``token_epoch`` (security audit H3/H4).
+            When provided it is embedded as the ``epoch`` claim; ``get_current_user``
+            rejects a token whose ``epoch`` is older than the user's live
+            ``token_epoch``, so bumping the column invalidates every outstanding
+            token (session revocation on password change / logout).
 
     Returns:
         Encoded JWT token string
@@ -100,16 +115,20 @@ def create_access_token(
         "type": "access",
         "jti": str(uuid4()),
     })
+    if token_epoch is not None:
+        to_encode["epoch"] = token_epoch
 
     encoded_jwt = jwt.encode(to_encode, settings.secret_key.get_secret_value(), algorithm=ALGORITHM)
     return encoded_jwt
 
 
-def create_refresh_token(user_id: int) -> str:
+def create_refresh_token(user_id: int, token_epoch: int | None = None) -> str:
     """
     Create a JWT refresh token.
 
-    Refresh tokens have longer expiration and can only be used to get new access tokens.
+    Refresh tokens have longer expiration and can only be used to get new access
+    tokens. ``token_epoch`` is embedded (when provided) so a session-revocation
+    epoch bump invalidates the refresh token too (security audit H3/H4).
     """
     expire = datetime.now(UTC).replace(tzinfo=None) + timedelta(days=settings.refresh_token_expire_days)
 
@@ -119,9 +138,43 @@ def create_refresh_token(user_id: int) -> str:
         "type": "refresh",
         "jti": str(uuid4()),
     }
+    if token_epoch is not None:
+        to_encode["epoch"] = token_epoch
 
     encoded_jwt = jwt.encode(to_encode, settings.secret_key.get_secret_value(), algorithm=ALGORITHM)
     return encoded_jwt
+
+
+def create_ws_token_jwt(user_id: int, token_epoch: int | None = None) -> str:
+    """
+    Mint a SHORT-LIVED, WS-scoped access JWT for the browser WebSocket handshake
+    (security audit M2).
+
+    The web client passes the WS token as ``?token=`` on the WebSocket URL, which
+    lands in reverse-proxy access logs / history / Referer. Handing over the
+    full 24h API access token there is the vulnerability; this token instead:
+      - lives only ``ws_jwt_expire_seconds`` (~90s) — long enough to open the
+        socket, far too short to be useful if harvested from a log later, and
+      - carries ``scope="ws"``, which :func:`get_current_user` REJECTS, so even
+        within its lifetime it is useless against the REST API.
+    It is a normal ``type="access"`` token so ``authenticate_websocket``
+    (Strategy 1) accepts it after the usual user existence/active/rotation checks.
+    Stateless (survives the single-replica Recreate restart), unlike the
+    in-memory device token store.
+    """
+    expire = datetime.now(UTC).replace(tzinfo=None) + timedelta(
+        seconds=settings.ws_jwt_expire_seconds
+    )
+    to_encode = {
+        "sub": str(user_id),
+        "exp": expire,
+        "type": "access",
+        "scope": "ws",
+        "jti": str(uuid4()),
+    }
+    if token_epoch is not None:
+        to_encode["epoch"] = token_epoch
+    return jwt.encode(to_encode, settings.secret_key.get_secret_value(), algorithm=ALGORITHM)
 
 
 def decode_token(token: str) -> dict | None:
@@ -167,6 +220,9 @@ async def authenticate_user(
     user = result.scalar_one_or_none()
 
     if not user:
+        # Spend one bcrypt round against a dummy hash so an unknown username costs
+        # the same as a real one (security audit M3 — no timing enumeration oracle).
+        verify_password(password, _DUMMY_PASSWORD_HASH)
         return None
 
     if not verify_password(password, user.password_hash):
@@ -176,6 +232,27 @@ async def authenticate_user(
         return None
 
     return user
+
+
+async def active_admin_ids(db: AsyncSession) -> set[int]:
+    """
+    Ids of ACTIVE users whose role currently grants ``Permission.ADMIN``
+    (security audit M5 — last-admin lockout guard). The user/role mutation routes
+    use this to refuse any operation that would leave the instance with zero
+    admins (self-demotion, demoting/deleting the last admin, or stripping ``admin``
+    from the only admin-granting role) — a lockout only a DB edit could recover.
+    """
+    from models.permissions import has_permission
+
+    result = await db.execute(
+        select(User.id, Role.permissions)
+        .join(Role, User.role_id == Role.id)
+        .where(User.is_active.is_(True))
+    )
+    return {
+        uid for uid, perms in result.all()
+        if has_permission(perms or [], Permission.ADMIN)
+    }
 
 
 async def get_user_by_id(db: AsyncSession, user_id: int) -> User | None:
@@ -244,6 +321,16 @@ async def get_current_user(
             headers={"WWW-Authenticate": "Bearer"},
         )
 
+    # A WS-scoped token (security audit M2) is ONLY valid on the WebSocket
+    # handshake, never against the REST API — reject it here so a short-lived WS
+    # token harvested from a proxy log can't be replayed as an API bearer.
+    if payload.get("scope") == "ws":
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid token scope",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
     # Check if token has been revoked (logout)
     jti = payload.get("jti")
     if jti:
@@ -278,6 +365,18 @@ async def get_current_user(
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="User account is disabled"
+        )
+
+    # Session-revocation epoch (security audit H3/H4). A token minted before the
+    # user's token_epoch was last bumped (password change / explicit revoke) is
+    # rejected. Tokens minted before this feature carry no `epoch` claim → 0;
+    # existing users default token_epoch=0 → 0 < 0 is False, so no mass logout on
+    # deploy. Enforced against DB truth, like the must_change_password gate.
+    if int(payload.get("epoch", 0) or 0) < int(getattr(user, "token_epoch", 0) or 0):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Token has been revoked",
+            headers={"WWW-Authenticate": "Bearer"},
         )
 
     # Enforce forced password rotation (#694). A user flagged

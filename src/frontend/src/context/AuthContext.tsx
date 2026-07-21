@@ -168,9 +168,30 @@ export function AuthProvider({ children }: AuthProviderProps) {
 
   // Logout
   const logout = useCallback(() => {
-    clearTokens();
+    // Security audit H4: tell the backend to REVOKE this session's tokens (both
+    // the access token AND the refresh token in the body) so they can't be
+    // replayed after logout. The Authorization header is attached EXPLICITLY
+    // here: the axios request interceptor reads localStorage asynchronously, so
+    // if we relied on it the clearTokens() below (synchronous) would wipe the
+    // access token before the interceptor runs → the POST would ship
+    // unauthenticated → 401 → nothing revoked. clearTokens() moves into
+    // .finally() so it runs only after the request has been dispatched.
+    const accessToken = getAccessToken();
+    const refreshToken = getRefreshToken();
     setUser(null);
-  }, [clearTokens]);
+    void apiClient
+      .post(
+        '/api/auth/logout',
+        refreshToken ? { refresh_token: refreshToken } : {},
+        accessToken ? { headers: { Authorization: `Bearer ${accessToken}` } } : undefined,
+      )
+      .catch(() => {
+        /* already logging out locally; a failed revoke is retried on next login churn */
+      })
+      .finally(() => {
+        clearTokens();
+      });
+  }, [clearTokens, getAccessToken, getRefreshToken]);
 
   // Change password
   const changePassword = useCallback(async (currentPassword: string, newPassword: string): Promise<{ message: string }> => {
@@ -181,8 +202,15 @@ export function AuthProvider({ children }: AuthProviderProps) {
     }, {
       headers: { Authorization: `Bearer ${token}` }
     });
+    // Security audit H3: the backend bumps the user's token_epoch on a password
+    // change (revoking every OTHER outstanding session) and returns a fresh token
+    // pair carrying the new epoch. Store them so THIS device stays logged in;
+    // without this our now-stale current tokens would 401 on the next request.
+    if (response.data?.access_token) {
+      setTokens(response.data.access_token, response.data.refresh_token);
+    }
     return response.data;
-  }, [getAccessToken]);
+  }, [getAccessToken, setTokens]);
 
   // Check auth status on mount
   useEffect(() => {

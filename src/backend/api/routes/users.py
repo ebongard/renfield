@@ -19,10 +19,15 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from models.database import Speaker, User
-from models.permissions import Permission
+from models.database import Role, Speaker, User
+from models.permissions import (
+    Permission,
+    has_permission,
+    missing_grantable_permissions,
+)
 from utils.hooks import run_hooks
 from services.auth_service import (
+    active_admin_ids,
     get_password_hash,
     get_role_by_id,
     require_permission,
@@ -36,6 +41,30 @@ router = APIRouter()
 def _escape_like(value: str) -> str:
     """Escape LIKE special characters to prevent wildcard injection."""
     return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
+def _reject_role_escalation(caller: "User | None", target_role: "Role") -> None:
+    """
+    Enforce grant-only-what-you-hold on role ASSIGNMENT (security audit H2).
+
+    A ``users.manage`` holder may only assign a role whose permission set is a
+    subset of the caller's own — otherwise a low-privilege operator could mint or
+    promote a user into Admin and inherit it. Admin callers may assign anything.
+    ``caller is None`` is auth-off / single-user mode → allowed.
+    """
+    if caller is None:
+        return
+    not_grantable = missing_grantable_permissions(
+        caller.get_permissions(), target_role.permissions or []
+    )
+    if not_grantable:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=(
+                "Cannot assign a role with permissions you do not hold: "
+                f"{sorted(not_grantable)}"
+            ),
+        )
 
 
 # =============================================================================
@@ -262,6 +291,11 @@ async def create_user(
             detail="Role not found"
         )
 
+    # Grant-only-what-you-hold (security audit H2): a non-admin users.manage
+    # holder cannot mint an account whose role carries permissions above their
+    # own (e.g. create a new Admin).
+    _reject_role_escalation(current_user, role)
+
     # Validate password
     is_valid, error = validate_password(request.password)
     if not is_valid:
@@ -364,6 +398,34 @@ async def update_user(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Role not found"
             )
+
+        # Block self-role-change (security audit H2): an operator must not change
+        # their OWN role — the sole safe path to elevate a user is via another
+        # admin. Mirrors the existing self-deactivation guard below.
+        if current_user and user.id == current_user.id:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Cannot change your own role",
+            )
+
+        # Grant-only-what-you-hold (security audit H2): cannot promote a user into
+        # a role more privileged than the caller (e.g. assign Admin).
+        _reject_role_escalation(current_user, role)
+
+        # Last-admin guard (security audit M5): if this reassignment demotes the
+        # target OUT of admin, refuse when no other active admin would remain.
+        target_is_admin = user.role and has_permission(
+            user.role.permissions or [], Permission.ADMIN
+        )
+        new_role_is_admin = has_permission(role.permissions or [], Permission.ADMIN)
+        if target_is_admin and not new_role_is_admin:
+            admin_ids = await active_admin_ids(db)
+            if not (admin_ids - {user.id}):
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Refusing: this would leave the instance with no admin",
+                )
+
         user.role_id = request.role_id
 
     # Update first/last name if provided
@@ -380,6 +442,16 @@ async def update_user(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Cannot deactivate your own account"
             )
+        # Last-admin guard (security audit M5): deactivating the final active
+        # admin would lock the instance out of user/role management.
+        if not request.is_active and user.is_active:
+            if user.role and has_permission(user.role.permissions or [], Permission.ADMIN):
+                admin_ids = await active_admin_ids(db)
+                if not (admin_ids - {user.id}):
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail="Refusing: this would leave the instance with no admin",
+                    )
         user.is_active = request.is_active
 
     # Update personality fields
@@ -443,6 +515,16 @@ async def delete_user(
             detail="Cannot delete your own account"
         )
 
+    # Last-admin guard (security audit M5): deleting the final active admin would
+    # lock the instance out of user/role management. active_admin_ids already
+    # counts only active admins, so an inactive-admin target is unaffected.
+    admin_ids = await active_admin_ids(db)
+    if user.id in admin_ids and not (admin_ids - {user.id}):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Refusing: this would leave the instance with no admin",
+        )
+
     username = user.username
     await db.delete(user)
     await db.commit()
@@ -483,9 +565,16 @@ async def reset_password(
         )
 
     user.password_hash = get_password_hash(request.new_password)
+    # Session revocation on admin-driven reset (security audit H3): the reset is
+    # the canonical lever pulled when an account is compromised, so it MUST
+    # invalidate the attacker's live access + refresh tokens. Bump the epoch (no
+    # re-issue — the admin is not the session owner). Force a rotation too so the
+    # temporary password can't linger.
+    user.token_epoch = int(user.token_epoch or 0) + 1
+    user.must_change_password = True
     await db.commit()
 
-    logger.info(f"Password reset for user: {user.username} by {current_user.username if current_user else 'system'}")
+    logger.info(f"Password reset for user: {user.username} by {current_user.username if current_user else 'system'} (sessions revoked)")
 
     return {"message": f"Password reset for user '{user.username}'"}
 

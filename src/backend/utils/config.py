@@ -999,7 +999,12 @@ class Settings(BaseSettings):
 
     # WebSocket Security
     ws_auth_enabled: bool = False  # Enable WebSocket authentication (set True in production)
-    ws_token_expire_minutes: int = 60  # WebSocket token expiration
+    ws_token_expire_minutes: int = 60  # WebSocket token expiration (device token store)
+    # Lifetime of the short-lived, WS-scoped access JWT the browser fetches from
+    # /api/ws/token and passes as ?token= on the WebSocket URL (security audit M2).
+    # Kept tiny: long enough to open the socket, far too short to be useful if
+    # harvested from a proxy access log later. A reconnect fetches a fresh one.
+    ws_jwt_expire_seconds: int = 90
 
     # Security (review H1): comma-separated allowlist of satellite_ids permitted
     # to receive per-person BLE IRKs (which permanently de-anonymize a resident's

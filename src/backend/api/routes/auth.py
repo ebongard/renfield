@@ -59,6 +59,13 @@ class RefreshRequest(BaseModel):
     refresh_token: str
 
 
+class LogoutRequest(BaseModel):
+    """Optional logout body — carries the refresh token so it can be revoked too
+    (security audit H4). Optional for backward compatibility with clients that
+    POST /logout with no body (only the access token is then revoked)."""
+    refresh_token: str | None = None
+
+
 class SsoExchangeRequest(BaseModel):
     """Exchange a one-time SSO hand-off code for the session tokens.
 
@@ -217,9 +224,10 @@ async def login(
     # claim; the cosmetic `username` claim now carries display_name (no
     # consumer reads it — verified design decision #6).
     access_token = create_access_token(
-        data={"sub": str(user.id), "username": outcome.display_name}
+        data={"sub": str(user.id), "username": outcome.display_name},
+        token_epoch=user.token_epoch,
     )
-    refresh_token = create_refresh_token(user.id)
+    refresh_token = create_refresh_token(user.id, token_epoch=user.token_epoch)
 
     logger.info(
         f"User logged in: {user.username} "
@@ -279,6 +287,16 @@ async def refresh_token(
             headers={"WWW-Authenticate": "Bearer"},
         )
 
+    # Session-revocation epoch (security audit H3/H4): a refresh token minted
+    # before the user's token_epoch was bumped (password change / revoke-all) is
+    # dead, so it cannot be traded for a fresh access token.
+    if int(payload.get("epoch", 0) or 0) < int(user.token_epoch or 0):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Refresh token has been revoked",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
     # #698: refresh-token rotation WITH reuse-detection. A refresh token is
     # single-use. (1) If its jti is already blacklisted it was spent (rotated) or
     # revoked → this is a replay of a stolen/old token → reject. (2) Otherwise
@@ -307,9 +325,10 @@ async def refresh_token(
 
     # Create new tokens
     access_token = create_access_token(
-        data={"sub": str(user.id), "username": user.username}
+        data={"sub": str(user.id), "username": user.username},
+        token_epoch=user.token_epoch,
     )
-    new_refresh_token = create_refresh_token(user.id)
+    new_refresh_token = create_refresh_token(user.id, token_epoch=user.token_epoch)
 
     return TokenResponse(
         access_token=access_token,
@@ -368,9 +387,10 @@ async def sso_exchange(
         raise bad
 
     access_token = create_access_token(
-        data={"sub": str(user.id), "username": user.username}
+        data={"sub": str(user.id), "username": user.username},
+        token_epoch=user.token_epoch,
     )
-    refresh_token = create_refresh_token(user.id)
+    refresh_token = create_refresh_token(user.id, token_epoch=user.token_epoch)
 
     logger.info(f"SSO hand-off exchanged: user={user.username} provider={session.provider!r}")
     return TokenResponse(
@@ -513,36 +533,82 @@ async def change_password(
     # the control was inert. Clearing it here makes the rotation gate functional.
     user.password_hash = get_password_hash(request.new_password)
     user.must_change_password = False
+    # Session revocation on credential change (security audit H3/H4): bump the
+    # token_epoch so EVERY outstanding access + refresh token for this user
+    # (including any stolen by an attacker) is immediately invalidated. We then
+    # mint a fresh pair carrying the new epoch and return them, so the device that
+    # performed the change stays logged in while all others are cut.
+    user.token_epoch = int(user.token_epoch or 0) + 1
     await db.commit()
 
-    logger.info(f"Password changed for user: {user.username}")
+    access_token = create_access_token(
+        data={"sub": str(user.id), "username": user.username},
+        token_epoch=user.token_epoch,
+    )
+    refresh_token = create_refresh_token(user.id, token_epoch=user.token_epoch)
 
-    return {"message": "Password changed successfully"}
+    logger.info(f"Password changed for user: {user.username} (all other sessions revoked)")
+
+    return {
+        "message": "Password changed successfully",
+        "access_token": access_token,
+        "refresh_token": refresh_token,
+        "token_type": "bearer",
+        "expires_in": settings.access_token_expire_minutes * 60,
+    }
 
 
 @router.post("/logout")
 async def logout(
     user: User = Depends(require_auth),
     token: str = Depends(oauth2_scheme),
+    logout_request: LogoutRequest | None = None,
 ):
     """
-    Logout the current user by revoking their access token.
+    Logout the current user by revoking their access token AND, when supplied,
+    their refresh token (security audit H4 — otherwise a stolen refresh token
+    kept minting fresh access tokens for 30 days after "logout").
 
-    The token's JTI is added to a Redis blacklist with TTL matching
-    the token's remaining lifetime.
+    Each token's JTI is added to a Redis blacklist with TTL matching its
+    remaining lifetime. If a revocation write fails (Redis unreachable) we return
+    503 rather than a misleading 200 (security audit M6) — the client must retry
+    so it never believes a session is dead when it is not.
     """
+    import time
+
     from services.token_blacklist import token_blacklist
 
-    if token:
-        payload = decode_token(token)
-        if payload:
-            jti = payload.get("jti")
-            exp = payload.get("exp")
-            if jti and exp:
-                import time
-                ttl = int(exp - time.time())
-                if ttl > 0:
-                    await token_blacklist.add(jti, ttl)
+    write_failed = False
+
+    async def _revoke(raw_token: str | None, expected_type: str) -> None:
+        nonlocal write_failed
+        if not raw_token:
+            return
+        payload = decode_token(raw_token)
+        if not payload or payload.get("type") != expected_type:
+            return
+        jti = payload.get("jti")
+        exp = payload.get("exp")
+        if not jti or not exp:
+            return
+        ttl = int(exp - time.time())
+        if ttl > 0 and not await token_blacklist.add(jti, ttl):
+            write_failed = True
+
+    # Revoke the REFRESH token first (audit review): it is the long-lived
+    # replay risk (30d), so if the blacklist write fails partway we must not have
+    # already burned the access-token write (which would 401 the retry at
+    # require_auth while leaving the refresh token live). Refresh first → a 503
+    # retry can still reach here to revoke it.
+    await _revoke(logout_request.refresh_token if logout_request else None, "refresh")
+    # ...then the access token authenticating this request.
+    await _revoke(token, "access")
+
+    if write_failed:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Logout could not be completed — revocation store unavailable, please retry",
+        )
 
     logger.info(f"User logged out: {user.username}")
     return {"message": "Successfully logged out"}
@@ -737,9 +803,10 @@ async def voice_authenticate(
         await db.commit()
 
         access_token = create_access_token(
-            data={"sub": str(user.id), "username": user.username}
+            data={"sub": str(user.id), "username": user.username},
+            token_epoch=user.token_epoch,
         )
-        refresh_token = create_refresh_token(user.id)
+        refresh_token = create_refresh_token(user.id, token_epoch=user.token_epoch)
 
         logger.info(f"Voice authentication successful: {user.username} (speaker: {speaker_name}, confidence: {confidence:.2f})")
 

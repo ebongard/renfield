@@ -218,6 +218,8 @@ curl -X POST http://localhost:8000/api/roles \
 | `/api/roles/{id}` | DELETE | Rolle löschen (nicht System-Rollen) |
 | `/api/roles/permissions/all` | GET | Alle verfügbaren Permissions |
 
+> **Grant-only-what-you-hold (Security-Audit 2026-07-21).** Beim Erstellen/Bearbeiten einer Rolle und beim Zuweisen einer Rolle an einen Benutzer kann der Aufrufer nur Permissions vergeben, die er **selbst** hält (`admin` ist ein Superset; MCP-Wildcards + Hierarchie zählen). Ein `roles.manage`/`users.manage`-Inhaber ohne `admin` kann sich also **nicht** selbst zum Admin machen und nicht seine eigene Rolle ändern. Das Ändern der Permissions einer **System-Rolle** erfordert zusätzlich `admin`. Außerdem verhindern **Last-Admin-Guards**, dass der letzte aktive Admin herabgestuft/deaktiviert/gelöscht wird (400). Details: [SECURITY.md → Login & User-Management Audit Hardening](SECURITY.md).
+
 ---
 
 ## Benutzer

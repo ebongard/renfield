@@ -68,6 +68,12 @@ async def verify_token(request: VerifyRequest) -> dict:
     if not payload or payload.get("type") != "access":
         raise _unauthorized()
 
+    # A WS-scoped token (security audit M2) is ONLY valid on the browser
+    # WebSocket handshake — reject it here so a ~90s ws token harvested from a
+    # proxy log can't be replayed as a full voice session within its window.
+    if payload.get("scope") == "ws":
+        raise _unauthorized()
+
     jti = payload.get("jti")
     if jti and await token_blacklist.is_blacklisted(jti):
         raise _unauthorized()
@@ -90,6 +96,13 @@ async def verify_token(request: VerifyRequest) -> dict:
             raise _unauthorized() from e
 
         if user is None or not user.is_active:
+            raise _unauthorized()
+
+        # Session-revocation epoch (security audit H3/H4): a token minted before
+        # the user's token_epoch was bumped (password change / admin reset) is
+        # revoked on REST + WS — enforce it here too so the voice path can't
+        # honor a stolen token for its full lifetime after a revoke.
+        if int(payload.get("epoch", 0) or 0) < int(getattr(user, "token_epoch", 0) or 0):
             raise _unauthorized()
 
     # ``jti`` is the revocation handle — voice-server doesn't need it and

@@ -921,6 +921,14 @@ class User(Base):
     is_active = Column(Boolean, default=True, nullable=False)
     must_change_password = Column(Boolean, default=False, nullable=False, server_default="false")
 
+    # Session-revocation epoch (security audit H3/H4). Access + refresh JWTs carry
+    # the user's token_epoch as an `epoch` claim; get_current_user / the refresh
+    # route reject a token whose epoch is older than this value. Bumping it (on
+    # password change, or an admin "revoke all sessions") instantly invalidates
+    # every outstanding token for the user. Default 0; existing tokens without the
+    # claim read as 0, so 0 >= 0 keeps them valid until natural expiry.
+    token_epoch = Column(Integer, nullable=False, default=0, server_default="0")
+
     # User preferences
     preferred_language = Column(String(10), default="de", nullable=False)
     media_follow_enabled = Column(Boolean, default=True, nullable=False, server_default="true")
