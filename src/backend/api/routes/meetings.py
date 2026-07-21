@@ -289,6 +289,39 @@ async def get_meeting(
     return _to_response(meeting)
 
 
+class UpdateMeetingRequest(BaseModel):
+    """PATCH body — currently just the project link. ``project_id=null`` unlinks;
+    a non-null id must be an existing project the caller owns."""
+    project_id: int | None = None
+
+
+@router.patch("/{meeting_id}", response_model=MeetingResponse)
+async def update_meeting(
+    meeting_id: int,
+    request: UpdateMeetingRequest,
+    user: User | None = Depends(get_optional_user),
+    db: AsyncSession = Depends(get_db),
+) -> MeetingResponse:
+    """Change or clear a meeting's project link (Phase 4A follow-up). Owner-gated
+    404 on the meeting. ``project_id=null`` unlinks; a non-null id is owner-
+    validated exactly like the upload path, so a meeting can't be attached to
+    someone else's project. Idempotent — sets the link to the value provided."""
+    _require_enabled()
+    meeting = await _get_owned_meeting(meeting_id, user, db)
+
+    if request.project_id is not None:
+        from models.database import Project
+
+        project = await db.get(Project, request.project_id)
+        if project is None or (settings.auth_enabled and user and project.owner_id != user.id):
+            raise HTTPException(status_code=404, detail="Project not found")
+
+    meeting.project_id = request.project_id
+    await db.commit()
+    await db.refresh(meeting)
+    return _to_response(meeting)
+
+
 @router.delete("/{meeting_id}")
 async def delete_meeting(
     meeting_id: int,

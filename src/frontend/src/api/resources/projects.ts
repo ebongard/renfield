@@ -61,12 +61,16 @@ async function deleteProjectRequest(id: number): Promise<void> {
   await apiClient.delete(`/api/projects/${id}`);
 }
 
-export function useProjectsQuery() {
+export function useProjectsQuery(enabled = true) {
   return useApiQuery(
     {
       queryKey: keys.projects.list(),
       queryFn: fetchProjects,
       staleTime: STALE.DEFAULT,
+      // `/api/projects` 404s entirely when projects_enabled is off; callers on
+      // projects-optional surfaces (e.g. MeetingsPage) gate this so a disabled
+      // instance doesn't 404-retry on every mount.
+      enabled,
     },
     'projects.failedToLoad',
   );

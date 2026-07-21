@@ -679,6 +679,10 @@
     "failedToUpload": "Could not upload recording",
     "failedToRelabel": "Could not rename speaker",
     "failedToDelete": "Could not delete meeting",
+    "failedToUpdateProject": "Could not change the project link",
+    "projectLabel": "Project",
+    "noProject": "— No project —",
+    "projectForMeeting": "Project for meeting {{title}}",
     "minutes": {
       "title": "Minutes",
       "draftReadyBadge": "Draft ready",

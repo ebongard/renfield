@@ -679,6 +679,10 @@
     "failedToUpload": "Aufnahme konnte nicht hochgeladen werden",
     "failedToRelabel": "Sprecher konnte nicht umbenannt werden",
     "failedToDelete": "Besprechung konnte nicht gelöscht werden",
+    "failedToUpdateProject": "Projektzuordnung konnte nicht geändert werden",
+    "projectLabel": "Projekt",
+    "noProject": "— Kein Projekt —",
+    "projectForMeeting": "Projekt für Besprechung {{title}}",
     "minutes": {
       "title": "Protokoll",
       "draftReadyBadge": "Entwurf bereit",

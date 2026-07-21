@@ -19,6 +19,7 @@ function mkMeeting(over: Partial<Meeting>): Meeting {
     error: null,
     transcript_document_id: 42,
     minutes_status: 'none',
+    project_id: null,
     created_at: '2026-07-14T09:00:00Z',
     ...over,
   };
@@ -41,6 +42,53 @@ describe('MeetingsPage', () => {
     expect(screen.getByText('Retro')).toBeInTheDocument();
     expect(screen.getByText(i18n.t('meetings.status.completed'))).toBeInTheDocument();
     expect(screen.getByText(i18n.t('meetings.status.processing'))).toBeInTheDocument();
+  });
+
+  it('links a meeting to a project via the card picker when projects exist', async () => {
+    const user = userEvent.setup();
+    let patchBody: unknown = null;
+    server.use(
+      // The projects query is gated on projects_enabled — turn it on for this test.
+      http.get(`${BASE_URL}/api/config/features`, () =>
+        HttpResponse.json({
+          schicht_a_extraction_enabled: false,
+          wissen_workspace_enabled: false,
+          command_palette_enabled: false,
+          role_surfacing_enabled: false,
+          message_search_enabled: false,
+          artifacts_typed_enabled: false,
+          room_handoff_enabled: false,
+          chat_branching_enabled: false,
+          projects_enabled: true,
+          meeting_transcription_enabled: true,
+          meeting_minutes_enabled: false,
+        }),
+      ),
+      http.get(`${BASE_URL}/api/projects`, () =>
+        HttpResponse.json([
+          { id: 7, name: 'Alpha', description: null, owner_id: 1, knowledge_base_id: null },
+        ]),
+      ),
+      http.get(`${BASE_URL}/api/meetings`, () =>
+        HttpResponse.json([mkMeeting({ id: 1, title: 'Kickoff', project_id: null })]),
+      ),
+      http.patch(`${BASE_URL}/api/meetings/1`, async ({ request }) => {
+        patchBody = await request.json();
+        return HttpResponse.json(mkMeeting({ id: 1, title: 'Kickoff', project_id: 7 }));
+      }),
+    );
+
+    renderWithProviders(<MeetingsPage />);
+
+    // The per-meeting project picker appears (aria-label carries the title),
+    // offering the project + the "no project" option.
+    const select = (await screen.findByLabelText(
+      i18n.t('meetings.projectForMeeting', { title: 'Kickoff' }),
+    )) as HTMLSelectElement;
+    expect(within(select).getByRole('option', { name: 'Alpha' })).toBeInTheDocument();
+
+    await user.selectOptions(select, '7');
+    await waitFor(() => expect(patchBody).toEqual({ project_id: 7 }));
   });
 
   it('renders a failed meeting with its error and no expand affordance', async () => {

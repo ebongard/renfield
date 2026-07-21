@@ -13,8 +13,10 @@ import { useFeatureFlags } from '../api/resources/brain';
 import {
   useMeetingsQuery, useUploadMeeting, useMeetingSegments, useRelabelSpeaker, useDeleteMeeting,
   useMinutes, useGenerateMinutes, useUpdateMinutes, useConfirmMinutes, useDeleteMinutes,
+  useUpdateMeetingProject,
   type Meeting, type MeetingSegment, type MinutesBody,
 } from '../api/resources/meetings';
+import { useProjectsQuery, type Project } from '../api/resources/projects';
 
 function formatClock(seconds: number): string {
   const s = Math.max(0, Math.floor(seconds));
@@ -530,7 +532,9 @@ function MinutesForm({
   );
 }
 
-function MeetingCard({ meeting, minutesEnabled }: { meeting: Meeting; minutesEnabled: boolean }) {
+function MeetingCard({
+  meeting, minutesEnabled, projects,
+}: { meeting: Meeting; minutesEnabled: boolean; projects: Project[] }) {
   const { t } = useTranslation();
   const [expanded, setExpanded] = useState(false);
   // Deliverable-first (§2 Track D): when minutes exist, the transcript is the
@@ -539,6 +543,7 @@ function MeetingCard({ meeting, minutesEnabled }: { meeting: Meeting; minutesEna
   const [showTranscript, setShowTranscript] = useState(false);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
   const deleteMeeting = useDeleteMeeting();
+  const updateProject = useUpdateMeetingProject();
   const canExpand = meeting.status === 'completed';
 
   const handleDelete = async () => {
@@ -627,6 +632,23 @@ function MeetingCard({ meeting, minutesEnabled }: { meeting: Meeting; minutesEna
         </div>
       </div>
 
+      {/* Project link — change or clear it anytime (Phase 4A). Only shown where
+          projects exist. Invalidates project timelines on change. */}
+      {projects.length > 0 && (
+        <div className="mt-2 flex items-center gap-2 text-xs text-gray-500 dark:text-gray-400">
+          <span className="shrink-0">{t('meetings.projectLabel')}:</span>
+          <ProjectSelect
+            projects={projects}
+            value={meeting.project_id}
+            onChange={(id) => updateProject.mutate({ meetingId: meeting.id, projectId: id })}
+            disabled={updateProject.isPending}
+            ariaLabel={t('meetings.projectForMeeting', { title: meeting.title || t('meetings.untitled') })}
+            className="input py-1 text-xs max-w-[16rem]"
+          />
+          {updateProject.isPending && <Loader className="w-3.5 h-3.5 animate-spin shrink-0" />}
+        </div>
+      )}
+
       {meeting.status === 'failed' && meeting.error && (
         <p className="mt-2 text-sm text-red-600 dark:text-red-400">{meeting.error}</p>
       )}
@@ -677,6 +699,36 @@ function MeetingCard({ meeting, minutesEnabled }: { meeting: Meeting; minutesEna
   );
 }
 
+/** Shared project dropdown — "— no project —" clears the link. Renders nothing
+ *  when there are no projects (household / projects-off). */
+function ProjectSelect({
+  projects, value, onChange, disabled, ariaLabel, className = 'input',
+}: {
+  projects: Project[];
+  value: number | null;
+  onChange: (id: number | null) => void;
+  disabled?: boolean;
+  ariaLabel: string;
+  className?: string;
+}) {
+  const { t } = useTranslation();
+  if (projects.length === 0) return null;
+  return (
+    <select
+      className={className}
+      value={value ?? ''}
+      onChange={(e) => onChange(e.target.value ? Number(e.target.value) : null)}
+      disabled={disabled}
+      aria-label={ariaLabel}
+    >
+      <option value="">{t('meetings.noProject')}</option>
+      {projects.map((p) => (
+        <option key={p.id} value={p.id}>{p.name}</option>
+      ))}
+    </select>
+  );
+}
+
 export default function MeetingsPage() {
   const { t } = useTranslation();
   const meetingsQuery = useMeetingsQuery();
@@ -684,12 +736,17 @@ export default function MeetingsPage() {
   const { data: featureFlags } = useFeatureFlags();
   const minutesEnabled = featureFlags?.meeting_minutes_enabled ?? false;
   const meetings = meetingsQuery.data ?? [];
+  // Projects are optional (Phase 4A) — the picker only appears where projects
+  // exist (i.e. projects_enabled instances). Gate the query on the flag so a
+  // projects-disabled instance doesn't 404-retry /api/projects on every mount.
+  const projects = useProjectsQuery(featureFlags?.projects_enabled ?? false).data ?? [];
 
   const [file, setFile] = useState<File | null>(null);
   const [title, setTitle] = useState('');
   const [date, setDate] = useState('');
   const [consentNote, setConsentNote] = useState('');
   const [consent, setConsent] = useState(false);
+  const [projectId, setProjectId] = useState<number | null>(null);
 
   const canSubmit = file != null && consent && !upload.isPending;
 
@@ -703,12 +760,14 @@ export default function MeetingsPage() {
         title: title.trim() || undefined,
         date: date || undefined,
         consentNote: consentNote.trim() || undefined,
+        projectId,
       });
       setFile(null);
       setTitle('');
       setDate('');
       setConsentNote('');
       setConsent(false);
+      setProjectId(null);
     } catch {
       // Error surfaced via upload.errorMessage; keep the form filled.
     }
@@ -750,6 +809,17 @@ export default function MeetingsPage() {
             aria-label={t('meetings.datePlaceholder')}
           />
         </div>
+
+        {/* Optional project scope — only when projects exist (Phase 4A). */}
+        {projects.length > 0 && (
+          <ProjectSelect
+            projects={projects}
+            value={projectId}
+            onChange={setProjectId}
+            disabled={upload.isPending}
+            ariaLabel={t('meetings.projectLabel')}
+          />
+        )}
 
         <textarea
           className="input"
@@ -805,7 +875,7 @@ export default function MeetingsPage() {
           </div>
         ) : (
           meetings.map((m) => (
-            <MeetingCard key={m.id} meeting={m} minutesEnabled={minutesEnabled} />
+            <MeetingCard key={m.id} meeting={m} minutesEnabled={minutesEnabled} projects={projects} />
           ))
         )}
       </div>

@@ -14,6 +14,8 @@ export interface Meeting {
   error: string | null;
   transcript_document_id: number | null;
   minutes_status: MinutesStatus; // 'none' | 'draft' | 'confirmed' — for the list badge
+  /** Optional project scope (Phase 4A) — null when unlinked. */
+  project_id: number | null;
   created_at: string;
 }
 
@@ -38,6 +40,7 @@ export interface MeetingUploadInput {
   title?: string;
   date?: string;             // ISO YYYY-MM-DD
   consentNote?: string;
+  projectId?: number | null; // optional project scope (Phase 4A)
 }
 
 export interface RelabelInput {
@@ -64,6 +67,7 @@ export async function uploadMeetingRequest(input: MeetingUploadInput): Promise<M
   if (input.title) formData.append('title', input.title);
   if (input.date) formData.append('date', input.date);
   if (input.consentNote) formData.append('consent_note', input.consentNote);
+  if (input.projectId != null) formData.append('project_id', String(input.projectId));
   const response = await apiClient.post<Meeting>('/api/meetings/transcribe', formData, {
     headers: { 'Content-Type': 'multipart/form-data' },
     // Meeting recordings are large (multi-hour → hundreds of MB). The shared
@@ -90,6 +94,20 @@ async function relabelRequest(input: RelabelInput): Promise<Meeting> {
   const response = await apiClient.post<Meeting>(
     `/api/meetings/${input.meetingId}/relabel`,
     { speaker_key: input.speakerKey, label: input.label },
+  );
+  return response.data;
+}
+
+/** Link a meeting to a project, or unlink it (projectId = null). */
+export interface UpdateMeetingProjectInput {
+  meetingId: number;
+  projectId: number | null;
+}
+
+async function updateMeetingProjectRequest(input: UpdateMeetingProjectInput): Promise<Meeting> {
+  const response = await apiClient.patch<Meeting>(
+    `/api/meetings/${input.meetingId}`,
+    { project_id: input.projectId },
   );
   return response.data;
 }
@@ -159,6 +177,21 @@ export function useRelabelSpeaker() {
       },
     },
     'meetings.failedToRelabel',
+  );
+}
+
+export function useUpdateMeetingProject() {
+  const queryClient = useQueryClient();
+  return useApiMutation(
+    {
+      mutationFn: updateMeetingProjectRequest,
+      onSuccess: () => {
+        // Refresh the meetings list AND any project timelines the link affects.
+        queryClient.invalidateQueries({ queryKey: keys.meetings.all });
+        queryClient.invalidateQueries({ queryKey: keys.projects.all });
+      },
+    },
+    'meetings.failedToUpdateProject',
   );
 }
 

@@ -1170,3 +1170,93 @@ class TestMeetingMinutesRoutes:
         r = await async_client.delete(f"/api/meetings/{m.id}/minutes")
         assert r.status_code == 200 and r.json()["minutes_status"] == "none"
         assert r.json()["minutes"] is None
+
+
+@pytest.mark.database
+class TestMeetingProjectPatch:
+    """PATCH /api/meetings/{id} — link/unlink a meeting to a project (Phase 4A
+    follow-up). Calls the handler directly (like the model tests) so it doesn't
+    need the full async_client + FormData upload harness."""
+
+    async def test_patch_links_then_unlinks(self, db_session: AsyncSession, monkeypatch):
+        from api.routes.meetings import UpdateMeetingRequest, update_meeting
+        from models.database import Project
+
+        monkeypatch.setattr(settings, "meeting_transcription_enabled", True)
+        monkeypatch.setattr(settings, "auth_enabled", False)
+
+        proj = Project(name="Alpha")
+        db_session.add(proj)
+        m = Meeting(title="Standup")
+        db_session.add(m)
+        await db_session.commit()
+        await db_session.refresh(proj)
+        await db_session.refresh(m)
+
+        linked = await update_meeting(
+            meeting_id=m.id, request=UpdateMeetingRequest(project_id=proj.id),
+            user=None, db=db_session,
+        )
+        assert linked.project_id == proj.id
+        unlinked = await update_meeting(
+            meeting_id=m.id, request=UpdateMeetingRequest(project_id=None),
+            user=None, db=db_session,
+        )
+        assert unlinked.project_id is None
+
+    async def _mk_users(self, db):
+        from models.database import Role, User
+        role = Role(name=f"R_{id(db) % 100000}", permissions=["chat.own"])
+        db.add(role)
+        await db.commit()
+        await db.refresh(role)
+        a = User(username=f"a_{id(role)}", password_hash="x", role_id=role.id)
+        b = User(username=f"b_{id(role)}", password_hash="x", role_id=role.id)
+        db.add(a)
+        db.add(b)
+        await db.commit()
+        await db.refresh(a)
+        await db.refresh(b)
+        return a, b
+
+    async def test_patch_rejects_non_owned_project(self, db_session: AsyncSession, monkeypatch):
+        from fastapi import HTTPException
+        from api.routes.meetings import UpdateMeetingRequest, update_meeting
+        from models.database import Project
+
+        monkeypatch.setattr(settings, "meeting_transcription_enabled", True)
+        monkeypatch.setattr(settings, "auth_enabled", True)
+        caller, other = await self._mk_users(db_session)
+        proj = Project(name="OthersProject", owner_id=other.id)  # owned by `other`
+        db_session.add(proj)
+        m = Meeting(title="M", owner_user_id=caller.id)          # owned by caller
+        db_session.add(m)
+        await db_session.commit()
+        await db_session.refresh(proj)
+        await db_session.refresh(m)
+
+        with pytest.raises(HTTPException) as exc:
+            await update_meeting(
+                meeting_id=m.id, request=UpdateMeetingRequest(project_id=proj.id),
+                user=caller, db=db_session,
+            )
+        assert exc.value.status_code == 404
+
+    async def test_patch_owner_gated_meeting(self, db_session: AsyncSession, monkeypatch):
+        from fastapi import HTTPException
+        from api.routes.meetings import UpdateMeetingRequest, update_meeting
+
+        monkeypatch.setattr(settings, "meeting_transcription_enabled", True)
+        monkeypatch.setattr(settings, "auth_enabled", True)
+        owner, intruder = await self._mk_users(db_session)
+        m = Meeting(title="Secret", owner_user_id=owner.id)
+        db_session.add(m)
+        await db_session.commit()
+        await db_session.refresh(m)
+
+        with pytest.raises(HTTPException) as exc:
+            await update_meeting(
+                meeting_id=m.id, request=UpdateMeetingRequest(project_id=None),
+                user=intruder, db=db_session,
+            )
+        assert exc.value.status_code == 404
