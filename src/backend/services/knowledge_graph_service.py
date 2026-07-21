@@ -2006,6 +2006,26 @@ async def kg_retrieve_context_hook(
         return None
 
 
+# Matches a meeting-transcript speaker PSEUDONYM line prefix ("Sprecher N:" /
+# "Speaker N:", optionally markdown-bolded as produced by
+# ``render_transcript_markdown``: ``**Sprecher 1:** ``). Deliberately narrow —
+# only the auto-generated pseudonyms, never a human-relabelled real name (that
+# is a legitimate cross-meeting entity). Phase 0 stop-the-bleeding; the real fix
+# is Track B (KG only from the confirmed speaker-aware pass).
+_SPEAKER_PSEUDONYM_PREFIX_RE = re.compile(
+    r"^(?:\*\*)?(?:Sprecher|Speaker)\s+[\w?]+:(?:\*\*)?\s*",
+    re.MULTILINE,
+)
+
+
+def _strip_speaker_pseudonyms(chunks: list[str]) -> list[str]:
+    """Drop ``Sprecher N:`` pseudonym line prefixes from meeting-transcript
+    chunks so the generic KG extractor doesn't mint the pseudonym as a person
+    entity ("Sprecher 1" that collides across meetings). Spoken content is
+    preserved; only the leading label marker per line is removed."""
+    return [_SPEAKER_PSEUDONYM_PREFIX_RE.sub("", c) for c in chunks]
+
+
 async def kg_post_document_ingest_hook(
     chunks: list[str],
     document_id: int | None = None,
@@ -2014,7 +2034,14 @@ async def kg_post_document_ingest_hook(
 ):
     """Extract KG entities from ingested document chunks (post_document_ingest hook)."""
     try:
+        from models.database import MEETING_TRANSCRIPT_SOURCE
         from services.database import AsyncSessionLocal
+
+        # §2 Phase 0: strip "Sprecher N" pseudonyms from meeting transcripts so
+        # they don't leak into the graph as junk person entities. The generic
+        # hook still runs (Track B later replaces it with the confirmed pass).
+        if kwargs.get("source") == MEETING_TRANSCRIPT_SOURCE:
+            chunks = _strip_speaker_pseudonyms(chunks)
 
         async with AsyncSessionLocal() as db:
             svc = KnowledgeGraphService(db)

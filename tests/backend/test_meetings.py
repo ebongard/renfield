@@ -260,6 +260,8 @@ class TestMeetingRoutes:
         rows = (await async_client.get("/api/meetings")).json()
         assert [r["id"] for r in rows] == [second, first]
         assert {r["title"] for r in rows} == {"First", "Second"}
+        # minutes_status rides on the list row (Phase 0 badge) — defaults "none".
+        assert all(r["minutes_status"] == "none" for r in rows)
 
     async def test_list_auth_off_sees_all(self, async_client, monkeypatch, tmp_path):
         _enable(monkeypatch, tmp_path, auth=False)

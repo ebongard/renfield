@@ -533,6 +533,10 @@ function MinutesForm({
 function MeetingCard({ meeting, minutesEnabled }: { meeting: Meeting; minutesEnabled: boolean }) {
   const { t } = useTranslation();
   const [expanded, setExpanded] = useState(false);
+  // Deliverable-first (§2 Track D): when minutes exist, the transcript is the
+  // raw material — collapsed below the minutes behind this toggle. When minutes
+  // are off it renders directly (pre-Phase-0 behavior), so this state is unused.
+  const [showTranscript, setShowTranscript] = useState(false);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
   const deleteMeeting = useDeleteMeeting();
   const canExpand = meeting.status === 'completed';
@@ -575,6 +579,17 @@ function MeetingCard({ meeting, minutesEnabled }: { meeting: Meeting; minutesEna
           </div>
         </button>
         <div className="flex items-center gap-2 shrink-0">
+          {minutesEnabled && meeting.minutes_status === 'draft' && (
+            <button
+              type="button"
+              onClick={() => setExpanded(true)}
+              className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium text-amber-700 dark:text-amber-300 bg-amber-50 dark:bg-amber-900/30 hover:bg-amber-100 dark:hover:bg-amber-900/50"
+              title={t('meetings.minutes.draftReadyHint')}
+            >
+              <FileText className="w-3 h-3" aria-hidden="true" />
+              {t('meetings.minutes.draftReadyBadge')}
+            </button>
+          )}
           <StatusBadge status={meeting.status} />
           {confirmingDelete ? (
             <span className="inline-flex items-center gap-1">
@@ -631,8 +646,31 @@ function MeetingCard({ meeting, minutesEnabled }: { meeting: Meeting; minutesEna
 
       {canExpand && expanded && (
         <div className="mt-4 border-t border-gray-200 dark:border-gray-700 pt-4 space-y-4">
-          <TranscriptView meetingId={meeting.id} />
-          {minutesEnabled && <MinutesPanel meetingId={meeting.id} />}
+          {minutesEnabled ? (
+            <>
+              <MinutesPanel meetingId={meeting.id} />
+              <div>
+                <button
+                  type="button"
+                  onClick={() => setShowTranscript((v) => !v)}
+                  className="inline-flex items-center gap-1.5 text-sm font-medium text-gray-700 dark:text-gray-300 hover:text-gray-900 dark:hover:text-white"
+                  aria-expanded={showTranscript}
+                >
+                  {showTranscript
+                    ? <ChevronDown className="w-4 h-4" aria-hidden="true" />
+                    : <ChevronRight className="w-4 h-4" aria-hidden="true" />}
+                  {t('meetings.transcriptToggle')}
+                </button>
+                {showTranscript && (
+                  <div className="mt-3">
+                    <TranscriptView meetingId={meeting.id} />
+                  </div>
+                )}
+              </div>
+            </>
+          ) : (
+            <TranscriptView meetingId={meeting.id} />
+          )}
         </div>
       )}
     </div>

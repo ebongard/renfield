@@ -18,6 +18,7 @@ function mkMeeting(over: Partial<Meeting>): Meeting {
     date: '2026-07-14',
     error: null,
     transcript_document_id: 42,
+    minutes_status: 'none',
     created_at: '2026-07-14T09:00:00Z',
     ...over,
   };
@@ -250,6 +251,48 @@ describe('MeetingsPage — minutes (§2 Phase 3)', () => {
       expect(screen.getByText(i18n.t('meetings.noSegments'))).toBeInTheDocument(),
     );
     expect(screen.queryByText(i18n.t('meetings.minutes.title'))).not.toBeInTheDocument();
+  });
+
+  it('surfaces a draft-ready badge on the collapsed card and puts minutes above a collapsible transcript', async () => {
+    useMinutesEnabled(6);
+    server.use(
+      http.get(`${BASE_URL}/api/meetings`, () =>
+        HttpResponse.json([
+          mkMeeting({ id: 6, title: 'Review', status: 'completed', minutes_status: 'draft' }),
+        ]),
+      ),
+      http.get(`${BASE_URL}/api/meetings/6/minutes`, () =>
+        HttpResponse.json({
+          id: 6,
+          minutes_status: 'draft',
+          minutes: { summary: 'Entwurf.', decisions: [], action_items: [] },
+        }),
+      ),
+    );
+
+    renderWithProviders(<MeetingsPage />);
+    const user = userEvent.setup();
+
+    // The badge is visible on the collapsed card; the transcript toggle is not.
+    const badge = await screen.findByRole('button', {
+      name: i18n.t('meetings.minutes.draftReadyBadge'),
+    });
+    expect(
+      screen.queryByRole('button', { name: i18n.t('meetings.transcriptToggle') }),
+    ).not.toBeInTheDocument();
+
+    // Clicking the badge expands → minutes render, transcript is behind a toggle.
+    await user.click(badge);
+    await waitFor(() =>
+      expect(screen.getByText(i18n.t('meetings.minutes.title'))).toBeInTheDocument(),
+    );
+    expect(
+      screen.getByRole('button', { name: i18n.t('meetings.transcriptToggle') }),
+    ).toBeInTheDocument();
+    // Transcript content stays hidden until the toggle is opened.
+    expect(screen.queryByText('Los gehts.')).not.toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: i18n.t('meetings.transcriptToggle') }));
+    await waitFor(() => expect(screen.getByText('Los gehts.')).toBeInTheDocument());
   });
 
   it('generates, edits, and confirms minutes', async () => {

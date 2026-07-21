@@ -658,6 +658,7 @@
     "untitled": "Untitled",
     "uploaded": "Uploaded",
     "openTranscript": "Open transcript",
+    "transcriptToggle": "Transcript",
     "noSegments": "No transcript segments",
     "speakers": "Speakers",
     "relabelHint": "Assign a name to each detected speaker — the transcript is re-rendered and reindexed.",
@@ -680,6 +681,8 @@
     "failedToDelete": "Could not delete meeting",
     "minutes": {
       "title": "Minutes",
+      "draftReadyBadge": "Draft ready",
+      "draftReadyHint": "Minutes draft ready to review",
       "noneHint": "Generate draft minutes from the transcript — a summary, the decisions, and the action items. You review and confirm before anything is folded into the document.",
       "generate": "Generate minutes",
       "regenerate": "Regenerate",

@@ -91,6 +91,9 @@ class MeetingResponse(BaseModel):
     error: str | None
     transcript_document_id: int | None
     project_id: int | None
+    # Lets the meeting list surface a "Protokoll: Entwurf bereit" badge without
+    # a per-card minutes fetch (§2 Phase 0 / Track D UX).
+    minutes_status: str
     created_at: str
 
 
@@ -103,6 +106,7 @@ def _to_response(m: Meeting) -> MeetingResponse:
         error=m.error,
         transcript_document_id=m.transcript_document_id,
         project_id=m.project_id,
+        minutes_status=getattr(m, "minutes_status", "none") or "none",
         created_at=m.created_at.isoformat() if m.created_at else "",
     )
 

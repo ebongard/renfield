@@ -15,8 +15,47 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from models.database import KG_ENTITY_TYPES, KGEntity, KGRelation
 from services.knowledge_graph_service import (
     KnowledgeGraphService,
+    _strip_speaker_pseudonyms,
     kg_post_document_ingest_hook,
 )
+
+
+# ==========================================================================
+# §2 Phase 0 — speaker-pseudonym stripping for meeting transcripts
+# ==========================================================================
+
+@pytest.mark.unit
+class TestStripSpeakerPseudonyms:
+    def test_strips_bold_german_pseudonym_prefix(self):
+        chunks = ["**Sprecher 1:** Wir nutzen PostgreSQL.\n**Sprecher 2:** Ja."]
+        assert _strip_speaker_pseudonyms(chunks) == [
+            "Wir nutzen PostgreSQL.\nJa."
+        ]
+
+    def test_strips_english_and_unbolded_and_qmark(self):
+        chunks = [
+            "Speaker 3: hello",
+            "Sprecher ?: unbekannt",
+            "**Speaker 12:** twelve",
+        ]
+        assert _strip_speaker_pseudonyms(chunks) == [
+            "hello",
+            "unbekannt",
+            "twelve",
+        ]
+
+    def test_preserves_relabelled_real_names(self):
+        # A human-relabelled speaker is a legitimate entity — never stripped.
+        chunks = ["**Alice Müller:** Wir migrieren zu k8s."]
+        assert _strip_speaker_pseudonyms(chunks) == [
+            "**Alice Müller:** Wir migrieren zu k8s."
+        ]
+
+    def test_leaves_non_prefix_content_untouched(self):
+        chunks = ["Note: der Sprecher 1 hat recht."]  # mid-line, not a prefix
+        assert _strip_speaker_pseudonyms(chunks) == [
+            "Note: der Sprecher 1 hat recht."
+        ]
 
 # ==========================================================================
 # Fixtures

@@ -13,6 +13,7 @@ export interface Meeting {
   date: string | null; // ISO YYYY-MM-DD
   error: string | null;
   transcript_document_id: number | null;
+  minutes_status: MinutesStatus; // 'none' | 'draft' | 'confirmed' — for the list badge
   created_at: string;
 }
 

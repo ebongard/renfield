@@ -658,6 +658,7 @@
     "untitled": "Ohne Titel",
     "uploaded": "Hochgeladen",
     "openTranscript": "Transkript öffnen",
+    "transcriptToggle": "Transkript",
     "noSegments": "Keine Transkriptsegmente vorhanden",
     "speakers": "Sprecher",
     "relabelHint": "Weise jedem erkannten Sprecher einen Namen zu — das Transkript wird neu erzeugt und indexiert.",
@@ -680,6 +681,8 @@
     "failedToDelete": "Besprechung konnte nicht gelöscht werden",
     "minutes": {
       "title": "Protokoll",
+      "draftReadyBadge": "Entwurf bereit",
+      "draftReadyHint": "Protokoll-Entwurf bereit zur Prüfung",
       "noneHint": "Erzeuge aus dem Transkript einen Protokollentwurf — Zusammenfassung, Entscheidungen und Aufgaben. Du prüfst und bestätigst ihn, bevor er ins Dokument übernommen wird.",
       "generate": "Protokoll erzeugen",
       "regenerate": "Neu erzeugen",
