@@ -9,7 +9,7 @@ import pytest
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from models.database import Meeting
+from models.database import Meeting, MeetingSpeakerFingerprint, Speaker
 from utils.config import settings
 
 
@@ -30,6 +30,30 @@ class TestMeetingModel:
         assert meeting.transcript_document_id is None
         assert meeting.heartbeat_at is None
         assert meeting.created_at is not None
+
+    async def test_fingerprint_defaults_and_speaker_binding(self, db_session: AsyncSession):
+        """A meeting_speaker_fingerprint gets the anonymous defaults (tier 2,
+        sample_count 1, no speaker) and can later bind to a real Speaker."""
+        fp = MeetingSpeakerFingerprint(label="Speaker A1B2", centroid_b64="AAAA")
+        db_session.add(fp)
+        await db_session.commit()
+        await db_session.refresh(fp)
+
+        assert fp.id is not None
+        assert fp.circle_tier == 2          # inherits the household/team default
+        assert fp.sample_count == 1
+        assert fp.speaker_id is None        # anonymous until enrolled
+        assert fp.created_at is not None
+
+        # merge-on-enroll: bind the fingerprint to a real Speaker.
+        spk = Speaker(name="Anna", alias="anna")
+        db_session.add(spk)
+        await db_session.commit()
+        fp.speaker_id = spk.id
+        await db_session.commit()
+        await db_session.refresh(fp)
+        assert fp.speaker_id == spk.id
+        assert fp.speaker.name == "Anna"
 
     async def test_meeting_segments_jsonb_roundtrip(self, db_session: AsyncSession):
         """segments stores/returns a list of turn dicts unchanged (JSONB)."""

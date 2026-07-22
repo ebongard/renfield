@@ -421,6 +421,68 @@ class Meeting(Base):
     created_at = Column(DateTime, default=_utcnow)
 
 
+class MeetingSpeakerFingerprint(Base):
+    """Cross-meeting speaker identity (§2 redesign Track A, Phase 1).
+
+    A stable ANONYMOUS fingerprint — an owner-scoped ECAPA centroid that lets a
+    diarized speaker cluster in one meeting be recognised as the same person in
+    another WITHOUT knowing who they are ("Speaker A1B2"). Optionally bound to a
+    real :class:`Speaker` once a human labels it (merge-on-enroll). This is the
+    "hard half" of Track A — a new table, not wiring — and stays gated behind the
+    calibration-spike go/no-go (docs/design/meeting-kg-and-speaker-identity.md).
+
+    The centroid is stored twice: ``centroid_b64`` (base64 float32[192], the
+    dialect-agnostic source of truth that also works on the sqlite test harness,
+    mirroring :class:`SpeakerEmbedding`) and ``centroid`` (a pgvector column,
+    Postgres-only, backing the HNSW nearest-neighbour search across fingerprints,
+    mirroring the ``document_chunks`` halfvec-cast index). The matching MATH is
+    reused from the live speaker resolver's cosine/margin, but behind a
+    meeting-specific gate that NEVER auto-enrolls into the live speaker pool.
+    """
+    __tablename__ = "meeting_speaker_fingerprints"
+
+    id = Column(Integer, primary_key=True, index=True)
+
+    # Owner-scoped (nullable for auth-off single-user; SET NULL mirrors Meeting/
+    # Project/Note — a deleted owner de-scopes rather than drops the identity).
+    owner_user_id = Column(
+        Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+
+    # Stable anonymous label shown until a human enrolls it ("Speaker A1B2").
+    # Unique per owner — enforced by a Postgres unique index (migration) +
+    # service get-or-create (the NULL-owner auth-off case is service-guarded,
+    # since Postgres treats each NULL owner as distinct — the notes-title pattern).
+    label = Column(String(64), nullable=False)
+
+    # ECAPA-TDNN 192-dim centroid (mean of contributing clusters' unit-normed
+    # embeddings). ``centroid_b64`` is the source of truth; ``centroid`` is the
+    # Postgres-only HNSW search copy (Text on sqlite — no pgvector).
+    centroid_b64 = Column(Text, nullable=False)
+    centroid = Column(
+        Vector(192) if PGVECTOR_AVAILABLE else Text, nullable=True
+    )
+
+    # Bound to a real enrolled Speaker once a human labels the fingerprint
+    # (merge-on-enroll). SET NULL so deleting the Speaker keeps the cross-meeting
+    # fingerprint (identity survives, just un-named again).
+    speaker_id = Column(
+        Integer, ForeignKey("speakers.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+
+    # How many diarized clusters have been folded into the running-mean centroid.
+    sample_count = Column(Integer, nullable=False, default=1, server_default="1")
+
+    # Circles v1 tier — inherits the meeting's tier (default 2 = household/team,
+    # mirrors Meeting.circle_tier). Owner-scoped + tiered.
+    circle_tier = Column(Integer, nullable=False, default=2, server_default="2")
+
+    created_at = Column(DateTime, default=_utcnow)
+    updated_at = Column(DateTime, default=_utcnow, onupdate=_utcnow)
+
+    speaker = relationship("Speaker")
+
+
 class Document(Base):
     """Hochgeladene Dokumente (Metadaten)"""
     __tablename__ = "documents"
