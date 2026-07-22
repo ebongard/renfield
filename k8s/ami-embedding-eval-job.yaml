@@ -1,0 +1,105 @@
+# One-shot §2 Track A go/no-go Job — cross-recording speaker-embedding separation.
+#
+# Runs bin/run_embedding_separation_eval.py in-cluster (so voice-server.voice:8080
+# resolves) against a manifest + audio staged on the shared uploads PVC. Prints a
+# PASS / FAIL / INSUFFICIENT verdict that gates the rest of Track A.
+#
+# WHY a Job, not a local run: the eval MUST embed through the SAME ECAPA the
+# meeting pipeline uses (voice-server /api/voice/stt) — a different model would
+# make the calibrated threshold a lie.
+#
+# ── Staging (once) ──────────────────────────────────────────────────────────
+# 1) Locally, download the AMI Mix-Headset wavs + their RTTMs (CC-BY 4.0), then:
+#      python bin/build_ami_manifest.py \
+#        --rttm ami/rttm \
+#        --audio-root /app/data/uploads/ami/audio \
+#        --audio-pattern '{recording}.Mix-Headset.wav' \
+#        --out ami/manifest.json
+#    (--audio-root is the path AS SEEN INSIDE this Job, i.e. on the PVC.)
+#    Heed the builder's WARNING: if no speaker recurs across recordings, the
+#    verdict is INSUFFICIENT — fix the speaker ids (--speaker-map) BEFORE staging.
+#
+# 2) Copy manifest + audio + the eval SCRIPT onto renfield-uploads-shared. The
+#    meeting-worker pod already mounts that PVC at /app/data/uploads, so use it as
+#    the staging host:
+#      POD=$(kubectl -n renfield get pod -l app.kubernetes.io/name=meeting-worker \
+#              -o jsonpath='{.items[0].metadata.name}')
+#      kubectl -n renfield exec "$POD" -- mkdir -p /app/data/uploads/ami/audio
+#      kubectl -n renfield cp ami/manifest.json "$POD":/app/data/uploads/ami/manifest.json
+#      kubectl -n renfield cp ami/audio        "$POD":/app/data/uploads/ami/audio
+#      kubectl -n renfield cp bin/run_embedding_separation_eval.py \
+#              "$POD":/app/data/uploads/ami/run_embedding_separation_eval.py
+#
+#    WHY stage the script too: the repo-root bin/ is NOT baked into the backend
+#    image — that image's build context is src/backend/ (only src/backend,
+#    wakeword-models, and satellite are rsynced in; see the deploy-production
+#    skill). So the Job runs the script from the PVC, not from /app/bin. It is
+#    self-contained (stdlib + the image's numpy/soundfile/librosa/requests).
+#
+# ── Run ─────────────────────────────────────────────────────────────────────
+#   kubectl -n renfield apply -f k8s/ami-embedding-eval-job.yaml
+#   kubectl -n renfield logs -f job/ami-embedding-eval      # the JSON verdict
+#   kubectl -n renfield delete job ami-embedding-eval       # clean up after
+#
+# PASS  => build the rest of Track A on the printed suggested_threshold.
+# FAIL  => attribution degrades to "unattributed" (design escape hatch); Track
+#          B/C still ship with stated_by=null / free-text owner.
+# INSUFFICIENT => not enough cross-recording same-speaker pairs; stage more.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: ami-embedding-eval
+  namespace: renfield
+  labels:
+    app.kubernetes.io/part-of: renfield
+    app.kubernetes.io/component: meeting-track-a-eval
+spec:
+  # No retry: the GPU embedding pass is expensive and the eval is deterministic —
+  # a failure is a real error (bad manifest / missing audio), not a flake to retry.
+  backoffLimit: 0
+  ttlSecondsAfterFinished: 86400
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/part-of: renfield
+    spec:
+      restartPolicy: Never
+      imagePullSecrets:
+        - name: harbor-pull-secret
+      containers:
+        - name: eval
+          image: registry.treehouse.x-idra.de/renfield/backend:latest
+          imagePullPolicy: Always
+          workingDir: /app
+          # The eval script is standalone (stdlib + numpy/soundfile/librosa/requests,
+          # all in the backend image) — no DB, no Settings() boot guard, no secrets.
+          # Run it from the PVC: repo-root bin/ is NOT in the image (build context
+          # is src/backend/) — it is staged next to the manifest in step 2 above.
+          command:
+            - python
+            - /app/data/uploads/ami/run_embedding_separation_eval.py
+            - --manifest
+            - /app/data/uploads/ami/manifest.json
+            # The :8080 service requires auth (401 without a JWT). The anon service
+            # (:8081) fronts the SAME voice-server pods → identical ECAPA/ONNX space,
+            # so the calibrated threshold stays valid — and needs no token.
+            - --voice-url
+            - http://voice-server-anon.voice:8081
+            - --min-margin
+            - "0.05"
+            - --min-pairs
+            - "20"
+            - --json
+          volumeMounts:
+            - name: uploads
+              mountPath: /app/data/uploads
+          resources:
+            requests:
+              cpu: 200m
+              memory: 512Mi
+            limits:
+              memory: 2Gi
+      volumes:
+        - name: uploads
+          persistentVolumeClaim:
+            claimName: renfield-uploads-shared
