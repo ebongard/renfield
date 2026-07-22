@@ -383,6 +383,12 @@ class Meeting(Base):
     title = Column(String(255), nullable=True)
     date = Column(Date, nullable=True)  # meeting date (distinct from created_at)
 
+    # Spoken language for ASR. NULL = the voice-server default (backward-compat);
+    # "auto" = whisper auto-detect; an ISO code ("en"/"de") forces it. The meeting
+    # ASR path used to hardcode German, so English meetings came back as German —
+    # this lets the mixed EN/DE customer base pick per meeting.
+    language = Column(String(8), nullable=True)
+
     # Pipeline state machine: pending -> processing -> completed | failed.
     status = Column(String(50), nullable=False, default="pending", index=True)
     error = Column(Text, nullable=True)

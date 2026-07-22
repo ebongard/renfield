@@ -192,6 +192,7 @@ async def transcribe_meeting_endpoint(
     request: Request,
     audio: UploadFile = File(...),
     whisper_model: str | None = Form(default=None),
+    language: str | None = Form(default=None),
     _user: dict = Depends(_require_token),
 ) -> MeetingTranscribeResponse:
     """Batch diarization + ASR over a whole meeting recording (§2).
@@ -243,7 +244,8 @@ async def transcribe_meeting_endpoint(
             asr_model = request.app.state.stt._model  # resident faster-whisper
 
         segments = await meeting.transcribe(
-            pcm, whisper_model=asr_model, speaker_service=request.app.state.speaker
+            pcm, whisper_model=asr_model, speaker_service=request.app.state.speaker,
+            language=language,
         )
     except HTTPException:
         raise

@@ -30,4 +30,16 @@ describe('meeting upload request', () => {
     expect(body.get('consent_confirmed')).toBe('true');
     expect(body.get('audio')).toBeInstanceOf(File);
   });
+
+  it('includes the ASR language when set, omits it otherwise', async () => {
+    const audio = new File([new Uint8Array(10)], 'a.wav', { type: 'audio/wav' });
+    await uploadMeetingRequest({ audio, consentConfirmed: true, language: 'en' });
+    let body = vi.mocked(apiClient.post).mock.calls[0][1] as FormData;
+    expect(body.get('language')).toBe('en');
+
+    vi.mocked(apiClient.post).mockClear();
+    await uploadMeetingRequest({ audio, consentConfirmed: true });
+    body = vi.mocked(apiClient.post).mock.calls[0][1] as FormData;
+    expect(body.get('language')).toBeNull();
+  });
 });

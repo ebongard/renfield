@@ -225,6 +225,45 @@ class TestMeetingRoutes:
         )
         assert r.status_code == 422
 
+    async def test_language_stored_and_returned(
+        self, async_client, db_session, monkeypatch, tmp_path
+    ):
+        """A per-meeting language flows into the row + response (the fix for
+        English meetings being transcribed as German)."""
+        _enable(monkeypatch, tmp_path, auth=False)
+        r = await async_client.post(
+            "/api/meetings/transcribe",
+            files={"audio": _wav()},
+            data={"consent_confirmed": "true", "language": "EN"},  # normalized to lower
+        )
+        assert r.status_code == 202, r.text
+        assert r.json()["language"] == "en"
+        meeting = await db_session.get(Meeting, r.json()["id"])
+        assert meeting.language == "en"
+
+    async def test_language_auto_and_omitted(self, async_client, monkeypatch, tmp_path):
+        _enable(monkeypatch, tmp_path, auth=False)
+        r_auto = await async_client.post(
+            "/api/meetings/transcribe",
+            files={"audio": _wav()},
+            data={"consent_confirmed": "true", "language": "auto"},
+        )
+        assert r_auto.status_code == 202 and r_auto.json()["language"] == "auto"
+        r_none = await async_client.post(
+            "/api/meetings/transcribe",
+            files={"audio": _wav()}, data={"consent_confirmed": "true"},
+        )
+        assert r_none.status_code == 202 and r_none.json()["language"] is None
+
+    async def test_invalid_language_422(self, async_client, monkeypatch, tmp_path):
+        _enable(monkeypatch, tmp_path, auth=False)
+        r = await async_client.post(
+            "/api/meetings/transcribe",
+            files={"audio": _wav()},
+            data={"consent_confirmed": "true", "language": "english"},  # not a 2-letter code
+        )
+        assert r.status_code == 422
+
     async def test_status_poll_and_owner_gating(self, async_client, monkeypatch, tmp_path):
         from models.database import User
 

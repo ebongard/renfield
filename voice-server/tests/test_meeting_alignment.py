@@ -2,6 +2,7 @@
 
 import numpy as np
 
+from voice_server.config import settings
 from voice_server.services.meeting_service import (
     MeetingDiarizationService,
     MeetingSegment,
@@ -11,6 +12,7 @@ from voice_server.services.meeting_service import (
     _chunk_bounds,
     _merge_adjacent_same_speaker,
     align_words_to_segments,
+    resolve_meeting_language,
 )
 
 
@@ -18,6 +20,18 @@ def test_free_cuda_cache_is_safe_without_gpu():
     """The OOM-mitigation cache free is best-effort: it must never raise when
     there's no CUDA (build/test box), so it can't break a transcription."""
     MeetingDiarizationService._free_cuda_cache()  # no exception = pass
+
+
+def test_resolve_meeting_language():
+    """Unset → backward-compat default; auto/detect → whisper autodetect (None);
+    explicit code → forced. This is the fix for English meetings being
+    transcribed as German."""
+    assert resolve_meeting_language(None) == settings.whisper_language_default
+    assert resolve_meeting_language("") == settings.whisper_language_default
+    assert resolve_meeting_language("auto") is None
+    assert resolve_meeting_language("Detect") is None
+    assert resolve_meeting_language("en") == "en"
+    assert resolve_meeting_language(" de ") == "de"
 
 
 # --- chunked transcription: pure stitching/boundary logic (no GPU) ---

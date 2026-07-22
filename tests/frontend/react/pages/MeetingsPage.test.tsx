@@ -20,6 +20,7 @@ function mkMeeting(over: Partial<Meeting>): Meeting {
     transcript_document_id: 42,
     minutes_status: 'none',
     project_id: null,
+    language: null,
     created_at: '2026-07-14T09:00:00Z',
     ...over,
   };
