@@ -28,7 +28,14 @@ export interface MeetingSegment {
   start_s: number;
   end_s: number;
   text: string;
+  /** §2 Track A cross-meeting anonymous fingerprint (only when the flag is on). */
+  fingerprint_id?: number | null;
+  fingerprint_label?: string | null;
 }
+
+/** Relabel result — Meeting fields plus how many OTHER meetings the name
+ *  propagated to via merge-on-enroll (§2 Track A). */
+export type RelabelResult = Meeting & { cross_meeting_applied: number };
 
 interface MeetingSegmentsResponse {
   id: number;
@@ -94,8 +101,8 @@ async function deleteMeetingRequest(meetingId: number): Promise<void> {
   await apiClient.delete(`/api/meetings/${meetingId}`);
 }
 
-async function relabelRequest(input: RelabelInput): Promise<Meeting> {
-  const response = await apiClient.post<Meeting>(
+async function relabelRequest(input: RelabelInput): Promise<RelabelResult> {
+  const response = await apiClient.post<RelabelResult>(
     `/api/meetings/${input.meetingId}/relabel`,
     { speaker_key: input.speakerKey, label: input.label },
   );

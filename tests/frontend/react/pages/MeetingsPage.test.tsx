@@ -244,6 +244,35 @@ describe('MeetingsPage', () => {
 
     await waitFor(() => expect(relabeled).toEqual({ speaker_key: 'S1', label: 'Anna' }));
   });
+
+  it('shows the merge-on-enroll message when a relabel propagates across meetings', async () => {
+    server.use(
+      http.get(`${BASE_URL}/api/meetings`, () =>
+        HttpResponse.json([mkMeeting({ id: 5, title: 'Planning', status: 'completed' })]),
+      ),
+      http.get(`${BASE_URL}/api/meetings/5/segments`, () =>
+        HttpResponse.json({
+          id: 5, status: 'completed',
+          segments: [{ speaker: 'Sprecher 1', speaker_key: 'S1', start_s: 0, end_s: 2, text: 'Hi.', fingerprint_id: 3, fingerprint_label: 'Speaker AB' }],
+        }),
+      ),
+      // §2 Track A: relabel propagated to 2 other meetings sharing the fingerprint.
+      http.post(`${BASE_URL}/api/meetings/5/relabel`, () =>
+        HttpResponse.json({ ...mkMeeting({ id: 5 }), cross_meeting_applied: 2 }),
+      ),
+    );
+
+    renderWithProviders(<MeetingsPage />);
+    const user = userEvent.setup();
+    await user.click(await screen.findByText('Planning'));
+    await waitFor(() => expect(screen.getByText('Hi.')).toBeInTheDocument());
+    await user.type(screen.getByLabelText(i18n.t('meetings.relabelAria', { speaker: 'Sprecher 1' })), 'Anna');
+    await user.click(screen.getAllByRole('button', { name: i18n.t('meetings.relabelSave') })[0]);
+
+    await waitFor(() =>
+      expect(screen.getByText(i18n.t('meetings.crossMeetingApplied', { count: 2 }))).toBeInTheDocument(),
+    );
+  });
 });
 
 /** Enable the minutes feature flag and stub the transcript segments so a

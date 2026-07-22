@@ -360,6 +360,14 @@ class RelabelRequest(BaseModel):
     label: str = Field(min_length=1, max_length=100)
 
 
+class RelabelResponse(MeetingResponse):
+    # §2 Track A merge-on-enroll: how many OTHER meetings this relabel also renamed
+    # (same anonymous fingerprint). Lets the UI say "also applied to N meetings" so
+    # cross-meeting propagation is visible, not a surprise. 0 when the flag is off
+    # or the cluster has no cross-meeting fingerprint.
+    cross_meeting_applied: int = 0
+
+
 @router.get("/{meeting_id}/segments")
 async def get_segments(
     meeting_id: int,
@@ -372,13 +380,13 @@ async def get_segments(
     return {"id": meeting.id, "status": meeting.status, "segments": meeting.segments or []}
 
 
-@router.post("/{meeting_id}/relabel", response_model=MeetingResponse)
+@router.post("/{meeting_id}/relabel", response_model=RelabelResponse)
 async def relabel_speaker(
     meeting_id: int,
     data: RelabelRequest,
     user: User | None = Depends(get_optional_user),
     db: AsyncSession = Depends(get_db),
-) -> MeetingResponse:
+) -> RelabelResponse:
     """Relabel one speaker cluster (pseudonym → person). Re-renders + reindexes
     the transcript in place (stable transcript_document_id). Owner-gated 404."""
     _require_enabled()
@@ -394,15 +402,20 @@ async def relabel_speaker(
     # Merge-on-enroll (§2 Track A): propagate the human name to other meetings
     # sharing this cluster's fingerprint. Best-effort — the primary relabel above
     # already committed, so a propagation hiccup must not fail the request.
+    cross_meeting_applied = 0
     if settings.meeting_fingerprints_enabled:
         from services.meeting_pipeline import enroll_fingerprint_across_meetings
 
         try:
-            await enroll_fingerprint_across_meetings(db, meeting, data.speaker_key, data.label)
+            affected = await enroll_fingerprint_across_meetings(
+                db, meeting, data.speaker_key, data.label
+            )
+            cross_meeting_applied = len(affected)
         except Exception as e:  # noqa: BLE001
             logger.warning(f"meeting {meeting_id}: merge-on-enroll propagation failed: {e}")
 
-    return _to_response(meeting)
+    return RelabelResponse(**_to_response(meeting).model_dump(),
+                           cross_meeting_applied=cross_meeting_applied)
 
 
 # --------------------------------------------------------------------------- #

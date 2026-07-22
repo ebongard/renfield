@@ -57,14 +57,17 @@ function SpeakerLabels({ meetingId, segments }: { meetingId: number; segments: M
 
   const [drafts, setDrafts] = useState<Record<string, string>>({});
   const [savedKey, setSavedKey] = useState<string | null>(null);
+  // §2 Track A merge-on-enroll: how many OTHER meetings the last relabel renamed.
+  const [crossApplied, setCrossApplied] = useState(0);
 
   const submit = async (speakerKey: string) => {
     const label = (drafts[speakerKey] ?? '').trim();
     if (!label || relabel.isPending) return;
     try {
-      await relabel.mutateAsync({ meetingId, speakerKey, label });
+      const res = await relabel.mutateAsync({ meetingId, speakerKey, label });
       setDrafts((d) => ({ ...d, [speakerKey]: '' }));
       setSavedKey(speakerKey);
+      setCrossApplied(res.cross_meeting_applied ?? 0);
     } catch {
       // Error surfaced via relabel.errorMessage; keep the draft.
     }
@@ -88,7 +91,7 @@ function SpeakerLabels({ meetingId, segments }: { meetingId: number; segments: M
             value={drafts[sp.key] ?? ''}
             onChange={(e) => {
               setDrafts((d) => ({ ...d, [sp.key]: e.target.value }));
-              if (savedKey === sp.key) setSavedKey(null);
+              if (savedKey === sp.key) { setSavedKey(null); setCrossApplied(0); }
             }}
             placeholder={t('meetings.relabelPlaceholder')}
             aria-label={t('meetings.relabelAria', { speaker: sp.name })}
@@ -111,6 +114,11 @@ function SpeakerLabels({ meetingId, segments }: { meetingId: number; segments: M
       ))}
       {relabel.errorMessage && (
         <p className="text-sm text-red-600 dark:text-red-400">{relabel.errorMessage}</p>
+      )}
+      {savedKey && crossApplied > 0 && !relabel.isPending && (
+        <p className="text-xs text-gray-500 dark:text-gray-400">
+          {t('meetings.crossMeetingApplied', { count: crossApplied })}
+        </p>
       )}
     </div>
   );

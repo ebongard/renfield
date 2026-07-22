@@ -669,6 +669,8 @@
     "relabelPlaceholder": "Person's name",
     "relabelAria": "Rename {{speaker}}",
     "relabelSave": "Save",
+    "crossMeetingApplied_one": "Also applied to 1 other meeting (same voice).",
+    "crossMeetingApplied_other": "Also applied to {{count}} other meetings (same voice).",
     "delete": "Delete",
     "confirmDelete": "Confirm delete",
     "cancelDelete": "Cancel",
