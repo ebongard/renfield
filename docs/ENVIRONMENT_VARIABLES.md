@@ -942,6 +942,11 @@ MEETING_AUTO_MATCH_ENABLED=false
 MEETING_FINGERPRINTS_ENABLED=false
 MEETING_FINGERPRINT_MATCH_THRESHOLD=0.60   # 0.0-1.0, Cosine zum Folden
 MEETING_FINGERPRINT_MATCH_MARGIN=0.05      # bester − zweitbester ≥ dies, sonst neu
+# Auto-Naming (SEPARATES, riskiores Sub-Flag; braucht auch MEETING_FINGERPRINTS_ENABLED):
+# ein NEUES Meeting zeigt den bereits vergebenen Namen statt "Sprecher N", wenn ein
+# Cluster einen benannten Fingerprint matcht. Aus lassen bis Real-Meeting-Kalibrierung —
+# ein False-Match würde einen echten Namen fehl-zuordnen (Human-Relabel korrigiert).
+MEETING_FINGERPRINT_AUTONAME=false
 # Originalaudio nach fertigem Transkript behalten (opt-in); sonst nach Grace-Fenster gelöscht
 MEETING_KEEP_AUDIO=false
 MEETING_AUDIO_GRACE_DAYS=7           # 0-365
@@ -956,7 +961,7 @@ MEETING_RETENTION_DAYS=365           # 0-3650
 **Defaults:**
 - `PROJECTS_ENABLED`: `false` · `NOTES_ENABLED`: `false` · `NOTES_SEMANTIC_SEARCH_ENABLED`: `true`
 - `MEETING_TRANSCRIPTION_ENABLED`: `false` · `MEETING_MINUTES_ENABLED`: `false` · `MEETING_AUTO_MATCH_ENABLED`: `false`
-- `MEETING_FINGERPRINTS_ENABLED`: `false` · `MEETING_FINGERPRINT_MATCH_THRESHOLD`: `0.60` · `MEETING_FINGERPRINT_MATCH_MARGIN`: `0.05`
+- `MEETING_FINGERPRINTS_ENABLED`: `false` · `MEETING_FINGERPRINT_MATCH_THRESHOLD`: `0.60` · `MEETING_FINGERPRINT_MATCH_MARGIN`: `0.05` · `MEETING_FINGERPRINT_AUTONAME`: `false`
 - `MEETING_WHISPER_MODEL`: `""` · `MEETING_MAX_DURATION_H`: `4`
 - `MEETING_KEEP_AUDIO`: `false` · `MEETING_AUDIO_GRACE_DAYS`: `7` · `MEETING_RETENTION_DAYS`: `365`
 

@@ -306,6 +306,7 @@ async def process_meeting(meeting_id: int, audio_path: str) -> None:
             try:
                 from services.meeting_fingerprint_service import (
                     annotate_segments,
+                    apply_known_names,
                     resolve_meeting_fingerprints,
                 )
 
@@ -315,6 +316,12 @@ async def process_meeting(meeting_id: int, audio_path: str) -> None:
                 async with db.begin_nested():
                     resolved = await resolve_meeting_fingerprints(db, meeting, raw_segments)
                 annotate_segments(segments, resolved)
+                # Auto-naming (separate flag): show a known person's name instead of
+                # "Sprecher N" when a cluster matched an already-named fingerprint.
+                if settings.meeting_fingerprint_autoname:
+                    n = apply_known_names(segments, resolved)
+                    if n:
+                        logger.info(f"meeting {meeting_id}: auto-named {n} known speaker(s)")
             except Exception as e:  # noqa: BLE001
                 logger.warning(f"meeting {meeting_id}: fingerprint matching failed: {e}")
         meeting.segments = segments

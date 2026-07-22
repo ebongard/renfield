@@ -166,7 +166,10 @@ async def resolve_meeting_fingerprints(db, meeting, raw_segments: list[dict]) ->
             fp = best[1]
             _fold_centroid(fp, query)
             used_ids.add(fp.id)
-            resolved[cluster_key] = {"fingerprint_id": fp.id, "fingerprint_label": fp.label}
+            resolved[cluster_key] = {
+                "fingerprint_id": fp.id, "fingerprint_label": fp.label,
+                "person_name": fp.person_name,  # known name if enrolled (autoname)
+            }
             logger.debug(
                 "meeting %s cluster %s → fingerprint %s (%.3f)",
                 meeting.id, cluster_key, fp.label, best[0],
@@ -182,7 +185,9 @@ async def resolve_meeting_fingerprints(db, meeting, raw_segments: list[dict]) ->
             await db.flush()  # assign fp.id for the segment annotation + used set
             used_ids.add(fp.id)
             candidates.append((fp, query))  # a later cluster can't re-match it (used_ids)
-            resolved[cluster_key] = {"fingerprint_id": fp.id, "fingerprint_label": fp.label}
+            resolved[cluster_key] = {
+                "fingerprint_id": fp.id, "fingerprint_label": fp.label, "person_name": None,
+            }
             logger.debug("meeting %s cluster %s → NEW fingerprint %s", meeting.id, cluster_key, label)
 
     return resolved
@@ -197,3 +202,19 @@ def annotate_segments(segments: list[dict], resolved: dict[str, dict]) -> None:
         if info:
             seg["fingerprint_id"] = info["fingerprint_id"]
             seg["fingerprint_label"] = info["fingerprint_label"]
+
+
+def apply_known_names(segments: list[dict], resolved: dict[str, dict]) -> int:
+    """Auto-naming (gated by ``meeting_fingerprint_autoname``): for a cluster that
+    matched a fingerprint a human already named, replace the "Sprecher N" display
+    ``speaker`` with that ``person_name``. In place; returns the count of clusters
+    auto-named. The ``speaker_key`` + ``fingerprint_id`` stay, so a human relabel
+    still corrects a mis-match. Only MATCHED fingerprints carry a person_name;
+    freshly-minted ones are None → left as pseudonyms."""
+    named_keys = {k for k, info in resolved.items() if info.get("person_name")}
+    for seg in segments:
+        key = str(seg.get("speaker_key", ""))
+        info = resolved.get(key)
+        if info and info.get("person_name"):
+            seg["speaker"] = info["person_name"]
+    return len(named_keys)

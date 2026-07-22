@@ -41,10 +41,10 @@ async def _meeting(db, owner_user_id=1, tier=2):
     return m
 
 
-async def _add_fp(db, unit_vec, owner_user_id=1, tier=2, label="Speaker SEED"):
+async def _add_fp(db, unit_vec, owner_user_id=1, tier=2, label="Speaker SEED", person_name=None):
     fp = MeetingSpeakerFingerprint(
         owner_user_id=owner_user_id, label=label, circle_tier=tier, sample_count=1,
-        centroid_b64=SpeakerService.embedding_to_base64(unit_vec),
+        centroid_b64=SpeakerService.embedding_to_base64(unit_vec), person_name=person_name,
     )
     db.add(fp)
     await db.flush()
@@ -176,6 +176,31 @@ def _seg(speaker, key, fp_id=None, text="hi"):
     if fp_id is not None:
         s["fingerprint_id"] = fp_id
     return s
+
+
+class TestAutoName:
+    async def test_resolve_carries_person_name_on_match(self, db_session):
+        person = _rand_unit(61)
+        await _add_fp(db_session, person, label="Speaker N1", person_name="Anna")
+        m = await _meeting(db_session)
+        resolved = await resolve_meeting_fingerprints(db_session, m, [_raw_seg("SPEAKER_00", person)])
+        assert resolved["SPEAKER_00"]["person_name"] == "Anna"  # matched → known name
+
+    async def test_resolve_person_name_none_for_new(self, db_session):
+        m = await _meeting(db_session)
+        resolved = await resolve_meeting_fingerprints(db_session, m, [_raw_seg("SPEAKER_00", _rand_unit(62))])
+        assert resolved["SPEAKER_00"]["person_name"] is None  # freshly minted → anonymous
+
+    async def test_apply_known_names_overrides_pseudonym(self):
+        from services.meeting_fingerprint_service import apply_known_names
+        segs = [{"speaker": "Sprecher 1", "speaker_key": "S0", "text": "hi"},
+                {"speaker": "Sprecher 2", "speaker_key": "S1", "text": "yo"}]
+        resolved = {"S0": {"fingerprint_id": 1, "fingerprint_label": "X", "person_name": "Anna"},
+                    "S1": {"fingerprint_id": 2, "fingerprint_label": "Y", "person_name": None}}
+        n = apply_known_names(segs, resolved)
+        assert n == 1
+        assert segs[0]["speaker"] == "Anna"        # named → overridden
+        assert segs[1]["speaker"] == "Sprecher 2"  # unnamed → pseudonym kept
 
 
 class TestMergeOnEnroll:

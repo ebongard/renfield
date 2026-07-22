@@ -536,6 +536,15 @@ class Settings(BaseSettings):
     # Best match must beat the runner-up by this cosine margin to fold — else the
     # cluster is ambiguous and mints a NEW fingerprint (prefer split).
     meeting_fingerprint_match_margin: float = Field(default=0.05, ge=0.0, le=1.0)
+    # §2 Track A future-meeting AUTO-NAMING: when a NEW meeting's cluster matches a
+    # fingerprint a human already named (person_name), show that name instead of
+    # "Sprecher N". The payoff of the fingerprint system (name once → recognised
+    # forever). SEPARATE sub-flag (needs meeting_fingerprints_enabled too) because
+    # it's the RISKIER half: a false fingerprint match becomes a real-name
+    # MISATTRIBUTION (worse than a pseudonym). Keep OFF until real-meeting
+    # calibration; the human relabel always corrects it, and the fingerprint link
+    # is retained so a correction re-propagates.
+    meeting_fingerprint_autoname: bool = False
     # Keep the original audio after a completed transcript (opt-in); default is to
     # delete it after the grace window below.
     meeting_keep_audio: bool = False
