@@ -521,6 +521,21 @@ class Settings(BaseSettings):
     # separation gate was insufficient-data on synthetic audio, so the matcher is
     # NOT built yet — pseudonyms ("Sprecher N") + human labeling is the product.
     meeting_auto_match_enabled: bool = False
+    # §2 Track A: cross-meeting ANONYMOUS speaker fingerprints. On a completed
+    # meeting, resolve each diarized cluster's ECAPA centroid to a stable
+    # owner+tier-scoped fingerprint ("Speaker A1B2") — the SAME anonymous person
+    # across meetings, WITHOUT claiming who they are (that's merge-on-enroll,
+    # separate). Distinct from meeting_auto_match_enabled (which binds to real
+    # enrolled Speakers). Dark by default; the calibration go/no-go PASSED on
+    # public AMI (margin 0.33, EER 0.0018). The threshold errs CONSERVATIVE —
+    # prefer a split (two fingerprints for one person, a human can merge later)
+    # over a false merge (silently conflating two people). Calibration reference:
+    # inter_p95≈0.33, intra_p05≈0.66, EER-threshold≈0.48.
+    meeting_fingerprints_enabled: bool = False
+    meeting_fingerprint_match_threshold: float = Field(default=0.60, ge=0.0, le=1.0)
+    # Best match must beat the runner-up by this cosine margin to fold — else the
+    # cluster is ambiguous and mints a NEW fingerprint (prefer split).
+    meeting_fingerprint_match_margin: float = Field(default=0.05, ge=0.0, le=1.0)
     # Keep the original audio after a completed transcript (opt-in); default is to
     # delete it after the grace window below.
     meeting_keep_audio: bool = False

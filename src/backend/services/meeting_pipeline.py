@@ -221,6 +221,21 @@ async def process_meeting(meeting_id: int, audio_path: str) -> None:
         )
         raw_segments = result.get("segments") or []
         segments = apply_pseudonyms(raw_segments)
+        # §2 Track A: resolve each diarized cluster to a stable cross-meeting
+        # anonymous fingerprint and ride it onto the segments (dark by default;
+        # display pseudonyms unchanged). Best-effort — a matcher failure must not
+        # fail the transcript.
+        if settings.meeting_fingerprints_enabled:
+            try:
+                from services.meeting_fingerprint_service import (
+                    annotate_segments,
+                    resolve_meeting_fingerprints,
+                )
+
+                resolved = await resolve_meeting_fingerprints(db, meeting, raw_segments)
+                annotate_segments(segments, resolved)
+            except Exception as e:  # noqa: BLE001
+                logger.warning(f"meeting {meeting_id}: fingerprint matching failed: {e}")
         meeting.segments = segments
 
         if meeting.transcript_document_id:
