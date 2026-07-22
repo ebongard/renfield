@@ -232,7 +232,11 @@ async def process_meeting(meeting_id: int, audio_path: str) -> None:
                     resolve_meeting_fingerprints,
                 )
 
-                resolved = await resolve_meeting_fingerprints(db, meeting, raw_segments)
+                # SAVEPOINT: a mid-resolve failure rolls back ONLY the matcher's
+                # partial fingerprint writes (else already-flushed rows would ride
+                # the later meeting.segments commit as orphans).
+                async with db.begin_nested():
+                    resolved = await resolve_meeting_fingerprints(db, meeting, raw_segments)
                 annotate_segments(segments, resolved)
             except Exception as e:  # noqa: BLE001
                 logger.warning(f"meeting {meeting_id}: fingerprint matching failed: {e}")

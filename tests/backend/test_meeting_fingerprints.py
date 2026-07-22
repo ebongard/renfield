@@ -144,6 +144,17 @@ class TestFingerprintMatching:
         assert resolved["SPEAKER_00"]["fingerprint_label"] not in {"Speaker A", "Speaker B"}
         assert await _count_fps(db_session) == 3
 
+    async def test_auth_off_owner_none(self, db_session):
+        """The household runs auth-off (owner_user_id=None). Matching must scope to
+        NULL-owner rows (== None → IS NULL) and still mint/match correctly."""
+        person = _rand_unit(51)
+        m1 = await _meeting(db_session, owner_user_id=None)
+        r1 = await resolve_meeting_fingerprints(db_session, m1, [_raw_seg("SPEAKER_00", person)])
+        m2 = await _meeting(db_session, owner_user_id=None)
+        r2 = await resolve_meeting_fingerprints(db_session, m2, [_raw_seg("SPEAKER_00", person)])
+        assert r1["SPEAKER_00"]["fingerprint_id"] == r2["SPEAKER_00"]["fingerprint_id"]
+        assert await _count_fps(db_session) == 1
+
     async def test_annotate_segments_rides_identity(self):
         segs = [{"speaker": "Sprecher 1", "speaker_key": "SPEAKER_00", "text": "x"},
                 {"speaker": "Sprecher 2", "speaker_key": "SPEAKER_01", "text": "y"}]
