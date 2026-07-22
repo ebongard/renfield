@@ -747,6 +747,9 @@ export default function MeetingsPage() {
   const [consentNote, setConsentNote] = useState('');
   const [consent, setConsent] = useState(false);
   const [projectId, setProjectId] = useState<number | null>(null);
+  // Default 'auto' = whisper detects the spoken language — the meeting ASR used
+  // to be hardcoded to German, so English recordings came back as German.
+  const [language, setLanguage] = useState('auto');
 
   const canSubmit = file != null && consent && !upload.isPending;
 
@@ -761,6 +764,7 @@ export default function MeetingsPage() {
         date: date || undefined,
         consentNote: consentNote.trim() || undefined,
         projectId,
+        language,
       });
       setFile(null);
       setTitle('');
@@ -768,6 +772,7 @@ export default function MeetingsPage() {
       setConsentNote('');
       setConsent(false);
       setProjectId(null);
+      setLanguage('auto');
     } catch {
       // Error surfaced via upload.errorMessage; keep the form filled.
     }
@@ -791,7 +796,7 @@ export default function MeetingsPage() {
           aria-label={t('meetings.audioLabel')}
         />
 
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
           <input
             className="input"
             type="text"
@@ -808,6 +813,16 @@ export default function MeetingsPage() {
             onChange={(e) => setDate(e.target.value)}
             aria-label={t('meetings.datePlaceholder')}
           />
+          <select
+            className="input"
+            value={language}
+            onChange={(e) => setLanguage(e.target.value)}
+            aria-label={t('meetings.languageLabel')}
+          >
+            <option value="auto">{t('meetings.languageAuto')}</option>
+            <option value="de">{t('meetings.languageDe')}</option>
+            <option value="en">{t('meetings.languageEn')}</option>
+          </select>
         </div>
 
         {/* Optional project scope — only when projects exist (Phase 4A). */}

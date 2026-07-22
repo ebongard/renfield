@@ -171,6 +171,7 @@ async def transcribe_meeting(
     auth_token: str,
     whisper_model: str | None = None,
     num_speakers: int | None = None,
+    language: str | None = None,
     timeout_s: float | None = None,
 ) -> dict[str, Any]:
     """POST a meeting recording (by PATH, streamed) to /transcribe-meeting.
@@ -191,6 +192,10 @@ async def transcribe_meeting(
         data["whisper_model"] = whisper_model
     if num_speakers:
         data["num_speakers"] = str(num_speakers)
+    if language:
+        # "auto" = whisper autodetect, else a forced code. Omitted → the
+        # voice-server default (backward-compat for callers that don't set it).
+        data["language"] = language
 
     async with httpx.AsyncClient(timeout=timeout_s) as client:
         try:

@@ -16,6 +16,8 @@ export interface Meeting {
   minutes_status: MinutesStatus; // 'none' | 'draft' | 'confirmed' — for the list badge
   /** Optional project scope (Phase 4A) — null when unlinked. */
   project_id: number | null;
+  /** ASR language: null = server default, 'auto' = detect, or an ISO code ('en'/'de'). */
+  language: string | null;
   created_at: string;
 }
 
@@ -41,6 +43,7 @@ export interface MeetingUploadInput {
   date?: string;             // ISO YYYY-MM-DD
   consentNote?: string;
   projectId?: number | null; // optional project scope (Phase 4A)
+  language?: string;         // 'auto' | ISO code; omitted → server default
 }
 
 export interface RelabelInput {
@@ -68,6 +71,7 @@ export async function uploadMeetingRequest(input: MeetingUploadInput): Promise<M
   if (input.date) formData.append('date', input.date);
   if (input.consentNote) formData.append('consent_note', input.consentNote);
   if (input.projectId != null) formData.append('project_id', String(input.projectId));
+  if (input.language) formData.append('language', input.language);
   const response = await apiClient.post<Meeting>('/api/meetings/transcribe', formData, {
     headers: { 'Content-Type': 'multipart/form-data' },
     // Meeting recordings are large (multi-hour → hundreds of MB). The shared

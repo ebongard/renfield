@@ -191,6 +191,25 @@ def _chunk_bounds(total_samples: int, chunk_samples: int) -> list[tuple[int, int
             for s in range(0, total_samples, chunk_samples)]
 
 
+def resolve_meeting_language(language: str | None) -> str | None:
+    """Resolve the faster-whisper ``language`` for a meeting job. PURE.
+
+    - unset (None/"")     -> ``settings.whisper_language_default`` (backward-compat:
+      a caller that doesn't pass a language keeps today's behavior)
+    - "auto" / "detect"   -> ``None`` = whisper auto-detects (the right choice for a
+      mixed EN/DE customer base — no need to know the language up front)
+    - an explicit code     -> that code verbatim (e.g. "en", "de")
+
+    Without this, the meeting path hardcoded ``de`` → English recordings were
+    transcribed as hallucinated German.
+    """
+    if not language:
+        return settings.whisper_language_default
+    if language.strip().lower() in ("auto", "detect"):
+        return None
+    return language.strip()
+
+
 def _merge_adjacent_same_speaker(segments: list[MeetingSegment]) -> list[MeetingSegment]:
     """Merge consecutive segments with the same (global) speaker — e.g. a turn
     split across a chunk boundary. PURE. Assumes segments are time-ordered."""
@@ -268,10 +287,12 @@ class MeetingDiarizationService:
         turns.sort(key=lambda t: t.start_s)
         return turns
 
-    def _transcribe_words_sync(self, pcm: np.ndarray, whisper_model) -> list[Word]:
+    def _transcribe_words_sync(
+        self, pcm: np.ndarray, whisper_model, language: str | None = None
+    ) -> list[Word]:
         segments, _info = whisper_model.transcribe(
             pcm, word_timestamps=True, beam_size=1,
-            language=settings.whisper_language_default,
+            language=resolve_meeting_language(language),
         )
         words: list[Word] = []
         for seg in segments:
@@ -294,7 +315,7 @@ class MeetingDiarizationService:
             pass
 
     async def _process_window(
-        self, pcm: np.ndarray, *, whisper_model, speaker_service
+        self, pcm: np.ndarray, *, whisper_model, speaker_service, language: str | None = None
     ) -> tuple[list[MeetingSegment], dict[str, np.ndarray | None]]:
         """Diarize + ASR + align ONE audio window → window-local segments (labels
         + timestamps relative to the window) + a per-local-speaker ECAPA embedding.
@@ -305,7 +326,8 @@ class MeetingDiarizationService:
         # Release pyannote's torch cache BEFORE whisper so CTranslate2's
         # (separate-pool) encode has room — the OOM guard, per window.
         self._free_cuda_cache()
-        words = await loop.run_in_executor(None, self._transcribe_words_sync, pcm, whisper_model)
+        words = await loop.run_in_executor(
+            None, self._transcribe_words_sync, pcm, whisper_model, language)
         self._free_cuda_cache()
 
         segments = align_words_to_segments(words, turns)
@@ -333,7 +355,9 @@ class MeetingDiarizationService:
             "embedding": emb,
         }
 
-    async def transcribe(self, pcm: np.ndarray, *, whisper_model, speaker_service) -> list[dict]:
+    async def transcribe(
+        self, pcm: np.ndarray, *, whisper_model, speaker_service, language: str | None = None
+    ) -> list[dict]:
         """Diarize + transcribe + align + per-speaker embed → segment dicts
         {speaker, start_s, end_s, text, embedding}.
 
@@ -351,7 +375,8 @@ class MeetingDiarizationService:
         async with self._lock:  # one meeting job monopolises the GPU
             if len(bounds) == 1:
                 segments, embeddings = await self._process_window(
-                    pcm, whisper_model=whisper_model, speaker_service=speaker_service
+                    pcm, whisper_model=whisper_model, speaker_service=speaker_service,
+                    language=language,
                 )
                 return [self._seg_dict(s, embeddings.get(s.speaker)) for s in segments]
 
@@ -361,7 +386,8 @@ class MeetingDiarizationService:
             for idx, (a, b) in enumerate(bounds):
                 offset_s = a / SAMPLE_RATE
                 segments, embeddings = await self._process_window(
-                    pcm[a:b], whisper_model=whisper_model, speaker_service=speaker_service
+                    pcm[a:b], whisper_model=whisper_model, speaker_service=speaker_service,
+                    language=language,
                 )
                 # Assign in a deterministic order so stitching is reproducible.
                 local_to_global = {

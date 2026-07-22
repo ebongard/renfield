@@ -91,6 +91,7 @@ class MeetingResponse(BaseModel):
     error: str | None
     transcript_document_id: int | None
     project_id: int | None
+    language: str | None
     # Lets the meeting list surface a "Protokoll: Entwurf bereit" badge without
     # a per-card minutes fetch (§2 Phase 0 / Track D UX).
     minutes_status: str
@@ -106,6 +107,7 @@ def _to_response(m: Meeting) -> MeetingResponse:
         error=m.error,
         transcript_document_id=m.transcript_document_id,
         project_id=m.project_id,
+        language=getattr(m, "language", None),
         minutes_status=getattr(m, "minutes_status", "none") or "none",
         created_at=m.created_at.isoformat() if m.created_at else "",
     )
@@ -120,6 +122,7 @@ async def transcribe_meeting(
     date: str | None = Form(None),
     consent_note: str | None = Form(None),
     project_id: int | None = Form(None),
+    language: str | None = Form(None),
     user: User | None = Depends(get_optional_user),
     db: AsyncSession = Depends(get_db),
 ) -> MeetingResponse:
@@ -157,6 +160,18 @@ async def transcribe_meeting(
         except ValueError:
             raise HTTPException(status_code=422, detail="date must be ISO format YYYY-MM-DD")
 
+    # ASR language: "auto" (whisper detects) or a 2-letter ISO code ("en"/"de");
+    # None → the voice-server default. Reject junk so it can't reach whisper.
+    meeting_language: str | None = None
+    if language:
+        norm = language.strip().lower()
+        if norm != "auto" and not (len(norm) == 2 and norm.isalpha()):
+            raise HTTPException(
+                status_code=422,
+                detail="language must be 'auto' or a 2-letter ISO code (e.g. 'en', 'de')",
+            )
+        meeting_language = norm
+
     # Worker-alive gate BEFORE any DB/disk work — never enqueue into a dead stream.
     if not await _meeting_worker_is_alive():
         raise HTTPException(
@@ -182,6 +197,7 @@ async def transcribe_meeting(
         consent_note=consent_note,
         retention_until=retention_until,
         project_id=project_id,
+        language=meeting_language,
     )
     db.add(meeting)
     await db.commit()

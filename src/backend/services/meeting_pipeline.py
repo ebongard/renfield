@@ -218,6 +218,7 @@ async def process_meeting(meeting_id: int, audio_path: str) -> None:
             audio_path,
             auth_token=_service_token(),
             whisper_model=(settings.meeting_whisper_model or None),
+            language=(meeting.language or None),
         )
         raw_segments = result.get("segments") or []
         segments = apply_pseudonyms(raw_segments)
