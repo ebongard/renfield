@@ -124,7 +124,96 @@ def build_manifest(rttm_texts, audio_root, audio_pattern, speaker_map, min_seg_s
     return manifest, summary
 
 
+import html
+import re
+
+_W_RE = re.compile(r"<w\b([^>]*)>(.*?)</w>", re.S)
+_MEETING_RE = re.compile(r'<meeting\b([^>]*)>(.*?)</meeting>', re.S)
+_SPEAKER_RE = re.compile(r'<speaker\b([^>]*?)/?>')
+
+
+def _attr(attrs, name):
+    m = re.search(rf'{name}="([^"]*)"', attrs)
+    return m.group(1) if m else None
+
+
+def parse_meetings_speaker_map(meetings_xml_text):
+    """meetings.xml -> {recording: {nxt_agent_letter: global_name}}."""
+    out = {}
+    for attrs, body in _MEETING_RE.findall(meetings_xml_text):
+        obs = _attr(attrs, "observation")
+        if not obs:
+            continue
+        letter_to_global = {}
+        for sp_attrs in _SPEAKER_RE.findall(body):
+            agent, gname = _attr(sp_attrs, "nxt_agent"), _attr(sp_attrs, "global_name")
+            if agent and gname:
+                letter_to_global[agent] = gname
+        out[obs] = letter_to_global
+    return out
+
+
+def parse_words_xml(text):
+    """AMI ``<w starttime endtime [punc]>text</w>`` -> [(start, end, word)].
+
+    Skips punctuation-only tokens (``punc="true"``) and non-word elements
+    (``<vocalsound>`` etc. don't match ``<w>``); unescapes XML entities."""
+    words = []
+    for attrs, raw in _W_RE.findall(text):
+        if 'punc="true"' in attrs:
+            continue
+        word = html.unescape(raw).strip()
+        if not word:
+            continue
+        st, et = _attr(attrs, "starttime"), _attr(attrs, "endtime")
+        try:
+            start = float(st) if st is not None else 0.0
+            end = float(et) if et is not None else start
+        except ValueError:
+            continue
+        words.append((start, end, word))
+    return words
+
+
+def load_ami_references(words_dir, meetings_xml_path, recordings):
+    """For each recording, gather timed reference words per GLOBAL speaker from the
+    AMI NXT manual annotations. Returns {recording: [{speaker,word,start_s,end_s}]}."""
+    with open(meetings_xml_path) as f:
+        speaker_map = parse_meetings_speaker_map(f.read())
+    refs = {}
+    for recording in recordings:
+        letter_to_global = speaker_map.get(recording, {})
+        rows = []
+        for letter, global_name in letter_to_global.items():
+            path = os.path.join(words_dir, f"{recording}.{letter}.words.xml")
+            if not os.path.exists(path):
+                continue
+            with open(path) as f:
+                for start, end, word in parse_words_xml(f.read()):
+                    rows.append({"speaker": global_name, "word": word,
+                                 "start_s": round(start, 3), "end_s": round(end, 3)})
+        rows.sort(key=lambda r: (r["start_s"], r["speaker"]))
+        refs[recording] = rows
+    return refs
+
+
 def _self_test():
+    # AMI reference extraction (words + speaker map)
+    meetings = (
+        '<meeting nite:id="m1" observation="ES2002a">'
+        '<speaker nite:id="s2" nxt_agent="B" global_name="FEE005" role="PM"/>'
+        '<speaker nite:id="s1" nxt_agent="A" global_name="MEE006" role="ID"/>'
+        '</meeting>')
+    smap = parse_meetings_speaker_map(meetings)
+    assert smap == {"ES2002a": {"B": "FEE005", "A": "MEE006"}}, smap
+    words_xml = (
+        '<w nite:id="x0" starttime="1.0" endtime="1.3">Don&#39;t</w>'
+        '<w nite:id="x1" starttime="1.3" endtime="1.3" punc="true">.</w>'
+        '<vocalsound nite:id="v" starttime="2.0" endtime="2.5" type="laugh"/>'
+        '<w nite:id="x2" starttime="2.6" endtime="2.9">Okay</w>')
+    ws = parse_words_xml(words_xml)
+    assert ws == [(1.0, 1.3, "Don't"), (2.6, 2.9, "Okay")], ws  # punc + vocalsound dropped
+
     rttm = (
         ";; comment\n"
         "SPEAKER ES2002a 1 12.400 2.700 <NA> <NA> MEE068 <NA> <NA>\n"
@@ -176,6 +265,11 @@ def main() -> int:
     ap.add_argument("--speaker-map", help="JSON local->global remap (see docstring)")
     ap.add_argument("--min-seg-seconds", type=float, default=0.0,
                     help="drop ground-truth segments shorter than this")
+    ap.add_argument("--ami-words-dir",
+                    help="AMI NXT words/ dir — adds timed reference words per "
+                         "recording (for the WER eval). Needs --ami-meetings-xml.")
+    ap.add_argument("--ami-meetings-xml",
+                    help="AMI corpusResources/meetings.xml (nxt_agent->global_name map)")
     ap.add_argument("--out", help="write manifest JSON here (else stdout)")
     ap.add_argument("--self-test", action="store_true")
     args = ap.parse_args()
@@ -208,6 +302,15 @@ def main() -> int:
 
     manifest, summary = build_manifest(
         rttm_texts, args.audio_root, args.audio_pattern, speaker_map, args.min_seg_seconds)
+
+    if args.ami_words_dir or args.ami_meetings_xml:
+        if not (args.ami_words_dir and args.ami_meetings_xml):
+            ap.error("--ami-words-dir and --ami-meetings-xml must be given together")
+        refs = load_ami_references(
+            args.ami_words_dir, args.ami_meetings_xml, [r["recording"] for r in manifest])
+        for rec in manifest:
+            rec["words"] = refs.get(rec["recording"], [])
+        summary["reference_words"] = sum(len(r["words"]) for r in manifest)
 
     print("=== AMI manifest summary ===", file=sys.stderr)
     for k, v in summary.items():
