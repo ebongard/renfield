@@ -1643,4 +1643,5 @@ class TestEntityTypeConstants:
         assert "thing" in KG_ENTITY_TYPES
         assert "event" in KG_ENTITY_TYPES
         assert "concept" in KG_ENTITY_TYPES
-        assert len(KG_ENTITY_TYPES) == 6
+        assert "note" in KG_ENTITY_TYPES  # added by the Notes atom feature (Phase 4B)
+        assert len(KG_ENTITY_TYPES) == 7
