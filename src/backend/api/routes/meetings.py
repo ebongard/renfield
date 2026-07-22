@@ -374,6 +374,18 @@ async def relabel_speaker(
     ok = await reattribute(db, meeting, data.speaker_key, data.label)
     if not ok:
         raise HTTPException(status_code=404, detail="speaker not found")
+
+    # Merge-on-enroll (§2 Track A): propagate the human name to other meetings
+    # sharing this cluster's fingerprint. Best-effort — the primary relabel above
+    # already committed, so a propagation hiccup must not fail the request.
+    if settings.meeting_fingerprints_enabled:
+        from services.meeting_pipeline import enroll_fingerprint_across_meetings
+
+        try:
+            await enroll_fingerprint_across_meetings(db, meeting, data.speaker_key, data.label)
+        except Exception as e:  # noqa: BLE001
+            logger.warning(f"meeting {meeting_id}: merge-on-enroll propagation failed: {e}")
+
     return _to_response(meeting)
 
 

@@ -473,6 +473,12 @@ class MeetingSpeakerFingerprint(Base):
     # How many diarized clusters have been folded into the running-mean centroid.
     sample_count = Column(Integer, nullable=False, default=1, server_default="1")
 
+    # Human-confirmed real name once someone relabels this fingerprint in ANY
+    # meeting (merge-on-enroll). OWNER-SCOPED here (not the global Speaker pool)
+    # so two owners' same-named people stay distinct on the business instance;
+    # `speaker_id` above stays for a future deliberate voice-profile binding.
+    person_name = Column(String(100), nullable=True)
+
     # Circles v1 tier — inherits the meeting's tier (default 2 = household/team,
     # mirrors Meeting.circle_tier). Owner-scoped + tiered.
     circle_tier = Column(Integer, nullable=False, default=2, server_default="2")

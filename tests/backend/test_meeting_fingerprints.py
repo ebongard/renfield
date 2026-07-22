@@ -161,3 +161,60 @@ class TestFingerprintMatching:
         annotate_segments(segs, {"SPEAKER_00": {"fingerprint_id": 5, "fingerprint_label": "Speaker AB"}})
         assert segs[0]["fingerprint_id"] == 5 and segs[0]["fingerprint_label"] == "Speaker AB"
         assert "fingerprint_id" not in segs[1]  # no resolution for this cluster
+
+
+async def _meeting_with_segs(db, segs, owner_user_id=1, tier=2):
+    m = Meeting(owner_user_id=owner_user_id, circle_tier=tier, status="completed",
+                consent_confirmed=True, transcript_document_id=None, segments=segs)
+    db.add(m)
+    await db.flush()
+    return m
+
+
+def _seg(speaker, key, fp_id=None, text="hi"):
+    s = {"speaker": speaker, "speaker_key": key, "start_s": 0.0, "end_s": 1.0, "text": text}
+    if fp_id is not None:
+        s["fingerprint_id"] = fp_id
+    return s
+
+
+class TestMergeOnEnroll:
+    async def test_backpropagates_name_to_sharing_meeting(self, db_session):
+        from services.meeting_pipeline import enroll_fingerprint_across_meetings
+        fp = await _add_fp(db_session, _rand_unit(1), label="Speaker XY")
+        m1 = await _meeting_with_segs(db_session, [_seg("Anna", "S0", fp.id)])  # already relabeled
+        m2 = await _meeting_with_segs(db_session, [_seg("Sprecher 1", "SPEAKER_00", fp.id)])
+        affected = await enroll_fingerprint_across_meetings(db_session, m1, "S0", "Anna")
+        assert affected == [m2.id]
+        await db_session.refresh(m2)
+        assert m2.segments[0]["speaker"] == "Anna"
+        await db_session.refresh(fp)
+        assert fp.person_name == "Anna"
+
+    async def test_no_fingerprint_is_noop(self, db_session):
+        from services.meeting_pipeline import enroll_fingerprint_across_meetings
+        m1 = await _meeting_with_segs(db_session, [_seg("Anna", "S0")])  # no fingerprint_id
+        assert await enroll_fingerprint_across_meetings(db_session, m1, "S0", "Anna") == []
+
+    async def test_non_sharing_meeting_untouched(self, db_session):
+        from services.meeting_pipeline import enroll_fingerprint_across_meetings
+        fp_a = await _add_fp(db_session, _rand_unit(2), label="Speaker A")
+        fp_b = await _add_fp(db_session, _rand_unit(3), label="Speaker B")
+        m1 = await _meeting_with_segs(db_session, [_seg("Anna", "S0", fp_a.id)])
+        m2 = await _meeting_with_segs(db_session, [_seg("Sprecher 1", "SPEAKER_00", fp_b.id)])
+        affected = await enroll_fingerprint_across_meetings(db_session, m1, "S0", "Anna")
+        assert affected == []
+        await db_session.refresh(m2)
+        assert m2.segments[0]["speaker"] == "Sprecher 1"  # different fingerprint → untouched
+
+    async def test_owner_scoped_propagation(self, db_session):
+        from services.meeting_pipeline import enroll_fingerprint_across_meetings
+        fp = await _add_fp(db_session, _rand_unit(4), owner_user_id=1, label="Speaker Z")
+        m1 = await _meeting_with_segs(db_session, [_seg("Anna", "S0", fp.id)], owner_user_id=1)
+        # Another owner's meeting that (contrived) carries the same fp id must NOT
+        # be relabeled — the query is owner+tier scoped.
+        m_other = await _meeting_with_segs(db_session, [_seg("Sprecher 1", "S0", fp.id)], owner_user_id=2)
+        affected = await enroll_fingerprint_across_meetings(db_session, m1, "S0", "Anna")
+        assert affected == []
+        await db_session.refresh(m_other)
+        assert m_other.segments[0]["speaker"] == "Sprecher 1"

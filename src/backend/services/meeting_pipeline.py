@@ -200,6 +200,82 @@ async def reattribute(db, meeting: Meeting, speaker_key: str, new_label: str) ->
     return True
 
 
+def _fingerprint_id_for_cluster(meeting: Meeting, speaker_key: str) -> int | None:
+    """The Track-A fingerprint id carried by a meeting's cluster (or None)."""
+    for seg in meeting.segments or []:
+        if seg.get("speaker_key") == speaker_key and seg.get("fingerprint_id") is not None:
+            return int(seg["fingerprint_id"])
+    return None
+
+
+def _relabel_by_fingerprint(meeting: Meeting, fingerprint_id: int, label: str) -> bool:
+    """Rewrite every segment carrying ``fingerprint_id`` to ``label`` (in place).
+    Returns whether anything changed (skips a meeting already at that label)."""
+    from sqlalchemy.orm.attributes import flag_modified
+
+    segments = [dict(s) for s in (meeting.segments or [])]
+    changed = False
+    for seg in segments:
+        if seg.get("fingerprint_id") == fingerprint_id and seg.get("speaker") != label:
+            seg["speaker"] = label
+            changed = True
+    if changed:
+        meeting.segments = segments
+        flag_modified(meeting, "segments")
+    return changed
+
+
+async def enroll_fingerprint_across_meetings(
+    db, source_meeting: Meeting, speaker_key: str, label: str
+) -> list[int]:
+    """Merge-on-enroll (§2 Track A): a human just named a cluster in
+    ``source_meeting``. If that cluster carries a fingerprint, record the name on
+    it (``person_name``, owner-scoped) and **back-propagate** the label to every
+    OTHER owner+tier meeting whose segments share that EXACT fingerprint — the
+    cross-meeting merge. Exact-id only (no fuzzy) → prefer split. Returns the ids
+    of the other meetings that were relabeled. No-op ([]) when the cluster has no
+    fingerprint (flag off / pre-fingerprint meeting).
+    """
+    from models.database import MeetingSpeakerFingerprint
+
+    fp_id = _fingerprint_id_for_cluster(source_meeting, speaker_key)
+    if fp_id is None:
+        return []
+    fp = await db.get(MeetingSpeakerFingerprint, fp_id)
+    if fp is None:
+        return []
+    fp.person_name = label
+
+    # Other completed meetings of the same owner+tier that carry this fingerprint.
+    others = (
+        (
+            await db.execute(
+                select(Meeting).where(
+                    Meeting.owner_user_id == source_meeting.owner_user_id,
+                    Meeting.circle_tier == source_meeting.circle_tier,
+                    Meeting.status == "completed",
+                    Meeting.id != source_meeting.id,
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    affected: list[int] = []
+    for m in others:
+        if not _relabel_by_fingerprint(m, fp_id, label):
+            continue
+        if m.transcript_document_id:
+            await _overwrite_transcript_and_reindex(db, m, m.segments)  # commits
+        affected.append(m.id)
+    await db.commit()  # persist person_name (+ any doc-less meeting)
+    if affected:
+        logger.info(
+            f"merge-on-enroll: fingerprint {fp_id} → '{label}' propagated to meetings {affected}"
+        )
+    return affected
+
+
 async def process_meeting(meeting_id: int, audio_path: str) -> None:
     """Transcribe + diarize a meeting, apply pseudonyms, and ingest the
     speaker-attributed transcript into the KB.
