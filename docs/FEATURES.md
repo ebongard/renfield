@@ -151,6 +151,13 @@ Aus einem fertigen, sprecher-attribuierten Transkript ein strukturiertes **Proto
 - **Frontend** (`MinutesPanel` in `pages/MeetingsPage.tsx`, flag-gated auf `meeting_minutes_enabled`): auf einer aufgeklappten fertigen Besprechung — `none` → „Protokoll erzeugen"; `draft` → editierbare Zusammenfassung + Entscheidungen[] + Aufgaben[] mit Add/Remove, „Entwurf speichern"/„Bestätigen"/„Neu erzeugen"/„Verwerfen"; `confirmed` → Read-only + „Bestätigt"-Badge + „Bearbeiten". **Bestätigen speichert offene Edits automatisch zuerst** (kein stiller Datenverlust). Typed JSON in/out (React-Escape-Grenze), keine Model-HTML.
 - **Dark by default** → `meeting_minutes_enabled=false` auf beiden Instanzen; Panel fehlt, bis der Flag umgelegt wird.
 
+### Meeting KG + Sprecher-Identität — Redesign (§2, Design [`design/meeting-kg-and-speaker-identity.md`](design/meeting-kg-and-speaker-identity.md))
+
+Ein Meeting ist eine hochwertige KG-Quelle, aber der generische Ingest-Pfad verrauscht den Graphen (Pseudonym-Junk, Chunk-vs-Turn-Attribution) und der bestätigte Status/die Action-Points enden im JSON-Blob. Der Redesign behandelt ein Meeting als **eine strukturierte, sprecher-bewusste, human-confirmed Extraktion** (Tracks A–D). **Phase 0** (erster Schritt, low-risk):
+
+- **Sprecher-Pseudonym-Strip**: `kg_post_document_ingest_hook` entfernt die `Sprecher N:`-Zeilenpräfixe aus Meeting-Transkript-Chunks (gated auf `source == "meeting_transcript"`), bevor der KG-Extraktor läuft — so wird „Sprecher 1" nicht als Junk-Person-Entität geminted, die über Meetings hinweg kollidiert. Bewusst eng: nur die Pseudonyme, ein human-umbenannter echter Name bleibt (legitime Cross-Meeting-Entität). Der generische Hook läuft weiter (Track B ersetzt ihn später durch die bestätigte sprecher-bewusste Passage).
+- **UX „Deliverable first"** (Track D): die Meeting-Liste trägt einen **„Protokoll: Entwurf bereit"-Badge** auf der eingeklappten Karte (`minutes_status='draft'`, jetzt auf `GET /api/meetings` mitgeliefert), und die aufgeklappte Karte kehrt die Hierarchie um — **Protokoll über einem einklappbaren Transkript** (bei ausgeschaltetem Protokoll rendert das Transkript direkt wie zuvor).
+
 ## Konversations-Gedächtnis (Langzeit)
 
 Renfield kann sich Dinge über Nutzer langfristig merken — Präferenzen, Fakten und Anweisungen werden als semantische Embeddings gespeichert und bei relevanten zukünftigen Gesprächen automatisch eingeblendet.
