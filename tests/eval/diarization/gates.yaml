@@ -52,3 +52,13 @@ gates:
   # a 0.15 threshold; real recordings decide).
   separation_min_same_pairs: 10
   separation_min_cross_pairs: 30
+
+  # HARD-when-measured — transcription Word Error Rate regression ceiling.
+  # A REGRESSION gate, not a quality target: catches the gross-failure class
+  # (e.g. the meeting ASR hardcoded German → English came back as ~0.95-WER
+  # hallucinated German, #1018) and a badly-broken ASR, while comfortably
+  # clearing a good run (synthetic clean ~0.1-0.2; AMI-hard English ~0.27,
+  # real German meetings ~0.2-0.35). Only blocks when actually measured —
+  # `wer_sample` needs `jiwer` in the eval env; without it the gate is n/a
+  # (advisory), so a run that didn't measure text quality never false-fails.
+  wer_max: 0.40

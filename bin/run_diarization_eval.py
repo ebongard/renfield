@@ -709,6 +709,7 @@ def cmd_report(args: argparse.Namespace) -> int:
                   gates["min_hyp_coverage"], ">="),
             _gate("gpu_s_per_audio_min", m.get("gpu_seconds_per_audio_minute"),
                   gates["gpu_seconds_per_audio_minute_max"], "<="),
+            _wer_gate(m.get("wer_sample"), gates.get("wer_max", 1.0)),
             _separation_gate(sep, gates),
         ]
         candidate_pass = all(ok for _, _, _, _, ok, advisory in rows if not advisory)
@@ -754,6 +755,17 @@ def _gate(name, value, threshold, op, advisory=False):
         return (name, "—", f"{op}{threshold}", "metric missing", ok, advisory)
     ok = value <= threshold if op == "<=" else value >= threshold
     return (name, str(value), f"{op}{threshold}", "", ok, advisory)
+
+
+def _wer_gate(wer_sample, wer_max):
+    """Transcription WER regression gate. HARD (blocks) when measured; advisory
+    'n/a' when ``wer_sample`` is absent (jiwer not installed) so a run that didn't
+    measure text quality never false-fails. Catches the gross-ASR-failure class
+    (the German-on-English 0.95-WER bug) without punishing hard-but-fine audio."""
+    if wer_sample is None:
+        return ("wer", "—", f"<={wer_max}", "jiwer not installed — WER not gated",
+                None, True)
+    return ("wer", str(wer_sample), f"<={wer_max}", "", wer_sample <= wer_max, False)
 
 
 def _separation_gate(sep: dict, gates: dict):
