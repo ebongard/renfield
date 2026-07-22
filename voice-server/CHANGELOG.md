@@ -3,6 +3,16 @@
 Releases via `bin/release-voice-server.sh` — the script refuses to release a
 version without a section here. Pushed digests live in `RELEASES.md`.
 
+## [0.3.7] — 2026-07-22
+
+- **Per-meeting ASR language.** `/transcribe-meeting` gains an optional `language`
+  Form param, threaded `transcribe → _process_window → _transcribe_words_sync`.
+  Pure `resolve_meeting_language()`: unset → `whisper_language_default` (backward-
+  compat), `"auto"`/`"detect"` → whisper autodetect, else the forced code. The
+  meeting path had hardcoded German, so English meetings were transcribed as
+  hallucinated German — this fixes it for the mixed EN/DE customer base. No dep
+  change (pure-Python layer). (renfield #1018)
+
 ## [0.3.6] — 2026-07-20
 
 - **THE meeting-OOM root fix: cap the ECAPA embedding input.** Traced the 14 GB

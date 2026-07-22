@@ -13,4 +13,4 @@ See docs/VOICE_PIPELINE_DESIGN.md § "Phase B" for the full architecture.
 # uploads from a seekable file (m4a); 0.3.4 = free CUDA cache between diarize/ASR;
 # 0.3.5 = chunked meeting transcription (backstop); 0.3.6 = cap ECAPA embedding
 # input (THE meeting-OOM root fix).
-__version__ = "0.3.6"
+__version__ = "0.3.7"
