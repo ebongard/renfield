@@ -1,7 +1,7 @@
 """meeting_speaker_fingerprints — §2 redesign Track A (Phase 1)
 
 Revision ID: pc20260722b_meeting_fingerprints
-Revises: pc20260722_user_token_epoch
+Revises: pc20260722c_meeting_language
 Create Date: 2026-07-22
 
 Adds ``meeting_speaker_fingerprints`` — owner-scoped, circle-tiered ECAPA
@@ -23,7 +23,9 @@ import sqlalchemy as sa
 from alembic import op
 
 revision = "pc20260722b_meeting_fingerprints"
-down_revision = "pc20260722_user_token_epoch"
+# Re-pointed onto pc20260722c (meetings.language, #1018) which merged first —
+# keeps a single linear alembic head (…→user_token_epoch→c→b→d).
+down_revision = "pc20260722c_meeting_language"
 branch_labels = None
 depends_on = None
 

@@ -934,6 +934,14 @@ MEETING_WHISPER_MODEL=
 MEETING_MAX_DURATION_H=4              # 1-12
 # Auto-Match diarisierter Cluster an enrollte Sprecher — DEFERRED/dark (noch nicht gebaut)
 MEETING_AUTO_MATCH_ENABLED=false
+# §2 Track A: cross-meeting ANONYME Sprecher-Fingerprints (dark). Ordnet jeden
+# diarisierten Cluster einem stabilen owner+tier-scoped Fingerprint zu (dieselbe
+# anonyme Person über Meetings hinweg, OHNE zu behaupten WER sie ist). Ein
+# Human-Relabel propagiert den Namen per Merge-on-Enroll auf alle Meetings mit
+# demselben Fingerprint. Schwelle konservativ (prefer split über false merge).
+MEETING_FINGERPRINTS_ENABLED=false
+MEETING_FINGERPRINT_MATCH_THRESHOLD=0.60   # 0.0-1.0, Cosine zum Folden
+MEETING_FINGERPRINT_MATCH_MARGIN=0.05      # bester − zweitbester ≥ dies, sonst neu
 # Originalaudio nach fertigem Transkript behalten (opt-in); sonst nach Grace-Fenster gelöscht
 MEETING_KEEP_AUDIO=false
 MEETING_AUDIO_GRACE_DAYS=7           # 0-365
@@ -948,6 +956,7 @@ MEETING_RETENTION_DAYS=365           # 0-3650
 **Defaults:**
 - `PROJECTS_ENABLED`: `false` · `NOTES_ENABLED`: `false` · `NOTES_SEMANTIC_SEARCH_ENABLED`: `true`
 - `MEETING_TRANSCRIPTION_ENABLED`: `false` · `MEETING_MINUTES_ENABLED`: `false` · `MEETING_AUTO_MATCH_ENABLED`: `false`
+- `MEETING_FINGERPRINTS_ENABLED`: `false` · `MEETING_FINGERPRINT_MATCH_THRESHOLD`: `0.60` · `MEETING_FINGERPRINT_MATCH_MARGIN`: `0.05`
 - `MEETING_WHISPER_MODEL`: `""` · `MEETING_MAX_DURATION_H`: `4`
 - `MEETING_KEEP_AUDIO`: `false` · `MEETING_AUDIO_GRACE_DAYS`: `7` · `MEETING_RETENTION_DAYS`: `365`
 
