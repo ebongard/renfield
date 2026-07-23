@@ -727,7 +727,15 @@
       "failedToSave": "Could not save minutes",
       "failedToConfirm": "Could not confirm minutes",
       "failedToDelete": "Could not discard minutes"
-    }
+    },
+    "backToList": "Back to overview",
+    "notFound": "Meeting not found",
+    "stillProcessing": "This meeting is still being processed — the transcript and minutes appear once it finishes.",
+    "transcriptSection": "Show transcript",
+    "openDetail": "Open details",
+    "draftNudgeTitle": "Minutes draft awaiting review",
+    "draftNudgeBody": "A draft was generated but not yet confirmed. Review it below and confirm so it is folded into the document.",
+    "openDetailFor": "Open details for {{title}}"
   },
   "tasks": {
     "title": "Tasks",

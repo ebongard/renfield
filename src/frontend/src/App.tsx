@@ -23,6 +23,7 @@ const ProjectDetailPage = lazy(() => import('./pages/ProjectDetailPage'));
 const NotesPage = lazy(() => import('./pages/NotesPage'));
 const AuthCallback = lazy(() => import('./pages/AuthCallback'));
 const MeetingsPage = lazy(() => import('./pages/MeetingsPage'));
+const MeetingDetailPage = lazy(() => import('./pages/MeetingDetailPage'));
 const CameraPage = lazy(() => import('./pages/CameraPage'));
 const HomeAssistantPage = lazy(() => import('./pages/HomeAssistantPage'));
 const SpeakersPage = lazy(() => import('./pages/SpeakersPage'));
@@ -127,6 +128,13 @@ function AppRoutes() {
               <Route path="/meetings" element={
                 <ProtectedRoute>
                   <MeetingsPage />
+                </ProtectedRoute>
+              } />
+            )}
+            {meetingsEnabled && (
+              <Route path="/meetings/:id" element={
+                <ProtectedRoute>
+                  <MeetingDetailPage />
                 </ProtectedRoute>
               } />
             )}

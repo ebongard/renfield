@@ -90,6 +90,11 @@ export async function uploadMeetingRequest(input: MeetingUploadInput): Promise<M
   return response.data;
 }
 
+async function fetchMeeting(meetingId: number): Promise<Meeting> {
+  const response = await apiClient.get<Meeting>(`/api/meetings/${meetingId}`);
+  return response.data;
+}
+
 async function fetchSegments(meetingId: number): Promise<MeetingSegment[]> {
   const response = await apiClient.get<MeetingSegmentsResponse>(
     `/api/meetings/${meetingId}/segments`,
@@ -133,6 +138,21 @@ export function useMeetingsQuery() {
       // once everything is completed/failed so an idle page makes no requests.
       refetchInterval: (query) =>
         (query.state.data ?? []).some(isActive) ? STALE.LIVE : false,
+    },
+    'meetings.failedToLoad',
+  );
+}
+
+/** Single meeting for the dedicated detail page (Track D). Polls while the
+ *  meeting is still transcribing (pending/processing), then stops. */
+export function useMeeting(meetingId: number | null) {
+  return useApiQuery(
+    {
+      queryKey: keys.meetings.detail(meetingId ?? 0),
+      queryFn: () => fetchMeeting(meetingId as number),
+      staleTime: STALE.LIVE,
+      enabled: meetingId != null,
+      refetchInterval: (query) => (query.state.data && isActive(query.state.data) ? STALE.LIVE : false),
     },
     'meetings.failedToLoad',
   );
@@ -288,6 +308,9 @@ export function useMinutes(meetingId: number | null, enabled: boolean) {
 function invalidateMinutes(queryClient: ReturnType<typeof useQueryClient>, meetingId: number) {
   queryClient.invalidateQueries({ queryKey: keys.meetings.minutes(meetingId) });
   queryClient.invalidateQueries({ queryKey: keys.meetings.list() });
+  // Detail page (Track D) drives its draft-confirm nudge off the meeting's
+  // minutes_status, so a generate/save/confirm must refresh the detail query too.
+  queryClient.invalidateQueries({ queryKey: keys.meetings.detail(meetingId) });
 }
 
 export function useGenerateMinutes() {

@@ -131,6 +131,7 @@ export const keys = {
   meetings: {
     all: ['meetings'] as const,
     list: () => ['meetings', 'list'] as const,
+    detail: (id: number) => ['meetings', id, 'detail'] as const,
     segments: (id: number) => ['meetings', id, 'segments'] as const,
     minutes: (id: number) => ['meetings', id, 'minutes'] as const,
   },
