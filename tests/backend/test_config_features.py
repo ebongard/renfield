@@ -109,3 +109,34 @@ async def test_features_wissensbasis_reva_true_when_route_mounted():
             if getattr(r, "path", None) != "/api/wissensbasis/me/mix"
         ]
         app.openapi_schema = None
+
+
+async def test_features_reports_chat_starters(monkeypatch):
+    """Instance-dependent chat starters flow through the runtime config seam so
+    one shared frontend image can differ per instance (business vs household)."""
+    starters = ["Fasse die letzte Besprechung zusammen", "Welche Fristen stehen an?"]
+    monkeypatch.setattr(settings, "chat_starters", starters)
+    from main import app
+    _auth_default(app)
+    try:
+        async with await _client(app) as c:
+            resp = await c.get("/api/config/features")
+    finally:
+        app.dependency_overrides.clear()
+    assert resp.status_code == 200
+    assert resp.json()["chat_starters"] == starters
+
+
+async def test_features_chat_starters_default_empty(monkeypatch):
+    """Unset => empty list; the frontend then falls back to its household i18n
+    defaults (weather/light/music), so the household deploy is unchanged."""
+    monkeypatch.setattr(settings, "chat_starters", [])
+    from main import app
+    _auth_default(app)
+    try:
+        async with await _client(app) as c:
+            resp = await c.get("/api/config/features")
+    finally:
+        app.dependency_overrides.clear()
+    assert resp.status_code == 200
+    assert resp.json()["chat_starters"] == []

@@ -96,6 +96,10 @@ export interface FeatureFlags {
   schicht_a_extraction_enabled: boolean;
   /** Gates the unified /wissen workspace nav + routing (D10). */
   wissen_workspace_enabled: boolean;
+  /** Instance-dependent chat starter prompts for the empty chat page. Empty =>
+   *  the frontend uses its household i18n defaults (weather/light/music). Runtime
+   *  config so one shared frontend image differs per instance (business vs home). */
+  chat_starters: string[];
   /** Gates the chat command palette UI (`/`-trigger + touch button + overlay). */
   command_palette_enabled: boolean;
   /** Gates the chat agent-role badge + role-pin (which role answered; tap to pin next turn). */

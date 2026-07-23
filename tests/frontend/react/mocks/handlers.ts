@@ -356,6 +356,7 @@ export const handlers: HttpHandler[] = [
     return HttpResponse.json({
       schicht_a_extraction_enabled: false,
       wissen_workspace_enabled: false,
+      chat_starters: [],
       command_palette_enabled: false,
       role_surfacing_enabled: false,
       message_search_enabled: false,

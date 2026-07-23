@@ -446,6 +446,14 @@ class Settings(BaseSettings):
     # /wissen workspace and the old routes redirect in. Off => legacy flat nav.
     # Runtime flag (exposed via /api/config/features) so it flips without a rebuild.
     wissen_workspace_enabled: bool = False
+    # Instance-dependent chat starter prompts shown on the empty chat page. Empty
+    # (default) => the frontend falls back to the household i18n examples
+    # (weather/light/music). Set per instance via CHAT_STARTERS as a JSON array,
+    # e.g. CHAT_STARTERS='["Fasse die letzte Besprechung zusammen","Welche Fristen
+    # stehen an?"]' — the business instance overrides the home-flavored defaults.
+    # Exposed to the browser via /api/config/features (RUNTIME config, so one
+    # shared frontend image can differ per instance). See api/routes/config.py.
+    chat_starters: list[str] = []
     # Gates the chat command palette UI (`/`-trigger + touch button + overlay).
     # Frontend-only gate; the backend `role_hint` handling is always present
     # (no-op when absent), so flipping this needs no backend redeploy.

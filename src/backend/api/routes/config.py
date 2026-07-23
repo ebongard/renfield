@@ -49,6 +49,12 @@ class FeatureFlags(BaseModel):
     # Gates the unified /wissen workspace nav + routing (frontend). Off => the
     # legacy flat corpus nav. See utils/config.py::wissen_workspace_enabled.
     wissen_workspace_enabled: bool
+    # Instance-dependent chat starter prompts for the empty chat page. Empty list
+    # => the frontend uses its household i18n defaults (weather/light/music). This
+    # is RUNTIME config (not the build-time VITE_CHAT_STARTERS), so one shared
+    # frontend image can show different starters per instance. See
+    # utils/config.py::chat_starters.
+    chat_starters: list[str]
     # Gates the chat command palette UI (the `/`-trigger + touch button + overlay).
     # Off => no palette elements rendered. See utils/config.py::command_palette_enabled.
     command_palette_enabled: bool
@@ -99,6 +105,7 @@ async def get_features(
     return FeatureFlags(
         schicht_a_extraction_enabled=settings.schicht_a_extraction_enabled,
         wissen_workspace_enabled=settings.wissen_workspace_enabled,
+        chat_starters=settings.chat_starters,
         command_palette_enabled=settings.command_palette_enabled,
         role_surfacing_enabled=settings.role_surfacing_enabled,
         message_search_enabled=settings.message_search_enabled,

@@ -244,6 +244,12 @@ export default function ChatMessages() {
           </p>
           <div className="flex flex-wrap justify-center gap-2">
             {(((): string[] => {
+              // Instance-dependent starters (runtime config from /api/config/features)
+              // win, so ONE shared frontend image can differ per instance (business
+              // vs household). Then the build-time VITE_CHAT_STARTERS, then the
+              // household i18n defaults (weather/light/music).
+              const runtime = features?.chat_starters;
+              if (runtime && runtime.length > 0) return runtime;
               try {
                 const custom = import.meta.env.VITE_CHAT_STARTERS;
                 if (custom) return JSON.parse(custom) as string[];
