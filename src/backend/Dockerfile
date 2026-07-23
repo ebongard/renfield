@@ -117,6 +117,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libgomp1 \
     espeak-ng \
     poppler-utils \
+    # Tesseract + DE/EN language data — used ONLY by the OCR-engine eval harness
+    # (bin/run_ocr_engine_eval.py, TODOS.md "OCR engine evaluation / swap") via
+    # docling's TesseractCliOcrOptions, which shells out to the `tesseract`
+    # binary. NOT used by the live ingest path (that stays docling-EasyOcr). The
+    # `deu`/`eng` traineddata is ISO 639-2 (not EasyOcr's `de`/`en`) and must be
+    # present or Tesseract yields nothing. ~15 MB; drop if a swap is ruled out.
+    tesseract-ocr \
+    tesseract-ocr-deu \
+    tesseract-ocr-eng \
     wget \
     curl \
     ca-certificates \

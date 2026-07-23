@@ -159,17 +159,22 @@ a partial comparison even on an incompletely-provisioned host.
   `src/backend/requirements.txt` (baseline + `docling_full_page_ocr`).
 - `poppler-utils` (the `pdftotext` binary) — already required by the
   `poppler_text_layer` path in production.
-- **Tesseract** (the new dependency for `docling_tesseract`), one of:
-  - `tesseract-ocr` + the `deu`/`eng` language data
-    (`apt-get install tesseract-ocr tesseract-ocr-deu tesseract-ocr-eng`) for the
-    CLI variant (`TesseractCliOcrOptions`, preferred — most portable), **or**
-  - the `tesserocr` Python binding + libtesseract for `TesseractOcrOptions`.
-  - docling's Tesseract extra: `pip install "docling[tesserocr]"` (the option
-    classes ship with docling 2.x; the harness imports them defensively and skips
-    the engine if the installed docling version lacks them).
+- **Tesseract** (for `docling_tesseract`) — **now baked into the backend image**:
+  `tesseract-ocr` + `tesseract-ocr-deu` + `tesseract-ocr-eng` are installed in the
+  runtime stage of `src/backend/Dockerfile` (alongside `poppler-utils`). The harness
+  uses docling's `TesseractCliOcrOptions` (ships with docling 2.x, shells out to the
+  `tesseract` binary — no `tesserocr` C-binding needed). So after the next backend
+  build, the full comparison runs with no manual install; **on a pod running an
+  older image**, `apt-get install tesseract-ocr tesseract-ocr-deu tesseract-ocr-eng`
+  provides it ephemerally.
   - **Language codes differ:** Tesseract uses ISO 639-2 (`deu`/`eng`); EasyOcr
-    uses `de`/`en`. The `deu`/`eng` traineddata must be installed or Tesseract
+    uses `de`/`en`. The `deu`/`eng` traineddata must be present or Tesseract
     OCR produces nothing.
+- **The harness itself** (`bin/run_ocr_engine_eval.py`) is not baked into the image
+  (`bin/` is outside the `src/backend` build context, per convention with the other
+  `bin/*` scripts). Run it by `kubectl cp`-ing it into a pod that has the uploads
+  PVC mounted (e.g. `document-worker`) — the document bytes live at
+  `Document.file_path` on that PVC, so the harness must run where it's mounted.
 
 These deps are needed **only to run the benchmark**. A `docling_tesseract` swap
 would additionally require adding Tesseract to the backend image and wiring a
