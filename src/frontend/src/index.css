@@ -117,33 +117,11 @@
          text-pink-700 dark:text-pink-300 no-underline hover:bg-pink-100 dark:hover:bg-pink-900/40;
 }
 
-@utility btn {
-  @apply px-4 py-2 rounded-lg font-medium active:scale-[0.97] transition-all;
-}
-
-@utility btn-primary {
-  @apply bg-primary-600 hover:bg-primary-700 text-white active:scale-[0.97] transition-all;
-}
-
-@utility btn-secondary {
-  @apply bg-gray-200 hover:bg-gray-300 text-gray-800
-           dark:bg-gray-700 dark:hover:bg-gray-600 dark:text-gray-100
-           active:scale-[0.97] transition-all;
-}
-
-@utility btn-danger {
-  @apply bg-red-600 hover:bg-red-700 text-white active:scale-[0.97] transition-all;
-}
-
-@utility btn-success {
-  @apply bg-green-600 hover:bg-green-700 text-white active:scale-[0.97] transition-all;
-}
-
-@utility btn-ghost {
-  @apply bg-transparent hover:bg-gray-100 text-gray-600
-         dark:hover:bg-gray-700 dark:text-gray-300
-         active:scale-[0.97] transition-all;
-}
+/* Button fill classes (.btn/.btn-primary/.btn-secondary/.btn-danger/.btn-success/
+   .btn-ghost) moved to @layer components below — the "Option C" dimensional
+   treatment. Components-layer placement lets utilities (px-3, text-sm, rounded-*,
+   gap-*) still override the defaults, and gives the ~25 bare `btn-primary`
+   buttons proper padding. Icon buttons stay as utilities. */
 
 @utility btn-icon {
   @apply p-2 rounded-lg transition-colors active:scale-95;
@@ -327,6 +305,85 @@
      the component, not here (only the label is struck, not the whole row). */
   .atom-row.atom-row--bestaetigt {
     @apply opacity-70 bg-cream/70 dark:bg-gray-800;
+  }
+
+  /* ─────────────────────────────────────────────────────────────────────────
+     Buttons — "Option C" dimensional treatment (DESIGN.md §Buttons).
+     A subtle SINGLE-HUE tonal shade (primary-500→600) + inner top highlight +
+     soft warm shadow, with a hover-lift and active-press. DM Sans bold (700,
+     DESIGN.md §Type) and a turquoise focus-visible ring. Gradient stops are the
+     exact --color-* token hexes (inlined for reliable emission). In
+     @layer components so utility classes still override padding/size/radius/gap.
+     ───────────────────────────────────────────────────────────────────────── */
+  .btn {
+    @apply inline-flex items-center justify-center gap-2 px-4 py-2 rounded-lg font-bold transition-all duration-100;
+    &:active:not(:disabled) { @apply scale-[0.97]; }
+    &:focus-visible { outline: 2px solid #00e4b8; outline-offset: 2px; }
+    &:disabled { @apply opacity-50 cursor-not-allowed; }
+  }
+
+  .btn-primary {
+    @apply inline-flex items-center justify-center gap-2 px-4 py-2 rounded-lg font-bold text-white transition-all duration-100;
+    background-image: linear-gradient(180deg, #e63e54, #c41e3a); /* primary-500 → 600 */
+    box-shadow: 0 1px 2px rgb(112 20 38 / 0.18), inset 0 1px 0 rgb(255 255 255 / 0.20), inset 0 -1px 0 rgb(0 0 0 / 0.12);
+    &:hover:not(:disabled) {
+      background-image: linear-gradient(180deg, #f06e7e, #e63e54); /* primary-400 → 500 */
+      transform: translateY(-1px);
+      box-shadow: 0 5px 14px -4px rgb(150 22 44 / 0.45), inset 0 1px 0 rgb(255 255 255 / 0.22);
+    }
+    &:active:not(:disabled) {
+      background-image: linear-gradient(180deg, #c41e3a, #a5162f); /* primary-600 → 700 */
+      transform: translateY(0) scale(0.985);
+      box-shadow: inset 0 2px 4px rgb(0 0 0 / 0.22);
+    }
+    &:focus-visible { outline: 2px solid #00e4b8; outline-offset: 2px; }
+    &:disabled { @apply opacity-50 cursor-not-allowed; box-shadow: none; }
+  }
+
+  .btn-secondary {
+    @apply inline-flex items-center justify-center gap-2 px-4 py-2 rounded-lg font-bold transition-all duration-100
+           bg-white text-gray-700 border border-gray-200
+           dark:bg-gray-700 dark:text-gray-100 dark:border-gray-600;
+    box-shadow: 0 1px 2px rgb(31 27 22 / 0.08);
+    &:hover:not(:disabled) { @apply bg-gray-50 dark:bg-gray-600; transform: translateY(-1px); box-shadow: 0 4px 10px -3px rgb(31 27 22 / 0.18); }
+    &:active:not(:disabled) { @apply bg-gray-100 dark:bg-gray-600; transform: translateY(0) scale(0.985); box-shadow: inset 0 1px 3px rgb(0 0 0 / 0.10); }
+    &:focus-visible { outline: 2px solid #00e4b8; outline-offset: 2px; }
+    &:disabled { @apply opacity-50 cursor-not-allowed; }
+  }
+
+  .btn-danger {
+    @apply inline-flex items-center justify-center gap-2 px-4 py-2 rounded-lg font-bold text-white transition-all duration-100;
+    background-image: linear-gradient(180deg, #ef4444, #dc2626); /* red-500 → 600 */
+    box-shadow: 0 1px 2px rgb(120 20 20 / 0.20), inset 0 1px 0 rgb(255 255 255 / 0.18);
+    &:hover:not(:disabled) { background-image: linear-gradient(180deg, #f87171, #ef4444); transform: translateY(-1px); box-shadow: 0 5px 14px -4px rgb(180 30 30 / 0.45), inset 0 1px 0 rgb(255 255 255 / 0.20); }
+    &:active:not(:disabled) { background-image: linear-gradient(180deg, #dc2626, #b91c1c); transform: translateY(0) scale(0.985); box-shadow: inset 0 2px 4px rgb(0 0 0 / 0.22); }
+    &:focus-visible { outline: 2px solid #00e4b8; outline-offset: 2px; }
+    &:disabled { @apply opacity-50 cursor-not-allowed; box-shadow: none; }
+  }
+
+  .btn-success {
+    @apply inline-flex items-center justify-center gap-2 px-4 py-2 rounded-lg font-bold text-white transition-all duration-100;
+    background-image: linear-gradient(180deg, #22c55e, #16a34a); /* green-500 → 600 */
+    box-shadow: 0 1px 2px rgb(20 80 40 / 0.20), inset 0 1px 0 rgb(255 255 255 / 0.18);
+    &:hover:not(:disabled) { background-image: linear-gradient(180deg, #4ade80, #22c55e); transform: translateY(-1px); box-shadow: 0 5px 14px -4px rgb(20 120 60 / 0.40), inset 0 1px 0 rgb(255 255 255 / 0.20); }
+    &:active:not(:disabled) { background-image: linear-gradient(180deg, #16a34a, #15803d); transform: translateY(0) scale(0.985); box-shadow: inset 0 2px 4px rgb(0 0 0 / 0.22); }
+    &:focus-visible { outline: 2px solid #00e4b8; outline-offset: 2px; }
+    &:disabled { @apply opacity-50 cursor-not-allowed; box-shadow: none; }
+  }
+
+  .btn-ghost {
+    @apply inline-flex items-center justify-center gap-2 px-4 py-2 rounded-lg font-bold transition-all duration-100
+           bg-transparent text-gray-600 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-700;
+    &:active:not(:disabled) { @apply scale-[0.97]; }
+    &:focus-visible { outline: 2px solid #00e4b8; outline-offset: 2px; }
+    &:disabled { @apply opacity-50 cursor-not-allowed; }
+  }
+
+  /* Honor reduced-motion: keep the color/shadow states, drop the lift + press. */
+  @media (prefers-reduced-motion: reduce) {
+    .btn:active, .btn-primary:hover, .btn-primary:active, .btn-secondary:hover,
+    .btn-secondary:active, .btn-danger:hover, .btn-danger:active,
+    .btn-success:hover, .btn-success:active, .btn-ghost:active { transform: none; }
   }
 }
 
