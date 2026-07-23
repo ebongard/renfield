@@ -423,7 +423,9 @@ class Settings(BaseSettings):
     # image (added to the backend Dockerfile 2026-07). FAILS SAFE to EasyOcr if the
     # tesseract CLI/binding is unavailable, so ingest never crashes. "easyocr" keeps
     # the legacy engine. Tesseract lang codes are ISO 639-2 (deu/eng) vs EasyOcr de/en.
-    rag_ocr_engine: str = "tesseract"
+    # Literal so a typo (e.g. RAG_OCR_ENGINE=tesserac) fails fast at config load
+    # instead of silently routing to the EasyOcr else-branch.
+    rag_ocr_engine: Literal["tesseract", "easyocr"] = "tesseract"
     # Per-chunk-rate trigger that complements rag_ocr_space_threshold.
     # When the chunker drops more than this fraction of chunks as
     # low-quality (utils.content_quality.is_low_quality_text), the

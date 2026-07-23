@@ -787,6 +787,12 @@ RAG_HYBRID_FTS_CONFIG=simple    # PostgreSQL FTS: simple/german/english
 # Context Window (benachbarte Chunks zum Treffer hinzufügen)
 RAG_CONTEXT_WINDOW=1             # Chunks pro Richtung (0=deaktiviert)
 RAG_CONTEXT_WINDOW_MAX=3         # Maximale Window-Größe
+
+# OCR (force_full_page_ocr Re-Run-Converter für garbled/gescannte Dokumente)
+RAG_OCR_ENGINE=tesseract         # tesseract (Default, 148-Doc-Eval-Sieger) | easyocr (Legacy).
+                                 # tesseract fällt fail-safe auf EasyOcr zurück, wenn die
+                                 # Tesseract-Runtime (CLI+deu/eng oder tesserocr) fehlt.
+RAG_OCR_IMAGES_SCALE=1.5         # Page-Raster-Faktor beim Full-Page-OCR (Memory ~quadratisch)
 ```
 
 **Defaults:**

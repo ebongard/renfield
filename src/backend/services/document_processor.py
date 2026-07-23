@@ -46,10 +46,9 @@ class DocumentProcessor:
 
         ``rag_ocr_engine='tesseract'`` (default; the 2026-07 148-doc eval winner over
         EasyOcr — 111/148 improved, 8 regressed, quality-gate drop 0.68→0.30, no speed
-        penalty) prefers ``TesseractCliOcrOptions`` (shells to the ``tesseract`` binary)
-        and falls back to the ``TesseractOcrOptions`` (tesserocr) binding. If neither is
-        available it **fails safe to EasyOcr** so ingest never crashes on a host missing
-        the tesseract packages. ``'easyocr'`` keeps the legacy engine.
+        penalty) prefers the ``tesseract`` CLI and falls back to the ``tesserocr``
+        binding. If the tesseract **runtime** is not actually usable it **fails safe to
+        EasyOcr** so ingest never crashes. ``'easyocr'`` keeps the legacy engine.
 
         Tesseract lang codes are ISO 639-2 (``deu``/``eng``); EasyOcr uses ``de``/``en``.
         """
@@ -57,30 +56,63 @@ class DocumentProcessor:
 
         engine = (settings.rag_ocr_engine or "tesseract").strip().lower()
         if engine == "tesseract":
-            import shutil
-            tess = None
-            if shutil.which("tesseract") is not None:
-                try:
-                    from docling.datamodel.pipeline_options import TesseractCliOcrOptions
-                    tess = TesseractCliOcrOptions(lang=["deu", "eng"], force_full_page_ocr=True)
-                except Exception:  # noqa: BLE001 - fall through to the tesserocr binding
-                    tess = None
-            if tess is None:
-                try:
-                    from docling.datamodel.pipeline_options import TesseractOcrOptions
-                    tess = TesseractOcrOptions(lang=["deu", "eng"], force_full_page_ocr=True)
-                except Exception:  # noqa: BLE001 - neither variant available
-                    tess = None
+            tess = self._build_tesseract_ocr_options()
             if tess is not None:
-                logger.info("Initialisiere force_full_page_ocr-Converter (Engine: Tesseract deu+eng)")
                 return tess
             logger.warning(
-                "rag_ocr_engine='tesseract', aber weder tesseract-CLI noch tesserocr "
-                "verfügbar — Fallback auf EasyOcr"
+                "rag_ocr_engine='tesseract', aber die Tesseract-Runtime ist nicht nutzbar "
+                "(CLI+deu/eng-traineddata oder tesserocr-Binding fehlen) — Fallback auf EasyOcr"
             )
 
         logger.info("Initialisiere force_full_page_ocr-Converter (Engine: EasyOcr de+en)")
         return EasyOcrOptions(lang=["de", "en"], force_full_page_ocr=True, bitmap_area_threshold=0.0)
+
+    def _build_tesseract_ocr_options(self):
+        """Tesseract OCR options, or ``None`` if the runtime can't actually OCR deu+eng.
+
+        Verifies the **runtime**, not just that the docling options class constructs —
+        ``TesseractCliOcrOptions``/``TesseractOcrOptions`` are config-only and build even
+        when tesseract is absent, which would then crash at *convert* time. So the CLI
+        variant requires the ``tesseract`` binary on PATH AND the deu/eng traineddata;
+        the binding variant requires the ``tesserocr`` module to be importable. Returns
+        ``None`` when neither holds so the caller fails safe to EasyOcr.
+        """
+        import shutil
+
+        if shutil.which("tesseract") is not None and self._tesseract_cli_has_langs():
+            try:
+                from docling.datamodel.pipeline_options import TesseractCliOcrOptions
+                opts = TesseractCliOcrOptions(lang=["deu", "eng"], force_full_page_ocr=True)
+                logger.info("Initialisiere force_full_page_ocr-Converter (Engine: Tesseract-CLI deu+eng)")
+                return opts
+            except Exception:  # noqa: BLE001 - fall through to the binding
+                pass
+
+        import importlib.util
+        if importlib.util.find_spec("tesserocr") is not None:
+            try:
+                from docling.datamodel.pipeline_options import TesseractOcrOptions
+                opts = TesseractOcrOptions(lang=["deu", "eng"], force_full_page_ocr=True)
+                logger.info("Initialisiere force_full_page_ocr-Converter (Engine: tesserocr deu+eng)")
+                return opts
+            except Exception:  # noqa: BLE001 - binding present but options unbuildable
+                pass
+
+        return None
+
+    @staticmethod
+    def _tesseract_cli_has_langs():
+        """True iff the ``tesseract`` CLI reports both ``deu`` and ``eng`` traineddata."""
+        import subprocess
+        try:
+            res = subprocess.run(
+                ["tesseract", "--list-langs"],
+                capture_output=True, text=True, timeout=10,
+            )
+        except Exception:  # noqa: BLE001 - binary missing / unrunnable
+            return False
+        langs = (res.stdout or "") + (res.stderr or "")
+        return "deu" in langs and "eng" in langs
 
     def _ensure_initialized(self):
         """Lazy initialization von Docling (lädt Modelle beim ersten Aufruf)"""
