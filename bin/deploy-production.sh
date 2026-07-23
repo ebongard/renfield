@@ -114,7 +114,7 @@ fi
 if [[ $SKIP_FRONTEND == 0 ]]; then
   log "build + push frontend:$FRONTEND_TAG"
   on_build "set -e; cd $STAGING/src/frontend && \
-    docker build -q --build-arg VITE_FEATURE_VOICE_STREAM=true -t $REGISTRY/frontend:latest -t $REGISTRY/frontend:$FRONTEND_TAG -f Dockerfile . && \
+    docker build -q --build-arg VITE_FEATURE_VOICE_STREAM=true --build-arg VITE_BUILD_STAMP=$FRONTEND_TAG -t $REGISTRY/frontend:latest -t $REGISTRY/frontend:$FRONTEND_TAG -f Dockerfile . && \
     docker push -q $REGISTRY/frontend:$FRONTEND_TAG && docker push -q $REGISTRY/frontend:latest"
 fi
 

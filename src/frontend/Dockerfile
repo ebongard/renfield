@@ -86,8 +86,15 @@ ARG VITE_APP_TENANT_NAME=
 # false — community deploys don't ship OIDC and the button stays hidden.
 ARG VITE_OIDC_ENABLED=false
 
+# Build stamp — set from the deploy's frontend tag (bin/deploy-production.sh
+# passes --build-arg VITE_BUILD_STAMP=$FRONTEND_TAG). Surfaced in the startup
+# console log + doubles as the PWA cache-propagation lever (see main.tsx).
+# Defaults to 'dev' for a plain `docker build` without the arg.
+ARG VITE_BUILD_STAMP=dev
+
 # Set environment variables for build
 ENV VITE_API_URL=${VITE_API_URL}
+ENV VITE_BUILD_STAMP=${VITE_BUILD_STAMP}
 ENV VITE_WS_URL=${VITE_WS_URL}
 ENV VITE_APP_NAME=${VITE_APP_NAME}
 ENV VITE_APP_LOGO_URL=${VITE_APP_LOGO_URL}
