@@ -31,7 +31,7 @@ if _TESTS_ROOT not in sys.path:
 
 # Target host is env-overridable so the same suite runs against the auth-off
 # household (default) OR an auth-on instance (e.g. xidra) without code changes:
-#   E2E_BASE_URL=https://x-ren.local
+#   E2E_BASE_URL=https://your-instance.example
 BASE_URL = os.environ.get("E2E_BASE_URL", "https://renfield.local").rstrip("/")
 SCREENSHOTS_DIR = os.path.join(os.path.dirname(__file__), "screenshots")
 
@@ -40,7 +40,7 @@ SCREENSHOTS_DIR = os.path.join(os.path.dirname(__file__), "screenshots")
 #   E2E_USERNAME=evdb \
 #   E2E_PASSWORD="$(kubectl -n renfield-xidra get secret renfield-secrets \
 #       -o jsonpath='{.data.default-admin-password}' | base64 -d)" \
-#   E2E_BASE_URL=https://x-ren.local \
+#   E2E_BASE_URL=https://your-instance.example \
 #   ./bin/run-e2e.sh tests/e2e/areas/test_notes.py
 # The password reaches Playwright via the process env and is exchanged for a JWT
 # through the real /api/auth/login flow; the token lives only in browser storage
@@ -56,7 +56,7 @@ E2E_PASSWORD = os.environ.get("E2E_PASSWORD")
 #       -- python3 -c 'from datetime import timedelta; \
 #       from services.auth_service import create_access_token; \
 #       print(create_access_token({\"sub\":\"1\"}, expires_delta=timedelta(minutes=20)))')" \
-#   E2E_BASE_URL=https://x-ren.local ./bin/run-e2e.sh tests/e2e/areas/test_notes.py
+#   E2E_BASE_URL=https://your-instance.example ./bin/run-e2e.sh tests/e2e/areas/test_notes.py
 E2E_ACCESS_TOKEN = os.environ.get("E2E_ACCESS_TOKEN")
 ACCESS_TOKEN_STORAGE_KEY = "renfield_access_token"
 
@@ -196,4 +196,4 @@ def authenticated_page(authenticated_context, request):
 def require_e2e_auth():
     """Skip a test unless run against an auth-on target with credentials set."""
     if not e2e_auth_enabled():
-        pytest.skip("needs E2E_USERNAME/E2E_PASSWORD (auth-on target, e.g. E2E_BASE_URL=https://x-ren.local)")
+        pytest.skip("needs E2E_USERNAME/E2E_PASSWORD (auth-on target, e.g. E2E_BASE_URL=https://your-instance.example)")

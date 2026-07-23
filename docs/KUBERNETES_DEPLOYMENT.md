@@ -203,7 +203,7 @@ For clients whose resolvers bypass mDNS (e.g., `getent hosts renfield.local` via
 
 ## Cross-cluster service exposure (LLM / voice)
 
-Some GPU-backed services in the `renfield` namespace are exposed to **other clusters** on the LAN over Traefik `*.test.local` hostnames (VIP `192.168.1.230`), not just to in-cluster pods. Today the external consumer is the **Reva** prod cluster (`192.168.99.0/24`), which uses this cluster as its router/embeddings + voice tier:
+Some GPU-backed services in the `renfield` namespace are exposed to **other clusters** on the LAN over Traefik `*.test.local` hostnames (VIP `192.168.1.230`), not just to in-cluster pods. Today the external consumer is the **Reva** prod cluster (`10.0.0.0/24`), which uses this cluster as its router/embeddings + voice tier:
 
 | Hostname | Backend Service | Port | External consumer |
 |---|---|---|---|
@@ -222,7 +222,7 @@ metadata: { name: llm-ingress-allowlist, namespace: renfield }
 spec:
   ipAllowList:
     sourceRange:
-      - 192.168.99.0/24      # Reva prod cluster (append new consumer subnets here)
+      - 10.0.0.0/24      # placeholder — the real consumer-cluster subnet (append more here)
 ```
 Attached per-ingress via `traefik.ingress.kubernetes.io/router.middlewares: renfield-llm-ingress-allowlist@kubernetescrd`.
 

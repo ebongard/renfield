@@ -478,8 +478,8 @@ Nur eine zentrale ErrorBoundary (in `App.tsx`); keine Feature-spezifischen. Eine
 | Pfad | Ergebnis | Limit |
 |---|---|---|
 | `.159` → Harbor **Public-IP**, 100 MB Push @ MTU 1500 | **10 s (~72 Mbit/s), 0 Retrans, 0 frag-needed** | WAN-Upload |
-| `.159` → direkter `.99`-Host (roberta), `iperf3` | **~6 Gbit/s** | LAN |
-| `roberta` (auf `.99`) → Harbor, 100 MB Push | **3,1 s (~258 Mbit/s)** | Harbor-Ingest/NFS |
+| `.159` → direkter `.99`-Host (build-host), `iperf3` | **~6 Gbit/s** | LAN |
+| `build-host` (auf `.99`) → Harbor, 100 MB Push | **3,1 s (~258 Mbit/s)** | Harbor-Ingest/NFS |
 | NFS-Write auf Harbor-Node (`dd oflag=direct`, 500 MB) | 104 MB/s | Storage |
 | internes Traefik `99.101:80` `/v2/` ttfb | **3,4 ms** vs Public `:443` 71 ms | — |
 

@@ -594,13 +594,13 @@ Shipped via the v2-federation chain: `execute_tool_streaming(...) -> AsyncIterat
 
 **SOURCE:** `~/.gstack/projects/ebongard-renfield/evdb-main-design-20260419-190713-second-brain-circles.md` Premise 2 + Open Q 1 + Open Q 12
 
-### Re-enable `itsm` MCP on roberta when USU customer service is back
-During the 2026-04-25 Reva bump test deploy on roberta, the `itsm` MCP server (`http://usu-mcp.reva.treehouse.local/mcp`) was throwing `Connection refused` — USU customer-side service was down. Reva's `/api/health` returns 503 if any MCP server is disconnected, blocking pod readiness. Workaround was to flip `enabled: true → false` for the itsm block in roberta's `reva-mcp-config` ConfigMap.
+### Re-enable `itsm` MCP on build-host when USU customer service is back
+During the 2026-04-25 Reva bump test deploy on build-host, the `itsm` MCP server (`http://usu-mcp.reva.internal.example/mcp`) was throwing `Connection refused` — USU customer-side service was down. Reva's `/api/health` returns 503 if any MCP server is disconnected, blocking pod readiness. Workaround was to flip `enabled: true → false` for the itsm block in build-host's `reva-mcp-config` ConfigMap.
 
 PRD is unaffected (separate cluster, separate ConfigMap, `usu-mcp` actually running there). Roberta-only loose end.
 
-- **Reverse with:** `ssh evdb@192.168.99.41 -- kubectl edit configmap reva-mcp-config -n reva` and flip `enabled: false → true` in the itsm block, then `kubectl rollout restart deployment/reva -n reva`.
-- **Gate:** USU customer service back up + reachable from roberta cluster (verify with `kubectl exec -n reva deployment/reva -c reva -- python3 -c 'import urllib.request,socket; socket.setdefaulttimeout(5); urllib.request.urlopen("http://usu-mcp.reva.treehouse.local/mcp")'`).
+- **Reverse with:** `ssh evdb@10.0.0.41 -- kubectl edit configmap reva-mcp-config -n reva` and flip `enabled: false → true` in the itsm block, then `kubectl rollout restart deployment/reva -n reva`.
+- **Gate:** USU customer service back up + reachable from build-host cluster (verify with `kubectl exec -n reva deployment/reva -c reva -- python3 -c 'import urllib.request,socket; socket.setdefaulttimeout(5); urllib.request.urlopen("http://usu-mcp.reva.internal.example/mcp")'`).
 
 ### Brain Review Queue Auto-Archive Policy (v1.5 decision)
 

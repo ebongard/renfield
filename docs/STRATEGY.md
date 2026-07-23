@@ -67,7 +67,7 @@ The maximalist circles plan was picked over four alternatives, listed here so th
 | Alternative | What it would have looked like | Why not chosen |
 |---|---|---|
 | **6-week MVP** | Single-user, no federation, no circles, ship fast, see if people want it | **[FOUNDER FILL-IN: why this didn't fit. Probably: "the MVP would have validated 'a chatbot' which is already validated; the bet I'm actually making isn't testable in 6 weeks"]** |
-| **Public Renfield launch (cloud-hosted)** | Free tier on x-idra.de servers, drop the offline requirement | **[FOUNDER FILL-IN: probably: contradicts the data-ownership positioning that's the core differentiator]** |
+| **Public Renfield launch (cloud-hosted)** | Free tier on example.com servers, drop the offline requirement | **[FOUNDER FILL-IN: probably: contradicts the data-ownership positioning that's the core differentiator]** |
 | **Reva commercial-first** | Push Reva as a paid Enterprise product, treat Renfield as the framework byproduct | **[FOUNDER FILL-IN: probably: enterprise sales cycle is 12-18 months and would consume bandwidth that's currently going to the household-product thesis]** |
 | **Small household features** | Stop after circles v1, build the long tail in `feature-ideen.md` (shopping lists, n8n routines, dashboard widgets) | **[FOUNDER FILL-IN: probably: those features are derivative of the platform being there; without circles + federation the platform thesis stays unvalidated]** |
 

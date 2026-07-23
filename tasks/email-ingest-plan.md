@@ -1,4 +1,4 @@
-# Plan: Email-mailbox auto-ingest (`buchhaltung@x-idra.de` → KB + Paperless)
+# Plan: Email-mailbox auto-ingest (`accounting@example.com` → KB + Paperless)
 
 Status: PROPOSED (nothing implemented). Mirrors the shipped **folder-ingest** feature
 (SMB share → KB + Paperless) for an IMAP mailbox.
@@ -12,8 +12,8 @@ same as folder-ingest).
 **Multi-mailbox, per-mailbox sphere routing.** The watcher handles **N mailboxes**,
 exactly as `renfield-mcp-filesystem` handles N roots via `roots.yaml`. Each mailbox is
 its own entry with its own IMAP creds + folders + allowlist **and its own target
-owner / tier / KB**, so company invoices (`buchhaltung@x-idra.de`) and private invoices
-(personal address) file into **separate spheres**. First addresses: `buchhaltung@x-idra.de`
+owner / tier / KB**, so company invoices (`accounting@example.com`) and private invoices
+(personal address) file into **separate spheres**. First addresses: `accounting@example.com`
 (x-idra/company) + a private mailbox (self/household).
 
 ## Locked design decisions
@@ -24,7 +24,7 @@ owner / tier / KB**, so company invoices (`buchhaltung@x-idra.de`) and private i
 
 ## Architecture
 ```
-buchhaltung@x-idra.de   privat@…        (N mailboxes, mailboxes.yaml)
+accounting@example.com   privat@…        (N mailboxes, mailboxes.yaml)
    │  IMAP IDLE          │  IMAP IDLE     (one watch loop each; push; no poll)
    ▼                     ▼
 renfield-mcp-email-ingest  (NEW dedicated async service; mirrors renfield-mcp-filesystem)

@@ -84,7 +84,7 @@ class Settings(BaseSettings):
 
     # Multi-client registry (auth_mode=registry). Env AUTH_CLIENTS is a JSON
     # object mapping client-id → row, e.g.
-    #   AUTH_CLIENTS='{"reva": {"verify_url": "http://192.168.99.101/api/internal/auth/verify"},
+    #   AUTH_CLIENTS='{"reva": {"verify_url": "http://10.0.0.101/api/internal/auth/verify"},
     #                  "renfield": {"anonymous": true}}'
     # REST callers identify via the `X-Voice-Client` header, WS via `?client=`.
     # Every request MUST name a registered client; per-user identity is

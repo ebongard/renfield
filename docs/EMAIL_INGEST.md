@@ -6,7 +6,7 @@ knowledge base **and** Paperless automatically. The email analog of
 adds **per-mailbox, server-authoritative** sphere routing.
 
 > **Status.** **Deployed to production (backend `v2.15.0`, 2026-06-09)** and live
-> against `buchhaltung@x-idra.de`. The dedicated watcher
+> against `accounting@example.com`. The dedicated watcher
 > [`renfield-mcp-email-ingest`](https://github.com/ebongard/renfield-mcp-email-ingest)
 > (`renfield/email-ingest-mcp:v0.1.1`) holds the IMAP credentials and pushes
 > attachments over REST. Ships behind `EMAIL_INGEST_ENABLED`.

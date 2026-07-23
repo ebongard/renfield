@@ -1,0 +1,9 @@
+# Project-specific prod-infra substrings that must NEVER be a baseline DB URL.
+# Copy to prod_url_patterns.private (gitignored) and fill with YOUR real infra
+# hostnames / subnets. One lower-cased substring per line; blank / `#` lines ignored.
+# The generic patterns (prod, .cluster.local, .rds.amazonaws.com, ...) stay in the
+# script; these project-specific ones are loaded from the private file at runtime.
+# db.your-domain.example
+# .your-domain.example
+# 10.0.0.
+# your-build-host

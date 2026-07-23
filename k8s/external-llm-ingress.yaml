@@ -3,7 +3,7 @@
 # Exposes the in-cluster ClusterIP services through Traefik on the
 # shared MetalLB VIP 192.168.1.230 with host-header routing. Lets
 # consumers outside this cluster (notably Reva in the prod kubeadm
-# cluster at 192.168.99.0/24) reach the GPU services by hostname.
+# cluster at 10.0.0.0/24) reach the GPU services by hostname.
 #
 # All three services run without per-tenant auth: llama-server has no
 # auth layer by design (LAN-only), voice-server uses AUTH_REQUIRED=false

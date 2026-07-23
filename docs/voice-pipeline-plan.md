@@ -68,7 +68,7 @@ These map but the *contents* differ from Reva.
 
 | Reva # | Why |
 |---|---|
-| **P2-1** mic button on `chat.reva.aktivities.ai` | Reva's web UI, not Renfield's. Renfield's chat already has voice. |
+| **P2-1** mic button on `chat.reva.example` | Reva's web UI, not Renfield's. Renfield's chat already has voice. |
 | **P2-2** Teams voice messages | Teams transport doesn't exist in Renfield (Reva-only). |
 | **P4** end-to-end voice models | Explicitly future-future for both projects. |
 

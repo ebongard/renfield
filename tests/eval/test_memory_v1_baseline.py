@@ -363,12 +363,9 @@ class TestSafetyHelpers:
             "postgresql://user@prod-db.k8s.local/renfield",
             "postgresql://u@host/production_db",
             "postgresql://u@host/renfield-db",
-            # Project-specific patterns added in /review adversarial F5:
-            "postgresql://reva@db.aktivities.ai/renfield",
-            "postgresql://reva@chat.aktivities.ai/db",
-            "postgresql://reva@192.168.99.14/renfield",
-            "postgresql://reva@roberta/renfield",
-            "postgresql://reva@your-registry.example/db",
+            # Project-specific prod hostnames (the /review adversarial-F5 additions)
+            # are now loaded from the gitignored bin/prod_url_patterns.private so real
+            # infra names stay out of the repo — covered by the sentinel test below.
             # Common managed-DB SaaS:
             "postgresql://u@db.abc123.us-west-2.rds.amazonaws.com/renfield",
             "postgresql://u@pg-xyz.aiven.io/defaultdb",
@@ -378,6 +375,21 @@ class TestSafetyHelpers:
             refusal = runner.check_database_url_safety(url, allow_prod=False)
             assert refusal is not None, f"Should have refused: {url}"
             assert "Refusing to run" in refusal
+
+    @pytest.mark.unit
+    def test_check_database_url_safety_honors_loaded_private_patterns(self, monkeypatch):
+        # Project-specific prod hostnames are loaded from the gitignored
+        # bin/prod_url_patterns.private (real infra names never enter the repo).
+        # Prove the guard enforces a loaded pattern using a SENTINEL — so no real
+        # infra name is hardcoded in this public test.
+        monkeypatch.setattr(
+            runner, "PROD_URL_PATTERNS",
+            tuple(runner.PROD_URL_PATTERNS) + ("sentinel-prod-host",),
+        )
+        refusal = runner.check_database_url_safety(
+            "postgresql://u@sentinel-prod-host/db", allow_prod=False
+        )
+        assert refusal is not None and "Refusing to run" in refusal
 
     @pytest.mark.unit
     def test_check_database_url_safety_accepts_dev_urls(self):

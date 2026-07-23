@@ -1,6 +1,6 @@
 ---
 name: deploy-production
-description: Production deployment guide for Renfield. Build box .159, Harbor registry, private k8s cluster. Triggers on "deploy", "Deployment", "production", "Produktion", "satellite deploy", "kubectl apply", "rsync", "registry.treehouse".
+description: Production deployment guide for Renfield. Build box .159, Harbor registry, private k8s cluster. Triggers on "deploy", "Deployment", "production", "Produktion", "satellite deploy", "kubectl apply", "rsync", "registry".
 disable-model-invocation: true
 ---
 

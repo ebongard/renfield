@@ -7,7 +7,7 @@ household (no creds set). Invoke:
     E2E_USERNAME=evdb \
     E2E_PASSWORD="$(kubectl -n renfield-xidra get secret renfield-secrets \
         -o jsonpath='{.data.default-admin-password}' | base64 -d)" \
-    E2E_BASE_URL=https://x-ren.local \
+    E2E_BASE_URL=https://your-instance.example \
     ./bin/run-e2e.sh tests/e2e/areas/test_notes.py
 
 Exercises the full round trip through the real UI + backend + DB: the nav entry,

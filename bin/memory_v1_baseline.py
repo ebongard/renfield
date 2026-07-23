@@ -127,12 +127,28 @@ _BASELINE_FAKE_PASSWORD_HASH = "$2b$12$LQv3c1yqBWVHxkd0LHAkCOYz6TtxMQJqhN8/X4wPp
 # match (lower-cased). The runner refuses to proceed if any match
 # BASELINE_DATABASE_URL unless --i-know-this-is-prod is passed.
 #
-# This is project-specific: per the user's infrastructure memory, prod
-# lives at db.aktivities.ai, the 192.168.99.0/24 subnet, the roberta
-# build host, and the treehouse.x-idra.de registry domain. A generic
-# substring list ("prod", ".cluster.local", etc.) is necessary but not
-# sufficient — adversarial review F5 caught that the original list let
-# db.aktivities.ai through trivially.
+# This is project-specific: the real prod hostnames/subnets are loaded from a
+# GITIGNORED file (bin/prod_url_patterns.private) so the real infra names stay
+# out of the public repo. A generic substring list ("prod", ".cluster.local",
+# etc.) is necessary but not sufficient — adversarial review F5 caught that the
+# original list let a project-specific prod host through trivially, hence the
+# private supplement.
+def _load_private_prod_patterns() -> tuple[str, ...]:
+    """Project-specific prod-infra substrings from an optional gitignored file
+    (bin/prod_url_patterns.private), so real infra names are not committed. One
+    lower-cased substring per line; blank / ``#`` lines ignored. Absent file →
+    empty tuple (the generic patterns below still guard)."""
+    from pathlib import Path
+    p = Path(__file__).with_name("prod_url_patterns.private")
+    if not p.exists():
+        return ()
+    return tuple(
+        line.strip().lower()
+        for line in p.read_text().splitlines()
+        if line.strip() and not line.lstrip().startswith("#")
+    )
+
+
 PROD_URL_PATTERNS = (
     "prod",
     "production",
@@ -141,20 +157,13 @@ PROD_URL_PATTERNS = (
     "kubernetes.default",
     "renfield-private",
     "renfield-db",
-    # Project-specific prod hostnames (Renfield + Reva infra)
-    "db.aktivities.ai",
-    ".aktivities.ai",
-    "192.168.99.",
-    "roberta",
-    ".x-idra.de",
-    "treehouse",
     # Common managed-DB SaaS — would-be-prod URLs even if user named
     # the env var "BASELINE_..." by mistake
     ".rds.amazonaws.com",
     ".aiven.io",
     ".supabase.co",
     ".neon.tech",
-)
+) + _load_private_prod_patterns()
 
 
 # NOTE: per-turn instrumentation lives on the InstrumentedConversationMemoryService
@@ -242,8 +251,8 @@ def check_database_url_safety(db_url: str, allow_prod: bool = False) -> Optional
 
     Match scope: hostname only. The earlier implementation lower-cased
     the entire URL and ran substring matches — that produced both
-    false-positives (a password containing 'treehouse' refused a safe
-    URL) and false-negatives (a credentials-free 'prod-alias.local'
+    false-positives (a password containing a prod-host substring refused
+    a safe URL) and false-negatives (a credentials-free 'prod-alias.local'
     URL passed when the pattern list didn't include that exact alias).
     Parsing the URL and matching `urlparse(...).hostname` removes
     both classes of bug.

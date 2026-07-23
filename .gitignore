@@ -145,3 +145,9 @@ docs/design/assets/
 
 # Flash-erase scratch image (4MB of 0xFF) — regenerable, never commit.
 src/satellite/hardware/xvf3800/firmware/*_all_ff.bin
+
+# Marketing website — moved out of the public product repo (business/legal content).
+site/
+
+# Real prod-guard substrings for memory_v1_baseline (real infra names) — NEVER public.
+bin/prod_url_patterns.private
