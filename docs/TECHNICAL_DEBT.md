@@ -2,7 +2,7 @@
 
 Dieses Dokument enthält eine umfassende Analyse der technischen Schulden im gesamten Renfield-System.
 
-**Letzte Aktualisierung:** 2026-06-04 (Backend #14 behoben: `run_at_boot` für die täglichen Scheduler, #678)
+**Letzte Aktualisierung:** 2026-07-23 (Infrastruktur I1 offen: Harbor push/pull langsam — Build+Cluster im `1.x`-Heim-LAN, Harbor im `.99`-VLAN; internes Traefik-Routing gemessen ~2× langsamer → verworfen)
 
 ---
 
@@ -13,8 +13,10 @@ Dieses Dokument enthält eine umfassende Analyse der technischen Schulden im ges
 | Backend | 0 | 3 | 4 | 9 | 11 |
 | Frontend | 0 | 0 | 2 | 4 | 7 |
 | Satellite | 0 | 3 | 2 | 5 | 5 |
-| Infrastruktur | 0 | 3 | 2 | 6 | 6 |
-| **Gesamt** | **0** | **9** | **10** | **24** | **29** |
+| Infrastruktur | 0 | 4 | 2 | 7 | 6 |
+| **Gesamt** | **0** | **10** | **10** | **25** | **29** |
+
+**Offen (🟡):** Infrastruktur **I1** — Harbor push/pull langsam (Topologie: `1.x`-Heim-LAN ↔ `.99`-Harbor-VLAN bandbreiten-limitiert). Siehe §Infrastruktur.
 
 ---
 
@@ -460,6 +462,34 @@ Nur eine zentrale ErrorBoundary (in `App.tsx`); keine Feature-spezifischen. Eine
 ---
 
 ## Infrastruktur
+
+### 🟡 Offen
+
+#### I1. Harbor push/pull ist langsam — Build-Box + Cluster im Heim-LAN, Harbor im `.99`-VLAN
+
+**Status:** Offen (untersucht + gemessen 2026-07-23). Kein akuter Blocker, aber jeder Backend-Deploy kostet mehrere Minuten Push + einen ~5-min Pod-Pull-Recreate-Blip; große Layer laufen gelegentlich in ein Push-Timeout (retrybar).
+
+**Root Cause (Topologie, mit Fakten belegt):** die Renfield-Build-Box (`.159 = 192.168.1.159`) **und alle 5 `renfield-private`-Cluster-Nodes** (`k8s-cp/gpu-1/gpu-2/gpu-3/orangepi`, alle `192.168.1.x`) liegen im **Heim-LAN**. Harbor läuft im **`192.168.99.x`-VLAN** (Cluster-Nodes `.14/.15/.16`, NFS `.18`, Traefik-LB `.101`). Der Übergang `1.x ↔ .99` (über die OPNsense-Firewall/-Routing) ist **bandbreiten-limitiert** — egal ob über die öffentliche IP (`registry.treehouse.x-idra.de → 93.241.252.154`, WAN-Hairpin/NAT-Reflection) ODER direkt über den internen Traefik. **Reva hat das Problem NICHT**, weil roberta (`192.168.99.41`) + der Reva-Cluster + Harbor ALLE im `.99`-VLAN sitzen (gigabit-lokal zu Harbor). Gleiches Harbor-Image, andere Netz-Distanz.
+
+**Messung (100 MB unkomprimierbarer Layer, `docker push` von `.159`):**
+
+| Pfad | Zeit | effektiv |
+|---|---|---|
+| **öffentlich** (`93.241.x` via OPNsense-HAProxy, TLS) — aktueller Pfad | **49,9 s** | ~16 Mbit/s |
+| intern (Traefik-LB `192.168.99.101:80`, HTTP) | 91,9 s | ~9 Mbit/s |
+
+**Untersucht + VERWORFEN:** das interne-Traefik-Routing (das dokumentierte Muster aus `public_k8s/harbor/07-configure-containerd.sh`, `/etc/hosts → 192.168.99.101` + containerd `http://…`) wurde getestet und ist **~2× LANGSAMER** als der öffentliche Pfad. Der Engpass ist also NICHT der WAN-Hairpin, sondern der `1.x↔.99`-Link selbst. `.159` bleibt daher auf dem öffentlichen Pfad (TLS erhalten); die Cluster-Nodes wurden NICHT umkonfiguriert.
+
+**Kandidaten für den echten Fix (noch nicht umgesetzt):**
+1. **Registry IM Heim-LAN (`1.x`)** — ein `registry:2` / Pull-Through-Cache auf `.159` oder einem Node. Push (`.159`→lokal) UND Pull (Nodes→lokal) bleiben auf `1.x` (Gigabit). Größter Hebel; braucht Registry + containerd-Trust-Config + Manifest-Repoint. Harbor bleibt optionaler Off-Site-Mirror.
+2. **LAN-`ctr import` in `bin/deploy-production.sh` automatisieren** — nach dem Build `docker save | ssh <node> ctr -n k8s.io images import -` über das `1.x`-LAN (Build-Box + Nodes beide auf `1.x` → Gigabit) + `imagePullPolicy: IfNotPresent`. Killt den Pull-Blip; der Harbor-Push bleibt langsam, wird aber best-effort/Audit-only. Wird heute schon manuell für Einzelfälle genutzt (siehe `memory/reference_harbor_wan_upstream_cap`, Esszimmer/voice-server).
+3. **`1.x↔.99`-Inter-VLAN-Link untersuchen/upgraden** (OPNsense-Software-Routing-Durchsatz bzw. physischer Link) — der eigentliche Engpass.
+
+**Bereits vorhandene Mitigationen (verhindern TIMEOUTS, nicht die Bandbreite):** der Split-Pip-Layer-Dockerfile (keine >2,5-GB-Layer, die am Harbor-Proxy 504en) + die OPNsense/Traefik-30-min-Timeouts (dokumentiert in `../public_k8s/docs/proxy-chain-timeouts.md`).
+
+**Tracking:** Deploy-Flow siehe `.claude/skills/deploy-production/SKILL.md`; Harbor-Architektur siehe `../public_k8s/`.
+
+---
 
 ### ~~🔴 Kritisch~~ → ✅ Behoben
 
