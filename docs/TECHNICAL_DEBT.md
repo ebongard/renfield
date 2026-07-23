@@ -2,7 +2,7 @@
 
 Dieses Dokument enthält eine umfassende Analyse der technischen Schulden im gesamten Renfield-System.
 
-**Letzte Aktualisierung:** 2026-07-23 (Infrastruktur I1: Harbor-Slowness vom Heim-Netz = **PMTUD-Blackhole** [MTU-Mismatch + geblocktes ICMP], NICHT Netz/Storage/Harbor — Netz gemessen 6 Gbit/s, NFS 104 MB/s; Fix = MSS-Clamping auf der OPNsense)
+**Letzte Aktualisierung:** 2026-07-23 (Infrastruktur I1 KORRIGIERT: Harbor-Slowness vom Heim-Netz = **WAN-Hairpin über die Public-IP**, upload-gedeckelt ~72 Mbit/s — KEIN PMTUD-Blackhole [sauberer Push: 0 Retrans, 0 frag-needed]. `.159` löst Harbor auf die Public-IP auf, weil der einzige TLS-Endpoint öffentlich ist. Fix: LAN-direkter `ctr import` › interner TLS-Endpoint + Split-Horizon-DNS. KEINE Firewall-Änderung. Vollanalyse: `../public_k8s/docs/harbor-slow-from-home-lan.md`)
 
 ---
 
@@ -16,7 +16,7 @@ Dieses Dokument enthält eine umfassende Analyse der technischen Schulden im ges
 | Infrastruktur | 0 | 4 | 2 | 7 | 6 |
 | **Gesamt** | **0** | **10** | **10** | **25** | **29** |
 
-**Offen (🟡):** Infrastruktur **I1** — Harbor push/pull vom Heim-Netz langsam (**PMTUD-Blackhole**: MTU-Mismatch + geblocktes ICMP; Netz/Storage/Harbor sind schnell). Fix = MSS-Clamping auf der OPNsense. Siehe §Infrastruktur.
+**Offen (🟡):** Infrastruktur **I1** — Harbor push/pull vom Heim-Netz langsam (**WAN-Hairpin über die Public-IP**, upload-gedeckelt ~72 Mbit/s; KEIN MTU/Blackhole — sauberer Push 0 Retrans/0 frag-needed). Ursache: `.159` löst Harbor auf die Public-IP auf (einziger TLS-Endpoint ist öffentlich). Fix: LAN-direkter `ctr import` › interner TLS-Endpoint + Split-Horizon-DNS. Siehe §Infrastruktur + `../public_k8s/docs/harbor-slow-from-home-lan.md`.
 
 ---
 
@@ -465,25 +465,30 @@ Nur eine zentrale ErrorBoundary (in `App.tsx`); keine Feature-spezifischen. Eine
 
 ### 🟡 Offen
 
-#### I1. Harbor push/pull vom Heim-Netz langsam — PMTUD-Blackhole (MTU-Mismatch + geblocktes ICMP)
+#### I1. Harbor push/pull vom Heim-Netz langsam — WAN-Hairpin (Public-IP-Pfad), KEIN MTU-Problem
 
-**Status:** Root Cause GEFUNDEN + gemessen (2026-07-23); Fix ausstehend (OPNsense-Zugriff nötig). Kein Datenverlust, aber jeder Backend-Deploy vom Heim-Netz kostet mehrere Minuten Push + einen ~5-min Pod-Pull-Recreate-Blip; große Layer laufen gelegentlich in ein Timeout (retrybar).
+**Status:** Root Cause per sauberer Nachmessung bestätigt (2026-07-23). Kein Datenverlust; ein Backend-Deploy vom Heim-Netz ist WAN-upload-gebremst (~72 Mbit/s), daher der ~5-min Pod-Pull-Recreate-Blip. **Fix = Routing/DNS + interner TLS-Endpoint, NICHT Firewall/MTU.** Volle Analyse: **`../public_k8s/docs/harbor-slow-from-home-lan.md`**.
 
-**Root Cause: NICHT Netzwerk/Storage/Harbor — ein PMTUD-Blackhole.** Ein Hop auf dem Pfad Heim-Netz (`192.168.1.x`) → `.99`-Cluster (via virtueller OPNsense) hat eine **MTU < 1500**, UND **ICMP „fragmentation needed" (Type 3 Code 4) ist geblockt** (dasselbe ICMP-Filtering, das die ganze Untersuchung `ping` fehlschlagen ließ). Damit scheitert Path-MTU-Discovery **still**: der Sender schickt weiter 1500-Byte-Pakete, die verworfen werden → TCP retransmittet endlos → Durchsatz kollabiert auf ~10-16 Mbit/s. Betrifft **alle Heim-Clients**: Pushes von der Build-Box (`.159`) UND Pulls der `renfield-private`-Nodes (`1.x`) — daher die ~5-min-Backend-Recreate-Pulls. Reva/roberta ist schnell, weil es **lokal auf `.99`** zu Harbor pusht (kein reduzierter-MTU-Hop im Pfad).
+**Root Cause: das Heim-LAN erreicht Harbor über die *öffentliche* IP → Hairpin durch die WAN (upload-gedeckelt).** `.159` löst `registry.treehouse.x-idra.de` → **`93.241.252.154`** (Public-IP, via `/etc/hosts`) auf; der Traffic verlässt und betritt das Netz über die **PPPoE-WAN** (NAT-Hairpin) und ist dort auf die **WAN-Upload-Rate (~72 Mbit/s gemessen)** begrenzt. Es MUSS diesen Pfad nehmen, weil **Harbors einziger TLS-Endpoint der öffentliche ist**: HAProxy ist im LAN nicht erreichbar (`192.168.1.1:443` Timeout), internes Traefik macht nur HTTP (`99.101:443` refused, `:80` ok). `.99`-Hosts erreichen Harbor **intern** → 3–80× schneller.
 
-**Messungen (2026-07-23), die Netz/Storage/Harbor als Ursache AUSSCHLIESSEN:**
+**KEIN PMTUD-Blackhole (die frühere Hypothese ist widerlegt):** ein sauberer 100-MB-Push von `.159` @ MTU 1500 lief in **10 s mit 0 TCP-Retransmits und 0 ICMP frag-needed** (`nstat` TcpRetransSegs-Delta = 0; `tcpdump icmp[icmptype]==3` = 0). Ein Blackhole verwirft Pakete und retransmittet massiv — hier **nichts**. Die frühere „MTU 1380 = 5× schneller"-Messung war transiente WAN-Congestion, nicht MTU (reproduziert nicht). **Es wurde KEINE Firewall-Änderung gemacht** (MSS-Clamp/ICMP hätten ein Nicht-Problem „gefixt"); der `os-firewall`-API-Zugriff war rein lesend.
 
-| Ebene | Ergebnis |
-|---|---|
-| Netzwerk cross-VLAN `.159 → roberta` (durch die virt. OPNsense, `iperf3`) | **~6 Gbit/s** ✓ |
-| NFS-Storage-Write auf einem Harbor-Node (`dd oflag=direct`, 500 MB) | **104 MB/s** ✓ |
-| Harbor-Push von `.99` (roberta), 100 MB | **3,1 s** ✓ (Reva ist wirklich schnell) |
-| Harbor-Push vom Heim-Netz (`.159`), 100 MB @ MTU **1500** | **49,9 s** ✗ |
-| … derselbe Push @ MTU **1380** | **10,8 s** (5× schneller → Smoking Gun) |
+**Messungen (2026-07-23):**
 
-**Fix (an EINER Stelle, behebt Push UND Pull für alle Heim-Clients):** **TCP-MSS-Clamping auf der OPNsense** auf die tatsächliche Pfad-MTU (Firewall → Settings → Normalization „MSS clamping", oder per-Interface-MSS). Damit handelt jede TCP-Verbindung eine sichere Segmentgröße aus → keine übergroßen Pakete, kein Blackhole, ohne per-Host-MTU-Basteln. Ergänzend/alternativ: (a) den reduzierten-MTU-Hop finden + auf 1500 bringen (OPNsense-Interface/VLAN), (b) ICMP frag-needed durchlassen, damit PMTUD überhaupt funktioniert. **Ein Heim-LAN-Registry ist NICHT nötig** — das Netz ist 6 Gbit/s.
+| Pfad | Ergebnis | Limit |
+|---|---|---|
+| `.159` → Harbor **Public-IP**, 100 MB Push @ MTU 1500 | **10 s (~72 Mbit/s), 0 Retrans, 0 frag-needed** | WAN-Upload |
+| `.159` → direkter `.99`-Host (roberta), `iperf3` | **~6 Gbit/s** | LAN |
+| `roberta` (auf `.99`) → Harbor, 100 MB Push | **3,1 s (~258 Mbit/s)** | Harbor-Ingest/NFS |
+| NFS-Write auf Harbor-Node (`dd oflag=direct`, 500 MB) | 104 MB/s | Storage |
+| internes Traefik `99.101:80` `/v2/` ttfb | **3,4 ms** vs Public `:443` 71 ms | — |
 
-**Frühere Fehlannahmen (dokumentiert, damit nicht erneut verfolgt):** „`1.x↔.99`-Link bandbreiten-limitiert", „virtuelle OPNsense/VirtIO/Offload zu langsam", „NFS-Storage langsam", „Harbor-Registry global langsam" — ALLE per Messung widerlegt (Tabelle). Auch das interne-Traefik-Routing (`99.101`, das Muster aus `public_k8s/harbor/07-configure-containerd.sh`) war *langsamer* (Proxy-/Overlay-MTU noch kleiner) — nicht verwenden.
+**Fix — nach Max-Speed gereiht:**
+1. **Sofort, ohne Infra-Änderung — LAN-direkt** `docker save <image> | ssh <node> 'ctr -n k8s.io images import -'`: umgeht Registry-Hostname + WAN-Hairpin komplett, voller LAN-Speed (~800 Mbit/s, NFS-gebunden). Der Max-Speed-Pfad für Deploys **heute**.
+2. **Dauerhaft — interner TLS-Endpoint für Harbor + Split-Horizon-DNS**: Harbor-Cert auf einem *internen* Endpoint anbieten (Traefik-TLS auf `99.101:443`, interner HAProxy-Bind, oder dedizierter MetalLB-VIP) UND LAN-Clients (`.159` + `renfield-private`-Nodes) `registry.treehouse.x-idra.de` intern auflösen lassen. Hebt die Decke von ~72 auf ~258 Mbit/s (oder höher).
+3. **Orthogonal — Images klein halten** (Backend splittet pip-Layer bereits).
+
+**Frühere Fehlannahmen (per Messung widerlegt, damit nicht erneut verfolgt):** „`1.x↔.99`-Link bandbreiten-limitiert", „virtuelle OPNsense/VirtIO/Offload langsam", „NFS-Storage langsam", „Harbor global langsam", **„PMTUD-Blackhole (MTU + geblocktes ICMP)"** — ALLE widerlegt (Retransmit-/ICMP-Zähler + Per-Pfad-Timing). Lehre: auf gemessene Fakten stützen, nicht auf Annahmen.
 
 **Tracking:** Deploy-Flow siehe `.claude/skills/deploy-production/SKILL.md`; Harbor-Architektur + Timeouts siehe `../public_k8s/` (`docs/proxy-chain-timeouts.md`).
 
