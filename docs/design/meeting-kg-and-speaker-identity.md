@@ -86,10 +86,11 @@ Two consequences that make the reviewer's hard problems **not exist**:
 - **Survives transcript purge** (not CASCADE-bound). Consent fit: the recording can be deleted for privacy while the confirmed commitment is tracked separately.
 - Isolated from fact-search (doesn't leak into `internal.knowledge_search`) → D14 stays cleanly carved out.
 
-### Track D — UX (surface the value; TODOS item)
+### Track D — UX (surface the value; TODOS item) — ✅ SHIPPED
 
-- A **dedicated `/meetings/{id}` page** with minutes/decisions/action-items **above a collapsible transcript** — invert today's hierarchy (deliverable first, raw material second).
-- A **"Protokoll: Entwurf bereit" badge + jump-link** on the meeting card so a draft is discoverable from the list, plus a confirm nudge so drafts don't rot.
+- ✅ A **dedicated `/meetings/{id}` page** (`pages/MeetingDetailPage.tsx`) with minutes/decisions/action-items **above a collapsible transcript** — inverts the old hierarchy (deliverable first, raw material second). Completed list cards now **link** to it (no inline expand); shared components extracted to `components/meetings/`; `useMeeting(id)` → `GET /api/meetings/{id}`.
+- ✅ A **"Protokoll: Entwurf bereit" badge** on the meeting card links to the detail page, plus a prominent **draft-confirm nudge banner** on the detail page so drafts don't rot.
+- Phase 0 (the collapsed-card badge + minutes-above-collapsible-transcript inline) was the first slice; this dedicated page is the full Track D.
 
 ---
 
