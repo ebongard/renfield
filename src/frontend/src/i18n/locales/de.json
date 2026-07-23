@@ -662,7 +662,6 @@
     "untitled": "Ohne Titel",
     "uploaded": "Hochgeladen",
     "openTranscript": "Transkript öffnen",
-    "transcriptToggle": "Transkript",
     "noSegments": "Keine Transkriptsegmente vorhanden",
     "speakers": "Sprecher",
     "relabelHint": "Weise jedem erkannten Sprecher einen Namen zu — das Transkript wird neu erzeugt und indexiert.",
@@ -732,7 +731,6 @@
     "notFound": "Besprechung nicht gefunden",
     "stillProcessing": "Die Besprechung wird noch verarbeitet — Transkript und Protokoll erscheinen, sobald sie fertig ist.",
     "transcriptSection": "Transkript anzeigen",
-    "openDetail": "Details öffnen",
     "draftNudgeTitle": "Protokoll-Entwurf wartet auf Prüfung",
     "draftNudgeBody": "Ein Entwurf wurde erzeugt, aber noch nicht bestätigt. Prüfe ihn unten und bestätige ihn, damit er ins Dokument übernommen wird.",
     "openDetailFor": "Details für {{title}} öffnen"

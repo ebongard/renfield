@@ -109,9 +109,10 @@ describe('MeetingDetailPage (§2 Track D)', () => {
     renderDetail();
     const user = userEvent.setup();
 
-    // Minutes render at the top; the transcript content is hidden until toggled.
-    await waitFor(() => expect(screen.getByText(i18n.t('meetings.minutes.title'))).toBeInTheDocument());
-    expect(screen.getByText('Zusammenfassung.')).toBeInTheDocument();
+    // Wait for the actual minutes CONTENT — the panel header also renders during
+    // the minutes-loading spinner, so waiting on the title races the query.
+    await screen.findByText('Zusammenfassung.');
+    // Transcript content is hidden until the toggle is opened (minutes-first).
     expect(screen.queryByText('Los gehts.')).not.toBeInTheDocument();
 
     await user.click(screen.getByRole('button', { name: i18n.t('meetings.transcriptSection') }));
@@ -278,5 +279,77 @@ describe('MeetingDetailPage (§2 Track D)', () => {
     await user.click(screen.getAllByRole('button', { name: i18n.t('meetings.relabelSave') })[0]);
 
     await waitFor(() => expect(relabeled).toEqual({ speaker_key: 'S1', label: 'Anna' }));
+  });
+
+  it('shows the cross-meeting merge notice when a relabel propagates (§2 Track A)', async () => {
+    server.use(
+      http.get(`${BASE_URL}/api/config/features`, () => HttpResponse.json(features())),
+      http.get(`${BASE_URL}/api/meetings/6`, () => HttpResponse.json(mkMeeting({ title: 'Planning' }))),
+      http.get(`${BASE_URL}/api/meetings/6/segments`, () =>
+        HttpResponse.json({
+          id: 6,
+          status: 'completed',
+          segments: [
+            { speaker: 'Sprecher 1', speaker_key: 'S1', start_s: 0, end_s: 2, text: 'Hi.', fingerprint_id: 3, fingerprint_label: 'Speaker AB' },
+          ],
+        }),
+      ),
+      // Relabel propagated to 2 other meetings sharing the fingerprint.
+      http.post(`${BASE_URL}/api/meetings/6/relabel`, () =>
+        HttpResponse.json({ ...mkMeeting({}), cross_meeting_applied: 2 }),
+      ),
+    );
+
+    renderDetail();
+    const user = userEvent.setup();
+
+    await waitFor(() => expect(screen.getByText('Hi.')).toBeInTheDocument());
+    await user.type(
+      screen.getByLabelText(i18n.t('meetings.relabelAria', { speaker: 'Sprecher 1' })),
+      'Anna',
+    );
+    await user.click(screen.getAllByRole('button', { name: i18n.t('meetings.relabelSave') })[0]);
+
+    await waitFor(() =>
+      expect(screen.getByText(i18n.t('meetings.crossMeetingApplied', { count: 2 }))).toBeInTheDocument(),
+    );
+  });
+
+  it('discards minutes back to the generate state', async () => {
+    let discarded = false;
+    let state = {
+      id: 6,
+      minutes_status: 'draft' as string,
+      minutes: { summary: 'Entwurf.', decisions: [], action_items: [] } as unknown,
+    };
+    server.use(
+      http.get(`${BASE_URL}/api/config/features`, () =>
+        HttpResponse.json(features({ meeting_minutes_enabled: true })),
+      ),
+      http.get(`${BASE_URL}/api/meetings/6`, () =>
+        HttpResponse.json(mkMeeting({ minutes_status: state.minutes_status as Meeting['minutes_status'] })),
+      ),
+      http.get(`${BASE_URL}/api/meetings/6/segments`, () =>
+        HttpResponse.json({ id: 6, status: 'completed', segments: [] }),
+      ),
+      http.get(`${BASE_URL}/api/meetings/6/minutes`, () => HttpResponse.json(state)),
+      http.delete(`${BASE_URL}/api/meetings/6/minutes`, () => {
+        discarded = true;
+        state = { id: 6, minutes_status: 'none', minutes: null };
+        return HttpResponse.json(state);
+      }),
+    );
+
+    renderDetail();
+    const user = userEvent.setup();
+
+    // Draft loads → discard it → panel returns to the Generate CTA.
+    await user.click(await screen.findByRole('button', { name: i18n.t('meetings.minutes.discard') }));
+    await waitFor(() => expect(discarded).toBe(true));
+    await waitFor(() =>
+      expect(
+        screen.getByRole('button', { name: i18n.t('meetings.minutes.generate') }),
+      ).toBeInTheDocument(),
+    );
   });
 });

@@ -40,9 +40,13 @@ export default function MeetingDetailPage() {
   const updateProject = useUpdateMeetingProject();
 
   const [confirmingDelete, setConfirmingDelete] = useState(false);
-  // Minutes-first: the transcript is the raw material, collapsed by default when
-  // minutes are enabled. Without minutes it is the only content → shown open.
-  const [showTranscript, setShowTranscript] = useState(!minutesEnabled);
+  // Minutes-first: the transcript is the raw material, collapsed by default.
+  // Start closed unconditionally — `minutesEnabled` comes from the async feature
+  // flags (undefined at mount), so deriving the initial value from it would read
+  // `false` on a cold load and freeze the toggle open. The collapse toggle only
+  // renders in the minutes-enabled branch anyway; the minutes-disabled branch
+  // renders the transcript directly, so this state is unused there.
+  const [showTranscript, setShowTranscript] = useState(false);
 
   const backLink = (
     <Link

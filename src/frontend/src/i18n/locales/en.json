@@ -662,7 +662,6 @@
     "untitled": "Untitled",
     "uploaded": "Uploaded",
     "openTranscript": "Open transcript",
-    "transcriptToggle": "Transcript",
     "noSegments": "No transcript segments",
     "speakers": "Speakers",
     "relabelHint": "Assign a name to each detected speaker — the transcript is re-rendered and reindexed.",
@@ -732,7 +731,6 @@
     "notFound": "Meeting not found",
     "stillProcessing": "This meeting is still being processed — the transcript and minutes appear once it finishes.",
     "transcriptSection": "Show transcript",
-    "openDetail": "Open details",
     "draftNudgeTitle": "Minutes draft awaiting review",
     "draftNudgeBody": "A draft was generated but not yet confirmed. Review it below and confirm so it is folded into the document.",
     "openDetailFor": "Open details for {{title}}"
