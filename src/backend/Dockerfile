@@ -36,7 +36,7 @@ RUN pip install --no-cache-dir --upgrade pip>=25.3 setuptools
 
 # Install Python dependencies. Split across multiple RUN layers so each pushed
 # layer stays well under Harbor's external proxy timeout (the 2.66 GB monolithic
-# layer reliably 504'd on the registry.treehouse.x-idra.de Telekom proxy).
+# layer reliably 504'd on the registry's upstream proxy).
 # The constraints file pins torch/torchaudio/torchvision to +cpu wheels from the
 # PyTorch CPU index — prevents transitive deps (docling, easyocr, transformers)
 # from resolving torch to a full CUDA build (saves ~3 GB of nvidia/* wheels).

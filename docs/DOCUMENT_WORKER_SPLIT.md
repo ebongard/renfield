@@ -511,7 +511,7 @@ spec:
       imagePullSecrets: [{name: harbor-pull-secret}]
       containers:
         - name: worker
-          image: registry.treehouse.x-idra.de/renfield/backend:latest
+          image: your-registry.example/renfield/backend:latest
           imagePullPolicy: Always
           command: ["python", "-m", "workers.document_processor_worker"]
           envFrom: [{configMapRef: {name: renfield-env}}]

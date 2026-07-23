@@ -39,7 +39,7 @@ spec:
         - name: harbor-pull-secret
       containers:
         - name: frontend
-          image: registry.treehouse.x-idra.de/renfield/frontend:latest
+          image: your-registry.example/renfield/frontend:latest
           imagePullPolicy: Always
           ports:
             - containerPort: 80

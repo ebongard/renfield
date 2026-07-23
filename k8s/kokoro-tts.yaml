@@ -47,7 +47,7 @@ spec:
         - name: kokoro-tts
           # Mirror of ghcr.io/remsky/kokoro-fastapi-cpu:latest (weights baked
           # into the image — no runtime model download / egress needed).
-          image: registry.treehouse.x-idra.de/renfield/kokoro-fastapi:cpu-v1
+          image: your-registry.example/renfield/kokoro-fastapi:cpu-v1
           imagePullPolicy: IfNotPresent
           ports:
             - containerPort: 8880

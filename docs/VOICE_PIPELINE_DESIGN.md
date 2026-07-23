@@ -248,7 +248,7 @@ spec:
         renfield.io/role: voice-llm
       containers:
       - name: voice-server
-        image: registry.treehouse.x-idra.de/renfield/voice-server:v0.1.0
+        image: your-registry.example/renfield/voice-server:v0.1.0
         ports:
         - containerPort: 8080
           name: http
@@ -529,8 +529,8 @@ TAG=v0.1.0
 ssh evdb@192.168.1.159 "rm -rf /tmp/voice-server-build-${TAG}; mkdir -p /tmp/voice-server-build-${TAG}"
 rsync -avz voice-server/ evdb@192.168.1.159:/tmp/voice-server-build-${TAG}/
 ssh evdb@192.168.1.159 "cd /tmp/voice-server-build-${TAG} && \
-  docker build -t registry.treehouse.x-idra.de/renfield/voice-server:${TAG} \
-                -t registry.treehouse.x-idra.de/renfield/voice-server:latest .
+  docker build -t your-registry.example/renfield/voice-server:${TAG} \
+                -t your-registry.example/renfield/voice-server:latest .
 
 # GPU-side parity gate (review-cycle 3 GAP-2 fix) — runs before push.
 # Validates the freshly-built image against tests/fixtures/speaker/ on the
@@ -539,15 +539,15 @@ ssh evdb@192.168.1.159 "cd /tmp/voice-server-build-${TAG} && \
 # or fall back to bundling speechbrain in the voice-server image.
 docker run --rm --gpus all \
   -v \$(pwd)/tests/fixtures/speaker:/fixtures:ro \
-  registry.treehouse.x-idra.de/renfield/voice-server:${TAG} \
+  your-registry.example/renfield/voice-server:${TAG} \
   python /app/scripts/gpu_parity_check.py /fixtures || exit 1
 
-docker push registry.treehouse.x-idra.de/renfield/voice-server:${TAG}
+docker push your-registry.example/renfield/voice-server:${TAG}
 # CAUTION (review-cycle 3 NIT-2): :latest is a debug-only convenience tag.
 # k8s manifests MUST pin to the version tag (:v0.1.0). Never reference
 # :latest from any production manifest, smoke-test script, or skill.
 # It exists only for ad-hoc \`docker run :latest\` on the build box.
-docker push registry.treehouse.x-idra.de/renfield/voice-server:latest"
+docker push your-registry.example/renfield/voice-server:latest"
 ```
 
 **Image-size budget:** ~3.5-4 GB realistic (revised from v1.2's 3 GB after the B.1.0 probe established that voice-server needs `speechbrain` + `torchaudio` for `compute_features` Python-side preprocessing — STFT-export limitation, see § B.1.0). Layer breakdown:

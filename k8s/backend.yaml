@@ -84,7 +84,7 @@ spec:
               mountPath: /app/data/cache-home
       containers:
         - name: backend
-          image: registry.treehouse.x-idra.de/renfield/backend:latest
+          image: your-registry.example/renfield/backend:latest
           imagePullPolicy: Always
           ports:
             - containerPort: 8000

@@ -62,7 +62,7 @@ spec:
             limits:   {memory: 64Mi}
       containers:
         - name: worker
-          image: registry.treehouse.x-idra.de/renfield/backend:latest
+          image: your-registry.example/renfield/backend:latest
           imagePullPolicy: Always
           workingDir: /app
           command: ["python", "-m", "workers.meeting_worker"]

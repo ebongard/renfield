@@ -67,8 +67,8 @@ Cluster-wide Traefik changes (entrypoints, TLS, CRDs) are tracked in `../private
 
 | Service | Image | Notes |
 |---------|-------|-------|
-| Backend | `registry.treehouse.x-idra.de/renfield/backend:latest` | CPU image (~3.5 GB). Includes wake-word models and renfield-mcp-dlna entrypoint |
-| Frontend | `registry.treehouse.x-idra.de/renfield/frontend:latest` | Nginx serving React SPA (vite-plugin-pwa PWA). `nginx.conf` serves `sw.js`/`registerSW.js`/`index.html`/manifest `no-cache` and content-hashed bundles `immutable` — required for new deploys to reach the browser; see deploy-production skill → "Frontend PWA cache propagation" |
+| Backend | `your-registry.example/renfield/backend:latest` | CPU image (~3.5 GB). Includes wake-word models and renfield-mcp-dlna entrypoint |
+| Frontend | `your-registry.example/renfield/frontend:latest` | Nginx serving React SPA (vite-plugin-pwa PWA). `nginx.conf` serves `sw.js`/`registerSW.js`/`index.html`/manifest `no-cache` and content-hashed bundles `immutable` — required for new deploys to reach the browser; see deploy-production skill → "Frontend PWA cache propagation" |
 | PostgreSQL | `pgvector/pgvector:pg16` | pgvector for embedding search |
 | Redis | `redis:7-alpine` | Message queue + cache (AOF enabled) |
 | Ollama | `ollama/ollama:latest` | LLM inference, requires GPU |
@@ -282,7 +282,7 @@ For a new backend image:
 ```bash
 kubectl -n renfield rollout restart deploy/backend
 # or pin a specific version
-kubectl -n renfield set image deploy/backend backend=registry.treehouse.x-idra.de/renfield/backend:v1.3.1
+kubectl -n renfield set image deploy/backend backend=your-registry.example/renfield/backend:v1.3.1
 ```
 
 When the new version contains migrations:

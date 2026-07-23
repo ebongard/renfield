@@ -368,7 +368,7 @@ class TestSafetyHelpers:
             "postgresql://reva@chat.aktivities.ai/db",
             "postgresql://reva@192.168.99.14/renfield",
             "postgresql://reva@roberta/renfield",
-            "postgresql://reva@registry.treehouse.x-idra.de/db",
+            "postgresql://reva@your-registry.example/db",
             # Common managed-DB SaaS:
             "postgresql://u@db.abc123.us-west-2.rds.amazonaws.com/renfield",
             "postgresql://u@pg-xyz.aiven.io/defaultdb",

@@ -35,10 +35,10 @@ cd voice-server
 # uses ~1.5 GB; coqui-tts + GPU torch adds ~2.5 GB. Total build time
 # ~10-15 min cold, ~2 min if base layers are cached on .159.
 docker build -f Dockerfile.spike \
-    -t registry.treehouse.x-idra.de/renfield/voice-server:b5-spike-rc1 .
+    -t your-registry.example/renfield/voice-server:b5-spike-rc1 .
 
 # Push. ~3 GB over Harbor; allow 5-10 min.
-docker push registry.treehouse.x-idra.de/renfield/voice-server:b5-spike-rc1
+docker push your-registry.example/renfield/voice-server:b5-spike-rc1
 ```
 
 ### 1.3  Build sanity-checks
@@ -50,7 +50,7 @@ If any of the following fails, surface BEFORE the maintenance window — debuggi
 - **Smoke import** (optional, on .159 with NVIDIA runtime):
   ```bash
   docker run --rm --gpus all \
-      registry.treehouse.x-idra.de/renfield/voice-server:b5-spike-rc1 \
+      your-registry.example/renfield/voice-server:b5-spike-rc1 \
       python -c "import torch; assert torch.cuda.is_available(); from TTS.api import TTS; print('OK')"
   ```
 

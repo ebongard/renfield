@@ -33,7 +33,7 @@ set -euo pipefail
 
 # --- config -----------------------------------------------------------------
 BUILD_HOST="${RENFIELD_BUILD_HOST:-evdb@192.168.1.159}"
-REGISTRY="${RENFIELD_REGISTRY:-registry.treehouse.x-idra.de/renfield}"
+REGISTRY="${RENFIELD_REGISTRY:?set RENFIELD_REGISTRY, e.g. export RENFIELD_REGISTRY=your-registry.example/renfield}"
 KCTX="${RENFIELD_KCTX:-renfield-private}"
 NS="${RENFIELD_NS:-renfield}"
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"

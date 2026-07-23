@@ -68,7 +68,7 @@ spec:
         - name: harbor-pull-secret
       containers:
         - name: eval
-          image: registry.treehouse.x-idra.de/renfield/backend:latest
+          image: your-registry.example/renfield/backend:latest
           imagePullPolicy: Always
           workingDir: /app
           # The eval script is standalone (stdlib + numpy/soundfile/librosa/requests,

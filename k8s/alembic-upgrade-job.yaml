@@ -30,7 +30,7 @@ spec:
         - name: harbor-pull-secret
       containers:
         - name: alembic
-          image: registry.treehouse.x-idra.de/renfield/backend:latest
+          image: your-registry.example/renfield/backend:latest
           imagePullPolicy: Always
           workingDir: /app
           command: ["alembic", "upgrade", "head"]

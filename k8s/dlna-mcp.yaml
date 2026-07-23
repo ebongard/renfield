@@ -54,7 +54,7 @@ spec:
           # Dedicated small image (see renfield-mcp-dlna/Dockerfile) — no longer
           # the 3.5 GB backend image. ENTRYPOINT is renfield-mcp-dlna, so no
           # `command:` override needed. The backend reaches this over HTTP only.
-          image: registry.treehouse.x-idra.de/renfield/dlna-mcp:v0.1.0
+          image: your-registry.example/renfield/dlna-mcp:v0.1.0
           imagePullPolicy: Always
           env:
             - name: MCP_TRANSPORT

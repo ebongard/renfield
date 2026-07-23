@@ -24,7 +24,7 @@ GPU instance.
 
 | Thing | Value |
 |---|---|
-| Household backend image | `registry.treehouse.x-idra.de/renfield/backend:2026-07-17-mtg-delete` — **predates T8** (`cfe8a005`), so it CANNOT send the `X-Voice-Client` header |
+| Household backend image | `your-registry.example/renfield/backend:2026-07-17-mtg-delete` — **predates T8** (`cfe8a005`), so it CANNOT send the `X-Voice-Client` header |
 | Household `VOICE_SERVER_URL` (cm `renfield-env`, ns renfield) | `http://voice-server:8080` — a Service with **no endpoints** (deployment scaled to 0) → every call fails → CPU fallback |
 | Old renfield-ns `voice-server` Deployment | `replicas: 0` (scaled down in Phase 4). Its manifest still says `1`, so a plain redeploy would recreate a harmless Pending pod. |
 | Shared instance | ns `voice`, image `voice-server@sha256:e93a2b46…` (v0.3.1), `AUTH_MODE=registry`. Registry: `reva` → verify_url (+ T11 secret), `renfield` → `{anonymous: true}`. |

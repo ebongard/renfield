@@ -61,7 +61,7 @@ docker run --rm --gpus all \
   -v /path/to/renfield:/eval -w /eval \
   -v ~/.cache/huggingface:/root/.cache/huggingface \
   -e HF_TOKEN \
-  registry.treehouse.x-idra.de/renfield/voice-server:<current-tag> \
+  your-registry.example/renfield/voice-server:<current-tag> \
   bash -lc 'pip install "pyannote.audio>=3.1" scipy pyyaml && \
     for M in base medium large-v3; do \
       python bin/run_diarization_eval.py run \

@@ -81,7 +81,7 @@ spec:
           # Dedicated small image (see renfield-mcp-samsung/Dockerfile). ENTRYPOINT
           # is renfield-mcp-samsung, so no `command:` override needed. The backend
           # reaches this over streamable-http only.
-          image: registry.treehouse.x-idra.de/renfield/samsung-mcp:v0.1.0
+          image: your-registry.example/renfield/samsung-mcp:v0.1.0
           imagePullPolicy: Always
           env:
             - name: MCP_TRANSPORT

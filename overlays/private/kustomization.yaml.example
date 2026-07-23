@@ -1,0 +1,32 @@
+# Private registry overlay — maps the public placeholder registry
+# (`your-registry.example`) onto your REAL container registry.
+#
+# Setup (once):
+#   cp overlays/private/kustomization.yaml.example overlays/private/kustomization.yaml
+#   # then replace YOUR_REGISTRY_HOST below with your real registry host
+# The real file (kustomization.yaml) is gitignored so the registry host never
+# lands in the public repo. Mirrors the k8s/renfield-env-private.secret.yaml pattern.
+#
+# Fresh-cluster bootstrap:
+#   kubectl apply -k overlays/private/
+# Rolling deploys go through bin/deploy-production.sh, which sets images from
+# $RENFIELD_REGISTRY via `kubectl set image` (never reads the manifest registry).
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - ../../k8s            # the public base (k8s/kustomization.yaml)
+
+images:
+  - name: your-registry.example/renfield/backend
+    newName: YOUR_REGISTRY_HOST/renfield/backend
+  - name: your-registry.example/renfield/frontend
+    newName: YOUR_REGISTRY_HOST/renfield/frontend
+  - name: your-registry.example/renfield/dlna-mcp
+    newName: YOUR_REGISTRY_HOST/renfield/dlna-mcp
+  - name: your-registry.example/renfield/samsung-mcp
+    newName: YOUR_REGISTRY_HOST/renfield/samsung-mcp
+  - name: your-registry.example/renfield/voice-server
+    newName: YOUR_REGISTRY_HOST/renfield/voice-server
+  - name: your-registry.example/renfield/kokoro-fastapi
+    newName: YOUR_REGISTRY_HOST/renfield/kokoro-fastapi

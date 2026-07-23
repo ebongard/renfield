@@ -15,7 +15,7 @@
 #   bin/release-voice-server.sh v0.3.0 --dry-run  # print, don't build
 #
 # Env overrides: RENFIELD_BUILD_HOST (default evdb@192.168.1.159),
-#                RENFIELD_REGISTRY   (default registry.treehouse.x-idra.de/renfield),
+#                RENFIELD_REGISTRY   (required, e.g. your-registry.example/renfield),
 #                HF_TOKEN_FILE       (default ~/.hf_token on the build host; used
 #                                     as the BuildKit secret to bake pyannote)
 #
@@ -38,7 +38,7 @@
 set -euo pipefail
 
 BUILD_HOST="${RENFIELD_BUILD_HOST:-evdb@192.168.1.159}"
-REGISTRY="${RENFIELD_REGISTRY:-registry.treehouse.x-idra.de/renfield}"
+REGISTRY="${RENFIELD_REGISTRY:?set RENFIELD_REGISTRY, e.g. export RENFIELD_REGISTRY=your-registry.example/renfield}"
 IMAGE="$REGISTRY/voice-server"
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 VSDIR="$REPO_ROOT/voice-server"

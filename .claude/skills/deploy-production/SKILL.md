@@ -20,10 +20,26 @@ disable-model-invocation: true
 | Role | Where | Notes |
 |---|---|---|
 | Build box | `192.168.1.159` (`renfield.local` mDNS often flaky — use the IP) | Docker Compose up for dev/test only. Used for `docker build` + `docker push`. Runs the full backend/test stack so pytest is executed here. **Not production.** |
-| Container registry | `https://registry.treehouse.x-idra.de` | Harbor. Namespace paths used: `renfield/backend`, `renfield/frontend`, `renfield/voice-server`. `harbor-pull-secret` already exists in the `renfield` k8s namespace. |
+| Container registry | `https://your-registry.example` | Harbor. Namespace paths used: `renfield/backend`, `renfield/frontend`, `renfield/voice-server`. `harbor-pull-secret` already exists in the `renfield` k8s namespace. |
 | Production | Private k8s cluster (kubectl context **`renfield-private`**) | GPU-accelerated LLM, Traefik ingress, Longhorn storage, MetalLB LB at `192.168.1.230`. Canonical doc: `docs/KUBERNETES_DEPLOYMENT.md`. |
 
 Single-VM `renfield.local` deployment on `/opt/renfield` is legacy / build-box only. Anything calling itself a "prod rsync" is referring to the build box, not production.
+
+## Registry (parameterized — the real host stays out of the public repo)
+
+The container-registry hostname is **not committed**. Public manifests + docs use the
+placeholder `your-registry.example/renfield/...`; the real host is supplied privately:
+
+- **Scripts** (`bin/deploy-production.sh`, `bin/release-voice-server.sh`) require
+  `RENFIELD_REGISTRY` (e.g. `export RENFIELD_REGISTRY=your-registry.example/renfield`).
+  Rolling deploys `kubectl set image` from `$RENFIELD_REGISTRY`, so they never read the
+  manifest registry.
+- **Fresh-cluster bootstrap** (standing deploys): `cp overlays/private/kustomization.yaml.example
+  overlays/private/kustomization.yaml` (gitignored), set `YOUR_REGISTRY_HOST`, then
+  `kubectl apply -k overlays/private/` — a kustomize `images:` transformer rewrites the placeholder.
+- **Individually-applied manifests** that carry the placeholder (the alembic job,
+  `meeting-worker`, `voice-server`, `kokoro-tts`) — substitute the registry at apply time:
+  `sed "s#your-registry.example/renfield#$RENFIELD_REGISTRY#" k8s/alembic-upgrade-job.yaml | kubectl apply -f -`.
 
 ## Release tag (audit trail)
 
@@ -122,7 +138,7 @@ First-time setup: `--gen-key`, then add the printed public-key hex to group_vars
 ssh evdb@192.168.1.159
 
 # Login to Harbor (skip if your session is already authenticated)
-docker login registry.treehouse.x-idra.de
+docker login your-registry.example
 
 # Backend (CPU image, ~3.5 GB — torch pinned to +cpu wheels via constraints.txt)
 # Build time (since the Dockerfile reorder — requirements.txt is COPY'd AFTER the
@@ -134,21 +150,21 @@ docker login registry.treehouse.x-idra.de
 #     deps rebuild, the only case that re-pulls torch).
 cd /tmp/renfield-build-vX.Y.Z/src/backend
 docker build \
-  -t registry.treehouse.x-idra.de/renfield/backend:latest \
-  -t registry.treehouse.x-idra.de/renfield/backend:vX.Y.Z \
+  -t your-registry.example/renfield/backend:latest \
+  -t your-registry.example/renfield/backend:vX.Y.Z \
   -f Dockerfile .
-docker push registry.treehouse.x-idra.de/renfield/backend:latest
-docker push registry.treehouse.x-idra.de/renfield/backend:vX.Y.Z
+docker push your-registry.example/renfield/backend:latest
+docker push your-registry.example/renfield/backend:vX.Y.Z
 
 # Frontend (Nginx serving React build, ~144 MB; ~2-3 min build + push)
 cd /tmp/renfield-build-vX.Y.Z/src/frontend
 docker build \
   --build-arg VITE_FEATURE_VOICE_STREAM=true \
-  -t registry.treehouse.x-idra.de/renfield/frontend:latest \
-  -t registry.treehouse.x-idra.de/renfield/frontend:vX.Y.Z \
+  -t your-registry.example/renfield/frontend:latest \
+  -t your-registry.example/renfield/frontend:vX.Y.Z \
   -f Dockerfile .
-docker push registry.treehouse.x-idra.de/renfield/frontend:latest
-docker push registry.treehouse.x-idra.de/renfield/frontend:vX.Y.Z
+docker push your-registry.example/renfield/frontend:latest
+docker push your-registry.example/renfield/frontend:vX.Y.Z
 ```
 
 > **`--build-arg VITE_FEATURE_VOICE_STREAM=true`** enables the streaming
@@ -186,7 +202,7 @@ ssh evdb@192.168.1.159 '
   # docker images lists newest-first by default -> keep the 3 newest tags per repo,
   # remove the rest (untags; the shared deps layer survives via the kept tags).
   for repo in backend frontend; do
-    docker images "registry.treehouse.x-idra.de/renfield/$repo" --format "{{.Repository}}:{{.Tag}}" \
+    docker images "your-registry.example/renfield/$repo" --format "{{.Repository}}:{{.Tag}}" \
     | awk "NR>3" | xargs -r -n1 docker rmi 2>/dev/null || true
   done
   docker image prune -f                         # dangling layers
@@ -219,7 +235,7 @@ rsync -avz --delete \
 # fine on the CPU build box (no GPU needed to BUILD). Layers usually cache, so
 # only the changed app layer pushes — fast.
 ssh evdb@192.168.1.159
-R=registry.treehouse.x-idra.de/renfield/voice-server
+R=your-registry.example/renfield/voice-server
 cd /tmp/renfield-build-vX.Y.Z/voice-server
 docker build -t $R:v0.1.N -t $R:latest -f Dockerfile .
 docker push $R:v0.1.N
@@ -255,7 +271,7 @@ rsync -avz --delete \
 
 # Build + push on .159 (pure-python / manylinux wheels — no toolchain needed)
 ssh evdb@192.168.1.159
-R=registry.treehouse.x-idra.de/renfield/samsung-mcp
+R=your-registry.example/renfield/samsung-mcp
 cd /tmp/renfield-samsung-build
 docker build -t $R:v0.1.N -t $R:latest -f Dockerfile .
 docker push $R:v0.1.N
@@ -265,7 +281,7 @@ docker push $R:latest
 kubectl -n renfield apply -f k8s/samsung-mcp.yaml
 # Thereafter, pinned-tag rollout (set image, like dlna-mcp/voice-server):
 kubectl -n renfield set image deploy/samsung-mcp \
-  samsung-mcp=registry.treehouse.x-idra.de/renfield/samsung-mcp:v0.1.N
+  samsung-mcp=your-registry.example/renfield/samsung-mcp:v0.1.N
 kubectl -n renfield rollout status deploy/samsung-mcp --timeout=600s
 ```
 
@@ -287,7 +303,7 @@ Mitigations to try, in order:
 1. **Wait + retry.** Harbor's proxy might be load-shedding. A few minutes can clear it.
 2. **Push the layer first, then the manifest.** `docker push --quiet` cuts logging overhead. If Docker is wasting time on output buffering during the layer upload, the timeout window shrinks.
 3. **Split the requirements install** — and stage the heavy packages OUTSIDE `/opt/venv` so the split survives the multi-stage `COPY`. Splitting the pip install into multiple RUN steps in the builder stage is **not enough** by itself: the runtime stage's `COPY --from=builder /opt/venv /opt/venv` collapses every site-packages file from every prior RUN into one giant layer at push time. The fix (landed in PR #512, v2.3.0) is to (a) split pip install into 5 RUN steps, AND (b) `mv` the heavy packages (torch, transformers, easyocr, docling*, speechbrain, cv2, ctranslate2, librosa) into `/opt/staging/{torch,ml,audio}/` after the installs, then `COPY --from=builder /opt/staging/torch/. /opt/venv/lib/python3.11/site-packages/` (one COPY per staging dir) before the catch-all `COPY --from=builder /opt/venv /opt/venv`. Result: 722 MB / 205 MB / 63 MB / 1.66 GB instead of one 2.65 GB layer — each pushed independently.
-4. **Investigate the Harbor proxy config.** The ingress in front of `registry.treehouse.x-idra.de` likely has `client_max_body_size` and read/write timeouts set conservatively. Bumping `proxy_read_timeout`, `proxy_send_timeout`, `client_body_timeout`, and `proxy_request_buffering off` on the Harbor proxy fixes this for all Renfield builds. (Requires admin access to the Harbor host.)
+4. **Investigate the Harbor proxy config.** The ingress in front of `your-registry.example` likely has `client_max_body_size` and read/write timeouts set conservatively. Bumping `proxy_read_timeout`, `proxy_send_timeout`, `client_body_timeout`, and `proxy_request_buffering off` on the Harbor proxy fixes this for all Renfield builds. (Requires admin access to the Harbor host.)
 
 When you hit this in the future: don't keep retrying blindly past 3 attempts — the layer ID failing is fixed, so the proxy/Harbor side is the issue. Stop the push, document which release tag couldn't ship, and surface to the operator.
 
@@ -304,13 +320,13 @@ kubectl -n renfield rollout restart deploy/backend deploy/document-worker deploy
 # the Dockerfile in the renfield-mcp-dlna repo — like voice-server). It does NOT
 # run the backend image. Roll it ONLY when the dlna image changed:
 #   build+push registry/renfield/dlna-mcp:v0.1.N on .159, then:
-#   kubectl -n renfield set image deploy/dlna-mcp dlna-mcp=registry.treehouse.x-idra.de/renfield/dlna-mcp:v0.1.N
+#   kubectl -n renfield set image deploy/dlna-mcp dlna-mcp=your-registry.example/renfield/dlna-mcp:v0.1.N
 # (The backend reaches dlna-mcp over HTTP only — it never imports the package —
 # so a dlna change does NOT need a backend rebuild, and vice versa.)
 
 # Or pin an explicit tag (force-pulls even if :latest is cached on the node)
 kubectl -n renfield set image deploy/backend \
-  backend=registry.treehouse.x-idra.de/renfield/backend:vX.Y.Z
+  backend=your-registry.example/renfield/backend:vX.Y.Z
 
 # Wait for each rollout
 kubectl -n renfield rollout status deploy/backend --timeout=600s
@@ -321,7 +337,7 @@ kubectl -n renfield rollout status deploy/frontend --timeout=600s
 # voice-server is a SEPARATE, fifth deploy — roll it ONLY when its image
 # changed (see "Voice-server image"). It runs a pinned tag, so set image:
 kubectl -n renfield set image deploy/voice-server \
-  voice-server=registry.treehouse.x-idra.de/renfield/voice-server:v0.1.N
+  voice-server=your-registry.example/renfield/voice-server:v0.1.N
 kubectl -n renfield rollout status deploy/voice-server --timeout=600s
 ```
 
@@ -347,7 +363,7 @@ kubectl -n renfield get pods -o jsonpath='{range .items[*]}{.metadata.name}{"\t"
 If a pod shows a stale digest, it's a `imagePullPolicy` issue. Force the pull with the explicit tag:
 
 ```bash
-kubectl -n renfield set image deploy/<name> <container>=registry.treehouse.x-idra.de/renfield/backend:vX.Y.Z
+kubectl -n renfield set image deploy/<name> <container>=your-registry.example/renfield/backend:vX.Y.Z
 kubectl -n renfield rollout status deploy/<name>
 ```
 
