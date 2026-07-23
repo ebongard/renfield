@@ -1,7 +1,8 @@
 # Document Processor Worker Split
 
-Plan to extract document ingestion (Docling + EasyOCR + layout detection) from the
-backend pod into a dedicated worker deployment.
+Plan to extract document ingestion (Docling + OCR [Tesseract by default / EasyOCR,
+`RAG_OCR_ENGINE`] + layout detection) from the backend pod into a dedicated worker
+deployment.
 
 Revision history:
 - v1 (2026-04-18): initial draft, inline feature flag, hostPath NFS, existing Redis-list TaskQueue.

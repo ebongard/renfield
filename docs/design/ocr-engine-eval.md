@@ -181,6 +181,27 @@ would additionally require adding Tesseract to the backend image and wiring a
 `TesseractOcrOptions` branch into `document_processor._ensure_initialized` — out
 of scope for this evaluation; that is the migration the decision rule gates.
 
+## Outcome (2026-07-23) — SHIPPED
+
+The eval ran over **all 148 flagged documents** (`--all-flagged`, isolated pod). Aggregate
+(baseline = docling-EasyOcr):
+
+| Engine | drop ratio ↓ | usable chars ↑ | wall/doc | vs baseline (of 148) |
+|---|---|---|---|---|
+| docling (EasyOcr, baseline) | 0.68 | 2123 | 23.4 s | — |
+| docling_full_page_ocr | 0.25 | 3741 | 77.5 s | 107 ↑ / 20 ↓ |
+| poppler_text_layer | 0.72 | 5490 | 0.02 s | 99 ↑ / 25 ↓ |
+| **docling_tesseract** | **0.30** | 3832 | 22.2 s | **111 ↑ / 8 ↓** |
+
+`docling_tesseract` won decisively (best improved/regressed ratio, halved the quality-gate
+drop, no speed penalty). **The swap was implemented and is now the default** (PR #1033):
+`settings.rag_ocr_engine` (`Literal["tesseract","easyocr"]`, default `tesseract`) drives
+`DocumentProcessor._build_full_page_ocr_options()`, which verifies the tesseract **runtime**
+(CLI + deu/eng traineddata, or the tesserocr binding) and **fails safe to EasyOcr** if it's
+absent. `tesseract-ocr`+`deu`/`eng` are in the backend image. `poppler_text_layer` was NOT
+adopted (25 regressions; only helps PDFs that already have a text layer). Deployed to the
+household 2026-07-23 (`backend:2026-07-23-ocr-tesseract-twin`).
+
 ## References
 
 - TODOS.md — "OCR engine evaluation / swap" (premise refreshed 2026-06-17).

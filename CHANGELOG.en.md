@@ -10,6 +10,12 @@ For earlier history (v1.2.0 - v2.5.0), see [CHANGELOG.md](CHANGELOG.md) (German 
 
 ## [Unreleased]
 
+### Changed
+- **Default OCR engine → Tesseract** (#1033). The `force_full_page_ocr` re-run converter (which re-OCRs garbled/scanned documents) now uses **Tesseract** (deu+eng) by default instead of docling-EasyOcr. A 148-document eval over the flagged corpus (`bin/run_ocr_engine_eval.py --all-flagged`) showed Tesseract clearly better: **111/148 improved, only 8 regressed**, quality-gate drop 0.68→0.30, no speed penalty. Switchable via `RAG_OCR_ENGINE` (`Literal["tesseract","easyocr"]`); **fail-safe** — it verifies the tesseract runtime (CLI + deu/eng, or the tesserocr binding) and falls back to EasyOcr if absent, so ingest never crashes. `tesseract-ocr`+deu/eng ship in the backend image. Design/outcome: `docs/design/ocr-engine-eval.md`.
+
+### Infrastructure
+- **Harbor push/pull from the home LAN: WAN-hairpin fixed.** Root cause was NOT MTU (0-retransmit re-measurement) but that LAN hosts resolved the registry to the public IP and hairpinned through the WAN upload cap (~72 Mbit/s). Fix: per-node `/etc/hosts` pin to the internal HAProxy path (`192.168.1.1`) → ~200 Mbit/s (100 MB push 11 s → 3 s); idempotent Ansible playbook (`private_k8s/ansible/`). Analysis: `docs/TECHNICAL_DEBT.md` I1 + `public_k8s/docs/harbor-slow-from-home-lan.md`.
+
 ### Fixed
 
 Three latent bugs that silently disabled the self-learning system in production — found during end-to-end validation, each fixed, deployed, and verified live:

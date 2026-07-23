@@ -468,7 +468,7 @@ PDF, DOCX, PPTX, XLSX, HTML, Markdown, TXT — verarbeitet mit IBM Docling.
 - **Quellen-Zitation** — wissensgestützte Chat-Antworten zeigen die verwendeten Dokumente als anklickbare **Quellen-Chips** (siehe „Rich Content in Chat-Nachrichten")
 - **Re-Embedding** — `POST /admin/reembed` nach Modellwechsel
 - **knowledge_search Agent Tool** — Internes Tool im Agent Loop für kombinierte Suche über RAG-Dokumente und MCP-Quellen (Paperless). Liefert zusätzlich **circle-gefilterte Schicht-A-Fakten** (Steuernummer/IBAN/Aussteller/Fristen aus `DocumentFactRetrieval`) als eigenen `FAKTEN`-Block, sodass der Agent den präzisen Wert zitiert statt der Passage (aktiv bei `schicht_a_extraction_enabled`; Quell-Dokumenttitel separat circle-gefiltert, damit ein tier-übersteuerter Fakt keinen privaten Dokumenttitel preisgibt)
-- **EasyOCR Fallback** — Garbled PDFs werden automatisch mit EasyOCR nachverarbeitet für bessere Text-Extraktion
+- **OCR-Engine (Tesseract, Standard)** — Garbled/gescannte PDFs werden automatisch neu-OCRt (`force_full_page_ocr`); Standard-Engine ist **Tesseract** (deu+eng), umschaltbar via `RAG_OCR_ENGINE` (`tesseract`|`easyocr`) und **fail-safe** auf EasyOCR, wenn die Tesseract-Runtime (CLI+deu/eng-Traineddata oder tesserocr-Binding) fehlt — Ingest stürzt nie ab. Ein 148-Dokument-Eval über den Flagged-Korpus (`bin/run_ocr_engine_eval.py --all-flagged`) zeigte Tesseract klar überlegen: 111/148 verbessert, nur 8 verschlechtert, Quality-Gate-Drop 0.68→0.30, kein Speed-Nachteil
 - **Separate Embedding-Instanz** — `OLLAMA_EMBED_URL` für dedizierten Embedding-Server (entlastet die Haupt-Ollama-Instanz)
 
 ### Konfiguration

@@ -91,7 +91,7 @@
 
 ### Knowledge Base (RAG)
 - **Hybrid search** — dense embeddings (pgvector) + BM25 full-text (German FTS, OR matching), combined via RRF
-- **Formats** — PDF, DOCX, PPTX, XLSX, HTML, Markdown, TXT (with EasyOCR fallback for garbled PDFs)
+- **Formats** — PDF, DOCX, PPTX, XLSX, HTML, Markdown, TXT (Tesseract OCR for garbled/scanned PDFs by default via `RAG_OCR_ENGINE`; fail-safe to EasyOCR)
 - **Knowledge bases** — thematic collections with sharing and access control
 - **Agent tool** — `knowledge_search` for combined RAG + Paperless search within the agent loop
 - **Knowledge Graph** — entity-relation triples with post-extraction validation, string-similarity dedup, bulk cleanup API, admin dashboard
