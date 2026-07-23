@@ -415,6 +415,15 @@ class Settings(BaseSettings):
     # converters + rasters at once). Raise toward 2.0 only if OCR accuracy regresses
     # AND the memory limit is also raised.
     rag_ocr_images_scale: float = Field(default=1.5, ge=0.5, le=4.0)
+    # OCR engine for the force_full_page_ocr re-run converter (the pass that
+    # reprocesses garbled/scanned docs). "tesseract" (default) won a 148-doc eval
+    # over EasyOcr on the flagged corpus (bin/run_ocr_engine_eval.py --all-flagged,
+    # 2026-07): 111/148 improved, only 8 regressed, mean quality-gate drop 0.68→0.30,
+    # no speed penalty (~22s/doc). Needs tesseract-ocr + deu/eng traineddata in the
+    # image (added to the backend Dockerfile 2026-07). FAILS SAFE to EasyOcr if the
+    # tesseract CLI/binding is unavailable, so ingest never crashes. "easyocr" keeps
+    # the legacy engine. Tesseract lang codes are ISO 639-2 (deu/eng) vs EasyOcr de/en.
+    rag_ocr_engine: str = "tesseract"
     # Per-chunk-rate trigger that complements rag_ocr_space_threshold.
     # When the chunker drops more than this fraction of chunks as
     # low-quality (utils.content_quality.is_low_quality_text), the

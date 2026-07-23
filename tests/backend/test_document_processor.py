@@ -524,3 +524,59 @@ class TestForceOcrPath:
         # Global config overrides force_ocr=False
         processor._convert_document_ocr.assert_called_once()
         processor._convert_document.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# OCR engine switch (rag_ocr_engine) — force_full_page_ocr converter
+# ---------------------------------------------------------------------------
+
+def _build_ocr_opts(engine, *, tesseract_on_path=True, tess_classes_raise=False):
+    """Invoke DocumentProcessor._build_full_page_ocr_options with mocked docling
+    option classes, tesseract availability and settings.rag_ocr_engine. Returns
+    the ``(label, kwargs)`` sentinel produced by the selected option constructor."""
+    mod = sys.modules["docling.datamodel.pipeline_options"]
+
+    def _mk(label):
+        def _ctor(**kwargs):
+            if tess_classes_raise and label in ("tess_cli", "tess_bind"):
+                raise RuntimeError("tesseract option unavailable")
+            return (label, kwargs)
+        return _ctor
+
+    with patch.object(mod, "EasyOcrOptions", _mk("easyocr"), create=True), \
+         patch.object(mod, "TesseractCliOcrOptions", _mk("tess_cli"), create=True), \
+         patch.object(mod, "TesseractOcrOptions", _mk("tess_bind"), create=True), \
+         patch("shutil.which", lambda name: "/usr/bin/tesseract" if tesseract_on_path else None), \
+         patch("services.document_processor.settings") as s:
+        s.rag_ocr_engine = engine
+        return DocumentProcessor()._build_full_page_ocr_options()
+
+
+@pytest.mark.unit
+def test_ocr_engine_tesseract_prefers_cli():
+    label, kwargs = _build_ocr_opts("tesseract", tesseract_on_path=True)
+    assert label == "tess_cli"
+    assert kwargs == {"lang": ["deu", "eng"], "force_full_page_ocr": True}
+
+
+@pytest.mark.unit
+def test_ocr_engine_tesseract_falls_back_to_binding_without_cli():
+    label, kwargs = _build_ocr_opts("tesseract", tesseract_on_path=False)
+    assert label == "tess_bind"
+    assert kwargs == {"lang": ["deu", "eng"], "force_full_page_ocr": True}
+
+
+@pytest.mark.unit
+def test_ocr_engine_tesseract_fails_safe_to_easyocr():
+    # tesseract selected but neither option class can be constructed -> legacy engine
+    label, kwargs = _build_ocr_opts("tesseract", tesseract_on_path=True, tess_classes_raise=True)
+    assert label == "easyocr"
+    assert kwargs["lang"] == ["de", "en"]
+    assert kwargs["force_full_page_ocr"] is True
+
+
+@pytest.mark.unit
+def test_ocr_engine_easyocr_legacy():
+    label, kwargs = _build_ocr_opts("easyocr")
+    assert label == "easyocr"
+    assert kwargs == {"lang": ["de", "en"], "force_full_page_ocr": True, "bitmap_area_threshold": 0.0}

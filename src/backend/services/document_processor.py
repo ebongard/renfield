@@ -41,6 +41,47 @@ class DocumentProcessor:
         self._chunker = None
         self._initialized = False
 
+    def _build_full_page_ocr_options(self):
+        """OCR options for the force_full_page_ocr re-run converter, per settings.
+
+        ``rag_ocr_engine='tesseract'`` (default; the 2026-07 148-doc eval winner over
+        EasyOcr — 111/148 improved, 8 regressed, quality-gate drop 0.68→0.30, no speed
+        penalty) prefers ``TesseractCliOcrOptions`` (shells to the ``tesseract`` binary)
+        and falls back to the ``TesseractOcrOptions`` (tesserocr) binding. If neither is
+        available it **fails safe to EasyOcr** so ingest never crashes on a host missing
+        the tesseract packages. ``'easyocr'`` keeps the legacy engine.
+
+        Tesseract lang codes are ISO 639-2 (``deu``/``eng``); EasyOcr uses ``de``/``en``.
+        """
+        from docling.datamodel.pipeline_options import EasyOcrOptions
+
+        engine = (settings.rag_ocr_engine or "tesseract").strip().lower()
+        if engine == "tesseract":
+            import shutil
+            tess = None
+            if shutil.which("tesseract") is not None:
+                try:
+                    from docling.datamodel.pipeline_options import TesseractCliOcrOptions
+                    tess = TesseractCliOcrOptions(lang=["deu", "eng"], force_full_page_ocr=True)
+                except Exception:  # noqa: BLE001 - fall through to the tesserocr binding
+                    tess = None
+            if tess is None:
+                try:
+                    from docling.datamodel.pipeline_options import TesseractOcrOptions
+                    tess = TesseractOcrOptions(lang=["deu", "eng"], force_full_page_ocr=True)
+                except Exception:  # noqa: BLE001 - neither variant available
+                    tess = None
+            if tess is not None:
+                logger.info("Initialisiere force_full_page_ocr-Converter (Engine: Tesseract deu+eng)")
+                return tess
+            logger.warning(
+                "rag_ocr_engine='tesseract', aber weder tesseract-CLI noch tesserocr "
+                "verfügbar — Fallback auf EasyOcr"
+            )
+
+        logger.info("Initialisiere force_full_page_ocr-Converter (Engine: EasyOcr de+en)")
+        return EasyOcrOptions(lang=["de", "en"], force_full_page_ocr=True, bitmap_area_threshold=0.0)
+
     def _ensure_initialized(self):
         """Lazy initialization von Docling (lädt Modelle beim ersten Aufruf)"""
         if self._initialized:
@@ -55,14 +96,8 @@ class DocumentProcessor:
             logger.info("Initialisiere Docling DocumentConverter (Standard)...")
             self._converter = DocumentConverter()
 
-            logger.info("Initialisiere Docling DocumentConverter (force_full_page_ocr / EasyOCR)...")
-            from docling.datamodel.pipeline_options import EasyOcrOptions
             ocr_pipeline_options = PdfPipelineOptions()
-            ocr_pipeline_options.ocr_options = EasyOcrOptions(
-                lang=["de", "en"],         # Deutsch + Englisch
-                force_full_page_ocr=True,  # OCR auf jeder Seite, embedded Text ignoriert
-                bitmap_area_threshold=0.0,
-            )
+            ocr_pipeline_options.ocr_options = self._build_full_page_ocr_options()
             ocr_pipeline_options.images_scale = settings.rag_ocr_images_scale  # memory-vs-accuracy; see config
             self._ocr_converter = DocumentConverter(
                 format_options={
