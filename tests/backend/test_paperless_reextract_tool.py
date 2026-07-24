@@ -58,7 +58,7 @@ async def test_gapfill_skips_already_complete_and_patches_empty(monkeypatch):
     monkeypatch.setattr(rt, "_fetch_taxonomy_names", AsyncMock(return_value=[]))
 
     # doc 11 already complete; doc 22 has empty document_type → should be patched.
-    async def _execute(tool, params):
+    async def _execute(tool, params, **_kw):
         if tool == "mcp.paperless.get_document":
             if params["document_id"] == 11:
                 return _envelope({"correspondent": "X", "document_type": "Rechnung", "tags": [1]})

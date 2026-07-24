@@ -49,7 +49,7 @@ def _mcp(upload_inner: dict | None = None, await_inner: dict | None = None):
     upload_inner = upload_inner if upload_inner is not None else {"task_id": "t1"}
     await_inner = await_inner if await_inner is not None else {"status": "success", "document_id": 5}
 
-    async def _execute(tool, params):
+    async def _execute(tool, params, **_kw):
         if tool == "mcp.paperless.upload_document":
             return _envelope(upload_inner)
         if tool == "mcp.paperless.await_consume_result":
@@ -220,7 +220,7 @@ def _mcp_transport(await_inner=None):
     await_inner = await_inner if await_inner is not None else {"status": "success", "document_id": 5}
     updates: list[dict] = []
 
-    async def _execute(tool, params):
+    async def _execute(tool, params, **_kw):
         if tool == "mcp.paperless.upload_document":
             return _envelope({"task_id": "t1"})
         if tool == "mcp.paperless.await_consume_result":
@@ -268,7 +268,7 @@ async def test_content_transport_failure_does_not_unsettle(monkeypatch):
     # update_document error is best-effort: the doc IS filed (state done, True).
     _patch_extractor_doc_text(monkeypatch)
 
-    async def _execute(tool, params):
+    async def _execute(tool, params, **_kw):
         if tool == "mcp.paperless.upload_document":
             return _envelope({"task_id": "t1"})
         if tool == "mcp.paperless.await_consume_result":
@@ -342,7 +342,7 @@ def _corr_mgr(names, *, create_inner=None):
     """A mock mcp_manager dispatching list_correspondents + create_correspondent."""
     create_inner = create_inner if create_inner is not None else {"id": 999, "name": "_created_"}
 
-    async def _execute(tool, params):
+    async def _execute(tool, params, **_kw):
         if tool == "mcp.paperless.list_correspondents":
             return _envelope({"items": [{"id": i + 1, "name": n} for i, n in enumerate(names)]})
         if tool == "mcp.paperless.create_correspondent":
@@ -395,7 +395,7 @@ async def test_resolve_genuinely_new_creates(monkeypatch):
 
 async def test_resolve_taxonomy_unreadable_returns_none_no_create(monkeypatch):
     # list_correspondents transport failure → never guess / create.
-    async def _execute(tool, params):
+    async def _execute(tool, params, **_kw):
         if tool == "mcp.paperless.list_correspondents":
             return {"success": False, "message": "boom"}
         raise AssertionError(f"unexpected tool {tool}")
@@ -435,7 +435,7 @@ def _full_mgr(names, *, create_inner=None, await_inner=None):
     await_inner = await_inner if await_inner is not None else {"status": "success", "document_id": 5}
     create_inner = create_inner if create_inner is not None else {"id": 999, "name": "_created_"}
 
-    async def _execute(tool, params):
+    async def _execute(tool, params, **_kw):
         if tool == "mcp.paperless.upload_document":
             return _envelope({"task_id": "t1"})
         if tool == "mcp.paperless.await_consume_result":
@@ -544,7 +544,7 @@ async def test_resolve_or_create_uses_passed_names_no_list_call(monkeypatch):
     _patch_fuzzy(monkeypatch, strict="regfish GmbH", loose=[])
     calls = []
 
-    async def _execute(tool, params):
+    async def _execute(tool, params, **_kw):
         calls.append(tool)
         return _envelope({"id": 1, "name": "x"})
 
@@ -585,7 +585,7 @@ def _tax_mgr(list_tool, names, create_tool, *, create_inner=None):
     """Mock mcp_manager dispatching one list_* + one create_* taxonomy tool."""
     create_inner = create_inner if create_inner is not None else {"id": 999, "name": "_created_"}
 
-    async def _execute(tool, params):
+    async def _execute(tool, params, **_kw):
         if tool == list_tool:
             return _envelope({"items": [{"id": i + 1, "name": n} for i, n in enumerate(names)]})
         if tool == create_tool:
@@ -671,3 +671,26 @@ async def test_tags_exact_plus_created_deduped(monkeypatch):
     out = await resolve_tags_from_metadata(mgr, meta)
     assert "Steuer" in out and "Versicherung" in out
     assert len(out) == len(set(out))  # de-duplicated
+
+
+async def test_await_consume_uses_per_call_timeout(monkeypatch):
+    """Regression (2026-07 duplicate loop): await_consume_result must be called with
+    a per-call timeout > the default 30s so a slow Paperless consume isn't cut off
+    (which left the doc un-settled → re-uploaded → duplicate)."""
+    _patch_extractor(monkeypatch)
+    calls = []
+
+    async def _execute(tool, params, **kw):
+        calls.append((tool, kw.get("call_timeout")))
+        if tool == "mcp.paperless.upload_document":
+            return _envelope({"task_id": "t1"})
+        if tool == "mcp.paperless.await_consume_result":
+            return _envelope({"status": "success", "document_id": 9})
+        return _envelope({})
+
+    mgr = MagicMock()
+    mgr.execute_tool = AsyncMock(side_effect=_execute)
+    await make_paperless_leg(mgr)(AsyncMock(), _doc(), _PDF, _meta())
+
+    consume = [ct for tool, ct in calls if tool == "mcp.paperless.await_consume_result"]
+    assert consume and consume[0] is not None and consume[0] > 30  # per-call override applied

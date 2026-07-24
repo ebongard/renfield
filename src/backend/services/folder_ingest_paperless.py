@@ -418,11 +418,19 @@ def make_paperless_leg(
             return True
 
         # 3. Await the consume verdict via the MCP (it owns the duplicate-marker
-        # knowledge — D10).
+        # knowledge — D10). The consume can outlast the default 30s mcp_call_timeout
+        # on a fresh/slow Paperless — cutting it off there left the doc un-settled and
+        # re-uploaded on retry (the 2026-07 duplicate loop). Poll for up to
+        # paperless_consume_timeout_s, and pass it as a PER-CALL execute_tool timeout
+        # (+ buffer) so the outer 30s limit doesn't truncate the poll.
+        from utils.config import settings as _settings
+
+        poll_s = await_timeout_s if await_timeout_s is not None else _settings.paperless_consume_timeout_s
         outcome = _parse_paperless_result(
             await mcp_manager.execute_tool(
                 "mcp.paperless.await_consume_result",
-                {"task_id": task_id, "timeout_s": await_timeout_s},
+                {"task_id": task_id, "timeout_s": poll_s},
+                call_timeout=poll_s + 15,
             )
         )
         status = outcome.get("status")

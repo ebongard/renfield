@@ -336,6 +336,12 @@ class Settings(BaseSettings):
     mcp_refresh_interval: int = 60        # Background refresh interval (seconds)
     mcp_connect_timeout: float = 10.0     # Connection timeout per server (seconds)
     mcp_call_timeout: float = 30.0        # Tool call timeout (seconds)
+    # Paperless consume-poll timeout: await_consume_result blocks until Paperless
+    # finishes OCR-consuming an uploaded doc, which on a fresh/slow instance exceeds
+    # the 30s mcp_call_timeout — that cut-off left the doc un-settled → re-enqueued →
+    # RE-UPLOADED → duplicates (2026-07). The leg passes this as a per-call timeout
+    # override so the first consume verdict actually arrives (no retry, no duplicate).
+    paperless_consume_timeout_s: float = 120.0
     mcp_max_response_size: int = Field(default=131072, ge=1024, le=524288)  # 128KB max response — accommodates list_correspondents on real corpora (~70KB at ~900 entries) without truncating mid-payload
     # MCP exponential-backoff for reconnect / transient failures
     mcp_backoff_initial_delay: float = Field(default=1.0, ge=0.1, le=60.0)

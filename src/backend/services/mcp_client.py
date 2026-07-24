@@ -1350,6 +1350,7 @@ class MCPManager:
         user_id: int | None = None,
         progress_sink: ProgressSink | None = None,
         truncate: bool = True,
+        call_timeout: float | None = None,
     ) -> dict:
         """
         Execute an MCP tool by its namespaced name.
@@ -1505,10 +1506,16 @@ class MCPManager:
         user_info = f" (user_id={user_id})" if user_id is not None else ""
         logger.debug(f"MCP call: {namespaced_name}{user_info}")
 
+        # Per-call timeout override for deliberately-blocking poll tools (e.g.
+        # paperless await_consume_result, which waits out a slow Paperless consume
+        # that can exceed the default 30s — the timeout that drove the 2026-07
+        # duplicate-upload loop). Defaults to the global setting.
+        effective_timeout = call_timeout if call_timeout is not None else settings.mcp_call_timeout
+
         async def _do_call() -> Any:
             return await asyncio.wait_for(
                 state.session.call_tool(tool_info.original_name, arguments),
-                timeout=settings.mcp_call_timeout,
+                timeout=effective_timeout,
             )
 
         # Try once; on a session-death signal (transport exception OR the
