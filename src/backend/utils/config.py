@@ -792,15 +792,6 @@ class Settings(BaseSettings):
     # resolve-only (assign existing taxonomy only).
     paperless_autocreate_document_type: bool = True
     paperless_autocreate_tags: bool = True
-    # Automatic Paperless metadata backfill: a periodic reconciler that gap-fills
-    # correspondent/document_type/tags on already-filed docs whose fields are still
-    # empty (e.g. the backlog filed before autocreate existed) — so the instance
-    # SELF-populates the metadata instead of needing a human/chat trigger. Reuses the
-    # backend-safe reextract tool (no Docling; stored-text extraction). Bounded batch
-    # per tick. Off = only new docs get metadata at filing time (+ the on-demand tool).
-    paperless_metadata_backfill_enabled: bool = True
-    paperless_metadata_backfill_interval: int = 3600  # seconds (hourly)
-    paperless_metadata_backfill_batch: int = 50       # docs per tick (rate-limit friendly)
     # Authoritative push token (optional). When set, the boot credential-reconciler
     # (services/credential_reconciler) seeds the DB SystemSetting from this value, so
     # a DB wipe SELF-HEALS the folder-ingest push token on next boot instead of

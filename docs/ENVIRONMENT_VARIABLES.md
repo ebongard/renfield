@@ -854,12 +854,6 @@ EMAIL_INGEST_TOKEN=                    # dito für den email-ingest-MCP (email_i
 # Near-Duplikate. false = Legacy (nur bestehende Taxonomie zuweisen).
 PAPERLESS_AUTOCREATE_DOCUMENT_TYPE=true
 PAPERLESS_AUTOCREATE_TAGS=true
-# Automatischer Metadaten-Backfill: periodischer Reconciler zieht Korrespondent/Typ/Tags
-# auf abgelegten Docs mit leeren Feldern nach (Bestand vor Autocreate) — die Instanz
-# befuellt die Felder SELBST (kein Chat/Mensch noetig). Backend-safe (kein Docling).
-PAPERLESS_METADATA_BACKFILL_ENABLED=true
-PAPERLESS_METADATA_BACKFILL_INTERVAL=3600
-PAPERLESS_METADATA_BACKFILL_BATCH=50
 
 # Async Paperless-Reconciler (Design Z): der Push legt paperless_state='pending' an
 # und gibt sofort zurück; das eigentliche Ablegen läuft im document-worker

@@ -786,7 +786,17 @@ class TestApplyFix:
         mock_result.suggested_storage_path = None
         mock_result.suggested_custom_fields = None
 
-        mock_mcp_manager.execute_tool.return_value = {"success": True}
+        # _apply_fix now resolve-or-creates the correspondent before updating: "B"
+        # is not in the existing taxonomy (only "A"), so it is auto-created and its
+        # created name flows into the update. update_document stays the last call.
+        async def _execute(tool, params, **_kw):
+            if tool == "mcp.paperless.list_correspondents":
+                return {"success": True, "message": json.dumps({"items": [{"name": "A"}]})}
+            if tool == "mcp.paperless.create_correspondent":
+                return {"success": True, "message": json.dumps({"id": 99, "name": params["name"]})}
+            return {"success": True}
+
+        mock_mcp_manager.execute_tool.side_effect = _execute
 
         # Mock DB lookup for status update
         mock_session = mock_db_factory._mock_session
@@ -803,10 +813,65 @@ class TestApplyFix:
         params = call_args[0][1]
         assert params["document_id"] == 42
         assert params["title"] == "New Title"
-        assert params["correspondent"] == "B"
+        assert params["correspondent"] == "B"  # resolve-or-created name
         assert "document_type" not in params  # unchanged
         assert "tags" not in params  # unchanged
         assert "created_date" not in params  # unchanged
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_apply_fix_autocreates_document_type_and_tags(
+        self, service, mock_mcp_manager, mock_db_factory
+    ):
+        """A genuinely-new document_type/tag is resolve-or-created and its created
+        name flows into the update — the taxonomy-autocreate folded onto the audit's
+        apply path (consolidation). update_document stays the last call."""
+        mock_result = MagicMock()
+        mock_result.id = 1
+        mock_result.paperless_doc_id = 42
+        mock_result.current_title = "Same"
+        mock_result.suggested_title = "Same"
+        mock_result.current_correspondent = None
+        mock_result.suggested_correspondent = None
+        mock_result.current_document_type = "Invoice"
+        mock_result.suggested_document_type = "Contract"  # new type — not in taxonomy
+        mock_result.current_tags = ["old"]
+        mock_result.suggested_tags = ["urgent"]  # new tag — not in taxonomy
+        mock_result.current_date = None
+        mock_result.suggested_date = None
+        mock_result.current_storage_path = None
+        mock_result.suggested_storage_path = None
+        mock_result.suggested_custom_fields = None
+
+        created: dict[str, str] = {}
+
+        async def _execute(tool, params, **_kw):
+            if tool == "mcp.paperless.list_document_types":
+                return {"success": True, "message": json.dumps({"items": [{"name": "Invoice"}]})}
+            if tool == "mcp.paperless.list_tags":
+                return {"success": True, "message": json.dumps({"items": [{"name": "old"}]})}
+            if tool == "mcp.paperless.create_document_type":
+                created["document_type"] = params["name"]
+                return {"success": True, "message": json.dumps({"id": 7, "name": params["name"]})}
+            if tool == "mcp.paperless.create_tag":
+                created["tag"] = params["name"]
+                return {"success": True, "message": json.dumps({"id": 8, "name": params["name"]})}
+            return {"success": True}
+
+        mock_mcp_manager.execute_tool.side_effect = _execute
+
+        mock_session = mock_db_factory._mock_session
+        mock_db_result = MagicMock()
+        mock_scalar = MagicMock(return_value=mock_db_result)
+        mock_session.execute.return_value = MagicMock(scalar_one_or_none=mock_scalar)
+
+        success = await service._apply_fix(mock_result)
+
+        assert success is True
+        assert created == {"document_type": "Contract", "tag": "urgent"}
+        params = mock_mcp_manager.execute_tool.call_args[0][1]  # last call = update_document
+        assert params["document_type"] == "Contract"
+        assert params["tags"] == ["urgent"]
 
     @pytest.mark.unit
     @pytest.mark.asyncio

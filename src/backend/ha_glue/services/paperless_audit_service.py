@@ -532,7 +532,20 @@ class PaperlessAuditService:
             return None
 
     async def _apply_fix(self, result) -> bool:
-        """Apply suggested fix via MCP update_document tool."""
+        """Apply suggested fix via MCP update_document tool.
+
+        Correspondent/document_type/tags are routed through the shared
+        resolve-OR-CREATE helpers (the taxonomy-autocreate folded in from the
+        folder-ingest leg, 2026-07): the audit assigns an existing taxonomy entry
+        when one matches (fuzzy), and CREATES it when genuinely new — so it isn't
+        stuck on a sparse/fresh Paperless the way assign-only was. Gated by the
+        paperless_autocreate_* flags; the fuzzy guardrail prevents near-duplicates.
+        """
+        from services.folder_ingest_paperless import (
+            resolve_or_create_correspondent,
+            resolve_or_create_taxonomy,
+        )
+
         params = {"document_id": result.paperless_doc_id}
         has_changes = False
 
@@ -540,14 +553,27 @@ class PaperlessAuditService:
             params["title"] = result.suggested_title
             has_changes = True
         if result.suggested_correspondent and result.suggested_correspondent != result.current_correspondent:
-            params["correspondent"] = result.suggested_correspondent
-            has_changes = True
+            corr = await resolve_or_create_correspondent(self._mcp, result.suggested_correspondent)
+            if corr:  # None = a fuzzy-near match exists → guardrail, leave unset
+                params["correspondent"] = corr
+                has_changes = True
         if result.suggested_document_type and result.suggested_document_type != result.current_document_type:
-            params["document_type"] = result.suggested_document_type
-            has_changes = True
+            dt = result.suggested_document_type
+            if settings.paperless_autocreate_document_type:
+                # None on a fuzzy-near guardrail hit → skip (same as correspondent),
+                # rather than force the raw suggestion and risk a near-duplicate type.
+                dt = await resolve_or_create_taxonomy(self._mcp, "document_type", dt)
+            if dt:
+                params["document_type"] = dt
+                has_changes = True
         if result.suggested_tags and result.suggested_tags != result.current_tags:
-            params["tags"] = result.suggested_tags
-            has_changes = True
+            tags = result.suggested_tags
+            if settings.paperless_autocreate_tags:
+                resolved = [await resolve_or_create_taxonomy(self._mcp, "tag", t) for t in tags]
+                tags = [t for t in resolved if t]  # drop guardrail-skipped (None) tags
+            if tags:
+                params["tags"] = tags
+                has_changes = True
         if result.suggested_date and result.suggested_date != result.current_date:
             params["created_date"] = result.suggested_date
             has_changes = True
