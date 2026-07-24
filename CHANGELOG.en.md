@@ -10,6 +10,9 @@ For earlier history (v1.2.0 - v2.5.0), see [CHANGELOG.md](CHANGELOG.md) (German 
 
 ## [Unreleased]
 
+### Security
+- **Pentest fixes (x-ren.local, authorized)** (#1037). Three Low findings fixed: **(F1)** `/api/notes`, `/api/meetings`, `/api/projects` now return **401** for unauthenticated requests when auth is enabled (previously `200 + []` — empirically NO data leak, owner-filter + owner-gated 404 hold, but missing auth enforcement; auth-off/single-user unchanged). **(F3)** **HSTS** (`Strict-Transport-Security`, `max-age=15768000`) in `nginx.conf`. **(F5)** prompt guard (DE+EN) against fabricated action confirmations in the `general.conversation` path. Confirmed hardened: login break-in, IDOR, circle isolation, mass-assignment, prompt injection. Report: `docs/private/security/pentest-report-x-ren-local-2026-07-23.md`.
+
 ### Changed
 - **Default OCR engine → Tesseract** (#1033). The `force_full_page_ocr` re-run converter (which re-OCRs garbled/scanned documents) now uses **Tesseract** (deu+eng) by default instead of docling-EasyOcr. A 148-document eval over the flagged corpus (`bin/run_ocr_engine_eval.py --all-flagged`) showed Tesseract clearly better: **111/148 improved, only 8 regressed**, quality-gate drop 0.68→0.30, no speed penalty. Switchable via `RAG_OCR_ENGINE` (`Literal["tesseract","easyocr"]`); **fail-safe** — it verifies the tesseract runtime (CLI + deu/eng, or the tesserocr binding) and falls back to EasyOcr if absent, so ingest never crashes. `tesseract-ocr`+deu/eng ship in the backend image. Design/outcome: `docs/design/ocr-engine-eval.md`.
 

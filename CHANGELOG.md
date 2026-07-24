@@ -8,6 +8,9 @@ Alle markanten Änderungen an Renfield, seit Release `v1.2.0`. Format lehnt sich
 
 ## [Unreleased]
 
+### Sicherheit
+- **Pentest-Fixes (x-ren.local, autorisiert)** (#1037). Drei Low-Findings behoben: **(F1)** `/api/notes`, `/api/meetings`, `/api/projects` erzwingen jetzt **401** für unauthentifizierte Requests bei aktivierter Auth (vorher `200 + []` — empirisch KEIN Datenabfluss, da Owner-Filter + owner-gated 404 greifen, aber fehlende Auth-Durchsetzung; auth-off/Single-User unverändert). **(F3)** **HSTS** (`Strict-Transport-Security`, `max-age=15768000`) in `nginx.conf`. **(F5)** Prompt-Guard (DE+EN) gegen halluzinierte Aktions-Bestätigungen im `general.conversation`-Pfad. Gehärtet bestätigt: Login-Break-in, IDOR, Circle-Isolation, Mass-Assignment, Prompt-Injection. Report: `docs/private/security/pentest-report-x-ren-local-2026-07-23.md`.
+
 ### Geändert
 - **OCR-Engine-Standard → Tesseract** (#1033). Der `force_full_page_ocr`-Re-Run-Converter (der garbled/gescannte Dokumente neu-OCRt) nutzt jetzt standardmäßig **Tesseract** (deu+eng) statt docling-EasyOcr. Ein 148-Dokument-Eval über den Flagged-Korpus (`bin/run_ocr_engine_eval.py --all-flagged`) zeigte Tesseract klar überlegen: **111/148 verbessert, nur 8 verschlechtert**, Quality-Gate-Drop 0.68→0.30, kein Speed-Nachteil. Umschaltbar via `RAG_OCR_ENGINE` (`Literal["tesseract","easyocr"]`); **fail-safe** — verifiziert die Tesseract-Runtime (CLI+deu/eng oder tesserocr-Binding) und fällt auf EasyOcr zurück, wenn sie fehlt, sodass Ingest nie abstürzt. `tesseract-ocr`+deu/eng im Backend-Image. Design/Ergebnis: `docs/design/ocr-engine-eval.md`.
 
