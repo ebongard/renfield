@@ -113,7 +113,7 @@ async def list_projects_route(
     stmt = select(Project).order_by(Project.created_at.desc())
     if settings.auth_enabled:
         if not user:
-            return []
+            raise HTTPException(status_code=401, detail="Authentication required")
         stmt = stmt.where(Project.owner_id == user.id)
 
     result = await db.execute(stmt)

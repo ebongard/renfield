@@ -136,7 +136,7 @@ async def list_notes_route(
     stmt = select(Note).order_by(Note.updated_at.desc()).limit(limit)
     if settings.auth_enabled:
         if not user:
-            return []
+            raise HTTPException(status_code=401, detail="Authentication required")
         stmt = stmt.where(Note.owner_user_id == user.id)
     result = await db.execute(stmt)
     return [_to_response(n) for n in result.scalars().all()]

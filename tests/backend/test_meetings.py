@@ -1323,3 +1323,10 @@ class TestMeetingProjectPatch:
                 user=intruder, db=db_session,
             )
         assert exc.value.status_code == 404
+
+
+async def test_list_meetings_requires_auth_when_enabled(async_client, monkeypatch, tmp_path):
+    """Regression (pentest F1): unauth GET /api/meetings on auth-enabled must 401."""
+    _enable(monkeypatch, tmp_path, auth=True)
+    _override_user(None)
+    assert (await async_client.get("/api/meetings")).status_code == 401

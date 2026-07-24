@@ -255,3 +255,10 @@ async def test_list_reports_document_count(async_client, db_session, monkeypatch
     assert listing.status_code == 200
     row = next(p for p in listing.json() if p["id"] == created["id"])
     assert row["document_count"] == 2
+
+
+async def test_list_projects_requires_auth_when_enabled(async_client, monkeypatch):
+    """Regression (pentest F1): unauth GET /api/projects on auth-enabled must 401."""
+    _enable(monkeypatch, auth=True)
+    _override_user(None)
+    assert (await async_client.get("/api/projects")).status_code == 401

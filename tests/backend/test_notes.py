@@ -261,3 +261,11 @@ async def test_note_retrieval_finds_and_circle_filters(async_client, db_session,
 
     # A thin query returns nothing.
     assert await NoteRetrieval(db_session).search("", asker_id=None, top_k=10) == []
+
+
+async def test_list_notes_requires_auth_when_enabled(async_client, monkeypatch):
+    """Regression (pentest F1): unauth GET /api/notes on an auth-enabled instance
+    must 401, not 200+[] (missing-auth enforcement)."""
+    _enable(monkeypatch, auth=True)
+    _override_user(None)
+    assert (await async_client.get("/api/notes")).status_code == 401

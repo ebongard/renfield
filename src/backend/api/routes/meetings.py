@@ -270,7 +270,7 @@ async def list_meetings(
     stmt = select(Meeting).order_by(Meeting.created_at.desc()).limit(limit)
     if settings.auth_enabled:
         if not user:
-            return []
+            raise HTTPException(status_code=401, detail="Authentication required")
         stmt = stmt.where(Meeting.owner_user_id == user.id)
 
     result = await db.execute(stmt)
