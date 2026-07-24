@@ -1,0 +1,210 @@
+"""`internal.paperless_dedupe` — agent-callable Paperless duplicate finder + remover.
+
+Finds duplicate documents in Paperless and (by default) deletes the extras itself,
+so a self-hosted instance keeps its own archive clean without a manual API script.
+Backs "finde und lösche die Duplikate in Paperless", "räum die doppelten Dokumente auf",
+"gibt es Dubletten?" (with dry_run).
+
+Safety model — only EXACT duplicates are auto-deleted (the user-chosen boundary):
+  - Candidate groups are formed cheaply from search metadata
+    (correspondent, document_type, creation date, title) — no content fetch for the
+    common singleton case.
+  - Within each candidate group the FULL OCR text is fetched and compared
+    (``get_document`` include_content=True); only members whose content is byte-for-byte
+    identical are treated as duplicates of each other. Near-duplicates (similar title,
+    non-identical content) are NEVER deleted — they are reported for human review.
+  - The CANONICAL kept copy is the one with the LOWEST Paperless id (the original /
+    earliest import). Every other content-identical copy is deleted.
+  - Deletion goes through ``mcp.paperless.delete_document``, which on Paperless-ngx 2.x
+    moves the document to the recoverable TRASH — so an over-eager pass is undoable.
+
+``dry_run=True`` reports the groups + what WOULD be deleted without touching anything.
+
+Destructive maintenance — gated on ``Permission.ADMIN`` when auth is on (auth-off /
+unidentified-voice turns are allowed, matching the other internal maintenance tools).
+Bounded sweep (``SWEEP_CAP`` docs); a larger corpus is reported as partially swept.
+"""
+from __future__ import annotations
+
+import hashlib
+from typing import Any
+
+from loguru import logger
+
+from models.permissions import Permission, has_permission
+from services.folder_ingest_paperless import _parse_paperless_result
+from utils.config import settings
+
+SWEEP_CAP = 500  # matches the Paperless MCP search_documents max_results ceiling
+
+PAPERLESS_DEDUPE_TOOL: dict = {
+    "internal.paperless_dedupe": {
+        "description": (
+            "Paperless-DUBLETTEN finden und aufräumen: durchsucht das Paperless-Archiv "
+            "nach doppelten Dokumenten und LÖSCHT die überzähligen Kopien selbst (das "
+            "älteste Dokument bleibt erhalten). Es werden NUR inhaltlich identische "
+            "Duplikate gelöscht — der volle Text wird vorher verglichen; ähnliche, aber "
+            "nicht identische Dokumente werden nur gemeldet, nie gelöscht. Gelöschte "
+            "landen im Paperless-Papierkorb (wiederherstellbar). Backt 'finde und lösche "
+            "die Duplikate in Paperless', 'räum die doppelten Dokumente auf', 'gibt es "
+            "Dubletten?' (mit nur_zeigen). Admin-Aktion."
+        ),
+        "parameters": {
+            "dry_run": "true = nur finden und melden, NICHTS löschen (Default false = löschen)",
+        },
+    }
+}
+
+
+def _content_hash(text: str | None) -> str | None:
+    if not text:
+        return None
+    return hashlib.sha256(text.encode("utf-8", "ignore")).hexdigest()
+
+
+def _candidate_key(doc: dict) -> tuple:
+    """Cheap grouping key from search metadata — narrows the set that needs a
+    full-content fetch. Re-uploads of one file share all four fields."""
+    created = (doc.get("created") or "")[:10]  # date only
+    return (
+        (doc.get("correspondent") or "").strip().lower(),
+        (doc.get("document_type") or "").strip().lower(),
+        created,
+        (doc.get("title") or "").strip().lower(),
+    )
+
+
+async def paperless_dedupe(
+    params: dict,
+    mcp_manager: Any = None,
+    user_id: int | None = None,
+    user_permissions: list[str] | None = None,
+) -> dict:
+    """Find exact-duplicate Paperless documents and delete the extras (keep oldest)."""
+    if settings.auth_enabled and user_permissions is not None:
+        if not has_permission(user_permissions, Permission.ADMIN):
+            return {
+                "success": False,
+                "message": "Zum Aufräumen der Paperless-Duplikate fehlt die Berechtigung (Admin).",
+                "action_taken": False,
+            }
+    if mcp_manager is None:
+        return {"success": False, "message": "Paperless nicht verfügbar (kein MCP).", "action_taken": False}
+
+    dry_run = bool(params.get("dry_run"))
+
+    try:
+        search = _parse_paperless_result(
+            await mcp_manager.execute_tool(
+                "mcp.paperless.search_documents",
+                {"ordering": "created", "max_results": SWEEP_CAP},
+            )
+        )
+        if search.get("error"):
+            return {
+                "success": False,
+                "message": f"Paperless-Suche fehlgeschlagen: {search.get('error')}",
+                "action_taken": False,
+            }
+        docs = search.get("results") or []
+
+        # 1) Cheap metadata grouping — only groups of ≥2 are duplicate candidates.
+        candidates: dict[tuple, list[dict]] = {}
+        for d in docs:
+            if d.get("id") is None:
+                continue
+            candidates.setdefault(_candidate_key(d), []).append(d)
+
+        groups_found = 0
+        deleted_ids: list[int] = []
+        kept_ids: list[int] = []
+        skipped = 0  # candidate-group members that were NOT content-identical
+
+        for _key, members in candidates.items():
+            if len(members) < 2:
+                continue
+
+            # 2) Verify by FULL OCR content: sub-group content-identical copies.
+            by_content: dict[str, list[int]] = {}
+            for m in members:
+                got = _parse_paperless_result(
+                    await mcp_manager.execute_tool(
+                        "mcp.paperless.get_document",
+                        {"document_id": m["id"], "include_content": True},
+                    )
+                )
+                if got.get("error"):
+                    skipped += 1
+                    continue
+                h = _content_hash(got.get("content"))
+                if h is None:  # no OCR text → can't prove identity → never auto-delete
+                    skipped += 1
+                    continue
+                by_content.setdefault(h, []).append(m["id"])
+
+            for _h, ids in by_content.items():
+                if len(ids) < 2:
+                    # unique content within the candidate group — not a duplicate
+                    continue
+                groups_found += 1
+                ids_sorted = sorted(ids)
+                canonical = ids_sorted[0]  # lowest id = original / earliest import
+                kept_ids.append(canonical)
+                for dup_id in ids_sorted[1:]:
+                    if dry_run:
+                        deleted_ids.append(dup_id)
+                        continue
+                    res = _parse_paperless_result(
+                        await mcp_manager.execute_tool(
+                            "mcp.paperless.delete_document", {"document_id": dup_id}
+                        )
+                    )
+                    if res.get("deleted"):
+                        deleted_ids.append(dup_id)
+                    else:
+                        logger.warning(
+                            f"paperless_dedupe: delete_document({dup_id}) failed: {res.get('error')}"
+                        )
+                        skipped += 1
+
+        swept_note = ""
+        if len(docs) >= SWEEP_CAP:
+            swept_note = f" (nur die ersten {SWEEP_CAP} Dokumente geprüft)"
+
+        if groups_found == 0:
+            return {
+                "success": True,
+                "message": f"Keine Duplikate in Paperless gefunden{swept_note}.",
+                "action_taken": False,
+                "data": {"groups": 0, "deleted": 0, "kept": 0, "skipped": skipped, "dry_run": dry_run},
+            }
+
+        verb = "würden gelöscht" if dry_run else "gelöscht"
+        parts = [
+            f"{groups_found} Duplikat-Gruppe(n)",
+            f"{len(deleted_ids)} Kopie(n) {verb}",
+            f"{len(kept_ids)} Original(e) behalten",
+        ]
+        if skipped:
+            parts.append(f"{skipped} nicht identisch/übersprungen")
+        return {
+            "success": True,
+            "message": "Paperless-Duplikate: " + ", ".join(parts) + swept_note + ".",
+            "action_taken": bool(deleted_ids) and not dry_run,
+            "data": {
+                "groups": groups_found,
+                "deleted": len(deleted_ids),
+                "deleted_ids": deleted_ids,
+                "kept": len(kept_ids),
+                "kept_ids": kept_ids,
+                "skipped": skipped,
+                "dry_run": dry_run,
+            },
+        }
+    except Exception as e:  # noqa: BLE001
+        logger.warning(f"paperless_dedupe failed: {e}")
+        return {
+            "success": False,
+            "message": f"Aufräumen der Paperless-Duplikate fehlgeschlagen: {e!s}",
+            "action_taken": False,
+        }

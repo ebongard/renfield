@@ -106,6 +106,15 @@ class ActionExecutor:
                 user_id=user_id, user_permissions=user_permissions,
             )
 
+        # Destructive maintenance: find exact-duplicate Paperless docs and delete
+        # the extras (keep oldest). Needs the live mcp_manager; ADMIN-gated.
+        if intent == "internal.paperless_dedupe":
+            from services.paperless_dedupe_tool import paperless_dedupe
+            return await paperless_dedupe(
+                parameters, mcp_manager=self.mcp_manager,
+                user_id=user_id, user_permissions=user_permissions,
+            )
+
         # Read-only: list completed docs that have no chunks, BY NAME.
         if intent == "internal.list_chunkless_documents":
             from services.kb_maintenance_tool import list_chunkless_documents
