@@ -113,3 +113,41 @@ async def test_cancel_during_boot_run_terminates_cleanly():
     except asyncio.CancelledError:
         pass
     assert task.done()
+
+
+# ---------------------------------------------------------------------------
+# Paperless metadata backfill reconciler — config gating (self-populating meta)
+# ---------------------------------------------------------------------------
+
+class _App:
+    class state:  # noqa: N801 - mimic Starlette app.state
+        mcp_manager = object()
+
+
+def test_metadata_reconciler_scheduled_when_enabled(monkeypatch):
+    calls = []
+    monkeypatch.setattr(lifecycle, "_spawn_periodic_task", lambda **kw: calls.append(kw))
+    monkeypatch.setattr(lifecycle.settings, "folder_ingest_to_paperless", True)
+    monkeypatch.setattr(lifecycle.settings, "paperless_metadata_backfill_enabled", True)
+    lifecycle._schedule_paperless_metadata_reconciler(_App())
+    assert calls and calls[0]["name"] == "Paperless metadata backfill"
+    assert calls[0]["run_at_boot"] is True
+
+
+def test_metadata_reconciler_skipped_when_backfill_off(monkeypatch):
+    calls = []
+    monkeypatch.setattr(lifecycle, "_spawn_periodic_task", lambda **kw: calls.append(kw))
+    monkeypatch.setattr(lifecycle.settings, "folder_ingest_to_paperless", True)
+    monkeypatch.setattr(lifecycle.settings, "paperless_metadata_backfill_enabled", False)
+    lifecycle._schedule_paperless_metadata_reconciler(_App())
+    assert calls == []
+
+
+def test_metadata_reconciler_skipped_when_paperless_off(monkeypatch):
+    calls = []
+    monkeypatch.setattr(lifecycle, "_spawn_periodic_task", lambda **kw: calls.append(kw))
+    monkeypatch.setattr(lifecycle.settings, "folder_ingest_to_paperless", False)
+    monkeypatch.setattr(lifecycle.settings, "email_ingest_to_paperless", False)
+    monkeypatch.setattr(lifecycle.settings, "paperless_metadata_backfill_enabled", True)
+    lifecycle._schedule_paperless_metadata_reconciler(_App())
+    assert calls == []

@@ -684,6 +684,54 @@ def _schedule_paperless_reconciler(app):
     )
 
 
+def _schedule_paperless_metadata_reconciler(app):
+    """Automatic Paperless metadata backfill — the instance self-populates the
+    fields, no human/chat trigger needed.
+
+    Periodically gap-fills correspondent/document_type/tags on already-filed docs
+    whose Paperless fields are still empty (e.g. the backlog filed before the
+    taxonomy-autocreate + resolve-or-create existed). Reuses the backend-SAFE
+    reextract tool (services/paperless_reextract_tool): it re-derives metadata from
+    the document's ALREADY-STORED chunk text (no Docling → no backend OOM), never
+    holds a DB connection across the MCP loop, and fetches the taxonomy once. Runs
+    when folder- OR email-ingest→Paperless is on and the backfill is enabled.
+    """
+    if not (settings.folder_ingest_to_paperless or settings.email_ingest_to_paperless):
+        return
+    if not settings.paperless_metadata_backfill_enabled:
+        return
+
+    async def _tick():
+        from services.paperless_reextract_tool import reextract_paperless_metadata
+
+        mgr = getattr(app.state, "mcp_manager", None)
+        if mgr is None:
+            logger.debug("Paperless metadata backfill: mcp_manager not ready; skipping tick")
+            return
+        # user_permissions=None → the platform's auth-off/system-context path
+        # (a scheduled tick has no user), so the RAG_MANAGE gate is not applied.
+        res = await reextract_paperless_metadata(
+            {"limit": settings.paperless_metadata_backfill_batch},
+            mcp_manager=mgr,
+            user_permissions=None,
+        )
+        data = (res or {}).get("data") or {}
+        if data.get("fixed"):
+            logger.info(f"Paperless metadata backfill: {res.get('message')}")
+
+    _spawn_periodic_task(
+        name="Paperless metadata backfill",
+        interval=settings.paperless_metadata_backfill_interval,
+        work=_tick,
+        started_msg=(
+            f"Paperless-Metadaten-Backfill gestartet "
+            f"(interval={settings.paperless_metadata_backfill_interval}s, "
+            f"batch={settings.paperless_metadata_backfill_batch})"
+        ),
+        run_at_boot=True,
+    )
+
+
 def _schedule_skill_shadow_log_cleanup():
     """Prune `skill_would_have_injected_log` rows older than the
     configured retention.
@@ -1249,6 +1297,7 @@ async def lifespan(app: "FastAPI"):
     _schedule_skill_shadow_log_cleanup()
     _schedule_paperless_sweepers(app)
     _schedule_paperless_reconciler(app)
+    _schedule_paperless_metadata_reconciler(app)
     _schedule_obligation_calendar_sync(app)
     _schedule_kiosk_weather_refresh(app)
     _schedule_kiosk_internal_health_refresh(app)
