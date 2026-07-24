@@ -54,20 +54,35 @@ spec:
       containers:
         - name: redis
           image: redis:7-alpine
-          command: ["redis-server", "--appendonly", "yes", "--dir", "/data"]
+          # requirepass from the redis-auth Secret (pentest F6). Empty/absent
+          # password => passwordless (legacy/dark-safe), so a cluster without the
+          # Secret still boots unchanged. sh -c so $REDIS_PASSWORD expands.
+          command:
+            - sh
+            - -c
+            - exec redis-server --appendonly yes --dir /data --requirepass "$REDIS_PASSWORD"
+          env:
+            - name: REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: redis-auth
+                  key: REDIS_PASSWORD
+                  optional: true
           ports:
             - containerPort: 6379
           volumeMounts:
             - name: data
               mountPath: /data
+          # Probes auth with the password when set; fall back to unauth ping when
+          # passwordless, so the probe works in both modes.
           livenessProbe:
             exec:
-              command: ["redis-cli", "ping"]
+              command: ["sh", "-c", "redis-cli -a \"$REDIS_PASSWORD\" --no-auth-warning ping || redis-cli ping"]
             initialDelaySeconds: 10
             periodSeconds: 10
           readinessProbe:
             exec:
-              command: ["redis-cli", "ping"]
+              command: ["sh", "-c", "redis-cli -a \"$REDIS_PASSWORD\" --no-auth-warning ping || redis-cli ping"]
             initialDelaySeconds: 5
             periodSeconds: 5
           resources:

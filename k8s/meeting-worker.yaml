@@ -71,6 +71,8 @@ spec:
             # Private per-instance config (out of public git); optional so the
             # pod boots without it. See k8s/renfield-env-private.secret.example.yaml.
             - secretRef: {name: renfield-env-private, optional: true}
+            # Redis auth (pentest F6) — REDIS_URL with password overrides the ConfigMap.
+            - secretRef: {name: redis-auth, optional: true}
           env:
             - name: POD_NAME
               valueFrom: {fieldRef: {fieldPath: metadata.name}}

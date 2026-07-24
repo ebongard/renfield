@@ -74,6 +74,7 @@ secrets/
 # Real private-config Secret (mailbox/weather/twin values) — NEVER public git.
 # Only the redacted .example.yaml is committed. See k8s/configmap.yaml header.
 k8s/renfield-env-private.secret.yaml
+k8s/redis-auth.secret.yaml
 k8s/secrets.yaml
 # Real private registry overlay (maps the placeholder registry -> real host) — NEVER public git.
 # Only kustomization.yaml.example is committed. See its header.

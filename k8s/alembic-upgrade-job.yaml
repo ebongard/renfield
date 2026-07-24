@@ -24,6 +24,9 @@ spec:
     metadata:
       labels:
         app.kubernetes.io/part-of: renfield
+        # Lets the redis/postgres NetworkPolicy (redis-postgres-netpol.yaml) admit
+        # this backend-image Job to Postgres for migrations.
+        app.kubernetes.io/component: backend-job
     spec:
       restartPolicy: OnFailure
       imagePullSecrets:

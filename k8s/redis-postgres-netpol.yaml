@@ -1,0 +1,53 @@
+# NetworkPolicy — restrict who can reach the Redis + Postgres data stores
+# (pentest F6: no NetworkPolicies existed, so ANY pod in the namespace — incl. an
+# MCP/sidecar — could reach passwordless Redis and the DB port). Defense-in-depth
+# against lateral movement; complements the Redis password (redis-auth.secret).
+#
+# Ingress to redis/postgres is allowed ONLY from the renfield backend-image
+# workloads that legitimately use them. Everything else in the namespace (MCP
+# servers, frontend, paperless, etc.) is denied at the network layer.
+#
+# NB: requires a CNI that enforces NetworkPolicy (Calico here — see
+# private_k8s/calico-ippool.yaml). Egress is not restricted (kept minimal).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: redis-allow-app-only
+  namespace: renfield
+  labels:
+    app.kubernetes.io/part-of: renfield
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: redis
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector: {matchLabels: {app.kubernetes.io/name: backend}}
+        - podSelector: {matchLabels: {app.kubernetes.io/name: document-worker}}
+        - podSelector: {matchLabels: {app.kubernetes.io/name: meeting-worker}}
+        # alembic-upgrade Job + any backend-image job carry this shared label.
+        - podSelector: {matchLabels: {app.kubernetes.io/part-of: renfield, app.kubernetes.io/component: backend-job}}
+      ports:
+        - {protocol: TCP, port: 6379}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: postgres-allow-app-only
+  namespace: renfield
+  labels:
+    app.kubernetes.io/part-of: renfield
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: postgres
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector: {matchLabels: {app.kubernetes.io/name: backend}}
+        - podSelector: {matchLabels: {app.kubernetes.io/name: document-worker}}
+        - podSelector: {matchLabels: {app.kubernetes.io/name: meeting-worker}}
+        - podSelector: {matchLabels: {app.kubernetes.io/part-of: renfield, app.kubernetes.io/component: backend-job}}
+      ports:
+        - {protocol: TCP, port: 5432}

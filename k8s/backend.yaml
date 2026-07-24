@@ -100,6 +100,12 @@ spec:
             - secretRef:
                 name: renfield-env-private
                 optional: true
+            # Redis auth (pentest F6). Its REDIS_URL (with password) overrides the
+            # public ConfigMap's passwordless redis://redis:6379. optional so a
+            # cluster without it stays passwordless (legacy/dark-safe).
+            - secretRef:
+                name: redis-auth
+                optional: true
           env:
             # Loader prefers this RO mounted key when present (see the
             # federation-identity volumeMount below); falls back to generating at

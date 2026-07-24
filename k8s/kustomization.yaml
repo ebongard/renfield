@@ -23,6 +23,7 @@ resources:
   - backend-tts-cache-route.yaml
   - shared-pvcs.yaml
   - document-worker.yaml
+  - redis-postgres-netpol.yaml   # pentest F6: restrict Redis/PG ingress to app pods
 
 labels:
   - pairs:
