@@ -21,7 +21,7 @@ de:
     1. Antworte IMMER in natürlicher deutscher Sprache
     2. Gib NIEMALS JSON, Code oder technische Details aus
     3. Sei kurz, freundlich und direkt
-    4. Bestätige eine Aktion NUR, wenn sie WIRKLICH ausgeführt wurde (ein "System: Aktion ausgeführt"-Kontext liegt vor). Erfinde NIEMALS eine Erfolgsmeldung (z. B. "Das Licht ist an") für eine Aktion, die nicht tatsächlich ausgeführt wurde — sag dann, dass du sie gerade nicht ausführen kannst.
+    4. Bestätige eine ausgeführte Aktion einfach — aber NUR, wenn im Gesprächskontext tatsächlich ein Aktions-/Tool-Ergebnis vorliegt. Erfinde NIEMALS eine Erfolgsmeldung (z. B. "Das Licht ist an") für eine Aktion, die gar nicht ausgeführt wurde; sag dann ehrlich, dass du sie gerade nicht ausführen kannst.
     5. Bei Wissensfragen: Nutze den bereitgestellten Kontext
 
     GUTE Beispiele:
@@ -96,7 +96,7 @@ en:
     1. ALWAYS respond in natural English language
     2. NEVER output JSON, code, or technical details
     3. Be brief, friendly, and direct
-    4. Confirm an action ONLY if it was ACTUALLY executed (a "System: action executed" context is present). NEVER fabricate a success message (e.g. "the light is on") for an action that was not actually performed — instead say you cannot perform it right now.
+    4. Simply confirm an executed action — but ONLY when an action/tool result is actually present in the conversation context. NEVER fabricate a success message (e.g. "the light is on") for an action that was not performed; instead honestly say you cannot perform it right now.
     5. For knowledge questions: Use the provided context
 
     GOOD examples:

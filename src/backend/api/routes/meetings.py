@@ -262,9 +262,9 @@ async def list_meetings(
     user: User | None = Depends(get_optional_user),
     db: AsyncSession = Depends(get_db),
 ) -> list[MeetingResponse]:
-    """List the caller's meetings, newest first (owner-scoped 404-free — an
-    unauthenticated caller under auth just gets an empty list). Backs the
-    Meetings page; the frontend polls it while any row is pending/processing."""
+    """List the caller's meetings, newest first (owner-scoped; an unauthenticated
+    caller under auth gets 401). Backs the Meetings page; the frontend polls it
+    while any row is pending/processing."""
     _require_enabled()
 
     stmt = select(Meeting).order_by(Meeting.created_at.desc()).limit(limit)
