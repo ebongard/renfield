@@ -56,7 +56,7 @@ roles:
       de: "Dokumente und E-Mail: Suche in Wissensdatenbank und Paperless, Download, Versand; SOWIE Verwaltung & Status der Dokument-VERARBEITUNG selbst: Verarbeitungsstatus/Rückstau der Indexierung, wie viele Dokumente KEINE Chunks haben / leer oder unvollständig indexiert sind, Dokumente ohne Chunks NEU INDEXIEREN / neu einlesen / reparieren"
       en: "Documents and email: search knowledge base and Paperless, download, send; AND administration & status of the document PROCESSING itself: indexing status/backlog, how many documents have NO chunks / are empty or incompletely indexed, RE-INDEX documents without chunks"
     mcp_servers: [paperless, email]
-    internal_tools: [internal.knowledge_search, internal.forward_attachment_to_paperless, internal.render_table, internal.render_list, internal.ingest_status, internal.reindex_documents, internal.list_chunkless_documents]
+    internal_tools: [internal.knowledge_search, internal.forward_attachment_to_paperless, internal.render_table, internal.render_list, internal.ingest_status, internal.reindex_documents, internal.list_chunkless_documents, internal.system_health, internal.reextract_paperless_metadata]
     max_steps: 8
     prompt_key: agent_prompt_documents
 

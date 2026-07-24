@@ -21,7 +21,10 @@ from services.folder_ingest_paperless import (
     _parse_paperless_result,
     make_paperless_leg,
     resolve_correspondent_from_metadata,
+    resolve_document_type_from_metadata,
     resolve_or_create_correspondent,
+    resolve_or_create_taxonomy,
+    resolve_tags_from_metadata,
 )
 from services.paperless_metadata_extractor import (
     ExtractionResult,
@@ -570,3 +573,101 @@ async def test_metadata_dry_run_threads_create_flag(monkeypatch):
     out = await resolve_correspondent_from_metadata(mgr, meta, create=False)
     assert out == "regfish GmbH"
     assert "mcp.paperless.create_correspondent" not in _created_tool_names(mgr)
+
+
+# ---------------------------------------------------------------------------
+# document_type + tag resolve-or-create (self-populating taxonomy) — 2026-07:
+# extends the correspondent resolve-or-create to doc_type/tags so a fresh/wiped
+# Paperless self-populates these fields instead of leaving them empty.
+# ---------------------------------------------------------------------------
+
+def _tax_mgr(list_tool, names, create_tool, *, create_inner=None):
+    """Mock mcp_manager dispatching one list_* + one create_* taxonomy tool."""
+    create_inner = create_inner if create_inner is not None else {"id": 999, "name": "_created_"}
+
+    async def _execute(tool, params):
+        if tool == list_tool:
+            return _envelope({"items": [{"id": i + 1, "name": n} for i, n in enumerate(names)]})
+        if tool == create_tool:
+            inner = dict(create_inner)
+            if inner.get("name") == "_created_":
+                inner["name"] = params["name"]
+            return _envelope(inner)
+        raise AssertionError(f"unexpected tool {tool}")
+
+    mgr = MagicMock()
+    mgr.execute_tool = AsyncMock(side_effect=_execute)
+    return mgr
+
+
+async def test_taxonomy_document_type_genuinely_new_creates(monkeypatch):
+    _patch_fuzzy(monkeypatch, strict=None, loose=[])
+    mgr = _tax_mgr("mcp.paperless.list_document_types", ["Vertrag"],
+                   "mcp.paperless.create_document_type", create_inner={"id": 5, "name": "Rechnung"})
+    out = await resolve_or_create_taxonomy(mgr, "document_type", "Rechnung")
+    assert out == "Rechnung"
+    assert "mcp.paperless.create_document_type" in _created_tool_names(mgr)
+
+
+async def test_taxonomy_strong_match_reuses_never_creates(monkeypatch):
+    _patch_fuzzy(monkeypatch, strict="Rechnung", loose=[])
+    mgr = _tax_mgr("mcp.paperless.list_tags", ["Rechnung"], "mcp.paperless.create_tag")
+    out = await resolve_or_create_taxonomy(mgr, "tag", "rechnung")
+    assert out == "Rechnung"
+    assert "mcp.paperless.create_tag" not in _created_tool_names(mgr)
+
+
+async def test_taxonomy_fuzzy_near_skips(monkeypatch):
+    _patch_fuzzy(monkeypatch, strict=None, loose=["Rechnungen"])
+    mgr = _tax_mgr("mcp.paperless.list_document_types", ["Rechnungen"],
+                   "mcp.paperless.create_document_type")
+    out = await resolve_or_create_taxonomy(mgr, "document_type", "Rechnung")
+    assert out is None
+    assert "mcp.paperless.create_document_type" not in _created_tool_names(mgr)
+
+
+async def test_document_type_exact_hit_used_directly(monkeypatch):
+    # metadata.document_type set (exact) → return it, no MCP call needed.
+    meta = PaperlessMetadata(document_type="Gehaltsabrechnung")
+    mgr = MagicMock(); mgr.execute_tool = AsyncMock()
+    out = await resolve_document_type_from_metadata(mgr, meta)
+    assert out == "Gehaltsabrechnung"
+    mgr.execute_tool.assert_not_called()
+
+
+async def test_document_type_new_from_resolution_creates(monkeypatch):
+    _patch_fuzzy(monkeypatch, strict=None, loose=[])
+    meta = PaperlessMetadata(
+        resolutions=[FieldResolution(field="document_type", extracted_value="Mahnung")]
+    )
+    mgr = _tax_mgr("mcp.paperless.list_document_types", ["Vertrag"],
+                   "mcp.paperless.create_document_type", create_inner={"id": 7, "name": "Mahnung"})
+    out = await resolve_document_type_from_metadata(mgr, meta)
+    assert out == "Mahnung"
+
+
+async def test_document_type_flag_off_is_resolve_only(monkeypatch):
+    import utils.config as cfg_mod
+    monkeypatch.setattr(cfg_mod.settings, "paperless_autocreate_document_type", False)
+    meta = PaperlessMetadata(
+        resolutions=[FieldResolution(field="document_type", extracted_value="Mahnung")]
+    )
+    mgr = MagicMock(); mgr.execute_tool = AsyncMock()
+    out = await resolve_document_type_from_metadata(mgr, meta)
+    assert out is None
+    mgr.execute_tool.assert_not_called()
+
+
+async def test_tags_exact_plus_created_deduped(monkeypatch):
+    _patch_fuzzy(monkeypatch, strict=None, loose=[])
+    meta = PaperlessMetadata(
+        tags=["Steuer"],
+        resolutions=[
+            FieldResolution(field="tag", extracted_value="Versicherung"),
+            FieldResolution(field="tag", extracted_value="Steuer"),  # dup of exact → collapse
+        ],
+    )
+    mgr = _tax_mgr("mcp.paperless.list_tags", [], "mcp.paperless.create_tag")
+    out = await resolve_tags_from_metadata(mgr, meta)
+    assert "Steuer" in out and "Versicherung" in out
+    assert len(out) == len(set(out))  # de-duplicated

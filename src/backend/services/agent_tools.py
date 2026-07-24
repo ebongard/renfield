@@ -185,11 +185,13 @@ class AgentToolRegistry:
         from services.kb_maintenance_tool import KB_MAINTENANCE_TOOLS
         from services.knowledge_tool import KNOWLEDGE_TOOL
         from services.memory_list_tool import MEMORY_LIST_TOOL
+        from services.paperless_reextract_tool import PAPERLESS_REEXTRACT_TOOL
+        from services.system_health_tool import SYSTEM_HEALTH_TOOL
         from services.widget_tools import WIDGET_TOOLS
 
         platform_tools: dict = {
             **KNOWLEDGE_TOOL, **MEMORY_LIST_TOOL, **CHAT_UPLOAD_TOOLS, **WIDGET_TOOLS,
-            **KB_MAINTENANCE_TOOLS,
+            **KB_MAINTENANCE_TOOLS, **SYSTEM_HEALTH_TOOL, **PAPERLESS_REEXTRACT_TOOL,
         }
 
         for name, definition in platform_tools.items():

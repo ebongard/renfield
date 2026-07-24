@@ -848,6 +848,12 @@ FOLDER_INGEST_NOTIFY_ON_FILED=true    # Bestätigungs-Notification nach Ablage
 # Legacy (DB-autoritativ, Admin-generiert via POST /api/folder-ingest/token).
 FOLDER_INGEST_TOKEN=
 EMAIL_INGEST_TOKEN=                    # dito für den email-ingest-MCP (email_ingest.token)
+# Paperless-Taxonomie selbst-befüllen: legt Dokumenttyp/Tags per resolve-or-create an
+# (wie Korrespondenten), statt nur gegen bestehende zu matchen — so füllen sich die
+# Felder auf einer frischen/gewipten Paperless-Instanz selbst. Fuzzy-Guardrail gegen
+# Near-Duplikate. false = Legacy (nur bestehende Taxonomie zuweisen).
+PAPERLESS_AUTOCREATE_DOCUMENT_TYPE=true
+PAPERLESS_AUTOCREATE_TAGS=true
 
 # Async Paperless-Reconciler (Design Z): der Push legt paperless_state='pending' an
 # und gibt sofort zurück; das eigentliche Ablegen läuft im document-worker

@@ -778,6 +778,14 @@ class Settings(BaseSettings):
     folder_ingest_target_user: str = ""  # owner username/id; empty → admin/first user
     folder_ingest_default_tier: int = Field(default=0, ge=0, le=4)  # circle tier at create
     folder_ingest_to_paperless: bool = True
+    # Auto-populate the Paperless taxonomy: when on (default), the filing leg
+    # resolve-OR-CREATEs document types / tags (like it already does for
+    # correspondents) instead of only matching against the pre-curated taxonomy —
+    # so on a fresh or wiped Paperless the fields self-populate instead of staying
+    # empty. The fuzzy guardrail still prevents near-duplicates. Off = legacy
+    # resolve-only (assign existing taxonomy only).
+    paperless_autocreate_document_type: bool = True
+    paperless_autocreate_tags: bool = True
     # Authoritative push token (optional). When set, the boot credential-reconciler
     # (services/credential_reconciler) seeds the DB SystemSetting from this value, so
     # a DB wipe SELF-HEALS the folder-ingest push token on next boot instead of

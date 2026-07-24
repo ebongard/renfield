@@ -88,6 +88,24 @@ class ActionExecutor:
             from services.kb_maintenance_tool import ingest_status
             return await ingest_status(parameters, user_id=user_id)
 
+        # Read-only whole-system self-diagnosis ("was ist kaputt?"). Needs the LIVE
+        # mcp_manager for fleet health; ADMIN-gated so user_permissions is injected.
+        if intent == "internal.system_health":
+            from services.system_health_tool import system_health
+            return await system_health(
+                parameters, mcp_manager=self.mcp_manager,
+                user_id=user_id, user_permissions=user_permissions,
+            )
+
+        # Write/maintenance: re-extract + gap-fill Paperless metadata on filed docs.
+        # Needs the live mcp_manager (paperless tools); RAG_MANAGE-gated.
+        if intent == "internal.reextract_paperless_metadata":
+            from services.paperless_reextract_tool import reextract_paperless_metadata
+            return await reextract_paperless_metadata(
+                parameters, mcp_manager=self.mcp_manager,
+                user_id=user_id, user_permissions=user_permissions,
+            )
+
         # Read-only: list completed docs that have no chunks, BY NAME.
         if intent == "internal.list_chunkless_documents":
             from services.kb_maintenance_tool import list_chunkless_documents

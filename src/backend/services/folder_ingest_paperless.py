@@ -142,6 +142,128 @@ async def resolve_or_create_correspondent(
     return None
 
 
+# ---------------------------------------------------------------------------
+# Document-type + tag resolve-or-create (mirror of the correspondent path).
+# Same guardrail: strong-fuzzy match in the FULL taxonomy → reuse; loose-near →
+# skip (don't auto-create a near-duplicate); genuinely new → create. Extends the
+# "resolve-or-create" behaviour correspondents already had to document_type/tags,
+# so on a FRESH (or wiped) Paperless the taxonomy self-populates instead of the
+# fields staying empty (the 2026-07 reset left doc_type/tags blank because the
+# extractor only RESOLVES against the pre-curated taxonomy, which the wipe cleared).
+# Config-gated (paperless_autocreate_document_type / _tags), default on.
+# ---------------------------------------------------------------------------
+
+_TAXONOMY_LIST_TOOL = {
+    "document_type": "mcp.paperless.list_document_types",
+    "tag": "mcp.paperless.list_tags",
+}
+_TAXONOMY_CREATE_TOOL = {
+    "document_type": "mcp.paperless.create_document_type",
+    "tag": "mcp.paperless.create_tag",
+}
+
+
+async def _fetch_taxonomy_names(mcp_manager, kind: str) -> list[str] | None:
+    """FULL Paperless list of names for ``kind`` (document_type/tag). None on
+    transport failure — the caller must then NOT guess (no auto-create half-blind)."""
+    parsed = _parse_paperless_result(
+        await mcp_manager.execute_tool(_TAXONOMY_LIST_TOOL[kind], {})
+    )
+    if parsed.get("error"):
+        return None
+    return [it["name"] for it in (parsed.get("items") or []) if it.get("name")]
+
+
+async def resolve_or_create_taxonomy(
+    mcp_manager, kind: str, extracted_value: str, *,
+    names: list[str] | None = None, create: bool = True,
+) -> str | None:
+    """Map a confidently-new extracted document_type/tag to a Paperless NAME the
+    upload can resolve, creating it ONLY when it has no fuzzy-near match in the
+    FULL taxonomy (same guardrail + matchers as resolve_or_create_correspondent)."""
+    value = (extracted_value or "").strip()
+    if not value:
+        return None
+    if names is None:
+        names = await _fetch_taxonomy_names(mcp_manager, kind)
+    if names is None:
+        return None  # couldn't read the taxonomy → don't risk a duplicate
+    from services.paperless_metadata_extractor import _fuzzy_match, _fuzzy_top_candidates
+
+    existing = _fuzzy_match(value, names)
+    if existing:
+        return existing
+    if _fuzzy_top_candidates(value, names):
+        return None  # fuzzy-near existing → don't auto-create
+    if not create:
+        return value  # dry-run preview
+    created = _parse_paperless_result(
+        await mcp_manager.execute_tool(_TAXONOMY_CREATE_TOOL[kind], {"name": value})
+    )
+    if created.get("error") == "already_exists":
+        return created.get("existing_name") or value
+    if created.get("id"):
+        logger.info(f"folder-ingest paperless: auto-created {kind} {value!r} (id={created.get('id')})")
+        return created.get("name") or value
+    logger.warning(f"folder-ingest paperless: create {kind} failed for {value!r}: {created.get('error')}")
+    return None
+
+
+async def resolve_document_type_from_metadata(
+    mcp_manager, metadata, *, names: list[str] | None = None, create: bool = True
+) -> str | None:
+    """Document-type NAME to file ``metadata`` under: the exact taxonomy hit if the
+    extractor found one, else resolve-or-create the first non-exact extracted type."""
+    from utils.config import settings
+
+    if metadata.document_type:
+        return metadata.document_type
+    if not (create and settings.paperless_autocreate_document_type):
+        return None
+    new_type = next(
+        (
+            r.extracted_value
+            for r in metadata.resolutions
+            if r.field == "document_type" and r.status != "exact" and r.extracted_value
+        ),
+        None,
+    )
+    if not new_type:
+        return None
+    return await resolve_or_create_taxonomy(mcp_manager, "document_type", new_type, names=names)
+
+
+async def resolve_tags_from_metadata(
+    mcp_manager, metadata, *, names: list[str] | None = None, create: bool = True
+) -> list[str]:
+    """Tag NAMES for ``metadata``: the exact-resolved tags PLUS resolve-or-created
+    ones for each non-exact extracted tag. De-duplicated, order-preserving."""
+    from utils.config import settings
+
+    result: list[str] = list(metadata.tags or [])
+    new_tags = [
+        r.extracted_value
+        for r in metadata.resolutions
+        if r.field == "tag" and r.status != "exact" and r.extracted_value
+    ]
+    # Only touch the Paperless taxonomy when there is actually a new tag to create
+    # — a doc with only exact-resolved (or no) tags makes ZERO MCP calls here.
+    if create and settings.paperless_autocreate_tags and new_tags:
+        if names is None:
+            names = await _fetch_taxonomy_names(mcp_manager, "tag")
+        for value in new_tags:
+            resolved = await resolve_or_create_taxonomy(
+                mcp_manager, "tag", value, names=names
+            )
+            if resolved:
+                result.append(resolved)
+                if names is not None and resolved not in names:
+                    names.append(resolved)  # so two new tags in one doc don't dup
+    # de-dup, preserve order
+    seen: set[str] = set()
+    return [t for t in result if not (t in seen or seen.add(t))]
+
+
 async def resolve_correspondent_from_metadata(
     mcp_manager, metadata, *, names: list[str] | None = None, create: bool = True
 ) -> str | None:
@@ -247,10 +369,22 @@ def make_paperless_leg(
                 correspondent = await resolve_correspondent_from_metadata(mcp_manager, m)
                 if correspondent:
                     upload_params["correspondent"] = correspondent
-                if m.document_type:
-                    upload_params["document_type"] = m.document_type
-                if m.tags:
-                    upload_params["tags"] = m.tags
+                # Resolve-or-create (like correspondent) so document_type/tags
+                # self-populate on a fresh/wiped Paperless instead of staying empty.
+                # Best-effort + isolated: a taxonomy hiccup here must NOT discard the
+                # already-resolved title/correspondent (fall through to upload them).
+                try:
+                    document_type = await resolve_document_type_from_metadata(mcp_manager, m)
+                    if document_type:
+                        upload_params["document_type"] = document_type
+                    tags = await resolve_tags_from_metadata(mcp_manager, m)
+                    if tags:
+                        upload_params["tags"] = tags
+                except Exception as tax_exc:  # noqa: BLE001 - taxonomy is best-effort
+                    logger.warning(
+                        f"paperless-leg: document_type/tags resolution failed for "
+                        f"doc {doc.id} (uploading with title/correspondent only): {tax_exc}"
+                    )
         except Exception as exc:  # noqa: BLE001 - extractor is best-effort
             logger.warning(
                 f"paperless-leg: extractor error for doc {doc.id} "
