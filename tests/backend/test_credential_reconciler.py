@@ -41,15 +41,18 @@ async def test_seeds_token_when_db_empty(db_session, monkeypatch):
 
 
 @pytest.mark.integration
-async def test_heals_diverged_token(db_session, monkeypatch):
-    """DB has a STALE token (the wipe/divergence case) → overwrite with authoritative."""
-    db_session.add(SystemSetting(key=SETTING_FOLDER_INGEST_TOKEN, value="stale-old"))
+async def test_preserves_nonempty_token_admin_rotation_not_reverted(db_session, monkeypatch):
+    """A NON-empty DB token is authoritative (an admin may have rotated it + updated
+    the MCP). The reconciler must NOT overwrite it from the stale env value — doing so
+    would revert the rotation and re-introduce the 403 it exists to prevent."""
+    db_session.add(SystemSetting(key=SETTING_FOLDER_INGEST_TOKEN, value="admin-rotated"))
     await db_session.commit()
-    monkeypatch.setattr(cr.settings, "folder_ingest_token", "authoritative-new")
+    monkeypatch.setattr(cr.settings, "folder_ingest_token", "stale-env-value")
     monkeypatch.setattr(cr.settings, "email_ingest_token", "")
     actions = await cr.reconcile_credentials()
-    assert await get_ingest_token(db_session, SETTING_FOLDER_INGEST_TOKEN) == "authoritative-new"
-    assert any("healed" in a for a in actions)
+    # unchanged — the rotation stands, no action taken
+    assert await get_ingest_token(db_session, SETTING_FOLDER_INGEST_TOKEN) == "admin-rotated"
+    assert actions == []
 
 
 @pytest.mark.integration

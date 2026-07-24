@@ -50,14 +50,19 @@ async def _reconcile_ingest_tokens() -> list[str]:
                 continue  # legacy DB-authoritative; nothing to reconcile
             try:
                 current = await get_ingest_token(db, key)
-                if current == desired:
+                # Seed ONLY when the DB token is empty (the wipe/fresh-install case).
+                # A NON-empty DB token is authoritative — an admin may have rotated it
+                # via POST /api/{folder,email}-ingest/token AND updated the MCP to match;
+                # overwriting it from the (now-stale) env would REVERT that rotation and
+                # re-introduce the 403 this reconciler exists to prevent. So we never
+                # touch a present token — we only fill an absent one.
+                if current:
                     continue
                 await set_ingest_token(db, key, desired)
-                what = "seeded (was empty)" if not current else "healed (diverged)"
-                actions.append(f"{label} token {what}")
+                actions.append(f"{label} token seeded (was empty)")
                 logger.warning(
-                    f"🔧 credential-reconciler: {label} token {what} from secret "
-                    "(DB token differed from the authoritative value — likely a wipe)"
+                    f"🔧 credential-reconciler: {label} token seeded from secret "
+                    "(DB token was empty — fresh install or DB wipe)"
                 )
             except Exception as e:  # noqa: BLE001 - never block startup
                 logger.warning(f"credential-reconciler: {label} check failed: {e}")
