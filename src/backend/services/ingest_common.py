@@ -41,6 +41,22 @@ async def generate_ingest_token(db: AsyncSession, key: str) -> str:
     return token
 
 
+async def set_ingest_token(db: AsyncSession, key: str, value: str) -> None:
+    """Upsert a SPECIFIC token value at ``key`` (vs generate_ which mints a random
+    one). Used by the boot credential-reconciler to seed the DB from the
+    authoritative secret so a DB wipe self-heals. No-op if already equal."""
+    existing = (
+        await db.execute(select(SystemSetting).where(SystemSetting.key == key))
+    ).scalar_one_or_none()
+    if existing:
+        if existing.value == value:
+            return
+        existing.value = value
+    else:
+        db.add(SystemSetting(key=key, value=value))
+    await db.commit()
+
+
 async def verify_ingest_token(db: AsyncSession, key: str, presented: str) -> bool:
     """Constant-time compare ``presented`` against the stored token at ``key``.
     False when none is configured (feature unprovisioned)."""

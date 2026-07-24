@@ -93,6 +93,18 @@ async def _init_database():
     logger.info("✅ Datenbank initialisiert")
 
 
+async def _reconcile_credentials_boot():
+    """Self-heal DB-stored integration tokens from their authoritative Secret
+    source at boot (services/credential_reconciler). No-op unless a token diverged
+    (e.g. after a DB wipe). Never blocks startup."""
+    try:
+        from services.credential_reconciler import reconcile_credentials
+
+        await reconcile_credentials()
+    except Exception as e:  # noqa: BLE001 - never block startup
+        logger.warning(f"credential-reconciler boot pass failed: {e}")
+
+
 async def _init_auth():
     """Initialize authentication system with default roles and admin user."""
     try:
@@ -1200,6 +1212,9 @@ async def lifespan(app: "FastAPI"):
     # Stage 1: Sequential (auth depends on database)
     await _init_database()
     await _init_auth()
+    # Self-heal DB-stored integration tokens from their authoritative Secret source
+    # so a DB wipe doesn't leave folder/email-ingest pushes 403ing (2026-07 incident).
+    await _reconcile_credentials_boot()
 
     # Stage 2: Independent services (parallel)
     await asyncio.gather(

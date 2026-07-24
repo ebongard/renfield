@@ -840,6 +840,14 @@ FOLDER_INGEST_TARGET_USER=            # Owner der auto-abgelegten Dokumente (Use
 FOLDER_INGEST_DEFAULT_TIER=0          # Circle-Tier beim Anlegen (0=self … 4=public)
 FOLDER_INGEST_TO_PAPERLESS=true       # zusätzlich in Paperless ablegen
 FOLDER_INGEST_NOTIFY_ON_FILED=true    # Bestätigungs-Notification nach Ablage
+# Autoritativer Push-Token (optional). Wenn gesetzt, seedet der Boot-Credential-
+# Reconciler (services/credential_reconciler.py) den DB-Token (SystemSetting
+# folder_ingest.token) aus diesem Wert — so heilt sich der Token nach einem DB-Wipe
+# beim nächsten Boot SELBST (statt vom MCP-Copy zu divergieren → Push-403). Muss dem
+# RENFIELD_INGEST_TOKEN des filesystem-MCP entsprechen (EIN Shared-Secret). Leer =
+# Legacy (DB-autoritativ, Admin-generiert via POST /api/folder-ingest/token).
+FOLDER_INGEST_TOKEN=
+EMAIL_INGEST_TOKEN=                    # dito für den email-ingest-MCP (email_ingest.token)
 
 # Async Paperless-Reconciler (Design Z): der Push legt paperless_state='pending' an
 # und gibt sofort zurück; das eigentliche Ablegen läuft im document-worker

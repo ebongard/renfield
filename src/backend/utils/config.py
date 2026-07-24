@@ -778,6 +778,14 @@ class Settings(BaseSettings):
     folder_ingest_target_user: str = ""  # owner username/id; empty → admin/first user
     folder_ingest_default_tier: int = Field(default=0, ge=0, le=4)  # circle tier at create
     folder_ingest_to_paperless: bool = True
+    # Authoritative push token (optional). When set, the boot credential-reconciler
+    # (services/credential_reconciler) seeds the DB SystemSetting from this value, so
+    # a DB wipe SELF-HEALS the folder-ingest push token on next boot instead of
+    # diverging from the MCP's copy (the 2026-07 reset incident: wipe cleared the
+    # DB token → MCP push 403). Must equal the filesystem MCP's RENFIELD_INGEST_TOKEN
+    # (share one secret). Empty = legacy DB-authoritative behavior (admin-generated
+    # token via POST /api/folder-ingest/token, no reconcile).
+    folder_ingest_token: str = ""
     folder_ingest_notify_on_filed: bool = True
 
     # Async Paperless reconciler (Design Z): folder/email-ingest stamp
@@ -842,6 +850,10 @@ class Settings(BaseSettings):
     email_ingest_enabled: bool = False
     email_ingest_to_paperless: bool = True
     email_ingest_mailboxes_json: str = ""
+    # Authoritative push token (optional) — see folder_ingest_token above. Seeds the
+    # DB email-ingest token on boot so a wipe self-heals it. Must equal the
+    # email-ingest MCP's RENFIELD_INGEST_TOKEN. Empty = legacy DB-authoritative.
+    email_ingest_token: str = ""
     # Paperless cold-start confirm ramp: the first N archives show a metadata
     # confirm; after N the system trusts itself and archives silently. 0 =
     # never confirm (always silent). Tunable without a code change.
