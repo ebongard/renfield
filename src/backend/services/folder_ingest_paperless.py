@@ -40,6 +40,16 @@ from models.database import (
 from services.folder_ingest import _PAPERLESS_SETTLED, IngestMeta, PaperlessLeg
 
 
+class PaperlessResolveError(Exception):
+    """A resolve-or-create FAILED (couldn't read the taxonomy, or the create call
+    errored) — as distinct from a legitimate ``None`` return (empty input or a
+    fuzzy-near guardrail skip). Only raised when a caller passes
+    ``raise_on_error=True`` (default off keeps the None-on-anything contract that
+    the folder-ingest / reextract / backfill callers rely on). Lets the audit's
+    ``_apply_fix`` tell "intentionally left unset" from "transiently failed" so it
+    doesn't report a dropped fix as applied."""
+
+
 def _parse_paperless_result(mcp_result: dict | None) -> dict:
     """Unwrap the MCPManager envelope to the paperless tool's own dict.
 
@@ -72,7 +82,8 @@ async def _fetch_correspondent_names(mcp_manager) -> list[str] | None:
 
 
 async def resolve_or_create_correspondent(
-    mcp_manager, extracted_value: str, *, names: list[str] | None = None, create: bool = True
+    mcp_manager, extracted_value: str, *, names: list[str] | None = None,
+    create: bool = True, raise_on_error: bool = False,
 ) -> str | None:
     """Option A + guardrail: map a confidently-new extracted sender to a Paperless
     correspondent NAME the upload can resolve, creating it ONLY when it has no
@@ -110,7 +121,10 @@ async def resolve_or_create_correspondent(
     if names is None:
         names = await _fetch_correspondent_names(mcp_manager)
     if names is None:
-        return None  # couldn't read the taxonomy → don't risk a duplicate
+        # couldn't read the taxonomy → don't risk a duplicate (transport failure)
+        if raise_on_error:
+            raise PaperlessResolveError("could not read correspondent taxonomy")
+        return None
     # Reuse the extractor's own matchers so "existing" means the same thing here
     # as it does inside extraction.
     from services.paperless_metadata_extractor import _fuzzy_match, _fuzzy_top_candidates
@@ -139,6 +153,8 @@ async def resolve_or_create_correspondent(
         f"folder-ingest paperless: create_correspondent failed for {value!r}: "
         f"{created.get('error')}"
     )
+    if raise_on_error:
+        raise PaperlessResolveError(f"create_correspondent failed: {created.get('error')}")
     return None
 
 
@@ -176,7 +192,7 @@ async def _fetch_taxonomy_names(mcp_manager, kind: str) -> list[str] | None:
 
 async def resolve_or_create_taxonomy(
     mcp_manager, kind: str, extracted_value: str, *,
-    names: list[str] | None = None, create: bool = True,
+    names: list[str] | None = None, create: bool = True, raise_on_error: bool = False,
 ) -> str | None:
     """Map a confidently-new extracted document_type/tag to a Paperless NAME the
     upload can resolve, creating it ONLY when it has no fuzzy-near match in the
@@ -187,7 +203,10 @@ async def resolve_or_create_taxonomy(
     if names is None:
         names = await _fetch_taxonomy_names(mcp_manager, kind)
     if names is None:
-        return None  # couldn't read the taxonomy → don't risk a duplicate
+        # couldn't read the taxonomy → don't risk a duplicate (transport failure)
+        if raise_on_error:
+            raise PaperlessResolveError(f"could not read {kind} taxonomy")
+        return None
     from services.paperless_metadata_extractor import _fuzzy_match, _fuzzy_top_candidates
 
     existing = _fuzzy_match(value, names)
@@ -206,6 +225,8 @@ async def resolve_or_create_taxonomy(
         logger.info(f"folder-ingest paperless: auto-created {kind} {value!r} (id={created.get('id')})")
         return created.get("name") or value
     logger.warning(f"folder-ingest paperless: create {kind} failed for {value!r}: {created.get('error')}")
+    if raise_on_error:
+        raise PaperlessResolveError(f"create {kind} failed: {created.get('error')}")
     return None
 
 

@@ -577,6 +577,7 @@ class PaperlessAuditService:
         resolver fetches its own (single-call callers / fallback).
         """
         from services.folder_ingest_paperless import (
+            PaperlessResolveError,
             resolve_or_create_correspondent,
             resolve_or_create_taxonomy,
         )
@@ -588,35 +589,50 @@ class PaperlessAuditService:
         if result.suggested_title and result.suggested_title != result.current_title:
             params["title"] = result.suggested_title
             has_changes = True
-        if result.suggested_correspondent and result.suggested_correspondent != result.current_correspondent:
-            corr = await resolve_or_create_correspondent(
-                self._mcp, result.suggested_correspondent, names=tax.get("correspondents")
-            )
-            if corr:  # None = a fuzzy-near match exists → guardrail, leave unset
-                params["correspondent"] = corr
-                has_changes = True
-        if result.suggested_document_type and result.suggested_document_type != result.current_document_type:
-            dt = result.suggested_document_type
-            if settings.paperless_autocreate_document_type:
-                # None on a fuzzy-near guardrail hit → skip (same as correspondent),
-                # rather than force the raw suggestion and risk a near-duplicate type.
-                dt = await resolve_or_create_taxonomy(
-                    self._mcp, "document_type", dt, names=tax.get("document_types")
+        # raise_on_error=True so a transient taxonomy read / create FAILURE is
+        # distinguishable from a legitimate guardrail-skip (None): on failure we
+        # abort this pass and leave the row pending for a clean retry, instead of
+        # dropping the fix silently and reporting it as applied.
+        try:
+            if result.suggested_correspondent and result.suggested_correspondent != result.current_correspondent:
+                corr = await resolve_or_create_correspondent(
+                    self._mcp, result.suggested_correspondent,
+                    names=tax.get("correspondents"), raise_on_error=True,
                 )
-            if dt:
-                params["document_type"] = dt
-                has_changes = True
-        if result.suggested_tags and result.suggested_tags != result.current_tags:
-            tags = result.suggested_tags
-            if settings.paperless_autocreate_tags:
-                resolved = [
-                    await resolve_or_create_taxonomy(self._mcp, "tag", t, names=tax.get("tags"))
-                    for t in tags
-                ]
-                tags = [t for t in resolved if t]  # drop guardrail-skipped (None) tags
-            if tags:
-                params["tags"] = tags
-                has_changes = True
+                if corr:  # None = a fuzzy-near match exists → guardrail, leave unset
+                    params["correspondent"] = corr
+                    has_changes = True
+            if result.suggested_document_type and result.suggested_document_type != result.current_document_type:
+                dt = result.suggested_document_type
+                if settings.paperless_autocreate_document_type:
+                    # None on a fuzzy-near guardrail hit → skip (same as correspondent),
+                    # rather than force the raw suggestion and risk a near-duplicate type.
+                    dt = await resolve_or_create_taxonomy(
+                        self._mcp, "document_type", dt,
+                        names=tax.get("document_types"), raise_on_error=True,
+                    )
+                if dt:
+                    params["document_type"] = dt
+                    has_changes = True
+            if result.suggested_tags and result.suggested_tags != result.current_tags:
+                tags = result.suggested_tags
+                if settings.paperless_autocreate_tags:
+                    resolved = [
+                        await resolve_or_create_taxonomy(
+                            self._mcp, "tag", t, names=tax.get("tags"), raise_on_error=True
+                        )
+                        for t in tags
+                    ]
+                    tags = [t for t in resolved if t]  # drop guardrail-skipped (None) tags
+                if tags:
+                    params["tags"] = tags
+                    has_changes = True
+        except PaperlessResolveError as e:
+            logger.warning(
+                f"_apply_fix: taxonomy resolve failed for doc {result.paperless_doc_id} "
+                f"({e}) — leaving pending for retry, not reporting as applied"
+            )
+            return False
         if result.suggested_date and result.suggested_date != result.current_date:
             params["created_date"] = result.suggested_date
             has_changes = True

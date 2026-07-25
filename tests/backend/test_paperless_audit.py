@@ -875,6 +875,56 @@ class TestApplyFix:
 
     @pytest.mark.unit
     @pytest.mark.asyncio
+    async def test_apply_fix_returns_false_on_resolve_failure_not_silent_success(
+        self, service, mock_mcp_manager, mock_db_factory
+    ):
+        """A transport/create FAILURE while resolving a taxonomy value must NOT be
+        reported as an applied fix — _apply_fix returns False so the row stays
+        pending for retry (distinct from a guardrail-skip, which is a success)."""
+        mock_result = MagicMock()
+        mock_result.id = 1
+        mock_result.paperless_doc_id = 42
+        mock_result.current_title = "Same"
+        mock_result.suggested_title = "Same"
+        mock_result.current_correspondent = "A"
+        mock_result.suggested_correspondent = "B"  # only change; create will fail
+        mock_result.current_document_type = None
+        mock_result.suggested_document_type = None
+        mock_result.current_tags = None
+        mock_result.suggested_tags = None
+        mock_result.current_date = None
+        mock_result.suggested_date = None
+        mock_result.current_storage_path = None
+        mock_result.suggested_storage_path = None
+        mock_result.suggested_custom_fields = None
+
+        update_called = []
+
+        async def _execute(tool, params, **_kw):
+            if tool == "mcp.paperless.list_correspondents":
+                return {"success": True, "message": json.dumps({"items": [{"name": "A"}]})}
+            if tool == "mcp.paperless.create_correspondent":
+                # transport/create failure — NOT already_exists, no id
+                return {"success": True, "message": json.dumps({"error": "boom"})}
+            if tool == "mcp.paperless.update_document":
+                update_called.append(params)
+                return {"success": True, "message": "{}"}
+            return {"success": True, "message": "{}"}
+
+        mock_mcp_manager.execute_tool.side_effect = _execute
+
+        mock_session = mock_db_factory._mock_session
+        mock_db_result = MagicMock()
+        mock_scalar = MagicMock(return_value=mock_db_result)
+        mock_session.execute.return_value = MagicMock(scalar_one_or_none=mock_scalar)
+
+        success = await service._apply_fix(mock_result)
+
+        assert success is False  # NOT a silent success
+        assert update_called == []  # no partial write
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
     async def test_apply_fix_with_v2_fields(self, service, mock_mcp_manager, mock_db_factory):
         """Should include date, storage_path, custom_fields in MCP call."""
         mock_result = MagicMock()
