@@ -2030,3 +2030,103 @@ class TestApiRouteHelpers:
         assert req.fix_mode == "auto_all"
         assert req.confidence_threshold == 0.9
         assert req.document_ids == [1, 2, 3]
+
+
+# ============================================================================
+# re-OCR → KB reindex hook (propagate an audit OCR improvement into renfield's KB)
+# ============================================================================
+
+
+class TestEnqueueKbReindex:
+    """_enqueue_kb_reindex: after a successful re-OCR, enqueue a renfield reindex for
+    the mapped Document so the KB picks up the improved OCR."""
+
+    def _mock_queue(self, monkeypatch, sink: dict):
+        class _FakeQueue:
+            def __init__(self, redis_client=None):
+                pass
+
+            async def enqueue(self, payload):
+                sink["payload"] = payload
+
+        monkeypatch.setattr("services.task_queue.DocumentTaskQueue", _FakeQueue)
+        monkeypatch.setattr("services.redis_client.get_redis", lambda: MagicMock())
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_enqueues_force_ocr_reindex_for_mapped_doc(
+        self, service, mock_db_factory, monkeypatch
+    ):
+        from types import SimpleNamespace
+
+        from ha_glue.utils.config import ha_glue_settings
+
+        monkeypatch.setattr(ha_glue_settings, "paperless_audit_reindex_on_reocr", True)
+        doc = SimpleNamespace(id=7, status="completed", error_message="old")
+        mock_db_factory._mock_session.execute.return_value = MagicMock(
+            scalar_one_or_none=MagicMock(return_value=doc)
+        )
+        sink: dict = {}
+        self._mock_queue(monkeypatch, sink)
+
+        await service._enqueue_kb_reindex(42)
+
+        assert sink["payload"] == {
+            "document_id": 7,
+            "force_ocr": True,
+            "user_id": None,
+            "trigger": "user_reindex",
+        }
+        assert doc.status == "pending"  # flipped so the list shows it queued
+        assert doc.error_message is None
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_noop_when_flag_disabled(self, service, monkeypatch):
+        from ha_glue.utils.config import ha_glue_settings
+
+        monkeypatch.setattr(ha_glue_settings, "paperless_audit_reindex_on_reocr", False)
+        sink: dict = {}
+        self._mock_queue(monkeypatch, sink)
+
+        await service._enqueue_kb_reindex(42)
+
+        assert sink == {}  # never touched the queue
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_noop_for_paperless_only_doc(self, service, mock_db_factory, monkeypatch):
+        """A Paperless-only doc has no renfield Document → nothing to reindex."""
+        from ha_glue.utils.config import ha_glue_settings
+
+        monkeypatch.setattr(ha_glue_settings, "paperless_audit_reindex_on_reocr", True)
+        mock_db_factory._mock_session.execute.return_value = MagicMock(
+            scalar_one_or_none=MagicMock(return_value=None)
+        )
+        sink: dict = {}
+        self._mock_queue(monkeypatch, sink)
+
+        await service._enqueue_kb_reindex(42)
+
+        assert sink == {}
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_dedup_when_reindex_already_in_flight(
+        self, service, mock_db_factory, monkeypatch
+    ):
+        from types import SimpleNamespace
+
+        from ha_glue.utils.config import ha_glue_settings
+
+        monkeypatch.setattr(ha_glue_settings, "paperless_audit_reindex_on_reocr", True)
+        doc = SimpleNamespace(id=7, status="processing", error_message=None)
+        mock_db_factory._mock_session.execute.return_value = MagicMock(
+            scalar_one_or_none=MagicMock(return_value=doc)
+        )
+        sink: dict = {}
+        self._mock_queue(monkeypatch, sink)
+
+        await service._enqueue_kb_reindex(42)
+
+        assert sink == {}  # already queued/running → dedup, no second enqueue

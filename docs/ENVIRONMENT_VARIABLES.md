@@ -1823,6 +1823,7 @@ PAPERLESS_AUDIT_FIX_MODE=review        # review | auto_threshold | auto_all
 PAPERLESS_AUDIT_CONFIDENCE_THRESHOLD=0.9
 PAPERLESS_AUDIT_OCR_THRESHOLD=2        # OCR-Qualität ≤ 2 → Re-OCR vorschlagen
 PAPERLESS_AUDIT_BATCH_DELAY=2.0        # Sekunden zwischen Dokumenten
+PAPERLESS_AUDIT_REINDEX_ON_REOCR=true  # Nach erfolgreichem Re-OCR den renfield-Reindex anstoßen (KB übernimmt den OCR-Gewinn)
 
 # Email (IMAP/SMTP)
 EMAIL_MCP_ENABLED=true

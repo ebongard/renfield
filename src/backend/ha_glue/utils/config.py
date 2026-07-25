@@ -86,6 +86,13 @@ class HaGlueSettings(BaseSettings):
     paperless_audit_confidence_threshold: float = 0.9
     paperless_audit_ocr_threshold: int = 2       # OCR <= 2 → suggest re-OCR
     paperless_audit_batch_delay: float = 2.0     # Seconds between documents
+    # After a successful audit re-OCR (local OCR beat the stored text and was
+    # written back to Paperless), also enqueue a renfield reindex for the SAME
+    # document so the KB's chunks/facts/KG pick up the improved OCR — otherwise the
+    # audit only refreshes the Paperless copy while renfield keeps its ingest-time
+    # (garbled) chunks. Maps paperless_document_id → the renfield Document. Skipped
+    # for Paperless-only docs (no KB copy). Best-effort, never breaks the re-OCR.
+    paperless_audit_reindex_on_reocr: bool = True
 
     # === Presence Detection (BLE-based room-level) ===
     presence_enabled: bool = False                      # Master-Switch for BLE presence detection

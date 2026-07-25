@@ -844,7 +844,62 @@ class PaperlessAuditService:
                 await db.commit()
 
         logger.info(f"re-OCR: wrote local OCR back to Paperless doc {doc_id} (quality {new_score})")
+
+        # Propagate the OCR improvement into the renfield KB. The audit only wrote
+        # the cleaned text to PAPERLESS; renfield's retrieval runs on its own chunks
+        # (built at ingest), so without this the KB keeps the garbled OCR. Enqueue a
+        # force-OCR reindex for the mapped renfield Document (best-effort).
+        await self._enqueue_kb_reindex(doc_id)
         return "improved"
+
+    async def _enqueue_kb_reindex(self, paperless_doc_id: int) -> None:
+        """Enqueue a renfield reindex for the Document mapped to ``paperless_doc_id``,
+        so an audit re-OCR improvement reaches the KB (chunks/facts/KG). No-op when
+        disabled, when the doc is Paperless-only (no renfield Document), or when a
+        reindex/ingest is already in flight. Best-effort: never raises into the
+        re-OCR path. Same enqueue contract as POST /api/knowledge/documents/{id}/reindex."""
+        from ha_glue.utils.config import ha_glue_settings
+
+        if not ha_glue_settings.paperless_audit_reindex_on_reocr:
+            return
+        try:
+            from models.database import Document
+            from services.redis_client import get_redis
+            from services.task_queue import DocumentTaskQueue
+
+            async with self._db_factory() as db:
+                doc = (
+                    await db.execute(
+                        select(Document).where(
+                            Document.paperless_document_id == paperless_doc_id
+                        )
+                    )
+                ).scalar_one_or_none()
+                if doc is None:
+                    return  # Paperless-only document → no KB copy to refresh
+                if doc.status in ("pending", "processing"):
+                    return  # a reindex/ingest is already queued/running → dedup
+
+                # Enqueue BEFORE flipping status so a Redis failure can't strand the
+                # doc in "pending" with no task behind it.
+                queue = DocumentTaskQueue(redis_client=get_redis())
+                await queue.enqueue({
+                    "document_id": doc.id,
+                    "force_ocr": True,  # re-run renfield's OCR to get the clean text
+                    "user_id": getattr(doc, "user_id", None),
+                    "trigger": "user_reindex",
+                })
+                doc.status = "pending"
+                doc.error_message = None
+                await db.commit()
+                logger.info(
+                    f"re-OCR→KB: enqueued reindex for renfield doc {doc.id} "
+                    f"(paperless {paperless_doc_id})"
+                )
+        except Exception as e:  # noqa: BLE001 — never break re-OCR on a reindex hiccup
+            logger.warning(
+                f"re-OCR→KB reindex enqueue failed for paperless {paperless_doc_id}: {e}"
+            )
 
     async def _paperless_reprocess(self, doc_id: int) -> str:
         """Trigger Paperless-NGX's own OCR reprocess (fallback).
