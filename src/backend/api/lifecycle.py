@@ -1129,6 +1129,45 @@ async def _load_plugin_module():
         await _load_one_plugin(spec)
 
 
+async def _init_paperless_audit(app: "FastAPI") -> None:
+    """Mount the Paperless audit REST router + start its service, from PLATFORM CORE.
+
+    The audit code lives under ``ha_glue/`` for historical packaging reasons, but it
+    needs no Home Assistant — only the Paperless MCP + ``paperless_audit_enabled``.
+    Mounting it here (not inside the ha_glue plugin) makes it available on HA-less
+    instances (e.g. the business/xidra deploy that never loads ha_glue), which is
+    where it previously 404'd. This is the SINGLE owner of the mount — the ha_glue
+    plugin no longer mounts it, so there is no double-include on HA deploys.
+
+    Gated: no-op unless ``paperless_audit_enabled`` AND the Paperless MCP server is
+    configured. Stores the service on ``app.state.paperless_audit`` for the shutdown
+    path. Best-effort — a failure here must not break startup.
+    """
+    try:
+        from ha_glue.utils.config import ha_glue_settings
+
+        if not ha_glue_settings.paperless_audit_enabled:
+            return
+        mcp_manager = getattr(app.state, "mcp_manager", None)
+        if not mcp_manager or not mcp_manager.has_server("paperless"):
+            logger.info("Paperless MCP not configured — audit disabled")
+            return
+
+        from ha_glue.api.routes.paperless_audit import router as audit_router
+        from ha_glue.services.paperless_audit_service import PaperlessAuditService
+        from services.database import AsyncSessionLocal
+
+        app.include_router(audit_router)
+        audit_service = PaperlessAuditService(
+            mcp_manager=mcp_manager, db_factory=AsyncSessionLocal
+        )
+        app.state.paperless_audit = audit_service
+        await audit_service.start()
+        logger.info("✅ Paperless Audit: routes mounted + service started (platform-core)")
+    except Exception:  # noqa: BLE001 — never break startup on the audit mount
+        logger.opt(exception=True).warning("Paperless audit init failed")
+
+
 @asynccontextmanager
 async def lifespan(app: "FastAPI"):
     """
@@ -1329,6 +1368,11 @@ async def lifespan(app: "FastAPI"):
     from utils.hooks import run_hooks
     await run_hooks("startup", app=app)
     await run_hooks("register_routes", app=app)
+
+    # Paperless audit — mounted from platform core (not the ha_glue plugin) so it
+    # works on HA-less instances too. Runs after register_routes so it's the single
+    # mount owner regardless of whether ha_glue is loaded.
+    await _init_paperless_audit(app)
 
     yield
 

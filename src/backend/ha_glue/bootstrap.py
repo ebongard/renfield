@@ -164,12 +164,9 @@ async def ha_glue_on_startup(*, app: Any) -> None:
         )
 
     # --- Paperless audit ---
-    try:
-        await _init_paperless_audit(app)
-    except Exception:  # noqa: BLE001
-        logger.opt(exception=True).warning(
-            "ha_glue.bootstrap: paperless audit init failed"
-        )
+    # Moved to platform core (api/lifecycle.py::_init_paperless_audit) so it works on
+    # HA-less instances (business/xidra) that never load this plugin. Mounting it here
+    # would double-include on HA deploys.
 
     # --- HA keyword preload (background) ---
     try:
@@ -251,39 +248,6 @@ async def _init_zeroconf(app: Any) -> None:
     await zeroconf_service.start()
     app.state.zeroconf_service = zeroconf_service
     logger.info("✅ Zeroconf Service bereit")
-
-
-async def _init_paperless_audit(app: Any) -> None:
-    """Dynamically provision Paperless audit if MCP server is available.
-
-    Routes, service, and imports only happen inside this function. If
-    Paperless MCP is not configured, nothing is imported, no routes
-    exist. Stores the running service on `app.state.paperless_audit`
-    so the platform shutdown path can stop it.
-    """
-    from ha_glue.utils.config import ha_glue_settings
-
-    if not ha_glue_settings.paperless_audit_enabled:
-        return
-
-    mcp_manager = getattr(app.state, "mcp_manager", None)
-    if not mcp_manager or not mcp_manager.has_server("paperless"):
-        logger.info("Paperless MCP not configured — audit disabled")
-        return
-
-    from ha_glue.api.routes.paperless_audit import router as audit_router
-    from services.database import AsyncSessionLocal
-    from ha_glue.services.paperless_audit_service import PaperlessAuditService
-
-    app.include_router(audit_router)
-
-    audit_service = PaperlessAuditService(
-        mcp_manager=mcp_manager,
-        db_factory=AsyncSessionLocal,
-    )
-    app.state.paperless_audit = audit_service
-    await audit_service.start()
-    logger.info("Paperless Audit: Routes mounted, service started")
 
 
 def _schedule_ha_keywords_preload() -> None:
@@ -650,14 +614,9 @@ async def ha_glue_register_routes(*, app: Any) -> None:
         )
 
     # --- Paperless audit REST router ---
-    try:
-        from ha_glue.api.routes.paperless_audit import router as paperless_router
-        app.include_router(paperless_router)
-        logger.info("✅ ha_glue: mounted paperless_audit router")
-    except Exception:  # noqa: BLE001
-        logger.opt(exception=True).warning(
-            "ha_glue.bootstrap: paperless_audit router mount failed"
-        )
+    # Mounted from platform core (api/lifecycle.py::_init_paperless_audit), NOT here —
+    # the audit needs no Home Assistant, so it must reach HA-less deploys too. This
+    # plugin is the single-owner no more; mounting here would double-include.
 
     # --- Device WebSocket (/ws/device) — satellites + Renfield web panels ---
     try:
