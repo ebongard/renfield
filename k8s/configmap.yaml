@@ -236,6 +236,12 @@ data:
   OBLIGATION_NOTIFIER_ENABLED: "true"
   OUTPUT_PROVIDERS_ENABLED: "true"
   PAPERLESS_AUDIT_ENABLED: "true"
+  # OCR VLM re-OCR fallback for rotated/poor scans (needs OLLAMA_VISION_MODEL, set):
+  # when OCR is garbled, the vision model re-transcribes; a fast LM gibberish gate
+  # (OLLAMA_INTENT_MODEL) catches the pseudo-word garble char stats can't. See
+  # docs/FEATURES.md "Paperless Audit → VLM-Re-OCR-Fallback".
+  OCR_VLM_FALLBACK_ENABLED: "true"
+  OCR_VLM_GIBBERISH_GATE_ENABLED: "true"
   PROACTIVE_ENABLED: "true"
   PROACTIVE_SEMANTIC_DEDUP_ENABLED: "true"
   ROLE_SURFACING_ENABLED: "true"
