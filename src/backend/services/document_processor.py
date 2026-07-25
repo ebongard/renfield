@@ -565,22 +565,40 @@ class DocumentProcessor:
         return out
 
     async def _vlm_ocr_fallback(self, file_path: str, ocr_text: str) -> str | None:
-        """Vision-model re-OCR when the OCR text is still low-quality.
+        """Vision-model re-OCR when the OCR text is bad (rotated / poor scan).
 
-        Rotated / poor scans OCR to character-level garble that force-full-page OCR
-        can't fix (both Tesseract and EasyOCR fail on the same bad pixels); a vision
-        model reads such pages and is robust to orientation. Renders the page(s),
-        has the VLM transcribe them, and returns the VLM text ONLY if it scores
-        strictly better than ``ocr_text``. Gated + best-effort — any failure (or a
-        not-better result) returns None so the OCR result is kept."""
+        Both Tesseract and EasyOCR fail on the same bad pixels; a vision model reads
+        such pages and is robust to orientation. Returns better VLM text, or None
+        (keep OCR). Gated + best-effort.
+
+        Trigger + acceptance are decided by TWO signals, because OCR garble comes in
+        two flavours: (1) internal-punctuation garble ('Bez:-ihl') the cheap
+        ``score_ocr_quality`` heuristic catches, and (2) pronounceable pseudo-words
+        ('ZOGEOLONIGGY') that character statistics CANNOT tell from real words — only
+        language understanding can, so an ``is_ocr_gibberish`` LM check
+        (``ocr_vlm_gibberish_gate_enabled``) covers that style. The LM gate is also
+        the acceptance test: use the VLM text when the OCR was gibberish and the VLM
+        output is readable (their coarse 1-5 scores can tie at 5 for style-2)."""
         if not settings.ocr_vlm_fallback_enabled:
             return None
         try:
             from utils.ocr_quality import score_ocr_quality
 
+            svc = getattr(self, "_ollama_service", None)
+            if svc is None:
+                from services.ollama_service import OllamaService
+
+                svc = OllamaService()
+                self._ollama_service = svc
+
             old_score, _ = score_ocr_quality(ocr_text or "")
-            if old_score > settings.ocr_vlm_fallback_score_threshold:
-                return None  # OCR is good enough — no VLM needed
+            # Trigger: cheap char signal (style-1), then the LM gibberish gate for the
+            # pronounceable-garbage style the char signal is blind to (style-2).
+            ocr_bad = old_score <= settings.ocr_vlm_fallback_score_threshold
+            if not ocr_bad and settings.ocr_vlm_gibberish_gate_enabled:
+                ocr_bad = await svc.is_ocr_gibberish(ocr_text) is True
+            if not ocr_bad:
+                return None
 
             loop = asyncio.get_event_loop()
             images = await loop.run_in_executor(
@@ -589,10 +607,6 @@ class DocumentProcessor:
             if not images:
                 return None
 
-            from services.ollama_service import OllamaService
-
-            svc = getattr(self, "_ollama_service", None) or OllamaService()
-            self._ollama_service = svc
             parts: list[str] = []
             for img in images:
                 t = await svc.extract_text_from_image(img)
@@ -602,16 +616,21 @@ class DocumentProcessor:
             if not vlm_text:
                 return None
 
+            # Accept when the VLM is strictly better by the char score, OR (for the
+            # style-2 tie) when the LM gate confirms the VLM text is readable.
             new_score, _ = score_ocr_quality(vlm_text)
-            if new_score > old_score:
+            accept = new_score > old_score
+            if not accept and settings.ocr_vlm_gibberish_gate_enabled:
+                accept = await svc.is_ocr_gibberish(vlm_text) is False
+            if accept:
                 logger.info(
-                    f"VLM re-OCR improved quality {old_score}→{new_score} for "
-                    f"{Path(file_path).name} ({len(images)} page(s))"
+                    f"VLM re-OCR: using vision transcription for "
+                    f"{Path(file_path).name} ({len(images)} page(s), "
+                    f"score {old_score}→{new_score})"
                 )
                 return vlm_text
             logger.info(
-                f"VLM re-OCR for {Path(file_path).name} not better "
-                f"({new_score} vs {old_score}) — keeping OCR text"
+                f"VLM re-OCR for {Path(file_path).name} not better — keeping OCR text"
             )
             return None
         except Exception as e:  # noqa: BLE001

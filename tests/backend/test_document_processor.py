@@ -673,3 +673,53 @@ async def test_vlm_fallback_keeps_ocr_when_vlm_not_better(monkeypatch):
     dp._ollama_service = _FakeVision(_VLM_GARBLE)  # VLM also garbage
 
     assert await dp._vlm_ocr_fallback("/x.pdf", _VLM_GARBLE) is None
+
+
+class _FakeVisionGate:
+    """Vision svc that also answers the LM gibberish gate; keyed by text prefix."""
+
+    def __init__(self, vlm_out, gibberish_prefix):
+        self._vlm = vlm_out
+        self._pfx = gibberish_prefix
+
+    async def extract_text_from_image(self, img):
+        return self._vlm
+
+    async def is_ocr_gibberish(self, text):
+        return text.startswith(self._pfx)
+
+
+@_pytest.mark.unit
+@_pytest.mark.asyncio
+async def test_vlm_fallback_gibberish_gate_triggers_on_pseudo_word_garble(monkeypatch):
+    """Style-2 garble scores OK by char stats but the LM gate flags it → VLM used."""
+    from utils.config import settings
+
+    monkeypatch.setattr(settings, "ocr_vlm_fallback_enabled", True)
+    monkeypatch.setattr(settings, "ocr_vlm_gibberish_gate_enabled", True)
+    dp = DocumentProcessor()
+    dp._render_pages_b64 = lambda fp, mx: ["img"]
+    # pronounceable pseudo-words: garble_ratio ~0 → score_ocr_quality would pass it
+    style2 = "ZOGEOLONIGGY bunaorstaoyuy NMCVAUN MOUYBOS aul Tuo readable looking here"
+    vlm_out = "Bezahlung MasterCard Betrag Gesamt Rechnung Nummer Datum Kunde Steuer"
+    dp._ollama_service = _FakeVisionGate(vlm_out, gibberish_prefix="ZOGEO")
+
+    assert await dp._vlm_ocr_fallback("/x.pdf", style2) == vlm_out
+
+
+@_pytest.mark.unit
+@_pytest.mark.asyncio
+async def test_vlm_fallback_gate_skips_readable_text(monkeypatch):
+    """Gate on + char score OK + LM says readable → no render, no VLM."""
+    from utils.config import settings
+
+    monkeypatch.setattr(settings, "ocr_vlm_fallback_enabled", True)
+    monkeypatch.setattr(settings, "ocr_vlm_gibberish_gate_enabled", True)
+    dp = DocumentProcessor()
+    rendered = []
+    dp._render_pages_b64 = lambda fp, mx: rendered.append(1) or ["img"]
+    dp._ollama_service = _FakeVisionGate("x", gibberish_prefix="ZZZ_NEVER")
+    clean = "Bezahlung MasterCard Betrag Gesamt Rechnung Nummer Datum Kunde Steuer heute"
+
+    assert await dp._vlm_ocr_fallback("/x.pdf", clean) is None
+    assert rendered == []

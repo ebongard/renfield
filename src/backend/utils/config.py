@@ -440,6 +440,12 @@ class Settings(BaseSettings):
     ocr_vlm_fallback_enabled: bool = False
     ocr_vlm_fallback_score_threshold: int = 2   # OCR score <= this → try the VLM
     ocr_vlm_fallback_max_pages: int = Field(default=5, ge=1, le=20)
+    # Adds a fast LM gibberish check (is_ocr_gibberish, intent model) to the VLM
+    # trigger + acceptance — catches the 'pronounceable pseudo-word' garble
+    # ('ZOGEOLONIGGY') that character statistics can't tell from real words. Without
+    # it the fallback only fires on the internal-punctuation garble style. One small
+    # text-model call per considered doc, so opt-in.
+    ocr_vlm_gibberish_gate_enabled: bool = False
     # Per-chunk-rate trigger that complements rag_ocr_space_threshold.
     # When the chunker drops more than this fraction of chunks as
     # low-quality (utils.content_quality.is_low_quality_text), the
