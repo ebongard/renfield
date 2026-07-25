@@ -105,7 +105,11 @@ data:
   # the in-process whisper_service + piper_service as a fallback for
   # dev environments without a voice-server deployment until B.4.c
   # removes them.
-  VOICE_SERVER_URL: "http://voice-server:8080"
+  # Points at the SHARED voice-server in the `voice` namespace (anon tier for the
+  # auth-off household) — the topology-redesign target. Reconciled to the live
+  # value 2026-07-25 (git previously lagged at the in-namespace voice-server:8080,
+  # which made a full `kubectl apply` clobber the working URL).
+  VOICE_SERVER_URL: "http://voice-server-anon.voice:8081"
 
   # Legacy Ollama model names kept for back-compat with config code paths
   # that read them as defaults. They're NOT used while the LLM_OPENAI_*
