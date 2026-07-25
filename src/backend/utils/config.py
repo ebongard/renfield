@@ -1237,6 +1237,14 @@ class Settings(BaseSettings):
     obligation_notifier_enabled: bool = False
     obligation_notifier_interval: int = 86400          # daily (seconds)
     obligation_notifier_overdue_grace_days: int = 30   # still fire "overdue" within this window
+    # MCP health self-detection (Phase 1): poll MCPManager.get_status() for
+    # degraded/down servers + accept Plane-B ingest-MCP failure reports at
+    # POST /api/mcp-health/report, and fire ONE proactive alert to the admin on a
+    # new/recurring problem. Detect-and-notify only (no healing). Needs
+    # proactive_enabled for the alert; surfacing in internal.system_health is free.
+    mcp_health_monitor_enabled: bool = False
+    mcp_health_monitor_interval: int = 120             # Plane-A poll interval (seconds)
+    mcp_health_realert_seconds: float = 21600.0        # re-alert an ongoing issue after 6h
 
     # Weekly obligation digest — the safety floor under the per-milestone
     # notifier. One owner-targeted summary per ISO week of every OPEN obligation

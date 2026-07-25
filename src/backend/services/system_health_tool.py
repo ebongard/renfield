@@ -184,6 +184,22 @@ async def system_health(
         logger.warning(f"system_health: mcp probe failed: {e}")
 
     try:
+        # Plane-B ingest MCPs (filesystem/email-ingest) push their own failures to
+        # /api/mcp-health/report — surface the fresh ones (they never reach get_status).
+        from services.mcp_health_monitor import plane_b_reports
+
+        reports = plane_b_reports()
+        for r in reports:
+            where = f" ({r.get('root')})" if r.get("root") else ""
+            problems.append(
+                f"Ingest-MCP '{r.get('source')}'{where}: {r.get('event')}"
+                + (f" ({r.get('reason')})" if r.get("reason") else "")
+            )
+        data["ingest_mcp_reports"] = reports
+    except Exception as e:  # noqa: BLE001
+        logger.warning(f"system_health: ingest-mcp probe failed: {e}")
+
+    try:
         sub = await _check_subsystems()
         problems += sub
         data["subsystem_problems"] = sub

@@ -651,6 +651,31 @@ def _schedule_obligation_calendar_sync(app):
     )
 
 
+def _schedule_mcp_health_monitor(app):
+    """MCP health self-detection (Phase 1): periodically poll the MCP client fleet
+    (`MCPManager.get_status()`) and fire a proactive alert to the admin on a new
+    degraded/down server. Plane-B ingest MCPs push their own failures separately to
+    POST /api/mcp-health/report. Detect-and-notify only. Gated on
+    `mcp_health_monitor_enabled` (the alert also needs `proactive_enabled`)."""
+    if not settings.mcp_health_monitor_enabled:
+        return
+
+    async def _tick():
+        from services.mcp_health_monitor import monitor_tick
+        await monitor_tick(app)
+
+    _spawn_periodic_task(
+        name="MCP health monitor",
+        interval=settings.mcp_health_monitor_interval,
+        work=_tick,
+        started_msg=(
+            "✅ MCP health monitor scheduled "
+            f"(interval={settings.mcp_health_monitor_interval}s)"
+        ),
+        run_at_boot=True,
+    )
+
+
 def _schedule_paperless_reconciler(app):
     """Retry re-enqueuer for Paperless filing (light — no Docling in the backend).
 
@@ -1288,6 +1313,7 @@ async def lifespan(app: "FastAPI"):
     _schedule_skill_shadow_log_cleanup()
     _schedule_paperless_sweepers(app)
     _schedule_paperless_reconciler(app)
+    _schedule_mcp_health_monitor(app)
     _schedule_obligation_calendar_sync(app)
     _schedule_kiosk_weather_refresh(app)
     _schedule_kiosk_internal_health_refresh(app)
