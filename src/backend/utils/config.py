@@ -432,6 +432,14 @@ class Settings(BaseSettings):
     # Literal so a typo (e.g. RAG_OCR_ENGINE=tesserac) fails fast at config load
     # instead of silently routing to the EasyOcr else-branch.
     rag_ocr_engine: Literal["tesseract", "easyocr"] = "tesseract"
+    # VLM re-OCR fallback: when Tesseract/EasyOCR output still scores low-quality
+    # (rotated / poor scan → character-level garble), render the page(s) and let the
+    # vision model transcribe them (robust to orientation/noise). Only used if the
+    # VLM result scores strictly better. Dark by default (opt-in per instance);
+    # needs a configured OLLAMA_VISION_MODEL. Bounded to the first N pages (cost).
+    ocr_vlm_fallback_enabled: bool = False
+    ocr_vlm_fallback_score_threshold: int = 2   # OCR score <= this → try the VLM
+    ocr_vlm_fallback_max_pages: int = Field(default=5, ge=1, le=20)
     # Per-chunk-rate trigger that complements rag_ocr_space_threshold.
     # When the chunker drops more than this fraction of chunks as
     # low-quality (utils.content_quality.is_low_quality_text), the

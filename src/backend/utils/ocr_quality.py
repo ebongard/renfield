@@ -56,6 +56,47 @@ def is_text_garbled(text: str) -> bool:
     return garbled
 
 
+# Character-level garbling thresholds (see ``_garbled_token_ratio``). A rotated /
+# poor scan OCRs to real-looking spacing but wrong letters ("Bez:-ihl unq Maa
+# torCa rd"), which the space / special-char / fragmentation signals all miss.
+# Calibrated so ordinary German/English prose stays ~0 while such garble is high.
+_GARBLE_RATIO_THRESHOLD = 0.25   # add an issue at/above this corrupt-token ratio
+_GARBLE_RATIO_SEVERE = 0.40      # dominant failure → cap the score at 2
+#   Measured: heavily-garbled scan (rotated MasterCard receipt) = 0.46; clean
+#   German prose = 0.00 — wide margin, so a clean code/abbreviation-heavy receipt
+#   stays well under 0.40. A false positive only wastes a re-OCR pass (never a
+#   write-back, since the VLM/OCR result can't beat already-clean text).
+_VOWELS = frozenset("aeiouyäöüàáâãéèêëíìîïóòôõúùûAEIOUYÄÖÜ")
+
+
+def _garbled_token_ratio(text: str) -> float:
+    """Fraction of word-like tokens that look OCR-corrupted at the character level.
+
+    A token counts as corrupt when its alphabetic core (≥3 chars) either carries
+    **internal punctuation** ("Bez:-ihl", "K(i", "Ni)") or is an **all-consonant
+    run** with no vowel ("KIJ", "KKN"). Numbers, initials, and short tokens are
+    ignored. Returns 0.0 when there's too little to judge (< 5 considered tokens).
+    """
+    import string
+
+    punct = set(string.punctuation)
+    considered = corrupt = 0
+    for tok in text.split():
+        core = tok.strip(string.punctuation)
+        if len(core) < 3 or not any(c.isalpha() for c in core):
+            continue
+        considered += 1
+        if any(c in punct for c in core):  # punctuation glued inside a word
+            corrupt += 1
+            continue
+        alpha = [c for c in core if c.isalpha()]
+        if alpha and not any(c in _VOWELS for c in alpha):  # implausible consonant run
+            corrupt += 1
+    if considered < 5:
+        return 0.0
+    return corrupt / considered
+
+
 def score_ocr_quality(text: str) -> tuple[int, str]:
     """Rate already-OCR'd document content 1 (worst) .. 5 (clean).
 
@@ -85,4 +126,16 @@ def score_ocr_quality(text: str) -> tuple[int, str]:
         if avg_line_len < 10 and len(lines) > 5:
             issues.append("Fragmented text (very short lines)")
 
-    return max(1, 5 - len(issues)), "; ".join(issues) or "OK"
+    # Character-level garbling with normal spacing (rotated / poor scan) — the case
+    # the three signals above miss (they need run-together words or short lines).
+    garble = _garbled_token_ratio(text)
+    if garble >= _GARBLE_RATIO_THRESHOLD:
+        issues.append("Implausible tokens (garbled OCR)")
+
+    score = max(1, 5 - len(issues))
+    # Severe garble is a dominant failure: the text is unreadable regardless of the
+    # other signals, so make sure it registers as low-quality (≤ 2) so the audit
+    # offers a re-OCR instead of scoring it OK.
+    if garble >= _GARBLE_RATIO_SEVERE:
+        score = min(score, 2)
+    return score, "; ".join(issues) or "OK"

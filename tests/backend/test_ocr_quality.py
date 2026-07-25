@@ -130,3 +130,46 @@ class TestScoreOcrQuality:
     def test_score_never_below_one(self):
         score, _ = score_ocr_quality("!@#$%^" * 50)
         assert score >= 1
+
+
+class TestCharLevelGarbleSignal:
+    """The rotated/poor-scan case: real-looking spacing but wrong letters
+    (internal punctuation, all-consonant runs) — which the space / special-char /
+    fragmentation signals all miss. Measured on a real garbled receipt: ratio 0.46."""
+
+    def test_char_garble_with_normal_spacing_scores_low(self):
+        garbled = (
+            "Rechnung KIJ Betrag Bez:-ihl unq Maa KNr lUGB Datum i;5.Lei "
+            "Nummer fff torC:a Summe Hqrq:nt Konto Aut:r Beleg Nmm:r Karte Nrq"
+        )
+        score, issues = score_ocr_quality(garbled)
+        assert score <= 2, f"expected <=2, got {score} ({issues})"
+        assert "garbled" in issues.lower()
+
+    def test_clean_german_prose_scores_five(self):
+        clean = (
+            "Sehr geehrte Damen und Herren, anbei erhalten Sie die Rechnung fuer "
+            "den Monat Mai. Der Gesamtbetrag betraegt 149,90 Euro und ist innerhalb "
+            "von vierzehn Tagen zu begleichen. Mit freundlichen Gruessen."
+        )
+        score, issues = score_ocr_quality(clean)
+        assert score == 5
+        assert issues == "OK"
+
+    def test_garbled_token_ratio_helper(self):
+        from utils.ocr_quality import _garbled_token_ratio
+
+        assert _garbled_token_ratio("KIJ Bez:-ihl lUGB i;5.Lei fff Aut:r Nrq KNr") >= 0.4
+        assert _garbled_token_ratio(
+            "normaler deutscher Text mit vielen echten Woertern hier drin"
+        ) == 0.0
+
+    def test_clean_receipt_tokens_not_over_flagged(self):
+        # A clean receipt has numbers/codes but real words — must stay OK, not be
+        # docked as garbled (false-positive guard for the 0.40 severe threshold).
+        receipt = (
+            "Rechnung Nummer 92088 Betrag 13,50 EUR Bezahlung MasterCard Datum "
+            "30.01.2026 Kunde Sparkasse Wiesbaden Gesamt netto 11,34 Steuer 19 Prozent"
+        )
+        score, _ = score_ocr_quality(receipt)
+        assert score >= 4

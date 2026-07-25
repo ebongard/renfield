@@ -476,6 +476,31 @@ class DocumentProcessor:
             docling_text = ""
             if doc is not None and hasattr(doc, "export_to_text"):
                 docling_text = await loop.run_in_executor(None, doc.export_to_text)
+
+            # Final recovery tier: OCR still low-quality (rotated / poor scan whose
+            # character garble force-OCR can't fix) → vision-model re-OCR + re-chunk
+            # from that text. Best-effort + gated; only replaces chunks when the VLM
+            # result scores strictly better. Benefits ingest AND reindex, so an audit
+            # re-OCR improvement actually reaches the KB (not re-garbled by Tesseract).
+            _ocr_text = docling_text or "\n".join(c.get("text", "") for c in chunks)
+            _vlm_text = await self._vlm_ocr_fallback(file_path, _ocr_text)
+            if _vlm_text:
+                from utils.content_quality import is_low_quality_text
+
+                _vlm_chunks = [
+                    c for c in self._simple_chunk(_vlm_text)
+                    if not is_low_quality_text(c.get("text", ""))
+                ]
+                if _vlm_chunks:
+                    logger.info(
+                        f"VLM re-OCR: replaced {len(chunks)} chunk(s) with "
+                        f"{len(_vlm_chunks)} for {path.name}"
+                    )
+                    chunks = _vlm_chunks
+                    dropped = 0
+                    ocr_engine = "vlm_fallback"
+                    docling_text = _vlm_text
+
             field_text = docling_text
             if text_layer and tl_usable:
                 field_text = (
@@ -502,6 +527,96 @@ class DocumentProcessor:
                 "status": "failed",
                 "error": str(e)
             }
+
+    def _render_pages_b64(self, file_path: str, max_pages: int) -> list[str]:
+        """Render the first ``max_pages`` pages to base64 PNGs for the VLM fallback.
+
+        PDFs via pypdfium2 (Docling's own renderer — no extra dep); image files via
+        PIL directly. Returns ``[]`` on any failure or unsupported type (the caller
+        then keeps the OCR text). Runs in a thread — pdfium is blocking."""
+        import base64
+        import io
+
+        ext = Path(file_path).suffix.lower().lstrip(".")
+        out: list[str] = []
+        try:
+            if ext == "pdf":
+                import pypdfium2 as pdfium
+
+                pdf = pdfium.PdfDocument(file_path)
+                try:
+                    for i in range(min(len(pdf), max_pages)):
+                        pil = pdf[i].render(scale=2.0).to_pil()
+                        buf = io.BytesIO()
+                        pil.save(buf, format="PNG")
+                        out.append(base64.b64encode(buf.getvalue()).decode())
+                finally:
+                    pdf.close()
+            elif ext in ("png", "jpg", "jpeg", "tif", "tiff", "bmp", "webp"):
+                from PIL import Image
+
+                with Image.open(file_path) as im:
+                    buf = io.BytesIO()
+                    im.convert("RGB").save(buf, format="PNG")
+                    out.append(base64.b64encode(buf.getvalue()).decode())
+        except Exception as e:  # noqa: BLE001
+            logger.warning(f"VLM re-OCR: page render failed for {file_path}: {e}")
+            return []
+        return out
+
+    async def _vlm_ocr_fallback(self, file_path: str, ocr_text: str) -> str | None:
+        """Vision-model re-OCR when the OCR text is still low-quality.
+
+        Rotated / poor scans OCR to character-level garble that force-full-page OCR
+        can't fix (both Tesseract and EasyOCR fail on the same bad pixels); a vision
+        model reads such pages and is robust to orientation. Renders the page(s),
+        has the VLM transcribe them, and returns the VLM text ONLY if it scores
+        strictly better than ``ocr_text``. Gated + best-effort — any failure (or a
+        not-better result) returns None so the OCR result is kept."""
+        if not settings.ocr_vlm_fallback_enabled:
+            return None
+        try:
+            from utils.ocr_quality import score_ocr_quality
+
+            old_score, _ = score_ocr_quality(ocr_text or "")
+            if old_score > settings.ocr_vlm_fallback_score_threshold:
+                return None  # OCR is good enough — no VLM needed
+
+            loop = asyncio.get_event_loop()
+            images = await loop.run_in_executor(
+                None, self._render_pages_b64, file_path, settings.ocr_vlm_fallback_max_pages
+            )
+            if not images:
+                return None
+
+            from services.ollama_service import OllamaService
+
+            svc = getattr(self, "_ollama_service", None) or OllamaService()
+            self._ollama_service = svc
+            parts: list[str] = []
+            for img in images:
+                t = await svc.extract_text_from_image(img)
+                if t:
+                    parts.append(t)
+            vlm_text = "\n\n".join(parts).strip()
+            if not vlm_text:
+                return None
+
+            new_score, _ = score_ocr_quality(vlm_text)
+            if new_score > old_score:
+                logger.info(
+                    f"VLM re-OCR improved quality {old_score}→{new_score} for "
+                    f"{Path(file_path).name} ({len(images)} page(s))"
+                )
+                return vlm_text
+            logger.info(
+                f"VLM re-OCR for {Path(file_path).name} not better "
+                f"({new_score} vs {old_score}) — keeping OCR text"
+            )
+            return None
+        except Exception as e:  # noqa: BLE001
+            logger.warning(f"VLM re-OCR fallback failed for {file_path}: {e}")
+            return None
 
     def _convert_document(self, file_path: str):
         """Synchrone Dokumentkonvertierung (für Thread-Pool)"""
@@ -763,6 +878,13 @@ class DocumentProcessor:
                 ocr_result = await loop.run_in_executor(None, self._convert_document_ocr, file_path)
                 if ocr_result is not None and hasattr(ocr_result.document, 'export_to_text'):
                     text = ocr_result.document.export_to_text() or text
+
+            # VLM re-OCR fallback: OCR still garbled (rotated / poor scan) → let the
+            # vision model transcribe the page(s). No-op unless enabled + still low
+            # quality; only used when it scores strictly better.
+            vlm_text = await self._vlm_ocr_fallback(file_path, text)
+            if vlm_text:
+                text = vlm_text
 
             return text[:max_chars] if text else None
 
