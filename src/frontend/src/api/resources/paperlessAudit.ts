@@ -146,7 +146,16 @@ async function skipResultsRequest(ids: number[]): Promise<void> {
 }
 
 async function reOcrRequest(ids: number[]): Promise<void> {
-  await apiClient.post('/api/admin/paperless-audit/re-ocr', { result_ids: ids });
+  // Re-OCR is synchronous server-side and now runs the local OCR stack PLUS a VLM
+  // fallback (~40s+ per document for a rotated/poor scan). The shared apiClient's
+  // 30s default would abort it client-side — the request completes on the server
+  // (Paperless gets the cleaned text) but the UI shows "Fehler beim Laden der
+  // Audit-Daten". timeout:0 lets the client wait for the real response.
+  await apiClient.post(
+    '/api/admin/paperless-audit/re-ocr',
+    { result_ids: ids },
+    { timeout: 0 },
+  );
 }
 
 async function markQualityIgnoredRequest(input: { result_ids: number[]; ignored: boolean }): Promise<void> {
