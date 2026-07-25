@@ -603,6 +603,8 @@ Automatisierte Metadaten-Prüfung für Paperless-NGX Dokumente via LLM. Opt-in v
 3. **LLM-Analyse** — 8 Validierungsfelder: Titel, Korrespondent, Dokumenttyp, Tags, Speicherpfad, Datum, Sprache, Archivstatus
 4. **Fix-Modi**: `review` (manuelle Freigabe im Admin UI), `auto_threshold` (ab Konfidenz ≥ Schwellwert), `auto_all`
 
+**Metadaten-Autocreate beim Anwenden.** Beim Anwenden eines Fixes werden Korrespondent / Dokumenttyp / Tags durch die geteilten resolve-**oder-CREATE**-Helfer der Folder-Ingest-Leg geleitet: ein passender (fuzzy) Taxonomie-Eintrag wird zugewiesen, ein genuin neuer **angelegt** — so bleibt das Audit nicht auf einem frischen/leeren Paperless stecken (der Fuzzy-Guardrail verhindert Beinahe-Duplikate; `None` bei Beinahe-Treffer → Feld bleibt unbesetzt, konsistent für alle drei Felder). Gated über `paperless_autocreate_document_type` / `paperless_autocreate_tags` (Default an). Die volle Taxonomie wird pro Batch **einmal** geladen (nicht 3× pro Dokument — die Paperless-MCP ist ~60/min rate-limitiert).
+
 ### Re-OCR (lokaler Stack mit Paperless-Fallback)
 
 Die „Re-OCR"-Aktion läuft **nicht** mehr blind über Paperless' eigene OCR (die mit denselben Einstellungen scheitern würde). Stattdessen pro Dokument: Original-Bytes per MCP `download_document` laden (`truncate=False` — sonst wird das Base64 am LLM-Response-Limit abgeschnitten), lokal mit erzwungener Ganzseiten-OCR (Renfields Docling/EasyOCR-Stack inkl. Garbled-Layer-Recovery) neu erkennen, das Ergebnis bewerten und **nur bei striktem Qualitätsgewinn** den sauberen Text via `update_document(content=…)` zurück nach Paperless schreiben. Schlägt die lokale OCR fehl oder ist sie nicht besser, greift der Fallback auf Paperless' natives `reprocess`. Hinweis: Es wird nur der durchsuchbare Content aktualisiert, das archivierte PDF wird nicht neu erzeugt.
@@ -619,6 +621,16 @@ Eigener Tab, der Dokumente sichtbar macht, deren **Ingest** an der Qualität ges
 2. der **letzte** `document_processing_history`-Eintrag hat ≥ 30 % der Chunks an der Qualitätsschwelle verworfen (`chunks_dropped_low_quality / (produced + dropped) ≥ 0.30`).
 
 Das Signal lebt am renfield-internen `Document`, der Audit-Datensatz am Paperless-externen `paperless_doc_id` — verknüpft über `Document.paperless_document_id`. Paperless-only-Dokumente (nie in die KB ingestet) tragen kein Badge. Jede betroffene Zeile zeigt ein Badge (`X % verworfen` bzw. `OCR fehlgeschlagen`) und zwei Aktionen: **Erneut OCR** (derselbe lokale Re-OCR-Pfad wie der OCR-Tab) und **Ignorieren** — letzteres setzt `documents.quality_ignored` (Migration `pc20260618_doc_quality_ignored`), wodurch das Dokument vom periodischen Cleanup-Lauf (`bin/purge_low_quality_chunks.py`) übersprungen und aus dem Tab herausgefiltert wird; **Wieder berücksichtigen** hebt das auf. Das Badge erscheint zusätzlich inline im OCR-Tab. Endpunkt: `POST /api/admin/paperless-audit/quality-ignore` (ADMIN-gated, wie alle Audit-Routen); der `low_quality_only`-Filter beschränkt die Ergebnisliste serverseitig.
+
+### Duplikate selbst finden und löschen (`internal.paperless_dedupe`)
+
+Renfield räumt doppelte Paperless-Dokumente selbst auf — per Chat, nicht per API-Skript („finde und lösche die Duplikate in Paperless", „räum die doppelten Dokumente auf", „gibt es Dubletten?"). Das Agent-Tool `internal.paperless_dedupe` (`services/paperless_dedupe_tool.py`, `documents`-Rolle):
+
+1. **Kandidaten** aus günstigen Such-Metadaten gruppieren (Korrespondent · Dokumenttyp · Erstelldatum · Titel, `ordering=-created` — Re-Upload-Bursts sind die neuesten Zeilen; Sweep bis `SWEEP_CAP=500`, größerer Korpus wird als teilweise geprüft gemeldet).
+2. **Voller OCR-Text-Vergleich** je Kandidatengruppe (`get_document` mit `truncate=False`) — nur **byte-identische** Kopien gelten als Duplikat; ähnliche, aber nicht identische Dokumente werden nur gemeldet, **nie** gelöscht.
+3. **Löschen**: das älteste Dokument (kleinste Paperless-ID) bleibt, jede weitere identische Kopie geht über `mcp.paperless.delete_document` in den **wiederherstellbaren Papierkorb** (Paperless-ngx 2.x — eine übereifrige Bereinigung ist rückgängig machbar).
+
+`dry_run=true` meldet die Gruppen, ohne zu löschen. **Fail-closed**: bei aktiver Auth erfordert das Löschen einen authentifizierten **ADMIN**; ein unidentifizierter Turn (`user_permissions=None` — Geräte-/Satelliten-Token oder unerkannte Sprachstimme) wird abgelehnt (Bulk-Archiv-Löschung hat größere Tragweite als die reversiblen Wartungs-Tools). Auth aus (Einzel-Haushalt) überspringt den Gate. Ergänzt den admin-seitigen **Duplikate**-Tab (nur Anzeige) um die aktive Bereinigung.
 
 ### Konfiguration
 
