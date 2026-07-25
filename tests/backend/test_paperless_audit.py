@@ -1093,7 +1093,10 @@ class TestRunAudit:
 
             await service.run_audit(mode="full", fix_mode="auto_all")
 
-            mock_fix.assert_called_once_with(mock_result)
+            # _apply_fix now also receives the batch-fetched taxonomy kwarg; assert
+            # on the positional result arg and ignore the taxonomy value.
+            mock_fix.assert_called_once()
+            assert mock_fix.call_args.args == (mock_result,)
 
     @pytest.mark.unit
     @pytest.mark.asyncio

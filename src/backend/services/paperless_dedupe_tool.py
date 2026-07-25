@@ -20,9 +20,11 @@ Safety model — only EXACT duplicates are auto-deleted (the user-chosen boundar
 
 ``dry_run=True`` reports the groups + what WOULD be deleted without touching anything.
 
-Destructive maintenance — gated on ``Permission.ADMIN`` when auth is on (auth-off /
-unidentified-voice turns are allowed, matching the other internal maintenance tools).
-Bounded sweep (``SWEEP_CAP`` docs); a larger corpus is reported as partially swept.
+Destructive maintenance — **fail-closed**: with auth ON it requires an authenticated
+``Permission.ADMIN``; an unidentified turn (``user_permissions=None``) is DENIED
+(unlike the reversible maintenance tools, because a bulk archive delete has a larger
+blast radius). Auth OFF (single-user household) skips the gate. Bounded sweep
+(``SWEEP_CAP`` docs); a larger corpus is reported as partially swept.
 """
 from __future__ import annotations
 
@@ -81,8 +83,13 @@ async def paperless_dedupe(
     user_permissions: list[str] | None = None,
 ) -> dict:
     """Find exact-duplicate Paperless documents and delete the extras (keep oldest)."""
-    if settings.auth_enabled and user_permissions is not None:
-        if not has_permission(user_permissions, Permission.ADMIN):
+    # Fail-closed: this trashes documents in bulk, so with auth ON it requires an
+    # authenticated ADMIN. An unidentified turn (user_permissions=None — a device/
+    # satellite token or unrecognized-voice turn) is DENIED, unlike the reversible
+    # maintenance tools that allow None: a bulk archive delete is a higher blast
+    # radius. Auth OFF (single-user household) skips the gate entirely.
+    if settings.auth_enabled:
+        if user_permissions is None or not has_permission(user_permissions, Permission.ADMIN):
             return {
                 "success": False,
                 "message": "Zum Aufräumen der Paperless-Duplikate fehlt die Berechtigung (Admin).",
@@ -96,8 +103,17 @@ async def paperless_dedupe(
     try:
         search = _parse_paperless_result(
             await mcp_manager.execute_tool(
+                # Newest-first: a re-upload burst (the dominant duplicate source)
+                # produces RECENT copies, so on a corpus larger than SWEEP_CAP the
+                # newest window is where the dupes are. Copies from one burst are
+                # time-adjacent → land in the same window together. (Full-corpus
+                # coverage beyond SWEEP_CAP needs pagination — P3, see swept_note.)
                 "mcp.paperless.search_documents",
-                {"ordering": "created", "max_results": SWEEP_CAP},
+                {"ordering": "-created", "max_results": SWEEP_CAP},
+                # truncate=False: a 500-row result set can exceed the default
+                # response cap; a truncated array would both drop candidate docs and
+                # make len(docs) < SWEEP_CAP falsely read as "full corpus swept".
+                truncate=False,
             )
         )
         if search.get("error"):
@@ -131,6 +147,12 @@ async def paperless_dedupe(
                     await mcp_manager.execute_tool(
                         "mcp.paperless.get_document",
                         {"document_id": m["id"], "include_content": True},
+                        # truncate=False: the identity check MUST compare the FULL OCR
+                        # text. The default response truncation would byte-cut a long
+                        # doc's content, and two different docs sharing the same first
+                        # ~mcp_max_response_size bytes (same candidate key) would then
+                        # hash-identical and one would be wrongly deleted.
+                        truncate=False,
                     )
                 )
                 if got.get("error"):

@@ -14,11 +14,13 @@ def _make_mcp(docs, contents):
     class _MCP:
         def __init__(self):
             self.deleted: list[int] = []
+            self.get_document_kwargs: list[dict] = []
 
         async def execute_tool(self, tool, params, **_kw):
             if tool == "mcp.paperless.search_documents":
                 return {"success": True, "message": json.dumps({"results": docs})}
             if tool == "mcp.paperless.get_document":
+                self.get_document_kwargs.append(_kw)
                 did = params["document_id"]
                 return {"success": True, "message": json.dumps({"content": contents.get(did)})}
             if tool == "mcp.paperless.delete_document":
@@ -52,6 +54,9 @@ async def test_deletes_exact_duplicates_keeps_oldest():
     assert result["data"]["groups"] == 1
     assert result["data"]["deleted"] == 2
     assert result["data"]["kept_ids"] == [1]
+    # Identity check MUST compare the FULL OCR text → get_document with truncate=False.
+    assert mcp.get_document_kwargs, "get_document was never called"
+    assert all(kw.get("truncate") is False for kw in mcp.get_document_kwargs)
 
 
 @pytest.mark.unit
@@ -135,6 +140,23 @@ async def test_permission_denied_without_admin(monkeypatch):
     mcp = _make_mcp(docs, {1: "SAME", 2: "SAME"})
 
     result = await paperless_dedupe({}, mcp_manager=mcp, user_permissions=["ha.read"])
+
+    assert result["success"] is False
+    assert result["action_taken"] is False
+    assert mcp.deleted == []
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_permission_denied_for_unidentified_turn_when_auth_on(monkeypatch):
+    """Fail-closed: auth ON + user_permissions=None (device/unrecognized-voice) is
+    DENIED for this destructive tool — must not trash documents without ADMIN."""
+    from utils.config import settings
+
+    monkeypatch.setattr(settings, "auth_enabled", True)
+    mcp = _make_mcp([_doc(1), _doc(2)], {1: "SAME", 2: "SAME"})
+
+    result = await paperless_dedupe({}, mcp_manager=mcp, user_permissions=None)
 
     assert result["success"] is False
     assert result["action_taken"] is False

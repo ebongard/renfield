@@ -141,6 +141,13 @@ class PaperlessAuditService:
 
             # 3. Fetch available metadata for LLM context
             available_metadata = await self._fetch_available_metadata()
+            # Full taxonomy for resolve-or-create, fetched ONCE — only when this run
+            # actually auto-applies fixes (review mode writes nothing here).
+            apply_taxonomy = (
+                await self._fetch_full_taxonomy()
+                if fix_mode in ("auto_all", "auto_threshold")
+                else {}
+            )
 
             # 4. Process each document
             for i, doc_id in enumerate(doc_ids):
@@ -162,7 +169,7 @@ class PaperlessAuditService:
                         if fix_mode == "auto_all" or (
                             fix_mode == "auto_threshold" and (result.confidence or 0) >= confidence_threshold
                         ):
-                            await self._apply_fix(result)
+                            await self._apply_fix(result, taxonomy=apply_taxonomy)
                         # else: stays "pending" for review
 
                     logger.info(
@@ -531,7 +538,31 @@ class PaperlessAuditService:
             logger.warning(f"Failed to parse LLM JSON response: {e}")
             return None
 
-    async def _apply_fix(self, result) -> bool:
+    async def _fetch_full_taxonomy(self) -> dict:
+        """Fetch the FULL Paperless taxonomy name-lists ONCE for a batch apply.
+
+        Threaded into ``_apply_fix(taxonomy=...)`` so a batch of N audit fixes makes
+        3 taxonomy list calls total instead of 3·N (the Paperless MCP is rate-limited
+        ~60/min — the per-call path would 429 on a large batch, then silently drop
+        fixes). Each value is ``None`` on a transport failure, in which case
+        ``_apply_fix`` falls back to per-call fetching for that kind.
+
+        Note: a same-batch auto-created entry won't appear in this cached list, so a
+        later doc needing the same value re-issues its create — the MCP answers
+        ``already_exists`` and the existing name is reused (idempotent, one extra call).
+        """
+        from services.folder_ingest_paperless import (
+            _fetch_correspondent_names,
+            _fetch_taxonomy_names,
+        )
+
+        return {
+            "correspondents": await _fetch_correspondent_names(self._mcp),
+            "document_types": await _fetch_taxonomy_names(self._mcp, "document_type"),
+            "tags": await _fetch_taxonomy_names(self._mcp, "tag"),
+        }
+
+    async def _apply_fix(self, result, taxonomy: dict | None = None) -> bool:
         """Apply suggested fix via MCP update_document tool.
 
         Correspondent/document_type/tags are routed through the shared
@@ -540,12 +571,17 @@ class PaperlessAuditService:
         when one matches (fuzzy), and CREATES it when genuinely new — so it isn't
         stuck on a sparse/fresh Paperless the way assign-only was. Gated by the
         paperless_autocreate_* flags; the fuzzy guardrail prevents near-duplicates.
+
+        ``taxonomy`` (from ``_fetch_full_taxonomy``) supplies the full name-lists so a
+        batch caller fetches them ONCE instead of 3× per result; omitted → each
+        resolver fetches its own (single-call callers / fallback).
         """
         from services.folder_ingest_paperless import (
             resolve_or_create_correspondent,
             resolve_or_create_taxonomy,
         )
 
+        tax = taxonomy or {}
         params = {"document_id": result.paperless_doc_id}
         has_changes = False
 
@@ -553,7 +589,9 @@ class PaperlessAuditService:
             params["title"] = result.suggested_title
             has_changes = True
         if result.suggested_correspondent and result.suggested_correspondent != result.current_correspondent:
-            corr = await resolve_or_create_correspondent(self._mcp, result.suggested_correspondent)
+            corr = await resolve_or_create_correspondent(
+                self._mcp, result.suggested_correspondent, names=tax.get("correspondents")
+            )
             if corr:  # None = a fuzzy-near match exists → guardrail, leave unset
                 params["correspondent"] = corr
                 has_changes = True
@@ -562,14 +600,19 @@ class PaperlessAuditService:
             if settings.paperless_autocreate_document_type:
                 # None on a fuzzy-near guardrail hit → skip (same as correspondent),
                 # rather than force the raw suggestion and risk a near-duplicate type.
-                dt = await resolve_or_create_taxonomy(self._mcp, "document_type", dt)
+                dt = await resolve_or_create_taxonomy(
+                    self._mcp, "document_type", dt, names=tax.get("document_types")
+                )
             if dt:
                 params["document_type"] = dt
                 has_changes = True
         if result.suggested_tags and result.suggested_tags != result.current_tags:
             tags = result.suggested_tags
             if settings.paperless_autocreate_tags:
-                resolved = [await resolve_or_create_taxonomy(self._mcp, "tag", t) for t in tags]
+                resolved = [
+                    await resolve_or_create_taxonomy(self._mcp, "tag", t, names=tax.get("tags"))
+                    for t in tags
+                ]
                 tags = [t for t in resolved if t]  # drop guardrail-skipped (None) tags
             if tags:
                 params["tags"] = tags
@@ -622,8 +665,10 @@ class PaperlessAuditService:
             )
             results = (await db.execute(stmt)).scalars().all()
 
+        # Fetch the full taxonomy ONCE for the whole batch (not 3× per result).
+        taxonomy = await self._fetch_full_taxonomy() if results else {}
         for result in results:
-            success = await self._apply_fix(result)
+            success = await self._apply_fix(result, taxonomy=taxonomy)
             if success:
                 applied += 1
             else:
