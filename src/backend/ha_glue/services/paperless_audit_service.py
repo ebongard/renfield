@@ -729,6 +729,7 @@ class PaperlessAuditService:
         improved = 0
         fallback = 0
         failed = 0
+        metadata_updated = 0
 
         async with self._db_factory() as db:
             stmt = select(PaperlessAuditResult).where(
@@ -736,10 +737,23 @@ class PaperlessAuditService:
             )
             results = (await db.execute(stmt)).scalars().all()
 
+        # Re-derive-after-reocr context, fetched ONCE (reused per improved doc): the
+        # LLM's taxonomy context + the full taxonomy for resolve-or-create on apply.
+        rederive = ha_glue_settings.paperless_audit_rederive_metadata_after_reocr
+        available_metadata = await self._fetch_available_metadata() if rederive else {}
+        taxonomy = await self._fetch_full_taxonomy() if rederive else {}
+
         for result in results:
             outcome = await self._local_reocr(result)
             if outcome == "improved":
                 improved += 1
+                # The old metadata was extracted from the garbled text; now that the
+                # text is fixed, re-derive + apply it in the same action so the user
+                # doesn't have to run a separate audit. Best-effort.
+                if rederive and await self._rederive_and_apply_metadata(
+                    result.paperless_doc_id, available_metadata, taxonomy
+                ):
+                    metadata_updated += 1
             elif outcome == "fallback":
                 fallback += 1
             else:
@@ -752,7 +766,28 @@ class PaperlessAuditService:
             "improved": improved,
             "fallback": fallback,
             "failed": failed,
+            "metadata_updated": metadata_updated,
         }
+
+    async def _rederive_and_apply_metadata(
+        self, doc_id: int, available_metadata: dict, taxonomy: dict
+    ) -> bool:
+        """After a re-OCR fixed the document's text, re-run the LLM metadata analysis
+        on the NOW-good content and apply the corrected metadata (title /
+        correspondent / document_type / tags / date). The prior suggestions were
+        derived from the garbled text. Best-effort — never raises into the re-OCR
+        loop. Returns True when a metadata fix was applied."""
+        try:
+            fresh = await self._analyze_document(doc_id, "reocr_rederive", available_metadata)
+            if fresh is None or not getattr(fresh, "changes_needed", False):
+                return False
+            applied = await self._apply_fix(fresh, taxonomy=taxonomy)
+            if applied:
+                logger.info(f"re-OCR: re-derived + applied metadata for doc {doc_id}")
+            return applied
+        except Exception as e:  # noqa: BLE001
+            logger.warning(f"re-OCR metadata re-derive failed for doc {doc_id}: {e}")
+            return False
 
     async def _local_reocr(self, result) -> str:
         """Re-OCR one audited document locally and write the text back.

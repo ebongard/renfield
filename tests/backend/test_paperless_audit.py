@@ -2130,3 +2130,88 @@ class TestEnqueueKbReindex:
         await service._enqueue_kb_reindex(42)
 
         assert sink == {}  # already queued/running → dedup, no second enqueue
+
+
+# ============================================================================
+# Re-OCR → re-derive + apply metadata (fix metadata that was extracted from garble)
+# ============================================================================
+
+
+class TestRederiveMetadataAfterReocr:
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_applies_fresh_metadata_when_changes_needed(self, service):
+        fresh = MagicMock()
+        fresh.changes_needed = True
+        service._analyze_document = AsyncMock(return_value=fresh)
+        service._apply_fix = AsyncMock(return_value=True)
+
+        assert await service._rederive_and_apply_metadata(40, {}, {}) is True
+        service._analyze_document.assert_awaited_once()
+        service._apply_fix.assert_awaited_once()
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_noop_when_analysis_finds_no_change(self, service):
+        fresh = MagicMock()
+        fresh.changes_needed = False
+        service._analyze_document = AsyncMock(return_value=fresh)
+        service._apply_fix = AsyncMock(return_value=True)
+
+        assert await service._rederive_and_apply_metadata(40, {}, {}) is False
+        service._apply_fix.assert_not_awaited()
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_best_effort_swallows_errors(self, service):
+        service._analyze_document = AsyncMock(side_effect=RuntimeError("boom"))
+        # must not raise into the re-OCR loop
+        assert await service._rederive_and_apply_metadata(40, {}, {}) is False
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_reprocess_rederives_after_improved(self, service, mock_db_factory, monkeypatch):
+        from ha_glue.utils.config import ha_glue_settings
+
+        monkeypatch.setattr(
+            ha_glue_settings, "paperless_audit_rederive_metadata_after_reocr", True
+        )
+        r = MagicMock()
+        r.id = 1
+        r.paperless_doc_id = 40
+        mock_db_factory._mock_session.execute.return_value = MagicMock(
+            scalars=MagicMock(return_value=MagicMock(all=MagicMock(return_value=[r])))
+        )
+        service._local_reocr = AsyncMock(return_value="improved")
+        service._fetch_available_metadata = AsyncMock(return_value={})
+        service._fetch_full_taxonomy = AsyncMock(return_value={})
+        service._rederive_and_apply_metadata = AsyncMock(return_value=True)
+
+        out = await service.reprocess_documents([1])
+
+        assert out["improved"] == 1
+        assert out["metadata_updated"] == 1
+        service._rederive_and_apply_metadata.assert_awaited_once_with(40, {}, {})
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_reprocess_skips_rederive_when_flag_off(self, service, mock_db_factory, monkeypatch):
+        from ha_glue.utils.config import ha_glue_settings
+
+        monkeypatch.setattr(
+            ha_glue_settings, "paperless_audit_rederive_metadata_after_reocr", False
+        )
+        r = MagicMock()
+        r.id = 1
+        r.paperless_doc_id = 40
+        mock_db_factory._mock_session.execute.return_value = MagicMock(
+            scalars=MagicMock(return_value=MagicMock(all=MagicMock(return_value=[r])))
+        )
+        service._local_reocr = AsyncMock(return_value="improved")
+        service._rederive_and_apply_metadata = AsyncMock(return_value=True)
+
+        out = await service.reprocess_documents([1])
+
+        assert out["improved"] == 1
+        assert out.get("metadata_updated", 0) == 0
+        service._rederive_and_apply_metadata.assert_not_awaited()

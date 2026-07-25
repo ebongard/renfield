@@ -93,6 +93,13 @@ class HaGlueSettings(BaseSettings):
     # (garbled) chunks. Maps paperless_document_id → the renfield Document. Skipped
     # for Paperless-only docs (no KB copy). Best-effort, never breaks the re-OCR.
     paperless_audit_reindex_on_reocr: bool = True
+    # After a re-OCR fixes the text, re-derive the Paperless metadata (title /
+    # correspondent / document_type / tags / date) from the NOW-good content and
+    # apply it in the same action — the old metadata was extracted from the garbled
+    # text, so a bare re-OCR left it wrong (the "why isn't the metadata updated too"
+    # gap). Best-effort; auto-applies (metadata is easily corrected, and the prior
+    # state was wrong). Default on.
+    paperless_audit_rederive_metadata_after_reocr: bool = True
 
     # === Presence Detection (BLE-based room-level) ===
     presence_enabled: bool = False                      # Master-Switch for BLE presence detection
