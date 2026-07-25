@@ -105,6 +105,16 @@ A wrong token → `401`/`403` (the MCP knows its token is bad = fatal). When the
 is **disabled** health still returns `200` with `enabled: false` (definitive "feature
 off" — distinct from the push route's transient `503`).
 
+### Failure reporting (MCP self-detection)
+
+The MCP already fires an `OPERATOR-NOTIFY` on its own failures (SMB-auth, share
+down, retry-exhausted). Point `FILES_NOTIFY_WEBHOOK_URL` at
+`POST /api/mcp-health/report` (same folder-ingest Bearer token via
+`FILES_NOTIFY_WEBHOOK_TOKEN`) so those surface as a proactive admin alert +
+`internal.system_health` entry instead of dead-ending in container logs. Backend
+side is gated `MCP_HEALTH_MONITOR_ENABLED`; unset URL = legacy log-only.
+See `docs/design/mcp-self-detection.md`.
+
 ## Interactive path (`internal.ingest_file`)
 
 Besides the auto push, the agent can ingest a file the user points at:

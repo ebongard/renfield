@@ -548,6 +548,39 @@ per user_id); restart-fest + advisory-locked. Bekannt: ohne Idempotenz-Key des
 MCP kann ein Crash zwischen erfolgreichem create und Ledger-Commit ein Duplikat
 hinterlassen (at-least-once; P2).
 
+#### MCP-Selbsterkennung + proaktive Alarmierung (Phase 1)
+
+```bash
+# Selbsterkennung von MCP-Ausfällen: pollt periodisch die MCP-Client-Flotte
+# (MCPManager.get_status()) auf degraded/down und nimmt Ausfallmeldungen der
+# Ingest-Push-MCPs (filesystem/email-ingest) an POST /api/mcp-health/report
+# entgegen. Feuert EINE proaktive Meldung an den Admin/Owner pro neuem/wieder-
+# kehrendem Problem (dedupliziert per Ledger, Re-Alert erst nach TTL). Nur
+# Erkennen+Melden — keine Heilung (Phase 2). Benötigt PROACTIVE_ENABLED für die
+# Zustellung; das Auftauchen in internal.system_health ist gratis (auch dark).
+MCP_HEALTH_MONITOR_ENABLED=false
+MCP_HEALTH_MONITOR_INTERVAL=120                # Plane-A Poll-Intervall (Sekunden)
+MCP_HEALTH_REALERT_SECONDS=21600              # laufendes Problem erst nach 6h erneut melden
+```
+
+Die Ingest-MCPs melden ihre eigenen Fehler (SMB-Auth, IMAP-Drop, retry-exhausted,
+fataler Token) über den vorhandenen `WebhookNotifier`. Diesen auf den Endpoint
+zeigen lassen — der Token ist derselbe revozierbare Folder-Ingest-Push-Token,
+den die MCPs bereits halten:
+
+```bash
+# renfield-mcp-filesystem
+FILES_NOTIFY_WEBHOOK_URL=http://backend:8000/api/mcp-health/report
+FILES_NOTIFY_WEBHOOK_TOKEN=<RENFIELD_INGEST_TOKEN>   # via secretKeyRef, nie Klartext im Manifest
+# renfield-mcp-email-ingest
+EMAIL_NOTIFY_WEBHOOK_URL=http://backend:8000/api/mcp-health/report
+EMAIL_NOTIFY_WEBHOOK_TOKEN=<RENFIELD_INGEST_TOKEN>
+```
+
+Ohne gesetzte Webhook-URL bleibt die MCP-eigene `OPERATOR-NOTIFY` (wie bisher) in
+den Container-Logs stecken. Design + Fehlermodus-Katalog + Phasen 2/3:
+`docs/design/mcp-self-detection.md`.
+
 #### Externe Scheduling-Templates
 
 Cron-basiertes Scheduling (z.B. Morgenbriefing) wird extern via **n8n-Workflows** oder **Home Assistant-Automationen** gelöst. Diese senden per Webhook an `POST /api/notifications/webhook`.

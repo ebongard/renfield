@@ -121,6 +121,16 @@ routing table (the email analog of folder-ingest's `kb_resolved`):
 A wrong token → `401`/`403`. When the feature is **disabled** health still returns
 `200` with `enabled: false` (distinct from the push route's transient `503`).
 
+### Failure reporting (MCP self-detection)
+
+The watcher fires an `OPERATOR-NOTIFY` on its own failures (IMAP drop, `BYE
+timeout`, bad token). Point `EMAIL_NOTIFY_WEBHOOK_URL` at
+`POST /api/mcp-health/report` (same Bearer token via `EMAIL_NOTIFY_WEBHOOK_TOKEN`)
+so those surface as a proactive admin alert + `internal.system_health` entry
+instead of dead-ending in container logs. Backend side is gated
+`MCP_HEALTH_MONITOR_ENABLED`; unset URL = legacy log-only.
+See `docs/design/mcp-self-detection.md`.
+
 ## Behavior notes
 
 - **Attachments only, inline images skipped.** A leaf MIME part with a filename is
