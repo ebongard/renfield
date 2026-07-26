@@ -1795,3 +1795,105 @@ class TestGetStatusTotalToolCount:
         status = manager.get_status()
         assert status["servers"][0]["tool_count"] == 1
         assert status["servers"][0]["total_tool_count"] == 2
+
+
+class TestFunctionalHealthCallTracking:
+    """Phase 2 functional health: rolling tool-call outcome window → calls_failing."""
+
+    def _tool(self):
+        return MCPToolInfo("srv", "t", "mcp.srv.t", "T")
+
+    @pytest.mark.unit
+    def test_calls_failing_below_min_samples_is_false(self):
+        state = MCPServerState(config=MCPServerConfig(name="srv"), connected=True)
+        for _ in range(3):  # default min_samples = 4
+            state.record_call_outcome(False)
+        assert state.calls_failing() is False
+
+    @pytest.mark.unit
+    def test_calls_failing_all_fail_over_threshold(self):
+        state = MCPServerState(config=MCPServerConfig(name="srv"), connected=True)
+        for _ in range(4):
+            state.record_call_outcome(False)
+        assert state.calls_failing() is True
+
+    @pytest.mark.unit
+    def test_calls_failing_below_ratio_is_false(self):
+        # 3 fail / 1 ok = 0.75 < default 0.8
+        state = MCPServerState(config=MCPServerConfig(name="srv"), connected=True)
+        for ok in (False, False, False, True):
+            state.record_call_outcome(ok)
+        assert state.calls_failing() is False
+
+    @pytest.mark.unit
+    def test_window_bounded_by_config(self):
+        from utils.config import settings
+        state = MCPServerState(config=MCPServerConfig(name="srv"), connected=True)
+        for _ in range(settings.mcp_health_call_window + 5):
+            state.record_call_outcome(True)
+        assert len(state.recent_outcomes) == settings.mcp_health_call_window
+
+    @pytest.mark.unit
+    def test_server_health_folds_calls_failing(self):
+        manager = MCPManager()
+        state = MCPServerState(config=MCPServerConfig(name="srv"), connected=True)
+        state.all_discovered_tools = [self._tool()]  # not no_tools
+        for _ in range(4):
+            state.record_call_outcome(False)
+        manager._servers["srv"] = state
+        assert manager._server_health("srv", state) == ("degraded", "calls_failing")
+
+    @pytest.mark.unit
+    def test_server_health_healthy_when_calls_ok(self):
+        manager = MCPManager()
+        state = MCPServerState(config=MCPServerConfig(name="srv"), connected=True)
+        state.all_discovered_tools = [self._tool()]
+        for _ in range(4):
+            state.record_call_outcome(True)
+        manager._servers["srv"] = state
+        assert manager._server_health("srv", state) == ("healthy", None)
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_execute_tool_records_success_outcome(self):
+        manager = MCPManager()
+        manager._tool_index["mcp.srv.mytool"] = MCPToolInfo("srv", "mytool", "mcp.srv.mytool", "t")
+        content = MagicMock(); content.text = "ok"; content.type = "text"
+        res = MagicMock(); res.isError = False; res.content = [content]
+        sess = AsyncMock(); sess.call_tool = AsyncMock(return_value=res)
+        state = MCPServerState(config=MCPServerConfig(name="srv"), connected=True, session=sess)
+        manager._servers["srv"] = state
+        await manager.execute_tool("mcp.srv.mytool", {})
+        assert list(state.recent_outcomes) == [True]
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_execute_tool_ignores_app_error_outcome(self):
+        # An isError result is an APPLICATION outcome (device off, not found, …),
+        # NOT a server-health signal — it must not be recorded, else a burst of
+        # legitimate app errors would falsely flag the server calls_failing.
+        manager = MCPManager()
+        manager._tool_index["mcp.srv.bad"] = MCPToolInfo("srv", "bad", "mcp.srv.bad", "t")
+        content = MagicMock(); content.text = "boom"; content.type = "text"
+        res = MagicMock(); res.isError = True; res.content = [content]
+        sess = AsyncMock(); sess.call_tool = AsyncMock(return_value=res)
+        state = MCPServerState(config=MCPServerConfig(name="srv"), connected=True, session=sess)
+        manager._servers["srv"] = state
+        await manager.execute_tool("mcp.srv.bad", {})
+        assert list(state.recent_outcomes) == []  # app error → not recorded
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_execute_tool_records_timeout_as_failure(self):
+        # A timeout IS health-correlated (server/upstream didn't respond) → False.
+        manager = MCPManager()
+        manager._tool_index["mcp.srv.slow"] = MCPToolInfo("srv", "slow", "mcp.srv.slow", "t")
+
+        async def _hang(*a, **k):
+            raise TimeoutError()
+
+        sess = AsyncMock(); sess.call_tool = AsyncMock(side_effect=_hang)
+        state = MCPServerState(config=MCPServerConfig(name="srv"), connected=True, session=sess)
+        manager._servers["srv"] = state
+        await manager.execute_tool("mcp.srv.slow", {})
+        assert list(state.recent_outcomes) == [False]

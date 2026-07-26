@@ -144,8 +144,37 @@ async def ingest_report(payload: dict[str, Any]) -> None:
 
 # --- Plane-A: poll MCPManager.get_status() -----------------------------------
 
+async def _self_heal(mcp_manager, problem_names: list[str]) -> set[str]:
+    """Phase 2 self-heal: actively probe each degraded/down server, which drives a
+    single-shot reconnect (``probe_server``). Returns the set of names we attempted
+    (so the alert pass can say "Selbstheilung versucht"). The caller re-reads
+    get_status() afterwards, so a server the reconnect fixed simply drops out of the
+    problem set and never alerts — while a plugin_failed/upstream-dead server that a
+    reconnect can't fix stays degraded and alerts."""
+    attempted: set[str] = set()
+    probe = getattr(mcp_manager, "probe_server", None)
+    if not (settings.mcp_health_self_heal_enabled and callable(probe)):
+        return attempted
+    healed = 0
+    for name in problem_names[: settings.mcp_health_self_heal_max_per_tick]:
+        try:
+            res = await probe(name)
+            attempted.add(name)
+            if isinstance(res, dict) and res.get("ok"):
+                healed += 1
+        except Exception as e:  # noqa: BLE001 — a probe failure must not break the tick
+            logger.warning(f"mcp_health: self-heal probe failed for '{name}': {e}")
+    if attempted:
+        logger.info(
+            f"mcp_health: self-heal probed {len(attempted)} server(s), "
+            f"{healed} recovered on reconnect"
+        )
+    return attempted
+
+
 async def monitor_tick(app) -> None:
-    """One poll of the MCP client fleet: alert on a NEW degrade/down, clear the
+    """One poll of the MCP client fleet: self-heal (probe+reconnect) degraded/down
+    servers, then alert on those STILL broken (NEW problems only), and clear the
     ledger on recovery (so a later re-failure re-alerts promptly)."""
     if not settings.mcp_health_monitor_enabled:
         return
@@ -158,6 +187,25 @@ async def monitor_tick(app) -> None:
         logger.warning(f"mcp_health: get_status failed: {e}")
         return
 
+    # Self-heal pass: probe+reconnect the problem servers, then re-read health so we
+    # only alert on the ones the self-heal could NOT fix. Skip `plugin_failed` — a
+    # reconnect provably can't reload a failed startup plugin, so probing it just
+    # wastes an RPC and would make the alert falsely claim "Selbstheilung versucht".
+    problem_names = [
+        s.get("name")
+        for s in status.get("servers", [])
+        if s.get("health") in ("degraded", "down")
+        and s.get("impaired_code") != "plugin_failed"
+    ]
+    healed_attempted: set[str] = set()
+    if problem_names:
+        healed_attempted = await _self_heal(mcp_manager, problem_names)
+        if healed_attempted:
+            try:
+                status = mcp_manager.get_status()  # post-heal health
+            except Exception as e:  # noqa: BLE001
+                logger.warning(f"mcp_health: post-heal get_status failed: {e}")
+
     current_problems: set[str] = set()
     for srv in status.get("servers", []):
         name = srv.get("name")
@@ -168,11 +216,18 @@ async def monitor_tick(app) -> None:
             if _should_alert(key):
                 reason = srv.get("impaired_code") or srv.get("last_error") or health
                 verb = "ist nicht erreichbar" if health == "down" else "ist eingeschränkt"
+                tried = " (Selbstheilung versucht, ohne Erfolg)" if name in healed_attempted else ""
                 await _notify(
                     title=f"MCP-Dienst {name} {verb}",
-                    message=f"Der MCP-Dienst '{name}' {verb} ({reason}). Betroffene Funktionen können ausfallen.",
+                    message=(
+                        f"Der MCP-Dienst '{name}' {verb} ({reason}){tried}. "
+                        "Betroffene Funktionen können ausfallen."
+                    ),
                     dedup_key=key,
-                    data={"plane": "A", "server": name, "health": health, "reason": reason},
+                    data={
+                        "plane": "A", "server": name, "health": health,
+                        "reason": reason, "self_heal_attempted": name in healed_attempted,
+                    },
                 )
     # Recovery: any Plane-A ledger key no longer a current problem → clear it.
     for key in [k for k in _alerted if k.startswith("planea:")]:

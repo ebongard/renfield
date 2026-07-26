@@ -1245,6 +1245,22 @@ class Settings(BaseSettings):
     mcp_health_monitor_enabled: bool = False
     mcp_health_monitor_interval: int = 120             # Plane-A poll interval (seconds)
     mcp_health_realert_seconds: float = 21600.0        # re-alert an ongoing issue after 6h
+    # MCP health Phase 2 (self-healing): before alerting on a degraded/down server,
+    # the monitor actively probes it (probe_server → single-shot reconnect). A server
+    # that recovers is silently self-healed (no alert, ledger cleared); only a server
+    # still broken after the heal attempt alerts. plugin_failed/no_tools that a
+    # reconnect can't fix still alert (the post-probe health re-read decides).
+    mcp_health_self_heal_enabled: bool = True
+    mcp_health_self_heal_max_per_tick: int = 8         # cap probe/reconnect attempts per tick
+    # Functional health: track the last N HEALTH-CORRELATED tool-call outcomes per
+    # server — True on a clean result, False on a TIMEOUT (server didn't respond).
+    # App-level errors (device off / not found / success:false envelopes), caller
+    # rejects, and session-death (already → "down") are NOT counted, so a burst of
+    # legitimate app errors can't falsely flag a healthy server. A connected server
+    # whose calls mostly TIME OUT → degraded (calls_failing).
+    mcp_health_call_window: int = 10                   # rolling outcome window per server
+    mcp_health_call_min_samples: int = 4               # need this many timeouts/successes before judging
+    mcp_health_call_fail_ratio: float = 0.8            # >= this share timed out → calls_failing
 
     # Weekly obligation digest — the safety floor under the per-milestone
     # notifier. One owner-targeted summary per ISO week of every OPEN obligation

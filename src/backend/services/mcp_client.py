@@ -18,6 +18,7 @@ import os
 import random
 import re
 import time
+from collections import deque
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import AsyncExitStack, suppress
 from dataclasses import dataclass, field
@@ -764,6 +765,29 @@ class MCPServerState:
     # (which would race exit_stack teardown against re-entry).
     reconnect_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     last_successful_call: float = 0.0  # monotonic timestamp; 0 = never
+    # Functional-health signal (Phase 2): rolling window of recent tool-call
+    # outcomes that are HEALTH-CORRELATED — True on a clean result, False on a
+    # timeout (server/upstream didn't respond). Deliberately NOT recorded:
+    # app-level errors (isError / a device-off / not-found envelope — an application
+    # outcome, not the server's health), caller rejects (permission/validation/rate-
+    # limit), and session-death (already flips connected=False → "down"). Reset on
+    # (re)connect (fresh session).
+    recent_outcomes: deque = field(
+        default_factory=lambda: deque(maxlen=max(1, settings.mcp_health_call_window))
+    )
+
+    def record_call_outcome(self, ok: bool) -> None:
+        """Record one real tool-call outcome for functional-health folding."""
+        self.recent_outcomes.append(bool(ok))
+
+    def calls_failing(self) -> bool:
+        """True when enough recent calls have been made AND the failure share is at
+        or above the configured ratio — 'connected but the calls are dying'."""
+        n = len(self.recent_outcomes)
+        if n < settings.mcp_health_call_min_samples:
+            return False
+        failures = sum(1 for ok in self.recent_outcomes if not ok)
+        return (failures / n) >= settings.mcp_health_call_fail_ratio
 
 
 def _substitute_env_vars(value: str) -> str:
@@ -1129,6 +1153,9 @@ class MCPManager:
             self._set_connected(state, True)
             state.all_discovered_tools = all_tools
             state.last_error = None
+            # Fresh session → drop the old session's failure history so a reconnect
+            # that fixed the upstream isn't left falsely flagged calls_failing.
+            state.recent_outcomes.clear()
 
             # Filter to active tools only (DB override > YAML prompt_tools > all)
             active_tools_list = self._get_active_tools(config)
@@ -1533,6 +1560,9 @@ class MCPManager:
                 break
             except TimeoutError:
                 logger.error(f"MCP tool call timeout: {namespaced_name}")
+                # Functional-health signal: a timeout means the server/upstream did
+                # not respond — health-correlated (unlike an app-level error result).
+                state.record_call_outcome(False)
                 return {
                     "success": False,
                     "message": f"Tool-Aufruf Timeout: {namespaced_name}",
@@ -1564,6 +1594,11 @@ class MCPManager:
                 state.last_error = str(e)
 
         if result is None:
+            # NOT recorded as a health failure: this path is either an app-level
+            # exception (session is fine — an app error, not the server's health) or
+            # a session death that already flipped connected=False (→ "down" via
+            # connectivity). Counting it would flag a healthy server whose tool just
+            # errored. Only timeouts + genuine successes drive calls_failing.
             return {
                 "success": False,
                 "message": f"Tool-Aufruf fehlgeschlagen: {last_exc}",
@@ -1603,6 +1638,15 @@ class MCPManager:
         # the inner JSON to detect real failures.
         if not is_error:
             is_error = _detect_inner_error(message)
+
+        # Functional-health signal: record ONLY a clean result as a success. An
+        # isError result (protocol or inner-JSON) is an APPLICATION outcome — a
+        # device off, a parcel not found, a workflow that returned success:false —
+        # NOT a statement about the server's health, so it is deliberately not
+        # recorded (else a burst of legitimate app errors would falsely flag the
+        # server calls_failing). Only a timeout is counted as a health failure.
+        if not is_error:
+            state.record_call_outcome(True)
 
         return {
             "success": not is_error,
@@ -2146,6 +2190,11 @@ class MCPManager:
             return "degraded", "plugin_failed"
         if state.config.transport != MCPTransportType.FEDERATION and not state.all_discovered_tools:
             return "degraded", "no_tools"
+        # Functional health (Phase 2): connected + list_tools present, but the recent
+        # real tool calls are mostly failing → the transport is green but the upstream
+        # is dead. Federation exempt (its single tool is managed out of band).
+        if state.config.transport != MCPTransportType.FEDERATION and state.calls_failing():
+            return "degraded", "calls_failing"
         return "healthy", None
 
     def _impaired_servers(self) -> set[str]:

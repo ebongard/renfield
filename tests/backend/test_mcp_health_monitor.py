@@ -94,3 +94,81 @@ def test_plane_b_reports_freshness_filter():
     fresh = m.plane_b_reports()
     assert [r["source"] for r in fresh] == ["fresh"]
     assert len(m.plane_b_reports(fresh_only=False)) == 2
+
+
+# --- Phase 2: probe-driven self-heal in monitor_tick -------------------------
+
+def _capture_notes(monkeypatch):
+    """Capture full _notify calls (dedup_key + data) for self-heal assertions."""
+    notes: list[dict] = []
+
+    async def _fake_notify(title, message, dedup_key, data):
+        notes.append({"dedup_key": dedup_key, "message": message, "data": data})
+
+    monkeypatch.setattr(m, "_notify", _fake_notify)
+    return notes
+
+
+def _app_with(mgr):
+    app = MagicMock()
+    app.state.mcp_manager = mgr
+    return app
+
+
+async def test_self_heal_recovers_down_server_no_alert(monkeypatch):
+    notes = _capture_notes(monkeypatch)
+    mgr = MagicMock()
+    from unittest.mock import AsyncMock
+    mgr.get_status = MagicMock(side_effect=[
+        {"servers": [{"name": "paperless", "health": "down", "last_error": "x"}]},
+        {"servers": [{"name": "paperless", "health": "healthy"}]},  # post-heal
+    ])
+    mgr.probe_server = AsyncMock(return_value={"ok": True})
+    await m.monitor_tick(_app_with(mgr))
+    mgr.probe_server.assert_awaited_once_with("paperless")
+    assert notes == []  # self-healed → no alert
+    assert not any(k.startswith("planea:paperless") for k in m._alerted)
+
+
+async def test_self_heal_fails_then_alerts_with_marker(monkeypatch):
+    notes = _capture_notes(monkeypatch)
+    mgr = MagicMock()
+    from unittest.mock import AsyncMock
+    mgr.get_status = MagicMock(side_effect=[
+        {"servers": [{"name": "paperless", "health": "down", "last_error": "x"}]},
+        {"servers": [{"name": "paperless", "health": "down", "last_error": "x"}]},  # still down
+    ])
+    mgr.probe_server = AsyncMock(return_value={"ok": False})
+    await m.monitor_tick(_app_with(mgr))
+    assert len(notes) == 1
+    assert notes[0]["data"]["self_heal_attempted"] is True
+    assert "Selbstheilung versucht" in notes[0]["message"]
+
+
+async def test_self_heal_disabled_alerts_without_probe(monkeypatch):
+    monkeypatch.setattr(m.settings, "mcp_health_self_heal_enabled", False)
+    notes = _capture_notes(monkeypatch)
+    mgr = MagicMock()
+    from unittest.mock import AsyncMock
+    mgr.get_status = MagicMock(return_value={"servers": [{"name": "x", "health": "down"}]})
+    mgr.probe_server = AsyncMock(return_value={"ok": True})
+    await m.monitor_tick(_app_with(mgr))
+    mgr.probe_server.assert_not_awaited()
+    assert len(notes) == 1
+    assert notes[0]["data"]["self_heal_attempted"] is False
+
+
+async def test_plugin_failed_skips_probe_still_alerts(monkeypatch):
+    # A reconnect provably can't reload a failed startup plugin → we DON'T probe it
+    # (no wasted RPC, no false "Selbstheilung versucht"), but it STILL alerts.
+    notes = _capture_notes(monkeypatch)
+    mgr = MagicMock()
+    from unittest.mock import AsyncMock
+    degraded = {"servers": [{"name": "twin", "health": "degraded", "impaired_code": "plugin_failed"}]}
+    mgr.get_status = MagicMock(return_value=degraded)
+    mgr.probe_server = AsyncMock(return_value={"ok": True})
+    await m.monitor_tick(_app_with(mgr))
+    mgr.probe_server.assert_not_awaited()
+    assert len(notes) == 1
+    assert "twin" in notes[0]["dedup_key"]
+    assert notes[0]["data"]["self_heal_attempted"] is False

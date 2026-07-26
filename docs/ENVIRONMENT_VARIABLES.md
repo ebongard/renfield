@@ -563,6 +563,28 @@ MCP_HEALTH_MONITOR_INTERVAL=120                # Plane-A Poll-Intervall (Sekunde
 MCP_HEALTH_REALERT_SECONDS=21600              # laufendes Problem erst nach 6h erneut melden
 ```
 
+**Phase 2 — Selbstheilung** (gated auf `MCP_HEALTH_SELF_HEAL_ENABLED`, default an, wenn der Monitor an ist; aus → Phase-1 nur-erkennen):
+
+```bash
+# Vor dem Alarm probt der Monitor jeden degraded/down-Server aktiv (probe_server →
+# Single-Shot-Reconnect) und alarmiert NUR, wenn die Selbstheilung scheitert.
+MCP_HEALTH_SELF_HEAL_ENABLED=true
+MCP_HEALTH_SELF_HEAL_MAX_PER_TICK=8           # Cap der Probe/Reconnect-Versuche je Tick
+# Funktionale Gesundheit: rollierendes Fenster der letzten N GESUNDHEITS-
+# KORRELIERTEN Ergebnisse je Server — True bei sauberem Ergebnis, False bei TIMEOUT
+# (Server antwortet nicht). NICHT gezählt: App-Fehler (Gerät aus / nicht gefunden /
+# success:false), Aufrufer-Fehler, Session-Tod (bereits → down) — sonst würde ein
+# Schwung legitimer App-Fehler einen gesunden Server fälschlich flaggen. Verbunden +
+# Mehrheit der Aufrufe läuft in Timeout → degraded (calls_failing).
+MCP_HEALTH_CALL_WINDOW=10                      # Fenstergröße je Server
+MCP_HEALTH_CALL_MIN_SAMPLES=4                  # so viele Aufrufe nötig vor Urteil
+MCP_HEALTH_CALL_FAIL_RATIO=0.8                # >= dieser Anteil gescheitert → calls_failing
+
+# renfield-mcp-email-ingest: Backend-Recovery-Detektor (down→up → jede Mailbox
+# re-reconcilen, geparkte erschöpfte Mail entparken). Spiegelt FILES_HEALTH_POLL_SECONDS.
+EMAIL_HEALTH_POLL_SECONDS=30                   # 0 = aus
+```
+
 Die Ingest-MCPs melden ihre eigenen Fehler (SMB-Auth, IMAP-Drop, retry-exhausted,
 fataler Token) über den vorhandenen `WebhookNotifier`. Diesen auf den Endpoint
 zeigen lassen — der Token ist derselbe revozierbare Folder-Ingest-Push-Token,

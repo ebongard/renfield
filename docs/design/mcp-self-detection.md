@@ -1,7 +1,8 @@
 # MCP Self-Detection + Self-Healing
 
-Status: **Phase 1 SHIPPED (dark)** · Phases 2–3 designed, not built.
-Flag: `MCP_HEALTH_MONITOR_ENABLED` (default `false`).
+Status: **Phase 1 + 2 SHIPPED** · Phase 3 designed, not built.
+Flags: `MCP_HEALTH_MONITOR_ENABLED` (default `false`) gates the whole monitor;
+`MCP_HEALTH_SELF_HEAL_ENABLED` (default `true`) gates the Phase-2 probe+reconnect.
 
 ## Why
 
@@ -61,24 +62,43 @@ Per-MCP failure modes and where each is (or isn't yet) caught:
 |---|---|---|---|---|
 | filesystem (B) | SMB-auth / share down / retry-exhausted | yes (OPERATOR-NOTIFY) | ✅ report → alert | re-reconcile on recovery |
 | email-ingest (B) | IMAP drop / BYE-timeout / bad token | yes (OPERATOR-NOTIFY) | ✅ report → alert | backend-recovery re-reconcile (asymmetry: filesystem re-reconciles, email doesn't yet) |
-| any client (A) | transport disconnect | yes (`down`) | ✅ tick → alert | active-probe reconnect (`probe_server()`, currently dead code) |
-| any client (A) | plugin bind failed / 0 tools | yes (`degraded`) | ✅ tick → alert | — (config problem, human-gated) |
-| any client (A) | **connected but upstream resource dead** | **NO** — `get_status()` is connectivity-only | — | Phase 2 functional health |
+| any client (A) | transport disconnect | yes (`down`) | ✅ tick → alert | ✅ P2 active-probe reconnect (`probe_server()`) |
+| any client (A) | plugin bind failed / 0 tools | yes (`degraded`) | ✅ tick → alert | — (config problem, human-gated; probe can't fix → still alerts) |
+| any client (A) | **connected but calls time out** | ✅ P2 `calls_failing` (rolling timeout window; app errors excluded) | ✅ tick → alert | ✅ P2 probe reconnects a wedged session |
 | paperless / news / carrier (A) | 429 / Retry-After throttle | NO — treated as generic error | — | Phase 3 backoff + honor Retry-After |
 | dedicated MCP pods | pod crash-loop / not-ready | k8s only, not in renfield's model | — | Phase 3 liveness/readiness probes |
 
-## Phase 2 — functional health + self-heal (designed)
+## Phase 2 — functional health + self-heal (SHIPPED, dark-safe)
 
-1. **Functional health in `_server_health`** — extend the fold beyond
-   connectivity: a server with a high recent-call-failure rate → `degraded` even
-   while its transport is up ("connected but upstream resource dead", the one gap
-   Plane-A can't see today).
-2. **Active-probe + reconnect** — wire `probe_server()` (currently dead code) into
-   the monitor: on a `down` verdict, probe and attempt a bounded reconnect before
-   alerting, so a transient blip self-heals silently.
-3. **Email-ingest backend-recovery re-reconcile** — close the asymmetry:
-   filesystem re-reconciles its push backlog when the backend comes back;
-   email-ingest should too.
+All three items shipped; the self-heal is gated `mcp_health_self_heal_enabled`
+(default on when the monitor is on) — flag off → Phase-1 detect-only behavior.
+
+1. **Functional health in `_server_health`** (`mcp_client.py`) — `MCPServerState`
+   keeps a rolling window (`recent_outcomes`, `mcp_health_call_window`) of the last N
+   **health-correlated** tool-call outcomes: `True` on a clean result, `False` on a
+   **timeout** (the server didn't respond). Deliberately **NOT** recorded — an
+   `isError`/inner-error result (an APPLICATION outcome: a device off, a parcel not
+   found, a workflow returning `success:false` — says nothing about the server's
+   health), caller rejects (permission / validation / rate-limit), and session-death
+   (which already flips `connected=False` → `down`). This is the key correctness
+   guard: folding plain app errors would falsely flag a healthy server whose *target*
+   failed (caught in `/review`). When a CONNECTED server's recent timeout share ≥
+   `mcp_health_call_fail_ratio` over ≥ `mcp_health_call_min_samples` calls →
+   `_server_health` folds `degraded` / `calls_failing`. The window is cleared on
+   (re)connect so a reconnect that fixed the server isn't left falsely flagged.
+2. **Active-probe + reconnect** (`mcp_health_monitor.py`) — `monitor_tick` now runs a
+   self-heal pass FIRST: for each degraded/down server it calls `probe_server()`
+   (active `tools/list` + single-shot reconnect), then re-reads `get_status()` and
+   alerts only on servers STILL broken (message says "Selbstheilung versucht, ohne
+   Erfolg"). A `down` server the reconnect fixes is silently healed (no alert, ledger
+   cleared); a `plugin_failed`/upstream-dead server a reconnect can't fix stays
+   degraded and alerts. Capped `mcp_health_self_heal_max_per_tick` per tick.
+3. **Email-ingest backend-recovery re-reconcile** (`renfield-mcp-email-ingest`) —
+   closes the asymmetry: `RenfieldPusher.health()` + a daemon `_health_poll_loop`
+   (`EMAIL_HEALTH_POLL_SECONDS`, default 30s) re-reconcile every mailbox on a
+   backend down→up edge, and `MessageEngine.recover()` **un-parks `_exhausted`** mail
+   (that exhausted its retries during the outage, still UNSEEN) and re-dispatches it —
+   no manual restart, mirroring the filesystem MCP.
 
 ## Phase 3 — rate-limit + orchestration (designed)
 
