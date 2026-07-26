@@ -182,6 +182,14 @@ export interface TaxonomyResponse {
   document_types: string[];
   tags: string[];
   storage_paths: string[];
+  /** Which fields can create a typed-new value on apply (mirrors the backend
+   *  auto-create gating); a false field is restricted to existing values. */
+  allow_create: {
+    correspondent: boolean;
+    document_type: boolean;
+    tags: boolean;
+    storage_path: boolean;
+  };
 }
 
 async function fetchTaxonomy(): Promise<TaxonomyResponse> {

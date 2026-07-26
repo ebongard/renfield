@@ -1534,6 +1534,10 @@ class TestGetTaxonomy:
         assert tax["document_types"] == ["Rechnung"]
         assert tax["tags"] == ["energie", "steuer"]
         assert tax["storage_paths"] == ["Finanzen/2024"]
+        # allow_create mirrors the apply-side auto-create capability
+        assert tax["allow_create"]["correspondent"] is True
+        assert tax["allow_create"]["storage_path"] is False
+        assert set(tax["allow_create"]) == {"correspondent", "document_type", "tags", "storage_path"}
 
     @pytest.mark.unit
     @pytest.mark.asyncio
@@ -1552,6 +1556,22 @@ class TestGetTaxonomy:
         tax = await service.get_taxonomy()
         assert tax["storage_paths"] == []
         assert tax["correspondents"] == []
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_get_taxonomy_mcp_down_degrades_not_500(self, service, mock_mcp_manager):
+        """A transport exception from the correspondents/types/tags fetch degrades
+        to empty lists (best-effort) rather than propagating and 500-ing the route."""
+        async def _execute(tool, params, **_kw):
+            raise RuntimeError("mcp session terminated")
+
+        mock_mcp_manager.execute_tool.side_effect = _execute
+        tax = await service.get_taxonomy()
+        assert tax["correspondents"] == []
+        assert tax["document_types"] == []
+        assert tax["tags"] == []
+        assert tax["storage_paths"] == []
+        assert "allow_create" in tax
 
 
 class TestApplyResults:

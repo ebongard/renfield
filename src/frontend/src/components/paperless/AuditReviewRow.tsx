@@ -117,6 +117,8 @@ export default function AuditReviewRow({
   colSpan,
 }: AuditReviewRowProps) {
   const { t } = useTranslation();
+  const editLabel = (field: string) => t('paperlessAudit.review.editFieldNamed', { field });
+  const allowCreate = taxonomy?.allow_create;
   const updateReview = useUpdateReview();
   const [draft, setDraft] = useState<Draft>(() => initDraft(r));
   const [expanded, setExpanded] = useState(false);
@@ -265,6 +267,7 @@ export default function AuditReviewRow({
             applicable={isApplicable('title')}
             selected={draft.selection.has('title')}
             overridden={isOverridden('title')}
+            ariaLabel={editLabel(t('paperlessAudit.review.fieldTitle'))}
             onSave={(v) => onScalarSave('title', v)}
             onToggle={() => onToggleField('title')}
             t={t}
@@ -275,6 +278,7 @@ export default function AuditReviewRow({
             applicable={isApplicable('tags')}
             selected={draft.selection.has('tags')}
             options={taxonomy?.tags ?? []}
+            creatable={allowCreate?.tags ?? true}
             onChange={setTags}
             onToggle={() => onToggleField('tags')}
             t={t}
@@ -286,6 +290,8 @@ export default function AuditReviewRow({
             current={scalarCurrent(r, 'correspondent')} value={effScalar('correspondent')}
             applicable={isApplicable('correspondent')} selected={draft.selection.has('correspondent')}
             overridden={isOverridden('correspondent')} options={taxonomy?.correspondents ?? []}
+            creatable={allowCreate?.correspondent ?? true}
+            ariaLabel={editLabel(t('paperlessAudit.review.correspondent'))}
             onSave={(v) => onScalarSave('correspondent', v)}
             onToggle={() => onToggleField('correspondent')} t={t}
           />
@@ -295,6 +301,8 @@ export default function AuditReviewRow({
             current={scalarCurrent(r, 'document_type')} value={effScalar('document_type')}
             applicable={isApplicable('document_type')} selected={draft.selection.has('document_type')}
             overridden={isOverridden('document_type')} options={taxonomy?.document_types ?? []}
+            creatable={allowCreate?.document_type ?? true}
+            ariaLabel={editLabel(t('paperlessAudit.review.type'))}
             onSave={(v) => onScalarSave('document_type', v)}
             onToggle={() => onToggleField('document_type')} t={t}
           />
@@ -304,6 +312,7 @@ export default function AuditReviewRow({
             current={scalarCurrent(r, 'date')} value={effScalar('date')} placeholder={t('paperlessAudit.review.datePlaceholder')}
             applicable={isApplicable('date')} selected={draft.selection.has('date')}
             overridden={isOverridden('date')} type="date"
+            ariaLabel={editLabel(t('paperlessAudit.review.date'))}
             onSave={(v) => onScalarSave('date', v)}
             onToggle={() => onToggleField('date')} t={t}
           />
@@ -318,6 +327,8 @@ export default function AuditReviewRow({
             current={scalarCurrent(r, 'storage_path')} value={effScalar('storage_path')}
             applicable={isApplicable('storage_path')} selected={draft.selection.has('storage_path')}
             overridden={isOverridden('storage_path')} options={taxonomy?.storage_paths ?? []}
+            creatable={allowCreate?.storage_path ?? false}
+            ariaLabel={editLabel(t('paperlessAudit.review.storagePath'))}
             onSave={(v) => onScalarSave('storage_path', v)}
             onToggle={() => onToggleField('storage_path')} t={t}
           />
@@ -403,13 +414,17 @@ function SelectBox({ applicable, selected, overridden, onToggle, label }: Select
   );
 }
 
+const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
+
 // Jira-style inline edit: reads as plain text; hover shows a subtle bg + an
 // affordance icon; click swaps to an editor; Enter/blur commits, Escape cancels.
-//  - options → a native <datalist> lookup: pick an existing Paperless value or
-//    type a new one to create it (create happens server-side on apply).
-//  - type='date' → a native calendar picker (auto-opened via showPicker()).
-// Native controls are used deliberately: they escape the table's overflow-x-auto
-// clipping that an absolute dropdown would hit, and are keyboard/i18n-accessible.
+//  - options (non-empty) → a lookup: `creatable` picks the control —
+//    a <datalist> (pick existing OR type a new value to create) vs a native
+//    <select> (existing-only, for fields the backend can't auto-create).
+//  - type='date' → a native calendar picker (auto-opened via showPicker());
+//    falls back to a text input for a non-ISO stored value so it stays editable.
+// Native controls are deliberate: they escape the table's overflow-x-auto
+// clipping an absolute dropdown would hit, and are keyboard/i18n-accessible.
 interface InlineEditProps {
   value: string;
   current?: string;
@@ -417,61 +432,87 @@ interface InlineEditProps {
   ariaLabel: string;
   type?: 'text' | 'date';
   options?: string[];
+  creatable?: boolean;
   onSave: (value: string) => void;
 }
-function InlineEdit({ value, current, placeholder, ariaLabel, type = 'text', options, onSave }: InlineEditProps) {
+function InlineEdit({ value, current, placeholder, ariaLabel, type = 'text', options, creatable = true, onSave }: InlineEditProps) {
   const [editing, setEditing] = useState(false);
   const [buffer, setBuffer] = useState(value);
   const inputRef = useRef<HTMLInputElement>(null);
+  const selectRef = useRef<HTMLSelectElement>(null);
   const listId = useId();
+
+  const isLookup = !!options && options.length > 0;   // affordance only with options
+  const useSelect = isLookup && !creatable;            // existing-only → native select
+  // date needs an ISO value; a non-ISO stored value falls back to text (based on
+  // the stable `value`, not the live buffer, so it can't flip mid-edit).
+  const useDate = type === 'date' && (value === '' || ISO_DATE.test(value));
 
   useEffect(() => {
     if (!editing) return;
+    if (useSelect) { selectRef.current?.focus(); return; }
     inputRef.current?.focus();
-    if (type === 'date') {
-      // Open the calendar immediately (supported in modern browsers).
-      inputRef.current?.showPicker?.();
-    } else {
-      inputRef.current?.select();
-    }
-  }, [editing, type]);
+    if (useDate) inputRef.current?.showPicker?.();
+    else inputRef.current?.select();
+  }, [editing, useSelect, useDate]);
 
-  const commit = () => {
-    setEditing(false);
-    if (buffer !== value) onSave(buffer);
-  };
-  const cancel = () => {
-    setEditing(false);
-    setBuffer(value);
-  };
+  const commitValue = (v: string) => { setEditing(false); if (v !== value) onSave(v); };
+  const cancel = () => { setEditing(false); setBuffer(value); };
 
+  // Keep the struck-through current value visible WHILE editing (the "what am I
+  // replacing" reference) — the read view shows it too.
+  const strike = current && current !== value
+    ? <span className="block truncate text-[11px] text-red-500 line-through dark:text-red-400">{current}</span>
+    : null;
+
+  if (editing && useSelect) {
+    const opts = value && !options!.includes(value) ? [value, ...options!] : options!;
+    return (
+      <div className="space-y-0.5">
+        {strike}
+        <select
+          ref={selectRef}
+          value={buffer}
+          aria-label={ariaLabel}
+          onChange={(e) => commitValue(e.target.value)}
+          onBlur={() => setEditing(false)}
+          onKeyDown={(e) => { if (e.key === 'Escape') { e.preventDefault(); cancel(); } }}
+          className="input py-1 px-1.5 text-xs w-full"
+        >
+          {!value && <option value="">{placeholder ?? '—'}</option>}
+          {opts.map((o) => <option key={o} value={o}>{o}</option>)}
+        </select>
+      </div>
+    );
+  }
   if (editing) {
     return (
-      <>
+      <div className="space-y-0.5">
+        {strike}
         <input
           ref={inputRef}
-          type={type === 'date' ? 'date' : 'text'}
-          list={options ? listId : undefined}
+          type={useDate ? 'date' : 'text'}
+          list={isLookup ? listId : undefined}
           value={buffer}
           placeholder={placeholder}
           aria-label={ariaLabel}
           onChange={(e) => setBuffer(e.target.value)}
-          onBlur={commit}
+          onBlur={() => commitValue(buffer)}
           onKeyDown={(e) => {
-            if (e.key === 'Enter') { e.preventDefault(); commit(); }
+            if (e.key === 'Enter') { e.preventDefault(); commitValue(buffer); }
             else if (e.key === 'Escape') { e.preventDefault(); cancel(); }
           }}
           className="input py-1 px-1.5 text-xs w-full"
         />
-        {options && (
+        {isLookup && (
           <datalist id={listId}>
-            {options.map((o) => <option key={o} value={o} />)}
+            {options!.map((o) => <option key={o} value={o} />)}
           </datalist>
         )}
-      </>
+      </div>
     );
   }
-  const Icon = type === 'date' ? Calendar : options ? ChevronsUpDown : Pencil;
+  const Icon = type === 'date' ? Calendar : isLookup ? ChevronsUpDown : Pencil;
   return (
     <button
       type="button"
@@ -480,9 +521,7 @@ function InlineEdit({ value, current, placeholder, ariaLabel, type = 'text', opt
       className="group/edit -mx-1.5 flex w-full items-center gap-1 rounded px-1.5 py-1 text-left transition-colors duration-75 hover:bg-gray-100 dark:hover:bg-gray-700/50"
     >
       <span className="min-w-0 flex-1 space-y-0.5">
-        {current && current !== value && (
-          <span className="block truncate text-[11px] text-red-500 line-through dark:text-red-400">{current}</span>
-        )}
+        {strike}
         <span className={`block truncate text-xs ${value ? 'text-gray-900 dark:text-gray-100' : 'italic text-gray-400 dark:text-gray-500'}`}>
           {value || placeholder || '—'}
         </span>
@@ -501,11 +540,13 @@ interface EditableScalarProps {
   placeholder?: string;
   type?: 'text' | 'date';
   options?: string[];
+  creatable?: boolean;
+  ariaLabel: string;
   onSave: (v: string) => void;
   onToggle: () => void;
   t: TFunction;
 }
-function EditableScalar({ current, value, applicable, selected, overridden, placeholder, type, options, onSave, onToggle, t }: EditableScalarProps) {
+function EditableScalar({ current, value, applicable, selected, overridden, placeholder, type, options, creatable, ariaLabel, onSave, onToggle, t }: EditableScalarProps) {
   return (
     <div className="flex items-start gap-1.5">
       <SelectBox applicable={applicable} selected={selected} overridden={overridden} onToggle={onToggle} label={t('paperlessAudit.review.applyField')} />
@@ -516,7 +557,8 @@ function EditableScalar({ current, value, applicable, selected, overridden, plac
           placeholder={placeholder}
           type={type}
           options={options}
-          ariaLabel={t('paperlessAudit.review.editField')}
+          creatable={creatable}
+          ariaLabel={ariaLabel}
           onSave={onSave}
         />
       </div>
@@ -530,18 +572,24 @@ interface TagsEditorProps {
   applicable: boolean;
   selected: boolean;
   options: string[];
+  creatable: boolean;
   onChange: (tags: string[]) => void;
   onToggle: () => void;
   t: TFunction;
 }
-function TagsEditor({ tags, current, applicable, selected, options, onChange, onToggle, t }: TagsEditorProps) {
+function TagsEditor({ tags, current, applicable, selected, options, creatable, onChange, onToggle, t }: TagsEditorProps) {
   const [adding, setAdding] = useState(false);
   const [entry, setEntry] = useState('');
   const inputRef = useRef<HTMLInputElement>(null);
+  const selectRef = useRef<HTMLSelectElement>(null);
   const listId = useId();
-  useEffect(() => { if (adding) inputRef.current?.focus(); }, [adding]);
-  const add = () => {
-    const v = entry.trim();
+  useEffect(() => {
+    if (!adding) return;
+    if (creatable) inputRef.current?.focus();
+    else selectRef.current?.focus();
+  }, [adding, creatable]);
+  const addTag = (raw: string) => {
+    const v = raw.trim();
     if (v && !tags.includes(v)) onChange([...tags, v]);
     setEntry('');
     setAdding(false);
@@ -562,7 +610,7 @@ function TagsEditor({ tags, current, applicable, selected, options, onChange, on
         {current.length > 0 && !tagsEqual(tags, current) && (
           <span className="text-red-500 dark:text-red-400 line-through text-[10px] self-center">{current.join(', ')}</span>
         )}
-        {adding ? (
+        {adding && creatable && (
           <>
             <input
               ref={inputRef}
@@ -570,9 +618,11 @@ function TagsEditor({ tags, current, applicable, selected, options, onChange, on
               list={listId}
               value={entry}
               onChange={(e) => setEntry(e.target.value)}
-              onBlur={add}
+              // Blur DISCARDS an in-progress tag (Enter or picking a suggestion +
+              // Enter commits) — a half-typed fragment must not be saved.
+              onBlur={() => { setEntry(''); setAdding(false); }}
               onKeyDown={(e) => {
-                if (e.key === 'Enter') { e.preventDefault(); add(); }
+                if (e.key === 'Enter') { e.preventDefault(); addTag(entry); }
                 else if (e.key === 'Escape') { e.preventDefault(); setEntry(''); setAdding(false); }
               }}
               placeholder={t('paperlessAudit.review.addTag')}
@@ -582,7 +632,23 @@ function TagsEditor({ tags, current, applicable, selected, options, onChange, on
               {suggestions.map((o) => <option key={o} value={o} />)}
             </datalist>
           </>
-        ) : (
+        )}
+        {adding && !creatable && (
+          // Existing-only (tag auto-create disabled) → pick from a native select.
+          <select
+            ref={selectRef}
+            value=""
+            aria-label={t('paperlessAudit.review.addTag')}
+            onChange={(e) => addTag(e.target.value)}
+            onBlur={() => setAdding(false)}
+            onKeyDown={(e) => { if (e.key === 'Escape') { e.preventDefault(); setAdding(false); } }}
+            className="input py-0.5 px-1.5 text-xs w-32"
+          >
+            <option value="">{t('paperlessAudit.review.addTag')}</option>
+            {suggestions.map((o) => <option key={o} value={o}>{o}</option>)}
+          </select>
+        )}
+        {!adding && (
           <button
             onClick={() => setAdding(true)}
             className="inline-flex items-center gap-0.5 rounded px-1 py-0.5 text-[11px] text-gray-400 transition-colors duration-75 hover:bg-gray-100 hover:text-gray-600 dark:hover:bg-gray-700/50 dark:hover:text-gray-300"
@@ -648,7 +714,7 @@ function CustomFieldsEditor({ value, applicable, selected, onChange, onToggle, t
               <div className="w-48">
                 <InlineEdit
                   value={typeof val === 'string' ? val : JSON.stringify(val)}
-                  ariaLabel={t('paperlessAudit.review.editField')}
+                  ariaLabel={t('paperlessAudit.review.editFieldNamed', { field: key })}
                   onSave={(nv) => onChange({ ...value, [key]: coerceCfValue(nv) })}
                 />
               </div>

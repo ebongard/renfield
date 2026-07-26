@@ -92,3 +92,31 @@ async def test_patch_review_requires_admin(monkeypatch):
         r = await c.patch(_PATH, json={"overrides": {"title": "X"}})
     assert r.status_code in (401, 403)
     svc.update_review.assert_not_awaited()
+
+
+_TAX_PATH = "/api/admin/paperless-audit/taxonomy"
+
+
+@pytest.mark.asyncio
+async def test_taxonomy_200_for_admin(monkeypatch):
+    svc = AsyncMock()
+    svc.get_taxonomy.return_value = {
+        "correspondents": ["A"], "document_types": [], "tags": [], "storage_paths": [],
+        "allow_create": {"correspondent": True, "document_type": True, "tags": True, "storage_path": False},
+    }
+    app = _app(svc, is_admin=True, monkeypatch=monkeypatch)
+    async with _client(app) as c:
+        r = await c.get(_TAX_PATH)
+    assert r.status_code == 200
+    assert r.json()["correspondents"] == ["A"]
+    svc.get_taxonomy.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_taxonomy_requires_admin(monkeypatch):
+    svc = AsyncMock()
+    app = _app(svc, is_admin=False, monkeypatch=monkeypatch)
+    async with _client(app) as c:
+        r = await c.get(_TAX_PATH)
+    assert r.status_code in (401, 403)
+    svc.get_taxonomy.assert_not_awaited()

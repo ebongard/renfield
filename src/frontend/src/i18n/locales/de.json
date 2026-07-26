@@ -1554,6 +1554,8 @@
       "selectRow": "Zeile auswählen",
       "applyField": "Dieses Feld übernehmen",
       "editField": "Feld bearbeiten",
+      "editFieldNamed": "{{field}} bearbeiten",
+      "fieldTitle": "Titel",
       "customFields": "Benutzerdefinierte Felder",
       "addTag": "Tag hinzufügen",
       "cfKey": "Feld",

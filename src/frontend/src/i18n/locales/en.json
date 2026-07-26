@@ -1554,6 +1554,8 @@
       "selectRow": "Select row",
       "applyField": "Apply this field",
       "editField": "Edit field",
+      "editFieldNamed": "Edit {{field}}",
+      "fieldTitle": "Title",
       "customFields": "Custom fields",
       "addTag": "Add tag",
       "cfKey": "Field",

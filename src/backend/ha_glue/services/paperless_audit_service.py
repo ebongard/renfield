@@ -562,24 +562,40 @@ class PaperlessAuditService:
             "tags": await _fetch_taxonomy_names(self._mcp, "tag"),
         }
 
-    async def get_taxonomy(self) -> dict:
-        """Selectable Paperless taxonomy for the review-UI lookup fields:
-        correspondents/document_types/tags (authoritative full name-lists) +
-        storage_paths. Best-effort — a transport failure for a kind yields []."""
-        tax = await self._fetch_full_taxonomy()
-        storage_paths: list[str] = []
+    async def _fetch_storage_path_names(self) -> list[str]:
+        """Storage-path names for the lookup. Best-effort → [] on any failure."""
         try:
             sp = self._parse_mcp_result(
                 await self._mcp.execute_tool("mcp.paperless.list_storage_paths", {})
             )
-            storage_paths = [p["path"] for p in (sp.get("paths") or []) if p.get("path")]
+            return [p["path"] for p in (sp.get("paths") or []) if p.get("path")]
         except Exception:  # noqa: BLE001 — best-effort; storage_path lookup is optional
-            storage_paths = []
+            return []
+
+    async def get_taxonomy(self) -> dict:
+        """Selectable Paperless taxonomy for the review-UI lookup fields:
+        correspondents/document_types/tags (authoritative full name-lists) +
+        storage_paths, plus per-field ``allow_create`` telling the UI which fields
+        can create a typed-new value on apply. Best-effort — a transport failure
+        for a kind yields [] rather than failing the whole call."""
+        try:
+            tax = await self._fetch_full_taxonomy()
+        except Exception:  # noqa: BLE001 — best-effort; degrade to empty lists
+            tax = {}
         return {
             "correspondents": tax.get("correspondents") or [],
             "document_types": tax.get("document_types") or [],
             "tags": tax.get("tags") or [],
-            "storage_paths": storage_paths,
+            "storage_paths": await self._fetch_storage_path_names(),
+            # Mirrors _apply_fix's resolve-or-create gating: correspondent always
+            # creates, document_type/tags are flag-gated, storage_path is never
+            # auto-created (Paperless config) so the UI restricts it to existing.
+            "allow_create": {
+                "correspondent": True,
+                "document_type": bool(settings.paperless_autocreate_document_type),
+                "tags": bool(settings.paperless_autocreate_tags),
+                "storage_path": False,
+            },
         }
 
     # Canonical field names for the review overlay (user_overrides keys /

@@ -164,7 +164,10 @@ describe('AuditReviewRow', () => {
   });
 
   it('offers Paperless correspondents as a datalist lookup (pick or create)', () => {
-    renderRow(row(), { correspondents: ['Stadtwerke', 'Finanzamt'], document_types: [], tags: [], storage_paths: [] });
+    renderRow(row(), {
+      correspondents: ['Stadtwerke', 'Finanzamt'], document_types: [], tags: [], storage_paths: [],
+      allow_create: { correspondent: true, document_type: true, tags: true, storage_path: false },
+    });
     fireEvent.click(screen.getByText('New Corp')); // click-to-edit the correspondent
     const input = screen.getByDisplayValue('New Corp');
     const listId = input.getAttribute('list');
@@ -172,6 +175,19 @@ describe('AuditReviewRow', () => {
     const dl = document.getElementById(listId as string);
     const values = [...(dl?.querySelectorAll('option') ?? [])].map((o) => o.getAttribute('value'));
     expect(values).toEqual(['Stadtwerke', 'Finanzamt']); // free text still allowed = create
+  });
+
+  it('storage_path is an existing-only select (no free-text create)', () => {
+    renderRow(row({ suggested_storage_path: 'Finanzen/2024' }), {
+      correspondents: [], document_types: [], tags: [],
+      storage_paths: ['Finanzen/2024', 'Fahrzeug/Belege'],
+      allow_create: { correspondent: true, document_type: true, tags: true, storage_path: false },
+    });
+    fireEvent.click(screen.getByText('Finanzen/2024'));
+    const control = screen.getByLabelText('Ablageort bearbeiten'); // editFieldNamed
+    expect(control.tagName).toBe('SELECT'); // existing-only, not a free-text input
+    const opts = [...control.querySelectorAll('option')].map((o) => o.getAttribute('value'));
+    expect(opts).toContain('Fahrzeug/Belege');
   });
 
   it('date field opens a native date input (calendar widget)', () => {
