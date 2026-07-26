@@ -619,6 +619,12 @@ Die „Re-OCR"-Aktion läuft **nicht** mehr blind über Paperless' eigene OCR (d
 
 Tabs: Audit Control (Start/Status), Review Queue (Sortierung, Suche, Freigabe), OCR Issues (Re-OCR-Angebot), **Niedrige OCR-Qualität** (siehe unten), Vollständigkeit, Duplikate, Ansprechpartner, Statistics.
 
+### Editierbare Review-Queue (selektive + manuelle Freigabe)
+
+Die Review-Queue ist nicht mehr „alles-oder-nichts": jeder vorgeschlagene Wert ist ein **inline editierbares Feld** (Auto-Save beim Verlassen des Feldes), und pro geändertem Feld gibt es eine **Übernehmen-Checkbox** — so lässt sich pro Dokument auswählen, *welche* der vorgeschlagenen Änderungen angewendet werden, und ein Vorschlag vor der Freigabe von Hand korrigieren. Tags haben einen Chip-Editor (hinzufügen/entfernen), benutzerdefinierte Felder einen Key/Value-Editor in einer pro-Zeile ausklappbaren Lade.
+
+Das Review-Overlay wird **persistiert** — zwei additive JSON-Spalten auf `paperless_audit_results` (Migration `pc20260726_audit_review`): `user_overrides` (`{Feld: editierter Wert}`, getrennt von `suggested_*`, damit der LLM-Vorschlag als Provenance erhalten bleibt) und `field_selection` (anzuwendende Felder; beide `NULL` = Legacy „alle vorgeschlagenen Änderungen", byte-identisch). Neuer Endpunkt `PATCH /api/admin/paperless-audit/results/{id}` (ADMIN, validiert Feldnamen/Typen → 400/404); `POST /apply` bleibt unverändert und liest das persistierte Overlay von der Zeile. In `_apply_fix` ist der effektive Wert pro Feld = Override ?? Vorschlag, angewendet nur wenn ausgewählt **und** ≠ aktuell (ein manueller Override gilt immer, ein Feld auf den aktuellen Wert editiert ist ein No-op). Die Frontend-Freigabe (einzeln + Sammel) flusht ausstehende Feld-Speicherungen, bevor angewendet wird.
+
 ### Niedrige OCR-Qualität (Triage statt SQL)
 
 Eigener Tab, der Dokumente sichtbar macht, deren **Ingest** an der Qualität gescheitert ist — damit der Operator sie in der UI statt per SQL bearbeitet. Ein Dokument gilt als „niedrige OCR-Qualität", wenn **eines** zutrifft:
