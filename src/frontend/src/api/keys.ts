@@ -86,6 +86,7 @@ export const keys = {
     results: () => ['paperlessAudit', 'results'] as const,
     stats: () => ['paperlessAudit', 'stats'] as const,
     duplicateGroups: () => ['paperlessAudit', 'duplicate-groups'] as const,
+    taxonomy: () => ['paperlessAudit', 'taxonomy'] as const,
   },
   federation: {
     all: ['federation'] as const,

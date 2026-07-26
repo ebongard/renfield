@@ -562,6 +562,26 @@ class PaperlessAuditService:
             "tags": await _fetch_taxonomy_names(self._mcp, "tag"),
         }
 
+    async def get_taxonomy(self) -> dict:
+        """Selectable Paperless taxonomy for the review-UI lookup fields:
+        correspondents/document_types/tags (authoritative full name-lists) +
+        storage_paths. Best-effort — a transport failure for a kind yields []."""
+        tax = await self._fetch_full_taxonomy()
+        storage_paths: list[str] = []
+        try:
+            sp = self._parse_mcp_result(
+                await self._mcp.execute_tool("mcp.paperless.list_storage_paths", {})
+            )
+            storage_paths = [p["path"] for p in (sp.get("paths") or []) if p.get("path")]
+        except Exception:  # noqa: BLE001 — best-effort; storage_path lookup is optional
+            storage_paths = []
+        return {
+            "correspondents": tax.get("correspondents") or [],
+            "document_types": tax.get("document_types") or [],
+            "tags": tax.get("tags") or [],
+            "storage_paths": storage_paths,
+        }
+
     # Canonical field names for the review overlay (user_overrides keys /
     # field_selection entries). "date" maps to the MCP `created_date` param in
     # _apply_fix; the rest match the suggested_*/current_* column stems.

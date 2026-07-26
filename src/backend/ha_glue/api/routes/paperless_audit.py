@@ -198,6 +198,14 @@ async def get_stats(request: Request, _user: User = Depends(require_permission(P
     return await service.get_stats()
 
 
+@router.get("/taxonomy")
+async def get_taxonomy(request: Request, _user: User = Depends(require_permission(Permission.ADMIN))):
+    """Selectable Paperless taxonomy for the review lookup fields:
+    correspondents / document_types / tags / storage_paths (name lists)."""
+    service = _get_service(request)
+    return await service.get_taxonomy()
+
+
 @router.post("/re-ocr")
 async def trigger_reocr(body: ReOcrRequest, request: Request, _user: User = Depends(require_permission(Permission.ADMIN))):
     """Trigger re-OCR for selected results."""

@@ -1553,6 +1553,7 @@
       "searchPlaceholder": "Search title, correspondent, type...",
       "selectRow": "Select row",
       "applyField": "Apply this field",
+      "editField": "Edit field",
       "customFields": "Custom fields",
       "addTag": "Add tag",
       "cfKey": "Field",

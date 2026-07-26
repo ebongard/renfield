@@ -176,6 +176,19 @@ async function skipResultsRequest(ids: number[]): Promise<void> {
   await apiClient.post('/api/admin/paperless-audit/skip', { result_ids: ids });
 }
 
+/** Selectable Paperless taxonomy for the review lookup fields. */
+export interface TaxonomyResponse {
+  correspondents: string[];
+  document_types: string[];
+  tags: string[];
+  storage_paths: string[];
+}
+
+async function fetchTaxonomy(): Promise<TaxonomyResponse> {
+  const { data } = await apiClient.get<TaxonomyResponse>('/api/admin/paperless-audit/taxonomy');
+  return data;
+}
+
 export interface UpdateReviewInput {
   id: number;
   // Each field REPLACES the stored overlay; pass null to leave it untouched.
@@ -403,6 +416,20 @@ export function useSkipResults() {
     {
       mutationFn: skipResultsRequest,
       onSuccess: () => invalidateAudit(queryClient),
+    },
+    'paperlessAudit.error',
+  );
+}
+
+/** Selectable Paperless taxonomy for the lookup fields — cached (changes rarely),
+ *  only fetched while the review tab is open. */
+export function useTaxonomyQuery(enabled: boolean) {
+  return useApiQuery(
+    {
+      queryKey: keys.paperlessAudit.taxonomy(),
+      queryFn: fetchTaxonomy,
+      staleTime: STALE.CONFIG,
+      enabled,
     },
     'paperlessAudit.error',
   );

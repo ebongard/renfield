@@ -12,7 +12,7 @@ import { screen, waitFor, fireEvent } from '@testing-library/react';
 import AuditReviewRow from '../../../../src/frontend/src/components/paperless/AuditReviewRow';
 import { renderWithProviders } from '../test-utils';
 import apiClient from '../../../../src/frontend/src/utils/axios';
-import type { AuditResult } from '../../../../src/frontend/src/api/resources/paperlessAudit';
+import type { AuditResult, TaxonomyResponse } from '../../../../src/frontend/src/api/resources/paperlessAudit';
 
 vi.mock('../../../../src/frontend/src/utils/axios', () => ({
   default: {
@@ -47,7 +47,7 @@ function row(overrides: Partial<AuditResult> = {}): AuditResult {
   };
 }
 
-function renderRow(r: AuditResult) {
+function renderRow(r: AuditResult, taxonomy?: TaxonomyResponse) {
   return renderWithProviders(
     <table>
       <tbody>
@@ -58,6 +58,7 @@ function renderRow(r: AuditResult) {
           onApprove={vi.fn()}
           onSkip={vi.fn()}
           onRegisterPending={vi.fn()}
+          taxonomy={taxonomy}
           actionLoading={false}
           colSpan={11}
         />
@@ -72,15 +73,18 @@ describe('AuditReviewRow', () => {
     mockedPatch.mockResolvedValue({ data: {} });
   });
 
-  it('renders suggested values as editable inputs', () => {
+  it('renders suggested values as read-only text (Jira click-to-edit)', () => {
     renderRow(row());
-    expect(screen.getByDisplayValue('New Title')).toBeInTheDocument();
-    expect(screen.getByDisplayValue('New Corp')).toBeInTheDocument();
-    expect(screen.getByDisplayValue('2024-02-02')).toBeInTheDocument();
+    // values shown as text, NOT permanent inputs, until clicked
+    expect(screen.getByText('New Title')).toBeInTheDocument();
+    expect(screen.getByText('New Corp')).toBeInTheDocument();
+    expect(screen.getByText('2024-02-02')).toBeInTheDocument();
+    expect(screen.queryByDisplayValue('New Title')).not.toBeInTheDocument();
   });
 
   it('persists a manual edit as an override on blur', async () => {
     renderRow(row());
+    fireEvent.click(screen.getByText('New Title')); // click-to-edit
     const titleInput = screen.getByDisplayValue('New Title');
     fireEvent.change(titleInput, { target: { value: 'Hand Edited' } });
     fireEvent.blur(titleInput);
@@ -95,10 +99,11 @@ describe('AuditReviewRow', () => {
     });
   });
 
-  it('reverting an edit back to the suggestion drops the override', async () => {
-    renderRow(row());
-    const titleInput = screen.getByDisplayValue('New Title');
-    fireEvent.change(titleInput, { target: { value: 'New Title' } });
+  it('editing an existing override back to the suggestion drops it', async () => {
+    renderRow(row({ user_overrides: { title: 'Hand Edited' } }));
+    fireEvent.click(screen.getByText('Hand Edited')); // the persisted override value
+    const titleInput = screen.getByDisplayValue('Hand Edited');
+    fireEvent.change(titleInput, { target: { value: 'New Title' } }); // back to suggestion
     fireEvent.blur(titleInput);
 
     await waitFor(() => expect(mockedPatch).toHaveBeenCalled());
@@ -127,6 +132,7 @@ describe('AuditReviewRow', () => {
   it('editing a scalar back to the current value does not freeze the row', async () => {
     // only title changes (correspondent/date == current)
     renderRow(row({ suggested_correspondent: 'Old Corp', suggested_date: '2024-01-01' }));
+    fireEvent.click(screen.getByText('New Title'));
     const titleInput = screen.getByDisplayValue('New Title');
     fireEvent.change(titleInput, { target: { value: 'Old Title' } }); // == current
     fireEvent.blur(titleInput);
@@ -143,10 +149,12 @@ describe('AuditReviewRow', () => {
 
   it('preserves the JSON type of an edited custom field (no string coercion)', async () => {
     renderRow(row({ suggested_custom_fields: { amount: 5 } }));
-    // expand the custom-fields drawer
+    // expand the custom-fields drawer, then click-to-edit the value
     fireEvent.click(screen.getByTitle('Benutzerdefinierte Felder'));
+    fireEvent.click(screen.getByText('5'));
     const valueInput = screen.getByDisplayValue('5');
     fireEvent.change(valueInput, { target: { value: '10' } });
+    fireEvent.blur(valueInput);
 
     await waitFor(() => {
       const bodies = mockedPatch.mock.calls.map((c) => c[1] as { overrides: { custom_fields?: Record<string, unknown> } });
@@ -155,8 +163,27 @@ describe('AuditReviewRow', () => {
     });
   });
 
+  it('offers Paperless correspondents as a datalist lookup (pick or create)', () => {
+    renderRow(row(), { correspondents: ['Stadtwerke', 'Finanzamt'], document_types: [], tags: [], storage_paths: [] });
+    fireEvent.click(screen.getByText('New Corp')); // click-to-edit the correspondent
+    const input = screen.getByDisplayValue('New Corp');
+    const listId = input.getAttribute('list');
+    expect(listId).toBeTruthy();
+    const dl = document.getElementById(listId as string);
+    const values = [...(dl?.querySelectorAll('option') ?? [])].map((o) => o.getAttribute('value'));
+    expect(values).toEqual(['Stadtwerke', 'Finanzamt']); // free text still allowed = create
+  });
+
+  it('date field opens a native date input (calendar widget)', () => {
+    renderRow(row());
+    fireEvent.click(screen.getByText('2024-02-02'));
+    const input = screen.getByDisplayValue('2024-02-02');
+    expect(input).toHaveAttribute('type', 'date');
+  });
+
   it('adding a tag persists a tags override', async () => {
     renderRow(row());
+    fireEvent.click(screen.getByText('Tag hinzufügen')); // reveal the add input
     const tagInput = screen.getByPlaceholderText('Tag hinzufügen');
     fireEvent.change(tagInput, { target: { value: 'steuer' } });
     fireEvent.keyDown(tagInput, { key: 'Enter' });

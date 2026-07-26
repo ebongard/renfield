@@ -1505,6 +1505,55 @@ class TestReviewOverlay:
                 service._validate_overrides(bad)
 
 
+class TestGetTaxonomy:
+    """get_taxonomy — the selectable Paperless taxonomy for the review lookups."""
+
+    @staticmethod
+    def _env(inner):
+        return {"success": True, "message": json.dumps(inner)}
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_get_taxonomy_shape(self, service, mock_mcp_manager):
+        env = self._env
+
+        async def _execute(tool, params, **_kw):
+            if tool == "mcp.paperless.list_correspondents":
+                return env({"items": [{"name": "Stadtwerke"}, {"name": "Finanzamt"}]})
+            if tool == "mcp.paperless.list_document_types":
+                return env({"items": [{"name": "Rechnung"}]})
+            if tool == "mcp.paperless.list_tags":
+                return env({"items": [{"name": "energie"}, {"name": "steuer"}]})
+            if tool == "mcp.paperless.list_storage_paths":
+                return env({"paths": [{"path": "Finanzen/2024"}]})
+            return env({})
+
+        mock_mcp_manager.execute_tool.side_effect = _execute
+        tax = await service.get_taxonomy()
+        assert tax["correspondents"] == ["Stadtwerke", "Finanzamt"]
+        assert tax["document_types"] == ["Rechnung"]
+        assert tax["tags"] == ["energie", "steuer"]
+        assert tax["storage_paths"] == ["Finanzen/2024"]
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_get_taxonomy_storage_paths_best_effort(self, service, mock_mcp_manager):
+        """A storage-paths transport failure yields [] without failing the whole call."""
+        env = self._env
+
+        async def _execute(tool, params, **_kw):
+            if tool == "mcp.paperless.list_storage_paths":
+                raise RuntimeError("mcp down")
+            if tool in ("mcp.paperless.list_correspondents", "mcp.paperless.list_document_types", "mcp.paperless.list_tags"):
+                return env({"items": []})
+            return env({})
+
+        mock_mcp_manager.execute_tool.side_effect = _execute
+        tax = await service.get_taxonomy()
+        assert tax["storage_paths"] == []
+        assert tax["correspondents"] == []
+
+
 class TestApplyResults:
     """Test apply_results method."""
 

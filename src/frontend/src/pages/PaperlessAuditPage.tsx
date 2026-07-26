@@ -34,6 +34,8 @@ import {
   useReOcr,
   useMarkQualityIgnored,
   useDetectDuplicates,
+  useTaxonomyQuery,
+  type TaxonomyResponse,
   type AuditMode,
   type FixMode,
   type AuditStatus,
@@ -126,6 +128,8 @@ export default function PaperlessAuditPage() {
   const reviewResults: AuditResult[] = reviewQuery.data?.results ?? [];
   const reviewTotal = reviewQuery.data?.total ?? 0;
   const reviewLoading = reviewQuery.isLoading;
+  // Paperless taxonomy for the review lookup fields — cached, only while reviewing.
+  const taxonomyQuery = useTaxonomyQuery(activeTab === 'review');
 
   const ocrQuery = useOcrResultsQuery(
     { page: ocrPage, perPage: PAGE_SIZE },
@@ -456,6 +460,7 @@ export default function PaperlessAuditPage() {
           onApprove={approveResults}
           onSkip={skipResults}
           onRegisterPending={registerPendingSave}
+          taxonomy={taxonomyQuery.data}
           sortBy={reviewSortBy}
           sortOrder={reviewSortOrder}
           onSort={handleReviewSort}
@@ -673,6 +678,7 @@ interface ReviewTabProps {
   onApprove: (ids: number[]) => void;
   onSkip: (ids: number[]) => void;
   onRegisterPending: (id: number, save: Promise<unknown>) => void;
+  taxonomy?: TaxonomyResponse;
   sortBy: string | null;
   sortOrder: 'asc' | 'desc';
   onSort: (column: string) => void;
@@ -687,7 +693,7 @@ interface SortHeaderProps {
 }
 
 // --- Review Tab Component ---
-function ReviewTab({ t, results, loading, total, page, setPage, selectedIds, actionLoading, onToggleSelected, onToggleSelectAll, onApprove, onSkip, onRegisterPending, sortBy, sortOrder, onSort, search, onSearch }: ReviewTabProps) {
+function ReviewTab({ t, results, loading, total, page, setPage, selectedIds, actionLoading, onToggleSelected, onToggleSelectAll, onApprove, onSkip, onRegisterPending, taxonomy, sortBy, sortOrder, onSort, search, onSearch }: ReviewTabProps) {
   const totalPages = Math.ceil(total / PAGE_SIZE);
   const allSelected = selectedIds.size === results.length && results.length > 0;
 
@@ -792,6 +798,7 @@ function ReviewTab({ t, results, loading, total, page, setPage, selectedIds, act
                 onApprove={onApprove}
                 onSkip={onSkip}
                 onRegisterPending={onRegisterPending}
+                taxonomy={taxonomy}
                 actionLoading={actionLoading.has(r.id)}
                 colSpan={11}
               />

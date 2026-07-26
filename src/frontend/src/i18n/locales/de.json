@@ -1553,6 +1553,7 @@
       "searchPlaceholder": "Titel, Ansprechpartner, Typ suchen...",
       "selectRow": "Zeile auswählen",
       "applyField": "Dieses Feld übernehmen",
+      "editField": "Feld bearbeiten",
       "customFields": "Benutzerdefinierte Felder",
       "addTag": "Tag hinzufügen",
       "cfKey": "Feld",
