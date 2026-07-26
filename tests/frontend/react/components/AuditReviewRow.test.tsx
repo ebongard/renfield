@@ -192,6 +192,29 @@ describe('AuditReviewRow', () => {
     });
   });
 
+  it('Enter commits the typed value (create), not the first option', async () => {
+    renderRow(row(), _taxo({ correspondents: ['Stadtwerke', 'Finanzamt'] }));
+    fireEvent.click(screen.getByText('New Corp'));
+    const input = screen.getByRole('combobox', { name: 'Ansprechpartner bearbeiten' });
+    fireEvent.change(input, { target: { value: 'Stadt' } }); // 'Stadtwerke' exists; user wants 'Stadt'
+    fireEvent.keyDown(input, { key: 'Enter' });
+    await waitFor(() => {
+      expect(mockedPatch).toHaveBeenCalledWith(
+        '/api/admin/paperless-audit/results/7',
+        expect.objectContaining({ overrides: expect.objectContaining({ correspondent: 'Stadt' }) }),
+      );
+    });
+  });
+
+  it('calendar reset clears the date override', async () => {
+    renderRow(row({ user_overrides: { date: '2024-09-09' } }));
+    fireEvent.click(screen.getByText('2024-09-09'));
+    fireEvent.click(screen.getByRole('button', { name: 'Zurücksetzen' }));
+    await waitFor(() => expect(mockedPatch).toHaveBeenCalled());
+    const body = mockedPatch.mock.calls[mockedPatch.mock.calls.length - 1][1] as { overrides: Record<string, unknown> };
+    expect(body.overrides).not.toHaveProperty('date');
+  });
+
   it('existing-only field (storage_path) offers no create row', () => {
     renderRow(row({ suggested_storage_path: 'Finanzen/2024' }),
       _taxo({ storage_paths: ['Finanzen/2024', 'Fahrzeug/Belege'] }));
@@ -205,7 +228,7 @@ describe('AuditReviewRow', () => {
     renderRow(row());
     fireEvent.click(screen.getByText('2024-02-02'));
     expect(screen.getByRole('dialog', { name: 'Datum bearbeiten' })).toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: '15' })); // Feb 2024 view
+    fireEvent.click(screen.getByRole('gridcell', { name: '15' })); // Feb 2024 view
     await waitFor(() => {
       expect(mockedPatch).toHaveBeenCalledWith(
         '/api/admin/paperless-audit/results/7',

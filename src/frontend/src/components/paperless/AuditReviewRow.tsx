@@ -439,9 +439,12 @@ function InlineEdit({ value, current, placeholder, ariaLabel, type = 'text', opt
   const [editing, setEditing] = useState(false);
   const [buffer, setBuffer] = useState(value);
   const inputRef = useRef<HTMLInputElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const wasEditing = useRef(false);
 
   const isLookup = !!options && options.length > 0;   // affordance only with options
-  const isDate = type === 'date';
+  // A non-ISO stored date falls back to a text input so it stays visible + fixable.
+  const isDate = type === 'date' && (value === '' || ISO_DATE.test(value));
 
   useEffect(() => {
     if (editing && !isLookup && !isDate) {
@@ -449,6 +452,13 @@ function InlineEdit({ value, current, placeholder, ariaLabel, type = 'text', opt
       inputRef.current?.select();
     }
   }, [editing, isLookup, isDate]);
+
+  // Restore focus to the field trigger when the editor closes (keyboard users
+  // shouldn't be dropped to <body>).
+  useEffect(() => {
+    if (wasEditing.current && !editing) triggerRef.current?.focus();
+    wasEditing.current = editing;
+  }, [editing]);
 
   const commit = (v: string) => { setEditing(false); if (v !== value) onSave(v); };
   const cancel = () => setEditing(false);
@@ -467,6 +477,7 @@ function InlineEdit({ value, current, placeholder, ariaLabel, type = 'text', opt
           ariaLabel={ariaLabel}
           locale={i18n.language}
           placeholder={placeholder}
+          t={t}
           onCommit={commit}
           onCancel={cancel}
         />
@@ -514,6 +525,7 @@ function InlineEdit({ value, current, placeholder, ariaLabel, type = 'text', opt
   const Icon = type === 'date' ? Calendar : isLookup ? ChevronsUpDown : Pencil;
   return (
     <button
+      ref={triggerRef}
       type="button"
       onClick={() => { setBuffer(value); setEditing(true); }}
       aria-label={ariaLabel}
