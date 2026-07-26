@@ -163,38 +163,55 @@ describe('AuditReviewRow', () => {
     });
   });
 
-  it('offers Paperless correspondents as a datalist lookup (pick or create)', () => {
-    renderRow(row(), {
-      correspondents: ['Stadtwerke', 'Finanzamt'], document_types: [], tags: [], storage_paths: [],
-      allow_create: { correspondent: true, document_type: true, tags: true, storage_path: false },
-    });
-    fireEvent.click(screen.getByText('New Corp')); // click-to-edit the correspondent
-    const input = screen.getByDisplayValue('New Corp');
-    const listId = input.getAttribute('list');
-    expect(listId).toBeTruthy();
-    const dl = document.getElementById(listId as string);
-    const values = [...(dl?.querySelectorAll('option') ?? [])].map((o) => o.getAttribute('value'));
-    expect(values).toEqual(['Stadtwerke', 'Finanzamt']); // free text still allowed = create
+  const _taxo = (over: Partial<import('../../../../src/frontend/src/api/resources/paperlessAudit').TaxonomyResponse> = {}) => ({
+    correspondents: [], document_types: [], tags: [], storage_paths: [],
+    allow_create: { correspondent: true, document_type: true, tags: true, storage_path: false },
+    ...over,
   });
 
-  it('storage_path is an existing-only select (no free-text create)', () => {
-    renderRow(row({ suggested_storage_path: 'Finanzen/2024' }), {
-      correspondents: [], document_types: [], tags: [],
-      storage_paths: ['Finanzen/2024', 'Fahrzeug/Belege'],
-      allow_create: { correspondent: true, document_type: true, tags: true, storage_path: false },
+  it('correspondent is a creatable combobox (filter existing + create row)', () => {
+    renderRow(row(), _taxo({ correspondents: ['Stadtwerke', 'Finanzamt'] }));
+    fireEvent.click(screen.getByText('New Corp')); // open the combobox
+    const input = screen.getByRole('combobox', { name: 'Ansprechpartner bearbeiten' });
+    fireEvent.change(input, { target: { value: 'stadt' } });
+    expect(screen.getByRole('option', { name: /Stadtwerke/ })).toBeInTheDocument(); // existing match
+    expect(screen.getByRole('option', { name: /anlegen/i })).toBeInTheDocument();   // create row
+  });
+
+  it('picking a combobox option persists it as an override', async () => {
+    renderRow(row(), _taxo({ correspondents: ['Stadtwerke', 'Finanzamt'] }));
+    fireEvent.click(screen.getByText('New Corp'));
+    const input = screen.getByRole('combobox', { name: 'Ansprechpartner bearbeiten' });
+    fireEvent.change(input, { target: { value: 'stadt' } });
+    fireEvent.mouseDown(screen.getByRole('button', { name: 'Stadtwerke' }));
+    await waitFor(() => {
+      expect(mockedPatch).toHaveBeenCalledWith(
+        '/api/admin/paperless-audit/results/7',
+        expect.objectContaining({ overrides: expect.objectContaining({ correspondent: 'Stadtwerke' }) }),
+      );
     });
+  });
+
+  it('existing-only field (storage_path) offers no create row', () => {
+    renderRow(row({ suggested_storage_path: 'Finanzen/2024' }),
+      _taxo({ storage_paths: ['Finanzen/2024', 'Fahrzeug/Belege'] }));
     fireEvent.click(screen.getByText('Finanzen/2024'));
-    const control = screen.getByLabelText('Ablageort bearbeiten'); // editFieldNamed
-    expect(control.tagName).toBe('SELECT'); // existing-only, not a free-text input
-    const opts = [...control.querySelectorAll('option')].map((o) => o.getAttribute('value'));
-    expect(opts).toContain('Fahrzeug/Belege');
+    const input = screen.getByRole('combobox', { name: 'Ablageort bearbeiten' });
+    fireEvent.change(input, { target: { value: 'Neuer Pfad' } }); // not an existing path
+    expect(screen.queryByRole('option', { name: /anlegen|create/i })).not.toBeInTheDocument();
   });
 
-  it('date field opens a native date input (calendar widget)', () => {
+  it('date field opens a calendar popover and persists a picked day', async () => {
     renderRow(row());
     fireEvent.click(screen.getByText('2024-02-02'));
-    const input = screen.getByDisplayValue('2024-02-02');
-    expect(input).toHaveAttribute('type', 'date');
+    expect(screen.getByRole('dialog', { name: 'Datum bearbeiten' })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: '15' })); // Feb 2024 view
+    await waitFor(() => {
+      expect(mockedPatch).toHaveBeenCalledWith(
+        '/api/admin/paperless-audit/results/7',
+        expect.objectContaining({ overrides: expect.objectContaining({ date: '2024-02-15' }) }),
+      );
+    });
   });
 
   it('adding a tag persists a tags override', async () => {

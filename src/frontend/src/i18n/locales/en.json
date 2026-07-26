@@ -1556,6 +1556,7 @@
       "editField": "Edit field",
       "editFieldNamed": "Edit {{field}}",
       "fieldTitle": "Title",
+      "createValue": "Create “{{value}}”",
       "customFields": "Custom fields",
       "addTag": "Add tag",
       "cfKey": "Field",

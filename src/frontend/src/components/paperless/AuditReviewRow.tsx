@@ -11,12 +11,13 @@
  * explicit intent), so field_selection only needs to carry the fields the user
  * wants applied; untouched rows never PATCH and keep the legacy apply-all path.
  */
-import { useEffect, useId, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { TFunction } from 'i18next';
 import { useTranslation } from 'react-i18next';
 import { Check, X, Loader, ChevronDown, ChevronRight, Plus, Trash2, Pencil, Calendar, ChevronsUpDown } from 'lucide-react';
 
 import Badge from '../Badge';
+import { ComboboxInput, CalendarPopover } from './reviewControls';
 import {
   useUpdateReview,
   type AuditResult,
@@ -417,14 +418,12 @@ function SelectBox({ applicable, selected, overridden, onToggle, label }: Select
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
 
 // Jira-style inline edit: reads as plain text; hover shows a subtle bg + an
-// affordance icon; click swaps to an editor; Enter/blur commits, Escape cancels.
-//  - options (non-empty) → a lookup: `creatable` picks the control —
-//    a <datalist> (pick existing OR type a new value to create) vs a native
-//    <select> (existing-only, for fields the backend can't auto-create).
-//  - type='date' → a native calendar picker (auto-opened via showPicker());
-//    falls back to a text input for a non-ISO stored value so it stays editable.
-// Native controls are deliberate: they escape the table's overflow-x-auto
-// clipping an absolute dropdown would hit, and are keyboard/i18n-accessible.
+// affordance icon; click swaps to an editor; Escape cancels.
+//  - options (non-empty) → a custom ComboboxInput: filter existing values or,
+//    when `creatable`, a "create «X»" row (auto-create on apply).
+//  - type='date' → a custom CalendarPopover (month grid).
+// Both overlays portal to <body> with fixed positioning so they escape the
+// review table's overflow-x-auto clipping.
 interface InlineEditProps {
   value: string;
   current?: string;
@@ -436,52 +435,58 @@ interface InlineEditProps {
   onSave: (value: string) => void;
 }
 function InlineEdit({ value, current, placeholder, ariaLabel, type = 'text', options, creatable = true, onSave }: InlineEditProps) {
+  const { t, i18n } = useTranslation();
   const [editing, setEditing] = useState(false);
   const [buffer, setBuffer] = useState(value);
   const inputRef = useRef<HTMLInputElement>(null);
-  const selectRef = useRef<HTMLSelectElement>(null);
-  const listId = useId();
 
   const isLookup = !!options && options.length > 0;   // affordance only with options
-  const useSelect = isLookup && !creatable;            // existing-only → native select
-  // date needs an ISO value; a non-ISO stored value falls back to text (based on
-  // the stable `value`, not the live buffer, so it can't flip mid-edit).
-  const useDate = type === 'date' && (value === '' || ISO_DATE.test(value));
+  const isDate = type === 'date';
 
   useEffect(() => {
-    if (!editing) return;
-    if (useSelect) { selectRef.current?.focus(); return; }
-    inputRef.current?.focus();
-    if (useDate) inputRef.current?.showPicker?.();
-    else inputRef.current?.select();
-  }, [editing, useSelect, useDate]);
+    if (editing && !isLookup && !isDate) {
+      inputRef.current?.focus();
+      inputRef.current?.select();
+    }
+  }, [editing, isLookup, isDate]);
 
-  const commitValue = (v: string) => { setEditing(false); if (v !== value) onSave(v); };
-  const cancel = () => { setEditing(false); setBuffer(value); };
+  const commit = (v: string) => { setEditing(false); if (v !== value) onSave(v); };
+  const cancel = () => setEditing(false);
 
-  // Keep the struck-through current value visible WHILE editing (the "what am I
-  // replacing" reference) — the read view shows it too.
+  // Struck-through current value stays visible WHILE editing (the replace ref).
   const strike = current && current !== value
     ? <span className="block truncate text-[11px] text-red-500 line-through dark:text-red-400">{current}</span>
     : null;
 
-  if (editing && useSelect) {
-    const opts = value && !options!.includes(value) ? [value, ...options!] : options!;
+  if (editing && isDate) {
     return (
       <div className="space-y-0.5">
         {strike}
-        <select
-          ref={selectRef}
-          value={buffer}
-          aria-label={ariaLabel}
-          onChange={(e) => commitValue(e.target.value)}
-          onBlur={() => setEditing(false)}
-          onKeyDown={(e) => { if (e.key === 'Escape') { e.preventDefault(); cancel(); } }}
-          className="input py-1 px-1.5 text-xs w-full"
-        >
-          {!value && <option value="">{placeholder ?? '—'}</option>}
-          {opts.map((o) => <option key={o} value={o}>{o}</option>)}
-        </select>
+        <CalendarPopover
+          value={value}
+          ariaLabel={ariaLabel}
+          locale={i18n.language}
+          placeholder={placeholder}
+          onCommit={commit}
+          onCancel={cancel}
+        />
+      </div>
+    );
+  }
+  if (editing && isLookup) {
+    return (
+      <div className="space-y-0.5">
+        {strike}
+        <ComboboxInput
+          value={value}
+          options={options!}
+          creatable={creatable}
+          placeholder={placeholder}
+          ariaLabel={ariaLabel}
+          t={t}
+          onCommit={commit}
+          onCancel={cancel}
+        />
       </div>
     );
   }
@@ -491,24 +496,18 @@ function InlineEdit({ value, current, placeholder, ariaLabel, type = 'text', opt
         {strike}
         <input
           ref={inputRef}
-          type={useDate ? 'date' : 'text'}
-          list={isLookup ? listId : undefined}
+          type="text"
           value={buffer}
           placeholder={placeholder}
           aria-label={ariaLabel}
           onChange={(e) => setBuffer(e.target.value)}
-          onBlur={() => commitValue(buffer)}
+          onBlur={() => commit(buffer)}
           onKeyDown={(e) => {
-            if (e.key === 'Enter') { e.preventDefault(); commitValue(buffer); }
+            if (e.key === 'Enter') { e.preventDefault(); commit(buffer); }
             else if (e.key === 'Escape') { e.preventDefault(); cancel(); }
           }}
           className="input py-1 px-1.5 text-xs w-full"
         />
-        {isLookup && (
-          <datalist id={listId}>
-            {options!.map((o) => <option key={o} value={o} />)}
-          </datalist>
-        )}
       </div>
     );
   }
@@ -579,19 +578,9 @@ interface TagsEditorProps {
 }
 function TagsEditor({ tags, current, applicable, selected, options, creatable, onChange, onToggle, t }: TagsEditorProps) {
   const [adding, setAdding] = useState(false);
-  const [entry, setEntry] = useState('');
-  const inputRef = useRef<HTMLInputElement>(null);
-  const selectRef = useRef<HTMLSelectElement>(null);
-  const listId = useId();
-  useEffect(() => {
-    if (!adding) return;
-    if (creatable) inputRef.current?.focus();
-    else selectRef.current?.focus();
-  }, [adding, creatable]);
   const addTag = (raw: string) => {
     const v = raw.trim();
     if (v && !tags.includes(v)) onChange([...tags, v]);
-    setEntry('');
     setAdding(false);
   };
   const suggestions = options.filter((o) => !tags.includes(o));
@@ -610,45 +599,21 @@ function TagsEditor({ tags, current, applicable, selected, options, creatable, o
         {current.length > 0 && !tagsEqual(tags, current) && (
           <span className="text-red-500 dark:text-red-400 line-through text-[10px] self-center">{current.join(', ')}</span>
         )}
-        {adding && creatable && (
-          <>
-            <input
-              ref={inputRef}
-              type="text"
-              list={listId}
-              value={entry}
-              onChange={(e) => setEntry(e.target.value)}
-              // Blur DISCARDS an in-progress tag (Enter or picking a suggestion +
-              // Enter commits) — a half-typed fragment must not be saved.
-              onBlur={() => { setEntry(''); setAdding(false); }}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') { e.preventDefault(); addTag(entry); }
-                else if (e.key === 'Escape') { e.preventDefault(); setEntry(''); setAdding(false); }
-              }}
+        {adding ? (
+          <div className="w-40">
+            <ComboboxInput
+              value=""
+              options={suggestions}
+              creatable={creatable}
               placeholder={t('paperlessAudit.review.addTag')}
-              className="input py-0.5 px-1.5 text-xs w-28"
+              ariaLabel={t('paperlessAudit.review.addTag')}
+              t={t}
+              discardOnBlur   // a half-typed tag must not be saved on blur
+              onCommit={addTag}
+              onCancel={() => setAdding(false)}
             />
-            <datalist id={listId}>
-              {suggestions.map((o) => <option key={o} value={o} />)}
-            </datalist>
-          </>
-        )}
-        {adding && !creatable && (
-          // Existing-only (tag auto-create disabled) → pick from a native select.
-          <select
-            ref={selectRef}
-            value=""
-            aria-label={t('paperlessAudit.review.addTag')}
-            onChange={(e) => addTag(e.target.value)}
-            onBlur={() => setAdding(false)}
-            onKeyDown={(e) => { if (e.key === 'Escape') { e.preventDefault(); setAdding(false); } }}
-            className="input py-0.5 px-1.5 text-xs w-32"
-          >
-            <option value="">{t('paperlessAudit.review.addTag')}</option>
-            {suggestions.map((o) => <option key={o} value={o}>{o}</option>)}
-          </select>
-        )}
-        {!adding && (
+          </div>
+        ) : (
           <button
             onClick={() => setAdding(true)}
             className="inline-flex items-center gap-0.5 rounded px-1 py-0.5 text-[11px] text-gray-400 transition-colors duration-75 hover:bg-gray-100 hover:text-gray-600 dark:hover:bg-gray-700/50 dark:hover:text-gray-300"
