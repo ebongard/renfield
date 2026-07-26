@@ -178,6 +178,15 @@ the role descriptions in `config/agent_roles.yaml`.
   the Paperless MCP's name→id resolver does bidirectional *substring* matching, so a
   containment match (e.g. "Telekom" ⊂ "Telekom Deutschland GmbH") is reused rather than
   duplicated — intended, and correct for recurring senders.
+- **Document date (Ausstellungsdatum).** The extracted `created_date` is submitted on
+  the (non-blocking) upload **and reapplied post-consume** via `update_document` once the
+  consume task yields a document id — Paperless can't set `created` before the doc exists,
+  so with `wait_for_consume=False` the MCP hands it back in `deferred_patch` for the caller
+  to apply (mirrors the chat-upload `_finalize_paperless_commit`; the reapply is merged into
+  the same post-consume PATCH that transports Renfield's OCR content). Without the reapply
+  Paperless kept the consume-time date while the OCR-derived **title** showed the correct one
+  (the pre-2026-07 Jet-receipt date drift, fixed). No extracted date → left unset (Paperless
+  default).
 - **Backfill.** `bin/backfill_paperless_metadata.py` (`--dry-run`/`--commit`) gap-fills
   the correspondent on already-filed folder-ingest docs that lack one (the Docling-outage
   + new-sender cohorts): it re-extracts, runs the same resolve-or-create path, and
@@ -194,6 +203,7 @@ the role descriptions in `config/agent_roles.yaml`.
 | Push gets `503 worker_unavailable` | document worker pod down | check the worker pod; it self-heals when back (the file stays in the inbox) |
 | File lands in `failed/` | bad extension / empty / oversize / malformed metadata | check `ALLOWED_EXTENSIONS` + `MAX_FILE_SIZE_MB`; inspect the file |
 | Document is in the KB but **not** in Paperless | a transient Paperless outage during the first ingest (known gap, P2) | the file already moved to `processed/`, so it is not auto-retried — re-push it, or it surfaces in Paperless's own failed-task log; a future reconciler will re-file `paperless_state != done` docs |
+| Paperless `created` (Ausstellungsdatum) is the ingest date, not the document's | pre-fix: the extracted date was submitted on upload but never reapplied post-consume | fixed 2026-07 (submit + post-consume `deferred_patch` reapply); correct already-filed docs via the ADMIN Paperless audit flow (`/api/admin/paperless-audit`, it PATCHes `created`) |
 | Document re-fails on every worker restart | poison document (terminal pipeline error) | the worker marks it `status=failed` + acks (it stops looping); fix or remove the file, then re-push |
 
 ## Where it lives
