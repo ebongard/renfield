@@ -562,6 +562,125 @@ class PaperlessAuditService:
             "tags": await _fetch_taxonomy_names(self._mcp, "tag"),
         }
 
+    # Canonical field names for the review overlay (user_overrides keys /
+    # field_selection entries). "date" maps to the MCP `created_date` param in
+    # _apply_fix; the rest match the suggested_*/current_* column stems.
+    EDITABLE_FIELDS = (
+        "title", "correspondent", "document_type", "tags",
+        "date", "storage_path", "custom_fields",
+    )
+
+    def _validate_overrides(self, overrides: dict) -> dict:
+        """Validate a manual-edit map against EDITABLE_FIELDS + per-field types.
+        A None value drops that field's override. Empty values are REJECTED (not
+        silently accepted): _apply_fix's truthiness gate would skip them, so a
+        blank edit would look saved but never apply — clearing a field is not
+        supported here. Raises ValueError on bad input (→ 400 at the route)."""
+        import datetime as _dt
+
+        if not isinstance(overrides, dict):
+            raise ValueError("overrides must be an object")
+        clean: dict = {}
+        for k, v in overrides.items():
+            if k not in self.EDITABLE_FIELDS:
+                raise ValueError(f"unknown field: {k!r}")
+            if v is None:
+                continue  # explicit drop of this override
+            if k == "tags":
+                if not (isinstance(v, list) and v and all(isinstance(t, str) and t.strip() for t in v)):
+                    raise ValueError("tags override must be a non-empty list of non-empty strings")
+            elif k == "custom_fields":
+                # Shape (field ids / values) is authoritative on the Paperless side;
+                # we only guard the outer type + non-emptiness here.
+                if not isinstance(v, dict) or not v:
+                    raise ValueError("custom_fields override must be a non-empty object")
+            elif k == "date":
+                if not isinstance(v, str):
+                    raise ValueError("date override must be a string")
+                try:
+                    _dt.date.fromisoformat(v)
+                except ValueError:
+                    raise ValueError("date override must be an ISO date (YYYY-MM-DD)")
+            elif not isinstance(v, str) or not v.strip():
+                raise ValueError(f"{k} override must be a non-empty string")
+            clean[k] = v
+        return clean
+
+    def _validate_selection(self, selection: list) -> list:
+        """Validate the apply-selection against EDITABLE_FIELDS; dedupe, keep order."""
+        if not isinstance(selection, list):
+            raise ValueError("field_selection must be a list")
+        seen: set = set()
+        out: list = []
+        for f in selection:
+            if f not in self.EDITABLE_FIELDS:
+                raise ValueError(f"unknown field: {f!r}")
+            if f not in seen:
+                seen.add(f)
+                out.append(f)
+        return out
+
+    async def update_review(
+        self,
+        result_id: int,
+        overrides: dict | None = None,
+        field_selection: list | None = None,
+    ) -> dict | None:
+        """Persist a manual review overlay: edited values (``overrides``) and/or
+        the subset of fields to apply (``field_selection``). Each param REPLACES
+        the whole stored value (not a merge); pass None to leave that overlay
+        untouched. Validates against EDITABLE_FIELDS + per-field types (raises
+        ValueError). Returns the updated result dict, or None if the id is unknown
+        (→ 404 at the route). Status is left as-is (apply reads the overlay later).
+        """
+        from models.database import PaperlessAuditResult
+
+        if overrides is not None:
+            overrides = self._validate_overrides(overrides)
+        if field_selection is not None:
+            field_selection = self._validate_selection(field_selection)
+
+        async with self._db_factory() as db:
+            stmt = select(PaperlessAuditResult).where(
+                PaperlessAuditResult.id == result_id
+            )
+            row = (await db.execute(stmt)).scalar_one_or_none()
+            if row is None:
+                return None
+            if overrides is not None:
+                row.user_overrides = overrides or None  # {} → NULL (no overlay)
+            if field_selection is not None:
+                # [] is meaningful (apply nothing); only None means "leave as-is".
+                row.field_selection = field_selection
+            # A manual review RE-OPENS the row for apply: editing an already
+            # applied/skipped/failed row must take effect on the next apply
+            # (apply_results only processes 'pending' rows). Reset so the edit
+            # isn't silently a no-op.
+            if overrides is not None or field_selection is not None:
+                row.status = "pending"
+                row.applied_at = None
+            await db.commit()
+            await db.refresh(row)
+            return self._result_to_dict(row)
+
+    async def _persist_status(self, result_id: int, status: str) -> None:
+        """Set a terminal status on a result row (and applied_at for 'applied')."""
+        from models.database import PaperlessAuditResult
+
+        async with self._db_factory() as db:
+            row = (
+                await db.execute(
+                    select(PaperlessAuditResult).where(
+                        PaperlessAuditResult.id == result_id
+                    )
+                )
+            ).scalar_one_or_none()
+            if row:
+                row.status = status
+                if status == "applied":
+                    row.applied_at = datetime.now(UTC).replace(tzinfo=None)
+                await db.commit()
+
     async def _apply_fix(self, result, taxonomy: dict | None = None) -> bool:
         """Apply suggested fix via MCP update_document tool.
 
@@ -586,24 +705,44 @@ class PaperlessAuditService:
         params = {"document_id": result.paperless_doc_id}
         has_changes = False
 
-        if result.suggested_title and result.suggested_title != result.current_title:
-            params["title"] = result.suggested_title
+        # Review overlay. ``user_overrides`` replaces the LLM suggestion per field
+        # (manual edit); ``field_selection`` limits which fields apply (None = all
+        # changed, the legacy path). Effective value = override if the user edited
+        # that field, else the suggested_* value. isinstance-guards keep the legacy
+        # path byte-identical when the columns are NULL (and tolerate mock rows).
+        overrides = result.user_overrides if isinstance(result.user_overrides, dict) else {}
+        selection = result.field_selection if isinstance(result.field_selection, list) else None
+
+        def _eff(field, suggested):
+            return overrides[field] if field in overrides else suggested
+
+        def _sel(field):
+            # A manual override IS an explicit intent to apply that field, so it
+            # always applies (never silently dropped by field_selection). Otherwise
+            # field_selection decides (None = all changed, the legacy path).
+            return field in overrides or selection is None or field in selection
+
+        title = _eff("title", result.suggested_title)
+        if _sel("title") and title and title != result.current_title:
+            params["title"] = title
             has_changes = True
         # raise_on_error=True so a transient taxonomy read / create FAILURE is
         # distinguishable from a legitimate guardrail-skip (None): on failure we
         # abort this pass and leave the row pending for a clean retry, instead of
         # dropping the fix silently and reporting it as applied.
         try:
-            if result.suggested_correspondent and result.suggested_correspondent != result.current_correspondent:
+            corr_val = _eff("correspondent", result.suggested_correspondent)
+            if _sel("correspondent") and corr_val and corr_val != result.current_correspondent:
                 corr = await resolve_or_create_correspondent(
-                    self._mcp, result.suggested_correspondent,
+                    self._mcp, corr_val,
                     names=tax.get("correspondents"), raise_on_error=True,
                 )
                 if corr:  # None = a fuzzy-near match exists → guardrail, leave unset
                     params["correspondent"] = corr
                     has_changes = True
-            if result.suggested_document_type and result.suggested_document_type != result.current_document_type:
-                dt = result.suggested_document_type
+            dt_val = _eff("document_type", result.suggested_document_type)
+            if _sel("document_type") and dt_val and dt_val != result.current_document_type:
+                dt = dt_val
                 if settings.paperless_autocreate_document_type:
                     # None on a fuzzy-near guardrail hit → skip (same as correspondent),
                     # rather than force the raw suggestion and risk a near-duplicate type.
@@ -614,8 +753,9 @@ class PaperlessAuditService:
                 if dt:
                     params["document_type"] = dt
                     has_changes = True
-            if result.suggested_tags and result.suggested_tags != result.current_tags:
-                tags = result.suggested_tags
+            tags_val = _eff("tags", result.suggested_tags)
+            if _sel("tags") and tags_val and tags_val != result.current_tags:
+                tags = tags_val
                 if settings.paperless_autocreate_tags:
                     resolved = [
                         await resolve_or_create_taxonomy(
@@ -633,17 +773,28 @@ class PaperlessAuditService:
                 f"({e}) — leaving pending for retry, not reporting as applied"
             )
             return False
-        if result.suggested_date and result.suggested_date != result.current_date:
-            params["created_date"] = result.suggested_date
+        date_val = _eff("date", result.suggested_date)
+        if _sel("date") and date_val and date_val != result.current_date:
+            params["created_date"] = date_val
             has_changes = True
-        if result.suggested_storage_path and result.suggested_storage_path != result.current_storage_path:
-            params["storage_path"] = result.suggested_storage_path
+        # storage_path: a manual override is applied as-is (trusted admin input),
+        # unlike an LLM suggestion which _analyze_document guards against the valid
+        # -paths list. A non-existent path is rejected by Paperless → row 'failed'.
+        sp_val = _eff("storage_path", result.suggested_storage_path)
+        if _sel("storage_path") and sp_val and sp_val != result.current_storage_path:
+            params["storage_path"] = sp_val
             has_changes = True
-        if result.suggested_custom_fields:
-            params["custom_fields"] = result.suggested_custom_fields
+        cf_val = _eff("custom_fields", result.suggested_custom_fields)
+        if _sel("custom_fields") and cf_val:
+            params["custom_fields"] = cf_val
             has_changes = True
 
         if not has_changes:
+            # Nothing to write (e.g. field_selection deselected every change, or an
+            # override equals the current value). Still mark the row processed so it
+            # does not reappear as pending and get re-counted "applied" on every
+            # subsequent apply (the deselect-all stuck-row bug).
+            await self._persist_status(result.id, "applied")
             return True
 
         mcp_result = await self._mcp.execute_tool("mcp.paperless.update_document", params)
@@ -673,11 +824,19 @@ class PaperlessAuditService:
         applied = 0
         failed = 0
 
+        from sqlalchemy import or_
+
         async with self._db_factory() as db:
             stmt = select(PaperlessAuditResult).where(
                 PaperlessAuditResult.id.in_(result_ids),
                 PaperlessAuditResult.status == "pending",
-                PaperlessAuditResult.changes_needed.is_(True),
+                # changes_needed OR a manual edit: a user override makes a row
+                # applicable even when the LLM flagged no change (they chose to
+                # fix it by hand).
+                or_(
+                    PaperlessAuditResult.changes_needed.is_(True),
+                    PaperlessAuditResult.user_overrides.isnot(None),
+                ),
             )
             results = (await db.execute(stmt)).scalars().all()
 
@@ -1689,6 +1848,8 @@ class PaperlessAuditService:
             "changes_needed": r.changes_needed,
             "reasoning": r.reasoning,
             "status": r.status,
+            "user_overrides": r.user_overrides,
+            "field_selection": r.field_selection,
             "audited_at": r.audited_at.isoformat() if r.audited_at else None,
             "applied_at": r.applied_at.isoformat() if r.applied_at else None,
             "audit_run_id": r.audit_run_id,

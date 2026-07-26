@@ -542,6 +542,13 @@ class PaperlessAuditResult(Base):
 
     status = Column(String, default="pending")
 
+    # User review overlay: manual edits to the suggested values + a per-field
+    # apply selection. Both NULL = no review → apply uses ALL suggested_* changes
+    # (legacy behavior, byte-identical). See PaperlessAuditService.EDITABLE_FIELDS
+    # for the canonical field names used as keys/entries here.
+    user_overrides = Column(JSON, nullable=True)   # {field: edited_value}
+    field_selection = Column(JSON, nullable=True)  # [field, ...] to apply; NULL = all changed
+
     renfield_ocr_text = Column(Text, nullable=True)
 
     audited_at = Column(DateTime, default=_utcnow)

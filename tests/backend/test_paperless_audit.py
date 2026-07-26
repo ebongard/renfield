@@ -961,8 +961,9 @@ class TestApplyFix:
 
     @pytest.mark.unit
     @pytest.mark.asyncio
-    async def test_apply_fix_no_changes(self, service, mock_mcp_manager):
-        """Should skip MCP call when all suggested values match current."""
+    async def test_apply_fix_no_changes(self, service, mock_mcp_manager, mock_db_factory):
+        """Should skip MCP call when all suggested values match current (the row is
+        still marked processed via _persist_status so it can't loop as pending)."""
         mock_result = MagicMock()
         mock_result.id = 1
         mock_result.paperless_doc_id = 42
@@ -979,6 +980,9 @@ class TestApplyFix:
         mock_result.current_storage_path = "path/a"
         mock_result.suggested_storage_path = "path/a"
         mock_result.suggested_custom_fields = None
+        mock_db_factory._mock_session.execute.return_value = MagicMock(
+            scalar_one_or_none=MagicMock(return_value=MagicMock())
+        )
 
         result = await service._apply_fix(mock_result)
 
@@ -987,8 +991,8 @@ class TestApplyFix:
 
     @pytest.mark.unit
     @pytest.mark.asyncio
-    async def test_apply_fix_none_suggested(self, service, mock_mcp_manager):
-        """Should skip when suggested values are None."""
+    async def test_apply_fix_none_suggested(self, service, mock_mcp_manager, mock_db_factory):
+        """Should skip when suggested values are None (row still marked processed)."""
         mock_result = MagicMock()
         mock_result.id = 1
         mock_result.paperless_doc_id = 42
@@ -1005,6 +1009,9 @@ class TestApplyFix:
         mock_result.current_storage_path = "path"
         mock_result.suggested_storage_path = None
         mock_result.suggested_custom_fields = None
+        mock_db_factory._mock_session.execute.return_value = MagicMock(
+            scalar_one_or_none=MagicMock(return_value=MagicMock())
+        )
 
         result = await service._apply_fix(mock_result)
 
@@ -1274,6 +1281,228 @@ class TestRunAudit:
 # ============================================================================
 # Apply/Skip/Reprocess Operations
 # ============================================================================
+
+
+class TestReviewOverlay:
+    """The manual-review overlay: user_overrides (edited values) + field_selection
+    (per-field apply subset), plus its validation. Exercises _apply_fix's overlay
+    handling and update_review persistence."""
+
+    @staticmethod
+    def _base_result():
+        """A result with title AND date changed, no overlay (legacy defaults)."""
+        r = MagicMock()
+        r.id = 1
+        r.paperless_doc_id = 42
+        r.current_title = "Old"
+        r.suggested_title = "New"
+        r.current_correspondent = None
+        r.suggested_correspondent = None
+        r.current_document_type = None
+        r.suggested_document_type = None
+        r.current_tags = None
+        r.suggested_tags = None
+        r.current_date = "2024-01-01"
+        r.suggested_date = "2024-02-02"
+        r.current_storage_path = None
+        r.suggested_storage_path = None
+        r.suggested_custom_fields = None
+        r.user_overrides = None
+        r.field_selection = None
+        return r
+
+    @staticmethod
+    def _wire_status_db(mock_db_factory):
+        """Wire the post-apply status-update lookup to a truthy row."""
+        s = mock_db_factory._mock_session
+        s.execute.return_value = MagicMock(
+            scalar_one_or_none=MagicMock(return_value=MagicMock())
+        )
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_override_replaces_suggested_value(self, service, mock_mcp_manager, mock_db_factory):
+        """A manual edit (user_overrides) is applied instead of the LLM suggestion."""
+        r = self._base_result()
+        r.user_overrides = {"title": "Hand Edited"}
+        self._wire_status_db(mock_db_factory)
+        assert await service._apply_fix(r) is True
+        params = mock_mcp_manager.execute_tool.call_args[0][1]
+        assert params["title"] == "Hand Edited"
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_field_selection_limits_applied_fields(self, service, mock_mcp_manager, mock_db_factory):
+        """Only fields in field_selection are applied; other changed fields skip."""
+        r = self._base_result()  # title AND date both changed
+        r.field_selection = ["title"]
+        self._wire_status_db(mock_db_factory)
+        assert await service._apply_fix(r) is True
+        params = mock_mcp_manager.execute_tool.call_args[0][1]
+        assert params["title"] == "New"
+        assert "created_date" not in params  # date changed but not selected
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_override_applies_when_llm_flagged_no_change(self, service, mock_mcp_manager, mock_db_factory):
+        """A manual edit on a field the LLM did NOT change (suggested == current) is
+        still applied — the whole point of manual adjustment."""
+        r = self._base_result()
+        r.suggested_title = "Old"       # LLM: no title change
+        r.suggested_date = "2024-01-01"  # LLM: no date change
+        r.user_overrides = {"title": "Manually Set"}
+        self._wire_status_db(mock_db_factory)
+        assert await service._apply_fix(r) is True
+        params = mock_mcp_manager.execute_tool.call_args[0][1]
+        assert params["title"] == "Manually Set"
+        assert "created_date" not in params
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_none_overlay_is_legacy_behavior(self, service, mock_mcp_manager, mock_db_factory):
+        """Explicit None overlay → identical to the pre-feature apply (all changed)."""
+        r = self._base_result()
+        self._wire_status_db(mock_db_factory)
+        assert await service._apply_fix(r) is True
+        params = mock_mcp_manager.execute_tool.call_args[0][1]
+        assert params["title"] == "New"
+        assert params["created_date"] == "2024-02-02"
+
+    # --- validation ---
+
+    @pytest.mark.unit
+    def test_validate_overrides_accepts_known_fields(self, service):
+        out = service._validate_overrides({"title": "X", "tags": ["a"], "custom_fields": {"k": "v"}})
+        assert out == {"title": "X", "tags": ["a"], "custom_fields": {"k": "v"}}
+
+    @pytest.mark.unit
+    def test_validate_overrides_rejects_unknown_field(self, service):
+        with pytest.raises(ValueError):
+            service._validate_overrides({"nope": "x"})
+
+    @pytest.mark.unit
+    def test_validate_overrides_rejects_bad_types(self, service):
+        with pytest.raises(ValueError):
+            service._validate_overrides({"tags": "notalist"})
+        with pytest.raises(ValueError):
+            service._validate_overrides({"custom_fields": ["notadict"]})
+        with pytest.raises(ValueError):
+            service._validate_overrides({"title": 123})
+
+    @pytest.mark.unit
+    def test_validate_overrides_drops_none_value(self, service):
+        assert service._validate_overrides({"title": None}) == {}
+
+    @pytest.mark.unit
+    def test_validate_selection_dedupes_and_validates(self, service):
+        assert service._validate_selection(["title", "title", "tags"]) == ["title", "tags"]
+        with pytest.raises(ValueError):
+            service._validate_selection(["bogus"])
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_update_review_persists_overlay(self, service, mock_db_factory):
+        """update_review writes the validated overlay onto the row and commits."""
+        row = MagicMock()
+        s = mock_db_factory._mock_session
+        s.execute.return_value = MagicMock(scalar_one_or_none=MagicMock(return_value=row))
+        out = await service.update_review(1, overrides={"title": "Z"}, field_selection=["title"])
+        assert row.user_overrides == {"title": "Z"}
+        assert row.field_selection == ["title"]
+        s.commit.assert_awaited()
+        assert out is not None  # serialized row
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_update_review_unknown_id_returns_none(self, service, mock_db_factory):
+        s = mock_db_factory._mock_session
+        s.execute.return_value = MagicMock(scalar_one_or_none=MagicMock(return_value=None))
+        assert await service.update_review(999, overrides={"title": "Z"}) is None
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_update_review_empty_overrides_stored_as_none(self, service, mock_db_factory):
+        row = MagicMock()
+        s = mock_db_factory._mock_session
+        s.execute.return_value = MagicMock(scalar_one_or_none=MagicMock(return_value=row))
+        await service.update_review(1, overrides={})
+        assert row.user_overrides is None
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_update_review_invalid_field_raises(self, service, mock_db_factory):
+        with pytest.raises(ValueError):
+            await service.update_review(1, overrides={"bogus": "x"})
+
+    # --- review-fix regressions (from /review) ---
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_override_outside_selection_still_applies(self, service, mock_mcp_manager, mock_db_factory):
+        """A manual edit applies even when field_selection omits that field — an
+        override is an explicit intent to apply and must never be silently dropped."""
+        r = self._base_result()
+        r.current_correspondent = "Old Corr"
+        r.field_selection = ["title"]                    # correspondent NOT selected
+        r.user_overrides = {"correspondent": "Finanzamt"}
+
+        async def _execute(tool, params, **_kw):
+            if tool == "mcp.paperless.list_correspondents":
+                return {"success": True, "message": json.dumps({"items": []})}
+            if tool == "mcp.paperless.create_correspondent":
+                return {"success": True, "message": json.dumps({"id": 1, "name": params["name"]})}
+            return {"success": True}
+
+        mock_mcp_manager.execute_tool.side_effect = _execute
+        self._wire_status_db(mock_db_factory)
+        assert await service._apply_fix(r) is True
+        params = mock_mcp_manager.execute_tool.call_args[0][1]  # last = update_document
+        assert params["correspondent"] == "Finanzamt"
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_deselect_all_marks_processed_not_stuck(self, service, mock_mcp_manager, mock_db_factory):
+        """field_selection=[] → no params → row is marked 'applied' (not left
+        pending and re-counted applied on every subsequent apply)."""
+        r = self._base_result()  # title + date changed
+        r.field_selection = []
+        status_row = MagicMock()
+        s = mock_db_factory._mock_session
+        s.execute.return_value = MagicMock(scalar_one_or_none=MagicMock(return_value=status_row))
+        assert await service._apply_fix(r) is True
+        tools = [c[0][0] for c in mock_mcp_manager.execute_tool.call_args_list]
+        assert "mcp.paperless.update_document" not in tools  # nothing written
+        assert status_row.status == "applied"
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_update_review_reopens_non_pending_row(self, service, mock_db_factory):
+        """Editing an already-applied row resets it to pending so the correction
+        takes effect on the next apply (apply only processes pending rows)."""
+        row = MagicMock()
+        row.status = "applied"
+        row.applied_at = "2024-01-01T00:00:00"
+        s = mock_db_factory._mock_session
+        s.execute.return_value = MagicMock(scalar_one_or_none=MagicMock(return_value=row))
+        await service.update_review(1, overrides={"title": "Fixed"})
+        assert row.status == "pending"
+        assert row.applied_at is None
+
+    @pytest.mark.unit
+    def test_validate_overrides_rejects_empty_values(self, service):
+        """Empty values are rejected at the boundary (would be a silent no-op in
+        _apply_fix's truthiness gate — clearing a field is not supported here)."""
+        for bad in [{"title": ""}, {"title": "   "}, {"tags": []},
+                    {"tags": [""]}, {"custom_fields": {}}, {"storage_path": ""}]:
+            with pytest.raises(ValueError):
+                service._validate_overrides(bad)
+
+    @pytest.mark.unit
+    def test_validate_overrides_date_must_be_iso(self, service):
+        assert service._validate_overrides({"date": "2024-02-14"}) == {"date": "2024-02-14"}
+        for bad in [{"date": "not-a-date"}, {"date": "14.02.2024"}, {"date": ""}]:
+            with pytest.raises(ValueError):
+                service._validate_overrides(bad)
 
 
 class TestApplyResults:

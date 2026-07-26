@@ -6,6 +6,7 @@ Paperless MCP server is configured. See lifecycle.py.
 """
 
 import logging
+from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel
@@ -34,6 +35,14 @@ class ApplyRequest(BaseModel):
 
 class SkipRequest(BaseModel):
     result_ids: list[int]
+
+
+class ReviewRequest(BaseModel):
+    """Manual review overlay for one audit result. Each field REPLACES the stored
+    value; omit (None) to leave that overlay untouched. Field names/types are
+    validated server-side against PaperlessAuditService.EDITABLE_FIELDS."""
+    overrides: dict[str, Any] | None = None
+    field_selection: list[str] | None = None
 
 
 class ReOcrRequest(BaseModel):
@@ -137,6 +146,33 @@ async def get_result(result_id: int, request: Request, _user: User = Depends(req
     service = _get_service(request)
     result = await service.get_result_by_id(result_id)
     if not result:
+        raise HTTPException(status_code=404, detail="Result not found")
+    return result
+
+
+@router.patch("/results/{result_id}")
+async def update_review(
+    result_id: int,
+    body: ReviewRequest,
+    request: Request,
+    _user: User = Depends(require_permission(Permission.ADMIN)),
+):
+    """Persist a manual review: edited values + per-field apply selection.
+
+    Apply (`POST /apply`) reads the persisted overlay off the row, so no payload
+    threading is needed there. Returns the updated result; 400 on invalid
+    field/type, 404 if the result id is unknown.
+    """
+    service = _get_service(request)
+    try:
+        result = await service.update_review(
+            result_id,
+            overrides=body.overrides,
+            field_selection=body.field_selection,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    if result is None:
         raise HTTPException(status_code=404, detail="Result not found")
     return result
 
