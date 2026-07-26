@@ -13,6 +13,29 @@ export interface AuditStatus {
   total?: number;
 }
 
+/** Canonical field names for the review overlay — must match the backend
+ *  PaperlessAuditService.EDITABLE_FIELDS. */
+export type EditableField =
+  | 'title'
+  | 'correspondent'
+  | 'document_type'
+  | 'tags'
+  | 'date'
+  | 'storage_path'
+  | 'custom_fields';
+
+/** Manual edits the user made to the suggested values, keyed by canonical field.
+ *  Scalar fields carry a string, tags a string[], custom_fields an object. */
+export type ReviewOverrides = Partial<{
+  title: string;
+  correspondent: string;
+  document_type: string;
+  date: string;
+  storage_path: string;
+  tags: string[];
+  custom_fields: Record<string, unknown>;
+}>;
+
 export interface AuditResult {
   id: number;
   paperless_doc_id: number;
@@ -26,6 +49,9 @@ export interface AuditResult {
   suggested_date?: string | null;
   current_storage_path?: string | null;
   suggested_storage_path?: string | null;
+  current_tags?: string[] | null;
+  current_custom_fields?: Record<string, unknown> | null;
+  suggested_custom_fields?: Record<string, unknown> | null;
   detected_language?: string | null;
   suggested_tags?: string[];
   missing_fields?: string[];
@@ -34,6 +60,11 @@ export interface AuditResult {
   ocr_issues?: string;
   content_completeness?: number;
   completeness_issues?: string;
+  status?: string;
+  // Review overlay (PR: selective + manual edits). Both null = no review →
+  // apply uses all suggested_* changes.
+  user_overrides?: ReviewOverrides | null;
+  field_selection?: EditableField[] | null;
   // Low-quality OCR signal (resolved from the renfield Document; null/false
   // for Paperless-only docs that were never ingested into the KB).
   low_quality_ocr?: boolean;
@@ -143,6 +174,22 @@ async function applyResultsRequest(ids: number[]): Promise<void> {
 
 async function skipResultsRequest(ids: number[]): Promise<void> {
   await apiClient.post('/api/admin/paperless-audit/skip', { result_ids: ids });
+}
+
+export interface UpdateReviewInput {
+  id: number;
+  // Each field REPLACES the stored overlay; pass null to leave it untouched.
+  overrides?: ReviewOverrides | null;
+  field_selection?: EditableField[] | null;
+}
+
+async function updateReviewRequest(input: UpdateReviewInput): Promise<AuditResult> {
+  const { id, overrides, field_selection } = input;
+  const { data } = await apiClient.patch<AuditResult>(
+    `/api/admin/paperless-audit/results/${id}`,
+    { overrides, field_selection },
+  );
+  return data;
 }
 
 async function reOcrRequest(ids: number[]): Promise<void> {
@@ -356,6 +403,19 @@ export function useSkipResults() {
     {
       mutationFn: skipResultsRequest,
       onSuccess: () => invalidateAudit(queryClient),
+    },
+    'paperlessAudit.error',
+  );
+}
+
+/** Persist a manual review overlay (edited values + per-field apply selection).
+ *  Deliberately does NOT invalidate the audit query: this fires on blur/toggle
+ *  while the user is editing, and a refetch would clobber in-progress local
+ *  drafts on other rows. apply/skip invalidate when the batch settles. */
+export function useUpdateReview() {
+  return useApiMutation(
+    {
+      mutationFn: updateReviewRequest,
     },
     'paperlessAudit.error',
   );

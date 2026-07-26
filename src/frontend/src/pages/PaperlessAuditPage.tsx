@@ -17,6 +17,7 @@ import {
 import PageHeader from '../components/PageHeader';
 import Alert from '../components/Alert';
 import Badge from '../components/Badge';
+import AuditReviewRow from '../components/paperless/AuditReviewRow';
 import {
   useAuditStatusQuery,
   useReviewResultsQuery,
@@ -768,81 +769,18 @@ function ReviewTab({ t, results, loading, total, page, setPage, selectedIds, act
             </tr>
           </thead>
           <tbody>
-            {results.map((r) => {
-              const isLoading = actionLoading.has(r.id);
-              return (
-                <tr key={r.id} className="border-b border-gray-100 dark:border-gray-800 hover:bg-gray-50 dark:hover:bg-gray-800/50">
-                  <td className="py-3 px-2">
-                    <input
-                      type="checkbox"
-                      checked={selectedIds.has(r.id)}
-                      onChange={() => onToggleSelected(r.id)}
-                      className="rounded border-gray-300 dark:border-gray-600"
-                    />
-                  </td>
-                  <td className="py-3 px-2 text-gray-900 dark:text-gray-100 font-mono text-xs">{r.paperless_doc_id}</td>
-                  <td className="py-3 px-2 max-w-xs">
-                    <DiffValue current={r.current_title} suggested={r.suggested_title} />
-                    {r.suggested_tags && r.suggested_tags.length > 0 && (
-                      <div className="mt-1 flex flex-wrap gap-1">
-                        {r.suggested_tags.map((tag, i) => (
-                          <Badge key={i} color="accent">{tag}</Badge>
-                        ))}
-                      </div>
-                    )}
-                  </td>
-                  <td className="py-3 px-2">
-                    <DiffValue current={r.current_correspondent} suggested={r.suggested_correspondent} />
-                  </td>
-                  <td className="py-3 px-2">
-                    <DiffValue current={r.current_document_type} suggested={r.suggested_document_type} />
-                  </td>
-                  <td className="py-3 px-2">
-                    <DiffValue current={r.current_date} suggested={r.suggested_date} />
-                  </td>
-                  <td className="py-3 px-2">
-                    {r.detected_language && (
-                      <Badge color="blue" className="font-mono">{r.detected_language}</Badge>
-                    )}
-                  </td>
-                  <td className="py-3 px-2">
-                    <DiffValue current={r.current_storage_path} suggested={r.suggested_storage_path} />
-                  </td>
-                  <td className="py-3 px-2">
-                    {r.missing_fields && r.missing_fields.length > 0 && (
-                      <div className="flex flex-wrap gap-1">
-                        {r.missing_fields.map((f, i) => (
-                          <Badge key={i} color="yellow">{f}</Badge>
-                        ))}
-                      </div>
-                    )}
-                  </td>
-                  <td className="py-3 px-2">
-                    <ConfidenceBadge value={r.confidence} />
-                  </td>
-                  <td className="py-3 px-2 text-right">
-                    <div className="flex items-center justify-end gap-1">
-                      <button
-                        onClick={() => onApprove([r.id])}
-                        disabled={isLoading}
-                        className="btn-icon text-green-600 dark:text-green-400 hover:bg-green-50 dark:hover:bg-green-900/20"
-                        title={t('paperlessAudit.review.approve')}
-                      >
-                        {isLoading ? <Loader className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />}
-                      </button>
-                      <button
-                        onClick={() => onSkip([r.id])}
-                        disabled={isLoading}
-                        className="btn-icon btn-icon-ghost"
-                        title={t('paperlessAudit.review.skip')}
-                      >
-                        <X className="w-4 h-4" />
-                      </button>
-                    </div>
-                  </td>
-                </tr>
-              );
-            })}
+            {results.map((r) => (
+              <AuditReviewRow
+                key={r.id}
+                result={r}
+                isBulkSelected={selectedIds.has(r.id)}
+                onToggleBulkSelected={onToggleSelected}
+                onApprove={onApprove}
+                onSkip={onSkip}
+                actionLoading={actionLoading.has(r.id)}
+                colSpan={11}
+              />
+            ))}
           </tbody>
         </table>
       </div>
@@ -1396,33 +1334,6 @@ function CorrespondentsTab({ t, clusters, loading, threshold, setThreshold, onSc
       )}
     </div>
   );
-}
-
-interface DiffValueProps {
-  current?: string | null;
-  suggested?: string | null;
-}
-
-// --- Shared Components ---
-function DiffValue({ current, suggested }: DiffValueProps) {
-  if (!suggested || current === suggested) {
-    return <span className="text-gray-900 dark:text-gray-100">{current || '-'}</span>;
-  }
-  return (
-    <div className="space-y-0.5">
-      {current && (
-        <div className="text-red-600 dark:text-red-400 line-through text-xs">{current}</div>
-      )}
-      <div className="text-green-600 dark:text-green-400 text-xs font-medium">{suggested}</div>
-    </div>
-  );
-}
-
-function ConfidenceBadge({ value }: { value: number | null | undefined }) {
-  if (value == null) return <span className="text-gray-400">-</span>;
-  const pct = (value * 100).toFixed(0);
-  const color = value >= 0.8 ? 'text-green-600 dark:text-green-400' : value >= 0.6 ? 'text-yellow-600 dark:text-yellow-400' : 'text-red-600 dark:text-red-400';
-  return <span className={`text-xs font-medium ${color}`}>{pct}%</span>;
 }
 
 interface PaginationProps {

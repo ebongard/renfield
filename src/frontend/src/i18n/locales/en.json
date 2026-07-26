@@ -3,6 +3,7 @@
     "save": "Save",
     "cancel": "Cancel",
     "delete": "Delete",
+    "remove": "Remove",
     "edit": "Edit",
     "create": "Create",
     "close": "Close",
@@ -1549,7 +1550,14 @@
       "skipSelected": "Skip Selected",
       "noResults": "No pending changes",
       "noSearchResults": "No results for this search",
-      "searchPlaceholder": "Search title, correspondent, type..."
+      "searchPlaceholder": "Search title, correspondent, type...",
+      "selectRow": "Select row",
+      "applyField": "Apply this field",
+      "customFields": "Custom fields",
+      "addTag": "Add tag",
+      "cfKey": "Field",
+      "cfValue": "Value",
+      "cfAdd": "Add field"
     },
     "ocr": {
       "quality": "OCR Quality",

@@ -3,6 +3,7 @@
     "save": "Speichern",
     "cancel": "Abbrechen",
     "delete": "Löschen",
+    "remove": "Entfernen",
     "edit": "Bearbeiten",
     "create": "Erstellen",
     "close": "Schließen",
@@ -1549,7 +1550,14 @@
       "skipSelected": "Ausgewählte überspringen",
       "noResults": "Keine ausstehenden Änderungen",
       "noSearchResults": "Keine Ergebnisse für diese Suche",
-      "searchPlaceholder": "Titel, Ansprechpartner, Typ suchen..."
+      "searchPlaceholder": "Titel, Ansprechpartner, Typ suchen...",
+      "selectRow": "Zeile auswählen",
+      "applyField": "Dieses Feld übernehmen",
+      "customFields": "Benutzerdefinierte Felder",
+      "addTag": "Tag hinzufügen",
+      "cfKey": "Feld",
+      "cfValue": "Wert",
+      "cfAdd": "Feld hinzufügen"
     },
     "ocr": {
       "quality": "OCR-Qualität",
