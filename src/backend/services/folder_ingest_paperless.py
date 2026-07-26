@@ -386,6 +386,13 @@ def make_paperless_leg(
                 m = extraction.metadata
                 if m.title:
                     upload_params["title"] = m.title
+                # The document's real Ausstellungsdatum (extracted from OCR).
+                # Without this Paperless defaults `created` to consume/upload time,
+                # so filed docs carry an ingest-near date while the title shows the
+                # correct one (the Jet-receipt date-drift bug). The MCP applies it
+                # via PATCH after consume.
+                if m.created_date:
+                    upload_params["created_date"] = m.created_date.isoformat()
                 # Existing match, or (Option A) resolve-or-create a new sender.
                 correspondent = await resolve_correspondent_from_metadata(mcp_manager, m)
                 if correspondent:
@@ -468,34 +475,48 @@ def make_paperless_leg(
                 f"paperless-leg: doc {doc.id} {status} "
                 f"(paperless_id={outcome.get('document_id')})"
             )
-            # Transport Renfield's high-quality OCR into Paperless's searchable
-            # content, overwriting Paperless's own weaker consume-time OCR. Only on
-            # a freshly-filed 'success' with an id + text we have — a 'duplicate'
-            # already exists (leave its content untouched). Best-effort: a failure
-            # here does not un-settle the doc (it IS filed); search just keeps
-            # Paperless's OCR.
-            if status == "success" and pid and ocr_text.strip():
-                try:
-                    res = _parse_paperless_result(
-                        await mcp_manager.execute_tool(
-                            "mcp.paperless.update_document",
-                            {"document_id": pid, "content": ocr_text},
+            # Post-consume PATCH — one update_document carrying two things:
+            #  1. The DEFERRED metadata. With wait_for_consume=False the upload
+            #     only SUBMITS created_date; Paperless cannot set `created`
+            #     before the consume task produces a document id, so the MCP
+            #     hands it back in `deferred_patch`. Without reapplying it here
+            #     the extracted Ausstellungsdatum is silently dropped and
+            #     Paperless keeps the consume-time date (the Jet-receipt drift).
+            #  2. Renfield's high-quality OCR into Paperless's searchable
+            #     content, overwriting Paperless's weaker consume-time OCR.
+            # Only on a freshly-filed 'success' with an id — a 'duplicate'
+            # already exists (leave its metadata/content untouched). Best-effort:
+            # a failure here does not un-settle the doc (it IS filed).
+            if status == "success" and pid:
+                deferred = upload.get("deferred_patch") or {}
+                patch: dict = {"document_id": pid}
+                if deferred.get("created_date"):
+                    patch["created_date"] = deferred["created_date"]
+                if ocr_text.strip():
+                    patch["content"] = ocr_text
+                if len(patch) > 1:  # something beyond document_id to apply
+                    try:
+                        res = _parse_paperless_result(
+                            await mcp_manager.execute_tool(
+                                "mcp.paperless.update_document", patch
+                            )
                         )
-                    )
-                    if res.get("error"):
+                        applied = sorted(k for k in patch if k != "document_id")
+                        if res.get("error"):
+                            logger.warning(
+                                f"paperless-leg: post-consume patch {applied} failed "
+                                f"for doc {doc.id} (paperless_id={pid}): {res.get('error')}"
+                            )
+                        else:
+                            logger.info(
+                                f"paperless-leg: applied post-consume patch {applied} "
+                                f"to paperless_id={pid} for doc {doc.id}"
+                            )
+                    except Exception as exc:  # noqa: BLE001 - best-effort
                         logger.warning(
-                            f"paperless-leg: content transport failed for doc "
-                            f"{doc.id} (paperless_id={pid}): {res.get('error')}"
+                            f"paperless-leg: post-consume patch error for doc "
+                            f"{doc.id}: {exc}"
                         )
-                    else:
-                        logger.info(
-                            f"paperless-leg: transported OCR content ({len(ocr_text)} "
-                            f"chars) into paperless_id={pid} for doc {doc.id}"
-                        )
-                except Exception as exc:  # noqa: BLE001 - transport is best-effort
-                    logger.warning(
-                        f"paperless-leg: content transport error for doc {doc.id}: {exc}"
-                    )
             return True
 
         if status == "failure":

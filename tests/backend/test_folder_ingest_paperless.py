@@ -214,15 +214,29 @@ def _patch_extractor_doc_text(monkeypatch, *, metadata=None, error=None):
     return inst
 
 
-def _mcp_transport(await_inner=None):
-    """Mock mgr that also answers ``update_document`` (OCR content transport),
-    recording the params on ``mgr._updates``."""
+def _mcp_transport(await_inner=None, *, defer_created_date=False):
+    """Mock mgr that also answers ``update_document`` (post-consume patch / OCR
+    content transport), recording the params on ``mgr._updates`` and the upload
+    params on ``mgr._uploads``. When ``defer_created_date`` is set the upload
+    ECHOES the received created_date back in a ``deferred_patch`` — mirroring the
+    real wait_for_consume=False MCP, which cannot apply `created` before the
+    consume produces a document id and hands it back for the caller to reapply."""
     await_inner = await_inner if await_inner is not None else {"status": "success", "document_id": 5}
     updates: list[dict] = []
+    uploads: list[dict] = []
 
     async def _execute(tool, params, **_kw):
         if tool == "mcp.paperless.upload_document":
-            return _envelope({"task_id": "t1"})
+            uploads.append(params)
+            inner = {"task_id": "t1"}
+            if defer_created_date:
+                inner["status"] = "submitted"
+                inner["deferred_patch"] = {
+                    "created_date": params.get("created_date"),
+                    "storage_path": None,
+                    "custom_fields": None,
+                }
+            return _envelope(inner)
         if tool == "mcp.paperless.await_consume_result":
             return _envelope(await_inner)
         if tool == "mcp.paperless.update_document":
@@ -233,6 +247,7 @@ def _mcp_transport(await_inner=None):
     mgr = MagicMock()
     mgr.execute_tool = AsyncMock(side_effect=_execute)
     mgr._updates = updates
+    mgr._uploads = uploads
     return mgr
 
 
@@ -307,6 +322,65 @@ async def test_extracted_metadata_passed_to_upload(monkeypatch):
     assert params["document_type"] == "Rechnung"
     assert params["tags"] == ["energie"]
     assert params["wait_for_consume"] is False  # we drive the consume poll ourselves
+
+
+async def test_created_date_passed_to_upload_and_reapplied_post_consume(monkeypatch):
+    """The extracted Ausstellungsdatum must be BOTH submitted on the upload (so
+    the wait_for_consume=False MCP defers it) AND reapplied post-consume via
+    update_document once the document id exists — otherwise Paperless keeps the
+    consume-time date and the title-vs-date drift persists (Jet fuel receipts)."""
+    from datetime import date
+
+    _patch_extractor_doc_text(
+        monkeypatch,
+        metadata=PaperlessMetadata(title="Tankbeleg", created_date=date(2026, 3, 14)),
+    )
+    mgr = _mcp_transport(
+        await_inner={"status": "success", "document_id": 42}, defer_created_date=True
+    )
+    leg = make_paperless_leg(mgr)
+    assert await leg(AsyncMock(), _doc(), _PDF, _meta(), "ocr text") is True
+
+    # submitted on the upload (so the MCP can defer it)
+    assert mgr._uploads[0]["created_date"] == "2026-03-14"
+    # and reapplied post-consume — one patch carrying both date and OCR content
+    assert mgr._updates == [
+        {"document_id": 42, "created_date": "2026-03-14", "content": "ocr text"}
+    ]
+
+
+async def test_created_date_reapplied_even_without_ocr_content(monkeypatch):
+    """Empty/whitespace OCR must NOT swallow the date fix: the post-consume patch
+    still carries created_date (regression guard for the old ocr_text-gated skip)."""
+    from datetime import date
+
+    _patch_extractor_doc_text(
+        monkeypatch,
+        metadata=PaperlessMetadata(title="Tankbeleg", created_date=date(2026, 3, 14)),
+    )
+    mgr = _mcp_transport(
+        await_inner={"status": "success", "document_id": 42}, defer_created_date=True
+    )
+    leg = make_paperless_leg(mgr)
+    # doc_text=" " → uses the doc_text path but ocr_text.strip() is empty
+    assert await leg(AsyncMock(), _doc(), _PDF, _meta(), " ") is True
+
+    assert mgr._updates == [{"document_id": 42, "created_date": "2026-03-14"}]
+
+
+async def test_no_created_date_when_extractor_has_none(monkeypatch):
+    """No extracted date → created_date is neither submitted nor patched
+    (Paperless keeps its own default, never a bogus/empty value)."""
+    _patch_extractor_doc_text(monkeypatch, metadata=PaperlessMetadata(title="Tankbeleg"))
+    mgr = _mcp_transport(
+        await_inner={"status": "success", "document_id": 42}, defer_created_date=True
+    )
+    leg = make_paperless_leg(mgr)
+    assert await leg(AsyncMock(), _doc(), _PDF, _meta(), "ocr text") is True
+
+    assert "created_date" not in mgr._uploads[0]
+    assert mgr._updates == [{"document_id": 42, "content": "ocr text"}]
+    assert "created_date" not in mgr._updates[0]
 
 
 async def test_extractor_error_falls_back_to_bare_upload(monkeypatch):
