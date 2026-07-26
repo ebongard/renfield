@@ -57,6 +57,7 @@ function renderRow(r: AuditResult) {
           onToggleBulkSelected={vi.fn()}
           onApprove={vi.fn()}
           onSkip={vi.fn()}
+          onRegisterPending={vi.fn()}
           actionLoading={false}
           colSpan={11}
         />
@@ -121,6 +122,37 @@ describe('AuditReviewRow', () => {
       field_selection: string[];
     };
     expect(body.field_selection.length).toBe(initial - 1);
+  });
+
+  it('editing a scalar back to the current value does not freeze the row', async () => {
+    // only title changes (correspondent/date == current)
+    renderRow(row({ suggested_correspondent: 'Old Corp', suggested_date: '2024-01-01' }));
+    const titleInput = screen.getByDisplayValue('New Title');
+    fireEvent.change(titleInput, { target: { value: 'Old Title' } }); // == current
+    fireEvent.blur(titleInput);
+
+    await waitFor(() => expect(mockedPatch).toHaveBeenCalled());
+    const body = mockedPatch.mock.calls[mockedPatch.mock.calls.length - 1][1] as {
+      field_selection: string[];
+    };
+    // a no-op edit deselects the field (not applied); the row is not stuck.
+    expect(body.field_selection).not.toContain('title');
+    const approveBtn = screen.getByTitle('Übernehmen');
+    expect(approveBtn).not.toBeDisabled();
+  });
+
+  it('preserves the JSON type of an edited custom field (no string coercion)', async () => {
+    renderRow(row({ suggested_custom_fields: { amount: 5 } }));
+    // expand the custom-fields drawer
+    fireEvent.click(screen.getByTitle('Benutzerdefinierte Felder'));
+    const valueInput = screen.getByDisplayValue('5');
+    fireEvent.change(valueInput, { target: { value: '10' } });
+
+    await waitFor(() => {
+      const bodies = mockedPatch.mock.calls.map((c) => c[1] as { overrides: { custom_fields?: Record<string, unknown> } });
+      const withCf = bodies.find((b) => b.overrides.custom_fields);
+      expect(withCf?.overrides.custom_fields).toEqual({ amount: 10 }); // number, not "10"
+    });
   });
 
   it('adding a tag persists a tags override', async () => {

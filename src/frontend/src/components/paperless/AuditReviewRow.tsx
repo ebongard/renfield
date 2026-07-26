@@ -11,7 +11,7 @@
  * explicit intent), so field_selection only needs to carry the fields the user
  * wants applied; untouched rows never PATCH and keep the legacy apply-all path.
  */
-import { useMemo, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { TFunction } from 'i18next';
 import { useTranslation } from 'react-i18next';
 import { Check, X, Loader, ChevronDown, ChevronRight, Plus, Trash2 } from 'lucide-react';
@@ -95,6 +95,9 @@ interface AuditReviewRowProps {
   onApprove: (ids: number[]) => void | Promise<void>;
   onSkip: (ids: number[]) => void;
   actionLoading: boolean;
+  /** Register this row's latest in-flight save so the page can flush it before
+   *  apply (covers both single-row and bulk approve). */
+  onRegisterPending: (id: number, save: Promise<unknown>) => void;
   /** Total column count so the custom-fields drawer can span the full row. */
   colSpan: number;
 }
@@ -106,13 +109,36 @@ export default function AuditReviewRow({
   onApprove,
   onSkip,
   actionLoading,
+  onRegisterPending,
   colSpan,
 }: AuditReviewRowProps) {
   const { t } = useTranslation();
   const updateReview = useUpdateReview();
   const [draft, setDraft] = useState<Draft>(() => initDraft(r));
   const [expanded, setExpanded] = useState(false);
-  const pendingRef = useRef<Promise<unknown> | null>(null);
+  // draftRef mirrors `draft` so event handlers read the latest state without a
+  // stale closure (two interactions before a re-render can't clobber each other).
+  const draftRef = useRef<Draft>(draft);
+  // Serialize saves so out-of-order network delivery can't leave an older payload
+  // as the last server write; the tail settles when the row is fully persisted.
+  const chainRef = useRef<Promise<unknown>>(Promise.resolve());
+
+  // Re-seed the draft when the SERVER data changes (e.g. an apply/skip of another
+  // row invalidates the query and this still-pending row refetches with fresh
+  // suggested_* / persisted overlay). Keyed on a signature of the server fields —
+  // our own edits don't invalidate, so this never clobbers an in-progress draft.
+  const serverSig = JSON.stringify([
+    r.current_title, r.suggested_title, r.current_correspondent, r.suggested_correspondent,
+    r.current_document_type, r.suggested_document_type, r.current_date, r.suggested_date,
+    r.current_storage_path, r.suggested_storage_path, r.current_tags, r.suggested_tags,
+    r.current_custom_fields, r.suggested_custom_fields, r.user_overrides, r.field_selection,
+  ]);
+  useEffect(() => {
+    const seeded = initDraft(r);
+    draftRef.current = seeded;
+    setDraft(seeded);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [serverSig]);
 
   const effScalar = (f: ScalarField): string =>
     (draft.overrides[f] as string | undefined) ?? scalarSuggested(r, f);
@@ -120,6 +146,9 @@ export default function AuditReviewRow({
   const effCustom = (): Record<string, unknown> =>
     (draft.overrides.custom_fields ?? r.suggested_custom_fields ?? {}) as Record<string, unknown>;
 
+  // A field APPLIES iff its effective value differs from current (matches the
+  // backend `eff != current` guard). An override equal to current is a no-op, so
+  // it's not applicable — no stuck disabled checkbox.
   const isChanged = (f: EditableField): boolean => {
     if (f === 'tags') return effTags().length > 0 && !tagsEqual(effTags(), r.current_tags ?? []);
     if (f === 'custom_fields')
@@ -128,33 +157,44 @@ export default function AuditReviewRow({
     return !!v && v !== scalarCurrent(r, f as ScalarField);
   };
   const isOverridden = (f: EditableField): boolean => f in draft.overrides;
-  const isApplicable = (f: EditableField): boolean => isChanged(f) || isOverridden(f);
+  const isApplicable = (f: EditableField): boolean => isChanged(f);
 
   const persist = (next: Draft) => {
-    const p = updateReview.mutateAsync({
-      id: r.id,
-      overrides: next.overrides,
-      field_selection: [...next.selection],
-    });
-    pendingRef.current = p;
-    // Swallow — the mutation surfaces its own error toast; a failed save must not
-    // reject the row's approve flow below.
-    p.catch(() => undefined);
+    const run = () =>
+      updateReview.mutateAsync({
+        id: r.id,
+        overrides: next.overrides,
+        field_selection: [...next.selection],
+      });
+    // Chain after the previous save settles (run on both fulfil and reject so a
+    // transient failure doesn't wedge the queue). The mutation surfaces its own
+    // error toast; the tail never rejects so the page's flush can't throw.
+    const tail = chainRef.current.then(run, run).catch(() => undefined);
+    chainRef.current = tail;
+    onRegisterPending(r.id, tail);
   };
 
   const commit = (next: Draft) => {
+    draftRef.current = next;
     setDraft(next);
     persist(next);
   };
 
   // --- scalar editing ---
   const onScalarChange = (f: ScalarField, value: string) => {
-    setDraft((d) => ({ ...d, overrides: { ...d.overrides, [f]: value } }));
+    // Keystroke: update state + ref only (no persist until blur).
+    const next: Draft = {
+      ...draftRef.current,
+      overrides: { ...draftRef.current.overrides, [f]: value },
+    };
+    draftRef.current = next;
+    setDraft(next);
   };
   const onScalarBlur = (f: ScalarField) => {
-    const raw = (draft.overrides[f] as string | undefined) ?? '';
-    const overrides = { ...draft.overrides };
-    const selection = new Set(draft.selection);
+    const d = draftRef.current;
+    const raw = (d.overrides[f] as string | undefined) ?? '';
+    const overrides = { ...d.overrides };
+    const selection = new Set(d.selection);
     if (raw.trim() === '' || raw === scalarSuggested(r, f)) {
       // Empty or back-to-suggestion → not an override (clearing isn't supported).
       delete overrides[f];
@@ -170,16 +210,18 @@ export default function AuditReviewRow({
 
   // --- selection toggle (checkbox) ---
   const onToggleField = (f: EditableField) => {
-    const selection = new Set(draft.selection);
+    const d = draftRef.current;
+    const selection = new Set(d.selection);
     if (selection.has(f)) selection.delete(f);
     else selection.add(f);
-    commit({ ...draft, selection });
+    commit({ ...d, selection });
   };
 
   // --- tags editing ---
   const setTags = (tags: string[]) => {
-    const overrides = { ...draft.overrides };
-    const selection = new Set(draft.selection);
+    const d = draftRef.current;
+    const overrides = { ...d.overrides };
+    const selection = new Set(d.selection);
     if (tags.length === 0 || tagsEqual(tags, r.suggested_tags ?? [])) {
       delete overrides.tags; // revert to suggestion / can't clear
     } else {
@@ -193,8 +235,9 @@ export default function AuditReviewRow({
 
   // --- custom_fields editing ---
   const setCustom = (obj: Record<string, unknown>) => {
-    const overrides = { ...draft.overrides };
-    const selection = new Set(draft.selection);
+    const d = draftRef.current;
+    const overrides = { ...d.overrides };
+    const selection = new Set(d.selection);
     if (Object.keys(obj).length === 0 || objEqual(obj, r.suggested_custom_fields ?? {})) {
       delete overrides.custom_fields;
     } else {
@@ -205,19 +248,6 @@ export default function AuditReviewRow({
     else selection.delete('custom_fields');
     commit({ overrides, selection });
   };
-
-  const approve = async () => {
-    // Flush any in-flight save so the persisted overlay reflects the latest edit
-    // before apply reads it off the row.
-    if (pendingRef.current) await pendingRef.current;
-    await onApprove([r.id]);
-  };
-
-  const editedCount = useMemo(
-    () => [...draft.selection].filter((f) => isApplicable(f)).length,
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [draft],
-  );
 
   return (
     <>
@@ -278,7 +308,7 @@ export default function AuditReviewRow({
         </td>
         <td className="py-3 px-2">
           <EditableScalar
-            field="date" current={scalarCurrent(r, 'date')} value={effScalar('date')} placeholder="YYYY-MM-DD"
+            field="date" current={scalarCurrent(r, 'date')} value={effScalar('date')} placeholder={t('paperlessAudit.review.datePlaceholder')}
             applicable={isApplicable('date')} selected={draft.selection.has('date')}
             overridden={isOverridden('date')}
             onChange={(v) => onScalarChange('date', v)} onBlur={() => onScalarBlur('date')}
@@ -320,8 +350,8 @@ export default function AuditReviewRow({
               {expanded ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
             </button>
             <button
-              onClick={approve}
-              disabled={actionLoading || editedCount === 0}
+              onClick={() => onApprove([r.id])}
+              disabled={actionLoading}
               className="btn-icon text-green-600 dark:text-green-400 hover:bg-green-50 dark:hover:bg-green-900/20 disabled:opacity-40"
               title={t('paperlessAudit.review.approve')}
             >
@@ -473,6 +503,21 @@ interface CustomFieldsEditorProps {
   onToggle: () => void;
   t: TFunction;
 }
+// Preserve JSON types (number/bool/null) round-tripping through a text input;
+// anything not valid JSON stays a plain string — so a numeric custom field
+// edited to "5" saves as 5, not "5" (no silent type corruption).
+function coerceCfValue(s: string): unknown {
+  const trimmed = s.trim();
+  if (trimmed === '') return s;
+  try {
+    const parsed: unknown = JSON.parse(trimmed);
+    if (typeof parsed === 'number' || typeof parsed === 'boolean' || parsed === null) return parsed;
+  } catch {
+    /* not JSON → keep the raw string */
+  }
+  return s;
+}
+
 function CustomFieldsEditor({ value, applicable, selected, onChange, onToggle, t }: CustomFieldsEditorProps) {
   const [k, setK] = useState('');
   const [v, setV] = useState('');
@@ -480,7 +525,7 @@ function CustomFieldsEditor({ value, applicable, selected, onChange, onToggle, t
   const addPair = () => {
     const key = k.trim();
     if (!key) return;
-    onChange({ ...value, [key]: v });
+    onChange({ ...value, [key]: coerceCfValue(v) });
     setK('');
     setV('');
   };
@@ -503,7 +548,7 @@ function CustomFieldsEditor({ value, applicable, selected, onChange, onToggle, t
               <input
                 type="text"
                 value={typeof val === 'string' ? val : JSON.stringify(val)}
-                onChange={(e) => onChange({ ...value, [key]: e.target.value })}
+                onChange={(e) => onChange({ ...value, [key]: coerceCfValue(e.target.value) })}
                 className="input py-0.5 px-1.5 text-xs w-48"
               />
               <button onClick={() => removeKey(key)} className="btn-icon btn-icon-ghost" aria-label={t('common.remove')}>

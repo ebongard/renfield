@@ -1557,7 +1557,8 @@
       "addTag": "Tag hinzufügen",
       "cfKey": "Feld",
       "cfValue": "Wert",
-      "cfAdd": "Feld hinzufügen"
+      "cfAdd": "Feld hinzufügen",
+      "datePlaceholder": "JJJJ-MM-TT"
     },
     "ocr": {
       "quality": "OCR-Qualität",

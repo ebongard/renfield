@@ -4,7 +4,7 @@
  * Admin page for auditing Paperless documents using LLM analysis.
  * Provides audit control, review queue, OCR issue tracking, and statistics.
  */
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import type { TFunction } from 'i18next';
 import type { AxiosError } from 'axios';
 import type { LucideIcon } from 'lucide-react';
@@ -84,6 +84,13 @@ export default function PaperlessAuditPage() {
   const [reviewSearch, setReviewSearch] = useState('');
   const [debouncedSearch, setDebouncedSearch] = useState('');
   const reviewSearchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Latest in-flight review-overlay save per row (registered by AuditReviewRow),
+  // flushed before apply so a not-yet-persisted edit isn't dropped — covers both
+  // single-row and bulk approve.
+  const pendingSaves = useRef<Map<number, Promise<unknown>>>(new Map());
+  const registerPendingSave = useCallback((id: number, save: Promise<unknown>) => {
+    pendingSaves.current.set(id, save);
+  }, []);
 
   // OCR tab state
   const [ocrPage, setOcrPage] = useState(0);
@@ -224,6 +231,11 @@ export default function PaperlessAuditPage() {
   const approveResults = async (ids: number[]) => {
     setActionLoading((prev) => new Set([...prev, ...ids]));
     try {
+      // Flush any in-flight per-row overlay saves so apply reads the latest edits
+      // off the DB (allSettled: a failed save must not block the apply — its own
+      // error toast already surfaced).
+      const flush = ids.map((id) => pendingSaves.current.get(id)).filter(Boolean) as Promise<unknown>[];
+      if (flush.length) await Promise.allSettled(flush);
       await applyMutation.mutateAsync(ids);
     } catch (err) {
       const status = (err as AxiosError | undefined)?.response?.status;
@@ -443,6 +455,7 @@ export default function PaperlessAuditPage() {
           onToggleSelectAll={toggleSelectAll}
           onApprove={approveResults}
           onSkip={skipResults}
+          onRegisterPending={registerPendingSave}
           sortBy={reviewSortBy}
           sortOrder={reviewSortOrder}
           onSort={handleReviewSort}
@@ -659,6 +672,7 @@ interface ReviewTabProps {
   onToggleSelectAll: () => void;
   onApprove: (ids: number[]) => void;
   onSkip: (ids: number[]) => void;
+  onRegisterPending: (id: number, save: Promise<unknown>) => void;
   sortBy: string | null;
   sortOrder: 'asc' | 'desc';
   onSort: (column: string) => void;
@@ -673,7 +687,7 @@ interface SortHeaderProps {
 }
 
 // --- Review Tab Component ---
-function ReviewTab({ t, results, loading, total, page, setPage, selectedIds, actionLoading, onToggleSelected, onToggleSelectAll, onApprove, onSkip, sortBy, sortOrder, onSort, search, onSearch }: ReviewTabProps) {
+function ReviewTab({ t, results, loading, total, page, setPage, selectedIds, actionLoading, onToggleSelected, onToggleSelectAll, onApprove, onSkip, onRegisterPending, sortBy, sortOrder, onSort, search, onSearch }: ReviewTabProps) {
   const totalPages = Math.ceil(total / PAGE_SIZE);
   const allSelected = selectedIds.size === results.length && results.length > 0;
 
@@ -777,6 +791,7 @@ function ReviewTab({ t, results, loading, total, page, setPage, selectedIds, act
                 onToggleBulkSelected={onToggleSelected}
                 onApprove={onApprove}
                 onSkip={onSkip}
+                onRegisterPending={onRegisterPending}
                 actionLoading={actionLoading.has(r.id)}
                 colSpan={11}
               />
