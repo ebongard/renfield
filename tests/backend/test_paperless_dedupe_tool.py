@@ -29,13 +29,15 @@ def _doc(did, page_count=None, snippet="same", **over):
     return {"id": did, **_META, "page_count": page_count, "snippet": snippet, **over}
 
 
-def _make_mcp(docs, contents=None, pages=None, rate_limit_first=0):
+def _make_mcp(docs, contents=None, pages=None, rate_limit_first=0, search_error_after=None):
     """Mock mcp_manager.
     ``docs``           = single-page search results (len < 500 ends pagination).
     ``contents``       = {id: ocr_text} returned by get_document (OFF/byte path only).
     ``pages``          = optional list of pages returned by successive searches
                          (multi-page pagination test).
     ``rate_limit_first`` = the first N delete calls return an MCP rate-limit error.
+    ``search_error_after`` = the search errors once this many pages have been returned
+                         (simulates a mid-sweep failure → partial coverage).
     Records deletes in ``.deleted`` and get_document calls in ``.get_document_calls``."""
     contents = contents or {}
 
@@ -48,6 +50,9 @@ def _make_mcp(docs, contents=None, pages=None, rate_limit_first=0):
 
         async def execute_tool(self, tool, params, **kw):
             if tool == "mcp.paperless.search_documents":
+                if search_error_after is not None and self._search_i >= search_error_after:
+                    self._search_i += 1
+                    return {"success": False, "message": "mid-sweep search error"}
                 if pages is not None:
                     page = pages[self._search_i] if self._search_i < len(pages) else []
                     self._search_i += 1
@@ -247,6 +252,26 @@ async def test_rate_limited_delete_gives_up_after_retries(monkeypatch):
     assert mcp.deleted == []
     assert result["data"]["deleted"] == 0
     assert result["data"]["remaining"] == 1  # the one extra couldn't be deleted
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_partial_sweep_is_not_reported_clean():
+    """A mid-sweep search error must mark the sweep INCOMPLETE: even if every found
+    duplicate is deleted, the tool must disclose partial coverage and never claim the
+    archive is clean (the invariant the whole rework protects)."""
+    page1 = [_doc(1, page_count=2), _doc(2, page_count=2)] + [
+        _doc(1000 + i, title=f"unique-{i}", page_count=1) for i in range(498)
+    ]  # 500 docs → forces a second page, which then errors
+    mcp = _make_mcp([], pages=[page1], search_error_after=1)
+
+    result = await paperless_dedupe({}, mcp_manager=mcp)
+
+    assert mcp.deleted == [2]  # the found dup WAS deleted
+    assert result["data"]["sweep_complete"] is False
+    assert result["data"]["remaining"] == 0  # nothing remains IN THE SWEPT PART...
+    assert "teilweise" in result["message"].lower()  # ...but coverage was partial
+    assert "bereinigt" not in result["message"].lower()  # never claims fully clean
 
 
 @pytest.mark.unit

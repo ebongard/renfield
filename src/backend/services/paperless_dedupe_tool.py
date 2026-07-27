@@ -48,6 +48,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import time
 from typing import Any
 
 from loguru import logger
@@ -58,8 +59,25 @@ from utils.config import settings
 
 _SEARCH_PAGE = 500       # Paperless MCP search_documents max_results ceiling per call
 _MAX_SWEEP_PAGES = 40    # safety cap on the paginated sweep (40 * 500 = 20k docs)
-_RATE_RETRY = 6          # per-delete retries when the MCP rate-limits the call
+_RATE_RETRY = 6          # retries when the MCP rate-limits a call (search/fetch/delete)
 _RATE_SLEEP = 1.2        # seconds to wait for the 60/min token bucket to refill
+_MAX_DELETE_SECONDS = 75  # wall-clock budget for the delete loop, so one tool call
+#                           can't block past the agent step timeout under heavy throttle
+
+
+async def _call_with_retry(mcp_manager: Any, tool: str, params: dict, **kw) -> dict:
+    """Execute an MCP tool and parse it, retrying ONLY on a rate-limit rejection (the
+    60/min token bucket refills ~1/s) — shared by the sweep, the OCR fetch and the
+    delete so all three survive throttling, not just deletes. Returns the parsed dict;
+    a non-rate-limit error is returned as-is for the caller to interpret."""
+    for _ in range(_RATE_RETRY):
+        res = _parse_paperless_result(await mcp_manager.execute_tool(tool, params, **kw))
+        err = str(res.get("error") or "")
+        if err and "rate limit" in err.lower():
+            await asyncio.sleep(_RATE_SLEEP)
+            continue
+        return res
+    return {"error": "rate_limited"}  # exhausted retries — surfaced to the caller
 
 PAPERLESS_DEDUPE_TOOL: dict = {
     "internal.paperless_dedupe": {
@@ -102,14 +120,23 @@ def _candidate_key(doc: dict) -> tuple:
     )
 
 
-async def _gather_all_documents(mcp_manager: Any) -> tuple[list[dict], str | None]:
+async def _gather_all_documents(
+    mcp_manager: Any,
+) -> tuple[list[dict], bool, str | None]:
     """Page the WHOLE archive via ``created_before`` date windows (the MCP caps each
-    search at 500). Returns (docs, error). Dedups by id (adjacent windows overlap on
-    the boundary date), bounded by _MAX_SWEEP_PAGES. A partial corpus (a later page
-    erroring after earlier pages succeeded) is still returned — better to dedupe what
-    we have than nothing; the error is only surfaced when we got zero docs."""
+    search at 500). Returns ``(docs, complete, error)``:
+      * ``complete`` is True ONLY when the sweep reached the natural end of the archive
+        (a page returned < 500). It is False whenever coverage may be partial — a
+        search errored mid-sweep, the _MAX_SWEEP_PAGES cap was hit, or the date window
+        stalled (>500 docs share the oldest date, so it can't advance). Callers MUST NOT
+        claim the archive is clean when ``complete`` is False.
+      * ``error`` is set only when the VERY FIRST search failed (zero docs). A later
+        page erroring returns the partial corpus with complete=False and error=None.
+    Dedups by id (adjacent windows overlap on the boundary date), bounded by
+    _MAX_SWEEP_PAGES. Rate-limited searches are retried (``_call_with_retry``)."""
     docs_by_id: dict[int, dict] = {}
     before: str | None = None
+    complete = False
     for _ in range(_MAX_SWEEP_PAGES):
         params: dict = {"ordering": "-created", "max_results": _SEARCH_PAGE}
         if before:
@@ -117,17 +144,14 @@ async def _gather_all_documents(mcp_manager: Any) -> tuple[list[dict], str | Non
             # the next window and are deduped by id (no gap even if a date straddles
             # the 500-row page boundary).
             params["created_before"] = before
-        res = _parse_paperless_result(
-            await mcp_manager.execute_tool(
-                "mcp.paperless.search_documents",
-                params,
-                # truncate=False: a 500-row page can exceed the default response cap;
-                # truncation would drop candidate docs and corrupt the sweep.
-                truncate=False,
-            )
+        # truncate=False: a 500-row page can exceed the default response cap; truncation
+        # would drop candidate docs and corrupt the sweep.
+        res = await _call_with_retry(
+            mcp_manager, "mcp.paperless.search_documents", params, truncate=False
         )
         if res.get("error"):
-            return list(docs_by_id.values()), (None if docs_by_id else res.get("error"))
+            # first page failed → nothing to work with; later page failed → partial.
+            return list(docs_by_id.values()), False, (res.get("error") if not docs_by_id else None)
         batch = res.get("results") or []
         oldest: str | None = None
         for d in batch:
@@ -138,11 +162,14 @@ async def _gather_all_documents(mcp_manager: Any) -> tuple[list[dict], str | Non
             if cd and (oldest is None or cd < oldest):
                 oldest = cd
         if len(batch) < _SEARCH_PAGE:
-            break  # reached the end of the archive
+            complete = True  # reached the natural end of the archive
+            break
         if oldest is None or oldest == before:
-            break  # can't advance the date window (>500 docs share one date) — stop
+            # can't advance the date window (>500 docs share one date) → older docs are
+            # unreachable via this API; report the sweep as INCOMPLETE, don't claim clean.
+            break
         before = oldest  # next window: that date and older
-    return list(docs_by_id.values()), None
+    return list(docs_by_id.values()), complete, None
 
 
 async def _build_dup_groups(
@@ -161,14 +188,14 @@ async def _build_dup_groups(
         nonlocal skipped
         by_hash: dict[str, list[int]] = {}
         for m in members:
-            got = _parse_paperless_result(
-                await mcp_manager.execute_tool(
-                    "mcp.paperless.get_document",
-                    {"document_id": m["id"], "include_content": True},
-                    # truncate=False: MUST compare the FULL OCR text — a byte-cut would
-                    # make two different docs sharing the same prefix hash-identical.
-                    truncate=False,
-                )
+            # truncate=False: MUST compare the FULL OCR text — a byte-cut would make two
+            # different docs sharing the same prefix hash-identical. _call_with_retry so
+            # a rate-limited fetch doesn't silently drop the group.
+            got = await _call_with_retry(
+                mcp_manager,
+                "mcp.paperless.get_document",
+                {"document_id": m["id"], "include_content": True},
+                truncate=False,
             )
             if got.get("error"):
                 skipped += 1
@@ -210,22 +237,12 @@ async def _build_dup_groups(
 
 
 async def _delete_one(mcp_manager: Any, doc_id: int) -> bool:
-    """Delete one document, retrying on an MCP rate-limit rejection (the 60/min token
-    bucket refills ~1/s). Returns True if deleted, False on a non-rate-limit error or
-    after exhausting retries."""
-    for _ in range(_RATE_RETRY):
-        res = _parse_paperless_result(
-            await mcp_manager.execute_tool("mcp.paperless.delete_document", {"document_id": doc_id})
-        )
-        if res.get("deleted"):
-            return True
-        err = str(res.get("error") or "")
-        if "rate limit" in err.lower():
-            await asyncio.sleep(_RATE_SLEEP)  # let the token bucket refill, then retry
-            continue
-        logger.warning(f"paperless_dedupe: delete_document({doc_id}) failed: {err}")
-        return False
-    logger.warning(f"paperless_dedupe: delete_document({doc_id}) gave up after rate-limit retries")
+    """Delete one document (rate-limit retried via _call_with_retry). Returns True if
+    deleted, False on a non-rate-limit error or after exhausting rate-limit retries."""
+    res = await _call_with_retry(mcp_manager, "mcp.paperless.delete_document", {"document_id": doc_id})
+    if res.get("deleted"):
+        return True
+    logger.warning(f"paperless_dedupe: delete_document({doc_id}) failed: {res.get('error')}")
     return False
 
 
@@ -256,7 +273,7 @@ async def paperless_dedupe(
     batch_cap = max(1, int(settings.paperless_dedupe_delete_batch))
 
     try:
-        docs, err = await _gather_all_documents(mcp_manager)
+        docs, sweep_complete, err = await _gather_all_documents(mcp_manager)
         if err:
             return {
                 "success": False,
@@ -272,22 +289,37 @@ async def paperless_dedupe(
         extras = [doc_id for g in dup_groups for doc_id in g["ids"][1:]]
         total_extras = len(extras)
 
-        base_data = {
-            "documents_scanned": len(docs),
-            "groups": groups_found,
-            "metadata_groups": metadata_groups,
-            "duplicate_copies": total_extras,
-            "kept": kept,
-            "skipped": skipped,
-            "dry_run": dry_run,
-        }
+        # Only a COMPLETE sweep may claim the archive is clean; a partial sweep (search
+        # error / page cap / date-window stall) must disclose it and never report "clean".
+        partial_note = (
+            ""
+            if sweep_complete
+            else (
+                " ACHTUNG: das Archiv wurde nur TEILWEISE durchsucht (Rate-Limit oder "
+                "sehr großer Bestand) — erneut aufrufen, um den Rest zu prüfen"
+            )
+        )
+
+        def _data(skipped_val: int, deleted: int, remaining: int) -> dict:
+            return {
+                "documents_scanned": len(docs),
+                "sweep_complete": sweep_complete,
+                "groups": groups_found,
+                "metadata_groups": metadata_groups,
+                "duplicate_copies": total_extras,
+                "kept": kept,
+                "skipped": skipped_val,
+                "deleted": deleted,
+                "remaining": remaining,
+                "dry_run": dry_run,
+            }
 
         if groups_found == 0:
             return {
                 "success": True,
-                "message": f"Keine Duplikate in Paperless gefunden ({len(docs)} Dokumente geprüft).",
+                "message": f"Keine Duplikate in den {len(docs)} geprüften Dokumenten gefunden{partial_note}.",
                 "action_taken": False,
-                "data": {**base_data, "deleted": 0, "remaining": 0},
+                "data": _data(skipped, 0, 0),
             }
 
         if dry_run:
@@ -302,44 +334,57 @@ async def paperless_dedupe(
                 "message": (
                     f"{groups_found} Duplikat-Gruppe(n) mit insgesamt {total_extras} "
                     f"überzähligen Kopien gefunden ({len(docs)} Dokumente geprüft, "
-                    f"{kept} Originale bleiben erhalten).{note} Nichts gelöscht (nur_zeigen)."
+                    f"{kept} Originale bleiben erhalten).{note} Nichts gelöscht "
+                    f"(nur_zeigen).{partial_note}"
                 ),
                 "action_taken": False,
-                "data": {**base_data, "deleted": 0, "remaining": total_extras},
+                "data": _data(skipped, 0, total_extras),
             }
 
-        # Delete a rate-limit-safe batch; the rest is left for the next call.
+        # Delete a rate-limit-safe batch; the rest is left for the next call. A
+        # wall-clock budget bounds the loop so one tool call can't block past the agent
+        # step timeout under heavy throttling — anything not reached counts as remaining.
+        deadline = time.monotonic() + _MAX_DELETE_SECONDS
         deleted_ids: list[int] = []
+        delete_failed = 0
         for doc_id in extras[:batch_cap]:
+            if time.monotonic() >= deadline:
+                break
             if await _delete_one(mcp_manager, doc_id):
                 deleted_ids.append(doc_id)
             else:
-                skipped += 1
+                delete_failed += 1
         remaining = total_extras - len(deleted_ids)
+        total_skipped = skipped + delete_failed  # grouping-time skips + delete failures
 
-        if remaining > 0:
-            message = (
-                f"{len(deleted_ids)} Duplikat(e) in den Papierkorb verschoben. "
-                f"Es verbleiben noch {remaining} von {total_extras} überzähligen Kopien "
-                f"(portionsweise wegen des Paperless-Rate-Limits). Sag erneut "
-                f"'räum die Duplikate auf', um fortzufahren."
-            )
-        else:
+        # "clean" ONLY when the full archive was swept, nothing remains, and nothing was
+        # skipped — otherwise report honestly and tell the caller to re-run.
+        if remaining == 0 and sweep_complete and total_skipped == 0:
             message = (
                 f"{len(deleted_ids)} Duplikat(e) in den Papierkorb verschoben — alle "
                 f"{groups_found} Gruppen bereinigt, {kept} Originale behalten "
                 f"(wiederherstellbar im Papierkorb)."
             )
+        else:
+            parts = [f"{len(deleted_ids)} Duplikat(e) in den Papierkorb verschoben"]
+            if remaining > 0:
+                parts.append(
+                    f"{remaining} von {total_extras} Kopien verbleiben "
+                    "(portionsweise wegen des Paperless-Rate-Limits)"
+                )
+            if total_skipped:
+                parts.append(f"{total_skipped} Dokument(e) konnten nicht geprüft/gelöscht werden")
+            if not sweep_complete:
+                parts.append("das Archiv wurde nur teilweise durchsucht")
+            message = ". ".join(parts) + ". Sag erneut 'räum die Duplikate auf', um fortzufahren."
 
         return {
             "success": True,
             "message": message,
             "action_taken": bool(deleted_ids),
             "data": {
-                **base_data,
-                "deleted": len(deleted_ids),
+                **_data(total_skipped, len(deleted_ids), remaining),
                 "deleted_ids": deleted_ids,
-                "remaining": remaining,
                 "batch_cap": batch_cap,
             },
         }
