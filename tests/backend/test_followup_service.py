@@ -72,3 +72,26 @@ async def test_generate_is_best_effort_on_failure():
     with patch("utils.llm_client.get_default_client", return_value=mock_client), \
          patch("utils.llm_client.extract_response_content", return_value=""):
         assert await generate_followups("q", "an answer", model="m") == []
+
+
+@pytest.mark.unit
+async def test_generate_disables_thinking_for_thinking_model():
+    """A thinking-capable model (e.g. qwen3) MUST be called with think=False, else the
+    ollama-python bug returns empty content and no chips are ever produced."""
+    mock_client = MagicMock()
+    mock_client.chat = AsyncMock(return_value={"message": {"content": '["X?"]'}})
+    with patch("utils.llm_client.get_default_client", return_value=mock_client), \
+         patch("utils.llm_client.extract_response_content", return_value='["X?"]'):
+        await generate_followups("q", "an answer long enough", model="qwen3:8b", count=3)
+    assert mock_client.chat.await_args.kwargs.get("think") is False  # thinking disabled
+
+
+@pytest.mark.unit
+async def test_generate_no_think_kwarg_for_non_thinking_model():
+    """A non-thinking model gets no `think` kwarg (get_classification_chat_kwargs → {})."""
+    mock_client = MagicMock()
+    mock_client.chat = AsyncMock(return_value={"message": {"content": '["X?"]'}})
+    with patch("utils.llm_client.get_default_client", return_value=mock_client), \
+         patch("utils.llm_client.extract_response_content", return_value='["X?"]'):
+        await generate_followups("q", "an answer long enough", model="llama3.1:8b", count=3)
+    assert "think" not in mock_client.chat.await_args.kwargs

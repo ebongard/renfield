@@ -98,7 +98,11 @@ async def generate_followups(
         return []
 
     try:
-        from utils.llm_client import extract_response_content, get_default_client
+        from utils.llm_client import (
+            extract_response_content,
+            get_classification_chat_kwargs,
+            get_default_client,
+        )
 
         lang_name = "Deutsch" if (lang or "de").startswith("de") else "English"
         system = (
@@ -123,6 +127,11 @@ async def generate_followups(
             ],
             format="json",
             options={"temperature": 0.4},
+            # Disable thinking mode for thinking-capable models (e.g. qwen3): the
+            # ollama-python 0.6.1 bug returns EMPTY content when thinking is on, so the
+            # chips silently never generate. Mirrors every other classification call
+            # site (schicht_a, KG, router, meeting-minutes, paperless-audit).
+            **get_classification_chat_kwargs(model),
         )
         raw = extract_response_content(response) or ""
         return _parse_followups(raw, count)
