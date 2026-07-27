@@ -673,6 +673,69 @@ class TestSuppressionLearning:
             assert result is False
 
     @pytest.mark.database
+    async def test_suppression_scoped_to_creating_user(self, notification_service, db_session, test_user):
+        """A PER-USER suppression blocks only that user's notifications — NOT other
+        users' (the multi-tenant bug: one user's dismissal must not suppress for all)."""
+        db_session.add(NotificationSuppression(
+            event_pattern="ha_automation.washer", is_active=True, user_id=test_user.id,
+        ))
+        await db_session.commit()
+        with patch("services.notification_service.settings") as mock_settings:
+            mock_settings.proactive_feedback_learning_enabled = True
+            mock_settings.proactive_feedback_similarity_threshold = 0.80
+            # same target user → suppressed
+            assert await notification_service._is_suppressed(
+                "ha_automation.washer", target_user_id=test_user.id) is True
+            # a DIFFERENT user → NOT suppressed (this is what the fix protects)
+            assert await notification_service._is_suppressed(
+                "ha_automation.washer", target_user_id=test_user.id + 999) is False
+            # a broadcast (no target user) → NOT suppressed by a per-user rule
+            assert await notification_service._is_suppressed(
+                "ha_automation.washer", target_user_id=None) is False
+
+    @pytest.mark.database
+    async def test_global_suppression_blocks_all_targets(self, notification_service, db_session, test_user):
+        """A GLOBAL suppression (user_id NULL) still blocks for any target user."""
+        db_session.add(NotificationSuppression(
+            event_pattern="ha_automation.washer", is_active=True, user_id=None,
+        ))
+        await db_session.commit()
+        with patch("services.notification_service.settings") as mock_settings:
+            mock_settings.proactive_feedback_learning_enabled = True
+            mock_settings.proactive_feedback_similarity_threshold = 0.80
+            assert await notification_service._is_suppressed(
+                "ha_automation.washer", target_user_id=test_user.id) is True
+            assert await notification_service._is_suppressed(
+                "ha_automation.washer", target_user_id=None) is True
+
+    @pytest.mark.database
+    async def test_enrichment_prompt_is_tenant_neutral(self, notification_service):
+        """The enrichment prompt must not use household 'Smart-Home'/'Bewohner' phrasing
+        (wrong for a business tenant)."""
+        captured = {}
+
+        async def _fake_generate(**kw):
+            captured["prompt"] = kw.get("prompt", "")
+
+            class _R:
+                response = "Formulierte Nachricht."
+
+            return _R()
+
+        mock_client = MagicMock()
+        mock_client.generate = _fake_generate
+        with patch("services.notification_service.settings") as ms, \
+             patch("utils.llm_client.get_default_client", return_value=mock_client):
+            ms.proactive_enrichment_enabled = True
+            ms.proactive_enrichment_model = ""
+            ms.ollama_model = "m"
+            await notification_service._enrich_message("evt", "Titel", "Nachricht")
+
+        assert "Smart-Home" not in captured["prompt"]
+        assert "Bewohner" not in captured["prompt"]
+        assert "digitaler Assistent" in captured["prompt"]
+
+    @pytest.mark.database
     async def test_list_suppressions(self, notification_service, db_session):
         """Test: List active suppressions."""
         db_session.add(NotificationSuppression(event_pattern="type_a", is_active=True))

@@ -13,7 +13,7 @@ import secrets
 from datetime import UTC, datetime, timedelta
 
 from loguru import logger
-from sqlalchemy import delete, select, text
+from sqlalchemy import delete, or_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.database import (
@@ -258,8 +258,8 @@ class NotificationService:
                 context = f"\nZusätzliche Daten: {data}"
 
             prompt = (
-                "Du bist ein Smart-Home-Assistent. Formuliere die folgende Benachrichtigung "
-                "als natürlich-sprachliche, hilfreiche Nachricht für den Bewohner. "
+                "Du bist ein digitaler Assistent. Formuliere die folgende Benachrichtigung "
+                "als natürlich-sprachliche, hilfreiche Nachricht für den Nutzer. "
                 "Halte dich kurz (1-2 Sätze). Antworte NUR mit der formulierten Nachricht.\n\n"
                 f"Event: {event_type}\n"
                 f"Titel: {title}\n"
@@ -284,17 +284,35 @@ class NotificationService:
     # ------------------------------------------------------------------
 
     async def _is_suppressed(
-        self, event_type: str, embedding: list[float] | None = None,
+        self,
+        event_type: str,
+        embedding: list[float] | None = None,
+        target_user_id: int | None = None,
     ) -> bool:
-        """Check if this notification type is suppressed via feedback learning."""
+        """Check if this notification type is suppressed via feedback learning.
+
+        Scoped to the TARGET user: a suppression applies only when it was created by
+        that user (``user_id == target_user_id``) OR it is a GLOBAL rule
+        (``user_id IS NULL`` — single-user/auth-off mode, or an intentionally
+        instance-wide suppression). Without this scope, one user dismissing a
+        notification type would suppress it for EVERY user on a multi-user instance.
+        For a broadcast (``target_user_id is None``) only global rules apply, since
+        ``user_id == None`` compiles to ``user_id IS NULL``.
+        """
         if not settings.proactive_feedback_learning_enabled:
             return False
+
+        user_scope = or_(
+            NotificationSuppression.user_id == target_user_id,
+            NotificationSuppression.user_id.is_(None),
+        )
 
         # Exact event_type match
         result = await self.db.execute(
             select(NotificationSuppression.id).where(
                 NotificationSuppression.event_pattern == event_type,
                 NotificationSuppression.is_active.is_(True),
+                user_scope,
             ).limit(1)
         )
         if result.scalar_one_or_none() is not None:
@@ -312,10 +330,11 @@ class NotificationService:
                         FROM notification_suppressions
                         WHERE is_active = true
                           AND embedding IS NOT NULL
+                          AND (user_id = :uid OR user_id IS NULL)
                         ORDER BY embedding <=> CAST(:embedding AS vector)
                         LIMIT 1
                     """),
-                    {"embedding": str(embedding)},
+                    {"embedding": str(embedding), "uid": target_user_id},
                 )
                 row = result.first()
                 if row and row.similarity >= threshold:
@@ -455,8 +474,8 @@ class NotificationService:
             except Exception as e:
                 logger.warning(f"⚠️ Embedding generation failed: {e}")
 
-        # 3. Suppression check (feedback learning)
-        if await self._is_suppressed(event_type, embedding):
+        # 3. Suppression check (feedback learning) — scoped to the target user
+        if await self._is_suppressed(event_type, embedding, target_user_id=target_user_id):
             raise ValueError("Notification suppressed by feedback rule")
 
         # 4. Semantic dedup check
