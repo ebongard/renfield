@@ -1,20 +1,19 @@
-"""Tests for internal.paperless_dedupe — duplicate finder + remover.
+"""Tests for internal.paperless_dedupe — duplicate finder + rate-limit-safe remover.
 
-Duplicate definition: a document is the SAME as another when ALL its metadata is
-identical (correspondent, document_type, date, title, page_count) OR its OCR bytes
-are identical.
+Duplicate definition: same document when ALL metadata is identical (correspondent,
+document_type, date, title, page_count) OR OCR is byte-identical. Metadata deletion
+requires a non-empty title AND a present page_count on every group member; otherwise
+the group falls back to byte-identical (never delete a distinct doc on a weak signal).
 
-Two paths:
-  - metadata-match ON (default): identity = full metadata tuple, read STRAIGHT FROM
-    the search result (page_count + snippet included) — so this path makes NO
-    get_document calls. Re-scans (same metadata, different OCR) are deduped.
-  - metadata-match OFF: legacy byte-identical — fetches full OCR per candidate and
-    compares bytes.
+The tool sweeps the FULL archive (paginated) and deletes a bounded batch per call
+(``paperless_dedupe_delete_batch``, default 50) with retry/backoff under the Paperless
+MCP's 60/min rate limit, reporting how many remain.
 """
 import json
 
 import pytest
 
+import services.paperless_dedupe_tool as mod
 from services.paperless_dedupe_tool import paperless_dedupe
 
 _META = {
@@ -26,26 +25,33 @@ _META = {
 
 
 def _doc(did, page_count=None, snippet="same", **over):
-    """A search_documents result row. page_count + snippet now come from SEARCH, so
-    the metadata-match path reads identity here without any get_document call."""
+    """A search_documents result row (page_count + snippet come from search)."""
     return {"id": did, **_META, "page_count": page_count, "snippet": snippet, **over}
 
 
-def _make_mcp(docs, contents=None):
-    """Mock mcp_manager. ``docs`` = search_documents results (carry page_count +
-    snippet); ``contents`` = {id: ocr_text} returned by get_document (used ONLY by the
-    OFF/byte-identical path). Records delete ids in ``.deleted`` and every
-    get_document call (id, kwargs) in ``.get_document_calls`` — the metadata path must
-    leave that list empty."""
+def _make_mcp(docs, contents=None, pages=None, rate_limit_first=0):
+    """Mock mcp_manager.
+    ``docs``           = single-page search results (len < 500 ends pagination).
+    ``contents``       = {id: ocr_text} returned by get_document (OFF/byte path only).
+    ``pages``          = optional list of pages returned by successive searches
+                         (multi-page pagination test).
+    ``rate_limit_first`` = the first N delete calls return an MCP rate-limit error.
+    Records deletes in ``.deleted`` and get_document calls in ``.get_document_calls``."""
     contents = contents or {}
 
     class _MCP:
         def __init__(self):
             self.deleted: list[int] = []
             self.get_document_calls: list[tuple[int, dict]] = []
+            self._search_i = 0
+            self._del_i = 0
 
         async def execute_tool(self, tool, params, **kw):
             if tool == "mcp.paperless.search_documents":
+                if pages is not None:
+                    page = pages[self._search_i] if self._search_i < len(pages) else []
+                    self._search_i += 1
+                    return {"success": True, "message": json.dumps({"results": page})}
                 return {"success": True, "message": json.dumps({"results": docs})}
             if tool == "mcp.paperless.get_document":
                 self.get_document_calls.append((params["document_id"], kw))
@@ -54,6 +60,9 @@ def _make_mcp(docs, contents=None):
                     "message": json.dumps({"content": contents.get(params["document_id"])}),
                 }
             if tool == "mcp.paperless.delete_document":
+                self._del_i += 1
+                if self._del_i <= rate_limit_first:
+                    return {"success": False, "message": "Rate limit exceeded for MCP server 'paperless'"}
                 did = params["document_id"]
                 self.deleted.append(did)
                 return {"success": True, "message": json.dumps({"deleted": True, "id": did})}
@@ -63,7 +72,7 @@ def _make_mcp(docs, contents=None):
 
 
 # --------------------------------------------------------------------------
-# metadata-match path (default ON) — identity from search, NO get_document
+# metadata-match path — identity from search, NO get_document
 # --------------------------------------------------------------------------
 
 
@@ -75,40 +84,35 @@ async def test_deletes_identical_documents_keeps_oldest():
 
     result = await paperless_dedupe({}, mcp_manager=mcp)
 
-    assert result["success"] is True
-    assert result["action_taken"] is True
+    assert result["success"] is True and result["action_taken"] is True
     assert sorted(mcp.deleted) == [2, 3]  # kept the lowest id (1)
     assert result["data"]["groups"] == 1
-    assert result["data"]["kept_ids"] == [1]
+    assert result["data"]["deleted"] == 2
+    assert result["data"]["remaining"] == 0
+    assert result["data"]["kept"] == 1
     assert result["data"]["metadata_groups"] == 0  # identical snippet → not a re-scan
-    # THE optimization: the metadata path establishes identity from search alone.
-    assert mcp.get_document_calls == []
+    assert mcp.get_document_calls == []  # identity from search alone
 
 
 @pytest.mark.unit
 @pytest.mark.asyncio
 async def test_same_metadata_deduped_even_when_ocr_differs():
-    """The Audi-lease case: identical metadata (title + page_count both present) with
-    DIFFERENT OCR snippet (re-scan) → deduped. Old 'different content is never deleted'
-    behavior is intentionally gone once ALL metadata (incl. page_count) matches."""
-    docs = [_doc(1, page_count=2, snippet="body one"), _doc(2, page_count=2, snippet="totally different")]
+    """Audi-lease case: identical metadata (title + page_count present), DIFFERENT OCR
+    snippet (re-scan) → deduped once ALL metadata (incl. page_count) matches."""
+    docs = [_doc(1, page_count=2, snippet="body one"), _doc(2, page_count=2, snippet="different")]
     mcp = _make_mcp(docs)
 
     result = await paperless_dedupe({}, mcp_manager=mcp)
 
-    assert result["success"] is True
-    assert mcp.deleted == [2]  # kept the oldest (1), deleted the re-scan
+    assert mcp.deleted == [2]
     assert result["data"]["groups"] == 1
     assert result["data"]["metadata_groups"] == 1  # differing OCR → flagged as re-scan
-    assert result["action_taken"] is True
     assert mcp.get_document_calls == []
 
 
 @pytest.mark.unit
 @pytest.mark.asyncio
 async def test_metadata_identity_dedupes_even_without_ocr_text():
-    """A member without OCR text (no snippet) is still deduped when its metadata is
-    identical — sameness no longer needs OCR bytes once all metadata matches."""
     docs = [_doc(1, page_count=3, snippet="text"), _doc(2, page_count=3, snippet=None)]
     mcp = _make_mcp(docs)
 
@@ -122,26 +126,7 @@ async def test_metadata_identity_dedupes_even_without_ocr_text():
 
 @pytest.mark.unit
 @pytest.mark.asyncio
-async def test_rescans_with_same_page_count_deduped():
-    docs = [
-        _doc(1, page_count=4, snippet="v1"),
-        _doc(2, page_count=4, snippet="v2"),
-        _doc(3, page_count=4, snippet="v3"),
-    ]
-    mcp = _make_mcp(docs)
-
-    result = await paperless_dedupe({}, mcp_manager=mcp)
-
-    assert sorted(mcp.deleted) == [2, 3]
-    assert result["data"]["groups"] == 1
-    assert result["data"]["metadata_groups"] == 1
-    assert mcp.get_document_calls == []
-
-
-@pytest.mark.unit
-@pytest.mark.asyncio
 async def test_different_page_count_keeps_documents_apart():
-    """Same title/date but DIFFERENT page_count → different documents, not deleted."""
     docs = [_doc(1, page_count=4), _doc(2, page_count=7)]
     mcp = _make_mcp(docs)
 
@@ -152,18 +137,20 @@ async def test_different_page_count_keeps_documents_apart():
     assert result["action_taken"] is False
 
 
+# --------------------------------------------------------------------------
+# SAFETY (review): weak metadata → byte-identical fallback, distinct docs kept
+# --------------------------------------------------------------------------
+
+
 @pytest.mark.unit
 @pytest.mark.asyncio
 async def test_missing_page_count_falls_back_to_byte_identical():
-    """SAFETY (review finding): when a member has no page_count, 'all metadata
-    identical' can't be established, so the group drops to byte-identical — a distinct
-    document is NOT trashed on a weak signal. Different OCR + no page_count → kept."""
     docs = [_doc(1), _doc(2)]  # page_count None on both
     mcp = _make_mcp(docs, {1: "BODY ONE", 2: "DIFFERENT BODY"})
 
     result = await paperless_dedupe({}, mcp_manager=mcp)
 
-    assert mcp.deleted == []  # byte-identical fallback: different content → not deleted
+    assert mcp.deleted == []  # different content → not deleted
     assert result["data"]["groups"] == 0
     assert mcp.get_document_calls, "no page_count → must fall back to fetching OCR"
 
@@ -171,9 +158,7 @@ async def test_missing_page_count_falls_back_to_byte_identical():
 @pytest.mark.unit
 @pytest.mark.asyncio
 async def test_missing_page_count_byte_identical_still_deduped():
-    """The byte-identical branch still deletes true byte-for-byte copies when
-    page_count is unavailable."""
-    docs = [_doc(1), _doc(2)]  # no page_count
+    docs = [_doc(1), _doc(2)]
     mcp = _make_mcp(docs, {1: "IDENTICAL", 2: "IDENTICAL"})
 
     result = await paperless_dedupe({}, mcp_manager=mcp)
@@ -185,15 +170,12 @@ async def test_missing_page_count_byte_identical_still_deduped():
 @pytest.mark.unit
 @pytest.mark.asyncio
 async def test_empty_title_falls_back_to_byte_identical():
-    """SAFETY (review finding): untitled docs (title='') are NOT deleted on metadata
-    alone — an empty title is not an 'identical title'. Distinct untitled docs with the
-    same correspondent/date/page_count but different OCR are kept."""
     docs = [_doc(1, title="", page_count=1), _doc(2, title="", page_count=1)]
     mcp = _make_mcp(docs, {1: "LETTER A", 2: "LETTER B"})
 
     result = await paperless_dedupe({}, mcp_manager=mcp)
 
-    assert mcp.deleted == []  # byte-identical fallback: different content → kept
+    assert mcp.deleted == []
     assert result["data"]["groups"] == 0
     assert mcp.get_document_calls, "empty title → must fall back to fetching OCR"
 
@@ -201,8 +183,6 @@ async def test_empty_title_falls_back_to_byte_identical():
 @pytest.mark.unit
 @pytest.mark.asyncio
 async def test_one_member_missing_page_count_makes_group_byte_identical():
-    """If ANY member of a candidate group lacks page_count, the whole group uses the
-    byte-identical fallback (can't assert all-metadata-identical across the group)."""
     docs = [_doc(1, page_count=2), _doc(2)]  # doc 2 has no page_count
     mcp = _make_mcp(docs, {1: "X", 2: "Y"})
 
@@ -210,43 +190,105 @@ async def test_one_member_missing_page_count_makes_group_byte_identical():
 
     assert mcp.deleted == []
     assert result["data"]["groups"] == 0
-    assert mcp.get_document_calls, "mixed page_count → byte-identical fallback fetches"
+    assert mcp.get_document_calls
+
+
+# --------------------------------------------------------------------------
+# batched delete + rate-limit retry + full-corpus pagination
+# --------------------------------------------------------------------------
 
 
 @pytest.mark.unit
 @pytest.mark.asyncio
-async def test_byte_identical_deduped_and_not_flagged_as_rescan():
-    """Identical documents (same page_count, same OCR snippet) dedupe as one group;
-    metadata_groups stays 0 since the text is identical (not a re-scan)."""
-    docs = [_doc(1, page_count=2, snippet="same"), _doc(2, page_count=2, snippet="same")]
+async def test_batch_cap_limits_deletes_and_reports_remaining(monkeypatch):
+    """A single call deletes at most paperless_dedupe_delete_batch extras and reports
+    the rest as remaining, so the caller re-runs to continue."""
+    monkeypatch.setattr(mod.settings, "paperless_dedupe_delete_batch", 2)
+    docs = [_doc(i, page_count=2) for i in (1, 2, 3, 4)]  # one group of 4 → 3 extras
     mcp = _make_mcp(docs)
 
     result = await paperless_dedupe({}, mcp_manager=mcp)
 
-    assert sorted(mcp.deleted) == [2]
-    assert result["data"]["groups"] == 1
-    assert result["data"]["metadata_groups"] == 0
+    assert len(mcp.deleted) == 2  # capped at the batch size
+    assert result["data"]["deleted"] == 2
+    assert result["data"]["remaining"] == 1
+    assert result["data"]["duplicate_copies"] == 3
+    assert "verbleiben" in result["message"].lower() or "räum" in result["message"].lower()
 
 
 @pytest.mark.unit
 @pytest.mark.asyncio
-async def test_dry_run_deletes_nothing_but_reports():
-    docs = [_doc(1, page_count=1), _doc(2, page_count=1)]
+async def test_rate_limited_delete_retries_then_succeeds(monkeypatch):
+    """A delete rejected by the MCP rate limit is retried (after a short backoff) and
+    then succeeds — the copy is deleted, not silently skipped."""
+    monkeypatch.setattr(mod, "_RATE_SLEEP", 0)  # don't actually wait in the test
+    docs = [_doc(1, page_count=2), _doc(2, page_count=2)]
+    mcp = _make_mcp(docs, rate_limit_first=1)  # first delete call is rate-limited
+
+    result = await paperless_dedupe({}, mcp_manager=mcp)
+
+    assert mcp.deleted == [2]  # succeeded on retry
+    assert result["data"]["deleted"] == 1
+    assert result["data"]["remaining"] == 0
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_rate_limited_delete_gives_up_after_retries(monkeypatch):
+    """If the rate limit never clears, the delete is abandoned (counted as remaining),
+    never reported as deleted."""
+    monkeypatch.setattr(mod, "_RATE_SLEEP", 0)
+    monkeypatch.setattr(mod, "_RATE_RETRY", 3)
+    docs = [_doc(1, page_count=2), _doc(2, page_count=2)]
+    mcp = _make_mcp(docs, rate_limit_first=99)  # every delete rate-limited
+
+    result = await paperless_dedupe({}, mcp_manager=mcp)
+
+    assert mcp.deleted == []
+    assert result["data"]["deleted"] == 0
+    assert result["data"]["remaining"] == 1  # the one extra couldn't be deleted
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_full_corpus_pagination_finds_dupes_beyond_first_page():
+    """The sweep pages the whole archive, so a duplicate group on a later page (beyond
+    the 500-doc first page) is still found — the SWEEP_CAP blind spot is closed."""
+    page1 = [_doc(1000 + i, title=f"unique-{i}", page_count=1) for i in range(500)]
+    page2 = [_doc(1, page_count=2), _doc(2, page_count=2)]  # a dup pair, older page
+    mcp = _make_mcp([], pages=[page1, page2])
+
+    result = await paperless_dedupe({}, mcp_manager=mcp)
+
+    assert result["data"]["documents_scanned"] == 502
+    assert result["data"]["groups"] == 1
+    assert mcp.deleted == [2]
+
+
+# --------------------------------------------------------------------------
+# dry-run + no-op
+# --------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_dry_run_reports_full_scope_deletes_nothing():
+    docs = [_doc(i, page_count=1) for i in (1, 2, 3)]
     mcp = _make_mcp(docs)
 
     result = await paperless_dedupe({"dry_run": True}, mcp_manager=mcp)
 
-    assert mcp.deleted == []  # delete_document never called
+    assert mcp.deleted == []
     assert result["action_taken"] is False
     assert result["data"]["dry_run"] is True
-    assert result["data"]["deleted"] == 1  # would-delete count
-    assert result["data"]["deleted_ids"] == [2]
+    assert result["data"]["groups"] == 1
+    assert result["data"]["duplicate_copies"] == 2  # would delete 2, keep 1
+    assert result["data"]["remaining"] == 2
 
 
 @pytest.mark.unit
 @pytest.mark.asyncio
-async def test_unique_metadata_makes_no_fetches_or_deletes():
-    """Distinct metadata → no duplicate groups → nothing fetched or deleted."""
+async def test_unique_metadata_no_dupes():
     docs = [
         _doc(1, title="Rechnung Jan", page_count=2),
         _doc(2, title="Vertrag Feb", document_type="Vertrag", page_count=5),
@@ -261,16 +303,14 @@ async def test_unique_metadata_makes_no_fetches_or_deletes():
 
 
 # --------------------------------------------------------------------------
-# legacy byte-identical path (metadata-match OFF) — fetches full OCR
+# legacy byte-identical path (metadata-match OFF)
 # --------------------------------------------------------------------------
 
 
 @pytest.mark.unit
 @pytest.mark.asyncio
 async def test_off_mode_deletes_byte_identical(monkeypatch):
-    from utils.config import settings
-
-    monkeypatch.setattr(settings, "paperless_dedupe_metadata_match_enabled", False)
+    monkeypatch.setattr(mod.settings, "paperless_dedupe_metadata_match_enabled", False)
     docs = [_doc(1, page_count=4), _doc(2, page_count=4)]
     mcp = _make_mcp(docs, {1: "SAME BODY", 2: "SAME BODY"})
 
@@ -278,20 +318,15 @@ async def test_off_mode_deletes_byte_identical(monkeypatch):
 
     assert mcp.deleted == [2]
     assert result["data"]["groups"] == 1
-    assert result["data"]["metadata_groups"] == 0  # byte-identical, not a metadata re-scan
-    # the byte-identical path MUST fetch the FULL OCR text (truncate=False)
-    assert mcp.get_document_calls, "OFF path must fetch content"
+    assert result["data"]["metadata_groups"] == 0
+    assert mcp.get_document_calls
     assert all(kw.get("truncate") is False for _id, kw in mcp.get_document_calls)
 
 
 @pytest.mark.unit
 @pytest.mark.asyncio
 async def test_off_mode_keeps_non_identical_content(monkeypatch):
-    """OFF = byte-identical only: same metadata + same page_count but different OCR →
-    NOT deleted (this is exactly the re-scan the ON path would catch)."""
-    from utils.config import settings
-
-    monkeypatch.setattr(settings, "paperless_dedupe_metadata_match_enabled", False)
+    monkeypatch.setattr(mod.settings, "paperless_dedupe_metadata_match_enabled", False)
     docs = [_doc(1, page_count=4), _doc(2, page_count=4)]
     mcp = _make_mcp(docs, {1: "AUDI v1", 2: "AUDI v2"})
 
@@ -304,10 +339,7 @@ async def test_off_mode_keeps_non_identical_content(monkeypatch):
 @pytest.mark.unit
 @pytest.mark.asyncio
 async def test_off_mode_skips_member_without_ocr(monkeypatch):
-    """OFF path: a member with no OCR text can't be proven identical → skipped."""
-    from utils.config import settings
-
-    monkeypatch.setattr(settings, "paperless_dedupe_metadata_match_enabled", False)
+    monkeypatch.setattr(mod.settings, "paperless_dedupe_metadata_match_enabled", False)
     docs = [_doc(1, page_count=4), _doc(2, page_count=4)]
     mcp = _make_mcp(docs, {1: "BODY", 2: None})
 
@@ -326,32 +358,24 @@ async def test_off_mode_skips_member_without_ocr(monkeypatch):
 @pytest.mark.unit
 @pytest.mark.asyncio
 async def test_permission_denied_without_admin(monkeypatch):
-    from utils.config import settings
-
-    monkeypatch.setattr(settings, "auth_enabled", True)
+    monkeypatch.setattr(mod.settings, "auth_enabled", True)
     mcp = _make_mcp([_doc(1, page_count=1), _doc(2, page_count=1)])
 
     result = await paperless_dedupe({}, mcp_manager=mcp, user_permissions=["ha.read"])
 
-    assert result["success"] is False
-    assert result["action_taken"] is False
+    assert result["success"] is False and result["action_taken"] is False
     assert mcp.deleted == []
 
 
 @pytest.mark.unit
 @pytest.mark.asyncio
 async def test_permission_denied_for_unidentified_turn_when_auth_on(monkeypatch):
-    """Fail-closed: auth ON + user_permissions=None (device/unrecognized-voice) is
-    DENIED for this destructive tool — must not trash documents without ADMIN."""
-    from utils.config import settings
-
-    monkeypatch.setattr(settings, "auth_enabled", True)
+    monkeypatch.setattr(mod.settings, "auth_enabled", True)
     mcp = _make_mcp([_doc(1, page_count=1), _doc(2, page_count=1)])
 
     result = await paperless_dedupe({}, mcp_manager=mcp, user_permissions=None)
 
-    assert result["success"] is False
-    assert result["action_taken"] is False
+    assert result["success"] is False and result["action_taken"] is False
     assert mcp.deleted == []
 
 

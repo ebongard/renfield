@@ -931,6 +931,12 @@ PAPERLESS_AUTOCREATE_TAGS=true
 # nicht „identisch", ein distinktes Dokument wird nie auf schwachem Signal gelöscht).
 # false = Legacy: nur byte-identischer OCR-Text.
 PAPERLESS_DEDUPE_METADATA_MATCH_ENABLED=true
+# Max. Duplikat-Kopien, die internal.paperless_dedupe pro Aufruf löscht. Die
+# Paperless-MCP ist auf 60/min gedrosselt, daher wird portionsweise gelöscht: jeder
+# Aufruf durchsucht das GANZE Archiv, löscht bis zu so viele Kopien (mit Retry/Backoff
+# bei Rate-Limit) und meldet, wie viele verbleiben — bei Rest erneut aufrufen. Deutlich
+# unter dem Rate-Limit halten, damit eine Portion ohne starke Drosselung durchläuft.
+PAPERLESS_DEDUPE_DELETE_BATCH=50
 
 # Async Paperless-Reconciler (Design Z): der Push legt paperless_state='pending' an
 # und gibt sofort zurück; das eigentliche Ablegen läuft im document-worker

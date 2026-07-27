@@ -818,6 +818,13 @@ class Settings(BaseSettings):
     # is not "identical", so a distinct doc is never deleted on a weak signal). Off =
     # legacy byte-identical-OCR-only behavior.
     paperless_dedupe_metadata_match_enabled: bool = True
+    # Max duplicate copies internal.paperless_dedupe deletes per invocation. The
+    # Paperless MCP is rate-limited (60/min token bucket), so a bulk delete is done
+    # in rate-limit-safe portions: each call sweeps the FULL archive, deletes up to
+    # this many extras (with retry/backoff on rate-limit), and reports how many
+    # remain so the caller re-runs to continue. Keep comfortably under the MCP rate
+    # limit so a batch completes without heavy throttling.
+    paperless_dedupe_delete_batch: int = 50
     # Authoritative push token (optional). When set, the boot credential-reconciler
     # (services/credential_reconciler) seeds the DB SystemSetting from this value, so
     # a DB wipe SELF-HEALS the folder-ingest push token on next boot instead of
