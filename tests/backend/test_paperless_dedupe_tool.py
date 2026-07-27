@@ -88,10 +88,10 @@ async def test_deletes_identical_documents_keeps_oldest():
 @pytest.mark.unit
 @pytest.mark.asyncio
 async def test_same_metadata_deduped_even_when_ocr_differs():
-    """The Audi-lease case: same metadata (no page_count → all-metadata-identical),
-    DIFFERENT OCR snippet (re-scan) → deduped. Old 'different content is never
-    deleted' behavior is intentionally gone."""
-    docs = [_doc(1, snippet="body one"), _doc(2, snippet="totally different")]
+    """The Audi-lease case: identical metadata (title + page_count both present) with
+    DIFFERENT OCR snippet (re-scan) → deduped. Old 'different content is never deleted'
+    behavior is intentionally gone once ALL metadata (incl. page_count) matches."""
+    docs = [_doc(1, page_count=2, snippet="body one"), _doc(2, page_count=2, snippet="totally different")]
     mcp = _make_mcp(docs)
 
     result = await paperless_dedupe({}, mcp_manager=mcp)
@@ -154,17 +154,63 @@ async def test_different_page_count_keeps_documents_apart():
 
 @pytest.mark.unit
 @pytest.mark.asyncio
-async def test_dedupes_when_page_count_absent():
-    """When Paperless omits page_count, all-metadata-identical STILL holds (None is a
-    value) — the fix must not quietly no-op just because page_count is unavailable."""
-    docs = [_doc(1, snippet="a"), _doc(2, snippet="b")]  # page_count None on both
-    mcp = _make_mcp(docs)
+async def test_missing_page_count_falls_back_to_byte_identical():
+    """SAFETY (review finding): when a member has no page_count, 'all metadata
+    identical' can't be established, so the group drops to byte-identical — a distinct
+    document is NOT trashed on a weak signal. Different OCR + no page_count → kept."""
+    docs = [_doc(1), _doc(2)]  # page_count None on both
+    mcp = _make_mcp(docs, {1: "BODY ONE", 2: "DIFFERENT BODY"})
+
+    result = await paperless_dedupe({}, mcp_manager=mcp)
+
+    assert mcp.deleted == []  # byte-identical fallback: different content → not deleted
+    assert result["data"]["groups"] == 0
+    assert mcp.get_document_calls, "no page_count → must fall back to fetching OCR"
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_missing_page_count_byte_identical_still_deduped():
+    """The byte-identical branch still deletes true byte-for-byte copies when
+    page_count is unavailable."""
+    docs = [_doc(1), _doc(2)]  # no page_count
+    mcp = _make_mcp(docs, {1: "IDENTICAL", 2: "IDENTICAL"})
 
     result = await paperless_dedupe({}, mcp_manager=mcp)
 
     assert mcp.deleted == [2]
     assert result["data"]["groups"] == 1
-    assert result["data"]["metadata_groups"] == 1
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_empty_title_falls_back_to_byte_identical():
+    """SAFETY (review finding): untitled docs (title='') are NOT deleted on metadata
+    alone — an empty title is not an 'identical title'. Distinct untitled docs with the
+    same correspondent/date/page_count but different OCR are kept."""
+    docs = [_doc(1, title="", page_count=1), _doc(2, title="", page_count=1)]
+    mcp = _make_mcp(docs, {1: "LETTER A", 2: "LETTER B"})
+
+    result = await paperless_dedupe({}, mcp_manager=mcp)
+
+    assert mcp.deleted == []  # byte-identical fallback: different content → kept
+    assert result["data"]["groups"] == 0
+    assert mcp.get_document_calls, "empty title → must fall back to fetching OCR"
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_one_member_missing_page_count_makes_group_byte_identical():
+    """If ANY member of a candidate group lacks page_count, the whole group uses the
+    byte-identical fallback (can't assert all-metadata-identical across the group)."""
+    docs = [_doc(1, page_count=2), _doc(2)]  # doc 2 has no page_count
+    mcp = _make_mcp(docs, {1: "X", 2: "Y"})
+
+    result = await paperless_dedupe({}, mcp_manager=mcp)
+
+    assert mcp.deleted == []
+    assert result["data"]["groups"] == 0
+    assert mcp.get_document_calls, "mixed page_count → byte-identical fallback fetches"
 
 
 @pytest.mark.unit

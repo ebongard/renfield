@@ -813,8 +813,10 @@ class Settings(BaseSettings):
     # their OCR text is NOT byte-identical — the "same contract scanned/sent twice"
     # case (e.g. an Audi lease imported three times) that byte-identical matching can
     # never catch. Requires page_count from Paperless AND a non-empty title; when
-    # page_count is unavailable it falls back to the byte-identical rule (fail-safe:
-    # never delete on a weaker signal). Off = legacy byte-identical-OCR-only behavior.
+    # EITHER is missing (no page_count / empty title) it falls back to the
+    # byte-identical rule for that candidate group (fail-safe: an absent metadata field
+    # is not "identical", so a distinct doc is never deleted on a weak signal). Off =
+    # legacy byte-identical-OCR-only behavior.
     paperless_dedupe_metadata_match_enabled: bool = True
     # Authoritative push token (optional). When set, the boot credential-reconciler
     # (services/credential_reconciler) seeds the DB SystemSetting from this value, so

@@ -345,12 +345,23 @@ async def reindex_documents(
     user_id: int | None = None,
     user_permissions: list[str] | None = None,
 ) -> dict:
-    """Enqueue a reindex (purge + rebuild) for every completed doc with 0 chunks.
+    """Enqueue a reindex (purge + rebuild) for every completed doc with no searchable
+    (embedded) chunk — zero-chunk AND parent-only docs (``_searchable_chunk_subquery``).
 
     Gated on ``Permission.RAG_MANAGE`` when auth is enabled: ``user_permissions``
     is None (auth-off OR unidentified voice turn) is allowed — matching the
     platform's HA_CONTROL convention — but an authenticated user lacking
     rag.manage is refused (a low-privilege member can't trigger a fleet re-OCR).
+
+    Known limitation: a parent-only doc (produced parent chunks but every embedded
+    child was dropped) is classified REPAIRABLE (``_unindexable_exists`` keys on
+    ``chunks_produced=0``, and a parent-only doc produced >0). A reindex re-embeds it,
+    which FIXES the common case (a transient embed-endpoint outage during a bulk
+    ingest). But a doc whose children fail EVERY time (e.g. content the quality gate
+    always rejects) stays unsearchable and is re-offered on each manual call — bounded
+    by manual invocation, not an auto-loop. History doesn't record embed-level outcomes,
+    so auto-classifying these as unindexable would need a schema change (deferred);
+    surfacing + retrying them is still strictly better than the prior silent invisibility.
     """
     if settings.auth_enabled and user_permissions is not None:
         if not has_permission(user_permissions, Permission.RAG_MANAGE):

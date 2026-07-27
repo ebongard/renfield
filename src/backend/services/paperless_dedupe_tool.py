@@ -8,23 +8,24 @@ Backs "finde und lösche die Duplikate in Paperless", "räum die doppelten Dokum
 Duplicate definition — a Paperless document is the SAME as another when ALL its
 metadata is identical (correspondent, document_type, creation date, title, page
 count) OR its OCR bytes are identical. Either is sufficient; the extra copies are
-deleted (recoverable trash). Implementation, by ``paperless_dedupe_metadata_match_enabled``:
-  * ON (default) — identity is the FULL intrinsic-metadata tuple ``(correspondent,
-    document_type, date, title, page_count)``, read STRAIGHT FROM ``search_documents``
-    (which returns page_count since paperless-mcp >= 1.10.0) — so NO per-document
-    ``get_document`` is needed. Equal tuple ⇒ ALL metadata identical ⇒ the SAME
-    document, even when the re-scanned OCR bytes differ (the "an Audi lease filed three
-    times" case that byte-identical matching can never catch). The WHOLE tuple
-    identifies the document — page_count alone does not; it is merely one field of it.
-    Byte-identical copies share the whole tuple, so this criterion subsumes byte-id.
-    (page_count ``None`` — Paperless omitted it — is a value, so all-metadata-identical
-    still holds and dedupes; a genuinely DIFFERENT page_count keeps documents apart.)
-    The search ``snippet`` is used only to REPORT which groups were re-scans (differing
-    OCR) — never as a delete criterion.
-  * OFF — legacy byte-identical only: a cheap candidate prefilter
-    (correspondent/type/date/title) then the FULL OCR text is fetched per candidate
-    (``get_document`` include_content=True, truncate=False) and compared; a member
-    without OCR text can't be proven identical and is reported, never deleted.
+deleted (recoverable trash). "All metadata identical" requires those fields to be
+PRESENT and equal — an absent field (empty title / missing page_count) is NOT
+"identical", so it drops to the byte-identical rule (never delete on a weak signal).
+Per candidate group (already sharing correspondent/type/date/title):
+  * METADATA identity (``paperless_dedupe_metadata_match_enabled`` ON, NON-EMPTY title,
+    AND every member carries a page_count) — sub-group by page_count. Same page_count ⇒
+    the full tuple ``(correspondent, document_type, date, title, page_count)`` matches ⇒
+    the SAME document, even when the re-scanned OCR bytes differ (the "an Audi lease
+    filed three times" case that byte-identical matching can never catch). The identity
+    is read STRAIGHT FROM ``search_documents`` (which returns page_count since
+    paperless-mcp >= 1.10.0), so NO per-document ``get_document`` is needed. The search
+    ``snippet`` is used only to REPORT which groups were re-scans — never to delete.
+  * BYTE-IDENTICAL fallback (setting OFF, OR an empty title, OR ANY member missing
+    page_count) — the FULL OCR text is fetched per member (``get_document``
+    include_content=True, truncate=False) and compared; only byte-identical copies are
+    deleted, and a member without OCR text can't be proven identical → never deleted.
+    This is the fail-safe for the degraded case (older MCP with no page_count, untitled
+    scans): a weak metadata signal alone never trashes a distinct document.
   - The CANONICAL kept copy is the one with the LOWEST Paperless id (the original /
     earliest import). Every other same-identity copy is deleted.
   - Deletion goes through ``mcp.paperless.delete_document``, which on Paperless-ngx 2.x
@@ -89,16 +90,6 @@ def _candidate_key(doc: dict) -> tuple:
     )
 
 
-def _metadata_identity(doc: dict) -> tuple:
-    """Full intrinsic-metadata identity: two documents with an equal tuple are the
-    SAME document (all metadata identical), even if their OCR bytes differ. Every
-    field comes from ``search_documents`` (which now returns ``page_count``), so the
-    metadata-match path establishes identity with NO per-document ``get_document``.
-    ``page_count`` None (Paperless omitted it) is a value, so all-metadata-identical
-    still holds; a genuinely different page_count keeps documents apart."""
-    return (*_candidate_key(doc), doc.get("page_count"))
-
-
 async def paperless_dedupe(
     params: dict,
     mcp_manager: Any = None,
@@ -155,67 +146,89 @@ async def paperless_dedupe(
         kept_ids: list[int] = []
         skipped = 0
 
-        # 1) Form duplicate groups — each a list of same-document ids.
-        #    ON  → identity is the FULL metadata tuple, read straight from the search
-        #          result (page_count included since paperless-mcp >= 1.10.0), so NO
-        #          per-document get_document is needed. Equal tuple ⇒ ALL metadata
-        #          identical ⇒ the SAME document, even when the re-scanned OCR bytes
-        #          differ (the "filed three times" case byte-identical matching misses).
-        #    OFF → legacy byte-identical: a cheap _candidate_key prefilter, then the
-        #          FULL OCR text is fetched per candidate and compared; a member without
-        #          OCR text can't be proven identical → skipped, never deleted.
+        # 1) Form duplicate groups — each a list of same-document ids. Members are
+        #    grouped by _candidate_key (correspondent, document_type, date, title) —
+        #    which they already share — then, per group:
+        #      METADATA identity (metadata_match ON, NON-EMPTY title, AND every member
+        #        carries a page_count): sub-group by page_count. Same page_count ⇒ ALL
+        #        metadata (correspondent, type, date, title, page_count) identical ⇒ the
+        #        SAME document, even when the re-scanned OCR bytes differ (the "filed
+        #        three times" case byte-identical matching misses). Read entirely from
+        #        search (page_count included since paperless-mcp >= 1.10.0) → NO
+        #        per-document get_document.
+        #      BYTE-IDENTICAL fallback (setting OFF, OR an empty title, OR ANY member
+        #        missing page_count): fetch the FULL OCR per member and compare. A weak
+        #        metadata signal (no title / no page_count) is NOT enough to delete a
+        #        distinct document — only proven-identical content is. This is the
+        #        fail-safe for the degraded case (e.g. an older MCP that returns no
+        #        page_count, or untitled scans).
         dup_groups: list[dict] = []  # {"ids": sorted[int], "text_differs": bool}
 
-        if metadata_match:
-            by_identity: dict[tuple, list[dict]] = {}
-            for d in docs:
-                if d.get("id") is None:
-                    continue
-                by_identity.setdefault(_metadata_identity(d), []).append(d)
-            for members in by_identity.values():
-                if len(members) < 2:
-                    continue
-                ids_sorted = sorted(m["id"] for m in members)
-                # The snippet (from search) is a cheap OCR fingerprint: differing
-                # snippets across the group mean the copies are re-scans that
-                # byte-identical matching would have missed. Report-only — never a
-                # delete criterion (metadata identity already decided the group).
-                text_differs = len({(m.get("snippet") or "") for m in members}) > 1
-                dup_groups.append({"ids": ids_sorted, "text_differs": text_differs})
-        else:
-            candidates: dict[tuple, list[dict]] = {}
-            for d in docs:
-                if d.get("id") is None:
-                    continue
-                candidates.setdefault(_candidate_key(d), []).append(d)
-            for members in candidates.values():
-                if len(members) < 2:
-                    continue
-                by_hash: dict[str, list[int]] = {}
-                for m in members:
-                    got = _parse_paperless_result(
-                        await mcp_manager.execute_tool(
-                            "mcp.paperless.get_document",
-                            {"document_id": m["id"], "include_content": True},
-                            # truncate=False: the byte-identical path MUST compare the
-                            # FULL OCR text — default truncation would byte-cut a long doc
-                            # and two different docs sharing the same first
-                            # ~mcp_max_response_size bytes would hash-identical and one be
-                            # wrongly deleted.
-                            truncate=False,
-                        )
+        async def _byte_identical_groups(members: list[dict]) -> list[dict]:
+            """Group members by FULL OCR content — only byte-identical copies are dupes.
+            A member without OCR text can't be proven identical → skipped, never deleted."""
+            nonlocal skipped
+            by_hash: dict[str, list[int]] = {}
+            for m in members:
+                got = _parse_paperless_result(
+                    await mcp_manager.execute_tool(
+                        "mcp.paperless.get_document",
+                        {"document_id": m["id"], "include_content": True},
+                        # truncate=False: MUST compare the FULL OCR text — default
+                        # truncation would byte-cut a long doc and two different docs
+                        # sharing the same first ~mcp_max_response_size bytes would
+                        # hash-identical and one be wrongly deleted.
+                        truncate=False,
                     )
-                    if got.get("error"):
-                        skipped += 1
-                        continue
-                    h = _content_hash(got.get("content"))
-                    if h is None:  # no OCR text → can't prove identity → never delete
-                        skipped += 1
-                        continue
-                    by_hash.setdefault(h, []).append(m["id"])
-                for ids in by_hash.values():
-                    if len(ids) >= 2:
-                        dup_groups.append({"ids": sorted(ids), "text_differs": False})
+                )
+                if got.get("error"):
+                    skipped += 1
+                    continue
+                h = _content_hash(got.get("content"))
+                if h is None:  # no OCR text → can't prove identity → never delete
+                    skipped += 1
+                    continue
+                by_hash.setdefault(h, []).append(m["id"])
+            return [
+                {"ids": sorted(ids), "text_differs": False}
+                for ids in by_hash.values()
+                if len(ids) >= 2
+            ]
+
+        candidates: dict[tuple, list[dict]] = {}
+        for d in docs:
+            if d.get("id") is None:
+                continue
+            candidates.setdefault(_candidate_key(d), []).append(d)
+
+        for meta_key, members in candidates.items():
+            if len(members) < 2:
+                continue
+            title = meta_key[3]  # _candidate_key = (correspondent, type, date, title)
+            strong_metadata = (
+                metadata_match
+                and bool(title)
+                and all(m.get("page_count") is not None for m in members)
+            )
+            if not strong_metadata:
+                # weak metadata (no title / missing page_count) or setting OFF → require
+                # proven-identical content before deleting anything.
+                dup_groups.extend(await _byte_identical_groups(members))
+                continue
+            # METADATA identity: sub-group by page_count (the other four fields are
+            # equal across the candidate group). No get_document.
+            by_page: dict[Any, list[dict]] = {}
+            for m in members:
+                by_page.setdefault(m["page_count"], []).append(m)
+            for grp in by_page.values():
+                if len(grp) < 2:
+                    continue
+                ids_sorted = sorted(m["id"] for m in grp)
+                # snippet (from search) is a best-effort OCR fingerprint: differing
+                # snippets flag re-scans byte-identical matching would have missed —
+                # report-only, never a delete criterion.
+                text_differs = len({(m.get("snippet") or "") for m in grp}) > 1
+                dup_groups.append({"ids": ids_sorted, "text_differs": text_differs})
 
         # 2) Delete the extras of each group (keep the lowest / oldest id).
         for g in dup_groups:
