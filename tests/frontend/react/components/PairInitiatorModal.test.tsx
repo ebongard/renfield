@@ -55,7 +55,9 @@ describe('PairInitiatorModal', () => {
     fireEvent.click(btn);
 
     await waitFor(() => {
-      expect(mockedApiPost).toHaveBeenCalledWith('/api/federation/pair/offer', {});
+      expect(mockedApiPost).toHaveBeenCalledWith('/api/federation/pair/offer', {
+        offered_endpoints: [],
+      });
       // aria-labeled QR container — "QR-Code mit signierter Kopplungs-Einladung"
       expect(screen.getByRole('img', { name: /kopplungs-einladung/i })).toBeInTheDocument();
     });

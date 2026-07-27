@@ -34,7 +34,7 @@ vi.mock('../../../../src/frontend/src/api/resources/roomOutputs', async (orig) =
 }));
 
 const addSpy = vi.fn().mockResolvedValue(undefined);
-const noopMut = { mutateAsync: vi.fn(), isPending: false } as unknown as ReturnType<typeof useUpdateOutputDevice>;
+const noopMut = { mutateAsync: vi.fn(), isPending: false };
 
 function setAvailable(output_targets: unknown) {
   vi.mocked(useAvailableOutputsQuery).mockReturnValue({
@@ -51,9 +51,9 @@ beforeEach(() => {
   vi.mocked(useAddOutputDevice).mockReturnValue(
     { mutateAsync: addSpy, isPending: false } as unknown as ReturnType<typeof useAddOutputDevice>,
   );
-  vi.mocked(useUpdateOutputDevice).mockReturnValue(noopMut);
-  vi.mocked(useDeleteOutputDevice).mockReturnValue(noopMut);
-  vi.mocked(useReorderOutputDevices).mockReturnValue(noopMut);
+  vi.mocked(useUpdateOutputDevice).mockReturnValue(noopMut as unknown as ReturnType<typeof useUpdateOutputDevice>);
+  vi.mocked(useDeleteOutputDevice).mockReturnValue(noopMut as unknown as ReturnType<typeof useDeleteOutputDevice>);
+  vi.mocked(useReorderOutputDevices).mockReturnValue(noopMut as unknown as ReturnType<typeof useReorderOutputDevices>);
 });
 
 const TARGETS = [

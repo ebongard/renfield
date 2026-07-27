@@ -72,8 +72,8 @@ describe('SettingsPage', () => {
         expect(screen.getByText('Wake Word Einstellungen')).toBeInTheDocument();
       });
 
-      const keywordSelect = screen.getByRole('combobox');
-      expect(keywordSelect).toBeInTheDocument();
+      // One checkbox per available keyword (multi-select).
+      expect(screen.getAllByRole('checkbox')).toHaveLength(3);
     });
 
     it('displays available keywords in dropdown', async () => {
@@ -83,8 +83,10 @@ describe('SettingsPage', () => {
         expect(screen.getByText('Wake Word Einstellungen')).toBeInTheDocument();
       });
 
-      const keywordSelect = screen.getByRole('combobox');
-      expect(keywordSelect).toHaveValue('alexa');
+      // The currently-selected keyword ('alexa') is the checked box.
+      expect(screen.getByRole('checkbox', { name: /Alexa/i })).toBeChecked();
+      expect(screen.getByRole('checkbox', { name: /Hey Jarvis/i })).not.toBeChecked();
+      expect(screen.getByRole('checkbox', { name: /Hey Mycroft/i })).not.toBeChecked();
 
       expect(screen.getByText('Alexa')).toBeInTheDocument();
       expect(screen.getByText('Hey Jarvis')).toBeInTheDocument();
@@ -111,8 +113,8 @@ describe('SettingsPage', () => {
       const saveButton = screen.getByRole('button', { name: /speichern/i });
       expect(saveButton).toBeDisabled();
 
-      const keywordSelect = screen.getByRole('combobox');
-      fireEvent.change(keywordSelect, { target: { value: 'hey_jarvis' } });
+      // Adding a second keyword changes the selection set → dirty.
+      fireEvent.click(screen.getByRole('checkbox', { name: /Hey Jarvis/i }));
 
       expect(saveButton).not.toBeDisabled();
     });
@@ -124,8 +126,7 @@ describe('SettingsPage', () => {
         expect(screen.getByText('Wake Word Einstellungen')).toBeInTheDocument();
       });
 
-      const keywordSelect = screen.getByRole('combobox');
-      fireEvent.change(keywordSelect, { target: { value: 'hey_jarvis' } });
+      fireEvent.click(screen.getByRole('checkbox', { name: /Hey Jarvis/i }));
 
       expect(screen.getByText('Ungespeicherte Änderungen')).toBeInTheDocument();
     });
@@ -163,8 +164,7 @@ describe('SettingsPage', () => {
         expect(screen.getByText('Wake Word Einstellungen')).toBeInTheDocument();
       });
 
-      const keywordSelect = screen.getByRole('combobox');
-      fireEvent.change(keywordSelect, { target: { value: 'hey_jarvis' } });
+      fireEvent.click(screen.getByRole('checkbox', { name: /Hey Jarvis/i }));
 
       const saveButton = screen.getByRole('button', { name: /speichern/i });
       fireEvent.click(saveButton);
@@ -190,8 +190,7 @@ describe('SettingsPage', () => {
         expect(screen.getByText('Wake Word Einstellungen')).toBeInTheDocument();
       });
 
-      const keywordSelect = screen.getByRole('combobox');
-      fireEvent.change(keywordSelect, { target: { value: 'hey_jarvis' } });
+      fireEvent.click(screen.getByRole('checkbox', { name: /Hey Jarvis/i }));
 
       const saveButton = screen.getByRole('button', { name: /speichern/i });
       fireEvent.click(saveButton);
@@ -233,8 +232,7 @@ describe('SettingsPage', () => {
         expect(screen.getByText('Wake Word Einstellungen')).toBeInTheDocument();
       });
 
-      const keywordSelect = screen.getByRole('combobox');
-      fireEvent.change(keywordSelect, { target: { value: 'hey_jarvis' } });
+      fireEvent.click(screen.getByRole('checkbox', { name: /Hey Jarvis/i }));
 
       const saveButton = screen.getByRole('button', { name: /speichern/i });
       fireEvent.click(saveButton);
@@ -257,8 +255,7 @@ describe('SettingsPage', () => {
         expect(screen.getByText('Wake Word Einstellungen')).toBeInTheDocument();
       });
 
-      const keywordSelect = screen.getByRole('combobox');
-      fireEvent.change(keywordSelect, { target: { value: 'hey_jarvis' } });
+      fireEvent.click(screen.getByRole('checkbox', { name: /Hey Jarvis/i }));
 
       const saveButton = screen.getByRole('button', { name: /speichern/i });
       fireEvent.click(saveButton);

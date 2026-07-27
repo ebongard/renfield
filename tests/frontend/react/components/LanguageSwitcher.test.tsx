@@ -242,7 +242,7 @@ describe('LanguageSwitcher', () => {
       await user.click(screen.getByRole('button'));
 
       const options = screen.getAllByRole('option');
-      expect(options).toHaveLength(2);
+      expect(options).toHaveLength(3); // de, en, it
     });
 
     it('current language has aria-selected', async () => {

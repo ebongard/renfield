@@ -48,7 +48,12 @@ export default defineConfig({
     include: ['./**/*.{test,spec}.{js,jsx,ts,tsx}'],
     testTimeout: 10000,
     pool: 'forks',
-    isolate: false, // Run tests sequentially to avoid MSW handler conflicts
+    // isolate: true (default) — each test file gets a fresh module registry so
+    // shared state (stores, module singletons) can't bleed between files. The
+    // old `isolate: false` caused ~15-37 non-deterministic cross-file failures;
+    // setup.ts already resets MSW handlers per-test (afterEach), so isolation is
+    // safe here.
+    isolate: true,
     coverage: {
       provider: 'v8',
       reporter: ['text', 'json', 'html'],

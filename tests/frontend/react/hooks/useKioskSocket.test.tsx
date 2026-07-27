@@ -159,6 +159,25 @@ describe('useKioskSocket', () => {
     expect(ih.knowledge).toBeUndefined();
   });
 
+  it('folds a peer_status_changed delta (full replace) onto the peer set', () => {
+    const { result } = renderHook(() => useKioskSocket());
+    act(() => {
+      latest().fireOpen();
+      latest().fireMessage(baseSnapshot());
+    });
+    expect(result.current.live.peers.map((p) => p.id)).toEqual(['p1']);
+    act(() => {
+      latest().fireMessage({
+        type: 'peer_status_changed',
+        peers: [{ id: 'p1', name: 'Peer', last_seen_at: '2026-07-04T20:58:00Z', reachable: false }],
+      });
+    });
+    // full replace: p1 flips unreachable live (no wait for reconnect snapshot)
+    expect(result.current.live.peers).toEqual([
+      { id: 'p1', name: 'Peer', last_seen_at: '2026-07-04T20:58:00Z', reachable: false },
+    ]);
+  });
+
   it('folds a satellite_state delta onto the matching satellite', () => {
     const { result } = renderHook(() => useKioskSocket());
     act(() => {
@@ -314,8 +333,8 @@ describe('useKioskSocket', () => {
     });
     const before = result.current.live;
     act(() => {
-      latest().fireMessage({ type: 'peer_status_changed', peer_id: 'p1', reachable: false });
       latest().fireMessage({ type: 'something_from_phase_9' });
+      latest().fireMessage({ type: 'another_future_delta', payload: { x: 1 } });
     });
     // reference unchanged → no re-render churn, and definitely no throw
     expect(result.current.live).toBe(before);
