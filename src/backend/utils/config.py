@@ -806,6 +806,16 @@ class Settings(BaseSettings):
     # resolve-only (assign existing taxonomy only).
     paperless_autocreate_document_type: bool = True
     paperless_autocreate_tags: bool = True
+    # internal.paperless_dedupe — treat a metadata-identical re-scan as a duplicate.
+    # A candidate group already shares correspondent + document_type + creation date +
+    # title (the cheap prefilter). When on (default), members of such a group that ALSO
+    # share the same page_count are treated as the SAME document and deduped even when
+    # their OCR text is NOT byte-identical — the "same contract scanned/sent twice"
+    # case (e.g. an Audi lease imported three times) that byte-identical matching can
+    # never catch. Requires page_count from Paperless AND a non-empty title; when
+    # page_count is unavailable it falls back to the byte-identical rule (fail-safe:
+    # never delete on a weaker signal). Off = legacy byte-identical-OCR-only behavior.
+    paperless_dedupe_metadata_match_enabled: bool = True
     # Authoritative push token (optional). When set, the boot credential-reconciler
     # (services/credential_reconciler) seeds the DB SystemSetting from this value, so
     # a DB wipe SELF-HEALS the folder-ingest push token on next boot instead of

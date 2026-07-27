@@ -5,17 +5,24 @@ Two chat-triggerable `internal.*` tools for the document ingest → KB → Paper
 pipeline:
 
 - ``internal.ingest_status`` (read-only): reports the live processing state —
-  documents by status, how many completed docs have NO chunks, the worker queue
-  depth + liveness, and the Paperless filing state. Backs questions like
-  "wie ist der Verarbeitungsstatus?" / "sind alle Dokumente in Paperless?".
+  documents by status, how many completed docs are NOT SEARCHABLE (no embedded
+  chunk), the worker queue depth + liveness, and the Paperless filing state. Backs
+  questions like "wie ist der Verarbeitungsstatus?" / "sind alle Dokumente in
+  Paperless?".
 
 - ``internal.reindex_documents`` (write / maintenance): finds ``completed``
-  documents with **0 chunks** (indexing finished but produced nothing) and
-  enqueues a ``user_reindex`` worker task for each (purge + rebuild) — the same
-  path as ``POST /api/knowledge/documents/{id}/reindex``. Gated on
-  ``Permission.RAG_MANAGE`` when auth is enabled (an authenticated low-privilege
+  documents with **no searchable (embedded) chunk** — either zero chunk rows OR
+  only unembedded ``parent`` chunks whose searchable children were all dropped at
+  embed time — and enqueues a ``user_reindex`` worker task for each (purge +
+  rebuild) — the same path as ``POST /api/knowledge/documents/{id}/reindex``. Gated
+  on ``Permission.RAG_MANAGE`` when auth is enabled (an authenticated low-privilege
   user is refused; auth-off / unidentified-voice turns are allowed, matching the
   platform's HA_CONTROL convention).
+
+"No searchable chunk" (not merely "no chunk rows") is the unifying invisibility
+predicate — see ``_searchable_chunk_subquery``. It closes the 2026-07 blind spot
+where a document with only unembedded parent chunks was invisible to RAG yet also
+invisible to this repair tooling.
 
 Mirrors ``services/memory_list_tool.py``: flattened tool definitions registered by
 ``agent_tools._register_internal_tools`` + async handlers dispatched as special
@@ -52,6 +59,31 @@ def _as_bool(value) -> bool:
     if isinstance(value, str):
         return value.strip().lower() in ("1", "true", "yes", "ja", "force", "on")
     return bool(value)
+
+
+def _searchable_chunk_subquery():
+    """document_ids that have at least one **embedded** (searchable) chunk.
+
+    A completed document ABSENT from this set is invisible to RAG retrieval, and
+    that covers TWO failure modes, not one:
+      1. no chunk rows at all (OCR/quality gate produced nothing), and
+      2. only unembedded ``parent`` chunks — every searchable child was dropped at
+         embed time (quality gate or embed-endpoint timeouts during a bulk ingest),
+         the 2026-07 "parent-only" mode. Such a doc HAS chunk rows, so a plain
+         ``document_id IS NULL`` check (any-chunk) misses it, yet it is exactly as
+         unsearchable as a zero-chunk doc.
+
+    Filtering on ``embedding IS NOT NULL`` unifies both: a doc not in this set has
+    no searchable content regardless of how many parent rows it carries. (Parent
+    chunks are intentionally unembedded — retrieval fetches them by id after a
+    child hit — so they must not count as "searchable".)
+    """
+    return (
+        select(DocumentChunk.document_id)
+        .where(DocumentChunk.embedding.isnot(None))
+        .group_by(DocumentChunk.document_id)
+        .subquery()
+    )
 
 
 def _unindexable_exists():
@@ -98,22 +130,25 @@ KB_MAINTENANCE_TOOLS: dict = {
             "'wie ist der Verarbeitungsstatus?', 'werden noch Dokumente "
             "verarbeitet?', 'gibt es einen Rückstau?', 'sind alle Dokumente in "
             "Paperless abgelegt?'. Returns how many documents are pending / "
-            "processing / completed / failed, how many completed documents have "
-            "NO chunks (empty index) — split into REPAIRABLE (worth reindexing) "
-            "vs genuinely UNINDEXABLE (unreadable scans the quality gate keeps "
-            "rejecting) — the worker queue depth and whether the worker is alive, "
-            "and the Paperless filing state (filed / pending / failed / not-filed)."
+            "processing / completed / failed, how many completed documents are NOT "
+            "SEARCHABLE (no embedded chunk — an empty index OR only unembedded "
+            "parent chunks) — split into REPAIRABLE (worth reindexing) vs genuinely "
+            "UNINDEXABLE (unreadable scans the quality gate keeps rejecting) — the "
+            "worker queue depth and whether the worker is alive, and the Paperless "
+            "filing state (filed / pending / failed / not-filed)."
         ),
         "parameters": {},
     },
     "internal.reindex_documents": {
         "description": (
-            "Re-index documents in the knowledge base that have NO chunks — "
-            "documents that finished indexing but produced nothing. Enqueues a "
+            "Re-index documents in the knowledge base that are NOT SEARCHABLE — no "
+            "embedded chunk (finished indexing but produced no retrievable content: "
+            "no chunks, or only unembedded parent chunks). Enqueues a "
             "background reindex (purge + rebuild) for each and reports how many "
             "were queued. Use when the user asks to 'reindex documents without "
-            "chunks', 'Dokumente ohne Chunks neu indexieren', or 'repariere die "
-            "leeren Dokumente'. By DEFAULT skips documents already known to be "
+            "chunks', 'Dokumente ohne Chunks neu indexieren', 'nicht durchsuchbare "
+            "Dokumente reparieren', or 'repariere die leeren Dokumente'. By DEFAULT "
+            "skips documents already known to be "
             "genuinely unindexable (an unreadable scan the quality gate keeps "
             "rejecting — a retry just re-produces 0 chunks); pass force=true to "
             "reindex those too. Does nothing to documents that already have chunks "
@@ -134,8 +169,9 @@ KB_MAINTENANCE_TOOLS: dict = {
     },
     "internal.list_chunkless_documents": {
         "description": (
-            "List BY NAME the knowledge-base documents that have NO chunks — the "
-            "completed documents that finished indexing but produced nothing. Use "
+            "List BY NAME the knowledge-base documents that are NOT SEARCHABLE — no "
+            "embedded chunk (finished indexing but produced no retrievable content: "
+            "no chunks, or only unembedded parent chunks). Use "
             "when the user wants to SEE WHICH documents are affected or their "
             "titles: 'welche Dokumente haben keine Chunks?', 'liste die leeren "
             "Dokumente auf', 'nenne mir die Titel der Dokumente ohne Chunks', "
@@ -193,12 +229,9 @@ async def ingest_status(params: dict, user_id: int | None = None) -> dict:
                     )
                 ).all()
             }
-            # completed docs with zero chunk rows
-            chunk_sub = (
-                select(DocumentChunk.document_id)
-                .group_by(DocumentChunk.document_id)
-                .subquery()
-            )
+            # completed docs with no SEARCHABLE (embedded) chunk — zero-chunk docs
+            # AND parent-only docs (see _searchable_chunk_subquery)
+            chunk_sub = _searchable_chunk_subquery()
             chunkless = (
                 await db.execute(
                     select(func.count())
@@ -340,14 +373,11 @@ async def reindex_documents(
 
     try:
         async with AsyncSessionLocal() as db:
-            # completed docs with no chunk rows (excludes pending/processing by
-            # construction, so no in-flight double-enqueue — mirrors the route's
-            # dedup guard).
-            chunk_sub = (
-                select(DocumentChunk.document_id)
-                .group_by(DocumentChunk.document_id)
-                .subquery()
-            )
+            # completed docs with no SEARCHABLE (embedded) chunk — zero-chunk AND
+            # parent-only docs (see _searchable_chunk_subquery). Excludes
+            # pending/processing by construction, so no in-flight double-enqueue —
+            # mirrors the route's dedup guard.
+            chunk_sub = _searchable_chunk_subquery()
             chunkless_where = (
                 Document.status == DOC_STATUS_COMPLETED,
                 chunk_sub.c.document_id.is_(None),
@@ -504,11 +534,8 @@ async def list_chunkless_documents(params: dict, user_id: int | None = None) -> 
         display_name = func.coalesce(
             Document.generated_title, Document.title, Document.filename
         )
-        chunk_sub = (
-            select(DocumentChunk.document_id)
-            .group_by(DocumentChunk.document_id)
-            .subquery()
-        )
+        # no SEARCHABLE (embedded) chunk — zero-chunk AND parent-only docs
+        chunk_sub = _searchable_chunk_subquery()
         unindexable_col = _unindexable_exists().label("unindexable")
         base = (
             select(Document.id, display_name, unindexable_col)

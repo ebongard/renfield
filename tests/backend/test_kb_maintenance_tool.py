@@ -88,6 +88,28 @@ def test_unindexable_queries_compile():
         assert "chunks_dropped_low_quality" in sql
 
 
+def test_searchable_chunk_subquery_filters_embedding():
+    """The 'not searchable' predicate must key on EMBEDDED chunks, so a parent-only
+    doc (chunks present, all embedding NULL) is detected, not just zero-chunk docs.
+    Compile-smoke against Postgres — mocked tests never exercise this SQL."""
+    from sqlalchemy import func, select
+    from sqlalchemy.dialects import postgresql
+
+    from models.database import DOC_STATUS_COMPLETED, Document
+
+    sub = kb._searchable_chunk_subquery()
+    q = (
+        select(func.count())
+        .select_from(Document)
+        .outerjoin(sub, sub.c.document_id == Document.id)
+        .where(Document.status == DOC_STATUS_COMPLETED, sub.c.document_id.is_(None))
+    )
+    sql = str(q.compile(dialect=postgresql.dialect())).lower()
+    assert "document_chunks" in sql
+    # the searchable predicate: only chunks WITH an embedding count
+    assert "embedding is not null" in sql
+
+
 def test_as_bool():
     assert kb._as_bool(True) is True
     assert kb._as_bool("true") is True and kb._as_bool("ja") is True
