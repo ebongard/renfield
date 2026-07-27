@@ -17,7 +17,7 @@ import { useTranslation } from 'react-i18next';
 import { Check, X, Loader, ChevronDown, ChevronRight, Plus, Trash2, Pencil, Calendar, ChevronsUpDown } from 'lucide-react';
 
 import Badge from '../Badge';
-import { ComboboxInput, CalendarPopover } from './reviewControls';
+import { ComboboxInput, CalendarPopover, ISO_DATE } from './reviewControls';
 import {
   useUpdateReview,
   type AuditResult,
@@ -414,8 +414,6 @@ function SelectBox({ applicable, selected, overridden, onToggle, label }: Select
     />
   );
 }
-
-const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
 
 // Jira-style inline edit: reads as plain text; hover shows a subtle bg + an
 // affordance icon; click swaps to an editor; Escape cancels.

@@ -213,6 +213,45 @@ describe('AuditReviewRow', () => {
     });
   });
 
+  it('Enter commits the TYPED value (create), not the auto-active first option', async () => {
+    const user = userEvent.setup();
+    renderRow(row(), _taxo({ correspondents: ['Stadtwerke', 'Finanzamt'] }));
+    await user.click(screen.getByText('New Corp'));
+    const input = screen.getByRole('combobox', { name: 'Ansprechpartner bearbeiten' });
+    await user.click(input);
+    await user.type(input, 'Stadt'); // 'Stadtwerke' auto-activates; user wants 'Stadt'
+    await user.keyboard('{Enter}');
+    await waitFor(() => {
+      expect(mockedPatch).toHaveBeenCalledWith(
+        '/api/admin/paperless-audit/results/7',
+        expect.objectContaining({ overrides: expect.objectContaining({ correspondent: 'Stadt' }) }),
+      );
+    });
+    // and NEVER the superstring existing option
+    const persistedCorrespondents = mockedPatch.mock.calls
+      .map((c) => (c[1] as { overrides?: { correspondent?: string } }).overrides?.correspondent)
+      .filter((v) => v !== undefined);
+    expect(persistedCorrespondents).not.toContain('Stadtwerke');
+  });
+
+  it('Escape cancels a combobox edit without persisting the typed text', async () => {
+    const user = userEvent.setup();
+    renderRow(row(), _taxo({ correspondents: ['Stadtwerke', 'Finanzamt'] }));
+    await user.click(screen.getByText('New Corp'));
+    const input = screen.getByRole('combobox', { name: 'Ansprechpartner bearbeiten' });
+    await user.click(input);
+    await user.type(input, 'Stadt');
+    await user.keyboard('{Escape}');
+    // the abandoned text must NOT become a correspondent override
+    await waitFor(() =>
+      expect(screen.queryByRole('combobox', { name: 'Ansprechpartner bearbeiten' })).not.toBeInTheDocument(),
+    );
+    const persistedCorrespondents = mockedPatch.mock.calls
+      .map((c) => (c[1] as { overrides?: { correspondent?: string } }).overrides?.correspondent)
+      .filter((v) => v !== undefined);
+    expect(persistedCorrespondents).not.toContain('Stadt');
+  });
+
   it('calendar reset clears the date override', async () => {
     const user = userEvent.setup();
     renderRow(row({ user_overrides: { date: '2024-09-09' } }));
@@ -246,6 +285,18 @@ describe('AuditReviewRow', () => {
         expect.objectContaining({ overrides: expect.objectContaining({ date: '2024-02-15' }) }),
       );
     });
+  });
+
+  it('re-clicking the already-selected calendar day closes the popover (not a dead no-op)', async () => {
+    const user = userEvent.setup();
+    renderRow(row()); // suggested_date 2024-02-02 → rendered selected
+    await user.click(screen.getByText('2024-02-02'));
+    expect(screen.getByRole('dialog', { name: 'Datum bearbeiten' })).toBeInTheDocument();
+    // mode="single" fires onSelect(undefined) here; the popover must still close.
+    await user.click(screen.getByRole('button', { name: /2\. Februar 2024, selected/ }));
+    await waitFor(() =>
+      expect(screen.queryByRole('dialog', { name: 'Datum bearbeiten' })).not.toBeInTheDocument(),
+    );
   });
 
   it('adding a tag persists a tags override', async () => {

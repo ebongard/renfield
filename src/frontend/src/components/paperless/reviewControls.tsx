@@ -6,7 +6,7 @@
  * Calendar → react-day-picker (accessible month grid + keyboard) inside a small
  * portal/positioning wrapper. These replace the previous hand-rolled widgets.
  */
-import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type RefObject } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type RefObject } from 'react';
 import { createPortal } from 'react-dom';
 import type { TFunction } from 'i18next';
 import {
@@ -16,11 +16,11 @@ import {
   ComboboxOption,
 } from '@headlessui/react';
 import { DayPicker } from 'react-day-picker';
-import { de, enUS } from 'date-fns/locale';
+import { de, enUS, it } from 'date-fns/locale';
 import { Check, Plus, RotateCcw } from 'lucide-react';
 // react-day-picker's base stylesheet is imported once globally in main.tsx.
 
-const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
+export const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
 
 function iso(d: Date): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
@@ -54,6 +54,7 @@ const OPTION_CLASS =
 export function ComboboxInput({ value, options, creatable, placeholder, ariaLabel, t, discardOnBlur = false, onCommit, onCancel }: ComboboxInputProps) {
   const [query, setQuery] = useState('');
   const committed = useRef(false);
+  const escaped = useRef(false);
 
   const q = query.trim().toLowerCase();
   // Existing-only: keep the current value reachable even if absent from the list.
@@ -67,15 +68,33 @@ export function ComboboxInput({ value, options, creatable, placeholder, ariaLabe
     committed.current = true;
     onCommit(v);
   };
-  // Escape/outside/blur close without a selection → commit the typed text
-  // (creatable, visible not hidden) or, for existing-only, only an exact match.
+  // Close semantics:
+  //  - Escape → always cancel (never persist in-progress text).
+  //  - outside/blur close without a selection → commit the typed text
+  //    (creatable) or, for existing-only, only an exact match.
   const handleClose = () => {
     if (committed.current) return;
+    if (escaped.current) { onCancel(); return; }
     const typed = query.trim();
     if (discardOnBlur || typed === '' || typed === value) { onCancel(); return; }
     if (creatable) { onCommit(typed); return; }
     const match = base.find((o) => o.toLowerCase() === typed.toLowerCase());
     if (match) onCommit(match); else onCancel();
+  };
+
+  // Headless UI auto-activates the first filtered option, so a bare Enter would
+  // select an existing superstring match (e.g. 'Stadtwerke' when the user typed
+  // 'Stadt' to CREATE 'Stadt') — silent wrong-value persistence. Intercept:
+  //  - Enter with a pending create value → commit the TYPED value, block HUI's
+  //    default selection (preventDefault; HUI skips its handler when defaulted).
+  //  - Escape → flag it so handleClose cancels instead of committing the text.
+  const handleKeyDown = (e: ReactKeyboardEvent) => {
+    if (e.key === 'Escape') { escaped.current = true; return; }
+    if (e.key === 'Enter' && createValue) {
+      e.preventDefault();
+      committed.current = true;
+      onCommit(createValue);
+    }
   };
 
   return (
@@ -89,6 +108,7 @@ export function ComboboxInput({ value, options, creatable, placeholder, ariaLabe
         placeholder={placeholder ?? value}
         displayValue={() => ''}
         onChange={(e) => setQuery(e.target.value)}
+        onKeyDown={handleKeyDown}
         className="input py-1 px-1.5 text-xs w-full"
       />
       <ComboboxOptions
@@ -211,6 +231,7 @@ export function CalendarPopover({ value, ariaLabel, locale, placeholder, t, onCo
           ref={popRef}
           role="dialog"
           aria-label={ariaLabel}
+          onKeyDown={(e) => { if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); onCancel(); } }}
           style={style}
           className="paperless-rdp z-50 rounded-lg border border-gray-200 bg-white p-2 text-gray-800 shadow-lg dark:border-gray-700 dark:bg-gray-800 dark:text-gray-100"
         >
@@ -220,8 +241,11 @@ export function CalendarPopover({ value, ariaLabel, locale, placeholder, t, onCo
             selected={selected}
             month={month}
             onMonthChange={setMonth}
-            onSelect={(d) => { if (d) onCommit(iso(d)); }}
-            locale={locale.startsWith('de') ? de : enUS}
+            // mode="single" fires onSelect(undefined) when the already-selected
+            // day is re-clicked — treat that as "confirm the shown date" (commit
+            // + close) rather than a dead no-op.
+            onSelect={(d) => { const picked = d ?? selected; if (picked) onCommit(iso(picked)); else onCancel(); }}
+            locale={locale.startsWith('de') ? de : locale.startsWith('it') ? it : enUS}
             weekStartsOn={1}
           />
           <div className="mt-1 flex justify-end border-t border-gray-100 pt-1.5 dark:border-gray-700">
