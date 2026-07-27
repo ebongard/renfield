@@ -25,6 +25,11 @@ export default defineConfig({
       'i18next-browser-languagedetector': path.join(testNodeModules, 'i18next-browser-languagedetector'),
       // lucide icons
       'lucide-react': path.join(testNodeModules, 'lucide-react'),
+      // @headlessui/react + react-day-picker (and their use-sync-external-store)
+      // must resolve React from the test tree — same duplicate-React fix as
+      // @tanstack/react-query below.
+      '@headlessui/react': path.join(testNodeModules, '@headlessui/react'),
+      'react-day-picker': path.join(testNodeModules, 'react-day-picker'),
       // qrcode.react's real package resolves React from src/frontend/node_modules,
       // which is a different copy than the aliased test React → duplicate
       // React dispatchers → null useMemo. Point tests at a no-op stub.

@@ -5,6 +5,7 @@ import '@fontsource-variable/cormorant';
 import '@fontsource-variable/dm-sans';
 import App from './App';
 import './index.css';
+import 'react-day-picker/style.css';
 import './i18n';
 
 // Build stamp — also the PWA service-worker propagation lever.
