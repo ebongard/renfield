@@ -136,7 +136,22 @@ async def test_reindex_enqueues_user_reindex_for_chunkless(monkeypatch):
     assert {p["document_id"] for p in payloads} == {5, 9}
     assert all(p["trigger"] == "user_reindex" for p in payloads)
     assert all(p["user_id"] == 7 for p in payloads)
+    assert all(p["force_ocr"] is False for p in payloads)  # default: reuse text layer
     assert session.commit.await_count == 1
+
+
+@pytest.mark.asyncio
+async def test_reindex_force_ocr_threads_into_enqueue(monkeypatch):
+    """force_ocr=true enqueues force_full_page_ocr so garbled scans get re-OCR'd."""
+    cm, _ = _session([_scalar_result(0), _scalars_result([5, 9]), MagicMock()])
+    monkeypatch.setattr(kb, "AsyncSessionLocal", cm)
+    monkeypatch.setattr(kb.settings, "auth_enabled", False)
+    q = _patch_queue(monkeypatch)
+
+    out = await kb.reindex_documents({"force_ocr": True}, user_id=7)
+    assert out["success"] and out["data"]["reindexed"] == 2
+    payloads = [c.args[0] for c in q.enqueue.await_args_list]
+    assert all(p["force_ocr"] is True for p in payloads)
 
 
 @pytest.mark.asyncio

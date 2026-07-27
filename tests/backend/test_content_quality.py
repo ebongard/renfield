@@ -33,9 +33,29 @@ CLEAN_SAMPLES = [
 ]
 
 
+# Legitimate financial/tabular content — numeric-heavy but REAL. The prior
+# letters-only heuristic FALSELY flagged these (dropping them at ingest → the
+# 2026-07 xidra unsearchable-financial-docs bug); they MUST pass now.
+FINANCIAL_SAMPLES = [
+    "IBAN: DE12 3456 7890 1234 56 BIC: GENODEF1XXX Betrag: 1.250,00 EUR "
+    "Datum: 01.02.2026 Rechnungsnr: 2024-00123 Kundennr: 44521",
+    "Pos 1 Menge 2 Einzelpreis 49,99 Gesamt 99,98 Pos 2 Menge 1 Einzelpreis "
+    "120,00 Gesamt 120,00 Zwischensumme 219,98 MwSt 19% 41,80 Summe 261,78 EUR",
+    "Steuernummer 123/456/78901 USt-IdNr DE123456789 Zeitraum 01.01.2026 bis "
+    "31.12.2026 Vorauszahlung 4.200,00 Nachzahlung 318,45",
+]
+
+
 @pytest.mark.parametrize("text", GARBAGE_SAMPLES)
 def test_garbage_flagged(text: str):
     assert is_low_quality_text(text) is True, f"Should flag garbage: {text!r}"
+
+
+@pytest.mark.parametrize("text", FINANCIAL_SAMPLES)
+def test_numeric_financial_content_passes(text: str):
+    """Numeric/financial content (amounts, IBANs, dates, codes) is legitimate — it
+    must NOT be flagged as garbage even though it has few letters-only words."""
+    assert is_low_quality_text(text) is False, f"legit financial content wrongly flagged: {text!r}"
 
 
 @pytest.mark.parametrize("text", CLEAN_SAMPLES)

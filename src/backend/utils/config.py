@@ -383,7 +383,12 @@ class Settings(BaseSettings):
     rag_hybrid_fts_config: str = "german"     # PostgreSQL FTS config: simple/german/english
 
     # Embedding
-    rag_embedding_timeout: float = 30.0       # Timeout in seconds for embedding calls
+    # Timeout for a single embedding call. Sized to survive a cold model load: the
+    # embed model can be evicted to CPU under GPU/VRAM pressure on a shared Ollama, so
+    # the FIRST embed after eviction cold-loads (~10s) and, under concurrent chat +
+    # bulk-ingest load, can queue further. A too-tight timeout silently DROPS the chunk
+    # (→ unsearchable / parent-only docs), so favour reliability over failing fast.
+    rag_embedding_timeout: float = 60.0
 
     # W5 — RAG eval LLM timeouts (previously hardcoded as 60 / 30 in rag_eval_service.py)
     rag_eval_answer_timeout: float = Field(default=60.0, ge=10.0, le=300.0)

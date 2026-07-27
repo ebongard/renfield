@@ -165,6 +165,13 @@ KB_MAINTENANCE_TOOLS: dict = {
                 "docs are reindexed. Set true for 'auch die unlesbaren' / "
                 "'trotzdem alle neu indexieren'."
             ),
+            "force_ocr": (
+                "Re-run FULL-PAGE OCR (force_full_page_ocr) instead of reusing the "
+                "existing text layer. Optional; default false. Use for scanned "
+                "documents whose text extraction was garbled ('nochmal mit OCR', "
+                "'als Scan neu erkennen'). Pairs well with force=true to give the "
+                "unindexable docs a real second chance."
+            ),
         },
     },
     "internal.list_chunkless_documents": {
@@ -381,6 +388,7 @@ async def reindex_documents(
         except (ValueError, TypeError):
             pass
     force = _as_bool(params.get("force"))
+    force_ocr = _as_bool(params.get("force_ocr"))
 
     try:
         async with AsyncSessionLocal() as db:
@@ -464,7 +472,7 @@ async def reindex_documents(
                 await queue.enqueue(
                     {
                         "document_id": did,
-                        "force_ocr": False,
+                        "force_ocr": force_ocr,
                         "user_id": user_id,
                         "trigger": "user_reindex",
                     }

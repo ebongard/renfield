@@ -24,11 +24,21 @@ from __future__ import annotations
 
 import re
 
-# A word-like token: ≥3 letters from a German-Latin alphabet. The bar is
-# deliberately language-aware (ä/ö/ü/ß) so German OCR with diacritics
-# isn't mis-classified as garbage. Anything outside this charset (digits,
-# punctuation, control glyphs from broken OCR) is NOT counted.
-_WORD_LIKE_RE = re.compile(r"^[A-Za-zÄÖÜäöüß]{3,}$")
+# A MEANINGFUL token carries real content: a word OR a structured/numeric datum.
+# The garbage we filter is glyph noise — single-char runs, punctuation, control
+# glyphs from broken OCR (``- r . : ■ { - n ; ;``). A token is meaningful when it
+# holds ≥3 alphanumeric characters (letters incl. ä/ö/ü/ß, or digits): this counts
+# real words (``Rechnung``), amounts (``1.250,00``), dates (``01.02.2026``), IBANs
+# (``DE12345678``), and codes — legitimate financial/tabular content that a business
+# archive is full of — while glyph noise (0-1 alphanumerics per token) is not counted.
+# (Prior versions counted ONLY letters-only ≥3-char tokens, which FALSELY flagged
+# numeric-heavy financial documents as garbage and dropped them at ingest.)
+_MIN_MEANINGFUL_ALNUM = 3
+
+
+def _is_meaningful(token: str) -> bool:
+    """A token with real content (word / number / amount / date / code), not glyph noise."""
+    return sum(1 for c in token if c.isalnum()) >= _MIN_MEANINGFUL_ALNUM
 
 # Length floor: shorter inputs are dominated by noise statistics. A
 # 12-char chunk of valid text could trivially trip a ratio check that
@@ -36,10 +46,11 @@ _WORD_LIKE_RE = re.compile(r"^[A-Za-zÄÖÜäöüß]{3,}$")
 # — the wins come on the medium-to-long garbage chunks.
 _MIN_LEN_FOR_QUALITY_CHECK = 40
 
-# Word-like-token ratio floor: below this, the text is dominated by
+# Meaningful-token ratio floor: below this, the text is dominated by
 # single-character runs / glyphs / punctuation. Calibrated empirically
-# against the production corpus: real text (German + technical English)
-# clears 0.4 by a wide margin; OCR garbage from Paperless lands 0.0-0.2.
+# against the production corpus: real text (German + technical English,
+# and numeric/financial content) clears 0.4 by a wide margin; OCR garbage
+# from Paperless lands 0.0-0.2.
 #
 # THRESHOLD-VERSIONING NOTE (v2.10.4): this constant is shared between
 # two call sites:
@@ -65,9 +76,10 @@ def is_low_quality_text(text: str | None) -> bool:
     """True if the text reads as OCR garbage / glyph noise.
 
     Returns False for None, empty, short (<40 char), or text that clears
-    the word-like-token ratio threshold. Only flags the medium-to-long
-    chunks dominated by single-char runs and punctuation glyphs that
-    failed Paperless OCR produces.
+    the meaningful-token ratio threshold (words OR numeric/structured data).
+    Only flags the medium-to-long chunks dominated by single-char runs and
+    punctuation glyphs that failed Paperless OCR produces — NOT legitimate
+    numeric/financial content.
     """
     if not text:
         return False
@@ -79,8 +91,8 @@ def is_low_quality_text(text: str | None) -> bool:
     if not tokens:
         return False
 
-    wordlike = sum(1 for t in tokens if _WORD_LIKE_RE.fullmatch(t))
-    ratio = wordlike / len(tokens)
+    meaningful = sum(1 for t in tokens if _is_meaningful(t))
+    ratio = meaningful / len(tokens)
     return ratio < _MIN_WORDLIKE_RATIO
 
 
