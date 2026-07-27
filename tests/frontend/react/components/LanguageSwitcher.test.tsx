@@ -242,7 +242,12 @@ describe('LanguageSwitcher', () => {
       await user.click(screen.getByRole('button'));
 
       const options = screen.getAllByRole('option');
-      expect(options).toHaveLength(3); // de, en, it
+      // Assert the configured UI locales each render as an option — robust to
+      // the i18n roadmap adding more languages (a literal count would false-red).
+      expect(screen.getByRole('option', { name: /deutsch/i })).toBeInTheDocument();
+      expect(screen.getByRole('option', { name: /english/i })).toBeInTheDocument();
+      expect(screen.getByRole('option', { name: /italiano/i })).toBeInTheDocument();
+      expect(options.length).toBeGreaterThanOrEqual(3);
     });
 
     it('current language has aria-selected', async () => {

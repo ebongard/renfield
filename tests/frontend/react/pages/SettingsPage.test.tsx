@@ -72,8 +72,12 @@ describe('SettingsPage', () => {
         expect(screen.getByText('Wake Word Einstellungen')).toBeInTheDocument();
       });
 
-      // One checkbox per available keyword (multi-select).
-      expect(screen.getAllByRole('checkbox')).toHaveLength(3);
+      // One checkbox per available keyword (multi-select). Assert by keyword
+      // name — robust to any unrelated toggle added elsewhere on the page (a
+      // global getAllByRole('checkbox') count would false-red on that).
+      expect(screen.getByRole('checkbox', { name: /Alexa/i })).toBeInTheDocument();
+      expect(screen.getByRole('checkbox', { name: /Hey Jarvis/i })).toBeInTheDocument();
+      expect(screen.getByRole('checkbox', { name: /Hey Mycroft/i })).toBeInTheDocument();
     });
 
     it('displays available keywords in dropdown', async () => {
