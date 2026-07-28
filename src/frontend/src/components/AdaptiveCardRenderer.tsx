@@ -231,6 +231,75 @@ function renderFormattedText(text?: string): ReactNode {
   return parts;
 }
 
+/**
+ * Render a TextBlock's text as block-level markdown → real React elements.
+ *
+ * The synthesizer (and any multi-line tool result) emits markdown with
+ * `### headings`, `-`/`*` bullet lists, and blank-line paragraph breaks.
+ * `renderFormattedText` only parses INLINE marks (bold/italic/<cite>) and a
+ * plain `<p>` collapses the source newlines, so that content used to render
+ * as a run-on wall. This splits on newlines and emits headings, `<ul>` lists,
+ * and paragraphs, delegating each line's inline marks to renderFormattedText.
+ * No raw HTML — every node is a React element through the escape boundary,
+ * same security model as the inline path.
+ */
+function renderMarkdownBlocks(text: string, keyBase: string): ReactNode {
+  const lines = text.split('\n');
+  const blocks: ReactNode[] = [];
+  let bullets: ReactNode[] = [];
+  let k = 0;
+
+  const flushBullets = () => {
+    if (bullets.length > 0) {
+      blocks.push(
+        <ul key={`${keyBase}-ul-${k++}`} className="list-disc pl-5 space-y-0.5">
+          {bullets}
+        </ul>,
+      );
+      bullets = [];
+    }
+  };
+
+  for (const raw of lines) {
+    const line = raw.replace(/\s+$/, '');
+    // Bullet: leading `-` or `*` followed by whitespace (single marker, so
+    // `**bold**` at line start is NOT mistaken for a bullet).
+    const bulletMatch = line.match(/^\s*[-*]\s+(.*)$/);
+    if (bulletMatch) {
+      bullets.push(
+        <li key={`${keyBase}-li-${k++}`}>{renderFormattedText(bulletMatch[1])}</li>,
+      );
+      continue;
+    }
+    flushBullets();
+
+    const headingMatch = line.match(/^\s*#{1,6}\s+(.*)$/);
+    if (headingMatch) {
+      blocks.push(
+        <p key={`${keyBase}-h-${k++}`} className="font-semibold mt-2 first:mt-0">
+          {renderFormattedText(headingMatch[1])}
+        </p>,
+      );
+    } else if (line.trim() === '') {
+      // Blank line → small paragraph gap.
+      blocks.push(<div key={`${keyBase}-sp-${k++}`} className="h-2" aria-hidden="true" />);
+    } else {
+      blocks.push(<p key={`${keyBase}-p-${k++}`}>{renderFormattedText(line)}</p>);
+    }
+  }
+  flushBullets();
+  return blocks;
+}
+
+/**
+ * A TextBlock needs block rendering when it carries newlines or opens with a
+ * heading / bullet marker. Single-line titles and labels stay on the cheap
+ * inline `<p>` path (backward-compatible).
+ */
+function isBlockText(text: string): boolean {
+  return /\n/.test(text) || /^\s*(#{1,6}\s|[-*]\s)/.test(text);
+}
+
 function renderElement(element: AcElement | undefined, index: number | string = 0): ReactNode {
   if (!element) return null;
   // The recursive call from ColumnSet sets `type: 'Column'` on bare column
@@ -251,11 +320,19 @@ function renderElement(element: AcElement | undefined, index: number | string = 
       const align = tb.horizontalAlignment === 'Center' ? 'text-center'
         : tb.horizontalAlignment === 'Right' ? 'text-right' : '';
 
+      const tbClassName = `${size} ${weight} ${color} ${subtle} ${wrap} ${align} ${spacing} ${separator}`.trim();
+      const tbText = tb.text ?? '';
+      // Multi-line / block markdown → real heading/list/paragraph elements so
+      // newlines and bullets survive. Single-line text keeps the inline <p>.
+      if (isBlockText(tbText)) {
+        return (
+          <div key={key} className={tbClassName}>
+            {renderMarkdownBlocks(tbText, key)}
+          </div>
+        );
+      }
       return (
-        <p
-          key={key}
-          className={`${size} ${weight} ${color} ${subtle} ${wrap} ${align} ${spacing} ${separator}`.trim()}
-        >
+        <p key={key} className={tbClassName}>
           {renderFormattedText(tb.text)}
         </p>
       );
