@@ -237,7 +237,16 @@ export default function ChatMessages() {
       {/* Empty State */}
       {!historyLoading && messages.length === 0 && (
         <div className="text-center py-16">
-          <img src="/logo-icon.svg" alt="" className="w-20 h-20 mx-auto mb-6 opacity-30" aria-hidden="true" />
+          {/* Brand the empty state with the white-label logo (same asset the
+              header + login lockup use) so a Pro/white-label build doesn't show
+              the Renfield icon here. Community (no VITE_APP_LOGO_URL) keeps the
+              square Renfield icon. */}
+          <img
+            src={import.meta.env.VITE_APP_LOGO_URL || '/logo-icon.svg'}
+            alt=""
+            className="h-16 w-auto max-w-[220px] mx-auto mb-6 opacity-30"
+            aria-hidden="true"
+          />
           <h2 className="font-display text-2xl text-gray-400 dark:text-gray-500 mb-2">{t('chat.startConversation')}</h2>
           <p className="text-sm text-gray-400 dark:text-gray-500 mb-6">
             {t('chat.useTextOrMic')}
