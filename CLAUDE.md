@@ -272,6 +272,7 @@ make release    # Create + push version tag — does NOT deploy. See deploy-prod
 | `/git-workflow` | commit, push, PR, branch | Commit format, issue numbers, PR workflow |
 | `/add-integration` | neue Integration, MCP server | Add MCP server to `mcp_servers.yaml` |
 | `/add-hook` | Hook, Plugin, extend | Async hook system for plugins |
+| `/add-skill` | neuer Skill, procedural skill, seed skill | Add a procedural skill (`src/backend/seed_skills/*.md`); full ref `docs/SKILLS.md` |
 | `/add-frontend-page` | neue Seite, add page | Page creation, routing, navigation |
 | `/deploy-production` | deploy, production, rsync | Docker deploy, secrets, satellites |
 | `/debug-renfield` | debug, Fehler, broken | Troubleshooting all subsystems |
