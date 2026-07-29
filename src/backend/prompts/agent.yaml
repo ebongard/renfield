@@ -601,10 +601,15 @@ de:
     Kombiniere diese Teilergebnisse zu einer natuerlichen Antwort auf die urspruengliche Frage.
     Originalfrage: "{message}"
 
-    Teilergebnisse:
+    Teilergebnisse (eines pro Quelle/Integration):
     {sub_results}
 
-    Antworte natuerlich und zusammenfassend.
+    Antworte natuerlich und zusammenfassend AUS DEN QUELLEN, DIE TATSAECHLICH DATEN GELIEFERT HABEN.
+    Wenn eine Quelle meldet, dass sie nichts / keine passenden Eintraege / keine Daten gefunden hat
+    (z. B. "hat keine Daten zurueckgegeben"), stelle das NICHT als Fehler dar und erwaehne es NICHT
+    als Einschraenkung — beantworte die Frage einfach aus den Quellen mit Daten. Erwaehne nur dann,
+    dass eine Quelle nichts hatte, wenn sich die Frage ausdruecklich auf genau diese Quelle bezieht
+    und keine andere Quelle sie beantwortet hat.
 
   # JSON system message
   json_system_message: "Antworte nur mit JSON."
@@ -1186,10 +1191,14 @@ en:
     Combine these partial results into a natural answer to the original question.
     Original question: "{message}"
 
-    Partial results:
+    Partial results (one per source/integration):
     {sub_results}
 
-    Reply naturally and summarize.
+    Write one natural, coherent answer FROM THE SOURCES THAT ACTUALLY RETURNED DATA.
+    If a source reports it found nothing / no matching records / returned no data (e.g.
+    "the tool did not return data"), do NOT present that as an error and do NOT mention it
+    as a caveat — simply answer from the sources that have data. Only state that a source had
+    nothing when the question is specifically about that source and no other source answered it.
 
   # JSON system message
   json_system_message: "Reply with JSON only."
