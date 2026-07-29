@@ -73,6 +73,40 @@ _ROOM_PATTERN = re.compile(
     r'\b(?:im|in\s+(?:der|dem|die|das)?)\s+(\w+)', re.I | re.UNICODE,
 )
 
+# Per-turn chat language detection. The web agent otherwise runs EVERY turn
+# under ``ollama.default_lang`` regardless of the message language, so an
+# English question gets the German system prompt and a German answer. The
+# Teams path already detects per-message; this brings the web path to parity.
+# ``detect_document_language`` (rag_service) bails under 50 chars, useless for
+# short chat turns, so this is a light stopword heuristic instead: German
+# chars/stopwords → "de", a clear English signal → "en", otherwise the
+# configured ``default`` (so a German-default deployment never regresses on an
+# ambiguous message; only a confident English signal flips the turn).
+_DE_STOPWORDS = re.compile(
+    r"\b(der|die|das|den|dem|des|und|oder|ich|mir|mich|mein|meine|welche|welcher|"
+    r"sind|ist|war|haben|hat|hatte|wurde|werden|zeige|zeig|bitte|gibt|für|nach|"
+    r"mit|im|am|beim|vom|zum|zur|auf|aus|ein|eine|einen|was|wie|wo|wann|warum|"
+    r"kann|soll|muss|nicht|kein|keine|alle|aktiv|aktiven|aktive|zwischen|über|"
+    r"unter|wir|unser|unsere|diese|dieser|dieses)\b", re.I)
+_EN_STOPWORDS = re.compile(
+    r"\b(the|is|are|was|were|show|list|give|what|which|when|where|why|how|who|"
+    r"can|could|should|would|do|does|did|deploy|release|releases|depend|depends|"
+    r"dependency|dependencies|freeze|window|windows|conflict|conflicts|earliest|"
+    r"safe|governance|active|all|between|for|with|about|there|any|our|approved|"
+    r"exceptions)\b", re.I)
+
+
+def detect_message_language(text: str, default: str) -> str:
+    """de/en for a short chat message; falls back to ``default`` when unclear."""
+    t = text or ""
+    if re.search(r"[äöüßÄÖÜ]", t):
+        return "de"
+    if _DE_STOPWORDS.search(t):
+        return "de"
+    if _EN_STOPWORDS.search(t):
+        return "en"
+    return default
+
 
 def _detect_media_transport(message: str) -> tuple[str, str | None] | None:
     """Detect simple media transport commands (stop/pause/resume/next/previous).
@@ -1099,6 +1133,10 @@ async def websocket_endpoint(
                 msg = WSChatMessage(**data)
                 message_type = msg.type
                 content = msg.content
+                # Answer in the language the user wrote in (parity with the
+                # Teams path). Falls back to ollama.default_lang when unclear,
+                # so German-default deployments are unchanged for German input.
+                turn_lang = detect_message_language(content, ollama.default_lang)
                 msg_session_id = msg.session_id
                 use_rag = msg.use_rag
                 knowledge_base_id = msg.knowledge_base_id
@@ -1468,7 +1506,7 @@ async def websocket_endpoint(
             document_context = ""
             if not media_shortcut_handled and not paperless_confirm_handled:
                 memory_context = await _retrieve_memory_context(
-                    content, user_id=user_id, lang=ollama.default_lang
+                    content, user_id=user_id, lang=turn_lang
                 )
                 if attachment_ids:
                     document_context = await _fetch_document_context(
@@ -1492,14 +1530,14 @@ async def websocket_endpoint(
             if user_personality_style:
                 from services.ollama_service import _build_personality_context
                 personality_context = _build_personality_context(
-                    user_personality_style, user_personality_prompt, ollama.default_lang
+                    user_personality_style, user_personality_prompt, turn_lang
                 )
 
             # Build time-of-day context for agent prompts (day/evening/night).
             # build_time_context wraps everything in try/except and returns ""
             # on any error, so this can never break the agent path.
             from services.daypart_service import build_time_context
-            time_context = build_time_context(lang=ollama.default_lang)
+            time_context = build_time_context(lang=turn_lang)
 
             # Get router from app state (initialized at startup if agent_enabled)
             agent_router = getattr(app.state, 'agent_router', None)
@@ -1829,7 +1867,7 @@ async def websocket_endpoint(
                             message=content,
                             ollama=ollama,
                             executor=executor,
-                            lang=ollama.default_lang,
+                            lang=turn_lang,
                             typing_callback=_typing_callback,
                             conversation_history=session_state.conversation_history if session_state.conversation_history else None,
                             room_context=room_context,
@@ -2057,6 +2095,7 @@ async def websocket_endpoint(
                     async for step in agent.run(
                         message=content,
                         ollama=ollama,
+                        lang=turn_lang,
                         executor=executor,
                         conversation_history=session_state.conversation_history if session_state.conversation_history else None,
                         room_context=room_context,
