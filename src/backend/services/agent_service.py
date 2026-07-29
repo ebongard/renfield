@@ -147,6 +147,13 @@ class AgentContext:
 
     # Track tools that return empty results (for empty-result loop detection)
     empty_results_per_tool: dict[str, int] = field(default_factory=dict)
+    # Count of "unknown tool" attempts per requested name. detect_infinite_loop
+    # only inspects executed tool_call steps, so an agent repeatedly asking for a
+    # tool that isn't registered (e.g. one that pre-selection pruned, or a
+    # hallucinated name) produces only `error` steps and never trips the loop
+    # guard — it burns the whole step budget. Tracked here so the loop can abort
+    # to a summary early.
+    invalid_tool_attempts: dict[str, int] = field(default_factory=dict)
 
     # Extracted context variables from tool results (for follow-up queries)
     extracted_vars: dict[str, Any] = field(default_factory=dict)
@@ -276,6 +283,12 @@ class AgentContext:
         """Check if a tool has returned empty results repeatedly."""
         return self.empty_results_per_tool.get(tool, 0) >= threshold
 
+    def record_invalid_tool(self, tool: str) -> int:
+        """Record an attempt to call an unregistered/unknown tool. Returns the
+        running total of invalid attempts across the turn."""
+        self.invalid_tool_attempts[tool] = self.invalid_tool_attempts.get(tool, 0) + 1
+        return sum(self.invalid_tool_attempts.values())
+
     def detect_infinite_loop(self, min_repetitions: int = 3) -> bool:
         """
         Detect if the agent is stuck in an infinite loop.
@@ -402,6 +415,14 @@ def _serialize_for_prompt(data: any, budget_chars: int = 0) -> str:
 
     # Scalar or other — return as-is (already over budget but can't reduce structurally)
     return serialized
+
+
+# Abort the ReAct loop after this many total "unknown tool" attempts in a turn.
+# The regular infinite-loop guard only inspects executed tool_call steps, so
+# repeated requests for an unregistered tool (pruned by pre-selection, or
+# hallucinated) never trip it. 3 mirrors detect_infinite_loop's min_repetitions:
+# give the LLM a couple of chances to self-correct off the error, then summarize.
+_INVALID_TOOL_ABORT_THRESHOLD = 3
 
 
 # LLM option defaults — used as fallback if prompts/agent.yaml lacks the key.
@@ -1860,6 +1881,7 @@ class AgentService:
             resolved = self.tool_registry.resolve_tool_name(action)
             if not resolved:
                 logger.warning(f"⚠️ Agent step {step_num}: Invalid tool '{action}'")
+                total_invalid = context.record_invalid_tool(action)
                 error_content = f"Unknown tool: {action}" if lang == "en" else f"Unbekanntes Tool: {action}"
                 error_step = AgentStep(
                     step_number=step_num,
@@ -1869,6 +1891,23 @@ class AgentService:
                 )
                 context.steps.append(error_step)
                 yield error_step
+                # Loop guard: `detect_infinite_loop` only sees executed tool_call
+                # steps, so an agent fixated on a tool that isn't registered
+                # (pruned by pre-selection, or hallucinated) would spin here to
+                # max_steps producing nothing. Abort to a summary once it has
+                # wasted enough steps — same fail-fast contract as the empty /
+                # infinite-loop guards below.
+                if total_invalid >= _INVALID_TOOL_ABORT_THRESHOLD:
+                    logger.warning(
+                        f"🔄 Agent gave up: {total_invalid} invalid-tool attempts "
+                        f"(last '{action}') at step {step_num}"
+                    )
+                    summary_step = await self._build_summary_answer(
+                        context, step_num, message, ollama, agent_model,
+                        lang=lang, agent_client=agent_client,
+                    )
+                    yield summary_step
+                    return
                 # Continue loop — LLM will see the error in history
                 continue
             if resolved != action:

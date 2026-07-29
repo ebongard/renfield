@@ -476,6 +476,42 @@ class TestAgentContext:
         assert ctx.detect_infinite_loop(min_repetitions=3) is False
 
     @pytest.mark.unit
+    def test_record_invalid_tool_counts_and_totals(self):
+        """record_invalid_tool tracks per-name counts and returns the running total.
+
+        Invalid-tool attempts are `error` steps, invisible to detect_infinite_loop
+        (which only inspects executed tool_call steps). Without this counter an
+        agent fixated on an unregistered tool (e.g. one pre-selection pruned)
+        spins to max_steps producing nothing. See _INVALID_TOOL_ABORT_THRESHOLD.
+        """
+        from services.agent_service import _INVALID_TOOL_ABORT_THRESHOLD
+
+        ctx = AgentContext(original_message="test")
+        assert ctx.invalid_tool_attempts == {}
+
+        # detect_infinite_loop must NOT catch these (they never execute):
+        for _ in range(5):
+            ctx.steps.append(AgentStep(step_number=1, step_type="error", tool="mcp.konfigure.list_aktivities"))
+        assert ctx.detect_infinite_loop(min_repetitions=3) is False
+
+        # The dedicated counter does, and reaches the abort threshold.
+        total = 0
+        for _ in range(_INVALID_TOOL_ABORT_THRESHOLD):
+            total = ctx.record_invalid_tool("mcp.konfigure.list_aktivities")
+        assert total == _INVALID_TOOL_ABORT_THRESHOLD
+        assert total >= _INVALID_TOOL_ABORT_THRESHOLD  # loop would abort here
+
+    @pytest.mark.unit
+    def test_record_invalid_tool_total_across_different_names(self):
+        """The abort total spans different invalid names, not just repeats of one."""
+        ctx = AgentContext(original_message="test")
+        ctx.record_invalid_tool("foo")
+        ctx.record_invalid_tool("bar")
+        total = ctx.record_invalid_tool("baz")
+        assert total == 3
+        assert ctx.invalid_tool_attempts == {"foo": 1, "bar": 1, "baz": 1}
+
+    @pytest.mark.unit
     def test_history_prompt_with_steps(self):
         ctx = AgentContext(original_message="test")
         ctx.steps.append(AgentStep(
