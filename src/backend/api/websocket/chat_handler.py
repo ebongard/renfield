@@ -1208,7 +1208,7 @@ async def websocket_endpoint(
                 )
                 blocked_msg = (
                     "Ich kann diese Anfrage nicht verarbeiten."
-                    if ollama.default_lang == "de"
+                    if turn_lang == "de"
                     else "I cannot process this request."
                 )
                 await websocket.send_json({"type": "stream", "content": blocked_msg})
@@ -1370,7 +1370,7 @@ async def websocket_endpoint(
                     # from a room-aware client raises NameError, which
                     # the outer `except Exception` swallows by closing
                     # the WebSocket.
-                    lang=ollama.default_lang,
+                    lang=turn_lang,
                     # B.4.a: pass through speaker resolution when this
                     # message came in via the streaming voice path.
                     # Hooks that don't care can ignore the kwarg.
@@ -1510,7 +1510,7 @@ async def websocket_endpoint(
                 )
                 if attachment_ids:
                     document_context = await _fetch_document_context(
-                        attachment_ids, lang=ollama.default_lang
+                        attachment_ids, lang=turn_lang
                     )
                 # LLM fallback: a pending confirm exists but the reply didn't look
                 # like ja/nein/field-choices. Tell the agent so it can still route
@@ -1604,7 +1604,7 @@ async def websocket_endpoint(
                     content, _resolved, ollama,
                     conversation_history=session_state.conversation_history if session_state.conversation_history else None,
                     context_vars=_ctx_vars,
-                    lang=ollama.default_lang,
+                    lang=turn_lang,
                     role_hint=_role_hint,
                 )
                 logger.info(f"🎯 Router: '{content[:60]}...' → {role.name}")
@@ -1649,7 +1649,7 @@ async def websocket_endpoint(
                     "pre_agent_context",
                     history=session_state.conversation_history or [],
                     session_id=msg_session_id or "",
-                    lang=ollama.default_lang,
+                    lang=turn_lang,
                     user_id=user_id,
                 )
                 if hook_results:
@@ -1702,7 +1702,7 @@ async def websocket_endpoint(
                             sub_intent=role.sub_intent,
                             handler_name=dispatch.get("handler", ""),
                             message=content,
-                            lang=ollama.default_lang,
+                            lang=turn_lang,
                             session_id=msg_session_id,
                             user_id=user_id,
                             user_name=dispatch_user_name,
@@ -1784,7 +1784,7 @@ async def websocket_endpoint(
                         plan=None,
                         message=content,
                         role=role,
-                        lang=ollama.default_lang,
+                        lang=turn_lang,
                         user_id=user_id,
                         session_id=msg_session_id,
                     )
@@ -1831,7 +1831,7 @@ async def websocket_endpoint(
                         orchestrator = QueryOrchestrator(agent_router, mcp_manager)
                         try:
                             sub_queries = await orchestrator.detect_multi_domain(
-                                content, ollama, lang=ollama.default_lang,
+                                content, ollama, lang=turn_lang,
                             )
                         except Exception as _orch_err:
                             logger.warning(f"Orchestrator detection failed, falling back to single-role: {_orch_err}")
@@ -1930,7 +1930,7 @@ async def websocket_endpoint(
                                 full_response = (
                                     "Antwort konnte nicht vollständig geprüft werden. "
                                     "Bitte versuche es erneut."
-                                    if ollama.default_lang.startswith("de") else
+                                    if turn_lang.startswith("de") else
                                     "Response could not be fully validated. Please try again."
                                 )
                             else:
@@ -1949,7 +1949,7 @@ async def websocket_endpoint(
                                         )
                                         full_response = (
                                             "[Inhalt zur Datenschutzprüfung zurückgehalten]"
-                                            if ollama.default_lang.startswith("de") else
+                                            if turn_lang.startswith("de") else
                                             "[content withheld for privacy review]"
                                         )
                                     else:
@@ -2493,7 +2493,7 @@ WICHTIG: Nutze die ECHTEN Daten aus dem Ergebnis! Gib NUR die Antwort, KEIN JSON
                         "build_assistant_card",
                         tool_summaries=None,
                         assistant_msg=full_response,
-                        lang=ollama.default_lang,
+                        lang=turn_lang,
                         user_id=user_id,
                         session_id=msg_session_id,
                         rid=request_id_var.get("--------"),
@@ -2617,7 +2617,7 @@ WICHTIG: Nutze die ECHTEN Daten aus dem Ergebnis! Gib NUR die Antwort, KEIN JSON
                             assistant_response=full_response,
                             user_id=user_id,
                             session_id=msg_session_id,
-                            lang=ollama.default_lang,
+                            lang=turn_lang,
                         )
                     )
                 else:
@@ -2627,7 +2627,7 @@ WICHTIG: Nutze die ECHTEN Daten aus dem Ergebnis! Gib NUR die Antwort, KEIN JSON
                             assistant_response=full_response,
                             user_id=user_id,
                             session_id=msg_session_id,
-                            lang=ollama.default_lang,
+                            lang=turn_lang,
                         )
                     )
                 _background_tasks.add(task)
@@ -2649,7 +2649,7 @@ WICHTIG: Nutze die ECHTEN Daten aus dem Ergebnis! Gib NUR die Antwort, KEIN JSON
                         websocket,
                         content,
                         full_response,
-                        lang=ollama.default_lang,
+                        lang=turn_lang,
                         model=settings.followup_chips_model or settings.ollama_intent_model,
                         count=settings.followup_chips_count,
                         timeout=settings.followup_chips_timeout_seconds,
