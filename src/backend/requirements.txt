@@ -81,7 +81,7 @@ python-dateutil>=2.8.2
 rapidfuzz>=3.9.0              # Fuzzy string matching (Paperless taxonomy resolution)
 
 # MCP Client (Model Context Protocol)
-mcp>=1.26.0
+mcp>=1.26.0,<2.0        # <2.0: mcp 2.0.0 renamed streamablehttp_client → streamable_http_client (breaks services/mcp_client.py)
 jsonschema>=4.21.0            # JSON Schema validation for MCP tool inputs
 
 # MCP Servers (standalone packages)
