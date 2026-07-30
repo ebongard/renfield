@@ -1340,6 +1340,7 @@ class TestParallelExecution:
         assert result == {
             "role": "release", "query": "test",
             "answer": "", "steps": [], "plugin_data": {}, "error": None,
+            "has_data": False,
         }
 
 
@@ -2358,3 +2359,75 @@ class TestSynthesisHooks:
 # ============================================================================
 # Phase 1 (orchestrator-uplift) — backwards compat: vanilla Renfield deploy
 # ============================================================================
+
+
+class TestEmitCombinedAnswerNoDataFilter:
+    """Structurally drop a legitimately-empty source from the combined answer
+    when a data-bearing source remains — via the has_data flag captured from
+    each sub-agent's actual tool results, NOT prose pattern-matching."""
+
+    @pytest.mark.asyncio
+    async def test_drops_no_data_source_when_data_source_remains(self):
+        orch = QueryOrchestrator(_make_router([]), MagicMock())
+        sub_results = [
+            {"role": "konfigure", "answer": "Freeze windows for OMS-01: ...",
+             "has_data": True, "steps": [], "plugin_data": {}},
+            {"role": "release", "answer": "The tool did not return any data.",
+             "has_data": False, "steps": [], "plugin_data": {}},
+        ]
+        with patch.object(orch, "_synthesize",
+                          new=AsyncMock(return_value="SHOULD_NOT_BE_USED")) as syn:
+            steps = [s async for s in
+                     orch._emit_combined_answer("msg", sub_results, _make_ollama(""), "en")]
+        syn.assert_not_called()  # only one data-bearing source → single-survivor
+        finals = [s for s in steps if s.step_type == "final_answer"]
+        assert len(finals) == 1
+        assert "Freeze windows" in finals[0].content
+        assert "did not return" not in finals[0].content
+
+    @pytest.mark.asyncio
+    async def test_all_empty_keeps_existing_behavior(self):
+        orch = QueryOrchestrator(_make_router([]), MagicMock())
+        sub_results = [
+            {"role": "release", "answer": "No releases found.",
+             "has_data": False, "steps": [], "plugin_data": {}},
+        ]
+        with patch.object(orch, "_synthesize", new=AsyncMock(return_value=None)):
+            steps = [s async for s in
+                     orch._emit_combined_answer("msg", sub_results, _make_ollama(""), "en")]
+        finals = [s for s in steps if s.step_type == "final_answer"]
+        assert len(finals) == 1
+        # the only source is empty → NOT dropped (we never blank the answer)
+        assert "No releases found" in finals[0].content
+
+    @pytest.mark.asyncio
+    async def test_two_data_sources_both_synthesized(self):
+        orch = QueryOrchestrator(_make_router([]), MagicMock())
+        sub_results = [
+            {"role": "konfigure", "answer": "Freezes ...", "has_data": True,
+             "steps": [], "plugin_data": {}},
+            {"role": "jira", "answer": "Ticket RM27-4 ...", "has_data": True,
+             "steps": [], "plugin_data": {}},
+        ]
+        with patch.object(orch, "_synthesize",
+                          new=AsyncMock(return_value="COMBINED")) as syn:
+            steps = [s async for s in
+                     orch._emit_combined_answer("msg", sub_results, _make_ollama(""), "en")]
+        syn.assert_called_once()
+        assert len(syn.call_args.args[1]) == 2  # both data sources passed
+        finals = [s for s in steps if s.step_type == "final_answer"]
+        assert finals[0].content == "COMBINED"
+
+    @pytest.mark.asyncio
+    async def test_missing_has_data_flag_defaults_to_kept(self):
+        """Back-compat: a sub_result without has_data must never be dropped."""
+        orch = QueryOrchestrator(_make_router([]), MagicMock())
+        sub_results = [
+            {"role": "release", "answer": "Legacy answer with no flag.",
+             "steps": [], "plugin_data": {}},
+        ]
+        with patch.object(orch, "_synthesize", new=AsyncMock(return_value=None)):
+            steps = [s async for s in
+                     orch._emit_combined_answer("msg", sub_results, _make_ollama(""), "en")]
+        finals = [s for s in steps if s.step_type == "final_answer"]
+        assert "Legacy answer" in finals[0].content

@@ -41,6 +41,26 @@ def _strip_source_line(answer: str) -> str:
     """Remove any trailing ``_Quelle: ..._`` / ``_Source: ..._`` line."""
     return _SOURCE_LINE_RE.sub("", answer).rstrip()
 
+
+def _sub_agent_returned_data(result: dict) -> bool:
+    """Structural check: did this sub-agent's tools actually return data?
+
+    Grounded in the data flow, not the LLM's prose: True iff at least one
+    ``tool_result`` step succeeded AND carried a non-null ``data`` payload
+    (``AgentStep.data`` = the tool result's ``data``, which is ``None`` for an
+    empty/"no results" tool response — see agent_service, and the dup-guard's
+    stop-directive which carries no data). Used to drop a legitimately-empty
+    source (e.g. Digital.ai Release queried for konfigure-only entities) from
+    the combined answer instead of pattern-matching "the tool returned no data"
+    out of its narration.
+
+    ``has_data`` is captured on the sub_result in ``_run_sub_agent`` BEFORE the
+    sub_agent_role tag is written into ``step.data`` (which would otherwise mask
+    the null). This reader just trusts that flag; default True so a missing
+    signal never drops a source.
+    """
+    return bool(result.get("has_data", True))
+
 if TYPE_CHECKING:
     from services.action_executor import ActionExecutor
     from services.agent_router import AgentRole, AgentRouter
@@ -82,6 +102,7 @@ def _failed_sub_result(role: str, query: str, error: str | None = None) -> dict:
         "steps": [],
         "plugin_data": {},
         "error": error,
+        "has_data": False,
     }
 
 
@@ -446,6 +467,13 @@ class QueryOrchestrator:
 
             steps: list = []
             final_answer: str | None = None
+            # Structural "did this sub-agent's tools return data?" — captured
+            # from the raw step BEFORE the sub_agent_role tag is written into
+            # step.data below (which would replace a null payload with a dict
+            # and mask the signal). A tool_result step carries the tool's own
+            # success flag + data payload (data is None for an empty response),
+            # so this reflects the data flow, not the LLM's wording.
+            has_data = False
             try:
                 async for step in agent.run(
                     message=query,
@@ -454,6 +482,12 @@ class QueryOrchestrator:
                     lang=lang,
                     **agent_kwargs,
                 ):
+                    if (
+                        step.step_type == "tool_result"
+                        and getattr(step, "success", False)
+                        and step.data is not None
+                    ):
+                        has_data = True
                     # Tag step with sub-agent role for frontend grouping.
                     # Only inject when data is dict-shaped or unset — list
                     # data (JQL results) and scalars must stay as-is so
@@ -483,6 +517,7 @@ class QueryOrchestrator:
                 "steps": steps,
                 "plugin_data": {},
                 "error": agent_run_error,
+                "has_data": has_data,
             }
 
             # post_sub_agent: fire even on agent.run crash so plugins can
@@ -673,8 +708,17 @@ class QueryOrchestrator:
 
         non_empty = [r for r in sub_results if r.get("answer")]
 
-        if len(non_empty) >= 2:
-            synthesized = await self._synthesize(message, sub_results, ollama, lang)
+        # Prefer sources that actually returned data: drop a legitimately-empty
+        # source's "found nothing" narration when at least one data-bearing
+        # source remains (e.g. a konfigure release-calendar question that also
+        # fans to Digital.ai Release, which holds none of those entities). Only
+        # applies to the mixed case — if EVERY source is empty, answer_sources
+        # stays == non_empty and the existing behavior is unchanged.
+        with_data = [r for r in non_empty if _sub_agent_returned_data(r)]
+        answer_sources = with_data if with_data else non_empty
+
+        if len(answer_sources) >= 2:
+            synthesized = await self._synthesize(message, answer_sources, ollama, lang)
             if synthesized:
                 yield AgentStep(
                     step_number=99,
@@ -684,11 +728,11 @@ class QueryOrchestrator:
                 return
             # Synthesizer returned nothing — fall through to fallback.
 
-        if non_empty:
+        if answer_sources:
             yield AgentStep(
                 step_number=99,
                 step_type="final_answer",
-                content=non_empty[0]["answer"],
+                content=answer_sources[0]["answer"],
             )
             return
 
