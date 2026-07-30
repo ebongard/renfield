@@ -485,8 +485,12 @@ class QueryOrchestrator:
                     if (
                         step.step_type == "tool_result"
                         and getattr(step, "success", False)
-                        and step.data is not None
+                        and step.data not in (None, [], {})
                     ):
+                        # A tool can succeed with an EMPTY payload (e.g.
+                        # find_freeze_windows returns [] for an unknown
+                        # application_identifier). An empty list/dict is not
+                        # data — only a non-empty payload counts.
                         has_data = True
                     # Tag step with sub-agent role for frontend grouping.
                     # Only inject when data is dict-shaped or unset — list

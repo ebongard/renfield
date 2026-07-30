@@ -2431,3 +2431,45 @@ class TestEmitCombinedAnswerNoDataFilter:
                      orch._emit_combined_answer("msg", sub_results, _make_ollama(""), "en")]
         finals = [s for s in steps if s.step_type == "final_answer"]
         assert "Legacy answer" in finals[0].content
+
+
+class TestSubAgentHasDataCapture:
+    """has_data is captured structurally from each tool_result step's success +
+    data payload. An empty list/dict payload (e.g. find_freeze_windows for an
+    unknown application_identifier) is NOT data."""
+
+    async def _run_with_payload(self, payload):
+        from services.agent_service import AgentStep
+        from services.orchestrator import QueryOrchestrator
+
+        async def _fake_run(*a, **k):
+            yield AgentStep(step_number=1, step_type="tool_result",
+                            tool="find_freeze_windows", success=True, data=payload)
+            yield AgentStep(step_number=2, step_type="final_answer", content="done")
+
+        role = _make_role("konfigure", servers=["konfigure"])
+        role.has_agent_loop = True
+        orch = QueryOrchestrator(_make_router([role]), MagicMock())
+        with patch("services.agent_service.AgentService") as MockAS, \
+             patch("services.agent_tools.AgentToolRegistry") as MockReg:
+            mock_agent = MagicMock()
+            mock_agent.run = _fake_run
+            MockAS.return_value = mock_agent
+            MockReg.create = AsyncMock(return_value=MagicMock())
+            return await orch._run_sub_agent(
+                {"role": "konfigure", "query": "q"}, _make_ollama("ok"), MagicMock(), "de")
+
+    @pytest.mark.asyncio
+    async def test_nonempty_payload_has_data_true(self):
+        result = await self._run_with_payload([{"id": 1, "name": "Freeze"}])
+        assert result["has_data"] is True
+
+    @pytest.mark.asyncio
+    async def test_empty_list_payload_has_data_false(self):
+        result = await self._run_with_payload([])  # find_freeze_windows unknown id
+        assert result["has_data"] is False
+
+    @pytest.mark.asyncio
+    async def test_null_payload_has_data_false(self):
+        result = await self._run_with_payload(None)
+        assert result["has_data"] is False
