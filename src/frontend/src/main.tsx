@@ -38,32 +38,69 @@ if (_edition === 'pro') {
   document.documentElement.dataset.edition = 'pro';
 }
 
-// OIDC URL-fragment hand-off. After a successful OIDC dance the backend
-// redirects to /#access_token=<JWT>&expires_in=<seconds>&provider=entra.
-// We move those tokens into localStorage (the standard storage the rest
-// of the app reads from) and clear the fragment before React mounts —
-// otherwise AuthContext's mount-time fetchUser() would miss the token
-// and the user would briefly see the login page before the fetch retried.
-// Fragment is never sent to the server, so the JWT does NOT show up in
-// any HTTP request log even though it lands in the URL bar momentarily.
+// OIDC URL-fragment hand-off (LEGACY — security audit). The old OIDC implicit
+// flow redirects to /#access_token=<JWT>&expires_in=<seconds>&provider=entra and
+// we move that token into localStorage before React mounts (otherwise
+// AuthContext's mount-time fetchUser() would miss it and briefly flash the login
+// page). The hardened replacement is the ?code=+PKCE exchange
+// (pages/AuthCallback.tsx / SSO_HANDOFF_ENABLED), which validates state + a PKCE
+// verifier and never puts a token in the URL.
+//
+// This handler is a token-INJECTION sink: any attacker-crafted `#access_token=`
+// is copied into localStorage. We cannot fully close that on the client (the
+// browser can't verify the HS256 signature), so we (a) gate the whole handler
+// behind a build flag — a kill switch for the post-cutover build; default ON so
+// no still-migrating SSO emitter (Reva) breaks — (b) accept only a structurally
+// valid, UNEXPIRED access JWT, and (c) ALWAYS strip the fragment from the URL,
+// even when we reject the token, so a crafted value never lingers in
+// history/Referer. Flip VITE_SSO_LEGACY_FRAGMENT=false and delete this once the
+// emitter is fully migrated to ?code=.
+const _SSO_LEGACY_FRAGMENT_ENABLED =
+  (import.meta.env.VITE_SSO_LEGACY_FRAGMENT ?? 'true') !== 'false';
+
+function _looksLikeUnexpiredAccessJwt(token: string): boolean {
+  const parts = token.split('.');
+  if (parts.length !== 3) return false;
+  try {
+    const payload = JSON.parse(
+      atob(parts[1].replace(/-/g, '+').replace(/_/g, '/')),
+    ) as { type?: string; exp?: number };
+    return (
+      payload.type === 'access'
+      && typeof payload.exp === 'number'
+      && payload.exp * 1000 > Date.now()
+    );
+  } catch {
+    return false;
+  }
+}
+
 function _consumeOidcHashHandoff(): void {
+  if (!_SSO_LEGACY_FRAGMENT_ENABLED) return;
   const hash = window.location.hash;
   if (!hash || !hash.startsWith('#access_token=')) {
     return;
   }
   const params = new URLSearchParams(hash.slice(1));
   const accessToken = params.get('access_token');
-  if (!accessToken) return;
+  // Strip the fragment from the URL bar without triggering a navigation —
+  // unconditionally, even if we reject the token below, so a crafted
+  // `#access_token=` never lingers in history/Referer. Keep any path/query the
+  // backend included (e.g. ?from=/brain).
+  const clearFragment = (): void => {
+    history.replaceState(
+      null,
+      '',
+      window.location.pathname + window.location.search,
+    );
+  };
+  if (!accessToken || !_looksLikeUnexpiredAccessJwt(accessToken)) {
+    clearFragment();
+    return;
+  }
 
   localStorage.setItem('renfield_access_token', accessToken);
-  // Clear the fragment from the URL bar without triggering a navigation.
-  // Replacing with `window.location.pathname + window.location.search` keeps
-  // any path/query the backend included (e.g. ?from=/brain).
-  history.replaceState(
-    null,
-    '',
-    window.location.pathname + window.location.search,
-  );
+  clearFragment();
 }
 _consumeOidcHashHandoff();
 

@@ -6,7 +6,7 @@ import os
 import sys
 from datetime import UTC, datetime
 
-from fastapi import Depends, FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
+from fastapi import Depends, FastAPI, HTTPException, Query, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from loguru import logger
@@ -231,7 +231,7 @@ app.include_router(kiosk_router, tags=["WebSocket Kiosk"])
 
 # WebSocket for Wake Word Detection (Server-Side Fallback)
 @app.websocket("/ws/wakeword")
-async def wakeword_websocket(websocket: WebSocket):
+async def wakeword_websocket(websocket: WebSocket, token: str | None = Query(None)):
     """
     WebSocket endpoint for server-side wake word detection.
 
@@ -246,6 +246,18 @@ async def wakeword_websocket(websocket: WebSocket):
                    {"type": "wakeword_detected", "keyword": str, "score": float}
                    {"type": "error", "message": str}
     """
+    # Security audit: this endpoint used to accept() with NO authentication —
+    # any client could open it and stream audio into the server-side
+    # OpenWakeWord service (a compute-DoS vector). Gate it like every other WS
+    # endpoint; when WS_AUTH_ENABLED is off (single-user) auth is skipped, so
+    # this is a no-op there.
+    from services.websocket_auth import authenticate_websocket, close_unauthorized
+
+    auth = await authenticate_websocket(websocket, token)
+    if auth is None:
+        await close_unauthorized(websocket)
+        return
+
     await websocket.accept()
     logger.info("🎤 Wake word WebSocket connection established")
 

@@ -1191,6 +1191,14 @@ class Settings(BaseSettings):
     login_lockout_max_attempts: int = 5        # failures within the window → lock
     login_lockout_window_seconds: int = 900    # 15 min rolling failure window
     login_lockout_duration_seconds: int = 900  # 15 min lock once tripped
+    # Anti-DoS (security audit): a per-username lock that any single attacker can
+    # trip is a denial-of-service — feed 5 bad passwords and the real user is
+    # locked out. The per-username lock's actual purpose (#693) is stopping
+    # IP-ROTATING attacks; a single-IP brute force is already throttled by the
+    # per-IP rate limit. So only trip the lock once failures come from at least
+    # this many DISTINCT source IPs. 1 = legacy behavior (any single IP can
+    # lock). Robustness of the IP signal depends on TRUSTED_PROXIES being set.
+    login_lockout_min_distinct_ips: int = 2
 
     # WebSocket Connection Limits
     ws_max_connections_per_ip: int = 10

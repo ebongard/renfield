@@ -17,6 +17,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from models.database import Atom as AtomModel
 from models.database import Document, KnowledgeBase, User
 from models.permissions import Permission, has_permission
 from services.atom_service import AtomService
@@ -170,6 +171,64 @@ async def check_kb_access(
             if user_level >= required_level:
                 return True
 
+    return False
+
+
+async def check_document_access(
+    doc: Document,
+    user: User | None,
+    required_action: str,  # "read" | "write" | "delete"
+    db: AsyncSession,
+) -> bool:
+    """Authoritative per-document ACL — IDOR-safe for KB-less documents.
+
+    The per-document endpoints used to gate on ``if doc.knowledge_base_id:``
+    and only then call :func:`check_kb_access`. Two holes (security audit):
+    a document with ``knowledge_base_id IS NULL`` (uploaded with no KB, or
+    orphaned when its KB was deleted via ``ondelete="SET NULL"``) skipped the
+    check ENTIRELY, and a set-but-orphaned KB id (row missing) also fell
+    through the ``if kb and …`` guard — both granting any authenticated user
+    read/delete/reindex/search on another user's document.
+
+    This resolver closes both:
+    - auth disabled → allow (single-user mode)
+    - no user (auth on) → deny
+    - ``kb.all`` (admin) → allow
+    - the document **owner** → allow (covers KB-less docs). Ownership lives on the
+      linked atoms row (``Document.atom_id`` → ``atoms.owner_user_id``), NOT on the
+      documents table — circles v2 moved the access-control unit to the atom
+      (docs/design/atoms-granularity.md).
+    - a document with a resolvable KB row → delegate to :func:`check_kb_access`
+      (public / explicit grants / KB owner)
+    - anything else (no resolvable owner atom **and** no resolvable KB, incl. an
+      orphaned KB id or a doc with no atom) → **deny, fail-closed**
+    """
+    if not settings.auth_enabled:
+        return True
+    if not user:
+        return False
+    user_perms = user.get_permissions()
+    if has_permission(user_perms, Permission.KB_ALL):
+        return True
+    # Owner always reaches their own document — the KB-less fallback. The owner
+    # is the linked atoms row's owner_user_id, reached via Document.atom_id.
+    if doc.atom_id:
+        owner_res = await db.execute(
+            select(AtomModel.owner_user_id).where(AtomModel.atom_id == doc.atom_id)
+        )
+        owner_id = owner_res.scalar_one_or_none()
+        if owner_id is not None and owner_id == user.id:
+            return True
+    # KB-backed: delegate to the KB ACL (shared / public / explicit grants).
+    if doc.knowledge_base_id:
+        result = await db.execute(
+            select(KnowledgeBase).where(KnowledgeBase.id == doc.knowledge_base_id)
+        )
+        kb = result.scalar_one_or_none()
+        if kb is not None:
+            return await check_kb_access(kb, user, required_action, db)
+        # KB id set but the row is gone (orphaned) → fall through to deny.
+    # No resolvable owner atom and no resolvable KB → deny.
     return False
 
 
@@ -554,13 +613,8 @@ async def get_documents_batch(
                 # is belt-and-braces. Skip the row rather than 401ing the
                 # whole batch.
                 continue
-            if doc.knowledge_base_id:
-                kb_res = await db.execute(
-                    select(KnowledgeBase).where(KnowledgeBase.id == doc.knowledge_base_id)
-                )
-                kb = kb_res.scalar_one_or_none()
-                if kb and not await check_kb_access(kb, user, "read", db):
-                    continue
+            if not await check_document_access(doc, user, "read", db):
+                continue
         kwargs = _doc_to_response_kwargs(doc)
         await _augment_with_progress(doc, kwargs, include_queue_position=True)
         responses.append(DocumentResponse(**kwargs))
@@ -583,13 +637,8 @@ async def get_document(
     if settings.auth_enabled:
         if not user:
             raise HTTPException(status_code=401, detail="Authentication required")
-        if document.knowledge_base_id:
-            result = await db.execute(
-                select(KnowledgeBase).where(KnowledgeBase.id == document.knowledge_base_id)
-            )
-            kb = result.scalar_one_or_none()
-            if kb and not await check_kb_access(kb, user, "read", db):
-                raise HTTPException(status_code=403, detail="No access to this document")
+        if not await check_document_access(document, user, "read", db):
+            raise HTTPException(status_code=403, detail="No access to this document")
 
     kwargs = _doc_to_response_kwargs(document)
     await _augment_with_progress(document, kwargs, include_queue_position=True)
@@ -608,13 +657,8 @@ async def delete_document(
         if not user:
             raise HTTPException(status_code=401, detail="Authentication required")
         doc = await rag.get_document(document_id)
-        if doc and doc.knowledge_base_id:
-            result = await db.execute(
-                select(KnowledgeBase).where(KnowledgeBase.id == doc.knowledge_base_id)
-            )
-            kb = result.scalar_one_or_none()
-            if kb and not await check_kb_access(kb, user, "delete", db):
-                raise HTTPException(status_code=403, detail="No delete access to this document")
+        if doc and not await check_document_access(doc, user, "delete", db):
+            raise HTTPException(status_code=403, detail="No delete access to this document")
     success = await rag.delete_document(document_id)
 
     if not success:
@@ -649,13 +693,8 @@ async def reindex_document(
     if settings.auth_enabled:
         if not user:
             raise HTTPException(status_code=401, detail="Authentication required")
-        if doc.knowledge_base_id:
-            result = await db.execute(
-                select(KnowledgeBase).where(KnowledgeBase.id == doc.knowledge_base_id)
-            )
-            kb = result.scalar_one_or_none()
-            if kb and not await check_kb_access(kb, user, "write", db):
-                raise HTTPException(status_code=403, detail="No write access to this document")
+        if not await check_document_access(doc, user, "write", db):
+            raise HTTPException(status_code=403, detail="No write access to this document")
 
     # Dedupe in-flight reindexes (/review finding): a double-click would enqueue
     # a second user_reindex, and the worker would purge+rebuild twice — a wasted
@@ -739,6 +778,22 @@ async def move_documents(
         target_kb = result.scalar_one_or_none()
         if target_kb and not await check_kb_access(target_kb, user, "write", db):
             raise HTTPException(status_code=403, detail="No write access to target knowledge base")
+
+        # SECURITY (IDOR, audit HIGH-1): validating write access to the TARGET
+        # KB is not enough — the caller must also be allowed to move each SOURCE
+        # document OUT of where it lives. Without this, any user holding kb.own
+        # could re-parent another user's (enumerable, sequential-id) documents
+        # into their own KB and then read the content via /documents/{id}/search.
+        # Require owner-or-KB-write on every requested source doc; fail closed.
+        src_res = await db.execute(
+            select(Document).where(Document.id.in_(request.document_ids))
+        )
+        for src_doc in src_res.scalars().all():
+            if not await check_document_access(src_doc, user, "write", db):
+                raise HTTPException(
+                    status_code=403,
+                    detail="No access to one or more source documents",
+                )
 
     try:
         moved = await rag.move_documents(request.document_ids, request.target_knowledge_base_id)
@@ -1216,13 +1271,8 @@ async def search_in_document(
     if settings.auth_enabled:
         if not user:
             raise HTTPException(status_code=401, detail="Authentication required")
-        if doc.knowledge_base_id:
-            result = await db.execute(
-                select(KnowledgeBase).where(KnowledgeBase.id == doc.knowledge_base_id)
-            )
-            kb = result.scalar_one_or_none()
-            if kb and not await check_kb_access(kb, user, "read", db):
-                raise HTTPException(status_code=403, detail="No access to this document")
+        if not await check_document_access(doc, user, "read", db):
+            raise HTTPException(status_code=403, detail="No access to this document")
 
     results = await rag.search_by_document(
         query=query,

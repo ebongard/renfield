@@ -16,6 +16,7 @@ class _FakeRedis:
     def __init__(self):
         self.store: dict[str, str] = {}
         self.ttls: dict[str, int] = {}
+        self.sets: dict[str, set] = {}
 
     async def incr(self, key):
         val = int(self.store.get(key, "0")) + 1
@@ -23,13 +24,13 @@ class _FakeRedis:
         return val
 
     async def expire(self, key, ttl):
-        if key in self.store:
+        if key in self.store or key in self.sets:
             self.ttls[key] = ttl
             return True
         return False
 
     async def ttl(self, key):
-        if key not in self.store:
+        if key not in self.store and key not in self.sets:
             return -2  # key does not exist
         return self.ttls.get(key, -1)  # -1 = exists but no expiry set
 
@@ -39,10 +40,20 @@ class _FakeRedis:
     async def exists(self, key):
         return 1 if key in self.store else 0
 
+    async def sadd(self, key, *members):
+        s = self.sets.setdefault(key, set())
+        before = len(s)
+        s.update(members)
+        return len(s) - before
+
+    async def scard(self, key):
+        return len(self.sets.get(key, set()))
+
     async def delete(self, *keys):
         for k in keys:
             self.store.pop(k, None)
             self.ttls.pop(k, None)
+            self.sets.pop(k, None)
 
 
 @pytest.fixture
@@ -52,10 +63,29 @@ def lockout(monkeypatch):
     monkeypatch.setattr(ll_mod.settings, "login_lockout_max_attempts", 3, raising=False)
     monkeypatch.setattr(ll_mod.settings, "login_lockout_window_seconds", 900, raising=False)
     monkeypatch.setattr(ll_mod.settings, "login_lockout_duration_seconds", 900, raising=False)
+    # These tests exercise the counter mechanics with the distinct-IP anti-DoS
+    # gate DISABLED (min_distinct_ips=1 = legacy: any single source can trip).
+    # The gate itself is covered by TestLockoutDistinctIpGate below.
+    monkeypatch.setattr(ll_mod.settings, "login_lockout_min_distinct_ips", 1, raising=False)
     lo = LoginLockout()
     fake = _FakeRedis()
     monkeypatch.setattr(lo, "_get_redis", lambda: fake)
     lo._fake = fake  # expose for assertions
+    return lo
+
+
+@pytest.fixture
+def lockout_multi_ip(monkeypatch):
+    """A LoginLockout requiring failures from >=2 distinct source IPs to lock."""
+    monkeypatch.setattr(ll_mod.settings, "login_lockout_enabled", True, raising=False)
+    monkeypatch.setattr(ll_mod.settings, "login_lockout_max_attempts", 3, raising=False)
+    monkeypatch.setattr(ll_mod.settings, "login_lockout_window_seconds", 900, raising=False)
+    monkeypatch.setattr(ll_mod.settings, "login_lockout_duration_seconds", 900, raising=False)
+    monkeypatch.setattr(ll_mod.settings, "login_lockout_min_distinct_ips", 2, raising=False)
+    lo = LoginLockout()
+    fake = _FakeRedis()
+    monkeypatch.setattr(lo, "_get_redis", lambda: fake)
+    lo._fake = fake
     return lo
 
 
@@ -136,3 +166,42 @@ class TestLoginLockout:
         # Next failure (count becomes 2) must detect the missing TTL and re-arm.
         await lockout.record_failure("alice")
         assert fake.ttls.get(fail_key) == 900
+
+
+class TestLockoutDistinctIpGate:
+    """Anti-DoS gate (security audit): with login_lockout_min_distinct_ips=2 a
+    single attacker can no longer lock out a known username at will — the lock
+    only trips once failures come from multiple distinct source IPs."""
+
+    @pytest.mark.unit
+    async def test_single_ip_never_locks(self, lockout_multi_ip):
+        """5 failures all from ONE IP must NOT lock (the DoS the fix closes)."""
+        for _ in range(5):
+            assert await lockout_multi_ip.record_failure("alice", "1.2.3.4") is False
+        assert await lockout_multi_ip.is_locked("alice") is False
+
+    @pytest.mark.unit
+    async def test_two_ips_lock_at_threshold(self, lockout_multi_ip):
+        """Reaching max_attempts across >=2 distinct IPs DOES lock (real attack)."""
+        assert await lockout_multi_ip.record_failure("alice", "1.1.1.1") is False
+        assert await lockout_multi_ip.record_failure("alice", "1.1.1.1") is False
+        # 3rd failure hits max_attempts=3 AND a 2nd distinct IP → trips.
+        assert await lockout_multi_ip.record_failure("alice", "2.2.2.2") is True
+        assert await lockout_multi_ip.is_locked("alice") is True
+
+    @pytest.mark.unit
+    async def test_count_met_but_one_ip_holds_open(self, lockout_multi_ip):
+        """Counter past threshold but a single IP → still not locked."""
+        for _ in range(4):
+            await lockout_multi_ip.record_failure("alice", "9.9.9.9")
+        assert await lockout_multi_ip.is_locked("alice") is False
+        # A second IP then completes the distinct-IP requirement on the next fail.
+        assert await lockout_multi_ip.record_failure("alice", "8.8.8.8") is True
+
+    @pytest.mark.unit
+    async def test_clear_removes_ip_set(self, lockout_multi_ip):
+        await lockout_multi_ip.record_failure("alice", "1.1.1.1")
+        await lockout_multi_ip.record_failure("alice", "2.2.2.2")
+        assert lockout_multi_ip._fake.sets.get("login_fail_ips:alice")
+        await lockout_multi_ip.clear("alice")
+        assert lockout_multi_ip._fake.sets.get("login_fail_ips:alice") is None

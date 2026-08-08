@@ -1,6 +1,7 @@
 import { useState, useRef, useCallback, useEffect } from 'react';
 import { debug } from '../../../utils/debug';
 import { getWebSocketUrl } from '../../../utils/env';
+import { fetchWsToken } from '../../../utils/wsToken';
 import type { MessageSource } from '../../../types/chat';
 
 export interface BaseWsMessage {
@@ -235,22 +236,33 @@ export function useChatWebSocket({
 }: UseChatWebSocketOptions = {}) {
   const [wsConnected, setWsConnected] = useState(false);
   const wsRef = useRef<WebSocket | null>(null);
+  // Set on unmount so an in-flight async token fetch (below) can't open a
+  // socket after the effect has torn down.
+  const cancelledRef = useRef(false);
   const reconnectTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   // Pending whenReady() resolvers, drained on the next onopen/onclose.
   const readyResolversRef = useRef<Array<(ok: boolean) => void>>([]);
 
-  const connectWebSocket = useCallback(() => {
+  const connectWebSocket = useCallback(async () => {
     if (reconnectTimeoutRef.current) {
       clearTimeout(reconnectTimeoutRef.current);
       reconnectTimeoutRef.current = null;
     }
+    cancelledRef.current = false;
 
     let wsUrl = getWebSocketUrl();
-    // Append JWT token for WebSocket authentication (falls back to device-token cookie if absent)
-    const accessToken = localStorage.getItem('renfield_access_token');
-    if (accessToken) {
+    // Security audit M2: authenticate the socket with a SHORT-LIVED, WS-scoped
+    // token (~90s, rejected by the REST API), NOT the full 24h access JWT —
+    // which, passed as ?token=, lands in reverse-proxy access logs and would be
+    // a full-API replay if harvested. fetchWsToken() returns null when WS auth
+    // is disabled (single-user) or on error → open without a token (the backend
+    // skips auth, or rejects and we reconnect). We deliberately never fall back
+    // to the long-lived localStorage token here.
+    const wsToken = await fetchWsToken();
+    if (cancelledRef.current) return;
+    if (wsToken) {
       const sep = wsUrl.includes('?') ? '&' : '?';
-      wsUrl = `${wsUrl}${sep}token=${accessToken}`;
+      wsUrl = `${wsUrl}${sep}token=${wsToken}`;
     }
     const ws = new WebSocket(wsUrl);
 
@@ -356,6 +368,7 @@ export function useChatWebSocket({
     connectWebSocket();
 
     return () => {
+      cancelledRef.current = true;
       if (reconnectTimeoutRef.current) {
         clearTimeout(reconnectTimeoutRef.current);
       }

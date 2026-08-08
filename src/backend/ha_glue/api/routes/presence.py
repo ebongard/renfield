@@ -141,8 +141,16 @@ async def get_debug_sightings(
 # --- Room occupancy ---
 
 @router.get("/rooms", response_model=list[RoomOccupancyResponse])
-async def get_rooms_presence():
-    """Get all rooms with their current occupants."""
+async def get_rooms_presence(
+    current_user: User | None = Depends(require_permission(Permission.ROOMS_READ)),
+):
+    """Get all rooms with their current occupants.
+
+    Gated on ROOMS_READ (security audit): these live-occupancy reads expose who
+    is physically where — the same class of data the ``/debug/sightings`` and
+    ``/analytics/timeline`` siblings already gate — and were previously reachable
+    with no authentication at all.
+    """
     if not ha_glue_settings.presence_enabled:
         return []
 
@@ -173,8 +181,11 @@ async def get_rooms_presence():
 
 
 @router.get("/room/{room_id}", response_model=RoomOccupancyResponse)
-async def get_room_presence(room_id: int):
-    """Get occupants of a specific room."""
+async def get_room_presence(
+    room_id: int,
+    current_user: User | None = Depends(require_permission(Permission.ROOMS_READ)),
+):
+    """Get occupants of a specific room. Gated on ROOMS_READ (security audit)."""
     if not ha_glue_settings.presence_enabled:
         return RoomOccupancyResponse(room_id=room_id)
 
@@ -203,8 +214,17 @@ async def get_room_presence(room_id: int):
 
 
 @router.get("/user/{user_id}", response_model=UserPresenceResponse)
-async def get_user_presence(user_id: int):
-    """Get current room and alone-status for a user."""
+async def get_user_presence(
+    user_id: int,
+    current_user: User | None = Depends(require_permission(Permission.ROOMS_READ)),
+):
+    """Get current room and alone-status for a user.
+
+    Gated on ROOMS_READ + an IDOR guard (security audit): a ROOMS_READ user may
+    read only their OWN live presence; reading another user's location requires
+    ROOMS_MANAGE (same rule as the presence-history endpoints).
+    """
+    _resolve_history_target(user_id, current_user)
     if not ha_glue_settings.presence_enabled:
         return UserPresenceResponse(user_id=user_id)
 
@@ -558,10 +578,22 @@ async def get_heatmap(
     days: int = Query(default=30, ge=1, le=365),
     user_id: int | None = Query(default=None),
     db: AsyncSession = Depends(get_db),
+    current_user: User | None = Depends(require_permission(Permission.ROOMS_READ)),
 ):
-    """Room x hour heatmap of enter events."""
+    """Room x hour heatmap of enter events.
+
+    Gated on ROOMS_READ (security audit). ``user_id=None`` = the house-wide
+    aggregate, which reveals everyone's movement patterns → reserved for
+    ROOMS_MANAGE / single-user mode; a plain ROOMS_READ user is scoped to self,
+    and an explicit cross-user ``user_id`` needs ROOMS_MANAGE.
+    """
     from ha_glue.services.presence_analytics import PresenceAnalyticsService
 
+    if user_id is not None or (
+        current_user is not None
+        and not current_user.has_permission(Permission.ROOMS_MANAGE.value)
+    ):
+        user_id = _resolve_history_target(user_id, current_user)
     service = PresenceAnalyticsService(db)
     return await service.get_heatmap(days=days, user_id=user_id)
 
@@ -571,10 +603,16 @@ async def get_predictions(
     user_id: int = Query(...),
     days: int = Query(default=60, ge=7, le=365),
     db: AsyncSession = Depends(get_db),
+    current_user: User | None = Depends(require_permission(Permission.ROOMS_READ)),
 ):
-    """Per-user room presence predictions by day-of-week and hour."""
+    """Per-user room presence predictions by day-of-week and hour.
+
+    Gated on ROOMS_READ + the cross-user IDOR guard (security audit): predicting
+    another user's whereabouts requires ROOMS_MANAGE.
+    """
     from ha_glue.services.presence_analytics import PresenceAnalyticsService
 
+    user_id = _resolve_history_target(user_id, current_user)
     service = PresenceAnalyticsService(db)
     return await service.get_predictions(user_id=user_id, days=days)
 
@@ -583,8 +621,9 @@ async def get_predictions(
 async def get_daily_summary(
     days: int = Query(default=7, ge=1, le=90),
     db: AsyncSession = Depends(get_db),
+    current_user: User | None = Depends(require_permission(Permission.ROOMS_READ)),
 ):
-    """Daily enter/leave event counts."""
+    """Daily enter/leave event counts. Gated on ROOMS_READ (security audit)."""
     from ha_glue.services.presence_analytics import PresenceAnalyticsService
 
     service = PresenceAnalyticsService(db)

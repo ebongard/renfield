@@ -22,6 +22,7 @@ import { useEffect, useReducer, useRef, useState } from 'react';
 
 import { debug } from '../../utils/debug';
 import { getWebSocketUrl } from '../../utils/env';
+import { fetchWsToken } from '../../utils/wsToken';
 import type { NodeHealth, SatelliteState } from './types';
 import type {
   AgentRoleInfo,
@@ -500,13 +501,15 @@ export interface KioskSocketState {
   backendUnreachable: boolean;
 }
 
-function kioskWsUrl(): string {
+async function kioskWsUrl(): Promise<string> {
   // getWebSocketUrl() returns `.../ws`; strip it and append our own path —
   // the canonical pattern (useDeviceConnection.getWsUrl for `/ws/device`).
   let url = getWebSocketUrl().replace(/\/ws$/, '') + '/ws/kiosk';
-  // Same JWT-in-query auth the chat + KG-live sockets use; the hub verifies it
-  // and requires Permission.ADMIN at connect.
-  const token = localStorage.getItem('renfield_access_token');
+  // Security audit M2: authenticate with a SHORT-LIVED, WS-scoped token
+  // (~90s, REST-rejected), NOT the full 24h JWT that would leak into proxy
+  // access logs. The hub verifies it + requires Permission.ADMIN at connect.
+  // null → open without a token (WS auth off / error), same as chat + KG-live.
+  const token = await fetchWsToken();
   if (token) url += `?token=${token}`;
   return url;
 }
@@ -544,15 +547,19 @@ export function useKioskSocket(): KioskSocketState {
       }
     };
 
-    const connect = () => {
+    const connect = async () => {
       if (reconnectTimerRef.current) {
         clearTimeout(reconnectTimerRef.current);
         reconnectTimerRef.current = null;
       }
 
+      const url = await kioskWsUrl();
+      // The effect may have torn down during the async token fetch.
+      if (intentionalCloseRef.current) return;
+
       let ws: WebSocket;
       try {
-        ws = new WebSocket(kioskWsUrl());
+        ws = new WebSocket(url);
       } catch (err) {
         debug.log('Kiosk WS construct failed:', err);
         setBootResolved(true);
