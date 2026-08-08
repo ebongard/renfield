@@ -149,11 +149,8 @@ async def login(
     # See auth/login_flow.py for the full resolution + standalone-fallback
     # contract.
     from auth.login_flow import resolve_login
-    from services.api_rate_limiter import get_client_ip
     from services.login_lockout import login_lockout
     from utils.metrics import record_login_failure
-
-    client_ip = get_client_ip(request)
 
     # Account lockout (#693): a locked username is rejected BEFORE the credential
     # walk (so a lockout also stops password-guessing that happens to be
@@ -182,7 +179,7 @@ async def login(
         # Bad credentials OR a registered post_authenticate consumer declined
         # to resolve — both are an opaque 401 (do not leak which).
         record_login_failure("bad_credentials")
-        tripped = await login_lockout.record_failure(form_data.username, client_ip)
+        tripped = await login_lockout.record_failure(form_data.username)
         logger.warning(
             f"Login failed: bad credentials (username={form_data.username!r})"
             + (" — account now locked out" if tripped else "")
@@ -206,7 +203,7 @@ async def login(
         # never leaks that the account exists. A failed attempt here still counts
         # toward lockout (a valid-username-but-disabled probe is still a probe).
         record_login_failure("inactive")
-        await login_lockout.record_failure(form_data.username, client_ip)
+        await login_lockout.record_failure(form_data.username)
         logger.warning(
             f"Login failed: account missing or inactive (username={form_data.username!r})"
         )

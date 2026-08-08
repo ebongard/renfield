@@ -1498,7 +1498,6 @@ LOGIN_LOCKOUT_ENABLED=true            # Pro-Username-Sperre nach wiederholten Fe
 LOGIN_LOCKOUT_MAX_ATTEMPTS=5          # Fehlversuche im Fenster bis zur Sperre
 LOGIN_LOCKOUT_WINDOW_SECONDS=900      # rollierendes Fehler-Fenster
 LOGIN_LOCKOUT_DURATION_SECONDS=900    # Sperrdauer nach Auslösung
-LOGIN_LOCKOUT_MIN_DISTINCT_IPS=2      # Anti-DoS: Sperre erst ab N verschiedenen Quell-IPs
 ```
 
 Ergänzt das per-IP-Rate-Limit: sperrt einen **Username** nach wiederholten
@@ -1507,15 +1506,6 @@ Fehl-Logins (stoppt Credential-Stuffing über wechselnde Quell-IPs). Redis-basie
 nicht den ganzen Haushalt aussperren). Eine gesperrte Anmeldung liefert dasselbe
 opake 401 wie falsche Zugangsdaten (kein Enumerations-Oracle); sichtbar nur über
 Log + `renfield_login_failure_total{reason="locked_out"}`.
-
-`LOGIN_LOCKOUT_MIN_DISTINCT_IPS` (Security-Audit, Anti-DoS): eine reine
-Pro-Username-Sperre, die jeder einzelne Angreifer auslösen kann, ist selbst ein
-Denial-of-Service — 5 falsche Passwörter und der echte Nutzer ist ausgesperrt.
-Der eigentliche Zweck der Username-Sperre ist das **IP-rotierende** Stuffing; ein
-Single-IP-Brute-Force wird bereits vom per-IP-Rate-Limit gedrosselt. Daher greift
-die Sperre erst, wenn die Fehlversuche aus mindestens so vielen **verschiedenen
-Quell-IPs** stammen. `1` = Legacy (jede einzelne IP sperrt). Die Verlässlichkeit
-des IP-Signals hängt an korrekt gesetztem `TRUSTED_PROXIES`.
 
 `API_RATE_LIMIT_INGEST` gilt für die `/document`-Push-Routen von folder- und
 email-ingest. Diese werden vom vertrauenswürdigen, Bearer-authentifizierten MCP

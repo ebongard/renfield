@@ -354,6 +354,12 @@ export function useChatWebSocket({
       // next reconnect will create a fresh ws with its own onopen drain.
       const pending = readyResolversRef.current.splice(0);
       pending.forEach((resolve) => resolve(false));
+      // Do NOT re-arm the reconnect once the hook has torn down. Cleanup sets
+      // cancelledRef + clears the timer, THEN calls ws.close() — whose onclose
+      // fires here; without this guard it would schedule a reconnect that
+      // reopens a zombie socket and mints a fresh WS token on the dead hook
+      // after unmount (review finding).
+      if (cancelledRef.current) return;
       reconnectTimeoutRef.current = setTimeout(connectWebSocket, 3000);
     };
 

@@ -142,14 +142,16 @@ async def get_debug_sightings(
 
 @router.get("/rooms", response_model=list[RoomOccupancyResponse])
 async def get_rooms_presence(
-    current_user: User | None = Depends(require_permission(Permission.ROOMS_READ)),
+    current_user: User | None = Depends(require_permission(Permission.ROOMS_MANAGE)),
 ):
     """Get all rooms with their current occupants.
 
-    Gated on ROOMS_READ (security audit): these live-occupancy reads expose who
-    is physically where — the same class of data the ``/debug/sightings`` and
-    ``/analytics/timeline`` siblings already gate — and were previously reachable
-    with no authentication at all.
+    Gated on ROOMS_MANAGE (security audit): this returns EVERY user's live
+    location, i.e. cross-user location data for everyone — so it takes the same
+    bar as reading another user's presence (``/user/{id}`` requires ROOMS_MANAGE
+    for a non-self target via ``_resolve_history_target``). Gating it at only
+    ROOMS_READ would let a ROOMS_READ holder bypass that per-user guard by
+    reading the whole house here. Previously reachable with NO auth at all.
     """
     if not ha_glue_settings.presence_enabled:
         return []
@@ -183,9 +185,12 @@ async def get_rooms_presence(
 @router.get("/room/{room_id}", response_model=RoomOccupancyResponse)
 async def get_room_presence(
     room_id: int,
-    current_user: User | None = Depends(require_permission(Permission.ROOMS_READ)),
+    current_user: User | None = Depends(require_permission(Permission.ROOMS_MANAGE)),
 ):
-    """Get occupants of a specific room. Gated on ROOMS_READ (security audit)."""
+    """Get occupants of a specific room. Gated on ROOMS_MANAGE (security audit):
+    it returns other users' locations, so it takes the same cross-user bar as
+    /rooms and /user/{id} — not the weaker ROOMS_READ, which would bypass the
+    per-user IDOR guard."""
     if not ha_glue_settings.presence_enabled:
         return RoomOccupancyResponse(room_id=room_id)
 
@@ -621,9 +626,12 @@ async def get_predictions(
 async def get_daily_summary(
     days: int = Query(default=7, ge=1, le=90),
     db: AsyncSession = Depends(get_db),
-    current_user: User | None = Depends(require_permission(Permission.ROOMS_READ)),
+    current_user: User | None = Depends(require_permission(Permission.ROOMS_MANAGE)),
 ):
-    """Daily enter/leave event counts. Gated on ROOMS_READ (security audit)."""
+    """House-wide daily enter/leave event counts. Gated on ROOMS_MANAGE (security
+    audit): it's a house-wide aggregate with no per-user scoping (the service
+    takes no user_id), so it takes the same bar as the heatmap's aggregate case —
+    not ROOMS_READ, which would leak whole-household movement volume."""
     from ha_glue.services.presence_analytics import PresenceAnalyticsService
 
     service = PresenceAnalyticsService(db)

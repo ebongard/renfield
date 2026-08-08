@@ -28,7 +28,6 @@ from utils.config import settings
 
 FAIL_PREFIX = "login_fail:"
 LOCK_PREFIX = "login_lock:"
-FAIL_IPS_PREFIX = "login_fail_ips:"
 
 
 def _normalize(username: str) -> str:
@@ -61,20 +60,14 @@ class LoginLockout:
             logger.error(f"Login lockout check failed — failing OPEN: {e}")
             return False
 
-    async def record_failure(self, username: str, source_ip: str | None = None) -> bool:
+    async def record_failure(self, username: str) -> bool:
         """Record a failed login for this username.
 
-        Increments the rolling-window failure counter; the username is locked for
-        ``login_lockout_duration_seconds`` once the counter reaches
-        ``login_lockout_max_attempts`` **and** failures have come from at least
-        ``login_lockout_min_distinct_ips`` distinct source IPs. The distinct-IP
-        gate is the anti-DoS control (security audit): without it any single
-        attacker could lock out a known username at will; a single-IP brute force
-        is already throttled by the per-IP rate limit, so the per-username lock
-        only needs to fire on the IP-rotating attack it was built for.
-
-        Returns True if THIS failure tripped the lock (so the caller can log the
-        transition). Best-effort — a Redis error is swallowed (fail-open).
+        Increments the rolling-window failure counter; once it reaches
+        ``login_lockout_max_attempts`` the username is locked for
+        ``login_lockout_duration_seconds``. Returns True if THIS failure tripped
+        the lock (so the caller can log the transition). Best-effort — a Redis
+        error is swallowed (fail-open).
         """
         if not settings.login_lockout_enabled:
             return False
@@ -84,7 +77,6 @@ class LoginLockout:
         try:
             redis = self._get_redis()
             fail_key = f"{FAIL_PREFIX}{user}"
-            ips_key = f"{FAIL_IPS_PREFIX}{user}"
             count = await redis.incr(fail_key)
             # Arm the window TTL on the first failure. We deliberately do NOT
             # refresh it on later failures (a rolling reset would let a slow drip
@@ -95,19 +87,7 @@ class LoginLockout:
             # permanently. `ttl < 0` means no expiry set (-1) or missing (-2).
             if count == 1 or await redis.ttl(fail_key) < 0:
                 await redis.expire(fail_key, settings.login_lockout_window_seconds)
-
-            # Track the distinct source IPs contributing to this window, on the
-            # same TTL as the counter. A missing/unresolved IP is bucketed under
-            # a sentinel so it still counts as one source.
-            distinct_ips = 1
-            min_ips = max(1, int(settings.login_lockout_min_distinct_ips))
-            if min_ips > 1:
-                await redis.sadd(ips_key, source_ip or "-")
-                if await redis.ttl(ips_key) < 0:
-                    await redis.expire(ips_key, settings.login_lockout_window_seconds)
-                distinct_ips = await redis.scard(ips_key)
-
-            if count >= settings.login_lockout_max_attempts and distinct_ips >= min_ips:
+            if count >= settings.login_lockout_max_attempts:
                 await redis.setex(
                     f"{LOCK_PREFIX}{user}",
                     settings.login_lockout_duration_seconds,
@@ -128,11 +108,7 @@ class LoginLockout:
             return
         try:
             redis = self._get_redis()
-            await redis.delete(
-                f"{FAIL_PREFIX}{user}",
-                f"{LOCK_PREFIX}{user}",
-                f"{FAIL_IPS_PREFIX}{user}",
-            )
+            await redis.delete(f"{FAIL_PREFIX}{user}", f"{LOCK_PREFIX}{user}")
         except Exception as e:
             logger.error(f"Login lockout clear failed (ignored): {e}")
 
