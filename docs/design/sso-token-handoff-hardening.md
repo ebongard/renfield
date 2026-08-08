@@ -15,8 +15,9 @@ the URL fragment**:
 https://<host>/#access_token=<JWT>&expires_in=<seconds>&provider=entra
 ```
 
-`src/frontend/src/main.tsx::_consumeOidcHashHandoff()` reads that fragment,
-writes the JWT to `localStorage`, and scrubs the fragment with
+`src/frontend/src/utils/ssoFragment.ts::consumeSsoFragmentHandoff()` (called from
+`main.tsx`, extracted from the former `_consumeOidcHashHandoff()`) reads that
+fragment, writes the JWT to `localStorage`, and scrubs the fragment with
 `history.replaceState`. This is the OAuth 2.0 **implicit flow**, deprecated by
 the OAuth Security BCP (RFC 9700 / draft-ietf-oauth-security-topics) precisely
 because **the access token travels in a URL**. The fragment is never sent to the
@@ -29,16 +30,25 @@ it closes. It remains exposed to:
   the handler can read `location.hash`.
 - **Browser extensions & shared devices** — anything with `tabs`/`history`
   permission or a shoulder-surfer sees the token in the address bar momentarily.
-- **Token injection / fixation (the sharpest one).** The handler stores **any**
-  `#access_token=` value it is handed. An attacker who lures a victim to
-  `https://<host>/#access_token=<attacker-controlled-JWT>` fixes the victim's
-  session to a token the attacker knows — there is **no binding** between the
-  token and a login this browser actually initiated.
+- **Token injection / fixation (the sharpest one).** An attacker who lures a
+  victim to `https://<host>/#access_token=<attacker-controlled-JWT>` fixes the
+  victim's session to a token the attacker knows — there is **no binding**
+  between the token and a login this browser actually initiated.
 
 On the current household + xidra instances no federated provider is enabled, so
 the handler is **dormant attack surface** (a token-injection sink with no
 legitimate producer). In the pro/Reva edition the OIDC callback genuinely uses
 it. Either way the mechanism, not just its exposure, must be replaced.
+
+**Interim hardening (security audit, shipped ahead of the full cutover).**
+`consumeSsoFragmentHandoff()` is now (a) gated behind the `VITE_SSO_LEGACY_FRAGMENT`
+build flag (kill switch — a post-cutover build sets it `false` and the handler is
+removed), (b) restricted to storing only a structurally valid, **unexpired
+`type:"access"` JWT** (`looksLikeUnexpiredAccessJwt`) — the browser can't verify
+the HS256 signature, so this narrows but does not fully close the injection sink;
+full closure still requires the `?code=`+PKCE cutover below — and (c) it **always**
+strips the fragment, even when it rejects the token. Covered by
+`tests/frontend/react/utils/ssoFragment.test.ts`.
 
 ## 2. Goals / non-goals
 
