@@ -10,6 +10,14 @@ import { screen, waitFor, act } from '@testing-library/react';
 import { renderWithProviders } from '../test-utils';
 import KioskPage from '../../../../src/frontend/src/pages/KioskPage';
 
+// Security audit M2: useKioskSocket now fetches a short-lived WS-scoped token
+// (fetchWsToken → POST /api/ws/token) and AWAITS it before constructing the
+// socket, so the socket is created asynchronously. Mock it to resolve
+// immediately; pushSnapshot() waits for the socket to exist before driving it.
+vi.mock('../../../../src/frontend/src/utils/wsToken', () => ({
+  fetchWsToken: vi.fn().mockResolvedValue('test-ws-token'),
+}));
+
 type WsListener<E = unknown> = ((event: E) => void) | null;
 
 class MockWebSocket {
@@ -83,7 +91,10 @@ function snapshot(satState: string, over: SnapOverrides = {}) {
   };
 }
 
-function pushSnapshot(snap: unknown) {
+async function pushSnapshot(snap: unknown) {
+  // The socket is opened after an awaited WS-token fetch now, so wait for it to
+  // be constructed before driving it.
+  await waitFor(() => expect(MockWebSocket.instances.length).toBeGreaterThan(0));
   const ws = MockWebSocket.instances[MockWebSocket.instances.length - 1];
   act(() => {
     ws.fireOpen();
@@ -109,7 +120,7 @@ describe('KioskPage', () => {
 
   it('renders the fullscreen kiosk with wordmark, telemetry and rings', async () => {
     renderWithProviders(<KioskPage />);
-    pushSnapshot(snapshot('idle'));
+    await pushSnapshot(snapshot('idle'));
     await waitFor(() => {
       expect(screen.getAllByText('RENFIELD').length).toBeGreaterThan(0);
     });
@@ -123,7 +134,7 @@ describe('KioskPage', () => {
 
   it('renders the internal subsystem nodes with their real health, and reacts to a delta', async () => {
     renderWithProviders(<KioskPage />);
-    pushSnapshot(
+    await pushSnapshot(
       snapshot('idle', {
         internal_health: [
           { id: 'presence', health: 'degraded', impaired_code: 'presence_satellite_unauthenticated' },
@@ -161,7 +172,7 @@ describe('KioskPage', () => {
 
   it('drives the core into a voice state from a listening satellite', async () => {
     renderWithProviders(<KioskPage />);
-    pushSnapshot(snapshot('listening'));
+    await pushSnapshot(snapshot('listening'));
     await waitFor(() => {
       expect(coreState()).toBe('listening');
     });
@@ -170,7 +181,7 @@ describe('KioskPage', () => {
 
   it('shows the ready core when every satellite is idle', async () => {
     renderWithProviders(<KioskPage />);
-    pushSnapshot(snapshot('idle'));
+    await pushSnapshot(snapshot('idle'));
     await waitFor(() => {
       expect(coreState()).toBe('idle');
     });
@@ -179,7 +190,7 @@ describe('KioskPage', () => {
   it('drops a satellite from the roster on a satellite_offline delta (core + counts)', async () => {
     renderWithProviders(<KioskPage />);
     // 3 satellites, one of them (c) reporting 'listening'.
-    pushSnapshot(snapshot('idle', {
+    await pushSnapshot(snapshot('idle', {
       satellites: [
         { satellite_id: 'a', room: 'Wohnzimmer', room_id: 1, state: 'idle' },
         { satellite_id: 'b', room: 'Wohnzimmer', room_id: 1, state: 'idle' },
@@ -201,7 +212,7 @@ describe('KioskPage', () => {
 
   it('shows the weather tile when a reading is available', async () => {
     renderWithProviders(<KioskPage />);
-    pushSnapshot(snapshot('idle', {
+    await pushSnapshot(snapshot('idle', {
       weather: { location: 'Musterstadt', temp: 21.4, unit: '°C', code: 0, condition: 'Klarer Himmel', high: 24, low: 13 },
     }));
     await waitFor(() => expect(screen.getByText('21°C')).toBeInTheDocument());
@@ -211,7 +222,7 @@ describe('KioskPage', () => {
 
   it('shows the now-playing tile for a live media session', async () => {
     renderWithProviders(<KioskPage />);
-    pushSnapshot(snapshot('idle', {
+    await pushSnapshot(snapshot('idle', {
       now_playing: [{ room: 'Wohnzimmer', kind: 'radio', title: 'Radio Beispiel', subtitle: null, track: null, total: null }],
     }));
     await waitFor(() => expect(screen.getByText('Radio Beispiel')).toBeInTheDocument());
@@ -220,7 +231,7 @@ describe('KioskPage', () => {
 
   it('surfaces a live-satellite error as busy, not a false ready', async () => {
     renderWithProviders(<KioskPage />);
-    pushSnapshot(snapshot('idle', {
+    await pushSnapshot(snapshot('idle', {
       satellites: [{ satellite_id: 'a', room: 'Wohnzimmer', room_id: 1, state: 'error' }],
     }));
     await waitFor(() => {
@@ -230,7 +241,7 @@ describe('KioskPage', () => {
 
   it('pulses the MCP node named by a live turn_activity delta', async () => {
     renderWithProviders(<KioskPage />);
-    pushSnapshot(snapshot('idle'));
+    await pushSnapshot(snapshot('idle'));
     await waitFor(() => expect(screen.getByText('2/2 online')).toBeInTheDocument());
     // no pulse yet
     expect(document.querySelector('[data-tool-id="homeassistant"][data-tool-active="1"]')).toBeNull();
@@ -246,7 +257,7 @@ describe('KioskPage', () => {
 
   it('renders synthetic internal-subsystem nodes and pulses them (knowledge)', async () => {
     renderWithProviders(<KioskPage />);
-    pushSnapshot(snapshot('idle'));
+    await pushSnapshot(snapshot('idle'));
     await waitFor(() => expect(screen.getByText('2/2 online')).toBeInTheDocument());
     // the knowledge/presence/media pseudo-nodes are always present (no MCP server)
     expect(document.querySelector('[data-tool-id="knowledge"]')).not.toBeNull();
@@ -267,7 +278,7 @@ describe('KioskPage', () => {
 
   it('drives the core to processing on a chat_activity delta (typed web-chat)', async () => {
     renderWithProviders(<KioskPage />);
-    pushSnapshot(snapshot('idle')); // all satellites idle, no voice activity
+    await pushSnapshot(snapshot('idle')); // all satellites idle, no voice activity
     await waitFor(() => expect(coreState()).toBe('idle'));
     const ws = MockWebSocket.instances[MockWebSocket.instances.length - 1];
     // a web-chat turn starts processing → the core thinks even with no satellite
@@ -285,7 +296,7 @@ describe('KioskPage', () => {
   it('does not duplicate a synthetic node when a real MCP server owns its id', async () => {
     renderWithProviders(<KioskPage />);
     // an operator adds an output-provider MCP server literally named 'media'
-    pushSnapshot(snapshot('idle', {
+    await pushSnapshot(snapshot('idle', {
       mcp: {
         enabled: true,
         total_tools: 5,

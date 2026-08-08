@@ -8,6 +8,24 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { renderHook, act } from '@testing-library/react';
 import { useKioskSocket } from '../../../../src/frontend/src/components/kiosk/useKioskSocket';
 
+// Security audit M2: the hook now fetches a short-lived WS-scoped token
+// (fetchWsToken → POST /api/ws/token) and AWAITS it before constructing the
+// socket, so socket creation is async. Mock it to resolve immediately so the
+// mock WebSocket is constructed on the next microtask (no real token in a URL).
+vi.mock('../../../../src/frontend/src/utils/wsToken', () => ({
+  fetchWsToken: vi.fn().mockResolvedValue('test-ws-token'),
+}));
+
+// The socket is constructed AFTER the awaited token fetch resolves, so flush the
+// microtask queue before touching MockWebSocket.instances. No React state update
+// happens on construction, so this needs no act() and is safe under fake timers
+// (vi fakes setTimeout/Date, not the microtask queue).
+async function flushConnect(): Promise<void> {
+  await Promise.resolve();
+  await Promise.resolve();
+  await Promise.resolve();
+}
+
 type WsListener<E = unknown> = ((event: E) => void) | null;
 
 class MockWebSocket {
@@ -98,16 +116,18 @@ afterEach(() => {
 });
 
 describe('useKioskSocket', () => {
-  it('opens /ws/kiosk and starts unhydrated (boot skeleton)', () => {
+  it('opens /ws/kiosk and starts unhydrated (boot skeleton)', async () => {
     const { result } = renderHook(() => useKioskSocket());
+    await flushConnect();
     expect(latest().url).toContain('/ws/kiosk');
     expect(result.current.bootLoading).toBe(true);
     expect(result.current.backendUnreachable).toBe(false);
     expect(result.current.live.hydrated).toBe(false);
   });
 
-  it('hydrates the full model from the snapshot message', () => {
+  it('hydrates the full model from the snapshot message', async () => {
     const { result } = renderHook(() => useKioskSocket());
+    await flushConnect();
     act(() => {
       latest().fireOpen();
       latest().fireMessage(baseSnapshot());
@@ -136,8 +156,9 @@ describe('useKioskSocket', () => {
     expect(m.internalHealth.knowledge.health).toBe('healthy');
   });
 
-  it('folds an internal_health_changed delta (full replace) onto the map', () => {
+  it('folds an internal_health_changed delta (full replace) onto the map', async () => {
     const { result } = renderHook(() => useKioskSocket());
+    await flushConnect();
     act(() => {
       latest().fireOpen();
       latest().fireMessage(baseSnapshot());
@@ -159,8 +180,9 @@ describe('useKioskSocket', () => {
     expect(ih.knowledge).toBeUndefined();
   });
 
-  it('folds a peer_status_changed delta (full replace) onto the peer set', () => {
+  it('folds a peer_status_changed delta (full replace) onto the peer set', async () => {
     const { result } = renderHook(() => useKioskSocket());
+    await flushConnect();
     act(() => {
       latest().fireOpen();
       latest().fireMessage(baseSnapshot());
@@ -178,8 +200,9 @@ describe('useKioskSocket', () => {
     ]);
   });
 
-  it('folds a satellite_state delta onto the matching satellite', () => {
+  it('folds a satellite_state delta onto the matching satellite', async () => {
     const { result } = renderHook(() => useKioskSocket());
+    await flushConnect();
     act(() => {
       latest().fireOpen();
       latest().fireMessage(baseSnapshot());
@@ -193,8 +216,9 @@ describe('useKioskSocket', () => {
     expect(result.current.live.satellites.find((s) => s.satellite_id === 'sat-ez')?.state).toBe('idle');
   });
 
-  it('ignores a satellite_state for an id not in the roster (offline can\'t be resurrected)', () => {
+  it('ignores a satellite_state for an id not in the roster (offline can\'t be resurrected)', async () => {
     const { result } = renderHook(() => useKioskSocket());
+    await flushConnect();
     act(() => {
       latest().fireOpen();
       latest().fireMessage(baseSnapshot());
@@ -214,8 +238,9 @@ describe('useKioskSocket', () => {
     expect(result.current.live.satellites.find((s) => s.satellite_id === 'sat-new')).toBeUndefined();
   });
 
-  it('reinstates a satellite on satellite_online and drops it on satellite_offline', () => {
+  it('reinstates a satellite on satellite_online and drops it on satellite_offline', async () => {
     const { result } = renderHook(() => useKioskSocket());
+    await flushConnect();
     act(() => {
       latest().fireOpen();
       latest().fireMessage(baseSnapshot());
@@ -241,8 +266,9 @@ describe('useKioskSocket', () => {
     expect(result.current.live.satellites.filter((s) => s.satellite_id === 'sat-wz')).toHaveLength(1);
   });
 
-  it('folds presence / now_playing / weather / tool_health deltas', () => {
+  it('folds presence / now_playing / weather / tool_health deltas', async () => {
     const { result } = renderHook(() => useKioskSocket());
+    await flushConnect();
     act(() => {
       latest().fireOpen();
       latest().fireMessage(baseSnapshot());
@@ -275,8 +301,9 @@ describe('useKioskSocket', () => {
     expect(ha?.last_error ?? null).toBeNull();
   });
 
-  it('folds the connectivity+functionality health field (degraded while connected)', () => {
+  it('folds the connectivity+functionality health field (degraded while connected)', async () => {
     const { result } = renderHook(() => useKioskSocket());
+    await flushConnect();
     act(() => {
       latest().fireOpen();
       // Snapshot hydrates a server that is connected but backend-marked degraded
@@ -308,8 +335,9 @@ describe('useKioskSocket', () => {
     expect(twin1?.impaired_code ?? null).toBeNull();
   });
 
-  it('folds a turn_activity delta into the trail and the subsystem pulses', () => {
+  it('folds a turn_activity delta into the trail and the subsystem pulses', async () => {
     const { result } = renderHook(() => useKioskSocket());
+    await flushConnect();
     act(() => {
       latest().fireOpen();
       latest().fireMessage(baseSnapshot());
@@ -325,8 +353,9 @@ describe('useKioskSocket', () => {
     expect(pulses.weather).toBe(Date.parse('2026-07-04T21:01:00Z'));
   });
 
-  it('ignores an unknown event type without crashing or mutating state', () => {
+  it('ignores an unknown event type without crashing or mutating state', async () => {
     const { result } = renderHook(() => useKioskSocket());
+    await flushConnect();
     act(() => {
       latest().fireOpen();
       latest().fireMessage(baseSnapshot());
@@ -340,9 +369,10 @@ describe('useKioskSocket', () => {
     expect(result.current.live).toBe(before);
   });
 
-  it('reconnects with backoff and re-hydrates from a fresh snapshot', () => {
+  it('reconnects with backoff and re-hydrates from a fresh snapshot', async () => {
     vi.useFakeTimers();
     const { result } = renderHook(() => useKioskSocket());
+    await flushConnect();
     act(() => {
       latest().fireOpen();
       latest().fireMessage(baseSnapshot());
@@ -356,10 +386,12 @@ describe('useKioskSocket', () => {
     expect(result.current.backendUnreachable).toBe(false);
     expect(MockWebSocket.instances).toHaveLength(1);
 
-    // first backoff (1s) elapses → a fresh socket is opened
+    // first backoff (1s) elapses → a fresh socket is opened (constructed after
+    // the awaited token fetch, so flush microtasks before asserting).
     act(() => {
       vi.advanceTimersByTime(1000);
     });
+    await flushConnect();
     expect(MockWebSocket.instances).toHaveLength(2);
 
     // the hub re-sends a snapshot on connect → the missed-event gap self-heals
@@ -372,10 +404,11 @@ describe('useKioskSocket', () => {
     expect(result.current.live.satellites[0].state).toBe('speaking');
   });
 
-  it('surfaces unreachable at once on a first-connect failure (no empty ready board)', () => {
+  it('surfaces unreachable at once on a first-connect failure (no empty ready board)', async () => {
     vi.useFakeTimers();
     const { result } = renderHook(() => useKioskSocket());
     expect(result.current.bootLoading).toBe(true);
+    await flushConnect();
     // the very first socket closes before any snapshot (e.g. auth rejected)
     act(() => {
       latest().fireClose();
@@ -386,9 +419,10 @@ describe('useKioskSocket', () => {
     expect(result.current.backendUnreachable).toBe(true);
   });
 
-  it('keeps the board live through a brief blip, flips unreachable only when sustained', () => {
+  it('keeps the board live through a brief blip, flips unreachable only when sustained', async () => {
     vi.useFakeTimers();
     const { result } = renderHook(() => useKioskSocket());
+    await flushConnect();
     act(() => {
       latest().fireOpen();
       latest().fireMessage(baseSnapshot());
@@ -401,9 +435,14 @@ describe('useKioskSocket', () => {
     });
     expect(result.current.backendUnreachable).toBe(false);
 
-    // it reopens quickly (< 8s) → the blip never escalates
+    // it reopens quickly (< 8s) → the blip never escalates. The reconnect
+    // constructs the fresh socket after the awaited token fetch, so flush
+    // microtasks before driving the new socket.
     act(() => {
       vi.advanceTimersByTime(1000);
+    });
+    await flushConnect();
+    act(() => {
       latest().fireOpen();
       latest().fireMessage(baseSnapshot());
     });

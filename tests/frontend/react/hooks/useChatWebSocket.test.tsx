@@ -2,6 +2,23 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { renderHook, act } from '@testing-library/react';
 import { useChatWebSocket } from '../../../../src/frontend/src/pages/ChatPage/hooks/useChatWebSocket';
 
+// Security audit M2: the hook now fetches a short-lived WS-scoped token
+// (fetchWsToken → POST /api/ws/token) and AWAITS it before constructing the
+// socket, so socket creation is async. Mock it to resolve immediately so the
+// mock WebSocket is constructed on the next microtask (no real token in a URL).
+vi.mock('../../../../src/frontend/src/utils/wsToken', () => ({
+  fetchWsToken: vi.fn().mockResolvedValue('test-ws-token'),
+}));
+
+// The socket is constructed AFTER the awaited token fetch resolves, so flush the
+// microtask queue before touching ControllableWebSocket.instances. No React
+// state update happens on construction, so this needs no act().
+async function flushConnect(): Promise<void> {
+  await Promise.resolve();
+  await Promise.resolve();
+  await Promise.resolve();
+}
+
 type WsListener<E = unknown> = ((event: E) => void) | null;
 
 // Mock WebSocket whose readyState starts as CONNECTING and becomes OPEN
@@ -67,6 +84,7 @@ describe('useChatWebSocket', () => {
   describe('whenReady', () => {
     it('resolves immediately to true when socket is already OPEN', async () => {
       const { result } = renderHook(() => useChatWebSocket());
+      await flushConnect();
       const ws = ControllableWebSocket.instances[0];
 
       act(() => ws.fireOpen());
@@ -77,6 +95,7 @@ describe('useChatWebSocket', () => {
 
     it('resolves to true once onopen fires after the call', async () => {
       const { result } = renderHook(() => useChatWebSocket());
+      await flushConnect();
       const ws = ControllableWebSocket.instances[0];
 
       // Socket not yet OPEN — call whenReady, then fire onopen.
@@ -117,6 +136,7 @@ describe('useChatWebSocket', () => {
 
     it('resolves to false if the socket closes before opening', async () => {
       const { result } = renderHook(() => useChatWebSocket());
+      await flushConnect();
       const ws = ControllableWebSocket.instances[0];
 
       const promise = result.current.whenReady(5000);
@@ -129,8 +149,9 @@ describe('useChatWebSocket', () => {
   });
 
   describe('sendMessage', () => {
-    it('returns true and transmits when socket is OPEN', () => {
+    it('returns true and transmits when socket is OPEN', async () => {
       const { result } = renderHook(() => useChatWebSocket());
+      await flushConnect();
       const ws = ControllableWebSocket.instances[0];
       act(() => ws.fireOpen());
 
@@ -140,8 +161,9 @@ describe('useChatWebSocket', () => {
       expect(JSON.parse(ws.sent[0])).toMatchObject({ type: 'text', content: 'hi' });
     });
 
-    it('returns false and does not transmit when socket is not OPEN', () => {
+    it('returns false and does not transmit when socket is not OPEN', async () => {
       const { result } = renderHook(() => useChatWebSocket());
+      await flushConnect();
       const ws = ControllableWebSocket.instances[0];
       // Socket left in CONNECTING state.
 
