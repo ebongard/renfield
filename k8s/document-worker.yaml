@@ -49,6 +49,9 @@ spec:
         - name: wait-for-deps
           image: busybox:1.36
           command: ["sh", "-c"]
+          # Reads LLM_OPENAI_FALLBACK_ENABLED / WAIT_CUDA_MAX_SECONDS for the cuda wait.
+          envFrom:
+            - configMapRef: {name: renfield-env}
           args:
             - |
               echo "waiting for postgres..."; until nc -z postgres 5432; do sleep 1; done
@@ -58,7 +61,19 @@ spec:
               # Agent endpoint moved to cuda.local, embeddings to in-cluster
               # ollama on 2026-05-13; both in-cluster llama-server-* are
               # scaled to 0. See k8s/backend.yaml init container for rationale.
-              echo "waiting for cuda.local llama-server /health..."; until wget -q -O- http://cuda.local:8081/health 2>/dev/null | grep -q '"ok"'; do sleep 2; done
+              # LLM_OPENAI_FALLBACK_ENABLED on → time-bounded cuda wait so the worker
+              # boots during a cuda outage (runtime Ollama fallback covers LLM); off →
+              # strict wait. See k8s/backend.yaml init container for rationale.
+              echo "waiting for cuda.local llama-server /health..."
+              if [ "$LLM_OPENAI_FALLBACK_ENABLED" = "true" ]; then
+                _w=0
+                until wget -q -O- http://cuda.local:8081/health 2>/dev/null | grep -q '"ok"'; do
+                  _w=$((_w+2)); [ "$_w" -ge "${WAIT_CUDA_MAX_SECONDS:-180}" ] && { echo "cuda.local not ready after ${_w}s — proceeding (fallback covers LLM)"; break; }
+                  sleep 2
+                done
+              else
+                until wget -q -O- http://cuda.local:8081/health 2>/dev/null | grep -q '"ok"'; do sleep 2; done
+              fi
               echo "waiting for ollama embed endpoint...";           until wget -q -O- http://ollama:11434/api/version 2>/dev/null | grep -q '"version"'; do sleep 2; done
               echo "deps ready"
               mkdir -p /app/data/cache-home/.cache /app/data/cache-home/.EasyOCR

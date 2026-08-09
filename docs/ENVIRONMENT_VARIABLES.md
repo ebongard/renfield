@@ -278,6 +278,32 @@ AGENT_ROUTER_TIMEOUT=30.0
 # DeepSeek, GPT-5.x) auf ihrem Default-Effort: gemessen ~30s Time-to-First-
 # Token pro Agent-Step, ~100s pro Multi-Step-Turn.
 # LLM_OPENAI_REASONING_EFFORT=low
+
+# In-Cluster-Fallback (Resilienz). Der OpenAI-compat-Primary
+# (LLM_OPENAI_BASE_URL, z. B. die externe cuda.local-llama-server-Box) ist ein
+# Single-Point-of-Failure: ist er unerreichbar, scheitert der ganze Turn
+# ("Connection error", Ausfall 2026-08-08). Ist dies an, wird ein
+# Verbindungsfehler gegen den Primary transparent gegen das In-Cluster-Ollama
+# (OLLAMA_URL) wiederholt — die externe GPU-Box degradiert zum lokalen Modell
+# statt Totalausfall. Erholung automatisch (Primary wird immer zuerst
+# versucht). Nur die OpenAI-compat-Strecke braucht das — die Ollama-Strecke
+# hat bereits OLLAMA_FALLBACK_URL. Gilt für chat/agent/intent (Streaming:
+# Failover nur, wenn der ERSTE Chunk scheitert).
+# LLM_OPENAI_FALLBACK_ENABLED=true
+
+# Modell für den Ollama-Fallback. Der Alias des Primary (LLM_OPENAI_MODEL, z. B.
+# "qwen3.6") existiert auf Ollama NICHT und muss umgemappt werden. Leer =>
+# OLLAMA_MODEL (empfohlen: qwen3:14b, in-cluster vorhanden). Modellnamen, die
+# Ollama bereits hat (z. B. das Intent-Modell qwen3:8b), werden durchgereicht.
+# LLM_OPENAI_FALLBACK_MODEL=qwen3:14b
+
+# Boot-Gate (k8s wait-for-deps Init-Container, backend + document-worker):
+# Ist LLM_OPENAI_FALLBACK_ENABLED=true, wartet der Init NICHT unbegrenzt auf
+# cuda.local, sondern höchstens WAIT_CUDA_MAX_SECONDS (Default 180) und bootet
+# dann trotzdem — der Runtime-Fallback deckt LLM-Aufrufe, bis cuda zurück ist.
+# So kommt das Backend auch dann hoch, wenn cuda beim Deploy weg ist (Ausfall
+# 2026-08-08). Bei =false bleibt das strikte Warten (kein 503 beim ersten Call).
+# WAIT_CUDA_MAX_SECONDS=180
 ```
 
 **Defaults:**
@@ -285,6 +311,8 @@ AGENT_ROUTER_TIMEOUT=30.0
 - `LLM_OPENAI_API_KEY`: None (sendet "no-key")
 - `LLM_OPENAI_MODEL`: `qwen3.6`
 - `LLM_OPENAI_REASONING_EFFORT`: None (kein reasoning_effort im Request)
+- `LLM_OPENAI_FALLBACK_ENABLED`: `false` (opt-in pro Instanz; braucht ein erreichbares In-Cluster-`OLLAMA_URL`)
+- `LLM_OPENAI_FALLBACK_MODEL`: `""` (=> `OLLAMA_MODEL`, z. B. `qwen3:14b`)
 
 **Wann aktivieren:**
 Der Agent Loop ermöglicht komplexe, mehrstufige Anfragen mit bedingter Logik und Tool-Verkettung:

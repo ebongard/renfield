@@ -1178,3 +1178,139 @@ class TestGetDedicatedClient:
         result = get_dedicated_client("http://router-ollama:11434")
 
         assert isinstance(result, _FallbackLLMClient)
+
+
+async def _agen(*chunks):
+    """Async generator yielding the given chunks (for streaming tests)."""
+    for c in chunks:
+        yield c
+
+
+async def _agen_raises(exc):
+    """Async generator that raises *exc* on the first __anext__ (models a
+    connection failure at stream open, before any chunk is produced)."""
+    raise exc
+    yield  # pragma: no cover — makes this an async generator
+
+
+class TestOpenAICompatFallbackClient:
+    """Tests for _OpenAICompatFallbackClient — OpenAI-compat primary → in-cluster
+    Ollama fallback (resilience for a downed external llama-server)."""
+
+    def _wrapper(self, monkeypatch, primary, fallback, *, openai_model="qwen3.6",
+                 ollama_model="qwen3:14b", fallback_model=""):
+        from utils import llm_client
+        monkeypatch.setattr(llm_client.settings, "llm_openai_model", openai_model, raising=False)
+        monkeypatch.setattr(llm_client.settings, "ollama_model", ollama_model, raising=False)
+        monkeypatch.setattr(llm_client.settings, "llm_openai_fallback_model", fallback_model, raising=False)
+        return llm_client._OpenAICompatFallbackClient(primary, fallback)
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_primary_success_no_fallback(self, monkeypatch):
+        primary = AsyncMock(); fallback = AsyncMock()
+        primary.chat.return_value = "primary"
+        w = self._wrapper(monkeypatch, primary, fallback)
+        assert await w.chat(model="qwen3.6", messages=[]) == "primary"
+        fallback.chat.assert_not_called()
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_connect_error_falls_back_and_remaps_alias_model(self, monkeypatch):
+        """Primary alias model (qwen3.6) is remapped to ollama_model on fallback."""
+        import httpx
+        primary = AsyncMock(); fallback = AsyncMock()
+        primary.chat.side_effect = httpx.ConnectError("refused")
+        fallback.chat.return_value = "fallback"
+        w = self._wrapper(monkeypatch, primary, fallback)
+        result = await w.chat(model="qwen3.6", messages=[])
+        assert result == "fallback"
+        assert fallback.chat.call_args.kwargs["model"] == "qwen3:14b"
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_empty_model_remapped_to_ollama_model(self, monkeypatch):
+        import httpx
+        primary = AsyncMock(); fallback = AsyncMock()
+        primary.chat.side_effect = httpx.ConnectError("refused")
+        fallback.chat.return_value = "ok"
+        w = self._wrapper(monkeypatch, primary, fallback)
+        await w.chat(model="", messages=[])
+        assert fallback.chat.call_args.kwargs["model"] == "qwen3:14b"
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_ollama_native_model_passed_through(self, monkeypatch):
+        """A model Ollama already has (e.g. intent qwen3:8b) is NOT remapped."""
+        import httpx
+        primary = AsyncMock(); fallback = AsyncMock()
+        primary.chat.side_effect = httpx.ConnectError("refused")
+        fallback.chat.return_value = "ok"
+        w = self._wrapper(monkeypatch, primary, fallback)
+        await w.chat(model="qwen3:8b", messages=[])
+        assert fallback.chat.call_args.kwargs["model"] == "qwen3:8b"
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_fallback_model_setting_wins(self, monkeypatch):
+        import httpx
+        primary = AsyncMock(); fallback = AsyncMock()
+        primary.chat.side_effect = httpx.ConnectError("refused")
+        fallback.chat.return_value = "ok"
+        w = self._wrapper(monkeypatch, primary, fallback, fallback_model="qwen3:32b")
+        await w.chat(model="qwen3.6", messages=[])
+        assert fallback.chat.call_args.kwargs["model"] == "qwen3:32b"
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_openai_apiconnectionerror_caught(self, monkeypatch):
+        import httpx
+        import openai
+        primary = AsyncMock(); fallback = AsyncMock()
+        primary.chat.side_effect = openai.APIConnectionError(request=httpx.Request("POST", "http://cuda.local:8081/v1"))
+        fallback.chat.return_value = "ok"
+        w = self._wrapper(monkeypatch, primary, fallback)
+        assert await w.chat(model="qwen3.6", messages=[]) == "ok"
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_stream_primary_success_no_fallback(self, monkeypatch):
+        primary = AsyncMock(); fallback = AsyncMock()
+        primary.chat.return_value = _agen("a", "b", "c")
+        w = self._wrapper(monkeypatch, primary, fallback)
+        out = [c async for c in await w.chat(model="qwen3.6", messages=[], stream=True)]
+        assert out == ["a", "b", "c"]
+        fallback.chat.assert_not_called()
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_stream_first_chunk_connect_error_falls_back(self, monkeypatch):
+        """Connection failure at stream open → fail over to the Ollama stream."""
+        import httpx
+        primary = AsyncMock(); fallback = AsyncMock()
+        primary.chat.return_value = _agen_raises(httpx.ConnectError("refused"))
+        fallback.chat.return_value = _agen("x", "y")
+        w = self._wrapper(monkeypatch, primary, fallback)
+        out = [c async for c in await w.chat(model="qwen3.6", messages=[], stream=True)]
+        assert out == ["x", "y"]
+        assert fallback.chat.call_args.kwargs["model"] == "qwen3:14b"
+
+    @pytest.mark.unit
+    def test_maybe_wrap_respects_flag(self, monkeypatch):
+        from utils import llm_client
+        sentinel = MagicMock()
+        monkeypatch.setattr(llm_client.settings, "llm_openai_fallback_enabled", False, raising=False)
+        assert llm_client._maybe_wrap_openai_fallback(sentinel) is sentinel
+
+    @pytest.mark.unit
+    @patch("ollama.AsyncClient")
+    def test_maybe_wrap_wraps_when_enabled(self, mock_cls, monkeypatch):
+        from utils import llm_client
+        llm_client.clear_client_cache()
+        monkeypatch.setattr(llm_client.settings, "llm_openai_fallback_enabled", True, raising=False)
+        monkeypatch.setattr(llm_client.settings, "ollama_url", "http://ollama:11434", raising=False)
+        monkeypatch.setattr(llm_client.settings, "ollama_connect_timeout", 10.0, raising=False)
+        monkeypatch.setattr(llm_client.settings, "ollama_read_timeout", 300.0, raising=False)
+        mock_cls.return_value = MagicMock()
+        wrapped = llm_client._maybe_wrap_openai_fallback(MagicMock())
+        assert isinstance(wrapped, llm_client._OpenAICompatFallbackClient)

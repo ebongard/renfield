@@ -164,6 +164,136 @@ def _make_client_with_fallback(primary_url: str) -> LLMClient:
     return primary
 
 
+# ---------------------------------------------------------------------------
+# OpenAI-compat primary → in-cluster Ollama fallback (resilience)
+# ---------------------------------------------------------------------------
+
+
+def _openai_connect_errors() -> tuple[type[BaseException], ...]:
+    """Connection-level error types that trigger the Ollama fallback.
+
+    The OpenAI SDK wraps transport failures in ``openai.APIConnectionError``
+    (``APITimeoutError`` is a subclass); the raw httpx connect errors are
+    caught defensively too. Imported lazily so this module keeps no hard
+    openai/httpx import at load time.
+    """
+    errs: list[type[BaseException]] = []
+    try:
+        import openai
+        errs.append(openai.APIConnectionError)
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        import httpx
+        errs.extend([httpx.ConnectError, httpx.ConnectTimeout])
+    except Exception:  # noqa: BLE001
+        pass
+    return tuple(errs) or (ConnectionError,)
+
+
+class _OpenAICompatFallbackClient:
+    """Wrap the OpenAI-compat chat/agent client with a transparent retry on the
+    in-cluster Ollama when the primary (external llama-server, e.g. cuda.local)
+    is unreachable — so a downed external GPU box degrades to the local model
+    instead of failing the whole turn (outage 2026-08-08).
+
+    - **Non-streaming** ``chat``: primary first; on a connection error, retried
+      on Ollama with the model remapped (the primary's alias like ``qwen3.6``
+      does not exist on Ollama; see :meth:`_fallback_model`).
+    - **Streaming** ``chat``: fails over ONLY if the FIRST chunk fails. Once
+      content has started streaming, a mid-stream drop cannot be re-run without
+      duplicating output, so it is surfaced. Connection failures happen at
+      stream open, so the outage case (primary fully down) is covered.
+    - Recovery is automatic: the primary is always tried first.
+    """
+
+    def __init__(self, primary: LLMClient, fallback: LLMClient) -> None:
+        self._primary = primary
+        self._fallback = fallback
+        self._errs = _openai_connect_errors()
+
+    def _fallback_model(self, model: str) -> str:
+        """Remap the requested model to an Ollama-available one for the fallback.
+
+        The primary's alias (``llm_openai_model``) and the empty default do not
+        exist on Ollama → use the configured fallback model. Anything else
+        (e.g. the intent model ``qwen3:8b``) is already an Ollama name and is
+        passed through unchanged.
+        """
+        configured = settings.llm_openai_fallback_model or settings.ollama_model
+        if not model or model == settings.llm_openai_model:
+            return configured
+        return model
+
+    async def chat(
+        self,
+        model: str = "",
+        messages: list[dict[str, Any]] | None = None,
+        *,
+        stream: bool = False,
+        **kwargs: Any,
+    ) -> Any:
+        if stream:
+            return self._chat_stream(model, messages, kwargs)
+        try:
+            return await self._primary.chat(model=model, messages=messages, stream=False, **kwargs)
+        except self._errs as exc:
+            fb_model = self._fallback_model(model)
+            logger.warning(
+                f"OpenAI-compat LLM primary unreachable ({exc!r}); "
+                f"falling back to in-cluster Ollama (model={fb_model})"
+            )
+            return await self._fallback.chat(model=fb_model, messages=messages, stream=False, **kwargs)
+
+    async def _chat_stream(
+        self, model: str, messages: list[dict[str, Any]] | None, kwargs: dict[str, Any]
+    ) -> Any:
+        try:
+            primary_gen = await self._primary.chat(model=model, messages=messages, stream=True, **kwargs)
+            first = await primary_gen.__anext__()
+        except StopAsyncIteration:
+            return  # primary produced an empty (but successful) stream
+        except self._errs as exc:
+            fb_model = self._fallback_model(model)
+            logger.warning(
+                f"OpenAI-compat LLM primary unreachable on stream open ({exc!r}); "
+                f"falling back to in-cluster Ollama (model={fb_model})"
+            )
+            fb_gen = await self._fallback.chat(model=fb_model, messages=messages, stream=True, **kwargs)
+            async for chunk in fb_gen:
+                yield chunk
+            return
+        # Primary opened successfully → stream it through (no mid-stream failover).
+        yield first
+        async for chunk in primary_gen:
+            yield chunk
+
+    async def embeddings(self, *args: Any, **kwargs: Any) -> Any:  # noqa: D102
+        try:
+            return await self._primary.embeddings(*args, **kwargs)
+        except self._errs as exc:
+            logger.warning(f"OpenAI-compat embeddings unreachable ({exc!r}); falling back to Ollama")
+            return await self._fallback.embeddings(*args, **kwargs)
+
+    async def list(self, *args: Any, **kwargs: Any) -> Any:  # noqa: D102
+        try:
+            return await self._primary.list(*args, **kwargs)
+        except self._errs:
+            return await self._fallback.list(*args, **kwargs)
+
+
+def _maybe_wrap_openai_fallback(client: LLMClient | None) -> LLMClient | None:
+    """Wrap an OpenAI-compat client with the in-cluster Ollama fallback when
+    ``llm_openai_fallback_enabled`` is on. No-op otherwise (byte-identical)."""
+    if client is None or not settings.llm_openai_fallback_enabled:
+        return client
+    cache_key = "__openai_compat_fallback__"
+    if cache_key not in _client_cache:
+        fallback = create_llm_client(settings.ollama_url)
+        _client_cache[cache_key] = _OpenAICompatFallbackClient(client, fallback)  # type: ignore[assignment]
+    return _client_cache.get(cache_key)
+
+
 def get_dedicated_client(url: str) -> LLMClient:
     """Client bound to an explicit URL, bypassing the OpenAI-tier short-circuit.
 
@@ -186,7 +316,7 @@ def get_default_client() -> LLMClient:
     if use_openai_for_tier("chat"):
         client = get_openai_compat_client()
         if client is not None:
-            return client  # type: ignore[return-value]
+            return _maybe_wrap_openai_fallback(client)  # type: ignore[return-value]
     return _make_client_with_fallback(settings.ollama_url)
 
 
@@ -224,7 +354,7 @@ def get_agent_client(
     if use_openai_for_tier("agent"):
         client = get_openai_compat_client()
         if client is not None:
-            return client, settings.llm_openai_base_url or ""  # type: ignore[return-value]
+            return _maybe_wrap_openai_fallback(client), settings.llm_openai_base_url or ""  # type: ignore[return-value]
     resolved = role_url or fallback_url or settings.ollama_url
     return _make_client_with_fallback(resolved), resolved
 
