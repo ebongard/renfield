@@ -1,9 +1,10 @@
 # A733 (Orange Pi Zero 3W) satellite camera — hardware bring-up reference
 
-**Status: investigated + schematic-verified 2026-08-09. Not yet built.** This is the
-authoritative camera reference for the Allwinner **A733** satellite (the Esszimmer node,
-`orangepizero3w` / 192.168.1.82). It supersedes earlier, wrong conclusions in this repo
-that said "CSI is a dead end, use RTSP" — the schematic shows the opposite.
+**Status: BROUGHT UP + WORKING 2026-08-09.** `/dev/video0` is live on the Esszimmer node
+(`orangepizero3w` / 192.168.1.82) with an IMX219 (Camera Module 2) on CAM1. This is the
+authoritative camera reference for the Allwinner **A733** satellite. It supersedes earlier,
+wrong conclusions in this repo that said "CSI is a dead end, use RTSP" — the schematic (and
+now a working camera) show the opposite.
 
 ## TL;DR
 
@@ -157,15 +158,31 @@ Camera Cable Standard - Mini"** (15-pin↔22-pin) is the *correct* cable — pai
 **IMX219** camera. A cable being right does not make an unsupported *sensor* work: Camera
 Module 3 (IMX708) fails on the sensor driver, not the cable.
 
-## Bring-up steps
+## Bring-up steps (as actually performed — DONE ✅)
 
-1. Order the 15→22-pin Pi-Zero camera cable; connect the IMX219 module to **CAM1**.
-2. Write + install the DT overlay (below); enable it in `/boot/orangepiEnv.txt`
-   (`overlays=...`), reboot.
-3. Verify `/dev/video0` appears and `v4l2-ctl --list-devices` / a test capture works.
-4. Mount `/dev/video0` + `/dev/media0` into the Esszimmer pod (`k8s/satellite-esszimmer.yaml`,
-   alongside the existing `/dev/snd` mounts).
-5. Wire it to the occupancy/gesture prototypes (`prototypes/npu-occupancy/`) — the
+1. ✅ IMX219 (Camera Module 2) on **CAM1** via a Standard-Mini (15↔22) cable, contacts
+   oriented correctly (a flipped ribbon shorts the board — see Troubleshooting).
+2. ✅ Compile + install the overlay: `.dtbo` → `/boot/dtb/allwinner/overlay/sun60i-a733-cam-imx219.dtbo`;
+   add `overlays=cam-imx219` to `/boot/orangepiEnv.txt` (the board uses
+   `overlay_prefix=sun60i-a733`, so the entry is the suffix `cam-imx219`); reboot. The
+   overlay applies (`/proc/device-tree/.../vind@5800800/sensor@5812000/sensor0_mname` = `imx219`).
+3. ✅ **Load the sunxi-vin modules — REQUIRED, easy to miss.** `CONFIG_AW_VIDEO_SUNXI_VIN`
+   and the sensor are **`=m` and do NOT autoload**, so after the overlay you still get no
+   `/dev/video0` until: `modprobe vin_io imx219 vin_v4l2`. Made persistent with
+   `/etc/modules-load.d/renfield-camera.conf` containing, in order:
+   ```
+   vin_io
+   imx219
+   vin_v4l2
+   ```
+   Result: `dmesg` → `[imx219]find the sony IMX219`, and `/dev/video0` + `/dev/media0`
+   appear (`v4l2-ctl -d /dev/video0 --list-formats-ext` enumerates RGB565/RGB888/NV12/YUV422/
+   GREY — the ISP output). **All overlay values were correct first try** (csi_sel/mipi_sel=0,
+   mclk_id=0, PE6/PE5 reset/pwdn) — no tunable iteration was needed. (A harmless
+   `imx219_2 ... No such device` logs from a second base-DTB sensor slot with no camera.)
+4. ⏳ **Next:** mount `/dev/video0` + `/dev/media0` into the Esszimmer pod
+   (`k8s/satellite-esszimmer.yaml`, alongside the existing `/dev/snd` hostPath mounts).
+5. ⏳ Wire it to the occupancy/gesture prototypes (`prototypes/npu-occupancy/`) — the
    detector + WS contract are camera-agnostic; only the frame source changes.
 
 ### DT overlay
