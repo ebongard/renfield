@@ -180,10 +180,59 @@ Module 3 (IMX708) fails on the sensor driver, not the cable.
    GREY — the ISP output). **All overlay values were correct first try** (csi_sel/mipi_sel=0,
    mclk_id=0, PE6/PE5 reset/pwdn) — no tunable iteration was needed. (A harmless
    `imx219_2 ... No such device` logs from a second base-DTB sensor slot with no camera.)
-4. ⏳ **Next:** mount `/dev/video0` + `/dev/media0` into the Esszimmer pod
-   (`k8s/satellite-esszimmer.yaml`, alongside the existing `/dev/snd` hostPath mounts).
-5. ⏳ Wire it to the occupancy/gesture prototypes (`prototypes/npu-occupancy/`) — the
-   detector + WS contract are camera-agnostic; only the frame source changes.
+4. ✅ Mount `/dev/video0` + `/dev/media0` into the Esszimmer pod
+   (`k8s/satellite-esszimmer.yaml`, alongside `/dev/snd`; `type: CharDevice`). Verified
+   visible in-container.
+5. ⏳ **Frame capture — needs the Allwinner GStreamer plugin (see below).** The detector
+   + WS contract are camera-agnostic; only the frame source needs this dependency.
+
+## Frame capture — sunxi-vin needs Allwinner's GStreamer `en-awisp` (NOT plain V4L2)
+
+The hardest gotcha, verified on-board 2026-08-09: **the sensor is detected and `/dev/video0`
+exists, but you cannot capture with plain V4L2 or OpenCV.** The device is a media-controller,
+**multiplanar** node whose ISP/scaler pipeline
+(sensor → mipi.0 → csi.0 → tdm_rx.0 → isp.0 → scaler.0 → vin_cap.0) will not negotiate a
+format from userspace V4L2:
+
+- `cv2.VideoCapture` / `v4l2-ctl --stream-mmap` → `VIDIOC_REQBUFS Invalid argument`,
+  `vin_pipeline_try_format failed`, `v4l2 sub device scaler get_selection error`. Setting
+  the sensor subdev (`/dev/v4l-subdev0`, `SRGGB10_1X10`) does not fix it — the AW ISP/scaler
+  needs proprietary configuration that raw V4L2 doesn't do.
+- **The only working path** is Allwinner's **patched GStreamer `v4l2src` with `en-awisp=1`**
+  (drives the AW ISP internally). This is exactly what the board's own
+  `/usr/local/bin/test_camera.sh` uses:
+  ```
+  gst-launch-1.0 v4l2src device=/dev/video0 en-awisp=1 en-largemode=0 num-buffers=1 \
+      ! video/x-raw,format=NV12,width=640,height=480 ! jpegenc ! filesink location=cam.jpg
+  ```
+
+**The blocker:** `en-awisp` is an **Allwinner patch** — it is NOT in stock GStreamer and NOT
+apt-installable (checked: `apt-cache search` finds only stock `gstreamer1.0-plugins-good`,
+whose `v4l2src` lacks `en-awisp`). It ships only in Allwinner's BSP GStreamer (the Orange Pi
+**desktop** image). The current satellite image has no GStreamer at all.
+
+**Remaining task → get the AW GStreamer v4l2 plugin into the satellite image:**
+- **Option A (extract):** pull `gst-launch-1.0` + the AW GStreamer libs/plugins from an Orange
+  Pi **desktop** rootfs for this exact board/kernel, bake them into the satellite image.
+- **Option B (build):** build the AW BSP GStreamer (the `en-awisp` v4l2 plugin) from
+  Allwinner's A733 source, cross- or native-compile on the board.
+- **Option C (raw-Bayer bypass):** investigate whether sunxi-vin exposes a raw-CSI capture
+  path (bypassing the ISP/scaler) → capture SRGGB10 + debayer in software. Unverified; avoids
+  the AW plugin but adds a debayer step and unknown driver support.
+
+`prototypes/npu-occupancy/satellite_occupancy.py::V4L2Camera` is written for the
+`en-awisp` GStreamer path (subprocess → JPEG → BGR) and degrades to "capture disabled" when
+`gst-launch-1.0` is absent — so the occupancy gate stays safe until the plugin ships.
+
+## Thermal note (observed during bring-up)
+
+The board runs **warm: ~72 °C** on the CPU cores at idle-ish load (1.3), driven by the
+baseline satellite ML workload (wakeword + BLE + audio) + k8s overhead — **not** the camera
+(idle vin draws ~nothing). It **has a PWM fan, already at max** (`pwm-fan cur=4/max=4`), and
+is not throttling (cores at 1794 MHz, no dmesg thermal warnings), skin only 38 °C. There is
+little cooling headroom left, so **continuous** vision inference would push it toward the
+throttle point — another reason the non-verbal design uses *gated, bounded-window* capture
+rather than a persistent stream.
 
 ### DT overlay
 

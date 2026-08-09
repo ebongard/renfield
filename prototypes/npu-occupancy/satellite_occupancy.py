@@ -29,34 +29,68 @@ from occupancy_detector import DetectorConfig, OccupancyDetector
 
 
 class V4L2Camera:
-    """Single-frame grabber for a CSI sensor exposed as /dev/videoN.
+    """Single-frame grabber for the A733 CSI sensor exposed as /dev/videoN.
 
     CSI (not a webcam): the sensor driver lives on the HOST; the privileged pod mounts
-    /dev/video* + /dev/media*. We open lazily and read one frame per request — no
-    continuous streaming (occupancy checks are occasional, and a persistent stream would
-    fight the audio loop for USB/DMA bandwidth and power).
+    /dev/video* + /dev/media*. One frame per request — no continuous streaming (occupancy
+    checks are occasional; a persistent stream adds heat on the passively-hot A733).
+
+    IMPORTANT — sunxi-vin does NOT capture via plain V4L2 / OpenCV.
+    ---------------------------------------------------------------
+    Verified on the Esszimmer board (2026-08-09): the sensor is detected and /dev/video0
+    exists, but `cv2.VideoCapture` and raw `v4l2-ctl --stream-mmap` BOTH fail — the device
+    is a media-controller, MULTIPLANAR node, and its ISP/scaler pipeline
+    (sensor → mipi → csi → tdm → isp → scaler → vin_cap) will not negotiate a format from
+    userspace V4L2 alone (`vin_pipeline_try_format failed`, `scaler get_selection error`).
+    The ONLY working capture path is Allwinner's **patched GStreamer `v4l2src`** with the
+    `en-awisp=1` property, which drives the AW ISP internally (this is exactly what the
+    board's own /usr/local/bin/test_camera.sh uses):
+
+        gst-launch-1.0 v4l2src device=/dev/video0 en-awisp=1 en-largemode=0 num-buffers=1 \
+            ! video/x-raw,format=NV12,width=640,height=480 ! jpegenc ! filesink location=...
+
+    That `en-awisp` v4l2src is an Allwinner patch — it is NOT in stock GStreamer and NOT
+    apt-installable; it ships only in Allwinner's BSP GStreamer (Orange Pi desktop image).
+    So enabling capture is a DEPENDENCY task: get the AW GStreamer v4l2 plugin into the
+    satellite image (extract from the Orange Pi desktop rootfs for this board, or build
+    from the A733 BSP GStreamer source). See docs/design/a733-satellite-camera.md.
     """
 
-    def __init__(self, device: str = "/dev/video0", width: int = 1280, height: int = 720) -> None:
+    # AW GStreamer capture → one NV12 frame → JPEG on stdout, decoded to BGR.
+    _GST = (
+        "gst-launch-1.0 -q v4l2src device={dev} en-awisp=1 en-largemode=0 num-buffers=1 "
+        "! video/x-raw,format=NV12,width={w},height={h} ! jpegenc ! fdsink fd=1"
+    )
+
+    def __init__(self, device: str = "/dev/video0", width: int = 640, height: int = 480) -> None:
         self._device, self._w, self._h = device, width, height
 
     async def grab_bgr(self):
-        # Run the blocking V4L2 read off the event loop so it never stalls wakeword/WS.
         return await asyncio.to_thread(self._grab_sync)
 
     def _grab_sync(self):
-        import cv2  # opencv-python-headless on the satellite image
-        cap = cv2.VideoCapture(self._device, cv2.CAP_V4L2)
+        """Capture one frame via the AW GStreamer pipeline → decode to BGR.
+
+        Returns None if gst / the en-awisp plugin is absent (the current satellite image),
+        so the occupancy gate degrades gracefully until the AW plugin ships. Requires
+        gst-launch-1.0 WITH Allwinner's en-awisp v4l2src on PATH inside the pod."""
+        import shutil, subprocess
+        import numpy as np
+        from PIL import Image
+        import io as _io
+        if shutil.which("gst-launch-1.0") is None:
+            print("[camera] gst-launch-1.0 (with AW en-awisp v4l2src) not present — capture disabled")
+            return None
+        cmd = self._GST.format(dev=self._device, w=self._w, h=self._h)
         try:
-            cap.set(cv2.CAP_PROP_FRAME_WIDTH, self._w)
-            cap.set(cv2.CAP_PROP_FRAME_HEIGHT, self._h)
-            # Drop the first couple of frames — CSI sensors need AE/AWB to settle,
-            # else the first frame is black/over-exposed and the count is garbage.
-            for _ in range(3):
-                ok, frame = cap.read()
-            return frame if ok else None
-        finally:
-            cap.release()
+            out = subprocess.run(cmd.split(), capture_output=True, timeout=15).stdout
+            if not out:
+                return None
+            rgb = np.asarray(Image.open(_io.BytesIO(out)).convert("RGB"))
+            return rgb[:, :, ::-1].copy()  # RGB→BGR
+        except Exception as e:  # noqa: BLE001
+            print(f"[camera] capture failed: {e}")
+            return None
 
 
 class OccupancyProbe:
