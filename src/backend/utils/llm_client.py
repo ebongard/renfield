@@ -179,11 +179,18 @@ def _should_fallback(exc: BaseException) -> bool:
       cold-model HTTP 503 during warm-up: the bounded boot-gate lets the backend
       go Ready before the model is warm, so runtime must cover that 503.
 
+    - a connect-timeout (host down / network-unreachable) — which the openai SDK
+      surfaces as ``openai.APITimeoutError`` wrapping ``httpx.ConnectTimeout``.
+
     Do NOT fail over on:
-    - read/pool timeouts of a slow-but-HEALTHY primary (``openai.APITimeoutError``,
-      ``httpx.ReadTimeout``, ``httpx.PoolTimeout``) — silently degrading a busy
-      primary to the weaker local model would hurt answer quality, and
+    - read/pool timeouts of a slow-but-HEALTHY primary (``httpx.ReadTimeout`` /
+      ``PoolTimeout``, incl. when wrapped as ``openai.APITimeoutError``) —
+      silently degrading a busy primary to the weaker local model would hurt
+      answer quality, and
     - 4xx client errors (our own bad request) — masking those hides real bugs.
+
+    Because openai flattens connect- AND read/pool-timeouts into one
+    ``APITimeoutError`` type, they are told apart by the chained ``__cause__``.
 
     openai/httpx are imported lazily; if unavailable we do NOT fall back (can't
     classify → surface the error rather than mask it).
@@ -193,9 +200,17 @@ def _should_fallback(exc: BaseException) -> bool:
         import openai
     except Exception:  # noqa: BLE001
         return False
-    # Slow-but-healthy primary → keep it, don't degrade. APITimeoutError is a
-    # SUBCLASS of APIConnectionError, so this check MUST come first.
-    if isinstance(exc, (openai.APITimeoutError, httpx.ReadTimeout, httpx.PoolTimeout)):
+    # openai collapses BOTH connect-timeout (host down → MUST fall over) and
+    # read/pool-timeout (server up, just slow → keep primary) into APITimeoutError,
+    # but chains the original httpx error via __cause__. So classify by the cause:
+    # only a genuine read/pool timeout stays on the primary; a connect-timeout —
+    # or an unknown/absent cause — falls over, because host-unreachable is the
+    # outage this whole feature exists for. (APITimeoutError is a SUBCLASS of
+    # APIConnectionError, so it MUST be handled before the APIConnectionError case.)
+    if isinstance(exc, openai.APITimeoutError):
+        return not isinstance(exc.__cause__, (httpx.ReadTimeout, httpx.PoolTimeout))
+    # Raw read/pool timeout (defensive — if it ever surfaces unwrapped) → keep primary.
+    if isinstance(exc, (httpx.ReadTimeout, httpx.PoolTimeout)):
         return False
     # Primary down / unreachable → fall over.
     if isinstance(exc, (openai.APIConnectionError, httpx.ConnectError, httpx.ConnectTimeout)):
@@ -216,11 +231,15 @@ class _OpenAICompatFallbackClient:
     :func:`_should_fallback`. A slow-but-healthy primary (read/pool timeout) is
     NOT failed over (no silent quality drop), and 4xx client errors surface.
 
-    KNOWN LIMITATION: a primary that ACCEPTS the connection then HANGS (never
-    returns a token) is cancelled by the caller's own ``asyncio.wait_for`` budget
-    before this wrapper's ``except`` runs, so that variant is not covered here —
-    it surfaces as a timeout. The common outage shapes (box down → connection
-    refused; box restarting → 503) ARE covered.
+    Covered outage shapes: box down (connection refused → APIConnectionError, OR
+    connect-timeout → APITimeoutError wrapping httpx.ConnectTimeout) and box
+    restarting (cold-model 503). KNOWN LIMITATIONS: (a) a primary that ACCEPTS the
+    connection then HANGS mid-generation is cancelled by the caller's own
+    ``asyncio.wait_for`` budget before this wrapper's ``except`` runs (surfaces as
+    a timeout, not covered); (b) the fallback call runs inside that same per-step
+    budget, so a COLD in-cluster model could be cancelled before it answers —
+    mitigated in this deployment because the fallback model (qwen3:14b) is pinned
+    resident (OLLAMA_KEEP_ALIVE=-1).
 
     - **Non-streaming** ``chat``: primary first; on a fail-over error, retried on
       Ollama with the model remapped to a known in-cluster model
@@ -239,6 +258,15 @@ class _OpenAICompatFallbackClient:
         self._primary = primary
         self._fallback = fallback
 
+    def __getattr__(self, name: str) -> Any:
+        # Transparent passthrough for any attr not defined here (e.g. capability
+        # flags like ``supports_native_tools``) so wrapping the primary doesn't
+        # hide them. Guard the internal names to avoid recursion before __init__
+        # has set them. __getattr__ only fires when normal lookup misses.
+        if name in ("_primary", "_fallback"):
+            raise AttributeError(name)
+        return getattr(self._primary, name)
+
     def _fallback_model(self) -> str:
         """The in-cluster model to use on fail-over — always a single known
         resident model (``llm_openai_fallback_model``, else ``ollama_model``,
@@ -250,6 +278,17 @@ class _OpenAICompatFallbackClient:
         degraded mode.
         """
         return settings.llm_openai_fallback_model or settings.ollama_model
+
+    def _fallback_kwargs(self, kwargs: dict[str, Any], fb_model: str) -> dict[str, Any]:
+        """Adjust call kwargs for the fallback model. The caller's ``think`` kwarg
+        was computed for the PRIMARY model; if the fallback model is a thinking
+        model and the caller didn't set ``think``, force ``think=False`` so it
+        doesn't return reasoning with empty ``message.content`` (the ollama-python
+        0.6.1 empty-content trap → agent JSON-parse failure) during the outage.
+        """
+        if is_thinking_model(fb_model) and "think" not in kwargs:
+            return {**kwargs, "think": False}
+        return kwargs
 
     async def chat(
         self,
@@ -267,11 +306,12 @@ class _OpenAICompatFallbackClient:
             if not _should_fallback(exc):
                 raise
             fb_model = self._fallback_model()
+            fb_kwargs = self._fallback_kwargs(kwargs, fb_model)
             logger.warning(
                 f"OpenAI-compat LLM primary failed ({exc!r}); "
                 f"falling back to in-cluster Ollama (model={fb_model})"
             )
-            return await self._fallback.chat(model=fb_model, messages=messages, stream=False, **kwargs)
+            return await self._fallback.chat(model=fb_model, messages=messages, stream=False, **fb_kwargs)
 
     async def _chat_stream(
         self, model: str, messages: list[dict[str, Any]] | None, kwargs: dict[str, Any]
@@ -285,11 +325,12 @@ class _OpenAICompatFallbackClient:
             if not _should_fallback(exc):
                 raise
             fb_model = self._fallback_model()
+            fb_kwargs = self._fallback_kwargs(kwargs, fb_model)
             logger.warning(
                 f"OpenAI-compat LLM primary failed on stream open ({exc!r}); "
                 f"falling back to in-cluster Ollama (model={fb_model})"
             )
-            fb_gen = await self._fallback.chat(model=fb_model, messages=messages, stream=True, **kwargs)
+            fb_gen = await self._fallback.chat(model=fb_model, messages=messages, stream=True, **fb_kwargs)
             async for chunk in fb_gen:
                 yield chunk
             return

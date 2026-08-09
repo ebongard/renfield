@@ -79,16 +79,21 @@ spec:
               # forever. When the fallback is OFF this keeps the strict wait (no 503 on the
               # first LLM call). The flag comes from the renfield-env configMap (envFrom below).
               echo "waiting for cuda.local llama-server /health..."
-              if [ "$LLM_OPENAI_FALLBACK_ENABLED" = "true" ]; then
-                # Guard against a non-numeric WAIT_CUDA_MAX_SECONDS (a typo like
-                # "180s" would make the -ge test error every iteration → the
-                # break never fires → the bounded wait hangs forever).
+              # Truthy match the flag the way Pydantic parses it (true/1/yes/on/t/y,
+              # any case) — a shell exact "=true" would leave the boot-gate strict
+              # while the runtime fallback is on, hanging Init during a cuda outage.
+              case "$LLM_OPENAI_FALLBACK_ENABLED" in [Tt][Rr][Uu][Ee]|1|[Yy][Ee][Ss]|[Oo][Nn]|[Tt]|[Yy]) _fb=1;; *) _fb=0;; esac
+              if [ "$_fb" = "1" ]; then
+                # Guard against a non-numeric WAIT_CUDA_MAX_SECONDS (a "180s" typo).
                 _max="${WAIT_CUDA_MAX_SECONDS:-180}"; case "$_max" in ''|*[!0-9]*) _max=180;; esac
-                _w=0
-                until wget -q -O- http://cuda.local:8081/health 2>/dev/null | grep -q '"ok"'; do
-                  _w=$((_w+2))
-                  if [ "$_w" -ge "$_max" ]; then
-                    echo "cuda.local not ready after ${_w}s — proceeding (in-cluster fallback covers LLM)"; break
+                # Bound by WALL-CLOCK (date), not iteration count, AND bound each
+                # probe with wget -T: a down host makes an un-timed wget block on
+                # the kernel connect timeout, so counting iterations would balloon
+                # the "180s" to many minutes — the exact hang this must avoid.
+                _start=$(date +%s)
+                until wget -T 5 -q -O- http://cuda.local:8081/health 2>/dev/null | grep -q '"ok"'; do
+                  if [ $(( $(date +%s) - _start )) -ge "$_max" ]; then
+                    echo "cuda.local not ready after ~${_max}s — proceeding (in-cluster fallback covers LLM)"; break
                   fi
                   sleep 2
                 done

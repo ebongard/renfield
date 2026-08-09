@@ -1281,18 +1281,86 @@ class TestOpenAICompatFallbackClient:
             await w.chat(model="qwen3.6", messages=[])
         fallback.chat.assert_not_called()
 
-    @pytest.mark.unit
-    @pytest.mark.asyncio
-    async def test_apitimeout_reraised_not_fallback(self, monkeypatch):
-        """A slow-but-healthy primary (APITimeoutError) must NOT degrade to Ollama."""
+    @staticmethod
+    def _apitimeout(cause=None):
+        """Build an openai.APITimeoutError the way the SDK does — wrapping (via
+        __cause__) the underlying httpx timeout (connect vs read/pool)."""
         import httpx
         import openai
+        exc = openai.APITimeoutError(request=httpx.Request("POST", "http://cuda.local:8081/v1"))
+        if cause is not None:
+            exc.__cause__ = cause
+        return exc
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_apitimeout_connect_cause_falls_over(self, monkeypatch):
+        """Host-down surfaces as APITimeoutError wrapping ConnectTimeout → MUST fall over
+        (the real-world outage shape the first fix wrongly excluded)."""
+        import httpx
         primary = AsyncMock(); fallback = AsyncMock()
-        primary.chat.side_effect = openai.APITimeoutError(request=httpx.Request("POST", "http://cuda.local:8081/v1"))
+        primary.chat.side_effect = self._apitimeout(httpx.ConnectTimeout("connect timed out"))
+        fallback.chat.return_value = "ok"
+        w = self._wrapper(monkeypatch, primary, fallback)
+        assert await w.chat(model="qwen3.6", messages=[]) == "ok"
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_apitimeout_read_cause_reraised(self, monkeypatch):
+        """Slow-but-healthy primary (APITimeoutError wrapping ReadTimeout) → do NOT degrade."""
+        import openai
+        import httpx
+        primary = AsyncMock(); fallback = AsyncMock()
+        primary.chat.side_effect = self._apitimeout(httpx.ReadTimeout("slow"))
         w = self._wrapper(monkeypatch, primary, fallback)
         with pytest.raises(openai.APITimeoutError):
             await w.chat(model="qwen3.6", messages=[])
         fallback.chat.assert_not_called()
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_apitimeout_bare_falls_over(self, monkeypatch):
+        """A bare APITimeoutError (no chained cause) errs toward falling over — host-down priority."""
+        primary = AsyncMock(); fallback = AsyncMock()
+        primary.chat.side_effect = self._apitimeout(None)
+        fallback.chat.return_value = "ok"
+        w = self._wrapper(monkeypatch, primary, fallback)
+        assert await w.chat(model="qwen3.6", messages=[]) == "ok"
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_fallback_forces_think_false_for_thinking_model(self, monkeypatch):
+        """Fallover to a thinking model (qwen3:14b) without an explicit think= must
+        set think=False (else the ollama-python empty-content trap)."""
+        import httpx
+        primary = AsyncMock(); fallback = AsyncMock()
+        primary.chat.side_effect = httpx.ConnectError("down")
+        fallback.chat.return_value = "ok"
+        w = self._wrapper(monkeypatch, primary, fallback)  # ollama_model=qwen3:14b
+        await w.chat(model="qwen3.6", messages=[])
+        assert fallback.chat.call_args.kwargs.get("think") is False
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_fallback_respects_explicit_think(self, monkeypatch):
+        """An explicit caller think= is not overridden on fallover."""
+        import httpx
+        primary = AsyncMock(); fallback = AsyncMock()
+        primary.chat.side_effect = httpx.ConnectError("down")
+        fallback.chat.return_value = "ok"
+        w = self._wrapper(monkeypatch, primary, fallback)
+        await w.chat(model="qwen3.6", messages=[], think=True)
+        assert fallback.chat.call_args.kwargs.get("think") is True
+
+    @pytest.mark.unit
+    def test_getattr_delegates_capability_flag_to_primary(self, monkeypatch):
+        """Unknown attrs (e.g. supports_native_tools) pass through to the primary,
+        so wrapping doesn't silently hide capability flags."""
+        from utils import llm_client
+        primary = MagicMock(); primary.supports_native_tools = True
+        fallback = MagicMock()
+        w = llm_client._OpenAICompatFallbackClient(primary, fallback)
+        assert w.supports_native_tools is True
 
     @pytest.mark.unit
     @pytest.mark.asyncio

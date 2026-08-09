@@ -68,11 +68,14 @@ spec:
               # boots during a cuda outage (runtime Ollama fallback covers LLM); off →
               # strict wait. See k8s/backend.yaml init container for rationale.
               echo "waiting for cuda.local llama-server /health..."
-              if [ "$LLM_OPENAI_FALLBACK_ENABLED" = "true" ]; then
+              # Truthy match (Pydantic parses true/1/yes/on/t/y, any case); wall-clock
+              # bound + wget -T so a down host can't balloon the wait. See backend.yaml.
+              case "$LLM_OPENAI_FALLBACK_ENABLED" in [Tt][Rr][Uu][Ee]|1|[Yy][Ee][Ss]|[Oo][Nn]|[Tt]|[Yy]) _fb=1;; *) _fb=0;; esac
+              if [ "$_fb" = "1" ]; then
                 _max="${WAIT_CUDA_MAX_SECONDS:-180}"; case "$_max" in ''|*[!0-9]*) _max=180;; esac
-                _w=0
-                until wget -q -O- http://cuda.local:8081/health 2>/dev/null | grep -q '"ok"'; do
-                  _w=$((_w+2)); [ "$_w" -ge "$_max" ] && { echo "cuda.local not ready after ${_w}s — proceeding (fallback covers LLM)"; break; }
+                _start=$(date +%s)
+                until wget -T 5 -q -O- http://cuda.local:8081/health 2>/dev/null | grep -q '"ok"'; do
+                  [ $(( $(date +%s) - _start )) -ge "$_max" ] && { echo "cuda.local not ready after ~${_max}s — proceeding (fallback covers LLM)"; break; }
                   sleep 2
                 done
               else
