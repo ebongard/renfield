@@ -43,13 +43,20 @@ static int xioctl(int fd, unsigned long req, void *arg, const char *name, int fa
 
 int main(int argc, char **argv) {
     const char *dev = argc > 1 ? argv[1] : "/dev/video0";
-    int W = argc > 2 ? atoi(argv[2]) : 640;
-    int H = argc > 3 ? atoi(argv[3]) : 480;
+    int W = argc > 2 ? atoi(argv[2]) : 1920;
+    int H = argc > 3 ? atoi(argv[3]) : 1080;
     const char *out = argc > 4 ? argv[4] : "/tmp/frame.i420";
     int warmup = argc > 5 ? atoi(argv[5]) : 8;   /* skip frames while 3A converges */
 
     int fd = open(dev, O_RDWR | O_NONBLOCK, 0);
     if (fd < 0) { fprintf(stderr, "[cap] open %s: %s\n", dev, strerror(errno)); return 2; }
+
+    /* This ISP config's scaler output caps at 1920x1080 (S_FMT clamps anything higher).
+     * The sensor is 8 MP, but full-res needs the ISP "large image" path (large-scaler /
+     * tiled) which `sensor_isp_cfg.large_image` + ispSetIspLargeImage alone don't unlock —
+     * not worth it here; 1080p is the practical max. So cap the request at 1920x1080. */
+    if (W > 1920) W = 1920;
+    if (H > 1080) H = 1080;
 
     int input = 0;
     xioctl(fd, VIDIOC_S_INPUT, &input, "S_INPUT", 0);

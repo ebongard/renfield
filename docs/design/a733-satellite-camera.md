@@ -210,19 +210,28 @@ Shipped tool: **`prototypes/npu-occupancy/isp_capture/renfield_isp_capture.c`** 
 (skips ~8 frames for 3A warmup) and writes raw **I420**. Built + run on the board:
 ```
 gcc -O2 -o renfield_isp_capture renfield_isp_capture.c -I/opt/awisp -L/opt/awisp/lib -lAWIspApi -Wl,-rpath,/opt/awisp/lib
-LD_LIBRARY_PATH=/opt/awisp/lib ./renfield_isp_capture /dev/video0 640 480 /tmp/frame.i420 8
+LD_LIBRARY_PATH=/opt/awisp/lib ./renfield_isp_capture /dev/video0 1920 1080 /tmp/frame.i420 8
 ```
-→ `/tmp/frame.i420` = **460800 bytes (640×480 I420)**, a real image (Y mean≈113, stddev≈22).
+→ `/tmp/frame.i420` = **3110400 bytes (1920×1080 I420)**, a real image (Y mean≈128, stddev≈28).
 `V4L2Camera` (satellite_occupancy.py) calls this tool → I420 → BGR (numpy, no cv2); degrades to
-"capture disabled" if the tool/libs are absent.
+"capture disabled" if the tool/libs are absent. Also verified **from inside the pod** (see mount
+below): 1080p frame captured in-container.
 
-**Deploy dependency (remaining):** bake the tool + the AW ISP libs into the satellite image:
-```
-/opt/awisp/renfield_isp_capture                                   # gcc-built from the .c
-/opt/awisp/lib/{libAWIspApi.so, libisp.so, libisp_ini.so}        # from the OPi desktop image
-```
-The `.c` is in-repo; the three AW `.so`s are Allwinner proprietary binaries (extracted from the
-desktop rootfs) — stage them into the satellite image build context, do NOT commit to git.
+**Resolution ceiling = 1920×1080.** The IMX219 is 8 MP (3280×2464) and captures 1080p natively,
+but this ISP config's **scaler output caps at 1920×1080** — `S_FMT` clamps any higher request
+(2560×1440 / 3280×2464 all come back as 1080p). Full-sensor res needs the ISP "large image" path
+(large-scaler / tiled capture); the `sensor_isp_cfg.large_image` + `ispSetIspLargeImage()` flags
+alone do NOT unlock it (tested — still clamped, and broke the simple grab). Not worth pursuing:
+1080p is ample for occupancy/gesture (the YOLO detector letterboxes to 640 anyway) and good for
+document reading. 640×480 / 1280×720 also work (lighter/less heat). The tool caps requests at
+1920×1080.
+
+**Deploy — DONE via hostPath (not baked into the image).** `/opt/awisp` (the `renfield_isp_capture`
+binary + `lib/{libAWIspApi,libisp,libisp_ini}.so`) lives on the **host** and is hostPath-mounted
+read-only into the pod (`k8s/satellite-esszimmer.yaml`, `awisp` volume). Applied + verified: the
+pod sees `/opt/awisp/*` and captures a frame in-container. The `.c` is in-repo; the three AW
+`.so`s are Allwinner proprietary (from the OPi desktop image) — they live on the host, NOT in git.
+(A later hardening option is to bake them into the satellite image instead of the host hostPath.)
 
 ## Thermal note (observed during bring-up)
 

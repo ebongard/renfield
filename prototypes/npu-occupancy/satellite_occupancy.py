@@ -54,8 +54,11 @@ class V4L2Camera:
     _CAP = "/opt/awisp/renfield_isp_capture"
     _LIBS = "/opt/awisp/lib"
 
-    def __init__(self, device: str = "/dev/video0", width: int = 640, height: int = 480,
+    def __init__(self, device: str = "/dev/video0", width: int = 1920, height: int = 1080,
                  warmup: int = 8) -> None:
+        # IMX219 is 8 MP; the ISP downscales, so 1280x720 / 640x480 also work if a lighter
+        # frame is wanted (the occupancy YOLO letterboxes to 640 regardless — higher res
+        # mainly helps document-reading / gesture detail, at more capture time + heat).
         self._device, self._w, self._h, self._warmup = device, width, height, warmup
 
     async def grab_bgr(self):
