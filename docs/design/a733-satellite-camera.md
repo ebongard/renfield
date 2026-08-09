@@ -87,16 +87,52 @@ CONFIG_SENSOR_OV13850=m         # MIPI, also available (13 MP)
   scaffold (`vind0`/`csi`/`sensor`/`vinc`) — adapt that as the overlay template.
 - So the entire remaining task is **one DT overlay** using the pins verified above.
 
-## The cable — and the no-boot root cause
+## Pin compatibility with Raspberry Pi cameras (verified)
 
-- **Root cause of the "Orange won't boot" incident:** a **15-pin** Pi camera (the
-  arbeitszimmer Pi Cam v2) was connected to the board's **22-pin** socket. The pins don't
-  align → mis-driven power/signal lines → the board fails to boot. Not a board fault; the
-  board is fine once disconnected.
-- **The one part to order:** a **Raspberry Pi Zero / Pi 5 camera cable, 15-pin (camera) ↔
-  22-pin (host), 0.5 mm** (the standard "Pi Zero camera cable"). ~€5, berrybase.de /
-  Amazon.de ("Raspberry Pi Zero Kamera Kabel 22-pin 15-pin"). A native-22-pin camera
-  needs a 22↔22 cable instead.
+The `fpc22-20-sm-RPI-TOP-h2` footprint is not just mechanically Pi-shaped — the **signal
+assignment matches the Raspberry Pi 22-pin standard** on the pins that matter, so a genuine
+Pi camera + the right cable maps correctly:
+
+| | SCL | SDA | 3V3 |
+|---|---|---|---|
+| Raspberry Pi 22-pin standard | pin 20 | pin 21 | pin 22 |
+| Orange Pi Zero 3W CAM1 (schematic) | pin 20 (TWI11_SCK) | pin 21 (TWI11_SDA) | pin 22 (VCC_3V3_CSI) |
+
+So the connector is genuinely Pi-compatible; an **IMX219** Pi camera is the right part.
+
+## The cable
+
+- **The one part to order:** a **Raspberry Pi "Standard - Mini" camera cable, 15-pin
+  (camera) ↔ 22-pin (host), 0.5 mm** (aka the Pi Zero / Pi 5 camera cable). ~€5,
+  berrybase.de / Amazon.de / Adafruit #5818. A native-22-pin camera needs a 22↔22 cable.
+
+## Troubleshooting: the board won't boot with the camera connected
+
+Two distinct causes, both **mechanical, not a board fault** — the board boots fine the
+moment the camera is unplugged. **Always power off before (dis)connecting the ribbon; a
+mis-seated CSI ribbon shorts 3V3→GND and can damage the board or camera if left powered.**
+
+1. **Wrong connector width** (the first incident): a **15-pin** Pi camera pushed onto the
+   **22-pin** socket without the 15→22 Standard-Mini cable → pins don't align → short → no
+   boot. Fix: use the Standard-Mini cable above.
+
+2. **Flipped FPC ribbon** (the second incident, with a correct Module 2 + cable): an FPC
+   ribbon has **contacts on one side only**. Inserted the wrong way round at **one** end,
+   the connector is **mirrored** — pin 22 (**3V3**) lands on pin 1 (**GND**) → **dead short
+   → no boot.** This is the classic FPC mistake and matches "boots without the camera, dies
+   with it" exactly. Fix, with **power off**:
+   - Unplug the camera; confirm the board boots bare (it will).
+   - Re-seat the ribbon so the **exposed metal contacts** face each connector's contact side
+     at **both** ends (the **blue stiffener** is the orientation reference; flipping one end
+     is what shorts it). Fully insert; close the latch/flap.
+   - Power on. If it boots but `/dev/video0` is absent, that's expected — the sensor still
+     needs the **DT overlay** (above); the board *booting* means the cable is now correct.
+   - Still no boot after fixing orientation with a known-good Standard-Mini cable → suspect a
+     damaged cable, or board damage from an earlier forced insertion (test the board bare,
+     then swap the cable).
+
+**Symptom on the cluster side:** the node goes `NotReady` + no ping (it's a hardware-pinned
+k8s node; a dead board can't self-heal). Unplug the camera and power-cycle to recover.
 
 ## Camera options (all IMX219 → driver already built)
 
