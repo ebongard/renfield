@@ -162,6 +162,11 @@ spec:
             - name: bluetooth
               mountPath: /var/lib/bluetooth
               readOnly: true
+            # CSI camera (IMX219 on CAM1) — see docs/design/a733-satellite-camera.md
+            - name: video
+              mountPath: /dev/video0
+            - name: media
+              mountPath: /dev/media0
           resources:
             requests:
               cpu: "250m"
@@ -187,3 +192,15 @@ spec:
         - name: bluetooth
           hostPath:
             path: /var/lib/bluetooth
+        # CSI camera brought up via the sun60i-a733-cam-imx219 DT overlay + the
+        # sunxi-vin modules (persisted at boot via /etc/modules-load.d). CharDevice
+        # asserts the node exists; media0 is the sunxi-vin media controller used to
+        # configure the capture pipeline. See docs/design/a733-satellite-camera.md.
+        - name: video
+          hostPath:
+            path: /dev/video0
+            type: CharDevice
+        - name: media
+          hostPath:
+            path: /dev/media0
+            type: CharDevice
