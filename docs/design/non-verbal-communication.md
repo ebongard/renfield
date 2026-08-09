@@ -498,19 +498,20 @@ re-shapes into a cheap near-term slice + a later motion phase.
 Two findings from the NPU-vision-offload work update assumptions in this doc. They do
 **not** change any decision; they de-risk the hardware + acceleration story.
 
-1. **CSI camera is viable on the A733 — supersedes "needs a USB camera."** This doc
-   (2026-06-27) assumed "the Pi CSI module is unsupported on that board → needs a USB
-   camera" (§Hardware finding, Decision 3, Phase-4 plan). A camera survey against the
-   **actual A733 vendor kernel config** (`linux-sun60iw2-current-a733.config`, 6.6.98)
-   found the board **does** expose MIPI CSI (the A733 Orange Pi Zero 3W has 2× 4-lane
-   connectors) and that **`CONFIG_SENSOR_IMX219=m` is compiled in** — so an IMX219 CSI
-   module works with only a device-tree overlay (host driver in-tree; the pod mounts
-   `/dev/video*`+`/dev/media*`, like `/dev/snd` today). USB UVC still works and stays a
-   valid Tier-2/transitional option, but **CSI-IMX219 is now the reference** for a
-   gesture/vision satellite. Only four sensors have drivers (IMX219, OV13850, GC05A2,
-   GC030A) — OV5647 is unsupported. Note the optics tension: occupancy wants wide/fisheye
-   + low-light (IMX219-160IR), gesture/expression wants a less-distorted, closer view —
-   the board's **two** CSI ports allow one of each, or pick per priority.
+1. **CSI is NOT usable on the Zero 3W today — use an RTSP (or USB UVC) camera.** This doc
+   (2026-06-27) assumed the A733 "needs a USB camera." A first pass found the board *does*
+   expose MIPI CSI and that `CONFIG_SENSOR_IMX219=m` is compiled — but a second pass (after
+   a Pi-15-pin IMX219 physically **failed to boot** the board) found a **connector/driver
+   collision** that no off-the-shelf CSI camera resolves: the board's CSI is a **24-pin FPC**
+   (Allwinner pinout), Orange Pi's 24-pin modules are all **OV5640 → no driver** in this
+   kernel, and the driver-supported sensors (IMX219/OV13850) ship only in **wrong-connector**
+   form (Pi 15/22-pin or RK3399). **No verified 15→24-pin adapter exists.** So a CSI camera
+   would require porting a `sunxi-vin` OV5640 driver + a Zero-3W DT overlay — real kernel
+   work, out of scope. **Reference camera is now an RTSP/ONVIF IP camera** (e.g. TP-Link
+   Tapo C210 ~€35, Reolink E1 Pro ~€40): no host driver, no DT overlay, no `/dev` mount —
+   frames over the network into the existing Frigate pipeline. USB UVC stays a valid
+   alternative. (This corrects the "CSI-IMX219 is the reference" claim in an earlier draft
+   of this addendum.)
 
 2. **The MediaPipe→NPU conversion rail now exists (demonstrated).** §Risks and
    T-SILICON-PROBE note NPU acceleration needs "a separate Verisilicon TFLite→NBG

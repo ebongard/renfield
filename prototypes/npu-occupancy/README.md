@@ -71,16 +71,32 @@ here are edge **triage** (recognize + has-text) that *route* a presented documen
 | `satellite_occupancy.py` | `V4L2Camera` (single-frame CSI grab), `OccupancyProbe`, and the `count_occupants` WS handler mirroring `_handle_capture_snapshot`. |
 | `README.md` | This — design, model-conversion recipe, integration diff, deploy. |
 
-## Camera (research result, 2026-08-09)
+## Camera (research result, 2026-08-09 — corrected)
 
-Against the **actual A733 vendor kernel config**, the board exposes MIPI CSI and only four
-sensors have drivers (`IMX219`, `OV13850`, `GC05A2`, `GC030A`; OV5647 unsupported). **Top
-pick: Waveshare IMX219-160IR** (8 MP, 160° FoV, IR night-vision, ~$30) — the only wide +
-night-capable module whose sensor is compiled in your kernel. Fallback: a wide-FoV **RTSP
-IP cam** (no host driver, slots into Frigate). Occupancy wants wide/fisheye/low-light;
-gesture/document reading wants a closer, less-distorted view — the board's **two CSI
-ports** allow one of each. This supersedes the "needs a USB camera" assumption in
-`non-verbal-communication.md` (see its 2026-08-09 addendum).
+**CSI is a dead end on this board today — use an RTSP IP camera.** There is a
+**connector/driver collision** on the Zero 3W (A733), confirmed after a Pi-15-pin camera
+failed to boot it:
+
+- The A733 vendor kernel (6.6.98, `sun60iw2`) builds drivers only for `IMX219`, `OV13850`,
+  `GC05A2`, `GC030A`.
+- The board's CSI is a **24-pin FPC** (Allwinner pinout). Orange Pi's own 24-pin camera
+  modules are all **OV5640** → **no driver** in this kernel.
+- The driver-supported sensors (IMX219/OV13850) ship only in **wrong-connector** form (Pi
+  15/22-pin or RK3399). **No verified 15→24-pin adapter exists — do not improvise one**
+  (a Pi 15-pin camera on the 24-pin connector already caused a no-boot).
+- Net: **no off-the-shelf CSI camera is both connector- AND driver-matched** for this board.
+  CSI would require porting a `sunxi-vin` OV5640 driver + a Zero-3W DT overlay (real kernel
+  work) — out of scope.
+
+**Recommended camera: an RTSP/ONVIF IP camera** — e.g. **TP-Link Tapo C210** (~€35) or
+**Reolink E1 Pro** (~€40). Frames arrive over RTSP: **no host driver, no DT overlay, no
+`/dev/video*` mount into the pod** — just network egress, and it slots into the existing
+Frigate pipeline. This is the buy-it-today path; it supersedes both the earlier
+Waveshare-IMX219 CSI pick AND the "needs a USB camera" line in `non-verbal-communication.md`.
+
+Implication for the prototype: `satellite_occupancy.py`'s `V4L2Camera` becomes an **RTSP
+frame grab** (`cv2.VideoCapture("rtsp://…")`) instead of `/dev/video0` — the detector and
+WS contract are unchanged (frame in → count/label out).
 
 ## Validate the pipeline TODAY (no NPU, no board)
 

@@ -153,5 +153,7 @@ offload + privacy + offline improvement — see `prototypes/npu-occupancy/`:
   the cluster still does authoritative OCR/extraction.
 
 Gesture + facial-expression understanding is a **separate** (CPU-MediaPipe) design —
-`docs/design/non-verbal-communication.md`. The A733 CSI camera options (IMX219 etc.) are
-in that doc's 2026-08-09 addendum and the prototype README.
+`docs/design/non-verbal-communication.md`. Camera choice for the A733: **use an RTSP/ONVIF
+IP camera** (Tapo C210 / Reolink E1 Pro) — the Zero 3W's 24-pin CSI has a connector/driver
+collision (no off-the-shelf camera both fits and has an A733 driver; a Pi-15-pin module
+won't even boot it). Details in that doc's 2026-08-09 addendum + the prototype README.
