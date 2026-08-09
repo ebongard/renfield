@@ -153,7 +153,8 @@ offload + privacy + offline improvement — see `prototypes/npu-occupancy/`:
   the cluster still does authoritative OCR/extraction.
 
 Gesture + facial-expression understanding is a **separate** (CPU-MediaPipe) design —
-`docs/design/non-verbal-communication.md`. Camera choice for the A733: **use an RTSP/ONVIF
-IP camera** (Tapo C210 / Reolink E1 Pro) — the Zero 3W's 24-pin CSI has a connector/driver
-collision (no off-the-shelf camera both fits and has an A733 driver; a Pi-15-pin module
-won't even boot it). Details in that doc's 2026-08-09 addendum + the prototype README.
+`docs/design/non-verbal-communication.md`. Camera choice for the A733 (Orange Pi Zero 3W):
+its CSI port is a **Raspberry-Pi-standard 22-pin MIPI connector** and the **IMX219 driver
+is already built** — so an IMX219 camera (Pi Cam v2 / Waveshare IMX219-160IR) + a
+"Standard-Mini" 15↔22-pin cable + one DT overlay is the path. Full schematic-verified
+reference (pinout, driver, overlay, incompatible cameras): `docs/design/a733-satellite-camera.md`.

@@ -71,32 +71,25 @@ here are edge **triage** (recognize + has-text) that *route* a presented documen
 | `satellite_occupancy.py` | `V4L2Camera` (single-frame CSI grab), `OccupancyProbe`, and the `count_occupants` WS handler mirroring `_handle_capture_snapshot`. |
 | `README.md` | This — design, model-conversion recipe, integration diff, deploy. |
 
-## Camera (research result, 2026-08-09 — corrected)
+## Camera — schematic-verified (2026-08-09)
 
-**CSI is a dead end on this board today — use an RTSP IP camera.** There is a
-**connector/driver collision** on the Zero 3W (A733), confirmed after a Pi-15-pin camera
-failed to boot it:
+**Full hardware reference: [`docs/design/a733-satellite-camera.md`](../../docs/design/a733-satellite-camera.md).**
 
-- The A733 vendor kernel (6.6.98, `sun60iw2`) builds drivers only for `IMX219`, `OV13850`,
-  `GC05A2`, `GC030A`.
-- The board's CSI is a **24-pin FPC** (Allwinner pinout). Orange Pi's own 24-pin camera
-  modules are all **OV5640** → **no driver** in this kernel.
-- The driver-supported sensors (IMX219/OV13850) ship only in **wrong-connector** form (Pi
-  15/22-pin or RK3399). **No verified 15→24-pin adapter exists — do not improvise one**
-  (a Pi 15-pin camera on the 24-pin connector already caused a no-boot).
-- Net: **no off-the-shelf CSI camera is both connector- AND driver-matched** for this board.
-  CSI would require porting a `sunxi-vin` OV5640 driver + a Zero-3W DT overlay (real kernel
-  work) — out of scope.
+CSI **works** on this board — the earlier "dead end / use RTSP" call in this file was wrong
+(it extrapolated the connector from lookalike boards). The Zero 3W schematic (sheet 13)
+shows the camera port `CAM1` is a **Raspberry-Pi-standard 22-pin 0.5 mm MIPI CSI** connector
+(footprint `fpc22-20-sm-RPI-TOP-h2`), wired to **CSI0**, i2c **TWI11**, control GPIOs
+**PE6/PE5**. The **IMX219 driver is already built** (`CONFIG_SENSOR_IMX219=m`).
 
-**Recommended camera: an RTSP/ONVIF IP camera** — e.g. **TP-Link Tapo C210** (~€35) or
-**Reolink E1 Pro** (~€40). Frames arrive over RTSP: **no host driver, no DT overlay, no
-`/dev/video*` mount into the pod** — just network egress, and it slots into the existing
-Frigate pipeline. This is the buy-it-today path; it supersedes both the earlier
-Waveshare-IMX219 CSI pick AND the "needs a USB camera" line in `non-verbal-communication.md`.
+- **Camera:** any **IMX219** module (Pi Cam v2, or Waveshare IMX219-160IR for wide+IR).
+  NOT Camera Module 3 (IMX708 — no driver) and NOT OV5640 (DVP, wrong interface).
+- **Cable:** a **Raspberry Pi "Standard - Mini" (15-pin↔22-pin) camera cable** (~€5). The
+  no-boot an operator saw was a 15-pin camera in the 22-pin socket *without* this adapter.
+- **Software:** one DT overlay (enable CSI0 + `imx219` on TWI11, PE5/PE6, 2-lane) — pins in
+  the reference doc. Then mount `/dev/video0` into the pod.
 
-Implication for the prototype: `satellite_occupancy.py`'s `V4L2Camera` becomes an **RTSP
-frame grab** (`cv2.VideoCapture("rtsp://…")`) instead of `/dev/video0` — the detector and
-WS contract are unchanged (frame in → count/label out).
+The prototype's `satellite_occupancy.py::V4L2Camera` reads `/dev/video0` as-is once the
+overlay is loaded — no code change; the detector + WS contract are camera-agnostic.
 
 ## Validate the pipeline TODAY (no NPU, no board)
 

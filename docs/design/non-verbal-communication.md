@@ -498,20 +498,18 @@ re-shapes into a cheap near-term slice + a later motion phase.
 Two findings from the NPU-vision-offload work update assumptions in this doc. They do
 **not** change any decision; they de-risk the hardware + acceleration story.
 
-1. **CSI is NOT usable on the Zero 3W today — use an RTSP (or USB UVC) camera.** This doc
-   (2026-06-27) assumed the A733 "needs a USB camera." A first pass found the board *does*
-   expose MIPI CSI and that `CONFIG_SENSOR_IMX219=m` is compiled — but a second pass (after
-   a Pi-15-pin IMX219 physically **failed to boot** the board) found a **connector/driver
-   collision** that no off-the-shelf CSI camera resolves: the board's CSI is a **24-pin FPC**
-   (Allwinner pinout), Orange Pi's 24-pin modules are all **OV5640 → no driver** in this
-   kernel, and the driver-supported sensors (IMX219/OV13850) ship only in **wrong-connector**
-   form (Pi 15/22-pin or RK3399). **No verified 15→24-pin adapter exists.** So a CSI camera
-   would require porting a `sunxi-vin` OV5640 driver + a Zero-3W DT overlay — real kernel
-   work, out of scope. **Reference camera is now an RTSP/ONVIF IP camera** (e.g. TP-Link
-   Tapo C210 ~€35, Reolink E1 Pro ~€40): no host driver, no DT overlay, no `/dev` mount —
-   frames over the network into the existing Frigate pipeline. USB UVC stays a valid
-   alternative. (This corrects the "CSI-IMX219 is the reference" claim in an earlier draft
-   of this addendum.)
+1. **CSI IMX219 IS viable on the Zero 3W — full hardware reference:
+   [`a733-satellite-camera.md`](a733-satellite-camera.md).** This doc (2026-06-27) assumed
+   the A733 "needs a USB camera." The board's own **schematic** (sheet 13) settles it: the
+   camera port `CAM1` is a **Raspberry-Pi-standard 22-pin 0.5 mm MIPI CSI** connector
+   (footprint `fpc22-20-sm-RPI-TOP-h2`) on **CSI0**, i2c **TWI11**, control GPIOs
+   **PE6/PE5** — and the **IMX219 driver is already `=m`** in the running kernel. So an
+   IMX219 camera + a **Raspberry Pi "Standard-Mini" 15↔22-pin cable** + **one DT overlay**
+   (values in the reference doc) is the path — no kernel/driver work. The no-boot an
+   operator hit was a 15-pin camera in the 22-pin socket *without* the adapter cable.
+   (Not Camera Module 3 / IMX708 — no driver; not OV5640 — DVP, wrong interface.) This
+   corrects earlier drafts of this addendum that mis-called it "24-pin / CSI dead end /
+   use RTSP" — all wrong extrapolations from lookalike boards.
 
 2. **The MediaPipe→NPU conversion rail now exists (demonstrated).** §Risks and
    T-SILICON-PROBE note NPU acceleration needs "a separate Verisilicon TFLite→NBG
