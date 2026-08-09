@@ -99,6 +99,17 @@ data:
   LLM_OPENAI_EMBED_BASE_URL: "http://ollama:11434/v1"
   LLM_OPENAI_EMBED_MODEL: "qwen3-embedding:4b"
 
+  # In-cluster LLM fallback (PR #1083). When the cuda.local OpenAI-compat
+  # chat/agent tier is unreachable (connection-down or cold-model 5xx), the
+  # backend fails the turn over to the in-cluster Ollama (OLLAMA_URL) using
+  # LLM_OPENAI_FALLBACK_MODEL, and the wait-for-deps init boot-gate becomes
+  # time-bounded (WAIT_CUDA_MAX_SECONDS) so the backend still boots during a
+  # cuda outage. Enabled here after the 2026-08-09 cuda outages; the in-code
+  # default is false (dark).
+  LLM_OPENAI_FALLBACK_ENABLED: "true"
+  LLM_OPENAI_FALLBACK_MODEL: "qwen3:14b"
+  WAIT_CUDA_MAX_SECONDS: "30"
+
   # Voice-server (B.4): when set, backend's /api/voice/voice-chat
   # orchestrator delegates STT + TTS to the voice-server pod
   # (k8s-gpu-3) instead of running them in-process. Backend retains
