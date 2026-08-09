@@ -46,10 +46,16 @@ spec:
           image: busybox:1.36
           command: ["sh", "-c"]
           # The init reads LLM_OPENAI_FALLBACK_ENABLED / WAIT_CUDA_MAX_SECONDS to
-          # decide whether the cuda.local wait is strict or time-bounded.
+          # decide whether the cuda.local wait is strict or time-bounded. Source
+          # BOTH the ConfigMap and the private Secret (like the main container),
+          # so the flag is honored wherever the operator set it — otherwise a
+          # flag in the Secret would leave the boot-gate strict and hang.
           envFrom:
             - configMapRef:
                 name: renfield-env
+            - secretRef:
+                name: renfield-env-private
+                optional: true
           args:
             - |
               echo "waiting for postgres..."
@@ -74,10 +80,14 @@ spec:
               # first LLM call). The flag comes from the renfield-env configMap (envFrom below).
               echo "waiting for cuda.local llama-server /health..."
               if [ "$LLM_OPENAI_FALLBACK_ENABLED" = "true" ]; then
+                # Guard against a non-numeric WAIT_CUDA_MAX_SECONDS (a typo like
+                # "180s" would make the -ge test error every iteration → the
+                # break never fires → the bounded wait hangs forever).
+                _max="${WAIT_CUDA_MAX_SECONDS:-180}"; case "$_max" in ''|*[!0-9]*) _max=180;; esac
                 _w=0
                 until wget -q -O- http://cuda.local:8081/health 2>/dev/null | grep -q '"ok"'; do
                   _w=$((_w+2))
-                  if [ "$_w" -ge "${WAIT_CUDA_MAX_SECONDS:-180}" ]; then
+                  if [ "$_w" -ge "$_max" ]; then
                     echo "cuda.local not ready after ${_w}s — proceeding (in-cluster fallback covers LLM)"; break
                   fi
                   sleep 2

@@ -304,10 +304,11 @@ class Settings(BaseSettings):
     # Off by default (opt-in per instance). Only the OpenAI-compat path needs
     # this — the Ollama path already has ollama_fallback_url.
     llm_openai_fallback_enabled: bool = False
-    # Model to use on the Ollama fallback. The primary's alias (e.g. "qwen3.6")
-    # does NOT exist on Ollama, so it must be remapped. Empty => ollama_model
-    # (recommended: qwen3:14b, which is pulled in-cluster). Model names Ollama
-    # already has (e.g. the intent model qwen3:8b) are passed through unchanged.
+    # Model to use on the Ollama fallback. The primary's model name (its alias
+    # like "qwen3.6", or a per-role name) is NOT reused — it may not exist on
+    # Ollama and would 404 during the very outage this covers. On fail-over EVERY
+    # tier that routes here (chat/agent/intent) uses THIS one known-resident
+    # model. Empty => ollama_model (recommended: qwen3:14b, pulled in-cluster).
     llm_openai_fallback_model: str = ""
 
     # Separate OpenAI-compatible endpoint for embeddings (a llama-server pod

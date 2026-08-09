@@ -281,20 +281,25 @@ AGENT_ROUTER_TIMEOUT=30.0
 
 # In-Cluster-Fallback (Resilienz). Der OpenAI-compat-Primary
 # (LLM_OPENAI_BASE_URL, z. B. die externe cuda.local-llama-server-Box) ist ein
-# Single-Point-of-Failure: ist er unerreichbar, scheitert der ganze Turn
-# ("Connection error", Ausfall 2026-08-08). Ist dies an, wird ein
-# Verbindungsfehler gegen den Primary transparent gegen das In-Cluster-Ollama
-# (OLLAMA_URL) wiederholt — die externe GPU-Box degradiert zum lokalen Modell
-# statt Totalausfall. Erholung automatisch (Primary wird immer zuerst
-# versucht). Nur die OpenAI-compat-Strecke braucht das — die Ollama-Strecke
-# hat bereits OLLAMA_FALLBACK_URL. Gilt für chat/agent/intent (Streaming:
-# Failover nur, wenn der ERSTE Chunk scheitert).
+# Single-Point-of-Failure: kann er nicht liefern, scheitert der ganze Turn
+# ("Connection error", Ausfall 2026-08-08). Ist dies an, wird auf das
+# In-Cluster-Ollama (OLLAMA_URL) umgeleitet, wenn der Primary NICHT LIEFERN KANN:
+# Verbindungsfehler (Box down) ODER 5xx (z. B. Cold-Model-503 im Warmup). Ein
+# langsamer-aber-gesunder Primary (Read/Pool-Timeout) wird NICHT umgeleitet
+# (kein stiller Qualitätsverlust), 4xx werden durchgereicht. Erholung
+# automatisch (Primary immer zuerst). Nur die OpenAI-compat-Strecke braucht das
+# — die Ollama-Strecke hat bereits OLLAMA_FALLBACK_URL. Gilt für chat/agent/
+# intent (Streaming: Failover nur, wenn der ERSTE Chunk scheitert). Bekannte
+# Grenze: ein Primary, der die Verbindung annimmt und dann HÄNGT, wird vom
+# asyncio.wait_for des Aufrufers abgebrochen, bevor der Failover greift.
 # LLM_OPENAI_FALLBACK_ENABLED=true
 
-# Modell für den Ollama-Fallback. Der Alias des Primary (LLM_OPENAI_MODEL, z. B.
-# "qwen3.6") existiert auf Ollama NICHT und muss umgemappt werden. Leer =>
-# OLLAMA_MODEL (empfohlen: qwen3:14b, in-cluster vorhanden). Modellnamen, die
-# Ollama bereits hat (z. B. das Intent-Modell qwen3:8b), werden durchgereicht.
+# Modell für den Ollama-Fallback. Der Modellname des Primary (Alias
+# LLM_OPENAI_MODEL wie "qwen3.6", oder ein Rollen-Modell) wird NICHT
+# wiederverwendet — er existiert evtl. nicht auf Ollama und würde beim Failover
+# 404en. Beim Failover nutzen ALLE hier laufenden Tiers (chat/agent/intent)
+# DIESES eine resident geladene Modell. Leer => OLLAMA_MODEL (empfohlen:
+# qwen3:14b, in-cluster gepinnt).
 # LLM_OPENAI_FALLBACK_MODEL=qwen3:14b
 
 # Boot-Gate (k8s wait-for-deps Init-Container, backend + document-worker):

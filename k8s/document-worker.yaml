@@ -49,9 +49,12 @@ spec:
         - name: wait-for-deps
           image: busybox:1.36
           command: ["sh", "-c"]
-          # Reads LLM_OPENAI_FALLBACK_ENABLED / WAIT_CUDA_MAX_SECONDS for the cuda wait.
+          # Reads LLM_OPENAI_FALLBACK_ENABLED / WAIT_CUDA_MAX_SECONDS for the cuda
+          # wait — source both ConfigMap + private Secret so the flag is honored
+          # wherever set (else a Secret-set flag leaves the boot-gate strict).
           envFrom:
             - configMapRef: {name: renfield-env}
+            - secretRef: {name: renfield-env-private, optional: true}
           args:
             - |
               echo "waiting for postgres..."; until nc -z postgres 5432; do sleep 1; done
@@ -66,9 +69,10 @@ spec:
               # strict wait. See k8s/backend.yaml init container for rationale.
               echo "waiting for cuda.local llama-server /health..."
               if [ "$LLM_OPENAI_FALLBACK_ENABLED" = "true" ]; then
+                _max="${WAIT_CUDA_MAX_SECONDS:-180}"; case "$_max" in ''|*[!0-9]*) _max=180;; esac
                 _w=0
                 until wget -q -O- http://cuda.local:8081/health 2>/dev/null | grep -q '"ok"'; do
-                  _w=$((_w+2)); [ "$_w" -ge "${WAIT_CUDA_MAX_SECONDS:-180}" ] && { echo "cuda.local not ready after ${_w}s — proceeding (fallback covers LLM)"; break; }
+                  _w=$((_w+2)); [ "$_w" -ge "$_max" ] && { echo "cuda.local not ready after ${_w}s — proceeding (fallback covers LLM)"; break; }
                   sleep 2
                 done
               else

@@ -1240,15 +1240,93 @@ class TestOpenAICompatFallbackClient:
 
     @pytest.mark.unit
     @pytest.mark.asyncio
-    async def test_ollama_native_model_passed_through(self, monkeypatch):
-        """A model Ollama already has (e.g. intent qwen3:8b) is NOT remapped."""
+    async def test_always_maps_to_configured_model(self, monkeypatch):
+        """Fail-over ALWAYS uses the configured in-cluster model — even a name
+        Ollama might not have is NOT passed through (would 404 during the outage)."""
         import httpx
         primary = AsyncMock(); fallback = AsyncMock()
         primary.chat.side_effect = httpx.ConnectError("refused")
         fallback.chat.return_value = "ok"
         w = self._wrapper(monkeypatch, primary, fallback)
-        await w.chat(model="qwen3:8b", messages=[])
-        assert fallback.chat.call_args.kwargs["model"] == "qwen3:8b"
+        await w.chat(model="some-external-only-name", messages=[])
+        assert fallback.chat.call_args.kwargs["model"] == "qwen3:14b"
+
+    @staticmethod
+    def _status_error(code: int):
+        import httpx
+        import openai
+        resp = httpx.Response(code, request=httpx.Request("POST", "http://cuda.local:8081/v1/chat/completions"))
+        return openai.APIStatusError("err", response=resp, body=None)
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_5xx_cold_model_falls_back(self, monkeypatch):
+        """A 5xx (cold-model 503 / server error) → primary can't serve → fall over."""
+        primary = AsyncMock(); fallback = AsyncMock()
+        primary.chat.side_effect = self._status_error(503)
+        fallback.chat.return_value = "ok"
+        w = self._wrapper(monkeypatch, primary, fallback)
+        assert await w.chat(model="qwen3.6", messages=[]) == "ok"
+        assert fallback.chat.call_args.kwargs["model"] == "qwen3:14b"
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_4xx_reraised_not_fallback(self, monkeypatch):
+        """A 4xx (our bad request) must surface, NOT be masked by fallback."""
+        import openai
+        primary = AsyncMock(); fallback = AsyncMock()
+        primary.chat.side_effect = self._status_error(400)
+        w = self._wrapper(monkeypatch, primary, fallback)
+        with pytest.raises(openai.APIStatusError):
+            await w.chat(model="qwen3.6", messages=[])
+        fallback.chat.assert_not_called()
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_apitimeout_reraised_not_fallback(self, monkeypatch):
+        """A slow-but-healthy primary (APITimeoutError) must NOT degrade to Ollama."""
+        import httpx
+        import openai
+        primary = AsyncMock(); fallback = AsyncMock()
+        primary.chat.side_effect = openai.APITimeoutError(request=httpx.Request("POST", "http://cuda.local:8081/v1"))
+        w = self._wrapper(monkeypatch, primary, fallback)
+        with pytest.raises(openai.APITimeoutError):
+            await w.chat(model="qwen3.6", messages=[])
+        fallback.chat.assert_not_called()
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_read_timeout_reraised_not_fallback(self, monkeypatch):
+        import httpx
+        primary = AsyncMock(); fallback = AsyncMock()
+        primary.chat.side_effect = httpx.ReadTimeout("slow")
+        w = self._wrapper(monkeypatch, primary, fallback)
+        with pytest.raises(httpx.ReadTimeout):
+            await w.chat(model="qwen3.6", messages=[])
+        fallback.chat.assert_not_called()
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_list_delegates_to_primary_no_fallback(self, monkeypatch):
+        """list() is a health probe → reflect the PRIMARY, never mask with Ollama."""
+        import httpx
+        primary = AsyncMock(); fallback = AsyncMock()
+        primary.list.side_effect = httpx.ConnectError("down")
+        w = self._wrapper(monkeypatch, primary, fallback)
+        with pytest.raises(httpx.ConnectError):
+            await w.list()
+        fallback.list.assert_not_called()
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_embeddings_delegates_to_primary_no_fallback(self, monkeypatch):
+        import httpx
+        primary = AsyncMock(); fallback = AsyncMock()
+        primary.embeddings.side_effect = httpx.ConnectError("down")
+        w = self._wrapper(monkeypatch, primary, fallback)
+        with pytest.raises(httpx.ConnectError):
+            await w.embeddings(model="x", prompt="y")
+        fallback.embeddings.assert_not_called()
 
     @pytest.mark.unit
     @pytest.mark.asyncio
