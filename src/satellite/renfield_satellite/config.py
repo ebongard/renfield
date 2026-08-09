@@ -189,6 +189,7 @@ class CameraConfig:
     enabled: bool = False
     resolution: str = "1280x720"
     quality: int = 85
+    backend: str = "rpicam"  # "rpicam" (Pi) | "sunxi_isp" (Orange Pi A733 + AW ISP)
 
 
 @dataclass
@@ -399,6 +400,7 @@ def load_config(config_path: Optional[str] = None) -> Config:
         config.camera.enabled = cam.get("enabled", config.camera.enabled)
         config.camera.resolution = cam.get("resolution", config.camera.resolution)
         config.camera.quality = cam.get("quality", config.camera.quality)
+        config.camera.backend = cam.get("backend", config.camera.backend)
 
     if "ble" in config_data:
         ble = config_data["ble"]

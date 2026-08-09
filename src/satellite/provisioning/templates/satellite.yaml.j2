@@ -113,6 +113,9 @@ display:
 
 camera:
   enabled: {{ camera_enabled | default(false) | lower }}
+  backend: {{ camera_backend | default('rpicam') }}
+  resolution: "{{ camera_resolution | default('1280x720') }}"
+  quality: {{ camera_quality | default(85) }}
 
 button:
   gpio_pin: {{ button_gpio_pin }}

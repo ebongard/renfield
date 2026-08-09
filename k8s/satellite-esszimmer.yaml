@@ -62,6 +62,11 @@ data:
       brightness: 20
       idle_color: "yellow"        # Esszimmer identity colour (continuity w/ old sat)
       xvf_host_path: "/opt/renfield-satellite/bin/xvf_host"
+    camera:
+      enabled: true              # IMX219 on CAM1 (see docs/design/a733-satellite-camera.md)
+      backend: sunxi_isp         # Orange Pi A733 AW-ISP capture (/opt/awisp/renfield_isp_capture)
+      resolution: "1920x1080"
+      quality: 85
     button:
       gpio_pin: 17                # no button wired; degrades to no-op without GPIO libs
     ble:

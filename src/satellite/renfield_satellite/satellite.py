@@ -204,6 +204,7 @@ class Satellite:
             self.camera = CameraController(
                 resolution=self.config.camera.resolution,
                 quality=self.config.camera.quality,
+                backend=self.config.camera.backend,
             )
 
         # Enviro pHAT sensor (optional)
