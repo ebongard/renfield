@@ -233,6 +233,19 @@ pod sees `/opt/awisp/*` and captures a frame in-container. The `.c` is in-repo; 
 `.so`s are Allwinner proprietary (from the OPi desktop image) — they live on the host, NOT in git.
 (A later hardening option is to bake them into the satellite image instead of the host hostPath.)
 
+### Reproducibility (how this survives a reflash) — NOT Ansible
+
+The Esszimmer host is **not** the bare-metal-satellite Ansible target (`src/satellite/provisioning/`
+is for the Pi Zero 2 W sats, which have no A733/ISP and no camera). Instead the HOST-side camera
+setup is captured in a committed, idempotent script — **`k8s/orangepi-esszimmer-camera-setup.sh`**
+(same pattern as `k8s/orangepi-node-resilience.sh`), run as root on the node from a repo checkout.
+It: (1) compiles+installs the DT overlay + enables it in `orangepiEnv.txt`, (2) writes
+`/etc/modules-load.d/renfield-camera.conf`, (3) builds `renfield_isp_capture` and installs the AW
+ISP libs into `/opt/awisp`. The AW `.so`s are proprietary → staged from `private/awisp/` (or
+extracted from the desktop image), never committed. So: reflash the node → run k8s node setup +
+this script → reboot → `kubectl apply` the pod manifest → camera back. The POD side is fully
+git-managed; only these host bits + the proprietary libs are out-of-band.
+
 ## Thermal note (observed during bring-up)
 
 The board runs **warm: ~72 °C** on the CPU cores at idle-ish load (1.3), driven by the
