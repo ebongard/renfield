@@ -186,43 +186,43 @@ Module 3 (IMX708) fails on the sensor driver, not the cable.
 5. ⏳ **Frame capture — needs the Allwinner GStreamer plugin (see below).** The detector
    + WS contract are camera-agnostic; only the frame source needs this dependency.
 
-## Frame capture — sunxi-vin needs Allwinner's GStreamer `en-awisp` (NOT plain V4L2)
+## Frame capture — WORKING via the Allwinner ISP userspace (verified 2026-08-09)
 
-The hardest gotcha, verified on-board 2026-08-09: **the sensor is detected and `/dev/video0`
-exists, but you cannot capture with plain V4L2 or OpenCV.** The device is a media-controller,
-**multiplanar** node whose ISP/scaler pipeline
-(sensor → mipi.0 → csi.0 → tdm_rx.0 → isp.0 → scaler.0 → vin_cap.0) will not negotiate a
-format from userspace V4L2:
+**The sensor is detected and `/dev/video0` exists, but you cannot capture with plain V4L2 /
+OpenCV** — the device is a multiplanar media-controller whose ISP/scaler pipeline
+(sensor → mipi.0 → csi.0 → tdm_rx.0 → isp.0 → scaler.0 → vin_cap.0) produces nothing unless
+**Allwinner's ISP userspace is running**. `cv2.VideoCapture` / `v4l2-ctl --stream-mmap` →
+`VIDIOC_REQBUFS Invalid argument`, `vin_pipeline_try_format failed`,
+`scaler get_selection error`.
 
-- `cv2.VideoCapture` / `v4l2-ctl --stream-mmap` → `VIDIOC_REQBUFS Invalid argument`,
-  `vin_pipeline_try_format failed`, `v4l2 sub device scaler get_selection error`. Setting
-  the sensor subdev (`/dev/v4l-subdev0`, `SRGGB10_1X10`) does not fix it — the AW ISP/scaler
-  needs proprietary configuration that raw V4L2 doesn't do.
-- **The only working path** is Allwinner's **patched GStreamer `v4l2src` with `en-awisp=1`**
-  (drives the AW ISP internally). This is exactly what the board's own
-  `/usr/local/bin/test_camera.sh` uses:
-  ```
-  gst-launch-1.0 v4l2src device=/dev/video0 en-awisp=1 en-largemode=0 num-buffers=1 \
-      ! video/x-raw,format=NV12,width=640,height=480 ! jpegenc ! filesink location=cam.jpg
-  ```
+**Red herring:** the board's `/usr/local/bin/test_camera.sh` uses `gst-launch-1.0 v4l2src …
+en-awisp=1`, but `en-awisp` exists in **no binary** (grep of the whole desktop rootfs found it
+only in that script). It's not a real property. Don't chase GStreamer.
 
-**The blocker:** `en-awisp` is an **Allwinner patch** — it is NOT in stock GStreamer and NOT
-apt-installable (checked: `apt-cache search` finds only stock `gstreamer1.0-plugins-good`,
-whose `v4l2src` lacks `en-awisp`). It ships only in Allwinner's BSP GStreamer (the Orange Pi
-**desktop** image). The current satellite image has no GStreamer at all.
+**What actually works: the AW ISP userspace** — `libAWIspApi.so` + `libisp.so` + `libisp_ini.so`
+(pkg `libawispapi-isp-602`, extracted from the OPi Zero 3W **desktop** image; tuning is baked
+into `libisp_ini.so`, no `/vendor/camera/isp_tuning` needed). Start the ISP
+(`CreateAWIspApi → ispApiInit → ispGetIspId(0) → ispStart`), then do the sunxi V4L2 mplane grab
+(`S_INPUT`, `VIDIOC_SET_SENSOR_ISP_CFG {0,0}`, `S_PARM`, `S_FMT` `V4L2_PIX_FMT_YUV420M` @ 640×480,
+`REQBUFS`/`QUERYBUF`+mmap/`QBUF`, `STREAMON`, `DQBUF`). The ISP does debayer + 3A.
 
-**Remaining task → get the AW GStreamer v4l2 plugin into the satellite image:**
-- **Option A (extract):** pull `gst-launch-1.0` + the AW GStreamer libs/plugins from an Orange
-  Pi **desktop** rootfs for this exact board/kernel, bake them into the satellite image.
-- **Option B (build):** build the AW BSP GStreamer (the `en-awisp` v4l2 plugin) from
-  Allwinner's A733 source, cross- or native-compile on the board.
-- **Option C (raw-Bayer bypass):** investigate whether sunxi-vin exposes a raw-CSI capture
-  path (bypassing the ISP/scaler) → capture SRGGB10 + debayer in software. Unverified; avoids
-  the AW plugin but adds a debayer step and unknown driver support.
+Shipped tool: **`prototypes/npu-occupancy/isp_capture/renfield_isp_capture.c`** — grabs ONE frame
+(skips ~8 frames for 3A warmup) and writes raw **I420**. Built + run on the board:
+```
+gcc -O2 -o renfield_isp_capture renfield_isp_capture.c -I/opt/awisp -L/opt/awisp/lib -lAWIspApi -Wl,-rpath,/opt/awisp/lib
+LD_LIBRARY_PATH=/opt/awisp/lib ./renfield_isp_capture /dev/video0 640 480 /tmp/frame.i420 8
+```
+→ `/tmp/frame.i420` = **460800 bytes (640×480 I420)**, a real image (Y mean≈113, stddev≈22).
+`V4L2Camera` (satellite_occupancy.py) calls this tool → I420 → BGR (numpy, no cv2); degrades to
+"capture disabled" if the tool/libs are absent.
 
-`prototypes/npu-occupancy/satellite_occupancy.py::V4L2Camera` is written for the
-`en-awisp` GStreamer path (subprocess → JPEG → BGR) and degrades to "capture disabled" when
-`gst-launch-1.0` is absent — so the occupancy gate stays safe until the plugin ships.
+**Deploy dependency (remaining):** bake the tool + the AW ISP libs into the satellite image:
+```
+/opt/awisp/renfield_isp_capture                                   # gcc-built from the .c
+/opt/awisp/lib/{libAWIspApi.so, libisp.so, libisp_ini.so}        # from the OPi desktop image
+```
+The `.c` is in-repo; the three AW `.so`s are Allwinner proprietary binaries (extracted from the
+desktop rootfs) — stage them into the satellite image build context, do NOT commit to git.
 
 ## Thermal note (observed during bring-up)
 

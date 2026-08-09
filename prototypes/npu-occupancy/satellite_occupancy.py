@@ -35,62 +35,74 @@ class V4L2Camera:
     /dev/video* + /dev/media*. One frame per request — no continuous streaming (occupancy
     checks are occasional; a persistent stream adds heat on the passively-hot A733).
 
-    IMPORTANT — sunxi-vin does NOT capture via plain V4L2 / OpenCV.
-    ---------------------------------------------------------------
-    Verified on the Esszimmer board (2026-08-09): the sensor is detected and /dev/video0
-    exists, but `cv2.VideoCapture` and raw `v4l2-ctl --stream-mmap` BOTH fail — the device
-    is a media-controller, MULTIPLANAR node, and its ISP/scaler pipeline
-    (sensor → mipi → csi → tdm → isp → scaler → vin_cap) will not negotiate a format from
-    userspace V4L2 alone (`vin_pipeline_try_format failed`, `scaler get_selection error`).
-    The ONLY working capture path is Allwinner's **patched GStreamer `v4l2src`** with the
-    `en-awisp=1` property, which drives the AW ISP internally (this is exactly what the
-    board's own /usr/local/bin/test_camera.sh uses):
+    HOW CAPTURE WORKS ON THE A733 (verified working on the Esszimmer board 2026-08-09).
+    ----------------------------------------------------------------------------------
+    sunxi-vin will NOT capture via plain V4L2 / OpenCV: the device is a multiplanar
+    media-controller whose ISP/scaler pipeline won't produce frames unless Allwinner's ISP
+    userspace (libAWIspApi/libisp) is running. So capture goes through
+    `renfield_isp_capture` — a small C tool (isp_capture/renfield_isp_capture.c) that starts
+    the AW ISP (`CreateAWIspApi → ispStart`), does the sunxi V4L2 mplane grab, and writes one
+    frame as raw I420. Confirmed: a real 640×480 frame (Y mean≈113, stddev≈22). The vendor
+    `test_camera.sh`'s `en-awisp` GStreamer property was a red herring (exists in no binary).
 
-        gst-launch-1.0 v4l2src device=/dev/video0 en-awisp=1 en-largemode=0 num-buffers=1 \
-            ! video/x-raw,format=NV12,width=640,height=480 ! jpegenc ! filesink location=...
-
-    That `en-awisp` v4l2src is an Allwinner patch — it is NOT in stock GStreamer and NOT
-    apt-installable; it ships only in Allwinner's BSP GStreamer (Orange Pi desktop image).
-    So enabling capture is a DEPENDENCY task: get the AW GStreamer v4l2 plugin into the
-    satellite image (extract from the Orange Pi desktop rootfs for this board, or build
-    from the A733 BSP GStreamer source). See docs/design/a733-satellite-camera.md.
+    Deploy dependency: the satellite image must contain the tool + the AW ISP libs:
+        /opt/awisp/renfield_isp_capture
+        /opt/awisp/lib/{libAWIspApi.so, libisp.so, libisp_ini.so}   (from the OPi desktop image)
+    See docs/design/a733-satellite-camera.md. Degrades to "capture disabled" when absent.
     """
 
-    # AW GStreamer capture → one NV12 frame → JPEG on stdout, decoded to BGR.
-    _GST = (
-        "gst-launch-1.0 -q v4l2src device={dev} en-awisp=1 en-largemode=0 num-buffers=1 "
-        "! video/x-raw,format=NV12,width={w},height={h} ! jpegenc ! fdsink fd=1"
-    )
+    _CAP = "/opt/awisp/renfield_isp_capture"
+    _LIBS = "/opt/awisp/lib"
 
-    def __init__(self, device: str = "/dev/video0", width: int = 640, height: int = 480) -> None:
-        self._device, self._w, self._h = device, width, height
+    def __init__(self, device: str = "/dev/video0", width: int = 640, height: int = 480,
+                 warmup: int = 8) -> None:
+        self._device, self._w, self._h, self._warmup = device, width, height, warmup
 
     async def grab_bgr(self):
         return await asyncio.to_thread(self._grab_sync)
 
     def _grab_sync(self):
-        """Capture one frame via the AW GStreamer pipeline → decode to BGR.
+        """Capture one frame via renfield_isp_capture → raw I420 → BGR (numpy, no cv2).
 
-        Returns None if gst / the en-awisp plugin is absent (the current satellite image),
-        so the occupancy gate degrades gracefully until the AW plugin ships. Requires
-        gst-launch-1.0 WITH Allwinner's en-awisp v4l2src on PATH inside the pod."""
-        import shutil, subprocess
+        Returns None if the ISP capture tool/libs aren't installed (so the occupancy gate
+        degrades gracefully), or on any capture error."""
+        import os, subprocess, tempfile
         import numpy as np
-        from PIL import Image
-        import io as _io
-        if shutil.which("gst-launch-1.0") is None:
-            print("[camera] gst-launch-1.0 (with AW en-awisp v4l2src) not present — capture disabled")
+        if not os.path.exists(self._CAP):
+            print("[camera] renfield_isp_capture not installed — capture disabled")
             return None
-        cmd = self._GST.format(dev=self._device, w=self._w, h=self._h)
+        out = tempfile.mktemp(suffix=".i420")
+        env = {**os.environ, "LD_LIBRARY_PATH": self._LIBS}
         try:
-            out = subprocess.run(cmd.split(), capture_output=True, timeout=15).stdout
-            if not out:
+            subprocess.run([self._CAP, self._device, str(self._w), str(self._h), out,
+                            str(self._warmup)], env=env, timeout=20, capture_output=True)
+            if not os.path.exists(out) or os.path.getsize(out) < self._w * self._h:
                 return None
-            rgb = np.asarray(Image.open(_io.BytesIO(out)).convert("RGB"))
-            return rgb[:, :, ::-1].copy()  # RGB→BGR
+            buf = np.fromfile(out, dtype=np.uint8)
+            return self._i420_to_bgr(buf, self._w, self._h)
         except Exception as e:  # noqa: BLE001
             print(f"[camera] capture failed: {e}")
             return None
+        finally:
+            try:
+                os.unlink(out)
+            except OSError:
+                pass
+
+    @staticmethod
+    def _i420_to_bgr(buf, w: int, h: int):
+        """Raw I420 (Y, then U, then V; chroma at w/2×h/2) → BGR uint8 (BT.601)."""
+        import numpy as np
+        ysz, csz = w * h, (w // 2) * (h // 2)
+        Y = buf[:ysz].reshape(h, w).astype(np.float32)
+        U = buf[ysz:ysz + csz].reshape(h // 2, w // 2).astype(np.float32) - 128.0
+        V = buf[ysz + csz:ysz + 2 * csz].reshape(h // 2, w // 2).astype(np.float32) - 128.0
+        U = np.repeat(np.repeat(U, 2, 0), 2, 1)          # upsample chroma to full res
+        V = np.repeat(np.repeat(V, 2, 0), 2, 1)
+        R = Y + 1.402 * V
+        G = Y - 0.344 * U - 0.714 * V
+        B = Y + 1.772 * U
+        return np.stack([B, G, R], axis=2).clip(0, 255).astype(np.uint8)
 
 
 class OccupancyProbe:
