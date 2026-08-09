@@ -1,0 +1,3 @@
+# Proprietary Allwinner ISP libs staged for provision-esszimmer-camera.yml
+# (extracted from the Orange Pi desktop image — never commit).
+files/awisp/

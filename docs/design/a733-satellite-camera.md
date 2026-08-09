@@ -233,18 +233,27 @@ pod sees `/opt/awisp/*` and captures a frame in-container. The `.c` is in-repo; 
 `.so`s are Allwinner proprietary (from the OPi desktop image) — they live on the host, NOT in git.
 (A later hardening option is to bake them into the satellite image instead of the host hostPath.)
 
-### Reproducibility (how this survives a reflash) — NOT Ansible
+### Reproducibility (how this survives a reflash) — Ansible
 
-The Esszimmer host is **not** the bare-metal-satellite Ansible target (`src/satellite/provisioning/`
-is for the Pi Zero 2 W sats, which have no A733/ISP and no camera). Instead the HOST-side camera
-setup is captured in a committed, idempotent script — **`k8s/orangepi-esszimmer-camera-setup.sh`**
-(same pattern as `k8s/orangepi-node-resilience.sh`), run as root on the node from a repo checkout.
-It: (1) compiles+installs the DT overlay + enables it in `orangepiEnv.txt`, (2) writes
-`/etc/modules-load.d/renfield-camera.conf`, (3) builds `renfield_isp_capture` and installs the AW
-ISP libs into `/opt/awisp`. The AW `.so`s are proprietary → staged from `private/awisp/` (or
-extracted from the desktop image), never committed. So: reflash the node → run k8s node setup +
-this script → reboot → `kubectl apply` the pod manifest → camera back. The POD side is fully
-git-managed; only these host bits + the proprietary libs are out-of-band.
+The HOST-side camera setup is an **Ansible playbook**:
+**`src/satellite/provisioning/provision-esszimmer-camera.yml`** (targets the `camera_satellites`
+inventory group — the Orange Pi node, root login; see `inventory.example.yml`). Idempotent; it:
+(1) installs build/DT tools, (2) installs the AW ISP libs + builds `renfield_isp_capture` into
+`/opt/awisp`, (3) compiles+installs the DT overlay and enables it in `orangepiEnv.txt`, (4) writes
+`/etc/modules-load.d/renfield-camera.conf` and loads the modules. Run:
+```
+cd src/satellite/provisioning
+ansible-playbook -i inventory.yml provision-esszimmer-camera.yml --limit satellite-esszimmer
+# add -e camera_reboot=true on first install (overlay needs a reboot for /dev/video0)
+```
+
+**Note the fleet split:** the bare-metal Pi Zero 2 W satellites (the `satellites` group) have no
+A733/ISP and no camera — this is a **separate play** for the A733 k8s-node host, not part of the
+normal satellite `provision.yml`. The AW ISP `.so`s are Allwinner **proprietary** → staged on the
+control machine at `src/satellite/provisioning/files/awisp/` (git-ignored), extracted from the OPi
+desktop image; never committed. So: reflash node → k8s node setup → run this playbook → reboot →
+`kubectl apply` the pod manifest → camera back. The POD side (device + `/opt/awisp` mounts) is
+fully git-managed; only these host bits + the proprietary libs are out-of-band.
 
 ## Thermal note (observed during bring-up)
 

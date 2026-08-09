@@ -46,3 +46,16 @@ all:
       hosts:
         hifiberry-livingroom:
           ansible_host: hifiberry-livingroom.local
+
+    # Camera-capable A733 satellite(s) — Orange Pi Zero 3W. The satellite itself runs as
+    # a k8s POD, but the CSI camera needs HOST-side setup: provision-esszimmer-camera.yml
+    # (DT overlay + module autoload + /opt/awisp ISP capture tool + libs). root login on
+    # the node. NOT the bare-metal `satellites` group — those Pi Zero 2 W have no A733/ISP
+    # and no camera. Requires the proprietary AW ISP libs staged at files/awisp/ (see the
+    # playbook header). Re-run after a node reflash; reboot once for the overlay.
+    camera_satellites:
+      vars:
+        ansible_user: root
+      hosts:
+        satellite-esszimmer:
+          ansible_host: 192.168.1.82
