@@ -138,3 +138,20 @@ cards.
 (RTX 5060 Ti, 16 GB) — `OLLAMA_VISION_URL` routes there, so no separate vision pod is
 needed. A single test-snapshot inference measured ~1 s end-to-end on the GPU; image-heavy
 scene descriptions with longer responses take proportionally longer.
+
+## On-device NPU offload (A733 satellites) — prototype
+
+The snapshot→`qwen3-vl` path above is authoritative and stays the default. On an **A733**
+satellite (Vivante VIP9000, 3 TOPS NPU) two of its jobs can run **on-device** as a GPU
+offload + privacy + offline improvement — see `prototypes/npu-occupancy/`:
+
+- **Occupancy count** (the announce privacy gate) → an NPU YOLOv8n person-detector; only
+  an integer leaves the device, the frame never does.
+- **Object / document-type recognition** ("is this an invoice / letter / parcel label")
+  → an NPU MobileCLIP zero-shot classifier + a has-text trigger that *routes* a presented
+  document into the existing folder-ingest / Docling / Schicht-A pipeline. It **triages**;
+  the cluster still does authoritative OCR/extraction.
+
+Gesture + facial-expression understanding is a **separate** (CPU-MediaPipe) design —
+`docs/design/non-verbal-communication.md`. The A733 CSI camera options (IMX219 etc.) are
+in that doc's 2026-08-09 addendum and the prototype README.
