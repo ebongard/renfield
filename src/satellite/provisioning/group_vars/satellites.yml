@@ -128,8 +128,19 @@ led_power_pin: null
 # Display
 display_enabled: false
 
-# Camera (visual queries via rpicam-still)
+# Camera (visual queries + announce occupancy checks).
+#   camera_enabled  — per-host on/off (rendered into the app config).
+#   camera_backend  — HOW the frame is captured, by board:
+#     "rpicam"     Raspberry Pi + Pi Camera (IMX219 etc.) via the OS libcamera/rpicam
+#                  stack — works out of the box, NO host provisioning needed (the app
+#                  uses rpicam-still). This is the default for the Pi satellites.
+#     "sunxi_isp"  Orange Pi A733 (Esszimmer) + MIPI-CSI IMX219 — needs host-side setup
+#                  (DT overlay + sunxi-vin modules + the Allwinner ISP userspace +
+#                  renfield_isp_capture). Set in that host's host_vars.
+# provision-camera.yml is config-driven off these two — it applies the sunxi_isp host
+# setup only where camera_backend == "sunxi_isp", and is a no-op for rpicam hosts.
 camera_enabled: false
+camera_backend: rpicam
 
 # Button
 button_gpio_pin: 17

@@ -1,0 +1,200 @@
+---
+# Renfield satellite CAMERA provisioning — config-driven, all board combinations.
+#
+# The fleet has every combination: Pi + Pi-camera (rpicam), Pi + no camera, and the
+# Orange Pi A733 (Esszimmer) + MIPI-CSI camera (sunxi/ISP). Which capture path a host
+# uses is driven ENTIRELY by its config (group_vars/host_vars), not by a hardcoded group:
+#
+#   camera_enabled: true|false      per-host (default false in group_vars)
+#   camera_backend: rpicam|sunxi_isp   how frames are captured (default rpicam)
+#
+# This playbook targets `all` and gates every task on those vars, so:
+#   * camera_enabled=false            → host is skipped entirely.
+#   * camera_backend=rpicam  (Pi)     → NO host provisioning needed; the Pi camera works
+#                                       via the OS libcamera/rpicam stack + the app's
+#                                       rpicam-still path (arbeitszimmer, kinderbad). A
+#                                       no-op check only.
+#   * camera_backend=sunxi_isp (A733) → install the DT overlay + sunxi-vin module autoload
+#                                       + the Allwinner ISP userspace + renfield_isp_capture
+#                                       into /opt/awisp (Esszimmer). This is a k8s-POD host;
+#                                       only these HOST bits are provisioned — the satellite
+#                                       app runs as a pod (k8s/satellite-esszimmer.yaml), so
+#                                       the main provision.yml deliberately does NOT target it.
+#
+# The bare-metal satellite app (provision.yml, hosts: satellites) is untouched by this.
+#
+# IDEMPOTENT. sunxi_isp needs a REBOOT after first overlay install (opt-in: -e camera_reboot=true).
+#
+# PREREQUISITE for sunxi_isp — proprietary Allwinner ISP libs (NOT in git). Stage on the
+# control machine under files/awisp/ (git-ignored): libAWIspApi.so, libisp.so, libisp_ini.so,
+# AWIspApi.h — extracted from the OPi Zero 3W *desktop* image (pkg libawispapi-isp-602).
+# See docs/design/a733-satellite-camera.md.
+#
+# Usage:
+#   ansible-playbook -i inventory.yml provision-camera.yml                    # whole fleet (gated)
+#   ansible-playbook -i inventory.yml provision-camera.yml --limit satellite-esszimmer
+#   ansible-playbook -i inventory.yml provision-camera.yml -e camera_reboot=true   # first A733 install
+#
+# Tags: camera, overlay, modules, awisp, tool
+
+- name: Provision satellite cameras (config-driven per host)
+  hosts: all
+  become: true
+  gather_facts: false
+  tags: [camera]
+
+  vars:
+    repo_root: "{{ playbook_dir }}/../../.."
+    src_dts: "{{ repo_root }}/prototypes/npu-occupancy/dts/sun60i-a733-orangepi-zero3w-cam-imx219.dts"
+    src_c: "{{ repo_root }}/prototypes/npu-occupancy/isp_capture/renfield_isp_capture.c"
+    awisp_src: "{{ playbook_dir }}/files/awisp"    # proprietary AW ISP libs (git-ignored)
+    awisp_dir: /opt/awisp
+    overlay_dir: /boot/dtb/allwinner/overlay
+    overlay_name: sun60i-a733-cam-imx219           # overlays= entry (overlay_prefix=sun60i-a733)
+    env_file: /boot/orangepiEnv.txt
+    camera_reboot: false
+
+  handlers:
+    - name: reboot for overlay
+      when: camera_reboot | bool
+      ansible.builtin.reboot:
+        msg: "Rebooting to load the IMX219 camera device-tree overlay"
+        reboot_timeout: 300
+
+  tasks:
+    - name: Report camera plan for this host
+      ansible.builtin.debug:
+        msg: >-
+          camera_enabled={{ camera_enabled | default(false) }}
+          backend={{ camera_backend | default('rpicam') }}
+          {{ '(skipped)' if not (camera_enabled | default(false)) else
+             ('(Pi rpicam — OS-provided, no host provisioning)' if (camera_backend | default('rpicam')) == 'rpicam'
+              else '(A733 sunxi_isp — provisioning host)') }}
+
+    # ── rpicam (Raspberry Pi): nothing to provision — the OS + app handle it ──────────
+    - name: rpicam — sanity note (no host setup needed)
+      when:
+        - camera_enabled | default(false)
+        - (camera_backend | default('rpicam')) == 'rpicam'
+      ansible.builtin.debug:
+        msg: "Pi camera via OS libcamera/rpicam + app rpicam-still — nothing to install."
+
+    # ── sunxi_isp (Orange Pi A733): full host-side camera bring-up ────────────────────
+    - name: sunxi_isp — build/DT tools present
+      when: &sunxi
+        - camera_enabled | default(false)
+        - (camera_backend | default('rpicam')) == 'sunxi_isp'
+      tags: [awisp]
+      ansible.builtin.apt:
+        name: [gcc, cpp, device-tree-compiler]
+        state: present
+        update_cache: true
+        cache_valid_time: 3600
+
+    - name: sunxi_isp — proprietary AW ISP libs staged on the control machine?
+      when: *sunxi
+      tags: [awisp]
+      ansible.builtin.stat:
+        path: "{{ awisp_src }}/libAWIspApi.so"
+      register: awlib
+      delegate_to: localhost
+      become: false
+
+    - name: sunxi_isp — abort with guidance if AW ISP libs missing
+      when:
+        - camera_enabled | default(false)
+        - (camera_backend | default('rpicam')) == 'sunxi_isp'
+        - not awlib.stat.exists
+      tags: [awisp]
+      ansible.builtin.fail:
+        msg: >-
+          AW ISP libs not found at {{ awisp_src }}/ . Extract libAWIspApi.so/libisp.so/
+          libisp_ini.so + AWIspApi.h from the OPi Zero 3W desktop image (git-ignored).
+          See docs/design/a733-satellite-camera.md.
+
+    - name: sunxi_isp — install AW ISP libs + header
+      when: *sunxi
+      tags: [awisp]
+      ansible.builtin.copy:
+        src: "{{ awisp_src }}/{{ item.s }}"
+        dest: "{{ awisp_dir }}/{{ item.d }}"
+        mode: "{{ item.m }}"
+      loop:
+        - { s: libAWIspApi.so, d: lib/libAWIspApi.so, m: "0755" }
+        - { s: libisp.so,      d: lib/libisp.so,      m: "0755" }
+        - { s: libisp_ini.so,  d: lib/libisp_ini.so,  m: "0755" }
+        - { s: AWIspApi.h,     d: AWIspApi.h,          m: "0644" }
+
+    - name: sunxi_isp — compile + install the DT overlay
+      when: *sunxi
+      tags: [overlay]
+      block:
+        - ansible.builtin.copy: { src: "{{ src_dts }}", dest: /tmp/cam-imx219.dts, mode: "0644" }
+        - ansible.builtin.shell: >-
+            cpp -nostdinc -undef -x assembler-with-cpp /tmp/cam-imx219.dts
+            | dtc -@ -I dts -O dtb -o /tmp/{{ overlay_name }}.dtbo -
+          changed_when: false
+        - ansible.builtin.copy:
+            src: "/tmp/{{ overlay_name }}.dtbo"
+            dest: "{{ overlay_dir }}/{{ overlay_name }}.dtbo"
+            remote_src: true
+            mode: "0644"
+          notify: reboot for overlay
+
+    - name: sunxi_isp — read orangepiEnv.txt
+      when: *sunxi
+      tags: [overlay]
+      ansible.builtin.slurp: { src: "{{ env_file }}" }
+      register: env_raw
+
+    - name: sunxi_isp — add overlays= line (none present)
+      when:
+        - camera_enabled | default(false)
+        - (camera_backend | default('rpicam')) == 'sunxi_isp'
+        - "'overlays=' not in (env_raw.content | b64decode)"
+      tags: [overlay]
+      ansible.builtin.lineinfile: { path: "{{ env_file }}", line: "overlays={{ overlay_name }}" }
+      notify: reboot for overlay
+
+    - name: sunxi_isp — append cam overlay to an existing overlays= line
+      when:
+        - camera_enabled | default(false)
+        - (camera_backend | default('rpicam')) == 'sunxi_isp'
+        - "'overlays=' in (env_raw.content | b64decode)"
+      tags: [overlay]
+      ansible.builtin.replace:
+        path: "{{ env_file }}"
+        regexp: '^(overlays=(?!.*\b{{ overlay_name }}\b).*)$'
+        replace: '\1 {{ overlay_name }}'
+      notify: reboot for overlay
+
+    - name: sunxi_isp — module autoload (sunxi-vin is =m, does not autoload)
+      when: *sunxi
+      tags: [modules]
+      ansible.builtin.copy:
+        dest: /etc/modules-load.d/renfield-camera.conf
+        mode: "0644"
+        content: |
+          vin_io
+          imx219
+          vin_v4l2
+
+    - name: sunxi_isp — load the modules now
+      when: *sunxi
+      tags: [modules]
+      community.general.modprobe: { name: "{{ item }}", state: present }
+      loop: [vin_io, imx219, vin_v4l2]
+      failed_when: false
+
+    - name: sunxi_isp — build renfield_isp_capture
+      when: *sunxi
+      tags: [tool]
+      block:
+        - ansible.builtin.copy:
+            src: "{{ src_c }}"
+            dest: "{{ awisp_dir }}/renfield_isp_capture.c"
+            mode: "0644"
+        - ansible.builtin.shell: >-
+            gcc -O2 -o {{ awisp_dir }}/renfield_isp_capture {{ awisp_dir }}/renfield_isp_capture.c
+            -I{{ awisp_dir }} -L{{ awisp_dir }}/lib -lAWIspApi -Wl,-rpath,{{ awisp_dir }}/lib
+          args: { creates: "{{ awisp_dir }}/renfield_isp_capture" }
