@@ -168,38 +168,34 @@ Module 3 (IMX708) fails on the sensor driver, not the cable.
 5. Wire it to the occupancy/gesture prototypes (`prototypes/npu-occupancy/`) — the
    detector + WS contract are camera-agnostic; only the frame source changes.
 
-### DT overlay — draft (confirmed pins; a few bring-up TODOs)
+### DT overlay
 
-```dts
-/* sun60i-a733-orangepi-zero3w-cam-imx219.dts — CAM1 / CSI0, IMX219 2-lane.
- * Pins verified from OPi ZERO 3W V1.2 schematic sheet 13. */
-&vind0            { status = "okay"; };
-&csi0             { status = "okay"; };            /* MCSIA / CAM1 */
-&twi11            { status = "okay"; };            /* sensor i2c (pins 20/21) */
+**Written + compile-verified:**
+[`prototypes/npu-occupancy/dts/sun60i-a733-orangepi-zero3w-cam-imx219.dts`](../../prototypes/npu-occupancy/dts/sun60i-a733-orangepi-zero3w-cam-imx219.dts).
+It adds the missing `sensor0` (IMX219) + `vinc00` (capture) nodes under the already-enabled
+`&vind0`, using the exact sunxi-vin binding from the Orange Pi 4 Pro DTS (same A733 SoC) and
+our confirmed values (`sensor0_mname="imx219"`, `twi_cci_id=11`, `twi_addr=0x20`,
+reset/pwdn on PE6/PE5, CSI0). It **compiles** on the board (`cpp | dtc -@` → 1442-byte
+`.dtbo`; only cosmetic `unit_address_vs_reg` warnings, same as the 4 Pro DTS).
 
-&sensor0 {
-    device_type       = "sensor0";
-    sensor0_mname     = "imx219_mipi";             /* in-tree MIPI driver (=m) */
-    sensor0_twi_id    = <11>;                      /* TWI11 */
-    sensor0_twi_addr  = <0x10>;                    /* IMX219 default */
-    sensor0_mclk_id   = <0>;                       /* TODO verify vs csi_mclk group */
-    /* PE6 = pin17, PE5 = pin18 — assign reset/pwdn per driver expectation + polarity: */
-    sensor0_reset     = <&pio 'E' 6 ...>;          /* TODO confirm reset vs pwdn + active level */
-    sensor0_pwdn      = <&pio 'E' 5 ...>;
-    sensor0_mipi_id   = <0>;
-    sensor0_lane      = <2>;                        /* IMX219 = 2 lanes */
-    status            = "okay";
-};
-```
+Build/install (from the overlay's header): `armbian-add-overlay <file>.dts`, or manual
+`cpp | dtc -@` → copy `.dtbo` to `/boot/dtb/allwinner/overlay/` → add
+`overlays=sun60i-a733-orangepi-zero3w-cam-imx219` to `/boot/orangepiEnv.txt` → reboot →
+expect `/dev/video0`.
 
-TODOs to resolve on first bring-up (hardware-in-the-loop): exact `mclk` source (Pi modules
-self-clock — the SoC mclk may be unused), and the reset/pwdn GPIO polarity. Everything else
-(bus = TWI11, GPIOs = PE5/PE6, CSI0, 2-lane, 0x10) is schematic-confirmed.
+**On-target tunables** (validate with `dmesg | grep -iE "vin|csi|imx219"`; the sensor
+already ACKs on i2c, so if it doesn't enumerate it's one of these): the MCSIA→PHY mux
+(`vinc0_csi_sel`/`vinc0_mipi_sel` = 0, try 1/2), `sensor0_mclk_id` (Pi modules self-clock,
+likely inert), and the PE6/PE5 reset-vs-pwdn assignment + polarity.
 
 ## Verification / provenance
 
 - Board identity, kernel config, DTB, i2c buses, absent `/dev/video`: read live on the
   board over SSH (`root@192.168.1.82`), 2026-08-09.
+- **IMX219 sensor live-confirmed:** with a Camera Module 2 + correctly-oriented Standard-Mini
+  cable, `i2cdetect -y 11` shows the sensor answering at **0x10** on **TWI11** — the exact
+  bus/address the schematic predicted and the overlay hard-codes. (The prior no-boot was a
+  flipped FPC; once re-seated, the board boots and the sensor ACKs.)
 - Connector part, footprint, and CAM1/CAM2 pinout: the official schematic PDF, sheet 13.
 - Driver bus types (IMX219 MIPI vs OV5640 DVP): the A733 vendor kernel source
   (`orangepi-xunlong/linux-orangepi`, `orange-pi-6.6-sun60iw2`).

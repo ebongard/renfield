@@ -1,0 +1,96 @@
+/*
+ * IMX219 camera on the Orange Pi Zero 3W (Allwinner A733 / sun60iw2) — CAM1 / CSI0.
+ *
+ * Runtime device-tree overlay. The base DTB already enables the CSI/MIPI/ISP
+ * controllers (vind@5800800, csi@5820000, mipi@, isp@ are all status="okay"); what
+ * it lacks is a SENSOR node + a VINC capture-pipeline node. This overlay adds them,
+ * so the sunxi-vin driver binds the IMX219 and exposes /dev/video0.
+ *
+ * Every value below is grounded:
+ *   - sensor mname/binding/vinc structure = the Orange Pi 4 Pro DTS (same A733 SoC),
+ *     which ships a populated `imx219` example (its sensor2 even uses twi_cci_id=11).
+ *   - twi_cci_id=11 / twi_addr=0x20 / GPIOs PE6+PE5 = the Zero 3W schematic sheet 13
+ *     (CAM1: i2c TWI11 on pins 20/21, control PE6 pin17 / PE5 pin18) AND verified live:
+ *     `i2cdetect -y 11` shows the IMX219 answering at 0x10 (7-bit) = 0x20 (8-bit).
+ *
+ * BRING-UP TUNABLES (validate on-target via `dmesg | grep -iE "vin|csi|imx219"` — if
+ * the sensor doesn't enumerate, these are the knobs, in order of likelihood):
+ *   (a) vinc0_csi_sel / vinc0_mipi_sel — the MCSIA→PHY mux. Set to 0 (CAM1 is labelled
+ *       "MIPI_DPHY_CSI0"); if no probe, try 1 then 2.
+ *   (b) sensor0_mclk_id — 0 for CSI0. A Pi camera module self-clocks (its own 24 MHz
+ *       oscillator; the RPI 22-pin connector routes no MCLK), so this is likely inert,
+ *       but the driver still selects a group.
+ *   (c) sensor0_reset vs sensor0_pwdn polarity — PE6/PE5 assignment + ACTIVE_LOW/HIGH.
+ *       IMX219 XCLR is active-low (low=reset). If it probes on i2c but won't stream,
+ *       swap the PE6/PE5 roles or flip the flags.
+ *
+ * Build (easiest, on the board): armbian-add-overlay sun60i-a733-orangepi-zero3w-cam-imx219.dts
+ *   (compiles + installs to /boot/dtb/allwinner/overlay/ + edits orangepiEnv.txt for you)
+ * Build (manual): cpp -nostdinc -undef -x assembler-with-cpp \
+ *                    sun60i-a733-orangepi-zero3w-cam-imx219.dts | \
+ *                 dtc -@ -I dts -O dtb -o sun60i-a733-orangepi-zero3w-cam-imx219.dtbo -
+ *   then copy the .dtbo to /boot/dtb/allwinner/overlay/ and add to /boot/orangepiEnv.txt:
+ *                 overlays=sun60i-a733-orangepi-zero3w-cam-imx219
+ *   reboot. Expect /dev/video0. See ../../docs/design/a733-satellite-camera.md.
+ *
+ * Self-contained: the GPIO flag + pin-bank macros are defined inline (with #ifndef
+ * guards), so it compiles without the kernel dt-bindings headers. `&pio` resolves
+ * against the base DTB's __symbols__ at apply time (dtc -@).
+ */
+/dts-v1/;
+/plugin/;
+
+#ifndef GPIO_ACTIVE_HIGH
+#define GPIO_ACTIVE_HIGH 0
+#endif
+#ifndef GPIO_ACTIVE_LOW
+#define GPIO_ACTIVE_LOW 1
+#endif
+/* Pin-bank index for &pio: A=0 B=1 C=2 D=3 E=4 ... */
+#ifndef PE
+#define PE 4
+#endif
+
+/ {
+	fragment@0 {
+		target = <&vind0>;
+		__overlay__ {
+			#address-cells = <2>;
+			#size-cells = <2>;
+
+			/* IMX219 on CAM1 / CSI0, i2c = TWI11, control = PE6/PE5 */
+			sensor0: sensor@5812000 {
+				device_type       = "sensor0";
+				sensor0_mname     = "imx219";
+				sensor0_twi_cci_id = <11>;                 /* TWI11 (CAM1 pins 20/21) */
+				sensor0_twi_addr  = <0x20>;                /* IMX219 7-bit 0x10 → 8-bit 0x20 */
+				sensor0_mclk_id   = <0>;                   /* tunable (b) */
+				sensor0_pos       = "rear";
+				sensor0_isp_used  = <1>;
+				sensor0_fmt       = <1>;
+				sensor0_stby_mode = <0>;
+				sensor0_vflip     = <0>;
+				sensor0_hflip     = <0>;
+				sensor0_power_en  = <>;
+				sensor0_reset     = <&pio PE 6 GPIO_ACTIVE_LOW>;   /* CAM1 pin17 = PE6; tunable (c) */
+				sensor0_pwdn      = <&pio PE 5 GPIO_ACTIVE_HIGH>;  /* CAM1 pin18 = PE5; tunable (c) */
+				status            = "okay";
+			};
+
+			/* Capture pipeline → /dev/video0. Binds sensor0 to CSI0/MIPI0/ISP0. */
+			vinc00: vinc@5830000 {
+				vinc0_csi_sel          = <0>;              /* tunable (a) — CAM1 = MIPI_DPHY_CSI0 */
+				vinc0_mipi_sel         = <0>;              /* tunable (a) */
+				vinc0_isp_sel          = <0>;
+				vinc0_isp_tx_ch        = <0>;
+				vinc0_tdm_rx_sel       = <0>;
+				vinc0_rear_sensor_sel  = <0>;              /* → sensor0 */
+				vinc0_front_sensor_sel = <0>;
+				vinc0_sensor_list      = <0>;
+				device_id              = <0>;
+				work_mode              = <0x0>;
+				status                 = "okay";
+			};
+		};
+	};
+};
