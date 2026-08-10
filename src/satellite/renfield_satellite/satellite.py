@@ -195,6 +195,16 @@ class Satellite:
             self.display = DisplayController(
                 width=self.config.display.width,
                 height=self.config.display.height,
+                hw={
+                    "gpio_backend": self.config.display.gpio_backend,
+                    "spi_bus": self.config.display.spi_bus,
+                    "spi_device": self.config.display.spi_device,
+                    "spi_speed_hz": self.config.display.spi_speed_hz,
+                    "dc_pin": self.config.display.dc_pin,
+                    "rst_pin": self.config.display.rst_pin,
+                    "bl_pin": self.config.display.bl_pin,
+                    "gpiochip": self.config.display.gpiochip,
+                },
                 room=self.config.satellite.room,
             )
 

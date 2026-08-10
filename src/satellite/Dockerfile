@@ -64,7 +64,12 @@ RUN pip3 install --break-system-packages \
         cryptography \
         Pillow \
         "opuslib>=3.0.1" \
+        spidev \
+        python-periphery \
     && pip3 install --break-system-packages --no-deps openwakeword
+# spidev + python-periphery: SPI TFT display support on the A733 (sunxi gpio_backend
+# drives DC/RST/BL via libgpiod/periphery, not gpiozero/BCM). No-op unless a display is
+# configured + wired. See docs/design/a733-satellite-display.md.
 
 # --- Wake word + VAD models (baked) ---
 # openWakeWord base feature models + a builtin keyword, plus Silero VAD.

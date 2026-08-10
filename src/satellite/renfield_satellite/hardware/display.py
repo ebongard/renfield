@@ -25,6 +25,50 @@ except ImportError:
     PWMLED = None
     GPIO_AVAILABLE = False
 
+
+# ── sunxi GPIO backend (Orange Pi A733 etc.) ──────────────────────────────────
+# gpiozero is Raspberry-Pi / BCM-numbered and does NOT map to Allwinner pins. On
+# a sunxi board the DC/RST/backlight lines are driven via libgpiod by (gpiochip,
+# line-offset) — python-periphery gives a clean, version-stable API. These shims
+# mimic the gpiozero OutputDevice/PWMLED surface the ST7789 driver uses
+# (.on()/.off()/.value/.close()), so the rest of the driver is backend-agnostic.
+# NOTE: backlight is on/off here (no dimming) — sunxi PWM dimming needs a hardware
+# PWM pin + overlay; wire BL to a plain GPIO for now. Validate pins on-board.
+class _SunxiOut:
+    """A single output line via python-periphery (libgpiod)."""
+    def __init__(self, gpiochip: str, line: int):
+        from periphery import GPIO
+        self._g = GPIO(gpiochip, int(line), "out")
+        self._g.write(False)
+
+    def on(self):
+        self._g.write(True)
+
+    def off(self):
+        self._g.write(False)
+
+    def close(self):
+        try:
+            self._g.close()
+        except Exception:
+            pass
+
+
+class _SunxiBacklight(_SunxiOut):
+    """Backlight line exposing a gpiozero-PWMLED-like `.value` (thresholded on/off)."""
+    def __init__(self, gpiochip: str, line: int):
+        super().__init__(gpiochip, line)
+        self._value = 0.0
+
+    @property
+    def value(self) -> float:
+        return self._value
+
+    @value.setter
+    def value(self, v: float):
+        self._value = max(0.0, min(1.0, float(v)))
+        self._g.write(self._value > 0.05)   # on/off (no dimming without a PWM pin)
+
 try:
     from PIL import Image, ImageDraw, ImageFont
     PIL_AVAILABLE = True
@@ -78,6 +122,8 @@ class ST7789Display:
         dc_pin: int = 27,
         rst_pin: int = 4,
         bl_pin: int = 22,
+        gpio_backend: str = "rpi",          # "rpi" (gpiozero/BCM) | "sunxi" (libgpiod)
+        gpiochip: str = "/dev/gpiochip0",   # sunxi backend: DC/RST/BL are line offsets on this chip
     ):
         self.width = width
         self.height = height
@@ -87,6 +133,8 @@ class ST7789Display:
         self.dc_pin = dc_pin
         self.rst_pin = rst_pin
         self.bl_pin = bl_pin
+        self.gpio_backend = gpio_backend
+        self.gpiochip = gpiochip
 
         self._spi: Optional["spidev.SpiDev"] = None
         self._dc: Optional["OutputDevice"] = None
@@ -95,14 +143,23 @@ class ST7789Display:
 
     def open(self) -> bool:
         """Initialize SPI and GPIO, run display init sequence."""
-        if not SPI_AVAILABLE or not GPIO_AVAILABLE:
-            print("Display: spidev or gpiozero not available")
+        if not SPI_AVAILABLE:
+            print("Display: spidev not available")
             return False
 
         try:
-            self._dc = OutputDevice(self.dc_pin)
-            self._rst = OutputDevice(self.rst_pin)
-            self._bl = PWMLED(self.bl_pin, initial_value=0)
+            if self.gpio_backend == "sunxi":
+                # Allwinner: DC/RST/BL are (gpiochip, line) via libgpiod/periphery.
+                self._dc = _SunxiOut(self.gpiochip, self.dc_pin)
+                self._rst = _SunxiOut(self.gpiochip, self.rst_pin)
+                self._bl = _SunxiBacklight(self.gpiochip, self.bl_pin)
+            else:
+                if not GPIO_AVAILABLE:
+                    print("Display: gpiozero not available (rpi backend)")
+                    return False
+                self._dc = OutputDevice(self.dc_pin)
+                self._rst = OutputDevice(self.rst_pin)
+                self._bl = PWMLED(self.bl_pin, initial_value=0)
 
             self._spi = spidev.SpiDev()
             self._spi.open(self.spi_bus, self.spi_device)
@@ -248,10 +305,14 @@ class DisplayController:
     ST7789 display. Uses a background thread to avoid blocking.
     """
 
-    def __init__(self, width: int = 240, height: int = 280, room: str = ""):
+    def __init__(self, width: int = 240, height: int = 280, room: str = "",
+                 hw: Optional[dict] = None):
         self.width = width
         self.height = height
         self.room = room
+        # Hardware settings passed to ST7789Display (gpio_backend/spi_bus/spi_device/
+        # spi_speed_hz/dc_pin/rst_pin/bl_pin/gpiochip). Empty = Pi/gpiozero defaults.
+        self._hw = hw or {}
 
         self._display: Optional[ST7789Display] = None
         self._lock = threading.Lock()
@@ -265,7 +326,7 @@ class DisplayController:
             print("Display: Pillow not installed")
             return False
 
-        self._display = ST7789Display(width=self.width, height=self.height)
+        self._display = ST7789Display(width=self.width, height=self.height, **self._hw)
         if not self._display.open():
             self._display = None
             return False

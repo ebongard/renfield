@@ -108,8 +108,16 @@ led:
 
 display:
   enabled: {{ display_enabled | default(false) | lower }}
-  width: 240
-  height: 280
+  width: {{ display_width | default(240) }}
+  height: {{ display_height | default(280) }}
+  gpio_backend: {{ display_gpio_backend | default('rpi') }}   # rpi (gpiozero/BCM) | sunxi (libgpiod)
+  spi_bus: {{ display_spi_bus | default(0) }}
+  spi_device: {{ display_spi_device | default(0) }}
+  spi_speed_hz: {{ display_spi_speed_hz | default(80000000) }}
+  dc_pin: {{ display_dc_pin | default(27) }}     # BCM (rpi) | gpiochip line offset (sunxi)
+  rst_pin: {{ display_rst_pin | default(4) }}
+  bl_pin: {{ display_bl_pin | default(22) }}
+  gpiochip: "{{ display_gpiochip | default('/dev/gpiochip0') }}"
 
 camera:
   enabled: {{ camera_enabled | default(false) | lower }}

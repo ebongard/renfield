@@ -177,10 +177,20 @@ class ButtonConfig:
 
 @dataclass
 class DisplayConfig:
-    """Display settings (Whisplay HAT ST7789)"""
+    """Display settings (SPI TFT — ST7789/ILI9341). gpio_backend selects the pin
+    driver: 'rpi' (gpiozero/BCM, Whisplay on a Pi) or 'sunxi' (libgpiod, Orange Pi
+    A733 — dc/rst/bl are line offsets on `gpiochip`)."""
     enabled: bool = False
     width: int = 240
     height: int = 280
+    gpio_backend: str = "rpi"
+    spi_bus: int = 0
+    spi_device: int = 0
+    spi_speed_hz: int = 80_000_000
+    dc_pin: int = 27
+    rst_pin: int = 4
+    bl_pin: int = 22
+    gpiochip: str = "/dev/gpiochip0"
 
 
 @dataclass
@@ -394,6 +404,14 @@ def load_config(config_path: Optional[str] = None) -> Config:
         config.display.enabled = disp.get("enabled", config.display.enabled)
         config.display.width = disp.get("width", config.display.width)
         config.display.height = disp.get("height", config.display.height)
+        config.display.gpio_backend = disp.get("gpio_backend", config.display.gpio_backend)
+        config.display.spi_bus = disp.get("spi_bus", config.display.spi_bus)
+        config.display.spi_device = disp.get("spi_device", config.display.spi_device)
+        config.display.spi_speed_hz = disp.get("spi_speed_hz", config.display.spi_speed_hz)
+        config.display.dc_pin = disp.get("dc_pin", config.display.dc_pin)
+        config.display.rst_pin = disp.get("rst_pin", config.display.rst_pin)
+        config.display.bl_pin = disp.get("bl_pin", config.display.bl_pin)
+        config.display.gpiochip = disp.get("gpiochip", config.display.gpiochip)
 
     if "camera" in config_data:
         cam = config_data["camera"]
