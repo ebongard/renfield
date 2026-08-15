@@ -105,6 +105,35 @@ async def send_message(
         intent = None
         action_result = None
 
+        # === Per-user RBAC on the REST agent/executor path ===
+        # This route runs the agent loop and the intent executor, both of which
+        # reach MCP tools. Without the caller's permissions they run with
+        # user_permissions=None, which mcp_client treats as allow-all — an
+        # authenticated user could read/act beyond their role, bypassing the
+        # WebSocket path's RBAC. Load permissions the same way chat_handler does
+        # and thread them into both call sites. Fail closed: an authenticated
+        # request whose permissions can't be resolved gets [] (deny), never None.
+        user_id = current_user.id if current_user else None
+        user_permissions = None
+        if user_id is not None:
+            try:
+                from sqlalchemy import select
+                from sqlalchemy.orm import selectinload
+
+                from models.database import User as _RbacUser
+                _res = await db.execute(
+                    select(_RbacUser)
+                    .options(selectinload(_RbacUser.role))
+                    .where(_RbacUser.id == int(user_id))
+                )
+                _u = _res.scalar_one_or_none()
+                if _u is not None:
+                    user_permissions = _u.get_permissions()
+            except Exception as e:
+                logger.warning(f"Failed to load user permissions for /api/chat/send: {e}")
+            if user_permissions is None and settings.auth_enabled:
+                user_permissions = []  # authenticated but unresolved → deny
+
         # === Agent Loop Check ===
         if settings.agent_enabled:
             from services.complexity_detector import ComplexityDetector
@@ -125,6 +154,8 @@ async def send_message(
                     ollama=ollama,
                     executor=executor,
                     session_id=session_id,
+                    user_permissions=user_permissions,
+                    user_id=user_id,
                 ):
                     if step.step_type == "final_answer":
                         response_text = step.content
@@ -167,7 +198,11 @@ async def send_message(
                 break
 
             executor = ActionExecutor(mcp_manager=mcp_mgr)
-            candidate_result = await executor.execute(intent_candidate)
+            candidate_result = await executor.execute(
+                intent_candidate,
+                user_permissions=user_permissions,
+                user_id=user_id,
+            )
 
             if candidate_result.get("success") and not candidate_result.get("empty_result"):
                 intent = intent_candidate
