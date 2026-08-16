@@ -40,6 +40,7 @@ from models.database import (
     DOC_STATUS_COMPLETED,
     DOC_STATUS_FAILED,
     DOC_STATUS_PENDING,
+    DOC_STATUS_SPLIT_ARCHIVED,
     PAPERLESS_STATE_DONE,
     PAPERLESS_STATE_FAILED,
     PAPERLESS_STATE_PENDING,
@@ -151,7 +152,14 @@ async def classify_existing(
         return _Decision.DUPLICATE, doc
     if doc.status == DOC_STATUS_FAILED:
         return _Decision.REINGEST, doc
-    # pending / processing — the worker still owns this row.
+    if doc.status == DOC_STATUS_SPLIT_ARCHIVED:
+        # A re-pushed combined multi-document PDF whose split already executed:
+        # the children are (being) ingested individually and the original is
+        # deliberately archived without chunks — a clean dedup, never a
+        # re-ingest. Without this branch the row would fall into RETRY and the
+        # MCP would re-push the file forever.
+        return _Decision.DUPLICATE, doc
+    # pending / processing / split_pending / split_review — still in flight.
     return _Decision.RETRY, doc
 
 

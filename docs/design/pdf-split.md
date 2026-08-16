@@ -1,0 +1,186 @@
+# PDF-Split — automatic multi-document PDF detection + splitting at ingest
+
+**Status:** PR1 (core auto-split, text-layer path) implemented; review flow (PR2)
+and the dedicated slow-lane split worker (PR3) planned. Dark by default
+(`PDF_SPLIT_ENABLED=false`).
+
+Closes the "multi-document files" deferral in
+`docs/design/paperless-llm-metadata.md` (open question 3).
+
+## Problem
+
+Batch scans routinely staple 10+ independent documents — invoices, letters,
+notices, contracts — into one PDF, often badly scanned with a poor or absent
+text layer. Ingesting such a file as ONE document pollutes retrieval (one giant
+mixed doc), produces one wrong Paperless record, and starves Schicht A of
+per-document facts.
+
+## Requirements (user-fixed)
+
+1. Renfield detects **on its own** that a PDF contains multiple documents, at
+   the **existing entry points** — no new upload paths.
+2. **Page count is NEVER a gate, cap, or signal.** Input is an arbitrary mix of
+   single-page documents and multi-page contracts: a 2-page file can be two
+   documents, a 200-page file can be one contract. Boundaries come from content
+   evidence only. Cost is bounded honestly instead: context limits via
+   sliding-window batching, unbounded duration via a dedicated worker.
+3. Confidence-gated automation: confident splits ingest automatically;
+   uncertain boundaries are held for owner review.
+4. The combined original is **archived, never ingested** — only the split
+   single documents reach the KB + Paperless.
+
+## Architecture
+
+### Insertion point: document-worker pre-stage
+
+All batch entry points (folder-ingest MCP push, email ingest,
+`internal.ingest_file`, meeting pipeline) converge on
+`services/folder_ingest.py::ingest_document` → `DocumentTaskQueue` →
+`workers/document_processor_worker.py::_process_entry`. Detection runs there,
+**before Docling**, so one seam covers every entry point and the API pod never
+does slow work. The chat-upload lane (`api/routes/chat_upload.py`, its own
+inline path with an interactive latency budget and a present user) is
+**deliberately out of scope**.
+
+Worker flow (initial_ingest branch, after the idempotent-consumer guard):
+
+```
+pdf_split_enabled?  ──no──▶ normal pipeline (byte-identical)
+        │yes
+maybe_split_at_ingest(db, doc_id, skip_split, user_id)
+        │
+        ├─ False ──▶ normal pipeline (single-doc verdict / any detection error)
+        └─ True  ──▶ ack, stop (split lifecycle owns the doc)
+```
+
+`skip_split` in the task params is the loop-breaker: a treat-as-single
+re-enqueue can never re-enter detection.
+
+### Detection pipeline (`services/pdf_split_detector.py`)
+
+1. **Per-page text signals** — pypdfium2 textpage (already a dep via Docling);
+   per-page quality via the calibrated
+   `DocumentProcessor.assess_text_layer_quality`. Signal = first ~600 + last
+   ~200 chars (letterhead / date / "Seite 1 von N" regions). A small number of
+   garbage pages ride along as an explicit "unreadable" placeholder.
+2. **Slow-lane classification** (`classify_slow_lane`) — fraction-based, never
+   count-based: first page garbage OR >30% garbage pages → `vlm`; signals
+   exceeding one LLM context window (`PDF_SPLIT_WINDOW_CHARS`) → `windows`.
+   PR1: both log loudly and fall back to the single-document status quo; PR3
+   routes them to the dedicated split worker.
+3. **Boundary call(s)** — strict-JSON on the TEXT model (never JSON from the
+   VLM: qwen3-vl think-buffer trap, see `paperless_metadata_extractor.py`).
+   Template: `MinutesExtractor` (`prompts/pdf_split.yaml`, de/en, fence-tolerant
+   parse, never raises). The prompt states explicitly that the file can be any
+   mix of one-page docs and long contracts, lists the content evidence for a
+   boundary, binds annexes/AGB to their parent, and prefers fewer documents
+   when unsure. **Arbitrary length via sliding windows:** signals batch into
+   context-budget windows; a non-final window's trailing piece is "open" and is
+   re-decided by the next window (which is told the open document's start
+   page); results merge in pure Python. One window = the common case.
+4. **Validation** (`validate_boundaries`) — contiguous, non-overlapping,
+   exhaustive coverage of the page range, confidences clamped. Anything
+   invalid, unparseable, or single collapses to a single-document verdict.
+
+Every failure mode degrades to "single document" — detection must never break
+ingest. The only exception: an error while *executing* a split propagates
+(falling through to normal ingest after children were partially created would
+double-ingest the combined file).
+
+### Confidence gate — whole-file
+
+Auto-split iff ≥2 pieces AND `min(confidence) >= PDF_SPLIT_AUTO_THRESHOLD`
+(default 0.85). Any piece below → the WHOLE file goes to review (PR2; PR1 logs
+and proceeds as single). No per-boundary partial splits — a half-ingested
+parent is a state the dedup matrix, Paperless leg and review UI would all have
+to model.
+
+### Split execution (`services/pdf_splitter.py`)
+
+Each piece is written with pypdfium2 (`PdfDocument.new()` + `import_pages`) and
+re-entered through `ingest_document`: children get sha256 dedup, owner/tier
+(inherited from the parent's atom/tier), the Paperless-pending stamp (iff the
+parent was filing-wanted at detection time), `source` inheritance
+(`pdf_split` when the parent has none), and the worker enqueue — then flow
+through OCR/Schicht-A/KG/Paperless like any upload. Children carry
+`split_from_document_id` → parent.
+
+**Idempotent resume:** pdfium bytes are not run-deterministic, so resume keys
+on the DETERMINISTIC child filename (`{parent-stem}_teil{NN}_{title-slug}.pdf`)
+instead of content hashes: parts whose (filename, kb) row exists are skipped
+(and their lineage stamp healed), only missing parts are rendered/ingested, and
+the parent is archived LAST. A byte-identical part deduping onto an existing
+document counts as covered.
+
+**Parent = archived:** `status='split_archived'`, `paperless_state='done'`
+(settled — the reconciler additionally requires `status='completed'`, so the
+archive is doubly excluded from filing), any partial chunks from a pre-split
+ingest attempt purged → excluded from retrieval. Bytes stay on the uploads PVC.
+
+### Dedup matrix change
+
+`classify_existing` gains: `status='split_archived'` → `DUPLICATE` (a re-pushed
+combined file is already handled — without this it would RETRY forever);
+`split_pending`/`split_review` fall into the existing in-flight RETRY branch.
+
+### Data model (migration `pc20260816_pdf_split`)
+
+- `documents.split_from_document_id` (FK→documents, ON DELETE SET NULL,
+  indexed) — child → archived original.
+- `documents.split_heartbeat_at` — row-level claim for the slow lane (mirrors
+  `Meeting.heartbeat_at`; jobs are unbounded-duration, reclaim keys on
+  heartbeat staleness, never a duration estimate).
+- `pdf_split_proposals` — uncertain splits awaiting review (precedent:
+  `kg_merge_proposals`): proposal JSON (pieces), page_signals JSON (evidence
+  for the UI), overall_confidence, status pending/approved/rejected, partial
+  unique "one pending per document".
+- Status constants: `split_pending` (slow lane), `split_review` (proposal
+  open), `split_archived` (split executed).
+
+Migration is inspector-guarded + rerunnable; fresh installs (no `documents`
+table yet) are owned entirely by `Base.metadata.create_all`.
+
+### Configuration
+
+| Setting | Default | Meaning |
+|---|---|---|
+| `PDF_SPLIT_ENABLED` | `false` | Master flag (dark) |
+| `PDF_SPLIT_WINDOW_CHARS` | `24000` | Char budget per boundary-LLM window (context batching, NOT a document-size assumption) |
+| `PDF_SPLIT_VLM_PAGE_TIMEOUT_S` | `45` | Per-call time bound for VLM page transcription (PR3) |
+| `PDF_SPLIT_AUTO_THRESHOLD` | `0.85` | Whole-file auto-split confidence gate |
+
+Deliberately **no page-count settings** of any kind.
+
+## Phasing
+
+- **PR1 (this)** — migration, models, flags, detector (windowed), splitter +
+  idempotent `execute_split`, worker pre-stage, `classify_existing` branch.
+  Enabling it already auto-splits confidently-detected text-layer PDFs;
+  slow-lane and uncertain cases log + status quo.
+- **PR2 — review flow** — `pdf_split_proposals` service + `/api/pdf-split`
+  routes (list / detail / page-PNG render / approve-with-edited-ranges /
+  reject-as-single), a flag-gated section on `/brain/review`, a split badge +
+  children list on `/knowledge`, `pdf_split_enabled` in `/api/config/features`,
+  proactive owner notification on proposal creation.
+- **PR3 — slow lane** — `PdfSplitTaskQueue` (stream `renfield:tasks:pdfsplit`),
+  `workers/pdf_split_worker.py` (meeting-worker template: row heartbeat,
+  poison-pill → treat-as-single, transient/terminal split, replicas 1),
+  per-page VLM transcription of garbage pages (plain text, per-call timeout,
+  circuit breaker, NO page cap), `k8s/pdf-split-worker.yaml`.
+
+## Risks / accepted residuals
+
+- **Over-splitting** (contract + annexes): prompt guidance + whole-file gate;
+  a miss degrades to review (PR2) or status quo — never data loss (parent
+  bytes retained, children deletable).
+- **pdfium write non-determinism:** handled by filename-keyed resume; residual
+  = a crash between child-create and commit can leave a same-name sibling
+  after a REINGEST-triggered re-detection with different LLM boundaries —
+  visible and deletable.
+- **Boundary-LLM latency inline** (single-window case in the doc worker):
+  bounded to one call; escape hatch = route all boundary calls to the split
+  worker (one-line change).
+- **Detection nondeterminism across retries:** a REINGEST after a terminal
+  split failure re-runs detection, which may propose different boundaries than
+  the partially-created children. Accepted for v1 (children are visible in the
+  KB either way).

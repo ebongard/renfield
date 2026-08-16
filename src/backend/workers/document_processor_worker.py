@@ -285,6 +285,32 @@ async def _process_entry(
                     f"delivery, acked (entry {entry.entry_id})"
                 )
                 return
+            # PDF-split pre-stage (dark unless PDF_SPLIT_ENABLED): decide
+            # whether this PDF is really several stapled documents BEFORE any
+            # Docling work. True → the split lifecycle owns the doc (children
+            # were created + enqueued through the normal bridge, the combined
+            # original is archived) — ack and stop. Detection errors degrade
+            # to False inside; an execution error propagates to the generic
+            # transient/terminal handling below (execute_split resumes
+            # idempotently on redelivery). Lazy import keeps the flag-off
+            # path free of the detector's import graph.
+            if settings.pdf_split_enabled:
+                from services.pdf_splitter import maybe_split_at_ingest
+
+                if await maybe_split_at_ingest(
+                    db,
+                    doc_id,
+                    skip_split=bool(entry.params.get("skip_split", False)),
+                    user_id=user_id,
+                ):
+                    await queue.ack(entry.entry_id)
+                    await _clear_transient(redis, entry.entry_id)
+                    logger.info(
+                        f"doc {doc_id}: handled by pdf-split "
+                        f"(entry {entry.entry_id})"
+                    )
+                    return
+
             if ingest_status in (
                 ProcessingStatus.PROCESSING.value,
                 ProcessingStatus.FAILED.value,

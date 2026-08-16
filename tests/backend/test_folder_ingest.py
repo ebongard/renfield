@@ -242,6 +242,37 @@ async def test_classify_in_flight_is_retry(pg_db_session, status):
 
 @pytest.mark.database
 @pytest.mark.asyncio
+async def test_classify_split_archived_is_duplicate(pg_db_session):
+    # A re-pushed combined multi-document PDF whose split already executed is a
+    # clean dedup — children are ingested individually, the original is
+    # deliberately archived without chunks. Without this branch the row falls
+    # into RETRY and the MCP re-pushes the file forever.
+    from models.database import DOC_STATUS_SPLIT_ARCHIVED
+
+    await _insert_doc(
+        pg_db_session,
+        file_hash="h_split",
+        status=DOC_STATUS_SPLIT_ARCHIVED,
+        paperless_state=PAPERLESS_STATE_DONE,
+    )
+    decision, doc = await classify_existing(pg_db_session, "h_split", None)
+    assert decision is _Decision.DUPLICATE
+    assert doc is not None
+
+
+@pytest.mark.database
+@pytest.mark.asyncio
+@pytest.mark.parametrize("status", ["split_pending", "split_review"])
+async def test_classify_split_in_flight_is_retry(pg_db_session, status):
+    # Split-lane in-flight states behave like pending/processing: the split
+    # lifecycle still owns the row, so the MCP leaves the file in the inbox.
+    await _insert_doc(pg_db_session, file_hash=f"h_{status}", status=status)
+    decision, _ = await classify_existing(pg_db_session, f"h_{status}", None)
+    assert decision is _Decision.RETRY
+
+
+@pytest.mark.database
+@pytest.mark.asyncio
 async def test_classify_is_scoped_by_kb(pg_db_session):
     # Same hash in a different KB must not match (the uniqueness key is the
     # (file_hash, knowledge_base_id) pair). Here the only row is kb=None;

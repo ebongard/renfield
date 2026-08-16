@@ -1013,6 +1013,33 @@ FILES_HEALTH_POLL_SECONDS=30          # Backend-Health-Poll; bei down→up wird 
 
 ---
 
+### PDF-Split (Multi-Dokument-PDFs beim Ingest erkennen + trennen)
+
+Erkennt beim Ingest (document-worker Pre-Stage, VOR Docling), ob ein PDF mehrere
+unabhängige Einzeldokumente enthält (Stapelscan), trennt es und ingestiert jedes
+Teilstück einzeln in KB + Paperless; das kombinierte Original wird archiviert
+(`status='split_archived'`, keine Chunks, nie in Paperless). Greift an ALLEN
+bestehenden Entry-Points (folder-ingest, email-ingest, `internal.ingest_file`),
+da alle über die Worker-Queue laufen. Design: `docs/design/pdf-split.md`.
+
+**Bewusst KEINE Seitenzahl-Einstellungen** (kein Min/Max-Gate, kein Seiten-Cap):
+der Input ist eine beliebige Mischung aus einseitigen Dokumenten und
+mehrseitigen Verträgen — Seitenzahl trägt kein Signal. Lange Dateien werden per
+Kontextfenster-Batching verarbeitet, schlechte Scans (VLM-Pfad) laufen in der
+dedizierten Split-Lane (PR3).
+
+```bash
+PDF_SPLIT_ENABLED=false          # Feature-Schalter (dark; flag-aus = byte-identisch)
+PDF_SPLIT_WINDOW_CHARS=24000     # Zeichenbudget pro Boundary-LLM-Fenster (Kontext-Batching, KEINE Dokumentgrößen-Annahme)
+PDF_SPLIT_VLM_PAGE_TIMEOUT_S=45  # Zeitlimit pro VLM-Seitentranskription (Slow-Lane, PR3)
+PDF_SPLIT_AUTO_THRESHOLD=0.85    # Whole-File-Gate: JEDES Teilstück muss diese Konfidenz erreichen, sonst Review statt Auto-Split
+```
+
+**Defaults:** `PDF_SPLIT_ENABLED`: `false` · `PDF_SPLIT_WINDOW_CHARS`: `24000` ·
+`PDF_SPLIT_VLM_PAGE_TIMEOUT_S`: `45` · `PDF_SPLIT_AUTO_THRESHOLD`: `0.85`
+
+---
+
 ### Email Auto-Ingest (Watch-Mailbox → KB + Paperless)
 
 Der dedizierte `renfield-mcp-email-ingest`-Watcher überwacht IMAP-Postfächer per

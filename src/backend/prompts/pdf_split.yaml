@@ -1,0 +1,95 @@
+# PDF-split boundary detection prompts (docs/design/pdf-split.md).
+#
+# Used by services/pdf_split_detector.detect_boundaries() to decide whether one
+# ingested PDF contains several independent documents and where the boundaries
+# lie. Input is one numbered snippet line per page (head … tail of the page).
+#
+# Hard rules encoded here (user requirement, do not weaken):
+# - The file can be ANY mix: many single-page documents back-to-back, one long
+#   multi-page document, or both interleaved. Boundaries come from CONTENT
+#   evidence only — never from length assumptions or page counts.
+# - Attachments/annexes/AGB belong to their parent document.
+# - When unsure, prefer FEWER, larger documents (an over-split loses context;
+#   an under-split degrades to the status quo).
+# - JSON only; ranges must cover the given page range contiguously, in order,
+#   without overlap.
+
+de:
+  system: |
+    Du analysierst die Seiten einer PDF-Datei, die mehrere unabhaengige
+    Einzeldokumente enthalten KANN (Stapelscan). Die Datei kann eine beliebige
+    Mischung sein: viele einseitige Dokumente hintereinander, EIN langes
+    mehrseitiges Dokument (z.B. ein Vertrag), oder beides gemischt. Es gibt
+    KEINE Annahme ueber Dokumentlaengen.
+
+    Erkenne Dokumentgrenzen NUR an inhaltlichen Belegen:
+    - neuer Briefkopf / neuer Absender / neue Empfaengeradresse
+    - neues Dokumentdatum oder neues Aktenzeichen/Rechnungsnummer
+    - neuer Betreff / Titel
+    - "Seite 1 von N"-Zaehler, der neu beginnt
+    - Grussformel/Unterschrift, gefolgt von einem frischen Dokumentkopf
+
+    Regeln:
+    - Anlagen, AGB und Anhaenge gehoeren zu ihrem Hauptdokument, sind KEINE
+      eigenen Dokumente.
+    - Fortsetzungsseiten ohne eigenen Kopf gehoeren zum vorhergehenden Dokument.
+    - Als unlesbar markierte Seiten gehoeren im Zweifel zum vorhergehenden
+      Dokument.
+    - Im Zweifel WENIGER, groessere Dokumente.
+    - "title": kurzer sprechender Titel (Absender + Dokumentart + ggf. Datum).
+    - "doc_type": z.B. Rechnung, Brief, Vertrag, Bescheid, Kontoauszug.
+    - "confidence" in [0,1] pro Dokument: wie sicher sind Anfang UND Ende.
+
+    Gib AUSSCHLIESSLICH ein JSON-Objekt zurueck, keinen Fliesstext, kein
+    Markdown:
+    {
+      "documents": [
+        {"start_page": 1, "end_page": 3, "title": "...", "doc_type": "...", "confidence": 0.9}
+      ]
+    }
+    Die Bereiche muessen den gesamten angegebenen Seitenbereich lueckenlos,
+    ueberlappungsfrei und aufsteigend abdecken.
+  user: |
+    {carry_note}Seitenbereich: {range_start} bis {range_end}.
+    Seiteninhalte (Anfang ... Ende jeder Seite):
+
+    {pages}
+
+en:
+  system: |
+    You analyze the pages of a PDF file that MAY contain several independent
+    documents (batch scan). The file can be ANY mix: many one-page documents
+    back-to-back, ONE long multi-page document (e.g. a contract), or both
+    interleaved. There is NO assumption about document lengths.
+
+    Detect document boundaries ONLY from content evidence:
+    - a new letterhead / sender / recipient address
+    - a new document date or reference/invoice number
+    - a new subject / title
+    - a "page 1 of N" counter that restarts
+    - a closing/signature followed by a fresh document header
+
+    Rules:
+    - Attachments, annexes and terms & conditions belong to their parent
+      document; they are NOT separate documents.
+    - Continuation pages without their own header belong to the preceding
+      document.
+    - Pages marked unreadable belong to the preceding document when in doubt.
+    - When unsure, prefer FEWER, larger documents.
+    - "title": short human title (sender + document type + date if present).
+    - "doc_type": e.g. invoice, letter, contract, notice, bank statement.
+    - "confidence" in [0,1] per document: how certain start AND end are.
+
+    Respond EXCLUSIVELY with a JSON object, no prose, no markdown:
+    {
+      "documents": [
+        {"start_page": 1, "end_page": 3, "title": "...", "doc_type": "...", "confidence": 0.9}
+      ]
+    }
+    The ranges must cover the given page range contiguously, in ascending
+    order, without gaps or overlaps.
+  user: |
+    {carry_note}Page range: {range_start} to {range_end}.
+    Page contents (start ... end of each page):
+
+    {pages}

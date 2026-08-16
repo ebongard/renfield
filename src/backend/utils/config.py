@@ -884,6 +884,24 @@ class Settings(BaseSettings):
     folder_ingest_token: str = ""
     folder_ingest_notify_on_filed: bool = True
 
+    # PDF-split: ingest-time detection + splitting of multi-document PDFs
+    # (docs/design/pdf-split.md). Runs as a document-worker pre-stage on EVERY
+    # ingested PDF when enabled. Deliberately NO page-count settings: input is
+    # an arbitrary mix of single-page docs and multi-page contracts, so page
+    # count is never a gate, cap, or signal — long inputs are handled by
+    # context-window batching, bad scans by unbounded per-page VLM work in the
+    # dedicated split worker.
+    pdf_split_enabled: bool = False
+    # Character budget per boundary-LLM window (context batching, NOT a
+    # document-size assumption). Signals beyond one window route to the slow
+    # split lane and are processed in overlapping windows.
+    pdf_split_window_chars: int = Field(default=24000, ge=4000, le=120000)
+    # Per-call time bound for the VLM page transcription in the split worker.
+    pdf_split_vlm_page_timeout_s: int = Field(default=45, ge=5, le=600)
+    # Whole-file auto-split gate: every proposed piece must reach this
+    # confidence or the file goes to owner review instead.
+    pdf_split_auto_threshold: float = Field(default=0.85, ge=0.0, le=1.0)
+
     # Async Paperless reconciler (Design Z): folder/email-ingest stamp
     # paperless_state='pending' and this periodic reconciler files them out of
     # band (services/paperless_reconciler.py), so the push never awaits the

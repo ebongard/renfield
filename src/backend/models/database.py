@@ -565,6 +565,22 @@ class Document(Base):
         Boolean, nullable=False, server_default=sa_text("false"), default=False
     )
 
+    # PDF-split lineage: set on a child document produced by splitting a
+    # multi-document PDF; points at the archived combined original (which ends
+    # in status='split_archived' with no chunks). SET NULL so deleting the
+    # archived parent never cascades into the ingested children.
+    split_from_document_id = Column(
+        Integer,
+        ForeignKey("documents.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    # Row-level in-flight claim while status='split_pending' (slow split lane).
+    # Mirrors Meeting.heartbeat_at: split jobs are unbounded-duration (per-page
+    # VLM on arbitrarily large scans), so reclaim keys on heartbeat staleness,
+    # never on an estimated duration.
+    split_heartbeat_at = Column(DateTime, nullable=True)
+
     # Timestamps
     created_at = Column(DateTime, default=_utcnow)
     processed_at = Column(DateTime, nullable=True)
@@ -895,6 +911,30 @@ DOC_STATUS_FAILED = "failed"
 MEETING_TRANSCRIPT_SOURCE = "meeting_transcript"
 
 DOC_STATUSES = [DOC_STATUS_PENDING, DOC_STATUS_PROCESSING, DOC_STATUS_COMPLETED, DOC_STATUS_FAILED]
+
+# PDF-split lifecycle states (Document.status is a plain String(50) — additive,
+# no DB enum). A multi-document PDF detected at ingest moves through:
+#   split_pending   handed to the slow split lane (VLM / multi-window), row
+#                   claimed via Document.split_heartbeat_at
+#   split_review    a boundary proposal awaits owner review (pdf_split_proposals)
+#   split_archived  split executed; the combined original is ARCHIVED — bytes
+#                   stay on the uploads PVC, row visible with its children via
+#                   split_from_document_id, but it has NO chunks (never entered
+#                   Docling) and is excluded from retrieval + Paperless.
+# classify_existing() treats split_archived as DUPLICATE (a re-pushed combined
+# file is already handled) and the two in-flight states as RETRY.
+DOC_STATUS_SPLIT_PENDING = "split_pending"
+DOC_STATUS_SPLIT_REVIEW = "split_review"
+DOC_STATUS_SPLIT_ARCHIVED = "split_archived"
+
+# Document.source value for a child produced by the PDF splitter (only when the
+# parent has no source of its own to inherit).
+PDF_SPLIT_CHILD_SOURCE = "pdf_split"
+
+# pdf_split_proposals.status values.
+PDF_SPLIT_PROPOSAL_PENDING = "pending"
+PDF_SPLIT_PROPOSAL_APPROVED = "approved"
+PDF_SPLIT_PROPOSAL_REJECTED = "rejected"
 
 # Folder-ingest Paperless leg state (Document.paperless_state). NULL = the
 # Paperless step was never attempted for this row. "pending"/"failed" are
@@ -1940,6 +1980,49 @@ class KgMergeProposal(Base):
 
     loser = relationship("KGEntity", foreign_keys=[loser_entity_id])
     winner = relationship("KGEntity", foreign_keys=[winner_entity_id])
+
+
+class PdfSplitProposal(Base):
+    """A detector-proposed multi-document PDF split awaiting owner review.
+
+    The ingest-time detector auto-splits only when EVERY proposed piece clears
+    the confidence threshold (whole-file gate). Anything uncertain lands here
+    for the owner to approve (optionally with edited page ranges) or reject
+    (treat as a single document) on /brain/review. Approval routes through
+    services/pdf_splitter.execute_split, the same path the worker's auto-split
+    uses. The parent document sits in status='split_review' while pending.
+    """
+    __tablename__ = "pdf_split_proposals"
+
+    id = Column(Integer, primary_key=True, index=True)
+    document_id = Column(
+        Integer,
+        ForeignKey("documents.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
+    status = Column(
+        String(20), nullable=False, default=PDF_SPLIT_PROPOSAL_PENDING, index=True
+    )
+    # Proposed pieces: [{start_page, end_page, title, doc_type, confidence}].
+    proposal = Column(JSON().with_variant(JSONB(), "postgresql"), nullable=False)
+    # Per-page evidence shown in the review UI:
+    # [{page, snippet, quality_ok, via_vlm}].
+    page_signals = Column(JSON().with_variant(JSONB(), "postgresql"), nullable=True)
+    page_count = Column(Integer, nullable=False)
+    overall_confidence = Column(Float, nullable=False, default=0.0)
+    created_at = Column(DateTime, default=_utcnow)
+    resolved_at = Column(DateTime, nullable=True)
+    resolved_by_user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+
+    __table_args__ = (
+        Index("ix_pdf_split_proposals_user_status", "user_id", "status"),
+        # One PENDING proposal per document (partial unique) is created in the
+        # migration (PG WHERE-predicate index — not expressible portably here).
+    )
+
+    document = relationship("Document", foreign_keys=[document_id])
 
 
 class MemoryHistory(Base):

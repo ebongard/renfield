@@ -1,0 +1,447 @@
+"""Unit tests for PDF-split execution + the document-worker pre-stage seam.
+
+``execute_split`` collaborators (db, ingest bridge, pdfium) are mocked; the
+pdfium roundtrip itself is covered where pypdfium2 is installed (the worker
+image has it via Docling — importorskip locally). ``maybe_split_at_ingest``
+branch coverage asserts the hard invariants: flag-off is a no-op, detection
+errors NEVER break ingest, and a partially-executed split is never followed by
+normal ingest of the combined parent.
+"""
+from __future__ import annotations
+
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, MagicMock
+
+import pytest
+
+import services.pdf_splitter as ps
+from models.database import (
+    DOC_STATUS_PENDING,
+    DOC_STATUS_SPLIT_ARCHIVED,
+    DOC_STATUS_SPLIT_PENDING,
+    DOC_STATUS_SPLIT_REVIEW,
+    PAPERLESS_STATE_DONE,
+    PAPERLESS_STATE_PENDING,
+)
+from services.folder_ingest import IngestResult, IngestStatus
+from services.pdf_split_detector import (
+    VERDICT_MULTI,
+    VERDICT_SINGLE,
+    PageSignal,
+    SplitPiece,
+    SplitVerdict,
+)
+from services.pdf_splitter import (
+    SplitExecutionError,
+    child_filename,
+    execute_split,
+    maybe_split_at_ingest,
+)
+
+# asyncio tests run via asyncio_mode=auto (pyproject / the .159 -o flag);
+# no module-wide asyncio mark so the sync TestChildFilename cases stay clean.
+pytestmark = [pytest.mark.unit]
+
+
+def _piece(s, e, title="Rechnung Stadtwerke", conf=0.9):
+    return SplitPiece(start_page=s, end_page=e, title=title, doc_type="invoice", confidence=conf)
+
+
+def _parent(**over):
+    defaults = dict(
+        id=7,
+        filename="stapel_scan.pdf",
+        file_path="/uploads/abc_stapel_scan.pdf",
+        knowledge_base_id=3,
+        status=DOC_STATUS_PENDING,
+        paperless_state=PAPERLESS_STATE_PENDING,
+        source=None,
+        atom_id=None,
+        circle_tier=0,
+        error_message=None,
+        chunk_count=0,
+    )
+    defaults.update(over)
+    return SimpleNamespace(**defaults)
+
+
+def _db():
+    db = MagicMock()
+    db.commit = AsyncMock()
+    db.execute = AsyncMock()
+    db.get = AsyncMock(return_value=None)
+    return db
+
+
+# ---------------------------------------------------------------------------
+# child_filename — the deterministic resume key
+# ---------------------------------------------------------------------------
+
+class TestChildFilename:
+    def test_deterministic(self):
+        a = child_filename("Stapel Scan 2026.pdf", 3, "Rechnung Müller GmbH")
+        b = child_filename("Stapel Scan 2026.pdf", 3, "Rechnung Müller GmbH")
+        assert a == b
+
+    def test_shape_and_umlauts(self):
+        name = child_filename("Stapel Scan.pdf", 1, "Rechnung Müller & Söhne")
+        assert name == "stapel-scan_teil01_rechnung-mueller-soehne.pdf"
+
+    def test_empty_title_still_valid(self):
+        assert child_filename("x.pdf", 2, "") == "x_teil02_dokument.pdf"
+
+
+# ---------------------------------------------------------------------------
+# execute_split
+# ---------------------------------------------------------------------------
+
+def _wire_split(monkeypatch, *, existing=None, ingest_results=None, owner=11):
+    """Patch execute_split collaborators. ``existing`` maps part index (0-based)
+    → fake existing child row. ``ingest_results`` is consumed in order for the
+    missing parts."""
+    existing = existing or {}
+    calls = {"ingest": [], "split_pieces": None}
+
+    async def fake_existing_child(db, kb_id, filename):
+        for i, row in existing.items():
+            if f"teil{i + 1:02d}" in filename:
+                return row
+        return None
+
+    async def fake_ingest(data, meta, **kwargs):
+        calls["ingest"].append((data, meta, kwargs))
+        return ingest_results.pop(0)
+
+    def fake_split(file_path, pieces):
+        calls["split_pieces"] = list(pieces)
+        return [b"%PDF-part%" for _ in pieces]
+
+    monkeypatch.setattr(ps, "_existing_child", fake_existing_child)
+    monkeypatch.setattr(ps, "ingest_document", fake_ingest)
+    monkeypatch.setattr(ps, "split_pdf_bytes", fake_split)
+    monkeypatch.setattr(
+        ps, "_resolve_parent_owner", AsyncMock(return_value=owner)
+    )
+    return calls
+
+
+async def test_execute_split_creates_all_parts_and_archives_last(monkeypatch):
+    db = _db()
+    parent = _parent()
+    child = SimpleNamespace(id=101, split_from_document_id=None)
+    db.get = AsyncMock(return_value=child)
+    calls = _wire_split(
+        monkeypatch,
+        ingest_results=[
+            IngestResult(IngestStatus.INGESTED, document_id=101),
+            IngestResult(IngestStatus.INGESTED, document_id=102),
+        ],
+    )
+
+    out = await execute_split(db, parent, [_piece(1, 2), _piece(3, 5)])
+
+    assert out == [101, 102]
+    assert len(calls["ingest"]) == 2
+    # children inherit kb / owner / tier / paperless intent / lineage source
+    _, meta, kwargs = calls["ingest"][0]
+    assert kwargs["kb_id"] == 3
+    assert kwargs["owner_user_id"] == 11
+    assert kwargs["file_to_paperless"] is True
+    assert kwargs["source"] == "pdf_split"
+    assert meta.filename.endswith(".pdf")
+    # parent archived + Paperless settled
+    assert parent.status == DOC_STATUS_SPLIT_ARCHIVED
+    assert parent.paperless_state == PAPERLESS_STATE_DONE
+
+
+async def test_execute_split_resume_skips_existing_parts(monkeypatch):
+    db = _db()
+    parent = _parent()
+    part1 = SimpleNamespace(id=201, split_from_document_id=7)
+    child2 = SimpleNamespace(id=202, split_from_document_id=None)
+    db.get = AsyncMock(return_value=child2)
+    calls = _wire_split(
+        monkeypatch,
+        existing={0: part1},
+        ingest_results=[IngestResult(IngestStatus.INGESTED, document_id=202)],
+    )
+
+    out = await execute_split(db, parent, [_piece(1, 2), _piece(3, 5)])
+
+    assert out == [201, 202]
+    assert len(calls["ingest"]) == 1  # only the missing part
+    assert [
+        (p.start_page, p.end_page) for p in calls["split_pieces"]
+    ] == [(3, 5)]  # only the missing piece was rendered
+    assert parent.status == DOC_STATUS_SPLIT_ARCHIVED
+
+
+async def test_execute_split_resume_stamps_unstamped_existing_child(monkeypatch):
+    # Crash window: child created but split_from not stamped — resume stamps it.
+    db = _db()
+    parent = _parent()
+    part1 = SimpleNamespace(id=201, split_from_document_id=None)
+    child2 = SimpleNamespace(id=202, split_from_document_id=None)
+    db.get = AsyncMock(return_value=child2)
+    _wire_split(
+        monkeypatch,
+        existing={0: part1},
+        ingest_results=[IngestResult(IngestStatus.INGESTED, document_id=202)],
+    )
+
+    await execute_split(db, parent, [_piece(1, 2), _piece(3, 5)])
+
+    assert part1.split_from_document_id == 7
+
+
+async def test_execute_split_failed_part_raises_and_leaves_parent(monkeypatch):
+    db = _db()
+    parent = _parent()
+    _wire_split(
+        monkeypatch,
+        ingest_results=[
+            IngestResult(IngestStatus.INGESTED, document_id=101),
+            IngestResult(IngestStatus.FAILED, detail="create_error"),
+        ],
+    )
+    db.get = AsyncMock(return_value=SimpleNamespace(id=101, split_from_document_id=None))
+
+    with pytest.raises(SplitExecutionError):
+        await execute_split(db, parent, [_piece(1, 2), _piece(3, 5)])
+
+    assert parent.status == DOC_STATUS_PENDING  # NOT archived
+
+
+async def test_execute_split_duplicate_part_counts_as_covered(monkeypatch):
+    db = _db()
+    parent = _parent()
+    _wire_split(
+        monkeypatch,
+        ingest_results=[
+            IngestResult(IngestStatus.DUPLICATE, document_id=55),
+            IngestResult(IngestStatus.INGESTED, document_id=102),
+        ],
+    )
+    db.get = AsyncMock(return_value=SimpleNamespace(id=102, split_from_document_id=None))
+
+    out = await execute_split(db, parent, [_piece(1, 2), _piece(3, 5)])
+
+    assert out == [55, 102]
+    assert parent.status == DOC_STATUS_SPLIT_ARCHIVED
+
+
+async def test_execute_split_already_archived_is_noop(monkeypatch):
+    db = _db()
+    result = MagicMock()
+    result.scalars.return_value.all.return_value = [101, 102]
+    db.execute = AsyncMock(return_value=result)
+    parent = _parent(status=DOC_STATUS_SPLIT_ARCHIVED)
+    calls = _wire_split(monkeypatch, ingest_results=[])
+
+    out = await execute_split(db, parent, [_piece(1, 2), _piece(3, 5)])
+
+    assert out == [101, 102]
+    assert calls["ingest"] == []
+
+
+async def test_execute_split_refuses_single_piece(monkeypatch):
+    _wire_split(monkeypatch, ingest_results=[])
+    with pytest.raises(SplitExecutionError):
+        await execute_split(_db(), _parent(), [_piece(1, 5)])
+
+
+async def test_execute_split_no_paperless_parent_means_no_paperless_children(monkeypatch):
+    db = _db()
+    parent = _parent(paperless_state=None)
+    db.get = AsyncMock(return_value=SimpleNamespace(id=1, split_from_document_id=None))
+    calls = _wire_split(
+        monkeypatch,
+        ingest_results=[
+            IngestResult(IngestStatus.INGESTED, document_id=1),
+            IngestResult(IngestStatus.INGESTED, document_id=2),
+        ],
+    )
+
+    await execute_split(db, parent, [_piece(1, 1), _piece(2, 2)])
+
+    assert all(c[2]["file_to_paperless"] is False for c in calls["ingest"])
+
+
+# ---------------------------------------------------------------------------
+# split_pdf_bytes — real pdfium roundtrip (runs where pypdfium2 is installed)
+# ---------------------------------------------------------------------------
+
+async def test_split_pdf_bytes_roundtrip(tmp_path):
+    pdfium = pytest.importorskip("pypdfium2")
+
+    src = pdfium.PdfDocument.new()
+    for _ in range(6):
+        src.new_page(595, 842)
+    src_path = tmp_path / "combined.pdf"
+    src.save(str(src_path))
+    src.close()
+
+    parts = ps.split_pdf_bytes(
+        str(src_path), [_piece(1, 2), _piece(3, 3), _piece(4, 6)]
+    )
+
+    assert len(parts) == 3
+    for data, expected_pages in zip(parts, (2, 1, 3), strict=True):
+        out = pdfium.PdfDocument(data)
+        try:
+            assert len(out) == expected_pages
+        finally:
+            out.close()
+
+
+# ---------------------------------------------------------------------------
+# maybe_split_at_ingest — the worker pre-stage seam
+# ---------------------------------------------------------------------------
+
+def _sig(page):
+    return PageSignal(page=page, text="Rechnung", quality_ok=True)
+
+
+def _wire_prestage(
+    monkeypatch,
+    *,
+    enabled=True,
+    doc=None,
+    signals=None,
+    slow=None,
+    verdict=None,
+    threshold=0.85,
+):
+    monkeypatch.setattr(ps.settings, "pdf_split_enabled", enabled)
+    monkeypatch.setattr(ps.settings, "pdf_split_auto_threshold", threshold)
+    db = _db()
+    db.get = AsyncMock(return_value=doc)
+    monkeypatch.setattr(
+        ps, "extract_page_signals", MagicMock(return_value=signals or [])
+    )
+    monkeypatch.setattr(ps, "classify_slow_lane", MagicMock(return_value=slow))
+    monkeypatch.setattr(
+        ps, "detect_boundaries", AsyncMock(return_value=verdict)
+    )
+    execute = AsyncMock(return_value=[101, 102])
+    monkeypatch.setattr(ps, "execute_split", execute)
+    return db, execute
+
+
+async def test_prestage_flag_off_is_noop(monkeypatch):
+    db, execute = _wire_prestage(monkeypatch, enabled=False, doc=_parent())
+    assert await maybe_split_at_ingest(db, 7) is False
+    db.get.assert_not_called()
+    execute.assert_not_called()
+
+
+async def test_prestage_skip_split_param_is_loop_breaker(monkeypatch):
+    db, execute = _wire_prestage(monkeypatch, doc=_parent())
+    assert await maybe_split_at_ingest(db, 7, skip_split=True) is False
+    db.get.assert_not_called()
+    execute.assert_not_called()
+
+
+async def test_prestage_non_pdf_is_noop(monkeypatch):
+    doc = _parent(filename="notes.docx", file_path="/uploads/x_notes.docx")
+    db, execute = _wire_prestage(monkeypatch, doc=doc)
+    assert await maybe_split_at_ingest(db, 7) is False
+    execute.assert_not_called()
+
+
+async def test_prestage_missing_doc_is_noop(monkeypatch):
+    db, _ = _wire_prestage(monkeypatch, doc=None)
+    assert await maybe_split_at_ingest(db, 7) is False
+
+
+@pytest.mark.parametrize(
+    "status",
+    [DOC_STATUS_SPLIT_ARCHIVED, DOC_STATUS_SPLIT_PENDING, DOC_STATUS_SPLIT_REVIEW],
+)
+async def test_prestage_split_owned_states_are_acked(monkeypatch, status):
+    """A redelivered entry for a doc the split lifecycle owns → True (ack,
+    skip normal processing) WITHOUT re-running detection."""
+    db, execute = _wire_prestage(monkeypatch, doc=_parent(status=status))
+    detector = MagicMock()
+    monkeypatch.setattr(ps, "extract_page_signals", detector)
+
+    assert await maybe_split_at_ingest(db, 7) is True
+
+    detector.assert_not_called()
+    execute.assert_not_called()
+
+
+async def test_prestage_detection_error_falls_through(monkeypatch):
+    db, execute = _wire_prestage(monkeypatch, doc=_parent())
+    monkeypatch.setattr(
+        ps, "extract_page_signals", MagicMock(side_effect=RuntimeError("pdfium"))
+    )
+    assert await maybe_split_at_ingest(db, 7) is False
+    execute.assert_not_called()
+
+
+async def test_prestage_no_signals_falls_through(monkeypatch):
+    db, execute = _wire_prestage(monkeypatch, doc=_parent(), signals=[])
+    assert await maybe_split_at_ingest(db, 7) is False
+    execute.assert_not_called()
+
+
+async def test_prestage_slow_lane_is_status_quo_in_pr1(monkeypatch):
+    db, execute = _wire_prestage(
+        monkeypatch, doc=_parent(), signals=[_sig(1), _sig(2)], slow="vlm"
+    )
+    assert await maybe_split_at_ingest(db, 7) is False
+    execute.assert_not_called()
+
+
+async def test_prestage_single_verdict_falls_through(monkeypatch):
+    db, execute = _wire_prestage(
+        monkeypatch,
+        doc=_parent(),
+        signals=[_sig(1), _sig(2)],
+        verdict=SplitVerdict(kind=VERDICT_SINGLE),
+    )
+    assert await maybe_split_at_ingest(db, 7) is False
+    execute.assert_not_called()
+
+
+async def test_prestage_low_confidence_is_status_quo_in_pr1(monkeypatch):
+    verdict = SplitVerdict(
+        kind=VERDICT_MULTI, pieces=[_piece(1, 1, conf=0.95), _piece(2, 2, conf=0.5)]
+    )
+    db, execute = _wire_prestage(
+        monkeypatch, doc=_parent(), signals=[_sig(1), _sig(2)], verdict=verdict
+    )
+    assert await maybe_split_at_ingest(db, 7) is False
+    execute.assert_not_called()
+
+
+async def test_prestage_confident_multi_executes_split(monkeypatch):
+    verdict = SplitVerdict(
+        kind=VERDICT_MULTI, pieces=[_piece(1, 1), _piece(2, 2)]
+    )
+    doc = _parent()
+    db, execute = _wire_prestage(
+        monkeypatch, doc=doc, signals=[_sig(1), _sig(2)], verdict=verdict
+    )
+
+    assert await maybe_split_at_ingest(db, 7, user_id=5) is True
+
+    execute.assert_awaited_once()
+    args, kwargs = execute.await_args
+    assert args[1] is doc
+    assert args[2] == verdict.pieces
+    assert kwargs["user_id"] == 5
+
+
+async def test_prestage_execution_error_propagates(monkeypatch):
+    """A failure while EXECUTING the split must NOT degrade to normal ingest
+    (children may already exist — the combined parent would double-ingest)."""
+    verdict = SplitVerdict(kind=VERDICT_MULTI, pieces=[_piece(1, 1), _piece(2, 2)])
+    db, execute = _wire_prestage(
+        monkeypatch, doc=_parent(), signals=[_sig(1), _sig(2)], verdict=verdict
+    )
+    execute.side_effect = SplitExecutionError("part 2 failed")
+
+    with pytest.raises(SplitExecutionError):
+        await maybe_split_at_ingest(db, 7)
