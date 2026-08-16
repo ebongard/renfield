@@ -729,6 +729,38 @@ class MCPPermissionError(Exception):
     pass
 
 
+# --- Per-user auth resolver seam (per-user data scoping) ----------------------
+# A plugin (Reva) registers a resolver via `set_user_auth_resolver()`. Given a
+# server name + authenticated renfield `user_id`, it returns the **HTTP headers**
+# to attach to THIS user's request — typically `{"Authorization": "Bearer <tok>"}`,
+# but a dict so a provider needing more than one header is expressible without a
+# core change (e.g. mcp-atlassian's multi-user mode requires BOTH
+# `Authorization: Bearer <oauth>` AND `X-Atlassian-Cloud-Id: <cloud_id>`). It
+# returns None (or an empty dict) when the user has no provisioned credential.
+# Renfield stays scheme-agnostic — the plugin owns the credential store, the
+# scheme, and any provider-specific companion headers. This is the ONLY seam
+# through which per-user credentials cross into the MCP core; the core never
+# sees a plaintext store.
+_USER_AUTH_RESOLVER = None  # type: ignore[var-annotated]
+
+
+def set_user_auth_resolver(fn) -> None:
+    """Register (or clear, with None) the per-user MCP auth resolver.
+
+    `fn` is `async (server_name: str, user_id: int) -> dict[str, str] | None`
+    returning the request headers to attach for that user. Idempotent.
+    """
+    global _USER_AUTH_RESOLVER
+    _USER_AUTH_RESOLVER = fn
+
+
+async def _resolve_user_auth_headers(server_name: str, user_id: int):
+    """Return the per-user request headers dict, or None/empty if unresolved."""
+    if _USER_AUTH_RESOLVER is None:
+        return None
+    return await _USER_AUTH_RESOLVER(server_name, user_id)
+
+
 @dataclass
 class MCPServerConfig:
     """Configuration for a single MCP server."""
@@ -761,6 +793,18 @@ class MCPServerConfig:
                               # notifications and yield ProgressChunks. First consumer: federation
                               # query_brain (F3). Non-streaming servers ignore this flag — the
                               # progress queue stays empty and only the final result is yielded.
+
+    # Per-user auth (per-user data scoping). When True, a tool call for this
+    # server does NOT ride the shared connection-level credential; each call
+    # opens a short-lived per-user session whose `Authorization` is resolved
+    # from the registered user-auth resolver (`set_user_auth_resolver`) for
+    # `(name, user_id)`. FAIL-CLOSED: an authenticated user with no resolvable
+    # credential — or an unidentified `user_id=None` turn — is DENIED, never
+    # silently downgraded to the shared operator credential (that downgrade is
+    # exactly the confused-deputy the per-user model exists to remove). Only
+    # streamable_http / sse transports are eligible. Default False = the
+    # byte-identical legacy shared-session path.
+    per_user_auth: bool = False
 
     # Federation-transport only (F3c): the local PeerUser.id this virtual
     # server represents. execute_tool_streaming looks up the peer row at
@@ -1032,6 +1076,7 @@ class MCPManager:
                         else None
                     ),
                     streaming=bool(_resolve_value(entry.get("streaming", False))),
+                    per_user_auth=bool(_resolve_value(entry.get("per_user_auth", False))),
                 )
 
                 if not config.enabled:
@@ -1401,6 +1446,59 @@ class MCPManager:
         state = self._servers.get(server_name)
         return state is not None and state.connected
 
+    async def _call_tool_per_user_session(
+        self, state: "MCPServerState", tool_name: str, arguments: dict, auth_headers: dict
+    ):
+        """Open a short-lived per-user MCP session (its OWN request headers) and
+        call one tool, then tear it down.
+
+        The MCP SDK binds auth at connection init — there is no per-request
+        header override on a shared session — so a per-user call needs its own
+        session (design note: modelcontextprotocol/python-sdk#1434). Correctness
+        over reuse: the session is per-call, never cached, because a cached
+        per-user session would serve a stale/rotated token — a security bug, not
+        a perf win. A bounded per-user session cache is a deferred optimization.
+        Only `streamable_http` / `sse` are eligible (a per-user stdio subprocess
+        is nonsensical). `auth_headers` (from the resolver) are merged over the
+        server's static headers — typically `Authorization`, plus any companion
+        header a provider needs (e.g. `X-Atlassian-Cloud-Id`)."""
+        from mcp import ClientSession
+        from mcp.client.sse import sse_client
+        from mcp.client.streamable_http import streamablehttp_client
+
+        config = state.config
+        headers = dict(config.headers)
+        headers.update(auth_headers)
+
+        async with AsyncExitStack() as stack:
+            if config.transport == MCPTransportType.STREAMABLE_HTTP:
+                if not config.url:
+                    raise ValueError("URL required for streamable_http transport")
+                transport = await stack.enter_async_context(
+                    streamablehttp_client(url=config.url, headers=headers)
+                )
+            elif config.transport == MCPTransportType.SSE:
+                if not config.url:
+                    raise ValueError("URL required for SSE transport")
+                transport = await stack.enter_async_context(
+                    sse_client(url=config.url, headers=headers)
+                )
+            else:
+                raise ValueError(
+                    f"per_user_auth requires streamable_http/sse, got "
+                    f"{config.transport}"
+                )
+            # (read, write) or (read, write, get_session_id) — mirror _connect_server
+            if len(transport) == 3:
+                read_stream, write_stream, _ = transport
+            else:
+                read_stream, write_stream = transport
+            session = await stack.enter_async_context(
+                ClientSession(read_stream, write_stream)
+            )
+            await session.initialize()
+            return await session.call_tool(tool_name, arguments)
+
     async def execute_tool(
         self,
         namespaced_name: str,
@@ -1571,7 +1669,56 @@ class MCPManager:
         # duplicate-upload loop). Defaults to the global setting.
         effective_timeout = call_timeout if call_timeout is not None else settings.mcp_call_timeout
 
+        # Per-user auth (per-user data scoping). When the server opts in, the
+        # call must run under THIS user's credential, not the shared operator
+        # one. FAIL-CLOSED: no identity or no provisioned credential → deny,
+        # never fall through to the shared session (that fall-through would be
+        # the confused deputy the whole model removes). The headers are resolved
+        # once here; `_do_call` opens a short-lived per-user session with them.
+        per_user_headers: dict | None = None
+        if state.config.per_user_auth:
+            if user_id is None:
+                logger.warning(
+                    f"🔒 per-user MCP: {namespaced_name} needs an identified "
+                    f"caller — denying unauthenticated turn"
+                )
+                return {
+                    "success": False,
+                    "message": "Authentication required for this tool.",
+                    "data": None,
+                }
+            try:
+                per_user_headers = await _resolve_user_auth_headers(
+                    state.config.name, user_id
+                )
+            except Exception as e:  # noqa: BLE001 — resolver must never wedge a call
+                logger.error(
+                    f"per-user MCP: auth resolver failed for "
+                    f"{state.config.name}/user={user_id}: {e}"
+                )
+                per_user_headers = None
+            if not per_user_headers:
+                logger.warning(
+                    f"🔒 per-user MCP: no credential for user={user_id} on "
+                    f"'{state.config.name}' — denying {namespaced_name}"
+                )
+                return {
+                    "success": False,
+                    "message": (
+                        "No credential is connected for this service. "
+                        "Connect it in your account settings to continue."
+                    ),
+                    "data": None,
+                }
+
         async def _do_call() -> Any:
+            if per_user_headers:
+                return await asyncio.wait_for(
+                    self._call_tool_per_user_session(
+                        state, tool_info.original_name, arguments, per_user_headers
+                    ),
+                    timeout=effective_timeout,
+                )
             return await asyncio.wait_for(
                 state.session.call_tool(tool_info.original_name, arguments),
                 timeout=effective_timeout,
