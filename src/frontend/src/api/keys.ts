@@ -19,6 +19,10 @@ export const STALE = {
  * key that starts with `['foo', ...]` (RQ uses prefix-match on tuples).
  */
 export const keys = {
+  connections: {
+    all: ['connections'] as const,
+    list: () => ['connections', 'list'] as const,
+  },
   memories: {
     all: ['memories'] as const,
     list: (category: string | null) => ['memories', 'list', { category }] as const,

@@ -5,6 +5,7 @@ import { useTranslation } from 'react-i18next';
 import type { LucideIcon } from 'lucide-react';
 import {
   MessageSquare,
+  Plug,
   CheckSquare,
   Camera,
   Lightbulb,
@@ -90,6 +91,7 @@ const mainNavigationConfig: NavItemConfig[] = [
   // unified 3D scene with built-in search (D23, Option 3). Old chip
   // URLs and ?focus= deep-links redirect via App.tsx Route.
   { nameKey: 'nav.tasks', href: '/tasks', icon: CheckSquare, feature: 'tasks' },
+  { nameKey: 'nav.connections', href: '/connections', icon: Plug },
   { nameKey: 'nav.cameras', href: '/camera', icon: Camera, permission: ['cam.view', 'cam.full'], feature: 'cameras' },
 ];
 

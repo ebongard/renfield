@@ -34,8 +34,38 @@
     "clear": "Leeren",
     "daysShort": "{{days}}d"
   },
+  "connections": {
+    "title": "Verbindungen",
+    "subtitle": "Verbinde deine Werkzeuge, damit Reva in deinem Namen handelt — mit deinen eigenen Rechten, nicht mit einem geteilten Konto.",
+    "loading": "Verbindungen werden geladen…",
+    "empty": "Es sind keine verbindbaren Werkzeuge konfiguriert.",
+    "connect": "Verbinden",
+    "manage": "Verwalten",
+    "connectTitle": "{{name}} verbinden",
+    "manageTitle": "{{name}} verwalten",
+    "manageBody": "{{name}} ist verbunden. Token ersetzen oder Verbindung trennen.",
+    "defaultHelp": "Füge dein Zugriffstoken ein. Reva speichert es verschlüsselt und nutzt es nur, um in deinem Namen zu handeln.",
+    "mintLink": "Token erstellen",
+    "tokenLabel": "Zugriffstoken",
+    "tokenHint": "Reva zeigt es nach dem Speichern nicht wieder an. Du kannst es jederzeit im Werkzeug widerrufen.",
+    "save": "Verbindung speichern",
+    "saving": "Speichern…",
+    "disconnect": "Trennen",
+    "disconnecting": "Wird getrennt…",
+    "rotate": "Token ersetzen",
+    "status": {
+      "connected": "Verbunden",
+      "notConnected": "Nicht verbunden"
+    },
+    "errors": {
+      "load": "Deine Verbindungen konnten nicht geladen werden.",
+      "connect": "Die Verbindung konnte nicht gespeichert werden.",
+      "disconnect": "Die Verbindung konnte nicht getrennt werden."
+    }
+  },
   "nav": {
     "chat": "Chat",
+    "connections": "Verbindungen",
     "knowledge": "Wissen",
     "tasks": "Aufgaben",
     "projects": "Projekte",

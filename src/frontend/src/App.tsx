@@ -33,6 +33,7 @@ const MemoryPage = lazy(() => import('./pages/MemoryPage'));
 const UsersPage = lazy(() => import('./pages/UsersPage'));
 const RolesPage = lazy(() => import('./pages/RolesPage'));
 const IntegrationsPage = lazy(() => import('./pages/IntegrationsPage'));
+const ConnectionsPage = lazy(() => import('./pages/ConnectionsPage'));
 const SettingsPage = lazy(() => import('./pages/SettingsPage'));
 const SatellitesPage = lazy(() => import('./pages/SatellitesPage'));
 const IntentsPage = lazy(() => import('./pages/IntentsPage'));
@@ -101,6 +102,7 @@ function AppRoutes() {
             } />
             <Route path="/chat" element={<Navigate to="/" replace />} />
             <Route path="/tasks" element={<TasksPage />} />
+            <Route path="/connections" element={<ConnectionsPage />} />
             {projectsEnabled && (
               <Route path="/projects" element={
                 <ProtectedRoute>

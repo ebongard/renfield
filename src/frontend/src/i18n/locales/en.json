@@ -34,8 +34,38 @@
     "clear": "Clear",
     "daysShort": "{{days}}d"
   },
+  "connections": {
+    "title": "Connections",
+    "subtitle": "Connect your tools so Reva can act as you — with your own permissions, not a shared account.",
+    "loading": "Loading connections…",
+    "empty": "No connectable tools are configured.",
+    "connect": "Connect",
+    "manage": "Manage",
+    "connectTitle": "Connect {{name}}",
+    "manageTitle": "Manage {{name}}",
+    "manageBody": "{{name}} is connected. Replace the token or disconnect it.",
+    "defaultHelp": "Paste your access token. Reva stores it encrypted and only uses it to act as you.",
+    "mintLink": "Create a token",
+    "tokenLabel": "Access token",
+    "tokenHint": "Reva never shows it again after saving. You can revoke it anytime in the tool.",
+    "save": "Save connection",
+    "saving": "Saving…",
+    "disconnect": "Disconnect",
+    "disconnecting": "Disconnecting…",
+    "rotate": "Replace token",
+    "status": {
+      "connected": "Connected",
+      "notConnected": "Not connected"
+    },
+    "errors": {
+      "load": "Could not load your connections.",
+      "connect": "Could not save the connection.",
+      "disconnect": "Could not disconnect."
+    }
+  },
   "nav": {
     "chat": "Chat",
+    "connections": "Connections",
     "knowledge": "Knowledge",
     "tasks": "Tasks",
     "projects": "Projects",
