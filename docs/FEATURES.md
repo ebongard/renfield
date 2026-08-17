@@ -490,6 +490,37 @@ RAG_HYBRID_FTS_CONFIG=german       # simple/german/english (german für BM25 mit
 RAG_CONTEXT_WINDOW=1              # Benachbarte Chunks (0=deaktiviert)
 ```
 
+### PDF-Split (Multi-Dokument-PDFs automatisch trennen, `PDF_SPLIT_ENABLED`, opt-in/dark)
+
+Stapelscans enthalten oft 10+ unabhängige Einzeldokumente in EINER PDF-Datei.
+Renfield erkennt das **selbstständig an den bestehenden Entry-Points** (Watch-
+Folder, E-Mail-Ingest, `internal.ingest_file` — alle laufen über den
+document-worker, wo die Erkennung als Pre-Stage VOR Docling läuft), trennt die
+Datei und ingestiert jedes Teilstück einzeln in KB + Paperless. Das kombinierte
+Original wird archiviert (`status='split_archived'`, keine Chunks, nie in
+Paperless, Bytes bleiben auf dem Uploads-PVC) und ist gegen Wiederbelebung
+geschützt (flag-unabhängiger Worker-Guard, Reindex-409, Dedup als DUPLICATE).
+
+- **Grenzen NUR aus Inhalts-Belegen** (neuer Briefkopf/Absender, Datum,
+  Betreff, „Seite 1 von N"-Reset, Unterschrift + neuer Kopf) — **Seitenzahl
+  ist niemals Gate, Cap oder Signal** (beliebige Mischung aus einseitigen
+  Dokumenten und mehrseitigen Verträgen). Lange Dateien: Kontextfenster-
+  Batching (`PDF_SPLIT_WINDOW_CHARS`); ein Strict-JSON-Call auf dem TEXT-Modell
+  pro Fenster.
+- **Whole-File-Konfidenz-Gate** (`PDF_SPLIT_AUTO_THRESHOLD`, Default 0.85):
+  nur wenn JEDES Teilstück sicher ist, wird automatisch getrennt; unsichere
+  Dateien → Owner-Review (PR2, bis dahin Status quo mit lautem Log). Schlechte
+  Scans (VLM-Pfad) → dedizierte Split-Lane (PR3).
+- **Crash-sicher:** der Split-Plan wird VOR der Ausführung persistiert
+  (`pdf_split_proposals`, approved) und bei Redelivery verbatim wiederholt
+  (nie erneut das nichtdeterministische LLM); Resume-Keys = deterministische
+  Kind-Dateinamen mit Parent-Hash-Präfix; transiente Fehler (LLM down,
+  Disk voll) bleiben via `SplitTransientError` in der PEL-Retry-Schleife.
+- Kinder erben KB/Owner/Tier/Paperless-Intent vom Parent
+  (`split_from_document_id`-Lineage) und durchlaufen OCR/Schicht-A/KG/Paperless
+  wie jeder normale Upload; `internal.ingest_status` weist archivierte
+  Originale separat aus. Design: `docs/design/pdf-split.md`.
+
 ## Multi-Room Device System
 
 ### Unterstützte Gerätetypen

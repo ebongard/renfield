@@ -15,7 +15,10 @@ Plan: `~/.claude/plans/harmonic-toasting-toucan.md` (approved 2026-08-16). Dark 
 - [x] `services/folder_ingest.py`: `classify_existing` `split_archived` → DUPLICATE, split-in-flight → RETRY
 - [x] Tests: 100 passed on .159 (detector/splitter/prestage/folder-ingest); neighboring suites 159 passed
 - [x] `docs/design/pdf-split.md` + `docs/ENVIRONMENT_VARIABLES.md` section
-- [ ] Full backend suite on .159 (running) → commit → /review → docs sweep (CLAUDE.md, FEATURES.md) → WAIT for merge approval (no push without permission)
+- [x] Full backend suite on .159: failure set byte-identical to main baseline (28 pre-existing rotten tests — NOT this feature; user should schedule /verify-tests)
+- [x] Commit `eb6ce554` → high-effort /code-review → 10 verified findings → ALL fixed in `a177f270` (persisted plan, parent-hash resume keys, SplitTransientError taxonomy, flag-independent archive guard, reindex 409, status contract, ORM partial unique, model tests, poppler-first signals, shared parse_llm_json+salvage)
+- [x] Docs sweep: CLAUDE.md, docs/FEATURES.md, docs/design/pdf-split.md, docs/ENVIRONMENT_VARIABLES.md, paperless-llm-metadata deferral resolved
+- [ ] Post-fix full suite (running) + medium /review of fix commit → then WAIT for push/merge approval (no push without permission)
 
 ## PR2 — review flow
 - [ ] `services/pdf_split_proposals.py` (create/approve/reject + proactive notification)

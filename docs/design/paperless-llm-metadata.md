@@ -995,6 +995,9 @@ PR 2 merge score, the PR blocks until investigated.
 3. **Multi-document files.** A PDF with two unrelated invoices stapled
    together. Out of scope for v1 — treat the whole file as one document.
    Flag as a known limitation in the release entry.
+   **RESOLVED 2026-08:** the PDF-Split feature (`PDF_SPLIT_ENABLED`,
+   `docs/design/pdf-split.md`) detects and splits such files at ingest;
+   each piece then gets its own Paperless record via the normal leg.
 4. **Taxonomy cache invalidation across pods.** 10-minute TTL +
    invalidate-on-write handles the single-pod case. Cross-pod (backend
    pod creates a new correspondent, document-worker pod still has stale
