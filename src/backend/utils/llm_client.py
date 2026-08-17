@@ -783,3 +783,142 @@ def extract_response_content(response: Any) -> str:
             # Instead, return empty so caller falls back to default behavior
 
     return content
+
+
+# ---------------------------------------------------------------------------
+# Strict-JSON extractor plumbing shared by the LLM extractors
+# (schicht_a_extractor delegates here; pdf_split_detector consumes directly;
+# meeting_minutes / paperless_metadata_extractor still carry local legacy
+# copies — migrate them here when next touched).
+# ---------------------------------------------------------------------------
+
+def parse_llm_json(raw: str) -> dict | None:
+    """Parse an LLM response to a dict; tolerate markdown fences + surrounding
+    prose. Returns None if nothing parseable.
+
+    Defense-in-depth: if the strict parse fails — overwhelmingly because the
+    response was truncated at the token cap mid-JSON (unbalanced braces / an
+    unterminated string) — fall back to :func:`salvage_truncated_json` so the
+    complete leading entries survive instead of discarding the whole batch
+    (the failure that once cost a document all 14 of its Schicht-A facts)."""
+    import json
+
+    if not raw:
+        return None
+    text = raw.strip()
+    if text.startswith("```"):
+        nl = text.find("\n")
+        if nl >= 0:
+            text = text[nl + 1:]
+        if text.endswith("```"):
+            text = text[:-3]
+        text = text.strip()
+    first = text.find("{")
+    if first < 0:
+        return None
+    body = text[first:]
+    last = body.rfind("}")
+    if last > 0:
+        try:
+            parsed = json.loads(body[:last + 1])
+            if isinstance(parsed, dict):
+                return parsed
+        except json.JSONDecodeError:
+            pass
+    salvaged = salvage_truncated_json(body)
+    if salvaged is not None:
+        logger.warning(
+            "parse_llm_json: response unparseable (likely truncated at the "
+            "token cap) — salvaged the complete leading entries"
+        )
+    return salvaged
+
+
+def salvage_truncated_json(s: str) -> dict | None:
+    """Best-effort recovery of a truncated JSON object.
+
+    Scan with a bracket stack and remember the last position that sits on a clean
+    boundary, cut there, drop the half-written trailing entry, and append the
+    missing closers. Returns a dict or None.
+
+    A boundary is recorded in two cases:
+      1. just after a nested container closes (``}``/``]`` with a parent still
+         open), and
+      2. at a comma **between elements of the OUTERMOST array** only
+         (``arr_depth == 1``).
+
+    The depth gate on (2) is the load-bearing rule: a comma inside a *nested*
+    array (``arr_depth >= 2``, e.g. ``"items":[10,20,30,40``) is NOT a cut point,
+    so a truncated nested array is never force-closed as a complete (wrong)
+    value — its whole enclosing element is dropped via (1) instead. (1) alone
+    can't recover the elements of a truncated top-level array of SCALARS (they
+    don't close with a bracket), which is why (2) is kept rather than removed.
+    A truncated FIRST element recovers nothing (None beats corrupt)."""
+    import json
+
+    if not s or s[0] != "{":
+        return None
+    stack: list[str] = []
+    arr_depth = 0  # number of currently-open '[' (so we can gate comma cuts)
+    in_str = esc = False
+    cut: int | None = None
+    for i, ch in enumerate(s):
+        if in_str:
+            if esc:
+                esc = False
+            elif ch == "\\":
+                esc = True
+            elif ch == '"':
+                in_str = False
+            continue
+        if ch == '"':
+            in_str = True
+        elif ch == "{":
+            stack.append(ch)
+        elif ch == "[":
+            stack.append(ch)
+            arr_depth += 1
+        elif ch == "}":
+            if stack:
+                stack.pop()
+            if stack:  # closed a nested container, parent still open → clean cut
+                cut = i + 1
+        elif ch == "]":
+            if stack:
+                stack.pop()
+            if arr_depth > 0:
+                arr_depth -= 1
+            if stack:
+                cut = i + 1
+        elif ch == "," and arr_depth == 1 and stack and stack[-1] == "[":
+            # between elements of the OUTERMOST array — a clean boundary.
+            # Gated to depth 1 so a truncated nested array can't be cut here.
+            cut = i
+    if cut is None:
+        return None
+    candidate = s[:cut]
+    # Recompute the still-open containers for the candidate and close them.
+    st: list[str] = []
+    in_str = esc = False
+    for ch in candidate:
+        if in_str:
+            if esc:
+                esc = False
+            elif ch == "\\":
+                esc = True
+            elif ch == '"':
+                in_str = False
+            continue
+        if ch == '"':
+            in_str = True
+        elif ch in "{[":
+            st.append(ch)
+        elif ch in "}]":
+            if st:
+                st.pop()
+    closers = "".join("}" if c == "{" else "]" for c in reversed(st))
+    try:
+        parsed = json.loads(candidate + closers)
+    except json.JSONDecodeError:
+        return None
+    return parsed if isinstance(parsed, dict) else None

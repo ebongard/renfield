@@ -18,7 +18,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.database import Atom as AtomModel
-from models.database import Document, KnowledgeBase, User
+from models.database import DOC_SPLIT_OWNED_STATUSES, Document, KnowledgeBase, User
 from models.permissions import Permission, has_permission
 from services.atom_service import AtomService
 from services.auth_service import get_optional_user
@@ -695,6 +695,22 @@ async def reindex_document(
             raise HTTPException(status_code=401, detail="Authentication required")
         if not await check_document_access(doc, user, "write", db):
             raise HTTPException(status_code=403, detail="No write access to this document")
+
+    # PDF-split lifecycle guard (/review finding): an archived combined
+    # original (or a doc parked in the split lane) must not be reindexed —
+    # rebuilding chunks for the combined file would resurrect it in retrieval
+    # next to its already-ingested children and re-fire KG/Schicht-A on the
+    # mixed text. The worker refuses these too; this 409 makes the refusal
+    # visible instead of silently acked.
+    if doc.status in DOC_SPLIT_OWNED_STATUSES:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "Dokument ist Teil eines PDF-Splits (kombiniertes Original "
+                "archiviert bzw. in Prüfung) und kann nicht neu indexiert "
+                "werden — die Einzeldokumente sind separat indexiert."
+            ),
+        )
 
     # Dedupe in-flight reindexes (/review finding): a double-click would enqueue
     # a second user_reindex, and the worker would purge+rebuild twice — a wasted

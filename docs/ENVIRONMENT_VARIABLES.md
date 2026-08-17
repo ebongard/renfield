@@ -1031,7 +1031,7 @@ dedizierten Split-Lane (PR3).
 ```bash
 PDF_SPLIT_ENABLED=false          # Feature-Schalter (dark; flag-aus = byte-identisch)
 PDF_SPLIT_WINDOW_CHARS=24000     # Zeichenbudget pro Boundary-LLM-Fenster (Kontext-Batching, KEINE Dokumentgrößen-Annahme)
-PDF_SPLIT_VLM_PAGE_TIMEOUT_S=45  # Zeitlimit pro VLM-Seitentranskription (Slow-Lane, PR3)
+PDF_SPLIT_VLM_PAGE_TIMEOUT_S=45  # Zeitlimit pro VLM-Seitentranskription (Slow-Lane — erst mit PR3 wirksam, bis dahin ohne Funktion)
 PDF_SPLIT_AUTO_THRESHOLD=0.85    # Whole-File-Gate: JEDES Teilstück muss diese Konfidenz erreichen, sonst Review statt Auto-Split
 ```
 

@@ -26,19 +26,20 @@ rather than raising — detection must never break ingest.
 """
 from __future__ import annotations
 
-import json
 import re
 from dataclasses import dataclass, field
 from typing import Any
 
 from loguru import logger
 
+from services.pdf_split_errors import SplitTransientError, is_llm_transient
 from services.prompt_manager import prompt_manager
 from utils.config import settings
 from utils.llm_client import (
     extract_response_content,
     get_classification_chat_kwargs,
     get_default_client,
+    parse_llm_json,
 )
 
 # Snippet shape per page: the header region (letterhead, sender, date, subject)
@@ -141,42 +142,90 @@ def _snippet(text: str) -> str:
     )
 
 
-def extract_page_signals(file_path: str) -> list[PageSignal]:
-    """Per-page text signals via the pypdfium2 text layer. Blocking (pdfium) —
-    call via ``run_in_executor``. Returns ``[]`` on any failure (caller then
-    treats the file as a single document)."""
+def _signals_from_page_texts(pages: list[str]) -> list[PageSignal]:
     from services.document_processor import DocumentProcessor
 
+    signals: list[PageSignal] = []
+    for i, raw in enumerate(pages):
+        usable, _reason = DocumentProcessor.assess_text_layer_quality(
+            raw, page_count=1
+        )
+        signals.append(
+            PageSignal(
+                page=i + 1,
+                text=_snippet(raw) if usable else _PLACEHOLDER_UNREADABLE,
+                quality_ok=usable,
+            )
+        )
+    return signals
+
+
+def _pdfium_page_count(file_path: str) -> int | None:
     try:
         import pypdfium2 as pdfium
 
         pdf = pdfium.PdfDocument(file_path)
         try:
-            signals: list[PageSignal] = []
-            for i in range(len(pdf)):
-                try:
-                    textpage = pdf[i].get_textpage()
-                    # pypdfium2 4.x: get_text_bounded() (full page by default);
-                    # older releases only have get_text_range().
-                    if hasattr(textpage, "get_text_bounded"):
-                        raw = textpage.get_text_bounded() or ""
-                    else:  # pragma: no cover - legacy pypdfium2
-                        raw = textpage.get_text_range() or ""
-                except Exception:  # noqa: BLE001 - one broken page ≠ broken file
-                    raw = ""
-                usable, _reason = DocumentProcessor.assess_text_layer_quality(
-                    raw, page_count=1
-                )
-                signals.append(
-                    PageSignal(
-                        page=i + 1,
-                        text=_snippet(raw) if usable else _PLACEHOLDER_UNREADABLE,
-                        quality_ok=usable,
-                    )
-                )
-            return signals
+            return len(pdf)
         finally:
             pdf.close()
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _pypdfium_page_texts(file_path: str) -> list[str]:
+    """Fallback per-page extraction via pypdfium2 textpages."""
+    import pypdfium2 as pdfium
+
+    pdf = pdfium.PdfDocument(file_path)
+    try:
+        pages: list[str] = []
+        for i in range(len(pdf)):
+            try:
+                textpage = pdf[i].get_textpage()
+                # pypdfium2 4.x: get_text_bounded() (full page by default);
+                # older releases only have get_text_range().
+                if hasattr(textpage, "get_text_bounded"):
+                    pages.append(textpage.get_text_bounded() or "")
+                else:  # pragma: no cover - legacy pypdfium2
+                    pages.append(textpage.get_text_range() or "")
+            except Exception:  # noqa: BLE001 - one broken page ≠ broken file
+                pages.append("")
+        return pages
+    finally:
+        pdf.close()
+
+
+def extract_page_signals(file_path: str) -> list[PageSignal]:
+    """Per-page text signals. Blocking — call via ``run_in_executor``. Returns
+    ``[]`` on any failure (caller then treats the file as a single document).
+
+    Primary extractor is poppler ``pdftotext -layout`` (via the canonical
+    ``DocumentProcessor.extract_text_layer``, split on the ``\\f`` page
+    separators): T-A0-1 established it as the ONLY extractor recovering
+    subsetted no-ToUnicode-font tokens, and ``assess_text_layer_quality`` was
+    calibrated on ITS output — feeding it pypdfium text would mis-route such
+    files to the slow lane. pypdfium textpages are the fallback when poppler is
+    unavailable/errored or its page segmentation disagrees with the real page
+    count (e.g. the text-layer char cap truncated a very long document)."""
+    from services.document_processor import DocumentProcessor
+
+    try:
+        page_count = _pdfium_page_count(file_path)
+        text = DocumentProcessor.extract_text_layer(file_path)
+        if text and page_count:
+            pages = text.split("\f")
+            # pdftotext emits a trailing \f after the last page
+            if pages and pages[-1].strip() == "":
+                pages = pages[:-1]
+            if len(pages) == page_count:
+                return _signals_from_page_texts(pages)
+            logger.info(
+                f"pdf-split: poppler page segmentation ({len(pages)}) disagrees "
+                f"with page count ({page_count}) for {file_path} — falling back "
+                f"to pypdfium textpages"
+            )
+        return _signals_from_page_texts(_pypdfium_page_texts(file_path))
     except Exception as e:  # noqa: BLE001 - detection must never break ingest
         logger.warning(f"pdf-split: page-signal extraction failed for {file_path}: {e}")
         return []
@@ -266,24 +315,6 @@ def validate_boundaries(
 # Stage 3 — boundary LLM call(s) with window batching
 # ---------------------------------------------------------------------------
 
-def _parse_llm_json(raw: str) -> dict | None:
-    """Best-effort JSON out of an LLM reply (tolerates ```json fences / prose).
-    Same local-copy convention as meeting_minutes / schicht_a_extractor."""
-    if not raw:
-        return None
-    raw = raw.strip()
-    fence = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", raw, re.DOTALL)
-    candidate = fence.group(1) if fence else raw
-    m = re.search(r"\{.*\}", candidate, re.DOTALL)
-    if not m:
-        return None
-    try:
-        obj = json.loads(m.group(0))
-        return obj if isinstance(obj, dict) else None
-    except (ValueError, TypeError):
-        return None
-
-
 def _build_windows(signals: list[PageSignal]) -> list[list[PageSignal]]:
     """Batch page signals into page-contiguous windows under the configured
     character budget. Purely a context-batching mechanism: every page appears
@@ -321,24 +352,16 @@ async def _boundary_call(
         logger.warning("pdf-split: no chat model configured")
         return None
 
+    # Minimal-skeleton fallback ONLY (house convention, meeting_minutes.py):
+    # prompts/pdf_split.yaml is the single source of the boundary rules.
     system = prompt_manager.get(
         "pdf_split", "system",
         default=(
-            "Du analysierst die Seiten einer PDF-Datei, die mehrere unabhängige "
-            "Einzeldokumente enthalten KANN (Stapelscan). Die Datei kann eine "
-            "beliebige Mischung sein: viele einseitige Dokumente hintereinander, "
-            "EIN langes mehrseitiges Dokument (z.B. ein Vertrag), oder beides "
-            "gemischt. Erkenne Dokumentgrenzen NUR an inhaltlichen Belegen: "
-            "neuer Briefkopf/Absender, neues Datum, neuer Betreff, "
-            "'Seite 1 von N'-Reset, Grußformel/Unterschrift gefolgt von einem "
-            "neuen Kopf. Niemals anhand von Längenannahmen. Anlagen, AGB und "
-            "Anhänge gehören zu ihrem Hauptdokument. Im Zweifel WENIGER, "
-            "größere Dokumente. Antworte AUSSCHLIESSLICH als JSON: "
+            "Du erkennst Dokumentgrenzen in einer PDF-Datei (Stapelscan) "
+            "ausschliesslich anhand inhaltlicher Belege. Antworte NUR als JSON: "
             '{"documents": [{"start_page": 1, "end_page": 3, "title": "...", '
-            '"doc_type": "...", "confidence": 0.0}]}. '
-            "confidence ∈ [0,1] pro Dokument. Die Bereiche müssen lückenlos, "
-            "überlappungsfrei und aufsteigend den gesamten angegebenen "
-            "Seitenbereich abdecken."
+            '"doc_type": "...", "confidence": 0.0}]} — lückenlos, '
+            "überlappungsfrei, aufsteigend über den ganzen Seitenbereich."
         ),
         lang=lang,
     )
@@ -372,7 +395,7 @@ async def _boundary_call(
         options={"temperature": 0.1},
         **get_classification_chat_kwargs(model),
     )
-    return _parse_llm_json(extract_response_content(response) or "")
+    return parse_llm_json(extract_response_content(response) or "")
 
 
 async def detect_boundaries(
@@ -384,9 +407,20 @@ async def detect_boundaries(
     """Boundary detection over prepared page signals. Handles arbitrary length
     via windowing with an open-trailing-piece carry: a non-final window's last
     piece may continue past the window edge, so it is re-decided by the next
-    window (which is told the open document's start page). Never raises;
-    anything unparseable/invalid collapses to a single-document verdict."""
+    window (which is told the open document's start page).
+
+    Anything unparseable/invalid collapses to a single-document verdict — with
+    ONE exception: a transient LLM-infrastructure failure (host down, timeout,
+    5xx) raises :class:`SplitTransientError` instead. Swallowing it would
+    permanently commit a multi-document PDF as one combined document (COMPLETED
+    → every re-push dedups), whereas raising lets the worker's PEL-retry
+    taxonomy re-deliver the entry once the LLM host is back."""
     if not signals:
+        return single_verdict(signals)
+    if len(signals) == 1:
+        # Analytic, not a heuristic: one page cannot contain two documents, so
+        # the boundary call could only ever return "single" — skip the LLM
+        # round-trip. (This is NOT a page-count gate on multi-doc candidates.)
         return single_verdict(signals)
     last_page = signals[-1].page
 
@@ -424,12 +458,33 @@ async def detect_boundaries(
                 pieces.extend(window_pieces[:-1])
                 carry_start = window_pieces[-1].start_page
 
-        final = validate_boundaries(
-            {"documents": [p.to_dict() for p in pieces]}, signals[0].page, last_page
-        )
-        if final is None or len(final) < 2:
+        # Final coverage check on the merged pieces directly (no dict
+        # round-trip — that would couple correctness to to_dict key names):
+        # contiguous, in order, covering first..last page exactly.
+        if len(pieces) < 2:
             return single_verdict(signals)
-        return SplitVerdict(kind=VERDICT_MULTI, pieces=final, page_signals=signals)
+        expected = signals[0].page
+        for p in pieces:
+            if p.start_page != expected or p.end_page < p.start_page:
+                logger.warning(
+                    f"pdf-split: window merge produced a non-contiguous piece "
+                    f"list at page {expected} — single-document verdict"
+                )
+                return single_verdict(signals)
+            expected = p.end_page + 1
+        if expected != last_page + 1:
+            logger.warning(
+                "pdf-split: window merge left a coverage gap at the tail — "
+                "single-document verdict"
+            )
+            return single_verdict(signals)
+        return SplitVerdict(kind=VERDICT_MULTI, pieces=pieces, page_signals=signals)
+    except SplitTransientError:
+        raise
     except Exception as e:  # noqa: BLE001 - detection must never break ingest
+        if is_llm_transient(e):
+            raise SplitTransientError(
+                f"boundary detection hit a transient LLM failure: {e}"
+            ) from e
         logger.warning(f"pdf-split: boundary detection failed: {e}")
         return single_verdict(signals)

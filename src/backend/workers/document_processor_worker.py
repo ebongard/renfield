@@ -41,8 +41,14 @@ from redis import exceptions as redis_exceptions
 from sqlalchemy import delete, text
 from sqlalchemy.exc import DisconnectionError, InterfaceError, OperationalError
 
-from models.database import DOC_STATUS_FAILED, Document, DocumentChunk
+from models.database import (
+    DOC_SPLIT_OWNED_STATUSES,
+    DOC_STATUS_FAILED,
+    Document,
+    DocumentChunk,
+)
 from services.database import AsyncSessionLocal
+from services.pdf_split_errors import SplitTransientError
 
 try:  # ollama is in the worker's import graph (rag embedding client); guard
     from ollama import ResponseError as _OllamaResponseError  # packaging drift
@@ -93,6 +99,11 @@ _TRANSIENT_EXC: tuple[type[BaseException], ...] = (
     OperationalError,  # DB connection lost / server unavailable
     InterfaceError,
     DisconnectionError,
+    # PDF-split retryable outcomes (LLM host down mid-detection, disk-full /
+    # lost-race child ingest): the split resume is idempotent, so a PEL retry
+    # continues where the last run stopped. Plain SplitExecutionError (its
+    # parent class) stays TERMINAL.
+    SplitTransientError,
 )
 
 
@@ -242,6 +253,28 @@ async def _process_entry(
     try:
         async with AsyncSessionLocal() as db:
             rag = RAGService(db)
+
+            # Flag-INDEPENDENT split-lifecycle guard: a doc in a split-owned
+            # status must never enter normal processing or a reindex —
+            # rebuilding chunks for an archived combined original would
+            # resurrect it in retrieval next to its children. Deliberately
+            # outside the pdf_split_enabled gate so a flag-off incident
+            # rollback can't cause exactly that on a redelivered entry.
+            doc_status = (
+                await db.execute(
+                    text("SELECT status FROM documents WHERE id = :id"),
+                    {"id": doc_id},
+                )
+            ).scalar_one_or_none()
+            if doc_status in DOC_SPLIT_OWNED_STATUSES:
+                await queue.ack(entry.entry_id)
+                await _clear_transient(redis, entry.entry_id)
+                logger.info(
+                    f"doc {doc_id}: status {doc_status!r} is owned by the "
+                    f"pdf-split lifecycle — acked without processing "
+                    f"(entry {entry.entry_id}, trigger {trigger})"
+                )
+                return
 
             if trigger == "user_reindex":
                 # Async reindex: ALWAYS reprocess. reindex_document purges the

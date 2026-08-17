@@ -182,6 +182,28 @@ class TestDetectBoundaries:
         verdict = await detect_boundaries([], llm_client=_fake_client([]))
         assert verdict.kind == VERDICT_SINGLE
 
+    async def test_single_page_is_analytic_single_no_llm_call(self):
+        # One page cannot contain two documents — the verdict is analytic and
+        # the LLM round-trip is skipped (NOT a page-count gate: any file with
+        # >= 2 pages always goes through content-based detection).
+        client = _fake_client([])
+        verdict = await detect_boundaries([_sig(1)], llm_client=client)
+        assert verdict.kind == VERDICT_SINGLE
+        client.chat.assert_not_called()
+
+    async def test_transient_llm_failure_raises_not_single(self):
+        # An infra blip (LLM host down) must NOT silently commit a
+        # single-document verdict — that would permanently ingest a
+        # multi-document PDF as one combined doc (COMPLETED → re-push dedups).
+        import httpx
+
+        from services.pdf_split_errors import SplitTransientError
+
+        client = AsyncMock()
+        client.chat = AsyncMock(side_effect=httpx.ConnectError("host down"))
+        with pytest.raises(SplitTransientError):
+            await detect_boundaries([_sig(1), _sig(2)], llm_client=client)
+
     async def test_single_doc_verdict(self):
         client = _fake_client([_payload((1, 5))])
         verdict = await detect_boundaries([_sig(p) for p in range(1, 6)], llm_client=client)

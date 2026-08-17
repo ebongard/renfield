@@ -76,8 +76,9 @@ async def test_completed_initial_ingest_is_skipped_and_acked(monkeypatch):
 
     rag.process_existing_document.assert_not_called()
     queue.ack.assert_awaited_once_with("1-0")
-    # Self-heal UPDATE issued (status reset for a doc stuck in 'processing').
-    assert db.execute.await_count == 1
+    # Split-lifecycle status probe + the self-heal UPDATE (status reset for a
+    # doc stuck in 'processing').
+    assert db.execute.await_count == 2
 
 
 async def test_incomplete_ingest_purges_then_reprocesses(monkeypatch):
@@ -87,7 +88,7 @@ async def test_incomplete_ingest_purges_then_reprocesses(monkeypatch):
 
     await worker._process_entry(MagicMock(), queue, _entry(5))
 
-    assert db.execute.await_count == 1  # the partial-chunk DELETE
+    assert db.execute.await_count == 2  # status probe + the partial-chunk DELETE
     rag.process_existing_document.assert_awaited_once()
     queue.ack.assert_awaited_once_with("1-0")
 
@@ -98,7 +99,7 @@ async def test_first_ingest_processes_without_purge(monkeypatch):
 
     await worker._process_entry(MagicMock(), queue, _entry(5))
 
-    db.execute.assert_not_called()  # no purge, no self-heal
+    assert db.execute.await_count == 1  # only the split-lifecycle status probe
     rag.process_existing_document.assert_awaited_once()
     queue.ack.assert_awaited_once_with("1-0")
 

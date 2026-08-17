@@ -1,9 +1,13 @@
 """Unit tests for the document-worker PDF-split pre-stage wiring.
 
-Asserts the seam behavior in ``_process_entry``: flag off → the split module
-is never touched; split-owned docs → ack without Docling; split-declined docs
-→ the normal pipeline runs unchanged; skip_split rides the task params through
-to the pre-stage. Collaborators are mocked (no DB / Redis / pdfium).
+Asserts the seam behavior in ``_process_entry``: the split-lifecycle status
+guard runs REGARDLESS of the feature flag (a flag-off rollback must not
+resurrect an archived parent — including via user_reindex); flag off → the
+split module is never touched; split-owned docs → ack without Docling;
+split-declined docs → the normal pipeline runs unchanged; skip_split rides the
+task params through; a SplitExecutionError is terminal while a
+SplitTransientError stays in the PEL. Collaborators are mocked (no DB / Redis
+/ pdfium).
 """
 from __future__ import annotations
 
@@ -14,6 +18,7 @@ import pytest
 import workers.document_processor_worker as worker
 
 import services.pdf_splitter as pdf_splitter
+from models.database import DOC_SPLIT_OWNED_STATUSES
 
 pytestmark = [pytest.mark.unit, pytest.mark.asyncio]
 
@@ -29,9 +34,11 @@ class _FakeSessionCM:
         return False
 
 
-def _wire(monkeypatch, *, split_enabled: bool, split_result=False):
+def _wire(monkeypatch, *, split_enabled: bool, split_result=False, doc_status="pending"):
     db = MagicMock()
-    db.execute = AsyncMock()
+    status_result = MagicMock()
+    status_result.scalar_one_or_none.return_value = doc_status
+    db.execute = AsyncMock(return_value=status_result)
     db.commit = AsyncMock()
 
     history = MagicMock()
@@ -39,6 +46,7 @@ def _wire(monkeypatch, *, split_enabled: bool, split_result=False):
 
     rag = MagicMock()
     rag.process_existing_document = AsyncMock()
+    rag.reindex_document = AsyncMock()
 
     progress = MagicMock()
     progress.clear = AsyncMock()
@@ -61,10 +69,11 @@ def _wire(monkeypatch, *, split_enabled: bool, split_result=False):
     return rag, queue, redis, maybe_split
 
 
-def _entry(doc_id: int = 5, **extra):
-    return types.SimpleNamespace(
-        entry_id="1-0", params={"document_id": doc_id, **extra}
-    )
+def _entry(doc_id: int = 5, trigger: str | None = None, **extra):
+    params = {"document_id": doc_id, **extra}
+    if trigger is not None:
+        params["trigger"] = trigger
+    return types.SimpleNamespace(entry_id="1-0", params=params)
 
 
 async def test_flag_off_never_touches_split_module(monkeypatch):
@@ -74,6 +83,38 @@ async def test_flag_off_never_touches_split_module(monkeypatch):
 
     maybe_split.assert_not_called()
     rag.process_existing_document.assert_awaited_once()
+    queue.ack.assert_awaited_once_with("1-0")
+
+
+@pytest.mark.parametrize("status", list(DOC_SPLIT_OWNED_STATUSES))
+@pytest.mark.parametrize("flag", [True, False])
+async def test_split_owned_status_acked_regardless_of_flag(monkeypatch, status, flag):
+    """THE rollback-safety property: a doc owned by the split lifecycle is
+    acked without processing even with PDF_SPLIT_ENABLED=false — otherwise a
+    flag-off incident rollback would re-ingest the archived combined PDF on a
+    redelivered entry."""
+    rag, queue, redis, maybe_split = _wire(
+        monkeypatch, split_enabled=flag, doc_status=status
+    )
+
+    await worker._process_entry(redis, queue, _entry())
+
+    rag.process_existing_document.assert_not_called()
+    queue.ack.assert_awaited_once_with("1-0")
+
+
+async def test_user_reindex_refuses_split_owned_doc(monkeypatch):
+    """A user_reindex on an archived parent must NOT rebuild chunks for the
+    combined original (it would resurrect it in retrieval next to its
+    children)."""
+    rag, queue, redis, _ = _wire(
+        monkeypatch, split_enabled=False, doc_status="split_archived"
+    )
+
+    await worker._process_entry(redis, queue, _entry(trigger="user_reindex"))
+
+    rag.reindex_document.assert_not_called()
+    rag.process_existing_document.assert_not_called()
     queue.ack.assert_awaited_once_with("1-0")
 
 
@@ -115,9 +156,7 @@ async def test_split_execution_error_is_terminal_not_swallowed(monkeypatch):
     """A SplitExecutionError from the pre-stage must flow into the worker's
     terminal handling (mark failed + ack) — NOT fall through to normal ingest
     of the combined parent."""
-    rag, queue, redis, maybe_split = _wire(
-        monkeypatch, split_enabled=True
-    )
+    rag, queue, redis, maybe_split = _wire(monkeypatch, split_enabled=True)
     maybe_split.side_effect = pdf_splitter.SplitExecutionError("part failed")
     marked = AsyncMock(return_value=True)
     monkeypatch.setattr(worker, "_mark_document_failed", marked)
@@ -127,3 +166,22 @@ async def test_split_execution_error_is_terminal_not_swallowed(monkeypatch):
     rag.process_existing_document.assert_not_called()
     marked.assert_awaited_once()
     queue.ack.assert_awaited_once_with("1-0")
+
+
+async def test_split_transient_error_stays_in_pel(monkeypatch):
+    """A SplitTransientError (LLM host down mid-detection, disk-full child
+    ingest) is RETRYABLE: no failed-mark, no ack — reclaim redelivers and the
+    idempotent resume continues."""
+    rag, queue, redis, maybe_split = _wire(monkeypatch, split_enabled=True)
+    maybe_split.side_effect = pdf_splitter.SplitTransientError("ollama down")
+    marked = AsyncMock(return_value=True)
+    monkeypatch.setattr(worker, "_mark_document_failed", marked)
+    # transient path touches redis.incr/expire (best-effort)
+    redis.incr = AsyncMock()
+    redis.expire = AsyncMock()
+
+    await worker._process_entry(redis, queue, _entry())
+
+    rag.process_existing_document.assert_not_called()
+    marked.assert_not_called()
+    queue.ack.assert_not_called()  # stays in PEL for reclaim

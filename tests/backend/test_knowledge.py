@@ -627,3 +627,35 @@ class TestDeleteDocumentFKCleanup:
         row = (await db_session.execute(stmt)).scalar_one_or_none()
         assert row is not None
         assert row.document_id is None
+
+
+# ============================================================================
+# PDF-Split reindex guard (route-level)
+# ============================================================================
+
+class TestReindexSplitGuard:
+    """POST /documents/{id}/reindex must refuse split-lifecycle documents:
+    rebuilding chunks for an archived combined original would resurrect it in
+    retrieval next to its already-ingested children."""
+
+    @pytest.mark.integration
+    async def test_reindex_split_archived_document_is_409(
+        self, async_client: AsyncClient, db_session: AsyncSession
+    ):
+        doc = Document(
+            filename="stapel_scan.pdf",
+            file_path="/uploads/x_stapel_scan.pdf",
+            file_hash="h_split_guard",
+            status="split_archived",
+            circle_tier=0,
+        )
+        db_session.add(doc)
+        await db_session.commit()
+        await db_session.refresh(doc)
+
+        response = await async_client.post(
+            f"/api/knowledge/documents/{doc.id}/reindex"
+        )
+
+        assert response.status_code == 409
+        assert "PDF-Split" in response.json()["detail"]

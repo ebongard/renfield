@@ -58,11 +58,17 @@ re-enqueue can never re-enter detection.
 
 ### Detection pipeline (`services/pdf_split_detector.py`)
 
-1. **Per-page text signals** — pypdfium2 textpage (already a dep via Docling);
-   per-page quality via the calibrated
-   `DocumentProcessor.assess_text_layer_quality`. Signal = first ~600 + last
-   ~200 chars (letterhead / date / "Seite 1 von N" regions). A small number of
-   garbage pages ride along as an explicit "unreadable" placeholder.
+1. **Per-page text signals** — poppler `pdftotext -layout` via the canonical
+   `DocumentProcessor.extract_text_layer`, split on its `\f` page separators
+   (T-A0-1: poppler is the only extractor recovering subsetted
+   no-ToUnicode-font tokens, and `assess_text_layer_quality` was calibrated on
+   ITS output); pypdfium2 textpages are the fallback when poppler is
+   unavailable or its page segmentation disagrees with the real page count.
+   Signal = first ~600 + last ~200 chars (letterhead / date / "Seite 1 von N"
+   regions). A small number of garbage pages ride along as an explicit
+   "unreadable" placeholder. A 1-page PDF short-circuits to a single-document
+   verdict WITHOUT an LLM call — that is analytic (one page cannot contain two
+   documents), not a page-count heuristic.
 2. **Slow-lane classification** (`classify_slow_lane`) — fraction-based, never
    count-based: first page garbage OR >30% garbage pages → `vlm`; signals
    exceeding one LLM context window (`PDF_SPLIT_WINDOW_CHARS`) → `windows`.
@@ -83,9 +89,19 @@ re-enqueue can never re-enter detection.
    invalid, unparseable, or single collapses to a single-document verdict.
 
 Every failure mode degrades to "single document" — detection must never break
-ingest. The only exception: an error while *executing* a split propagates
-(falling through to normal ingest after children were partially created would
-double-ingest the combined file).
+ingest — with two deliberate exceptions (`services/pdf_split_errors.py`):
+
+- A **transient LLM-infrastructure failure** (host down, timeout, 5xx) raises
+  `SplitTransientError`, which the worker's PEL-retry taxonomy treats as
+  retryable. Swallowing it would permanently commit a multi-document PDF as
+  one combined document (COMPLETED → every re-push dedups).
+- An error while *executing* a split propagates (falling through to normal
+  ingest after children were partially created would double-ingest the
+  combined file). Within execution, a RETRY-class child outcome (disk full,
+  lost create race) raises `SplitTransientError` (PEL retry, idempotent
+  resume); only genuinely terminal child results raise `SplitExecutionError`
+  (parent marked failed; the entry-point re-push → REINGEST is the deliberate
+  retry).
 
 ### Confidence gate — whole-file
 
@@ -105,17 +121,42 @@ parent was filing-wanted at detection time), `source` inheritance
 through OCR/Schicht-A/KG/Paperless like any upload. Children carry
 `split_from_document_id` → parent.
 
-**Idempotent resume:** pdfium bytes are not run-deterministic, so resume keys
-on the DETERMINISTIC child filename (`{parent-stem}_teil{NN}_{title-slug}.pdf`)
-instead of content hashes: parts whose (filename, kb) row exists are skipped
-(and their lineage stamp healed), only missing parts are rendered/ingested, and
-the parent is archived LAST. A byte-identical part deduping onto an existing
-document counts as covered.
+**Idempotent resume — three pieces (each closed a /review finding):**
+
+- **Persisted plan.** The boundary LLM is nondeterministic, so a crash-resume
+  must never re-detect (boundary drift with unchanged titles could silently
+  drop pages). The confident verdict is stored as an APPROVED
+  `pdf_split_proposals` row BEFORE execution; a redelivered entry replays the
+  stored plan verbatim (revalidated; a corrupt plan falls back to detection).
+- **Deterministic, parent-scoped resume keys.** pdfium bytes are not
+  run-deterministic, so resume keys on the child filename
+  (`{parent-stem}_{parent-hash8}_teil{NN}_{title-slug}.pdf`): the parent's
+  content-hash prefix makes recurring scanner names + recurring title slugs
+  collision-free across different batch scans, and the resume probe (one
+  batched SELECT) additionally requires the row's `split_from_document_id` to
+  be this parent or still unstamped (the create-vs-stamp crash window).
+- Parts are rendered ONE at a time (no all-parts-in-RAM peak), skipped parts
+  get their lineage stamp healed, and the parent is archived LAST. A
+  byte-identical part deduping onto an existing document counts as covered.
+
+**Children never re-enter detection** (`split_from_document_id` guard) — no
+wasted per-child LLM calls, no recursive re-splitting of a contract+annex
+child whose pages renumbered from 1.
 
 **Parent = archived:** `status='split_archived'`, `paperless_state='done'`
-(settled — the reconciler additionally requires `status='completed'`, so the
+(settled — 'done' already covers the deliberate-skip case per its constant
+docs; the reconciler additionally requires `status='completed'`, so the
 archive is doubly excluded from filing), any partial chunks from a pre-split
 ingest attempt purged → excluded from retrieval. Bytes stay on the uploads PVC.
+
+**The archive cannot be resurrected:** the worker acks any entry for a doc in
+a split-owned status (`DOC_SPLIT_OWNED_STATUSES` in `models/database.py`)
+BEFORE and INDEPENDENT of the feature flag — a flag-off incident rollback
+cannot re-ingest the combined original on a redelivered entry — and the same
+guard covers `user_reindex`; `POST /documents/{id}/reindex` additionally 409s.
+**Status contract:** the three split states are part of `DOC_STATUSES`, and
+`internal.ingest_status` reports archived/split-in-flight rows in its
+narrative (parked state must never dead-end invisibly).
 
 ### Dedup matrix change
 
@@ -173,14 +214,17 @@ Deliberately **no page-count settings** of any kind.
 - **Over-splitting** (contract + annexes): prompt guidance + whole-file gate;
   a miss degrades to review (PR2) or status quo — never data loss (parent
   bytes retained, children deletable).
-- **pdfium write non-determinism:** handled by filename-keyed resume; residual
-  = a crash between child-create and commit can leave a same-name sibling
-  after a REINGEST-triggered re-detection with different LLM boundaries —
-  visible and deletable.
 - **Boundary-LLM latency inline** (single-window case in the doc worker):
   bounded to one call; escape hatch = route all boundary calls to the split
   worker (one-line change).
-- **Detection nondeterminism across retries:** a REINGEST after a terminal
-  split failure re-runs detection, which may propose different boundaries than
-  the partially-created children. Accepted for v1 (children are visible in the
-  KB either way).
+- **Terminal child failure after archive:** a child whose own Docling run
+  fails terminally AFTER the parent archived has no automatic re-push source
+  (its bytes were synthesized). It is visible as `failed` in /knowledge and
+  recoverable via manual reindex; the combined original's bytes remain on the
+  PVC. Accepted for v1.
+- **REINGEST after a TERMINAL split failure** (parent marked failed, re-push
+  re-enters): detection is not re-run blindly — the persisted plan replays —
+  but if the plan itself was the problem (revalidation rejects it), fresh
+  detection may propose different boundaries than already-created children.
+  The hash-scoped filenames keep matching parts aligned; a drifted part shows
+  as an extra visible child. Sharply narrowed vs v1's re-detect-always.

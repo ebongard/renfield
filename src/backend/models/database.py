@@ -910,7 +910,17 @@ DOC_STATUS_FAILED = "failed"
 # re-open fact-mining on meeting small talk.
 MEETING_TRANSCRIPT_SOURCE = "meeting_transcript"
 
-DOC_STATUSES = [DOC_STATUS_PENDING, DOC_STATUS_PROCESSING, DOC_STATUS_COMPLETED, DOC_STATUS_FAILED]
+DOC_STATUSES = [
+    DOC_STATUS_PENDING,
+    DOC_STATUS_PROCESSING,
+    DOC_STATUS_COMPLETED,
+    DOC_STATUS_FAILED,
+    # PDF-split lifecycle (defined below) — part of the status contract so
+    # consumers enumerating "all known statuses" include split-parked rows.
+    "split_pending",
+    "split_review",
+    "split_archived",
+]
 
 # PDF-split lifecycle states (Document.status is a plain String(50) — additive,
 # no DB enum). A multi-document PDF detected at ingest moves through:
@@ -926,6 +936,17 @@ DOC_STATUSES = [DOC_STATUS_PENDING, DOC_STATUS_PROCESSING, DOC_STATUS_COMPLETED,
 DOC_STATUS_SPLIT_PENDING = "split_pending"
 DOC_STATUS_SPLIT_REVIEW = "split_review"
 DOC_STATUS_SPLIT_ARCHIVED = "split_archived"
+
+# Statuses meaning "the split lifecycle owns this document": a worker entry for
+# such a doc must be acked without normal processing REGARDLESS of the feature
+# flag (a flag-off rollback must not resurrect an archived parent), and a
+# user_reindex must refuse it. Lives here (import-light) so the worker can
+# guard without pulling the splitter's LLM import graph.
+DOC_SPLIT_OWNED_STATUSES = (
+    DOC_STATUS_SPLIT_PENDING,
+    DOC_STATUS_SPLIT_REVIEW,
+    DOC_STATUS_SPLIT_ARCHIVED,
+)
 
 # Document.source value for a child produced by the PDF splitter (only when the
 # parent has no source of its own to inherit).
@@ -2001,7 +2022,10 @@ class PdfSplitProposal(Base):
         nullable=False,
         index=True,
     )
-    user_id = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
+    # NOTE: no standalone user_id index — the composite (user_id, status)
+    # below covers user_id-leading lookups; keeping the column un-indexed
+    # matches the PG migration exactly (no fresh-vs-migrated schema drift).
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
     status = Column(
         String(20), nullable=False, default=PDF_SPLIT_PROPOSAL_PENDING, index=True
     )
@@ -2018,8 +2042,17 @@ class PdfSplitProposal(Base):
 
     __table_args__ = (
         Index("ix_pdf_split_proposals_user_status", "user_id", "status"),
-        # One PENDING proposal per document (partial unique) is created in the
-        # migration (PG WHERE-predicate index — not expressible portably here).
+        # One PENDING proposal per document. Declared here (with per-dialect
+        # WHERE predicates) so create_all-built schemas — the sqlite test
+        # harness AND fresh installs, which skip the migration's table DDL —
+        # enforce the same invariant as migrated PG databases.
+        Index(
+            "uq_pdf_split_proposals_pending_doc",
+            "document_id",
+            unique=True,
+            postgresql_where=sa_text("status = 'pending'"),
+            sqlite_where=sa_text("status = 'pending'"),
+        ),
     )
 
     document = relationship("Document", foreign_keys=[document_id])

@@ -647,3 +647,109 @@ class TestHomeAssistantEntityModel:
 
         with pytest.raises(Exception):  # IntegrityError
             await db_session.commit()
+
+
+# ============================================================================
+# PDF-Split Model Tests (documents lineage columns + pdf_split_proposals)
+# ============================================================================
+
+from models.database import (  # noqa: E402 - section-local (PDF-split additions)
+    DOC_STATUS_SPLIT_ARCHIVED,
+    PDF_SPLIT_PROPOSAL_APPROVED,
+    PDF_SPLIT_PROPOSAL_PENDING,
+    Document,
+    PdfSplitProposal,
+)
+
+
+def _split_doc(filename: str, file_hash: str, **over) -> Document:
+    defaults = dict(
+        filename=filename,
+        file_path=f"/uploads/{file_hash}.pdf",
+        file_hash=file_hash,
+        status="completed",
+        circle_tier=0,
+    )
+    defaults.update(over)
+    return Document(**defaults)
+
+
+class TestPdfSplitModels:
+    """Constraint-level coverage on REAL Postgres (pg_db_session — flush only,
+    rollback-isolated): the SET-NULL lineage FK, the proposals CASCADE, and
+    the one-pending-proposal-per-document partial unique index (declared in
+    the ORM __table_args__ so create_all enforces it on fresh installs too)."""
+
+    @pytest.mark.database
+    @pytest.mark.asyncio
+    async def test_split_lineage_fk_set_null_on_parent_delete(self, pg_db_session):
+        parent = _split_doc("stapel.pdf", "h_parent", status=DOC_STATUS_SPLIT_ARCHIVED)
+        pg_db_session.add(parent)
+        await pg_db_session.flush()
+        child = _split_doc(
+            "stapel_teil01.pdf", "h_child", split_from_document_id=parent.id
+        )
+        pg_db_session.add(child)
+        await pg_db_session.flush()
+
+        # Deleting the archived parent must NOT cascade into the ingested
+        # child — the lineage pointer just clears.
+        await pg_db_session.delete(parent)
+        await pg_db_session.flush()
+        await pg_db_session.refresh(child)
+
+        assert child.split_from_document_id is None
+
+    @pytest.mark.database
+    @pytest.mark.asyncio
+    async def test_proposals_cascade_with_document(self, pg_db_session):
+        doc = _split_doc("stapel2.pdf", "h_prop_doc")
+        pg_db_session.add(doc)
+        await pg_db_session.flush()
+        pg_db_session.add(
+            PdfSplitProposal(
+                document_id=doc.id,
+                status=PDF_SPLIT_PROPOSAL_PENDING,
+                proposal=[{"start_page": 1, "end_page": 1}],
+                page_count=1,
+            )
+        )
+        await pg_db_session.flush()
+
+        await pg_db_session.delete(doc)
+        await pg_db_session.flush()
+
+        remaining = (
+            await pg_db_session.execute(
+                select(PdfSplitProposal).where(PdfSplitProposal.document_id == doc.id)
+            )
+        ).scalars().all()
+        assert remaining == []
+
+    @pytest.mark.database
+    @pytest.mark.asyncio
+    async def test_one_pending_proposal_per_document(self, pg_db_session):
+        from sqlalchemy.exc import IntegrityError
+
+        doc = _split_doc("stapel3.pdf", "h_uniq_doc")
+        pg_db_session.add(doc)
+        await pg_db_session.flush()
+
+        def _proposal(status):
+            return PdfSplitProposal(
+                document_id=doc.id,
+                status=status,
+                proposal=[{"start_page": 1, "end_page": 1}],
+                page_count=1,
+            )
+
+        # pending + APPROVED coexist (the partial predicate only covers pending)
+        pg_db_session.add(_proposal(PDF_SPLIT_PROPOSAL_APPROVED))
+        pg_db_session.add(_proposal(PDF_SPLIT_PROPOSAL_PENDING))
+        await pg_db_session.flush()
+
+        # a SECOND pending proposal for the same document violates the
+        # partial unique index
+        pg_db_session.add(_proposal(PDF_SPLIT_PROPOSAL_PENDING))
+        with pytest.raises(IntegrityError):
+            await pg_db_session.flush()

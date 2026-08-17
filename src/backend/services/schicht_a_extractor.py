@@ -23,7 +23,6 @@ hook. Spec: ``tests/eval/schicht_a_fixtures_local/labels.yaml`` (local/gitignore
 from __future__ import annotations
 
 import asyncio
-import json
 import re
 from contextlib import asynccontextmanager
 from datetime import date
@@ -532,134 +531,21 @@ def _facts_from_payload(payload: dict) -> list[ExtractedFact]:
 
 
 def _parse_llm_json(raw: str) -> dict | None:
-    """Parse an LLM response to a dict; tolerate markdown fences + surrounding
-    prose. Returns None if nothing parseable (caller treats as failure).
+    """Thin delegate to the shared ``utils.llm_client.parse_llm_json`` — the
+    fence-tolerant strict parse + truncation salvage (which once cost doc 43
+    all 14 facts before the salvage existed) moved there so every strict-JSON
+    extractor shares ONE hardened implementation. Kept as a local name so call
+    sites/tests are unchanged; the shared helper logs when salvage kicks in."""
+    from utils.llm_client import parse_llm_json
 
-    Defense-in-depth: if the strict parse fails — overwhelmingly because the
-    response was truncated at the token cap mid-JSON (unbalanced braces / an
-    unterminated string) — fall back to ``_salvage_truncated_json`` so the
-    complete leading entries survive instead of discarding the whole batch
-    (the old behavior, which cost doc 43 all 14 of its facts)."""
-    if not raw:
-        return None
-    text = raw.strip()
-    if text.startswith("```"):
-        nl = text.find("\n")
-        if nl >= 0:
-            text = text[nl + 1:]
-        if text.endswith("```"):
-            text = text[:-3]
-        text = text.strip()
-    first = text.find("{")
-    if first < 0:
-        return None
-    body = text[first:]
-    last = body.rfind("}")
-    if last > 0:
-        try:
-            parsed = json.loads(body[:last + 1])
-            if isinstance(parsed, dict):
-                return parsed
-        except json.JSONDecodeError:
-            pass
-    salvaged = _salvage_truncated_json(body)
-    if salvaged is not None:
-        logger.warning(
-            "Schicht A: LLM JSON unparseable (likely truncated at the token "
-            "cap) — salvaged %d complete obligation(s) from the partial payload",
-            len(salvaged.get("obligations") or []),
-        )
-    return salvaged
+    return parse_llm_json(raw)
 
 
 def _salvage_truncated_json(s: str) -> dict | None:
-    """Best-effort recovery of a truncated JSON object.
+    """Thin delegate — implementation moved to utils.llm_client.salvage_truncated_json."""
+    from utils.llm_client import salvage_truncated_json
 
-    Scan with a bracket stack and remember the last position that sits on a clean
-    boundary, cut there, drop the half-written trailing entry, and append the
-    missing closers. Returns a dict or None.
-
-    A boundary is recorded in two cases:
-      1. just after a nested container closes (``}``/``]`` with a parent still
-         open), and
-      2. at a comma **between elements of the OUTERMOST array** only
-         (``arr_depth == 1``).
-
-    The depth gate on (2) is the load-bearing rule: a comma inside a *nested*
-    array (``arr_depth >= 2``, e.g. ``"items":[10,20,30,40``) is NOT a cut point,
-    so a truncated nested array is never force-closed as a complete (wrong)
-    value — its whole enclosing element is dropped via (1) instead. (1) alone
-    can't recover the elements of a truncated top-level array of SCALARS (they
-    don't close with a bracket), which is why (2) is kept rather than removed.
-    ``_facts_from_payload`` tolerates any recovered entry that still lacks
-    optional fields; a truncated FIRST element recovers nothing (None beats
-    corrupt)."""
-    if not s or s[0] != "{":
-        return None
-    stack: list[str] = []
-    arr_depth = 0  # number of currently-open '[' (so we can gate comma cuts)
-    in_str = esc = False
-    cut: int | None = None
-    for i, ch in enumerate(s):
-        if in_str:
-            if esc:
-                esc = False
-            elif ch == "\\":
-                esc = True
-            elif ch == '"':
-                in_str = False
-            continue
-        if ch == '"':
-            in_str = True
-        elif ch == "{":
-            stack.append(ch)
-        elif ch == "[":
-            stack.append(ch)
-            arr_depth += 1
-        elif ch == "}":
-            if stack:
-                stack.pop()
-            if stack:  # closed a nested container, parent still open → clean cut
-                cut = i + 1
-        elif ch == "]":
-            if stack:
-                stack.pop()
-            if arr_depth > 0:
-                arr_depth -= 1
-            if stack:
-                cut = i + 1
-        elif ch == "," and arr_depth == 1 and stack and stack[-1] == "[":
-            # between elements of the OUTERMOST array — a clean boundary.
-            # Gated to depth 1 so a truncated nested array can't be cut here.
-            cut = i
-    if cut is None:
-        return None
-    candidate = s[:cut]
-    # Recompute the still-open containers for the candidate and close them.
-    st: list[str] = []
-    in_str = esc = False
-    for ch in candidate:
-        if in_str:
-            if esc:
-                esc = False
-            elif ch == "\\":
-                esc = True
-            elif ch == '"':
-                in_str = False
-            continue
-        if ch == '"':
-            in_str = True
-        elif ch in "{[":
-            st.append(ch)
-        elif ch in "}]":
-            if st:
-                st.pop()
-    closers = "".join("}" if c == "{" else "]" for c in reversed(st))
-    try:
-        parsed = json.loads(candidate + closers)
-    except json.JSONDecodeError:
-        return None
-    return parsed if isinstance(parsed, dict) else None
+    return salvage_truncated_json(s)
 
 
 def _parse_date(value: Any) -> date | None:
