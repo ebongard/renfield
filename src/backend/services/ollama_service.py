@@ -78,10 +78,18 @@ class OllamaService:
         memory_context: str | None = None,
         personality_style: str | None = None,
         personality_prompt: str | None = None,
+        time_context: str | None = None,
     ) -> str:
         """Get system prompt for the specified language, optionally with memory and personality context."""
         lang = lang or self.default_lang
         base = prompt_manager.get("chat", "system_prompt", lang=lang, default=self._default_system_prompt(lang))
+
+        # Current date/time FIRST — the plain chat/smalltalk path has no agent
+        # {time_context}, so without this the model invents a year from its
+        # training cutoff when asked "what's today" (a bad look for a release
+        # assistant). Best-effort: caller passes "" when unavailable.
+        if time_context:
+            base = f"{time_context}\n\n{base}"
 
         # Personality injection
         if personality_style:
@@ -202,6 +210,7 @@ WICHTIGE REGELN FÜR ANTWORTEN:
         document_context: str | None = None,
         personality_style: str | None = None,
         personality_prompt: str | None = None,
+        time_context: str | None = None,
     ) -> AsyncGenerator[str, None]:
         """
         Streaming Chat with optional conversation history.
@@ -225,7 +234,7 @@ WICHTIGE REGELN FÜR ANTWORTEN:
 
         try:
             message = _sanitize_user_input(message)
-            system_prompt = self.get_system_prompt(lang, memory_context=memory_context, personality_style=personality_style, personality_prompt=personality_prompt)
+            system_prompt = self.get_system_prompt(lang, memory_context=memory_context, personality_style=personality_style, personality_prompt=personality_prompt, time_context=time_context)
             if document_context:
                 system_prompt += f"\n\n{document_context}"
             messages = [{"role": "system", "content": system_prompt}]
@@ -1104,6 +1113,7 @@ WICHTIGE REGELN FÜR ANTWORTEN:
         document_context: str | None = None,
         personality_style: str | None = None,
         personality_prompt: str | None = None,
+        time_context: str | None = None,
     ) -> AsyncGenerator[str, None]:
         """
         Streaming Chat mit optionalem RAG-Kontext.
@@ -1129,7 +1139,7 @@ WICHTIGE REGELN FÜR ANTWORTEN:
             model = self.rag_model if rag_context else self.chat_model
 
             # Baue System-Prompt mit RAG-Kontext
-            system_prompt = self._build_rag_system_prompt(rag_context, lang=lang, memory_context=memory_context, document_context=document_context, personality_style=personality_style, personality_prompt=personality_prompt)
+            system_prompt = self._build_rag_system_prompt(rag_context, lang=lang, memory_context=memory_context, document_context=document_context, personality_style=personality_style, personality_prompt=personality_prompt, time_context=time_context)
 
             messages = [{"role": "system", "content": system_prompt}]
 
@@ -1156,7 +1166,7 @@ WICHTIGE REGELN FÜR ANTWORTEN:
             logger.error(f"RAG Streaming Fehler: {e}")
             yield prompt_manager.get("chat", "error_fallback", lang=lang, default=f"Error: {e!s}", error=str(e))
 
-    def _build_rag_system_prompt(self, context: str | None = None, lang: str | None = None, memory_context: str | None = None, document_context: str | None = None, personality_style: str | None = None, personality_prompt: str | None = None) -> str:
+    def _build_rag_system_prompt(self, context: str | None = None, lang: str | None = None, memory_context: str | None = None, document_context: str | None = None, personality_style: str | None = None, personality_prompt: str | None = None, time_context: str | None = None) -> str:
         """
         Erstellt System-Prompt mit optionalem RAG-Kontext.
 
@@ -1167,6 +1177,7 @@ WICHTIGE REGELN FÜR ANTWORTEN:
             document_context: Optional formatted document section
             personality_style: Optional personality style
             personality_prompt: Optional free-text personality fine-tuning
+            time_context: Optional current-date/time line (grounds date reasoning)
 
         Returns:
             System-Prompt für das LLM
@@ -1175,6 +1186,11 @@ WICHTIGE REGELN FÜR ANTWORTEN:
 
         # Base RAG system prompt from externalized prompts
         base_prompt = prompt_manager.get("chat", "rag_system_prompt", lang=lang)
+
+        # Current date/time FIRST (see get_system_prompt) — the chat path lacks
+        # the agent {time_context}, so ground it here too.
+        if time_context:
+            base_prompt = f"{time_context}\n\n{base_prompt}"
 
         # Personality injection
         if personality_style:
