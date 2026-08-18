@@ -256,6 +256,11 @@ data:
   OBLIGATION_NOTIFIER_ENABLED: "true"
   OUTPUT_PROVIDERS_ENABLED: "true"
   PAPERLESS_AUDIT_ENABLED: "true"
+  # PDF-Split (docs/design/pdf-split.md): Multi-Dokument-Stapelscans beim
+  # Ingest erkennen + trennen. VLM-Slow-Lane nutzt OLLAMA_VISION_MODEL (oben
+  # gesetzt) und den pdf-split-worker (k8s/pdf-split-worker.yaml). Rollback:
+  # auf "false" — der Worker parkt seinen Backlog dann in der PEL.
+  PDF_SPLIT_ENABLED: "true"
   # OCR VLM re-OCR fallback for rotated/poor scans (needs OLLAMA_VISION_MODEL, set):
   # when OCR is garbled, the vision model re-transcribes; a fast LM gibberish gate
   # (OLLAMA_INTENT_MODEL) catches the pseudo-word garble char stats can't. See
