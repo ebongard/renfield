@@ -1,8 +1,8 @@
 # PDF-Split — automatic multi-document PDF detection + splitting at ingest
 
-**Status:** PR1 (core auto-split, text-layer path) implemented; review flow (PR2)
-and the dedicated slow-lane split worker (PR3) planned. Dark by default
-(`PDF_SPLIT_ENABLED=false`).
+**Status:** PR1 (core auto-split, text-layer path) + PR2 (owner review flow)
+implemented; the dedicated slow-lane split worker (PR3) planned. Dark by
+default (`PDF_SPLIT_ENABLED=false`).
 
 Closes the "multi-document files" deferral in
 `docs/design/paperless-llm-metadata.md` (open question 3).
@@ -106,10 +106,37 @@ ingest — with two deliberate exceptions (`services/pdf_split_errors.py`):
 ### Confidence gate — whole-file
 
 Auto-split iff ≥2 pieces AND `min(confidence) >= PDF_SPLIT_AUTO_THRESHOLD`
-(default 0.85). Any piece below → the WHOLE file goes to review (PR2; PR1 logs
-and proceeds as single). No per-boundary partial splits — a half-ingested
-parent is a state the dedup matrix, Paperless leg and review UI would all have
-to model.
+(default 0.85). Any piece below → the WHOLE file goes to owner review. No
+per-boundary partial splits — a half-ingested parent is a state the dedup
+matrix, Paperless leg and review UI would all have to model.
+
+### Review flow (PR2, `services/pdf_split_proposals.py` + `/api/pdf-split`)
+
+An uncertain verdict files/refreshes ONE pending `pdf_split_proposals` row
+(partial unique; a refresh does not re-fire the owner notification), parks the
+parent in `split_review` and notifies the owner (personal, presence-gated
+downstream). The owner decides on /brain/review (`PdfSplitReviewSection`,
+flag-gated): approve — optionally after editing ranges, where the UI permits
+only contiguity-preserving operations (merge-with-next, add-boundary) and the
+server re-validates (422) — or reject (treat-as-single).
+
+- **Resolution never splits in the API pod**: approve persists the (edited)
+  plan + parks the parent `split_pending` + enqueues; the WORKER executes via
+  the stored plan (full crash-safe machinery). Reject re-enqueues with the
+  `skip_split` loop-breaker.
+- **Durable decisions**: resolutions use a conditional UPDATE (concurrent
+  resolutions → 409, never silently discarded); a REJECTED row is the durable
+  treat-as-single record — detection consults `has_rejected_proposal`, so a
+  stale/reclaimed plain task can never re-park a document the owner chose to
+  keep whole.
+- **Strand recovery**: retrying the SAME resolution on an already-resolved
+  proposal idempotently re-enqueues (the recovery route for a Redis blip
+  between commit and enqueue); an ownerless proposal (NULL user_id) is
+  visible/resolvable by admins under auth so it cannot strand invisibly.
+- **Evidence**: per-page snippets ride the proposal row; page thumbnails are
+  on-demand authenticated JPEG renders from a bounded dedicated executor.
+- An error while FILING a proposal degrades to single-document ingest (an
+  uncertain verdict never loses a document); transient DB errors PEL-retry.
 
 ### Split execution (`services/pdf_splitter.py`)
 
@@ -198,11 +225,11 @@ Deliberately **no page-count settings** of any kind.
   idempotent `execute_split`, worker pre-stage, `classify_existing` branch.
   Enabling it already auto-splits confidently-detected text-layer PDFs;
   slow-lane and uncertain cases log + status quo.
-- **PR2 — review flow** — `pdf_split_proposals` service + `/api/pdf-split`
-  routes (list / detail / page-PNG render / approve-with-edited-ranges /
-  reject-as-single), a flag-gated section on `/brain/review`, a split badge +
-  children list on `/knowledge`, `pdf_split_enabled` in `/api/config/features`,
-  proactive owner notification on proposal creation.
+- **PR2 — review flow (this)** — proposals service + `/api/pdf-split` routes,
+  the flag-gated `/brain/review` section, split status badges on `/knowledge`
+  (+ polling treats parked states as terminal), `pdf_split_enabled` in
+  `/api/config/features`, owner notification. Children-list on the archived
+  parent card: deferred polish.
 - **PR3 — slow lane** — `PdfSplitTaskQueue` (stream `renfield:tasks:pdfsplit`),
   `workers/pdf_split_worker.py` (meeting-worker template: row heartbeat,
   poison-pill → treat-as-single, transient/terminal split, replicas 1),

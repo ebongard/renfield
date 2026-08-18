@@ -509,8 +509,12 @@ geschützt (flag-unabhängiger Worker-Guard, Reindex-409, Dedup als DUPLICATE).
   pro Fenster.
 - **Whole-File-Konfidenz-Gate** (`PDF_SPLIT_AUTO_THRESHOLD`, Default 0.85):
   nur wenn JEDES Teilstück sicher ist, wird automatisch getrennt; unsichere
-  Dateien → Owner-Review (PR2, bis dahin Status quo mit lautem Log). Schlechte
-  Scans (VLM-Pfad) → dedizierte Split-Lane (PR3).
+  Dateien landen als Vorschlag auf **/brain/review** („PDF-Aufteilung
+  prüfen"): Bereiche editieren (nur kontiguitäts-erhaltende Operationen),
+  Seiten-Snippets + On-Demand-Thumbnails, Bestätigen oder „Als EIN Dokument
+  verarbeiten" (dauerhaft — eine abgelehnte Aufteilung wird nie erneut
+  vorgeschlagen). Der Owner wird proaktiv benachrichtigt. Schlechte Scans
+  (VLM-Pfad) → dedizierte Split-Lane (PR3).
 - **Crash-sicher:** der Split-Plan wird VOR der Ausführung persistiert
   (`pdf_split_proposals`, approved) und bei Redelivery verbatim wiederholt
   (nie erneut das nichtdeterministische LLM); Resume-Keys = deterministische
