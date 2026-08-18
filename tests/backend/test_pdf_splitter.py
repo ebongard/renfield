@@ -523,12 +523,69 @@ async def test_prestage_no_signals_falls_through(monkeypatch):
     execute.assert_not_called()
 
 
-async def test_prestage_slow_lane_is_status_quo_in_pr1(monkeypatch):
+async def test_prestage_slow_lane_routes_to_split_worker(monkeypatch):
+    """A VLM-needing / multi-window file is handed to the dedicated split
+    worker (PR3) — no inline detection, no execution here."""
+    doc = _parent()
     db, execute, _ = _wire_prestage(
-        monkeypatch, doc=_parent(), signals=[_sig(1), _sig(2)], slow="vlm"
+        monkeypatch, doc=doc, signals=[_sig(1), _sig(2)], slow="vlm"
     )
-    assert await maybe_split_at_ingest(db, 7) is False
+    route = AsyncMock(return_value=True)
+    monkeypatch.setattr(ps, "_route_to_slow_lane", route)
+    detect = AsyncMock()
+    monkeypatch.setattr(ps, "detect_boundaries", detect)
+
+    assert await maybe_split_at_ingest(db, 7, user_id=5) is True
+
+    route.assert_awaited_once()
+    assert route.await_args.args[1] is doc
+    assert route.await_args.args[2] == "vlm"
+    detect.assert_not_called()
     execute.assert_not_called()
+
+
+async def test_route_to_slow_lane_worker_dead_is_status_quo(monkeypatch):
+    """No pdf-split worker alive → pre-PR3 status quo (single ingest), never
+    park a doc on a stream nobody drains."""
+    monkeypatch.setattr(ps.settings, "ollama_vision_model", "qwen-vl")
+    monkeypatch.setattr(
+        "services.task_queue.pdf_split_worker_is_alive",
+        AsyncMock(return_value=False),
+    )
+    doc = _parent()
+    db = _db()
+
+    assert await ps._route_to_slow_lane(db, doc, "vlm", None) is False
+    assert doc.status == DOC_STATUS_PENDING  # NOT parked
+
+
+async def test_route_to_slow_lane_vlm_without_vision_model_is_status_quo(monkeypatch):
+    monkeypatch.setattr(ps.settings, "ollama_vision_model", "")
+    doc = _parent()
+
+    assert await ps._route_to_slow_lane(_db(), doc, "vlm", None) is False
+    assert doc.status == DOC_STATUS_PENDING
+
+
+async def test_route_to_slow_lane_parks_and_enqueues(monkeypatch):
+    monkeypatch.setattr(ps.settings, "ollama_vision_model", "qwen-vl")
+    monkeypatch.setattr(
+        "services.task_queue.pdf_split_worker_is_alive",
+        AsyncMock(return_value=True),
+    )
+    queue = MagicMock()
+    queue.enqueue = AsyncMock()
+    monkeypatch.setattr(
+        "services.task_queue.PdfSplitTaskQueue", MagicMock(return_value=queue)
+    )
+    monkeypatch.setattr("services.redis_client.get_redis", MagicMock())
+    doc = _parent()
+    db = _db()
+
+    assert await ps._route_to_slow_lane(db, doc, "windows", 5) is True
+
+    assert doc.status == DOC_STATUS_SPLIT_PENDING  # parked BEFORE enqueue
+    queue.enqueue.assert_awaited_once_with({"document_id": 7, "user_id": 5})
 
 
 async def test_prestage_single_verdict_falls_through(monkeypatch):

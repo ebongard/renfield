@@ -1031,12 +1031,22 @@ dedizierten Split-Lane (PR3).
 ```bash
 PDF_SPLIT_ENABLED=false          # Feature-Schalter (dark; flag-aus = byte-identisch)
 PDF_SPLIT_WINDOW_CHARS=24000     # Zeichenbudget pro Boundary-LLM-Fenster (Kontext-Batching, KEINE Dokumentgrößen-Annahme)
-PDF_SPLIT_VLM_PAGE_TIMEOUT_S=45  # Zeitlimit pro VLM-Seitentranskription (Slow-Lane — erst mit PR3 wirksam, bis dahin ohne Funktion)
+PDF_SPLIT_VLM_PAGE_TIMEOUT_S=45  # Zeitlimit pro VLM-Seitentranskription in der Slow-Lane (zeitbasiert — bewusst KEIN Seiten-Cap)
+PDF_SPLIT_WORKER_MAX_TRANSIENT_RETRIES=10  # Slow-Lane: transiente Fehlversuche, bevor der Fail-Safe greift (Übergabe als EIN Dokument — nie ein dauerhaft fehlgeschlagenes Doc)
 PDF_SPLIT_AUTO_THRESHOLD=0.85    # Whole-File-Gate: JEDES Teilstück muss diese Konfidenz erreichen, sonst Review statt Auto-Split
 ```
 
+Die Slow-Lane (schlechte Scans → VLM-Seitentranskription; überlange Dateien →
+Multi-Window) läuft im dedizierten **pdf-split-worker** (`k8s/pdf-split-worker.yaml`,
+Stream `renfield:tasks:pdfsplit`, replicas:1, Row-Heartbeat
+`documents.split_heartbeat_at`). Die Inline-Stage routet NUR dorthin, wenn dessen
+Heartbeat frisch ist UND (für den VLM-Pfad) `OLLAMA_VISION_MODEL` gesetzt ist —
+sonst Status quo (Einzeldokument, lautes Log). Fail-Safe der Lane ist immer die
+Übergabe als EIN Dokument, nie ein verlorenes/fehlgeschlagenes Doc.
+
 **Defaults:** `PDF_SPLIT_ENABLED`: `false` · `PDF_SPLIT_WINDOW_CHARS`: `24000` ·
-`PDF_SPLIT_VLM_PAGE_TIMEOUT_S`: `45` · `PDF_SPLIT_AUTO_THRESHOLD`: `0.85`
+`PDF_SPLIT_VLM_PAGE_TIMEOUT_S`: `45` · `PDF_SPLIT_AUTO_THRESHOLD`: `0.85` ·
+`PDF_SPLIT_WORKER_MAX_TRANSIENT_RETRIES`: `10`
 
 ---
 

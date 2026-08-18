@@ -513,8 +513,11 @@ geschützt (flag-unabhängiger Worker-Guard, Reindex-409, Dedup als DUPLICATE).
   prüfen"): Bereiche editieren (nur kontiguitäts-erhaltende Operationen),
   Seiten-Snippets + On-Demand-Thumbnails, Bestätigen oder „Als EIN Dokument
   verarbeiten" (dauerhaft — eine abgelehnte Aufteilung wird nie erneut
-  vorgeschlagen). Der Owner wird proaktiv benachrichtigt. Schlechte Scans
-  (VLM-Pfad) → dedizierte Split-Lane (PR3).
+  vorgeschlagen). Der Owner wird proaktiv benachrichtigt. Schlechte Scans werden in der
+  dedizierten **Split-Lane** verarbeitet (`pdf-split-worker`): jede unlesbare
+  Seite wird per Vision-Modell transkribiert (bewusst ohne Seiten-Cap,
+  zeitlich begrenzt pro Aufruf), dann entscheidet dieselbe Boundary-Logik;
+  Fail-Safe ist immer die Verarbeitung als EIN Dokument.
 - **Crash-sicher:** der Split-Plan wird VOR der Ausführung persistiert
   (`pdf_split_proposals`, approved) und bei Redelivery verbatim wiederholt
   (nie erneut das nichtdeterministische LLM); Resume-Keys = deterministische

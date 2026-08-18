@@ -1,8 +1,8 @@
 # PDF-Split — automatic multi-document PDF detection + splitting at ingest
 
-**Status:** PR1 (core auto-split, text-layer path) + PR2 (owner review flow)
-implemented; the dedicated slow-lane split worker (PR3) planned. Dark by
-default (`PDF_SPLIT_ENABLED=false`).
+**Status:** PR1 (core auto-split) + PR2 (owner review flow) + PR3 (slow-lane
+split worker with VLM page transcription) implemented. Dark by default
+(`PDF_SPLIT_ENABLED=false`).
 
 Closes the "multi-document files" deferral in
 `docs/design/paperless-llm-metadata.md` (open question 3).
@@ -72,8 +72,23 @@ re-enqueue can never re-enter detection.
 2. **Slow-lane classification** (`classify_slow_lane`) — fraction-based, never
    count-based: first page garbage OR >30% garbage pages → `vlm`; signals
    exceeding one LLM context window (`PDF_SPLIT_WINDOW_CHARS`) → `windows`.
-   PR1: both log loudly and fall back to the single-document status quo; PR3
-   routes them to the dedicated split worker.
+   Both route to the dedicated split worker (`_route_to_slow_lane`): parent
+   parked `split_pending` + enqueued on `renfield:tasks:pdfsplit`. Fail-safe
+   gates keep the status quo (single ingest, loud log) when the lane cannot
+   help: no worker heartbeat, or a VLM case without `OLLAMA_VISION_MODEL`.
+
+   **The slow lane** (`services/pdf_split_slow_lane.py` +
+   `workers/pdf_split_worker.py`, meeting-worker template, replicas:1, row
+   heartbeat `documents.split_heartbeat_at`): stored-plan replay wins first,
+   the durable rejection record is honored, then `vlm_fill_signals` transcribes
+   EVERY garbage page via `ollama_vision_model` (plain text, per-call
+   `PDF_SPLIT_VLM_PAGE_TIMEOUT_S`, deliberately NO page cap — cost is bounded
+   by isolation + timeouts, never by skipping pages; a failed page keeps its
+   placeholder) and the multi-window boundary call decides. Outcomes reuse the
+   shared `act_on_verdict`; a `single` outcome HANDS THE DOC BACK to normal
+   ingest (`skip_split`). Poison/transient-cap fail-safe = the same hand-back
+   (never a failed doc); only a terminal mid-execute error (children may exist
+   → hand-back would double-ingest) marks the doc failed.
 3. **Boundary call(s)** — strict-JSON on the TEXT model (never JSON from the
    VLM: qwen3-vl think-buffer trap, see `paperless_metadata_extractor.py`).
    Template: `MinutesExtractor` (`prompts/pdf_split.yaml`, de/en, fence-tolerant

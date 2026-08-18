@@ -419,3 +419,40 @@ async def document_worker_is_alive() -> bool:
         logger.warning(f"heartbeat check failed: {e}; treating worker as unavailable")
         return False
     return value is not None
+
+
+class PdfSplitTaskQueue(DocumentTaskQueue):
+    """Durable queue for the PDF-split SLOW LANE (docs/design/pdf-split.md PR3).
+
+    Same Redis-Streams durability contract as ``DocumentTaskQueue``, on a
+    DEDICATED stream + consumer group: a bad scan needing per-page VLM
+    transcription runs for unbounded minutes and must never head-of-line-block
+    document ingestion nor share its visibility window. Liveness of a running
+    job is judged by the ROW heartbeat (``documents.split_heartbeat_at``), not
+    a duration estimate — the worker reclaims on heartbeat staleness.
+
+    Payload: ``{document_id, user_id}`` (bytes stay on the uploads PVC).
+    """
+
+    DEFAULT_STREAM = "renfield:tasks:pdfsplit"
+    DEFAULT_GROUP = "pdfsplitworker"
+
+
+PDF_SPLIT_WORKER_HEARTBEAT_KEY = "renfield:worker:pdfsplit:heartbeat"
+
+
+async def pdf_split_worker_is_alive() -> bool:
+    """True when a pdf-split worker refreshed its heartbeat within the TTL.
+    Gates the slow-lane routing: with no worker deployed, the inline path
+    keeps the pre-PR3 status quo (single-document ingest, loud log) instead of
+    parking documents on a stream nobody drains."""
+    from services.redis_client import get_redis
+
+    try:
+        value = await get_redis().get(PDF_SPLIT_WORKER_HEARTBEAT_KEY)
+    except Exception as e:  # noqa: BLE001
+        logger.warning(
+            f"pdfsplit heartbeat check failed: {e}; treating worker as unavailable"
+        )
+        return False
+    return value is not None

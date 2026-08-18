@@ -901,6 +901,10 @@ class Settings(BaseSettings):
     # Whole-file auto-split gate: every proposed piece must reach this
     # confidence or the file goes to owner review instead.
     pdf_split_auto_threshold: float = Field(default=0.85, ge=0.0, le=1.0)
+    # Slow-lane worker: cap on TRANSIENT retries (LLM host down etc.) before
+    # the fail-safe hand-back to single-document ingest (mirrors
+    # meeting_worker_max_transient_retries — never a permanently failed doc).
+    pdf_split_worker_max_transient_retries: int = Field(default=10, ge=1, le=100)
 
     # Async Paperless reconciler (Design Z): folder/email-ingest stamp
     # paperless_state='pending' and this periodic reconciler files them out of

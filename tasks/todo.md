@@ -20,12 +20,12 @@ Plan: `~/.claude/plans/harmonic-toasting-toucan.md` (approved 2026-08-16). Dark 
 - [x] Docs sweep: CLAUDE.md, docs/FEATURES.md, docs/design/pdf-split.md, docs/ENVIRONMENT_VARIABLES.md, paperless-llm-metadata deferral resolved
 - [ ] Post-fix full suite (running) + medium /review of fix commit → then WAIT for push/merge approval (no push without permission)
 
-## PR2 — review flow
-- [ ] `services/pdf_split_proposals.py` (create/approve/reject + proactive notification)
-- [ ] `api/routes/pdf_split.py` (`/api/pdf-split`: list/detail/page-png/approve/reject) + `main.py` mount
-- [ ] `api/routes/config.py` FeatureFlags `pdf_split_enabled`
-- [ ] Frontend: BrainReviewPage section + `PdfSplitReviewCard`, KnowledgePage split badge/children, i18n de+en
-- [ ] Tests: `test_pdf_split_routes.py`, proposal DB tests, React tests
+## PR2 — review flow — DONE, PR #1099 (pushed, awaiting merge approval)
+- [x] `services/pdf_split_proposals.py` (create idempotent + notify-once, durable conditional-UPDATE resolutions, idempotent same-action retry = strand recovery, has_rejected_proposal consulted by detection)
+- [x] `api/routes/pdf_split.py` + main.py mount (owner-scoped, NULL-owner admin-resolvable, JPEG thumbs from bounded executor, worker-alive 503; `document_worker_is_alive` promoted to task_queue)
+- [x] `api/routes/config.py` FeatureFlags `pdf_split_enabled`
+- [x] Frontend: PdfSplitReviewSection (contiguity-by-construction editing, opt-in thumbs, prop re-sync), StatusBadge split states (DESIGN warning tone), polling terminal states, i18n de/en/it
+- [x] Tests: 16 route/service + 6 RTL; 2 review cycles (10+1 findings fixed); full suite baseline-identical; rotten MeetingsPage test fixed (undici/jsdom File)
 
 ## PR3 — VLM slow path
 - [ ] `PdfSplitTaskQueue` (stream `renfield:tasks:pdfsplit`), `workers/pdf_split_worker.py` (meeting-worker template, row heartbeat, poison → treat-as-single)

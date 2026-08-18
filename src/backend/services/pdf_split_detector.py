@@ -26,6 +26,7 @@ rather than raising — detection must never break ingest.
 """
 from __future__ import annotations
 
+import asyncio
 import re
 from dataclasses import dataclass, field
 from typing import Any
@@ -488,3 +489,94 @@ async def detect_boundaries(
             ) from e
         logger.warning(f"pdf-split: boundary detection failed: {e}")
         return single_verdict(signals)
+
+
+# ---------------------------------------------------------------------------
+# Slow-lane VLM fill-in (PR3): transcribe garbage pages so the boundary call
+# has evidence for every page. Plain-text answers ONLY — never JSON from the
+# VLM (qwen3-vl think-buffer trap, see paperless_metadata_extractor).
+# ---------------------------------------------------------------------------
+
+def _render_page_b64(file_path: str, page_number: int) -> str | None:
+    """Render ONE page to a base64 PNG for the VLM (blocking — executor).
+    Mirrors DocumentProcessor._render_pages_b64 but per-index, so the slow
+    lane renders exactly the garbage pages instead of a head slice."""
+    import base64
+    import io
+
+    try:
+        import pypdfium2 as pdfium
+
+        pdf = pdfium.PdfDocument(file_path)
+        try:
+            if page_number < 1 or page_number > len(pdf):
+                return None
+            pil = pdf[page_number - 1].render(scale=2.0).to_pil()
+            buf = io.BytesIO()
+            pil.save(buf, format="PNG")
+            return base64.b64encode(buf.getvalue()).decode()
+        finally:
+            pdf.close()
+    except Exception as e:  # noqa: BLE001
+        logger.warning(f"pdf-split: VLM page render failed for {file_path}: {e}")
+        return None
+
+
+async def vlm_fill_signals(
+    file_path: str,
+    signals: list[PageSignal],
+    *,
+    ollama_service: Any = None,
+) -> tuple[list[PageSignal], int]:
+    """Replace garbage-page placeholders with VLM transcriptions. Returns the
+    (new signal list, number of pages successfully transcribed).
+
+    Deliberately NO page cap (user requirement — cost is bounded by the
+    per-call timeout and the dedicated worker's isolation, not by skipping
+    pages). A page whose render or transcription fails keeps its placeholder —
+    the boundary prompt treats unreadable pages as continuation pages. Never
+    raises for per-page failures; a missing vision model returns unchanged."""
+    if not settings.ollama_vision_model:
+        return signals, 0
+
+    if ollama_service is None:
+        from services.ollama_service import OllamaService
+
+        ollama_service = OllamaService()
+
+    loop = asyncio.get_running_loop()
+    out = list(signals)
+    filled = 0
+    for i, sig in enumerate(out):
+        if sig.quality_ok:
+            continue
+        b64 = await loop.run_in_executor(
+            None, _render_page_b64, file_path, sig.page
+        )
+        if not b64:
+            continue
+        try:
+            text = await asyncio.wait_for(
+                ollama_service.extract_text_from_image(b64),
+                timeout=settings.pdf_split_vlm_page_timeout_s,
+            )
+        except TimeoutError:
+            logger.warning(
+                f"pdf-split: VLM transcription of page {sig.page} timed out "
+                f"({settings.pdf_split_vlm_page_timeout_s}s) — keeping placeholder"
+            )
+            continue
+        except Exception as e:  # noqa: BLE001 - one bad page ≠ a dead job
+            logger.warning(
+                f"pdf-split: VLM transcription of page {sig.page} failed: {e}"
+            )
+            continue
+        if text and text.strip():
+            out[i] = PageSignal(
+                page=sig.page,
+                text=_snippet(text),
+                quality_ok=True,
+                via_vlm=True,
+            )
+            filled += 1
+    return out, filled

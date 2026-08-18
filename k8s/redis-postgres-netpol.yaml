@@ -26,6 +26,7 @@ spec:
         - podSelector: {matchLabels: {app.kubernetes.io/name: backend}}
         - podSelector: {matchLabels: {app.kubernetes.io/name: document-worker}}
         - podSelector: {matchLabels: {app.kubernetes.io/name: meeting-worker}}
+        - podSelector: {matchLabels: {app.kubernetes.io/name: pdf-split-worker}}
         # alembic-upgrade Job + any backend-image job carry this shared label.
         - podSelector: {matchLabels: {app.kubernetes.io/part-of: renfield, app.kubernetes.io/component: backend-job}}
       ports:
@@ -48,6 +49,7 @@ spec:
         - podSelector: {matchLabels: {app.kubernetes.io/name: backend}}
         - podSelector: {matchLabels: {app.kubernetes.io/name: document-worker}}
         - podSelector: {matchLabels: {app.kubernetes.io/name: meeting-worker}}
+        - podSelector: {matchLabels: {app.kubernetes.io/name: pdf-split-worker}}
         - podSelector: {matchLabels: {app.kubernetes.io/part-of: renfield, app.kubernetes.io/component: backend-job}}
       ports:
         - {protocol: TCP, port: 5432}
