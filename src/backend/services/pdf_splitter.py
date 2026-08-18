@@ -8,17 +8,22 @@ upload. The combined original is archived LAST: ``status='split_archived'``,
 ``paperless_state='done'`` (settled — never filed), zero chunks (it never
 entered Docling) → excluded from retrieval; its bytes stay on the uploads PVC.
 
-Crash-safety is built from three pieces (each closes a /review finding):
+Crash-safety model (each element closed a /review finding):
 
 - **Persisted plan.** The boundary LLM is nondeterministic, so a crash-resume
   must NEVER re-detect: the confident verdict is stored as an APPROVED
   ``pdf_split_proposals`` row BEFORE execution, and a redelivered entry replays
-  that stored plan verbatim.
-- **Deterministic, parent-scoped resume keys.** Each piece's child filename
-  embeds the parent's content-hash prefix + part index, and the resume probe
-  additionally requires the row's ``split_from_document_id`` to be this parent
-  (or still unstamped — the create-vs-stamp crash window). A same-name row from
-  a DIFFERENT batch scan can no longer be adopted as a child.
+  that stored plan verbatim (revalidated against the row's OWN page_count — no
+  live pdfium probe whose failure would discard a valid plan).
+- **In-flight state.** The parent is stamped ``split_pending`` before the first
+  child is created, so a mid-split parent is protected by the worker's
+  flag-INDEPENDENT split-owned guard (a flag-off rollback parks it in the PEL
+  instead of normally ingesting the combined file next to its children).
+- **Persisted part resolutions.** As each part resolves (ingested OR deduped),
+  its child ``document_id`` is recorded on the plan row, so a resume never
+  depends on byte-identical re-rendering (pdfium stamps a fresh /CreationDate
+  per save). Filename matching (parent-hash-prefixed deterministic names,
+  lineage-scoped batched probe) remains the second resume layer.
 - **Transient vs terminal.** A child ingest that comes back RETRY (disk full,
   lost create race) raises :class:`SplitTransientError` — the worker leaves the
   entry in the PEL and the resume continues later. Only genuinely terminal
@@ -36,10 +41,14 @@ from pathlib import Path
 from loguru import logger
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm.attributes import flag_modified
 
 from models.database import (
     DOC_SPLIT_OWNED_STATUSES,
+    DOC_STATUS_PENDING,
     DOC_STATUS_SPLIT_ARCHIVED,
+    DOC_STATUS_SPLIT_PENDING,
+    DOC_STATUS_SPLIT_REVIEW,
     PAPERLESS_STATE_DONE,
     PAPERLESS_STATE_PENDING,
     PDF_SPLIT_CHILD_SOURCE,
@@ -69,9 +78,8 @@ from services.pdf_split_errors import (  # noqa: F401  (re-export)
 )
 from utils.config import settings
 
-# Statuses meaning "the split lifecycle owns this document" — canonical tuple
-# lives in models.database (import-light for the worker's flag-independent
-# guard); re-exported here for the service-side guard + tests.
+# Re-export (canonical tuple lives in models.database, import-light for the
+# worker's flag-independent guard).
 SPLIT_OWNED_STATUSES = DOC_SPLIT_OWNED_STATUSES
 
 
@@ -100,7 +108,12 @@ def child_filename(
 
 def split_pdf_bytes(file_path: str, pieces: list[SplitPiece]) -> list[bytes]:
     """Write one PDF per piece (blocking — callers use ``run_in_executor``).
-    Page ranges are 1-based inclusive; pdfium indices are 0-based."""
+    Page ranges are 1-based inclusive; pdfium indices are 0-based.
+
+    Callers render ONE piece per call to bound peak RAM; the repeated
+    ``PdfDocument(file_path)`` open is cheap (pdfium parses lazily off the
+    xref — it does not re-parse every page) and keeps each executor call's
+    pdfium state self-contained (no cross-thread handle sharing)."""
     import pypdfium2 as pdfium
 
     src = pdfium.PdfDocument(file_path)
@@ -169,21 +182,60 @@ async def _existing_children(
     return by_name
 
 
+def _recorded_child_id(plan_row: PdfSplitProposal | None, part_index: int) -> int | None:
+    """Child document_id persisted on the plan row for a resolved part (the
+    strongest resume signal — survives non-deterministic re-rendering AND
+    intra-split dedup onto foreign rows)."""
+    if plan_row is None or not isinstance(plan_row.proposal, list):
+        return None
+    try:
+        entry = plan_row.proposal[part_index]
+    except (IndexError, TypeError):
+        return None
+    if isinstance(entry, dict):
+        child_id = entry.get("document_id")
+        return child_id if isinstance(child_id, int) else None
+    return None
+
+
+async def _record_child_id(
+    db: AsyncSession,
+    plan_row: PdfSplitProposal | None,
+    part_index: int,
+    child_id: int,
+) -> None:
+    if plan_row is None or not isinstance(plan_row.proposal, list):
+        return
+    try:
+        entry = plan_row.proposal[part_index]
+    except (IndexError, TypeError):
+        return
+    if isinstance(entry, dict):
+        entry["document_id"] = child_id
+        # In-place JSONB mutation is invisible to the ORM's change tracking —
+        # flag it explicitly (real ORM rows only; test doubles lack the state).
+        if hasattr(plan_row, "_sa_instance_state"):
+            flag_modified(plan_row, "proposal")
+        await db.commit()
+
+
 async def execute_split(
     db: AsyncSession,
     parent: Document,
     pieces: list[SplitPiece],
     *,
     user_id: int | None = None,
+    plan_row: PdfSplitProposal | None = None,
 ) -> list[int]:
     """Split the parent into its pieces and archive it. Returns the child
     document ids (existing + created). Raises :class:`SplitTransientError` for
     retryable child outcomes and :class:`SplitExecutionError` for terminal
-    ones — the parent is then left unarchived so a redelivery resumes exactly
-    where this run stopped.
+    ones — the parent is then left unarchived (in ``split_pending``) so a
+    redelivery resumes exactly where this run stopped.
 
-    Safe to re-run: already-materialized parts (matched by their deterministic,
-    parent-scoped filename) are skipped; an already-archived parent is a no-op."""
+    Safe to re-run: parts already resolved on the plan row (or matched by
+    their deterministic, parent-scoped filename) are skipped; an
+    already-archived parent is a no-op."""
     if parent.status == DOC_STATUS_SPLIT_ARCHIVED:
         children = (
             (
@@ -200,6 +252,14 @@ async def execute_split(
     if len(pieces) < 2:
         raise SplitExecutionError("refusing to split into fewer than 2 pieces")
 
+    # In-flight stamp BEFORE the first child exists: from here on the worker's
+    # flag-independent split-owned guard protects the parent (a flag-off
+    # rollback parks the redelivered entry instead of normally ingesting the
+    # combined file next to its children).
+    if parent.status != DOC_STATUS_SPLIT_PENDING:
+        parent.status = DOC_STATUS_SPLIT_PENDING
+        await db.commit()
+
     # The child's Paperless intent mirrors the parent's at detection time: only
     # a filing-wanted parent (stamped 'pending' by its entry point) produces
     # filing-wanted children.
@@ -209,23 +269,33 @@ async def execute_split(
         owner_user_id = user_id
     source = parent.source or PDF_SPLIT_CHILD_SOURCE
 
-    # Which parts still need materializing? (resume key = deterministic name)
+    # Which parts still need materializing? Strongest signal first (persisted
+    # per-part resolution on the plan row), then the deterministic-filename
+    # probe (crash window before the first recording).
     names = [
         child_filename(parent.filename, parent.file_hash, i + 1, piece.title)
         for i, piece in enumerate(pieces)
     ]
-    existing = await _existing_children(db, parent, names)
     child_ids: list[int | None] = [None] * len(pieces)
-    stamped = False
-    for i, name in enumerate(names):
-        row = existing.get(name)
-        if row is not None:
-            if row.split_from_document_id is None:
-                row.split_from_document_id = parent.id
-                stamped = True
-            child_ids[i] = row.id
-    if stamped:
-        await db.commit()
+    for i in range(len(pieces)):
+        recorded = _recorded_child_id(plan_row, i)
+        if recorded is not None and await db.get(Document, recorded) is not None:
+            child_ids[i] = recorded
+    unresolved = [i for i in range(len(pieces)) if child_ids[i] is None]
+    if unresolved:
+        existing = await _existing_children(
+            db, parent, [names[i] for i in unresolved]
+        )
+        stamped = False
+        for i in unresolved:
+            row = existing.get(names[i])
+            if row is not None:
+                if row.split_from_document_id is None:
+                    row.split_from_document_id = parent.id
+                    stamped = True
+                child_ids[i] = row.id
+        if stamped:
+            await db.commit()
 
     loop = asyncio.get_running_loop()
     for i, piece in enumerate(pieces):
@@ -275,6 +345,10 @@ async def execute_split(
                 f"part {i + 1} ({names[i]!r}) not ingested: "
                 f"{result.status.value}/{result.detail}"
             )
+        # Persist the resolution so a later resume never depends on
+        # re-rendering byte-identical bytes (pdfium output is not
+        # run-deterministic) nor on filename matching alone.
+        await _record_child_id(db, plan_row, i, child_ids[i])
 
     # Archive LAST — only when every piece is accounted for. 'done' settles the
     # Paperless leg explicitly (the reconciler additionally requires
@@ -301,10 +375,14 @@ async def execute_split(
 # ---------------------------------------------------------------------------
 
 async def _load_stored_plan(
-    db: AsyncSession, document_id: int, page_count: int
-) -> list[SplitPiece] | None:
-    """Newest APPROVED plan for this document, revalidated. A corrupt stored
-    plan is ignored (fall through to fresh detection) rather than fatal."""
+    db: AsyncSession, document_id: int
+) -> tuple[PdfSplitProposal | None, list[SplitPiece] | None]:
+    """Newest APPROVED plan for this document, revalidated against the row's
+    OWN persisted page_count (never a live pdfium probe — a transient probe
+    failure must not discard a valid plan and re-open the nondeterministic
+    detection path). A corrupt stored plan is ignored (fall through to fresh
+    detection) rather than fatal. DB errors propagate — the worker's transient
+    taxonomy PEL-retries them."""
     row = (
         await db.execute(
             select(PdfSplitProposal)
@@ -317,36 +395,42 @@ async def _load_stored_plan(
         )
     ).scalar_one_or_none()
     if row is None:
-        return None
-    pieces = validate_boundaries({"documents": row.proposal}, 1, page_count)
+        return None, None
+    if not row.page_count or row.page_count <= 0:
+        logger.warning(
+            f"pdf-split: stored plan for doc {document_id} has no page_count — "
+            f"ignoring it"
+        )
+        return row, None
+    pieces = validate_boundaries({"documents": row.proposal}, 1, row.page_count)
     if pieces is None or len(pieces) < 2:
         logger.warning(
             f"pdf-split: stored plan for doc {document_id} failed revalidation "
             f"— ignoring it"
         )
-        return None
-    return pieces
+        return row, None
+    return row, pieces
 
 
 async def _store_plan(
     db: AsyncSession, parent: Document, verdict: SplitVerdict, user_id: int | None
-) -> None:
+) -> PdfSplitProposal:
     """Persist the confident verdict BEFORE executing it, so a crash-resume
     replays THIS plan instead of re-running the nondeterministic boundary LLM
     (whose drift could silently drop pages from the resume-keyed parts)."""
-    db.add(
-        PdfSplitProposal(
-            document_id=parent.id,
-            user_id=user_id,
-            status=PDF_SPLIT_PROPOSAL_APPROVED,
-            proposal=[p.to_dict() for p in verdict.pieces],
-            page_signals=[s.to_dict() for s in verdict.page_signals],
-            page_count=verdict.page_signals[-1].page if verdict.page_signals else 0,
-            overall_confidence=verdict.min_confidence,
-            resolved_at=datetime.now(UTC).replace(tzinfo=None),
-        )
+    row = PdfSplitProposal(
+        document_id=parent.id,
+        user_id=user_id,
+        status=PDF_SPLIT_PROPOSAL_APPROVED,
+        proposal=[p.to_dict() for p in verdict.pieces],
+        page_signals=[s.to_dict() for s in verdict.page_signals],
+        page_count=verdict.page_signals[-1].page if verdict.page_signals else 0,
+        overall_confidence=verdict.min_confidence,
+        resolved_at=datetime.now(UTC).replace(tzinfo=None),
     )
+    db.add(row)
     await db.commit()
+    return row
 
 
 # ---------------------------------------------------------------------------
@@ -362,8 +446,8 @@ async def maybe_split_at_ingest(
 ) -> bool:
     """Run PDF-split detection for one enqueued document. Returns True when
     the split lifecycle now OWNS the document (split executed, or the row is
-    already in a split state) — the caller must then ACK and skip normal
-    processing. False → proceed with the normal ingest pipeline.
+    parked in a done/review split state) — the caller must then ACK and skip
+    normal processing. False → proceed with the normal ingest pipeline.
 
     Guards: ``pdf_split_enabled`` off (authoritative gate — the worker's own
     flag check only avoids the lazy import), a ``skip_split`` task param (the
@@ -372,47 +456,54 @@ async def maybe_split_at_ingest(
     would waste an LLM call per child and risk recursive re-splitting), or a
     non-PDF are all no-ops.
 
+    Lifecycle states: ``split_archived``/``split_review`` → True (parked).
+    ``split_pending`` = MID-SPLIT → resume by replaying the persisted plan; if
+    the plan is unusable, the parent is un-parked back to ``pending`` and
+    detection re-runs (loudly — the narrow re-detect residual documented in
+    the design doc).
+
     Error taxonomy: detection errors degrade to False (detection must never
     break ingest) EXCEPT transient LLM-infra failures, which raise
     :class:`SplitTransientError` so the worker PEL-retries instead of
-    permanently committing a multi-document PDF as one document. An error while
-    EXECUTING a split always propagates — falling through to normal ingest
-    after children were partially created would double-ingest the combined
-    file.
+    permanently committing a multi-document PDF as one document. Plan-lookup
+    DB errors propagate for the same reason. An error while EXECUTING a split
+    always propagates — falling through to normal ingest after children were
+    partially created would double-ingest the combined file.
     """
     if not settings.pdf_split_enabled or skip_split:
         return False
     doc = await db.get(Document, doc_id)
     if doc is None:
         return False
-    if doc.status in SPLIT_OWNED_STATUSES:
-        # Redelivery of an entry whose doc the split lifecycle already owns.
-        # (The worker also guards this OUTSIDE the flag gate — see
-        # _split_owned_status in the worker — so a flag-off rollback can't
-        # resurrect an archived parent either.)
+    if doc.status in (DOC_STATUS_SPLIT_ARCHIVED, DOC_STATUS_SPLIT_REVIEW):
+        # Parked states (done / awaiting owner review) — ack the entry.
         return True
     if doc.split_from_document_id is not None:
         return False
     if not (doc.filename or doc.file_path or "").lower().endswith(".pdf"):
         return False
 
-    # -- Resume: a persisted plan replays verbatim (never re-detect) --
-    loop = asyncio.get_running_loop()
-    try:
-        page_count = await loop.run_in_executor(
-            None, _pdfium_page_count_safe, doc.file_path
-        )
-        stored = await _load_stored_plan(db, doc.id, page_count or 10**9)
-    except Exception as e:  # noqa: BLE001 - plan lookup must not break ingest
-        logger.warning(f"pdf-split: stored-plan lookup failed for doc {doc_id}: {e}")
-        stored = None
+    # -- Resume: a persisted plan replays verbatim (never re-detect). DB
+    # errors here propagate (worker PEL-retries). --
+    plan_row, stored = await _load_stored_plan(db, doc.id)
     if stored is not None:
-        await execute_split(db, doc, stored, user_id=user_id)
+        await execute_split(db, doc, stored, user_id=user_id, plan_row=plan_row)
         return True
+    if doc.status == DOC_STATUS_SPLIT_PENDING:
+        # Mid-split but the plan is unusable (corrupt / missing — should not
+        # happen given the store-then-stamp order). Un-park and re-detect
+        # loudly rather than stranding the doc.
+        logger.warning(
+            f"pdf-split: doc {doc.id} is mid-split but has no usable stored "
+            f"plan — un-parking for fresh detection"
+        )
+        doc.status = DOC_STATUS_PENDING
+        await db.commit()
 
     # -- Detection (best-effort; failures → single-document status quo,
     #    transient LLM failures → SplitTransientError, see docstring) --
     try:
+        loop = asyncio.get_running_loop()
         signals = await loop.run_in_executor(
             None, extract_page_signals, doc.file_path
         )
@@ -448,13 +539,9 @@ async def maybe_split_at_ingest(
         )
         return False
 
-    # -- Execution: persist the plan FIRST, then execute (NOT swallowed) --
-    await _store_plan(db, doc, verdict, user_id)
-    await execute_split(db, doc, verdict.pieces, user_id=user_id)
+    # -- Execution: persist the plan FIRST (crash-resume determinism), then
+    #    execute — which stamps split_pending before the first child (NOT
+    #    swallowed; see docstring) --
+    plan_row = await _store_plan(db, doc, verdict, user_id)
+    await execute_split(db, doc, verdict.pieces, user_id=user_id, plan_row=plan_row)
     return True
-
-
-def _pdfium_page_count_safe(file_path: str) -> int | None:
-    from services.pdf_split_detector import _pdfium_page_count
-
-    return _pdfium_page_count(file_path)

@@ -34,28 +34,50 @@ class SplitTransientError(SplitExecutionError):
     as transient (it is listed in ``_TRANSIENT_EXC``)."""
 
 
-# LLM-client infrastructure blips during boundary detection. Deliberately a
-# subset of the worker's _TRANSIENT_EXC: detection talks only to the LLM host,
-# so DB/Redis exception types are not wrapped here (they propagate raw and the
-# worker classifies them itself).
-_LLM_TRANSIENT_EXC: tuple[type[BaseException], ...] = (
-    asyncio.TimeoutError,
-    httpx.ConnectError,
-    httpx.ConnectTimeout,
-    httpx.ReadTimeout,
-    httpx.WriteTimeout,
-    httpx.PoolTimeout,
-    httpx.RemoteProtocolError,
-)
-
-
 def is_llm_transient(exc: BaseException) -> bool:
     """True when a boundary-detection failure is an infra blip that warrants a
-    PEL retry instead of silently committing a single-document verdict."""
-    if isinstance(exc, _LLM_TRANSIENT_EXC):
-        return True
-    if _OllamaResponseError is not None and isinstance(exc, _OllamaResponseError):
-        # 5xx = host reachable but degraded (model loading, gateway) → retry;
-        # 4xx = config/data error → terminal for the detection attempt.
-        return getattr(exc, "status_code", 0) >= 500
+    PEL retry instead of silently committing a single-document verdict.
+
+    Covers BOTH production LLM client shapes (mirrors
+    ``utils.llm_client._should_fallback``'s classification):
+
+    - the OpenAI-compat client (``LLM_OPENAI_BASE_URL`` → cuda.local
+      llama-server, the deployment's documented recurring outage) raises
+      ``openai.APIConnectionError``/``APITimeoutError`` (timeout is a SUBCLASS
+      of connection-error) and ``openai.APIStatusError`` — often with the raw
+      httpx error only chained via ``__cause__``, so the chain is walked;
+    - the bare ollama client raises httpx transport errors directly, or
+      ``ollama.ResponseError`` with a status code.
+
+    Unlike ``_should_fallback`` (which deliberately keeps read/pool timeouts on
+    the primary), ANY timeout is transient here: for detection the alternative
+    to a retry is a PERMANENT wrong single-document verdict, not a degraded
+    answer. 4xx statuses stay terminal (our own bad request — retrying can't
+    fix it, and the single-doc fallback is the safe outcome).
+    """
+    try:
+        import openai
+    except Exception:  # noqa: BLE001 - classification degrades gracefully
+        openai = None  # type: ignore[assignment]
+
+    seen: set[int] = set()
+    e: BaseException | None = exc
+    while e is not None and id(e) not in seen:
+        seen.add(id(e))
+        if isinstance(e, (asyncio.TimeoutError, ConnectionError)):
+            return True
+        # httpx.TransportError covers Connect/Read/Write/Pool timeouts AND
+        # ConnectError/ReadError/WriteError/RemoteProtocolError.
+        if isinstance(e, httpx.TransportError):
+            return True
+        if _OllamaResponseError is not None and isinstance(e, _OllamaResponseError):
+            # 5xx = host reachable but degraded (model loading, gateway) →
+            # retry; 4xx = config/data error → terminal for this attempt.
+            return getattr(e, "status_code", 0) >= 500
+        if openai is not None:
+            if isinstance(e, openai.APIConnectionError):
+                return True
+            if isinstance(e, openai.APIStatusError):
+                return getattr(e, "status_code", 0) >= 500
+        e = e.__cause__
     return False

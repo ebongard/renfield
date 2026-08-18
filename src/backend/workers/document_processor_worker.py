@@ -42,8 +42,10 @@ from sqlalchemy import delete, text
 from sqlalchemy.exc import DisconnectionError, InterfaceError, OperationalError
 
 from models.database import (
-    DOC_SPLIT_OWNED_STATUSES,
     DOC_STATUS_FAILED,
+    DOC_STATUS_SPLIT_ARCHIVED,
+    DOC_STATUS_SPLIT_PENDING,
+    DOC_STATUS_SPLIT_REVIEW,
     Document,
     DocumentChunk,
 )
@@ -266,7 +268,9 @@ async def _process_entry(
                     {"id": doc_id},
                 )
             ).scalar_one_or_none()
-            if doc_status in DOC_SPLIT_OWNED_STATUSES:
+            if doc_status in (DOC_STATUS_SPLIT_ARCHIVED, DOC_STATUS_SPLIT_REVIEW):
+                # Parked states (split done / awaiting owner review): drop the
+                # entry.
                 await queue.ack(entry.entry_id)
                 await _clear_transient(redis, entry.entry_id)
                 logger.info(
@@ -275,6 +279,38 @@ async def _process_entry(
                     f"(entry {entry.entry_id}, trigger {trigger})"
                 )
                 return
+            if doc_status == DOC_STATUS_SPLIT_PENDING:
+                # MID-SPLIT (children may already exist). With the flag on,
+                # the pre-stage below resumes the persisted plan. With the
+                # flag off (incident rollback), PARK the entry in the PEL —
+                # never normal-ingest the combined parent, never drop the
+                # entry (re-enabling the flag lets the next reclaim resume).
+                # Recorded as a clean transient leave so redeliveries don't
+                # burn the OOM-poison budget.
+                if trigger == "user_reindex" or not settings.pdf_split_enabled:
+                    if trigger == "user_reindex":
+                        # A reindex must not resume/replay a split; drop it.
+                        await queue.ack(entry.entry_id)
+                        logger.info(
+                            f"doc {doc_id}: mid-split — user_reindex refused "
+                            f"(entry {entry.entry_id})"
+                        )
+                        return
+                    try:
+                        tkey = _transient_key(entry.entry_id)
+                        await redis.incr(tkey)
+                        await redis.expire(tkey, 86_400)
+                    except Exception as ie:  # noqa: BLE001 - best-effort
+                        logger.debug(
+                            f"transient-counter incr failed for {entry.entry_id}: {ie}"
+                        )
+                    logger.warning(
+                        f"doc {doc_id}: MID-SPLIT but PDF_SPLIT_ENABLED is "
+                        f"off — parking entry {entry.entry_id} in the PEL "
+                        f"(re-enable the flag to resume the split; the "
+                        f"combined parent is NOT normally ingested)"
+                    )
+                    return  # no ack — reclaim redelivers
 
             if trigger == "user_reindex":
                 # Async reindex: ALWAYS reprocess. reindex_document purges the

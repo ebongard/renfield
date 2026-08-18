@@ -18,7 +18,6 @@ import pytest
 import workers.document_processor_worker as worker
 
 import services.pdf_splitter as pdf_splitter
-from models.database import DOC_SPLIT_OWNED_STATUSES
 
 pytestmark = [pytest.mark.unit, pytest.mark.asyncio]
 
@@ -86,14 +85,14 @@ async def test_flag_off_never_touches_split_module(monkeypatch):
     queue.ack.assert_awaited_once_with("1-0")
 
 
-@pytest.mark.parametrize("status", list(DOC_SPLIT_OWNED_STATUSES))
+@pytest.mark.parametrize("status", ["split_archived", "split_review"])
 @pytest.mark.parametrize("flag", [True, False])
-async def test_split_owned_status_acked_regardless_of_flag(monkeypatch, status, flag):
-    """THE rollback-safety property: a doc owned by the split lifecycle is
-    acked without processing even with PDF_SPLIT_ENABLED=false — otherwise a
-    flag-off incident rollback would re-ingest the archived combined PDF on a
-    redelivered entry."""
-    rag, queue, redis, maybe_split = _wire(
+async def test_parked_split_status_acked_regardless_of_flag(monkeypatch, status, flag):
+    """THE rollback-safety property: a PARKED split doc (archived / awaiting
+    review) is acked without processing even with PDF_SPLIT_ENABLED=false —
+    otherwise a flag-off incident rollback would re-ingest the archived
+    combined PDF on a redelivered entry."""
+    rag, queue, redis, _ = _wire(
         monkeypatch, split_enabled=flag, doc_status=status
     )
 
@@ -103,12 +102,47 @@ async def test_split_owned_status_acked_regardless_of_flag(monkeypatch, status, 
     queue.ack.assert_awaited_once_with("1-0")
 
 
-async def test_user_reindex_refuses_split_owned_doc(monkeypatch):
-    """A user_reindex on an archived parent must NOT rebuild chunks for the
-    combined original (it would resurrect it in retrieval next to its
-    children)."""
+async def test_mid_split_flag_off_parks_entry_in_pel(monkeypatch):
+    """A MID-SPLIT parent (split_pending — children may already exist) under a
+    flag-off rollback is PARKED: no ack (reclaim redelivers, so re-enabling
+    the flag resumes the split), no normal ingest of the combined parent, and
+    a clean transient leave so redeliveries don't burn the poison budget."""
+    rag, queue, redis, maybe_split = _wire(
+        monkeypatch, split_enabled=False, doc_status="split_pending"
+    )
+    redis.incr = AsyncMock()
+    redis.expire = AsyncMock()
+
+    await worker._process_entry(redis, queue, _entry())
+
+    rag.process_existing_document.assert_not_called()
+    maybe_split.assert_not_called()
+    queue.ack.assert_not_called()  # stays in PEL
+    redis.incr.assert_awaited_once()  # clean transient leave recorded
+
+
+async def test_mid_split_flag_on_resumes_via_prestage(monkeypatch):
+    """split_pending with the flag ON falls through to the pre-stage, which
+    resumes the persisted plan."""
+    rag, queue, redis, maybe_split = _wire(
+        monkeypatch, split_enabled=True, split_result=True,
+        doc_status="split_pending",
+    )
+
+    await worker._process_entry(redis, queue, _entry())
+
+    maybe_split.assert_awaited_once()
+    rag.process_existing_document.assert_not_called()
+    queue.ack.assert_awaited_once_with("1-0")
+
+
+@pytest.mark.parametrize("status", ["split_archived", "split_pending"])
+async def test_user_reindex_refuses_split_owned_doc(monkeypatch, status):
+    """A user_reindex on an archived OR mid-split parent must NOT rebuild
+    chunks for the combined original (it would resurrect it in retrieval next
+    to its children)."""
     rag, queue, redis, _ = _wire(
-        monkeypatch, split_enabled=False, doc_status="split_archived"
+        monkeypatch, split_enabled=False, doc_status=status
     )
 
     await worker._process_entry(redis, queue, _entry(trigger="user_reindex"))

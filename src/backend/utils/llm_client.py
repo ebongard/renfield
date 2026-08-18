@@ -806,6 +806,19 @@ def parse_llm_json(raw: str) -> dict | None:
     if not raw:
         return None
     text = raw.strip()
+    # A fenced JSON block ANYWHERE wins first: a prose preamble may contain a
+    # stray '{' that would poison the first-brace slice below (e.g.
+    # "Analyse: {mehrere} Dokumente.\n```json\n{...}\n```").
+    import re as _re
+
+    fence = _re.search(r"```(?:json)?\s*(\{.*?\})\s*```", text, _re.DOTALL)
+    if fence:
+        try:
+            parsed = json.loads(fence.group(1))
+            if isinstance(parsed, dict):
+                return parsed
+        except json.JSONDecodeError:
+            pass  # fall through to the slice + salvage path
     if text.startswith("```"):
         nl = text.find("\n")
         if nl >= 0:

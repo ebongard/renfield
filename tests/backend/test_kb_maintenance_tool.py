@@ -392,3 +392,48 @@ async def test_list_chunkless_truncated(monkeypatch):
     out = await kb.list_chunkless_documents({"limit": 2})
     assert out["data"]["truncated"] is True and out["data"]["total"] == 100
     assert "zeige 2 von 100" in out["message"]
+
+
+@pytest.mark.asyncio
+async def test_ingest_status_reports_split_lifecycle(monkeypatch):
+    """Split-parked documents must not vanish from the narrative (status
+    contract): archived combined originals + split-lane in-flight rows get
+    their own 'PDF-Split:' sentence, and the raw group-by carries them."""
+    cm, _ = _session([
+        _all_result([
+            ("completed", 10),
+            ("split_archived", 2),
+            ("split_pending", 1),
+            ("split_review", 1),
+        ]),
+        _scalar_result(0),
+        _scalar_result(0),
+        _all_result([("done", 12)]),
+    ])
+    monkeypatch.setattr(kb, "AsyncSessionLocal", cm)
+    monkeypatch.setattr(
+        "services.redis_client.get_redis", MagicMock(side_effect=RuntimeError("no redis")))
+
+    out = await kb.ingest_status({})
+
+    assert out["data"]["documents_by_status"]["split_archived"] == 2
+    assert "PDF-Split:" in out["message"]
+    assert "2 kombinierte Original-PDF(s)" in out["message"]
+    assert "2 PDF(s) in der Split-Prüfung/-Verarbeitung" in out["message"]
+
+
+@pytest.mark.asyncio
+async def test_ingest_status_no_split_line_when_no_split_docs(monkeypatch):
+    cm, _ = _session([
+        _all_result([("completed", 10)]),
+        _scalar_result(0),
+        _scalar_result(0),
+        _all_result([("done", 10)]),
+    ])
+    monkeypatch.setattr(kb, "AsyncSessionLocal", cm)
+    monkeypatch.setattr(
+        "services.redis_client.get_redis", MagicMock(side_effect=RuntimeError("no redis")))
+
+    out = await kb.ingest_status({})
+
+    assert "PDF-Split:" not in out["message"]

@@ -229,7 +229,9 @@ async def test_execute_split_failed_part_raises_terminal_and_leaves_parent(monke
         await execute_split(db, parent, [_piece(1, 2), _piece(3, 5)])
 
     assert not isinstance(exc.value, SplitTransientError)  # genuinely terminal
-    assert parent.status == DOC_STATUS_PENDING  # NOT archived
+    # NOT archived — parked mid-split (the flag-independent worker guard
+    # protects this state against normal ingest)
+    assert parent.status == DOC_STATUS_SPLIT_PENDING
 
 
 async def test_execute_split_retry_part_raises_transient(monkeypatch):
@@ -246,7 +248,8 @@ async def test_execute_split_retry_part_raises_transient(monkeypatch):
     with pytest.raises(SplitTransientError):
         await execute_split(db, parent, [_piece(1, 2), _piece(3, 5)])
 
-    assert parent.status == DOC_STATUS_PENDING  # NOT archived, NOT failed
+    # NOT archived, NOT failed — parked mid-split for the PEL retry
+    assert parent.status == DOC_STATUS_SPLIT_PENDING
 
 
 async def test_execute_split_duplicate_part_counts_as_covered(monkeypatch):
@@ -354,13 +357,12 @@ def _wire_prestage(
     monkeypatch.setattr(ps.settings, "pdf_split_auto_threshold", threshold)
     db = _db()
     db.get = AsyncMock(return_value=doc)
+    plan_row = SimpleNamespace(id=1) if stored_plan is not None else None
     monkeypatch.setattr(
-        ps, "_pdfium_page_count_safe", MagicMock(return_value=9)
+        ps, "_load_stored_plan", AsyncMock(return_value=(plan_row, stored_plan))
     )
-    monkeypatch.setattr(
-        ps, "_load_stored_plan", AsyncMock(return_value=stored_plan)
-    )
-    store = AsyncMock()
+    store_row = SimpleNamespace(id=2)
+    store = AsyncMock(return_value=store_row)
     monkeypatch.setattr(ps, "_store_plan", store)
     monkeypatch.setattr(
         ps, "extract_page_signals", MagicMock(return_value=signals or [])
@@ -417,12 +419,11 @@ async def test_prestage_missing_doc_is_noop(monkeypatch):
 
 
 @pytest.mark.parametrize(
-    "status",
-    [DOC_STATUS_SPLIT_ARCHIVED, DOC_STATUS_SPLIT_PENDING, DOC_STATUS_SPLIT_REVIEW],
+    "status", [DOC_STATUS_SPLIT_ARCHIVED, DOC_STATUS_SPLIT_REVIEW]
 )
-async def test_prestage_split_owned_states_are_acked(monkeypatch, status):
-    """A redelivered entry for a doc the split lifecycle owns → True (ack,
-    skip normal processing) WITHOUT re-running detection."""
+async def test_prestage_parked_states_are_acked(monkeypatch, status):
+    """A redelivered entry for a PARKED doc (archived / awaiting review) →
+    True (ack, skip normal processing) WITHOUT re-running detection."""
     db, execute, _ = _wire_prestage(monkeypatch, doc=_parent(status=status))
     detector = MagicMock()
     monkeypatch.setattr(ps, "extract_page_signals", detector)
@@ -438,7 +439,7 @@ async def test_prestage_stored_plan_replays_without_detection(monkeypatch):
     nondeterministic boundary LLM must NOT run again (its drift could silently
     drop pages from the resume-keyed parts)."""
     plan = [_piece(1, 2), _piece(3, 5)]
-    doc = _parent()
+    doc = _parent(status=DOC_STATUS_SPLIT_PENDING)
     db, execute, store = _wire_prestage(monkeypatch, doc=doc, stored_plan=plan)
     detector = MagicMock()
     monkeypatch.setattr(ps, "extract_page_signals", detector)
@@ -449,6 +450,24 @@ async def test_prestage_stored_plan_replays_without_detection(monkeypatch):
     store.assert_not_called()  # no second plan row
     execute.assert_awaited_once()
     assert execute.await_args.args[2] == plan
+    assert execute.await_args.kwargs["plan_row"] is not None
+
+
+async def test_prestage_mid_split_without_plan_unparks_and_redetects(monkeypatch):
+    """split_pending with NO usable stored plan (corrupt / lost) must not
+    strand the doc: it is un-parked back to pending and re-detected loudly."""
+    doc = _parent(status=DOC_STATUS_SPLIT_PENDING)
+    db, execute, _ = _wire_prestage(
+        monkeypatch,
+        doc=doc,
+        signals=[_sig(1), _sig(2)],
+        verdict=SplitVerdict(kind=VERDICT_SINGLE),
+    )
+
+    assert await maybe_split_at_ingest(db, 7) is False  # single verdict now
+
+    assert doc.status == DOC_STATUS_PENDING  # un-parked
+    execute.assert_not_called()
 
 
 async def test_prestage_detection_error_falls_through(monkeypatch):
@@ -473,6 +492,25 @@ async def test_prestage_transient_llm_error_propagates(monkeypatch):
     )
 
     with pytest.raises(SplitTransientError):
+        await maybe_split_at_ingest(db, 7)
+
+    execute.assert_not_called()
+
+
+async def test_prestage_plan_lookup_db_error_propagates(monkeypatch):
+    """A DB error during the stored-plan SELECT is transient infrastructure —
+    it must propagate for a worker PEL retry, NOT degrade into fresh
+    (nondeterministic) re-detection."""
+    from sqlalchemy.exc import OperationalError
+
+    db, execute, _ = _wire_prestage(monkeypatch, doc=_parent())
+    monkeypatch.setattr(
+        ps,
+        "_load_stored_plan",
+        AsyncMock(side_effect=OperationalError("SELECT", {}, Exception("blip"))),
+    )
+
+    with pytest.raises(OperationalError):
         await maybe_split_at_ingest(db, 7)
 
     execute.assert_not_called()
@@ -533,6 +571,7 @@ async def test_prestage_confident_multi_stores_plan_then_executes(monkeypatch):
     assert args[1] is doc
     assert args[2] == verdict.pieces
     assert kwargs["user_id"] == 5
+    assert kwargs["plan_row"] is store.return_value  # resolutions recorded on it
 
 
 async def test_prestage_execution_error_propagates(monkeypatch):
@@ -552,21 +591,73 @@ async def test_prestage_execution_error_propagates(monkeypatch):
 # stored-plan loading (validation against the real validate_boundaries)
 # ---------------------------------------------------------------------------
 
-async def test_load_stored_plan_revalidates_and_rejects_corrupt(monkeypatch):
+async def test_load_stored_plan_validates_against_row_page_count(monkeypatch):
+    """Revalidation uses the ROW's persisted page_count — never a live pdfium
+    probe whose transient failure would discard a valid plan and re-open the
+    nondeterministic detection path."""
     row = SimpleNamespace(
+        page_count=5,
         proposal=[
             {"start_page": 1, "end_page": 2, "title": "A", "doc_type": "", "confidence": 0.9},
             {"start_page": 3, "end_page": 5, "title": "B", "doc_type": "", "confidence": 0.9},
-        ]
+        ],
     )
     db = _db()
     result = MagicMock()
     result.scalar_one_or_none.return_value = row
     db.execute = AsyncMock(return_value=result)
 
-    pieces = await ps._load_stored_plan(db, 7, 5)
+    got_row, pieces = await ps._load_stored_plan(db, 7)
+    assert got_row is row
     assert [(p.start_page, p.end_page) for p in pieces] == [(1, 2), (3, 5)]
 
     # corrupt plan (coverage gap) → ignored, not fatal
     row.proposal = [{"start_page": 1, "end_page": 1}]
-    assert await ps._load_stored_plan(db, 7, 5) is None
+    got_row, pieces = await ps._load_stored_plan(db, 7)
+    assert got_row is row and pieces is None
+
+    # missing page_count → cannot validate → ignored
+    row.page_count = 0
+    _, pieces = await ps._load_stored_plan(db, 7)
+    assert pieces is None
+
+
+# ---------------------------------------------------------------------------
+# persisted per-part resolutions (resume never re-renders resolved parts)
+# ---------------------------------------------------------------------------
+
+async def test_execute_split_uses_recorded_resolutions_on_resume(monkeypatch):
+    """A part resolved in run 1 (recorded document_id on the plan row) is
+    NEVER re-rendered on resume — pdfium bytes are not run-deterministic, so
+    re-rendering a DUPLICATE-covered part would mint a near-duplicate child."""
+    db = _db()
+    parent = _parent()
+    plan_row = SimpleNamespace(
+        proposal=[
+            {"start_page": 1, "end_page": 2, "document_id": 55},  # resolved run 1
+            {"start_page": 3, "end_page": 5},
+        ]
+    )
+    resolved_doc = SimpleNamespace(id=55)
+    new_child = SimpleNamespace(id=102, split_from_document_id=None)
+
+    async def fake_get(model, pk):
+        return {55: resolved_doc, 102: new_child}.get(pk)
+
+    db.get = AsyncMock(side_effect=fake_get)
+    calls = _wire_split(
+        monkeypatch,
+        ingest_results=[IngestResult(IngestStatus.INGESTED, document_id=102)],
+    )
+
+    out = await execute_split(
+        db, parent, [_piece(1, 2), _piece(3, 5)], plan_row=plan_row
+    )
+
+    assert out == [55, 102]
+    assert len(calls["ingest"]) == 1  # only the unresolved part
+    assert [
+        (p.start_page, p.end_page) for c in calls["split_calls"] for p in c
+    ] == [(3, 5)]
+    # the newly resolved part was recorded too
+    assert plan_row.proposal[1]["document_id"] == 102

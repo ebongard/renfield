@@ -341,3 +341,81 @@ class TestSnippets:
 
     def test_whitespace_squashed(self):
         assert det._snippet("a\t\t b   c") == "a b c"
+
+
+# ---------------------------------------------------------------------------
+# shared parse_llm_json + transient classifier (regression coverage for the
+# /review findings on the fix commit)
+# ---------------------------------------------------------------------------
+
+class TestSharedParseLlmJson:
+    def test_fenced_json_after_prose_with_braces(self):
+        # The detector's old fence-anywhere tolerance must survive the move to
+        # the shared parser: a prose preamble containing a stray '{' before
+        # the fenced JSON must not poison the parse.
+        from utils.llm_client import parse_llm_json
+
+        raw = (
+            'Analyse: die Datei enthält {mehrere} Dokumente.\n'
+            '```json\n{"documents": [{"start_page": 1, "end_page": 2}]}\n```'
+        )
+        parsed = parse_llm_json(raw)
+        assert parsed == {"documents": [{"start_page": 1, "end_page": 2}]}
+
+    def test_truncated_payload_salvages_leading_entries(self):
+        from utils.llm_client import parse_llm_json
+
+        raw = (
+            '{"documents": [{"start_page": 1, "end_page": 2, "confidence": 0.9},'
+            ' {"start_page": 3, "end_'
+        )
+        parsed = parse_llm_json(raw)
+        assert parsed is not None
+        assert parsed["documents"][0]["end_page"] == 2
+
+
+class TestIsLlmTransient:
+    def test_httpx_transport_errors_are_transient(self):
+        import httpx
+
+        from services.pdf_split_errors import is_llm_transient
+
+        assert is_llm_transient(httpx.ConnectError("down")) is True
+        assert is_llm_transient(httpx.ReadTimeout("slow")) is True
+        assert is_llm_transient(httpx.ReadError("dropped")) is True
+
+    def test_plain_exceptions_are_terminal(self):
+        from services.pdf_split_errors import is_llm_transient
+
+        assert is_llm_transient(ValueError("bad")) is False
+        assert is_llm_transient(RuntimeError("bug")) is False
+
+    def test_openai_client_shapes(self):
+        # Prod uses the OpenAI-compat client (LLM_OPENAI_BASE_URL →
+        # llama-server): its exceptions must classify transient, including
+        # when the httpx cause is only chained via __cause__.
+        openai = pytest.importorskip("openai")
+        import httpx
+
+        from services.pdf_split_errors import is_llm_transient
+
+        req = httpx.Request("POST", "http://cuda.local/v1/chat/completions")
+        conn = openai.APIConnectionError(request=req)
+        assert is_llm_transient(conn) is True
+
+        # httpx cause chained under a generic wrapper
+        wrapper = RuntimeError("boundary call failed")
+        wrapper.__cause__ = httpx.ConnectTimeout("no route")
+        assert is_llm_transient(wrapper) is True
+
+        resp_503 = httpx.Response(503, request=req)
+        status_503 = openai.APIStatusError(
+            "cold model", response=resp_503, body=None
+        )
+        assert is_llm_transient(status_503) is True
+
+        resp_400 = httpx.Response(400, request=req)
+        status_400 = openai.APIStatusError(
+            "bad request", response=resp_400, body=None
+        )
+        assert is_llm_transient(status_400) is False
