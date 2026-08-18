@@ -115,6 +115,7 @@ async def test_approve_as_is_enqueues_worker_execution(
     resp = await async_client.post(f"/api/pdf-split/proposals/{row.id}/approve")
 
     assert resp.status_code == 200
+    assert resp.json()["status"] == PDF_SPLIT_PROPOSAL_APPROVED  # not stale 'pending'
     await db_session.refresh(row)
     await db_session.refresh(doc)
     assert row.status == PDF_SPLIT_PROPOSAL_APPROVED

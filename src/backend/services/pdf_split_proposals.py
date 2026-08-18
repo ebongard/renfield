@@ -247,6 +247,9 @@ async def approve_proposal(
         raise ProposalStateError("parent document no longer exists")
     parent.status = DOC_STATUS_SPLIT_PENDING
     await db.commit()
+    # The conditional UPDATE bypassed the ORM — sync the in-session row so the
+    # caller's response reflects the resolved state, not stale 'pending'.
+    await db.refresh(row)
 
     await _enqueue_parent(db, row.document_id, resolved_by, skip_split=False)
 
@@ -282,6 +285,7 @@ async def reject_proposal(
         raise ProposalStateError("parent document no longer exists")
     parent.status = DOC_STATUS_PENDING
     await db.commit()
+    await db.refresh(row)  # sync past the raw conditional UPDATE (see approve)
 
     await _enqueue_parent(db, row.document_id, resolved_by, skip_split=True)
 
