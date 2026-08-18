@@ -260,7 +260,12 @@ async def _process_entry(
         try:
             fkey = _flagpark_key(entry.entry_id)
             await redis.incr(fkey)
-            await redis.expire(fkey, 86_400)
+            # 7d TTL: a multi-day incident rollback must not let the counter
+            # expire while delivery_count keeps growing (an inflated
+            # crash_count would hand back a healthy parked entry). Residual:
+            # a rollback longer than 7d may single-ingest parked docs — the
+            # safe fail-safe outcome, not data loss.
+            await redis.expire(fkey, 604_800)
         except Exception as ie:  # noqa: BLE001
             logger.debug(f"flagpark-counter incr failed: {ie}")
         logger.warning(
@@ -320,7 +325,7 @@ async def _process_entry(
             try:
                 tkey = _transient_key(entry.entry_id)
                 await redis.incr(tkey)
-                await redis.expire(tkey, 86_400)
+                await redis.expire(tkey, 604_800)  # 7d — see flagpark TTL note
             except Exception as ie:  # noqa: BLE001
                 logger.debug(f"transient-counter incr failed: {ie}")
             logger.warning(
