@@ -25,7 +25,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 
 from loguru import logger
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm.attributes import flag_modified
 
@@ -110,7 +110,11 @@ async def create_review_proposal(
     await db.commit()
     await db.refresh(row)
 
-    await _notify_owner(db, parent, row)
+    if existing is None:
+        # Notify once per proposal — a refresh (re-detection of the same
+        # still-parked doc) must not re-fire "PDF-Prüfung wartet" (the 60s
+        # NotificationService dedup window cannot cover an hours-later refresh).
+        await _notify_owner(db, parent, row)
     return row
 
 
@@ -166,6 +170,39 @@ def _coerce_override(
     return pieces
 
 
+async def _try_mark_resolved(
+    db: AsyncSession,
+    row: PdfSplitProposal,
+    new_status: str,
+    resolved_by: int | None,
+) -> bool:
+    """Atomically flip pending → resolved (conditional UPDATE). False when a
+    concurrent resolution won — the check-then-act guard alone would silently
+    discard the losing owner's decision."""
+    result = await db.execute(
+        update(PdfSplitProposal)
+        .where(
+            PdfSplitProposal.id == row.id,
+            PdfSplitProposal.status == PDF_SPLIT_PROPOSAL_PENDING,
+        )
+        .values(
+            status=new_status,
+            resolved_at=datetime.now(UTC).replace(tzinfo=None),
+            resolved_by_user_id=resolved_by,
+        )
+    )
+    return bool(getattr(result, "rowcount", 0) == 1)
+
+
+async def _enqueue_parent(
+    db: AsyncSession, document_id: int, user_id: int | None, *, skip_split: bool
+) -> None:
+    params: dict = {"document_id": document_id, "force_ocr": False, "user_id": user_id}
+    if skip_split:
+        params["skip_split"] = True
+    await DocumentTaskQueue(redis_client=get_redis()).enqueue(params)
+
+
 async def approve_proposal(
     db: AsyncSession,
     row: PdfSplitProposal,
@@ -175,9 +212,21 @@ async def approve_proposal(
 ) -> None:
     """Approve: persist the (possibly edited) plan, park the parent
     ``split_pending`` and enqueue it — the WORKER executes the split via the
-    stored plan (full crash-safe machinery; nothing heavy in the API pod)."""
+    stored plan (full crash-safe machinery; nothing heavy in the API pod).
+
+    IDEMPOTENT retry path: an already-APPROVED proposal whose parent is still
+    parked re-enqueues without changing state — this is the recovery route for
+    a Redis blip between the commit and the original enqueue (without it the
+    doc would strand in 'split_pending' with every retry 409ing)."""
+    await db.refresh(row)
+    if row.status == PDF_SPLIT_PROPOSAL_APPROVED:
+        parent = await db.get(Document, row.document_id)
+        if parent is not None and parent.status == DOC_STATUS_SPLIT_PENDING:
+            await _enqueue_parent(db, row.document_id, resolved_by, skip_split=False)
+        return
     if row.status != PDF_SPLIT_PROPOSAL_PENDING:
         raise ProposalStateError(f"proposal is {row.status}, not pending")
+
     if documents_override is not None:
         pieces = _coerce_override(documents_override, row.page_count)
         row.proposal = [p.to_dict() for p in pieces]
@@ -189,9 +238,9 @@ async def approve_proposal(
                 "Der gespeicherte Vorschlag ist nicht mehr gültig — bitte "
                 "Bereiche anpassen."
             )
-    row.status = PDF_SPLIT_PROPOSAL_APPROVED
-    row.resolved_at = datetime.now(UTC).replace(tzinfo=None)
-    row.resolved_by_user_id = resolved_by
+    if not await _try_mark_resolved(db, row, PDF_SPLIT_PROPOSAL_APPROVED, resolved_by):
+        await db.rollback()  # discard the JSON edit — the other resolution won
+        raise ProposalStateError("proposal was resolved concurrently")
 
     parent = await db.get(Document, row.document_id)
     if parent is None:
@@ -199,9 +248,7 @@ async def approve_proposal(
     parent.status = DOC_STATUS_SPLIT_PENDING
     await db.commit()
 
-    await DocumentTaskQueue(redis_client=get_redis()).enqueue(
-        {"document_id": parent.id, "force_ocr": False, "user_id": resolved_by}
-    )
+    await _enqueue_parent(db, row.document_id, resolved_by, skip_split=False)
 
 
 async def reject_proposal(
@@ -211,12 +258,24 @@ async def reject_proposal(
     resolved_by: int | None = None,
 ) -> None:
     """Reject (treat-as-single): un-park the parent and re-enqueue it with the
-    ``skip_split`` loop-breaker → normal single-document ingest."""
+    ``skip_split`` loop-breaker → normal single-document ingest. The REJECTED
+    row stays as the durable decision record — ``maybe_split_at_ingest``
+    consults it, so a later stale/plain task can never overturn the owner's
+    choice by re-detecting.
+
+    IDEMPOTENT retry path mirrors approve: an already-REJECTED proposal whose
+    parent is still un-ingested re-enqueues without changing state."""
+    await db.refresh(row)
+    if row.status == PDF_SPLIT_PROPOSAL_REJECTED:
+        parent = await db.get(Document, row.document_id)
+        if parent is not None and parent.status == DOC_STATUS_PENDING:
+            await _enqueue_parent(db, row.document_id, resolved_by, skip_split=True)
+        return
     if row.status != PDF_SPLIT_PROPOSAL_PENDING:
         raise ProposalStateError(f"proposal is {row.status}, not pending")
-    row.status = PDF_SPLIT_PROPOSAL_REJECTED
-    row.resolved_at = datetime.now(UTC).replace(tzinfo=None)
-    row.resolved_by_user_id = resolved_by
+    if not await _try_mark_resolved(db, row, PDF_SPLIT_PROPOSAL_REJECTED, resolved_by):
+        await db.rollback()
+        raise ProposalStateError("proposal was resolved concurrently")
 
     parent = await db.get(Document, row.document_id)
     if parent is None:
@@ -224,11 +283,20 @@ async def reject_proposal(
     parent.status = DOC_STATUS_PENDING
     await db.commit()
 
-    await DocumentTaskQueue(redis_client=get_redis()).enqueue(
-        {
-            "document_id": parent.id,
-            "force_ocr": False,
-            "user_id": resolved_by,
-            "skip_split": True,
-        }
-    )
+    await _enqueue_parent(db, row.document_id, resolved_by, skip_split=True)
+
+
+async def has_rejected_proposal(db: AsyncSession, document_id: int) -> bool:
+    """Durable treat-as-single record: True when the owner has rejected a
+    split for this document. Detection consults this so a reclaimed stale
+    task or a REINGEST can never re-park (or auto-split) a document the owner
+    explicitly chose to keep whole."""
+    row_id = (
+        await db.execute(
+            select(PdfSplitProposal.id).where(
+                PdfSplitProposal.document_id == document_id,
+                PdfSplitProposal.status == PDF_SPLIT_PROPOSAL_REJECTED,
+            ).limit(1)
+        )
+    ).scalar_one_or_none()
+    return row_id is not None

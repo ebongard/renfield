@@ -76,7 +76,9 @@ def _enabled(monkeypatch):
     queue.enqueue = AsyncMock()
     monkeypatch.setattr(psp, "DocumentTaskQueue", MagicMock(return_value=queue))
     monkeypatch.setattr(psp, "get_redis", MagicMock())
-    monkeypatch.setattr("api.routes.knowledge._worker_is_alive", AsyncMock(return_value=True))
+    monkeypatch.setattr(
+        "api.routes.pdf_split.document_worker_is_alive", AsyncMock(return_value=True)
+    )
     return queue
 
 
@@ -169,22 +171,55 @@ async def test_reject_reenqueues_with_skip_split(
     assert params["skip_split"] is True
 
 
-async def test_resolved_proposal_conflicts_409(
+async def test_cross_resolution_conflicts_409(
     async_client: AsyncClient, db_session, _enabled
 ):
+    """Approving a REJECTED proposal (or rejecting an APPROVED one) is a
+    genuine conflict — the MATCHING action instead retries idempotently."""
     doc, row = await _seed(db_session)
+    row.status = PDF_SPLIT_PROPOSAL_REJECTED
+    await db_session.commit()
+
+    resp = await async_client.post(f"/api/pdf-split/proposals/{row.id}/approve")
+    assert resp.status_code == 409
+
+
+async def test_approve_retry_is_idempotent_re_enqueue(
+    async_client: AsyncClient, db_session, _enabled
+):
+    """The Redis-blip recovery route: the proposal is already APPROVED and the
+    parent still parked (the original enqueue was lost) — retrying the approve
+    re-enqueues WITHOUT state change instead of 409ing (which would strand the
+    doc in 'split_pending' forever)."""
+    doc, row = await _seed(db_session, status=DOC_STATUS_SPLIT_PENDING)
     row.status = PDF_SPLIT_PROPOSAL_APPROVED
     await db_session.commit()
 
-    for action in ("approve", "reject"):
-        resp = await async_client.post(f"/api/pdf-split/proposals/{row.id}/{action}")
-        assert resp.status_code == 409
+    resp = await async_client.post(f"/api/pdf-split/proposals/{row.id}/approve")
+
+    assert resp.status_code == 200
+    _enabled.enqueue.assert_awaited_once()
+    assert _enabled.enqueue.await_args.args[0]["document_id"] == doc.id
+
+
+async def test_reject_retry_is_idempotent_re_enqueue(
+    async_client: AsyncClient, db_session, _enabled
+):
+    doc, row = await _seed(db_session, status=DOC_STATUS_PENDING)
+    row.status = PDF_SPLIT_PROPOSAL_REJECTED
+    await db_session.commit()
+
+    resp = await async_client.post(f"/api/pdf-split/proposals/{row.id}/reject")
+
+    assert resp.status_code == 200
+    params = _enabled.enqueue.await_args.args[0]
+    assert params["skip_split"] is True
 
 
 async def test_worker_dead_is_503(async_client: AsyncClient, db_session, _enabled, monkeypatch):
     doc, row = await _seed(db_session)
     monkeypatch.setattr(
-        "api.routes.knowledge._worker_is_alive", AsyncMock(return_value=False)
+        "api.routes.pdf_split.document_worker_is_alive", AsyncMock(return_value=False)
     )
 
     resp = await async_client.post(f"/api/pdf-split/proposals/{row.id}/approve")
@@ -256,3 +291,79 @@ async def test_create_review_proposal_refreshes_existing_pending(db_session, mon
 
     assert second.id == first.id  # refreshed in place
     assert [(p["start_page"], p["end_page"]) for p in second.proposal] == [(1, 1), (2, 4)]
+
+
+async def test_notify_fires_only_for_new_proposal(db_session, monkeypatch):
+    """A refresh of the pending row (re-detection) must NOT re-fire the
+    'PDF-Prüfung wartet' notification — the 60s NotificationService dedup
+    window cannot cover an hours-later refresh."""
+    notify = AsyncMock()
+    monkeypatch.setattr(psp, "_notify_owner", notify)
+    doc = Document(
+        filename="n.pdf", file_path="/uploads/n.pdf", file_hash="h_notify",
+        status=DOC_STATUS_PENDING, circle_tier=0,
+    )
+    db_session.add(doc)
+    await db_session.commit()
+    await db_session.refresh(doc)
+
+    await psp.create_review_proposal(db_session, doc, _verdict((1, 1), (2, 2)), None)
+    await psp.create_review_proposal(db_session, doc, _verdict((1, 2), (3, 3)), None)
+
+    notify.assert_awaited_once()
+
+
+async def test_rejected_proposal_is_durable_treat_as_single(db_session, monkeypatch):
+    """has_rejected_proposal backs the detection-side guard: after an owner
+    reject, a later plain task must not re-park the document."""
+    monkeypatch.setattr(psp, "_notify_owner", AsyncMock())
+    doc = Document(
+        filename="r.pdf", file_path="/uploads/r.pdf", file_hash="h_rejdur",
+        status=DOC_STATUS_PENDING, circle_tier=0,
+    )
+    db_session.add(doc)
+    await db_session.commit()
+    await db_session.refresh(doc)
+
+    assert await psp.has_rejected_proposal(db_session, doc.id) is False
+    row = await psp.create_review_proposal(db_session, doc, _verdict((1, 1), (2, 2)), None)
+
+    queue = MagicMock()
+    queue.enqueue = AsyncMock()
+    monkeypatch.setattr(psp, "DocumentTaskQueue", MagicMock(return_value=queue))
+    monkeypatch.setattr(psp, "get_redis", MagicMock())
+    await psp.reject_proposal(db_session, row, resolved_by=None)
+
+    assert await psp.has_rejected_proposal(db_session, doc.id) is True
+
+
+async def test_ownerless_proposal_visible_to_admin_only(db_session, monkeypatch):
+    """Under AUTH_ENABLED an ownerless proposal (NULL user_id) must be
+    resolvable by an admin — otherwise the parked parent strands invisibly."""
+    from fastapi import HTTPException
+
+    from api.routes.pdf_split import _owned_proposal
+    from utils.config import settings as cfg
+
+    doc, row = await _seed(db_session)
+    row.user_id = None
+    await db_session.commit()
+    monkeypatch.setattr(cfg, "auth_enabled", True)
+
+    class _U:
+        def __init__(self, uid, perms):
+            self.id = uid
+            self._perms = perms
+
+        def get_permissions(self):
+            return self._perms
+
+    admin = _U(1, ["admin"])
+    plain = _U(2, ["kb.own"])
+
+    got = await _owned_proposal(db_session, row.id, admin)
+    assert got.id == row.id
+
+    with pytest.raises(HTTPException) as exc:
+        await _owned_proposal(db_session, row.id, plain)
+    assert exc.value.status_code == 404

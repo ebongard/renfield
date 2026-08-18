@@ -2186,6 +2186,7 @@
     "treatAsSingle": "Process as ONE document",
     "needTwoPieces": "At least 2 pieces required — otherwise process as one document.",
     "pageThumbAlt": "Preview of page {{page}}",
-    "couldNotLoad": "Could not load PDF split proposals."
+    "couldNotLoad": "Could not load PDF split proposals.",
+    "loadThumbs": "Load page previews"
   }
 }

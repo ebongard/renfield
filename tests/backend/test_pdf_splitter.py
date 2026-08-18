@@ -364,6 +364,7 @@ def _wire_prestage(
     store_row = SimpleNamespace(id=2)
     store = AsyncMock(return_value=store_row)
     monkeypatch.setattr(ps, "_store_plan", store)
+    monkeypatch.setattr(ps, "_rejection_recorded", AsyncMock(return_value=False))
     monkeypatch.setattr(
         ps, "extract_page_signals", MagicMock(return_value=signals or [])
     )
@@ -673,3 +674,17 @@ async def test_execute_split_uses_recorded_resolutions_on_resume(monkeypatch):
     ] == [(3, 5)]
     # the newly resolved part was recorded too
     assert plan_row.proposal[1]["document_id"] == 102
+
+
+async def test_prestage_honors_durable_rejection(monkeypatch):
+    """An owner-REJECTED proposal outlives its one skip_split task: any later
+    plain task for the doc must skip detection entirely (treat-as-single)."""
+    db, execute, _ = _wire_prestage(monkeypatch, doc=_parent())
+    monkeypatch.setattr(ps, "_rejection_recorded", AsyncMock(return_value=True))
+    detector = MagicMock()
+    monkeypatch.setattr(ps, "extract_page_signals", detector)
+
+    assert await maybe_split_at_ingest(db, 7) is False
+
+    detector.assert_not_called()
+    execute.assert_not_called()

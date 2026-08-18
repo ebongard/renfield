@@ -59,6 +59,17 @@ function PdfSplitProposalCard({ proposal }: { proposal: PdfSplitProposal }) {
 
   const [pieces, setPieces] = useState<PdfSplitPiece[]>(proposal.documents);
   const [dirty, setDirty] = useState(false);
+
+  // The backend REFRESHES a pending proposal in place (same row id, new
+  // ranges) when the parent is re-detected; react-query refetches but the
+  // mounted card would keep editing the stale plan. While the owner has not
+  // edited anything, mirror the latest server plan; once dirty, keep the
+  // edits (the server re-validates against the current page_count anyway).
+  useEffect(() => {
+    if (!dirty) {
+      setPieces(proposal.documents);
+    }
+  }, [proposal.documents, dirty]);
   const [showEvidence, setShowEvidence] = useState(false);
   const [boundaryInput, setBoundaryInput] = useState('');
 
@@ -251,6 +262,10 @@ function ProposalEvidence({ proposalId }: { proposalId: number }) {
   const { t } = useTranslation();
   const detail = usePdfSplitProposalDetailQuery(proposalId);
   const signals = detail.data?.page_signals ?? [];
+  // Thumbnails are opt-in: each one is an authenticated render request that
+  // opens the parent PDF server-side — auto-firing one per page would storm
+  // the backend on a large scan. Snippets alone are usually decisive.
+  const [thumbsOn, setThumbsOn] = useState(false);
 
   if (detail.isLoading) {
     return (
@@ -267,27 +282,38 @@ function ProposalEvidence({ proposalId }: { proposalId: number }) {
     );
   }
   return (
-    <ul className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-      {signals.map((s) => (
-        <li
-          key={s.page}
-          className="rounded-lg border border-gray-200 dark:border-gray-700 p-2 space-y-1"
+    <div className="space-y-2">
+      {!thumbsOn && (
+        <button
+          type="button"
+          className="btn btn-secondary text-sm"
+          onClick={() => setThumbsOn(true)}
         >
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-medium text-gray-700 dark:text-gray-200">
-              {t('pdfSplit.pageOne', { page: s.page })}
-            </span>
-            {!s.quality_ok && (
-              <Badge color="red">{t('pdfSplit.unreadable')}</Badge>
-            )}
-          </div>
-          <PageThumb proposalId={proposalId} page={s.page} />
-          <p className="text-xs text-gray-600 dark:text-gray-300 line-clamp-3 break-words">
-            {s.snippet}
-          </p>
-        </li>
-      ))}
-    </ul>
+          {t('pdfSplit.loadThumbs')}
+        </button>
+      )}
+      <ul className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+        {signals.map((s) => (
+          <li
+            key={s.page}
+            className="rounded-lg border border-gray-200 dark:border-gray-700 p-2 space-y-1"
+          >
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-medium text-gray-700 dark:text-gray-200">
+                {t('pdfSplit.pageOne', { page: s.page })}
+              </span>
+              {!s.quality_ok && (
+                <Badge color="red">{t('pdfSplit.unreadable')}</Badge>
+              )}
+            </div>
+            {thumbsOn && <PageThumb proposalId={proposalId} page={s.page} />}
+            <p className="text-xs text-gray-600 dark:text-gray-300 line-clamp-3 break-words">
+              {s.snippet}
+            </p>
+          </li>
+        ))}
+      </ul>
+    </div>
   );
 }
 

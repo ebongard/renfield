@@ -2186,6 +2186,7 @@
     "treatAsSingle": "Als EIN Dokument verarbeiten",
     "needTwoPieces": "Mindestens 2 Teilstücke nötig — sonst als ein Dokument verarbeiten.",
     "pageThumbAlt": "Vorschau Seite {{page}}",
-    "couldNotLoad": "PDF-Aufteilungsvorschläge konnten nicht geladen werden."
+    "couldNotLoad": "PDF-Aufteilungsvorschläge konnten nicht geladen werden.",
+    "loadThumbs": "Seiten-Vorschauen laden"
   }
 }

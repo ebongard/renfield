@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import io
+from concurrent.futures import ThreadPoolExecutor
 
 from fastapi import APIRouter, Depends, HTTPException, Response
 from loguru import logger
@@ -27,12 +28,14 @@ from models.database import (
 )
 from services.auth_service import get_optional_user
 from services.database import get_db
+from models.permissions import Permission, has_permission
 from services.pdf_split_proposals import (
     ProposalRangeError,
     ProposalStateError,
     approve_proposal,
     reject_proposal,
 )
+from services.task_queue import document_worker_is_alive
 from utils.config import settings
 
 router = APIRouter()
@@ -96,17 +99,37 @@ def _require_user(user: User | None) -> None:
         raise HTTPException(status_code=401, detail="Authentication required")
 
 
+def _is_admin(user: User | None) -> bool:
+    if user is None:
+        return False
+    try:
+        return has_permission(user.get_permissions(), Permission.ADMIN)
+    except Exception:  # noqa: BLE001 - permission parse must not 500 the route
+        return False
+
+
 async def _owned_proposal(
     db: AsyncSession, proposal_id: int, user: User | None
 ) -> PdfSplitProposal:
     """Ownership-gated fetch — a foreign proposal 404s (not 403: don't leak
-    existence). Single-user mode sees everything."""
+    existence). Single-user mode sees everything. An OWNERLESS proposal
+    (parent had no atom owner and the task carried no user) is visible to
+    admins — otherwise the parked parent would strand invisibly under auth."""
     row = await db.get(PdfSplitProposal, proposal_id)
     if row is None:
         raise HTTPException(status_code=404, detail="Vorschlag nicht gefunden")
     if settings.auth_enabled and user is not None and row.user_id != user.id:
-        raise HTTPException(status_code=404, detail="Vorschlag nicht gefunden")
+        if not (row.user_id is None and _is_admin(user)):
+            raise HTTPException(status_code=404, detail="Vorschlag nicht gefunden")
     return row
+
+
+async def _require_worker() -> None:
+    if not await document_worker_is_alive():
+        raise HTTPException(
+            status_code=503,
+            detail="Dokument-Worker nicht verfügbar — bitte gleich erneut versuchen.",
+        )
 
 
 def _to_response(row: PdfSplitProposal, filename: str) -> dict:
@@ -143,7 +166,11 @@ async def list_proposals(
         .order_by(PdfSplitProposal.created_at.desc())
     )
     if settings.auth_enabled and user is not None:
-        q = q.where(PdfSplitProposal.user_id == user.id)
+        owner_filter = PdfSplitProposal.user_id == user.id
+        if _is_admin(user):
+            # Ownerless proposals are the admin's to resolve (see _owned_proposal).
+            owner_filter = owner_filter | PdfSplitProposal.user_id.is_(None)
+        q = q.where(owner_filter)
     rows = (await db.execute(q)).all()
     proposals = [_to_response(row, filename) for row, filename in rows]
     return ProposalListResponse(proposals=proposals, total=len(proposals))
@@ -167,8 +194,16 @@ async def get_proposal(
     return ProposalDetailResponse(**out)
 
 
-def _render_page_png(file_path: str, page_number: int) -> bytes | None:
-    """Render ONE page of the parent PDF to PNG (blocking — executor)."""
+# Bounded, dedicated executor for page renders: pdfium renders are
+# multi-second on big scans — they must not saturate the loop's shared default
+# ThreadPoolExecutor and queue unrelated blocking offloads behind them.
+_RENDER_EXECUTOR = ThreadPoolExecutor(max_workers=2, thread_name_prefix="pdfsplit-thumb")
+
+
+def _render_page_thumb(file_path: str, page_number: int) -> bytes | None:
+    """Render ONE page of the parent PDF as a review THUMBNAIL (blocking —
+    dedicated executor). JPEG at modest scale: the UI shows it ~200px wide,
+    a lossless full-scale PNG would be 1-2 MB per page for nothing."""
     try:
         import pypdfium2 as pdfium
 
@@ -176,9 +211,9 @@ def _render_page_png(file_path: str, page_number: int) -> bytes | None:
         try:
             if page_number < 1 or page_number > len(pdf):
                 return None
-            pil = pdf[page_number - 1].render(scale=1.5).to_pil()
+            pil = pdf[page_number - 1].render(scale=1.0).to_pil().convert("RGB")
             buf = io.BytesIO()
-            pil.save(buf, format="PNG")
+            pil.save(buf, format="JPEG", quality=75)
             return buf.getvalue()
         finally:
             pdf.close()
@@ -203,14 +238,14 @@ async def get_proposal_page(
     if doc is None:
         raise HTTPException(status_code=404, detail="Dokument nicht gefunden")
     loop = asyncio.get_running_loop()
-    png = await loop.run_in_executor(
-        None, _render_page_png, doc.file_path, page_number
+    data = await loop.run_in_executor(
+        _RENDER_EXECUTOR, _render_page_thumb, doc.file_path, page_number
     )
-    if png is None:
+    if data is None:
         raise HTTPException(status_code=404, detail="Seite nicht gefunden")
     return Response(
-        content=png,
-        media_type="image/png",
+        content=data,
+        media_type="image/jpeg",
         headers={"Cache-Control": "private, max-age=3600"},
     )
 
@@ -227,13 +262,7 @@ async def approve(
     _require_enabled()
     _require_user(user)
     row = await _owned_proposal(db, proposal_id, user)
-    from api.routes.knowledge import _worker_is_alive
-
-    if not await _worker_is_alive():
-        raise HTTPException(
-            status_code=503,
-            detail="Dokument-Worker nicht verfügbar — bitte gleich erneut versuchen.",
-        )
+    await _require_worker()
     override = (
         [p.model_dump() for p in body.documents]
         if body and body.documents is not None
@@ -264,13 +293,7 @@ async def reject(
     _require_enabled()
     _require_user(user)
     row = await _owned_proposal(db, proposal_id, user)
-    from api.routes.knowledge import _worker_is_alive
-
-    if not await _worker_is_alive():
-        raise HTTPException(
-            status_code=503,
-            detail="Dokument-Worker nicht verfügbar — bitte gleich erneut versuchen.",
-        )
+    await _require_worker()
     try:
         await reject_proposal(db, row, resolved_by=user.id if user else None)
     except ProposalStateError as e:

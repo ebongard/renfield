@@ -29,24 +29,14 @@ from services.redis_client import get_redis
 from services.task_queue import DocumentTaskQueue
 from utils.config import settings
 
-# Worker liveness key. Written every 30 s by the document-worker pod with
-# a 90 s TTL. If missing when the flag is on, we 503 the upload rather than
-# enqueue into a stream nobody's consuming.
-_WORKER_HEARTBEAT_KEY = "renfield:worker:document:heartbeat"
-
-
-async def _worker_is_alive() -> bool:
-    """Check the Redis heartbeat key. Returns True if a worker has
-    refreshed it within the TTL window."""
-    redis = get_redis()
-    try:
-        value = await redis.get(_WORKER_HEARTBEAT_KEY)
-    except Exception as e:
-        # Redis outage masks the worker's real state; treat as dead so we
-        # fail loudly rather than silently enqueue into a broken Redis.
-        logger.warning(f"heartbeat check failed: {e}; treating worker as unavailable")
-        return False
-    return value is not None
+# Worker liveness moved to services/task_queue.py (document_worker_is_alive) —
+# it had grown four underscore-private cross-module importers. The local names
+# stay as thin delegates so those importers (chat_upload, folder_ingest,
+# kb_maintenance_tool, pdf-split) and the tests keep working unchanged.
+from services.task_queue import (  # noqa: E402
+    DOCUMENT_WORKER_HEARTBEAT_KEY as _WORKER_HEARTBEAT_KEY,
+)
+from services.task_queue import document_worker_is_alive as _worker_is_alive
 
 
 async def _augment_with_progress(

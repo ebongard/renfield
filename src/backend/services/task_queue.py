@@ -393,3 +393,29 @@ class MeetingTaskQueue(DocumentTaskQueue):
             group_name=self.DEFAULT_GROUP,
             visibility_ms=visibility_ms,
         )
+
+
+# ---------------------------------------------------------------------------
+# Document-worker liveness (shared)
+# ---------------------------------------------------------------------------
+
+# Written every 30 s by the document-worker pod with a 90 s TTL (see
+# workers/document_processor_worker.HEARTBEAT_KEY). Absent → no consumer is
+# draining the stream, so callers should 503 instead of enqueueing into a
+# queue nobody reads. Promoted here from api/routes/knowledge.py (which now
+# delegates) — it had grown four underscore-private cross-module importers.
+DOCUMENT_WORKER_HEARTBEAT_KEY = "renfield:worker:document:heartbeat"
+
+
+async def document_worker_is_alive() -> bool:
+    """True when a document worker refreshed its heartbeat within the TTL."""
+    from services.redis_client import get_redis
+
+    try:
+        value = await get_redis().get(DOCUMENT_WORKER_HEARTBEAT_KEY)
+    except Exception as e:  # noqa: BLE001
+        # A Redis outage masks the worker's real state; treat as dead so we
+        # fail loudly rather than silently enqueue into a broken Redis.
+        logger.warning(f"heartbeat check failed: {e}; treating worker as unavailable")
+        return False
+    return value is not None

@@ -500,6 +500,16 @@ async def maybe_split_at_ingest(
         doc.status = DOC_STATUS_PENDING
         await db.commit()
 
+    # -- Durable treat-as-single: an owner-REJECTED proposal outlives its one
+    # skip_split task, so a reclaimed stale entry or a REINGEST can never
+    # re-park (or auto-split) a document the owner chose to keep whole. --
+    if await _rejection_recorded(db, doc.id):
+        logger.info(
+            f"pdf-split: doc {doc.id} has an owner-rejected split proposal — "
+            f"honoring treat-as-single"
+        )
+        return False
+
     # -- Detection (best-effort; failures → single-document status quo,
     #    transient LLM failures → SplitTransientError, see docstring) --
     try:
@@ -534,9 +544,26 @@ async def maybe_split_at_ingest(
         # guard keep it parked; the MCP re-push keeps the source file in the
         # inbox via RETRY until the review resolves). Lazy import — the
         # proposals module imports helpers from THIS module.
+        #
+        # "An uncertain verdict never loses a document": a NON-transient
+        # failure filing the proposal (e.g. a DataError on the JSON) degrades
+        # to the single-document status quo instead of failing the whole doc;
+        # transient DB errors propagate for the worker's PEL retry.
+        from sqlalchemy.exc import DisconnectionError, InterfaceError, OperationalError
+
         from services.pdf_split_proposals import create_review_proposal
 
-        row = await create_review_proposal(db, doc, verdict, user_id)
+        try:
+            row = await create_review_proposal(db, doc, verdict, user_id)
+        except (OperationalError, InterfaceError, DisconnectionError):
+            raise
+        except Exception as e:  # noqa: BLE001
+            logger.warning(
+                f"pdf-split: could not file review proposal for doc {doc.id} "
+                f"({e}) — processing as a single document"
+            )
+            await db.rollback()
+            return False
         logger.info(
             f"pdf-split: doc {doc.id} looks like {len(verdict.pieces)} "
             f"documents at min confidence {verdict.min_confidence:.2f} < "
@@ -551,3 +578,11 @@ async def maybe_split_at_ingest(
     plan_row = await _store_plan(db, doc, verdict, user_id)
     await execute_split(db, doc, verdict.pieces, user_id=user_id, plan_row=plan_row)
     return True
+
+
+async def _rejection_recorded(db: AsyncSession, document_id: int) -> bool:
+    """Module-level seam (monkeypatchable in tests) around the durable
+    treat-as-single record."""
+    from services.pdf_split_proposals import has_rejected_proposal
+
+    return await has_rejected_proposal(db, document_id)

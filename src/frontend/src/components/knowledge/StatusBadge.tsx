@@ -57,7 +57,7 @@ const STATUS_META: Record<DocStatus, StatusMeta> = {
   pending: { Icon: Clock, labelKey: 'knowledge.statusQueued', iconClass: 'text-gray-500', spin: false },
   failed: { Icon: AlertCircle, labelKey: 'knowledge.statusFailed', iconClass: 'text-red-500', spin: false },
   split_pending: { Icon: FileStack, labelKey: 'knowledge.statusSplitPending', iconClass: 'text-primary-500', spin: false },
-  split_review: { Icon: FileStack, labelKey: 'knowledge.statusSplitReview', iconClass: 'text-amber-500', spin: false },
+  split_review: { Icon: FileStack, labelKey: 'knowledge.statusSplitReview', iconClass: 'text-primary-700 dark:text-primary-300', spin: false },
   split_archived: { Icon: FileStack, labelKey: 'knowledge.statusSplitArchived', iconClass: 'text-gray-400', spin: false },
 };
 

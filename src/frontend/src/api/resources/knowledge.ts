@@ -5,7 +5,14 @@ import { useApiQuery, useApiMutation } from '../hooks';
 import { keys, STALE } from '../keys';
 import type { DocPages } from '../../components/knowledge/StatusBadge';
 
-export type DocStatus = 'pending' | 'processing' | 'completed' | 'failed';
+export type DocStatus =
+  | 'pending'
+  | 'processing'
+  | 'completed'
+  | 'failed'
+  | 'split_pending'
+  | 'split_review'
+  | 'split_archived';
 export type StatusFilter = DocStatus | 'all';
 
 export interface KnowledgeBaseRow {

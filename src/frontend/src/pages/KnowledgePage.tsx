@@ -522,12 +522,17 @@ export default function KnowledgePage() {
   };
 
   const statusFilters: StatusFilter[] = ['all', 'completed', 'processing', 'pending', 'failed'];
+  // Split statuses are labelled but not offered as filter chips (statusFilters
+  // above) — they are rare parked states surfaced via the card badge instead.
   const statusLabels: Record<StatusFilter, string> = {
     all: t('common.all'),
     completed: t('knowledge.statusCompleted'),
     processing: t('knowledge.statusProcessing'),
     pending: t('knowledge.statusPending'),
     failed: t('knowledge.statusFailed'),
+    split_pending: t('knowledge.statusSplitPending'),
+    split_review: t('knowledge.statusSplitReview'),
+    split_archived: t('knowledge.statusSplitArchived'),
   };
 
   return (

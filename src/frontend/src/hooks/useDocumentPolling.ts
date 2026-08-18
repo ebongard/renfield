@@ -25,7 +25,16 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { AxiosError } from 'axios';
 import apiClient from '../utils/axios';
 
-export type DocStatus = 'pending' | 'processing' | 'completed' | 'failed';
+export type DocStatus =
+  | 'pending'
+  | 'processing'
+  | 'completed'
+  | 'failed'
+  // PDF-split lifecycle: parked/terminal for polling purposes — the doc won't
+  // move again without an owner action (review) or the split lane finishing.
+  | 'split_pending'
+  | 'split_review'
+  | 'split_archived';
 
 export interface KbDocumentPages {
   current?: number | null;
@@ -56,7 +65,15 @@ interface UseDocumentPollingOptions {
   timeoutMs?: number;
 }
 
-const TERMINAL_STATES = new Set<DocStatus>(['completed', 'failed']);
+const TERMINAL_STATES = new Set<DocStatus>([
+  'completed',
+  'failed',
+  // Split-parked docs stop polling (otherwise a parked split_review doc polls
+  // for 30 min and then shows a misleading timeout warning); the StatusBadge
+  // points the user at /brain/review instead.
+  'split_review',
+  'split_archived',
+]);
 
 // Backoff ladder (ms). The hook walks through this array and clamps at the
 // last value. Tests override via `backoffSequenceMs` / `initialDelayMs`.

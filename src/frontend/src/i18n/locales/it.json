@@ -1945,6 +1945,7 @@
     "treatAsSingle": "Elabora come UN documento",
     "needTwoPieces": "Servono almeno 2 parti — altrimenti elaborare come un documento.",
     "pageThumbAlt": "Anteprima pagina {{page}}",
-    "couldNotLoad": "Impossibile caricare le proposte di suddivisione PDF."
+    "couldNotLoad": "Impossibile caricare le proposte di suddivisione PDF.",
+    "loadThumbs": "Carica anteprime pagine"
   }
 }
