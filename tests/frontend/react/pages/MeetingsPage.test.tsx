@@ -223,8 +223,13 @@ describe('MeetingsPage', () => {
     server.use(
       http.get(`${BASE_URL}/api/meetings`, () => HttpResponse.json(store)),
       http.post(`${BASE_URL}/api/meetings/transcribe`, async ({ request }) => {
-        const form = await request.formData();
-        sentConsent = String(form.get('consent_confirmed'));
+        // NOT request.formData(): Node's undici multipart parser asserts each
+        // value is an undici File/USVString and rejects jsdom's File class
+        // (env-interop rot after a Node upgrade) — the handler then 500s and
+        // the upload flow silently never completes. Parse the raw body.
+        const raw = await request.text();
+        sentConsent =
+          /name="consent_confirmed"[^]*?\r\n\r\n([^\r]+)/.exec(raw)?.[1] ?? null;
         const created = mkMeeting({ id: 7, title: 'New', status: 'pending', transcript_document_id: null });
         store.push(created);
         return HttpResponse.json(created);
