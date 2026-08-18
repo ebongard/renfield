@@ -90,6 +90,10 @@ class FeatureFlags(BaseModel):
     # Gates the §2 Phase 3 minutes UI (generate/edit/confirm on a completed
     # meeting). Off => no minutes affordance. See utils/config.py::meeting_minutes_enabled.
     meeting_minutes_enabled: bool
+    # Gates the PDF-split review section on /brain/review + the split badge on
+    # /knowledge. Off => surfaces absent. See utils/config.py::pdf_split_enabled
+    # + docs/design/pdf-split.md.
+    pdf_split_enabled: bool
     # True when the Reva-only Wissensbasis surface (/trace + /me/mix) is mounted
     # (Reva adapter present). Standalone Renfield => False. Lets the frontend
     # hide the Reva-only side panels without probing an endpoint that 404s.
@@ -116,5 +120,6 @@ async def get_features(
         notes_enabled=settings.notes_enabled,
         meeting_transcription_enabled=settings.meeting_transcription_enabled,
         meeting_minutes_enabled=settings.meeting_minutes_enabled,
+        pdf_split_enabled=settings.pdf_split_enabled,
         wissensbasis_reva_available=_reva_wissensbasis_mounted(request),
     )

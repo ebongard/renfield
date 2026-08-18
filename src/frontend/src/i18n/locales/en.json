@@ -884,7 +884,10 @@
       }
     },
     "failedRetry": "Upload again",
-    "pollingTimeout": "Processing of \"{{filename}}\" is taking longer than expected. Please refresh to see the current status."
+    "pollingTimeout": "Processing of \"{{filename}}\" is taking longer than expected. Please refresh to see the current status.",
+    "statusSplitPending": "Splitting",
+    "statusSplitReview": "Split review pending",
+    "statusSplitArchived": "Split (original archived)"
   },
   "memory": {
     "title": "Memories",
@@ -2163,5 +2166,26 @@
       "entities": "Entities",
       "feedback": "Feedback"
     }
+  },
+  "pdfSplit": {
+    "sectionTitle": "Review PDF split",
+    "summary": "{{pages}} pages · proposed: {{pieces}} documents",
+    "confidence": "Confidence {{pct}}%",
+    "pageOne": "Page {{page}}",
+    "pageRange": "Pages {{from}}–{{to}}",
+    "titlePlaceholder": "Title of this part",
+    "titleAria": "Title for part {{index}}",
+    "mergeWithNext": "Merge with next piece",
+    "addBoundaryLabel": "New document boundary at page",
+    "addBoundary": "Add boundary",
+    "showEvidence": "Show page previews & evidence",
+    "noEvidence": "No page evidence available.",
+    "unreadable": "unreadable",
+    "approve": "Split",
+    "approveEdited": "Split with changes",
+    "treatAsSingle": "Process as ONE document",
+    "needTwoPieces": "At least 2 pieces required — otherwise process as one document.",
+    "pageThumbAlt": "Preview of page {{page}}",
+    "couldNotLoad": "Could not load PDF split proposals."
   }
 }

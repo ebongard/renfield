@@ -120,6 +120,9 @@ export interface FeatureFlags {
   meeting_transcription_enabled: boolean;
   /** Gates the §2 Phase 3 minutes UI (generate/edit/confirm on a completed meeting). */
   meeting_minutes_enabled: boolean;
+  /** Gates the PDF-split review section on /brain/review + the split badge on
+   *  /knowledge (docs/design/pdf-split.md). */
+  pdf_split_enabled: boolean;
   /** True when the Reva-only Wissensbasis surface (/trace + /me/mix) is mounted.
    *  Standalone Renfield => false. Lets the frontend hide the Reva-only side
    *  panels without probing an endpoint that 404s (console-noise fix). */

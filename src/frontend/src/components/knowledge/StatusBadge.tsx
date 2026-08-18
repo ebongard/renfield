@@ -15,11 +15,21 @@
  *     (`gray-300` in dark) to clear WCAG AA against the card background.
  */
 import type { LucideIcon } from 'lucide-react';
-import { AlertCircle, CheckCircle, Clock, Loader2 } from 'lucide-react';
+import { AlertCircle, CheckCircle, Clock, FileStack, Loader2 } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 
-export type DocStatus = 'completed' | 'processing' | 'pending' | 'failed';
+export type DocStatus =
+  | 'completed'
+  | 'processing'
+  | 'pending'
+  | 'failed'
+  // PDF-split lifecycle (docs/design/pdf-split.md): parked in the split lane /
+  // awaiting owner review / archived combined original (children ingested
+  // separately, the original deliberately carries no chunks).
+  | 'split_pending'
+  | 'split_review'
+  | 'split_archived';
 
 export interface DocPages {
   current: number;
@@ -46,6 +56,9 @@ const STATUS_META: Record<DocStatus, StatusMeta> = {
   processing: { Icon: Loader2, labelKey: 'knowledge.statusProcessing', iconClass: 'text-primary-500', spin: true },
   pending: { Icon: Clock, labelKey: 'knowledge.statusQueued', iconClass: 'text-gray-500', spin: false },
   failed: { Icon: AlertCircle, labelKey: 'knowledge.statusFailed', iconClass: 'text-red-500', spin: false },
+  split_pending: { Icon: FileStack, labelKey: 'knowledge.statusSplitPending', iconClass: 'text-primary-500', spin: false },
+  split_review: { Icon: FileStack, labelKey: 'knowledge.statusSplitReview', iconClass: 'text-amber-500', spin: false },
+  split_archived: { Icon: FileStack, labelKey: 'knowledge.statusSplitArchived', iconClass: 'text-gray-400', spin: false },
 };
 
 const STAGE_KEY: Record<string, string> = {

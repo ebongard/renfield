@@ -884,7 +884,10 @@
       }
     },
     "failedRetry": "Erneut hochladen",
-    "pollingTimeout": "Die Verarbeitung von „{{filename}}\" dauert länger als erwartet. Bitte die Seite neu laden, um den aktuellen Status zu sehen."
+    "pollingTimeout": "Die Verarbeitung von „{{filename}}\" dauert länger als erwartet. Bitte die Seite neu laden, um den aktuellen Status zu sehen.",
+    "statusSplitPending": "Wird aufgeteilt",
+    "statusSplitReview": "Aufteilung prüfen",
+    "statusSplitArchived": "Aufgeteilt (Original archiviert)"
   },
   "memory": {
     "title": "Erinnerungen",
@@ -2163,5 +2166,26 @@
       "entities": "Entitäten",
       "feedback": "Feedback"
     }
+  },
+  "pdfSplit": {
+    "sectionTitle": "PDF-Aufteilung prüfen",
+    "summary": "{{pages}} Seiten · Vorschlag: {{pieces}} Dokumente",
+    "confidence": "Konfidenz {{pct}}%",
+    "pageOne": "Seite {{page}}",
+    "pageRange": "Seiten {{from}}–{{to}}",
+    "titlePlaceholder": "Titel des Teildokuments",
+    "titleAria": "Titel für Teildokument {{index}}",
+    "mergeWithNext": "Mit nächstem Teilstück zusammenführen",
+    "addBoundaryLabel": "Neue Dokumentgrenze ab Seite",
+    "addBoundary": "Grenze hinzufügen",
+    "showEvidence": "Seiten-Vorschau & Belege anzeigen",
+    "noEvidence": "Keine Seitenbelege vorhanden.",
+    "unreadable": "unlesbar",
+    "approve": "Aufteilen",
+    "approveEdited": "Mit Änderungen aufteilen",
+    "treatAsSingle": "Als EIN Dokument verarbeiten",
+    "needTwoPieces": "Mindestens 2 Teilstücke nötig — sonst als ein Dokument verarbeiten.",
+    "pageThumbAlt": "Vorschau Seite {{page}}",
+    "couldNotLoad": "PDF-Aufteilungsvorschläge konnten nicht geladen werden."
   }
 }

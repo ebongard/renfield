@@ -529,15 +529,21 @@ async def maybe_split_at_ingest(
     if verdict.kind != VERDICT_MULTI:
         return False
     if verdict.min_confidence < settings.pdf_split_auto_threshold:
-        # PR2 files a pending pdf_split_proposals row for owner review. Until
-        # the review surface exists, holding the doc would strand it: status quo.
-        logger.warning(
+        # Uncertain boundaries → owner review: file/refresh the PENDING
+        # proposal, park the parent in split_review (this ack + the worker
+        # guard keep it parked; the MCP re-push keeps the source file in the
+        # inbox via RETRY until the review resolves). Lazy import — the
+        # proposals module imports helpers from THIS module.
+        from services.pdf_split_proposals import create_review_proposal
+
+        row = await create_review_proposal(db, doc, verdict, user_id)
+        logger.info(
             f"pdf-split: doc {doc.id} looks like {len(verdict.pieces)} "
-            f"documents but min confidence {verdict.min_confidence:.2f} < "
-            f"{settings.pdf_split_auto_threshold} — processing as a single "
-            f"document until the review flow ships"
+            f"documents at min confidence {verdict.min_confidence:.2f} < "
+            f"{settings.pdf_split_auto_threshold} — held for owner review "
+            f"(proposal {row.id})"
         )
-        return False
+        return True
 
     # -- Execution: persist the plan FIRST (crash-resume determinism), then
     #    execute — which stamps split_pending before the first child (NOT

@@ -644,7 +644,10 @@
       }
     },
     "failedRetry": "Carica di nuovo",
-    "pollingTimeout": "L'elaborazione di \"{{filename}}\" sta richiedendo più tempo del previsto. Aggiorna per vedere lo stato attuale."
+    "pollingTimeout": "L'elaborazione di \"{{filename}}\" sta richiedendo più tempo del previsto. Aggiorna per vedere lo stato attuale.",
+    "statusSplitPending": "Suddivisione in corso",
+    "statusSplitReview": "Suddivisione da verificare",
+    "statusSplitArchived": "Suddiviso (originale archiviato)"
   },
   "memory": {
     "title": "Memorie",
@@ -1922,5 +1925,26 @@
     "failedToSave": "Impossibile salvare la nota",
     "failedToDelete": "Impossibile eliminare la nota",
     "failedToLoadLinks": "Impossibile caricare i collegamenti"
+  },
+  "pdfSplit": {
+    "sectionTitle": "Verifica suddivisione PDF",
+    "summary": "{{pages}} pagine · proposta: {{pieces}} documenti",
+    "confidence": "Confidenza {{pct}}%",
+    "pageOne": "Pagina {{page}}",
+    "pageRange": "Pagine {{from}}–{{to}}",
+    "titlePlaceholder": "Titolo del documento parziale",
+    "titleAria": "Titolo per la parte {{index}}",
+    "mergeWithNext": "Unisci alla parte successiva",
+    "addBoundaryLabel": "Nuovo confine documento da pagina",
+    "addBoundary": "Aggiungi confine",
+    "showEvidence": "Mostra anteprime e indizi delle pagine",
+    "noEvidence": "Nessun indizio di pagina disponibile.",
+    "unreadable": "illeggibile",
+    "approve": "Suddividi",
+    "approveEdited": "Suddividi con modifiche",
+    "treatAsSingle": "Elabora come UN documento",
+    "needTwoPieces": "Servono almeno 2 parti — altrimenti elaborare come un documento.",
+    "pageThumbAlt": "Anteprima pagina {{page}}",
+    "couldNotLoad": "Impossibile caricare le proposte di suddivisione PDF."
   }
 }

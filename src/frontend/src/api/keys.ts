@@ -103,6 +103,11 @@ export const keys = {
     history: () => ['routing', 'history'] as const,
     stats: () => ['routing', 'stats'] as const,
   },
+  pdfSplit: {
+    all: ['pdfSplit'] as const,
+    proposals: () => ['pdfSplit', 'proposals'] as const,
+    proposal: (id: number) => ['pdfSplit', 'proposals', id] as const,
+  },
   knowledgeGraph: {
     all: ['knowledgeGraph'] as const,
     entities: (filters?: Record<string, unknown>) => ['knowledgeGraph', 'entities', filters ?? {}] as const,

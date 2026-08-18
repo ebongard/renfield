@@ -5,6 +5,7 @@ import PageHeader from '../components/PageHeader';
 import { formatDateTime } from '../utils/datetime';
 import LensFrame from '../components/wissen/LensFrame';
 import MergeProposalsSection from '../components/MergeProposalsSection';
+import PdfSplitReviewSection from '../components/PdfSplitReviewSection';
 import Alert from '../components/Alert';
 import Badge from '../components/Badge';
 import type { BadgeColor } from '../components/Badge';
@@ -12,6 +13,7 @@ import TierPicker from '../components/TierPicker';
 import type { CircleTier } from '../components/TierBadge';
 import {
   useAtomsForReviewQuery,
+  useFeatureFlags,
   usePatchAtomTier,
   type AtomType,
   type ReviewAtom,
@@ -33,6 +35,8 @@ export default function BrainReviewPage() {
   const { t, i18n } = useTranslation();
 
   const [days, setDays] = useState(7);
+  const featuresQuery = useFeatureFlags();
+  const features = featuresQuery.data;
   const reviewQuery = useAtomsForReviewQuery(days);
   const atoms = reviewQuery.data ?? [];
 
@@ -98,6 +102,7 @@ export default function BrainReviewPage() {
 
       {/* D7: merge-proposal review queue, above the per-atom tier review list */}
       <MergeProposalsSection />
+      <PdfSplitReviewSection enabled={features?.pdf_split_enabled ?? false} />
 
       <div className="flex items-center gap-3">
         <Calendar className="w-4 h-4 text-gray-500" aria-hidden="true" />
