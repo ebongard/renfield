@@ -67,6 +67,7 @@ def _parent(**over):
         error_message=None,
         chunk_count=0,
         split_from_document_id=None,
+        split_heartbeat_at=None,
     )
     defaults.update(over)
     return SimpleNamespace(**defaults)
@@ -744,4 +745,62 @@ async def test_prestage_honors_durable_rejection(monkeypatch):
     assert await maybe_split_at_ingest(db, 7) is False
 
     detector.assert_not_called()
+    execute.assert_not_called()
+
+
+async def test_route_to_slow_lane_enqueue_failure_raises_transient(monkeypatch):
+    """The parent is already parked when the enqueue runs — a swallowed
+    failure would let the caller normally ingest the combined PDF. Transient
+    → PEL retry re-routes."""
+    monkeypatch.setattr(ps.settings, "ollama_vision_model", "qwen-vl")
+    monkeypatch.setattr(
+        "services.task_queue.pdf_split_worker_is_alive",
+        AsyncMock(return_value=True),
+    )
+    queue = MagicMock()
+    queue.enqueue = AsyncMock(side_effect=RuntimeError("redis down"))
+    monkeypatch.setattr(
+        "services.task_queue.PdfSplitTaskQueue", MagicMock(return_value=queue)
+    )
+    monkeypatch.setattr("services.redis_client.get_redis", MagicMock())
+    doc = _parent()
+
+    with pytest.raises(SplitTransientError):
+        await ps._route_to_slow_lane(_db(), doc, "vlm", None)
+
+
+async def test_prestage_single_page_short_circuits_before_routing(monkeypatch):
+    """Analytic: one page cannot contain two documents — decided BEFORE
+    slow-lane routing so a single-page bad scan never burns a queued VLM
+    transcription (NOT a page-count gate: >= 2 pages always detect)."""
+    db, execute, _ = _wire_prestage(
+        monkeypatch, doc=_parent(), signals=[_sig(1)], slow="vlm"
+    )
+    route = AsyncMock()
+    monkeypatch.setattr(ps, "_route_to_slow_lane", route)
+    classify = MagicMock()
+    monkeypatch.setattr(ps, "classify_slow_lane", classify)
+
+    assert await maybe_split_at_ingest(db, 7) is False
+
+    route.assert_not_called()
+    classify.assert_not_called()
+    execute.assert_not_called()
+
+
+async def test_prestage_mid_split_with_live_heartbeat_is_acked(monkeypatch):
+    """A duplicate document-queue delivery for a doc a slow-lane job is
+    actively working (fresh row heartbeat) must NOT un-park it — that would
+    race a normal ingest against the imminent split."""
+    from datetime import UTC, datetime
+
+    doc = _parent(
+        status=DOC_STATUS_SPLIT_PENDING,
+        split_heartbeat_at=datetime.now(UTC).replace(tzinfo=None),
+    )
+    db, execute, _ = _wire_prestage(monkeypatch, doc=doc)  # no stored plan
+
+    assert await maybe_split_at_ingest(db, 7) is True  # ack, hands off
+
+    assert doc.status == DOC_STATUS_SPLIT_PENDING  # NOT un-parked
     execute.assert_not_called()

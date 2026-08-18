@@ -437,6 +437,23 @@ class PdfSplitTaskQueue(DocumentTaskQueue):
     DEFAULT_STREAM = "renfield:tasks:pdfsplit"
     DEFAULT_GROUP = "pdfsplitworker"
 
+    def __init__(
+        self,
+        redis_client: aioredis.Redis | None = None,
+        consumer_id: str = "worker-local",
+    ):
+        # Explicit __init__ is LOAD-BEARING (mirrors MeetingTaskQueue): the
+        # inherited __init__ bound the DOCUMENT stream/group as def-time
+        # defaults, so class-attribute overrides alone are inert — without
+        # this, the slow lane would enqueue onto the document stream and this
+        # worker's group would steal real ingestion tasks.
+        super().__init__(
+            redis_client=redis_client,
+            consumer_id=consumer_id,
+            stream_key=self.DEFAULT_STREAM,
+            group_name=self.DEFAULT_GROUP,
+        )
+
 
 PDF_SPLIT_WORKER_HEARTBEAT_KEY = "renfield:worker:pdfsplit:heartbeat"
 

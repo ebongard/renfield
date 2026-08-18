@@ -86,9 +86,18 @@ re-enqueue can never re-enter detection.
    by isolation + timeouts, never by skipping pages; a failed page keeps its
    placeholder) and the multi-window boundary call decides. Outcomes reuse the
    shared `act_on_verdict`; a `single` outcome HANDS THE DOC BACK to normal
-   ingest (`skip_split`). Poison/transient-cap fail-safe = the same hand-back
-   (never a failed doc); only a terminal mid-execute error (children may exist
-   → hand-back would double-ingest) marks the doc failed.
+   ingest (`skip_split`, enqueue-failure reverts the park + retries).
+   Poison/transient-cap fail-safe = the same hand-back — lifecycle-aware:
+   split_review is dropped (the review owns it), existing children mark the
+   doc failed instead (REINGEST recovery; single-ingest would duplicate),
+   and only a terminal mid-execute error does likewise. Guard rails: a
+   wholesale VLM outage (0 of N garbage pages transcribed) retries as
+   transient instead of deciding over placeholders; sessions are NOT held
+   across the unbounded VLM work (two short phases, re-guarded);
+   `PDF_SPLIT_ENABLED=false` parks the worker's backlog in the PEL (real
+   kill switch — flagpark leaves don't burn the retry budgets); a live row
+   heartbeat stops any other actor from un-parking a mid-VLM doc; 1-page
+   files short-circuit analytically BEFORE routing.
 3. **Boundary call(s)** — strict-JSON on the TEXT model (never JSON from the
    VLM: qwen3-vl think-buffer trap, see `paperless_metadata_extractor.py`).
    Template: `MinutesExtractor` (`prompts/pdf_split.yaml`, de/en, fence-tolerant

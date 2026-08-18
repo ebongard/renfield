@@ -38,6 +38,7 @@ import httpx
 import redis.asyncio as aioredis
 from loguru import logger
 from redis import exceptions as redis_exceptions
+from sqlalchemy import select
 from sqlalchemy.exc import DisconnectionError, InterfaceError, OperationalError
 
 from models.database import (
@@ -100,20 +101,50 @@ def _is_transient_error(exc: BaseException) -> bool:
     return isinstance(exc, _TRANSIENT_EXC)
 
 
-async def _hand_back_as_single(document_id, reason: str) -> bool:
-    """Fail-safe terminal outcome: give up on splitting and return the doc to
-    normal single-document ingest (pre-PR3 status quo). Children that already
-    exist stay (visible, deletable); the combined parent then ingests whole —
-    ONLY reached when the split path is verifiably stuck, and preferred over a
-    permanently failed doc. Returns False when the hand-back could not be
-    persisted (caller leaves the entry in the PEL)."""
+async def _hand_back_as_single(
+    document_id, reason: str, user_id=None
+) -> bool:
+    """Fail-safe terminal outcome for the poison/transient-cap guards: give up
+    on splitting and return the doc to normal single-document ingest (pre-PR3
+    status quo). Returns False when the hand-back could not be persisted
+    (caller leaves the entry in the PEL).
+
+    Lifecycle-aware — the hand-back is ONLY safe for a doc with no split
+    footprint yet:
+    - split_archived → done, nothing to do.
+    - split_review → the review flow owns it; dropping the entry is correct
+      (an approve/reject re-drives via its own enqueue).
+    - children already exist (execute_split died mid-run every attempt) →
+      single-ingesting the COMBINED parent would duplicate their content, so
+      this one case marks the doc failed instead (re-push REINGEST recovery),
+      mirroring the terminal-error branch."""
     try:
         async with AsyncSessionLocal() as db:
             doc = await db.get(Document, document_id)
             if doc is None:
                 return True
-            if doc.status == DOC_STATUS_SPLIT_ARCHIVED:
-                return True  # split finished after all — nothing to do
+            if doc.status in (DOC_STATUS_SPLIT_ARCHIVED, DOC_STATUS_SPLIT_REVIEW):
+                return True  # resolved / owned elsewhere — just drop the entry
+            has_children = (
+                await db.execute(
+                    select(Document.id)
+                    .where(Document.split_from_document_id == document_id)
+                    .limit(1)
+                )
+            ).scalar_one_or_none() is not None
+            if has_children:
+                logger.error(
+                    f"pdf-split[slow]: doc {document_id} gave up ({reason}) "
+                    f"but children already exist — marking failed instead of "
+                    f"single-ingesting the combined parent (REINGEST recovers)"
+                )
+                doc.status = "failed"
+                doc.error_message = (
+                    f"pdf-split slow lane gave up mid-execution: {reason}"
+                )[:2000]
+                doc.split_heartbeat_at = None
+                await db.commit()
+                return True
             logger.error(
                 f"pdf-split[slow]: doc {document_id} hand-back as single "
                 f"document ({reason})"
@@ -124,7 +155,7 @@ async def _hand_back_as_single(document_id, reason: str) -> bool:
         from services.redis_client import get_redis
 
         await DocumentTaskQueue(redis_client=get_redis()).enqueue(
-            {"document_id": document_id, "force_ocr": False, "user_id": None,
+            {"document_id": document_id, "force_ocr": False, "user_id": user_id,
              "skip_split": True}
         )
         return True
@@ -169,9 +200,18 @@ def _transient_key(entry_id: str) -> str:
     return f"renfield:tasks:pdfsplit:transient:{entry_id}"
 
 
+def _flagpark_key(entry_id: str) -> str:
+    """Counts flag-off parks separately from real transient failures: both
+    offset the crash count (a park is not a crash), but only REAL transients
+    count toward the give-up cap — an incident rollback must not consume the
+    retry budget of healthy entries."""
+    return f"renfield:tasks:pdfsplit:flagpark:{entry_id}"
+
+
 async def _clear_transient(redis: aioredis.Redis, entry_id: str) -> None:
     try:
         await redis.delete(_transient_key(entry_id))
+        await redis.delete(_flagpark_key(entry_id))
     except Exception as e:  # noqa: BLE001
         logger.debug(f"transient-counter cleanup failed for {entry_id}: {e}")
 
@@ -211,6 +251,24 @@ async def _process_entry(
         await queue.ack(entry.entry_id)
         return
 
+    # Kill switch FIRST: PDF_SPLIT_ENABLED=false must stop the lane's WORK,
+    # not just new enqueues (the documented incident rollback). Park the entry
+    # in the PEL and record a FLAGPARK leave (offsets the crash count without
+    # consuming the transient give-up budget); re-enabling the flag lets the
+    # next reclaim resume the backlog.
+    if not settings.pdf_split_enabled:
+        try:
+            fkey = _flagpark_key(entry.entry_id)
+            await redis.incr(fkey)
+            await redis.expire(fkey, 86_400)
+        except Exception as ie:  # noqa: BLE001
+            logger.debug(f"flagpark-counter incr failed: {ie}")
+        logger.warning(
+            f"doc {document_id}: PDF_SPLIT_ENABLED is off — parking entry "
+            f"{entry.entry_id} in the PEL (re-enable to resume)"
+        )
+        return
+
     # Poison guard (crash redeliveries) + transient-retry cap. Outcome is the
     # single-document hand-back, NEVER a failed doc (see module docstring).
     delivery_count = getattr(entry, "delivery_count", 1)
@@ -219,14 +277,18 @@ async def _process_entry(
             transient_leaves = int(await redis.get(_transient_key(entry.entry_id)) or 0)
         except Exception:  # noqa: BLE001
             transient_leaves = 0
-        crash_count = delivery_count - transient_leaves
+        try:
+            flagpark_leaves = int(await redis.get(_flagpark_key(entry.entry_id)) or 0)
+        except Exception:  # noqa: BLE001
+            flagpark_leaves = 0
+        crash_count = delivery_count - transient_leaves - flagpark_leaves
         give_up = None
         if crash_count > settings.worker_max_deliveries:
             give_up = f"crash-redelivered {crash_count}x"
         elif transient_leaves > settings.pdf_split_worker_max_transient_retries:
             give_up = f"transient-failed {transient_leaves}x"
         if give_up:
-            if await _hand_back_as_single(document_id, give_up):
+            if await _hand_back_as_single(document_id, give_up, user_id=user_id):
                 await queue.ack(entry.entry_id)
                 await _clear_transient(redis, entry.entry_id)
             return

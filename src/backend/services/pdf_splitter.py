@@ -82,6 +82,11 @@ from utils.config import settings
 # worker's flag-independent guard).
 SPLIT_OWNED_STATUSES = DOC_SPLIT_OWNED_STATUSES
 
+# A split_pending row whose split_heartbeat_at is younger than this belongs to
+# a LIVE slow-lane job (the pdf-split worker refreshes it every 30 s) — other
+# actors must not un-park it. Matches the worker's ROW_HEARTBEAT_STALE_S.
+SPLIT_ROW_HEARTBEAT_STALE_S = 120
+
 
 def _slug(title: str, cap: int = 40) -> str:
     text = (title or "").lower()
@@ -490,12 +495,24 @@ async def maybe_split_at_ingest(
         await execute_split(db, doc, stored, user_id=user_id, plan_row=plan_row)
         return True
     if doc.status == DOC_STATUS_SPLIT_PENDING:
-        # Mid-split but the plan is unusable (corrupt / missing — should not
-        # happen given the store-then-stamp order). Un-park and re-detect
-        # loudly rather than stranding the doc.
+        # Mid-split without a usable plan: either slow-lane-queued (no plan by
+        # design) or a corrupt plan. A LIVE slow-lane job (fresh row heartbeat)
+        # owns the doc — ack this duplicate delivery rather than un-parking a
+        # file the worker is mid-VLM on (which would race a concurrent normal
+        # ingest against the imminent split). Only a stale/absent heartbeat
+        # un-parks for fresh detection.
+        hb = doc.split_heartbeat_at
+        if hb is not None and (
+            datetime.now(UTC).replace(tzinfo=None) - hb
+        ).total_seconds() < SPLIT_ROW_HEARTBEAT_STALE_S:
+            logger.info(
+                f"pdf-split: doc {doc.id} has a live slow-lane job (fresh "
+                f"heartbeat) — acking duplicate delivery"
+            )
+            return True
         logger.warning(
             f"pdf-split: doc {doc.id} is mid-split but has no usable stored "
-            f"plan — un-parking for fresh detection"
+            f"plan and no live slow-lane job — un-parking for fresh detection"
         )
         doc.status = DOC_STATUS_PENDING
         await db.commit()
@@ -518,6 +535,13 @@ async def maybe_split_at_ingest(
             None, extract_page_signals, doc.file_path
         )
         if not signals:
+            return False
+        if len(signals) == 1:
+            # Analytic, not a heuristic: one page cannot contain two documents
+            # (detect_boundaries short-circuits identically). Decided BEFORE
+            # slow-lane routing so the dominant single-page-scan case never
+            # burns a queued VLM transcription whose result the length check
+            # would discard anyway.
             return False
         slow_reason = classify_slow_lane(signals)
         if slow_reason:
@@ -628,9 +652,19 @@ async def _route_to_slow_lane(
     await db.commit()
     from services.redis_client import get_redis
 
-    await PdfSplitTaskQueue(redis_client=get_redis()).enqueue(
-        {"document_id": doc.id, "user_id": user_id}
-    )
+    try:
+        await PdfSplitTaskQueue(redis_client=get_redis()).enqueue(
+            {"document_id": doc.id, "user_id": user_id}
+        )
+    except Exception as e:
+        # The parent is already parked; a swallowed enqueue failure would let
+        # the caller normally ingest the combined multi-doc PDF (permanent —
+        # COMPLETED dedups every re-push). Raise TRANSIENT: the entry
+        # PEL-retries, finds split_pending without a plan, un-parks and
+        # re-routes.
+        raise SplitTransientError(
+            f"slow-lane enqueue failed for doc {doc.id}: {e}"
+        ) from e
     logger.info(
         f"pdf-split: doc {doc.id} routed to the slow split lane ({slow_reason})"
     )

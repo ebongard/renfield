@@ -251,10 +251,15 @@ async def test_slow_split_confident_and_review_outcomes(monkeypatch):
 # worker claim / poison / terminal semantics
 # ---------------------------------------------------------------------------
 
-def _wire_worker(monkeypatch, *, doc, process=None):
+def _wire_worker(monkeypatch, *, doc, process=None, flag=True):
+    monkeypatch.setattr(w.settings, "pdf_split_enabled", flag)
     db = MagicMock()
     db.commit = AsyncMock()
     db.get = AsyncMock(return_value=doc)
+    # children-exist probe in _hand_back_as_single: default "no children"
+    child_probe = MagicMock()
+    child_probe.scalar_one_or_none.return_value = None
+    db.execute = AsyncMock(return_value=child_probe)
     monkeypatch.setattr(w, "AsyncSessionLocal", lambda: _FakeSessionCM(db))
     proc = AsyncMock(return_value=process or "split")
     monkeypatch.setattr(w, "process_slow_split", proc)
@@ -368,3 +373,123 @@ async def test_worker_terminal_execution_error_marks_failed(monkeypatch):
     assert doc.status == "failed"
     hand_back.assert_not_called()
     queue.ack.assert_awaited_once_with("1-0")
+
+
+@pytest.mark.asyncio
+async def test_worker_flag_off_parks_entry(monkeypatch):
+    """PDF_SPLIT_ENABLED=false is a real kill switch: the worker parks the
+    backlog (no ack, no processing) with a FLAGPARK leave so redeliveries
+    neither burn the poison budget nor the transient give-up cap."""
+    doc = _doc()
+    _, proc, hand_back, queue, redis = _wire_worker(monkeypatch, doc=doc, flag=False)
+
+    await w._process_entry(redis, queue, _entry())
+
+    proc.assert_not_called()
+    hand_back.assert_not_called()
+    queue.ack.assert_not_called()
+    redis.incr.assert_awaited_once()
+    assert "flagpark" in redis.incr.await_args.args[0]
+
+
+@pytest.mark.asyncio
+async def test_worker_hand_back_passes_user_id(monkeypatch):
+    doc = _doc()
+    _, proc, hand_back, queue, redis = _wire_worker(monkeypatch, doc=doc)
+    monkeypatch.setattr(w.settings, "worker_max_deliveries", 1)
+    entry = SimpleNamespace(
+        entry_id="1-0", params={"document_id": 7, "user_id": 42}, delivery_count=5
+    )
+
+    await w._process_entry(redis, queue, entry)
+
+    hand_back.assert_awaited_once()
+    assert hand_back.await_args.kwargs["user_id"] == 42
+
+
+@pytest.mark.asyncio
+async def test_hand_back_with_children_marks_failed_not_single(monkeypatch):
+    """Children already exist → single-ingesting the COMBINED parent would
+    duplicate their content: this case marks the doc failed (REINGEST
+    recovery) instead of handing back."""
+    doc = _doc()
+    db = MagicMock()
+    db.commit = AsyncMock()
+    db.get = AsyncMock(return_value=doc)
+    child_probe = MagicMock()
+    child_probe.scalar_one_or_none.return_value = 101  # a child exists
+    db.execute = AsyncMock(return_value=child_probe)
+    monkeypatch.setattr(w, "AsyncSessionLocal", lambda: _FakeSessionCM(db))
+    queue = MagicMock()
+    queue.enqueue = AsyncMock()
+    monkeypatch.setattr(w, "DocumentTaskQueue", MagicMock(return_value=queue))
+
+    assert await w._hand_back_as_single(7, "poison", user_id=None) is True
+
+    assert doc.status == "failed"
+    queue.enqueue.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_hand_back_split_review_is_dropped(monkeypatch):
+    """A doc parked in owner review keeps its proposal — the give-up path
+    must not un-park/single-ingest it (the review resolution re-drives)."""
+    doc = _doc(status=DOC_STATUS_SPLIT_REVIEW)
+    db = MagicMock()
+    db.commit = AsyncMock()
+    db.get = AsyncMock(return_value=doc)
+    monkeypatch.setattr(w, "AsyncSessionLocal", lambda: _FakeSessionCM(db))
+    queue = MagicMock()
+    queue.enqueue = AsyncMock()
+    monkeypatch.setattr(w, "DocumentTaskQueue", MagicMock(return_value=queue))
+
+    assert await w._hand_back_as_single(7, "poison") is True
+
+    assert doc.status == DOC_STATUS_SPLIT_REVIEW  # untouched
+    queue.enqueue.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_slow_split_vlm_outage_raises_transient(monkeypatch):
+    """Zero VLM successes across ALL garbage pages = the outage signature —
+    retry (PEL) instead of deciding boundaries over pure placeholders."""
+    garbage = [_sig(1, ok=False), _sig(2, ok=False)]
+    doc = _doc()
+    _wire_lane(monkeypatch, doc=doc, signals=garbage, filled=0)
+
+    with pytest.raises(SplitTransientError):
+        await lane.process_slow_split(7, None)
+
+
+@pytest.mark.asyncio
+async def test_hand_back_single_reverts_on_enqueue_failure(monkeypatch):
+    """A failed hand-back enqueue must REVERT the park state and raise
+    transient — otherwise the doc strands in 'pending' with no queue entry
+    (the claim guard would treat it as resolved-elsewhere and ACK)."""
+    doc = _doc()
+    db = MagicMock()
+    db.commit = AsyncMock()
+    queue = MagicMock()
+    queue.enqueue = AsyncMock(side_effect=RuntimeError("redis down"))
+    monkeypatch.setattr(lane, "DocumentTaskQueue", MagicMock(return_value=queue))
+    monkeypatch.setattr(lane, "get_redis", MagicMock())
+
+    with pytest.raises(SplitTransientError):
+        await lane._hand_back_single(db, doc, None)
+
+    assert doc.status == DOC_STATUS_SPLIT_PENDING  # reverted
+
+
+def test_pdfsplit_queue_uses_own_stream_and_group():
+    """REGRESSION GUARD for the inert-class-attribute bug: the inherited
+    __init__ bound the DOCUMENT stream/group as def-time defaults, so the
+    subclass MUST pass its own explicitly — otherwise the slow lane enqueues
+    onto the document stream and this worker's group steals real ingestion
+    tasks. Asserts the REAL instance attributes (no mocks)."""
+    from services.task_queue import DocumentTaskQueue as DQ
+    from services.task_queue import PdfSplitTaskQueue
+
+    q = PdfSplitTaskQueue(redis_client=MagicMock())
+    assert q.stream_key == "renfield:tasks:pdfsplit"
+    assert q.group_name == "pdfsplitworker"
+    assert q.stream_key != DQ.DEFAULT_STREAM
