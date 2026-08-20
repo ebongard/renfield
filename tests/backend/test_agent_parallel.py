@@ -136,16 +136,69 @@ async def test_orchestrator_parallel_runs_both_agents():
     ]
 
     steps = []
-    with patch.object(settings, "agent_orchestrator_parallel", True):
+    with patch.object(settings, "agent_orchestrator_parallel", True), \
+         patch.object(settings, "orchestrator_deterministic_merge", True):
         async for step in orch._run_parallel(sub_queries, "original", MagicMock(), MagicMock()):
             steps.append(step)
 
     final_answers = [s for s in steps if s.step_type == "final_answer"]
-    # Orchestrator now yields exactly ONE final_answer — the synthesized
-    # one. Per-sub-agent final_answer steps are suppressed so the web chat
-    # doesn't render multiple greetings / duplicated intro text.
+    # Orchestrator yields exactly ONE final_answer — the combined one.
+    # Per-sub-agent final_answer steps are suppressed so the web chat doesn't
+    # render multiple greetings / duplicated intro text.
+    assert len(final_answers) == 1
+    # Under the deterministic merge (Phase 0, default) that combined answer is
+    # assembled from the sub-agents' OWN answers under role-keyed headers — the
+    # LLM synthesizer is not consulted, so no domain can be dropped or
+    # cross-labeled.
+    orch._synthesize.assert_not_awaited()
+    assert final_answers[0].content == (
+        "## Role A\n\nResult for role_a\n\n## Role B\n\nResult for role_b"
+    )
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_orchestrator_parallel_synthesizes_when_merge_disabled():
+    """With the deterministic-merge kill-switch off, the combined answer comes
+    from the LLM synthesizer (break-glass revert path)."""
+    from services.orchestrator import QueryOrchestrator
+
+    mock_router = MagicMock()
+    mock_role = MagicMock()
+    mock_role.has_agent_loop = True
+    mock_role.mcp_servers = []
+    mock_role.internal_tools = []
+    mock_router.roles = {"role_a": mock_role, "role_b": mock_role}
+
+    orch = QueryOrchestrator(mock_router, MagicMock())
+
+    async def mock_run_sub(sq, *args, **kwargs):
+        return {
+            "role": sq["role"],
+            "query": sq["query"],
+            "answer": f"Result for {sq['role']}",
+            "steps": [],
+        }
+
+    orch._run_sub_agent = mock_run_sub
+    orch._synthesize = AsyncMock(return_value="Combined answer")
+
+    sub_queries = [
+        {"role": "role_a", "query": "query a"},
+        {"role": "role_b", "query": "query b"},
+    ]
+
+    steps = []
+    with patch.object(settings, "agent_orchestrator_parallel", True), \
+         patch.object(settings, "orchestrator_deterministic_merge", False):
+        async for step in orch._run_parallel(sub_queries, "original", MagicMock(), MagicMock()):
+            steps.append(step)
+
+    final_answers = [s for s in steps if s.step_type == "final_answer"]
     assert len(final_answers) == 1
     assert final_answers[0].content == "Combined answer"
+    # Both sub-agent results were handed to the synthesizer.
+    assert len(orch._synthesize.call_args.args[1]) == 2
 
 
 @pytest.mark.unit
@@ -312,7 +365,10 @@ async def test_orchestrator_synthesis_none_falls_back_to_first_answer():
     orch._synthesize = AsyncMock(return_value=None)  # synthesizer fails
 
     steps = []
-    with patch.object(settings, "agent_orchestrator_parallel", True):
+    # The synthesizer only runs with the deterministic merge switched off, so
+    # this hole lives on the kill-switch path — pin it explicitly.
+    with patch.object(settings, "agent_orchestrator_parallel", True), \
+         patch.object(settings, "orchestrator_deterministic_merge", False):
         async for step in orch._run_parallel(
             [{"role": "a", "query": "q"}, {"role": "b", "query": "q"}],
             "msg", MagicMock(), MagicMock(),

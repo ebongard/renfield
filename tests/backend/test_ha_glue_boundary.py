@@ -85,6 +85,15 @@ ALLOWED_IMPORTERS = frozenset({
     # degrades to an empty section when ha_glue is absent). Never reached on a
     # platform-only deploy. Same lazy-pattern rule as the shims above.
     "api/websocket/kiosk_handler.py",
+    # (2) Lazy, guarded — the kiosk's internal-subsystem health probes
+    # (_presence_health / _media_health) read `ha_glue_settings` and the satellite
+    # roster through function-body imports. compute_internal_subsystem_health()
+    # runs each probe under its own try/except, so on a platform-only deploy the
+    # presence/media nodes simply drop out of the readout instead of crashing.
+    # This module was split out of the allowlisted kiosk_handler.py when the admin
+    # Command Center was decommissioned; it carries the same reads and the same
+    # lazy-pattern justification.
+    "api/websocket/kiosk_data.py",
     # (2) Lazy, try/except-guarded — emit_continued_handoff_frame() does a
     # function-body `from ha_glue.services.device_manager import get_device_manager`
     # inside a try block to broadcast the room-handoff chip; deferred + guarded, so

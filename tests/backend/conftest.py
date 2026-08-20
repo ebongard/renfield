@@ -151,6 +151,48 @@ def _reset_rate_limiter():
 
 
 # ============================================================================
+# Redis client isolation
+# ============================================================================
+
+# The backend caches its async Redis clients per PROCESS (services.redis_client
+# ._client, used by login_lockout/task_queue/...; TokenBlacklist._redis). In
+# production that is one client on one event loop for the process lifetime. The
+# suite, however, runs every test on a FRESH function-scoped loop, so a client
+# built in test A's loop carries a pooled connection bound to a loop that is
+# already closed by the time test B borrows it — the command raises "Event loop
+# is closed". That surfaces as an unrelated-looking failure wherever a Redis
+# error is handled rather than raised: get_current_user's blacklist check fails
+# CLOSED and returns 401, so an authenticated request in test B gets rejected
+# purely because test A opened the connection.
+#
+# Drop the cached clients around every test so each one builds its own on the
+# loop it actually runs on. Teardown is best-effort: a test may have swapped in
+# a fake, and closing a client whose loop is gone is itself allowed to fail.
+@pytest.fixture(autouse=True)
+def _reset_shared_redis_clients():
+    def _drop():
+        try:
+            from services import redis_client as _rc
+        except ImportError:
+            pass
+        else:
+            _rc._client = None
+        try:
+            from services.token_blacklist import token_blacklist as _tb
+        except ImportError:
+            pass
+        else:
+            try:
+                _tb._redis = None
+            except Exception:
+                pass
+
+    _drop()
+    yield
+    _drop()
+
+
+# ============================================================================
 # Database Fixtures
 # ============================================================================
 

@@ -27,11 +27,13 @@ Plan: `~/.claude/plans/harmonic-toasting-toucan.md` (approved 2026-08-16). Dark 
 - [x] Frontend: PdfSplitReviewSection (contiguity-by-construction editing, opt-in thumbs, prop re-sync), StatusBadge split states (DESIGN warning tone), polling terminal states, i18n de/en/it
 - [x] Tests: 16 route/service + 6 RTL; 2 review cycles (10+1 findings fixed); full suite baseline-identical; rotten MeetingsPage test fixed (undici/jsdom File)
 
-## PR3 — VLM slow path
-- [ ] `PdfSplitTaskQueue` (stream `renfield:tasks:pdfsplit`), `workers/pdf_split_worker.py` (meeting-worker template, row heartbeat, poison → treat-as-single)
-- [ ] VLM page-signal fill-in (plain-text transcription, per-call timeout, circuit breaker, NO page cap)
-- [ ] `k8s/pdf-split-worker.yaml` + kustomization + ConfigMap env
-- [ ] Tests: `test_pdf_split_worker.py`
+## PR3 — VLM slow path — DONE, merged #1100 (98348c07)
+- [x] All of it + 2 review cycles (incl. release-blocking inert-queue-defaults bug) — see design doc
+
+## Deployed 2026-08-18 (household)
+- [x] Images `2026-08-18-pdfsplit`, migration applied, flag ON, worker live, netpols enforced, E2E green (synthetic 3-doc split perfect)
+- [x] xidra rollout DONE 2026-08-20 (migration, flag, worker, netpols mit eigener privater Quelle k8s/xidra/redis-postgres-netpol.yaml; ~3-min Paperless-Netpol-Incident, behoben) ·
+- [ ] Follow-ups: deploy-script fix (sed registry for alembic job) · /verify-tests for the 28 rotten main tests · test docs 421-424 cleanup (user decision)
 
 ## Review / verification log
 (fill during implementation)

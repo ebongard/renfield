@@ -90,7 +90,10 @@ class TestFederationRouting:
             "services.database.AsyncSessionLocal", lambda: session_mock,
         )
 
-        async def fake_query_peer(self, peer, text):
+        seen_user_ids: list[int | None] = []
+
+        async def fake_query_peer(self, peer, text, user_id=None):
+            seen_user_ids.append(user_id)
             yield ProgressChunk(label="retrieving", sequence=1)
             yield {"success": True, "message": f"answered {peer.remote_display_name}", "data": None}
 
@@ -101,7 +104,7 @@ class TestFederationRouting:
 
         items = []
         async for item in manager.execute_tool_streaming(
-            "mcp.peer_7.query_brain", {"query": "what's for dinner?"},
+            "mcp.peer_7.query_brain", {"query": "what's for dinner?"}, user_id=42,
         ):
             items.append(item)
 
@@ -110,6 +113,9 @@ class TestFederationRouting:
         assert len(progress) == 1
         assert finals[0]["success"] is True
         assert "Mom" in finals[0]["message"]
+        # F-ID-1: the authenticated asker must reach query_peer so it can
+        # resolve the person-scoped querier_ref.
+        assert seen_user_ids == [42]
 
         reset_federation_identity_for_tests()
 
@@ -145,7 +151,7 @@ class TestFederationRouting:
 
         asker_called = False
 
-        async def should_not_be_called(self, peer, text):
+        async def should_not_be_called(self, peer, text, user_id=None):
             nonlocal asker_called
             asker_called = True
             yield {"success": True, "message": "", "data": None}
@@ -222,7 +228,10 @@ class TestFederationRouting:
             "services.database.AsyncSessionLocal", lambda: session_mock,
         )
 
-        async def fake_query_peer(self, peer, text):
+        seen_user_ids: list[int | None] = []
+
+        async def fake_query_peer(self, peer, text, user_id=None):
+            seen_user_ids.append(user_id)
             yield ProgressChunk(label="retrieving", sequence=1)
             yield {"success": True, "message": f"answered by {peer.remote_display_name}", "data": None}
         monkeypatch.setattr(
@@ -232,11 +241,14 @@ class TestFederationRouting:
 
         # NON-STREAMING path — agent loop's entry point
         result = await manager.execute_tool(
-            "mcp.peer_5.query_brain", {"query": "?"},
+            "mcp.peer_5.query_brain", {"query": "?"}, user_id=5,
         )
 
         assert result["success"] is True
         assert "Dad" in result["message"]
+        # F-ID-1: execute_tool must thread the asker through too, not just
+        # execute_tool_streaming.
+        assert seen_user_ids == [5]
         # ProgressChunks are discarded on the non-streaming path, only
         # the final dict is returned.
         assert "data" in result
@@ -550,7 +562,7 @@ class TestFederationProgressSink:
         # progress labels during polling, then FinalResult on terminal
         # status (asker doesn't emit `complete`/`failed` as chunks — those
         # are responder-side status strings that break the poll loop).
-        async def fake_query_peer(self, peer, text):
+        async def fake_query_peer(self, peer, text, user_id=None):
             yield ProgressChunk(label="waking_up", detail={"peer": peer.remote_display_name}, sequence=1)
             yield ProgressChunk(label="retrieving", detail={"peer": peer.remote_display_name}, sequence=2)
             yield ProgressChunk(label="synthesizing", detail={"peer": peer.remote_display_name}, sequence=3)
@@ -627,7 +639,7 @@ class TestFederationProgressSink:
             "services.database.AsyncSessionLocal", lambda: session_mock,
         )
 
-        async def fake_query_peer(self, peer, text):
+        async def fake_query_peer(self, peer, text, user_id=None):
             yield ProgressChunk(label="retrieving", sequence=1)
             yield ProgressChunk(label="synthesizing", sequence=2)
             yield {"success": True, "message": "done", "data": None}
@@ -691,7 +703,7 @@ class TestFederationProgressSink:
             "services.database.AsyncSessionLocal", lambda: session_mock,
         )
 
-        async def fake_query_peer(self, peer, text):
+        async def fake_query_peer(self, peer, text, user_id=None):
             yield ProgressChunk(label="retrieving", sequence=1)
             yield {"success": True, "message": "ok", "data": None}
 

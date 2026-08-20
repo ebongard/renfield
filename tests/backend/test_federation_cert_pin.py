@@ -248,10 +248,12 @@ class TestAskerCertPinIntegration:
         initiate_called = False
         original_initiate = FederationQueryAsker._initiate
 
-        async def spy_initiate(self, client, endpoint, query_text):
+        async def spy_initiate(self, client, endpoint, query_text, querier_ref=None):
             nonlocal initiate_called
             initiate_called = True
-            return await original_initiate(self, client, endpoint, query_text)
+            return await original_initiate(
+                self, client, endpoint, query_text, querier_ref,
+            )
 
         monkeypatch.setattr(
             FederationQueryAsker, "_initiate", spy_initiate,
@@ -310,7 +312,7 @@ class TestAskerCertPinIntegration:
         )
 
         # Stub the wire calls so we don't actually hit the network.
-        async def fake_initiate(self, client, endpoint, query_text):
+        async def fake_initiate(self, client, endpoint, query_text, querier_ref=None):
             return None  # signals "peer rejected initiate"
         monkeypatch.setattr(
             FederationQueryAsker, "_initiate", fake_initiate,

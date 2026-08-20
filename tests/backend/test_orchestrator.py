@@ -2098,6 +2098,7 @@ class TestSynthesisHooks:
             s.agent_router_model = "test-model"
             s.ollama_intent_model = "test-model"
             s.ollama_model = "test-model"
+            s.agent_ollama_url = None  # no dedicated agent URL → use the passed ollama.client
             s.orchestrator_synthesis_timeout = 10.0
 
             sub_results = [
@@ -2138,6 +2139,7 @@ class TestSynthesisHooks:
              patch("services.orchestrator.get_classification_chat_kwargs", return_value={}):
             pm.get.return_value = "X"
             s.agent_router_model = s.ollama_intent_model = s.ollama_model = "test-model"
+            s.agent_ollama_url = None  # no dedicated agent URL → use the passed ollama.client
             s.orchestrator_synthesis_timeout = 10.0
 
             await orchestrator._synthesize(
@@ -2171,6 +2173,7 @@ class TestSynthesisHooks:
              patch("services.orchestrator.get_classification_chat_kwargs", return_value={}):
             pm.get.return_value = "DEFAULT_PROMPT_NEVER_USED"
             s.agent_router_model = s.ollama_intent_model = s.ollama_model = "test-model"
+            s.agent_ollama_url = None  # no dedicated agent URL → use the passed ollama.client
             s.orchestrator_synthesis_timeout = 10.0
 
             await orchestrator._synthesize(
@@ -2204,6 +2207,7 @@ class TestSynthesisHooks:
              patch("services.orchestrator.get_classification_chat_kwargs", return_value={}):
             pm.get.return_value = "DEFAULT_PROMPT"
             s.agent_router_model = s.ollama_intent_model = s.ollama_model = "test-model"
+            s.agent_ollama_url = None  # no dedicated agent URL → use the passed ollama.client
             s.orchestrator_synthesis_timeout = 10.0
 
             await orchestrator._synthesize(
@@ -2272,6 +2276,7 @@ class TestSynthesisHooks:
              patch("services.orchestrator.get_classification_chat_kwargs", return_value={}):
             pm.get.return_value = "PROMPT"
             s.agent_router_model = s.ollama_intent_model = s.ollama_model = "test-model"
+            s.agent_ollama_url = None  # no dedicated agent URL → use the passed ollama.client
             s.orchestrator_synthesis_timeout = 10.0
 
             answer = await orchestrator._synthesize(
@@ -2309,6 +2314,7 @@ class TestSynthesisHooks:
              patch("services.orchestrator.logger") as mock_logger:
             pm.get.return_value = "PROMPT"
             s.agent_router_model = s.ollama_intent_model = s.ollama_model = "test-model"
+            s.agent_ollama_url = None  # no dedicated agent URL → use the passed ollama.client
             s.orchestrator_synthesis_timeout = 30.0
 
             answer = await orchestrator._synthesize("msg", sub_results, ollama, "de")
@@ -2342,6 +2348,7 @@ class TestSynthesisHooks:
              patch("services.orchestrator.logger") as mock_logger:
             pm.get.return_value = "PROMPT"
             s.agent_router_model = s.ollama_intent_model = s.ollama_model = "test-model"
+            s.agent_ollama_url = None  # no dedicated agent URL → use the passed ollama.client
             s.orchestrator_synthesis_timeout = 30.0
 
             answer = await orchestrator._synthesize("msg", sub_results, ollama, "de")
@@ -2401,7 +2408,10 @@ class TestEmitCombinedAnswerNoDataFilter:
         assert "No releases found" in finals[0].content
 
     @pytest.mark.asyncio
-    async def test_two_data_sources_both_synthesized(self):
+    async def test_two_data_sources_both_rendered(self):
+        """Default path: both data-bearing sources reach the combined answer via
+        the deterministic merge — each under its own role-keyed header, with no
+        LLM synthesis involved."""
         orch = QueryOrchestrator(_make_router([]), MagicMock())
         sub_results = [
             {"role": "konfigure", "answer": "Freezes ...", "has_data": True,
@@ -2409,7 +2419,31 @@ class TestEmitCombinedAnswerNoDataFilter:
             {"role": "jira", "answer": "Ticket RM27-4 ...", "has_data": True,
              "steps": [], "plugin_data": {}},
         ]
-        with patch.object(orch, "_synthesize",
+        with patch("services.orchestrator.settings.orchestrator_deterministic_merge", True), \
+             patch.object(orch, "_synthesize",
+                          new=AsyncMock(return_value="COMBINED")) as syn:
+            steps = [s async for s in
+                     orch._emit_combined_answer("msg", sub_results, _make_ollama(""), "en")]
+        syn.assert_not_called()
+        finals = [s for s in steps if s.step_type == "final_answer"]
+        assert len(finals) == 1
+        assert finals[0].content == (
+            "## konfigure\n\nFreezes ...\n\n## Jira\n\nTicket RM27-4 ..."
+        )
+
+    @pytest.mark.asyncio
+    async def test_two_data_sources_both_synthesized_when_merge_disabled(self):
+        """Kill-switch path: with the deterministic merge off, both data-bearing
+        sources are handed to the LLM synthesizer."""
+        orch = QueryOrchestrator(_make_router([]), MagicMock())
+        sub_results = [
+            {"role": "konfigure", "answer": "Freezes ...", "has_data": True,
+             "steps": [], "plugin_data": {}},
+            {"role": "jira", "answer": "Ticket RM27-4 ...", "has_data": True,
+             "steps": [], "plugin_data": {}},
+        ]
+        with patch("services.orchestrator.settings.orchestrator_deterministic_merge", False), \
+             patch.object(orch, "_synthesize",
                           new=AsyncMock(return_value="COMBINED")) as syn:
             steps = [s async for s in
                      orch._emit_combined_answer("msg", sub_results, _make_ollama(""), "en")]

@@ -156,11 +156,28 @@ async def messages_fts_installed(pg_db_session: AsyncSession) -> None:
 
 
 async def _add_conv(db: AsyncSession, session_id: str, user_id: int, msgs: list[tuple[str, str]]):
+    """Seed a linear (un-forked) conversation the way ``save_message`` does.
+
+    Chat branching (Phase 1) made the message tree load-bearing for reads:
+    search walks ``parent_message_id`` UPWARD from
+    ``conversations.active_leaf_message_id``, so a conversation whose rows carry
+    neither a parent chain nor an active leaf contributes NO rows. Hand-inserted
+    messages must therefore chain onto the tip and advance the leaf, exactly as
+    ``ConversationService.save_message`` does on every append.
+    """
     conv = Conversation(session_id=session_id, user_id=user_id)
     db.add(conv)
     await db.flush()
     for role, content in msgs:
-        db.add(Message(conversation_id=conv.id, role=role, content=content))
+        message = Message(
+            conversation_id=conv.id,
+            role=role,
+            content=content,
+            parent_message_id=conv.active_leaf_message_id,
+        )
+        db.add(message)
+        await db.flush()
+        conv.active_leaf_message_id = message.id
     await db.flush()
     return conv
 

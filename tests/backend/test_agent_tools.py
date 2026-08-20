@@ -12,10 +12,11 @@ from services.agent_tools import AgentToolRegistry, ToolDefinition
 
 # The registry always registers the platform-owned internal tools in
 # __init__ via _register_internal_tools() — the union of KNOWLEDGE_TOOL,
-# MEMORY_LIST_TOOL, CHAT_UPLOAD_TOOLS and WIDGET_TOOLS. Tests that count
-# tools or assert an "empty" registry must account for these baseline
-# entries. Keep this set in sync when a platform internal.* tool is added
-# (ha_glue-registered tools come via the register_tools hook and are NOT
+# MEMORY_LIST_TOOL, CHAT_UPLOAD_TOOLS, WIDGET_TOOLS, KB_MAINTENANCE_TOOLS,
+# SYSTEM_HEALTH_TOOL, PAPERLESS_REEXTRACT_TOOL and PAPERLESS_DEDUPE_TOOL.
+# Tests that count tools or assert an "empty" registry must account for these
+# baseline entries. Keep this set in sync when a platform internal.* tool is
+# added (ha_glue-registered tools come via the register_tools hook and are NOT
 # in this baseline).
 INTERNAL_TOOL_NAMES = {
     "internal.knowledge_search",          # KNOWLEDGE_TOOL
@@ -25,6 +26,12 @@ INTERNAL_TOOL_NAMES = {
     "internal.render_table",              # WIDGET_TOOLS
     "internal.render_list",               # WIDGET_TOOLS
     "internal.weather_widget",            # WIDGET_TOOLS
+    "internal.ingest_status",             # KB_MAINTENANCE_TOOLS
+    "internal.reindex_documents",         # KB_MAINTENANCE_TOOLS
+    "internal.list_chunkless_documents",  # KB_MAINTENANCE_TOOLS
+    "internal.system_health",             # SYSTEM_HEALTH_TOOL
+    "internal.reextract_paperless_metadata",  # PAPERLESS_REEXTRACT_TOOL
+    "internal.paperless_dedupe",          # PAPERLESS_DEDUPE_TOOL
 }
 NUM_INTERNAL_TOOLS = len(INTERNAL_TOOL_NAMES)
 
@@ -208,7 +215,7 @@ class TestAgentToolRegistryMCPTools:
 
         registry = AgentToolRegistry(mcp_manager=mock_mcp, _init_only=True)
         names = registry.get_tool_names()
-        # 3 MCP tools + the 3 baseline internal tools.
+        # 3 MCP tools + the baseline internal tools.
         assert len(names) == 3 + NUM_INTERNAL_TOOLS
         assert "mcp.homeassistant.turn_on" in names
         assert "mcp.weather.get_forecast" in names

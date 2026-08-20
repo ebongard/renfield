@@ -356,7 +356,7 @@ class TestAuditIntegration:
             "services.database.AsyncSessionLocal", lambda: session_mock,
         )
 
-        async def fake_query_peer(self, peer, text):
+        async def fake_query_peer(self, peer, text, user_id=None):
             yield ProgressChunk(label="retrieving", sequence=1)
             yield {"success": True, "message": "the answer", "data": None}
 
@@ -586,7 +586,7 @@ class TestCancellationAuditRow:
             "services.database.AsyncSessionLocal", lambda: session_mock,
         )
 
-        async def fake_query_peer(self, peer, text):
+        async def fake_query_peer(self, peer, text, user_id=None):
             yield ProgressChunk(label="retrieving", sequence=1)
             # Simulated mid-query crash — no terminal dict reached.
             raise RuntimeError("simulated mid-query abort")

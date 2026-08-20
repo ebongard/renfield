@@ -236,6 +236,11 @@ class TestSatelliteUpdateAPIFlow:
                 mock_settings.satellite_latest_version = "2.0.0"
                 mock_settings.advertise_host = "localhost"
                 mock_settings.advertise_port = 8000
+                # Production default. Left unset, the MagicMock attribute is
+                # truthy and trips the H6 signed-OTA gate, which refuses an
+                # unsigned release — that gate has its own coverage in
+                # test_satellite_ota_signing.py.
+                mock_settings.satellite_ota_require_signature = False
 
                 # Mock get_package_info since /app/satellite doesn't exist in CI
                 fake_package_info = {
