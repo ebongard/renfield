@@ -478,7 +478,7 @@ class TestBlacklistWriteFailure:
         bl = TokenBlacklist()
         redis = MagicMock()
         redis.setex = AsyncMock(side_effect=RuntimeError("redis down"))
-        bl._redis = redis
+        bl._get_redis = lambda: redis
         assert await bl.add("some-jti", 60) is False
 
     async def test_add_returns_true_on_success(self):
@@ -487,7 +487,7 @@ class TestBlacklistWriteFailure:
         bl = TokenBlacklist()
         redis = MagicMock()
         redis.setex = AsyncMock(return_value=True)
-        bl._redis = redis
+        bl._get_redis = lambda: redis
         assert await bl.add("some-jti", 60) is True
 
     async def test_add_noop_for_expired_ttl_is_true(self):

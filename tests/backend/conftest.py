@@ -177,15 +177,8 @@ def _reset_shared_redis_clients():
             pass
         else:
             _rc._client = None
-        try:
-            from services.token_blacklist import token_blacklist as _tb
-        except ImportError:
-            pass
-        else:
-            try:
-                _tb._redis = None
-            except Exception:
-                pass
+        # (TokenBlacklist now delegates to the shared services.redis_client
+        # pool — resetting _rc._client above covers it.)
 
     _drop()
     yield

@@ -7,23 +7,21 @@ Stores JTI (JWT ID) with TTL matching the token's remaining lifetime.
 import redis.asyncio as aioredis
 from loguru import logger
 
-from utils.config import settings
-
 BLACKLIST_PREFIX = "blacklist:"
 
 
 class TokenBlacklist:
     """Redis-backed JWT token blacklist."""
 
-    def __init__(self):
-        self._redis: aioredis.Redis | None = None
-
     def _get_redis(self) -> aioredis.Redis:
-        if self._redis is None:
-            self._redis = aioredis.from_url(
-                settings.redis_url, decode_responses=True
-            )
-        return self._redis
+        # Shared process-wide pooled client (services.redis_client), closed by
+        # lifecycle.close_redis() on shutdown — mirrors login_lockout, which
+        # documents why: a PRIVATE from_url client here was never closed and
+        # leaked its pool past shutdown (flagged in the 2026-08-20 test-rot
+        # sweep). Kept as an instance method: tests patch this seam.
+        from services.redis_client import get_redis
+
+        return get_redis()
 
     async def add(self, jti: str, ttl_seconds: int) -> bool:
         """

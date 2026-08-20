@@ -33,7 +33,7 @@ Plan: `~/.claude/plans/harmonic-toasting-toucan.md` (approved 2026-08-16). Dark 
 ## Deployed 2026-08-18 (household)
 - [x] Images `2026-08-18-pdfsplit`, migration applied, flag ON, worker live, netpols enforced, E2E green (synthetic 3-doc split perfect)
 - [x] xidra rollout DONE 2026-08-20 (migration, flag, worker, netpols mit eigener privater Quelle k8s/xidra/redis-postgres-netpol.yaml; ~3-min Paperless-Netpol-Incident, behoben) ·
-- [ ] Follow-ups: deploy-script fix (sed registry for alembic job) · /verify-tests for the 28 rotten main tests · test docs 421-424 cleanup (user decision)
+- [ ] Follow-ups: deploy-script fix (sed registry for alembic job) · [x] /verify-tests DONE 2026-08-20: 28→0, branch fix/test-rot-28 (awaiting push/merge) — Follow-ups: search-excludes-abandoned-branch Regressionstest, TokenBlacklist private-client cleanup · test docs 421-424 cleanup (user decision)
 
 ## Review / verification log
 (fill during implementation)

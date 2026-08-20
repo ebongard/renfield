@@ -22,7 +22,7 @@ the migration ADDs the GENERATED one).
 from __future__ import annotations
 
 import pytest
-from sqlalchemy import text
+from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.database import Conversation, Message, Role, User
@@ -280,3 +280,39 @@ class TestSearchMessagesPostgres:
         svc = ConversationService(pg_db_session)
         out = await svc.search_messages("café", user_id=u1)
         assert {r["session_id"] for r in out["results"]} == {"pg-fr"}
+
+    async def test_abandoned_fork_branch_excluded(
+        self, pg_db_session: AsyncSession, messages_fts_installed, two_users
+    ):
+        """The property that silently rotted in the 2026-08 sweep, now pinned:
+        search is ACTIVE-branch-scoped. A message on an abandoned fork (parented
+        into the tree but not on the path walked up from active_leaf_message_id)
+        must NOT surface, while the active branch's content does."""
+        u1, _ = two_users
+        conv = await _add_conv(
+            pg_db_session, "pg-fork", u1,
+            [("user", "Aktivstrang Xylophonkonzert"), ("assistant", "Gern!")],
+        )
+        # Fork off the ROOT message: an alternative reply that was abandoned
+        # (the active leaf stays on the linear branch seeded above).
+        root_id = (
+            await pg_db_session.execute(
+                select(Message.id)
+                .where(Message.conversation_id == conv.id,
+                       Message.parent_message_id.is_(None))
+            )
+        ).scalar_one()
+        abandoned = Message(
+            conversation_id=conv.id,
+            role="assistant",
+            content="Verwaister Zweig Quastenflosserfund",
+            parent_message_id=root_id,
+        )
+        pg_db_session.add(abandoned)
+        await pg_db_session.flush()  # active_leaf deliberately NOT advanced
+
+        svc = ConversationService(pg_db_session)
+        active = await svc.search_messages("Xylophonkonzert", user_id=u1)
+        assert {r["session_id"] for r in active["results"]} == {"pg-fork"}
+        orphaned = await svc.search_messages("Quastenflosserfund", user_id=u1)
+        assert orphaned["results"] == []

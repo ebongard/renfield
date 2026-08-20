@@ -122,7 +122,10 @@ fi
 if [[ $DO_MIGRATE == 1 ]]; then
   log "alembic migration (new image, before rollout)"
   run "${KUBECTL[*]} delete job alembic-upgrade --ignore-not-found"
-  run "${KUBECTL[*]} apply -f $REPO_ROOT/k8s/alembic-upgrade-job.yaml"
+  # The public manifest carries the registry placeholder — substitute the real
+  # registry + the freshly pushed tag at apply time (a raw apply fails the
+  # image pull; bit the 2026-08-18 pdfsplit deploy).
+  run "sed 's#your-registry.example/renfield/backend:latest#$REGISTRY/backend:${BACKEND_TAG:-latest}#' $REPO_ROOT/k8s/alembic-upgrade-job.yaml | ${KUBECTL[*]} apply -f -"
   if [[ $DRY_RUN == 0 ]]; then
     if ! "${KUBECTL[@]}" wait --for=condition=Complete job/alembic-upgrade --timeout=300s; then
       echo "ERROR: migration job did not complete — logs follow:" >&2
