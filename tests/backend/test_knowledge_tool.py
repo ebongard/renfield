@@ -96,6 +96,42 @@ class TestKnowledgeSearch:
         )
 
     @pytest.mark.unit
+    async def test_chunk_cap_follows_setting(self, monkeypatch):
+        """The per-chunk char cap in the context block is configurable
+        (knowledge_context_chunk_chars) so a large-context deployment can pass
+        retrieved chunks to the agent uncut."""
+        long_content = "A" * 900
+        mock_rag = MagicMock()
+        mock_rag.search = AsyncMock(return_value=[
+            {
+                "chunk": {"content": long_content},
+                "document": {"filename": "doc.pdf"},
+                "similarity": 0.9,
+            },
+        ])
+
+        mock_db = AsyncMock()
+
+        @asynccontextmanager
+        async def mock_session():
+            yield mock_db
+
+        monkeypatch.setattr(
+            "services.knowledge_tool.settings.knowledge_context_chunk_chars", 100
+        )
+        stubs = _stub_db_and_rag_modules()
+        try:
+            with patch("services.database.AsyncSessionLocal", mock_session, create=True), \
+                 patch("services.rag_service.RAGService", return_value=mock_rag, create=True):
+                result = await knowledge_search({"query": "test"})
+        finally:
+            _teardown_stubs(stubs)
+
+        context = result["data"]["context"]
+        assert "A" * 100 in context
+        assert "A" * 101 not in context
+
+    @pytest.mark.unit
     async def test_returns_structured_sources(self):
         """Results carry a deduped, document-keyed `sources` list for the chat
         provenance-chips UI (filename, title, tier)."""

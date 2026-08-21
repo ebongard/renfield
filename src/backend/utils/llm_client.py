@@ -290,6 +290,24 @@ class _OpenAICompatFallbackClient:
             return {**kwargs, "think": False}
         return kwargs
 
+    @staticmethod
+    def _warn_if_prompt_exceeds_fallback_ctx(messages: list[dict[str, Any]] | None) -> None:
+        """The fallback runs at ``ollama_num_ctx`` regardless of how wide the
+        primary's window is (``llm_openai_num_ctx``); an oversized prompt is
+        silently truncated by Ollama, dropping the system/tools framing at the
+        head. We can't shrink the prompt here (outage mode is best-effort), but
+        the degradation must be visible in the logs. Chars/token ≈ 3 is a
+        deliberately conservative estimate — only clear oversize warns.
+        """
+        total_chars = sum(len(str(m.get("content") or "")) for m in messages or [])
+        limit_chars = settings.ollama_num_ctx * 3
+        if total_chars > limit_chars:
+            logger.warning(
+                f"Fallback prompt (~{total_chars} chars) exceeds the in-cluster "
+                f"fallback context (num_ctx={settings.ollama_num_ctx}) — the "
+                f"response may be truncated/degraded until the primary recovers"
+            )
+
     async def chat(
         self,
         model: str = "",
@@ -311,6 +329,7 @@ class _OpenAICompatFallbackClient:
                 f"OpenAI-compat LLM primary failed ({exc!r}); "
                 f"falling back to in-cluster Ollama (model={fb_model})"
             )
+            self._warn_if_prompt_exceeds_fallback_ctx(messages)
             return await self._fallback.chat(model=fb_model, messages=messages, stream=False, **fb_kwargs)
 
     async def _chat_stream(
@@ -330,6 +349,7 @@ class _OpenAICompatFallbackClient:
                 f"OpenAI-compat LLM primary failed on stream open ({exc!r}); "
                 f"falling back to in-cluster Ollama (model={fb_model})"
             )
+            self._warn_if_prompt_exceeds_fallback_ctx(messages)
             fb_gen = await self._fallback.chat(model=fb_model, messages=messages, stream=True, **fb_kwargs)
             async for chunk in fb_gen:
                 yield chunk
@@ -730,6 +750,22 @@ def use_openai_for_tier(tier: str) -> bool:
     if agent is None:
         return True  # default: route everything through llama-server when configured
     return bool(agent)
+
+
+def effective_agent_num_ctx() -> int:
+    """Context window the agent tier can actually fill.
+
+    The OpenAI-compat server (llama-server) ignores client-side ``num_ctx`` —
+    its ``--ctx-size`` governs — so when the agent tier routes there AND the
+    operator declared that size via ``llm_openai_num_ctx``, the backend token
+    budget may fill it. Everywhere else (Ollama routing, or the setting unset)
+    the budget stays at ``ollama_num_ctx``. NOTE: this is a budget bound only;
+    with ``llm_openai_fallback_enabled`` a prompt wider than ``ollama_num_ctx``
+    degrades on fail-over (see ``_OpenAICompatFallbackClient``).
+    """
+    if settings.llm_openai_num_ctx and use_openai_for_tier("agent"):
+        return settings.llm_openai_num_ctx
+    return settings.ollama_num_ctx
 
 
 # ---------------------------------------------------------------------------

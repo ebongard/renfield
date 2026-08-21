@@ -223,7 +223,8 @@ async def knowledge_search(params: dict) -> dict:
             )
             source = doc.get("filename", "") or r.get("filename", "")
             if content:
-                context_parts.append(f"[{source}] {content[:500]}")
+                chunk_cap = settings.knowledge_context_chunk_chars
+                context_parts.append(f"[{source}] {content[:chunk_cap]}")
 
             doc_id = doc.get("id")
             if doc_id is not None and doc_id not in seen_doc_ids:

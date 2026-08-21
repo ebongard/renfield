@@ -38,6 +38,7 @@ from utils.llm_client import (
     OpenAICompatibleClient,
     clear_client_cache,
     create_llm_client,
+    effective_agent_num_ctx,
     extract_response_content,
     get_agent_client,
     get_classification_chat_kwargs,
@@ -1045,6 +1046,45 @@ class TestUseOpenAIForTier:
         assert use_openai_for_tier("chat") is False
 
 
+class TestEffectiveAgentNumCtx:
+    """The token budget's context window must follow the serving backend."""
+
+    @pytest.mark.unit
+    def test_openai_ctx_when_agent_routed_and_declared(self, monkeypatch):
+        monkeypatch.setattr("utils.llm_client.settings.llm_openai_base_url", "http://llama:8080/v1")
+        monkeypatch.setattr("utils.llm_client.settings.llm_openai_for_agent", None)
+        monkeypatch.setattr("utils.llm_client.settings.llm_openai_num_ctx", 262144, raising=False)
+        monkeypatch.setattr("utils.llm_client.settings.ollama_num_ctx", 32768)
+        assert effective_agent_num_ctx() == 262144
+
+    @pytest.mark.unit
+    def test_ollama_ctx_when_setting_unset(self, monkeypatch):
+        """llm_openai_num_ctx=None (default) → legacy budget, even when the
+        agent tier routes to the OpenAI-compat server."""
+        monkeypatch.setattr("utils.llm_client.settings.llm_openai_base_url", "http://llama:8080/v1")
+        monkeypatch.setattr("utils.llm_client.settings.llm_openai_for_agent", None)
+        monkeypatch.setattr("utils.llm_client.settings.llm_openai_num_ctx", None, raising=False)
+        monkeypatch.setattr("utils.llm_client.settings.ollama_num_ctx", 32768)
+        assert effective_agent_num_ctx() == 32768
+
+    @pytest.mark.unit
+    def test_ollama_ctx_when_agent_tier_on_ollama(self, monkeypatch):
+        """A declared llm_openai_num_ctx must NOT widen the budget when the
+        agent tier is routed to Ollama (per-tier override off)."""
+        monkeypatch.setattr("utils.llm_client.settings.llm_openai_base_url", "http://llama:8080/v1")
+        monkeypatch.setattr("utils.llm_client.settings.llm_openai_for_agent", False)
+        monkeypatch.setattr("utils.llm_client.settings.llm_openai_num_ctx", 262144, raising=False)
+        monkeypatch.setattr("utils.llm_client.settings.ollama_num_ctx", 32768)
+        assert effective_agent_num_ctx() == 32768
+
+    @pytest.mark.unit
+    def test_ollama_ctx_when_no_openai_endpoint(self, monkeypatch):
+        monkeypatch.setattr("utils.llm_client.settings.llm_openai_base_url", None)
+        monkeypatch.setattr("utils.llm_client.settings.llm_openai_num_ctx", 262144, raising=False)
+        monkeypatch.setattr("utils.llm_client.settings.ollama_num_ctx", 32768)
+        assert effective_agent_num_ctx() == 32768
+
+
 class TestGetDefaultClientRoutesToOpenAI:
     """get_default_client() / get_agent_client() prefer OpenAI when configured."""
 
@@ -1226,6 +1266,43 @@ class TestOpenAICompatFallbackClient:
         result = await w.chat(model="qwen3.6", messages=[])
         assert result == "fallback"
         assert fallback.chat.call_args.kwargs["model"] == "qwen3:14b"
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_oversized_prompt_warns_on_fallback(self, monkeypatch):
+        """A prompt wider than the fallback's num_ctx (budgeted for the large
+        llama-server window) must log a WARNING — Ollama would silently
+        truncate it, and that degradation has to be visible."""
+        import httpx
+        primary = AsyncMock()
+        fallback = AsyncMock()
+        primary.chat.side_effect = httpx.ConnectError("refused")
+        fallback.chat.return_value = "ok"
+        w = self._wrapper(monkeypatch, primary, fallback)
+        monkeypatch.setattr("utils.llm_client.settings.ollama_num_ctx", 1000)
+        big_messages = [{"role": "user", "content": "x" * 5000}]  # > 1000*3 chars
+
+        with patch("utils.llm_client.logger") as log:
+            assert await w.chat(model="qwen3.6", messages=big_messages) == "ok"
+        warnings = [str(c.args[0]) for c in log.warning.call_args_list]
+        assert any("exceeds the in-cluster fallback context" in m for m in warnings)
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_small_prompt_no_oversize_warning(self, monkeypatch):
+        import httpx
+        primary = AsyncMock()
+        fallback = AsyncMock()
+        primary.chat.side_effect = httpx.ConnectError("refused")
+        fallback.chat.return_value = "ok"
+        w = self._wrapper(monkeypatch, primary, fallback)
+        monkeypatch.setattr("utils.llm_client.settings.ollama_num_ctx", 1000)
+        small_messages = [{"role": "user", "content": "hi"}]
+
+        with patch("utils.llm_client.logger") as log:
+            assert await w.chat(model="qwen3.6", messages=small_messages) == "ok"
+        warnings = [str(c.args[0]) for c in log.warning.call_args_list]
+        assert not any("exceeds the in-cluster fallback context" in m for m in warnings)
 
     @pytest.mark.unit
     @pytest.mark.asyncio

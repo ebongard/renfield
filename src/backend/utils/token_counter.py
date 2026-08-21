@@ -267,26 +267,38 @@ class TokenCounter:
             reserved_tokens=reserved_for_response
         )
 
+    # Sample size for content-type detection. count() runs on the hot agent
+    # path up to ~7x per ReAct step; scanning a multi-hundred-KB prompt in
+    # full (plus the .lower() copy) blocks the event loop for tens of ms per
+    # call. A prefix sample classifies just as reliably — prompts are
+    # homogeneous enough that the first few KB decide the ratio.
+    DETECT_SAMPLE_CHARS = 4096
+
     def _detect_content_type(self, text: str) -> float:
         """
         Detect content type and return appropriate chars-per-token ratio.
+
+        Operates on a bounded prefix sample (DETECT_SAMPLE_CHARS) so the cost
+        stays O(1) regardless of prompt size.
         """
+        sample = text[:self.DETECT_SAMPLE_CHARS]
+
         # Check for JSON
-        if text.strip().startswith("{") or text.strip().startswith("["):
+        if sample.strip().startswith("{") or sample.strip().startswith("["):
             return self.CHARS_PER_TOKEN_JSON
 
         # Check for code (simple heuristics)
         code_indicators = ["def ", "class ", "function ", "import ", "const ", "let ", "var "]
-        if any(indicator in text for indicator in code_indicators):
+        if any(indicator in sample for indicator in code_indicators):
             return self.CHARS_PER_TOKEN_CODE
 
         # Check for German text (umlauts and common words)
         german_chars = "äöüÄÖÜß"
         german_words = ["der", "die", "das", "und", "ist", "ein", "eine", "nicht"]
-        text_lower = text.lower()
+        sample_lower = sample.lower()
 
-        has_umlauts = any(c in text for c in german_chars)
-        has_german_words = sum(1 for w in german_words if f" {w} " in f" {text_lower} ") >= 2
+        has_umlauts = any(c in sample for c in german_chars)
+        has_german_words = sum(1 for w in german_words if f" {w} " in f" {sample_lower} ") >= 2
 
         if has_umlauts or has_german_words:
             return self.CHARS_PER_TOKEN_GERMAN
