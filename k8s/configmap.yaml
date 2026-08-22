@@ -134,6 +134,14 @@ data:
   AGENT_TOOL_RESULT_TEXT_MAX_CHARS: "32000"
   KNOWLEDGE_CONTEXT_CHUNK_CHARS: "1500"
 
+  # H1 Satellite-Enrollment: PERMISSIVE läuft seit 2026-07 (ENABLED via
+  # renfield-env-private); der Auto-Flip latcht zu ENFORCING, sobald JEDE
+  # enrollte Satellites-Row mindestens einmal authentifiziert hat — Stand
+  # 2026-08-22 hält allein sat-benszimmer (frisch enrolled, Token noch nicht
+  # provisioniert) den Latch. Nach dessen Provisionierung flippt die Fleet
+  # automatisch und dauerhaft (Latch löscht sich nie selbst).
+  SATELLITE_ENROLLMENT_AUTOFLIP_ENABLED: "true"
+
   # Prometheus /metrics (in-cluster only: der Ingress routet /metrics nicht,
   # der Service ist ClusterIP — extern landet der Pfad auf der SPA). Enthält
   # u. a. die MCP-Health-Heartbeats (renfield_mcp_health_ticks_total).

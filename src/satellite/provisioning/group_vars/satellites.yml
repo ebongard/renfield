@@ -31,7 +31,13 @@ satellite_enrollment_token: ""
 # hex public key(s) printed by `bin/sign_satellite_release.py --gen-key`. Multiple
 # entries = key rotation (the satellite accepts any). require_signature stays
 # false until the release-signing pipeline is live, then flip to fail-closed.
-satellite_release_pubkeys: []
+satellite_release_pubkeys:
+  # Ed25519 release key #1 (generated 2026-08-22; private key on the operator
+  # workstation at ~/.renfield/ota_release_key — never on backend/build box).
+  - "7a11b0548a84ce084c3b4156cb94bd04ea9e5755566bf3a19b9d6d77ef7ddec0"
+# Verify-if-present until the whole fleet carries the pubkey (provisioning
+# round), then flip fail-closed together with backend
+# SATELLITE_OTA_REQUIRE_SIGNATURE.
 satellite_ota_require_signature: false
 # Connection robustness (Pi Zero 2 W 2.4GHz WiFi is marginal — detect dead links
 # fast and self-heal instead of wedging). See docs/SATELLITE_CONNECTIVITY.md.
