@@ -51,5 +51,11 @@ spec:
         - podSelector: {matchLabels: {app.kubernetes.io/name: meeting-worker}}
         - podSelector: {matchLabels: {app.kubernetes.io/name: pdf-split-worker}}
         - podSelector: {matchLabels: {app.kubernetes.io/part-of: renfield, app.kubernetes.io/component: backend-job}}
+        # Digital twin (private deployment, label app=twin): stores its events in
+        # its OWN Postgres DB on this instance. Was cut off when this policy
+        # shipped (2026-08-18) — conntrack kept the pool alive until 2026-08-20,
+        # then /ready hung forever on blackholed reconnects (pod NotReady 18d,
+        # twin capture silently dead). Twin needs Postgres only, NOT Redis.
+        - podSelector: {matchLabels: {app: twin}}
       ports:
         - {protocol: TCP, port: 5432}
