@@ -331,6 +331,35 @@ class TestActionExecutorPreMCPCall:
         assert call_args.args[1]["user_subject"] == "host-resolved"
 
     @pytest.mark.unit
+    async def test_pre_mcp_call_high_priority_guard_runs_last(self, action_executor):
+        """A priority-registered security guard has the LAST word even when a
+        later-loaded plugin returns a fresh dict that drops its key."""
+        from utils.hooks import _hooks, register_hook
+
+        async def guard(intent, parameters, user_id=None, **_):
+            return {**parameters, "user_subject": "host-resolved"}
+
+        async def careless_plugin(intent, parameters, user_id=None, **_):
+            return {"id": "rebuilt"}  # fresh dict, drops user_subject
+
+        # Guard registers FIRST (plugin load order) but with high priority;
+        # the careless plugin registers after it.
+        register_hook("pre_mcp_call", guard, priority=100)
+        register_hook("pre_mcp_call", careless_plugin)
+        try:
+            await action_executor.execute({
+                "intent": "mcp.release.get_release",
+                "parameters": {"title": "x"},
+                "confidence": 0.9,
+            })
+        finally:
+            _hooks["pre_mcp_call"].remove(guard)
+            _hooks["pre_mcp_call"].remove(careless_plugin)
+
+        call_args = action_executor.mcp_manager.execute_tool.call_args
+        assert call_args.args[1]["user_subject"] == "host-resolved"
+
+    @pytest.mark.unit
     async def test_pre_mcp_call_crashing_handler_is_skipped(self, action_executor):
         """A raising handler is skipped (logged); later handlers still run."""
         from utils.hooks import _hooks, register_hook

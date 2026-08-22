@@ -122,6 +122,7 @@ class TestEnforceTokenBudget:
             s.ollama_num_ctx = 32768
             s.agent_default_num_predict = 2048
             s.agent_budget_threshold = 0.85
+            s.agent_prompt_target_tokens = None
 
             result = await agent._enforce_token_budget(
                 large_prompt, ctx, "test", None,
@@ -158,6 +159,7 @@ class TestEnforceTokenBudget:
             s.ollama_num_ctx = 32768
             s.agent_default_num_predict = 2048
             s.agent_budget_threshold = 0.85
+            s.agent_prompt_target_tokens = None
 
             result = await agent._enforce_token_budget(
                 large_prompt, ctx, "test", full_history,
@@ -298,6 +300,71 @@ class TestSoftPromptTarget:
 
     @pytest.mark.unit
     @pytest.mark.asyncio
+    async def test_soft_pass_reverts_when_target_too_tight(self):
+        """Advisory floor: a target so tight that tool results would be
+        crushed near the 200-char floor is skipped (prompt passes unreduced,
+        tool_result_budget_chars reset) — the soft target is latency control,
+        never an emergency crush."""
+        agent = _make_agent()
+        ctx = self._ctx_with_tool_results()
+        prompt = "x" * 80000  # over the tiny target
+
+        async def mock_build(*args, **kwargs):
+            # Skeleton alone nearly fills the tiny target → headroom ~0.
+            return "s" * 8000
+
+        agent._build_agent_prompt = mock_build
+
+        with patch("services.agent_service.settings") as s, \
+             patch("services.agent_service.effective_agent_num_ctx", return_value=262144):
+            s.agent_default_num_predict = 2048
+            s.agent_budget_threshold = 0.85
+            s.agent_prompt_target_tokens = 2048  # <= reserved → headroom 0
+
+            out_prompt, _, _, _ = await agent._enforce_token_budget(
+                prompt, ctx, "test", None,
+                memory_context="", document_context="", lang="de",
+            )
+            assert out_prompt == prompt              # NOT the crushed rebuild
+            assert ctx.tool_result_budget_chars == 0  # reverted
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_hard_pass_respects_soft_target_ceiling(self):
+        """No latency inversion at the threshold: a prompt OVER the hard
+        threshold sizes Pass 0 toward min(target, hard), not the full 85%
+        window."""
+        agent = _make_agent()
+        ctx = self._ctx_with_tool_results()
+        prompt = "x" * 950000  # ~237k tokens > 85% of 262144
+
+        captured_budgets = []
+
+        async def spy(*args, **kwargs):
+            captured_budgets.append(kwargs.get("budget_tokens"))
+            return None  # no tool results shrunk — fall through to later passes
+
+        agent._apply_adaptive_tool_budget = spy
+
+        async def mock_build(*args, **kwargs):
+            return "x" * 10000
+
+        agent._build_agent_prompt = mock_build
+
+        with patch("services.agent_service.settings") as s, \
+             patch("services.agent_service.effective_agent_num_ctx", return_value=262144):
+            s.agent_default_num_predict = 2048
+            s.agent_budget_threshold = 0.85
+            s.agent_prompt_target_tokens = 65536
+
+            await agent._enforce_token_budget(
+                prompt, ctx, "test", None,
+                memory_context="", document_context="", lang="de",
+            )
+        assert captured_budgets == [65536]  # min(target, int(262144*0.85))
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
     async def test_under_target_passthrough(self):
         agent = _make_agent()
         ctx = self._ctx_with_tool_results()
@@ -381,6 +448,7 @@ class TestBackendAwareBudget:
              patch("services.agent_service.effective_agent_num_ctx", return_value=32768):
             s.agent_default_num_predict = 2048
             s.agent_budget_threshold = 0.85
+            s.agent_prompt_target_tokens = None
 
             prompt, _, _, _ = await agent._enforce_token_budget(
                 large_prompt, ctx, "test", None,

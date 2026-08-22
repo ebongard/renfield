@@ -518,6 +518,11 @@ def _with_required_companions(selected_names: list[str]) -> list[str]:
 # therefore must not carry an output cap below that reservation.
 _BUDGETED_OPTION_KEYS = frozenset({"llm_options", "llm_options_retry"})
 
+# Minimum per-result char budget for the ADVISORY soft-target pass to be worth
+# applying — below this the agent can't meaningfully read its own tool results
+# and the pass is skipped (the hard budget's 200-char emergency floor stays).
+_SOFT_TARGET_MIN_RESULT_CHARS = 1000
+
 
 def _warn_if_truncated(raw_response: Any, model: str, call_type: str, step_num: int | None = None) -> bool:
     """Log + count a completion the model had to cut at the output-token cap.
@@ -1125,7 +1130,13 @@ class AgentService:
                         memory_context, document_context, lang, build_kwargs,
                         budget_tokens=soft_budget, reserved=reserved,
                     )
-                    if soft is not None:
+                    # The soft target is ADVISORY (latency control), never an
+                    # emergency: if the target is so tight relative to the
+                    # prompt skeleton that tool results would be crushed to
+                    # near the 200-char floor (agent can't read its own
+                    # results any more), revert and let the prompt pass — the
+                    # hard budget still protects the window.
+                    if soft is not None and soft[2] >= _SOFT_TARGET_MIN_RESULT_CHARS:
                         prompt, prompt_tokens, per_result_chars, n_results = soft
                         utilization = (prompt_tokens + reserved) / max_tokens
                         record_budget_reduction("soft_target_tool_budget")
@@ -1135,6 +1146,14 @@ class AgentService:
                             f"/{target} target ({per_result_chars} chars/result "
                             f"x {n_results} results)"
                         )
+                    elif soft is not None:
+                        context.tool_result_budget_chars = 0
+                        logger.warning(
+                            f"Soft prompt target {target} leaves <"
+                            f"{_SOFT_TARGET_MIN_RESULT_CHARS} chars/result "
+                            f"(skeleton too large) — soft pass skipped; raise "
+                            f"AGENT_PROMPT_TARGET_TOKENS"
+                        )
                 return prompt, memory_context, document_context, conversation_history
 
             logger.warning(
@@ -1143,11 +1162,19 @@ class AgentService:
             )
             from utils.metrics import record_budget_reduction
 
-            # Pass 0: Adaptive tool result budgeting via _serialize_for_prompt
+            # Pass 0: Adaptive tool result budgeting via _serialize_for_prompt.
+            # With a soft target set, Pass 0 sizes toward min(target, hard) —
+            # otherwise a prompt just OVER the hard threshold would come out
+            # ~3x LARGER than one just under it (the soft pass squeezed the
+            # latter to the target, while Pass 0 refilled the former to 85%
+            # of the window — a non-monotonic latency inversion).
+            pass0_budget = int(max_tokens * threshold)
+            if settings.agent_prompt_target_tokens:
+                pass0_budget = min(settings.agent_prompt_target_tokens, pass0_budget)
             pass0 = await self._apply_adaptive_tool_budget(
                 message, context, conversation_history,
                 memory_context, document_context, lang, build_kwargs,
-                budget_tokens=int(max_tokens * threshold), reserved=reserved,
+                budget_tokens=pass0_budget, reserved=reserved,
             )
             if pass0 is not None:
                 prompt, prompt_tokens, per_result_chars, n_results = pass0

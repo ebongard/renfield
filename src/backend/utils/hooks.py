@@ -370,11 +370,29 @@ HookFn = Callable[..., Coroutine[Any, Any, Any]]
 _hooks: dict[str, list[HookFn]] = defaultdict(list)
 
 
-def register_hook(event: str, fn: HookFn) -> None:
-    """Register an async callback for *event*. Raises ValueError for unknown events."""
+# (event, fn) -> priority for handlers registered with a non-default priority.
+# Kept OUTSIDE _hooks so the list representation (and every test doing
+# `_hooks[event].remove(fn)`) stays untouched; a stale entry after a direct
+# list removal is harmless (keyed by fn identity, re-registration overwrites).
+_hook_priorities: dict[tuple[str, int], int] = {}
+
+
+def register_hook(event: str, fn: HookFn, *, priority: int = 0) -> None:
+    """Register an async callback for *event*. Raises ValueError for unknown events.
+
+    ``priority`` orders handlers for callers that consume them via
+    ``get_hook_handlers`` (higher runs LATER; ties keep registration order).
+    Security handlers that must have the last word in a CHAINED consumer
+    (e.g. the twin self-access guard on ``pre_mcp_call``) register with a
+    high priority so no later-loaded plugin can sit behind them by accident.
+    ``run_hooks`` deliberately ignores priority (its results are unordered
+    contributions, not a chain).
+    """
     if event not in HOOK_EVENTS:
         raise ValueError(f"Unknown hook event {event!r}. Valid: {sorted(HOOK_EVENTS)}")
     _hooks[event].append(fn)
+    if priority:
+        _hook_priorities[(event, id(fn))] = priority
     logger.debug(f"Hook registered: {event} → {getattr(fn, '__qualname__', repr(fn))}")
 
 
@@ -453,16 +471,21 @@ def is_hook_registered(event: str, fn: HookFn) -> bool:
 
 
 def get_hook_handlers(event: str) -> list[HookFn]:
-    """Snapshot of the registered handlers for *event*, in registration order.
+    """Snapshot of the registered handlers for *event*, sorted by priority
+    (ascending — higher priority runs LATER), ties in registration order.
 
     For callers that must CHAIN handler results (feed each handler the
     previous handler's output — e.g. the ``pre_mcp_call`` parameter rewrite),
     which ``run_hooks``' same-kwargs-for-all model cannot express. Returns a
     copy; the internal registry stays private to this module.
     """
-    return list(_hooks.get(event, []))
+    handlers = _hooks.get(event, [])
+    return sorted(
+        handlers, key=lambda fn: _hook_priorities.get((event, id(fn)), 0)
+    )
 
 
 def clear_hooks() -> None:
     """Remove all registered hooks. Used for test isolation."""
     _hooks.clear()
+    _hook_priorities.clear()

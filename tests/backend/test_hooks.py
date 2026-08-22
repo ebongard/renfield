@@ -267,3 +267,44 @@ def test_plugin_spec_no_callable():
     """Plugin spec without ':' means module-only import."""
     spec = "renfield_twin.hooks"
     assert ":" not in spec
+
+
+class TestHookPriority:
+    """get_hook_handlers orders by priority (higher runs later); run_hooks
+    deliberately ignores priority."""
+
+    @pytest.mark.unit
+    def test_priority_orders_handlers_for_chained_consumers(self):
+        from utils.hooks import get_hook_handlers, register_hook
+
+        async def early(**_):
+            return None
+
+        async def guard(**_):
+            return None
+
+        async def late_registered(**_):
+            return None
+
+        register_hook("pre_mcp_call", guard, priority=100)
+        register_hook("pre_mcp_call", early)
+        register_hook("pre_mcp_call", late_registered)
+
+        handlers = get_hook_handlers("pre_mcp_call")
+        # Default-priority handlers keep registration order; the high-priority
+        # guard runs LAST even though it registered first.
+        assert handlers == [early, late_registered, guard]
+
+    @pytest.mark.unit
+    def test_default_priority_keeps_registration_order(self):
+        from utils.hooks import get_hook_handlers, register_hook
+
+        async def a(**_):
+            return None
+
+        async def b(**_):
+            return None
+
+        register_hook("pre_mcp_call", a)
+        register_hook("pre_mcp_call", b)
+        assert get_hook_handlers("pre_mcp_call") == [a, b]

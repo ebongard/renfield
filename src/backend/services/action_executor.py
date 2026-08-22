@@ -273,11 +273,13 @@ class ActionExecutor:
                     rewritten = await pre_call_handler(
                         intent=intent, parameters=parameters, user_id=user_id
                     )
-                except Exception as e:  # mirror run_hooks fail-open semantics
-                    logger.warning(
+                except Exception:  # mirror run_hooks fail-open semantics
+                    # Full traceback (like run_hooks): a silently-skipped
+                    # SECURITY handler must be diagnosable from the log alone.
+                    logger.opt(exception=True).warning(
                         f"pre_mcp_call handler "
                         f"{getattr(pre_call_handler, '__name__', '?')} failed "
-                        f"(skipped): {e}"
+                        f"(skipped)"
                     )
                     continue
                 if isinstance(rewritten, dict):

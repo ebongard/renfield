@@ -488,23 +488,26 @@ def record_llm_response_truncated(model: str, call_type: str):
 # === Middleware & Endpoint Setup ===
 
 
-# Path segments that are per-resource identifiers → one label value each would
-# explode the `endpoint` label cardinality (a Counter time series per document
-# id, session uuid, …). Numeric ids, UUIDs, and long hex tokens collapse to
-# `{id}`; everything else stays literal.
-_ID_SEGMENT_RE = None
+import re as _re
+
+# Fallback heuristic for paths WITHOUT a matched route (404s, scanner probes):
+# numeric ids, UUIDs, and long hex tokens collapse to `{id}` so even unmatched
+# traffic can't mint unbounded label values.
+_ID_SEGMENT_RE = _re.compile(
+    r"^(\d+|[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}"
+    r"-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}|[0-9a-fA-F]{16,})$"
+)
 
 
 def normalize_endpoint(path: str) -> str:
-    """Collapse per-resource path segments to `{id}` for the metrics label
-    (e.g. /api/knowledge/documents/123 → /api/knowledge/documents/{id})."""
-    global _ID_SEGMENT_RE
-    if _ID_SEGMENT_RE is None:
-        import re
-        _ID_SEGMENT_RE = re.compile(
-            r"^(\d+|[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}"
-            r"-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}|[0-9a-fA-F]{16,})$"
-        )
+    """Heuristic id-collapse for the metrics `endpoint` label
+    (e.g. /api/knowledge/documents/123 → /api/knowledge/documents/{id}).
+
+    Only the FALLBACK for requests without a matched route — matched requests
+    use the exact route template (``scope["route"].path_format``), which also
+    covers non-hex string path params ({session_id}, {intent_name}, …) this
+    regex cannot recognise.
+    """
     parts = path.split("/")
     return "/".join("{id}" if _ID_SEGMENT_RE.match(p) else p for p in parts)
 
@@ -538,9 +541,13 @@ def setup_metrics(app: "FastAPI"):
             response = await call_next(request)
             duration = time.monotonic() - start
 
-            # Normalize endpoint path (remove IDs to reduce cardinality) —
-            # the comment used to be aspirational; now it's implemented.
-            endpoint = normalize_endpoint(request.url.path)
+            # Cardinality-safe endpoint label: the EXACT route template when
+            # the request matched a route (covers every path param, including
+            # non-hex strings like {session_id}); heuristic id-collapse only
+            # for unmatched paths (404s / scanner probes).
+            route = request.scope.get("route")
+            path_format = getattr(route, "path_format", None)
+            endpoint = path_format or normalize_endpoint(request.url.path)
             record_http_request(
                 method=request.method,
                 endpoint=endpoint,
