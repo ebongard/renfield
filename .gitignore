@@ -67,6 +67,12 @@ docs/private/
 k8s/xidra/
 config/xidra/
 
+# Digital-twin adapter — PRIVATE package staged into the working tree for backend
+# image builds (canonical source: the private twin repo, see the twin-adapter
+# staging memory/DEPLOY.md). NEVER public git; without this entry a stray
+# `git add -A` would publish it permanently.
+src/backend/twin_adapter/
+
 # Secrets (should use .env)
 *.pem
 *.key
