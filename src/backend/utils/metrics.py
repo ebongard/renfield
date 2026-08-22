@@ -173,6 +173,16 @@ def _init_metrics():
             ["violation"],
         )
 
+        # Answers cut off at the output-token cap. This used to be entirely
+        # invisible: the user simply got a reply that stopped mid-sentence.
+        # Any sustained non-zero rate means num_predict is too low for what
+        # the model is being asked to produce.
+        _llm_response_truncated_total = Counter(
+            "renfield_llm_response_truncated_total",
+            "LLM completions that hit the output-token cap (finish_reason=length)",
+            ["model", "call_type"],
+        )
+
         # Pluggable-auth fail-open observability. Name intentionally matches
         # the cross-repo design contract (ebongard/renfield#591) verbatim —
         # no `renfield_` prefix — so dashboards/alerts written against the
@@ -437,6 +447,13 @@ def record_output_guard_violation(violation: str):
     if not _metrics_initialized:
         return
     _output_guard_violations_total.labels(violation=violation).inc()
+
+
+def record_llm_response_truncated(model: str, call_type: str):
+    """Record a completion that hit the output-token cap (finish_reason=length)."""
+    if not _metrics_initialized:
+        return
+    _llm_response_truncated_total.labels(model=model, call_type=call_type).inc()
 
 
 # === Middleware & Endpoint Setup ===

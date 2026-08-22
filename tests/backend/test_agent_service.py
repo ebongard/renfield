@@ -2452,3 +2452,139 @@ def test_with_required_companions_is_dedup_safe_and_inert():
     # unrelated tools untouched
     assert _with_required_companions(["internal.media_control"]) == ["internal.media_control"]
     assert _with_required_companions([]) == []
+
+
+# ============================================================================
+# Output-cap handling.
+#
+# The token budget reserves `agent_default_num_predict` tokens for the answer,
+# but the cap actually sent to the model came from a separate literal in
+# prompts/agent.yaml. Raising the setting moved the reservation and not the
+# cap, so a long answer was cut mid-sentence — silently, since finish_reason
+# was never inspected.
+# ============================================================================
+
+
+class TestBudgetedLlmOptions:
+    """_llm_options_or_default keeps the answer cap >= the budget reservation."""
+
+    @pytest.mark.unit
+    def test_answer_cap_is_raised_to_the_setting(self, monkeypatch):
+        from services import agent_service
+
+        monkeypatch.setattr(
+            agent_service.prompt_manager, "get_config",
+            lambda *a, **k: {"temperature": 0.1, "num_predict": 2048},
+        )
+        monkeypatch.setattr(agent_service.settings, "agent_default_num_predict", 6000, raising=False)
+
+        opts = agent_service._llm_options_or_default("llm_options", {})
+
+        assert opts["num_predict"] == 6000
+        assert opts["temperature"] == 0.1  # everything else untouched
+
+    @pytest.mark.unit
+    def test_a_more_generous_yaml_cap_wins(self, monkeypatch):
+        """The reconciliation raises a stale floor; it never lowers a cap."""
+        from services import agent_service
+
+        monkeypatch.setattr(
+            agent_service.prompt_manager, "get_config", lambda *a, **k: {"num_predict": 8192}
+        )
+        monkeypatch.setattr(agent_service.settings, "agent_default_num_predict", 2048, raising=False)
+
+        assert agent_service._llm_options_or_default("llm_options", {})["num_predict"] == 8192
+
+    @pytest.mark.unit
+    def test_retry_options_are_reconciled_too(self, monkeypatch):
+        from services import agent_service
+
+        monkeypatch.setattr(
+            agent_service.prompt_manager, "get_config", lambda *a, **k: {"num_predict": 2048}
+        )
+        monkeypatch.setattr(agent_service.settings, "agent_default_num_predict", 4096, raising=False)
+
+        assert agent_service._llm_options_or_default("llm_options_retry", {})["num_predict"] == 4096
+
+    @pytest.mark.unit
+    def test_short_by_design_option_sets_are_left_alone(self, monkeypatch):
+        """Summary and pre-selection are meant to be brief — their small caps
+        are the point, so the reservation must not inflate them."""
+        from services import agent_service
+
+        monkeypatch.setattr(
+            agent_service.prompt_manager, "get_config", lambda *a, **k: {"num_predict": 512}
+        )
+        monkeypatch.setattr(agent_service.settings, "agent_default_num_predict", 6000, raising=False)
+
+        assert agent_service._llm_options_or_default(
+            "llm_options_tool_preselect", {}
+        )["num_predict"] == 512
+        assert agent_service._llm_options_or_default(
+            "llm_options_summary", {}
+        )["num_predict"] == 512
+
+    @pytest.mark.unit
+    def test_missing_yaml_still_falls_back(self, monkeypatch):
+        from services import agent_service
+
+        monkeypatch.setattr(agent_service.prompt_manager, "get_config", lambda *a, **k: None)
+        monkeypatch.setattr(agent_service.settings, "agent_default_num_predict", 2048, raising=False)
+
+        opts = agent_service._llm_options_or_default("llm_options", {"temperature": 0.7})
+
+        assert opts["temperature"] == 0.7
+        assert opts["num_predict"] == 2048
+
+
+class TestWarnIfTruncated:
+    """A capped completion must leave a trace."""
+
+    @pytest.mark.unit
+    def test_truncated_response_warns_and_counts(self, monkeypatch):
+        from types import SimpleNamespace
+
+        from services import agent_service
+
+        recorded = []
+        monkeypatch.setattr(
+            "utils.metrics.record_llm_response_truncated",
+            lambda model, call_type: recorded.append((model, call_type)),
+        )
+
+        assert agent_service._warn_if_truncated(
+            SimpleNamespace(done_reason="length"), "qwen3.6", "agent_step", 3
+        ) is True
+        assert recorded == [("qwen3.6", "agent_step")]
+
+    @pytest.mark.unit
+    def test_complete_response_is_silent(self, monkeypatch):
+        from types import SimpleNamespace
+
+        from services import agent_service
+
+        recorded = []
+        monkeypatch.setattr(
+            "utils.metrics.record_llm_response_truncated",
+            lambda model, call_type: recorded.append((model, call_type)),
+        )
+
+        assert agent_service._warn_if_truncated(
+            SimpleNamespace(done_reason="stop"), "qwen3.6", "agent_step", 1
+        ) is False
+        assert recorded == []
+
+    @pytest.mark.unit
+    def test_metrics_failure_never_breaks_the_agent_loop(self, monkeypatch):
+        from types import SimpleNamespace
+
+        from services import agent_service
+
+        def boom(*a, **k):
+            raise RuntimeError("registry exploded")
+
+        monkeypatch.setattr("utils.metrics.record_llm_response_truncated", boom)
+
+        assert agent_service._warn_if_truncated(
+            SimpleNamespace(done_reason="length"), "m", "agent_step", 1
+        ) is True
