@@ -642,7 +642,7 @@ class TestExtractResponseContent:
 # ============================================================================
 
 
-def _stub_openai_choice(content="", tool_calls=None, reasoning_content=None):
+def _stub_openai_choice(content="", tool_calls=None, reasoning_content=None, finish_reason="stop"):
     """Build a non-stream openai.ChatCompletion-shaped fake."""
     msg = SimpleNamespace(
         content=content,
@@ -650,12 +650,12 @@ def _stub_openai_choice(content="", tool_calls=None, reasoning_content=None):
         reasoning_content=reasoning_content,
         role="assistant",
     )
-    return SimpleNamespace(message=msg, finish_reason="stop", index=0)
+    return SimpleNamespace(message=msg, finish_reason=finish_reason, index=0)
 
 
-def _stub_openai_response(content="", tool_calls=None, reasoning_content=None):
+def _stub_openai_response(content="", tool_calls=None, reasoning_content=None, finish_reason="stop"):
     """Top-level non-stream openai response with a single choice."""
-    choice = _stub_openai_choice(content, tool_calls, reasoning_content)
+    choice = _stub_openai_choice(content, tool_calls, reasoning_content, finish_reason)
     return SimpleNamespace(choices=[choice], usage=None, model="qwen3.6")
 
 
@@ -1560,3 +1560,94 @@ class TestOpenAICompatFallbackClient:
         mock_cls.return_value = MagicMock()
         wrapped = llm_client._maybe_wrap_openai_fallback(MagicMock())
         assert isinstance(wrapped, llm_client._OpenAICompatFallbackClient)
+
+
+# ============================================================================
+# Output-cap visibility: a completion cut at max_tokens must be recognisable.
+# Before this, `finish_reason` was dropped by the adapter, so an answer that
+# stopped mid-sentence was indistinguishable from a complete one.
+# ============================================================================
+
+
+class TestResponseWasTruncated:
+    """response_was_truncated() over both back-ends' vocabulary."""
+
+    @pytest.mark.unit
+    def test_length_finish_reason_is_truncation(self):
+        from utils.llm_client import response_was_truncated
+
+        assert response_was_truncated(SimpleNamespace(done_reason="length")) is True
+
+    @pytest.mark.unit
+    def test_stop_is_not_truncation(self):
+        from utils.llm_client import response_was_truncated
+
+        assert response_was_truncated(SimpleNamespace(done_reason="stop")) is False
+
+    @pytest.mark.unit
+    def test_case_and_whitespace_tolerant(self):
+        from utils.llm_client import response_was_truncated
+
+        assert response_was_truncated(SimpleNamespace(done_reason=" Length ")) is True
+
+    @pytest.mark.unit
+    def test_missing_reason_is_not_truncation(self):
+        """Never claim truncation we cannot observe (ollama pre-done_reason)."""
+        from utils.llm_client import response_was_truncated
+
+        assert response_was_truncated(SimpleNamespace()) is False
+        assert response_was_truncated(SimpleNamespace(done_reason=None)) is False
+
+
+class TestFinishReasonSurvivesTheAdapter:
+    """The OpenAI-compat wrapper must carry finish_reason through as done_reason."""
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_truncated_completion_is_flagged(self, monkeypatch):
+        from utils.llm_client import response_was_truncated
+
+        adapter = _make_openai_compat(monkeypatch)
+        adapter._client.chat.completions.create.return_value = _stub_openai_response(
+            content="Die Freeze-Fenster für 2027 sind: Januar", finish_reason="length"
+        )
+
+        response = await adapter.chat(messages=[{"role": "user", "content": "freeze?"}])
+
+        assert response.done_reason == "length"
+        assert response_was_truncated(response) is True
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_complete_completion_is_not_flagged(self, monkeypatch):
+        from utils.llm_client import response_was_truncated
+
+        adapter = _make_openai_compat(monkeypatch)
+        adapter._client.chat.completions.create.return_value = _stub_openai_response(
+            content="Fertig.", finish_reason="stop"
+        )
+
+        response = await adapter.chat(messages=[{"role": "user", "content": "hi"}])
+
+        assert response.done_reason == "stop"
+        assert response_was_truncated(response) is False
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_streaming_chunks_carry_the_reason(self, monkeypatch):
+        adapter = _make_openai_compat(monkeypatch)
+        chunk = SimpleNamespace(
+            choices=[
+                SimpleNamespace(
+                    delta=SimpleNamespace(content="…", tool_calls=None),
+                    finish_reason="length",
+                )
+            ]
+        )
+        adapter._client.chat.completions.create.return_value = _async_iter([chunk])
+
+        seen = [c async for c in await adapter.chat(
+            messages=[{"role": "user", "content": "hi"}], stream=True
+        )]
+
+        assert seen[-1].done_reason == "length"

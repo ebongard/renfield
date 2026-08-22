@@ -497,14 +497,25 @@ class _OllamaShapedMessage:
 
 
 class _OllamaShapedResponse:
-    """Mimics ollama.ChatResponse with .message attribute."""
+    """Mimics ollama.ChatResponse with .message attribute.
 
-    __slots__ = ("message", "model", "done")
+    ``done_reason`` carries why generation stopped, using ollama's vocabulary
+    (``"stop"`` / ``"length"``). OpenAI calls the same thing ``finish_reason``
+    and the values coincide for the cases we care about, so the adapter maps it
+    straight through. Without it a completion cut off at ``max_tokens`` is
+    indistinguishable from one the model chose to end — see
+    ``response_was_truncated``.
+    """
 
-    def __init__(self, message: _OllamaShapedMessage, model: str) -> None:
+    __slots__ = ("message", "model", "done", "done_reason")
+
+    def __init__(
+        self, message: _OllamaShapedMessage, model: str, done_reason: str | None = None
+    ) -> None:
         self.message = message
         self.model = model
         self.done = True
+        self.done_reason = done_reason
 
 
 class OpenAICompatibleClient:
@@ -655,6 +666,7 @@ class OpenAICompatibleClient:
                     thinking=None,
                 ),
                 model,
+                done_reason=getattr(choice, "finish_reason", None),
             )
 
     @staticmethod
@@ -673,6 +685,7 @@ class OpenAICompatibleClient:
                 thinking=thinking,
             ),
             model,
+            done_reason=getattr(choice, "finish_reason", None) if choice else None,
         )
 
     async def embeddings(
@@ -837,6 +850,24 @@ def extract_response_content(response: Any) -> str:
             # Instead, return empty so caller falls back to default behavior
 
     return content
+
+
+def response_was_truncated(response: Any) -> bool:
+    """True when the model stopped because it hit the output-token cap.
+
+    Both back-ends report this, under different names — ollama on
+    ``response.done_reason``, OpenAI-compatible servers on the choice's
+    ``finish_reason`` (which the adapter maps onto ``done_reason``). Either way
+    the value is ``"length"``.
+
+    This distinction is not cosmetic: a capped completion is delivered to the
+    user as a normal answer that simply stops mid-sentence, with nothing in the
+    logs to say why. Callers are expected to at least record it.
+
+    Unknown/absent reason → False: never claim truncation we cannot see.
+    """
+    reason = getattr(response, "done_reason", None)
+    return isinstance(reason, str) and reason.strip().lower() == "length"
 
 
 # ---------------------------------------------------------------------------

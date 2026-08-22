@@ -202,3 +202,90 @@ class TestCircuitBreakerMetricsIntegration:
             await breaker.allow_request()   # -> HALF_OPEN (recovery_timeout=0)
             await breaker.record_success()  # -> CLOSED
             mock_state.assert_called_with("test", "closed")
+
+
+class TestEveryCollectorIsReachable:
+    """A collector assigned in _init_metrics must reach module scope.
+
+    `_init_metrics` assigns its collectors to module-level names, which only
+    works if each name is also listed in one of the function's `global`
+    declarations. Miss that and the assignment silently creates a LOCAL — the
+    module attribute stays None (or never exists), and the recorder that reads
+    it raises. Callers wrap recorders in try/except so metrics can never break
+    a request path, so the counter is simply dead and nothing says so.
+
+    That happened to `renfield_llm_response_truncated_total`: the WARNING it
+    accompanies was logged for days while the metric an alert reads recorded
+    nothing. Enumerating the collectors from the source rather than by hand is
+    what keeps the next one from repeating it.
+    """
+
+    @staticmethod
+    def _collectors_assigned_in_init():
+        import ast
+        import inspect
+
+        import utils.metrics as metrics_module
+
+        tree = ast.parse(inspect.getsource(metrics_module))
+        init = next(
+            n for n in ast.walk(tree)
+            if isinstance(n, ast.FunctionDef) and n.name == "_init_metrics"
+        )
+        names = set()
+        for node in ast.walk(init):
+            if not isinstance(node, ast.Assign) or not isinstance(node.value, ast.Call):
+                continue
+            func = node.value.func
+            factory = getattr(func, "id", None) or getattr(func, "attr", None)
+            if factory not in ("Counter", "Gauge", "Histogram", "Summary"):
+                continue
+            for target in node.targets:
+                if isinstance(target, ast.Name) and target.id.startswith("_"):
+                    names.add(target.id)
+        return names
+
+    def test_no_collector_is_stranded_in_local_scope(self):
+        import utils.metrics as metrics_module
+
+        assigned = self._collectors_assigned_in_init()
+        assert assigned, "found no collectors — the AST scan is broken, not the module"
+
+        metrics_module._metrics_initialized = False
+        try:
+            with patch.dict("sys.modules", {"prometheus_client": MagicMock()}):
+                metrics_module._init_metrics()
+
+            stranded = [
+                name for name in sorted(assigned)
+                if getattr(metrics_module, name, None) is None
+            ]
+            assert not stranded, (
+                f"assigned in _init_metrics but still None at module scope: "
+                f"{stranded} — add each to a `global` declaration in _init_metrics "
+                f"and give it a module-level `= None`"
+            )
+        finally:
+            metrics_module._metrics_initialized = False
+            for name in assigned:
+                setattr(metrics_module, name, None)
+
+    def test_every_collector_has_a_module_level_declaration(self):
+        """Without `<name> = None` at module scope the recorder raises NameError
+        rather than the AttributeError a None would give — same dead counter,
+        noisier failure."""
+        import ast
+        import inspect
+
+        import utils.metrics as metrics_module
+
+        tree = ast.parse(inspect.getsource(metrics_module))
+        declared = {
+            t.id
+            for node in tree.body
+            if isinstance(node, ast.Assign)
+            for t in node.targets
+            if isinstance(t, ast.Name)
+        }
+        missing = sorted(self._collectors_assigned_in_init() - declared)
+        assert not missing, f"no module-level declaration for: {missing}"

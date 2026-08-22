@@ -516,6 +516,41 @@ def _with_required_companions(selected_names: list[str]) -> list[str]:
     return out
 
 
+# Option sets whose completion the token budget reserves room for, and which
+# therefore must not carry an output cap below that reservation.
+_BUDGETED_OPTION_KEYS = frozenset({"llm_options", "llm_options_retry"})
+
+
+def _warn_if_truncated(raw_response: Any, model: str, call_type: str, step_num: int | None = None) -> bool:
+    """Log + count a completion the model had to cut at the output-token cap.
+
+    A capped completion reaches the user as an ordinary answer that just stops
+    mid-sentence — or, on the ReAct path, as unparseable JSON that looks like a
+    model failure. Neither left any trace before this, so the only way to notice
+    was for someone to read the answer. Returns whether it was truncated so a
+    caller can react beyond logging.
+    """
+    from utils.llm_client import response_was_truncated
+
+    if not response_was_truncated(raw_response):
+        return False
+    where = f" at step {step_num}" if step_num is not None else ""
+    logger.warning(
+        f"✂️ LLM output hit the token cap{where} ({call_type}, model={model}) — "
+        f"the response is cut off. Raise AGENT_DEFAULT_NUM_PREDICT if this recurs."
+    )
+    try:
+        from utils.metrics import record_llm_response_truncated
+
+        record_llm_response_truncated(model, call_type)
+    except Exception as e:  # noqa: BLE001 — metrics must never break the agent loop
+        # WARNING, not debug: this except is the reason the counter's own
+        # registration bug went unnoticed while the line above logged happily.
+        # A dead metric is invisible precisely because nothing depends on it.
+        logger.warning(f"could not record llm truncation metric: {e!r}")
+    return True
+
+
 def _llm_options_or_default(prompt_key: str, fallback: dict) -> dict:
     """Resolve LLM options from prompts/agent.yaml, falling back to a default.
 
@@ -525,7 +560,24 @@ def _llm_options_or_default(prompt_key: str, fallback: dict) -> dict:
     while a missing key falls through to the in-code fallback.
     """
     cfg = prompt_manager.get_config("agent", prompt_key)
-    return cfg if cfg is not None else fallback
+    opts = dict(cfg if cfg is not None else fallback)
+
+    # The token budget RESERVES `agent_default_num_predict` tokens for the
+    # answer (see _enforce_token_budget), but the cap actually sent to the
+    # model came from a separate literal in the YAML. Raising the setting
+    # therefore changed the reservation and NOT the cap, and an answer longer
+    # than the YAML value was silently cut mid-sentence. Keep the two in step
+    # for the answer-producing calls so one knob governs both.
+    #
+    # max(): a YAML value ABOVE the setting still wins — this raises a stale
+    # floor, it never lowers a deliberately generous cap. The summary and
+    # tool-preselect options are excluded on purpose: they are meant to be
+    # short, and their small caps are the point.
+    if prompt_key in _BUDGETED_OPTION_KEYS:
+        opts["num_predict"] = max(
+            int(opts.get("num_predict") or 0), settings.agent_default_num_predict
+        )
+    return opts
 
 
 async def _apply_agent_system_prompt_hook(
@@ -1661,6 +1713,7 @@ class AgentService:
                     _fc_parsed = None
                     response_text = extract_response_content(raw_response) or ""
                 await agent_circuit_breaker.record_success()
+                _warn_if_truncated(raw_response, agent_model, "agent_step", step_num)
 
                 # Track token usage
                 context.track_tokens(prompt, response_text)
@@ -1722,6 +1775,7 @@ class AgentService:
                         ),
                         timeout=self.step_timeout,
                     )
+                    _warn_if_truncated(retry_response, agent_model, "agent_retry", step_num)
                     if use_native_fc:
                         parsed, response_text = self._native_fc_parsed(retry_response)
                     else:
@@ -2259,6 +2313,7 @@ class AgentService:
                 ),
                 timeout=self.step_timeout,
             )
+            _warn_if_truncated(raw_response, agent_model, "agent_summary")
             summary = (extract_response_content(raw_response) or "").strip()
 
             # Track tokens for summary call

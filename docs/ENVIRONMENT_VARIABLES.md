@@ -254,6 +254,16 @@ AGENT_HISTORY_MESSAGE_MAX_CHARS=500
 AGENT_TOOL_RESULT_TEXT_MAX_CHARS=8000
 AGENT_RESPONSE_TRUNCATION=2000
 
+# Ausgabe-Budget einer Agent-Antwort in Tokens. Steuert BEIDES: die
+# Reservierung, die _enforce_token_budget für die Antwort freihält, UND das
+# `max_tokens`, das an den Server geht. Bis 2026-08 waren die zwei entkoppelt
+# (die Grenze stand als Literal in prompts/agent.yaml) — dieser Wert zu
+# erhöhen verschob nur die Reservierung, und längere Antworten wurden weiter
+# bei 2048 Tokens mitten im Satz gekappt. Anheben, wenn Antworten lange Listen
+# aufzählen sollen; ein Erreichen der Grenze loggt jetzt eine WARNING und
+# zählt renfield_llm_response_truncated_total.
+AGENT_DEFAULT_NUM_PREDICT=2048
+
 # Agent Router Timeout (Sekunden)
 AGENT_ROUTER_TIMEOUT=30.0
 ```
@@ -269,6 +279,7 @@ AGENT_ROUTER_TIMEOUT=30.0
 - `AGENT_HISTORY_MESSAGE_MAX_CHARS`: `500`
 - `AGENT_TOOL_RESULT_TEXT_MAX_CHARS`: `8000`
 - `AGENT_RESPONSE_TRUNCATION`: `2000`
+- `AGENT_DEFAULT_NUM_PREDICT`: `2048`
 - `AGENT_ROUTER_TIMEOUT`: `30.0`
 
 ### OpenAI-kompatibler LLM-Endpoint (llama-server / vLLM / OpenRouter)
@@ -293,7 +304,9 @@ AGENT_ROUTER_TIMEOUT=30.0
 # Budget gegen OLLAMA_NUM_CTX (Legacy). Um das Fenster real zu füllen,
 # zusätzlich AGENT_HISTORY_MESSAGE_MAX_CHARS / AGENT_TOOL_RESULT_TEXT_MAX_CHARS
 # + AGENT_RESPONSE_TRUNCATION (beide zusammen!) / KNOWLEDGE_CONTEXT_CHUNK_CHARS
-# / AGENT_CONV_CONTEXT_MESSAGES anheben.
+# / AGENT_CONV_CONTEXT_MESSAGES anheben. Das sind alles EINGABE-Caps: soll die
+# Antwort selbst länger werden, braucht es AGENT_DEFAULT_NUM_PREDICT (Default
+# 2048 Tokens, kappt sonst mitten im Satz).
 # ACHTUNG Fallback: bei LLM_OPENAI_FALLBACK_ENABLED laufen Prompts > OLLAMA_NUM_CTX
 # im Ausfall-Fall degradiert (Ollama schneidet still ab; WARNING im Log).
 # LLM_OPENAI_NUM_CTX=262144
