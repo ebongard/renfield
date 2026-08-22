@@ -165,6 +165,8 @@ async def test_self_heal_hang_guard_bounds_a_wedged_probe(monkeypatch):
     import asyncio
 
     monkeypatch.setattr(m.settings, "mcp_health_self_heal_probe_timeout", 0.05)
+    monkeypatch.setattr(m.settings, "mcp_connect_timeout", 0.001)
+    monkeypatch.setattr(m, "_PROBE_GUARD_OVERHEAD_S", 0.001)
     notes = _capture_notes(monkeypatch)
     mgr = MagicMock()
 
@@ -187,6 +189,8 @@ async def test_self_heal_hang_guard_spares_other_servers(monkeypatch):
     import asyncio
 
     monkeypatch.setattr(m.settings, "mcp_health_self_heal_probe_timeout", 0.05)
+    monkeypatch.setattr(m.settings, "mcp_connect_timeout", 0.001)
+    monkeypatch.setattr(m, "_PROBE_GUARD_OVERHEAD_S", 0.001)
     _capture_notes(monkeypatch)
     mgr = MagicMock()
     probed: list[str] = []
@@ -219,6 +223,21 @@ async def test_monitor_tick_records_heartbeat(monkeypatch):
     mgr.get_status = MagicMock(return_value={"servers": [{"name": "ok", "health": "healthy"}]})
     await m.monitor_tick(_app_with(mgr))
     assert ticks == [0]
+
+
+async def test_heartbeat_ticks_even_when_get_status_fails(monkeypatch):
+    """The liveness counter must tick for a live-but-erroring loop (else a
+    persistently failing get_status flatlines the counter and mimics the very
+    hang the metric exists to expose); the gauge verdict stays None."""
+    ticks: list = []
+    monkeypatch.setattr(
+        "utils.metrics.record_mcp_health_tick", lambda n: ticks.append(n)
+    )
+    _capture_notes(monkeypatch)
+    mgr = MagicMock()
+    mgr.get_status = MagicMock(side_effect=RuntimeError("broken status shape"))
+    await m.monitor_tick(_app_with(mgr))
+    assert ticks == [None]
 
 
 async def test_plugin_failed_skips_probe_still_alerts(monkeypatch):

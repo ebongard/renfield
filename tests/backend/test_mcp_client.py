@@ -1934,22 +1934,71 @@ class TestConnectHangGuards:
         assert state.connected is False
         assert state.last_error  # timeout surfaced as the connect failure
 
+    @staticmethod
+    def _recording_transport(closed: list):
+        """Async CM that ENTERS successfully (2-tuple of fake streams) and
+        records its __aexit__ — the shape _connect_server unpacks."""
+
+        class _T:
+            async def __aenter__(self):
+                return (MagicMock(), MagicMock())
+
+            async def __aexit__(self, *exc):
+                closed.append("transport")
+                return False
+
+        return _T()
+
     @pytest.mark.unit
     @pytest.mark.asyncio
-    async def test_connect_failure_closes_local_exit_stack(self, monkeypatch):
-        """The partially-entered LOCAL exit stack must be closed on a failed
-        connect (it used to leak: only the always-None state.exit_stack was
-        closed)."""
+    async def test_connect_failure_closes_entered_transport(self, monkeypatch):
+        """A transport that was ENTERED before a later stage fails must be
+        closed via the local exit stack (it used to leak: only the stale
+        state.exit_stack was closed)."""
         import services.mcp_client as mc
 
-        closed: list[bool] = []
+        closed: list[str] = []
+        import mcp as mcp_mod
+        import mcp.client.streamable_http as sh
+        monkeypatch.setattr(
+            sh, "streamablehttp_client", lambda **kw: self._recording_transport(closed)
+        )
+
+        def _boom(*a, **kw):
+            raise RuntimeError("session construction failed")
+
+        monkeypatch.setattr(mcp_mod, "ClientSession", _boom)
+        monkeypatch.setattr(mc.settings, "mcp_connect_timeout", 1.0)
+
+        manager = MCPManager()
+        state = MCPServerState(
+            config=MCPServerConfig(name="failing", url="http://failing:1/mcp"),
+        )
+        await manager._connect_server(state)
+        assert state.connected is False
+        assert closed == ["transport"]
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_connect_failure_closes_stale_state_stack(self, monkeypatch):
+        """Direct refresh_tools reconnects reach _connect_server with a STALE
+        state.exit_stack from the prior session (no teardown happened) — a
+        failed connect must close it, not silently drop it (regression vs the
+        first hang-guard cut)."""
+        import services.mcp_client as mc
+
+        closed: list[str] = []
+
+        class _StaleStack:
+            async def __aexit__(self, *exc):
+                closed.append("stale")
+                return False
 
         class _FailingTransport:
             async def __aenter__(self):
                 raise RuntimeError("refused")
 
             async def __aexit__(self, *exc):
-                closed.append(True)
                 return False
 
         import mcp.client.streamable_http as sh
@@ -1958,14 +2007,44 @@ class TestConnectHangGuards:
 
         manager = MCPManager()
         state = MCPServerState(
-            config=MCPServerConfig(name="refused", url="http://refused:1/mcp"),
+            config=MCPServerConfig(name="stale2", url="http://stale2:1/mcp"),
         )
+        state.exit_stack = _StaleStack()
+        state.session = object()
         await manager._connect_server(state)
+        assert closed == ["stale"]
+        assert state.exit_stack is None
+        assert state.session is None
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_cancelled_connect_records_backoff_and_detached_close(self, monkeypatch):
+        """An outer-guard-cancelled connect must advance backoff like an inner
+        timeout does, and schedule a strongly-referenced detached closer."""
+        import services.mcp_client as mc
+
+        class _WedgedTransport:
+            async def __aenter__(self):
+                await asyncio.sleep(3600)
+
+            async def __aexit__(self, *exc):
+                return False
+
+        import mcp.client.streamable_http as sh
+        monkeypatch.setattr(sh, "streamablehttp_client", lambda **kw: _WedgedTransport())
+        monkeypatch.setattr(mc.settings, "mcp_connect_timeout", 30.0)  # inner must NOT fire
+
+        manager = MCPManager()
+        state = MCPServerState(
+            config=MCPServerConfig(name="cancelled", url="http://cancelled:1/mcp"),
+        )
+        state.backoff = MagicMock()
+        with pytest.raises(TimeoutError):
+            async with asyncio.timeout(0.05):
+                await manager._connect_server(state)
+        state.backoff.record_failure.assert_called_once()
         assert state.connected is False
-        # AsyncExitStack unwinds entered contexts on __aexit__; a transport whose
-        # __aenter__ raised was never entered, so nothing to close — but the
-        # stack itself must have been exited without hanging. The observable
-        # contract: the call returns and no exception escapes.
+        assert "cancelled" in (state.last_error or "")
 
     @pytest.mark.unit
     @pytest.mark.asyncio

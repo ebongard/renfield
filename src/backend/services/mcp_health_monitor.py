@@ -145,6 +145,12 @@ async def ingest_report(payload: dict[str, Any]) -> None:
 
 # --- Plane-A: poll MCPManager.get_status() -----------------------------------
 
+# Fixed share of the probe hang-guard floor beyond the 3x transport/init/list
+# window: probe (2s) + bounded teardown (5s) + re-probe (2s), padded. Module
+# constant (not config) so tests can shrink it.
+_PROBE_GUARD_OVERHEAD_S = 15.0
+
+
 async def _self_heal(mcp_manager, problem_names: list[str]) -> set[str]:
     """Phase 2 self-heal: actively probe each degraded/down server, which drives a
     single-shot reconnect (``probe_server``). Returns the set of names we attempted
@@ -157,6 +163,15 @@ async def _self_heal(mcp_manager, problem_names: list[str]) -> set[str]:
     if not (settings.mcp_health_self_heal_enabled and callable(probe)):
         return attempted
     healed = 0
+    # The guard must stay ABOVE a worst-case honest reconnect (probe + bounded
+    # teardown + transport/init/tools-list at mcp_connect_timeout each + re-probe),
+    # else raising MCP_CONNECT_TIMEOUT alone would make every slow-but-honest
+    # heal get cancelled mid-connect and self-heal permanently fail. The floor
+    # tracks the connect timeout so the two knobs can't be misconfigured apart.
+    probe_guard_s = max(
+        settings.mcp_health_self_heal_probe_timeout,
+        settings.mcp_connect_timeout * 3 + _PROBE_GUARD_OVERHEAD_S,
+    )
     for name in problem_names[: settings.mcp_health_self_heal_max_per_tick]:
         try:
             # Hard hang-guard: the probe drives a reconnect, and a wedged
@@ -164,7 +179,7 @@ async def _self_heal(mcp_manager, problem_names: list[str]) -> set[str]:
             # loop (the scheduler awaits each tick), so a down server never
             # alerted and never healed (#1107). asyncio.timeout keeps the
             # cancellation in this task (anyio-scope-safe).
-            async with asyncio.timeout(settings.mcp_health_self_heal_probe_timeout):
+            async with asyncio.timeout(probe_guard_s):
                 res = await probe(name)
             attempted.add(name)
             if isinstance(res, dict) and res.get("ok"):
@@ -173,7 +188,7 @@ async def _self_heal(mcp_manager, problem_names: list[str]) -> set[str]:
             attempted.add(name)  # we DID try — the alert may say "Selbstheilung versucht"
             logger.warning(
                 f"mcp_health: self-heal probe for '{name}' exceeded "
-                f"{settings.mcp_health_self_heal_probe_timeout:.0f}s hang-guard — aborted"
+                f"{probe_guard_s:.0f}s hang-guard — aborted"
             )
         except Exception as e:  # noqa: BLE001 — a probe failure must not break the tick
             logger.warning(f"mcp_health: self-heal probe failed for '{name}': {e}")
@@ -194,6 +209,24 @@ async def monitor_tick(app) -> None:
     mcp_manager = getattr(app.state, "mcp_manager", None)
     if mcp_manager is None:
         return
+    # Tick heartbeat (#1107): a stuck monitor loop used to be indistinguishable
+    # from "all healthy". The COUNTER ticks in the finally (so a live loop whose
+    # get_status keeps failing still reads as alive — WARNs tell the rest), the
+    # problem GAUGE is only set when a tick actually completed with a verdict.
+    try:
+        await _monitor_tick_body(mcp_manager)
+    finally:
+        from utils.metrics import record_mcp_health_tick
+
+        record_mcp_health_tick(_last_tick_problem_count)
+
+
+_last_tick_problem_count: int | None = None
+
+
+async def _monitor_tick_body(mcp_manager) -> None:
+    global _last_tick_problem_count
+    _last_tick_problem_count = None
     try:
         status = mcp_manager.get_status()
     except Exception as e:  # noqa: BLE001
@@ -247,12 +280,7 @@ async def monitor_tick(app) -> None:
         if key not in current_problems:
             _clear_alert(key)
 
-    # Tick heartbeat (#1107): a stuck monitor loop used to be indistinguishable
-    # from "all healthy". DEBUG log + a monotonically increasing counter make
-    # "the monitor stopped ticking" observable without log noise.
-    from utils.metrics import record_mcp_health_tick
-
-    record_mcp_health_tick(len(current_problems))
+    _last_tick_problem_count = len(current_problems)
     logger.debug(
         f"mcp_health: tick complete — {len(status.get('servers', []))} servers, "
         f"{len(current_problems)} problem(s), {len(healed_attempted)} heal attempt(s)"

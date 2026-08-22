@@ -224,15 +224,41 @@ class TokenBucketRateLimiter:
 _TEARDOWN_TIMEOUT_S = 5.0
 
 
-async def _close_stack_quietly(stack: AsyncExitStack) -> None:
-    """Detached best-effort close of a partially-entered transport stack after a
-    cancelled connect. Bounded (a wedged teardown must not live forever) and
-    fully silent — cross-task anyio cancel-scope errors are expected here."""
+# Strong references to detached cleanup tasks: the event loop only holds weak
+# refs, so a fire-and-forget close task could be garbage-collected before it
+# runs ("Task was destroyed but it is pending!"). Done tasks self-remove.
+_detached_cleanup_tasks: set["asyncio.Task"] = set()
+
+
+async def _close_stack_bounded(stack: AsyncExitStack) -> None:
+    """Bounded best-effort close of a transport stack (shared idiom for every
+    teardown site — a wedged anyio teardown must never hold a caller). Swallows
+    teardown failures/timeouts; an OUTER cancellation still propagates."""
     try:
         async with asyncio.timeout(_TEARDOWN_TIMEOUT_S):
             await stack.__aexit__(None, None, None)
-    except BaseException:  # detached cleanup — nothing to surface
+    except asyncio.CancelledError:
+        raise
+    except BaseException:  # teardown of a half-broken stack — nothing to surface
         pass
+
+
+def _close_stack_detached(stack: AsyncExitStack) -> None:
+    """Schedule a detached best-effort close (used from a CANCELLED connect,
+    where awaiting anything would insta-cancel). Keeps a strong task reference
+    so the closer can't be GC'd before it runs; fully silent — cross-task anyio
+    cancel-scope errors are expected here."""
+
+    async def _run() -> None:
+        try:
+            async with asyncio.timeout(_TEARDOWN_TIMEOUT_S):
+                await stack.__aexit__(None, None, None)
+        except BaseException:  # detached cleanup — nothing to surface
+            pass
+
+    task = asyncio.get_running_loop().create_task(_run())
+    _detached_cleanup_tasks.add(task)
+    task.add_done_callback(_detached_cleanup_tasks.discard)
 
 
 def _coerce_arguments(arguments: dict, input_schema: dict) -> dict:
@@ -1254,6 +1280,11 @@ class MCPManager:
                 )
                 all_tools.append(info)
 
+            # A STALE stack from a prior session can still be set here (direct
+            # refresh_tools reconnects skip the teardown in _reconnect_server) —
+            # close it bounded before overwriting, else its transport leaks.
+            if state.exit_stack is not None and state.exit_stack is not exit_stack:
+                await _close_stack_bounded(state.exit_stack)
             state.session = session
             state.exit_stack = exit_stack
             self._set_connected(state, True)
@@ -1284,14 +1315,21 @@ class MCPManager:
 
         except asyncio.CancelledError:
             # Cancelled mid-connect (self-heal hang-guard or shutdown): mark the
-            # state honestly and hand the partially-entered transport to a
-            # detached best-effort closer — a wedged anyio teardown must not
-            # block the cancelling caller; a rare leak beats a frozen loop.
+            # state honestly and hand the partially-entered transport — plus a
+            # possibly still-live STALE stack from a prior session (direct
+            # refresh_tools reconnects don't tear down first) — to a detached
+            # best-effort closer; awaiting here would insta-cancel, and a rare
+            # leak beats a frozen loop. The same slow-upstream condition must
+            # advance backoff like an inner-timeout failure does.
             self._set_connected(state, False)
             state.last_error = "connect cancelled (timeout/shutdown)"
+            if state.backoff:
+                state.backoff.record_failure()
+            if state.exit_stack is not None and state.exit_stack is not exit_stack:
+                _close_stack_detached(state.exit_stack)
             state.exit_stack = None
             if exit_stack is not None:
-                asyncio.get_running_loop().create_task(_close_stack_quietly(exit_stack))
+                _close_stack_detached(exit_stack)
             raise
         except Exception as e:
             self._set_connected(state, False)
@@ -1308,18 +1346,19 @@ class MCPManager:
             else:
                 logger.warning(f"MCP server '{config.name}' connection failed: {e}")
 
-            # Clean up the LOCAL exit stack on failure. (The old code closed
-            # state.exit_stack here, which at this point is always None — the
-            # local one is only promoted to state on success — so every failed
-            # connect leaked its partially-entered transport contexts.) Bounded:
-            # a teardown of a half-broken anyio transport can itself wedge.
+            # Clean up BOTH stacks on failure, bounded: the LOCAL partially-
+            # entered one (previously leaked — only state.exit_stack was closed,
+            # which the reconnect path has already torn down), AND a possibly
+            # still-live STALE state.exit_stack from a prior session — direct
+            # refresh_tools reconnects (a list_tools failure flips connected
+            # without teardown) reach here with the old stack still set, and
+            # dropping it unclosed would orphan its transport/subprocess.
             if exit_stack is not None:
-                try:
-                    async with asyncio.timeout(_TEARDOWN_TIMEOUT_S):
-                        await exit_stack.__aexit__(None, None, None)
-                except Exception:
-                    pass
+                await _close_stack_bounded(exit_stack)
+            if state.exit_stack is not None and state.exit_stack is not exit_stack:
+                await _close_stack_bounded(state.exit_stack)
             state.exit_stack = None
+            state.session = None
 
     async def _reconnect_server(self, state: MCPServerState) -> bool:
         """Tear down a stale session and re-establish.
@@ -1341,11 +1380,7 @@ class MCPManager:
             # stream drain, and this runs under reconnect_lock — an unbounded
             # hang here would freeze every reconnect path for the server.
             if state.exit_stack is not None:
-                try:
-                    async with asyncio.timeout(_TEARDOWN_TIMEOUT_S):
-                        await state.exit_stack.__aexit__(None, None, None)
-                except Exception:
-                    pass
+                await _close_stack_bounded(state.exit_stack)
                 state.exit_stack = None
                 state.session = None
             logger.info(f"MCP reconnecting to '{state.config.name}'...")
@@ -2618,10 +2653,11 @@ class MCPManager:
 
         for state in self._servers.values():
             if state.exit_stack:
-                try:
-                    await state.exit_stack.__aexit__(None, None, None)
-                except Exception as e:
-                    logger.warning(f"MCP shutdown error for '{state.config.name}': {e}")
+                # Bounded like every other teardown site: a session wedged on
+                # stream drain (the #1107 failure mode) must not block graceful
+                # shutdown past the k8s grace period — later shutdown steps
+                # (plugin hooks, cleanup) still have to run.
+                await _close_stack_bounded(state.exit_stack)
             self._set_connected(state, False)
             state.session = None
             state.exit_stack = None

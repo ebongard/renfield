@@ -384,13 +384,16 @@ def record_mcp_tool_call(server: str, tool: str, duration: float, success: bool)
         _mcp_tool_errors_total.labels(server=server, tool=tool).inc()
 
 
-def record_mcp_health_tick(problem_count: int):
-    """Record one COMPLETED MCP health monitor tick (heartbeat, #1107) and the
-    number of degraded/down servers it saw."""
+def record_mcp_health_tick(problem_count: int | None):
+    """Record one MCP health monitor tick (heartbeat, #1107). The counter ticks
+    for every ATTEMPTED tick (liveness — a flatline means the loop is stuck);
+    the gauge is only set when the tick completed with a verdict
+    (``problem_count is not None``) so a failing get_status can't fake 0."""
     if not _metrics_initialized:
         return
     _mcp_health_ticks_total.inc()
-    _mcp_health_problem_servers.set(problem_count)
+    if problem_count is not None:
+        _mcp_health_problem_servers.set(problem_count)
 
 
 def record_agent_outcome(outcome: str):
