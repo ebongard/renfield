@@ -447,18 +447,30 @@ class TestGlobalInstance:
 
 
 class TestDetectContentTypeSampling:
-    """_detect_content_type runs on a bounded prefix sample so count() stays
-    O(1) on the hot agent path even for very wide prompts."""
+    """_detect_content_type runs on a bounded head+tail sample so count()
+    stays O(1) on the hot agent path even for very wide prompts."""
 
     @pytest.mark.unit
-    def test_prefix_decides_ratio(self):
-        """Content type is classified from the prefix — a huge suffix of a
-        different flavor doesn't flip the decision."""
+    def test_head_decides_ratio_for_plain_tail(self):
+        """A huge plain-text middle/tail doesn't flip a German head."""
         counter = TokenCounter()
-        german_prefix = "Der Hund und die Katze sind nicht im Haus. " * 200
-        english_suffix = "plain english filler text " * 50000
-        ratio = counter._detect_content_type(german_prefix + english_suffix)
+        german_head = "Der Hund und die Katze sind nicht im Haus. " * 200
+        english_tail = "plain english filler text " * 50000
+        ratio = counter._detect_content_type(german_head + english_tail)
         assert ratio == TokenCounter.CHARS_PER_TOKEN_GERMAN
+
+    @pytest.mark.unit
+    def test_code_tail_wins_over_german_head(self):
+        """Agent prompts end in the tool-result scratchpad: a code-bearing
+        tail must classify CODE (3.0, conservative — more estimated tokens)
+        even under a German system-template head, else wide mixed prompts
+        undercount by up to ~33% right at the budget edge."""
+        counter = TokenCounter()
+        german_head = "Der Hund und die Katze sind nicht im Haus. " * 200
+        filler = "plain filler text " * 50000
+        code_tail = "def handler():\n    return import_result\n" * 200
+        ratio = counter._detect_content_type(german_head + filler + code_tail)
+        assert ratio == TokenCounter.CHARS_PER_TOKEN_CODE
 
     @pytest.mark.unit
     def test_short_text_unchanged(self):

@@ -323,7 +323,10 @@ class Settings(BaseSettings):
     # ollama_num_ctx (legacy behavior). Caveat: with llm_openai_fallback_enabled
     # a prompt wider than ollama_num_ctx degrades on fail-over (the in-cluster
     # fallback model still runs at ollama_num_ctx and truncates).
-    llm_openai_num_ctx: int | None = None
+    # Bounded so a fat-fingered/negative value fails at startup instead of
+    # silently disabling budget enforcement (negative max → negative
+    # utilization → reduction never fires).
+    llm_openai_num_ctx: int | None = Field(default=None, ge=1024, le=2_000_000)
     agent_conv_context_messages: int = 12  # Number of conversation history messages in agent loop
     conversation_summary_threshold: int = 10  # Trigger LLM summary when message count exceeds this
     agent_roles_path: str = "config/agent_roles.yaml"  # Path to agent role definitions

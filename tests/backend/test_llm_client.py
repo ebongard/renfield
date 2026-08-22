@@ -1289,6 +1289,29 @@ class TestOpenAICompatFallbackClient:
 
     @pytest.mark.unit
     @pytest.mark.asyncio
+    async def test_oversize_warning_keys_on_forwarded_num_ctx(self, monkeypatch):
+        """The fallback actually runs at the options.num_ctx forwarded in the
+        call kwargs, not at settings.ollama_num_ctx — a raised OLLAMA_NUM_CTX
+        must not mask real truncation at the smaller forwarded window."""
+        import httpx
+        primary = AsyncMock()
+        fallback = AsyncMock()
+        primary.chat.side_effect = httpx.ConnectError("refused")
+        fallback.chat.return_value = "ok"
+        w = self._wrapper(monkeypatch, primary, fallback)
+        monkeypatch.setattr("utils.llm_client.settings.ollama_num_ctx", 65536)
+        big_messages = [{"role": "user", "content": "x" * 20000}]  # ~5k tokens
+
+        with patch("utils.llm_client.logger") as log:
+            assert await w.chat(
+                model="qwen3.6", messages=big_messages,
+                options={"num_ctx": 1000},
+            ) == "ok"
+        warnings = [str(c.args[0]) for c in log.warning.call_args_list]
+        assert any("num_ctx=1000" in m for m in warnings)
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
     async def test_small_prompt_no_oversize_warning(self, monkeypatch):
         import httpx
         primary = AsyncMock()

@@ -122,6 +122,11 @@ data:
   LLM_OPENAI_NUM_CTX: "262144"
   AGENT_CONV_CONTEXT_MESSAGES: "30"
   AGENT_HISTORY_MESSAGE_MAX_CHARS: "2000"
+  # Both tool-result knobs must move together: AGENT_RESPONSE_TRUNCATION caps
+  # text results at STEP CREATION (before they ever reach the scratchpad),
+  # AGENT_TOOL_RESULT_TEXT_MAX_CHARS caps them at prompt-build time — raising
+  # only the latter leaves it inert behind the 2000-char creation default.
+  AGENT_RESPONSE_TRUNCATION: "32000"
   AGENT_TOOL_RESULT_TEXT_MAX_CHARS: "32000"
   KNOWLEDGE_CONTEXT_CHUNK_CHARS: "1500"
 

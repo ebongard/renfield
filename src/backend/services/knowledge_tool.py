@@ -214,6 +214,7 @@ async def knowledge_search(params: dict) -> dict:
         # Deduped by document_id (one chip per source document, not per chunk).
         sources: list[dict] = []
         seen_doc_ids: set = set()
+        chunk_cap = settings.knowledge_context_chunk_chars
         for r in results:
             doc = r.get("document") if isinstance(r.get("document"), dict) else {}
             content = (
@@ -223,7 +224,6 @@ async def knowledge_search(params: dict) -> dict:
             )
             source = doc.get("filename", "") or r.get("filename", "")
             if content:
-                chunk_cap = settings.knowledge_context_chunk_chars
                 context_parts.append(f"[{source}] {content[:chunk_cap]}")
 
             doc_id = doc.get("id")

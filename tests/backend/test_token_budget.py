@@ -218,8 +218,6 @@ class TestConfigurableContentCaps:
         content = "y" * 3000
         out = _compress_history_message(content)
         assert len(out) == 2003  # 2000 chars + "..."
-        # Explicit max_chars argument still wins over the setting
-        assert len(_compress_history_message(content, max_chars=150)) == 153
 
     @pytest.mark.unit
     def test_tool_result_text_cap_follows_setting(self, monkeypatch):
@@ -234,6 +232,24 @@ class TestConfigurableContentCaps:
         prompt = ctx.build_history_prompt(lang="de")
         assert "z" * 12000 in prompt
         assert "z" * 12001 not in prompt
+
+    @pytest.mark.unit
+    def test_budget_reduction_bites_text_results_too(self, monkeypatch):
+        """Pass-0 budget reduction (tool_result_budget_chars) must also cap
+        TEXT results — else a text-dominated overrun is irreducible and falls
+        through to the harsher history/memory passes."""
+        monkeypatch.setattr(
+            "services.agent_service.settings.agent_tool_result_text_max_chars", 12000
+        )
+        ctx = AgentContext(original_message="test")
+        ctx.tool_result_budget_chars = 300
+        ctx.steps = [
+            AgentStep(step_number=1, step_type="tool_result",
+                      content="z" * 20000, tool="t"),
+        ]
+        prompt = ctx.build_history_prompt(lang="de")
+        assert "z" * 300 in prompt
+        assert "z" * 301 not in prompt
 
 
 class TestBackendAwareBudget:

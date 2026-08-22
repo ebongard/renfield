@@ -248,8 +248,11 @@ AGENT_HISTORY_MESSAGE_MAX_CHARS=500
 
 # Zeichen-Cap für Text-Tool-Ergebnisse im Agent-Scratchpad (strukturierte
 # Ergebnisse steuert das Token-Budget). Bei großem Kontextfenster anheben
-# (z. B. 32000).
+# (z. B. 32000). WICHTIG: zusammen mit AGENT_RESPONSE_TRUNCATION anheben —
+# das kappt Text-Ergebnisse bereits bei der Step-Erzeugung (Default 2000);
+# ohne beides bleibt der Lese-Cap wirkungslos.
 AGENT_TOOL_RESULT_TEXT_MAX_CHARS=8000
+AGENT_RESPONSE_TRUNCATION=2000
 
 # Agent Router Timeout (Sekunden)
 AGENT_ROUTER_TIMEOUT=30.0
@@ -265,6 +268,7 @@ AGENT_ROUTER_TIMEOUT=30.0
 - `AGENT_CONV_CONTEXT_MESSAGES`: `12`
 - `AGENT_HISTORY_MESSAGE_MAX_CHARS`: `500`
 - `AGENT_TOOL_RESULT_TEXT_MAX_CHARS`: `8000`
+- `AGENT_RESPONSE_TRUNCATION`: `2000`
 - `AGENT_ROUTER_TIMEOUT`: `30.0`
 
 ### OpenAI-kompatibler LLM-Endpoint (llama-server / vLLM / OpenRouter)
@@ -288,7 +292,8 @@ AGENT_ROUTER_TIMEOUT=30.0
 # ignoriert client-seitiges num_ctx, sein --ctx-size gilt. Ungesetzt =>
 # Budget gegen OLLAMA_NUM_CTX (Legacy). Um das Fenster real zu füllen,
 # zusätzlich AGENT_HISTORY_MESSAGE_MAX_CHARS / AGENT_TOOL_RESULT_TEXT_MAX_CHARS
-# / KNOWLEDGE_CONTEXT_CHUNK_CHARS / AGENT_CONV_CONTEXT_MESSAGES anheben.
+# + AGENT_RESPONSE_TRUNCATION (beide zusammen!) / KNOWLEDGE_CONTEXT_CHUNK_CHARS
+# / AGENT_CONV_CONTEXT_MESSAGES anheben.
 # ACHTUNG Fallback: bei LLM_OPENAI_FALLBACK_ENABLED laufen Prompts > OLLAMA_NUM_CTX
 # im Ausfall-Fall degradiert (Ollama schneidet still ab; WARNING im Log).
 # LLM_OPENAI_NUM_CTX=262144

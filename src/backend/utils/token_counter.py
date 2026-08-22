@@ -270,18 +270,23 @@ class TokenCounter:
     # Sample size for content-type detection. count() runs on the hot agent
     # path up to ~7x per ReAct step; scanning a multi-hundred-KB prompt in
     # full (plus the .lower() copy) blocks the event loop for tens of ms per
-    # call. A prefix sample classifies just as reliably — prompts are
-    # homogeneous enough that the first few KB decide the ratio.
+    # call. Sampling head AND tail keeps the cost O(1) while still seeing the
+    # scratchpad end of an agent prompt: a German system-template head with
+    # code/JSON-bearing tool results at the tail must classify as CODE (3.0,
+    # the conservative direction) rather than GERMAN (4.5) — a head-only
+    # sample would undercount such prompts right where the budget runs close
+    # to the real context limit.
     DETECT_SAMPLE_CHARS = 4096
 
     def _detect_content_type(self, text: str) -> float:
         """
         Detect content type and return appropriate chars-per-token ratio.
 
-        Operates on a bounded prefix sample (DETECT_SAMPLE_CHARS) so the cost
-        stays O(1) regardless of prompt size.
+        Operates on a bounded head+tail sample (DETECT_SAMPLE_CHARS each) so
+        the cost stays O(1) regardless of prompt size.
         """
-        sample = text[:self.DETECT_SAMPLE_CHARS]
+        n = self.DETECT_SAMPLE_CHARS
+        sample = text if len(text) <= 2 * n else text[:n] + "\n" + text[-n:]
 
         # Check for JSON
         if sample.strip().startswith("{") or sample.strip().startswith("["):
