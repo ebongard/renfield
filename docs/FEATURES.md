@@ -880,13 +880,17 @@ Siehe [SECRETS_MANAGEMENT.md](SECRETS_MANAGEMENT.md) für Details.
 
 ### Prometheus Metrics
 
-Opt-in Endpoint für Prometheus-kompatible Metriken:
+Opt-in Endpoint für Prometheus-kompatible Metriken (in Prod seit 2026-08 auf
+beiden Instanzen aktiv):
 
 ```env
 METRICS_ENABLED=false               # Aktivieren: true
 ```
 
-Endpoint: `GET /metrics` (Prometheus Exposition Format)
+Endpoint: `GET /metrics` (Prometheus Exposition Format). Nur in-cluster
+erreichbar (Ingress routet den Pfad nicht); der `endpoint`-Label nutzt das
+exakte Route-Template (Kardinalitätsschutz, `{id}`-Fallback für 404-Pfade).
+Enthält u. a. den MCP-Health-Heartbeat `renfield_mcp_health_ticks_total`.
 
 ### Health Checks
 - `GET /health` — Backend Health Check
