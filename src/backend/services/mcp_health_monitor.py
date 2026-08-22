@@ -21,6 +21,7 @@ alerts. Detect-and-notify ONLY — healing is Phase 2 (mirrors the ``system_heal
 """
 from __future__ import annotations
 
+import asyncio
 import time
 from typing import Any
 
@@ -158,10 +159,22 @@ async def _self_heal(mcp_manager, problem_names: list[str]) -> set[str]:
     healed = 0
     for name in problem_names[: settings.mcp_health_self_heal_max_per_tick]:
         try:
-            res = await probe(name)
+            # Hard hang-guard: the probe drives a reconnect, and a wedged
+            # transport used to hang here forever — freezing the WHOLE monitor
+            # loop (the scheduler awaits each tick), so a down server never
+            # alerted and never healed (#1107). asyncio.timeout keeps the
+            # cancellation in this task (anyio-scope-safe).
+            async with asyncio.timeout(settings.mcp_health_self_heal_probe_timeout):
+                res = await probe(name)
             attempted.add(name)
             if isinstance(res, dict) and res.get("ok"):
                 healed += 1
+        except TimeoutError:
+            attempted.add(name)  # we DID try — the alert may say "Selbstheilung versucht"
+            logger.warning(
+                f"mcp_health: self-heal probe for '{name}' exceeded "
+                f"{settings.mcp_health_self_heal_probe_timeout:.0f}s hang-guard — aborted"
+            )
         except Exception as e:  # noqa: BLE001 — a probe failure must not break the tick
             logger.warning(f"mcp_health: self-heal probe failed for '{name}': {e}")
     if attempted:
@@ -233,6 +246,17 @@ async def monitor_tick(app) -> None:
     for key in [k for k in _alerted if k.startswith("planea:")]:
         if key not in current_problems:
             _clear_alert(key)
+
+    # Tick heartbeat (#1107): a stuck monitor loop used to be indistinguishable
+    # from "all healthy". DEBUG log + a monotonically increasing counter make
+    # "the monitor stopped ticking" observable without log noise.
+    from utils.metrics import record_mcp_health_tick
+
+    record_mcp_health_tick(len(current_problems))
+    logger.debug(
+        f"mcp_health: tick complete — {len(status.get('servers', []))} servers, "
+        f"{len(current_problems)} problem(s), {len(healed_attempted)} heal attempt(s)"
+    )
 
 
 # A Plane-B report older than this with no newer one is treated as recovered — the

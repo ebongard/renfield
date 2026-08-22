@@ -158,6 +158,69 @@ async def test_self_heal_disabled_alerts_without_probe(monkeypatch):
     assert notes[0]["data"]["self_heal_attempted"] is False
 
 
+async def test_self_heal_hang_guard_bounds_a_wedged_probe(monkeypatch):
+    """#1107: a probe whose reconnect wedges must NOT freeze the tick — the
+    hang-guard cancels it, the tick completes, the alert still fires and is
+    honest about the attempted heal."""
+    import asyncio
+
+    monkeypatch.setattr(m.settings, "mcp_health_self_heal_probe_timeout", 0.05)
+    notes = _capture_notes(monkeypatch)
+    mgr = MagicMock()
+
+    async def _wedged_probe(name):
+        await asyncio.sleep(3600)
+
+    mgr.probe_server = _wedged_probe
+    down = {"servers": [{"name": "twin", "health": "down", "last_error": "no session"}]}
+    mgr.get_status = MagicMock(return_value=down)
+
+    await asyncio.wait_for(m.monitor_tick(_app_with(mgr)), timeout=5.0)
+
+    assert len(notes) == 1
+    assert notes[0]["data"]["self_heal_attempted"] is True
+    assert "Selbstheilung versucht" in notes[0]["message"]
+
+
+async def test_self_heal_hang_guard_spares_other_servers(monkeypatch):
+    """One wedged server must not starve the heal attempts of the others."""
+    import asyncio
+
+    monkeypatch.setattr(m.settings, "mcp_health_self_heal_probe_timeout", 0.05)
+    _capture_notes(monkeypatch)
+    mgr = MagicMock()
+    probed: list[str] = []
+
+    async def _probe(name):
+        probed.append(name)
+        if name == "wedged":
+            await asyncio.sleep(3600)
+        return {"ok": False}
+
+    mgr.probe_server = _probe
+    mgr.get_status = MagicMock(return_value={"servers": [
+        {"name": "wedged", "health": "down"},
+        {"name": "other", "health": "down"},
+    ]})
+
+    await asyncio.wait_for(m.monitor_tick(_app_with(mgr)), timeout=5.0)
+    assert probed == ["wedged", "other"]
+
+
+async def test_monitor_tick_records_heartbeat(monkeypatch):
+    """#1107: every COMPLETED tick must emit the heartbeat metric so a stuck
+    monitor is distinguishable from an all-healthy one."""
+    ticks: list[int] = []
+    monkeypatch.setattr(
+        "utils.metrics.record_mcp_health_tick", lambda n: ticks.append(n)
+    )
+    _capture_notes(monkeypatch)
+    mgr = MagicMock()
+    mgr.get_status = MagicMock(return_value={"servers": [{"name": "ok", "health": "healthy"}]})
+    await m.monitor_tick(_app_with(mgr))
+    assert ticks == [0]
+
+
 async def test_plugin_failed_skips_probe_still_alerts(monkeypatch):
     # A reconnect provably can't reload a failed startup plugin → we DON'T probe it
     # (no wasted RPC, no false "Selbstheilung versucht"), but it STILL alerts.

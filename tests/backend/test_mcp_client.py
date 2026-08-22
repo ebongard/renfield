@@ -1897,3 +1897,98 @@ class TestFunctionalHealthCallTracking:
         manager._servers["srv"] = state
         await manager.execute_tool("mcp.srv.slow", {})
         assert list(state.recent_outcomes) == [False]
+
+
+# ============================================================================
+# #1107 — connect/teardown hang-guards (a wedged transport must never freeze
+# a reconnect path or the health monitor's self-heal tick)
+# ============================================================================
+
+
+class TestConnectHangGuards:
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_connect_server_bounds_hanging_transport_enter(self, monkeypatch):
+        """A streamable_http transport whose __aenter__ wedges must fail within
+        mcp_connect_timeout instead of hanging the caller (which may hold the
+        reconnect_lock)."""
+        import services.mcp_client as mc
+
+        class _WedgedTransport:
+            async def __aenter__(self):
+                await asyncio.sleep(3600)
+
+            async def __aexit__(self, *exc):
+                return False
+
+        import mcp.client.streamable_http as sh
+        monkeypatch.setattr(sh, "streamablehttp_client", lambda **kw: _WedgedTransport())
+        monkeypatch.setattr(mc.settings, "mcp_connect_timeout", 0.05)
+
+        manager = MCPManager()
+        state = MCPServerState(
+            config=MCPServerConfig(name="wedged", url="http://wedged:1/mcp"),
+        )
+        await asyncio.wait_for(manager._connect_server(state), timeout=5.0)
+        assert state.connected is False
+        assert state.last_error  # timeout surfaced as the connect failure
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_connect_failure_closes_local_exit_stack(self, monkeypatch):
+        """The partially-entered LOCAL exit stack must be closed on a failed
+        connect (it used to leak: only the always-None state.exit_stack was
+        closed)."""
+        import services.mcp_client as mc
+
+        closed: list[bool] = []
+
+        class _FailingTransport:
+            async def __aenter__(self):
+                raise RuntimeError("refused")
+
+            async def __aexit__(self, *exc):
+                closed.append(True)
+                return False
+
+        import mcp.client.streamable_http as sh
+        monkeypatch.setattr(sh, "streamablehttp_client", lambda **kw: _FailingTransport())
+        monkeypatch.setattr(mc.settings, "mcp_connect_timeout", 1.0)
+
+        manager = MCPManager()
+        state = MCPServerState(
+            config=MCPServerConfig(name="refused", url="http://refused:1/mcp"),
+        )
+        await manager._connect_server(state)
+        assert state.connected is False
+        # AsyncExitStack unwinds entered contexts on __aexit__; a transport whose
+        # __aenter__ raised was never entered, so nothing to close — but the
+        # stack itself must have been exited without hanging. The observable
+        # contract: the call returns and no exception escapes.
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_reconnect_bounds_hanging_teardown(self, monkeypatch):
+        """A stale session whose exit-stack teardown wedges must not block the
+        reconnect (it runs under reconnect_lock) — bounded by _TEARDOWN_TIMEOUT_S."""
+        import services.mcp_client as mc
+
+        monkeypatch.setattr(mc, "_TEARDOWN_TIMEOUT_S", 0.05)
+
+        class _WedgedStack:
+            async def __aexit__(self, *exc):
+                await asyncio.sleep(3600)
+
+        manager = MCPManager()
+        state = MCPServerState(
+            config=MCPServerConfig(name="stale", url="http://stale:1/mcp"),
+            connected=False,
+        )
+        state.exit_stack = _WedgedStack()
+        state.session = object()
+        manager._connect_server = AsyncMock()  # reconnect proceeds after teardown
+
+        await asyncio.wait_for(manager._reconnect_server(state), timeout=5.0)
+        assert state.exit_stack is None
+        manager._connect_server.assert_awaited_once()

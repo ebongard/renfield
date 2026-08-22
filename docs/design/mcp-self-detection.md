@@ -93,6 +93,22 @@ All three items shipped; the self-heal is gated `mcp_health_self_heal_enabled`
    Erfolg"). A `down` server the reconnect fixes is silently healed (no alert, ledger
    cleared); a `plugin_failed`/upstream-dead server a reconnect can't fix stays
    degraded and alerts. Capped `mcp_health_self_heal_max_per_tick` per tick.
+   **Hang-guards (2026-08-22, #1107):** the reconnect a probe drives could wedge
+   indefinitely on a pathological upstream (observed: the run_at_boot tick hung in
+   the twin reconnect while its service had no endpoints, silencing the WHOLE
+   monitor loop for the outage's duration — no probe, no alert). Now bounded at
+   three layers, all same-task `asyncio.timeout` (anyio-cancel-scope-safe, never
+   `wait_for`): each self-heal probe (`mcp_health_self_heal_probe_timeout`, 45s),
+   the transport `__aenter__` in `_connect_server` (`mcp_connect_timeout` — init/
+   tools-list were always bounded, the transport connect was not), and every
+   exit-stack teardown (`_TEARDOWN_TIMEOUT_S`, runs under `reconnect_lock`). A
+   cancelled connect hands its partially-entered stack to a detached bounded
+   closer (a rare leak beats a frozen loop); the failed-connect path now closes
+   the LOCAL exit stack (previously leaked — only the always-None
+   `state.exit_stack` was closed). Observability: every COMPLETED tick increments
+   `renfield_mcp_health_ticks_total` + sets `renfield_mcp_health_problem_servers`
+   (a flatlining counter under a running backend = the monitor is stuck — exactly
+   the ambiguity that cost the diagnosis) plus a DEBUG tick-complete line.
 3. **Email-ingest backend-recovery re-reconcile** (`renfield-mcp-email-ingest`) —
    closes the asymmetry: `RenfieldPusher.health()` + a daemon `_health_poll_loop`
    (`EMAIL_HEALTH_POLL_SECONDS`, default 30s) re-reconcile every mailbox on a

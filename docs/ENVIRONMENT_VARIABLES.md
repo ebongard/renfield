@@ -632,6 +632,13 @@ MCP_HEALTH_REALERT_SECONDS=21600              # laufendes Problem erst nach 6h e
 # Single-Shot-Reconnect) und alarmiert NUR, wenn die Selbstheilung scheitert.
 MCP_HEALTH_SELF_HEAL_ENABLED=true
 MCP_HEALTH_SELF_HEAL_MAX_PER_TICK=8           # Cap der Probe/Reconnect-Versuche je Tick
+# Harter Hang-Guard je Heilungs-Probe (Sekunden). Der Reconnect hinter der Probe
+# (Transport-Connect + init + tools/list) konnte auf einem pathologischen Upstream
+# unbegrenzt hängen und damit die GESAMTE Monitor-Schleife einfrieren (beobachtet
+# 2026-08-22, #1107). Muss über einem ehrlichen Worst-Case-Reconnect liegen
+# (~3x MCP_CONNECT_TIMEOUT). Heartbeat: renfield_mcp_health_ticks_total (Counter,
+# steht der still, hängt der Monitor) + renfield_mcp_health_problem_servers (Gauge).
+MCP_HEALTH_SELF_HEAL_PROBE_TIMEOUT=45
 # Funktionale Gesundheit: rollierendes Fenster der letzten N GESUNDHEITS-
 # KORRELIERTEN Ergebnisse je Server — True bei sauberem Ergebnis, False bei TIMEOUT
 # (Server antwortet nicht). NICHT gezählt: App-Fehler (Gerät aus / nicht gefunden /

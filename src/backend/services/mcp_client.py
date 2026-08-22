@@ -217,6 +217,24 @@ class TokenBucketRateLimiter:
         self.last_update = time.monotonic()
 
 
+# Bound for tearing down a (half-)broken transport stack. anyio teardown of a
+# wedged streamable_http session can hang on stream drain; every teardown site
+# below is bounded by this so no caller (esp. one holding reconnect_lock) can
+# freeze on cleanup (#1107).
+_TEARDOWN_TIMEOUT_S = 5.0
+
+
+async def _close_stack_quietly(stack: AsyncExitStack) -> None:
+    """Detached best-effort close of a partially-entered transport stack after a
+    cancelled connect. Bounded (a wedged teardown must not live forever) and
+    fully silent — cross-task anyio cancel-scope errors are expected here."""
+    try:
+        async with asyncio.timeout(_TEARDOWN_TIMEOUT_S):
+            await stack.__aexit__(None, None, None)
+    except BaseException:  # detached cleanup — nothing to surface
+        pass
+
+
 def _coerce_arguments(arguments: dict, input_schema: dict) -> dict:
     """
     Coerce LLM-produced flat arguments to match nested JSON schemas.
@@ -1118,6 +1136,7 @@ class MCPManager:
     async def _connect_server(self, state: MCPServerState) -> None:
         """Connect to a single MCP server and discover its tools."""
         config = state.config
+        exit_stack: AsyncExitStack | None = None
         try:
             from mcp import ClientSession
             from mcp.client.sse import sse_client
@@ -1134,19 +1153,28 @@ class MCPManager:
                 if token:
                     headers["Authorization"] = f"Bearer {token}"
 
-            # Connect based on transport type
+            # Connect based on transport type. The WHOLE transport establishment
+            # is bounded by a same-task asyncio.timeout: init/list_tools below were
+            # always wait_for-bounded, but the transport __aenter__ itself was not —
+            # a pathological upstream could wedge here indefinitely while holding
+            # the reconnect_lock, silencing every reconnect path incl. the health
+            # monitor's self-heal tick (#1107). asyncio.timeout (not wait_for)
+            # keeps the cancellation in THIS task, so anyio cancel scopes entered
+            # by the transport contexts stay task-consistent for later teardown.
             if config.transport == MCPTransportType.STREAMABLE_HTTP:
                 if not config.url:
                     raise ValueError("URL required for streamable_http transport")
-                transport = await exit_stack.enter_async_context(
-                    streamablehttp_client(url=config.url, headers=headers)
-                )
+                async with asyncio.timeout(settings.mcp_connect_timeout):
+                    transport = await exit_stack.enter_async_context(
+                        streamablehttp_client(url=config.url, headers=headers)
+                    )
             elif config.transport == MCPTransportType.SSE:
                 if not config.url:
                     raise ValueError("URL required for SSE transport")
-                transport = await exit_stack.enter_async_context(
-                    sse_client(url=config.url, headers=headers)
-                )
+                async with asyncio.timeout(settings.mcp_connect_timeout):
+                    transport = await exit_stack.enter_async_context(
+                        sse_client(url=config.url, headers=headers)
+                    )
             elif config.transport == MCPTransportType.STDIO:
                 if not config.command:
                     raise ValueError("Command required for stdio transport")
@@ -1179,9 +1207,10 @@ class MCPManager:
                     args=config.args,
                     env=subprocess_env,
                 )
-                transport = await exit_stack.enter_async_context(
-                    stdio_client(server=params)
-                )
+                async with asyncio.timeout(settings.mcp_connect_timeout):
+                    transport = await exit_stack.enter_async_context(
+                        stdio_client(server=params)
+                    )
             else:
                 raise ValueError(f"Unknown transport: {config.transport}")
 
@@ -1253,9 +1282,21 @@ class MCPManager:
             else:
                 logger.info(f"MCP server '{config.name}' connected: {len(state.tools)} tools")
 
+        except asyncio.CancelledError:
+            # Cancelled mid-connect (self-heal hang-guard or shutdown): mark the
+            # state honestly and hand the partially-entered transport to a
+            # detached best-effort closer — a wedged anyio teardown must not
+            # block the cancelling caller; a rare leak beats a frozen loop.
+            self._set_connected(state, False)
+            state.last_error = "connect cancelled (timeout/shutdown)"
+            state.exit_stack = None
+            if exit_stack is not None:
+                asyncio.get_running_loop().create_task(_close_stack_quietly(exit_stack))
+            raise
         except Exception as e:
             self._set_connected(state, False)
-            state.last_error = str(e)
+            # str(TimeoutError()) is "" — always keep a meaningful error text.
+            state.last_error = str(e) or type(e).__name__
 
             # Record failure for exponential backoff
             if state.backoff:
@@ -1267,13 +1308,18 @@ class MCPManager:
             else:
                 logger.warning(f"MCP server '{config.name}' connection failed: {e}")
 
-            # Clean up exit stack on failure
-            if state.exit_stack:
+            # Clean up the LOCAL exit stack on failure. (The old code closed
+            # state.exit_stack here, which at this point is always None — the
+            # local one is only promoted to state on success — so every failed
+            # connect leaked its partially-entered transport contexts.) Bounded:
+            # a teardown of a half-broken anyio transport can itself wedge.
+            if exit_stack is not None:
                 try:
-                    await state.exit_stack.__aexit__(None, None, None)
+                    async with asyncio.timeout(_TEARDOWN_TIMEOUT_S):
+                        await exit_stack.__aexit__(None, None, None)
                 except Exception:
                     pass
-                state.exit_stack = None
+            state.exit_stack = None
 
     async def _reconnect_server(self, state: MCPServerState) -> bool:
         """Tear down a stale session and re-establish.
@@ -1290,10 +1336,14 @@ class MCPManager:
             if state.connected and state.session is not None:
                 return True
             # Tear down old session/streams. Failures here are expected
-            # (the resource is half-broken — that's why we're here).
+            # (the resource is half-broken — that's why we're here). Bounded:
+            # anyio teardown of a broken streamable_http session can hang on
+            # stream drain, and this runs under reconnect_lock — an unbounded
+            # hang here would freeze every reconnect path for the server.
             if state.exit_stack is not None:
                 try:
-                    await state.exit_stack.__aexit__(None, None, None)
+                    async with asyncio.timeout(_TEARDOWN_TIMEOUT_S):
+                        await state.exit_stack.__aexit__(None, None, None)
                 except Exception:
                     pass
                 state.exit_stack = None

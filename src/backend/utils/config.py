@@ -1365,6 +1365,12 @@ class Settings(BaseSettings):
     # reconnect can't fix still alert (the post-probe health re-read decides).
     mcp_health_self_heal_enabled: bool = True
     mcp_health_self_heal_max_per_tick: int = 8         # cap probe/reconnect attempts per tick
+    # Hard hang-guard per self-heal probe. probe_server's own RPC probes are 2s-
+    # bounded, but the reconnect it drives (transport connect + init + tools/list)
+    # can wedge on a pathological upstream (observed 2026-08-22: the run_at_boot
+    # tick hung in the twin reconnect and silenced the WHOLE monitor loop — #1107).
+    # Must exceed a worst-case honest reconnect (~3x mcp_connect_timeout + probes).
+    mcp_health_self_heal_probe_timeout: float = Field(default=45.0, ge=5.0, le=600.0)
     # Functional health: track the last N HEALTH-CORRELATED tool-call outcomes per
     # server — True on a clean result, False on a TIMEOUT (server didn't respond).
     # App-level errors (device off / not found / success:false envelopes), caller
