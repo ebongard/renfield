@@ -893,10 +893,13 @@ update:
 - `bin/sign_satellite_release.py --verify --pubkey <hex>` — CI/Pre-Build-Check
   (Manifest == aktuelle Quelle + Signatur gültig).
 
-**Dark by default:** kein committetes Manifest + `require_signature=false`
-→ Backend leitet `None` weiter, Satellit prüft nur Checksum (Legacy). Rollout:
-gen-key → Public Key in group_vars → sign + Image bauen → re-provisionieren →
-`require_signature` flippen.
+**Rollout-Stand (2026-08-22):** Manifest v1.4.6 + Signatur sind committet,
+Public Key #1 steht in group_vars `satellite_release_pubkeys` (privater
+Schlüssel: `~/.renfield/ota_release_key`, nur Operator-Workstation). Restschritte:
+Fleet re-provisionieren (pinnt den Key auf jedem Satelliten) → dann
+`require_signature` fail-closed flippen (Satellit + Backend
+`SATELLITE_OTA_REQUIRE_SIGNATURE`). Bis dahin: verify-if-present. Bei jeder
+Satelliten-Quellcode-Änderung neu signieren (`--sign`).
 
 ---
 
