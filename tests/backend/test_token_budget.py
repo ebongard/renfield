@@ -74,7 +74,8 @@ class TestEnforceTokenBudget:
         ctx = AgentContext(original_message="test")
         short_prompt = "Hello " * 100  # ~600 chars ~ 150 tokens
 
-        with patch("services.agent_service.settings") as s:
+        with patch("services.agent_service.settings") as s, \
+             patch("services.agent_service.effective_agent_num_ctx", return_value=32768):
             s.ollama_num_ctx = 32768
             s.agent_default_num_predict = 2048
             s.agent_budget_threshold = 0.85
@@ -115,7 +116,8 @@ class TestEnforceTokenBudget:
 
         agent._build_agent_prompt = mock_build
 
-        with patch("services.agent_service.settings") as s:
+        with patch("services.agent_service.settings") as s, \
+             patch("services.agent_service.effective_agent_num_ctx", return_value=32768):
             s.ollama_num_ctx = 32768
             s.agent_default_num_predict = 2048
             s.agent_budget_threshold = 0.85
@@ -150,7 +152,8 @@ class TestEnforceTokenBudget:
 
         agent._build_agent_prompt = mock_build
 
-        with patch("services.agent_service.settings") as s:
+        with patch("services.agent_service.settings") as s, \
+             patch("services.agent_service.effective_agent_num_ctx", return_value=32768):
             s.ollama_num_ctx = 32768
             s.agent_default_num_predict = 2048
             s.agent_budget_threshold = 0.85
@@ -181,6 +184,7 @@ class TestTokenBudgetLogLine:
 
         captured: list[str] = []
         with patch("services.agent_service.settings") as s, \
+             patch("services.agent_service.effective_agent_num_ctx", return_value=32768), \
              patch("services.agent_service.logger") as log:
             s.ollama_num_ctx = 32768
             s.agent_default_num_predict = 2048
@@ -199,3 +203,103 @@ class TestTokenBudgetLogLine:
         # Sanity-check the format: should contain a slash, a percentage sign, parens.
         assert "/" in canonical[0]
         assert "%)" in canonical[0]
+
+
+class TestConfigurableContentCaps:
+    """The former hardcoded content caps must follow their settings so a
+    large-context deployment can raise them via ConfigMap."""
+
+    @pytest.mark.unit
+    def test_compress_history_message_follows_setting(self, monkeypatch):
+        from services.agent_service import _compress_history_message
+        monkeypatch.setattr(
+            "services.agent_service.settings.agent_history_message_max_chars", 2000
+        )
+        content = "y" * 3000
+        out = _compress_history_message(content)
+        assert len(out) == 2003  # 2000 chars + "..."
+
+    @pytest.mark.unit
+    def test_tool_result_text_cap_follows_setting(self, monkeypatch):
+        monkeypatch.setattr(
+            "services.agent_service.settings.agent_tool_result_text_max_chars", 12000
+        )
+        ctx = AgentContext(original_message="test")
+        ctx.steps = [
+            AgentStep(step_number=1, step_type="tool_result",
+                      content="z" * 20000, tool="t"),
+        ]
+        prompt = ctx.build_history_prompt(lang="de")
+        assert "z" * 12000 in prompt
+        assert "z" * 12001 not in prompt
+
+    @pytest.mark.unit
+    def test_budget_reduction_bites_text_results_too(self, monkeypatch):
+        """Pass-0 budget reduction (tool_result_budget_chars) must also cap
+        TEXT results — else a text-dominated overrun is irreducible and falls
+        through to the harsher history/memory passes."""
+        monkeypatch.setattr(
+            "services.agent_service.settings.agent_tool_result_text_max_chars", 12000
+        )
+        ctx = AgentContext(original_message="test")
+        ctx.tool_result_budget_chars = 300
+        ctx.steps = [
+            AgentStep(step_number=1, step_type="tool_result",
+                      content="z" * 20000, tool="t"),
+        ]
+        prompt = ctx.build_history_prompt(lang="de")
+        assert "z" * 300 in prompt
+        assert "z" * 301 not in prompt
+
+
+class TestBackendAwareBudget:
+    """The budget must follow the effective serving backend: when the agent
+    tier routes to the OpenAI-compat llama-server and its --ctx-size is
+    declared (llm_openai_num_ctx), a prompt far over the Ollama window must
+    pass through un-reduced."""
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_large_ctx_prompt_passes_untouched(self):
+        agent = _make_agent()
+        ctx = AgentContext(original_message="test")
+        # ~30k tokens — over 85% of 32768, but far under 262144.
+        large_prompt = "x" * 120000
+
+        with patch("services.agent_service.settings") as s, \
+             patch("services.agent_service.effective_agent_num_ctx", return_value=262144):
+            s.agent_default_num_predict = 2048
+            s.agent_budget_threshold = 0.85
+
+            prompt, mem, doc, _hist = await agent._enforce_token_budget(
+                large_prompt, ctx, "test", None,
+                memory_context="mem", document_context="doc", lang="de",
+            )
+            assert prompt == large_prompt
+            assert mem == "mem"
+            assert doc == "doc"
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_same_prompt_reduced_on_ollama_ctx(self):
+        """Control: identical prompt IS reduced when the effective window is
+        the Ollama one — proves the backend switch is what widens the budget."""
+        agent = _make_agent()
+        ctx = AgentContext(original_message="test")
+        large_prompt = "x" * 120000
+
+        async def mock_build(*args, **kwargs):
+            return "x" * 50000
+
+        agent._build_agent_prompt = mock_build
+
+        with patch("services.agent_service.settings") as s, \
+             patch("services.agent_service.effective_agent_num_ctx", return_value=32768):
+            s.agent_default_num_predict = 2048
+            s.agent_budget_threshold = 0.85
+
+            prompt, _, _, _ = await agent._enforce_token_budget(
+                large_prompt, ctx, "test", None,
+                memory_context="mem", document_context="doc", lang="de",
+            )
+            assert len(prompt) < len(large_prompt)

@@ -25,6 +25,7 @@ from utils.circuit_breaker import agent_circuit_breaker
 from utils.config import settings
 from utils.prompt_safety import neutralize_delimiters
 from utils.llm_client import (
+    effective_agent_num_ctx,
     extract_response_content,
     get_agent_client,
     get_classification_chat_kwargs,
@@ -68,12 +69,14 @@ token_budget_info: ContextVar[dict | None] = ContextVar("token_budget_info", def
 token_usage_info: ContextVar[dict | None] = ContextVar("token_usage_info", default=None)
 
 
-def _compress_history_message(content: str, max_chars: int = 500) -> str:
+def _compress_history_message(content: str) -> str:
     """Compress a conversation history message for the agent prompt.
 
     Action result blocks can be very large (full document lists, base64 data).
-    This extracts the essential summary and truncates the natural-language response.
+    This extracts the essential summary and truncates the natural-language
+    response to ``agent_history_message_max_chars``.
     """
+    max_chars = settings.agent_history_message_max_chars
     if not content:
         return ""
 
@@ -133,8 +136,9 @@ class AgentContext:
     steps: list[AgentStep] = field(default_factory=list)
     tool_results: list[dict] = field(default_factory=list)
 
-    # Maximum number of steps to include in the prompt (sliding window)
-    # With 32k context window, we can keep all steps from a typical agent run
+    # Maximum number of steps to include in the prompt (sliding window) —
+    # sized so a typical agent run keeps all its steps within the token budget
+    # (effective_agent_num_ctx)
     MAX_HISTORY_STEPS: int = settings.agent_history_limit
 
     # Blob store for large binary data (base64) passed between tool steps.
@@ -234,6 +238,14 @@ class AgentContext:
             no_result = "Kein Ergebnis"
 
         lines = [header]
+        # Hoisted: loop-invariant caps. The token-budget reduction (Pass 0)
+        # must bite TEXT results too, not only structured step.data — else a
+        # text-dominated overrun is irreducible and falls through to the
+        # harsher history/memory passes.
+        budget = self.tool_result_budget_chars
+        text_cap = settings.agent_tool_result_text_max_chars
+        if budget:
+            text_cap = min(text_cap, budget)
         for step in recent_steps:
             if step.step_type == "tool_call":
                 tool_text = tool_called.format(tool=step.tool)
@@ -249,10 +261,9 @@ class AgentContext:
                 )
             elif step.step_type == "tool_result":
                 if step.data is not None:
-                    budget = self.tool_result_budget_chars
                     content = _serialize_for_prompt(step.data, budget_chars=budget)
                 else:
-                    content = step.content[:8000] if step.content else no_result
+                    content = step.content[:text_cap] if step.content else no_result
                 tool_name = step.tool or "unknown"
                 # #686: neutralize structural delimiters in untrusted tool output
                 # (and the tool name) so a crafted MCP/tool result can't forge or
@@ -449,6 +460,16 @@ _SAME_TOOL_ABORT_THRESHOLD = 5
 # YAML always wins when present (keys defined at the bottom of agent.yaml).
 # Centralizing the defaults here so they aren't duplicated as inline literals
 # at each call site, where they previously read like the source of truth.
+# The num_ctx=32768 here is DELIBERATE even when the agent routes to the
+# large-context llama-server: the OpenAI-compat path drops num_ctx anyway
+# (server --ctx-size governs), while on the in-cluster Ollama fallback it
+# protects the fallback model from an oversized KV-cache allocation. The
+# backend token budget scales via effective_agent_num_ctx() instead.
+# KNOWN GAP (pre-existing): on an Ollama-PRIMARY agent path with a raised
+# OLLAMA_NUM_CTX (> 32768), the budget follows ollama_num_ctx while the
+# request still carries this 32768 — Ollama then truncates the prompt head.
+# Tracked as a follow-up; align these if you raise OLLAMA_NUM_CTX without
+# an OpenAI-compat endpoint.
 _DEFAULT_LLM_OPTIONS = {
     "temperature": 0.1, "top_p": 0.2, "num_predict": 2048, "num_ctx": 32768,
 }
@@ -954,7 +975,11 @@ class AgentService:
         """
         from utils.token_counter import token_counter
 
-        max_tokens = settings.ollama_num_ctx
+        # Backend-aware: the OpenAI-compat llama-server ignores client num_ctx
+        # (its --ctx-size governs), so when the agent tier routes there the
+        # budget may fill the declared llm_openai_num_ctx instead of the
+        # Ollama window.
+        max_tokens = effective_agent_num_ctx()
         reserved = settings.agent_default_num_predict
         threshold = settings.agent_budget_threshold
 
@@ -1064,7 +1089,12 @@ class AgentService:
                 if utilization <= threshold:
                     return prompt, "", "", conversation_history
 
-            # Pass 4: Truncate history results
+            # Pass 4: Truncate history results. The 500-char floor is the
+            # DELIBERATE last-resort emergency crush — it only fires when the
+            # prompt is still over budget after every gentler pass, where
+            # fitting the window beats honoring the operator's configured
+            # tool-result caps. Note it mutates step.content in place, so it
+            # sticks for the remaining steps of this turn.
             context.truncate_history_results(max_chars=500)
             prompt = await self._build_agent_prompt(
                 message, context, conversation_history,
@@ -1128,8 +1158,10 @@ class AgentService:
         if summary_text:
             conv_prefix += f"## Earlier in this conversation\n{neutralize_delimiters(summary_text)}\n\n"
 
-        # With 32k context, include conversation history for follow-up references
-        # like "Schick die gleiche Rechnung nochmal" or "Und wie ist es morgen?"
+        # Include conversation history for follow-up references like "Schick
+        # die gleiche Rechnung nochmal" or "Und wie ist es morgen?" — depth via
+        # agent_conv_context_messages, per-message size via
+        # agent_history_message_max_chars (both budget-guarded downstream)
         conv_context = ""
         if conversation_history:
             n = settings.agent_conv_context_messages

@@ -267,26 +267,43 @@ class TokenCounter:
             reserved_tokens=reserved_for_response
         )
 
+    # Sample size for content-type detection. count() runs on the hot agent
+    # path up to ~7x per ReAct step; scanning a multi-hundred-KB prompt in
+    # full (plus the .lower() copy) blocks the event loop for tens of ms per
+    # call. Sampling head AND tail keeps the cost O(1) while still seeing the
+    # scratchpad end of an agent prompt: a German system-template head with
+    # code/JSON-bearing tool results at the tail must classify as CODE (3.0,
+    # the conservative direction) rather than GERMAN (4.5) — a head-only
+    # sample would undercount such prompts right where the budget runs close
+    # to the real context limit.
+    DETECT_SAMPLE_CHARS = 4096
+
     def _detect_content_type(self, text: str) -> float:
         """
         Detect content type and return appropriate chars-per-token ratio.
+
+        Operates on a bounded head+tail sample (DETECT_SAMPLE_CHARS each) so
+        the cost stays O(1) regardless of prompt size.
         """
+        n = self.DETECT_SAMPLE_CHARS
+        sample = text if len(text) <= 2 * n else text[:n] + "\n" + text[-n:]
+
         # Check for JSON
-        if text.strip().startswith("{") or text.strip().startswith("["):
+        if sample.strip().startswith("{") or sample.strip().startswith("["):
             return self.CHARS_PER_TOKEN_JSON
 
         # Check for code (simple heuristics)
         code_indicators = ["def ", "class ", "function ", "import ", "const ", "let ", "var "]
-        if any(indicator in text for indicator in code_indicators):
+        if any(indicator in sample for indicator in code_indicators):
             return self.CHARS_PER_TOKEN_CODE
 
         # Check for German text (umlauts and common words)
         german_chars = "äöüÄÖÜß"
         german_words = ["der", "die", "das", "und", "ist", "ein", "eine", "nicht"]
-        text_lower = text.lower()
+        sample_lower = sample.lower()
 
-        has_umlauts = any(c in text for c in german_chars)
-        has_german_words = sum(1 for w in german_words if f" {w} " in f" {text_lower} ") >= 2
+        has_umlauts = any(c in sample for c in german_chars)
+        has_german_words = sum(1 for w in german_words if f" {w} " in f" {sample_lower} ") >= 2
 
         if has_umlauts or has_german_words:
             return self.CHARS_PER_TOKEN_GERMAN

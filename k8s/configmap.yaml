@@ -110,6 +110,26 @@ data:
   LLM_OPENAI_FALLBACK_MODEL: "qwen3:14b"
   WAIT_CUDA_MAX_SECONDS: "30"
 
+  # Exploit the llama-server's large context window. LLM_OPENAI_NUM_CTX must
+  # match the server's --ctx-size (cuda.local:8081 runs 262144); it only
+  # widens the backend token budget — the server ignores client num_ctx.
+  # The AGENT_*/KNOWLEDGE_* knobs raise the content caps that used to bind
+  # long before the budget (history 12×500 chars, tool-result text 8000,
+  # knowledge chunks 500). Moderate sizing: typical prompts stay well under
+  # ~64k tokens so prefill latency remains interactive. Caveat: during a cuda
+  # outage the Ollama fallback still runs at OLLAMA_NUM_CTX — oversized
+  # prompts degrade there (logged WARNING), which is acceptable best-effort.
+  LLM_OPENAI_NUM_CTX: "262144"
+  AGENT_CONV_CONTEXT_MESSAGES: "30"
+  AGENT_HISTORY_MESSAGE_MAX_CHARS: "2000"
+  # Both tool-result knobs must move together: AGENT_RESPONSE_TRUNCATION caps
+  # text results at STEP CREATION (before they ever reach the scratchpad),
+  # AGENT_TOOL_RESULT_TEXT_MAX_CHARS caps them at prompt-build time — raising
+  # only the latter leaves it inert behind the 2000-char creation default.
+  AGENT_RESPONSE_TRUNCATION: "32000"
+  AGENT_TOOL_RESULT_TEXT_MAX_CHARS: "32000"
+  KNOWLEDGE_CONTEXT_CHUNK_CHARS: "1500"
+
   # Voice-server (B.4): when set, backend's /api/voice/voice-chat
   # orchestrator delegates STT + TTS to the voice-server pod
   # (k8s-gpu-3) instead of running them in-process. Backend retains

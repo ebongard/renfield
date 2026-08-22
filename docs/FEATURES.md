@@ -906,7 +906,14 @@ Renfield unterstützt separate Modelle pro Aufgabe. Jedes kann auf einer anderen
 ```env
 # Basis
 OLLAMA_URL=http://ollama:11434
-OLLAMA_NUM_CTX=32768                # Context Window
+OLLAMA_NUM_CTX=32768                # Context Window (Ollama-Calls)
+# LLM_OPENAI_NUM_CTX=262144         # Context Window des externen OpenAI-compat
+                                    # llama-servers (= dessen --ctx-size). Weitet
+                                    # das Agent-Token-Budget; zum realen Ausnutzen
+                                    # auch AGENT_HISTORY_MESSAGE_MAX_CHARS /
+                                    # AGENT_TOOL_RESULT_TEXT_MAX_CHARS /
+                                    # KNOWLEDGE_CONTEXT_CHUNK_CHARS anheben
+                                    # (siehe docs/ENVIRONMENT_VARIABLES.md)
 
 # Pro Aufgabe
 OLLAMA_CHAT_MODEL=qwen3:14b        # Chat-Antworten

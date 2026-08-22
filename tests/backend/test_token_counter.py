@@ -444,3 +444,54 @@ class TestGlobalInstance:
         """Global instance should function correctly."""
         result = token_counter.count("Test string")
         assert result > 0
+
+
+class TestDetectContentTypeSampling:
+    """_detect_content_type runs on a bounded head+tail sample so count()
+    stays O(1) on the hot agent path even for very wide prompts."""
+
+    @pytest.mark.unit
+    def test_head_decides_ratio_for_plain_tail(self):
+        """A huge plain-text middle/tail doesn't flip a German head."""
+        counter = TokenCounter()
+        german_head = "Der Hund und die Katze sind nicht im Haus. " * 200
+        english_tail = "plain english filler text " * 50000
+        ratio = counter._detect_content_type(german_head + english_tail)
+        assert ratio == TokenCounter.CHARS_PER_TOKEN_GERMAN
+
+    @pytest.mark.unit
+    def test_code_tail_wins_over_german_head(self):
+        """Agent prompts end in the tool-result scratchpad: a code-bearing
+        tail must classify CODE (3.0, conservative — more estimated tokens)
+        even under a German system-template head, else wide mixed prompts
+        undercount by up to ~33% right at the budget edge."""
+        counter = TokenCounter()
+        german_head = "Der Hund und die Katze sind nicht im Haus. " * 200
+        filler = "plain filler text " * 50000
+        code_tail = "def handler():\n    return import_result\n" * 200
+        ratio = counter._detect_content_type(german_head + filler + code_tail)
+        assert ratio == TokenCounter.CHARS_PER_TOKEN_CODE
+
+    @pytest.mark.unit
+    def test_short_text_unchanged(self):
+        """Texts under the sample size classify exactly as before."""
+        counter = TokenCounter()
+        assert counter._detect_content_type(
+            "def foo():\n    return 1"
+        ) == TokenCounter.CHARS_PER_TOKEN_CODE
+        assert counter._detect_content_type(
+            '{"key": "value"}'
+        ) == TokenCounter.CHARS_PER_TOKEN_JSON
+
+    @pytest.mark.unit
+    def test_large_text_count_is_fast(self):
+        """count() on a ~1 MB text must not do full-text scans — generous
+        wall-clock bound as a regression tripwire."""
+        import time
+        counter = TokenCounter()
+        big = "plain english filler text without code markers " * 22000  # ~1 MB
+        start = time.perf_counter()
+        for _ in range(20):
+            counter.count(big)
+        elapsed = time.perf_counter() - start
+        assert elapsed < 1.0, f"20 counts on 1MB took {elapsed:.2f}s"

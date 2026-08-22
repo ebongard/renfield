@@ -316,6 +316,17 @@ class Settings(BaseSettings):
     # Qwen3-Embedding-4B). When set, embeddings route here instead of Ollama.
     llm_openai_embed_base_url: str | None = None
     llm_openai_embed_model: str = "qwen3-embedding"
+    # Context window of the external OpenAI-compat server (must match the
+    # llama-server's --ctx-size). Used ONLY for the backend-side token budget
+    # (_enforce_token_budget) when the agent tier routes to that server — the
+    # server itself ignores client num_ctx. None = budget against
+    # ollama_num_ctx (legacy behavior). Caveat: with llm_openai_fallback_enabled
+    # a prompt wider than ollama_num_ctx degrades on fail-over (the in-cluster
+    # fallback model still runs at ollama_num_ctx and truncates).
+    # Bounded so a fat-fingered/negative value fails at startup instead of
+    # silently disabling budget enforcement (negative max → negative
+    # utilization → reduction never fires).
+    llm_openai_num_ctx: int | None = Field(default=None, ge=1024, le=2_000_000)
     agent_conv_context_messages: int = 12  # Number of conversation history messages in agent loop
     conversation_summary_threshold: int = 10  # Trigger LLM summary when message count exceeds this
     agent_roles_path: str = "config/agent_roles.yaml"  # Path to agent role definitions
@@ -406,6 +417,14 @@ class Settings(BaseSettings):
     agent_history_limit: int = Field(default=20, ge=1, le=100)       # Max history steps in agent loop
     agent_response_truncation: int = Field(default=2000, ge=100, le=50000)  # Max chars for tool response truncation
     agent_budget_threshold: float = Field(default=0.85, ge=0.5, le=0.99)   # Token budget utilization threshold (triggers reduction above this)
+    # Per-message char cap when compressing conversation history into the agent
+    # prompt (_compress_history_message). Raise together with llm_openai_num_ctx
+    # to actually exploit a large server-side context window.
+    agent_history_message_max_chars: int = Field(default=500, ge=100, le=50000)
+    # Char cap for text-form tool results in the agent scratchpad
+    # (AgentContext.build_history_prompt step.content path). Structured results
+    # are governed by tool_result_budget_chars / the token budget instead.
+    agent_tool_result_text_max_chars: int = Field(default=8000, ge=500, le=500000)
     agent_parallel_tools: bool = True                                       # Allow multi-action in single step
     agent_orchestrator_parallel: bool = True                                # Run orchestrator sub-agents in parallel
 
@@ -457,6 +476,10 @@ class Settings(BaseSettings):
     rag_rerank_enabled: bool = True            # Rerank results with dedicated model
     rag_rerank_model: str = "mxbai-rerank-base-v1"
     rag_rerank_top_k: int = Field(default=5, ge=1, le=50)  # Final results after reranking
+    # Per-chunk char cap when internal.knowledge_search assembles its context
+    # block (services/knowledge_tool.py). Raise together with llm_openai_num_ctx
+    # so retrieved chunks reach the agent uncut.
+    knowledge_context_chunk_chars: int = Field(default=500, ge=100, le=10000)
 
     # OCR Processing
     rag_force_ocr: bool = False               # Always force full-page OCR (ignores embedded text)

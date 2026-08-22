@@ -290,6 +290,54 @@ class _OpenAICompatFallbackClient:
             return {**kwargs, "think": False}
         return kwargs
 
+    @staticmethod
+    def _warn_if_prompt_exceeds_fallback_ctx(
+        messages: list[dict[str, Any]] | None, kwargs: dict[str, Any]
+    ) -> None:
+        """The fallback runs at the ``options.num_ctx`` forwarded verbatim in
+        the call kwargs (else Ollama's own default) — NOT at whatever wide
+        window the primary served (``llm_openai_num_ctx``). An oversized prompt
+        is silently truncated by Ollama, dropping the system/tools framing at
+        the head. We can't shrink the prompt here (outage mode is best-effort),
+        but the degradation must be visible in the logs. Token estimation goes
+        through the content-aware ``token_counter`` (rare path — one extra scan
+        per fail-over call is fine) so the warning neither misses real oversize
+        nor cries wolf on prompts that fit.
+        """
+        from utils.token_counter import token_counter
+
+        options = kwargs.get("options") or {}
+        effective_ctx = options.get("num_ctx") or settings.ollama_num_ctx
+        text = "".join(str(m.get("content") or "") for m in messages or [])
+        estimated_tokens = token_counter.count(text)
+        if estimated_tokens > effective_ctx:
+            logger.warning(
+                f"Fallback prompt (~{estimated_tokens} tokens) exceeds the "
+                f"in-cluster fallback context (num_ctx={effective_ctx}) — the "
+                f"response may be truncated/degraded until the primary recovers"
+            )
+
+    def _prepare_fallback(
+        self,
+        exc: Exception,
+        messages: list[dict[str, Any]] | None,
+        kwargs: dict[str, Any],
+        *,
+        stream: bool,
+    ) -> tuple[str, dict[str, Any]]:
+        """Shared fail-over preamble for the streaming and non-streaming paths:
+        resolve the in-cluster model, adjust kwargs, log the fail-over, and
+        surface a possible prompt-oversize degradation."""
+        fb_model = self._fallback_model()
+        fb_kwargs = self._fallback_kwargs(kwargs, fb_model)
+        where = " on stream open" if stream else ""
+        logger.warning(
+            f"OpenAI-compat LLM primary failed{where} ({exc!r}); "
+            f"falling back to in-cluster Ollama (model={fb_model})"
+        )
+        self._warn_if_prompt_exceeds_fallback_ctx(messages, kwargs)
+        return fb_model, fb_kwargs
+
     async def chat(
         self,
         model: str = "",
@@ -305,12 +353,7 @@ class _OpenAICompatFallbackClient:
         except Exception as exc:  # noqa: BLE001 — _should_fallback re-raises what it can't handle
             if not _should_fallback(exc):
                 raise
-            fb_model = self._fallback_model()
-            fb_kwargs = self._fallback_kwargs(kwargs, fb_model)
-            logger.warning(
-                f"OpenAI-compat LLM primary failed ({exc!r}); "
-                f"falling back to in-cluster Ollama (model={fb_model})"
-            )
+            fb_model, fb_kwargs = self._prepare_fallback(exc, messages, kwargs, stream=False)
             return await self._fallback.chat(model=fb_model, messages=messages, stream=False, **fb_kwargs)
 
     async def _chat_stream(
@@ -324,12 +367,7 @@ class _OpenAICompatFallbackClient:
         except Exception as exc:  # noqa: BLE001
             if not _should_fallback(exc):
                 raise
-            fb_model = self._fallback_model()
-            fb_kwargs = self._fallback_kwargs(kwargs, fb_model)
-            logger.warning(
-                f"OpenAI-compat LLM primary failed on stream open ({exc!r}); "
-                f"falling back to in-cluster Ollama (model={fb_model})"
-            )
+            fb_model, fb_kwargs = self._prepare_fallback(exc, messages, kwargs, stream=True)
             fb_gen = await self._fallback.chat(model=fb_model, messages=messages, stream=True, **fb_kwargs)
             async for chunk in fb_gen:
                 yield chunk
@@ -730,6 +768,22 @@ def use_openai_for_tier(tier: str) -> bool:
     if agent is None:
         return True  # default: route everything through llama-server when configured
     return bool(agent)
+
+
+def effective_agent_num_ctx() -> int:
+    """Context window the agent tier can actually fill.
+
+    The OpenAI-compat server (llama-server) ignores client-side ``num_ctx`` —
+    its ``--ctx-size`` governs — so when the agent tier routes there AND the
+    operator declared that size via ``llm_openai_num_ctx``, the backend token
+    budget may fill it. Everywhere else (Ollama routing, or the setting unset)
+    the budget stays at ``ollama_num_ctx``. NOTE: this is a budget bound only;
+    with ``llm_openai_fallback_enabled`` a prompt wider than ``ollama_num_ctx``
+    degrades on fail-over (see ``_OpenAICompatFallbackClient``).
+    """
+    if settings.llm_openai_num_ctx and use_openai_for_tier("agent"):
+        return settings.llm_openai_num_ctx
+    return settings.ollama_num_ctx
 
 
 # ---------------------------------------------------------------------------

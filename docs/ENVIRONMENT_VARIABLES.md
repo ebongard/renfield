@@ -238,8 +238,21 @@ AGENT_TOTAL_TIMEOUT=120.0
 # Optionale separate Ollama-Instanz für Agent
 # AGENT_OLLAMA_URL=http://cuda.local:11434
 
-# Konversations-Kontext im Agent Loop
-AGENT_CONV_CONTEXT_MESSAGES=6
+# Konversations-Kontext im Agent Loop (Anzahl Nachrichten)
+AGENT_CONV_CONTEXT_MESSAGES=12
+
+# Zeichen-Cap pro komprimierter Historien-Nachricht im Agent-Prompt.
+# Zusammen mit LLM_OPENAI_NUM_CTX anheben, um ein großes Kontextfenster
+# tatsächlich zu nutzen (z. B. 2000 bei 256k-Server).
+AGENT_HISTORY_MESSAGE_MAX_CHARS=500
+
+# Zeichen-Cap für Text-Tool-Ergebnisse im Agent-Scratchpad (strukturierte
+# Ergebnisse steuert das Token-Budget). Bei großem Kontextfenster anheben
+# (z. B. 32000). WICHTIG: zusammen mit AGENT_RESPONSE_TRUNCATION anheben —
+# das kappt Text-Ergebnisse bereits bei der Step-Erzeugung (Default 2000);
+# ohne beides bleibt der Lese-Cap wirkungslos.
+AGENT_TOOL_RESULT_TEXT_MAX_CHARS=8000
+AGENT_RESPONSE_TRUNCATION=2000
 
 # Agent Router Timeout (Sekunden)
 AGENT_ROUTER_TIMEOUT=30.0
@@ -252,7 +265,10 @@ AGENT_ROUTER_TIMEOUT=30.0
 - `AGENT_TOTAL_TIMEOUT`: `120.0`
 - `AGENT_MODEL`: None (nutzt `OLLAMA_MODEL`)
 - `AGENT_OLLAMA_URL`: None (nutzt `OLLAMA_URL`)
-- `AGENT_CONV_CONTEXT_MESSAGES`: `6`
+- `AGENT_CONV_CONTEXT_MESSAGES`: `12`
+- `AGENT_HISTORY_MESSAGE_MAX_CHARS`: `500`
+- `AGENT_TOOL_RESULT_TEXT_MAX_CHARS`: `8000`
+- `AGENT_RESPONSE_TRUNCATION`: `2000`
 - `AGENT_ROUTER_TIMEOUT`: `30.0`
 
 ### OpenAI-kompatibler LLM-Endpoint (llama-server / vLLM / OpenRouter)
@@ -269,6 +285,18 @@ AGENT_ROUTER_TIMEOUT=30.0
 
 # Logischer Modellname des Endpoints (llama-server --alias)
 # LLM_OPENAI_MODEL=qwen3.6
+
+# Kontextfenster des externen Servers (MUSS dessen --ctx-size entsprechen,
+# z. B. 262144 auf cuda.local:8081). Weitet NUR das backendseitige
+# Token-Budget des Agent-Loops (_enforce_token_budget) — der Server selbst
+# ignoriert client-seitiges num_ctx, sein --ctx-size gilt. Ungesetzt =>
+# Budget gegen OLLAMA_NUM_CTX (Legacy). Um das Fenster real zu füllen,
+# zusätzlich AGENT_HISTORY_MESSAGE_MAX_CHARS / AGENT_TOOL_RESULT_TEXT_MAX_CHARS
+# + AGENT_RESPONSE_TRUNCATION (beide zusammen!) / KNOWLEDGE_CONTEXT_CHUNK_CHARS
+# / AGENT_CONV_CONTEXT_MESSAGES anheben.
+# ACHTUNG Fallback: bei LLM_OPENAI_FALLBACK_ENABLED laufen Prompts > OLLAMA_NUM_CTX
+# im Ausfall-Fall degradiert (Ollama schneidet still ab; WARNING im Log).
+# LLM_OPENAI_NUM_CTX=262144
 
 # Reasoning-Budget für Reasoning-Modelle hinter dem Endpoint
 # ("minimal"/"low"/"medium"/"high"/"none", providerabhängig). Wird NUR bei
@@ -315,6 +343,7 @@ AGENT_ROUTER_TIMEOUT=30.0
 - `LLM_OPENAI_BASE_URL`: None (Ollama wird verwendet)
 - `LLM_OPENAI_API_KEY`: None (sendet "no-key")
 - `LLM_OPENAI_MODEL`: `qwen3.6`
+- `LLM_OPENAI_NUM_CTX`: None (Budget gegen `OLLAMA_NUM_CTX`)
 - `LLM_OPENAI_REASONING_EFFORT`: None (kein reasoning_effort im Request)
 - `LLM_OPENAI_FALLBACK_ENABLED`: `false` (opt-in pro Instanz; braucht ein erreichbares In-Cluster-`OLLAMA_URL`)
 - `LLM_OPENAI_FALLBACK_MODEL`: `""` (=> `OLLAMA_MODEL`, z. B. `qwen3:14b`)
@@ -864,6 +893,10 @@ RAG_CHUNK_SIZE=512               # Token-Limit pro Chunk
 RAG_CHUNK_OVERLAP=50             # Überlappung zwischen Chunks
 RAG_TOP_K=5                      # Anzahl der relevantesten Chunks
 RAG_SIMILARITY_THRESHOLD=0.4     # Minimum Similarity für Dense-only (0-1)
+KNOWLEDGE_CONTEXT_CHUNK_CHARS=500  # Zeichen-Cap pro Chunk im Kontext-Block von
+                                 # internal.knowledge_search. Zusammen mit
+                                 # LLM_OPENAI_NUM_CTX anheben (z. B. 1500),
+                                 # damit Chunks den Agenten ungekürzt erreichen.
 
 # Hybrid Search (Dense + BM25 via Reciprocal Rank Fusion)
 RAG_HYBRID_ENABLED=true          # Hybrid Search aktivieren
@@ -899,6 +932,7 @@ OCR_VLM_GIBBERISH_GATE_ENABLED=false  # Schneller LM-Check (is_ocr_gibberish, In
 - `RAG_CHUNK_OVERLAP`: `50`
 - `RAG_TOP_K`: `5`
 - `RAG_SIMILARITY_THRESHOLD`: `0.4`
+- `KNOWLEDGE_CONTEXT_CHUNK_CHARS`: `500`
 - `RAG_HYBRID_ENABLED`: `true`
 - `RAG_HYBRID_BM25_WEIGHT`: `0.3`
 - `RAG_HYBRID_DENSE_WEIGHT`: `0.7`
