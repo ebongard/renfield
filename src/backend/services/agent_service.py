@@ -543,8 +543,11 @@ def _warn_if_truncated(raw_response: Any, model: str, call_type: str, step_num: 
         from utils.metrics import record_llm_response_truncated
 
         record_llm_response_truncated(model, call_type)
-    except Exception:  # noqa: BLE001 — metrics must never break the agent loop
-        logger.debug("could not record llm truncation metric")
+    except Exception as e:  # noqa: BLE001 — metrics must never break the agent loop
+        # WARNING, not debug: this except is the reason the counter's own
+        # registration bug went unnoticed while the line above logged happily.
+        # A dead metric is invisible precisely because nothing depends on it.
+        logger.warning(f"could not record llm truncation metric: {e!r}")
     return True
 
 

@@ -39,6 +39,7 @@ _agent_outcome_total = None
 _injection_attempts_total = None
 _budget_reductions_total = None
 _output_guard_violations_total = None
+_llm_response_truncated_total = None
 _auth_provider_unreachable_total = None
 _login_failure_total = None
 _authz_denied_total = None
@@ -61,6 +62,7 @@ def _init_metrics():
     global _mcp_tool_duration_seconds, _mcp_tool_errors_total
     global _agent_outcome_total, _injection_attempts_total
     global _budget_reductions_total, _output_guard_violations_total
+    global _llm_response_truncated_total
     global _auth_provider_unreachable_total
     global _login_failure_total, _authz_denied_total
     global _kg_conflation_candidates
