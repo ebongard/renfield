@@ -181,6 +181,56 @@ class TokenCounter:
 
         return truncated + suffix, True
 
+    def truncate_middle_to_budget(
+        self,
+        text: str,
+        max_tokens: int,
+        reserved: int = 0,
+        marker: str = "\n…[Mitte wegen Fallback-Kontextfenster gekürzt]…\n",
+    ) -> tuple[str, bool]:
+        """Shrink text to the token budget by cutting the MIDDLE, preserving
+        head and tail.
+
+        Built for the LLM-fallback path (#1104): the agent prompt is ONE
+        monolithic user message — instructions/tools framing at the head,
+        question + step directive at the tail, the compressible mass (history,
+        tool results) in the middle. A head-preserving tail-cut destroys the
+        question; Ollama's own overflow handling silently drops the HEAD.
+        Cutting the middle keeps both load-bearing ends.
+
+        Head gets ~55% of the budget (the tools/format contract is larger and
+        less redundant than the scratchpad tail), tail the rest. Cuts snap to
+        line boundaries where one is reasonably close, so the marker lands
+        between lines instead of mid-JSON-token.
+
+        Returns (text, was_shrunk).
+        """
+        available = max_tokens - reserved - self.count(marker)
+        if available <= 0:
+            return text, False
+        if self.count(text) <= available:
+            return text, False
+
+        chars_per_token = self._detect_content_type(text)
+        target_chars = int(available * chars_per_token)
+        if target_chars >= len(text) or target_chars < 200:
+            return text, False
+
+        head_chars = int(target_chars * 0.55)
+        tail_chars = target_chars - head_chars
+
+        head = text[:head_chars]
+        cut = head.rfind("\n")
+        if cut > head_chars * 0.8:
+            head = head[:cut]
+
+        tail = text[-tail_chars:]
+        cut = tail.find("\n")
+        if 0 <= cut < tail_chars * 0.2:
+            tail = tail[cut + 1:]
+
+        return head + marker + tail, True
+
     def truncate_messages_to_budget(
         self,
         messages: list[dict],

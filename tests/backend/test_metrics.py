@@ -289,3 +289,27 @@ class TestEveryCollectorIsReachable:
         }
         missing = sorted(self._collectors_assigned_in_init() - declared)
         assert not missing, f"no module-level declaration for: {missing}"
+
+
+class TestNormalizeEndpoint:
+    """Cardinality guard: per-resource path segments collapse to {id} so the
+    endpoint label can't explode into one time series per document/session."""
+
+    def test_numeric_and_uuid_segments_collapse(self):
+        from utils.metrics import normalize_endpoint
+
+        assert normalize_endpoint("/api/knowledge/documents/123") == \
+            "/api/knowledge/documents/{id}"
+        assert normalize_endpoint(
+            "/api/meetings/0f8b2c1a-1234-4abc-9def-001122334455/segments"
+        ) == "/api/meetings/{id}/segments"
+        assert normalize_endpoint("/api/chat/deadbeefdeadbeefdeadbeef/branch/42") == \
+            "/api/chat/{id}/branch/{id}"
+
+    def test_literal_segments_survive(self):
+        from utils.metrics import normalize_endpoint
+
+        assert normalize_endpoint("/api/mcp/status") == "/api/mcp/status"
+        assert normalize_endpoint("/health") == "/health"
+        # Short hex-looking words stay literal (only >=16 hex chars collapse)
+        assert normalize_endpoint("/api/atoms/facade") == "/api/atoms/facade"

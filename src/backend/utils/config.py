@@ -417,6 +417,11 @@ class Settings(BaseSettings):
     agent_history_limit: int = Field(default=20, ge=1, le=100)       # Max history steps in agent loop
     agent_response_truncation: int = Field(default=2000, ge=100, le=50000)  # Max chars for tool response truncation
     agent_budget_threshold: float = Field(default=0.85, ge=0.5, le=0.99)   # Token budget utilization threshold (triggers reduction above this)
+    # Soft prompt target (#1104): OPTIONAL second, lower bound. Above it (but
+    # under the hard threshold) ONLY the adaptive tool-result pass runs, sized
+    # to this target — prefill-latency control on large-context servers without
+    # sacrificing history/memory/documents. None = off (hard budget only).
+    agent_prompt_target_tokens: int | None = Field(default=None, ge=1024, le=2_000_000)
     # Per-message char cap when compressing conversation history into the agent
     # prompt (_compress_history_message). Raise together with llm_openai_num_ctx
     # to actually exploit a large server-side context window.

@@ -2507,6 +2507,39 @@ class TestBudgetedLlmOptions:
         assert agent_service._llm_options_or_default("llm_options_retry", {})["num_predict"] == 4096
 
     @pytest.mark.unit
+    def test_ollama_primary_num_ctx_follows_setting(self, monkeypatch):
+        """#1104: on an Ollama-primary agent path the request num_ctx must
+        follow a raised OLLAMA_NUM_CTX, else Ollama truncates the prompt head
+        while the budget thinks the window is wide."""
+        from services import agent_service
+
+        monkeypatch.setattr(
+            agent_service.prompt_manager, "get_config",
+            lambda *a, **k: {"num_predict": 2048, "num_ctx": 32768},
+        )
+        monkeypatch.setattr(agent_service.settings, "agent_default_num_predict", 2048, raising=False)
+        monkeypatch.setattr(agent_service.settings, "ollama_num_ctx", 65536, raising=False)
+        monkeypatch.setattr(agent_service, "use_openai_for_tier", lambda tier: False)
+
+        assert agent_service._llm_options_or_default("llm_options", {})["num_ctx"] == 65536
+
+    @pytest.mark.unit
+    def test_openai_path_keeps_num_ctx_literal(self, monkeypatch):
+        """OpenAI-compat path: the 32768 literal stays — the server drops
+        num_ctx anyway and it protects the in-cluster fallback's KV cache."""
+        from services import agent_service
+
+        monkeypatch.setattr(
+            agent_service.prompt_manager, "get_config",
+            lambda *a, **k: {"num_predict": 2048, "num_ctx": 32768},
+        )
+        monkeypatch.setattr(agent_service.settings, "agent_default_num_predict", 2048, raising=False)
+        monkeypatch.setattr(agent_service.settings, "ollama_num_ctx", 65536, raising=False)
+        monkeypatch.setattr(agent_service, "use_openai_for_tier", lambda tier: True)
+
+        assert agent_service._llm_options_or_default("llm_options", {})["num_ctx"] == 32768
+
+    @pytest.mark.unit
     def test_short_by_design_option_sets_are_left_alone(self, monkeypatch):
         """Summary and pre-selection are meant to be brief — their small caps
         are the point, so the reservation must not inflate them."""

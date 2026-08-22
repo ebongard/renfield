@@ -291,31 +291,67 @@ class _OpenAICompatFallbackClient:
         return kwargs
 
     @staticmethod
-    def _warn_if_prompt_exceeds_fallback_ctx(
+    def _shrink_messages_for_fallback(
         messages: list[dict[str, Any]] | None, kwargs: dict[str, Any]
-    ) -> None:
-        """The fallback runs at the ``options.num_ctx`` forwarded verbatim in
-        the call kwargs (else Ollama's own default) — NOT at whatever wide
-        window the primary served (``llm_openai_num_ctx``). An oversized prompt
-        is silently truncated by Ollama, dropping the system/tools framing at
-        the head. We can't shrink the prompt here (outage mode is best-effort),
-        but the degradation must be visible in the logs. Token estimation goes
-        through the content-aware ``token_counter`` (rare path — one extra scan
-        per fail-over call is fine) so the warning neither misses real oversize
-        nor cries wolf on prompts that fit.
+    ) -> list[dict[str, Any]] | None:
+        """Fit the prompt into the fallback's context window (#1104).
+
+        The fallback runs at the ``options.num_ctx`` forwarded verbatim in the
+        call kwargs (else Ollama's own default) — NOT at whatever wide window
+        the primary served (``llm_openai_num_ctx``). On overflow Ollama silently
+        drops the prompt HEAD (system/tools framing) and the ReAct contract
+        collapses. Instead: keep the system message whole and MIDDLE-CUT the
+        oversized user message (the agent prompt is one monolithic string —
+        framing at the head, question at the tail, compressible mass in the
+        middle), so an outage answer stays coherent instead of turning to
+        garbage. Token estimation via the content-aware ``token_counter``
+        (rare path — one scan per fail-over call is fine).
         """
         from utils.token_counter import token_counter
 
+        if not messages:
+            return messages
         options = kwargs.get("options") or {}
         effective_ctx = options.get("num_ctx") or settings.ollama_num_ctx
-        text = "".join(str(m.get("content") or "") for m in messages or [])
-        estimated_tokens = token_counter.count(text)
-        if estimated_tokens > effective_ctx:
+        reserved = int(options.get("num_predict") or 0)
+        total = sum(
+            token_counter.count(str(m.get("content") or "")) for m in messages
+        )
+        if total + reserved <= effective_ctx:
+            return messages
+
+        # Budget for the LARGEST message = window minus everything else.
+        # In practice that is the monolithic agent user-prompt; the small
+        # system message stays whole.
+        largest_i = max(
+            range(len(messages)),
+            key=lambda i: len(str(messages[i].get("content") or "")),
+        )
+        others = sum(
+            token_counter.count(str(m.get("content") or ""))
+            for i, m in enumerate(messages) if i != largest_i
+        )
+        # Safety margin: the chars/token estimate can undercount; leave 10%.
+        budget = int((effective_ctx - reserved - others) * 0.9)
+        shrunk_text, shrunk = token_counter.truncate_middle_to_budget(
+            str(messages[largest_i].get("content") or ""), budget
+        )
+        if not shrunk:
             logger.warning(
-                f"Fallback prompt (~{estimated_tokens} tokens) exceeds the "
-                f"in-cluster fallback context (num_ctx={effective_ctx}) — the "
-                f"response may be truncated/degraded until the primary recovers"
+                f"Fallback prompt (~{total} tokens) exceeds the in-cluster "
+                f"fallback context (num_ctx={effective_ctx}) and could not be "
+                f"shrunk — the response may be truncated/degraded"
             )
+            return messages
+        out = [dict(m) for m in messages]
+        out[largest_i]["content"] = shrunk_text
+        logger.warning(
+            f"Fallback prompt (~{total} tokens) exceeded the in-cluster "
+            f"fallback context (num_ctx={effective_ctx}) — middle-cut the "
+            f"prompt to ~{token_counter.count(shrunk_text)} tokens so the "
+            f"framing and the question survive the outage"
+        )
+        return out
 
     def _prepare_fallback(
         self,
@@ -324,10 +360,10 @@ class _OpenAICompatFallbackClient:
         kwargs: dict[str, Any],
         *,
         stream: bool,
-    ) -> tuple[str, dict[str, Any]]:
+    ) -> tuple[str, dict[str, Any], list[dict[str, Any]] | None]:
         """Shared fail-over preamble for the streaming and non-streaming paths:
         resolve the in-cluster model, adjust kwargs, log the fail-over, and
-        surface a possible prompt-oversize degradation."""
+        shrink an oversized prompt into the fallback window."""
         fb_model = self._fallback_model()
         fb_kwargs = self._fallback_kwargs(kwargs, fb_model)
         where = " on stream open" if stream else ""
@@ -335,8 +371,8 @@ class _OpenAICompatFallbackClient:
             f"OpenAI-compat LLM primary failed{where} ({exc!r}); "
             f"falling back to in-cluster Ollama (model={fb_model})"
         )
-        self._warn_if_prompt_exceeds_fallback_ctx(messages, kwargs)
-        return fb_model, fb_kwargs
+        fb_messages = self._shrink_messages_for_fallback(messages, kwargs)
+        return fb_model, fb_kwargs, fb_messages
 
     async def chat(
         self,
@@ -353,8 +389,8 @@ class _OpenAICompatFallbackClient:
         except Exception as exc:  # noqa: BLE001 — _should_fallback re-raises what it can't handle
             if not _should_fallback(exc):
                 raise
-            fb_model, fb_kwargs = self._prepare_fallback(exc, messages, kwargs, stream=False)
-            return await self._fallback.chat(model=fb_model, messages=messages, stream=False, **fb_kwargs)
+            fb_model, fb_kwargs, fb_messages = self._prepare_fallback(exc, messages, kwargs, stream=False)
+            return await self._fallback.chat(model=fb_model, messages=fb_messages, stream=False, **fb_kwargs)
 
     async def _chat_stream(
         self, model: str, messages: list[dict[str, Any]] | None, kwargs: dict[str, Any]
@@ -367,8 +403,8 @@ class _OpenAICompatFallbackClient:
         except Exception as exc:  # noqa: BLE001
             if not _should_fallback(exc):
                 raise
-            fb_model, fb_kwargs = self._prepare_fallback(exc, messages, kwargs, stream=True)
-            fb_gen = await self._fallback.chat(model=fb_model, messages=messages, stream=True, **fb_kwargs)
+            fb_model, fb_kwargs, fb_messages = self._prepare_fallback(exc, messages, kwargs, stream=True)
+            fb_gen = await self._fallback.chat(model=fb_model, messages=fb_messages, stream=True, **fb_kwargs)
             async for chunk in fb_gen:
                 yield chunk
             return

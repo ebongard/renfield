@@ -446,6 +446,48 @@ class TestGlobalInstance:
         assert result > 0
 
 
+class TestTruncateMiddleToBudget:
+    """#1104 fallback shrink: middle-cut preserves head (framing) and tail
+    (question) while fitting the token budget."""
+
+    @pytest.mark.unit
+    def test_fits_unchanged(self):
+        counter = TokenCounter()
+        text = "short text"
+        out, shrunk = counter.truncate_middle_to_budget(text, max_tokens=1000)
+        assert out == text
+        assert shrunk is False
+
+    @pytest.mark.unit
+    def test_oversize_keeps_head_and_tail(self):
+        counter = TokenCounter()
+        text = "HEAD-START\n" + ("filler line\n" * 4000) + "TAIL-QUESTION"
+        out, shrunk = counter.truncate_middle_to_budget(text, max_tokens=1000)
+        assert shrunk is True
+        assert out.startswith("HEAD-START")
+        assert out.endswith("TAIL-QUESTION")
+        assert "[Mitte wegen Fallback-Kontextfenster gekürzt]" in out
+        assert counter.count(out) <= 1000
+
+    @pytest.mark.unit
+    def test_reserved_shrinks_available(self):
+        counter = TokenCounter()
+        text = "z" * 40000
+        out_no_res, _ = counter.truncate_middle_to_budget(text, max_tokens=2000)
+        out_res, _ = counter.truncate_middle_to_budget(text, max_tokens=2000, reserved=1000)
+        assert len(out_res) < len(out_no_res)
+
+    @pytest.mark.unit
+    def test_tiny_budget_returns_unchanged(self):
+        """A budget too small for a meaningful head+tail (target < 200 chars)
+        falls back to no-op rather than emitting marker-only garbage."""
+        counter = TokenCounter()
+        text = "y" * 10000
+        out, shrunk = counter.truncate_middle_to_budget(text, max_tokens=20)
+        assert out == text
+        assert shrunk is False
+
+
 class TestDetectContentTypeSampling:
     """_detect_content_type runs on a bounded head+tail sample so count()
     stays O(1) on the hot agent path even for very wide prompts."""

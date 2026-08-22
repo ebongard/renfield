@@ -120,6 +120,10 @@ data:
   # outage the Ollama fallback still runs at OLLAMA_NUM_CTX — oversized
   # prompts degrade there (logged WARNING), which is acceptable best-effort.
   LLM_OPENAI_NUM_CTX: "262144"
+  # Soft-Prompt-Target (#1104): triggert NUR die adaptive Tool-Result-Reduktion
+  # (Pass 0) oberhalb dieses Werts, lange bevor das harte 85%-Budget greift —
+  # hält Prefill-Latenz interaktiv, ohne Historie/Memory zu opfern.
+  AGENT_PROMPT_TARGET_TOKENS: "65536"
   AGENT_CONV_CONTEXT_MESSAGES: "30"
   AGENT_HISTORY_MESSAGE_MAX_CHARS: "2000"
   # Both tool-result knobs must move together: AGENT_RESPONSE_TRUNCATION caps
@@ -129,6 +133,11 @@ data:
   AGENT_RESPONSE_TRUNCATION: "32000"
   AGENT_TOOL_RESULT_TEXT_MAX_CHARS: "32000"
   KNOWLEDGE_CONTEXT_CHUNK_CHARS: "1500"
+
+  # Prometheus /metrics (in-cluster only: der Ingress routet /metrics nicht,
+  # der Service ist ClusterIP — extern landet der Pfad auf der SPA). Enthält
+  # u. a. die MCP-Health-Heartbeats (renfield_mcp_health_ticks_total).
+  METRICS_ENABLED: "true"
 
   # Voice-server (B.4): when set, backend's /api/voice/voice-chat
   # orchestrator delegates STT + TTS to the voice-server pod

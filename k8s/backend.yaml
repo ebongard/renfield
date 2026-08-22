@@ -150,6 +150,17 @@ spec:
             # the writable default when the secret isn't provisioned yet.
             - name: FEDERATION_IDENTITY_PERSISTED_KEY_PATH
               value: "/app/federation-identity/federation_identity_key"
+            # Digital-twin ingest token (private twin deployment). Declarative
+            # here — it used to be injected imperatively via `kubectl set env`,
+            # so EVERY re-apply of this manifest dropped it and silently
+            # disabled twin capture (the 2026-08-22 review's config-drift
+            # fail-open). optional: a cluster without the twin still boots.
+            - name: TWIN_INGEST_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: twin-secrets
+                  key: TWIN_INGEST_TOKEN
+                  optional: true
             - name: POSTGRES_PASSWORD
               valueFrom:
                 secretKeyRef:

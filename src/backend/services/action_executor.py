@@ -258,20 +258,30 @@ class ActionExecutor:
                         "verify_aborted": True,
                     }
 
-            # Plugin pre-call rewrite. Plugins may repair malformed LLM
-            # tool calls here (e.g. substitute a release id when the LLM
-            # passed a title). First well-shaped non-None dict replaces
-            # parameters; everything else is ignored.
-            pre_call_results = await run_hooks(
-                "pre_mcp_call",
-                intent=intent,
-                parameters=parameters,
-                user_id=user_id,
-            )
-            for rewritten in pre_call_results:
+            # Plugin pre-call rewrite — CHAINED (2026-08 twin-guard hardening):
+            # each handler receives the CURRENT parameters (including earlier
+            # handlers' rewrites) and a well-shaped dict result becomes the new
+            # current parameters. The old first-dict-wins run_hooks pass let an
+            # earlier plugin's repair silently discard a later SECURITY rewrite
+            # (the twin self-access guard's user_subject override). A handler
+            # that raises is skipped and logged — same fail-open semantics as
+            # run_hooks, so security-critical handlers must be exception-free
+            # by construction (the twin guard is: dict copy + f-string).
+            from utils.hooks import get_hook_handlers
+            for pre_call_handler in get_hook_handlers("pre_mcp_call"):
+                try:
+                    rewritten = await pre_call_handler(
+                        intent=intent, parameters=parameters, user_id=user_id
+                    )
+                except Exception as e:  # mirror run_hooks fail-open semantics
+                    logger.warning(
+                        f"pre_mcp_call handler "
+                        f"{getattr(pre_call_handler, '__name__', '?')} failed "
+                        f"(skipped): {e}"
+                    )
+                    continue
                 if isinstance(rewritten, dict):
                     parameters = rewritten
-                    break
             # `user_id` is passed as a kwarg to `execute_tool()` (used for
             # permission checks + audit), NOT merged into `parameters`. MCP
             # tools have strict Pydantic schemas; every unknown key triggers

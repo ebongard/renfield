@@ -305,11 +305,19 @@ HOOK_EVENTS: frozenset[str] = frozenset({
     # ``MCPManager.execute_tool`` for any ``mcp.*`` intent. Handlers
     # receive ``intent: str, parameters: dict, user_id: int | None`` and
     # may return a ``dict`` to **replace** the parameters before the MCP
-    # call, or ``None`` to leave them unchanged. First well-shaped
-    # non-None result wins — registration order determines precedence.
-    # Used by plugins to repair LLM tool calls (e.g. resolve a release
-    # title to its API id when the LLM passed the wrong parameter
-    # shape). Platform default (no handler) is a no-op.
+    # call, or ``None`` to leave them unchanged. **CHAINED** (since the
+    # 2026-08 twin-guard hardening): handlers run in registration order and
+    # each receives the CURRENT parameters — i.e. including earlier
+    # handlers' rewrites — and a well-shaped dict result becomes the new
+    # current parameters for the next handler and, ultimately, the call.
+    # (The old first-dict-wins contract let any earlier plugin's repair
+    # silently discard a later security rewrite.) Handlers must therefore
+    # be idempotent and preserve keys they don't own. NOTE: a handler that
+    # RAISES is skipped (logged) — a security-critical handler must be
+    # exception-free by construction rather than rely on ordering.
+    # Used by plugins to repair LLM tool calls and by the twin adapter's
+    # self-access guard (host-resolved ``user_subject`` override).
+    # Platform default (no handler) is a no-op.
     "pre_mcp_call",
     # Pre-MCP tool call gate — fired by ActionExecutor BEFORE
     # ``pre_mcp_call`` for any ``mcp.*`` intent. Handlers receive
@@ -442,6 +450,17 @@ def is_hook_registered(event: str, fn: HookFn) -> bool:
     representation private to this module.
     """
     return fn in _hooks.get(event, [])
+
+
+def get_hook_handlers(event: str) -> list[HookFn]:
+    """Snapshot of the registered handlers for *event*, in registration order.
+
+    For callers that must CHAIN handler results (feed each handler the
+    previous handler's output — e.g. the ``pre_mcp_call`` parameter rewrite),
+    which ``run_hooks``' same-kwargs-for-all model cannot express. Returns a
+    copy; the internal registry stays private to this module.
+    """
+    return list(_hooks.get(event, []))
 
 
 def clear_hooks() -> None:

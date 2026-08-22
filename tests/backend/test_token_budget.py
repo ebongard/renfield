@@ -79,6 +79,7 @@ class TestEnforceTokenBudget:
             s.ollama_num_ctx = 32768
             s.agent_default_num_predict = 2048
             s.agent_budget_threshold = 0.85
+            s.agent_prompt_target_tokens = None
 
             result = await agent._enforce_token_budget(
                 short_prompt, ctx, "test", None,
@@ -189,6 +190,7 @@ class TestTokenBudgetLogLine:
             s.ollama_num_ctx = 32768
             s.agent_default_num_predict = 2048
             s.agent_budget_threshold = 0.85
+            s.agent_prompt_target_tokens = None
             log.info.side_effect = lambda msg, *a, **kw: captured.append(msg)
 
             await agent._enforce_token_budget(
@@ -252,6 +254,87 @@ class TestConfigurableContentCaps:
         assert "z" * 301 not in prompt
 
 
+class TestSoftPromptTarget:
+    """#1104: AGENT_PROMPT_TARGET_TOKENS triggers ONLY the adaptive tool-result
+    pass above the target — long before the hard threshold — and touches
+    neither history nor memory/documents."""
+
+    def _ctx_with_tool_results(self):
+        ctx = AgentContext(original_message="test")
+        ctx.steps = [
+            AgentStep(step_number=1, step_type="tool_result",
+                      content="r" * 40000, tool="t"),
+        ]
+        return ctx
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_over_target_under_threshold_runs_soft_pass_only(self):
+        agent = _make_agent()
+        ctx = self._ctx_with_tool_results()
+        prompt = "x" * 80000  # ~20k tokens: over 10k target, far under 85% of 262144
+
+        async def mock_build(*args, **kwargs):
+            # Shrunken rebuild — well under the target
+            return "x" * 20000
+
+        agent._build_agent_prompt = mock_build
+        hist = [{"role": "user", "content": f"m{i}"} for i in range(10)]
+
+        with patch("services.agent_service.settings") as s, \
+             patch("services.agent_service.effective_agent_num_ctx", return_value=262144):
+            s.agent_default_num_predict = 2048
+            s.agent_budget_threshold = 0.85
+            s.agent_prompt_target_tokens = 10000
+
+            out_prompt, mem, doc, out_hist = await agent._enforce_token_budget(
+                prompt, ctx, "test", hist,
+                memory_context="mem", document_context="doc", lang="de",
+            )
+            assert len(out_prompt) < len(prompt)   # soft pass rebuilt the prompt
+            assert mem == "mem" and doc == "doc"   # never dropped
+            assert out_hist is hist                # history untouched
+            assert ctx.tool_result_budget_chars > 0
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_under_target_passthrough(self):
+        agent = _make_agent()
+        ctx = self._ctx_with_tool_results()
+        prompt = "x" * 8000  # ~2k tokens < 10k target
+
+        with patch("services.agent_service.settings") as s, \
+             patch("services.agent_service.effective_agent_num_ctx", return_value=262144):
+            s.agent_default_num_predict = 2048
+            s.agent_budget_threshold = 0.85
+            s.agent_prompt_target_tokens = 10000
+
+            out_prompt, _, _, _ = await agent._enforce_token_budget(
+                prompt, ctx, "test", None,
+                memory_context="", document_context="", lang="de",
+            )
+            assert out_prompt == prompt
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_no_target_means_hard_budget_only(self):
+        agent = _make_agent()
+        ctx = self._ctx_with_tool_results()
+        prompt = "x" * 80000
+
+        with patch("services.agent_service.settings") as s, \
+             patch("services.agent_service.effective_agent_num_ctx", return_value=262144):
+            s.agent_default_num_predict = 2048
+            s.agent_budget_threshold = 0.85
+            s.agent_prompt_target_tokens = None
+
+            out_prompt, _, _, _ = await agent._enforce_token_budget(
+                prompt, ctx, "test", None,
+                memory_context="", document_context="", lang="de",
+            )
+            assert out_prompt == prompt  # under hard threshold, target off
+
+
 class TestBackendAwareBudget:
     """The budget must follow the effective serving backend: when the agent
     tier routes to the OpenAI-compat llama-server and its --ctx-size is
@@ -270,6 +353,7 @@ class TestBackendAwareBudget:
              patch("services.agent_service.effective_agent_num_ctx", return_value=262144):
             s.agent_default_num_predict = 2048
             s.agent_budget_threshold = 0.85
+            s.agent_prompt_target_tokens = None
 
             prompt, mem, doc, _hist = await agent._enforce_token_budget(
                 large_prompt, ctx, "test", None,

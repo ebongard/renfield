@@ -2761,6 +2761,10 @@ WICHTIG: Nutze die ECHTEN Daten aus dem Ergebnis! Gib NUR die Antwort, KEIN JSON
                     assistant_msg=full_response,
                     user_id=user_id,
                     session_id=msg_session_id,
+                    # Real turn language for capture consumers (twin adapter
+                    # stamps its events with it) — the subsume-coordinated
+                    # path already passed it, this default path did not.
+                    lang=turn_lang,
                 ))
                 _background_tasks.add(_pm_task)
                 _pm_task.add_done_callback(_background_tasks.discard)

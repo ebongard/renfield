@@ -1,23 +1,21 @@
-# Großen LLM-Kontext (256k llama-server) ausnutzen — feat/exploit-large-llm-context
+# Twin-Härtung + #1104-Follow-ups + Metriken — feat/twin-hardening-ctx-followups
 
-Plan: ~/.claude/plans/buzzing-crafting-meerkat.md (genehmigt, Zuschnitt: Moderat) · Issue #1103 · Follow-ups #1104
+Plan: ~/.claude/plans/buzzing-crafting-meerkat.md (genehmigt; anon-Policy=Auto via AUTH_ENABLED, B3=jetzt)
 
-- [x] 1-8. Implementierung + Tests + Doku (Commit `bac65900`)
-- [x] 9. Suite auf .159 grün (5998 → nach Review-Fixes 6001 passed, 0 failed); Lint-Diff gegen main: 0 neue Verstöße
-- [x] 10. Commit `bac65900` (Feature) 
-- [x] 11. /review high abgearbeitet (2. Commit mit Review-Fixes):
-  - F2 CONFIRMED: `AGENT_RESPONSE_TRUNCATION=32000` in beide ConfigMaps (Text-Ergebnisse wurden sonst schon bei Step-Erzeugung auf 2000 gekappt → Lese-Cap inert)
-  - F4 CONFIRMED: Pass-0-Budget (`tool_result_budget_chars`) greift jetzt auch auf TEXT-Ergebnisse (min mit `agent_tool_result_text_max_chars`); Pass-4-500er-Floor als bewusster Notfall-Crush dokumentiert
-  - F5 CONFIRMED: Fallback-Oversize-Warnung keyt auf das tatsächlich geforwardete `options.num_ctx` + content-aware `token_counter` statt `ollama_num_ctx*3` (beide Fehlrichtungen behoben)
-  - F7 CONFIRMED: `llm_openai_num_ctx` mit Field-Bounds (ge=1024) — negativer Wert kann Budget nicht mehr still deaktivieren
-  - F9/F10 cleanup: gemeinsames `_prepare_fallback`, toter `max_chars`-Param entfernt, loop-invariante Settings-Reads gehoistet
-  - F3 PLAUSIBLE: token_counter sampelt Head+Tail (Code-Tail → konservative 3.0 statt German 4.5 → kein 33%-Undercount am Budget-Rand)
-  - F1/F6/F8 PLAUSIBLE (bewusst vertagt, dokumentiert): Follow-up-Issue #1104 (Fallback-seitige Re-Reduktion, Ollama-Primary num_ctx-Forwarding, Soft-Prompt-Target); F6 zusätzlich als KNOWN GAP im Code kommentiert
-  - Refuted: V3 (multimodal), V12 (tool_calls), Timing-Flake
-- [ ] 12. Push/PR/Merge — NUR nach expliziter Freigabe
-- [ ] 13. Deploy nach Freigabe (`bin/deploy-production.sh`, Backend-Image beide Instanzen + ConfigMap-Apply, keine Migration) + Browser-E2E + Log-Nachweis `Token budget: N/262144`
+- [ ] C. Metriken: METRICS_ENABLED beide ConfigMaps + Endpoint-Label-Normalisierung (Kardinalität) + Test
+- [ ] B1. Ollama-Primary num_ctx-Forwarding in `_llm_options_or_default` + Test
+- [ ] B2. Soft-Prompt-Target `AGENT_PROMPT_TARGET_TOKENS` (Pass-0-only-Zweig) + ConfigMaps 65536 + Tests
+- [ ] A1. Guard bedingungslos registrieren + Prefix-Match `TWIN_MCP_BINDING` (Adapter, Privat-Repo)
+- [ ] A1b. `k8s/backend.yaml`: TWIN_INGEST_TOKEN aus Secret twin-secrets `optional: true` + twin/DEPLOY.md
+- [ ] A2. Host: pre_mcp_call Chaining statt First-Dict-wins (action_executor + hooks-Doku + Test-Umbau)
+- [ ] A3. anon-Policy Auto via AUTH_ENABLED + TWIN_ANON_POLICY-Override (Adapter)
+- [ ] A4. Shared httpx-Client + TWIN_RECALL_TIMEOUT (1s) + Cooldown-Latch (Adapter)
+- [ ] A5. lang durchreichen (chat_handler Pfad A + Adapter build_event)
+- [ ] A6. Adapter-Tests (Privat-Repo) + TWIN_*-Doku in ENVIRONMENT_VARIABLES.md + Docstring-Fixes
+- [ ] B3. Middle-Cut-Utility + Fallback-seitige Prompt-Kürzung in _prepare_fallback + Tests
+- [ ] Re-Stage Adapter kanonisch → src/backend/twin_adapter/
+- [ ] Suite .159 (voll + PG) + Adapter-Tests + Lint-Diff
+- [ ] /review high → Fixes → Push/PR/Merge NUR nach Freigabe → Deploy + Smoke inkl. Metrics-Nachweis
 
 ## Review
-- Suite-Läufe isoliert auf .159: non-PG 5647 passed / 382 skipped, PG-markiert 354 passed / 12 skipped — 0 Failures (beide Commits).
-- Ruff-Diff main↔branch nach beiden Commits: 0 neue Verstöße.
-- Bewusste Tradeoffs: Fallback bleibt bei 32k (VRAM-Schutz, Outage = best-effort mit korrekter Warnung); Prefill-Latenz durch moderate Caps begrenzt, Soft-Target als Follow-up.
+(wird ergänzt)

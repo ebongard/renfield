@@ -1269,10 +1269,10 @@ class TestOpenAICompatFallbackClient:
 
     @pytest.mark.unit
     @pytest.mark.asyncio
-    async def test_oversized_prompt_warns_on_fallback(self, monkeypatch):
-        """A prompt wider than the fallback's num_ctx (budgeted for the large
-        llama-server window) must log a WARNING — Ollama would silently
-        truncate it, and that degradation has to be visible."""
+    async def test_oversized_prompt_is_middle_cut_for_fallback(self, monkeypatch):
+        """#1104: a prompt wider than the fallback's num_ctx is MIDDLE-CUT
+        before the fallback call — head (framing) and tail (question) survive,
+        and the degradation is visible in the log."""
         import httpx
         primary = AsyncMock()
         fallback = AsyncMock()
@@ -1280,19 +1280,27 @@ class TestOpenAICompatFallbackClient:
         fallback.chat.return_value = "ok"
         w = self._wrapper(monkeypatch, primary, fallback)
         monkeypatch.setattr("utils.llm_client.settings.ollama_num_ctx", 1000)
-        big_messages = [{"role": "user", "content": "x" * 5000}]  # > 1000*3 chars
+        content = "HEAD-" + ("x" * 8000) + "-TAIL"
+        big_messages = [{"role": "user", "content": content}]
 
         with patch("utils.llm_client.logger") as log:
             assert await w.chat(model="qwen3.6", messages=big_messages) == "ok"
         warnings = [str(c.args[0]) for c in log.warning.call_args_list]
-        assert any("exceeds the in-cluster fallback context" in m for m in warnings)
+        assert any("middle-cut" in m for m in warnings)
+        sent = fallback.chat.call_args.kwargs["messages"][0]["content"]
+        assert len(sent) < len(content)
+        assert "[Mitte wegen Fallback-Kontextfenster gekürzt]" in sent
+        assert sent.startswith("HEAD-")
+        assert sent.endswith("-TAIL")
+        # The original message dict must not be mutated (caller may retry primary)
+        assert big_messages[0]["content"] == content
 
     @pytest.mark.unit
     @pytest.mark.asyncio
-    async def test_oversize_warning_keys_on_forwarded_num_ctx(self, monkeypatch):
+    async def test_shrink_keys_on_forwarded_num_ctx(self, monkeypatch):
         """The fallback actually runs at the options.num_ctx forwarded in the
         call kwargs, not at settings.ollama_num_ctx — a raised OLLAMA_NUM_CTX
-        must not mask real truncation at the smaller forwarded window."""
+        must not mask real overflow at the smaller forwarded window."""
         import httpx
         primary = AsyncMock()
         fallback = AsyncMock()
@@ -1309,10 +1317,12 @@ class TestOpenAICompatFallbackClient:
             ) == "ok"
         warnings = [str(c.args[0]) for c in log.warning.call_args_list]
         assert any("num_ctx=1000" in m for m in warnings)
+        sent = fallback.chat.call_args.kwargs["messages"][0]["content"]
+        assert len(sent) < 20000
 
     @pytest.mark.unit
     @pytest.mark.asyncio
-    async def test_small_prompt_no_oversize_warning(self, monkeypatch):
+    async def test_small_prompt_passes_unshrunk(self, monkeypatch):
         import httpx
         primary = AsyncMock()
         fallback = AsyncMock()
@@ -1325,7 +1335,32 @@ class TestOpenAICompatFallbackClient:
         with patch("utils.llm_client.logger") as log:
             assert await w.chat(model="qwen3.6", messages=small_messages) == "ok"
         warnings = [str(c.args[0]) for c in log.warning.call_args_list]
-        assert not any("exceeds the in-cluster fallback context" in m for m in warnings)
+        assert not any("fallback context" in m for m in warnings)
+        assert fallback.chat.call_args.kwargs["messages"] is small_messages
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_shrink_preserves_system_message(self, monkeypatch):
+        """Only the LARGEST message (the monolithic agent prompt) is cut —
+        the system message carries the JSON contract and stays whole."""
+        import httpx
+        primary = AsyncMock()
+        fallback = AsyncMock()
+        primary.chat.side_effect = httpx.ConnectError("refused")
+        fallback.chat.return_value = "ok"
+        w = self._wrapper(monkeypatch, primary, fallback)
+        monkeypatch.setattr("utils.llm_client.settings.ollama_num_ctx", 1000)
+        system = "Antworte NUR mit JSON."
+        msgs = [
+            {"role": "system", "content": system},
+            {"role": "user", "content": "y" * 9000},
+        ]
+
+        with patch("utils.llm_client.logger"):
+            assert await w.chat(model="qwen3.6", messages=msgs) == "ok"
+        sent = fallback.chat.call_args.kwargs["messages"]
+        assert sent[0]["content"] == system
+        assert len(sent[1]["content"]) < 9000
 
     @pytest.mark.unit
     @pytest.mark.asyncio

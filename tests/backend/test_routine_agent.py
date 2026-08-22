@@ -247,6 +247,7 @@ class TestRoutineAgentExecution:
                 mock_settings.ollama_num_ctx = 32768
                 mock_settings.agent_default_num_predict = 1024
                 mock_settings.agent_budget_threshold = 0.9
+                mock_settings.agent_prompt_target_tokens = None
                 mock_settings.agent_conv_context_messages = 6
                 mock_settings.agent_history_limit = 10
                 mock_settings.agent_parallel_tools = False

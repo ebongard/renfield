@@ -182,8 +182,16 @@ METRICS_ENABLED=false
 
 **Default:** `false`
 
+**Exposure:** `/metrics` ist NUR in-cluster erreichbar — der Ingress routet den
+Pfad nicht (nur `/api`, `/ws`, `/health` gehen ans Backend), der Service ist
+ClusterIP; extern landet `/metrics` auf der SPA. Der Endpoint selbst hat keine
+Auth — vor einem externen Expose (Ingress-Pfad) MUSS eine Auth-Schicht davor.
+Der `endpoint`-Label der HTTP-Metriken normalisiert numerische/UUID/hex-
+Segmente zu `{id}` (Kardinalitätsschutz).
+
 **Wenn aktiviert:**
 - `/metrics` Endpoint im Prometheus-Format verfügbar
+- MCP-Health-Heartbeat: `renfield_mcp_health_ticks_total` + `renfield_mcp_health_problem_servers` (#1107)
 - HTTP Request Counter + Latency Histogram
 - WebSocket Connection Gauge
 - LLM Call Duration Histogram
@@ -254,6 +262,12 @@ AGENT_HISTORY_MESSAGE_MAX_CHARS=500
 AGENT_TOOL_RESULT_TEXT_MAX_CHARS=8000
 AGENT_RESPONSE_TRUNCATION=2000
 
+# Soft-Prompt-Target (#1104, optional): oberhalb dieses Werts (aber unter dem
+# harten 85%-Budget) läuft NUR die adaptive Tool-Result-Reduktion, dimensioniert
+# auf das Target — hält die Prefill-Latenz auf großen Kontextfenstern
+# interaktiv, ohne Historie/Memory/Dokumente zu opfern. Leer = aus.
+# AGENT_PROMPT_TARGET_TOKENS=65536
+
 # Ausgabe-Budget einer Agent-Antwort in Tokens. Steuert BEIDES: die
 # Reservierung, die _enforce_token_budget für die Antwort freihält, UND das
 # `max_tokens`, das an den Server geht. Bis 2026-08 waren die zwei entkoppelt
@@ -279,6 +293,7 @@ AGENT_ROUTER_TIMEOUT=30.0
 - `AGENT_HISTORY_MESSAGE_MAX_CHARS`: `500`
 - `AGENT_TOOL_RESULT_TEXT_MAX_CHARS`: `8000`
 - `AGENT_RESPONSE_TRUNCATION`: `2000`
+- `AGENT_PROMPT_TARGET_TOKENS`: None (aus)
 - `AGENT_DEFAULT_NUM_PREDICT`: `2048`
 - `AGENT_ROUTER_TIMEOUT`: `30.0`
 
@@ -2202,6 +2217,35 @@ PLUGIN_MCP_BINDINGS=some_adapter=some_server
 **Hook Events:** `startup`, `shutdown`, `register_routes`, `register_tools`, `post_message`, `retrieve_context`
 
 **Hinweis:** Das Hook-System ist der empfohlene Weg für tiefe Integrationen (Kontext-Injektion, Post-Processing, Custom Routes). Für einfache Tool-Integrationen sind MCP-Server weiterhin der bevorzugte Weg.
+
+### Digital-Twin-Adapter (privates Plugin `twin_adapter`)
+
+Der Twin-Adapter ist ein PRIVATES Paket (nicht in diesem Repo; wird für den
+Image-Build in den Arbeitsbaum gestaged, gitignored). Er liest reine Env-Vars —
+zur Vollständigkeit hier dokumentiert (keine Werte committen; der Ingest-Token
+kommt deklarativ aus dem k8s-Secret `twin-secrets`, siehe `k8s/backend.yaml`):
+
+```bash
+TWIN_ENABLED=false                # Capture an/aus (der MCP-Self-Access-Guard läuft IMMER)
+TWIN_INGEST_URL=                  # POST-Endpoint des Twin-Service (/ingest)
+TWIN_INGEST_TOKEN=                # Bearer für Ingest/Recall/Consent (Secret!)
+TWIN_RECALL_URL=                  # /recall — leer = keine Kontext-Injektion
+TWIN_SOURCE_APP=renfield          # Subject-Präfix (<source_app>:<user_id>)
+TWIN_INGEST_TIMEOUT=5.0           # Capture/Consent-Timeout (fire-and-forget)
+TWIN_RECALL_TIMEOUT=1.0           # Recall-Timeout — liegt auf dem KRITISCHEN Chat-Pfad
+TWIN_RECALL_COOLDOWN=60           # Nach Connect-Fehler Recall so lange überspringen
+TWIN_MCP_BINDING=twin             # Stanza-Name des Twin-MCP-Servers (Guard-Prefix mcp.<binding>.)
+TWIN_ANON_POLICY=auto             # auto|pool|drop — Umgang mit user_id=None-Turns:
+                                  # auto folgt AUTH_ENABLED (auth-off→pool, auth-on→drop)
+TWIN_CLIENT_CONSENT_GATE=false    # BetrVG: Consent-Check VOR jedem Ingest (fail-closed)
+TWIN_CONSENT_STATUS_URL=          # Override; sonst aus TWIN_INGEST_URL abgeleitet
+TWIN_CONSENT_CACHE_TTL=60         # Consent-Verdict-Cache (Sekunden)
+```
+
+Multi-User-Empfehlung: Auf Instanzen mit mehreren echten Nutzern die
+agent-callable Twin-MCP-Tools serverseitig aus lassen
+(`TWIN_MCP_TOOLS_ENABLED=false` am Twin-Service) und Recall nur über den
+REST-Pfad fahren — der `pre_mcp_call`-Guard ist Verteidigung, kein Ersatz.
 
 ---
 

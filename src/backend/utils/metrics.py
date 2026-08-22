@@ -488,6 +488,27 @@ def record_llm_response_truncated(model: str, call_type: str):
 # === Middleware & Endpoint Setup ===
 
 
+# Path segments that are per-resource identifiers → one label value each would
+# explode the `endpoint` label cardinality (a Counter time series per document
+# id, session uuid, …). Numeric ids, UUIDs, and long hex tokens collapse to
+# `{id}`; everything else stays literal.
+_ID_SEGMENT_RE = None
+
+
+def normalize_endpoint(path: str) -> str:
+    """Collapse per-resource path segments to `{id}` for the metrics label
+    (e.g. /api/knowledge/documents/123 → /api/knowledge/documents/{id})."""
+    global _ID_SEGMENT_RE
+    if _ID_SEGMENT_RE is None:
+        import re
+        _ID_SEGMENT_RE = re.compile(
+            r"^(\d+|[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}"
+            r"-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}|[0-9a-fA-F]{16,})$"
+        )
+    parts = path.split("/")
+    return "/".join("{id}" if _ID_SEGMENT_RE.match(p) else p for p in parts)
+
+
 def setup_metrics(app: "FastAPI"):
     """
     Add Prometheus metrics middleware and /metrics endpoint to the app.
@@ -517,8 +538,9 @@ def setup_metrics(app: "FastAPI"):
             response = await call_next(request)
             duration = time.monotonic() - start
 
-            # Normalize endpoint path (remove IDs to reduce cardinality)
-            endpoint = request.url.path
+            # Normalize endpoint path (remove IDs to reduce cardinality) —
+            # the comment used to be aspirational; now it's implemented.
+            endpoint = normalize_endpoint(request.url.path)
             record_http_request(
                 method=request.method,
                 endpoint=endpoint,
