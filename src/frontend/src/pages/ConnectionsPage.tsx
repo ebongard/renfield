@@ -7,7 +7,7 @@
  */
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Plug, ExternalLink, Loader2, CheckCircle2, Circle } from 'lucide-react';
+import { Plug, ExternalLink, Loader2, CheckCircle2, Circle, KeyRound } from 'lucide-react';
 import PageHeader from '../components/PageHeader';
 import Modal from '../components/Modal';
 import Badge from '../components/Badge';
@@ -16,6 +16,7 @@ import {
   useConnections,
   useConnect,
   useDisconnect,
+  isSsoProvider,
   type ConnectionProvider,
 } from '../api/resources/connections';
 
@@ -25,14 +26,17 @@ export default function ConnectionsPage() {
   const connect = useConnect();
   const disconnect = useDisconnect();
 
-  // modal state: the provider being connected/managed, and the paste field
+  // modal state: the provider being connected/managed, and the paste field.
+  // `sso` is its own mode — those connections have no token to paste and no
+  // token to revoke, so both the paste form and the disconnect action would
+  // only lead to a server-side refusal.
   const [active, setActive] = useState<ConnectionProvider | null>(null);
-  const [mode, setMode] = useState<'connect' | 'manage'>('connect');
+  const [mode, setMode] = useState<'connect' | 'manage' | 'sso'>('connect');
   const [secret, setSecret] = useState('');
 
   const open = (p: ConnectionProvider) => {
     setActive(p);
-    setMode(p.connected ? 'manage' : 'connect');
+    setMode(isSsoProvider(p) ? 'sso' : p.connected ? 'manage' : 'connect');
     setSecret('');
     connect.reset?.();
   };
@@ -69,32 +73,47 @@ export default function ConnectionsPage() {
         </div>
       ) : (
         <div className="card divide-y divide-gray-100 dark:divide-gray-700 p-0 overflow-hidden">
-          {(providers ?? []).map((p) => (
-            <div key={p.provider_key} className="flex items-center gap-4 px-5 py-4">
-              <div className="flex-1 min-w-0">
-                <div className="font-semibold text-gray-900 dark:text-gray-100">
-                  {p.display_name ?? p.provider_key}
-                </div>
-                {p.descriptor && (
-                  <div className="text-sm text-gray-500 dark:text-gray-400 truncate">
-                    {p.descriptor}
+          {(providers ?? []).map((p) => {
+            const sso = isSsoProvider(p);
+            return (
+              <div key={p.provider_key} className="flex items-center gap-4 px-5 py-4">
+                <div className="flex-1 min-w-0">
+                  <div className="font-semibold text-gray-900 dark:text-gray-100">
+                    {p.display_name ?? p.provider_key}
                   </div>
+                  {p.descriptor && (
+                    <div className="text-sm text-gray-500 dark:text-gray-400 truncate">
+                      {p.descriptor}
+                    </div>
+                  )}
+                  {sso && (
+                    // Say up front that this one works differently, so an
+                    // unconnected state doesn't read as "go find a token".
+                    <div className="text-xs text-gray-400 dark:text-gray-500 mt-0.5 inline-flex items-center gap-1">
+                      <KeyRound className="w-3 h-3" aria-hidden="true" />
+                      {t('connections.viaSso')}
+                    </div>
+                  )}
+                </div>
+                {p.connected ? (
+                  <Badge color="green" icon={CheckCircle2}>{t('connections.status.connected')}</Badge>
+                ) : (
+                  <Badge color="gray" icon={Circle}>{t('connections.status.notConnected')}</Badge>
                 )}
+                <button
+                  type="button"
+                  onClick={() => open(p)}
+                  className={sso || p.connected ? 'btn-secondary' : 'btn-primary'}
+                >
+                  {sso
+                    ? t('connections.details')
+                    : p.connected
+                      ? t('connections.manage')
+                      : t('connections.connect')}
+                </button>
               </div>
-              {p.connected ? (
-                <Badge color="green" icon={CheckCircle2}>{t('connections.status.connected')}</Badge>
-              ) : (
-                <Badge color="gray" icon={Circle}>{t('connections.status.notConnected')}</Badge>
-              )}
-              <button
-                type="button"
-                onClick={() => open(p)}
-                className={p.connected ? 'btn-secondary' : 'btn-primary'}
-              >
-                {p.connected ? t('connections.manage') : t('connections.connect')}
-              </button>
-            </div>
-          ))}
+            );
+          })}
           {(providers ?? []).length === 0 && (
             <div className="px-5 py-10 text-center text-gray-500 dark:text-gray-400">
               {t('connections.empty')}
@@ -109,15 +128,39 @@ export default function ConnectionsPage() {
         onClose={close}
         title={
           active
-            ? t(mode === 'manage' ? 'connections.manageTitle' : 'connections.connectTitle', {
-                name: active.display_name ?? active.provider_key,
-              })
+            ? t(
+                mode === 'manage'
+                  ? 'connections.manageTitle'
+                  : mode === 'sso'
+                    ? 'connections.ssoTitle'
+                    : 'connections.connectTitle',
+                { name: active.display_name ?? active.provider_key },
+              )
             : ''
         }
       >
         {active && (
           <div className="space-y-4">
-            {mode === 'connect' ? (
+            {mode === 'sso' ? (
+              <>
+                <p className="text-sm text-gray-600 dark:text-gray-300">
+                  {active.help ?? t('connections.ssoDefaultHelp')}
+                </p>
+                {active.connected ? (
+                  <Alert variant="success">{t('connections.ssoConnected')}</Alert>
+                ) : (
+                  // The remedy is a fresh login, not a token hunt. Without
+                  // saying so, "Not connected" on a provider with no Connect
+                  // button is a dead end.
+                  <Alert variant="warning">{t('connections.ssoNotConnected')}</Alert>
+                )}
+                <div className="flex justify-end pt-1">
+                  <button type="button" className="btn-secondary" onClick={close}>
+                    {t('common.close')}
+                  </button>
+                </div>
+              </>
+            ) : mode === 'connect' ? (
               <>
                 <p className="text-sm text-gray-600 dark:text-gray-300">
                   {active.help ?? t('connections.defaultHelp')}

@@ -9,15 +9,29 @@ import apiClient from '../../utils/axios';
 import { useApiQuery, useApiMutation } from '../hooks';
 import { keys, STALE } from '../keys';
 
+/** Credential types the catalog can declare. `sso` has nothing to paste — its
+ *  credential is minted from the user's own login, so connect/disconnect are
+ *  refused server-side and the UI must not offer them. */
+export const SSO_CREDENTIAL_TYPE = 'sso';
+
 export interface ConnectionProvider {
   provider_key: string;
   display_name?: string;
   descriptor?: string;
+  /** 'paste_token' | 'oauth3lo' | 'sso' — see config/connections.yaml */
   credential_type?: string;
   read_only?: boolean;
   mint_url?: string;
   help?: string;
+  /** For `sso` providers: the vault key the login capture writes, which is
+   *  where `connected` is derived from. A provider name, never a secret. */
+  sso_source?: string;
   connected: boolean;
+}
+
+/** True when this connection is established by logging in, not by pasting. */
+export function isSsoProvider(p: ConnectionProvider): boolean {
+  return p.credential_type === SSO_CREDENTIAL_TYPE;
 }
 
 async function fetchConnections(): Promise<ConnectionProvider[]> {

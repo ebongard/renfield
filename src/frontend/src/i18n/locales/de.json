@@ -53,6 +53,12 @@
     "disconnect": "Trennen",
     "disconnecting": "Wird getrennt…",
     "rotate": "Token ersetzen",
+    "details": "Details",
+    "viaSso": "Über deine SSO-Anmeldung",
+    "ssoTitle": "{{name}} über SSO",
+    "ssoDefaultHelp": "Diese Verbindung entsteht automatisch aus deiner Anmeldung. Es gibt kein Token zum Einfügen und keines zum Widerrufen.",
+    "ssoConnected": "Aktiv. Reva greift mit deinen eigenen Rechten zu, solange deine Anmeldung gültig ist. Zum Beenden melde dich ab.",
+    "ssoNotConnected": "Deine Anmeldung enthält derzeit kein gültiges Token für dieses Werkzeug. Melde dich über die Weboberfläche neu an — danach steht die Verbindung wieder. Ein Token einzufügen ist hier nicht möglich.",
     "status": {
       "connected": "Verbunden",
       "notConnected": "Nicht verbunden"

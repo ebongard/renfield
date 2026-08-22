@@ -53,6 +53,12 @@
     "disconnect": "Disconnect",
     "disconnecting": "Disconnecting…",
     "rotate": "Replace token",
+    "details": "Details",
+    "viaSso": "Through your SSO login",
+    "ssoTitle": "{{name}} via SSO",
+    "ssoDefaultHelp": "This connection comes from your login automatically. There is no token to paste and none to revoke.",
+    "ssoConnected": "Active. Reva uses your own permissions for as long as your login is valid. Sign out to end it.",
+    "ssoNotConnected": "Your login currently carries no valid token for this tool. Sign in again through the web interface and the connection comes back. Pasting a token is not possible here.",
     "status": {
       "connected": "Connected",
       "notConnected": "Not connected"
