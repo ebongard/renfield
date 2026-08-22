@@ -913,7 +913,10 @@ OLLAMA_NUM_CTX=32768                # Context Window (Ollama-Calls)
                                     # auch AGENT_HISTORY_MESSAGE_MAX_CHARS /
                                     # AGENT_TOOL_RESULT_TEXT_MAX_CHARS /
                                     # KNOWLEDGE_CONTEXT_CHUNK_CHARS anheben
-                                    # (siehe docs/ENVIRONMENT_VARIABLES.md)
+                                    # (siehe docs/ENVIRONMENT_VARIABLES.md).
+                                    # Das sind EINGABE-Caps — für längere
+                                    # ANTWORTEN: AGENT_DEFAULT_NUM_PREDICT
+                                    # (Default 2048, kappt sonst im Satz)
 
 # Pro Aufgabe
 OLLAMA_CHAT_MODEL=qwen3:14b        # Chat-Antworten
