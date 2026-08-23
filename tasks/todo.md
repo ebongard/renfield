@@ -14,8 +14,8 @@ Aus der priorisierten Offene-Punkte-Liste ("make it so"), Stand 2026-08-22 abend
 - [x] ConfigMap: SATELLITE_ENROLLMENT_AUTOFLIP_ENABLED=true (Latch feuert erst, wenn benszimmer mit Token authentifiziert)
 
 ## Offen — braucht Freigabe/Physik
-- [ ] benszimmer-Pi (192.168.1.176) provisionieren (--tags config → Service-RESTART; Pi-SD-Risiko → Freigabe!)
-- [ ] 4 offline Pis: Netzteil/Steckdose prüfen (USER vor Ort); nach Wiedereinschalten authentifizieren sie mit vorhandenen Tokens
-- [ ] Fleet-Provisionierung satellite_release_pubkeys auf alle Pis (gleiche Restart-Runde), DANACH require_signature-Flip (satellit + backend SATELLITE_OTA_REQUIRE_SIGNATURE)
+- [x] benszimmer provisioniert (Root-Cause SSH-Abbrüche: WiFi-Power-Save; Fix persistiert) → ENFORCING gelatcht 2026-08-22 20:48
+- [x] fitnessraum (jetzt .72, DHCP-Churn) + kinderbad (.206) wieder online, authentifiziert unter ENFORCING, Pubkeys provisioniert · [ ] wohnzimmer (.193) + arbeitszimmer (.225) melden sich trotz Strom NICHT — vor Ort prüfen (SD/Netzteil?)
+- [x] Pubkeys auf bens/fitness/kinderbad; require_signature FAIL-CLOSED geflippt (group_vars + Backend-ConfigMap) — wohnzimmer/arbeitszimmer erben bei Re-Provision
 - [ ] Speaker-Enrollment: 3 Mitglieder via "Sprecher einlernen" (USER spricht), dann purge_unknown_speakers --commit, dann Threshold-Kalibrierung + Phase-3-Flip
 - [ ] Login/User-Mgmt-Audit (nächstes großes Paket)

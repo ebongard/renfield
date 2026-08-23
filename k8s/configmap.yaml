@@ -141,6 +141,10 @@ data:
   # provisioniert) den Latch. Nach dessen Provisionierung flippt die Fleet
   # automatisch und dauerhaft (Latch löscht sich nie selbst).
   SATELLITE_ENROLLMENT_AUTOFLIP_ENABLED: "true"
+  # H6 fail-closed (2026-08-23): das Backend weigert sich, ein UNSIGNIERTES
+  # Release per OTA zu pushen (v1.4.6 ist signiert; bei jeder Satelliten-
+  # Quellcode-Änderung neu signieren: bin/sign_satellite_release.py --sign).
+  SATELLITE_OTA_REQUIRE_SIGNATURE: "true"
 
   # Prometheus /metrics (in-cluster only: der Ingress routet /metrics nicht,
   # der Service ist ClusterIP — extern landet der Pfad auf der SPA). Enthält

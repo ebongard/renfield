@@ -35,10 +35,13 @@ satellite_release_pubkeys:
   # Ed25519 release key #1 (generated 2026-08-22; private key on the operator
   # workstation at ~/.renfield/ota_release_key — never on backend/build box).
   - "7a11b0548a84ce084c3b4156cb94bd04ea9e5755566bf3a19b9d6d77ef7ddec0"
-# Verify-if-present until the whole fleet carries the pubkey (provisioning
-# round), then flip fail-closed together with backend
-# SATELLITE_OTA_REQUIRE_SIGNATURE.
-satellite_ota_require_signature: false
+# FAIL-CLOSED since 2026-08-23: a satellite with this config refuses any OTA
+# without a valid signed manifest. Rolled to the reachable fleet (benszimmer/
+# fitnessraum/kinderbad); wohnzimmer + arbeitszimmer (offline) inherit it on
+# their next re-provision — until then they verify-if-present (checksum-only
+# legacy). Backend counterpart: SATELLITE_OTA_REQUIRE_SIGNATURE in the
+# ConfigMap (refuses to PUSH unsigned releases).
+satellite_ota_require_signature: true
 # Connection robustness (Pi Zero 2 W 2.4GHz WiFi is marginal — detect dead links
 # fast and self-heal instead of wedging). See docs/SATELLITE_CONNECTIVITY.md.
 server_ping_interval: 15          # WS keepalive cadence (s)
