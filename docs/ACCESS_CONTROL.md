@@ -82,7 +82,7 @@ Beim ersten Start mit `AUTH_ENABLED=true`:
 
 1. Standard-Rollen werden automatisch erstellt (Admin, Familie, Gast)
 2. Ein Admin-Benutzer wird erstellt mit den konfigurierten Zugangsdaten
-3. **Wichtig:** Passwort sofort nach erstem Login ändern!
+3. **Erzwungen:** Der Bootstrap-Admin startet immer mit `must_change_password=true` (auch bei operator-gesetztem `DEFAULT_ADMIN_PASSWORD`). Nach dem ersten Login leitet die App serverseitig-erzwungen nach `/change-password` — jede andere Route gibt bis zur Rotation `403 password_change_required`. Das neue Passwort darf nicht dem aktuellen oder dem `DEFAULT_ADMIN_PASSWORD` entsprechen.
 
 ```
 ⚠️  Standard-Admin erstellt: 'admin' - BITTE PASSWORT SOFORT ÄNDERN!

@@ -473,7 +473,7 @@ Frontend ──token=opaque──► voice-server
 ```
 
 - Voice-server holds NO signing keys. Pod compromise yields no token-minting capability.
-- Backend exposes `/api/internal/auth/verify` reachable only on cluster network (via NetworkPolicy or implicit `cluster-local` Service).
+- Backend exposes `/api/internal/auth/verify` reachable only on cluster network (via NetworkPolicy or implicit `cluster-local` Service). **Since the 2026-08 login audit** the endpoint additionally supports an application-layer gate: `INTERNAL_AUTH_VERIFY_SECRET` (backend) ↔ `auth_callback_secret` / registry `verify_secret` (voice-server) — a matching `X-Verify-Secret` header is required before any token work, so the endpoint is no longer an unauthenticated token-validity oracle even if the network allowlist is misconfigured. This is the shared-secret half of Option B; a callback-mode voice-server MUST set the matching value or every verify 401s.
 - Adds one HTTP round-trip (~5-20 ms LAN) on every voice session open. Negligible for UX.
 - Adds a backend dependency to `/ws/voice` open: if backend is down, voice-server can't even start a session — the whole voice path becomes a tight-coupling failure domain instead of an independent one. For Renfield (single-tenant, household), this trade is wrong (we want voice to keep working when backend is degraded if at all possible). For Reva (B2B, enterprise tenants), this trade is right (security-team will block voice-server holding session-signing keys).
 

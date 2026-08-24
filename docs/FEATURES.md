@@ -871,7 +871,8 @@ Siehe [SECRETS_MANAGEMENT.md](SECRETS_MANAGEMENT.md) für Details.
 - **Rate-Limit-Storage**: per-Pod (`memory://`) oder per-Cluster (`API_RATE_LIMIT_STORAGE_URI=${REDIS_URL}`)
 - **Account Lockout**: Pro-Username-Sperre nach Fehl-Logins (`LOGIN_LOCKOUT_ENABLED`, Redis, fail-open)
 - **Auth-Observability**: `renfield_login_failure_total` / `renfield_authz_denied_total` + strukturierte Logs auf 401/403
-- **Forced Password Rotation**: `must_change_password` serverseitig erzwungen (Allowlist bis zur Rotation)
+- **Forced Password Rotation**: `must_change_password` serverseitig erzwungen (Allowlist bis zur Rotation); Bootstrap-Admin startet immer damit (auch bei operator-gesetztem `DEFAULT_ADMIN_PASSWORD`) + Frontend-Redirect nach `/change-password`; Change-Password lehnt Wiederverwendung (aktuelles/Default-Passwort) ab
+- **Internal-Auth-Verify-Gate**: `POST /api/internal/auth/verify` (Voice-Server-Verify) optional per `INTERNAL_AUTH_VERIFY_SECRET` (`X-Verify-Secret` Header) abgeschottet — schließt das unauth. Token-Validity-Oracle (login audit 2026-08)
 - **WebSocket Auth**: Optional aktivierbar (`WS_AUTH_ENABLED`)
 - **Passwort-Hashing**: bcrypt
 - **MCP Response Limits**: Max Response-Größe begrenzt (`MCP_MAX_RESPONSE_SIZE`)
