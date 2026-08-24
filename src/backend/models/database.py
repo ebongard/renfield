@@ -835,13 +835,22 @@ class PaperlessUploadTracking(Base):
     inert.
     """
     __tablename__ = "paperless_upload_tracking"
+    # One ChatUpload maps to exactly one Paperless document, so exactly one
+    # tracking row. The UNIQUE constraint is the concurrency backstop for the
+    # #658 finalize idempotency: a live task and a reconciler pass that race
+    # past the read-check can't both insert (the loser gets an IntegrityError,
+    # handled in paperless_commit_tool._finalize_paperless_commit).
+    __table_args__ = (
+        UniqueConstraint(
+            "chat_upload_id", name="uq_paperless_upload_tracking_chat_upload_id"
+        ),
+    )
 
     id = Column(Integer, primary_key=True)
     chat_upload_id = Column(
         Integer,
         ForeignKey("chat_uploads.id", ondelete="CASCADE"),
         nullable=False,
-        index=True,
     )
     paperless_document_id = Column(Integer, nullable=False)
     user_id = Column(
@@ -858,6 +867,53 @@ class PaperlessUploadTracking(Base):
     doc_text = Column(Text, nullable=True)
     # NULL until the sweeper processes this row.
     swept_at = Column(DateTime, nullable=True, index=True)
+
+
+class PaperlessPendingFinalize(Base):
+    """Durable intent for the async Paperless commit's background finalize (#658).
+
+    ``paperless_commit_tool._finalize_paperless_commit`` runs fire-and-forget: it
+    polls the Paperless consume task (<=300s), applies the deferred metadata PATCH
+    (created_date/storage_path/custom_fields), and writes the
+    PaperlessUploadTracking row. If the consume exceeds the poll window OR the pod
+    restarts mid-poll, that in-memory task is lost — the PATCH never lands and no
+    tracking row is written, silently.
+
+    This row persists the finalize intent BEFORE the background task spawns, so
+    ``paperless_finalize_reconciler`` can re-run a lost finalize (poll the same
+    task_id → PATCH → tracking). ``finalized_at`` is stamped once the finalize
+    completes; the reconciler only picks up still-NULL rows past a grace window.
+    """
+    __tablename__ = "paperless_pending_finalize"
+
+    id = Column(Integer, primary_key=True)
+    # Paperless consume task id to poll for the resulting document id.
+    task_id = Column(String(255), nullable=False)
+    chat_upload_id = Column(
+        Integer,
+        ForeignKey("chat_uploads.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    user_id = Column(
+        Integer,
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=True,
+        index=True,
+    )
+    session_id = Column(String(255), nullable=True)
+    filename = Column(String(1024), nullable=False)
+    # Deferred PATCH (storage_path/created_date/custom_fields) to reapply once the
+    # document id exists — the metadata Paperless drops on the initial upload.
+    deferred_patch = Column(JSON, nullable=False, default=dict)
+    # The approved field set → PaperlessUploadTracking.original_metadata baseline.
+    original_metadata = Column(JSON, nullable=False, default=dict)
+    created_note = Column(Text, nullable=True)
+    doc_text = Column(Text, nullable=True)
+    created_at = Column(DateTime, nullable=False, default=_utcnow, index=True)
+    # NULL until the finalize completes; the reconciler only re-runs NULL rows.
+    finalized_at = Column(DateTime, nullable=True, index=True)
+    attempts = Column(Integer, nullable=False, default=0)
 
 
 class EmailIngestLog(Base):

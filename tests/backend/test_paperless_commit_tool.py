@@ -38,6 +38,19 @@ from services.paperless_commit_tool import (
 import services.paperless_metadata_extractor  # noqa: F401  # side-effect
 
 
+class _NoopSavepoint:
+    """Stand-in for AsyncSession.begin_nested() — the finalize idempotency claim
+    (#658) wraps the tracking INSERT in a SAVEPOINT. Real async SQLAlchemy
+    returns the transaction synchronously as an async CM; a bare AsyncMock would
+    return a coroutine (not a CM), so the mocked sessions need this."""
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *exc):
+        return False
+
+
 # ===========================================================================
 # Token classification
 # ===========================================================================
@@ -470,6 +483,12 @@ class TestApprovePath:
             s.__aexit__ = AsyncMock(return_value=False)
             s.add = MagicMock(side_effect=lambda o: adds.append(o))
             s.commit = AsyncMock()
+            # Finalize idempotency guard (#658): no existing tracking row, and
+            # the SAVEPOINT claim wraps the INSERT in an async CM.
+            s.execute = AsyncMock(
+                return_value=MagicMock(first=MagicMock(return_value=None))
+            )
+            s.begin_nested = MagicMock(side_effect=lambda: _NoopSavepoint())
             return s
 
         monkeypatch.setattr("services.database.AsyncSessionLocal", _factory)
@@ -499,6 +518,67 @@ class TestApprovePath:
         assert pushed and pushed[0][1]["status"] == "completed"
         assert "abgelegt" in pushed[0][1]["message"].lower()
         mcp.execute_tool.assert_not_awaited()  # no deferred patch to apply
+
+    @pytest.mark.asyncio
+    @pytest.mark.unit
+    async def test_finalize_pending_not_re_announced_on_reconciler_rerun(self, monkeypatch):
+        """A still-'pending' consume has no document_id, so `already_tracked`
+        never gets set — without a guard a reconciler re-run would persist a
+        duplicate 'still processing' message + WS push on EVERY tick (#658).
+        announce_pending=False (reconciler) suppresses both; the live task
+        (announce_pending=True) still announces pending exactly once."""
+        monkeypatch.setattr(
+            "services.chat_upload_tool._poll_paperless_task",
+            AsyncMock(return_value=(None, None)),  # still consuming → pending
+        )
+
+        def _factory():
+            s = AsyncMock()
+            s.__aenter__ = AsyncMock(return_value=s)
+            s.__aexit__ = AsyncMock(return_value=False)
+            s.add = MagicMock()
+            s.commit = AsyncMock()
+            s.execute = AsyncMock(
+                return_value=MagicMock(first=MagicMock(return_value=None))
+            )
+            s.begin_nested = MagicMock(side_effect=lambda: _NoopSavepoint())
+            return s
+
+        monkeypatch.setattr("services.database.AsyncSessionLocal", _factory)
+        pushed: list = []
+
+        async def _notify(sid, msg):
+            pushed.append((sid, msg))
+            return True
+
+        monkeypatch.setattr("api.websocket.shared.notify_session", _notify)
+        saved: list = []
+
+        async def _save(self, session_id, role, content, **kw):
+            saved.append((session_id, role, content))
+            return MagicMock()
+
+        monkeypatch.setattr(
+            "services.conversation_service.ConversationService.save_message", _save
+        )
+        mcp = MagicMock()
+        mcp.execute_tool = AsyncMock()
+        kw = dict(
+            task_id="t", deferred_patch={}, user_approved={}, attachment_id=42,
+            user_id=1, session_id="s", filename="f.pdf", created_note="",
+            doc_text=None, mcp_manager=mcp,
+        )
+
+        # Reconciler re-run: pending must be silent (no dup message / push).
+        status = await _finalize_paperless_commit(**kw, announce_pending=False)
+        assert status == "pending"
+        assert pushed == []
+        assert saved == []
+
+        # Live task: announces the pending state exactly once.
+        await _finalize_paperless_commit(**kw, announce_pending=True)
+        assert len(pushed) == 1 and pushed[0][1]["status"] == "pending"
+        assert len(saved) == 1
 
     @pytest.mark.asyncio
     @pytest.mark.unit
@@ -567,6 +647,12 @@ class TestApproveMessageShape:
             s.__aexit__ = AsyncMock(return_value=False)
             s.add = MagicMock()
             s.commit = AsyncMock()
+            # Finalize idempotency guard (#658): no existing tracking row, and
+            # the SAVEPOINT claim wraps the INSERT in an async CM.
+            s.execute = AsyncMock(
+                return_value=MagicMock(first=MagicMock(return_value=None))
+            )
+            s.begin_nested = MagicMock(side_effect=lambda: _NoopSavepoint())
             return s
 
         monkeypatch.setattr("services.database.AsyncSessionLocal", _factory)
@@ -886,6 +972,9 @@ def _make_session_factory(*, pending, upload=None, pending_after_update=None):
         def _execute(query):
             result = MagicMock()
             result.scalar_one_or_none = MagicMock(return_value=pending)
+            # The finalize idempotency guard (#658) probes for an existing
+            # PaperlessUploadTracking row via ``.first()`` — None = fresh upload.
+            result.first = MagicMock(return_value=None)
             result.rowcount = 1
             return result
 

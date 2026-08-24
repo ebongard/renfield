@@ -957,6 +957,33 @@ class Settings(BaseSettings):
     # tolerable retry cadence for a genuinely stuck doc.
     paperless_reconciler_refile_lease_seconds: int = 900
 
+    # --- Async Paperless-commit finalize reconciler (#658) ---
+    # The interactive commit's deferred-PATCH + tracking finalize runs
+    # fire-and-forget; if the consume outlives the poll window or the pod
+    # restarts mid-poll, it's lost. This scan re-runs finalizes persisted as
+    # paperless_pending_finalize rows still finalized_at IS NULL past the grace.
+    paperless_finalize_reconciler_interval: int = 120  # seconds between ticks
+    paperless_finalize_reconciler_batch: int = 25  # rows re-run per tick
+    # Grace before a not-yet-finalized row is re-run — above the live task's
+    # ~300s poll so the scan never races a still-running in-memory finalize.
+    paperless_finalize_reconciler_grace_seconds: int = 360
+    # Short poll on a re-run: the doc is almost certainly consumed by now; a
+    # still-consuming one shouldn't block the tick — it retries next pass.
+    paperless_finalize_reconciler_poll_seconds: float = 30.0
+    # Per-row re-finalize lease (Redis SET NX EX) so overlapping ticks / the live
+    # task don't double-run a row; expires so a failed attempt retries.
+    paperless_finalize_reconciler_lease_seconds: int = 120
+    # After this many ERROR attempts a stuck row is closed + logged loudly
+    # (never retried forever, never silently dropped). A merely still-consuming
+    # ("pending") outcome refunds its attempt so a healthy-but-slow Paperless
+    # OCR backlog doesn't burn the budget and get abandoned with unapplied
+    # metadata; the wall-clock backstop below still bounds a forever-pending row.
+    paperless_finalize_reconciler_max_attempts: int = 5
+    # Absolute give-up backstop: a row still unfinalized this long after creation
+    # is closed + logged loudly even if every pass was "pending" (Paperless is
+    # clearly never going to consume it) — bounds the refunded-pending case.
+    paperless_finalize_reconciler_giveup_hours: int = 24
+
     # Document-worker stale-task recovery. reclaim_stale() re-adopts entries a
     # dead consumer left un-ACKed in the Redis PEL. It used to run ONLY at worker
     # startup, so an entry orphaned WHILE the worker keeps running (an OOMKill

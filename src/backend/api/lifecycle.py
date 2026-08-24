@@ -709,6 +709,35 @@ def _schedule_paperless_reconciler(app):
     )
 
 
+def _schedule_paperless_finalize_reconciler(app):
+    """Restart-safe backstop for the interactive Paperless-commit finalize (#658).
+
+    The commit's deferred-PATCH + tracking finalize runs fire-and-forget; if the
+    consume outlives the ~300s poll window or the pod restarts mid-poll, that
+    in-memory task is lost (the PATCH/tracking silently never land). This scan
+    re-runs finalizes persisted as ``paperless_pending_finalize`` rows still
+    ``finalized_at IS NULL`` past the grace, via a live mcp_manager. Scheduled
+    unconditionally — cheap no-op when idle (one partial-indexed query → empty;
+    a None mcp_manager short-circuits)."""
+
+    async def _tick():
+        from services.paperless_finalize_reconciler import reconcile_pending_finalizes
+
+        await reconcile_pending_finalizes(getattr(app.state, "mcp_manager", None))
+
+    _spawn_periodic_task(
+        name="Paperless finalize reconciler",
+        interval=settings.paperless_finalize_reconciler_interval,
+        work=_tick,
+        started_msg=(
+            f"Paperless finalize reconciler gestartet "
+            f"(interval={settings.paperless_finalize_reconciler_interval}s, "
+            f"grace={settings.paperless_finalize_reconciler_grace_seconds}s)"
+        ),
+        run_at_boot=True,
+    )
+
+
 def _schedule_skill_shadow_log_cleanup():
     """Prune `skill_would_have_injected_log` rows older than the
     configured retention.
@@ -1313,6 +1342,7 @@ async def lifespan(app: "FastAPI"):
     _schedule_skill_shadow_log_cleanup()
     _schedule_paperless_sweepers(app)
     _schedule_paperless_reconciler(app)
+    _schedule_paperless_finalize_reconciler(app)
     _schedule_mcp_health_monitor(app)
     _schedule_obligation_calendar_sync(app)
     _schedule_kiosk_weather_refresh(app)

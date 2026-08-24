@@ -498,7 +498,6 @@ async def _commit_approved(
         }
 
     try:
-        from pathlib import Path as _Path
         import base64 as _base64
         with open(upload.file_path, "rb") as f:
             file_bytes = f.read()
@@ -620,6 +619,23 @@ async def _commit_approved(
     # rejects (e.g. a duplicate) doesn't wrongly increment it. The upload-
     # tracking row + deferred PATCH need the document id → background finalizer.
     # (ChatUpload bytes are retained, so a failed consume can be re-uploaded.)
+    created_note = ""
+    if created_entries:
+        flat: list[str] = []
+        for values in created_entries.values():
+            flat.extend(values)
+        if flat:
+            created_note = f" (Neu angelegt: {', '.join(sorted(set(flat)))})"
+    doc_text = _truncate_doc_text(pending) if pending else None
+
+    # Delete the confirm row AND persist the finalize intent in ONE transaction
+    # (#658): the deferred PATCH + tracking are applied by a fire-and-forget
+    # background task that would be LOST if the consume outlives the ~300s poll
+    # window or the pod restarts. The paperless_pending_finalize row is the
+    # durable record the reconciler re-runs from; stamping it here (not just the
+    # in-memory task args) is the whole fix. Only when the async upload returned
+    # a task_id to poll.
+    pending_finalize_id: int | None = None
     async with AsyncSessionLocal() as db:
         if diff_row is not None:
             db.add(diff_row)
@@ -628,19 +644,28 @@ async def _commit_approved(
                 PaperlessPendingConfirm.confirm_token == pending.confirm_token
             )
         )
+        if task_id:
+            from models.database import PaperlessPendingFinalize
+            pf = PaperlessPendingFinalize(
+                task_id=str(task_id),
+                chat_upload_id=pending.attachment_id,
+                user_id=user_id,
+                session_id=pending.session_id,
+                filename=upload.filename,
+                deferred_patch=dict(deferred_patch or {}),
+                original_metadata=dict(user_approved or {}),
+                created_note=created_note,
+                doc_text=doc_text,
+            )
+            db.add(pf)
         await db.commit()
-
-    created_note = ""
-    if created_entries:
-        flat: list[str] = []
-        for values in created_entries.values():
-            flat.extend(values)
-        if flat:
-            created_note = f" (Neu angelegt: {', '.join(sorted(set(flat)))})"
+        if task_id:
+            pending_finalize_id = pf.id
 
     # Finish in the background: poll consume → document id → apply the deferred
-    # PATCH via update_document → write the tracking row → push the final result
-    # over the chat WS. Keeps the agent turn from blocking on Paperless consume.
+    # PATCH via update_document → write the tracking row → mark the finalize row
+    # done → push the final result over the chat WS. Keeps the agent turn from
+    # blocking on Paperless consume; the reconciler is the restart-safe backstop.
     if task_id:
         _spawn_bg(_finalize_paperless_commit(
             task_id=str(task_id),
@@ -651,8 +676,9 @@ async def _commit_approved(
             session_id=pending.session_id,
             filename=upload.filename,
             created_note=created_note,
-            doc_text=_truncate_doc_text(pending) if pending else None,
+            doc_text=doc_text,
             mcp_manager=mcp_manager,
+            pending_finalize_id=pending_finalize_id,
         ))
 
     return {
@@ -678,18 +704,22 @@ async def _finalize_paperless_commit(
     created_note: str,
     doc_text: str | None,
     mcp_manager: Any,
-) -> None:
+    pending_finalize_id: int | None = None,
+    poll_timeout_s: float = 300.0,
+    announce_pending: bool = True,
+) -> str:
     """Background tail of an async Paperless commit: poll the consume task for
     the document id, apply the deferred PATCH (storage_path/created_date/
     custom_fields) via update_document, write the upload-tracking row, and push
     the final outcome over the chat WS. Best-effort — every step is guarded; a
-    failure is logged and surfaced in the push, never raised."""
+    failure is logged and surfaced in the push, never raised. Returns the
+    outcome status (``completed``/``failed``/``pending``) for the reconciler."""
     failure_reason: str | None = None
     document_id: int | None = None
     try:
         from services.chat_upload_tool import _poll_paperless_task
         failure_reason, document_id = await _poll_paperless_task(
-            task_id, timeout_s=300.0,
+            task_id, timeout_s=poll_timeout_s,
         )
     except Exception as exc:  # noqa: BLE001
         logger.warning("paperless finalize: task poll failed: %s", exc)
@@ -726,26 +756,66 @@ async def _finalize_paperless_commit(
     # cold-start counter (bumped ONLY on a confirmed consume), and the outcome
     # message persisted to the conversation so it survives a reload or a dropped
     # WS push (the live push below is best-effort and no-ops on a gone socket).
+    already_tracked = False
+    # A still-"pending" consume has no document_id, so `already_tracked` never
+    # gets set on that path — without this guard a reconciler re-run would
+    # persist a duplicate "still processing" message + WS push on EVERY tick
+    # (up to giveup_hours worth). The live task announces pending once
+    # (announce_pending=True); reconciler re-runs pass announce_pending=False so
+    # only a terminal outcome (completed/failed) is re-announced (#658).
+    suppress_announce = status == "pending" and not announce_pending
     try:
-        from models.database import PaperlessUploadTracking
+        from datetime import UTC, datetime
+
+        from sqlalchemy import select
+        from sqlalchemy.exc import IntegrityError
+
+        from models.database import PaperlessPendingFinalize, PaperlessUploadTracking
         from services.chat_upload_tool import _bump_confirms_used
         from services.conversation_service import ConversationService
         from services.database import AsyncSessionLocal
         async with AsyncSessionLocal() as db:
             if document_id is not None:
-                db.add(PaperlessUploadTracking(
-                    chat_upload_id=attachment_id,
-                    paperless_document_id=int(document_id),
-                    user_id=user_id,
-                    original_metadata=dict(user_approved),
-                    doc_text=doc_text,
-                ))
-            # Bump the cold-start trust counter ONLY on a confirmed consume.
-            # Per-user when known; a global SystemSetting key in single-user mode
-            # (else the confirm would fire on every archive forever).
-            if status == "completed":
+                # Idempotency (#658): a reconciler re-run may hit an upload the
+                # original run already tracked (then crashed before marking the
+                # finalize done). Don't write a second tracking row — and skip the
+                # one-shot side effects (counter bump, outcome message/push).
+                already_tracked = bool((await db.execute(
+                    select(PaperlessUploadTracking.id)
+                    .where(PaperlessUploadTracking.chat_upload_id == attachment_id)
+                    .limit(1)
+                )).first())
+                if not already_tracked:
+                    # Claim the tracking row inside a SAVEPOINT so the UNIQUE
+                    # constraint on chat_upload_id is the concurrency backstop:
+                    # if a live task and a reconciler pass race past the SELECT
+                    # above, the loser's INSERT fails here, we treat it as
+                    # already-tracked (winner owns the one-shot side effects), and
+                    # the outer transaction survives to still stamp finalized_at.
+                    try:
+                        async with db.begin_nested():
+                            db.add(PaperlessUploadTracking(
+                                chat_upload_id=attachment_id,
+                                paperless_document_id=int(document_id),
+                                user_id=user_id,
+                                original_metadata=dict(user_approved),
+                                doc_text=doc_text,
+                            ))
+                    except IntegrityError:
+                        already_tracked = True
+            # Close the durable finalize intent once terminal (completed, or a
+            # hard consume failure). A still-"pending" consume leaves finalized_at
+            # NULL so the reconciler re-runs on the next pass.
+            if pending_finalize_id is not None and status in ("completed", "failed"):
+                pf = await db.get(PaperlessPendingFinalize, pending_finalize_id)
+                if pf is not None and pf.finalized_at is None:
+                    pf.finalized_at = datetime.now(UTC).replace(tzinfo=None)
+            # Bump the cold-start trust counter ONLY on the FIRST confirmed
+            # consume. Per-user when known; a global SystemSetting key in
+            # single-user mode. not-already_tracked prevents a re-run double-bump.
+            if status == "completed" and not already_tracked:
                 await _bump_confirms_used(db, user_id)
-            if session_id:
+            if session_id and not already_tracked and not suppress_announce:
                 await ConversationService(db).save_message(
                     session_id, "assistant", message, user_id=user_id,
                 )
@@ -753,7 +823,7 @@ async def _finalize_paperless_commit(
     except Exception as exc:  # noqa: BLE001
         logger.warning("paperless finalize: outcome persist failed: %s", exc)
 
-    if session_id:
+    if session_id and not already_tracked and not suppress_announce:
         try:
             from api.websocket.shared import notify_session
             await notify_session(session_id, {
@@ -765,6 +835,10 @@ async def _finalize_paperless_commit(
             })
         except Exception as exc:  # noqa: BLE001
             logger.warning("paperless finalize: notify_session failed: %s", exc)
+
+    # Reported to the reconciler (#658): a "pending" consume refunds its attempt
+    # (healthy-but-slow, not a failure); "completed"/"failed" are terminal.
+    return status
 
 
 async def _abort_pending(pending) -> dict:
