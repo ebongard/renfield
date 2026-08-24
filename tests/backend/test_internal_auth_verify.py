@@ -268,3 +268,23 @@ def test_verify_secret_correct_header_accepted(monkeypatch):
     )
     assert resp.status_code == 200
     assert resp.json()["user_id"] == "42"
+
+
+def test_verify_secret_non_ascii_header_is_401_not_500(monkeypatch):
+    """A non-ASCII X-Verify-Secret must yield the opaque 401, never a 500:
+    hmac.compare_digest raises TypeError on non-ASCII str, so the compare runs
+    on bytes. A 500 would be an ugly crash + a weak 'secret is configured'
+    oracle. The header is sent as raw latin-1 bytes (how a non-ASCII header
+    actually arrives on the wire — Starlette decodes headers latin-1), since the
+    HTTP client refuses to ASCII-encode a non-ASCII str header value."""
+    _set_verify_secret(monkeypatch, "s3cr3t")
+    _install_service_stubs(
+        monkeypatch,
+        decode_return={"sub": "42", "type": "access", "jti": "a", "exp": 9999999999},
+    )
+    resp = _client().post(
+        "/api/internal/auth/verify", json={"token": "x"},
+        headers={"X-Verify-Secret": "café-ÿ".encode("latin-1")},
+    )
+    assert resp.status_code == 401
+    assert resp.json()["detail"] == "unauthorized"

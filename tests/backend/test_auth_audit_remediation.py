@@ -443,6 +443,23 @@ class TestChangePasswordRevocation:
         assert exc.value.status_code == 400
         assert "default" in exc.value.detail.lower()
 
+    async def test_non_ascii_new_password_succeeds(self, db_session):
+        """Regression (login audit): the default-password reuse check must compare
+        bytes — hmac.compare_digest raises TypeError on non-ASCII str, so an umlaut
+        password (common here) would 500 and soft-lock a forced-rotation user."""
+        role = await _mk_role(db_session, "CP5", ["chat.own"])
+        user = await _mk_user(db_session, "cpuser5", role, password="OldPass123!")
+        resp = await change_password(
+            request=ChangePasswordRequest(
+                current_password="OldPass123!", new_password="Grüße2026!ÄÖÜ"
+            ),
+            user=user,
+            db=db_session,
+        )
+        assert resp["access_token"]
+        await db_session.refresh(user)
+        assert user.must_change_password is False
+
 
 # ---------------------------------------------------------------------------
 # H4 — logout revokes the refresh token too

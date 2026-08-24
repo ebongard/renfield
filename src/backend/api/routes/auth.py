@@ -538,7 +538,12 @@ async def change_password(
             detail="New password must differ from the current password",
         )
     default_admin_pw = settings.default_admin_password.get_secret_value()
-    if default_admin_pw and hmac.compare_digest(request.new_password, default_admin_pw):
+    # Compare as bytes: hmac.compare_digest raises TypeError on non-ASCII str
+    # (umlaut passwords are common here), which would surface as a 500 and block
+    # a legitimate password change / soft-lock the forced-rotation admin.
+    if default_admin_pw and hmac.compare_digest(
+        request.new_password.encode("utf-8"), default_admin_pw.encode("utf-8")
+    ):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="New password must not be the default admin password",

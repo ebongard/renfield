@@ -29,12 +29,19 @@ Contract (pinned by voice-server's ``_verify_via``):
   reach. Voice-server reads only the status code.
 
 Network exposure: mounted under the ``/api`` ingress prefix, so it is
-externally reachable. Set ``INTERNAL_AUTH_VERIFY_SECRET`` (the shared voice-
-server already sends it as ``X-Verify-Secret`` in callback/registry mode) to
-gate the endpoint — an external caller without the secret then gets a plain
-401 before any token work, closing the validity-oracle/claims-leak (login
-audit). Unset = unauthenticated (legacy). A deployment-layer ingress/
-NetworkPolicy allowlist is still the belt-and-suspenders option.
+externally reachable. Set ``INTERNAL_AUTH_VERIFY_SECRET`` to gate the endpoint
+— an external caller without the secret then gets a plain 401 before any token
+work, closing the validity-oracle/claims-leak (login audit). Unset =
+unauthenticated (legacy). A deployment-layer ingress/NetworkPolicy allowlist is
+still the belt-and-suspenders option.
+
+TWO-SIDED coupling: the shared voice-server sends ``X-Verify-Secret`` only when
+its matching per-client secret is set (``auth_callback_secret`` in callback
+mode, the registry row's ``verify_secret`` in registry mode) — it is NOT sent
+unconditionally. Configuring this secret on the backend without setting the
+same value on the voice-server side makes the backend 401 every verify and
+breaks that client's voice auth. ``local``-mode voice-servers validate JWTs
+offline and never call this endpoint, so setting it there cannot break voice.
 """
 
 from __future__ import annotations
@@ -74,7 +81,13 @@ async def verify_token(
     configured = settings.internal_auth_verify_secret
     if configured is not None:
         expected = configured.get_secret_value()
-        if not x_verify_secret or not hmac.compare_digest(x_verify_secret, expected):
+        # Compare as bytes: hmac.compare_digest raises TypeError on non-ASCII
+        # str, and the header arrives latin-1-decoded — a non-ASCII header value
+        # would 500 the gate (ugly + a weak "secret is configured" oracle)
+        # instead of returning the intended opaque 401.
+        if not x_verify_secret or not hmac.compare_digest(
+            x_verify_secret.encode("utf-8"), expected.encode("utf-8")
+        ):
             raise _unauthorized()
 
     # Imported lazily so this module can be imported during test collection

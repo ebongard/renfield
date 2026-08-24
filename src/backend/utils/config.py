@@ -1160,11 +1160,16 @@ class Settings(BaseSettings):
     # Shared secret gating POST /api/internal/auth/verify (login-audit finding):
     # the endpoint is unauthenticated and reachable through the /api ingress
     # prefix — an unauthenticated token-validity oracle + claims leak. When set,
-    # the endpoint requires a matching X-Verify-Secret header (which the shared
-    # voice-server already sends in callback/registry mode) BEFORE any token
+    # the endpoint requires a matching X-Verify-Secret header BEFORE any token
     # work, so an external caller without the secret gets a plain 401.
-    # None = unauthenticated (legacy, backward-compatible); set it on any
-    # instance where the endpoint is ingress-reachable.
+    # TWO-SIDED: the shared voice-server sends X-Verify-Secret only when its own
+    # per-client secret is configured (auth_callback_secret / registry-row
+    # verify_secret); it is NOT sent unconditionally. Setting this on the backend
+    # WITHOUT the matching value on the voice-server side 401s every verify and
+    # breaks that client's voice auth. local-mode voice-servers never call this
+    # endpoint, so setting it there is safe. None = unauthenticated (legacy,
+    # backward-compatible); set it on any instance where the endpoint is
+    # ingress-reachable AND coordinate the voice-server secret.
     internal_auth_verify_secret: SecretStr | None = None
 
     # --- LDAP credential provider (authn only; group→role authz is a

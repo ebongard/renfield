@@ -1729,9 +1729,14 @@ AUTH_PROVIDER_TIMEOUT_SECONDS=10.0
 # ist über den /api-Ingress-Prefix von außen erreichbar; ohne Gate ist er ein
 # unauth. Token-Validity-Oracle + Claims-Leak. Gesetzt → verlangt einen
 # passenden X-Verify-Secret-Header VOR jeder Token-Arbeit (externe Aufrufer ohne
-# Secret → 401). Der Shared-Voice-Server (callback/registry) sendet denselben
-# Wert bereits; auf Instanzen ohne Voice-Server 401t das schlicht alle (nicht
-# existenten) Aufrufer. Leer = unauthenticated (Legacy). In renfield-env-private.
+# Secret → 401). ZWEISEITIG: Der Shared-Voice-Server sendet den Header NUR, wenn
+# sein passendes Per-Client-Secret gesetzt ist (auth_callback_secret bzw. das
+# verify_secret der Registry-Zeile) — nicht unbedingt. Diesen Wert im Backend zu
+# setzen, ohne denselben Wert voice-server-seitig zu setzen, 401t jeden Verify
+# und bricht die Voice-Auth dieses Clients. local-Mode-Voice-Server rufen den
+# Endpoint nie auf (JWT offline) → dort gefahrlos. Auf Instanzen ohne Voice-
+# Server 401t das schlicht alle (nicht existenten) Aufrufer. Leer =
+# unauthenticated (Legacy). In renfield-env-private.
 # INTERNAL_AUTH_VERIFY_SECRET=
 
 # LDAP credential provider (authn only — no group→role mapping yet).

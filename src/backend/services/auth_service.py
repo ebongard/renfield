@@ -662,7 +662,6 @@ async def ensure_admin_user(db: AsyncSession) -> User | None:
     configured_password = settings.default_admin_password.get_secret_value()
     if configured_password == "changeme":
         password = secrets.token_urlsafe(16)
-        must_change = True
         # Print to stdout only (not captured by file-based loggers)
         print(f"ADMIN_PASSWORD={password}")
         logger.warning(
