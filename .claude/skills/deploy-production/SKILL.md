@@ -526,6 +526,7 @@ An nginx-only change needs no backend rebuild — roll `deploy/frontend` only.
 4. ✅ Verify staging — `Dockerfile`, `.dockerignore`, `wakeword-models/` (~9 files), `satellite/renfield_satellite/__init__.py` all present; `config/mcp_servers.yaml` etc. NOT present (else the configmap mount breaks).
 5. ✅ Build backend (long if requirements.txt changed) and frontend (fast); build voice-server ONLY if `voice-server/` changed (its own `v0.1.x` tag).
 6. ✅ Push `:latest` + the pinned tag for each image built — verify each `digest:` line in the push output.
+6b. ✅ **Supply-chain audit (#684):** `bin/pip-audit.sh $REGISTRY/backend:<backend-tag>` (or `make audit-backend` for `:latest`) — pip-audit the just-built backend image. Exit 0 = clean; the backend keeps `>=`-ranges (auto-patching) so this is the gate that catches a build landing on a version with a known advisory. Reviewed-accepted advisories are ignored in the script; a NEW finding means review before rollout (bump the offending dep's floor + rebuild, or add a justified ignore). See docs/SECURITY.md → "Supply-chain posture".
 7. ✅ Roll out: `rollout restart` backend, dlna-mcp, document-worker; `kubectl set image` for frontend (and voice-server if rebuilt) — both run pinned tags, so `rollout restart` is a no-op for them.
 8. ✅ `kubectl rollout status` per rolled deploy with 600s timeout.
 9. ✅ Verify image digests across the rolled deploys match what was pushed.
