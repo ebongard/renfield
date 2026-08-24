@@ -127,7 +127,10 @@ spec:
           ports:
             - containerPort: 8000
           command: ["uvicorn"]
-          args: ["main:app", "--host", "0.0.0.0", "--port", "8000"]
+          # --ws-max-size caps inbound WebSocket frames at the protocol layer
+          # (#1116) so an oversized frame is dropped before any /ws handler
+          # parses it. 1000000 = ws_max_message_size default; keep in sync.
+          args: ["main:app", "--host", "0.0.0.0", "--port", "8000", "--ws-max-size", "1000000"]
           envFrom:
             - configMapRef:
                 name: renfield-env

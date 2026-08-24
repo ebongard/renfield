@@ -643,5 +643,12 @@ if __name__ == "__main__":
         host="0.0.0.0",
         port=8000,
         reload=True,
-        log_level="info"
+        log_level="info",
+        # Cap inbound WebSocket frames at the protocol layer (#1116): drops an
+        # oversized frame before any handler parses/buffers it, covering every
+        # /ws endpoint. All legit inbound frames are small (chat = text + attach
+        # IDs, attachments upload via REST; audio streams in ~KB chunks). The
+        # prod launch (k8s/backend.yaml uvicorn args) sets the same via
+        # --ws-max-size; keep the two in sync with settings.ws_max_message_size.
+        ws_max_size=settings.ws_max_message_size,
     )
