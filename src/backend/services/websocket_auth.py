@@ -114,6 +114,26 @@ def get_token_store() -> WSTokenStore:
     return _token_store
 
 
+def _ws_origin_allowed(websocket: WebSocket) -> bool:
+    """CSWSH origin allowlist for the WS handshake (#1116).
+
+    - ``cors_origins == "*"`` → allow all (dev / permissive).
+    - no ``Origin`` header → allow (non-browser client; browsers always send it).
+    - else the ``Origin`` must be one of the comma-separated ``cors_origins``.
+
+    Mirrors the CORS-middleware allowlist in main.py, so any origin the SPA is
+    already served from (and passes CORS with) also passes the WS check.
+    """
+    configured = settings.cors_origins.strip()
+    if configured == "*":
+        return True
+    origin = websocket.headers.get("origin")
+    if not origin:
+        return True
+    allowed = {o.strip() for o in configured.split(",") if o.strip()}
+    return origin in allowed
+
+
 async def authenticate_websocket(
     websocket: WebSocket,
     token: str | None = None
@@ -128,6 +148,20 @@ async def authenticate_websocket(
     Returns:
         Token data if authenticated, None otherwise
     """
+    # CSWSH protection (#1116): a browser ALWAYS sends an Origin header on the
+    # WS handshake, so reject a browser Origin that is not in the CORS allowlist
+    # (cross-site WebSocket hijacking). A MISSING Origin = a non-browser client
+    # (satellite/device/server-to-server) → allowed (an attacker's browser can't
+    # omit Origin). cors_origins="*" (dev/permissive, e.g. the auth-off
+    # household) skips the check. Applied before the ws_auth_enabled short-
+    # circuit so it protects even ws-auth-off browser sockets.
+    if not _ws_origin_allowed(websocket):
+        logger.warning(
+            "WS handshake rejected: disallowed Origin {!r}",
+            websocket.headers.get("origin"),
+        )
+        return None
+
     # Skip authentication if disabled
     if not settings.ws_auth_enabled:
         return {"authenticated": True, "auth_skipped": True}
