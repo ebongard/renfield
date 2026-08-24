@@ -337,19 +337,28 @@ servers:
     permissions:
       - mcp.paperless.read
       - mcp.paperless.write
+    # COMPLETE map over every paperless MCP tool — an unmapped tool would fall
+    # back to the server-level `permissions` (which accepts read OR write), so a
+    # mutation left unmapped would stay drivable by a read-only role. Reads →
+    # read, every state-changing tool (incl. reprocess_document) → write.
     tool_permissions:
       search_documents: mcp.paperless.read
       get_document: mcp.paperless.read
+      download_document: mcp.paperless.read
+      await_consume_result: mcp.paperless.read
       list_correspondents: mcp.paperless.read
       list_document_types: mcp.paperless.read
       list_tags: mcp.paperless.read
+      list_custom_fields: mcp.paperless.read
+      list_storage_paths: mcp.paperless.read
       update_document: mcp.paperless.write
+      reprocess_document: mcp.paperless.write
+      upload_document: mcp.paperless.write
       create_correspondent: mcp.paperless.write
       create_document_type: mcp.paperless.write
       create_storage_path: mcp.paperless.write
       create_tag: mcp.paperless.write
       delete_document: mcp.paperless.write
-      upload_document: mcp.paperless.write
     # Note: ``upload_document`` is intentionally NOT exposed to the agent
     # prompt. The agent has no access to raw file bytes, so when it saw this
     # tool it hallucinated placeholder base64 ("base64_encoded_content_of...")

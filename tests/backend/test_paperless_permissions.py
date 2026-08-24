@@ -49,3 +49,11 @@ def test_paperless_stanza_maps_tools():
     assert tp.get("update_document") == "mcp.paperless.write"
     assert tp.get("search_documents") == "mcp.paperless.read"
     assert "mcp.paperless.write" in (paperless.get("permissions") or [])
+    # EVERY mutation must be mapped to write — an unmapped mutation falls back to
+    # the server-level [read, write] and stays drivable by a read-only role.
+    for mutation in (
+        "update_document", "reprocess_document", "upload_document",
+        "create_correspondent", "create_document_type", "create_storage_path",
+        "create_tag", "delete_document",
+    ):
+        assert tp.get(mutation) == "mcp.paperless.write", f"{mutation} not write-gated"
