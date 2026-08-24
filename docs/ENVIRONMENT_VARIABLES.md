@@ -1056,6 +1056,24 @@ PAPERLESS_RECONCILER_INTERVAL=120              # Sekunden zwischen Ticks
 PAPERLESS_RECONCILER_BATCH=25                  # pending-Dokumente pro Tick re-enqueued
 PAPERLESS_RECONCILER_REFILE_GRACE_SECONDS=300  # Karenz, bevor ein completed+pending-Doc als Nachzügler gilt (rennt nicht mit dem initialen Filing-Hook)
 PAPERLESS_RECONCILER_REFILE_LEASE_SECONDS=900  # Redis-Lease pro Doc: nur ein Refile-Versuch gleichzeitig; läuft ab → Retry (verhindert Re-Enqueue-Churn)
+
+# Restart-sicherer Finalize-Reconciler (#658) für den INTERAKTIVEN Paperless-Commit
+# (Chat-Upload-Bestätigung, paperless_commit_tool). Der Commit lädt async hoch und
+# beendet in einem Fire-and-forget-Task: Consume pollen → deferred Metadaten-PATCH →
+# PaperlessUploadTracking-Zeile. Überlebt der Consume das ~300s-Poll-Fenster ODER
+# startet der Pod mitten im Poll neu, ginge dieser In-Memory-Task verloren und
+# PATCH/Tracking landeten still nie. Die Intent wird als paperless_pending_finalize-
+# Zeile VOR dem Task-Spawn persistiert; dieser Scan führt finalized_at-IS-NULL-Zeilen
+# jenseits der Karenz erneut aus (idempotent, per Redis-Lease serialisiert). Ein noch
+# konsumierendes ('pending') Ergebnis erstattet seinen Versuch zurück (gesund-langsam
+# ist kein Fehler); der Wall-Clock-Backstop begrenzt eine für-immer-pending-Zeile.
+PAPERLESS_FINALIZE_RECONCILER_INTERVAL=120      # Sekunden zwischen Ticks
+PAPERLESS_FINALIZE_RECONCILER_BATCH=25          # Zeilen pro Tick
+PAPERLESS_FINALIZE_RECONCILER_GRACE_SECONDS=360 # Karenz > Live-Poll (300s), damit der Scan nie den laufenden In-Memory-Task rennt
+PAPERLESS_FINALIZE_RECONCILER_POLL_SECONDS=30   # kurzer Re-Run-Poll: das Doc ist fast sicher schon konsumiert
+PAPERLESS_FINALIZE_RECONCILER_LEASE_SECONDS=120 # Redis-Lease pro Zeile gegen Doppel-Run
+PAPERLESS_FINALIZE_RECONCILER_MAX_ATTEMPTS=5    # nach so vielen ECHTEN Fehlern: Zeile schließen + laut loggen (nie still verworfen)
+PAPERLESS_FINALIZE_RECONCILER_GIVEUP_HOURS=24   # Wall-Clock-Backstop: für-immer-pending-Zeile nach so vielen Stunden schließen
 ```
 
 Wiederverwendet `MAX_FILE_SIZE_MB`, `ALLOWED_EXTENSIONS`, `UPLOAD_DIR` (siehe RAG/Upload).
@@ -1081,6 +1099,7 @@ FILES_HEALTH_POLL_SECONDS=30          # Backend-Health-Poll; bei down→up wird 
 - `FOLDER_INGEST_TO_PAPERLESS`: `true`
 - `FOLDER_INGEST_NOTIFY_ON_FILED`: `true`
 - `PAPERLESS_RECONCILER_INTERVAL`: `120` · `PAPERLESS_RECONCILER_BATCH`: `25` · `PAPERLESS_RECONCILER_REFILE_GRACE_SECONDS`: `300` · `PAPERLESS_RECONCILER_REFILE_LEASE_SECONDS`: `900`
+- `PAPERLESS_FINALIZE_RECONCILER_INTERVAL`: `120` · `_BATCH`: `25` · `_GRACE_SECONDS`: `360` · `_POLL_SECONDS`: `30` · `_LEASE_SECONDS`: `120` · `_MAX_ATTEMPTS`: `5` · `_GIVEUP_HOURS`: `24`
 - `FILES_MAX_CONCURRENT_PUSHES`: `4` · `FILES_HEALTH_POLL_SECONDS`: `30`
 
 ---
