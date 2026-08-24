@@ -25,6 +25,21 @@ __pycache__
 .coverage
 htmlcov
 
+# Test suite + test-only files must NEVER ship in the runtime image. The real
+# suite lives at repo-root tests/ — outside this build context — so a clean
+# staging build already excludes it. These patterns are defense-in-depth: if a
+# build ever runs from a polluted context (e.g. the /opt/renfield compose
+# checkout, which bind-mounts source and where stray test copies accumulate)
+# they still can't be baked in. No git-tracked runtime module matches these
+# names, so nothing legitimate is dropped. requirements-test.txt is the dev/test
+# deps manifest (used only by the .159 compose stack); the Dockerfile installs
+# requirements.txt only, so it must not leak into the image either.
+tests
+conftest.py
+test_*.py
+pytest.ini
+requirements-test.txt
+
 # Virtualenvs shouldn't leak into the image.
 .venv
 venv
