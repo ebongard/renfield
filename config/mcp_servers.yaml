@@ -324,6 +324,32 @@ servers:
     env:
       PAPERLESS_API_URL: "${PAPERLESS_API_URL:-}"
       PAPERLESS_API_TOKEN: "${PAPERLESS_API_TOKEN:-}"
+    # Read/write permission split (#1116) — mirrors the calendar stanza. Without
+    # a per-tool map, the single convention grant `mcp.paperless` authorized BOTH
+    # reads (search) AND writes (update_document) — no separation. Now reads map
+    # to mcp.paperless.read, mutations to mcp.paperless.write.
+    # BACKWARD-COMPATIBLE: a role holding the broad `mcp.paperless` server grant
+    # still satisfies both (wildcard covers all paperless tools), so existing
+    # search flows do NOT break on deploy. The write restriction only bites once
+    # a role is tightened to grant `mcp.paperless.read` (read-only) instead of
+    # the broad `mcp.paperless` — the operational activation step (auth-on
+    # instances only; auth-off passes user_permissions=None → allowed).
+    permissions:
+      - mcp.paperless.read
+      - mcp.paperless.write
+    tool_permissions:
+      search_documents: mcp.paperless.read
+      get_document: mcp.paperless.read
+      list_correspondents: mcp.paperless.read
+      list_document_types: mcp.paperless.read
+      list_tags: mcp.paperless.read
+      update_document: mcp.paperless.write
+      create_correspondent: mcp.paperless.write
+      create_document_type: mcp.paperless.write
+      create_storage_path: mcp.paperless.write
+      create_tag: mcp.paperless.write
+      delete_document: mcp.paperless.write
+      upload_document: mcp.paperless.write
     # Note: ``upload_document`` is intentionally NOT exposed to the agent
     # prompt. The agent has no access to raw file bytes, so when it saw this
     # tool it hallucinated placeholder base64 ("base64_encoded_content_of...")
