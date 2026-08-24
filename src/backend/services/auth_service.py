@@ -13,7 +13,7 @@ from fastapi.security import OAuth2PasswordBearer
 from jose import JWTError, jwt
 from loguru import logger
 from passlib.context import CryptContext
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -232,6 +232,27 @@ async def authenticate_user(
         return None
 
     return user
+
+
+# M5 last-admin guard — TOCTOU fix (#1116). The four guarded mutations
+# (demote via role change, deactivate, delete, strip admin from a role) all
+# read active_admin_ids() then mutate+commit. Without serialization, two
+# concurrent txns targeting DIFFERENT admins on a 2-admin instance can both
+# pass "would this leave zero admins?" and race to zero. Each guarded path
+# takes this single transaction-scoped advisory lock BEFORE the check, so they
+# serialize; the lock auto-releases at commit/rollback. Postgres-only — a no-op
+# on sqlite (tests), where there is no cross-connection concurrency to guard.
+_LAST_ADMIN_GUARD_LOCK_KEY = 0x4D354C41  # "M5LA" (M5 Last-Admin)
+
+
+async def acquire_last_admin_guard_lock(db: AsyncSession) -> None:
+    """Serialize the last-admin guards (see note above). Call before
+    active_admin_ids() in every mutation that could remove an admin."""
+    if db.bind is not None and db.bind.dialect.name == "postgresql":
+        await db.execute(
+            text("SELECT pg_advisory_xact_lock(:k)"),
+            {"k": _LAST_ADMIN_GUARD_LOCK_KEY},
+        )
 
 
 async def active_admin_ids(db: AsyncSession) -> set[int]:

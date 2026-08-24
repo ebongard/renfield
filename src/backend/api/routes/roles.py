@@ -23,7 +23,11 @@ from models.permissions import (
     has_permission,
     missing_grantable_permissions,
 )
-from services.auth_service import active_admin_ids, require_permission
+from services.auth_service import (
+    acquire_last_admin_guard_lock,
+    active_admin_ids,
+    require_permission,
+)
 from services.database import get_db
 
 router = APIRouter()
@@ -301,6 +305,7 @@ async def update_role(
             not has_permission(request.permissions, Permission.ADMIN)
         )
         if strips_admin:
+            await acquire_last_admin_guard_lock(db)
             admin_ids = await active_admin_ids(db)
             holders = {
                 r[0]
@@ -395,12 +400,17 @@ async def delete_role(
 
 
 @router.get("/permissions/all")
-async def list_permissions(request: Request):
+async def list_permissions(
+    request: Request,
+    user: User = Depends(require_permission(Permission.ROLES_VIEW)),
+):
     """
     List all available permissions including dynamic MCP permissions.
 
-    This endpoint is public (no auth required) as it's useful for
-    understanding the permission system.
+    Gated on ROLES_VIEW (#1116): an unauthenticated caller could otherwise
+    enumerate the full permission taxonomy AND the live MCP tool names. The
+    frontend role editor holds ROLES_VIEW; auth-off (AUTH_ENABLED=false) still
+    allows it (require_permission short-circuits when auth is disabled).
     """
     permissions = get_all_permissions()
 

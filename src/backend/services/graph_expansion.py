@@ -82,20 +82,21 @@ def _relation_filter(
     A relation carries its OWN ``circle_tier`` (can be stricter than either
     endpoint), so accessible endpoints are NOT sufficient to disclose the
     predicate — a private relationship between two public entities would
-    otherwise leak to a peer.
+    otherwise leak.
 
-    Applied ONLY on the federation (``enforce_circles``) path so every
-    non-federation caller keeps the original endpoint-accessibility behavior
-    byte-identically. (Household/auth-on relation-tier filtering — where
-    entities are filtered but relations historically were not — is a separate,
-    pre-existing concern tracked as a follow-up, not part of this security fix.)
+    Mirrors ``_entity_filter``'s gating (#1116): auth-off with no federation
+    scope → no filter (byte-identical legacy); otherwise the relation's own tier
+    is enforced on BOTH the federation (peer-scoped) AND the auth-on household
+    path. Previously only the federation path was filtered, so a household member
+    who could see two entities also saw a stricter-tier relation between them —
+    entities were tier-filtered but relations were not.
     """
-    if not enforce_circles:
+    if not settings.auth_enabled and not enforce_circles:
         return ("", {})
     if asker_id is None:
         return ("AND r.circle_tier = :rel_pub_tier", {"rel_pub_tier": TIER_PUBLIC})
     from services.circle_sql import kg_relations_circles_filter
-    clause, params = kg_relations_circles_filter(asker_id, alias="r", peer_scoped=True)
+    clause, params = kg_relations_circles_filter(asker_id, alias="r", peer_scoped=enforce_circles)
     return (f"AND {clause}", params)
 
 

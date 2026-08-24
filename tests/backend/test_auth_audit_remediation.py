@@ -716,3 +716,58 @@ class TestInternalVerifyGuards:
         with pytest.raises(HTTPException) as exc:
             await verify_token(VerifyRequest(token=ws))
         assert exc.value.status_code == 401
+
+
+# ---------------------------------------------------------------------------
+# Tier-2 login-hardening batch (#1116): last-admin TOCTOU lock, kg_relations
+# tier filter on the auth-on path, taxonomy-endpoint auth gates.
+# ---------------------------------------------------------------------------
+
+@pytest.mark.database
+class TestTier2AuthHardening:
+    async def test_last_admin_guard_lock_noop_on_sqlite(self, db_session):
+        """acquire_last_admin_guard_lock is Postgres-only; on sqlite (tests) it
+        must no-op WITHOUT error so the guarded mutation paths still run. The
+        existing last-admin guard tests exercise the guarded paths (which now
+        call this first) — this asserts the helper itself is a clean no-op."""
+        from services.auth_service import acquire_last_admin_guard_lock
+        await acquire_last_admin_guard_lock(db_session)  # must not raise
+
+    def test_relation_filter_gates_auth_on_and_off(self, monkeypatch):
+        """#1116: kg_relations tier filter now applies on the auth-on path
+        (was federation-only). Auth-off + no federation scope stays byte-
+        identical (no filter)."""
+        from services import graph_expansion as ge
+
+        monkeypatch.setattr(ge.settings, "auth_enabled", False)
+        assert ge._relation_filter(asker_id=5, enforce_circles=False) == ("", {})
+
+        monkeypatch.setattr(ge.settings, "auth_enabled", True)
+        clause, _ = ge._relation_filter(asker_id=5, enforce_circles=False)
+        # Must enforce the relation's OWN circle_tier — the leak was that
+        # relations (unlike entities) were unfiltered on the auth-on path, so a
+        # non-empty-but-tier-less clause would not close it.
+        assert clause and "circle_tier" in clause, (
+            "auth-on relation filter must reference r.circle_tier"
+        )
+
+        clause_anon, params_anon = ge._relation_filter(asker_id=None, enforce_circles=False)
+        assert "circle_tier" in clause_anon and params_anon
+
+    async def test_roles_taxonomy_gate(self, db_session, monkeypatch):
+        """#1116: /api/roles/permissions/all is gated on ROLES_VIEW — the gate
+        denies an unauthenticated caller when auth is ON, and allows when auth
+        is OFF (single-user household unaffected)."""
+        from services import auth_service
+        from services.auth_service import require_permission
+        from models.permissions import Permission
+
+        checker = require_permission(Permission.ROLES_VIEW)
+
+        monkeypatch.setattr(auth_service.settings, "auth_enabled", True)
+        with pytest.raises(HTTPException) as exc:
+            await checker(user=None, db=db_session)
+        assert exc.value.status_code in (401, 403)
+
+        monkeypatch.setattr(auth_service.settings, "auth_enabled", False)
+        assert await checker(user=None, db=db_session) is None  # auth-off allows

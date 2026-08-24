@@ -18,7 +18,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.database import Role, User
-from models.permissions import get_all_permissions
+from models.permissions import Permission, get_all_permissions
 from services.api_rate_limiter import limiter
 from services.auth_service import (
     create_access_token,
@@ -30,6 +30,7 @@ from services.auth_service import (
     get_user_by_id,
     oauth2_scheme,
     require_auth,
+    require_permission,
     validate_password,
 )
 from services.database import get_db
@@ -679,11 +680,17 @@ async def get_auth_status(
 
 
 @router.get("/permissions")
-async def list_all_permissions():
+async def list_all_permissions(user: User = Depends(require_permission(Permission.ROLES_VIEW))):
     """
     List all available permissions in the system.
 
-    Useful for admin UIs when creating/editing roles.
+    Gated on ROLES_VIEW (#1116): an anonymous caller could otherwise enumerate
+    the permission taxonomy. require_permission short-circuits to ALLOW when
+    AUTH_ENABLED=false (returns None WITHOUT a user lookup, so single-user mode
+    works even with no user rows), and rejects auth-on + missing/insufficient
+    credentials. Consistent with /api/roles/permissions/all.
+    NOTE: `require_auth` / `get_user_or_default` are wrong here — the former
+    raises 401 even auth-off, the latter needs a real user row to exist.
     """
     return get_all_permissions()
 

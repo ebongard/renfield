@@ -27,6 +27,7 @@ from models.permissions import (
 )
 from utils.hooks import run_hooks
 from services.auth_service import (
+    acquire_last_admin_guard_lock,
     active_admin_ids,
     get_password_hash,
     get_role_by_id,
@@ -419,6 +420,7 @@ async def update_user(
         )
         new_role_is_admin = has_permission(role.permissions or [], Permission.ADMIN)
         if target_is_admin and not new_role_is_admin:
+            await acquire_last_admin_guard_lock(db)
             admin_ids = await active_admin_ids(db)
             if not (admin_ids - {user.id}):
                 raise HTTPException(
@@ -446,6 +448,7 @@ async def update_user(
         # admin would lock the instance out of user/role management.
         if not request.is_active and user.is_active:
             if user.role and has_permission(user.role.permissions or [], Permission.ADMIN):
+                await acquire_last_admin_guard_lock(db)
                 admin_ids = await active_admin_ids(db)
                 if not (admin_ids - {user.id}):
                     raise HTTPException(
@@ -518,6 +521,7 @@ async def delete_user(
     # Last-admin guard (security audit M5): deleting the final active admin would
     # lock the instance out of user/role management. active_admin_ids already
     # counts only active admins, so an inactive-admin target is unaffected.
+    await acquire_last_admin_guard_lock(db)
     admin_ids = await active_admin_ids(db)
     if user.id in admin_ids and not (admin_ids - {user.id}):
         raise HTTPException(
