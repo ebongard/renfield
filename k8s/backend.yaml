@@ -161,6 +161,18 @@ spec:
                   name: twin-secrets
                   key: TWIN_INGEST_TOKEN
                   optional: true
+            # Shared secret gating POST /api/internal/auth/verify (login audit
+            # #1116). optional: unset → endpoint stays legacy-unauthenticated
+            # (byte-identical), so the pod boots dark on any instance without the
+            # key. TWO-SIDED: on an instance whose voice-server registry client
+            # calls verify (e.g. xidra), the SAME value must be set as that
+            # client's verify_secret in voice-registry-auth, else voice 401s.
+            - name: INTERNAL_AUTH_VERIFY_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: renfield-secrets
+                  key: internal-auth-verify-secret
+                  optional: true
             - name: POSTGRES_PASSWORD
               valueFrom:
                 secretKeyRef:
