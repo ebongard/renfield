@@ -7,6 +7,7 @@ Provides endpoints for user authentication:
 - Refresh (get new access token using refresh token)
 - Me (get current user info)
 """
+import hmac
 from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile, status
@@ -24,7 +25,6 @@ from services.auth_service import (
     create_refresh_token,
     create_user,
     decode_token,
-    get_current_user,
     get_optional_user,
     get_role_by_name,
     get_user_by_id,
@@ -149,6 +149,7 @@ async def login(
     # See auth/login_flow.py for the full resolution + standalone-fallback
     # contract.
     from auth.login_flow import resolve_login
+
     from services.login_lockout import login_lockout
     from utils.metrics import record_login_failure
 
@@ -376,7 +377,6 @@ async def sso_exchange(
     if not verify_pkce_s256(exchange.code_verifier, session.code_challenge):
         raise bad
     # constant-time state compare (CSRF binding to the initiating tab)
-    import hmac
     if not hmac.compare_digest(exchange.state, session.state):
         raise bad
 
@@ -526,6 +526,22 @@ async def change_password(
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=error
+        )
+
+    # Reject reuse (login audit): the new password must differ from the current
+    # one AND must not be the operator-set DEFAULT_ADMIN_PASSWORD — otherwise the
+    # forced rotation is ceremonial and a weak/shared bootstrap credential stays
+    # standing. Both checks are constant-time via bcrypt verify / hmac.
+    if verify_password(request.new_password, user.password_hash):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="New password must differ from the current password",
+        )
+    default_admin_pw = settings.default_admin_password.get_secret_value()
+    if default_admin_pw and hmac.compare_digest(request.new_password, default_admin_pw):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="New password must not be the default admin password",
         )
 
     # Update password and clear the forced-rotation flag (review M5): the flag

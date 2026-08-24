@@ -1157,6 +1157,16 @@ class Settings(BaseSettings):
     # skipped (fail-open) — see auth/registry.py.
     auth_provider_timeout_seconds: float = 10.0
 
+    # Shared secret gating POST /api/internal/auth/verify (login-audit finding):
+    # the endpoint is unauthenticated and reachable through the /api ingress
+    # prefix — an unauthenticated token-validity oracle + claims leak. When set,
+    # the endpoint requires a matching X-Verify-Secret header (which the shared
+    # voice-server already sends in callback/registry mode) BEFORE any token
+    # work, so an external caller without the secret gets a plain 401.
+    # None = unauthenticated (legacy, backward-compatible); set it on any
+    # instance where the endpoint is ingress-reachable.
+    internal_auth_verify_secret: SecretStr | None = None
+
     # --- LDAP credential provider (authn only; group→role authz is a
     #     separate future layer). Default off → DB-only behavior unchanged. ---
     ldap_auth_enabled: bool = False

@@ -10,6 +10,7 @@ import { useFeatureFlags } from './api/resources/brain';
 import ChatPage from './pages/ChatPage';
 import LoginPage from './pages/LoginPage';
 import RegisterPage from './pages/RegisterPage';
+import ChangePasswordPage from './pages/ChangePasswordPage';
 import { DeviceProvider } from './context/DeviceContext';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import { ThemeProvider } from './context/ThemeContext';
@@ -82,6 +83,15 @@ function AppRoutes() {
       <Route path="/register" element={<RegisterPage />} />
       {/* SSO one-time-code callback (token-in-URL replacement) — no layout. */}
       <Route path="/auth/callback" element={<AuthCallback />} />
+
+      {/* Forced password rotation (login audit) — standalone (no sidebar),
+          auth-required but exempt from the must_change redirect in ProtectedRoute
+          so the user can actually reach it while soft-locked. */}
+      <Route path="/change-password" element={
+        <ProtectedRoute>
+          <ChangePasswordPage />
+        </ProtectedRoute>
+      } />
 
       {/* Fullscreen wall-display kiosk — deliberately OUTSIDE the app Layout
           (no sidebar/header). Admin-gated (auth-off = open, like the board). */}

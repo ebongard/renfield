@@ -162,7 +162,19 @@
       "oidc_internal": "An internal error occurred. Try again or contact support."
     },
     "completingSignIn": "Completing sign-in …",
-    "signInFailed": "Sign-in failed. Please try again."
+    "signInFailed": "Sign-in failed. Please try again.",
+    "changePasswordTitle": "Change password",
+    "changePasswordRequired": "Password change required",
+    "changePasswordRequiredHint": "For security reasons you must change your password before continuing.",
+    "currentPassword": "Current password",
+    "newPassword": "New password",
+    "enterCurrentPassword": "Enter current password",
+    "enterNewPassword": "Enter new password",
+    "confirmNewPassword": "Confirm new password",
+    "changePasswordSubmit": "Change password",
+    "passwordChanged": "Password changed successfully.",
+    "newPasswordSameAsCurrent": "The new password must differ from the current one.",
+    "changePasswordFailed": "Password change failed. Please try again."
   },
   "chat": {
     "title": "Chat",

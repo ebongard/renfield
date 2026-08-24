@@ -1725,6 +1725,15 @@ VOICE_AUTH_MIN_CONFIDENCE=0.7
 # skipped fail-open (WARNING + auth_provider_unreachable_total counter).
 AUTH_PROVIDER_TIMEOUT_SECONDS=10.0
 
+# Shared secret gating POST /api/internal/auth/verify (login audit). Der Endpoint
+# ist über den /api-Ingress-Prefix von außen erreichbar; ohne Gate ist er ein
+# unauth. Token-Validity-Oracle + Claims-Leak. Gesetzt → verlangt einen
+# passenden X-Verify-Secret-Header VOR jeder Token-Arbeit (externe Aufrufer ohne
+# Secret → 401). Der Shared-Voice-Server (callback/registry) sendet denselben
+# Wert bereits; auf Instanzen ohne Voice-Server 401t das schlicht alle (nicht
+# existenten) Aufrufer. Leer = unauthenticated (Legacy). In renfield-env-private.
+# INTERNAL_AUTH_VERIFY_SECRET=
+
 # LDAP credential provider (authn only — no group→role mapping yet).
 # Default off → DB-only behavior unchanged.
 LDAP_AUTH_ENABLED=false

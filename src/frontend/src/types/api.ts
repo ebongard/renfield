@@ -142,6 +142,10 @@ export interface User {
   speaker_id?: number;
   created_at: string;
   updated_at: string;
+  // Forced-rotation flag: true → the backend blocks every non-allowlisted
+  // route until the password is changed, so the frontend must route the user
+  // to the mandatory change-password screen (login audit).
+  must_change_password?: boolean;
 }
 
 export interface Role {

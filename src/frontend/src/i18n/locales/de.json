@@ -162,7 +162,19 @@
       "oidc_internal": "Ein interner Fehler ist aufgetreten. Bitte erneut versuchen oder Support kontaktieren."
     },
     "completingSignIn": "Anmeldung wird abgeschlossen …",
-    "signInFailed": "Anmeldung fehlgeschlagen. Bitte erneut versuchen."
+    "signInFailed": "Anmeldung fehlgeschlagen. Bitte erneut versuchen.",
+    "changePasswordTitle": "Passwort ändern",
+    "changePasswordRequired": "Passwortänderung erforderlich",
+    "changePasswordRequiredHint": "Aus Sicherheitsgründen musst du dein Passwort ändern, bevor du fortfahren kannst.",
+    "currentPassword": "Aktuelles Passwort",
+    "newPassword": "Neues Passwort",
+    "enterCurrentPassword": "Aktuelles Passwort eingeben",
+    "enterNewPassword": "Neues Passwort eingeben",
+    "confirmNewPassword": "Neues Passwort bestätigen",
+    "changePasswordSubmit": "Passwort ändern",
+    "passwordChanged": "Passwort erfolgreich geändert.",
+    "newPasswordSameAsCurrent": "Das neue Passwort muss sich vom aktuellen unterscheiden.",
+    "changePasswordFailed": "Passwortänderung fehlgeschlagen. Bitte erneut versuchen."
   },
   "chat": {
     "title": "Chat",

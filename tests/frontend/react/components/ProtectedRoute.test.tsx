@@ -153,6 +153,57 @@ describe('ProtectedRoute', () => {
     });
   });
 
+  describe('Forced password rotation (login audit)', () => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const userWith = (mustChange: boolean): any => ({
+      id: 1, username: 'admin', is_active: true, role_id: 1,
+      created_at: '', updated_at: '', must_change_password: mustChange,
+    });
+
+    it('redirects to /change-password when must_change_password is set', () => {
+      mockedUseAuth.mockReturnValue(
+        buildAuth({
+          user: userWith(true),
+          isAuthenticated: true,
+          authEnabled: true,
+          hasPermission: () => true,
+          hasAnyPermission: () => true,
+        }),
+      );
+
+      renderWithProviders(
+        <ProtectedRoute>
+          <TestChild />
+        </ProtectedRoute>,
+      );
+
+      const nav = screen.getByTestId('navigate');
+      expect(nav).toHaveAttribute('data-to', '/change-password');
+      expect(screen.queryByTestId('protected-content')).not.toBeInTheDocument();
+    });
+
+    it('renders content normally when must_change_password is false', () => {
+      mockedUseAuth.mockReturnValue(
+        buildAuth({
+          user: userWith(false),
+          isAuthenticated: true,
+          authEnabled: true,
+          hasPermission: () => true,
+          hasAnyPermission: () => true,
+        }),
+      );
+
+      renderWithProviders(
+        <ProtectedRoute>
+          <TestChild />
+        </ProtectedRoute>,
+      );
+
+      expect(screen.getByTestId('protected-content')).toBeInTheDocument();
+      expect(screen.queryByTestId('navigate')).not.toBeInTheDocument();
+    });
+  });
+
   describe('Permission Checks', () => {
     it('allows access when user has required permission', () => {
       mockedUseAuth.mockReturnValue(

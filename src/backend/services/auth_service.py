@@ -671,7 +671,13 @@ async def ensure_admin_user(db: AsyncSession) -> User | None:
         )
     else:
         password = configured_password
-        must_change = False
+
+    # The bootstrap admin ALWAYS starts with must_change_password=True, even
+    # when DEFAULT_ADMIN_PASSWORD is operator-set (login audit): otherwise a
+    # weak/shared env password becomes a permanent standing credential. The
+    # frontend forced-rotation gate makes this actionable in-app; change-password
+    # rejects reuse of the same/default value so the rotation is real.
+    must_change = True
 
     # Create default admin user
     admin_user = User(

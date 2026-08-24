@@ -21,7 +21,7 @@ export default function ProtectedRoute({
   permission = null,
   requireAny = false,
 }: ProtectedRouteProps) {
-  const { isAuthenticated, authEnabled, loading, hasPermission, hasAnyPermission } = useAuth();
+  const { user, isAuthenticated, authEnabled, loading, hasPermission, hasAnyPermission } = useAuth();
   const location = useLocation();
 
   if (loading) {
@@ -38,6 +38,14 @@ export default function ProtectedRoute({
 
   if (!isAuthenticated) {
     return <Navigate to="/login" state={{ from: location }} replace />;
+  }
+
+  // Forced password rotation (login audit): while must_change_password is set,
+  // the backend 403s every non-allowlisted route — so route the user to the
+  // mandatory change-password screen instead of an apparently-broken app.
+  // The change-password route itself is exempt to avoid a redirect loop.
+  if (user?.must_change_password && location.pathname !== '/change-password') {
+    return <Navigate to="/change-password" replace />;
   }
 
   if (permission) {
