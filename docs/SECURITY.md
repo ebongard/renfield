@@ -49,23 +49,28 @@ frame-ancestors 'none';
 
 ## Dependency Security
 
-### Automated Audits
+### Supply-chain posture (#684)
 
-Run security audits regularly:
+Three layers, chosen deliberately for a self-hosted LAN deploy with heavy ML deps:
+
+1. **Immutable source pins.** The in-process `renfield-mcp-*` servers are installed from `archive/<commit-sha>.tar.gz` tarballs, **not** moving `heads/main` (`src/backend/requirements.txt`) — closing the mutable-git-ref hole (a force-push/compromise upstream could otherwise land in the image; this pattern had already shipped stale code via CDN lag). `python-jose[cryptography]` is upper-bounded (`<4`). The frontend ships a committed `package-lock.json`.
+2. **Auto-patching PyPI ranges.** The PyPI deps keep `>=` ranges: a rebuild floats them to the latest fix (verified 2026-08-24 — the built image was already on the patched pyjwt / pillow / starlette / python-multipart). We deliberately did **not** adopt a `pip-compile --generate-hashes` lockfile — freezing versions would forfeit this auto-patching, a poor trade here. The reproducibility/hash-verification that a lockfile buys is given up consciously.
+3. **pip-audit gate.** `bin/pip-audit.sh` (or `make audit-backend`) runs `pip-audit` against the **built** backend image — the safety net that makes the ranges honest: it catches when a build lands on a version carrying a known advisory. Run it on every release. Reviewed-accepted advisories are ignored in the script so it only alarms on something new.
 
 ```bash
-# Frontend (npm)
-cd src/frontend && npm audit
-
-# Backend (pip-audit)
-docker compose exec backend pip-audit
+make audit-backend                 # pip-audit the built backend image (#684)
+bin/pip-audit.sh <image-ref>       # audit a specific tag
+cd src/frontend && npm audit       # frontend
 ```
 
-### Known Vulnerabilities
+### Known / accepted advisories
 
-| Package | CVE | Status | Notes |
-|---------|-----|--------|-------|
-| ecdsa | CVE-2024-23342 | Won't Fix | Upstream considers timing attacks out of scope |
+Re-review each on the relevant dependency bump.
+
+| Package | Advisory | Status | Notes |
+|---------|----------|--------|-------|
+| ecdsa | CVE-2024-23342 / PYSEC-2026-1325 | Not exercised | ECDSA side-channel; renfield signs+verifies JWTs with **HS256 (HMAC) only** (`auth_service.ALGORITHM`), so the ECDSA path is never hit. Transitive dep of python-jose. |
+| transformers | PYSEC-2025-217, PYSEC-2026-2288/2289/2290 | Fix blocked | Fixes ship only in transformers 5.x, but `transformers<5` is pinned (5.x needs torch≥2.7; prod CPU torch is 2.6 — see requirements.txt). Renfield loads its **own** models (docling / rt_detr_v2), never user-supplied, so the model-deserialization surface is unreachable. Drop the ignore once the torch floor can move. |
 
 ## OWASP ZAP Testing
 

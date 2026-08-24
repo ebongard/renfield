@@ -12,7 +12,7 @@
 #   - Python 3.11+ (for local development)
 #   - Node.js 18+ (for local development)
 
-.PHONY: help dev prod stop clean build test lint format \
+.PHONY: help dev prod stop clean build test lint format audit-backend \
         backend-dev backend-test backend-lint backend-build \
         frontend-dev frontend-test frontend-lint frontend-build \
         test-frontend-react \
@@ -202,6 +202,11 @@ lint-frontend: ## Lint frontend JavaScript code (in Docker)
 	@$(DC) exec -T frontend npm run lint 2>/dev/null || \
 		(cd $(FRONTEND_DIR) && npm run lint)
 	@echo "$(GREEN)✓ Frontend linted$(NC)"
+
+audit-backend: ## Supply-chain audit: pip-audit the built backend image (#684)
+	@echo "$(BLUE)Auditing backend dependencies (pip-audit)...$(NC)"
+	@./bin/pip-audit.sh
+	@echo "$(GREEN)✓ Backend audited (no new advisories)$(NC)"
 
 format: format-backend format-frontend ## Format all code (in Docker)
 	@echo "$(GREEN)✓ All code formatted$(NC)"
