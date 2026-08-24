@@ -324,5 +324,8 @@ data:
 
   # === §2 meeting transcription — flip ON for the household, 2026-07-17 ===
   # Frontend + backend + voice-server all shipped dark; this turns the feature on.
-  # voice-server also needs MEETING_ENABLED=true (k8s/voice-server.yaml).
+  # The voice-server is the SHARED instance in the `voice` namespace (registry
+  # AUTH_MODE, managed in the flux private_k8s repo — NOT this repo); it also
+  # needs MEETING_ENABLED=true there. The former per-namespace voice-server
+  # (k8s/voice-server.yaml) was retired 2026-08-24 (superseded, scaled to 0).
   MEETING_TRANSCRIPTION_ENABLED: "true"
