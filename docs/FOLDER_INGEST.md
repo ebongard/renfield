@@ -166,6 +166,19 @@ the role descriptions in `config/agent_roles.yaml`.
   batch). The filed Paperless id is persisted on `documents.paperless_document_id`
   (migration `pc20260613`). The push itself never performs the external round-trip on a
   pooled DB connection — that inline leg was the 2026-07-01 pool-exhaustion outage.
+- **Idempotent refile (no re-upload loop).** The leg persists the Paperless consume
+  `task_id` on `documents.paperless_task_id` (migration `pc20260825`) BEFORE awaiting the
+  verdict; on a retry it RE-POLLS that task (`await_consume_result`) instead of
+  re-uploading. So a consume that outlives the await window (a slow Paperless) settles
+  from the same task next cycle rather than creating a fresh copy — the fix for a 2026-08
+  re-ingest loop that reached 2289 identical copies of one file on xidra. Only
+  success/duplicate/failure are terminal; a pending/transport-error re-poll keeps the
+  task_id and never re-uploads. The initial (fire-and-forget) filing hook awaits the full
+  `paperless_consume_timeout_s` (raised to 300s; it yields the loop, so long is free);
+  the retry runs in the sequential document worker and uses a short
+  `paperless_refile_poll_timeout_s` (30s) so it can't head-of-line-block ingest —
+  relying on the cheap re-poll. Docs that settle via the re-poll skip the post-consume
+  `created_date`/OCR patch (fixable via `bin/backfill_paperless_metadata.py`).
 - **Correspondent auto-create (Option A + guardrail).** Metadata extraction (`services/
   paperless_metadata_extractor.py`) only matches a correspondent against the *recency-
   pruned* taxonomy window, so a new sender would otherwise be filed blank. The leg now

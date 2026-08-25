@@ -1052,9 +1052,19 @@ PAPERLESS_DEDUPE_DELETE_BATCH=50
 # 6-Gi-Limit). Der Push wartet NIE inline auf die Paperless-Runde auf einer
 # Pool-Verbindung (das war die Outage vom 2026-07-01). Läuft, wenn folder- ODER
 # email-ingest→Paperless an ist.
+# Idempotenz gegen Re-Upload-Loop (2026-08): die Filing-Leg persistiert den Paperless-
+# Consume-task_id auf documents.paperless_task_id (Migration pc20260825) und pollt ihn
+# beim Retry erneut (await_consume_result) statt neu hochzuladen — ein Consume, der das
+# Await-Fenster überlebt, erzeugt so keine Duplikat-Kopie mehr (der Loop hatte auf xidra
+# 2289 Kopien einer Datei erzeugt). Der initiale (fire-and-forget) Filing-Hook wartet den
+# vollen PAPERLESS_CONSUME_TIMEOUT_S ab (yieldet den Loop → lang ist gratis); der Refile
+# läuft im sequentiellen document-worker und nutzt den kurzen POLL-Timeout, damit er den
+# Ingest nicht head-of-line-blockiert.
+PAPERLESS_CONSUME_TIMEOUT_S=300                 # Inline-Await auf den Consume-Verdikt (fire-and-forget-Hook); 2026-08 von 120→300 (xidra-Consume ~162s avg)
+PAPERLESS_REFILE_POLL_TIMEOUT_S=30             # kurzer Re-Poll-Timeout des gespeicherten task_id auf dem Retry-Pfad (blockiert den sequentiellen Worker nicht)
 PAPERLESS_RECONCILER_INTERVAL=120              # Sekunden zwischen Ticks
 PAPERLESS_RECONCILER_BATCH=25                  # pending-Dokumente pro Tick re-enqueued
-PAPERLESS_RECONCILER_REFILE_GRACE_SECONDS=300  # Karenz, bevor ein completed+pending-Doc als Nachzügler gilt (rennt nicht mit dem initialen Filing-Hook)
+PAPERLESS_RECONCILER_REFILE_GRACE_SECONDS=360  # Karenz, bevor ein completed+pending-Doc als Nachzügler gilt (> CONSUME_TIMEOUT+Puffer, damit der Reconciler nicht mit dem initialen Filing-Hook rennt)
 PAPERLESS_RECONCILER_REFILE_LEASE_SECONDS=900  # Redis-Lease pro Doc: nur ein Refile-Versuch gleichzeitig; läuft ab → Retry (verhindert Re-Enqueue-Churn)
 
 # Restart-sicherer Finalize-Reconciler (#658) für den INTERAKTIVEN Paperless-Commit
@@ -1098,7 +1108,7 @@ FILES_HEALTH_POLL_SECONDS=30          # Backend-Health-Poll; bei down→up wird 
 - `FOLDER_INGEST_DEFAULT_TIER`: `0`
 - `FOLDER_INGEST_TO_PAPERLESS`: `true`
 - `FOLDER_INGEST_NOTIFY_ON_FILED`: `true`
-- `PAPERLESS_RECONCILER_INTERVAL`: `120` · `PAPERLESS_RECONCILER_BATCH`: `25` · `PAPERLESS_RECONCILER_REFILE_GRACE_SECONDS`: `300` · `PAPERLESS_RECONCILER_REFILE_LEASE_SECONDS`: `900`
+- `PAPERLESS_CONSUME_TIMEOUT_S`: `300` · `PAPERLESS_REFILE_POLL_TIMEOUT_S`: `30` · `PAPERLESS_RECONCILER_INTERVAL`: `120` · `PAPERLESS_RECONCILER_BATCH`: `25` · `PAPERLESS_RECONCILER_REFILE_GRACE_SECONDS`: `360` · `PAPERLESS_RECONCILER_REFILE_LEASE_SECONDS`: `900`
 - `PAPERLESS_FINALIZE_RECONCILER_INTERVAL`: `120` · `_BATCH`: `25` · `_GRACE_SECONDS`: `360` · `_POLL_SECONDS`: `30` · `_LEASE_SECONDS`: `120` · `_MAX_ATTEMPTS`: `5` · `_GIVEUP_HOURS`: `24`
 - `FILES_MAX_CONCURRENT_PUSHES`: `4` · `FILES_HEALTH_POLL_SECONDS`: `30`
 
