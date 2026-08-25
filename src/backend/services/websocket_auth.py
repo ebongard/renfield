@@ -213,6 +213,14 @@ async def authenticate_websocket(
     except Exception as e:  # noqa: BLE001 — decode_token shouldn't raise, but defend
         logger.debug(f"WebSocket JWT decode raised unexpectedly: {e}")
 
+    # A "voice"-scoped faucet token is ONLY for the external voice-server's
+    # /ws/voice handshake — reject it on renfield's own /ws/* so a harvested voice
+    # token can't open a chat/kiosk socket (scope hygiene; the "ws" scope stays
+    # valid here, and a legacy no-scope access token is still accepted).
+    if payload and payload.get("scope") == "voice":
+        logger.debug("WebSocket JWT rejected: voice-scoped token not valid on this socket")
+        return None
+
     if payload and payload.get("type") == "access":
         sub = payload.get("sub")
         try:

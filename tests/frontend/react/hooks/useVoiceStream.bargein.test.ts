@@ -15,6 +15,13 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { renderHook, act } from '@testing-library/react';
 import { useVoiceStream } from '../../../../src/frontend/src/pages/ChatPage/hooks/useVoiceStream';
 
+// The hook now fetches its own short-lived voice faucet token; mock it to null
+// (anonymous handshake) so these WS-plumbing tests stay HTTP-free + deterministic.
+vi.mock('../../../../src/frontend/src/utils/wsToken', () => ({
+  fetchVoiceToken: () => Promise.resolve(null),
+  fetchWsToken: () => Promise.resolve(null),
+}));
+
 type WsListener = (event: unknown) => void;
 
 // Mock WebSocket with addEventListener support — useVoiceStream's
@@ -265,6 +272,9 @@ async function speakAndConnect(
   act(() => {
     ridP = result.current.speakText(text);
   });
+  // The hook now fetches a short-lived voice token async before creating the
+  // socket — flush that microtask so the WebSocket exists before we grab it.
+  await act(async () => { await Promise.resolve(); });
   const ws = lastWs();
   await act(async () => {
     ws.fireOpen();
@@ -328,7 +338,7 @@ afterEach(() => {
 
 describe('useVoiceStream — barge-in plumbing', () => {
   it('speakText dispatches a tts_request and resolves to its request id', async () => {
-    const { result } = renderHook(() => useVoiceStream({ token: null }));
+    const { result } = renderHook(() => useVoiceStream({}));
     const { ws, rid } = await speakAndConnect(result);
 
     expect(typeof rid).toBe('string');
@@ -341,11 +351,13 @@ describe('useVoiceStream — barge-in plumbing', () => {
   it('speakText is gated (returns null) when cancelAllPlayback fires during the handshake', async () => {
     // Headline 1A: TTS the agent produced before the user interrupted
     // must not reach the speaker.
-    const { result } = renderHook(() => useVoiceStream({ token: null }));
+    const { result } = renderHook(() => useVoiceStream({}));
     let ridP!: Promise<string | null>;
     act(() => {
       ridP = result.current.speakText('soll nicht gesprochen werden');
     });
+    // Flush the async voice-token fetch so the socket is created (still pre-ready).
+    await act(async () => { await Promise.resolve(); });
     const ws = lastWs();
     // Barge-in lands while the socket handshake is still in flight.
     act(() => {
@@ -362,7 +374,7 @@ describe('useVoiceStream — barge-in plumbing', () => {
   });
 
   it('tts_done drains the request and ends playback after the grace window', async () => {
-    const { result } = renderHook(() => useVoiceStream({ token: null }));
+    const { result } = renderHook(() => useVoiceStream({}));
     const { ws, rid } = await speakAndConnect(result);
     expect(result.current.playbackActive).toBe(true);
 
@@ -381,7 +393,7 @@ describe('useVoiceStream — barge-in plumbing', () => {
     const onError = vi.fn();
     const onTtsSettled = vi.fn();
     const { result } = renderHook(() =>
-      useVoiceStream({ token: null, onError, onTtsSettled }),
+      useVoiceStream({ onError, onTtsSettled }),
     );
     const { ws, rid } = await speakAndConnect(result);
 
@@ -401,7 +413,7 @@ describe('useVoiceStream — barge-in plumbing', () => {
     const onError = vi.fn();
     const onTtsSettled = vi.fn();
     const { result } = renderHook(() =>
-      useVoiceStream({ token: null, onError, onTtsSettled }),
+      useVoiceStream({ onError, onTtsSettled }),
     );
     const { ws, rid } = await speakAndConnect(result);
 
@@ -418,7 +430,7 @@ describe('useVoiceStream — barge-in plumbing', () => {
   });
 
   it('WS close clears pending TTS and ends playback immediately', async () => {
-    const { result } = renderHook(() => useVoiceStream({ token: null }));
+    const { result } = renderHook(() => useVoiceStream({}));
     const { ws } = await speakAndConnect(result);
     expect(result.current.playbackActive).toBe(true);
 
@@ -430,7 +442,7 @@ describe('useVoiceStream — barge-in plumbing', () => {
   });
 
   it('the 60s watchdog force-drops a request whose terminal frame never arrives', async () => {
-    const { result } = renderHook(() => useVoiceStream({ token: null }));
+    const { result } = renderHook(() => useVoiceStream({}));
     await speakAndConnect(result);
     expect(result.current.playbackActive).toBe(true);
 
@@ -445,7 +457,7 @@ describe('useVoiceStream — barge-in plumbing', () => {
   });
 
   it('cancelAllPlayback sends one cancel frame per in-flight request', async () => {
-    const { result } = renderHook(() => useVoiceStream({ token: null }));
+    const { result } = renderHook(() => useVoiceStream({}));
     const { ws, rid } = await speakAndConnect(result, 'satz eins');
     const rid2 = await speakAgain(result, 'satz zwei');
     const rid3 = await speakAgain(result, 'satz drei');
@@ -464,7 +476,7 @@ describe('useVoiceStream — barge-in plumbing', () => {
   });
 
   it('cancelAllPlayback after the socket closed does not throw', async () => {
-    const { result } = renderHook(() => useVoiceStream({ token: null }));
+    const { result } = renderHook(() => useVoiceStream({}));
     const { ws } = await speakAndConnect(result);
     act(() => {
       ws.fireClose();
@@ -477,7 +489,7 @@ describe('useVoiceStream — barge-in plumbing', () => {
   });
 
   it('a binary frame for an unknown request id is dropped (rid gate)', async () => {
-    const { result } = renderHook(() => useVoiceStream({ token: null }));
+    const { result } = renderHook(() => useVoiceStream({}));
     const { ws, rid } = await speakAndConnect(result);
 
     // Settle the real request so playback is idle.
@@ -506,7 +518,7 @@ describe('useVoiceStream — barge-in plumbing', () => {
     // gate condition (drop the pending ones) would silently discard ALL
     // TTS audio and the suite would still pass.
     MockAudioContext.autoDecode = true;
-    const { result } = renderHook(() => useVoiceStream({ token: null }));
+    const { result } = renderHook(() => useVoiceStream({}));
     const { ws, rid } = await speakAndConnect(result);
 
     await act(async () => {
@@ -524,7 +536,7 @@ describe('useVoiceStream — barge-in plumbing', () => {
     // The generation re-check after decodeAudioData must drop the buffer
     // instead of starting a source.
     MockAudioContext.autoDecode = false;
-    const { result } = renderHook(() => useVoiceStream({ token: null }));
+    const { result } = renderHook(() => useVoiceStream({}));
     const { ws, rid } = await speakAndConnect(result);
 
     await act(async () => {
@@ -550,7 +562,7 @@ describe('useVoiceStream — barge-in plumbing', () => {
 
   it('the barge-in listener does not fire while the mic is silent', async () => {
     MockAudioContext.frequencyFrame = []; // silence
-    const { result } = renderHook(() => useVoiceStream({ token: null }));
+    const { result } = renderHook(() => useVoiceStream({}));
     const { ws } = await speakAndConnect(result);
     await act(async () => { await flushMicrotasks(); }); // listener open() settles
     await act(async () => {
@@ -563,7 +575,7 @@ describe('useVoiceStream — barge-in plumbing', () => {
 
   it('voiced energy within the warmup window does not fire a barge-in', async () => {
     MockAudioContext.frequencyFrame = new Array(16).fill(200); // loud
-    const { result } = renderHook(() => useVoiceStream({ token: null }));
+    const { result } = renderHook(() => useVoiceStream({}));
     const { ws } = await speakAndConnect(result);
     await act(async () => { await flushMicrotasks(); });
     // Only 200ms elapse — short of the 250ms warmup, so detection is
@@ -578,7 +590,7 @@ describe('useVoiceStream — barge-in plumbing', () => {
 
   it('sustained voiced energy fires a barge-in: cancels TTS and promotes to recording', async () => {
     MockAudioContext.frequencyFrame = new Array(16).fill(200); // user speaking
-    const { result } = renderHook(() => useVoiceStream({ token: null }));
+    const { result } = renderHook(() => useVoiceStream({}));
     const { ws } = await speakAndConnect(result);
     await act(async () => { await flushMicrotasks(); });
 
@@ -600,7 +612,7 @@ describe('useVoiceStream — barge-in plumbing', () => {
     getUserMediaShouldReject = true;
     MockAudioContext.frequencyFrame = new Array(16).fill(200);
     const onError = vi.fn();
-    const { result } = renderHook(() => useVoiceStream({ token: null, onError }));
+    const { result } = renderHook(() => useVoiceStream({ onError }));
     const { ws } = await speakAndConnect(result);
     await act(async () => {
       vi.advanceTimersByTime(600);
@@ -616,7 +628,7 @@ describe('useVoiceStream — barge-in plumbing', () => {
     // open()-vs-cleanup race: getUserMedia is still in flight when the
     // reply finishes. The cancelled-flag guard must stop the late stream.
     getUserMediaDeferred = true;
-    const { result } = renderHook(() => useVoiceStream({ token: null }));
+    const { result } = renderHook(() => useVoiceStream({}));
     const { ws, rid } = await speakAndConnect(result);
     await act(async () => { await flushMicrotasks(); }); // listener parked on getUserMedia
     expect(getUserMediaResolvers).toHaveLength(1);
@@ -641,9 +653,11 @@ describe('useVoiceStream — checkSilence regression (plan §8.3)', () => {
   // IRON RULE: the computeRms extraction (T4a) refactored checkSilence.
   // This proves end-of-utterance auto-stop still fires.
   it('still auto-stops the recorder after trailing silence', async () => {
-    const { result } = renderHook(() => useVoiceStream({ token: null }));
+    const { result } = renderHook(() => useVoiceStream({}));
     let startP!: Promise<void>;
     act(() => { startP = result.current.startRecording(); });
+    // Flush the async voice-token fetch so the socket exists before we grab it.
+    await act(async () => { await Promise.resolve(); });
     const ws = lastWs();
     await act(async () => {
       ws.fireOpen();

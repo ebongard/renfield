@@ -16,12 +16,25 @@ import apiClient from './axios';
  * rejects and the caller retries on its normal reconnect path). We deliberately
  * do NOT fall back to the long-lived localStorage access token — that would
  * re-introduce the full-JWT-in-URL exposure this change closes.
+ *
+ * `purpose` selects the faucet scope: `"ws"` (default) for renfield's own /ws/*
+ * sockets, or `"voice"` for the external voice-server handshake (its verify path
+ * accepts a non-"ws" scope). Both are short-lived and REST-rejected.
  */
-export async function fetchWsToken(): Promise<string | null> {
+export async function fetchWsToken(purpose: 'ws' | 'voice' = 'ws'): Promise<string | null> {
   try {
-    const res = await apiClient.post('/api/ws/token');
+    const res = await apiClient.post('/api/ws/token', null, { params: { purpose } });
     return res.data?.token ?? null;
   } catch {
     return null;
   }
+}
+
+/**
+ * Short-lived `scope:"voice"` token for the browser voice WebSocket to the
+ * external voice-server — replaces shipping the long-lived localStorage access
+ * JWT in the voice `?token=` (the last JS-readable long-lived-token exposure).
+ */
+export function fetchVoiceToken(): Promise<string | null> {
+  return fetchWsToken('voice');
 }

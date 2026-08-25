@@ -21,7 +21,6 @@ import {
 // voice-server) instead of the request-response REST pair. Off by default
 // during the soak period so flag-off is the safety path.
 const VOICE_STREAM_ENABLED = import.meta.env.VITE_FEATURE_VOICE_STREAM === 'true';
-const ACCESS_TOKEN_KEY = 'renfield_access_token';
 // Stable no-op for the legacy (flag-off) path's cancelAllPlayback so the
 // context value's identity doesn't churn every render.
 const NOOP = (): void => {};
@@ -1408,19 +1407,10 @@ export function ChatProvider({ children }: ChatProviderProps) {
     handleRecordingError(`${code}: ${message}`);
   }, [handleRecordingError]);
 
-  // Token: read once, refresh via storage event so a token rotation
-  // mid-session updates the ref without re-rendering this provider for
-  // every state change.
-  const [streamToken, setStreamToken] = useState<string | null>(() =>
-    localStorage.getItem(ACCESS_TOKEN_KEY),
-  );
-  useEffect(() => {
-    const handler = (e: StorageEvent) => {
-      if (e.key === ACCESS_TOKEN_KEY) setStreamToken(e.newValue);
-    };
-    window.addEventListener('storage', handler);
-    return () => window.removeEventListener('storage', handler);
-  }, []);
+  // Voice-WS auth: useVoiceStream now fetches its own short-lived scope:"voice"
+  // faucet token at connect time (see wsToken.fetchVoiceToken), so we no longer
+  // read the long-lived access JWT from localStorage here — that was the last
+  // JS-readable long-lived-token exposure (JWT-cookie migration follow-up).
 
   // Sentence-streaming TTS bookkeeping — onTtsSettled fires per
   // dispatched sentence on EVERY terminal outcome (done / cancelled /
@@ -1452,7 +1442,6 @@ export function ChatProvider({ children }: ChatProviderProps) {
   }, [resumeWakeWord]);
 
   const voiceStream = useVoiceStream({
-    token: streamToken,
     onFinal: handleStreamFinal,
     onError: handleStreamError,
     onTtsSettled: handleStreamTtsSettled,

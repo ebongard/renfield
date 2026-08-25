@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, renderHook, act } from '@testing-library/react';
 import { http, HttpResponse } from 'msw';
 import { server } from '../mocks/server';
 import { BASE_URL } from '../mocks/handlers';
@@ -67,6 +67,65 @@ describe('AuthContext', () => {
 
   afterEach(() => {
     localStorage.clear();
+  });
+
+  describe('Cookie mode (XSS hardening)', () => {
+    it('login persists NEITHER token to localStorage when auth_cookie_enabled', async () => {
+      server.use(
+        http.get(`${BASE_URL}/api/auth/status`, () =>
+          HttpResponse.json({
+            auth_enabled: true,
+            allow_registration: false,
+            auth_cookie_enabled: true,
+          })
+        ),
+        http.get(`${BASE_URL}/api/auth/me`, () =>
+          HttpResponse.json({ id: 1, username: 'u', role: 'Admin', permissions: ['admin'] })
+        ),
+        http.post(`${BASE_URL}/api/auth/login`, () =>
+          HttpResponse.json({
+            access_token: 'a', refresh_token: 'r', token_type: 'bearer', expires_in: 3600,
+          })
+        )
+      );
+
+      const { result } = renderHook(() => useAuth(), { wrapper: AuthProvider });
+      await waitFor(() => expect(result.current.loading).toBe(false));
+      await act(async () => {
+        await result.current.login('u', 'pw');
+      });
+
+      // The whole point of the migration: in cookie mode the session lives only
+      // in the HttpOnly cookies — an XSS has nothing to read from localStorage.
+      expect(localStorage.getItem('renfield_access_token')).toBeNull();
+      expect(localStorage.getItem('renfield_refresh_token')).toBeNull();
+      expect(result.current.isAuthenticated).toBe(true);
+    });
+
+    it('login DOES persist tokens to localStorage when cookie mode is off (legacy)', async () => {
+      server.use(
+        http.get(`${BASE_URL}/api/auth/status`, () =>
+          HttpResponse.json({ auth_enabled: true, allow_registration: false })
+        ),
+        http.get(`${BASE_URL}/api/auth/me`, () =>
+          HttpResponse.json({ id: 1, username: 'u', role: 'Admin', permissions: ['admin'] })
+        ),
+        http.post(`${BASE_URL}/api/auth/login`, () =>
+          HttpResponse.json({
+            access_token: 'a', refresh_token: 'r', token_type: 'bearer', expires_in: 3600,
+          })
+        )
+      );
+
+      const { result } = renderHook(() => useAuth(), { wrapper: AuthProvider });
+      await waitFor(() => expect(result.current.loading).toBe(false));
+      await act(async () => {
+        await result.current.login('u', 'pw');
+      });
+
+      expect(localStorage.getItem('renfield_access_token')).toBe('a');
+      expect(localStorage.getItem('renfield_refresh_token')).toBe('r');
+    });
   });
 
   describe('Initialization', () => {

@@ -171,23 +171,41 @@ def create_refresh_token(user_id: int, token_epoch: int | None = None) -> str:
     return encoded_jwt
 
 
-def create_ws_token_jwt(user_id: int, token_epoch: int | None = None) -> str:
-    """
-    Mint a SHORT-LIVED, WS-scoped access JWT for the browser WebSocket handshake
-    (security audit M2).
+# WS-faucet token scopes. Each is a short-lived (~90s) type="access" token minted
+# by /api/ws/token for a specific handshake and REJECTED by the REST API
+# (get_current_user) so a token harvested from a WS URL / proxy log can't be
+# replayed against /api/*.
+#   "ws"    → renfield's own /ws/* (chat, kiosk, kg) — authenticate_websocket accepts it.
+#   "voice" → the browser voice WS to the external voice-server, whose verify path
+#             (internal_auth.verify) accepts any non-"ws" scope. This replaces the
+#             full 24h access JWT the voice path used to ship in ?token= — the last
+#             JS-readable long-lived-token exposure (JWT-cookie migration follow-up).
+WS_FAUCET_SCOPES = frozenset({"ws", "voice"})
 
-    The web client passes the WS token as ``?token=`` on the WebSocket URL, which
-    lands in reverse-proxy access logs / history / Referer. Handing over the
-    full 24h API access token there is the vulnerability; this token instead:
+
+def create_ws_token_jwt(
+    user_id: int, token_epoch: int | None = None, scope: str = "ws"
+) -> str:
+    """
+    Mint a SHORT-LIVED, faucet-scoped access JWT for a browser WebSocket handshake
+    (security audit M2 + voice-WS migration).
+
+    The web client passes the token as ``?token=`` on the WebSocket URL, which
+    lands in reverse-proxy access logs / history / Referer. Handing over the full
+    24h API access token there is the vulnerability; this token instead:
       - lives only ``ws_jwt_expire_seconds`` (~90s) — long enough to open the
         socket, far too short to be useful if harvested from a log later, and
-      - carries ``scope="ws"``, which :func:`get_current_user` REJECTS, so even
-        within its lifetime it is useless against the REST API.
-    It is a normal ``type="access"`` token so ``authenticate_websocket``
-    (Strategy 1) accepts it after the usual user existence/active/rotation checks.
-    Stateless (survives the single-replica Recreate restart), unlike the
-    in-memory device token store.
+      - carries a faucet ``scope`` (``ws``/``voice``, see ``WS_FAUCET_SCOPES``),
+        which :func:`get_current_user` REJECTS, so even within its lifetime it is
+        useless against the REST API.
+    It is a normal ``type="access"`` token. ``scope="ws"`` is accepted by
+    ``authenticate_websocket`` (renfield's own /ws/*); ``scope="voice"`` is
+    accepted by the voice-server's verify path but rejected by both the REST guard
+    and ``authenticate_websocket`` (it's only for the voice handshake). Stateless
+    (survives the single-replica Recreate restart), unlike the device token store.
     """
+    if scope not in WS_FAUCET_SCOPES:
+        raise ValueError(f"invalid WS faucet scope: {scope!r}")
     expire = datetime.now(UTC).replace(tzinfo=None) + timedelta(
         seconds=settings.ws_jwt_expire_seconds
     )
@@ -195,7 +213,7 @@ def create_ws_token_jwt(user_id: int, token_epoch: int | None = None) -> str:
         "sub": str(user_id),
         "exp": expire,
         "type": "access",
-        "scope": "ws",
+        "scope": scope,
         "jti": str(uuid4()),
     }
     if token_epoch is not None:
@@ -368,10 +386,11 @@ async def get_current_user(
             headers={"WWW-Authenticate": "Bearer"},
         )
 
-    # A WS-scoped token (security audit M2) is ONLY valid on the WebSocket
-    # handshake, never against the REST API — reject it here so a short-lived WS
-    # token harvested from a proxy log can't be replayed as an API bearer.
-    if payload.get("scope") == "ws":
+    # A faucet-scoped token (security audit M2 + voice-WS migration) is ONLY valid
+    # on its WebSocket handshake, never against the REST API — reject any WS-faucet
+    # scope here so a short-lived ws/voice token harvested from a proxy log can't be
+    # replayed as an API bearer.
+    if payload.get("scope") in WS_FAUCET_SCOPES:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid token scope",

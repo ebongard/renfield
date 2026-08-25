@@ -264,6 +264,109 @@ async def test_ws_scoped_token_rejected_on_rest(monkeypatch):
 
 
 # =============================================================================
+# Voice-WS faucet token (voice-WS migration): short-lived scope:"voice"
+# =============================================================================
+class TestVoiceFaucetToken:
+    @pytest.mark.unit
+    def test_minter_voice_scope(self):
+        from jose import jwt
+        from services.auth_service import ALGORITHM, WS_FAUCET_SCOPES, create_ws_token_jwt
+        from utils.config import settings
+        assert "voice" in WS_FAUCET_SCOPES
+        tok = create_ws_token_jwt(1, 0, scope="voice")
+        p = jwt.decode(tok, settings.secret_key.get_secret_value(), algorithms=[ALGORITHM])
+        assert p["scope"] == "voice" and p["type"] == "access"
+
+    @pytest.mark.unit
+    def test_minter_default_is_ws(self):
+        from jose import jwt
+        from services.auth_service import ALGORITHM, create_ws_token_jwt
+        from utils.config import settings
+        p = jwt.decode(
+            create_ws_token_jwt(1, 0),
+            settings.secret_key.get_secret_value(), algorithms=[ALGORITHM],
+        )
+        assert p["scope"] == "ws"
+
+    @pytest.mark.unit
+    def test_minter_invalid_scope_raises(self):
+        from services.auth_service import create_ws_token_jwt
+        with pytest.raises(ValueError, match="scope"):
+            create_ws_token_jwt(1, 0, scope="bogus")
+
+    @pytest.mark.asyncio
+    async def test_voice_token_rejected_on_rest(self, monkeypatch):
+        """A harvested scope:voice token must NOT work against the REST API."""
+        from fastapi import HTTPException
+        from services import auth_service as a
+        monkeypatch.setattr(a.settings, "auth_enabled", True)
+        tok = a.create_ws_token_jwt(1, 0, scope="voice")
+        with pytest.raises(HTTPException) as exc:
+            await a.get_current_user(token=tok, db=None, request=None)
+        assert exc.value.status_code == 401
+
+    @pytest.mark.database
+    @pytest.mark.asyncio
+    async def test_voice_token_rejected_on_chat_ws(self, ws_session_factory, monkeypatch):
+        """A scope:voice token must NOT open renfield's own /ws/* (chat) — only the
+        external voice-server's /ws/voice accepts it (via internal_auth.verify)."""
+        from services import websocket_auth as wa
+        from services.auth_service import create_ws_token_jwt
+        monkeypatch.setattr(wa.settings, "ws_auth_enabled", True)
+        uid = await _mk_user(ws_session_factory, epoch=0)
+        tok = create_ws_token_jwt(uid, 0, scope="voice")
+        # via query token (chat WS reads ?token=) → rejected
+        assert await wa.authenticate_websocket(_fake_ws({}), token=tok) is None
+
+    @pytest.mark.asyncio
+    async def test_faucet_route_purpose_threading(self, monkeypatch):
+        """/api/ws/token: bad purpose → 422; purpose=voice → a voice-scoped token;
+        WS auth off → {token:None}."""
+        from fastapi import HTTPException
+        from jose import jwt
+        from main import create_ws_token
+        from services import auth_service as a
+        from utils.config import settings
+        user = MagicMock(id=7, token_epoch=0)
+
+        monkeypatch.setattr(a.settings, "ws_auth_enabled", True, raising=False)
+        # bad purpose → 422 (before any minting)
+        with pytest.raises(HTTPException) as exc:
+            await create_ws_token(purpose="bogus", current_user=user)
+        assert exc.value.status_code == 422
+
+        # purpose=voice → voice-scoped token bound to the caller
+        res = await create_ws_token(purpose="voice", current_user=user)
+        p = jwt.decode(res["token"], settings.secret_key.get_secret_value(),
+                       algorithms=[a.ALGORITHM])
+        assert p["scope"] == "voice" and p["sub"] == "7"
+
+        # WS auth disabled (household) → no token regardless of purpose
+        monkeypatch.setattr(a.settings, "ws_auth_enabled", False, raising=False)
+        res_off = await create_ws_token(purpose="voice", current_user=user)
+        assert res_off["token"] is None
+
+    @pytest.mark.database
+    @pytest.mark.asyncio
+    async def test_voice_token_accepted_by_internal_verify(self, ws_session_factory, monkeypatch):
+        """internal_auth.verify accepts a scope:voice token (the voice-server path)
+        — it only rejects scope:ws."""
+        from unittest.mock import patch
+        from api.routes.internal_auth import VerifyRequest, verify_token
+        from services import auth_service as a
+        monkeypatch.setattr(a.settings, "auth_enabled", True)
+        monkeypatch.setattr(a.settings, "internal_auth_verify_secret", None, raising=False)
+        uid = await _mk_user(ws_session_factory, epoch=0)
+        tok = a.create_ws_token_jwt(uid, 0, scope="voice")
+        # verify_token has no db param — it opens AsyncSessionLocal internally,
+        # which the ws_session_factory fixture patches to the test engine.
+        with patch("services.token_blacklist.token_blacklist.is_blacklisted",
+                   new=AsyncMock(return_value=False)):
+            result = await verify_token(VerifyRequest(token=tok), x_verify_secret=None)
+        assert int(result.get("user_id")) == uid and result.get("scope") == "voice"
+
+
+# =============================================================================
 # Refresh cookie dual-read (High finding: {} body 422'd before the cookie read)
 # =============================================================================
 def _cookie_limiter_request(cookie_header: str, path="/api/auth/refresh"):

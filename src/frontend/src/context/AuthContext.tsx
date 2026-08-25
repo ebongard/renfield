@@ -59,14 +59,19 @@ export function AuthProvider({ children }: AuthProviderProps) {
 
   // Store tokens
   const setTokens = useCallback((accessToken?: string, refreshToken?: string) => {
+    // Cookie mode: NEITHER token is persisted to localStorage — the session
+    // lives entirely in the HttpOnly cookies, so an XSS has nothing to steal.
+    // (The voice WS now fetches its own short-lived scope:"voice" faucet token,
+    // so it no longer needs the access token here; the SPA's own requests use the
+    // cookie; the Reva fragment path writes its own token independently.)
+    // Flag off (legacy / rollback) → persist both as before.
+    if (cookieAuthRef.current) {
+      return;
+    }
     if (accessToken) {
       localStorage.setItem(ACCESS_TOKEN_KEY, accessToken);
     }
-    // Cookie mode: the 30-day refresh token — the real XSS target — lives ONLY
-    // in the HttpOnly cookie; never persist it to localStorage. The 24h access
-    // token is still stored (the voice WS reads it — its migration is deferred —
-    // and the Bearer dual-read needs it); full elimination awaits that follow-up.
-    if (refreshToken && !cookieAuthRef.current) {
+    if (refreshToken) {
       localStorage.setItem(REFRESH_TOKEN_KEY, refreshToken);
     }
   }, []);
@@ -214,13 +219,14 @@ export function AuthProvider({ children }: AuthProviderProps) {
 
   // Change password
   const changePassword = useCallback(async (currentPassword: string, newPassword: string): Promise<{ message: string }> => {
+    // Attach the localStorage Bearer only if present (legacy); in cookie mode
+    // there is no JS-readable token and the HttpOnly cookie carries auth — don't
+    // send a literal "Bearer null" header (mirrors logout).
     const token = getAccessToken();
     const response = await apiClient.post('/api/auth/change-password', {
       current_password: currentPassword,
       new_password: newPassword
-    }, {
-      headers: { Authorization: `Bearer ${token}` }
-    });
+    }, token ? { headers: { Authorization: `Bearer ${token}` } } : undefined);
     // Security audit H3: the backend bumps the user's token_epoch on a password
     // change (revoking every OTHER outstanding session) and returns a fresh token
     // pair carrying the new epoch. Store them so THIS device stays logged in;

@@ -11,7 +11,7 @@ vi.mock('../../../../src/frontend/src/utils/axios', () => ({
 }));
 
 import apiClient from '../../../../src/frontend/src/utils/axios';
-import { fetchWsToken } from '../../../../src/frontend/src/utils/wsToken';
+import { fetchVoiceToken, fetchWsToken } from '../../../../src/frontend/src/utils/wsToken';
 
 const post = apiClient.post as unknown as ReturnType<typeof vi.fn>;
 
@@ -23,7 +23,13 @@ describe('fetchWsToken', () => {
   it('returns the scoped token from the response', async () => {
     post.mockResolvedValueOnce({ data: { token: 'ws-scoped-token' } });
     await expect(fetchWsToken()).resolves.toBe('ws-scoped-token');
-    expect(post).toHaveBeenCalledWith('/api/ws/token');
+    expect(post).toHaveBeenCalledWith('/api/ws/token', null, { params: { purpose: 'ws' } });
+  });
+
+  it('fetchVoiceToken requests the voice purpose', async () => {
+    post.mockResolvedValueOnce({ data: { token: 'voice-scoped-token' } });
+    await expect(fetchVoiceToken()).resolves.toBe('voice-scoped-token');
+    expect(post).toHaveBeenCalledWith('/api/ws/token', null, { params: { purpose: 'voice' } });
   });
 
   it('returns null when the backend reports WS auth disabled (token: null)', async () => {

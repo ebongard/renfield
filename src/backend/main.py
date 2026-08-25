@@ -479,14 +479,25 @@ async def liveness_check():
 async def create_ws_token(
     device_id: str = None,
     device_type: str = None,
+    purpose: str = "ws",
     current_user: User | None = Depends(get_current_user),
 ):
     """
     Generate a WebSocket authentication token.
 
+    ``purpose`` selects the faucet scope: ``ws`` (default) for renfield's own
+    /ws/* sockets (chat/kiosk/kg), or ``voice`` for the browser voice WS to the
+    external voice-server (whose verify path accepts a non-"ws" scope; this
+    replaces the full 24h access JWT the voice path used to ship in ?token=).
+
     Only relevant when WS_AUTH_ENABLED=true.
     In production, this endpoint should be protected by authentication.
     """
+    from services.auth_service import WS_FAUCET_SCOPES
+
+    if purpose not in WS_FAUCET_SCOPES:
+        raise HTTPException(status_code=422, detail="Invalid token purpose")
+
     if not settings.ws_auth_enabled:
         return {
             "token": None,
@@ -510,7 +521,9 @@ async def create_ws_token(
     # access token after the usual user existence/active/rotation checks.
     from services.auth_service import create_ws_token_jwt
 
-    token = create_ws_token_jwt(current_user.id, token_epoch=current_user.token_epoch)
+    token = create_ws_token_jwt(
+        current_user.id, token_epoch=current_user.token_epoch, scope=purpose
+    )
 
     return {
         "token": token,

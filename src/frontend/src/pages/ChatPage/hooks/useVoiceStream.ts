@@ -32,6 +32,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { getWebSocketUrl } from '../../../utils/env';
 import { debug } from '../../../utils/debug';
 import { computeRms, detectBargeIn, VOICE_MIC_CONSTRAINTS } from './voiceAudioUtils';
+import { fetchVoiceToken } from '../../../utils/wsToken';
 
 const RFWA_MAGIC = new Uint8Array([0x52, 0x46, 0x57, 0x41]); // "RFWA"
 const HEADER_LEN = 24; // 4 magic + 16 uuid + 4 sequence
@@ -110,7 +111,9 @@ interface FinalTranscript {
 }
 
 interface UseVoiceStreamOptions {
-  token: string | null;
+  // No token here anymore: the hook fetches a fresh short-lived scope:"voice"
+  // faucet token itself at connect time (see ensureSocket) instead of receiving
+  // the long-lived localStorage access JWT.
   onPartial?: (text: string, confidence: number) => void;
   onFinal?: (result: FinalTranscript) => void;
   onError?: (code: string, message: string, requestId?: string) => void;
@@ -179,7 +182,6 @@ function generateRequestId(): string {
 }
 
 export function useVoiceStream({
-  token,
   onPartial,
   onFinal,
   onError,
@@ -455,10 +457,13 @@ export function useVoiceStream({
     // never create a second WebSocket while one is CONNECTING.
     if (pendingSocketRef.current) return pendingSocketRef.current;
 
-    // token=null is allowed (no-auth deployments). buildVoiceWsUrl
-    // omits the query param; voice-server's auth.authenticate treats
-    // empty token as anonymous when auth_required=False.
-    const url = buildVoiceWsUrl(token);
+    // Fetch a fresh short-lived scope:"voice" faucet token per connect — this
+    // replaces shipping the long-lived localStorage access JWT (the last
+    // JS-readable long-lived-token exposure). fetchVoiceToken() returns null on
+    // auth-off deployments → buildVoiceWsUrl omits the query param and the
+    // voice-server treats the empty token as anonymous (auth_required=False).
+    const connect = fetchVoiceToken().then((wsToken) => {
+    const url = buildVoiceWsUrl(wsToken);
     const ws = new WebSocket(url);
     ws.binaryType = 'arraybuffer';
     wsRef.current = ws;
@@ -539,12 +544,15 @@ export function useVoiceStream({
       ws.addEventListener('error', onErrorEarly, { once: true });
     });
 
-    pendingSocketRef.current = handshake;
-    handshake.finally(() => {
-      if (pendingSocketRef.current === handshake) pendingSocketRef.current = null;
-    });
     return handshake;
-  }, [token, handleTextMessage, enqueuePlayback, clearAllPendingTts]);
+    });
+
+    pendingSocketRef.current = connect;
+    connect.finally(() => {
+      if (pendingSocketRef.current === connect) pendingSocketRef.current = null;
+    });
+    return connect;
+  }, [handleTextMessage, enqueuePlayback, clearAllPendingTts]);
 
   // Build the MediaRecorder + VAD loop on an already-open mic stream
   // and start streaming. Shared by startRecording (which gets a fresh
