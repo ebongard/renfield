@@ -83,7 +83,6 @@ class TestTokenReader:
         req = _fake_request(cookies={"renfield_access": "COOKIEJWT"},
                             auth_header="Bearer HEADERJWT")
         assert await a._cookie_or_bearer_token(req) == "COOKIEJWT"
-        assert req.state.auth_via == "cookie"
 
     async def test_falls_back_to_bearer(self, monkeypatch):
         from services import auth_service as a
@@ -91,14 +90,12 @@ class TestTokenReader:
         monkeypatch.setattr(a.settings, "auth_cookie_name", "renfield_access")
         req = _fake_request(cookies={}, auth_header="Bearer HEADERJWT")
         assert await a._cookie_or_bearer_token(req) == "HEADERJWT"
-        assert req.state.auth_via == "bearer"
 
     async def test_flag_off_ignores_cookie(self, monkeypatch):
         from services import auth_service as a
         monkeypatch.setattr(a.settings, "auth_cookie_enabled", False)
         req = _fake_request(cookies={"renfield_access": "COOKIEJWT"}, auth_header=None)
         assert await a._cookie_or_bearer_token(req) is None
-        assert req.state.auth_via == "none"
 
 
 # =============================================================================
@@ -211,6 +208,59 @@ class TestCsrfMiddleware:
         c = _csrf_client(monkeypatch, enabled=False)
         c.cookies.set("renfield_access", "A")
         assert c.post("/api/x").status_code == 200
+
+    @pytest.mark.asyncio
+    async def test_non_ascii_csrf_header_403_not_500(self, monkeypatch):
+        # The fix-2 regression: compare_digest on a non-ASCII str would TypeError
+        # → 500. With bytes-encoding it's a clean mismatch → 403. Call dispatch
+        # directly with a latin-1 header value (as Starlette hands it to the
+        # middleware on a real server) — httpx's TestClient rejects non-ASCII
+        # header values client-side, so it can't exercise this path.
+        import main as m
+        from main import CSRFMiddleware
+        monkeypatch.setattr(m.settings, "auth_cookie_enabled", True)
+        mw = CSRFMiddleware(app=None)
+        req = SimpleNamespace(
+            method="POST",
+            url=SimpleNamespace(path="/api/x"),
+            cookies={"renfield_access": "A", "renfield_csrf": "TOK"},
+            headers={"X-CSRF-Token": "café"},
+        )
+
+        async def _call_next(_r):
+            raise AssertionError("handler must not be reached on a CSRF failure")
+
+        resp = await mw.dispatch(req, _call_next)
+        assert resp.status_code == 403
+
+
+@pytest.mark.unit
+def test_set_cookies_emits_real_setcookie(monkeypatch):
+    """End-to-end helper wiring: a real fastapi Response actually gets the three
+    Set-Cookie headers with the right attributes (the MagicMock test only checks
+    the call, this checks the emitted headers)."""
+    from api.routes import auth as ar
+    monkeypatch.setattr(ar.settings, "auth_cookie_enabled", True)
+    r = Response()
+    ar._set_auth_cookies(r, access_token="AAA", refresh_token="RRR")
+    emitted = " | ".join(v.decode() for k, v in r.raw_headers if k == b"set-cookie")
+    assert "renfield_access=AAA" in emitted and "httponly" in emitted.lower()
+    assert "renfield_refresh=RRR" in emitted and "/api/auth/refresh" in emitted
+    assert "renfield_csrf=" in emitted
+
+
+@pytest.mark.asyncio
+async def test_ws_scoped_token_rejected_on_rest(monkeypatch):
+    """A scope='ws' token delivered via the access cookie must NOT authenticate
+    the REST API (only the WS handshake) — get_current_user rejects it before any
+    DB use, so db=None is safe here."""
+    from fastapi import HTTPException
+    from services import auth_service as a
+    monkeypatch.setattr(a.settings, "auth_enabled", True)
+    ws_token = a.create_ws_token_jwt(user_id=1, token_epoch=0)
+    with pytest.raises(HTTPException) as exc:
+        await a.get_current_user(token=ws_token, db=None, request=None)
+    assert exc.value.status_code == 401
 
 
 # =============================================================================

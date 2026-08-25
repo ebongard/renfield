@@ -62,7 +62,11 @@ export function AuthProvider({ children }: AuthProviderProps) {
     if (accessToken) {
       localStorage.setItem(ACCESS_TOKEN_KEY, accessToken);
     }
-    if (refreshToken) {
+    // Cookie mode: the 30-day refresh token — the real XSS target — lives ONLY
+    // in the HttpOnly cookie; never persist it to localStorage. The 24h access
+    // token is still stored (the voice WS reads it — its migration is deferred —
+    // and the Bearer dual-read needs it); full elimination awaits that follow-up.
+    if (refreshToken && !cookieAuthRef.current) {
       localStorage.setItem(REFRESH_TOKEN_KEY, refreshToken);
     }
   }, []);
@@ -276,7 +280,13 @@ export function AuthProvider({ children }: AuthProviderProps) {
       async (error) => {
         const originalRequest = error.config;
 
-        if (error.response?.status === 401 && !originalRequest._retry && authEnabled) {
+        // Never attempt refresh-on-401 for the refresh endpoint itself: a 401
+        // from /api/auth/refresh (logged out / expired refresh cookie) would
+        // otherwise recurse into another refresh POST on every 401 until the
+        // auth rate-limiter 429s — which then blocks the user's legitimate login.
+        const isRefreshCall = (originalRequest?.url || '').includes('/api/auth/refresh');
+
+        if (error.response?.status === 401 && !originalRequest._retry && authEnabled && !isRefreshCall) {
           originalRequest._retry = true;
           const refreshed = await refreshAccessToken();
           if (refreshed) {

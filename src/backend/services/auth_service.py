@@ -46,20 +46,16 @@ async def _cookie_or_bearer_token(request: Request) -> str | None:
     When ``auth_cookie_enabled`` and the HttpOnly access cookie is present it
     wins; otherwise fall back to ``Authorization: Bearer`` — so the Reva
     fragment→localStorage→Bearer path, the voice-server, and any legacy client
-    keep working (the migration's backward-compat seam). Stamps
-    ``request.state.auth_via`` (``cookie``/``bearer``/``none``) so the CSRF
-    middleware can exempt Bearer (structurally CSRF-immune) requests. Never
-    raises (mirrors ``auto_error=False``): returns ``None`` when no token.
-    Flag off → behaves exactly like the bare bearer scheme.
+    keep working (the migration's backward-compat seam). Never raises (mirrors
+    ``auto_error=False``): returns ``None`` when no token. Flag off → behaves
+    exactly like the bare bearer scheme. (The CSRF middleware independently
+    re-derives cookie-vs-bearer from access-cookie presence on the raw request.)
     """
     if settings.auth_cookie_enabled:
         cookie_token = request.cookies.get(settings.auth_cookie_name)
         if cookie_token:
-            request.state.auth_via = "cookie"
             return cookie_token
-    bearer = await _bearer_scheme(request)
-    request.state.auth_via = "bearer" if bearer else "none"
-    return bearer
+    return await _bearer_scheme(request)
 
 
 # The dependency every auth dependency injects. Rebinding it here (instead of the

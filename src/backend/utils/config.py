@@ -1723,6 +1723,12 @@ class Settings(BaseSettings):
                     "the session cookie would be sent over plain HTTP. Set "
                     "COOKIE_SECURE=true (only relax it in a dev env)."
                 )
+            if self.cookie_samesite.lower() not in {"lax", "strict", "none"}:
+                raise ValueError(
+                    "Invalid COOKIE_SAMESITE="
+                    f"{self.cookie_samesite!r} — must be one of lax/strict/none "
+                    "(a typo would 500 at Set-Cookie time, not boot)."
+                )
         elif self.auth_enabled and self.cors_origins.strip() == "*":
             logger.warning(
                 "⚠ AUTH_ENABLED=true with CORS_ORIGINS='*' (wildcard). A real "
