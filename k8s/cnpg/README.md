@@ -42,8 +42,9 @@ kubectl apply --server-side -f \
   https://raw.githubusercontent.com/cloudnative-pg/cloudnative-pg/release-1.27/releases/cnpg-1.27.0.yaml
 kubectl -n cnpg-system rollout status deploy/cnpg-controller-manager --timeout=180s
 
-# Barman Cloud plugin (needs cert-manager; check the latest plugin release tag)
-kubectl apply -f https://github.com/cloudnative-pg/plugin-barman-cloud/releases/latest/download/manifest.yaml
+# Barman Cloud plugin (needs cert-manager). Pin the version (v0.14.0 was verified
+# with operator 1.27.0); bump deliberately, don't float on latest/.
+kubectl apply -f https://github.com/cloudnative-pg/plugin-barman-cloud/releases/download/v0.14.0/manifest.yaml
 kubectl -n cnpg-system rollout status deploy/barman-cloud --timeout=180s
 
 # Renfield-side prereqs (safe — no cluster created yet)
@@ -62,7 +63,11 @@ Copy `20-cluster-renfield-pg.yaml` into a scratch ns, import from a **copy** of
 the DB, then:
 1. `kubectl cnpg status renfield-pg` → healthy, 1 primary + 2 standbys in sync.
 2. Kill the primary pod → `renfield-pg-rw` repoints within seconds.
-3. `kubectl drain` the primary's node → failover + the drained instance rejoins & re-syncs.
+3. `kubectl drain` the primary's node → failover + the drained instance rejoins &
+   re-syncs. Drain exactly ONE node at a time and wait for 3/3 before the next
+   (see the dataDurability tradeoff in `20-cluster-renfield-pg.yaml`); a full
+   drain also evicts co-located prod pods, so a cordon + pod-delete is the lighter
+   test when you only need to prove promotion + `-rw` repoint.
 4. `\dx vector` + a real similarity query return correct rows.
 
 ## Phase 4 — household cutover (`ns renfield`)
@@ -76,14 +81,24 @@ the DB, then:
      --from-literal=password="$PW"
    unset PW
    ```
-2. Brief write-freeze on the app, then create the cluster (imports from live `postgres`):
+2. **Write-freeze — held CONTINUOUSLY until step 5 completes.** The import is a
+   `pg_dump` snapshot taken at cluster-creation; ANY write to the legacy DB
+   between that snapshot and the app being repointed is lost at cutover. So freeze
+   *before* creating the cluster and keep it frozen through the repoint+rollout:
    ```bash
-   kubectl apply -f 20-cluster-renfield-pg.yaml
+   kubectl -n renfield scale deploy/backend deploy/document-worker \
+     deploy/meeting-worker deploy/pdf-split-worker --replicas=0
+   ```
+3. Create the cluster (imports from live `postgres`). These files carry the
+   `your-registry.example` placeholder — substitute the real registry at apply
+   time (same pattern as the alembic job in the deploy skill):
+   ```bash
+   sed "s#your-registry.example/renfield#$RENFIELD_REGISTRY#" 20-cluster-renfield-pg.yaml | kubectl apply -f -
    kubectl cnpg status renfield-pg -n renfield   # wait: import complete, 3/3 healthy
    ```
-3. Verify on the new cluster: `\dx vector`, HNSW indexes present, a real RAG
-   similarity query returns correct rows.
-4. **Repoint the renfield app DB** `@postgres` → `@renfield-pg-rw` (host swap only):
+4. Verify on the new cluster: `\dx vector` (≥0.8.6), HNSW indexes present, a real
+   RAG similarity query returns correct rows (count-only is enough).
+5. **Repoint the renfield app DB** `@postgres` → `@renfield-pg-rw` (host swap only):
    - `k8s/backend.yaml:185`
    - `k8s/document-worker.yaml:119`
    - `k8s/meeting-worker.yaml:90`
@@ -93,13 +108,29 @@ the DB, then:
 
    **Do NOT touch** Paperless `PAPERLESS_DBHOST=postgres` or the twin DB config —
    they stay on the legacy StatefulSet.
-5. `kubectl apply -f k8s/configmap.yaml` + `rollout restart` backend + workers.
-   Run the alembic job against `-rw` first.
-6. Browser E2E (chat + Wissenssuche), watch Traefik/backend logs. Soak a few days.
+6. `kubectl apply -f k8s/configmap.yaml`, run the alembic job against `-rw` FIRST,
+   then scale backend + workers back up (this ends the write-freeze):
+   ```bash
+   kubectl -n renfield scale deploy/backend deploy/document-worker \
+     deploy/meeting-worker deploy/pdf-split-worker --replicas=1   # or prior replica counts
+   ```
+7. **Turn on backups** (both the plugin base backup and the pg_dump fallback are
+   inert until applied — WAL archiving alone is NOT restorable):
+   ```bash
+   kubectl apply -f 30-scheduledbackup.yaml
+   sed "s#your-registry.example/renfield#$RENFIELD_REGISTRY#" 50-pgdump-cronjob.yaml | kubectl apply -f -
+   kubectl cnpg backup renfield-pg -n renfield   # take an immediate base backup — don't wait for 02:30
+   ```
+8. Browser E2E (chat + Wissenssuche), watch Traefik/backend logs. Soak a few days.
 
 ## Phase 5 — backups sharp + verified
-- Confirm base backup + WAL archiving land in Garage (`kubectl cnpg status` +
-  list the bucket).
+- Confirm the on-demand base backup + continuous WAL archiving actually LAND in
+  Garage (`kubectl cnpg status renfield-pg` shows `First/Last Point of Recoverability`
+  + list the bucket). NB: the ObjectStore CR has no `region` field; barman/boto
+  default the S3 region — the ListBuckets connectivity check does not exercise
+  barman's signing, so explicitly confirm a base backup + a WAL segment upload
+  succeed before trusting the backup (Garage is generally region-lenient, but
+  verify, don't assume).
 - **Test a PITR restore into a scratch cluster** (`bootstrap.recovery` from the
   ObjectStore) — a backup you have not restored is not a backup.
 - Confirm the nightly `pg_dump` CronJob wrote a dump to NFS and restores cleanly.

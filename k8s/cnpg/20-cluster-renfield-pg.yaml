@@ -37,10 +37,21 @@ spec:
   # loss). CNPG promotes a caught-up standby automatically. (The explicit
   # `failoverQuorum` knob is a newer field than the installed operator 1.27.0 and
   # is intentionally omitted; the sync guarantee above already prevents data loss.)
+  #
+  # dataDurability: required (explicit; also the default) — durability over write-
+  # availability. TRADEOFF: this cluster has only 3 schedulable nodes and required
+  # anti-affinity, so a downed instance cannot reschedule until its node returns.
+  # If a SECOND instance is then lost, the sync requirement (ANY 1 standby) can't
+  # be met and app WRITES BLOCK until a standby is back — the app hangs, not just
+  # degrades. Operational rule: drain exactly ONE node at a time and wait for full
+  # re-sync (3/3) before the next; never run with two instances down. Switch to
+  # `preferred` only if you want writes to continue (async, last-commit-loss risk)
+  # through a double fault instead of blocking.
   postgresql:
     synchronous:
       method: any
       number: 1
+      dataDurability: required
 
   # --- One instance per node --------------------------------------------------
   affinity:
@@ -52,6 +63,14 @@ spec:
   storage:
     storageClass: longhorn-pg
     size: 10Gi
+  # Separate WAL volume: if S3 WAL archiving stalls (Garage/NAS down) unarchived
+  # WAL accumulates — isolating it here means that pressure fills a dedicated 2Gi
+  # volume instead of PGDATA, and each is resizable independently
+  # (allowVolumeExpansion). Monitor free space on both; a full WAL volume still
+  # halts the primary (by design — never silently drop WAL).
+  walStorage:
+    storageClass: longhorn-pg
+    size: 2Gi
 
   # --- Bootstrap: MIGRATE from the live single-node DB via pg_dump/restore -----
   # `microservice` import copies exactly the `renfield` database and re-owns it

@@ -21,9 +21,12 @@
 FROM ghcr.io/cloudnative-pg/postgresql:16.9-standard-bookworm
 
 USER root
+# Pin the pgvector version so a rebuild can't silently drift from the :pgvectorX.Y.Z
+# tag. A PGDG bump makes this line fail loud (version not found) — the signal to
+# bump BOTH this pin and the image tag together, never a silent contents drift.
 RUN set -eux; \
     apt-get update; \
-    apt-get install -y --no-install-recommends postgresql-16-pgvector; \
+    apt-get install -y --no-install-recommends postgresql-16-pgvector=0.8.6-1.pgdg12+1; \
     rm -rf /var/lib/apt/lists/*
 # Drop back to the unprivileged CNPG runtime user.
 USER 26
