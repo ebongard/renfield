@@ -1,0 +1,94 @@
+# Nightly logical backup of the databases that still live on the LEGACY single-node
+# `postgres` StatefulSet (i.e. everything NOT migrated to the CNPG renfield-pg
+# cluster). On the household that is the digital-twin DB; on xidra it is
+# paperlessdb + twin (see k8s/xidra/legacy-postgres-dump-cronjob.yaml).
+#
+# WHY: the CNPG migration gave the renfield APP db real backups (Barman S3 + PITR),
+# but the legacy StatefulSet that keeps serving twin/paperless had NO backup at all
+# (no WAL archiving, no dump). This CronJob closes that gap with a self-contained
+# `pg_dump -Fc` per database to NFS, restorable with plain `pg_restore`. It is the
+# near-term safety net; a full CNPG migration of those DBs is a later phase.
+#
+# The `renfield` superuser (POSTGRES_USER on the legacy instance) can dump every
+# database. The pod carries the app-job labels so the postgres NetworkPolicy admits
+# it. Image is the same public pgvector/pg16 (has pg_dump 16 + the vector extension
+# so twin's embedding columns dump/restore cleanly) — no Harbor pull needed.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: legacy-pg-dump-nfs
+  namespace: renfield
+  labels:
+    app.kubernetes.io/part-of: renfield
+spec:
+  accessModes: [ReadWriteMany]
+  storageClassName: nfs-csi-renfield-uploads
+  resources:
+    requests:
+      storage: 20Gi
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: legacy-pg-dump
+  namespace: renfield
+  labels:
+    app.kubernetes.io/part-of: renfield
+spec:
+  schedule: "0 3 * * *"            # 03:00 nightly
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 2
+      template:
+        metadata:
+          labels:
+            # Inherit the app-job label so postgres-allow-app-only admits this pod.
+            app.kubernetes.io/part-of: renfield
+            app.kubernetes.io/component: backend-job
+        spec:
+          restartPolicy: OnFailure
+          containers:
+            - name: pgdump
+              image: pgvector/pgvector:pg16
+              env:
+                - name: PGHOST
+                  value: postgres
+                - name: PGUSER
+                  value: renfield
+                - name: PGPASSWORD
+                  valueFrom:
+                    secretKeyRef:
+                      name: renfield-secrets
+                      key: postgres-password
+                # Space-separated list of legacy DBs to dump (household = twin).
+                - name: BACKUP_DBS
+                  value: "twin"
+                - name: RETENTION_DAYS
+                  value: "14"
+              command: ["/bin/bash", "-c"]
+              args:
+                - |
+                  set -euo pipefail
+                  ts=$(date -u +%Y%m%dT%H%M%SZ)
+                  for db in $BACKUP_DBS; do
+                    # Skip a db that doesn't exist on this instance (fail-safe).
+                    if ! psql -d postgres -tAc "SELECT 1 FROM pg_database WHERE datname='${db}'" | grep -q 1; then
+                      echo "skip: db '${db}' not present"; continue
+                    fi
+                    out="/backup/${db}-${ts}.dump"
+                    echo "pg_dump ${db} -> ${out}"
+                    pg_dump -Fc -Z6 -d "${db}" -f "${out}"
+                  done
+                  echo "rotate: deleting dumps older than ${RETENTION_DAYS}d"
+                  find /backup -name '*.dump' -type f -mtime +${RETENTION_DAYS} -delete
+                  echo "current dumps:"; ls -lh /backup/*.dump 2>/dev/null || echo "(none)"
+              volumeMounts:
+                - name: dump
+                  mountPath: /backup
+          volumes:
+            - name: dump
+              persistentVolumeClaim:
+                claimName: legacy-pg-dump-nfs
