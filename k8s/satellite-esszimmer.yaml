@@ -59,7 +59,12 @@ data:
       silero_model_path: "/opt/renfield-satellite/models/silero_vad.onnx"
     led:
       type: "xvf3800"             # LED ring driven via xvf_host over USB
-      brightness: 20
+      brightness: 28              # ~90% of the 0-31 scale — the milled (gefräste)
+                                  # faceplate needs this to let the ring shine through
+      min_brightness: 28          # FLOOR: clamp backend daypart pushes (day=20/
+                                  # night=5) UP to 28 so the plate stays lit day AND
+                                  # night — else register_ack/night-dimming would
+                                  # dim it back below the plate's readable threshold
       idle_color: "yellow"        # Esszimmer identity colour (continuity w/ old sat)
       xvf_host_path: "/opt/renfield-satellite/bin/xvf_host"
     camera:
@@ -127,7 +132,7 @@ spec:
                     values: ["arm64"]
       containers:
         - name: satellite
-          image: renfield/satellite:esszimmer-v9
+          image: renfield/satellite:esszimmer-v10
           imagePullPolicy: Never   # imported into node containerd (k8s.io ns)
           securityContext:
             privileged: true        # raw /dev access for USB audio + xvf_host

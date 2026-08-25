@@ -150,6 +150,14 @@ class LEDConfig:
     """LED control settings"""
     type: str = "apa102"  # "apa102", "gpio_rgb", "xvf3800", or "none"
     brightness: int = 20  # 0-31 (APA102/XVF3800 scale)
+    # Per-device brightness FLOOR (0-31). Backend-pushed brightness
+    # (`led_config` / register_ack led_brightness, incl. night-dimming) is
+    # clamped UP to this value locally. Default 0 = no floor (fleet-identical:
+    # the backend value is applied verbatim). Set > 0 only for a device whose
+    # ring must stay visible regardless of the fleet daypart dimming — e.g. the
+    # Esszimmer XVF3800 behind a milled (gefräste) faceplate that needs ~90%
+    # (=28) to shine through. See satellite.py::_on_led_config_update.
+    min_brightness: int = 0  # 0-31 (APA102/XVF3800 scale)
     # Documentation/default only — the LIVE night brightness is pushed by the
     # backend over the WebSocket (`led_config` / register_ack led_brightness).
     # This is the local fallback default the backend's led_night_brightness
@@ -384,6 +392,7 @@ def load_config(config_path: Optional[str] = None) -> Config:
         led = config_data["led"]
         config.led.type = led.get("type", config.led.type)
         config.led.brightness = led.get("brightness", config.led.brightness)
+        config.led.min_brightness = led.get("min_brightness", config.led.min_brightness)
         config.led.night_brightness = led.get("night_brightness", config.led.night_brightness)
         config.led.num_leds = led.get("num_leds", config.led.num_leds)
         config.led.spi_bus = led.get("spi_bus", config.led.spi_bus)

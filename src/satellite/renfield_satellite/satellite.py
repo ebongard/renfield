@@ -1297,12 +1297,18 @@ class Satellite:
         """Apply a backend-pushed LED brightness (night-dimming).
 
         Only scales animation brightness — never stops/restarts the running
-        pattern. Brightness is clamped to the APA102/XVF3800 0-31 range. For the
-        XVF3800 (XMOS renders effects in hardware) an explicit LED_BRIGHTNESS
-        command is needed; APA102/GPIO read ``self.leds.brightness`` live per
-        frame so setting the attribute is enough.
+        pattern. Brightness is clamped to the APA102/XVF3800 0-31 range, then
+        raised to the per-device ``led.min_brightness`` floor (default 0 = no
+        floor, fleet-identical). The floor lets a device whose ring must stay
+        visible regardless of the fleet daypart dimming (e.g. the Esszimmer
+        XVF3800 behind a milled faceplate) ignore a backend push that would dim
+        it below its readable threshold. For the XVF3800 (XMOS renders effects
+        in hardware) an explicit LED_BRIGHTNESS command is needed; APA102/GPIO
+        read ``self.leds.brightness`` live per frame so setting the attribute is
+        enough.
         """
-        clamped = min(31, max(0, int(brightness)))
+        floor = min(31, max(0, int(getattr(self.config.led, "min_brightness", 0) or 0)))
+        clamped = min(31, max(floor, int(brightness)))
         old = getattr(self.leds, "brightness", None)
         self.leds.brightness = clamped
 
