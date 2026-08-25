@@ -132,8 +132,19 @@ async def refile_document_paperless(
 
         from services.folder_ingest import IngestMeta
         from services.folder_ingest_paperless import make_paperless_leg
+        from utils.config import settings
 
-        leg = make_paperless_leg(mgr, user_id=user_id)
+        # SHORT inline await on the retry path: this runs in the sequential
+        # (replicas:1) document worker, so a long await here head-of-line-blocks all
+        # other ingest. A refile that doesn't settle in this window leaves the doc
+        # pending WITH its task_id, and the next reconciler cycle re-polls it cheaply
+        # (the poll-first guard) — no re-upload, no worker starvation. The initial
+        # fire-and-forget filing hook keeps the full paperless_consume_timeout_s (it
+        # yields the loop, so a long await there is free).
+        leg = make_paperless_leg(
+            mgr, user_id=user_id,
+            await_timeout_s=settings.paperless_refile_poll_timeout_s,
+        )
         try:
             # doc_text=None → the leg re-OCRs via Docling (full quality) and
             # transports that OCR into Paperless content too.

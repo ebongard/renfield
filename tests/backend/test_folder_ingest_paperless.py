@@ -208,6 +208,21 @@ async def test_retry_polls_prior_task_and_settles_done(monkeypatch):
     assert "mcp.paperless.upload_document" not in called  # NO re-upload
 
 
+async def test_retry_prior_task_duplicate_settles_done(monkeypatch):
+    # A prior task that Paperless classified as a duplicate is terminal-done too
+    # (D10) — settle without re-uploading.
+    _patch_extractor(monkeypatch)
+    mgr = _mcp(await_inner={"status": "duplicate", "detail": "dup"})
+    leg = make_paperless_leg(mgr)
+    doc = _doc(paperless_state="pending", paperless_task_id="tPrior")
+    db = AsyncMock()
+
+    assert await leg(db, doc, _PDF, _meta()) is True
+    assert doc.paperless_state == PAPERLESS_STATE_DONE
+    assert doc.paperless_task_id is None
+    assert "mcp.paperless.upload_document" not in _called_tools(mgr)
+
+
 async def test_retry_prior_task_still_pending_does_not_reupload(monkeypatch):
     _patch_extractor(monkeypatch)
     mgr = _mcp(await_inner={"status": "pending"})
