@@ -75,6 +75,56 @@ describe('MeetingDetailPage (§2 Track D)', () => {
     expect(screen.getByText(i18n.t('meetings.openTranscript'))).toBeInTheDocument();
   });
 
+  it('deep-links to the linked project when one is set', async () => {
+    server.use(
+      http.get(`${BASE_URL}/api/config/features`, () =>
+        HttpResponse.json(features({ projects_enabled: true })),
+      ),
+      http.get(`${BASE_URL}/api/projects`, () =>
+        HttpResponse.json([
+          { id: 9, name: 'Apollo', description: null, owner_id: 1, knowledge_base_id: null },
+        ]),
+      ),
+      http.get(`${BASE_URL}/api/meetings/6`, () => HttpResponse.json(mkMeeting({ project_id: 9 }))),
+      http.get(`${BASE_URL}/api/meetings/6/segments`, () =>
+        HttpResponse.json({ id: 6, status: 'completed', segments: [] }),
+      ),
+    );
+
+    renderDetail();
+
+    const link = await screen.findByRole('link', {
+      name: new RegExp(i18n.t('meetings.openProject')),
+    });
+    expect(link).toHaveAttribute('href', '/projects/9');
+  });
+
+  it('shows NO open-project link when the meeting is not linked to a project', async () => {
+    server.use(
+      http.get(`${BASE_URL}/api/config/features`, () =>
+        HttpResponse.json(features({ projects_enabled: true })),
+      ),
+      http.get(`${BASE_URL}/api/projects`, () =>
+        HttpResponse.json([
+          { id: 9, name: 'Apollo', description: null, owner_id: 1, knowledge_base_id: null },
+        ]),
+      ),
+      http.get(`${BASE_URL}/api/meetings/6`, () => HttpResponse.json(mkMeeting({ project_id: null }))),
+      http.get(`${BASE_URL}/api/meetings/6/segments`, () =>
+        HttpResponse.json({ id: 6, status: 'completed', segments: [] }),
+      ),
+    );
+
+    renderDetail();
+
+    // Wait for the page to render, then assert the navigate link is absent
+    // (the ProjectSelect to link one is still shown, but nothing to open yet).
+    await screen.findByText('Review');
+    expect(
+      screen.queryByRole('link', { name: new RegExp(i18n.t('meetings.openProject')) }),
+    ).toBeNull();
+  });
+
   it('shows an invalid id as not-found', async () => {
     renderDetail('/meetings/not-a-number');
     await waitFor(() =>

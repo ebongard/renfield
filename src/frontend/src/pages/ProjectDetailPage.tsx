@@ -26,11 +26,15 @@ function TimelineRow({ event }: { event: TimelineEvent }) {
   const { t } = useTranslation();
   const { Icon, cls } = KIND_META[event.kind];
 
+  // meeting_id wins over document_id: a meeting/decision event carries the
+  // transcript's document_id too, but the deliverable-first MEETING DETAIL page
+  // (minutes/decisions/action-items) is the destination — not the raw transcript
+  // doc in the KB (that "buried" view is exactly what the Meetings-UX track fixes).
   const href =
-    event.document_id != null
-      ? `/knowledge?doc=${event.document_id}`
-      : event.meeting_id != null
-        ? '/meetings'
+    event.meeting_id != null
+      ? `/meetings/${event.meeting_id}`
+      : event.document_id != null
+        ? `/knowledge?doc=${event.document_id}`
         : null;
 
   const body = (

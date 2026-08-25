@@ -739,6 +739,7 @@
     "projectLabel": "Projekt",
     "noProject": "— Kein Projekt —",
     "projectForMeeting": "Projekt für Besprechung {{title}}",
+    "openProject": "Projekt öffnen",
     "minutes": {
       "title": "Protokoll",
       "draftReadyBadge": "Entwurf bereit",

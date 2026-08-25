@@ -56,6 +56,12 @@ describe('ProjectDetailPage', () => {
     // A document event deep-links into the knowledge base.
     const specLink = screen.getByText('Spec').closest('a');
     expect(specLink).toHaveAttribute('href', '/knowledge?doc=20');
+
+    // A meeting event deep-links into the deliverable-first MEETING DETAIL page
+    // (not the raw transcript doc), even though it also carries a document_id.
+    expect(screen.getByText('Kickoff').closest('a')).toHaveAttribute('href', '/meetings/3');
+    // A decision (flattened from a meeting's minutes) deep-links to its meeting.
+    expect(screen.getByText('Ship it').closest('a')).toHaveAttribute('href', '/meetings/3');
   });
 
   it('shows the empty state when the timeline has no events', async () => {

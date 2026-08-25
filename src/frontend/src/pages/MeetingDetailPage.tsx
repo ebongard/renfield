@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Link, useNavigate, useParams } from 'react-router';
 import {
-  ArrowLeft, Loader, XCircle, FileText, Trash2, Check, X, ChevronDown, ChevronRight, AlertCircle,
+  ArrowLeft, Loader, XCircle, FileText, Trash2, Check, X, ChevronDown, ChevronRight, AlertCircle, FolderKanban,
 } from 'lucide-react';
 
 import { formatDate, formatDateTime } from '../utils/datetime';
@@ -165,6 +165,15 @@ export default function MeetingDetailPage() {
               className="input py-1 text-sm max-w-[16rem]"
             />
             {updateProject.isPending && <Loader className="w-3.5 h-3.5 animate-spin shrink-0" />}
+            {meeting.project_id != null && (
+              <Link
+                to={`/projects/${meeting.project_id}`}
+                className="shrink-0 inline-flex items-center gap-1 text-sm text-primary-600 dark:text-primary-400 hover:underline"
+              >
+                <FolderKanban className="w-3.5 h-3.5" aria-hidden="true" />
+                {t('meetings.openProject')}
+              </Link>
+            )}
           </div>
         )}
 
