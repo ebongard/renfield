@@ -57,5 +57,10 @@ spec:
         # then /ready hung forever on blackholed reconnects (pod NotReady 18d,
         # twin capture silently dead). Twin needs Postgres only, NOT Redis.
         - podSelector: {matchLabels: {app: twin}}
+        # CNPG migration (DB-HA): the renfield-pg cluster pods run pg_dump against
+        # this legacy DB during bootstrap.initdb.import. They carry the cnpg.io
+        # cluster label, not the app labels, so without this they'd be blackholed
+        # and the import would hang. Same-namespace (ns renfield). See k8s/cnpg/.
+        - podSelector: {matchLabels: {cnpg.io/cluster: renfield-pg}}
       ports:
         - {protocol: TCP, port: 5432}
