@@ -1,0 +1,39 @@
+# Barman Cloud Plugin ObjectStore — the S3 backup target for the renfield-pg
+# cluster. Points at the Garage S3 server on the TrueNAS box (192.168.1.9:30188),
+# bucket `renfield-pg-backups`. This is where base backups + archived WAL land,
+# giving Point-In-Time-Recovery that is EXTERNAL to the k8s cluster (survives a
+# full cluster loss).
+#
+# Prereqs (already done during the Garage install):
+#   - Secret `renfield-pg-backup-s3` in ns renfield with keys
+#     ACCESS_KEY_ID + ACCESS_SECRET_KEY (the Garage `renfield-cnpg` key).
+#   - The Barman Cloud Plugin must be installed cluster-wide first (see README).
+#
+# NOTE: this is the NEW plugin-based backup CR (barmancloud.cnpg.io/v1), not the
+# deprecated in-Cluster `.spec.backup.barmanObjectStore` block.
+apiVersion: barmancloud.cnpg.io/v1
+kind: ObjectStore
+metadata:
+  name: renfield-pg-backup
+  namespace: renfield
+  labels:
+    app.kubernetes.io/part-of: renfield
+spec:
+  configuration:
+    destinationPath: s3://renfield-pg-backups/
+    endpointURL: http://192.168.1.9:30188
+    s3Credentials:
+      accessKeyId:
+        name: renfield-pg-backup-s3
+        key: ACCESS_KEY_ID
+      secretAccessKey:
+        name: renfield-pg-backup-s3
+        key: ACCESS_SECRET_KEY
+    wal:
+      compression: gzip
+      maxParallel: 2
+    data:
+      compression: gzip
+  # Keep the last 30 days of backups/WAL. Garage prunes nothing itself; CNPG's
+  # retention policy drives the delete. Tune to your NAS capacity.
+  retentionPolicy: "30d"

@@ -1,0 +1,21 @@
+# Nightly base backup to Garage S3 (WAL is archived continuously by the plugin's
+# isWALArchiver on the cluster). Together they give PITR back to any point within
+# the ObjectStore retention window (30d).
+#
+# `method: plugin` is required for the Barman Cloud plugin (the old `barmanObjectStore`
+# method is deprecated). Time is in 6-field Go cron (sec min hour dom mon dow).
+apiVersion: postgresql.cnpg.io/v1
+kind: ScheduledBackup
+metadata:
+  name: renfield-pg-nightly
+  namespace: renfield
+  labels:
+    app.kubernetes.io/part-of: renfield
+spec:
+  cluster:
+    name: renfield-pg
+  schedule: "0 30 2 * * *"        # 02:30 every night
+  backupOwnerReference: self
+  method: plugin
+  pluginConfiguration:
+    name: barman-cloud.cloudnative-pg.io

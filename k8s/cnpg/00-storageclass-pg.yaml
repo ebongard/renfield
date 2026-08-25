@@ -1,0 +1,26 @@
+# Dedicated Longhorn StorageClass for CNPG PGDATA.
+#
+# CNPG already replicates data 3x at the PostgreSQL level (streaming replication
+# across the 3 cluster instances). Longhorn replicating each PVC again would give
+# 9x storage for zero extra safety — so this SC pins Longhorn to a SINGLE replica
+# and keeps the volume node-local (strict-local) for latency. Durability comes
+# from PG replication + the Barman S3 base-backups/WAL, not from Longhorn here.
+#
+# reclaimPolicy: Retain — a `kubectl delete pvc` (or an accidental Cluster delete)
+# leaves the underlying Longhorn volume intact for manual recovery. CNPG's own
+# PVCs are managed by the operator; Retain is the safe default for a database.
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: longhorn-pg
+  labels:
+    app.kubernetes.io/part-of: renfield
+provisioner: driver.longhorn.io
+allowVolumeExpansion: true
+reclaimPolicy: Retain
+volumeBindingMode: Immediate
+parameters:
+  numberOfReplicas: "1"
+  dataLocality: "strict-local"
+  staleReplicaTimeout: "30"
+  fsType: "ext4"

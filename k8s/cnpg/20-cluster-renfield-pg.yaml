@@ -1,0 +1,99 @@
+# The HA Postgres cluster for the renfield APP database (NOT Paperless, NOT the
+# digital-twin DB — those stay on the legacy single-node `postgres` StatefulSet
+# for now; see the DB-HA plan).
+#
+# 3 instances = 1 primary + 2 hot standbys with quorum-based synchronous
+# replication (the smallest correct sync-HA topology). Services created by CNPG:
+#   renfield-pg-rw  -> always the current primary  (app + alembic write here)
+#   renfield-pg-ro  -> round-robin over hot standbys
+#   renfield-pg-r   -> any instance
+# The app cutover is a pure host swap: `@postgres` -> `@renfield-pg-rw`.
+#
+# App user/DB are deliberately `renfield`/`renfield` (identical to the legacy DB)
+# so the DATABASE_URL only changes host. The app-user password comes from a
+# PRE-CREATED secret `renfield-pg-app` (see README) so it matches the value the
+# app already has in `renfield-secrets/postgres-password`.
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: renfield-pg
+  namespace: renfield
+  labels:
+    app.kubernetes.io/part-of: renfield
+spec:
+  instances: 3
+
+  # pgvector is NOT in the stock CNPG operand image — this is a thin custom image
+  # (see Dockerfile.pgvector) built + pushed to Harbor in Phase 2. Verify the
+  # bundled pgvector is >= 0.8.1 (halfvec + HNSW + 2560-dim) with `\dx vector`.
+  imageName: your-registry.example/renfield/cnpg-pg16-pgvector:16.9-pgvector0.8.6
+  imagePullPolicy: Always
+  imagePullSecrets:
+    - name: harbor-pull-secret
+
+  # --- HA: quorum-based synchronous replication (requires >= 3 instances) ------
+  postgresql:
+    synchronous:
+      method: any
+      number: 1            # at least 1 standby must confirm each commit
+      failoverQuorum: true # no data-losing failover without quorum
+
+  # --- One instance per node --------------------------------------------------
+  affinity:
+    enablePodAntiAffinity: true
+    topologyKey: kubernetes.io/hostname
+    podAntiAffinityType: required   # hard: never co-schedule two PG pods
+
+  # --- Storage (Longhorn, 1 replica — see 00-storageclass-pg.yaml) ------------
+  storage:
+    storageClassName: longhorn-pg
+    size: 10Gi
+
+  # --- Bootstrap: MIGRATE from the live single-node DB via pg_dump/restore -----
+  # `microservice` import copies exactly the `renfield` database and re-owns it
+  # to `renfield`. Runs in a superuser context inside the pod, so the dumped
+  # `CREATE EXTENSION vector` + halfvec/HNSW objects restore cleanly.
+  bootstrap:
+    initdb:
+      database: renfield
+      owner: renfield
+      import:
+        type: microservice
+        databases:
+          - renfield
+        source:
+          externalCluster: legacy-postgres
+      # Belt-and-suspenders: guarantee the extension exists post-import (runs as
+      # superuser). The app's boot-time `CREATE EXTENSION IF NOT EXISTS vector`
+      # then short-circuits as a harmless no-op for the non-superuser app user.
+      postImportApplicationSQL:
+        - "CREATE EXTENSION IF NOT EXISTS vector"
+
+  externalClusters:
+    - name: legacy-postgres
+      connectionParameters:
+        host: postgres          # the legacy StatefulSet headless service
+        user: renfield
+        dbname: renfield
+      password:
+        name: renfield-secrets
+        key: postgres-password
+
+  # --- Backups: WAL archiving + base backups via the Barman Cloud plugin -------
+  plugins:
+    - name: barman-cloud.cloudnative-pg.io
+      isWALArchiver: true
+      parameters:
+        barmanObjectName: renfield-pg-backup   # -> 10-objectstore.yaml
+
+  resources:
+    requests:
+      cpu: 250m
+      memory: 512Mi
+    limits:
+      cpu: "2"
+      memory: 2Gi
+
+  # CNPG manages its own PodDisruptionBudget (maxUnavailable derived from
+  # instances) — no manual PDB needed. A rolling node drain evicts at most one
+  # instance at a time and waits for re-sync.

@@ -1,0 +1,29 @@
+# Thin CNPG operand image = stock CloudNativePG PostgreSQL 16 + pgvector.
+#
+# WHY a custom image: the stock CNPG operand images
+# (ghcr.io/cloudnative-pg/postgresql) do NOT bundle pgvector, which the renfield
+# app hard-requires (halfvec, HNSW, 2560-dim embeddings). We keep the CNPG base
+# (so the operator's instance-manager, entrypoints, and PG minor tracking stay
+# intact) and add ONLY the pgvector extension from the PGDG apt repo the base
+# image already trusts.
+#
+# Build + push (Phase 2, on the .159 build box):
+#   R=your-registry.example/renfield
+#   docker build -f Dockerfile.pgvector \
+#     -t $R/cnpg-pg16-pgvector:16.9-pgvector0.8.6 \
+#     -t $R/cnpg-pg16-pgvector:latest .
+#   docker push $R/cnpg-pg16-pgvector:16.9-pgvector0.8.6
+#   docker push $R/cnpg-pg16-pgvector:latest
+#
+# VERIFY after first boot (the whole reason this image exists):
+#   psql -c '\dx vector'      # extension present, version >= 0.8.1
+# Re-pin the base tag to the current 16.x minor at build time; never :latest base.
+FROM ghcr.io/cloudnative-pg/postgresql:16.9-standard-bookworm
+
+USER root
+RUN set -eux; \
+    apt-get update; \
+    apt-get install -y --no-install-recommends postgresql-16-pgvector; \
+    rm -rf /var/lib/apt/lists/*
+# Drop back to the unprivileged CNPG runtime user.
+USER 26

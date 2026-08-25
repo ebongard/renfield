@@ -1,0 +1,86 @@
+# Nightly LOGICAL backup (pg_dump -Fc) to NFS — the simple, image-independent
+# fallback ALONGSIDE the Barman S3 PITR. This is the Phase-0 safety floor: a
+# self-contained custom-format dump that restores with plain `pg_restore` onto
+# any pgvector-capable Postgres, no operator/plugin required. Barman is the
+# primary (PITR); this is the "can always get the data back" belt.
+#
+# The dump runs against `renfield-pg-rw` (primary). Custom format (-Fc) preserves
+# the pgvector/halfvec column types + HNSW index definitions. Restore + verify
+# procedure is in README.md (Phase 0).
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: renfield-pg-dump-nfs
+  namespace: renfield
+  labels:
+    app.kubernetes.io/part-of: renfield
+spec:
+  accessModes: [ReadWriteMany]
+  # Reuses the existing NFS-CSI storage on 192.168.1.9. A DEDICATED backup export
+  # /SC would be cleaner (separates dumps from app uploads) — flagged in README.
+  storageClassName: nfs-csi-renfield-uploads
+  resources:
+    requests:
+      storage: 20Gi
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: renfield-pg-dump
+  namespace: renfield
+  labels:
+    app.kubernetes.io/part-of: renfield
+spec:
+  schedule: "0 3 * * *"            # 03:00 nightly (after the 02:30 base backup)
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 2
+      template:
+        metadata:
+          labels:
+            # Inherit the app-job label so the DB NetworkPolicy admits this pod.
+            app.kubernetes.io/part-of: renfield
+            app.kubernetes.io/component: backend-job
+        spec:
+          restartPolicy: OnFailure
+          containers:
+            - name: pgdump
+              image: your-registry.example/renfield/cnpg-pg16-pgvector:16.9-pgvector0.8.6
+              imagePullPolicy: Always
+              env:
+                - name: PGHOST
+                  value: renfield-pg-rw
+                - name: PGUSER
+                  value: renfield
+                - name: PGDATABASE
+                  value: renfield
+                - name: PGPASSWORD
+                  valueFrom:
+                    secretKeyRef:
+                      name: renfield-secrets
+                      key: postgres-password
+                - name: RETENTION_DAYS
+                  value: "14"
+              command: ["/bin/bash", "-c"]
+              args:
+                - |
+                  set -euo pipefail
+                  ts=$(date -u +%Y%m%dT%H%M%SZ)
+                  out=/backup/renfield-${ts}.dump
+                  echo "pg_dump -> ${out}"
+                  pg_dump -Fc -Z6 -f "${out}"
+                  echo "rotate: deleting dumps older than ${RETENTION_DAYS}d"
+                  find /backup -name 'renfield-*.dump' -type f -mtime +${RETENTION_DAYS} -delete
+                  echo "done; current dumps:"; ls -lh /backup/renfield-*.dump
+              volumeMounts:
+                - name: dump
+                  mountPath: /backup
+          imagePullSecrets:
+            - name: harbor-pull-secret
+          volumes:
+            - name: dump
+              persistentVolumeClaim:
+                claimName: renfield-pg-dump-nfs

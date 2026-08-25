@@ -1,0 +1,46 @@
+# NetworkPolicy for the renfield-pg CNPG pods — same defense-in-depth posture as
+# the legacy `postgres-allow-app-only` (pentest F6): only the renfield app
+# workloads may reach the DB port, everything else in the namespace is denied.
+#
+# CNPG pods do NOT carry `app.kubernetes.io/name: postgres`, so the existing
+# policy does not select them — WITHOUT this file they would be unrestricted
+# (deny-by-default only applies to pods some policy selects). This policy also
+# MUST allow the traffic CNPG itself needs, or HA breaks:
+#   - 5432 between the cluster's own instances (streaming replication)
+#   - 5432 + 8000 from the operator namespace (management + instance status)
+#
+# NB: requires a NetworkPolicy-enforcing CNI (Calico here).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: renfield-pg-allow
+  namespace: renfield
+  labels:
+    app.kubernetes.io/part-of: renfield
+spec:
+  podSelector:
+    matchLabels:
+      cnpg.io/cluster: renfield-pg
+  policyTypes: [Ingress]
+  ingress:
+    # --- App workloads: Postgres wire protocol only -------------------------
+    - from:
+        - podSelector: {matchLabels: {app.kubernetes.io/name: backend}}
+        - podSelector: {matchLabels: {app.kubernetes.io/name: document-worker}}
+        - podSelector: {matchLabels: {app.kubernetes.io/name: meeting-worker}}
+        - podSelector: {matchLabels: {app.kubernetes.io/name: pdf-split-worker}}
+        # alembic-upgrade Job + any backend-image job carry this shared label.
+        - podSelector: {matchLabels: {app.kubernetes.io/part-of: renfield, app.kubernetes.io/component: backend-job}}
+      ports:
+        - {protocol: TCP, port: 5432}
+    # --- Intra-cluster replication between the renfield-pg instances ---------
+    - from:
+        - podSelector: {matchLabels: {cnpg.io/cluster: renfield-pg}}
+      ports:
+        - {protocol: TCP, port: 5432}
+    # --- The CNPG operator (management + instance-manager status on 8000) ----
+    - from:
+        - namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: cnpg-system}}
+      ports:
+        - {protocol: TCP, port: 5432}
+        - {protocol: TCP, port: 8000}
