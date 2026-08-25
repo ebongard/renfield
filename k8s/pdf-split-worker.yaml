@@ -78,7 +78,7 @@ spec:
               valueFrom:
                 secretKeyRef: {name: renfield-secrets, key: secret-key, optional: true}
             - name: DATABASE_URL
-              value: postgresql+asyncpg://renfield:$(POSTGRES_PASSWORD)@postgres:5432/renfield
+              value: postgresql+asyncpg://renfield:$(POSTGRES_PASSWORD)@renfield-pg-rw:5432/renfield
           volumeMounts:
             # Read the parent PDF; execute_split persists the child PDFs here
             # via ingest_document.

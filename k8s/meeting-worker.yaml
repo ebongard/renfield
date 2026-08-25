@@ -87,7 +87,7 @@ spec:
               valueFrom:
                 secretKeyRef: {name: renfield-secrets, key: secret-key, optional: true}
             - name: DATABASE_URL
-              value: postgresql+asyncpg://renfield:$(POSTGRES_PASSWORD)@postgres:5432/renfield
+              value: postgresql+asyncpg://renfield:$(POSTGRES_PASSWORD)@renfield-pg-rw:5432/renfield
           volumeMounts:
             # Read the audio the backend streamed here; ingest_document also
             # persists the rendered transcript under this PVC.

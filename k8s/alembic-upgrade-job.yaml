@@ -59,7 +59,7 @@ spec:
                   key: secret-key
                   optional: true
             - name: DATABASE_URL
-              value: postgresql+asyncpg://renfield:$(POSTGRES_PASSWORD)@postgres:5432/renfield
+              value: postgresql+asyncpg://renfield:$(POSTGRES_PASSWORD)@renfield-pg-rw:5432/renfield
           resources:
             requests:
               cpu: 100m

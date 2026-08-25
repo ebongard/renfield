@@ -29,6 +29,13 @@ spec:
       secretAccessKey:
         name: renfield-pg-backup-s3
         key: ACCESS_SECRET_KEY
+      # Garage signs SigV4 against its configured region ("garage"); without this
+      # barman/boto defaults the region and Garage rejects HeadBucket with
+      # 400 Bad Request → WAL archiving + backups fail. Must match the Garage
+      # app's s3_region.
+      region:
+        name: renfield-pg-backup-s3
+        key: REGION
     wal:
       compression: gzip
       maxParallel: 2

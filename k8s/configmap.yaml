@@ -43,7 +43,7 @@ data:
   # ────────────────────────────────────────────────────────────────────────────
 
   # Infra endpoints (cluster-internal DNS)
-  DATABASE_URL: "postgresql+asyncpg://renfield:__PG_PASSWORD__@postgres:5432/renfield"
+  DATABASE_URL: "postgresql+asyncpg://renfield:__PG_PASSWORD__@renfield-pg-rw:5432/renfield"
   REDIS_URL: "redis://redis:6379"
   OLLAMA_URL: "http://ollama:11434"
   OLLAMA_EMBED_URL: "http://ollama:11434"

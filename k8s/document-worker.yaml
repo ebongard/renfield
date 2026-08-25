@@ -116,7 +116,7 @@ spec:
               valueFrom:
                 secretKeyRef: {name: renfield-secrets, key: secret-key, optional: true}
             - name: DATABASE_URL
-              value: postgresql+asyncpg://renfield:$(POSTGRES_PASSWORD)@postgres:5432/renfield
+              value: postgresql+asyncpg://renfield:$(POSTGRES_PASSWORD)@renfield-pg-rw:5432/renfield
             # Integration secrets mirror the backend so Docling/RAG code paths
             # that eventually call out (e.g. contextual retrieval LLM) work.
             - name: HOME_ASSISTANT_TOKEN
