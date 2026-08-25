@@ -33,11 +33,16 @@ spec:
         - podSelector: {matchLabels: {app.kubernetes.io/part-of: renfield, app.kubernetes.io/component: backend-job}}
       ports:
         - {protocol: TCP, port: 5432}
-    # --- Intra-cluster replication between the renfield-pg instances ---------
+    # --- Intra-cluster: streaming replication (5432) AND the instance-manager
+    # failsafe/liveness cross-check (8000). Instances probe each other's
+    # /failsafe on 8000; without it the split-brain self-fencing safety net is
+    # blocked (cluster still promotes via the operator, but the instance-to-
+    # instance failsafe degrades — silent HA weakening). ------------------------
     - from:
         - podSelector: {matchLabels: {cnpg.io/cluster: renfield-pg}}
       ports:
         - {protocol: TCP, port: 5432}
+        - {protocol: TCP, port: 8000}
     # --- The CNPG operator (management + instance-manager status on 8000) ----
     - from:
         - namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: cnpg-system}}
