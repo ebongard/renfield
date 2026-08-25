@@ -2,9 +2,16 @@
 #
 # CNPG already replicates data 3x at the PostgreSQL level (streaming replication
 # across the 3 cluster instances). Longhorn replicating each PVC again would give
-# 9x storage for zero extra safety — so this SC pins Longhorn to a SINGLE replica
-# and keeps the volume node-local (strict-local) for latency. Durability comes
-# from PG replication + the Barman S3 base-backups/WAL, not from Longhorn here.
+# 9x storage for zero extra safety — so this SC pins Longhorn to a SINGLE replica.
+# Durability comes from PG replication + the Barman S3 base-backups/WAL, not from
+# Longhorn here.
+#
+# dataLocality: best-effort (NOT strict-local). This cluster has only 2 Longhorn
+# storage nodes (gpu-1/gpu-2), but CNPG's required pod anti-affinity spreads the 3
+# instances across 3 nodes — so a PG pod WILL land on a non-storage node and must
+# attach its volume over the network. strict-local makes that a hard, unsatisfiable
+# replica affinity ("hard affinity cannot be satisfied" -> volume stuck detached);
+# best-effort keeps locality where possible and falls back to remote attach.
 #
 # reclaimPolicy: Retain — a `kubectl delete pvc` (or an accidental Cluster delete)
 # leaves the underlying Longhorn volume intact for manual recovery. CNPG's own
@@ -21,6 +28,6 @@ reclaimPolicy: Retain
 volumeBindingMode: Immediate
 parameters:
   numberOfReplicas: "1"
-  dataLocality: "strict-local"
+  dataLocality: "best-effort"
   staleReplicaTimeout: "30"
   fsType: "ext4"
