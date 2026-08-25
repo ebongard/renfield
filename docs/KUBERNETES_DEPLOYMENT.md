@@ -69,7 +69,7 @@ Cluster-wide Traefik changes (entrypoints, TLS, CRDs) are tracked in `../private
 |---------|-------|-------|
 | Backend | `your-registry.example/renfield/backend:latest` | CPU image (~3.5 GB). Includes wake-word models and renfield-mcp-dlna entrypoint |
 | Frontend | `your-registry.example/renfield/frontend:latest` | Nginx serving React SPA (vite-plugin-pwa PWA). `nginx.conf` serves `sw.js`/`registerSW.js`/`index.html`/manifest `no-cache` and content-hashed bundles `immutable` — required for new deploys to reach the browser; see deploy-production skill → "Frontend PWA cache propagation" |
-| PostgreSQL | `pgvector/pgvector:pg16` | pgvector for embedding search |
+| PostgreSQL | `pgvector/pgvector:pg16` | pgvector for embedding search. Single-node StatefulSet; an HA CloudNativePG track for the app DB is in progress — see "Postgres HA (CloudNativePG)" below |
 | Redis | `redis:7-alpine` | Message queue + cache (AOF enabled) |
 | Ollama | `ollama/ollama:latest` | LLM inference, requires GPU |
 | SearXNG | `searxng/searxng:latest` | In-cluster metasearch |
@@ -91,7 +91,10 @@ k8s/
 ├── namespace.yaml                  Namespace renfield
 ├── secrets.yaml.example            12 app secrets + harbor-pull-secret (TEMPLATE)
 ├── configmap.yaml                  Env vars (endpoints, models, feature flags)
-├── postgres.yaml                   StatefulSet + Service + PVC
+├── postgres.yaml                   StatefulSet + Service + PVC (single-node; still
+│                                    serves Paperless + digital-twin DBs)
+├── cnpg/                            HA CloudNativePG track for the app DB (applied
+│                                    by hand, NOT in kustomization) — see below
 ├── redis.yaml                      Deployment + Service + PVC
 ├── ollama.yaml                     Deployment (2 replicas, GPU-only workers,
 │                                    anti-affinity) + Service + model pre-pull Job
@@ -127,6 +130,35 @@ For K8s this means:
   ```
 
 A follow-up that consolidates all 41 migrations into a single clean baseline is tracked separately.
+
+## Postgres HA (CloudNativePG)
+
+The app database is being moved off the single-node `postgres` StatefulSet onto a
+3-instance **CloudNativePG (CNPG)** cluster (`renfield-pg`) with streaming
+replication + automatic failover + external S3 PITR backups. Manifests + the full
+phased runbook live in **`k8s/cnpg/`** (`README.md` there is the source of truth).
+
+Scope + status:
+
+- **Scope is the renfield app DB only.** Paperless (`paperlessdb`) and the
+  digital-twin DB stay on the legacy `postgres` StatefulSet, which keeps running
+  for them. The cutover is a pure host swap in `DATABASE_URL`:
+  `@postgres` → `@renfield-pg-rw` (services: `renfield-pg-rw`/`-ro`/`-r`).
+- **Rollout is household (`ns renfield`) first, then xidra** (Phase 6). Applied by
+  hand, phase by phase — the `k8s/cnpg/` files are deliberately **not** in
+  `kustomization.yaml`.
+- **Live so far:** operator stack (cert-manager, CNPG operator 1.27.0, Barman
+  Cloud plugin v0.14.0), the `longhorn-pg` StorageClass, the Garage-S3
+  `ObjectStore`, and the CNPG NetworkPolicy are applied; the pgvector operand
+  image is built (`cnpg-pg16-pgvector:16.9-pgvector0.8.6`); a scratch dry-run
+  proved import + failover with no data loss. **The household cutover (Phase 4)
+  has not run yet** — the app still uses the single-node `postgres`.
+- **pgvector image:** the stock CNPG operand has no pgvector, so a thin custom
+  image (`k8s/cnpg/Dockerfile.pgvector`) adds `postgresql-16-pgvector`.
+- **Backups:** base backups + WAL archiving go to the Garage S3 server on the NAS
+  (`renfield-pg-backups`) for PITR, plus a nightly `pg_dump` → NFS fallback.
+- **Known ceiling:** the single control-plane node bounds real availability until
+  the control plane is also HA (separate track).
 
 > **Auth-on instances (`AUTH_ENABLED=true` / `RENFIELD_ENV=production`):** the v2.20.0 boot
 > guard (`fail_closed_on_insecure_jwt_key`) validates `SECRET_KEY` at `Settings()` init, which
@@ -327,6 +359,10 @@ Ollama model pulls: drop the model into the NFS share at `192.168.1.9:/mnt/data/
 - **Migration chain consolidation** — the 41-migration history is bypassed by `Base.metadata.create_all` for fresh installs; a clean baseline that replaces the empty stub is still pending
 - **HPA** — horizontal scaling for backend
 - **NetworkPolicy** — pod-to-pod traffic restrictions
-- **Backup** — Longhorn snapshot schedule for the postgres PVC
+- **Backup** — the legacy single-node `postgres` PVC still has no backup (Longhorn
+  snapshot schedule pending). The **CNPG app-DB track adds real backups** (Barman
+  base backups + WAL archiving to Garage S3 for PITR, plus a nightly `pg_dump` →
+  NFS) once the Phase-4 cutover lands — see "Postgres HA (CloudNativePG)". Paperless
+  + twin DBs on the legacy StatefulSet remain unbacked until migrated.
 - **Evolution API / WhatsApp** — optional profile
 - **Satellite management CRDs** — rollout orchestration for Pi Zero fleet
