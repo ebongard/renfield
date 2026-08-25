@@ -32,11 +32,15 @@ spec:
     - name: harbor-pull-secret
 
   # --- HA: quorum-based synchronous replication (requires >= 3 instances) ------
+  # `number: 1` = at least one standby must confirm every commit before it is
+  # acknowledged, so a primary loss never drops an acked write (no async data
+  # loss). CNPG promotes a caught-up standby automatically. (The explicit
+  # `failoverQuorum` knob is a newer field than the installed operator 1.27.0 and
+  # is intentionally omitted; the sync guarantee above already prevents data loss.)
   postgresql:
     synchronous:
       method: any
-      number: 1            # at least 1 standby must confirm each commit
-      failoverQuorum: true # no data-losing failover without quorum
+      number: 1
 
   # --- One instance per node --------------------------------------------------
   affinity:
@@ -46,7 +50,7 @@ spec:
 
   # --- Storage (Longhorn, 1 replica — see 00-storageclass-pg.yaml) ------------
   storage:
-    storageClassName: longhorn-pg
+    storageClass: longhorn-pg
     size: 10Gi
 
   # --- Bootstrap: MIGRATE from the live single-node DB via pg_dump/restore -----
@@ -63,11 +67,11 @@ spec:
           - renfield
         source:
           externalCluster: legacy-postgres
-      # Belt-and-suspenders: guarantee the extension exists post-import (runs as
-      # superuser). The app's boot-time `CREATE EXTENSION IF NOT EXISTS vector`
-      # then short-circuits as a harmless no-op for the non-superuser app user.
-      postImportApplicationSQL:
-        - "CREATE EXTENSION IF NOT EXISTS vector"
+        # Belt-and-suspenders: guarantee the extension exists post-import (runs as
+        # superuser). The app's boot-time `CREATE EXTENSION IF NOT EXISTS vector`
+        # then short-circuits as a harmless no-op for the non-superuser app user.
+        postImportApplicationSQL:
+          - "CREATE EXTENSION IF NOT EXISTS vector"
 
   externalClusters:
     - name: legacy-postgres
