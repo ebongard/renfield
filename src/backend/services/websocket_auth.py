@@ -166,6 +166,15 @@ async def authenticate_websocket(
     if not settings.ws_auth_enabled:
         return {"authenticated": True, "auth_skipped": True}
 
+    # Strategy 0: the HttpOnly access cookie (JWT cookie migration). A browser
+    # auto-attaches it on the same-origin WS handshake, so browsers need no
+    # ?token= in the URL (no long-lived JWT in proxy logs). Safe because the
+    # CSWSH Origin allowlist above already ran and only a pinned-origin deploy
+    # enables cookies. Only when auth_cookie_enabled and no explicit query /
+    # first-message token was supplied.
+    if not token and settings.auth_cookie_enabled:
+        token = websocket.cookies.get(settings.auth_cookie_name)
+
     # Fallback: read token from Authorization header if not provided via query
     if not token:
         auth_header = websocket.headers.get("authorization", "")

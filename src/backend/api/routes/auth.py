@@ -8,9 +8,10 @@ Provides endpoints for user authentication:
 - Me (get current user info)
 """
 import hmac
+import secrets
 from datetime import UTC, datetime
 
-from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile, status
+from fastapi import APIRouter, Depends, File, HTTPException, Request, Response, UploadFile, status
 from fastapi.security import OAuth2PasswordRequestForm
 from loguru import logger
 from pydantic import BaseModel, EmailStr, Field
@@ -40,6 +41,78 @@ router = APIRouter()
 
 
 # =============================================================================
+# HttpOnly-cookie session helpers (JWT cookie migration)
+# =============================================================================
+# The token issuers below ALSO set these cookies (in addition to the JSON body,
+# which stays for backward-compat) when auth_cookie_enabled. The cookie carries
+# the SAME JWT the body returns — it is purely an additional, XSS-safe transport.
+
+def _set_auth_cookies(
+    response: Response | None,
+    *,
+    access_token: str,
+    refresh_token: str | None = None,
+) -> None:
+    """Set the HttpOnly access (+ optional refresh) cookie and a JS-readable
+    double-submit CSRF cookie. No-op unless ``auth_cookie_enabled``. ``response``
+    is None only on direct unit calls (FastAPI always injects it on a request)."""
+    if not settings.auth_cookie_enabled or response is None:
+        return
+    common = dict(
+        secure=settings.cookie_secure,
+        samesite=settings.cookie_samesite,
+        domain=settings.cookie_domain,
+    )
+    # Access: sent on every request (Path=/), HttpOnly so JS/XSS can't read it.
+    response.set_cookie(
+        settings.auth_cookie_name,
+        access_token,
+        httponly=True,
+        path="/",
+        max_age=settings.access_token_expire_minutes * 60,
+        **common,
+    )
+    # Refresh: scoped to the refresh endpoint so it's never sent elsewhere.
+    if refresh_token is not None:
+        response.set_cookie(
+            settings.refresh_cookie_name,
+            refresh_token,
+            httponly=True,
+            path="/api/auth/refresh",
+            max_age=settings.refresh_token_expire_days * 86400,
+            **common,
+        )
+    # CSRF: NOT HttpOnly — the SPA reads it and echoes it as X-CSRF-Token; the
+    # middleware compares header == cookie (stateless double-submit).
+    response.set_cookie(
+        settings.csrf_cookie_name,
+        secrets.token_urlsafe(32),
+        httponly=False,
+        path="/",
+        max_age=settings.access_token_expire_minutes * 60,
+        **common,
+    )
+
+
+def _clear_auth_cookies(response: Response | None) -> None:
+    """Expire all three session cookies (logout). No-op unless enabled."""
+    if not settings.auth_cookie_enabled or response is None:
+        return
+    for name, path in (
+        (settings.auth_cookie_name, "/"),
+        (settings.refresh_cookie_name, "/api/auth/refresh"),
+        (settings.csrf_cookie_name, "/"),
+    ):
+        response.delete_cookie(
+            name,
+            path=path,
+            domain=settings.cookie_domain,
+            secure=settings.cookie_secure,
+            samesite=settings.cookie_samesite,
+        )
+
+
+# =============================================================================
 # Request/Response Models
 # =============================================================================
 
@@ -56,8 +129,12 @@ class TokenResponse(BaseModel):
 
 
 class RefreshRequest(BaseModel):
-    """Request model for token refresh."""
-    refresh_token: str
+    """Request model for token refresh. The token is OPTIONAL so a cookie-mode
+    client can POST an empty/absent body and let the handler read the HttpOnly
+    refresh cookie: a *present* body `{}` with a required field would 422 at the
+    validation layer BEFORE the handler's cookie dual-read runs (only an omitted
+    body maps to None). Presence is validated in-handler."""
+    refresh_token: str | None = None
 
 
 class LogoutRequest(BaseModel):
@@ -123,6 +200,10 @@ class AuthStatusResponse(BaseModel):
     authenticated: bool
     user: UserResponse | None = None
     features: dict[str, bool] = {}
+    # HttpOnly-cookie session mode (JWT cookie migration). The SPA reads this to
+    # decide whether "logged in?" is discovered via /me (cookie, not JS-readable)
+    # vs the legacy localStorage-token gate. Off → byte-identical legacy behavior.
+    auth_cookie_enabled: bool = False
 
 
 # =============================================================================
@@ -134,7 +215,8 @@ class AuthStatusResponse(BaseModel):
 async def login(
     request: Request,
     form_data: OAuth2PasswordRequestForm = Depends(),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    response: Response = None,
 ):
     """
     Authenticate user and return JWT tokens.
@@ -236,6 +318,8 @@ async def login(
         f"(provider={outcome.provider_id})"
     )
 
+    _set_auth_cookies(response, access_token=access_token, refresh_token=refresh_token)
+
     return TokenResponse(
         access_token=access_token,
         refresh_token=refresh_token,
@@ -249,15 +333,30 @@ async def login(
 @limiter.limit(settings.api_rate_limit_auth)
 async def refresh_token(
     request: Request,
-    refresh_request: RefreshRequest,
-    db: AsyncSession = Depends(get_db)
+    refresh_request: RefreshRequest | None = None,
+    db: AsyncSession = Depends(get_db),
+    response: Response = None,
 ):
     """
     Get a new access token using a refresh token.
 
     Refresh tokens are long-lived and can only be used to get new access tokens.
+    Dual-read: the HttpOnly refresh cookie is preferred when auth_cookie_enabled,
+    else the request body (Bearer/legacy clients) — so both models keep working.
     """
-    payload = decode_token(refresh_request.refresh_token)
+    refresh_jwt: str | None = None
+    if settings.auth_cookie_enabled:
+        refresh_jwt = request.cookies.get(settings.refresh_cookie_name)
+    if not refresh_jwt and refresh_request is not None:
+        refresh_jwt = refresh_request.refresh_token
+    if not refresh_jwt:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid refresh token",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    payload = decode_token(refresh_jwt)
 
     if not payload:
         raise HTTPException(
@@ -332,6 +431,8 @@ async def refresh_token(
     )
     new_refresh_token = create_refresh_token(user.id, token_epoch=user.token_epoch)
 
+    _set_auth_cookies(response, access_token=access_token, refresh_token=new_refresh_token)
+
     return TokenResponse(
         access_token=access_token,
         refresh_token=new_refresh_token,
@@ -350,6 +451,7 @@ async def sso_exchange(
     request: Request,
     exchange: SsoExchangeRequest,
     db: AsyncSession = Depends(get_db),
+    response: Response = None,
 ):
     """Exchange a one-time SSO hand-off code for the session tokens.
 
@@ -394,6 +496,9 @@ async def sso_exchange(
     refresh_token = create_refresh_token(user.id, token_epoch=user.token_epoch)
 
     logger.info(f"SSO hand-off exchanged: user={user.username} provider={session.provider!r}")
+    # Set cookies too, so when Reva's emitter flips to ?code= the exchange lands
+    # cookie-native for free (the fragment→localStorage path stays for now).
+    _set_auth_cookies(response, access_token=access_token, refresh_token=refresh_token)
     return TokenResponse(
         access_token=access_token,
         refresh_token=refresh_token,
@@ -505,7 +610,8 @@ async def get_current_user_info(
 async def change_password(
     request: ChangePasswordRequest,
     user: User = Depends(require_auth),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    response: Response = None,
 ):
     """
     Change the current user's password.
@@ -571,6 +677,10 @@ async def change_password(
 
     logger.info(f"Password changed for user: {user.username} (all other sessions revoked)")
 
+    # Re-set cookies with the fresh pair so THIS device stays logged in; other
+    # devices' cookies are now epoch-stale and rejected at get_current_user.
+    _set_auth_cookies(response, access_token=access_token, refresh_token=refresh_token)
+
     return {
         "message": "Password changed successfully",
         "access_token": access_token,
@@ -585,6 +695,8 @@ async def logout(
     user: User = Depends(require_auth),
     token: str = Depends(oauth2_scheme),
     logout_request: LogoutRequest | None = None,
+    request: Request = None,
+    response: Response = None,
 ):
     """
     Logout the current user by revoking their access token AND, when supplied,
@@ -617,12 +729,17 @@ async def logout(
         if ttl > 0 and not await token_blacklist.add(jti, ttl):
             write_failed = True
 
+    # The refresh token to revoke: body (Bearer clients) or the HttpOnly cookie.
+    refresh_to_revoke = logout_request.refresh_token if logout_request else None
+    if not refresh_to_revoke and settings.auth_cookie_enabled and request is not None:
+        refresh_to_revoke = request.cookies.get(settings.refresh_cookie_name)
+
     # Revoke the REFRESH token first (audit review): it is the long-lived
     # replay risk (30d), so if the blacklist write fails partway we must not have
     # already burned the access-token write (which would 401 the retry at
     # require_auth while leaving the refresh token live). Refresh first → a 503
     # retry can still reach here to revoke it.
-    await _revoke(logout_request.refresh_token if logout_request else None, "refresh")
+    await _revoke(refresh_to_revoke, "refresh")
     # ...then the access token authenticating this request.
     await _revoke(token, "access")
 
@@ -631,6 +748,9 @@ async def logout(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Logout could not be completed — revocation store unavailable, please retry",
         )
+
+    # Expire the session cookies on this device (no-op unless cookie mode is on).
+    _clear_auth_cookies(response)
 
     logger.info(f"User logged out: {user.username}")
     return {"message": "Successfully logged out"}
@@ -675,7 +795,8 @@ async def get_auth_status(
         allow_registration=settings.allow_registration,
         authenticated=user is not None,
         user=user_response,
-        features=settings.features
+        features=settings.features,
+        auth_cookie_enabled=settings.auth_cookie_enabled,
     )
 
 

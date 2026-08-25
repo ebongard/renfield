@@ -34,9 +34,39 @@ pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 # import (a single bcrypt round) to stay valid against the live bcrypt backend.
 _DUMMY_PASSWORD_HASH = pwd_context.hash("renfield-login-timing-equalizer")
 
-# OAuth2 scheme for token extraction
-# tokenUrl is the endpoint where users can get a token
-oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/auth/login", auto_error=False)
+# OAuth2 scheme for token extraction (the Authorization: Bearer header). Kept as
+# the private base extractor; the public `oauth2_scheme` dependency below reads a
+# cookie first (JWT HttpOnly-cookie migration). tokenUrl is where a token is minted.
+_bearer_scheme = OAuth2PasswordBearer(tokenUrl="/api/auth/login", auto_error=False)
+
+
+async def _cookie_or_bearer_token(request: Request) -> str | None:
+    """Resolve the access token cookie-first, then Bearer header.
+
+    When ``auth_cookie_enabled`` and the HttpOnly access cookie is present it
+    wins; otherwise fall back to ``Authorization: Bearer`` — so the Reva
+    fragment→localStorage→Bearer path, the voice-server, and any legacy client
+    keep working (the migration's backward-compat seam). Stamps
+    ``request.state.auth_via`` (``cookie``/``bearer``/``none``) so the CSRF
+    middleware can exempt Bearer (structurally CSRF-immune) requests. Never
+    raises (mirrors ``auto_error=False``): returns ``None`` when no token.
+    Flag off → behaves exactly like the bare bearer scheme.
+    """
+    if settings.auth_cookie_enabled:
+        cookie_token = request.cookies.get(settings.auth_cookie_name)
+        if cookie_token:
+            request.state.auth_via = "cookie"
+            return cookie_token
+    bearer = await _bearer_scheme(request)
+    request.state.auth_via = "bearer" if bearer else "none"
+    return bearer
+
+
+# The dependency every auth dependency injects. Rebinding it here (instead of the
+# raw OAuth2PasswordBearer) makes all of get_current_user/get_optional_user/
+# require_auth/require_permission/get_user_or_default cookie-aware with zero
+# call-site edits.
+oauth2_scheme = _cookie_or_bearer_token
 
 # JWT configuration
 ALGORITHM = "HS256"

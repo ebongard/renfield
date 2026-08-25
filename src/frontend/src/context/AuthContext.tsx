@@ -4,7 +4,7 @@
  * Provides global authentication state and methods for login/logout.
  * Handles JWT token storage and automatic refresh.
  */
-import { createContext, useContext, useState, useEffect, useCallback, ReactNode } from 'react';
+import { createContext, useContext, useState, useEffect, useCallback, useRef, ReactNode } from 'react';
 import apiClient from '../utils/axios';
 import { ACCESS_TOKEN_KEY, REFRESH_TOKEN_KEY } from '../utils/authTokens';
 import type { User, LoginResponse } from '../types/api';
@@ -46,6 +46,12 @@ export function AuthProvider({ children }: AuthProviderProps) {
   const [authEnabled, setAuthEnabled] = useState(false);
   const [allowRegistration, setAllowRegistration] = useState(false);
   const [features, setFeatures] = useState<Record<string, boolean>>({});
+  // HttpOnly-cookie session mode (JWT cookie migration), learned from
+  // /api/auth/status. A ref (not state) so fetchUser/refresh — defined below and
+  // memoized — read the current value without re-creating on every render. When
+  // on, "logged in?" is discovered via /me (the cookie isn't JS-readable) and
+  // refresh relies on the HttpOnly refresh cookie; off → legacy localStorage gates.
+  const cookieAuthRef = useRef(false);
 
   // Get stored tokens
   const getAccessToken = useCallback(() => localStorage.getItem(ACCESS_TOKEN_KEY), []);
@@ -95,12 +101,18 @@ export function AuthProvider({ children }: AuthProviderProps) {
   // Refresh access token
   const refreshAccessToken = useCallback(async (): Promise<boolean> => {
     const refreshToken = getRefreshToken();
-    if (!refreshToken) return false;
+    // Cookie mode: no localStorage refresh token, but the HttpOnly refresh cookie
+    // rides the request (backend dual-reads). Legacy mode: bail early without a
+    // token (byte-identical to before).
+    if (!refreshToken && !cookieAuthRef.current) return false;
 
     try {
-      const response = await apiClient.post('/api/auth/refresh', {
-        refresh_token: refreshToken
-      });
+      // No body in cookie mode (send undefined, NOT {}): a present `{}` would
+      // 422 at FastAPI validation before the handler reads the refresh cookie.
+      const response = await apiClient.post(
+        '/api/auth/refresh',
+        refreshToken ? { refresh_token: refreshToken } : undefined
+      );
       setTokens(response.data.access_token, response.data.refresh_token);
       return true;
     } catch {
@@ -112,16 +124,19 @@ export function AuthProvider({ children }: AuthProviderProps) {
 
   // Fetch current user info
   const fetchUser = useCallback(async (): Promise<AuthUser | null> => {
+    // Cookie mode: the session lives in an HttpOnly cookie JS can't read, so we
+    // must ASK /me rather than gate on a localStorage token. Legacy mode: keep
+    // the token-present short-circuit (no wasted /me on the logged-out login page).
     const token = getAccessToken();
-    if (!token) {
+    if (!token && !cookieAuthRef.current) {
       setUser(null);
       return null;
     }
 
     try {
-      const response = await apiClient.get('/api/auth/me', {
-        headers: { Authorization: `Bearer ${token}` }
-      });
+      // No explicit Authorization header: the axios interceptor attaches the
+      // localStorage Bearer if present, else the cookie carries auth.
+      const response = await apiClient.get('/api/auth/me');
       setUser(response.data);
       return response.data;
     } catch (error: unknown) {
@@ -220,6 +235,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
         setAuthEnabled(response.data.auth_enabled);
         setAllowRegistration(response.data.allow_registration);
         setFeatures(response.data.features || {});
+        cookieAuthRef.current = !!response.data.auth_cookie_enabled;
 
         if (response.data.auth_enabled) {
           await fetchUser();
@@ -264,7 +280,12 @@ export function AuthProvider({ children }: AuthProviderProps) {
           originalRequest._retry = true;
           const refreshed = await refreshAccessToken();
           if (refreshed) {
-            originalRequest.headers.Authorization = `Bearer ${getAccessToken()}`;
+            // Legacy: re-attach the fresh Bearer. Cookie mode: the Set-Cookie
+            // from /refresh already re-armed the session; don't set "Bearer null".
+            const fresh = getAccessToken();
+            if (fresh) {
+              originalRequest.headers.Authorization = `Bearer ${fresh}`;
+            }
             return apiClient(originalRequest);
           }
         }

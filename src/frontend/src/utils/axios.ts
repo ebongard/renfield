@@ -3,10 +3,23 @@ import axios, { AxiosInstance, InternalAxiosRequestConfig, AxiosResponse, AxiosE
 import { getApiBaseUrl } from './env';
 import { ACCESS_TOKEN_KEY } from './authTokens';
 
+// JS-readable double-submit CSRF cookie name (must match backend csrf_cookie_name).
+const CSRF_COOKIE_NAME = 'renfield_csrf';
+const MUTATING_METHODS = new Set(['post', 'put', 'patch', 'delete']);
+
+function readCookie(name: string): string | null {
+  const match = document.cookie.match(new RegExp('(?:^|; )' + name + '=([^;]*)'));
+  return match ? decodeURIComponent(match[1]) : null;
+}
+
 // Axios Instance mit Base URL
 const apiClient: AxiosInstance = axios.create({
   baseURL: getApiBaseUrl(),
   timeout: 30000,
+  // Send the HttpOnly session cookie on every request (JWT cookie migration).
+  // Harmless in the localStorage-Bearer era: no cookie is set until the backend
+  // auth_cookie_enabled flag is on, so nothing is sent.
+  withCredentials: true,
   headers: {
     'Content-Type': 'application/json',
   }
@@ -25,9 +38,21 @@ const apiClient: AxiosInstance = axios.create({
 // that ordering dependency entirely.
 apiClient.interceptors.request.use(
   (config: InternalAxiosRequestConfig) => {
+    // Bearer from localStorage — KEPT during the cookie transition so the Reva
+    // fragment→localStorage path and any pre-cutover client still authenticate.
+    // When cookie mode is on the backend reads the cookie first; the header is
+    // a harmless no-op (no token stored).
     const token = localStorage.getItem(ACCESS_TOKEN_KEY);
     if (token && !config.headers.Authorization) {
       config.headers.Authorization = `Bearer ${token}`;
+    }
+    // Double-submit CSRF: echo the JS-readable csrf cookie on mutating requests.
+    // No-op when the cookie is absent (Bearer/household → CSRF middleware exempt).
+    if (MUTATING_METHODS.has((config.method || 'get').toLowerCase())) {
+      const csrf = readCookie(CSRF_COOKIE_NAME);
+      if (csrf && !config.headers['X-CSRF-Token']) {
+        config.headers['X-CSRF-Token'] = csrf;
+      }
     }
     return config;
   },

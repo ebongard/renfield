@@ -2,6 +2,7 @@
 Renfield - Persönlicher KI-Assistent
 Hauptanwendung mit FastAPI
 """
+import hmac
 import os
 import sys
 from datetime import UTC, datetime
@@ -156,7 +157,49 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         return response
 
 
+class CSRFMiddleware(BaseHTTPMiddleware):
+    """Double-submit CSRF guard for the HttpOnly-cookie session (JWT cookie
+    migration). No-op unless ``auth_cookie_enabled``.
+
+    Enforced ONLY when the request is authenticated via the auth **cookie** AND
+    the method is mutating: the SPA echoes the JS-readable ``renfield_csrf``
+    cookie as ``X-CSRF-Token`` and this compares header == cookie (constant
+    time). A Bearer request carries no ambient credential (an attacker's page
+    can't read our localStorage) → structurally CSRF-immune → exempt, which also
+    covers first-login (no cookie yet), the refresh bootstrap after cookie
+    expiry, and every legacy client. ``/api/internal/*`` (server-to-server, no
+    browser) is exempt defensively. Safe methods and CORS preflight pass through.
+    """
+
+    _SAFE_METHODS = frozenset({"GET", "HEAD", "OPTIONS", "TRACE"})
+    _EXEMPT_PREFIXES = ("/api/internal/",)
+
+    async def dispatch(self, request: Request, call_next):
+        if (
+            settings.auth_cookie_enabled
+            and request.method not in self._SAFE_METHODS
+            and not request.url.path.startswith(self._EXEMPT_PREFIXES)
+            and request.cookies.get(settings.auth_cookie_name)  # cookie-authed only
+        ):
+            header = request.headers.get("X-CSRF-Token")
+            cookie = request.cookies.get(settings.csrf_cookie_name)
+            # Encode both to bytes: hmac.compare_digest raises TypeError on a
+            # non-ASCII str (a crafted header), which would surface as a 500.
+            if (
+                not header
+                or not cookie
+                or not hmac.compare_digest(header.encode("utf-8"), cookie.encode("utf-8"))
+            ):
+                return JSONResponse(
+                    status_code=403,
+                    content={"detail": "CSRF token missing or invalid"},
+                )
+        return await call_next(request)
+
+
 app.add_middleware(SecurityHeadersMiddleware)
+# CSRF guard (inner of CORS so preflight OPTIONS is handled by CORS first).
+app.add_middleware(CSRFMiddleware)
 
 # CORS Middleware - configured via settings
 _cors_origins = (
@@ -168,7 +211,7 @@ app.add_middleware(
     allow_origins=_cors_origins,
     allow_credentials=settings.cors_origins != "*",
     allow_methods=["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
-    allow_headers=["Authorization", "Content-Type", "X-Request-ID"],
+    allow_headers=["Authorization", "Content-Type", "X-Request-ID", "X-CSRF-Token"],
 )
 
 # Prometheus Metrics (opt-in via METRICS_ENABLED=true)

@@ -1163,6 +1163,21 @@ class Settings(BaseSettings):
     access_token_expire_minutes: int = 60 * 24  # 24 hours
     refresh_token_expire_days: int = 30
 
+    # === JWT HttpOnly-cookie session (XSS token-theft hardening) ===
+    # Master switch. OFF (default) → byte-identical to the localStorage-Bearer
+    # model: no cookies are set, the token reader falls back to the Authorization
+    # header, the CSRF middleware no-ops. ON → token issuers ALSO set HttpOnly
+    # cookies, the reader prefers the cookie, and CSRF is enforced on
+    # cookie-authenticated mutating requests. Requires a pinned cors_origins and
+    # auth_enabled (validated). Reva/voice/Bearer paths keep working (dual-read).
+    auth_cookie_enabled: bool = False
+    auth_cookie_name: str = "renfield_access"        # HttpOnly access, Path=/
+    refresh_cookie_name: str = "renfield_refresh"    # HttpOnly refresh, Path=/api/auth/refresh
+    csrf_cookie_name: str = "renfield_csrf"          # JS-readable double-submit token
+    cookie_secure: bool = True                       # Secure flag (HTTPS-only)
+    cookie_samesite: str = "lax"                     # lax = OIDC redirect + <a> downloads keep working
+    cookie_domain: str | None = None                 # None = host-only (recommended)
+
     # SSO token hand-off hardening — replaces the URL-fragment token hand-off
     # (implicit flow) with a one-time, single-use, PKCE-bound code exchanged over
     # POST (a token never rides in a URL). Gates POST /api/auth/sso/exchange
@@ -1679,13 +1694,41 @@ class Settings(BaseSettings):
                 "(refusing to start with a phantom security control)."
             )
 
-        if self.auth_enabled and self.cors_origins.strip() == "*":
+        env = self.renfield_env.lower()
+
+        # HARD FAIL — cookie session with a broken/unsafe posture. Cookies need
+        # credentialed CORS (impossible with a wildcard origin) AND the WS Origin
+        # allowlist as the CSWSH guard (also defeated by a wildcard); they are
+        # meaningless with auth off; and a non-Secure cookie leaks the session on
+        # plain HTTP. Refuse to boot rather than run a broken/insecure cookie mode.
+        if self.auth_cookie_enabled:
+            if self.cors_origins.strip() == "*":
+                raise ValueError(
+                    "Inconsistent auth config: AUTH_COOKIE_ENABLED=true with "
+                    "CORS_ORIGINS='*' — credentialed CORS is impossible with a "
+                    "wildcard origin (cookies won't be sent) and the WS CSWSH "
+                    "Origin allowlist is skipped. Pin CORS_ORIGINS to the "
+                    "frontend origin(s) before enabling cookie auth."
+                )
+            if not self.auth_enabled:
+                raise ValueError(
+                    "Inconsistent auth config: AUTH_COOKIE_ENABLED=true with "
+                    "AUTH_ENABLED=false — a cookie session is meaningless without "
+                    "authentication. Enable AUTH_ENABLED or disable cookie auth."
+                )
+            if not self.cookie_secure and env in {"production", "prod", "staging"}:
+                raise ValueError(
+                    "Inconsistent auth config: AUTH_COOKIE_ENABLED=true with "
+                    f"COOKIE_SECURE=false on RENFIELD_ENV={self.renfield_env!r} — "
+                    "the session cookie would be sent over plain HTTP. Set "
+                    "COOKIE_SECURE=true (only relax it in a dev env)."
+                )
+        elif self.auth_enabled and self.cors_origins.strip() == "*":
             logger.warning(
                 "⚠ AUTH_ENABLED=true with CORS_ORIGINS='*' (wildcard). A real "
                 "deployment should pin CORS_ORIGINS to the frontend origin(s)."
             )
 
-        env = self.renfield_env.lower()
         if env in {"production", "prod", "staging"} and self.allow_registration:
             logger.warning(
                 f"⚠ RENFIELD_ENV={self.renfield_env!r} with ALLOW_REGISTRATION=true "

@@ -1712,7 +1712,8 @@ Jetzt ein **getracktes Settings-Feld** (#697, vorher nur via `os.getenv` gelesen
 
 **Konsistenz-Assertion (#697, `assert_auth_config_consistency`):**
 - **HARTER Boot-Fehler:** `AUTH_ENABLED=true` mit `WS_AUTH_ENABLED=false` — der WebSocket-Chat wäre unauthentifiziert und der WS-Session-Ownership-Check (#657) still deaktiviert. Beide Flags müssen gemeinsam an.
-- **WARN (nicht fatal):** `AUTH_ENABLED=true` mit `CORS_ORIGINS='*'`; `RENFIELD_ENV=production` mit `ALLOW_REGISTRATION=true`.
+- **HARTER Boot-Fehler (Cookie-Session):** `AUTH_COOKIE_ENABLED=true` mit (a) `CORS_ORIGINS='*'` (credentialed CORS unmöglich → Cookies würden nicht gesendet, und die WS-CSWSH-Origin-Allowlist wäre umgangen), (b) `AUTH_ENABLED=false` (Cookie-Session ohne Auth sinnlos), oder (c) `COOKIE_SECURE=false` auf `RENFIELD_ENV=production/prod/staging` (Session-Cookie über Klartext-HTTP).
+- **WARN (nicht fatal):** `AUTH_ENABLED=true` mit `CORS_ORIGINS='*'` (nur wenn Cookie-Mode AUS — mit Cookies ist es ein harter Fehler); `RENFIELD_ENV=production` mit `ALLOW_REGISTRATION=true`.
 - Bei der aktuellen Auth-off-Posture (alles false) greift nichts — byte-identisch.
 
 ### Authentication (RPBAC)
@@ -1724,6 +1725,23 @@ AUTH_ENABLED=false
 # JWT Token Gültigkeitsdauer
 ACCESS_TOKEN_EXPIRE_MINUTES=1440       # 24 Stunden
 REFRESH_TOKEN_EXPIRE_DAYS=30
+
+# === JWT HttpOnly-Cookie-Session (XSS-Token-Diebstahl-Härtung) ===
+# Master-Switch. AUS (Default) → byte-identisch zum localStorage-Bearer-Modell
+# (keine Cookies, Token-Reader fällt auf den Authorization-Header zurück, CSRF-
+# Middleware no-op). AN → die Token-Issuer setzen ZUSÄTZLICH HttpOnly-Cookies
+# (denselben JWT wie der Body), der Reader bevorzugt das Cookie, und CSRF wird
+# auf cookie-authentifizierten mutierenden Requests erzwungen. Der Bearer-/Reva-
+# Fragment-/voice-server-Pfad läuft weiter (Dual-Read). VORAUSSETZUNG (Validator
+# harter Boot-Fehler): gepinnte CORS_ORIGINS (kein '*') + AUTH_ENABLED=true +
+# COOKIE_SECURE=true (in prod/staging). Voll reversibel per Flag.
+AUTH_COOKIE_ENABLED=false
+AUTH_COOKIE_NAME=renfield_access        # HttpOnly Access-Cookie, Path=/
+REFRESH_COOKIE_NAME=renfield_refresh    # HttpOnly Refresh-Cookie, Path=/api/auth/refresh
+CSRF_COOKIE_NAME=renfield_csrf          # JS-lesbares Double-Submit-Token
+COOKIE_SECURE=true                      # Secure-Flag (nur HTTPS)
+COOKIE_SAMESITE=lax                     # lax = OIDC-Redirect + <a>-Downloads funktionieren weiter
+# COOKIE_DOMAIN=                        # leer = host-only (empfohlen)
 
 # Passwort-Policy
 PASSWORD_MIN_LENGTH=8

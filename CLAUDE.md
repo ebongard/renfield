@@ -185,6 +185,54 @@ redirects with only `?code=&state=`; the SPA (`pages/AuthCallback.tsx`,
 is migrated onto `?code=`, then it is removed (cutover in the design doc). Design
 + threat model + cross-repo emitter contract: `docs/design/sso-token-handoff-hardening.md`.
 
+### JWT HttpOnly-cookie session + CSRF (`AUTH_COOKIE_ENABLED`, dark)
+
+Moves the session off `localStorage` (where any XSS steals the 30-day refresh
+token) into an **HttpOnly+Secure+SameSite=Lax cookie** JS can never read, plus a
+stateless **double-submit CSRF** token. **Flag off (default) → byte-identical**
+to the localStorage-Bearer model. Household is auth-off (inert); the real target
+is xidra (auth-on). Backward-compat seam is a **cookie-first-then-Bearer
+dual-read** so the Reva fragment→localStorage→Bearer path, the voice-server
+(`internal_auth.verify`, body+header, cookie-inert), and any legacy client keep
+working while cookies are on. Fully reversible per flag.
+
+- **Reader:** `services/auth_service.py` — `oauth2_scheme` rebound to
+  `_cookie_or_bearer_token` (cookie wins when present, else the `Authorization`
+  header), so all five auth deps become cookie-aware with zero call-site edits.
+- **Issuers set cookies too** (in addition to the unchanged JSON body):
+  `api/routes/auth.py` `_set_auth_cookies` on login/refresh/change-password/
+  sso-exchange; `_clear_auth_cookies` on logout. Refresh **dual-reads** the
+  refresh token (cookie `Path=/api/auth/refresh` → body). Rotation/reuse-
+  detection/blacklist/`token_epoch` all unchanged (they key on the decoded JWT,
+  not its transport).
+- **CSRF:** `main.py` `CSRFMiddleware` (inner of CORS) — enforces `X-CSRF-Token`
+  == the JS-readable `renfield_csrf` cookie (constant-time) ONLY on cookie-authed
+  mutating requests. A Bearer request (no auth cookie) is structurally CSRF-immune
+  → exempt, which also covers first-login, the refresh bootstrap, and
+  `/api/internal/*` (server-to-server, exempt by prefix).
+- **WebSocket:** `services/websocket_auth.py` Strategy-0 reads
+  `websocket.cookies` (a browser auto-sends the cookie on the same-origin WS
+  handshake → no long-lived JWT in the URL); safe because the `_ws_origin_allowed`
+  CSWSH allowlist runs first. The `/api/ws/token` faucet stays. **Voice WS is NOT
+  migrated** (deferred): it authenticates to the external voice-server via
+  `internal_auth.verify`, which needs a full access JWT and rejects `scope:ws` and
+  can't read the cookie — so voice keeps the localStorage JWT during the transition.
+- **Frontend:** `utils/axios.ts` `withCredentials:true` + a CSRF header
+  interceptor (Bearer interceptor kept for the Reva path); `context/AuthContext.tsx`
+  learns cookie-mode from `/api/auth/status` (`auth_cookie_enabled`) and, when on,
+  discovers "logged in?" via `/me` (cookie isn't JS-readable) and refreshes via the
+  HttpOnly cookie instead of gating on a localStorage token.
+- **Validator hard-fails** (`config.py`): `AUTH_COOKIE_ENABLED=true` with
+  `CORS_ORIGINS='*'` (credentialed CORS impossible + WS CSWSH bypass), with
+  `AUTH_ENABLED=false`, or with `COOKIE_SECURE=false` on a prod/staging env.
+- **Deferred** (own follow-ups): removing the SSO fragment handler / `?code=`
+  emitter wiring (= SSO cutover, needs Reva); retiring `/api/ws/token` + the
+  Bearer interceptor; migrating the voice WS. **Not touched:** `SECRET_KEY`
+  (tri-purpose: JWT + Fernet-at-rest + BLE IRK — no split/rotation).
+  Env: `AUTH_COOKIE_ENABLED`/`AUTH_COOKIE_NAME`/`REFRESH_COOKIE_NAME`/
+  `CSRF_COOKIE_NAME`/`COOKIE_SECURE`/`COOKIE_SAMESITE`/`COOKIE_DOMAIN`
+  (`docs/ENVIRONMENT_VARIABLES.md`).
+
 ### Circles v1 (access tiers)
 
 Detailed user-facing and architectural documentation: [`docs/CIRCLES.md`](docs/CIRCLES.md). Narrative of the broader knowledge system (the four subsystems circles protect): [`docs/SECOND_BRAIN.md`](docs/SECOND_BRAIN.md). Code-level summary below.
