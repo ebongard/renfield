@@ -556,6 +556,13 @@ class Document(Base):
     # NULL = never filed, or filed before pc20260613 (recoverable via the
     # filename+date match in bin/backfill_paperless_metadata.py).
     paperless_document_id = Column(Integer, nullable=True)
+    # The last submitted Paperless consume task_id (from upload_document). Persisted
+    # BEFORE the consume await so a retry re-POLLS the same task (await_consume_result)
+    # instead of re-uploading — the fix for the folder-ingest re-ingest loop that
+    # created thousands of duplicate copies of one file (2026-08). Cleared when the
+    # doc settles (done/failed) or is reset for a fresh attempt. Migration
+    # pc20260825_paperless_task_id. NULL = no outstanding upload.
+    paperless_task_id = Column(String(255), nullable=True)
 
     # Operator flag (set from the Paperless Audit page's "low-quality OCR" tab):
     # when True, this document is deliberately ignored by the low-quality-chunk

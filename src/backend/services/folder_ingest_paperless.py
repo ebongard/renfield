@@ -35,6 +35,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from models.database import (
     PAPERLESS_STATE_DONE,
     PAPERLESS_STATE_FAILED,
+    PAPERLESS_STATE_PENDING,
     Document,
 )
 from services.folder_ingest import _PAPERLESS_SETTLED, IngestMeta, PaperlessLeg
@@ -68,6 +69,40 @@ def _parse_paperless_result(mcp_result: dict | None) -> dict:
         except (json.JSONDecodeError, TypeError):
             pass
     return {"error": "unparseable_paperless_response"}
+
+
+async def _settle_from_outcome(
+    db: AsyncSession, doc: Document, outcome: dict
+) -> bool:
+    """Apply a TERMINAL consume verdict to ``doc.paperless_state`` and return True
+    iff the outcome was terminal (settled). Used by the poll-first idempotency
+    guard, which only needs to settle an already-finished prior task.
+
+    - ``success`` / ``duplicate`` → ``done`` (+ ``paperless_document_id`` if present)
+    - ``failure`` → ``failed``
+    - anything else (``pending`` OR an ``error``/absent status) → NOT terminal,
+      returns False so the caller retries WITHOUT re-uploading (keeps ``task_id``).
+
+    Clears ``paperless_task_id`` on settle. Deliberately does NOT apply the
+    post-consume created_date/content PATCH — that needs the original upload's
+    ``deferred_patch`` + OCR text, available only on the fresh-upload path; a
+    re-polled doc is still filed (metadata is fixable via the audit/backfill tools).
+    """
+    status = outcome.get("status")
+    if status in ("success", "duplicate"):
+        doc.paperless_state = PAPERLESS_STATE_DONE
+        pid = outcome.get("document_id")
+        if pid:
+            doc.paperless_document_id = pid
+        doc.paperless_task_id = None
+        await db.commit()
+        return True
+    if status == "failure":
+        doc.paperless_state = PAPERLESS_STATE_FAILED
+        doc.paperless_task_id = None
+        await db.commit()
+        return True
+    return False
 
 
 async def _fetch_correspondent_names(mcp_manager) -> list[str] | None:
@@ -350,6 +385,41 @@ def make_paperless_leg(
         if doc.paperless_state in _PAPERLESS_SETTLED:
             return True
 
+        from utils.config import settings as _settings
+
+        # Poll-first idempotency guard — THE fix for the re-ingest loop. A doc left
+        # ``pending`` WITH a stored task_id means a prior attempt already uploaded
+        # but its consume outlived the await window. Re-POLL that same task instead
+        # of re-uploading (which would create a duplicate). Only success/duplicate/
+        # failure are terminal; ``pending`` OR any transport error keeps the task_id
+        # and returns False so a later cycle re-polls — it must NEVER fall through to
+        # a fresh upload (that is exactly the loop). A document is thus uploaded at
+        # most once, ever.
+        if doc.paperless_state == PAPERLESS_STATE_PENDING and doc.paperless_task_id:
+            prior = _parse_paperless_result(
+                await mcp_manager.execute_tool(
+                    "mcp.paperless.await_consume_result",
+                    {
+                        "task_id": doc.paperless_task_id,
+                        "timeout_s": _settings.paperless_refile_poll_timeout_s,
+                    },
+                    call_timeout=_settings.paperless_refile_poll_timeout_s + 15,
+                )
+            )
+            if await _settle_from_outcome(db, doc, prior):
+                logger.info(
+                    f"paperless-leg: doc {doc.id} settled from prior-task re-poll "
+                    f"({prior.get('status')}, paperless_id={prior.get('document_id')}); "
+                    f"no re-upload"
+                )
+                return True
+            logger.info(
+                f"paperless-leg: doc {doc.id} prior task not terminal "
+                f"({prior.get('status') or prior.get('error')}); re-poll next cycle, "
+                f"no re-upload"
+            )
+            return False
+
         # 1. Metadata extraction (D5). Prefer the worker's already-extracted
         # high-quality OCR text (no second Docling pass, no chunk shortcut);
         # fall back to a fresh Docling extraction only when no text was supplied.
@@ -438,6 +508,7 @@ def make_paperless_leg(
         task_id = upload.get("task_id")
         if upload.get("error") or not task_id:
             doc.paperless_state = PAPERLESS_STATE_FAILED
+            doc.paperless_task_id = None
             await db.commit()
             logger.warning(
                 f"folder-ingest paperless: Paperless rejected doc {doc.id} "
@@ -445,14 +516,20 @@ def make_paperless_leg(
             )
             return True
 
+        # Persist the task_id BEFORE the await. If the await times out (or the pod
+        # restarts mid-poll), the doc stays ``pending`` but the task_id survives, so
+        # the next cycle re-POLLS this task via the guard above instead of
+        # re-uploading — no duplicate. (The doc is already ``pending`` from the
+        # folder-ingest bridge; we only add the task_id.)
+        doc.paperless_task_id = task_id
+        await db.commit()
+
         # 3. Await the consume verdict via the MCP (it owns the duplicate-marker
         # knowledge — D10). The consume can outlast the default 30s mcp_call_timeout
         # on a fresh/slow Paperless — cutting it off there left the doc un-settled and
         # re-uploaded on retry (the 2026-07 duplicate loop). Poll for up to
         # paperless_consume_timeout_s, and pass it as a PER-CALL execute_tool timeout
         # (+ buffer) so the outer 30s limit doesn't truncate the poll.
-        from utils.config import settings as _settings
-
         poll_s = await_timeout_s if await_timeout_s is not None else _settings.paperless_consume_timeout_s
         outcome = _parse_paperless_result(
             await mcp_manager.execute_tool(
@@ -470,6 +547,7 @@ def make_paperless_leg(
             pid = outcome.get("document_id")
             if pid:
                 doc.paperless_document_id = pid
+            doc.paperless_task_id = None  # settled — no outstanding upload
             await db.commit()
             logger.info(
                 f"paperless-leg: doc {doc.id} {status} "
@@ -525,6 +603,7 @@ def make_paperless_leg(
             # (don't loop); the KB still has the document, only Paperless filing
             # is skipped (observable in Paperless's own failed-task log).
             doc.paperless_state = PAPERLESS_STATE_FAILED
+            doc.paperless_task_id = None  # settled terminal — no outstanding upload
             await db.commit()
             logger.warning(
                 f"folder-ingest paperless: doc {doc.id} consume FAILED "

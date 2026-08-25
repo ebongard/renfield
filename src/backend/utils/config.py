@@ -396,7 +396,18 @@ class Settings(BaseSettings):
     # the 30s mcp_call_timeout — that cut-off left the doc un-settled → re-enqueued →
     # RE-UPLOADED → duplicates (2026-07). The leg passes this as a per-call timeout
     # override so the first consume verdict actually arrives (no retry, no duplicate).
-    paperless_consume_timeout_s: float = 120.0
+    # Raised 120→300 in 2026-08: xidra consume averages ~162s (max ~517s), above the
+    # old 120s, so the first inline await usually settles in one pass. The durable
+    # loop fix is the task_id re-poll guard in folder_ingest_paperless._leg — this
+    # just reduces how often a doc falls through to that retry path.
+    paperless_consume_timeout_s: float = 300.0
+    # SHORT timeout for the re-poll of a PRIOR task_id (the idempotency guard on a
+    # refile retry). Must stay small and DISTINCT from paperless_consume_timeout_s:
+    # the document worker is replicas:1 and processes entries sequentially, so a
+    # batch of stuck docs each blocking ~300s would starve normal ingest. A prior
+    # task that already finished returns terminal immediately; one still consuming
+    # returns fast — we do not wait out a fresh consume here.
+    paperless_refile_poll_timeout_s: float = 30.0
     mcp_max_response_size: int = Field(default=131072, ge=1024, le=524288)  # 128KB max response — accommodates list_correspondents on real corpora (~70KB at ~900 entries) without truncating mid-payload
     # MCP exponential-backoff for reconnect / transient failures
     mcp_backoff_initial_delay: float = Field(default=1.0, ge=0.1, le=60.0)
@@ -945,8 +956,11 @@ class Settings(BaseSettings):
     # Grace before a still-pending completed doc is re-enqueued for a worker
     # refile — keeps the scan from racing the initial fire-and-forget filing hook
     # (which runs after the doc is marked completed). Only docs completed longer
-    # ago than this are treated as genuine stragglers.
-    paperless_reconciler_refile_grace_seconds: int = 300
+    # ago than this are treated as genuine stragglers. Must stay ABOVE
+    # paperless_consume_timeout_s + the +15s per-call buffer (now ~315s) so the
+    # reconciler never re-enqueues a refile while the initial inline await is still
+    # in flight; raised 300→360 alongside the consume-timeout bump.
+    paperless_reconciler_refile_grace_seconds: int = 360
     # Per-doc refile lease (Redis SET NX EX). ``processed_at`` is fixed at
     # completion, so a still-pending straggler re-selects every tick; without a
     # lease the SAME doc is re-enqueued each interval until it settles (a slow

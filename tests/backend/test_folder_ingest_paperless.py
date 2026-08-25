@@ -76,8 +76,21 @@ def _patch_extractor(monkeypatch, *, metadata=None, error=None):
     return inst
 
 
-def _doc(paperless_state=None):
-    return MagicMock(id=1, paperless_state=paperless_state, file_path="/uploads/x.pdf")
+def _doc(paperless_state=None, paperless_task_id=None):
+    # NB: paperless_task_id is set explicitly (default None) — a bare MagicMock
+    # attribute would auto-materialise as a truthy child mock and spuriously trip
+    # the poll-first guard for pending docs.
+    return MagicMock(
+        id=1,
+        paperless_state=paperless_state,
+        paperless_task_id=paperless_task_id,
+        file_path="/uploads/x.pdf",
+    )
+
+
+def _called_tools(mgr) -> list[str]:
+    """Tool names execute_tool was awaited with, for asserting no re-upload."""
+    return [c.args[0] for c in mgr.execute_tool.await_args_list]
 
 
 def _meta():
@@ -151,12 +164,93 @@ async def test_non_duplicate_failure_marks_failed_and_settles(monkeypatch):
 
 async def test_pending_is_unsettled(monkeypatch):
     _patch_extractor(monkeypatch)
-    leg = make_paperless_leg(_mcp(await_inner={"status": "pending", "detail": "timeout"}))
+    leg = make_paperless_leg(
+        _mcp(upload_inner={"task_id": "t1"}, await_inner={"status": "pending", "detail": "timeout"})
+    )
     doc, db = _doc(), AsyncMock()
 
     assert await leg(db, doc, _PDF, _meta()) is False  # retry later
-    assert doc.paperless_state is None  # left unset
-    db.commit.assert_not_awaited()
+    assert doc.paperless_state is None  # left unset (the bridge stamps 'pending' in prod)
+    # The task_id is now PERSISTED before the await (commits once) so a retry
+    # re-polls this task instead of re-uploading — the re-ingest-loop fix.
+    assert doc.paperless_task_id == "t1"
+    db.commit.assert_awaited()
+
+
+# ---------------------------------------------------------------------------
+# poll-first idempotency guard (re-ingest loop fix): a pending doc WITH a stored
+# task_id re-polls that task and NEVER re-uploads.
+# ---------------------------------------------------------------------------
+
+async def test_pending_persists_task_id(monkeypatch):
+    # Fresh upload whose consume await times out must persist the task_id
+    # (previously discarded → the doc re-uploaded on every retry).
+    _patch_extractor(monkeypatch)
+    leg = make_paperless_leg(_mcp(upload_inner={"task_id": "tX"}, await_inner={"status": "pending"}))
+    doc, db = _doc(), AsyncMock()
+    assert await leg(db, doc, _PDF, _meta()) is False
+    assert doc.paperless_task_id == "tX"
+
+
+async def test_retry_polls_prior_task_and_settles_done(monkeypatch):
+    _patch_extractor(monkeypatch)
+    mgr = _mcp(await_inner={"status": "success", "document_id": 9})
+    leg = make_paperless_leg(mgr)
+    doc = _doc(paperless_state="pending", paperless_task_id="tPrior")
+    db = AsyncMock()
+
+    assert await leg(db, doc, _PDF, _meta()) is True
+    assert doc.paperless_state == PAPERLESS_STATE_DONE
+    assert doc.paperless_document_id == 9
+    assert doc.paperless_task_id is None  # cleared on settle
+    called = _called_tools(mgr)
+    assert "mcp.paperless.await_consume_result" in called
+    assert "mcp.paperless.upload_document" not in called  # NO re-upload
+
+
+async def test_retry_prior_task_still_pending_does_not_reupload(monkeypatch):
+    _patch_extractor(monkeypatch)
+    mgr = _mcp(await_inner={"status": "pending"})
+    leg = make_paperless_leg(mgr)
+    doc = _doc(paperless_state="pending", paperless_task_id="tPrior")
+    db = AsyncMock()
+
+    assert await leg(db, doc, _PDF, _meta()) is False
+    assert doc.paperless_task_id == "tPrior"  # kept for the next re-poll
+    assert "mcp.paperless.upload_document" not in _called_tools(mgr)
+
+
+async def test_retry_prior_task_error_does_not_reupload(monkeypatch):
+    # HIGH-1: a transport error on the re-poll must NOT fall through to re-upload.
+    _patch_extractor(monkeypatch)
+
+    async def _execute(tool, params, **_kw):
+        if tool == "mcp.paperless.await_consume_result":
+            return {"success": False, "message": "mcp down"}  # transport error
+        raise AssertionError(f"must not call {tool}")  # a re-upload would raise
+
+    mgr = MagicMock()
+    mgr.execute_tool = AsyncMock(side_effect=_execute)
+    leg = make_paperless_leg(mgr)
+    doc = _doc(paperless_state="pending", paperless_task_id="tPrior")
+    db = AsyncMock()
+
+    assert await leg(db, doc, _PDF, _meta()) is False
+    assert doc.paperless_task_id == "tPrior"  # kept, not cleared, not re-uploaded
+    assert "mcp.paperless.upload_document" not in _called_tools(mgr)
+
+
+async def test_retry_prior_task_failure_settles_failed(monkeypatch):
+    _patch_extractor(monkeypatch)
+    mgr = _mcp(await_inner={"status": "failure", "detail": "bad"})
+    leg = make_paperless_leg(mgr)
+    doc = _doc(paperless_state="pending", paperless_task_id="tPrior")
+    db = AsyncMock()
+
+    assert await leg(db, doc, _PDF, _meta()) is True
+    assert doc.paperless_state == PAPERLESS_STATE_FAILED
+    assert doc.paperless_task_id is None
+    assert "mcp.paperless.upload_document" not in _called_tools(mgr)
 
 
 async def test_upload_tool_rejection_is_terminal_failed(monkeypatch):

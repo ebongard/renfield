@@ -273,6 +273,7 @@ async def ingest_document(
         # docs; NULL on an interactive upload is the intended "never file" state.
         if file_to_paperless and existing.paperless_state is None:
             existing.paperless_state = PAPERLESS_STATE_PENDING
+            existing.paperless_task_id = None  # fresh attempt — no stale task to poll
             await db.commit()
         return IngestResult(
             IngestStatus.DUPLICATE, document_id=existing.id, detail="already_ingested"
@@ -368,6 +369,10 @@ async def ingest_document(
     # DUPLICATE re-stamp above), never a silently-completed-but-unfiled doc.
     if file_to_paperless and doc.paperless_state != PAPERLESS_STATE_DONE:
         doc.paperless_state = PAPERLESS_STATE_PENDING
+        # Clear any stale task_id from a prior attempt — this is a fresh (re)ingest,
+        # so the poll-first guard must not re-poll an old task for possibly-changed
+        # content; it should upload once and store the new task_id.
+        doc.paperless_task_id = None
         await db.commit()
 
     queue = DocumentTaskQueue(redis_client=get_redis())
