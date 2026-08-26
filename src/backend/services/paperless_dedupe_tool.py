@@ -5,10 +5,14 @@ so a self-hosted instance keeps its own archive clean without a manual API scrip
 Backs "finde und lösche die Duplikate in Paperless", "räum die doppelten Dokumente auf",
 "gibt es Dubletten?" (with dry_run).
 
-Duplicate definition — a Paperless document is the SAME as another when ALL its
-metadata is identical (correspondent, document_type, creation date, title, page
-count) OR its OCR bytes are identical. Either is sufficient; the extra copies are
-deleted (recoverable trash). "All metadata identical" requires those fields to be
+Duplicate definition — a Paperless document is the SAME as another when its file
+CHECKSUM is identical (byte-identical original — the exact signal, catches re-upload-
+loop copies even if their metadata drifted), OR ALL its metadata is identical
+(correspondent, document_type, creation date, title, page count), OR its OCR bytes
+are identical. Any is sufficient; the extra copies are deleted (recoverable trash).
+Enumeration is INDEX-INDEPENDENT (``list_all_documents``: DB-ordered, fully paginated,
+carries the checksum) so a stale/partial Paperless search index cannot hide copies —
+the failure that made a dry-run see only ~564 of ~3616 real duplicates on xidra. "All metadata identical" requires those fields to be
 PRESENT and equal — an absent field (empty title / missing page_count) is NOT
 "identical", so it drops to the byte-identical rule (never delete on a weak signal).
 Per candidate group (already sharing correspondent/type/date/title):
@@ -123,8 +127,35 @@ def _candidate_key(doc: dict) -> tuple:
 async def _gather_all_documents(
     mcp_manager: Any,
 ) -> tuple[list[dict], bool, str | None]:
-    """Page the WHOLE archive via ``created_before`` date windows (the MCP caps each
-    search at 500). Returns ``(docs, complete, error)``:
+    """Enumerate the WHOLE archive, index-INDEPENDENT, via ``list_all_documents``
+    (DB-ordered, fully paginated, carries ``checksum``). Returns ``(docs, complete,
+    error)``; ``complete`` is False when the returned count is short of the DB
+    ``total_count`` (never claim clean on a partial enumeration).
+
+    Falls back to the legacy ``created_before`` date-window sweep if
+    ``list_all_documents`` is unavailable (an older MCP / version skew) — so dedup
+    still works, degraded. That fallback CANNOT reach a duplicate group whose >500
+    copies share one creation date (the failure that hid the 2289-copy group);
+    ``list_all_documents`` fixes it by walking an id cursor, not a date window."""
+    res = await _call_with_retry(mcp_manager, "mcp.paperless.list_all_documents", {})
+    if not res.get("error"):
+        docs = res.get("results") or []
+        summary = res.get("summary") or {}
+        total = summary.get("total_count")
+        complete = total is None or (len(docs) >= total and not summary.get("truncated"))
+        return docs, complete, None
+    logger.info(
+        f"paperless_dedupe: list_all_documents unavailable ({res.get('error')}); "
+        "falling back to the date-window sweep"
+    )
+    return await _gather_via_date_windows(mcp_manager)
+
+
+async def _gather_via_date_windows(
+    mcp_manager: Any,
+) -> tuple[list[dict], bool, str | None]:
+    """LEGACY fallback: page the archive via ``created_before`` date windows (the MCP
+    caps each search at 500). Returns ``(docs, complete, error)``:
       * ``complete`` is True ONLY when the sweep reached the natural end of the archive
         (a page returned < 500). It is False whenever coverage may be partial — a
         search errored mid-sweep, the _MAX_SWEEP_PAGES cap was hit, or the date window
@@ -178,9 +209,33 @@ async def _build_dup_groups(
     """Group docs into duplicate sets. Returns (dup_groups, skipped) where each group
     is {"ids": sorted[int], "text_differs": bool}. See module docstring for identity."""
     skipped = 0
-    candidates: dict[tuple, list[dict]] = {}
+    dup_groups: list[dict] = []
+
+    # PASS 1 — exact checksum groups (byte-identical files). The strongest, cheapest
+    # signal: same MD5 ⇒ same document, independent of any metadata/date drift, and it
+    # needs no per-doc fetch. This is what catches the re-ingest-loop copies the
+    # metadata key missed (their title/date could vary while the bytes are identical).
+    # Docs without a checksum (older MCP, or genuinely absent) fall through to pass 2.
+    by_checksum: dict[str, list[int]] = {}
     for d in docs:
         if d.get("id") is None:
+            continue
+        cs = d.get("checksum")
+        if cs:
+            by_checksum.setdefault(cs, []).append(d["id"])
+    claimed: set[int] = set()
+    for ids in by_checksum.values():
+        if len(ids) >= 2:
+            dup_groups.append({"ids": sorted(ids), "text_differs": False})
+            claimed.update(ids)
+
+    # PASS 2 — the metadata / OCR-hash passes on everything NOT already a byte-identical
+    # checksum dup. Catches RE-SCANS (same document scanned twice → DIFFERENT bytes/
+    # checksum, but same correspondent/type/date/title/page_count). Unique-checksum docs
+    # stay in here for exactly that reason.
+    candidates: dict[tuple, list[dict]] = {}
+    for d in docs:
+        if d.get("id") is None or d["id"] in claimed:
             continue
         candidates.setdefault(_candidate_key(d), []).append(d)
 
@@ -211,7 +266,7 @@ async def _build_dup_groups(
             if len(ids) >= 2
         ]
 
-    dup_groups: list[dict] = []
+    # (dup_groups already holds the pass-1 checksum groups; pass 2 appends to it.)
     for meta_key, members in candidates.items():
         if len(members) < 2:
             continue

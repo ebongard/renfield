@@ -343,6 +343,7 @@ servers:
     # read, every state-changing tool (incl. reprocess_document) → write.
     tool_permissions:
       search_documents: mcp.paperless.read
+      list_all_documents: mcp.paperless.read
       get_document: mcp.paperless.read
       download_document: mcp.paperless.read
       await_consume_result: mcp.paperless.read
