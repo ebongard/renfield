@@ -56,7 +56,14 @@ def _make_mcp(docs, contents=None, pages=None, rate_limit_first=0, search_error_
         async def execute_tool(self, tool, params, **kw):
             if tool == "mcp.paperless.list_all_documents":
                 if all_docs is None:
-                    return {"success": False, "message": "unknown tool: list_all_documents"}
+                    # Reproduce MCPManager's REAL behavior on an OLD MCP that lacks
+                    # this tool: it does NOT error — it fuzzy-falls-back to
+                    # search_documents, returning a success-shaped result with a
+                    # DIFFERENT summary (total_matching, NO total_count, no checksum).
+                    # The dedupe MUST reject this and fall back to the date sweep.
+                    return {"success": True, "message": json.dumps(
+                        {"summary": {"total_matching": len(docs), "returned": len(docs)},
+                         "results": docs})}
                 tc = total_count if total_count is not None else len(all_docs)
                 return {"success": True, "message": json.dumps({
                     "summary": {"total_count": tc, "returned": len(all_docs),
@@ -497,10 +504,47 @@ async def test_checksum_and_metadata_rescan_both_found():
 
 @pytest.mark.unit
 @pytest.mark.asyncio
-async def test_falls_back_to_search_sweep_when_list_all_unavailable():
-    # all_docs=None → list_all_documents errors → legacy search sweep still dedupes.
+async def test_falls_back_to_search_sweep_on_old_mcp_fuzzy_result():
+    # all_docs=None → list_all_documents fuzzy-falls-back to a search-shaped result
+    # (no total_count). The dedupe must REJECT that and dedupe via the legacy sweep.
     docs = [_doc(1, page_count=2), _doc(2, page_count=2)]
-    mcp = _make_mcp(docs)  # no all_docs → list_all_documents returns an error
+    mcp = _make_mcp(docs)
     res = await paperless_dedupe({}, mcp_manager=mcp)
     assert res["data"]["groups"] == 1
     assert mcp.deleted == [2]
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_gather_rejects_totalcount_less_result_and_falls_back(monkeypatch):
+    # CRITICAL guard: a success-shaped response WITHOUT total_count (the old-MCP
+    # fuzzy fallback to search_documents) must NOT be accepted — must invoke the sweep.
+    called = {"sweep": False}
+
+    async def _fake_sweep(_mgr):
+        called["sweep"] = True
+        return [{"id": 9}], True, None
+
+    monkeypatch.setattr(mod, "_gather_via_date_windows", _fake_sweep)
+    mcp = _make_mcp([_doc(1)])  # all_docs=None → fuzzy (no total_count)
+    gathered, complete, err = await mod._gather_all_documents(mcp)
+    assert called["sweep"] is True
+    assert [d["id"] for d in gathered] == [9] and err is None
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_gather_uses_list_all_when_total_count_present(monkeypatch):
+    # A genuine list_all_documents response (has total_count) is used directly — the
+    # date-window sweep is NOT invoked.
+    called = {"sweep": False}
+
+    async def _fake_sweep(_mgr):
+        called["sweep"] = True
+        return [], True, None
+
+    monkeypatch.setattr(mod, "_gather_via_date_windows", _fake_sweep)
+    mcp = _make_mcp([], all_docs=[_doc(1, checksum="X")])
+    gathered, complete, err = await mod._gather_all_documents(mcp)
+    assert called["sweep"] is False
+    assert [d["id"] for d in gathered] == [1] and complete is True

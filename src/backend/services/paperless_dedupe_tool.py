@@ -138,15 +138,26 @@ async def _gather_all_documents(
     copies share one creation date (the failure that hid the 2289-copy group);
     ``list_all_documents`` fixes it by walking an id cursor, not a date window."""
     res = await _call_with_retry(mcp_manager, "mcp.paperless.list_all_documents", {})
-    if not res.get("error"):
+    # Accept ONLY a genuine list_all_documents response — it is the only paperless
+    # tool whose summary carries ``total_count``. Critical: on an OLD MCP that lacks
+    # this tool, MCPManager does NOT error — it FUZZY-FALLS-BACK to another paperless
+    # tool (search_documents), returning a success-shaped result with a DIFFERENT
+    # summary (``total_matching``, newest-100 only, no checksum). Treating that as our
+    # result would dedupe only the newest slice and falsely report the archive clean —
+    # the exact silent failure this fix kills. So gate on the ``total_count`` contract
+    # marker; anything else (real error OR a fuzzy-fallback search result) degrades to
+    # the legacy date-window sweep, which discloses partial coverage and never
+    # false-cleans. (Also: a missing total means UNKNOWN completeness, never complete.)
+    summary = res.get("summary")
+    if not res.get("error") and isinstance(summary, dict) and "total_count" in summary:
         docs = res.get("results") or []
-        summary = res.get("summary") or {}
-        total = summary.get("total_count")
-        complete = total is None or (len(docs) >= total and not summary.get("truncated"))
+        total = summary["total_count"]
+        complete = total is not None and len(docs) >= total and not summary.get("truncated")
         return docs, complete, None
     logger.info(
-        f"paperless_dedupe: list_all_documents unavailable ({res.get('error')}); "
-        "falling back to the date-window sweep"
+        f"paperless_dedupe: list_all_documents unavailable/unrecognized "
+        f"({res.get('error') or 'no total_count in summary'}); falling back to the "
+        "date-window sweep"
     )
     return await _gather_via_date_windows(mcp_manager)
 
