@@ -137,7 +137,14 @@ async def _gather_all_documents(
     still works, degraded. That fallback CANNOT reach a duplicate group whose >500
     copies share one creation date (the failure that hid the 2289-copy group);
     ``list_all_documents`` fixes it by walking an id cursor, not a date window."""
-    res = await _call_with_retry(mcp_manager, "mcp.paperless.list_all_documents", {})
+    # truncate=False is ESSENTIAL: the whole-archive payload (thousands of rows ×
+    # checksum) far exceeds the default 128KB mcp_max_response_size cap. A truncated
+    # response is unparseable → the guard below would silently fall back to the
+    # partial date-window sweep (the ~566-of-4056 symptom on xidra). Same reason the
+    # legacy sweep passes truncate=False.
+    res = await _call_with_retry(
+        mcp_manager, "mcp.paperless.list_all_documents", {}, truncate=False
+    )
     # Accept ONLY a genuine list_all_documents response — it is the only paperless
     # tool whose summary carries ``total_count``. Critical: on an OLD MCP that lacks
     # this tool, MCPManager does NOT error — it FUZZY-FALLS-BACK to another paperless

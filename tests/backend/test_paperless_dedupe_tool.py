@@ -50,11 +50,13 @@ def _make_mcp(docs, contents=None, pages=None, rate_limit_first=0, search_error_
         def __init__(self):
             self.deleted: list[int] = []
             self.get_document_calls: list[tuple[int, dict]] = []
+            self.list_all_kw: dict | None = None
             self._search_i = 0
             self._del_i = 0
 
         async def execute_tool(self, tool, params, **kw):
             if tool == "mcp.paperless.list_all_documents":
+                self.list_all_kw = kw
                 if all_docs is None:
                     # Reproduce MCPManager's REAL behavior on an OLD MCP that lacks
                     # this tool: it does NOT error — it fuzzy-falls-back to
@@ -548,3 +550,14 @@ async def test_gather_uses_list_all_when_total_count_present(monkeypatch):
     gathered, complete, err = await mod._gather_all_documents(mcp)
     assert called["sweep"] is False
     assert [d["id"] for d in gathered] == [1] and complete is True
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_list_all_documents_called_with_truncate_false():
+    # The whole-archive payload (thousands of rows × checksum) exceeds the 128KB
+    # response cap; without truncate=False it is silently truncated → unparseable →
+    # falls back to the partial sweep (the ~566-of-4056 xidra symptom).
+    mcp = _make_mcp([], all_docs=[_doc(1, checksum="X"), _doc(2, checksum="X")])
+    await paperless_dedupe({"dry_run": True}, mcp_manager=mcp)
+    assert mcp.list_all_kw.get("truncate") is False
