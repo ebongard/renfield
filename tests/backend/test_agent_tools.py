@@ -32,6 +32,7 @@ INTERNAL_TOOL_NAMES = {
     "internal.system_health",             # SYSTEM_HEALTH_TOOL
     "internal.reextract_paperless_metadata",  # PAPERLESS_REEXTRACT_TOOL
     "internal.paperless_dedupe",          # PAPERLESS_DEDUPE_TOOL
+    "internal.create_reminder",           # REMINDER_TOOL
 }
 NUM_INTERNAL_TOOLS = len(INTERNAL_TOOL_NAMES)
 

@@ -82,6 +82,17 @@ class ActionExecutor:
             from services.memory_list_tool import list_my_memories
             return await list_my_memories(parameters, user_id=user_id)
 
+        # Platform-owned internal tool: create a time-based reminder. The
+        # authenticated user_id (the reminder's owner) + session_id are injected
+        # here — never from LLM params. Backs "erinnere mich in X Minuten daran"
+        # so the chat agent actually persists a reminder instead of hallucinating
+        # a confirmation (#1146). Self-gates on proactive_reminders_enabled.
+        if intent == "internal.create_reminder":
+            from services.reminder_tool import create_reminder
+            return await create_reminder(
+                parameters, user_id=user_id, session_id=self.session_id,
+            )
+
         # Platform-owned internal tool: read-only ingest → KB → Paperless status.
         # Aggregate counts only; user_id injected for symmetry (unused today).
         if intent == "internal.ingest_status":

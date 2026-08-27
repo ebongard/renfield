@@ -43,9 +43,16 @@ class ReminderService:
         """
         text = text.strip()
 
-        # Try ISO datetime first
+        # Try ISO datetime first. Normalize any timezone-aware value to naive UTC:
+        # the rest of the codebase compares against naive `datetime.now(UTC)
+        # .replace(tzinfo=None)`, so a tz-aware trigger (e.g. an LLM-emitted
+        # "...+00:00" ISO string) would otherwise raise
+        # "can't compare offset-naive and offset-aware datetimes" (#1146).
         try:
-            return datetime.fromisoformat(text)
+            parsed = datetime.fromisoformat(text)
+            if parsed.tzinfo is not None:
+                parsed = parsed.astimezone(UTC).replace(tzinfo=None)
+            return parsed
         except ValueError:
             pass
 

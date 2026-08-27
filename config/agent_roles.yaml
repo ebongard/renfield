@@ -104,8 +104,8 @@ roles:
 
   general:
     description:
-      de: "Allgemein: Komplexe oder domainuebergreifende Anfragen; AUCH wenn der Nutzer Daten oder Fakten ausdruecklich als LISTE oder TABELLE dargestellt haben moechte (z.B. 'liste ... auf', 'zeig mir eine Liste/Tabelle von ...', 'erstelle eine Tabelle mit/der ...', 'vergleiche ... als Tabelle')"
-      en: "General: complex or cross-domain queries; ALSO when the user explicitly wants data or facts shown as a LIST or TABLE (e.g. 'list ...', 'show me a list/table of ...', 'create a table of ...', 'compare ... as a table')"
+      de: "Allgemein: Komplexe oder domainuebergreifende Anfragen; AUCH das Anlegen einer zeitbasierten ERINNERUNG/eines Reminders ('erinnere mich in X Minuten/Stunden daran ...', 'erinnere mich um HH:MM an ...'); AUCH wenn der Nutzer Daten oder Fakten ausdruecklich als LISTE oder TABELLE dargestellt haben moechte (z.B. 'liste ... auf', 'zeig mir eine Liste/Tabelle von ...', 'erstelle eine Tabelle mit/der ...', 'vergleiche ... als Tabelle')"
+      en: "General: complex or cross-domain queries; ALSO setting a time-based REMINDER ('remind me in X minutes/hours to ...', 'remind me at HH:MM to ...'); ALSO when the user explicitly wants data or facts shown as a LIST or TABLE (e.g. 'list ...', 'show me a list/table of ...', 'create a table of ...', 'compare ... as a table')"
     mcp_servers: null
     internal_tools: null
     max_steps: 12
