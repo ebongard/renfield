@@ -1028,6 +1028,13 @@ class Settings(BaseSettings):
     # pass stays inside the MCP rate limit + the tool's wall-clock budget; the job
     # re-runs each interval until remaining reaches 0.
     paperless_dedupe_reconciler_max_delete: int = Field(default=200, ge=1, le=1000)
+    # Per-call MCP timeout for mcp.paperless.dedupe_documents. It does the WHOLE
+    # dedupe in ONE call (full-archive enumeration + grouping + a batch delete
+    # bounded by the tool's ~75s wall-clock budget), which on a large archive far
+    # exceeds the default 30s mcp_call_timeout → the call would time out and the
+    # drain never progresses. Both the scheduled paperless-dedupe job AND the
+    # interactive internal.paperless_dedupe pass this as execute_tool(call_timeout=).
+    paperless_dedupe_call_timeout_s: float = Field(default=180.0, ge=30.0, le=600.0)
 
     # Document-worker stale-task recovery. reclaim_stale() re-adopts entries a
     # dead consumer left un-ACKed in the Redis PEL. It used to run ONLY at worker

@@ -415,6 +415,7 @@ class TestPaperlessDedupeHandler:
             async def execute_tool(self, tool, params, **kw):
                 assert tool == "mcp.paperless.dedupe_documents"
                 assert params["dry_run"] is False
+                assert kw.get("call_timeout") and kw["call_timeout"] > 30  # raised per-call timeout
                 # MCPManager envelope: the tool's dict is JSON in "message". Include
                 # the marker keys a real dedupe_documents response always carries, so
                 # the contract-marker guard treats it as a legitimate result.

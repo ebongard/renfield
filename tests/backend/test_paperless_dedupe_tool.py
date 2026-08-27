@@ -25,12 +25,17 @@ def _make_mcp(inner: dict | None = None, *, transport_error: bool = False):
     class _MCP:
         def __init__(self):
             self.last_params: dict | None = None
+            self.last_kw: dict | None = None
             self.calls: list[str] = []
 
         async def execute_tool(self, tool, params, **kw):
             self.calls.append(tool)
             self.last_params = params
+            self.last_kw = kw
             assert kw.get("truncate") is False  # large payloads must not be truncated
+            # The single-call full-archive dedupe needs a raised per-call timeout
+            # (the default 30s times out on a large archive).
+            assert kw.get("call_timeout") and kw["call_timeout"] > 30
             if transport_error:
                 return {"success": False, "message": "boom"}
             return _envelope(inner or {})

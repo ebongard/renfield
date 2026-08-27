@@ -71,6 +71,9 @@ async def _paperless_dedupe_handler(app: "FastAPI", params: dict) -> str | None:
             "metadata_match": settings.paperless_dedupe_metadata_match_enabled,
         },
         truncate=False,
+        # The single-call full-archive dedupe exceeds the default 30s on a large
+        # archive — raise the per-call timeout (else the drain never progresses).
+        call_timeout=settings.paperless_dedupe_call_timeout_s,
     ))
     if res.get("error"):
         raise RuntimeError(f"dedupe_documents error: {res['error']}")

@@ -100,6 +100,9 @@ async def paperless_dedupe(
             "mcp.paperless.dedupe_documents",
             {"dry_run": dry_run, "max_delete": max_delete, "metadata_match": metadata_match},
             truncate=False,
+            # Single-call full-archive dedupe exceeds the default 30s on a large
+            # archive — raise the per-call timeout so it doesn't time out mid-sweep.
+            call_timeout=settings.paperless_dedupe_call_timeout_s,
         ))
     except Exception as e:  # noqa: BLE001
         logger.warning(f"paperless_dedupe failed: {e}")
