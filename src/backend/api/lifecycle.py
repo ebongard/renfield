@@ -1187,36 +1187,56 @@ async def _setup_task_engine(app):
     boot-force run_at_boot tasks — the #678 fix) then the periodic engine tick.
     The engine always runs; built-ins carry their existing enabled-defaults and
     the paperless-dedupe job self-gates on its runtime flag, so this is inert
-    until a task is activated. Boot failures are logged, never fatal."""
-    try:
-        from services.scheduled_tasks.builtins import register_builtin_handlers
-        from services.scheduled_tasks.engine import (
-            ensure_builtin_tasks,
-            force_run_at_boot_tasks,
-            run_engine_tick,
-        )
+    until a task is activated. Failures log at ERROR (a dead engine stops every
+    scheduled task) but never break startup."""
+    from services.scheduled_tasks.builtins import register_builtin_handlers
+    from services.scheduled_tasks.engine import (
+        ensure_builtin_tasks,
+        force_run_at_boot_tasks,
+        run_engine_tick,
+    )
 
+    # Handler registration is pure in-process dict inserts and must succeed for
+    # tasks to resolve; if it somehow fails, don't start a tick loop that can only
+    # skip everything.
+    try:
         register_builtin_handlers()
+    except Exception:  # noqa: BLE001
+        logger.opt(exception=True).error(
+            "Scheduled Tasks handler registration failed — engine not started"
+        )
+        return
+
+    # One-time seed + boot-force is BEST-EFFORT and DECOUPLED from the tick loop:
+    # run_engine_tick only SELECTs due rows (already present from a prior boot), so
+    # a transient DB error here must not stop the resilient periodic tick for the
+    # pod's whole lifetime. Log at ERROR (new built-ins may be missing this boot).
+    try:
         await ensure_builtin_tasks()
         await force_run_at_boot_tasks()
-    except Exception:  # noqa: BLE001 — a seeding hiccup must not break startup
-        logger.opt(exception=True).warning("Scheduled Tasks engine boot setup failed")
-        return
+    except Exception:  # noqa: BLE001
+        logger.opt(exception=True).error(
+            "Scheduled Tasks seeding/boot-force failed — starting the engine anyway "
+            "(existing rows still run; new built-ins may be missing until next boot)"
+        )
 
     async def _tick():
         await run_engine_tick(app)
 
-    _spawn_periodic_task(
-        name="Scheduled tasks engine",
-        interval=settings.scheduled_tasks_engine_tick_seconds,
-        work=_tick,
-        started_msg=(
-            f"Scheduled Tasks Engine gestartet "
-            f"(tick={settings.scheduled_tasks_engine_tick_seconds}s, "
-            f"max_concurrent={settings.scheduled_tasks_max_concurrent})"
-        ),
-        run_at_boot=True,
-    )
+    try:
+        _spawn_periodic_task(
+            name="Scheduled tasks engine",
+            interval=settings.scheduled_tasks_engine_tick_seconds,
+            work=_tick,
+            started_msg=(
+                f"Scheduled Tasks Engine gestartet "
+                f"(tick={settings.scheduled_tasks_engine_tick_seconds}s, "
+                f"max_concurrent={settings.scheduled_tasks_max_concurrent})"
+            ),
+            run_at_boot=True,
+        )
+    except Exception:  # noqa: BLE001
+        logger.opt(exception=True).error("Scheduled Tasks engine tick loop failed to start")
 
 
 @asynccontextmanager

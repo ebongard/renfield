@@ -58,6 +58,7 @@ async def _paperless_dedupe_handler(app: "FastAPI", params: dict) -> str | None:
         return "skipped: no mcp_manager"
 
     from services.folder_ingest_paperless import _parse_paperless_result
+    from services.paperless_dedupe_tool import looks_like_dedupe_result
 
     max_delete = int(params.get("max_delete") or settings.paperless_dedupe_reconciler_max_delete)
     # truncate=False is essential — the dedupe response can be large (see the
@@ -73,6 +74,15 @@ async def _paperless_dedupe_handler(app: "FastAPI", params: dict) -> str | None:
     ))
     if res.get("error"):
         raise RuntimeError(f"dedupe_documents error: {res['error']}")
+    # Contract-marker guard (mirrors the interactive tool): MCPManager fuzzy-falls-
+    # back an UNKNOWN tool to another paperless tool instead of erroring, so an old
+    # MCP (< 1.12.0) would yield a foreign response with deleted/remaining absent →
+    # this would report last_status='ok' + "deleted=0" forever while the backlog
+    # never drains. RAISE instead so it surfaces as last_status='error'.
+    if not looks_like_dedupe_result(res):
+        raise RuntimeError(
+            "dedupe_documents unavailable (Paperless MCP < 1.12.0 / fuzzy-fallback)"
+        )
     deleted = res.get("deleted", 0)
     remaining = res.get("remaining", 0)
     complete = res.get("complete")

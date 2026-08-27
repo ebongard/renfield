@@ -415,15 +415,38 @@ class TestPaperlessDedupeHandler:
             async def execute_tool(self, tool, params, **kw):
                 assert tool == "mcp.paperless.dedupe_documents"
                 assert params["dry_run"] is False
-                # MCPManager envelope: the tool's dict is JSON in "message".
+                # MCPManager envelope: the tool's dict is JSON in "message". Include
+                # the marker keys a real dedupe_documents response always carries, so
+                # the contract-marker guard treats it as a legitimate result.
                 return {
                     "success": True,
-                    "message": json.dumps({"deleted": 5, "remaining": 3, "complete": False}),
+                    "message": json.dumps({
+                        "scanned": 100, "duplicate_copies": 8,
+                        "deleted": 5, "remaining": 3, "complete": False,
+                    }),
                 }
 
         app = SimpleNamespace(state=SimpleNamespace(mcp_manager=_MCP()))
         out = await builtins._paperless_dedupe_handler(app, {})
         assert "deleted=5" in out and "remaining=3" in out
+
+    async def test_fuzzy_fallback_response_raises(self, monkeypatch):
+        """An old MCP fuzzy-falls-back dedupe_documents to another tool → no marker
+        keys. The handler must RAISE (→ last_status='error'), not report a green
+        no-op that hides the never-draining backlog."""
+        from services.scheduled_tasks import builtins
+        from utils.config import settings
+
+        monkeypatch.setattr(settings, "paperless_dedupe_reconciler_enabled", True)
+
+        class _MCP:
+            async def execute_tool(self, tool, params, **kw):
+                # search_documents-shaped response: no scanned/complete/duplicate_copies
+                return {"success": True, "message": json.dumps({"results": [], "total_matching": 0})}
+
+        app = SimpleNamespace(state=SimpleNamespace(mcp_manager=_MCP()))
+        with pytest.raises(RuntimeError):
+            await builtins._paperless_dedupe_handler(app, {})
 
 
 @pytest.mark.database

@@ -61,7 +61,10 @@ PAPERLESS_DEDUPE_TOOL: dict = {
 _DEDUPE_MARKER_KEYS = ("scanned", "complete", "duplicate_copies")
 
 
-def _looks_like_dedupe_result(res: dict) -> bool:
+def looks_like_dedupe_result(res: dict) -> bool:
+    """True iff ``res`` carries dedupe_documents' own marker keys. Shared with the
+    scheduled paperless-dedupe handler so both callers reject a fuzzy-fallback
+    response identically (never read a foreign tool's result as a clean sweep)."""
     return all(k in res for k in _DEDUPE_MARKER_KEYS)
 
 
@@ -112,7 +115,7 @@ async def paperless_dedupe(
             "message": f"Aufräumen der Paperless-Duplikate fehlgeschlagen: {res['error']}",
             "action_taken": False,
         }
-    if not _looks_like_dedupe_result(res):
+    if not looks_like_dedupe_result(res):
         # Fuzzy-fallback / old MCP: never claim clean off a foreign response.
         return {
             "success": False,
