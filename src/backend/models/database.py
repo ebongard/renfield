@@ -1369,6 +1369,65 @@ class Reminder(Base):
 
 
 # ==========================================================================
+# Scheduled Tasks (#1137 — DB-defined, UI-managed recurring jobs)
+# ==========================================================================
+
+# schedule_kind values
+SCHEDULE_KIND_INTERVAL = "interval"
+SCHEDULE_KIND_CRON = "cron"
+
+# last_status values
+SCHEDULED_TASK_STATUS_OK = "ok"
+SCHEDULED_TASK_STATUS_ERROR = "error"
+SCHEDULED_TASK_STATUS_SKIPPED = "skipped"  # lock held / unknown handler
+
+
+class ScheduledTask(Base):
+    """A DB-defined recurring job (docs/design/scheduled-tasks.md).
+
+    Run by the single engine loop (``services/scheduled_tasks/engine.py``): each
+    tick selects enabled rows due within their ``[start_at, end_at]`` window and
+    spawns each as its own asyncio.Task. ``handler_key`` resolves against the code
+    registry (``services/scheduled_tasks/registry.py``); ``params`` is passed to
+    the handler. Naming avoids the ``Task``/``tasks`` (agent queue) collision.
+    """
+    __tablename__ = "scheduled_tasks"
+
+    id = Column(Integer, primary_key=True, index=True)
+    # UNIQUE — the seed/idempotency key (ensure_builtin_tasks ON CONFLICT (name)).
+    name = Column(String(255), nullable=False, unique=True)
+    handler_key = Column(String(100), nullable=False)
+
+    # "interval" | "cron"
+    schedule_kind = Column(String(20), nullable=False, default=SCHEDULE_KIND_INTERVAL)
+    interval_seconds = Column(Integer, nullable=True)   # for schedule_kind=interval
+    cron_expr = Column(String(120), nullable=True)      # for schedule_kind=cron
+
+    # handler arguments (validated per-handler on write). cross-dialect JSONB.
+    params = Column(JSON().with_variant(JSONB(), "postgresql"), nullable=False, default=dict, server_default="{}")
+
+    enabled = Column(Boolean, nullable=False, default=True, server_default="true")
+    # force a run at startup regardless of the persisted next_run_at (#678 fix).
+    run_at_boot = Column(Boolean, nullable=False, default=False, server_default="false")
+
+    start_at = Column(DateTime, nullable=True)
+    end_at = Column(DateTime, nullable=True)
+
+    # engine-computed; the due-selection index target.
+    next_run_at = Column(DateTime, nullable=True, index=True)
+    last_run_at = Column(DateTime, nullable=True)
+    last_status = Column(String(20), nullable=True)  # ok | error | skipped
+    last_error = Column(Text, nullable=True)
+    last_duration_ms = Column(Integer, nullable=True)
+
+    # built-ins are edit-not-delete; custom tasks are deletable.
+    is_builtin = Column(Boolean, nullable=False, default=False, server_default="false")
+
+    created_at = Column(DateTime, nullable=False, default=_utcnow, server_default=sa_text("now()"))
+    updated_at = Column(DateTime, nullable=False, default=_utcnow, onupdate=_utcnow, server_default=sa_text("now()"))
+
+
+# ==========================================================================
 # Conversation Memory (Long-term)
 # ==========================================================================
 

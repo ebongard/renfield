@@ -105,6 +105,9 @@ renfield-mcp-tracking @ https://github.com/ebongard/renfield-mcp-tracking/archiv
 exchangelib>=5.4                     # Required by renfield-mcp-calendar (EWS backend)
 caldav>=1.4                          # Required by renfield-mcp-calendar (CalDAV backend)
 
+# Scheduling
+croniter>=2.0     # cron-expression evaluation for the Scheduled Tasks engine (#1137)
+
 # Monitoring & Logging
 loguru==0.7.2
 prometheus-client>=0.21.0     # Optional: Prometheus metrics (METRICS_ENABLED=true)

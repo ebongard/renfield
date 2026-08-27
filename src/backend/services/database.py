@@ -31,11 +31,15 @@ engine = create_async_engine(
 # for 20+ minutes after a single v2-shadow-mode path failed mid-flight,
 # stalling all memory extraction for that user.
 #
-# Fix: release every advisory lock at connection checkin. Safe because
-# this codebase uses advisory locks for exactly one purpose
-# (ConversationMemoryService._user_lock_key — the v2 per-user extraction
-# serialisation). If a future feature wires another advisory lock, this
-# hook must be revisited.
+# Fix: release every advisory lock at connection checkin. Several features now
+# take advisory locks, and ALL of them acquire on a DEDICATED connection they
+# hold + explicitly unlock for the lock's whole scope (the KG reconciler
+# 0x4B47, the obligation notifier/digest/calendar 0x4F42/0x4F43/0x4F44, the
+# Schicht-A fact-override reindex 0x5341, and the Scheduled Tasks engine 0x5354),
+# so this checkin sweep only ever fires as a backstop against a leaked lock —
+# never against a live one on the pooled work session. A future feature that
+# takes an advisory lock on a POOLED session (not a dedicated connection) would
+# have it dropped here mid-scope; keep using the dedicated-connection pattern.
 @event.listens_for(engine.sync_engine, "checkin")
 def _release_leaked_advisory_locks_on_checkin(dbapi_connection, connection_record):
     """Release any held advisory locks when a connection returns to the pool.

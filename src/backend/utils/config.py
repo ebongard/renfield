@@ -998,6 +998,37 @@ class Settings(BaseSettings):
     # clearly never going to consume it) — bounds the refunded-pending case.
     paperless_finalize_reconciler_giveup_hours: int = 24
 
+    # --- Scheduled Tasks subsystem (#1137, docs/design/scheduled-tasks.md) ---
+    # DB-defined recurring jobs (interval OR cron, start/end dates, enable toggle)
+    # run by a single engine loop that spawns each due task as its own asyncio.Task.
+    # The engine always runs; individual built-ins carry their existing
+    # enabled-defaults, so this is inert until a task is activated.
+    # Engine cadence. Also the interval FLOOR — a task with interval_seconds below
+    # this is rejected (sub-tick jobs stay on the legacy _spawn_periodic_task path).
+    scheduled_tasks_engine_tick_seconds: int = Field(default=10, ge=1, le=300)
+    # Concurrent-task fan-out per tick. Deliberately LOW: each running task holds a
+    # dedicated advisory-lock connection for its whole duration AND a migrated
+    # per-user looper opens its own per-user lock connection + work sessions, so a
+    # task can peak at ~4 connections. The pool (db_pool_size + db_max_overflow =
+    # 10+20=30) also serves every request/WS handler, so the engine leaves the bulk
+    # for request traffic (Review D1).
+    scheduled_tasks_max_concurrent: int = Field(default=3, ge=1, le=20)
+    # Frontend feature flag (Phase-2 admin UI "Geplante Aufgaben"); false-safe.
+    scheduled_tasks_enabled: bool = False
+
+    # Paperless dedupe reconciler — the first built-in scheduled task. Autonomously
+    # drains the Paperless duplicate backlog by calling mcp.paperless.dedupe_documents
+    # on a schedule (recoverable trash; keep-lowest-id). The built-in row is seeded
+    # present+enabled; this runtime flag self-gates the HANDLER so a ConfigMap
+    # env-flip activates it in Phase 1 before the UI toggle exists (Review M7).
+    paperless_dedupe_reconciler_enabled: bool = False
+    # Seed interval for the built-in row (admin-overridable in the UI once it ships).
+    paperless_dedupe_reconciler_interval: int = Field(default=300, ge=30, le=86400)
+    # Extras deleted per dedupe pass (→ dedupe_documents max_delete). Bounded so one
+    # pass stays inside the MCP rate limit + the tool's wall-clock budget; the job
+    # re-runs each interval until remaining reaches 0.
+    paperless_dedupe_reconciler_max_delete: int = Field(default=200, ge=1, le=1000)
+
     # Document-worker stale-task recovery. reclaim_stale() re-adopts entries a
     # dead consumer left un-ACKed in the Redis PEL. It used to run ONLY at worker
     # startup, so an entry orphaned WHILE the worker keeps running (an OOMKill

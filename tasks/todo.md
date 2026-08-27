@@ -1,21 +1,35 @@
-# H1/H6-Security-Rollout + P0-Fleet — chore/h1-h6-security-rollout
+# Scheduled Tasks subsystem — Phase 1 (#1137)
 
-Aus der priorisierten Offene-Punkte-Liste ("make it so"), Stand 2026-08-22 abends.
+Design: `docs/design/scheduled-tasks.md`. Branch: `feat/scheduled-tasks-1137`.
 
-## Befund (Korrekturen zur Doku)
-- Esszimmer LÄUFT (Node Ready, Pod 12d, authentifiziert) — P0-Annahme überholt
-- H1 weiter als dokumentiert: ENROLLMENT_ENABLED=true (PERMISSIVE), 5/6 Sats enrolled+authenticated
-- NEU-P0: 4 Pis seit Wochen OFFLINE (arbeitszimmer .72 seit 19.07., fitnessraum .225 seit 13.07., kinderbad .206 seit 20.07., wohnzimmer .193 seit 06.08.) — kein SSH, physisch aus/gestrandet
+## Phase 1 — Engine + model + registry + Paperless dedupe job (backend only)
 
-## Erledigt (dieser Branch / diese Session)
-- [x] sat-benszimmer enrolled (PSK via Admin-API), Token in gitignored host_var
-- [x] H6: Ed25519-Keypair generiert (~/.renfield/ota_release_key, nur Workstation), Release v1.4.6 signiert+verifiziert, RELEASE_MANIFEST.json+.sig committet
-- [x] group_vars: satellite_release_pubkeys mit Key #1; require_signature bleibt false (verify-if-present) bis Fleet-Provisionierung
-- [x] ConfigMap: SATELLITE_ENROLLMENT_AUTOFLIP_ENABLED=true (Latch feuert erst, wenn benszimmer mit Token authentifiziert)
+- [x] Config: `croniter` dep; `paperless_dedupe_reconciler_enabled`/`_interval`/`_max_delete`; `scheduled_tasks_engine_tick_seconds`/`_max_concurrent`; `scheduled_tasks_enabled` (frontend flag)
+- [x] Migration `pc20260827_scheduled_tasks` (down_revision `pc20260825_paperless_task_id`, re-verified head)
+- [x] Model `ScheduledTask` (models/database.py) + constants
+- [x] Registry `services/scheduled_tasks/registry.py` (handler_key → handler; optional param validator)
+- [x] Engine `services/scheduled_tasks/engine.py` (tick + spawn-per-task + Semaphore(3) + advisory-lock 0x5354 dedicated-conn + boot pass + ensure_builtin_tasks ON CONFLICT + interval floor + unknown-handler_key skip+backoff + cron tz + status-transition log)
+- [x] `api/lifecycle.py`: `_setup_task_engine(app)` + register in lifespan; migrated `federation_audit_cleanup` + `upload_cleanup` (removed their `_schedule_*`); updated stale advisory-lock comment in `services/database.py` (B2)
+- [x] Built-ins: paperless-dedupe (self-gates on `paperless_dedupe_reconciler_enabled`) + `federation_audit_cleanup` + `upload_cleanup` handlers
+- [x] MCP `dedupe_documents` (sibling repo `renfield-mcp-paperless` v1.12.0, 24 tests green) — NOT committed/pushed yet (awaits approval)
+- [x] Tests: `tests/backend/test_scheduled_tasks_engine.py` (pure helpers, registry, seeding idempotency+no-clobber, boot-force, execution ok/error/unknown-skip/disabled, tick due-selection+bounds+spawn-independence, dedupe handler self-gate)
+- [x] Run backend tests on .159 green — 22/22 pass (incl. cron, upload-cleanup regression, shutdown drain)
+- [x] Code review of implementation — 2 findings fixed (upload_cleanup NameError; untracked spawned runs → drain)
+- [ ] **FOLLOW-UP (this PR):** rewire interactive `internal.paperless_dedupe` as a thin caller of `mcp.paperless.dedupe_documents` (D9) + rewrite `test_paperless_dedupe_tool.py` to mock the MCP call. Deploy-coupled: requires the requirements.txt MCP pin bump to the v1.12.0 commit (ships in the same backend image). Autonomous scheduled path already uses the MCP tool — no fork in the new code.
+- [ ] **DEPLOY STEP:** after the MCP PR merges, bump `renfield-mcp-paperless` archive pin in `src/backend/requirements.txt` to the v1.12.0 SHA.
 
-## Offen — braucht Freigabe/Physik
-- [x] benszimmer provisioniert (Root-Cause SSH-Abbrüche: WiFi-Power-Save; Fix persistiert) → ENFORCING gelatcht 2026-08-22 20:48
-- [x] fitnessraum (jetzt .72, DHCP-Churn) + kinderbad (.206) wieder online, authentifiziert unter ENFORCING, Pubkeys provisioniert · [ ] wohnzimmer (.193) + arbeitszimmer (.225) melden sich trotz Strom NICHT — vor Ort prüfen (SD/Netzteil?)
-- [x] Pubkeys auf bens/fitness/kinderbad; require_signature FAIL-CLOSED geflippt (group_vars + Backend-ConfigMap) — wohnzimmer/arbeitszimmer erben bei Re-Provision
-- [ ] Speaker-Enrollment: 3 Mitglieder via "Sprecher einlernen" (USER spricht), dann purge_unknown_speakers --commit, dann Threshold-Kalibrierung + Phase-3-Flip
-- [ ] Login/User-Mgmt-Audit (nächstes großes Paket)
+## Review / outcome
+
+Phase 1 COMPLETE + committed (not pushed):
+- Renfield `feat/scheduled-tasks-1137`: `bf4ac680` (design doc) + `7b36d131` (feat: engine + dedupe job + D9 rewire).
+- MCP `renfield-mcp-paperless` `feat/dedupe-documents`: `8d0ffc7` (dedupe_documents v1.12.0).
+- Tests: 22 engine + 14 dedupe-thin-caller green on .159; MCP 24 tests green.
+- Three design reviews + one implementation code review; all findings fixed (upload_cleanup NameError; untracked spawned runs → drain).
+
+### Remaining before "Phase 1 shippable"
+- Push + PR both repos (awaiting approval).
+- **DEPLOY:** after the MCP PR merges, bump the `renfield-mcp-paperless` archive pin in `src/backend/requirements.txt` to the v1.12.0 SHA (ships the tool in the backend image; the interactive thin caller + scheduled job both need it).
+- Activate on xidra: `PAPERLESS_DEDUPE_RECONCILER_ENABLED=true` (runtime self-gate) to drain the duplicate backlog, then it idles.
+
+### Phase 2 (next): `/api/scheduled-tasks` CRUD + admin UI "Geplante Aufgaben".
+### Phase 3: migrate the remaining ~20 schedulers (per-job gate-location audit).
