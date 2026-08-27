@@ -4,11 +4,11 @@
  * Lists every interval/cron task, shows its next/last run + status, and lets an
  * admin toggle, run-now, edit, create (custom) and delete (non-builtin) tasks.
  */
-import { useState, useEffect } from 'react';
+import { useState, useEffect, Fragment } from 'react';
 import type { FormEvent } from 'react';
 import { useTranslation } from 'react-i18next';
 import {
-  Clock, Plus, RefreshCw, Play, Pencil, Trash2, Loader, Lock, Power,
+  Clock, Plus, RefreshCw, Play, Pencil, Trash2, Loader, Lock, Power, ChevronDown,
 } from 'lucide-react';
 
 import PageHeader from '../components/PageHeader';
@@ -21,6 +21,7 @@ import { extractApiError } from '../utils/axios';
 import { formatDateTime } from '../utils/datetime';
 import {
   useScheduledTasks,
+  useScheduledTaskRuns,
   useCreateScheduledTask,
   useUpdateScheduledTask,
   useRunScheduledTaskNow,
@@ -60,6 +61,101 @@ const STATUS_BADGE: Record<TaskStatus, BadgeColor> = {
   error: 'red',
   skipped: 'amber',
 };
+
+/** duration_ms → "41s" / "1m 20s" / "—" (null). */
+function formatDuration(ms: number | null, t: Translate): string {
+  if (ms == null) return '—';
+  const totalSeconds = Math.round(ms / 1000);
+  if (totalSeconds < 60) {
+    return t('scheduledTasks.runs.durationSeconds', { seconds: totalSeconds });
+  }
+  return t('scheduledTasks.runs.durationMinutes', {
+    minutes: Math.floor(totalSeconds / 60),
+    seconds: totalSeconds % 60,
+  });
+}
+
+/** Inline per-task run-history table. Mounted only while its row is expanded, so
+ *  the underlying query is fetched lazily (first expand). */
+function TaskRunHistory({ taskId }: { taskId: number }) {
+  const { t } = useTranslation();
+  const runsQuery = useScheduledTaskRuns(taskId, { enabled: true });
+  const runs = runsQuery.data ?? [];
+
+  if (runsQuery.isLoading) {
+    return (
+      <div className="flex items-center gap-2 py-2 text-sm text-gray-500 dark:text-gray-400">
+        <Loader className="w-4 h-4 animate-spin" />
+        <span>{t('scheduledTasks.runs.loading')}</span>
+      </div>
+    );
+  }
+
+  if (runsQuery.errorMessage) {
+    return <Alert variant="error">{runsQuery.errorMessage}</Alert>;
+  }
+
+  if (runs.length === 0) {
+    return (
+      <p className="py-2 text-sm text-gray-500 dark:text-gray-400">
+        {t('scheduledTasks.runs.empty')}
+      </p>
+    );
+  }
+
+  return (
+    <div>
+      <div className="mb-2 text-xs font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400">
+        {t('scheduledTasks.runs.title')}
+      </div>
+      <div className="overflow-x-auto">
+        <table className="w-full text-sm tabular-nums">
+          <thead>
+            <tr className="text-left text-xs uppercase tracking-wide text-gray-400 dark:text-gray-500">
+              <th className="px-3 py-2 font-medium">{t('scheduledTasks.runs.colTime')}</th>
+              <th className="px-3 py-2 font-medium">{t('scheduledTasks.runs.colStatus')}</th>
+              <th className="px-3 py-2 font-medium">{t('scheduledTasks.runs.colDuration')}</th>
+              <th className="px-3 py-2 font-medium">{t('scheduledTasks.runs.colOutput')}</th>
+            </tr>
+          </thead>
+          <tbody>
+            {runs.map((run) => (
+              <tr
+                key={run.id}
+                className="border-t border-gray-100 dark:border-gray-800"
+              >
+                <td className="px-3 py-2 align-top whitespace-nowrap text-gray-600 dark:text-gray-400">
+                  {formatDateTime(run.started_at)}
+                </td>
+                <td className="px-3 py-2 align-top">
+                  <Badge color={STATUS_BADGE[run.status]}>
+                    {t(`scheduledTasks.status.${run.status}`)}
+                  </Badge>
+                </td>
+                <td className="px-3 py-2 align-top whitespace-nowrap text-gray-600 dark:text-gray-400">
+                  {formatDuration(run.duration_ms, t)}
+                </td>
+                <td className="px-3 py-2 align-top">
+                  {run.error ? (
+                    <span className="font-mono text-xs break-words text-red-600 dark:text-red-400">
+                      {run.error}
+                    </span>
+                  ) : run.detail ? (
+                    <span className="font-mono text-xs break-words text-gray-600 dark:text-gray-400">
+                      {run.detail}
+                    </span>
+                  ) : (
+                    <span className="text-gray-400 dark:text-gray-600">—</span>
+                  )}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
 
 interface TaskFormData {
   name: string;
@@ -111,6 +207,8 @@ export default function ScheduledTasksPage() {
 
   const [success, setSuccess] = useState<string | null>(null);
   const [mutationError, setMutationError] = useState<string | null>(null);
+
+  const [expandedTaskId, setExpandedTaskId] = useState<number | null>(null);
 
   const [showModal, setShowModal] = useState(false);
   const [editingTask, setEditingTask] = useState<ScheduledTask | null>(null);
@@ -314,8 +412,8 @@ export default function ScheduledTasksPage() {
             </thead>
             <tbody>
               {tasks.map((task) => (
+                <Fragment key={task.id}>
                 <tr
-                  key={task.id}
                   className="border-b border-gray-100 dark:border-gray-800 last:border-0 hover:bg-gray-50 dark:hover:bg-gray-800/50 transition-colors"
                 >
                   {/* Name + badges */}
@@ -404,6 +502,22 @@ export default function ScheduledTasksPage() {
                     <div className="flex items-center justify-end gap-1">
                       <button
                         type="button"
+                        onClick={() =>
+                          setExpandedTaskId((cur) => (cur === task.id ? null : task.id))
+                        }
+                        aria-expanded={expandedTaskId === task.id}
+                        aria-label={t('scheduledTasks.runs.toggle')}
+                        className="inline-flex items-center gap-1 p-2 rounded-lg text-gray-500 hover:text-accent-600 dark:text-gray-400 dark:hover:text-accent-400 hover:bg-gray-100 dark:hover:bg-gray-700/50 transition-colors"
+                        title={t('scheduledTasks.runs.toggle')}
+                      >
+                        <ChevronDown
+                          className={`w-4 h-4 transition-transform ${
+                            expandedTaskId === task.id ? 'rotate-180' : ''
+                          }`}
+                        />
+                      </button>
+                      <button
+                        type="button"
                         onClick={() => handleRunNow(task)}
                         disabled={!task.enabled || runTask.isPending}
                         className="p-2 rounded-lg text-gray-500 hover:text-accent-600 dark:text-gray-400 dark:hover:text-accent-400 hover:bg-gray-100 dark:hover:bg-gray-700/50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
@@ -432,6 +546,15 @@ export default function ScheduledTasksPage() {
                     </div>
                   </td>
                 </tr>
+
+                {expandedTaskId === task.id && (
+                  <tr className="bg-gray-50 dark:bg-gray-800/30">
+                    <td colSpan={7} className="px-4 py-3">
+                      <TaskRunHistory taskId={task.id} />
+                    </td>
+                  </tr>
+                )}
+                </Fragment>
               ))}
             </tbody>
           </table>

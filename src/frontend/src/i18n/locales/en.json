@@ -708,6 +708,19 @@
       "skipped": "Skipped",
       "never": "Never ran"
     },
+    "runs": {
+      "title": "History",
+      "toggle": "History",
+      "colTime": "Time",
+      "colStatus": "Status",
+      "colDuration": "Duration",
+      "colOutput": "Output",
+      "empty": "No runs yet",
+      "loading": "Loading history...",
+      "failedToLoad": "Failed to load history",
+      "durationSeconds": "{{seconds}}s",
+      "durationMinutes": "{{minutes}}m {{seconds}}s"
+    },
     "fieldName": "Name",
     "namePlaceholder": "e.g. Nightly cleanup",
     "fieldHandler": "Handler",

@@ -239,3 +239,41 @@ class TestDelete:
     async def test_delete_missing_404(self, async_client):
         r = await async_client.delete("/api/scheduled-tasks/999999")
         assert r.status_code == 404
+
+
+class TestRuns:
+    async def _seed_run(self, smk, task_id, **kw):
+        from datetime import UTC, datetime
+
+        from models.database import ScheduledTaskRun
+
+        defaults = dict(
+            task_id=task_id, started_at=datetime.now(UTC).replace(tzinfo=None),
+            finished_at=datetime.now(UTC).replace(tzinfo=None),
+            status="ok", duration_ms=100, detail="deleted=5 remaining=3", error=None,
+        )
+        defaults.update(kw)
+        async with smk() as db:
+            row = ScheduledTaskRun(**defaults)
+            db.add(row)
+            await db.commit()
+
+    async def test_runs_newest_first(self, async_client, smk):
+        from datetime import UTC, datetime, timedelta
+
+        tid = await _seed(smk, name="T")
+        base = datetime.now(UTC).replace(tzinfo=None)
+        await self._seed_run(smk, tid, started_at=base - timedelta(minutes=10), detail="old")
+        await self._seed_run(smk, tid, started_at=base, status="error", error="boom", detail=None)
+
+        r = await async_client.get(f"/api/scheduled-tasks/{tid}/runs")
+        assert r.status_code == 200
+        runs = r.json()
+        assert len(runs) == 2
+        assert runs[0]["status"] == "error"  # newest first
+        assert runs[0]["error"] == "boom"
+        assert runs[1]["detail"] == "old"
+
+    async def test_runs_missing_task_404(self, async_client):
+        r = await async_client.get("/api/scheduled-tasks/999999/runs")
+        assert r.status_code == 404

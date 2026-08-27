@@ -136,6 +136,7 @@ export const keys = {
     all: ['scheduledTasks'] as const,
     list: () => ['scheduledTasks', 'list'] as const,
     detail: (id: number) => ['scheduledTasks', 'detail', id] as const,
+    runs: (id: number) => ['scheduledTasks', id, 'runs'] as const,
   },
   notes: {
     all: ['notes'] as const,

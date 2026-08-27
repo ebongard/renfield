@@ -68,6 +68,19 @@ class ScheduledTaskResponse(BaseModel):
         from_attributes = True
 
 
+class ScheduledTaskRunResponse(BaseModel):
+    id: int
+    started_at: datetime
+    finished_at: datetime | None
+    status: str
+    duration_ms: int | None
+    detail: str | None
+    error: str | None
+
+    class Config:
+        from_attributes = True
+
+
 class ScheduledTaskList(BaseModel):
     tasks: list[ScheduledTaskResponse]
     # The handler_keys a custom task may bind to (for the create form).
@@ -162,6 +175,28 @@ async def get_scheduled_task(
     if task is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Aufgabe nicht gefunden")
     return ScheduledTaskResponse.model_validate(task)
+
+
+@router.get("/{task_id}/runs", response_model=list[ScheduledTaskRunResponse])
+async def list_scheduled_task_runs(
+    task_id: int,
+    limit: int = 50,
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(require_permission(Permission.ADMIN)),
+) -> list[ScheduledTaskRunResponse]:
+    """Per-run history for a task (newest first) — the UI's "log of each run"."""
+    from models.database import ScheduledTaskRun
+
+    if await db.get(ScheduledTask, task_id) is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Aufgabe nicht gefunden")
+    limit = max(1, min(limit, 200))
+    rows = (await db.execute(
+        select(ScheduledTaskRun)
+        .where(ScheduledTaskRun.task_id == task_id)
+        .order_by(ScheduledTaskRun.started_at.desc(), ScheduledTaskRun.id.desc())
+        .limit(limit)
+    )).scalars().all()
+    return [ScheduledTaskRunResponse.model_validate(r) for r in rows]
 
 
 @router.post("", response_model=ScheduledTaskResponse, status_code=status.HTTP_201_CREATED)

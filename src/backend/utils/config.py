@@ -1006,6 +1006,10 @@ class Settings(BaseSettings):
     # Engine cadence. Also the interval FLOOR — a task with interval_seconds below
     # this is rejected (sub-tick jobs stay on the legacy _spawn_periodic_task path).
     scheduled_tasks_engine_tick_seconds: int = Field(default=10, ge=1, le=300)
+    # Per-task run-history retention: the engine records one scheduled_task_runs
+    # row per run (the admin UI's per-run "log") and prunes to the newest N per
+    # task so the table stays bounded.
+    scheduled_tasks_run_history_limit: int = Field(default=50, ge=1, le=1000)
     # Concurrent-task fan-out per tick. Deliberately LOW: each running task holds a
     # dedicated advisory-lock connection for its whole duration AND a migrated
     # per-user looper opens its own per-user lock connection + work sessions, so a

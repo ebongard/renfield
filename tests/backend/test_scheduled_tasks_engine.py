@@ -715,3 +715,79 @@ class TestBatchBCHandlers:
             if seed.interval_seconds is not None:
                 # must not be below the engine tick (interval floor)
                 engine._validate_interval_floor(seed.interval_seconds)
+
+
+@pytest.mark.database
+class TestRunHistory:
+    """Per-run history rows (the admin UI's 'log of each run')."""
+
+    async def _runs(self, smk, task_id):
+        from models.database import ScheduledTaskRun
+
+        async with smk() as db:
+            return (await db.execute(
+                select(ScheduledTaskRun)
+                .where(ScheduledTaskRun.task_id == task_id)
+                .order_by(ScheduledTaskRun.started_at.desc(), ScheduledTaskRun.id.desc())
+            )).scalars().all()
+
+    async def test_records_ok_run_with_detail(self, session_factory):
+        from services.scheduled_tasks import engine, registry
+
+        async def _h(app, params):
+            return "deleted=5 remaining=3"
+
+        registry.register_handler("rh_ok", _h)
+        tid = await _mk(session_factory, name="t", handler_key="rh_ok")
+        await engine._execute_task(SimpleNamespace(state=SimpleNamespace()), tid)
+
+        runs = await self._runs(session_factory, tid)
+        assert len(runs) == 1
+        assert runs[0].status == "ok"
+        assert runs[0].detail == "deleted=5 remaining=3"
+        assert runs[0].error is None
+        assert runs[0].finished_at is not None
+        assert runs[0].duration_ms is not None
+
+    async def test_records_error_run(self, session_factory):
+        from services.scheduled_tasks import engine, registry
+
+        async def _boom(app, params):
+            raise RuntimeError("kaboom")
+
+        registry.register_handler("rh_err", _boom)
+        tid = await _mk(session_factory, name="t", handler_key="rh_err")
+        await engine._execute_task(SimpleNamespace(state=SimpleNamespace()), tid)
+
+        runs = await self._runs(session_factory, tid)
+        assert len(runs) == 1
+        assert runs[0].status == "error"
+        assert "kaboom" in (runs[0].error or "")
+
+    async def test_records_unknown_handler_skip_run(self, session_factory):
+        from services.scheduled_tasks import engine
+
+        tid = await _mk(session_factory, name="t", handler_key="ghost")  # not registered
+        await engine._execute_task(SimpleNamespace(state=SimpleNamespace()), tid)
+
+        runs = await self._runs(session_factory, tid)
+        assert len(runs) == 1
+        assert runs[0].status == "skipped"
+        assert "unknown handler_key" in (runs[0].detail or "")
+
+    async def test_retention_prunes_to_limit(self, session_factory, monkeypatch):
+        from utils.config import settings
+        from services.scheduled_tasks import engine, registry
+
+        monkeypatch.setattr(settings, "scheduled_tasks_run_history_limit", 3)
+
+        async def _h(app, params):
+            return "ok"
+
+        registry.register_handler("rh_many", _h)
+        tid = await _mk(session_factory, name="t", handler_key="rh_many")
+        for _ in range(5):
+            await engine._execute_task(SimpleNamespace(state=SimpleNamespace()), tid)
+
+        runs = await self._runs(session_factory, tid)
+        assert len(runs) == 3  # pruned to the newest N

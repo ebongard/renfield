@@ -1942,6 +1942,19 @@
       "skipped": "Saltata",
       "never": "Mai eseguita"
     },
+    "runs": {
+      "title": "Cronologia",
+      "toggle": "Cronologia",
+      "colTime": "Ora",
+      "colStatus": "Stato",
+      "colDuration": "Durata",
+      "colOutput": "Output",
+      "empty": "Nessuna esecuzione",
+      "loading": "Caricamento cronologia...",
+      "failedToLoad": "Impossibile caricare la cronologia",
+      "durationSeconds": "{{seconds}}s",
+      "durationMinutes": "{{minutes}}m {{seconds}}s"
+    },
     "fieldName": "Nome",
     "namePlaceholder": "es. Pulizia notturna",
     "fieldHandler": "Handler",

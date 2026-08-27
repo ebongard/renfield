@@ -26,7 +26,7 @@ from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
 
 from loguru import logger
-from sqlalchemy import or_, select, text
+from sqlalchemy import delete, or_, select, text
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from models.database import (
@@ -35,6 +35,7 @@ from models.database import (
     SCHEDULED_TASK_STATUS_OK,
     SCHEDULED_TASK_STATUS_SKIPPED,
     ScheduledTask,
+    ScheduledTaskRun,
 )
 from services.scheduled_tasks.registry import get_handler
 from utils.config import settings
@@ -306,10 +307,53 @@ async def _run_one(app: "FastAPI", task_id: int) -> None:
             )
 
 
+async def _record_run(
+    session,
+    task_id: int,
+    *,
+    started_at: datetime,
+    finished_at: datetime,
+    status: str,
+    duration_ms: int,
+    detail: str | None,
+    error: str | None,
+) -> None:
+    """Insert one per-run history row and prune to the newest
+    ``scheduled_tasks_run_history_limit`` for this task. Best-effort — the caller
+    isolates it from the task-state commit so a run-log failure never disturbs
+    scheduling."""
+    session.add(ScheduledTaskRun(
+        task_id=task_id,
+        started_at=started_at,
+        finished_at=finished_at,
+        status=status,
+        duration_ms=duration_ms,
+        detail=detail or None,
+        error=error or None,
+    ))
+    await session.flush()  # give the new row an id so the prune counts it
+    limit = max(1, settings.scheduled_tasks_run_history_limit)
+    keep = (
+        select(ScheduledTaskRun.id)
+        .where(ScheduledTaskRun.task_id == task_id)
+        .order_by(ScheduledTaskRun.started_at.desc(), ScheduledTaskRun.id.desc())
+        .limit(limit)
+        .scalar_subquery()
+    )
+    await session.execute(
+        delete(ScheduledTaskRun).where(
+            ScheduledTaskRun.task_id == task_id,
+            ScheduledTaskRun.id.not_in(keep),
+        )
+    )
+    await session.commit()
+
+
 async def _execute_task(app: "FastAPI", task_id: int) -> None:
     from services.database import AsyncSessionLocal
 
     started = time.monotonic()
+    started_at = _naive_utcnow()
     async with AsyncSessionLocal() as session:
         task = await session.get(ScheduledTask, task_id)
         if task is None or not task.enabled:
@@ -321,13 +365,21 @@ async def _execute_task(app: "FastAPI", task_id: int) -> None:
         if spec is None:
             # Unknown handler_key (Review D3/D4): record once + back off, so a
             # removed handler or a mid-rollout ordering gap doesn't error every tick.
+            unknown_msg = f"unknown handler_key: {task.handler_key}"
             task.last_run_at = now
             task.last_status = SCHEDULED_TASK_STATUS_SKIPPED
-            task.last_error = f"unknown handler_key: {task.handler_key}"
+            task.last_error = unknown_msg
+            task.last_duration_ms = int((time.monotonic() - started) * 1000)
             task.next_run_at = compute_next_run(task, after=now) or (
                 now + timedelta(seconds=_UNSCHEDULABLE_BACKOFF_SECONDS)
             )
             await session.commit()
+            await _record_run_safe(
+                session, task_id, task.name,
+                started_at=started_at, finished_at=now,
+                status=SCHEDULED_TASK_STATUS_SKIPPED,
+                duration_ms=task.last_duration_ms, detail=unknown_msg, error=unknown_msg,
+            )
             logger.warning(
                 f"scheduled task '{task.name}': unknown handler_key "
                 f"'{task.handler_key}' — skipped + backed off"
@@ -335,6 +387,7 @@ async def _execute_task(app: "FastAPI", task_id: int) -> None:
             return
 
         prev_status = task.last_status
+        task_name = task.name
         params = dict(task.params or {})
         status = SCHEDULED_TASK_STATUS_OK
         err: str | None = None
@@ -346,24 +399,42 @@ async def _execute_task(app: "FastAPI", task_id: int) -> None:
         except Exception as e:  # noqa: BLE001 — a handler failure is recorded, not fatal
             status = SCHEDULED_TASK_STATUS_ERROR
             err = f"{type(e).__name__}: {e}"
-            logger.warning(f"scheduled task '{task.name}' failed: {err}")
+            logger.warning(f"scheduled task '{task_name}' failed: {err}")
 
         end = _naive_utcnow()
+        duration_ms = int((time.monotonic() - started) * 1000)
         task.last_run_at = end
         task.last_status = status
         task.last_error = err
-        task.last_duration_ms = int((time.monotonic() - started) * 1000)
+        task.last_duration_ms = duration_ms
         task.next_run_at = compute_next_run(task, after=end) or (
             end + timedelta(seconds=_UNSCHEDULABLE_BACKOFF_SECONDS)
         )
         await session.commit()
+
+        # Per-run history row (isolated from the task-state commit above).
+        await _record_run_safe(
+            session, task_id, task_name,
+            started_at=started_at, finished_at=end, status=status,
+            duration_ms=duration_ms, detail=detail, error=err,
+        )
 
         # Status-transition observability (Review D5): the last_* columns keep only
         # the most recent run, so surface a transition so an intermittently-failing
         # task is visible without opening the UI.
         if status != prev_status:
             logger.info(
-                f"scheduled task '{task.name}' status {prev_status or 'none'} -> {status}"
+                f"scheduled task '{task_name}' status {prev_status or 'none'} -> {status}"
                 + (f" ({detail})" if detail else "")
                 + (f": {err}" if err else "")
             )
+
+
+async def _record_run_safe(session, task_id: int, task_name: str, **kw) -> None:
+    """Run-history recording that never disturbs the already-committed task state:
+    on any failure it rolls back its own partial work and logs a warning."""
+    try:
+        await _record_run(session, task_id, **kw)
+    except Exception as e:  # noqa: BLE001
+        await session.rollback()
+        logger.warning(f"scheduled-task run-history record failed for '{task_name}': {e}")

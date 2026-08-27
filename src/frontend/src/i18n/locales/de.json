@@ -708,6 +708,19 @@
       "skipped": "Übersprungen",
       "never": "Nie gelaufen"
     },
+    "runs": {
+      "title": "Verlauf",
+      "toggle": "Verlauf",
+      "colTime": "Zeit",
+      "colStatus": "Status",
+      "colDuration": "Dauer",
+      "colOutput": "Ausgabe",
+      "empty": "Noch keine Läufe",
+      "loading": "Lade Verlauf...",
+      "failedToLoad": "Verlauf konnte nicht geladen werden",
+      "durationSeconds": "{{seconds}}s",
+      "durationMinutes": "{{minutes}}m {{seconds}}s"
+    },
     "fieldName": "Name",
     "namePlaceholder": "z.B. Nächtliche Bereinigung",
     "fieldHandler": "Handler",

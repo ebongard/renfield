@@ -38,6 +38,20 @@ export interface ScheduledTasksResponse {
   engine_tick_seconds: number;
 }
 
+/** One recorded execution of a scheduled task. Mirrors ScheduledTaskRun in
+ *  api/routes/scheduled_tasks.py; the API returns these newest-first. */
+export interface ScheduledTaskRun {
+  id: number;
+  started_at: string;
+  finished_at: string | null;
+  status: TaskStatus;
+  duration_ms: number | null;
+  /** The handler's output line (e.g. "deleted=200 remaining=1852"). */
+  detail: string | null;
+  /** Set only on a failed run. */
+  error: string | null;
+}
+
 /** Create body — a custom task. `handler_key` must be one of the
  *  `available_handlers`; interval must be ≥ engine tick; cron must parse. */
 export interface CreateScheduledTaskInput {
@@ -73,6 +87,14 @@ export interface DeleteScheduledTaskResult {
 
 async function fetchScheduledTasks(): Promise<ScheduledTasksResponse> {
   const response = await apiClient.get<ScheduledTasksResponse>('/api/scheduled-tasks');
+  return response.data;
+}
+
+async function fetchScheduledTaskRuns(id: number): Promise<ScheduledTaskRun[]> {
+  const response = await apiClient.get<ScheduledTaskRun[]>(
+    `/api/scheduled-tasks/${id}/runs`,
+    { params: { limit: 50 } },
+  );
   return response.data;
 }
 
@@ -114,6 +136,20 @@ export function useScheduledTasks() {
       staleTime: STALE.DEFAULT,
     },
     'scheduledTasks.failedToLoad',
+  );
+}
+
+/** Per-task run history. `enabled` gates the fetch so the runs only load once
+ *  the caller expands the row (lazy). */
+export function useScheduledTaskRuns(taskId: number, opts?: { enabled?: boolean }) {
+  return useApiQuery(
+    {
+      queryKey: keys.scheduledTasks.runs(taskId),
+      queryFn: () => fetchScheduledTaskRuns(taskId),
+      staleTime: STALE.DEFAULT,
+      enabled: opts?.enabled ?? true,
+    },
+    'scheduledTasks.runs.failedToLoad',
   );
 }
 

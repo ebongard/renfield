@@ -393,6 +393,11 @@ accurate against the code; verdict "sound to build with the fixes below"):
   through as a param.
 - **D5 (MEDIUM)** — `last_*`-only hides intermittent failures → **log/metric on
   status transition**, optionally route `error` to the proactive alert path.
+  **Extended (shipped):** a bounded per-run history table `scheduled_task_runs`
+  (migration `pc20260828`, newest-`scheduled_tasks_run_history_limit`/task) — the
+  engine records every run (status, duration, handler `detail`, error) isolated
+  from the task-state commit; `GET /api/scheduled-tasks/{id}/runs` backs the
+  admin page's expandable per-task run-history ("log of each run").
 - **D6/D7/D8 (LOW)** — run-now is schedule-soonest not instant; disable doesn't
   cancel an in-flight run; `params` needs a per-handler schema — all now stated.
 - **B1/B2/B3** — pool ceiling is `10+20=30` not 10; update the stale

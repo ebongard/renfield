@@ -12,6 +12,7 @@ import type { ModalProps } from '../../../../src/frontend/src/components/Modal';
 import type { UseConfirmDialogResult } from '../../../../src/frontend/src/components/ConfirmDialog';
 import type {
   ScheduledTask,
+  ScheduledTaskRun,
   ScheduledTasksResponse,
 } from '../../../../src/frontend/src/api/resources/scheduledTasks';
 
@@ -178,6 +179,58 @@ describe('ScheduledTasksPage', () => {
     expect(screen.queryByTitle('Aufgabe löschen')).not.toBeInTheDocument();
     // …but are still editable.
     expect(screen.getByTitle('Aufgabe bearbeiten')).toBeInTheDocument();
+  });
+
+  it('lazily loads and renders per-task run history when expanded', async () => {
+    useTasks([mkTask({ id: 11, name: 'Dedupe task' })]);
+    const runs: ScheduledTaskRun[] = [
+      {
+        id: 2,
+        started_at: '2026-08-27T13:19:00',
+        finished_at: '2026-08-27T13:19:41',
+        status: 'ok',
+        duration_ms: 41000,
+        detail: 'deleted=200 remaining=1652',
+        error: null,
+      },
+      {
+        id: 1,
+        started_at: '2026-08-27T12:56:00',
+        finished_at: '2026-08-27T12:56:30',
+        status: 'error',
+        duration_ms: 30000,
+        detail: null,
+        error: 'Tool-Aufruf Timeout: dedupe_documents',
+      },
+    ];
+    let runsRequested = false;
+    server.use(
+      http.get(`${BASE_URL}/api/scheduled-tasks/:id/runs`, ({ params }) => {
+        runsRequested = true;
+        expect(params.id).toBe('11');
+        return HttpResponse.json(runs);
+      }),
+    );
+
+    renderWithProviders(<ScheduledTasksPage />);
+    const user = userEvent.setup();
+
+    await waitFor(() => expect(screen.getByText('Dedupe task')).toBeInTheDocument());
+    // Not fetched until the row is expanded.
+    expect(runsRequested).toBe(false);
+
+    await user.click(screen.getByRole('button', { name: 'Verlauf' }));
+
+    // ok run's detail + the error run's message render.
+    await waitFor(() =>
+      expect(screen.getByText('deleted=200 remaining=1652')).toBeInTheDocument(),
+    );
+    expect(runsRequested).toBe(true);
+    expect(screen.getByText('Tool-Aufruf Timeout: dedupe_documents')).toBeInTheDocument();
+    // Duration humanized (41000ms → "41s").
+    expect(screen.getByText('41s')).toBeInTheDocument();
+    // The error run carries the red "Fehler" status badge.
+    expect(screen.getByText('Fehler')).toBeInTheDocument();
   });
 
   it('surfaces a 409 error when creating a duplicate task', async () => {

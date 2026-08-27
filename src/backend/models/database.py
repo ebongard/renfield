@@ -1426,6 +1426,32 @@ class ScheduledTask(Base):
     created_at = Column(DateTime, nullable=False, default=_utcnow, server_default=sa_text("now()"))
     updated_at = Column(DateTime, nullable=False, default=_utcnow, onupdate=_utcnow, server_default=sa_text("now()"))
 
+    runs = relationship("ScheduledTaskRun", back_populates="task", cascade="all, delete-orphan")
+
+
+class ScheduledTaskRun(Base):
+    """One execution of a ScheduledTask — the per-run audit trail the admin UI
+    shows as the "log" of each scheduled run. The engine writes one row per run
+    and prunes to the newest ``scheduled_tasks_run_history_limit`` per task."""
+    __tablename__ = "scheduled_task_runs"
+
+    id = Column(Integer, primary_key=True, index=True)
+    task_id = Column(Integer, ForeignKey("scheduled_tasks.id", ondelete="CASCADE"), nullable=False, index=True)
+    started_at = Column(DateTime, nullable=False)
+    finished_at = Column(DateTime, nullable=True)
+    status = Column(String(20), nullable=False)  # ok | error | skipped
+    duration_ms = Column(Integer, nullable=True)
+    # the handler's return string (e.g. "deleted=200 remaining=1852") or skip reason
+    detail = Column(Text, nullable=True)
+    error = Column(Text, nullable=True)
+    created_at = Column(DateTime, nullable=False, default=_utcnow, server_default=sa_text("now()"))
+
+    task = relationship("ScheduledTask", back_populates="runs")
+
+    __table_args__ = (
+        Index("ix_scheduled_task_runs_task_started", "task_id", "started_at"),
+    )
+
 
 # ==========================================================================
 # Conversation Memory (Long-term)
