@@ -1436,7 +1436,10 @@ class ScheduledTaskRun(Base):
     __tablename__ = "scheduled_task_runs"
 
     id = Column(Integer, primary_key=True, index=True)
-    task_id = Column(Integer, ForeignKey("scheduled_tasks.id", ondelete="CASCADE"), nullable=False, index=True)
+    # No single-column index=True: the composite ix_scheduled_task_runs_task_started
+    # (below) covers task_id-prefix lookups, and the migration creates only that —
+    # keep create_all + Alembic in lockstep.
+    task_id = Column(Integer, ForeignKey("scheduled_tasks.id", ondelete="CASCADE"), nullable=False)
     started_at = Column(DateTime, nullable=False)
     finished_at = Column(DateTime, nullable=True)
     status = Column(String(20), nullable=False)  # ok | error | skipped
