@@ -143,55 +143,19 @@ def _mock_lifecycle_modules():
 
 
 class TestMemoryCleanupScheduler:
-    """Tests for _schedule_memory_cleanup in lifecycle."""
+    """The memory-cleanup scheduler was migrated to the Scheduled Tasks engine
+    (#1137); its logic now lives in ``services.scheduled_tasks.builtins.
+    _memory_cleanup_handler``. The gate (memory_enabled) re-assertion is verified
+    here; the enabled-path cleanup logic is covered by the ConversationMemoryService
+    tests above and the engine's execution tests."""
 
     @pytest.mark.unit
-    def test_schedule_not_called_when_disabled(self):
-        """No task created when memory_enabled is False."""
-        import importlib
+    async def test_handler_skips_when_disabled(self, monkeypatch):
+        from types import SimpleNamespace
 
-        with _mock_lifecycle_modules():
-            import api.lifecycle as lifecycle
+        from services.scheduled_tasks import builtins
+        from utils.config import settings
 
-            importlib.reload(lifecycle)
-
-            original_tasks = lifecycle._startup_tasks.copy()
-
-            with patch.object(lifecycle, "settings") as mock_settings:
-                mock_settings.memory_enabled = False
-                lifecycle._schedule_memory_cleanup()
-
-            # No new tasks should have been added
-            assert len(lifecycle._startup_tasks) == len(original_tasks)
-            lifecycle._startup_tasks = original_tasks
-
-    @pytest.mark.unit
-    async def test_schedule_creates_task_when_enabled(self):
-        """Task is created when memory_enabled is True."""
-        import importlib
-
-        with _mock_lifecycle_modules():
-            import api.lifecycle as lifecycle
-
-            importlib.reload(lifecycle)
-
-            original_tasks = lifecycle._startup_tasks.copy()
-            lifecycle._startup_tasks = []
-
-            try:
-                with patch.object(lifecycle, "settings") as mock_settings:
-                    mock_settings.memory_enabled = True
-                    mock_settings.memory_cleanup_interval = 3600
-                    lifecycle._schedule_memory_cleanup()
-
-                assert len(lifecycle._startup_tasks) == 1
-                task = lifecycle._startup_tasks[0]
-                assert isinstance(task, asyncio.Task)
-                # Cancel the task to avoid it running forever
-                task.cancel()
-                try:
-                    await task
-                except asyncio.CancelledError:
-                    pass
-            finally:
-                lifecycle._startup_tasks = original_tasks
+        monkeypatch.setattr(settings, "memory_enabled", False)
+        out = await builtins._memory_cleanup_handler(SimpleNamespace(state=SimpleNamespace()), {})
+        assert out is not None and "skipped" in out

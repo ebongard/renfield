@@ -1,6 +1,6 @@
 """Meeting retention + audio lifecycle (§2).
 
-Two mechanisms, run by one daily job (``_schedule_meeting_retention``):
+Two mechanisms, run by one daily job (the ``meeting_retention`` scheduled task):
 
 1. **Audio grace cleanup** — a completed meeting's original audio is deleted
    after ``meeting_audio_grace_days`` (unless ``meeting_keep_audio``). The

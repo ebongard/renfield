@@ -168,6 +168,237 @@ async def _mcp_health_monitor_handler(app: "FastAPI", params: dict) -> str | Non
     return None
 
 
+# --- Phase 3 Batch B: single wrapper-gated interval jobs ---------------------
+# Each re-asserts its runtime gate in-handler (H4): the legacy _schedule_* gated
+# in the wrapper but the service fn does not, so a naive call would run the work
+# with the flag off. Seeded enabled + in-handler gate (M7) so a ConfigMap flag
+# flip controls the work at runtime, preserving the legacy behavior.
+
+async def _notification_cleanup_handler(app: "FastAPI", params: dict) -> str | None:
+    if not settings.proactive_enabled:
+        return "skipped: proactive_enabled is off"
+    from services.database import AsyncSessionLocal
+    from services.notification_service import NotificationService
+
+    async with AsyncSessionLocal() as db_session:
+        await NotificationService(db_session).cleanup_expired()
+    return None
+
+
+async def _memory_cleanup_handler(app: "FastAPI", params: dict) -> str | None:
+    if not settings.memory_enabled:
+        return "skipped: memory_enabled is off"
+    from services.conversation_memory_service import ConversationMemoryService
+    from services.database import AsyncSessionLocal
+
+    async with AsyncSessionLocal() as db_session:
+        counts = await ConversationMemoryService(db_session).cleanup()
+        if sum(counts.values()) > 0:
+            from utils.metrics import record_memory_cleanup
+
+            record_memory_cleanup(counts)
+
+    # Episodic sub-branch (inline runtime sub-gate, preserved from the legacy tick).
+    if settings.memory_episodic_enabled:
+        from sqlalchemy import func, select
+
+        from models.database import EpisodicMemory
+        from services.episodic_memory_service import EpisodicMemoryService
+
+        async with AsyncSessionLocal() as db_session:
+            ep_svc = EpisodicMemoryService(db_session)
+            ep_counts = await ep_svc.cleanup()
+            if sum(ep_counts.values()) > 0:
+                logger.info(f"Episodic cleanup: {ep_counts}")
+            result = await db_session.execute(
+                select(EpisodicMemory.user_id)
+                .where(EpisodicMemory.is_active == True)  # noqa: E712
+                .group_by(EpisodicMemory.user_id)
+                .having(func.count(EpisodicMemory.id) > settings.memory_episodic_summarize_threshold)
+            )
+            user_ids = [row[0] for row in result.fetchall() if row[0] is not None]
+            for uid in user_ids:
+                summarized = await ep_svc.summarize_old(uid)
+                if summarized > 0:
+                    logger.info(f"Episodic summarization: {summarized} episodes for user {uid}")
+    return None
+
+
+async def _meeting_retention_handler(app: "FastAPI", params: dict) -> str | None:
+    if not settings.meeting_transcription_enabled:
+        return "skipped: meeting_transcription_enabled is off"
+    from services.meeting_retention import cleanup_meetings
+
+    audio_deleted, meetings_purged = await cleanup_meetings()
+    if audio_deleted or meetings_purged:
+        logger.info(f"Meeting retention: {audio_deleted} audio freed, {meetings_purged} purged")
+        return f"audio={audio_deleted} purged={meetings_purged}"
+    return None
+
+
+async def _trajectory_cleanup_handler(app: "FastAPI", params: dict) -> str | None:
+    if not settings.trajectory_capture_enabled:
+        return "skipped: trajectory_capture_enabled is off"
+    from services.database import AsyncSessionLocal
+    from services.trajectory_service import TrajectoryService
+
+    async with AsyncSessionLocal() as db_session:
+        await TrajectoryService(db_session).purge_expired()
+    return None
+
+
+async def _kg_conflation_monitor_handler(app: "FastAPI", params: dict) -> str | None:
+    if not settings.kg_conflation_monitor_enabled:
+        return "skipped: kg_conflation_monitor_enabled is off"
+    from services.database import AsyncSessionLocal
+    from services.kg_conflation_monitor import KgConflationMonitor
+
+    async with AsyncSessionLocal() as db_session:
+        await KgConflationMonitor(db_session).scan_all()
+    return None
+
+
+async def _paperless_reconciler_handler(app: "FastAPI", params: dict) -> str | None:
+    if not (settings.folder_ingest_to_paperless or settings.email_ingest_to_paperless):
+        return "skipped: folder/email ingest-to-Paperless is off"
+    from services.paperless_reconciler import reenqueue_pending_paperless
+
+    await reenqueue_pending_paperless()
+    return None
+
+
+# --- Phase 3 Batch C: compound-gated / per-user / special --------------------
+
+async def _obligation_deadline_notifier_handler(app: "FastAPI", params: dict) -> str | None:
+    # Compound gate (H4): running with proactive off would CONSUME the ledger
+    # (mark milestones sent) without delivering — elapsed reminders lost. Require BOTH.
+    if not (settings.obligation_notifier_enabled and settings.proactive_enabled):
+        return "skipped: obligation_notifier_enabled AND proactive_enabled required"
+    from services.obligation_deadline_notifier import scan_all_users
+
+    await scan_all_users()
+    return None
+
+
+async def _obligation_digest_handler(app: "FastAPI", params: dict) -> str | None:
+    if not (settings.obligation_digest_enabled and settings.proactive_enabled):
+        return "skipped: obligation_digest_enabled AND proactive_enabled required"
+    from services.obligation_digest import scan_all_users
+
+    await scan_all_users()
+    return None
+
+
+async def _obligation_calendar_sync_handler(app: "FastAPI", params: dict) -> str | None:
+    if not settings.obligation_calendar_sync_enabled:
+        return "skipped: obligation_calendar_sync_enabled is off"
+    from services.obligation_calendar_sync import reconcile_all_users
+
+    mgr = getattr(app.state, "mcp_manager", None)
+    if mgr is None:
+        return "skipped: mcp_manager not ready"
+    await reconcile_all_users(mgr)
+    return None
+
+
+async def _speaker_vocab_rebuild_handler(app: "FastAPI", params: dict) -> str | None:
+    # The legacy scheduler ran only under the OUTER lifespan gate features["voice"]
+    # AND speaker_vocab_capture_enabled — re-assert BOTH (the voice flag is easy to miss).
+    if not (settings.features.get("voice") and settings.speaker_vocab_capture_enabled):
+        return "skipped: voice feature AND speaker_vocab_capture_enabled required"
+    from services.database import AsyncSessionLocal
+    from services.speaker_vocabulary_service import rebuild_vocabulary
+
+    async with AsyncSessionLocal() as session:
+        stats = await rebuild_vocabulary(db_session=session)
+    logger.info(f"📚 Speaker vocab rebuilt: {stats}")
+    return None
+
+
+async def _skill_curator_handler(app: "FastAPI", params: dict) -> str | None:
+    if not (settings.skills_enabled and settings.skill_curator_enabled):
+        return "skipped: skills_enabled AND skill_curator_enabled required"
+    from services.database import AsyncSessionLocal
+    from services.skill_curator_service import SkillCuratorService
+
+    # Enumerate user ids in one session (closed before iterating), then a fresh
+    # per-user session so a failure/aborted txn doesn't leak between users.
+    async with AsyncSessionLocal() as enum_session:
+        user_ids = await SkillCuratorService(enum_session).list_active_user_ids()
+    for uid in user_ids:
+        try:
+            async with AsyncSessionLocal() as per_user_db:
+                await SkillCuratorService(per_user_db).run_for_user(uid)
+        except Exception as e:  # noqa: BLE001
+            logger.warning(f"Skill curator failed for user {uid}: {e}")
+    return f"users={len(user_ids)}" if user_ids else None
+
+
+async def _kg_reconciler_handler(app: "FastAPI", params: dict) -> str | None:
+    if not settings.kg_reconciler_enabled:
+        return "skipped: kg_reconciler_enabled is off"
+    from services.database import AsyncSessionLocal
+    from services.kg_reconciler_service import KgReconcilerService
+
+    # Per-user; the advisory lock (ns 0x4B47) lives INSIDE run_for_user on its own
+    # dedicated connection — the handler must NOT re-wrap it.
+    async with AsyncSessionLocal() as enum_session:
+        user_ids = await KgReconcilerService(enum_session).list_active_user_ids()
+    for uid in user_ids:
+        try:
+            async with AsyncSessionLocal() as per_user_db:
+                await KgReconcilerService(per_user_db).run_for_user(uid)
+        except Exception as e:  # noqa: BLE001
+            logger.warning(f"KG reconciler failed for user {uid}: {e}")
+    return f"users={len(user_ids)}" if user_ids else None
+
+
+async def _skill_shadow_log_cleanup_handler(app: "FastAPI", params: dict) -> str | None:
+    if not (settings.skills_enabled and settings.skill_shadow_log_enabled):
+        return "skipped: skills_enabled AND skill_shadow_log_enabled required"
+    from datetime import UTC, datetime, timedelta
+
+    from sqlalchemy import delete
+
+    from models.database import SkillWouldHaveInjectedLog
+    from services.database import AsyncSessionLocal
+
+    cutoff = datetime.now(UTC).replace(tzinfo=None) - timedelta(
+        days=settings.skill_shadow_log_retention_days
+    )
+    async with AsyncSessionLocal() as db_session:
+        result = await db_session.execute(
+            delete(SkillWouldHaveInjectedLog).where(SkillWouldHaveInjectedLog.created_at < cutoff)
+        )
+        deleted = int(result.rowcount or 0)
+        if deleted:
+            await db_session.commit()
+            logger.info(
+                f"🧹 Skill shadow log: pruned {deleted} row(s) older than "
+                f"{settings.skill_shadow_log_retention_days}d"
+            )
+    return f"pruned={deleted}" if deleted else None
+
+
+async def _paperless_ui_edit_sweep_handler(app: "FastAPI", params: dict) -> str | None:
+    # No enabled flag; needs mcp_manager (skips until it's wired).
+    mgr = getattr(app.state, "mcp_manager", None)
+    if mgr is None:
+        return "skipped: mcp_manager not ready"
+    from services.paperless_ui_edit_sweeper import run_sweep_tick
+
+    await run_sweep_tick(mcp_manager=mgr)
+    return None
+
+
+async def _paperless_abandoned_confirm_sweep_handler(app: "FastAPI", params: dict) -> str | None:
+    # No gate; DB-only (drop stale pending_confirms).
+    from services.paperless_ui_edit_sweeper import run_abandoned_confirm_sweep
+
+    await run_abandoned_confirm_sweep()
+    return None
+
+
 # ---------------------------------------------------------------------------
 # Registration + seeds
 # ---------------------------------------------------------------------------
@@ -181,6 +412,23 @@ def register_builtin_handlers() -> None:
     register_handler("daypart_watcher", _daypart_watcher_handler)
     register_handler("paperless_finalize_reconciler", _paperless_finalize_reconciler_handler)
     register_handler("mcp_health_monitor", _mcp_health_monitor_handler)
+    # Phase 3 Batch B
+    register_handler("notification_cleanup", _notification_cleanup_handler)
+    register_handler("memory_cleanup", _memory_cleanup_handler)
+    register_handler("meeting_retention", _meeting_retention_handler)
+    register_handler("trajectory_cleanup", _trajectory_cleanup_handler)
+    register_handler("kg_conflation_monitor", _kg_conflation_monitor_handler)
+    register_handler("paperless_reconciler", _paperless_reconciler_handler)
+    # Phase 3 Batch C
+    register_handler("obligation_deadline_notifier", _obligation_deadline_notifier_handler)
+    register_handler("obligation_digest", _obligation_digest_handler)
+    register_handler("obligation_calendar_sync", _obligation_calendar_sync_handler)
+    register_handler("speaker_vocab_rebuild", _speaker_vocab_rebuild_handler)
+    register_handler("skill_curator", _skill_curator_handler)
+    register_handler("kg_reconciler", _kg_reconciler_handler)
+    register_handler("skill_shadow_log_cleanup", _skill_shadow_log_cleanup_handler)
+    register_handler("paperless_ui_edit_sweep", _paperless_ui_edit_sweep_handler)
+    register_handler("paperless_abandoned_confirm_sweep", _paperless_abandoned_confirm_sweep_handler)
 
 
 def builtin_task_seeds() -> list[TaskSeed]:
@@ -230,4 +478,21 @@ def builtin_task_seeds() -> list[TaskSeed]:
             run_at_boot=True,
             enabled=True,
         ),
+        # --- Phase 3 Batch B (seeded enabled + in-handler gate → flag controls at runtime) ---
+        TaskSeed(name="Benachrichtigungen aufräumen", handler_key="notification_cleanup", interval_seconds=3600, enabled=True),
+        TaskSeed(name="Gedächtnis aufräumen", handler_key="memory_cleanup", interval_seconds=settings.memory_cleanup_interval, enabled=True),
+        TaskSeed(name="Meeting-Aufbewahrung", handler_key="meeting_retention", interval_seconds=86400, run_at_boot=True, enabled=True),
+        TaskSeed(name="Trajektorien aufräumen", handler_key="trajectory_cleanup", interval_seconds=settings.trajectory_cleanup_interval, run_at_boot=True, enabled=True),
+        TaskSeed(name="KG-Konflations-Monitor", handler_key="kg_conflation_monitor", interval_seconds=settings.kg_conflation_monitor_interval, run_at_boot=True, enabled=True),
+        TaskSeed(name="Paperless-Ablage nachziehen", handler_key="paperless_reconciler", interval_seconds=settings.paperless_reconciler_interval, run_at_boot=True, enabled=True),
+        # --- Phase 3 Batch C ---
+        TaskSeed(name="Fristen-Benachrichtigung", handler_key="obligation_deadline_notifier", interval_seconds=settings.obligation_notifier_interval, run_at_boot=True, enabled=True),
+        TaskSeed(name="Fristen-Wochenübersicht", handler_key="obligation_digest", interval_seconds=settings.obligation_digest_interval, run_at_boot=True, enabled=True),
+        TaskSeed(name="Fristen-Kalender-Sync", handler_key="obligation_calendar_sync", interval_seconds=settings.obligation_calendar_sync_interval, run_at_boot=True, enabled=True),
+        TaskSeed(name="Sprecher-Vokabular neu aufbauen", handler_key="speaker_vocab_rebuild", interval_seconds=settings.speaker_vocab_rebuild_interval_seconds, run_at_boot=True, enabled=True),
+        TaskSeed(name="Fähigkeiten-Kurator", handler_key="skill_curator", interval_seconds=settings.skill_curator_interval, run_at_boot=True, enabled=True),
+        TaskSeed(name="KG-Reconciler", handler_key="kg_reconciler", interval_seconds=settings.kg_reconciler_interval, run_at_boot=True, enabled=True),
+        TaskSeed(name="Skill-Schattenlog aufräumen", handler_key="skill_shadow_log_cleanup", interval_seconds=settings.skill_shadow_log_cleanup_interval, run_at_boot=True, enabled=True),
+        TaskSeed(name="Paperless UI-Änderungen auswerten", handler_key="paperless_ui_edit_sweep", interval_seconds=3600, run_at_boot=True, enabled=True),
+        TaskSeed(name="Paperless verwaiste Bestätigungen aufräumen", handler_key="paperless_abandoned_confirm_sweep", interval_seconds=3600, run_at_boot=True, enabled=True),
     ]
