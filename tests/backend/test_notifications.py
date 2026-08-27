@@ -813,13 +813,22 @@ class TestReminderParsing:
 
     @pytest.mark.unit
     def test_parse_absolute_time(self):
-        """Test: Parse 'um 18:00'."""
+        """Test: Parse 'um 18:00' — interpreted in the LOCAL tz, stored naive UTC.
+
+        Asserted tz-agnostically (round-trip back through the resolved local
+        zone) so it holds under any DAYPART_TIMEZONE / DST, while still proving
+        the local-time semantics fix (#1146).
+        """
+        from datetime import UTC
+
+        from services.daypart_service import _resolve_tz
         from services.reminder_service import ReminderService
 
         result = ReminderService.parse_duration("um 18:00")
         assert isinstance(result, datetime)
-        assert result.hour == 18
-        assert result.minute == 0
+        assert result.tzinfo is None  # stored naive UTC
+        local = result.replace(tzinfo=UTC).astimezone(_resolve_tz())
+        assert (local.hour, local.minute) == (18, 0)
 
     @pytest.mark.unit
     def test_parse_iso_datetime(self):

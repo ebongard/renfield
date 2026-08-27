@@ -28,6 +28,25 @@ class ReminderService:
     # ------------------------------------------------------------------
 
     @staticmethod
+    def _naive_local_to_naive_utc(dt_naive_local: datetime) -> datetime:
+        """Interpret a naive wall-clock datetime as LOCAL time and return it as
+        naive UTC — the storage/comparison convention used everywhere else in
+        this service (`get_due_reminders` compares against naive-UTC `now()`).
+
+        Without this, "um 18:00" / a naive ISO would be read as 18:00 UTC, i.e.
+        20:00 for a CEST user — an off-by-offset firing time. The local zone is
+        resolved via daypart's `_resolve_tz` (DAYPART_TIMEZONE → ha_glue presence
+        tz → UTC); imported lazily to avoid an import cycle.
+        """
+        from services.daypart_service import _resolve_tz
+
+        return (
+            dt_naive_local.replace(tzinfo=_resolve_tz())
+            .astimezone(UTC)
+            .replace(tzinfo=None)
+        )
+
+    @staticmethod
     def parse_duration(text: str) -> timedelta | datetime | None:
         """
         Parse a relative duration or absolute time from text.
@@ -36,23 +55,24 @@ class ReminderService:
         - "in 30 Minuten" / "in 30 minutes"
         - "in 2 Stunden" / "in 2 hours"
         - "in 1 Stunde" / "in 1 hour"
-        - "um 18:00" / "at 18:00"
-        - ISO datetime strings
+        - "um 18:00" / "at 18:00"  (interpreted in the local timezone)
+        - ISO datetime strings (naive = local; tz-aware = respected)
 
-        Returns timedelta for relative, datetime for absolute, None if unparseable.
+        All returned datetimes are naive UTC. Returns timedelta for relative,
+        datetime for absolute, None if unparseable.
         """
         text = text.strip()
 
-        # Try ISO datetime first. Normalize any timezone-aware value to naive UTC:
-        # the rest of the codebase compares against naive `datetime.now(UTC)
-        # .replace(tzinfo=None)`, so a tz-aware trigger (e.g. an LLM-emitted
-        # "...+00:00" ISO string) would otherwise raise
-        # "can't compare offset-naive and offset-aware datetimes" (#1146).
+        # Try ISO datetime first. A tz-aware value is converted to naive UTC (an
+        # LLM-emitted "...+00:00" would otherwise raise "can't compare
+        # offset-naive and offset-aware datetimes" on the naive comparison path,
+        # #1146); a naive value is interpreted as LOCAL wall-clock and converted
+        # to naive UTC so the fire time matches what the user meant.
         try:
             parsed = datetime.fromisoformat(text)
             if parsed.tzinfo is not None:
-                parsed = parsed.astimezone(UTC).replace(tzinfo=None)
-            return parsed
+                return parsed.astimezone(UTC).replace(tzinfo=None)
+            return ReminderService._naive_local_to_naive_utc(parsed)
         except ValueError:
             pass
 
@@ -91,12 +111,18 @@ class ReminderService:
         )
         if m:
             hour, minute = int(m.group(1)), int(m.group(2))
-            now = datetime.now(UTC).replace(tzinfo=None)
-            target = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
-            # If time already passed today, schedule for tomorrow
-            if target <= now:
-                target += timedelta(days=1)
-            return target
+            # Build the target in the LOCAL zone (so "um 18:00" means 18:00 local),
+            # roll to tomorrow if already past, then store as naive UTC.
+            from services.daypart_service import _resolve_tz
+
+            tz = _resolve_tz()
+            now_local = datetime.now(tz)
+            target_local = now_local.replace(
+                hour=hour, minute=minute, second=0, microsecond=0
+            )
+            if target_local <= now_local:
+                target_local += timedelta(days=1)
+            return target_local.astimezone(UTC).replace(tzinfo=None)
 
         return None
 

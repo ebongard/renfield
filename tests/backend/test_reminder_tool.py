@@ -192,6 +192,28 @@ def test_parse_duration_relative_still_timedelta():
     assert ReminderService.parse_duration("in 45 seconds") == timedelta(seconds=45)
 
 
+def test_parse_duration_naive_iso_is_local_time():
+    """A naive ISO datetime is interpreted as LOCAL wall-clock, stored naive-UTC
+    (#1146). Pinned to Europe/Berlin (CET, +01:00 in December) for determinism:
+    10:00 local == 09:00 UTC."""
+    with patch("services.daypart_service.settings.daypart_timezone", "Europe/Berlin"):
+        dt = ReminderService.parse_duration("2026-12-25T10:00:00")
+    assert dt.tzinfo is None
+    assert dt == datetime(2026, 12, 25, 9, 0, 0)
+
+
+def test_parse_duration_um_hhmm_is_local_time():
+    """'um HH:MM' resolves in the local zone, stored naive-UTC. Round-tripping
+    back through the pinned zone must yield the requested wall-clock time."""
+    from zoneinfo import ZoneInfo
+
+    with patch("services.daypart_service.settings.daypart_timezone", "Europe/Berlin"):
+        dt = ReminderService.parse_duration("um 18:00")
+    assert dt.tzinfo is None
+    local = dt.replace(tzinfo=UTC).astimezone(ZoneInfo("Europe/Berlin"))
+    assert (local.hour, local.minute) == (18, 0)
+
+
 @pytest.mark.asyncio
 async def test_create_reminder_service_accepts_tz_aware_iso():
     """End-to-end on the service: a future tz-aware ISO trigger no longer raises."""
