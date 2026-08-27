@@ -170,48 +170,6 @@ def _schedule_whisper_preload():
 # Last-seen daypart for the watcher loop. Module-level so the loop closure
 # carries state across ticks; `None` until the first tick (which always fires
 # the hook because there is no prior value to compare against).
-_daypart_watcher_state: dict[str, str | None] = {"last": None}
-
-
-def _schedule_daypart_watcher():
-    """Watch for day/evening/night transitions and fire the `daypart_changed`
-    hook so features (e.g. satellite LED dimming) can react.
-
-    Runs at boot (so the first tick establishes the current daypart) and then
-    every 5 minutes. Stateless apart from the module-level last-seen daypart.
-    """
-
-    async def _tick():
-        from services.daypart_service import get_daypart_info
-        from utils.hooks import run_hooks
-
-        info = get_daypart_info()
-        current = info["daypart"]
-        local_time = info["local_time"]
-        previous = _daypart_watcher_state["last"]
-
-        if current != previous:
-            # run_hooks never raises — handler exceptions are logged inside.
-            await run_hooks(
-                "daypart_changed",
-                previous=previous,
-                current=current,
-                local_time=local_time,
-            )
-            _daypart_watcher_state["last"] = current
-            logger.info(
-                f"🌓 Daypart transition: {previous} → {current} (local {local_time})"
-            )
-
-    _spawn_periodic_task(
-        name="Daypart watcher",
-        interval=300,
-        work=_tick,
-        started_msg="✅ Daypart Watcher gestartet (alle 5 Minuten)",
-        run_at_boot=True,
-    )
-
-
 def _schedule_notification_cleanup():
     """Schedule periodic cleanup of expired notifications."""
     if not settings.proactive_enabled:
@@ -609,31 +567,6 @@ def _schedule_obligation_calendar_sync(app):
     )
 
 
-def _schedule_mcp_health_monitor(app):
-    """MCP health self-detection (Phase 1): periodically poll the MCP client fleet
-    (`MCPManager.get_status()`) and fire a proactive alert to the admin on a new
-    degraded/down server. Plane-B ingest MCPs push their own failures separately to
-    POST /api/mcp-health/report. Detect-and-notify only. Gated on
-    `mcp_health_monitor_enabled` (the alert also needs `proactive_enabled`)."""
-    if not settings.mcp_health_monitor_enabled:
-        return
-
-    async def _tick():
-        from services.mcp_health_monitor import monitor_tick
-        await monitor_tick(app)
-
-    _spawn_periodic_task(
-        name="MCP health monitor",
-        interval=settings.mcp_health_monitor_interval,
-        work=_tick,
-        started_msg=(
-            "✅ MCP health monitor scheduled "
-            f"(interval={settings.mcp_health_monitor_interval}s)"
-        ),
-        run_at_boot=True,
-    )
-
-
 def _schedule_paperless_reconciler(app):
     """Retry re-enqueuer for Paperless filing (light — no Docling in the backend).
 
@@ -662,35 +595,6 @@ def _schedule_paperless_reconciler(app):
             f"Paperless refile re-enqueuer gestartet "
             f"(interval={settings.paperless_reconciler_interval}s, "
             f"batch={settings.paperless_reconciler_batch})"
-        ),
-        run_at_boot=True,
-    )
-
-
-def _schedule_paperless_finalize_reconciler(app):
-    """Restart-safe backstop for the interactive Paperless-commit finalize (#658).
-
-    The commit's deferred-PATCH + tracking finalize runs fire-and-forget; if the
-    consume outlives the ~300s poll window or the pod restarts mid-poll, that
-    in-memory task is lost (the PATCH/tracking silently never land). This scan
-    re-runs finalizes persisted as ``paperless_pending_finalize`` rows still
-    ``finalized_at IS NULL`` past the grace, via a live mcp_manager. Scheduled
-    unconditionally — cheap no-op when idle (one partial-indexed query → empty;
-    a None mcp_manager short-circuits)."""
-
-    async def _tick():
-        from services.paperless_finalize_reconciler import reconcile_pending_finalizes
-
-        await reconcile_pending_finalizes(getattr(app.state, "mcp_manager", None))
-
-    _spawn_periodic_task(
-        name="Paperless finalize reconciler",
-        interval=settings.paperless_finalize_reconciler_interval,
-        work=_tick,
-        started_msg=(
-            f"Paperless finalize reconciler gestartet "
-            f"(interval={settings.paperless_finalize_reconciler_interval}s, "
-            f"grace={settings.paperless_finalize_reconciler_grace_seconds}s)"
         ),
         run_at_boot=True,
     )
@@ -1342,7 +1246,6 @@ async def lifespan(app: "FastAPI"):
     if settings.features["voice"]:
         _schedule_whisper_preload()
         _schedule_speaker_vocab_rebuild()
-    _schedule_daypart_watcher()
     _schedule_notification_cleanup()
     _schedule_reminder_checker()
     _schedule_notification_poller(app)
@@ -1357,8 +1260,6 @@ async def lifespan(app: "FastAPI"):
     _schedule_skill_shadow_log_cleanup()
     _schedule_paperless_sweepers(app)
     _schedule_paperless_reconciler(app)
-    _schedule_paperless_finalize_reconciler(app)
-    _schedule_mcp_health_monitor(app)
     _schedule_obligation_calendar_sync(app)
     _schedule_kiosk_weather_refresh(app)
     _schedule_kiosk_internal_health_refresh(app)

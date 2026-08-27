@@ -119,6 +119,55 @@ async def _upload_cleanup_handler(app: "FastAPI", params: dict) -> str | None:
     return f"deleted={deleted_count}" if deleted_count else None
 
 
+# --- Phase 3 Batch A: low-risk interval jobs (NONE / service-side gate) ------
+
+# Last-seen daypart, moved verbatim from the legacy _schedule_daypart_watcher.
+_daypart_watcher_state: dict[str, str | None] = {"last": None}
+
+
+async def _daypart_watcher_handler(app: "FastAPI", params: dict) -> str | None:
+    """Fire the ``daypart_changed`` hook on a day/evening/night transition (e.g.
+    for satellite LED dimming). No runtime gate — always runs; stateless apart
+    from the module-level last-seen daypart."""
+    from services.daypart_service import get_daypart_info
+    from utils.hooks import run_hooks
+
+    info = get_daypart_info()
+    current = info["daypart"]
+    local_time = info["local_time"]
+    previous = _daypart_watcher_state["last"]
+    if current == previous:
+        return None
+    # run_hooks never raises — handler exceptions are logged inside.
+    await run_hooks("daypart_changed", previous=previous, current=current, local_time=local_time)
+    _daypart_watcher_state["last"] = current
+    logger.info(f"🌓 Daypart transition: {previous} → {current} (local {local_time})")
+    return f"{previous} -> {current}"
+
+
+async def _paperless_finalize_reconciler_handler(app: "FastAPI", params: dict) -> str | None:
+    """Restart-safe backstop for the interactive Paperless-commit finalize (#658):
+    re-run finalizes still pending past the grace via a live mcp_manager. No gate
+    — a cheap no-op when idle (empty query) or when mcp_manager is None."""
+    from services.paperless_finalize_reconciler import reconcile_pending_finalizes
+
+    await reconcile_pending_finalizes(getattr(app.state, "mcp_manager", None))
+    return None
+
+
+async def _mcp_health_monitor_handler(app: "FastAPI", params: dict) -> str | None:
+    """MCP health self-detection: poll the MCP fleet + alert on a new degraded/down
+    server. ``monitor_tick`` re-checks ``mcp_health_monitor_enabled`` internally,
+    but re-assert it here too (H4 discipline) so the runtime flag fully gates the
+    work and a ConfigMap flip activates it without a UI toggle (M7)."""
+    if not settings.mcp_health_monitor_enabled:
+        return "skipped: mcp_health_monitor_enabled is off"
+    from services.mcp_health_monitor import monitor_tick
+
+    await monitor_tick(app)
+    return None
+
+
 # ---------------------------------------------------------------------------
 # Registration + seeds
 # ---------------------------------------------------------------------------
@@ -128,6 +177,10 @@ def register_builtin_handlers() -> None:
     register_handler("paperless_dedupe", _paperless_dedupe_handler)
     register_handler("federation_audit_cleanup", _federation_audit_cleanup_handler)
     register_handler("upload_cleanup", _upload_cleanup_handler)
+    # Phase 3 Batch A
+    register_handler("daypart_watcher", _daypart_watcher_handler)
+    register_handler("paperless_finalize_reconciler", _paperless_finalize_reconciler_handler)
+    register_handler("mcp_health_monitor", _mcp_health_monitor_handler)
 
 
 def builtin_task_seeds() -> list[TaskSeed]:
@@ -153,5 +206,28 @@ def builtin_task_seeds() -> list[TaskSeed]:
             handler_key="upload_cleanup",
             interval_seconds=3600,
             enabled=settings.chat_upload_cleanup_enabled,
+        ),
+        # --- Phase 3 Batch A (all run_at_boot, like their legacy schedulers) ---
+        TaskSeed(
+            name="Tageszeit-Wächter",
+            handler_key="daypart_watcher",
+            interval_seconds=300,
+            run_at_boot=True,
+            enabled=True,
+        ),
+        TaskSeed(
+            name="Paperless-Finalisierung nachziehen",
+            handler_key="paperless_finalize_reconciler",
+            interval_seconds=settings.paperless_finalize_reconciler_interval,
+            run_at_boot=True,
+            enabled=True,
+        ),
+        TaskSeed(
+            name="MCP-Gesundheitsmonitor",
+            handler_key="mcp_health_monitor",
+            interval_seconds=settings.mcp_health_monitor_interval,
+            # Seeded enabled; the handler self-gates on mcp_health_monitor_enabled (M7).
+            run_at_boot=True,
+            enabled=True,
         ),
     ]

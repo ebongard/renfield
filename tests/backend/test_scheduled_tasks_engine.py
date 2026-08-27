@@ -499,3 +499,84 @@ class TestShutdownDrain:
 
         assert not engine._running_tasks   # handles cleared
         assert not engine._inflight        # in-flight guard cleared
+
+
+@pytest.mark.unit
+class TestBatchAHandlers:
+    """Phase 3 Batch A migrated handlers (daypart / paperless-finalize / mcp-health)."""
+
+    def _app(self, **state):
+        return SimpleNamespace(state=SimpleNamespace(**state))
+
+    async def test_daypart_fires_hook_on_transition(self, monkeypatch):
+        import services.daypart_service as dp
+        import utils.hooks as hooks
+        from services.scheduled_tasks import builtins
+
+        builtins._daypart_watcher_state["last"] = "day"
+        monkeypatch.setattr(dp, "get_daypart_info", lambda *a, **k: {"daypart": "night", "local_time": "22:00"})
+        calls = []
+
+        async def _run_hooks(name, **kw):
+            calls.append((name, kw))
+
+        monkeypatch.setattr(hooks, "run_hooks", _run_hooks)
+        out = await builtins._daypart_watcher_handler(self._app(), {})
+        assert calls and calls[0][0] == "daypart_changed"
+        assert builtins._daypart_watcher_state["last"] == "night"
+        assert "day -> night" in out
+
+    async def test_daypart_noop_when_unchanged(self, monkeypatch):
+        import services.daypart_service as dp
+        from services.scheduled_tasks import builtins
+
+        builtins._daypart_watcher_state["last"] = "night"
+        monkeypatch.setattr(dp, "get_daypart_info", lambda *a, **k: {"daypart": "night", "local_time": "22:00"})
+        out = await builtins._daypart_watcher_handler(self._app(), {})
+        assert out is None
+
+    async def test_finalize_calls_service_with_mcp_manager(self, monkeypatch):
+        import services.paperless_finalize_reconciler as pf
+        from services.scheduled_tasks import builtins
+
+        seen = {}
+
+        async def _reconcile(mcp_manager=None):
+            seen["mcp"] = mcp_manager
+
+        monkeypatch.setattr(pf, "reconcile_pending_finalizes", _reconcile)
+        mcp = object()
+        await builtins._paperless_finalize_reconciler_handler(self._app(mcp_manager=mcp), {})
+        assert seen["mcp"] is mcp
+
+    async def test_mcp_health_gate_off_skips(self, monkeypatch):
+        import services.mcp_health_monitor as mh
+        from services.scheduled_tasks import builtins
+        from utils.config import settings
+
+        monkeypatch.setattr(settings, "mcp_health_monitor_enabled", False)
+        called = []
+
+        async def _tick(app):
+            called.append(1)
+
+        monkeypatch.setattr(mh, "monitor_tick", _tick)
+        out = await builtins._mcp_health_monitor_handler(self._app(), {})
+        assert "skipped" in out
+        assert not called
+
+    async def test_mcp_health_gate_on_calls_monitor(self, monkeypatch):
+        import services.mcp_health_monitor as mh
+        from services.scheduled_tasks import builtins
+        from utils.config import settings
+
+        monkeypatch.setattr(settings, "mcp_health_monitor_enabled", True)
+        called = []
+
+        async def _tick(app):
+            called.append(app)
+
+        monkeypatch.setattr(mh, "monitor_tick", _tick)
+        app = self._app()
+        await builtins._mcp_health_monitor_handler(app, {})
+        assert called == [app]
