@@ -132,6 +132,11 @@ export const keys = {
     detail: (id: number) => ['projects', 'detail', id] as const,
     timeline: (id: number) => ['projects', id, 'timeline'] as const,
   },
+  scheduledTasks: {
+    all: ['scheduledTasks'] as const,
+    list: () => ['scheduledTasks', 'list'] as const,
+    detail: (id: number) => ['scheduledTasks', 'detail', id] as const,
+  },
   notes: {
     all: ['notes'] as const,
     list: () => ['notes', 'list'] as const,

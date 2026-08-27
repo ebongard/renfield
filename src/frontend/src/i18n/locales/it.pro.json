@@ -9,7 +9,12 @@
     "brain": "Conoscenza (classica)",
     "memory": "Note",
     "brainReview": "Coda di revisione",
-    "circles": "Visibilità"
+    "circles": "Visibilità",
+    "scheduledTasks": "Attività pianificate"
+  },
+  "scheduledTasks": {
+    "title": "Attività pianificate",
+    "subtitle": "Gestisci job automatizzati e processi ricorrenti"
   },
   "memory": {
     "title": "Note",

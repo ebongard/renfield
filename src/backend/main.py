@@ -44,6 +44,7 @@ from api.routes import (
     notes,
     projects,
     roles,
+    scheduled_tasks,
     skills,
     speakers,
     tasks,
@@ -226,6 +227,7 @@ app.include_router(auth.router, prefix="/api/auth", tags=["Authentication"])
 # callback/registry auth) — opaque 401s; constrain reach at the network layer.
 app.include_router(internal_auth.router, prefix="/api/internal", tags=["Internal"])
 app.include_router(roles.router, prefix="/api/roles", tags=["Roles"])
+app.include_router(scheduled_tasks.router, prefix="/api/scheduled-tasks", tags=["Scheduled Tasks"])
 app.include_router(users.router, prefix="/api/users", tags=["Users"])
 app.include_router(chat.router, prefix="/api/chat", tags=["Chat"])
 app.include_router(chat_upload.router, prefix="/api/chat", tags=["Chat Upload"])

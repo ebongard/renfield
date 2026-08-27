@@ -22,6 +22,7 @@ const TasksPage = lazy(() => import('./pages/TasksPage'));
 const ProjectsPage = lazy(() => import('./pages/ProjectsPage'));
 const ProjectDetailPage = lazy(() => import('./pages/ProjectDetailPage'));
 const NotesPage = lazy(() => import('./pages/NotesPage'));
+const ScheduledTasksPage = lazy(() => import('./pages/ScheduledTasksPage'));
 const AuthCallback = lazy(() => import('./pages/AuthCallback'));
 const MeetingsPage = lazy(() => import('./pages/MeetingsPage'));
 const MeetingDetailPage = lazy(() => import('./pages/MeetingDetailPage'));
@@ -72,6 +73,9 @@ function AppRoutes() {
   // (/api/config/features). Off (the household default) => the route is absent.
   const projectsEnabled = featureFlags?.projects_enabled ?? false;
   const notesEnabled = featureFlags?.notes_enabled ?? false;
+  // Scheduler admin (Phase 2): the /admin/scheduled-tasks surface is gated by a
+  // runtime flag (/api/config/features). Off => the route is absent.
+  const scheduledTasksEnabled = featureFlags?.scheduled_tasks_enabled ?? false;
   // §2 meeting transcription: the /meetings surface is gated by a runtime flag
   // (/api/config/features). Off (the default on both instances) => route absent.
   const meetingsEnabled = featureFlags?.meeting_transcription_enabled ?? false;
@@ -280,6 +284,13 @@ function AppRoutes() {
                 <RolesPage />
               </AdminRoute>
             } />
+            {scheduledTasksEnabled && (
+              <Route path="/admin/scheduled-tasks" element={
+                <AdminRoute>
+                  <ScheduledTasksPage />
+                </AdminRoute>
+              } />
+            )}
             <Route path="/admin/settings" element={
               <AdminRoute>
                 <SettingsPage />

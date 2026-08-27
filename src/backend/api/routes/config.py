@@ -94,6 +94,10 @@ class FeatureFlags(BaseModel):
     # /knowledge. Off => surfaces absent. See utils/config.py::pdf_split_enabled
     # + docs/design/pdf-split.md.
     pdf_split_enabled: bool
+    # Gates the /admin/scheduled-tasks nav + page ("Geplante Aufgaben", #1137).
+    # Off => no nav entry / route. The engine itself always runs regardless.
+    # See utils/config.py::scheduled_tasks_enabled.
+    scheduled_tasks_enabled: bool
     # True when the Reva-only Wissensbasis surface (/trace + /me/mix) is mounted
     # (Reva adapter present). Standalone Renfield => False. Lets the frontend
     # hide the Reva-only side panels without probing an endpoint that 404s.
@@ -121,5 +125,6 @@ async def get_features(
         meeting_transcription_enabled=settings.meeting_transcription_enabled,
         meeting_minutes_enabled=settings.meeting_minutes_enabled,
         pdf_split_enabled=settings.pdf_split_enabled,
+        scheduled_tasks_enabled=settings.scheduled_tasks_enabled,
         wissensbasis_reva_available=_reva_wissensbasis_mounted(request),
     )

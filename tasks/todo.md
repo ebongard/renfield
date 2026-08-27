@@ -31,5 +31,14 @@ Phase 1 COMPLETE + committed (not pushed):
 - **DEPLOY:** after the MCP PR merges, bump the `renfield-mcp-paperless` archive pin in `src/backend/requirements.txt` to the v1.12.0 SHA (ships the tool in the backend image; the interactive thin caller + scheduled job both need it).
 - Activate on xidra: `PAPERLESS_DEDUPE_RECONCILER_ENABLED=true` (runtime self-gate) to drain the duplicate backlog, then it idles.
 
-### Phase 2 (next): `/api/scheduled-tasks` CRUD + admin UI "Geplante Aufgaben".
+### Phase 2 — `/api/scheduled-tasks` CRUD + admin UI "Geplante Aufgaben" (branch `feat/scheduled-tasks-phase2`, stacked on Phase 1)
+- [x] Backend routes `api/routes/scheduled_tasks.py` (list/get/create/patch/run-now/delete; ADMIN-gated; interval-floor + cron + param validation; next_run_at recompute; built-in edit-not-delete)
+- [x] Register in `main.py`; expose `scheduled_tasks_enabled` in `/api/config/features`
+- [x] Backend route tests `tests/backend/test_scheduled_tasks_routes.py`
+- [x] Backend tests green on .159 — 19 route + 28 engine + 16 dedupe pass
+- [x] Frontend: resource + keys + `ScheduledTasksPage` + route + nav + i18n(×6) + 7 vitest tests
+- [x] Frontend typecheck (tsc --noEmit exit 0) + vitest (7/7) green
+- [x] Phase 2 reviewed (backend + frontend) — 2 findings fixed (run-now window 409; delete-type string); backend 24 + frontend 7 green
+- [ ] **HELD** (user decision): Phase 2 stays local on `feat/scheduled-tasks-phase2` until #1138 merges. THEN: `git rebase feat/scheduled-tasks-1137`→main base, push, open PR against main (no retarget needed since we waited).
+
 ### Phase 3: migrate the remaining ~20 schedulers (per-job gate-location audit).

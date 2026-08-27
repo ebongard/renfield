@@ -1,14 +1,16 @@
 # Scheduled Tasks — DB-defined, UI-managed recurring jobs
 
-**Status:** **Phase 1 implemented** on `feat/scheduled-tasks-1137` (#1137) —
-engine + model + migration + registry + built-ins + tests, plus the MCP
-`dedupe_documents` tool (sibling repo v1.12.0). Design approved over three
-adversarial engineering reviews (the third code-grounded) + a code review of the
-implementation; all findings folded in (see Review history). Phases 2 (REST +
-admin UI) and 3 (migrate the remaining schedulers) are pending. Dark/inert by
-default — the engine runs but ships no behavior change until built-ins are
-seeded with their existing enabled-defaults and the Paperless dedupe job is
-explicitly activated.
+**Status:** **Phases 1 + 2 implemented.** Phase 1 on `feat/scheduled-tasks-1137`
+(#1137) — engine + model + migration + registry + built-ins + tests, plus the
+MCP `dedupe_documents` tool (sibling repo v1.12.0). Phase 2 on
+`feat/scheduled-tasks-phase2` (stacked) — the ADMIN-gated `/api/scheduled-tasks`
+CRUD + the "Geplante Aufgaben" admin page (gated on `scheduled_tasks_enabled`).
+Both reviewed (three design rounds + implementation code reviews per phase); all
+findings folded in (see Review history). Phase 3 (migrate the remaining ~20
+schedulers) is pending. Dark/inert by default — the engine runs but ships no
+behavior change until built-ins are seeded with their existing enabled-defaults
+and the Paperless dedupe job is explicitly activated; the admin UI is absent
+until `scheduled_tasks_enabled` is turned on.
 
 **Phase-1 follow-up still open:** rewire the interactive `internal.paperless_dedupe`
 as a thin caller of `mcp.paperless.dedupe_documents` (Review D9) — the autonomous

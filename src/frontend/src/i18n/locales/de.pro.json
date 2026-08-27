@@ -9,7 +9,12 @@
     "brain": "Wissensbasis (klassisch)",
     "memory": "Notizen",
     "brainReview": "Prüf-Eingang",
-    "circles": "Sichtbarkeit"
+    "circles": "Sichtbarkeit",
+    "scheduledTasks": "Geplante Aufgaben"
+  },
+  "scheduledTasks": {
+    "title": "Geplante Aufgaben",
+    "subtitle": "Automatisierte Jobs und wiederkehrende Prozesse verwalten"
   },
   "memory": {
     "title": "Notizen",

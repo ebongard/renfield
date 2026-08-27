@@ -114,6 +114,8 @@ export interface FeatureFlags {
   chat_branching_enabled: boolean;
   /** Gates the /projects nav + page (business-instance Phase 1). */
   projects_enabled: boolean;
+  /** Gates the /admin/scheduled-tasks nav + page (scheduler admin, Phase 2). */
+  scheduled_tasks_enabled: boolean;
   /** Gates the /notes nav + page + the note atom-source (Phase 4B). */
   notes_enabled: boolean;
   /** Gates the §2 meeting-transcription nav + page (upload + status + speaker labeling). */

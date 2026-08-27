@@ -9,7 +9,12 @@
     "brain": "Knowledge (classic)",
     "memory": "Notes",
     "brainReview": "Review queue",
-    "circles": "Visibility"
+    "circles": "Visibility",
+    "scheduledTasks": "Scheduled Tasks"
+  },
+  "scheduledTasks": {
+    "title": "Scheduled Tasks",
+    "subtitle": "Manage automated jobs and recurring processes"
   },
   "memory": {
     "title": "Notes",

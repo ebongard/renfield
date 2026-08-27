@@ -43,6 +43,7 @@ import {
   FolderKanban,
   Mic,
   NotebookPen,
+  Clock,
 } from 'lucide-react';
 import DeviceStatus from './DeviceStatus';
 import ThemeToggle from './ThemeToggle';
@@ -193,6 +194,10 @@ export default function Layout({ children }: LayoutProps) {
   const meetingsEnabled = featureFlags?.meeting_transcription_enabled ?? false;
   // Phase 4B: the Notes entry appears only when the flag is on.
   const notesEnabled = featureFlags?.notes_enabled ?? false;
+  // Scheduler admin (Phase 2): append the Geplante Aufgaben admin entry only
+  // when the runtime flag is on (same reason as projects: item.feature can't
+  // hide it — the AuthContext feature map defaults missing keys to true).
+  const scheduledTasksEnabled = featureFlags?.scheduled_tasks_enabled ?? false;
 
   const baseMainNav: NavItemConfig[] = wissenWorkspace
     ? (() => {
@@ -226,7 +231,14 @@ export default function Layout({ children }: LayoutProps) {
     name: t(item.nameKey),
   }));
 
-  const adminNavigation: NavItem[] = adminNavigationConfig.map((item) => ({
+  const adminNavSource: NavItemConfig[] = [
+    ...adminNavigationConfig,
+    ...(scheduledTasksEnabled
+      ? [{ nameKey: 'nav.scheduledTasks', href: '/admin/scheduled-tasks', icon: Clock, permission: ['admin'] }]
+      : []),
+  ];
+
+  const adminNavigation: NavItem[] = adminNavSource.map((item) => ({
     ...item,
     name: t(item.nameKey),
   }));
