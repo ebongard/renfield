@@ -202,6 +202,7 @@ data:
   # preference against this list). 'it' added with the Italian locale (#628).
   SUPPORTED_LANGUAGES: "de,en,it"
   AGENT_ENABLED: "true"
+  AGENT_ORCHESTRATOR_ENABLED: "true"
   MCP_ENABLED: "true"
   # MCP self-detection (Phase 1): surface MCP failures renfield already detects
   # (Plane-A get_status() degrade/down + Plane-B ingest-MCP OPERATOR-NOTIFY pushes)
@@ -209,6 +210,7 @@ data:
   # of dead-ending in logs. Needs PROACTIVE_ENABLED (on here) for the push.
   MCP_HEALTH_MONITOR_ENABLED: "true"
   MEMORY_ENABLED: "true"
+  MEMORY_EPISODIC_ENABLED: "true"
   MEMORY_EXTRACTION_ENABLED: "true"
   KNOWLEDGE_GRAPH_ENABLED: "true"
   PRESENCE_ENABLED: "true"
