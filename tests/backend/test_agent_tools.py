@@ -34,6 +34,7 @@ INTERNAL_TOOL_NAMES = {
     "internal.paperless_dedupe",          # PAPERLESS_DEDUPE_TOOL
     "internal.create_reminder",           # REMINDER_TOOL
     "internal.forward_attachment_to_simba",  # SIMBA_FORWARD_TOOL
+    "internal.simba_commit_upload",          # SIMBA_FORWARD_TOOL
 }
 NUM_INTERNAL_TOOLS = len(INTERNAL_TOOL_NAMES)
 

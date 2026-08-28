@@ -172,6 +172,17 @@ class ActionExecutor:
                 user_id=user_id,
             )
 
+        # Second half of the human-gated Simba flow: the REAL upload, only after
+        # the user confirmed the preview (needs the confirm_token + the user's reply).
+        if intent == "internal.simba_commit_upload":
+            from services.simba_forward_tool import simba_commit_upload
+            return await simba_commit_upload(
+                parameters,
+                mcp_manager=self.mcp_manager,
+                session_id=self.session_id,
+                user_id=user_id,
+            )
+
         # Platform-owned internal tool: interactive folder-ingest. The agent
         # passes a file ``path`` on a watched share; the tool pulls the bytes
         # through the filesystem MCP (truncate=False) and runs them through the

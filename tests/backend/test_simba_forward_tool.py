@@ -1,47 +1,47 @@
 """
-Unit tests for `internal.forward_attachment_to_simba` — the chat-attachment →
-Simba tax-portal bridge.
-
-Guarantees: it resolves the ChatUpload (by id or session fallback), reads the
-real bytes and hands them to mcp.simba.upload_documents as base64 (the LLM never
-supplies bytes), requires category/type, defaults to a dry-run, and passes the
-dry_run/confirm safety flags through to the simba server.
+Unit tests for the two-step, human-gated Simba bridge:
+`internal.forward_attachment_to_simba` (preview + token, NEVER uploads) and
+`internal.simba_commit_upload` (the real upload, only after the user confirms).
 """
 import base64
+import json
 from contextlib import asynccontextmanager
 from unittest.mock import AsyncMock, MagicMock, mock_open, patch
 
 import pytest
 
-from services.simba_forward_tool import SIMBA_FORWARD_TOOL, forward_attachment_to_simba
+from services.simba_forward_tool import (
+    SIMBA_FORWARD_TOOL,
+    forward_attachment_to_simba,
+    simba_commit_upload,
+)
 
 pytestmark = pytest.mark.unit
 
 FILE_BYTES = b"%PDF-1.4 hello"
+B64 = base64.b64encode(FILE_BYTES).decode("ascii")
 
 
-def _upload(uid=5, filename="invoice.pdf", path="/data/x.pdf", status="completed"):
+def _upload(uid=5, filename="2026_07_14.pdf", path="/data/x.pdf"):
     u = MagicMock()
     u.id = uid
     u.filename = filename
     u.file_path = path
-    u.status = status
+    u.status = "completed"
     return u
 
 
 def _mcp(result=None):
     m = MagicMock()
-    m.execute_tool = AsyncMock(return_value=result or {"success": True, "message": "OK"})
+    m.execute_tool = AsyncMock(return_value=result or {"success": True, "message": "{}"})
     return m
 
 
 def _db_patch(upload):
-    """Patch AsyncSessionLocal so any query resolves to `upload` (execute mocked;
-    the real select(ChatUpload) statement is built but never run)."""
     db = MagicMock()
-    result = MagicMock()
-    result.scalar_one_or_none = MagicMock(return_value=upload)
-    db.execute = AsyncMock(return_value=result)
+    res = MagicMock()
+    res.scalar_one_or_none = MagicMock(return_value=upload)
+    db.execute = AsyncMock(return_value=res)
 
     @asynccontextmanager
     async def _session(*_a, **_k):
@@ -50,155 +50,190 @@ def _db_patch(upload):
     return patch("services.database.AsyncSessionLocal", lambda *a, **k: _session())
 
 
-# ---------------------------------------------------------------------------
-
-def test_tool_definition_shape():
-    assert "internal.forward_attachment_to_simba" in SIMBA_FORWARD_TOOL
-    params = SIMBA_FORWARD_TOOL["internal.forward_attachment_to_simba"]["parameters"]
-    assert {"category", "type", "attachment_id", "dry_run", "confirm"} <= set(params)
-
-
-@pytest.mark.asyncio
-async def test_no_mcp_manager():
-    r = await forward_attachment_to_simba({"category": "Belege", "type": "x"}, mcp_manager=None)
-    assert r["success"] is False and r["action_taken"] is False
-
-
-@pytest.mark.asyncio
-async def test_requires_category_and_type():
-    r = await forward_attachment_to_simba({"category": "Belege"}, mcp_manager=_mcp(), session_id="s")
-    assert r["success"] is False
-    assert "type" in r["message"]
-
-
-@pytest.mark.asyncio
-async def test_happy_path_dryrun_default_passes_base64():
-    upload = _upload()
-    mcp = _mcp({"success": True, "message": '{"modus":"Probelauf"}'})
-    p_isfile, p_open = patch("pathlib.Path.is_file", return_value=True), patch(
+def _fs():
+    return patch("pathlib.Path.is_file", return_value=True), patch(
         "builtins.open", mock_open(read_data=FILE_BYTES)
     )
-    with _db_patch(upload), p_isfile, p_open:
+
+
+class FakeRedis:
+    def __init__(self):
+        self.store: dict[str, str] = {}
+
+    async def setex(self, k, _ttl, v):
+        self.store[k] = v
+
+    async def get(self, k):
+        return self.store.get(k)
+
+    async def delete(self, k):
+        self.store.pop(k, None)
+
+
+def _redis_patch(fake):
+    return patch("services.redis_client.get_redis", return_value=fake)
+
+
+# ---------------------------------------------------------------------------
+# Tool defs
+# ---------------------------------------------------------------------------
+
+def test_both_tools_defined():
+    assert "internal.forward_attachment_to_simba" in SIMBA_FORWARD_TOOL
+    assert "internal.simba_commit_upload" in SIMBA_FORWARD_TOOL
+
+
+# ---------------------------------------------------------------------------
+# forward: preview only, NEVER uploads
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_forward_previews_and_stores_token_never_uploads():
+    upload = _upload()
+    mcp = _mcp({"success": True, "message": '{"modus":"Probelauf"}'})
+    redis = FakeRedis()
+    p_isfile, p_open = _fs()
+    with _db_patch(upload), p_isfile, p_open, _redis_patch(redis):
         r = await forward_attachment_to_simba(
-            {"category": "Belege", "type": "Ausgangsrechnung"},
-            mcp_manager=mcp, session_id="sess", user_id=3,
+            {"category": "Posteingang", "type": "Schriftverkehr", "month": 7, "year": 2026},
+            mcp_manager=mcp, session_id="sess", user_id=1,
         )
-    assert r["success"] is True
-    assert r["action_taken"] is False  # dry-run default → nothing sent
-    args = mcp.execute_tool.await_args.args
-    assert args[0] == "mcp.simba.upload_documents"
-    payload = mcp.execute_tool.await_args.args[1]
-    assert payload["dry_run"] is True and payload["confirm"] is False
-    assert payload["category"] == "Belege" and payload["type"] == "Ausgangsrechnung"
-    f0 = payload["files"][0]
-    assert f0["filename"] == "invoice.pdf"
-    assert f0["content_base64"] == base64.b64encode(FILE_BYTES).decode("ascii")
+    # dry-run only — no real upload
+    assert mcp.execute_tool.await_count == 1
+    dry_args = mcp.execute_tool.await_args.args[1]
+    assert dry_args["dry_run"] is True
+    assert dry_args["files"][0]["content_base64"] == B64
+    # returns a confirm token, nothing uploaded
+    assert r["action_taken"] is False
+    assert r["data"]["action_required"] == "simba_confirm"
+    token = r["data"]["confirm_token"]
+    assert f"simba:pending:{token}" in redis.store
 
 
 @pytest.mark.asyncio
-async def test_real_upload_passes_confirm_and_marks_action():
+async def test_forward_requires_category_and_type():
+    r = await forward_attachment_to_simba({"category": "Belege"}, mcp_manager=_mcp(), session_id="s")
+    assert r["success"] is False and "type" in r["message"]
+
+
+@pytest.mark.asyncio
+async def test_forward_dryrun_validation_failure_returns_error_no_token():
     upload = _upload()
-    mcp = _mcp({"success": True, "message": '{"uebertragen":1}'})
-    with _db_patch(upload), patch("pathlib.Path.is_file", return_value=True), patch(
-        "builtins.open", mock_open(read_data=FILE_BYTES)
-    ):
+    mcp = _mcp({"success": True, "message": '{"fehler":[{"file":"x","error":"maximal 15 MB"}]}'})
+    redis = FakeRedis()
+    p_isfile, p_open = _fs()
+    with _db_patch(upload), p_isfile, p_open, _redis_patch(redis):
         r = await forward_attachment_to_simba(
-            {"category": "Belege", "type": "Ausgangsrechnung", "dry_run": False, "confirm": True},
+            {"category": "Belege", "type": "x"}, mcp_manager=mcp, session_id="s",
+        )
+    assert r["success"] is False
+    assert "15 MB" in r["message"]
+    assert redis.store == {}  # no token persisted on a bad file
+
+
+# ---------------------------------------------------------------------------
+# commit: real upload only after the user confirms
+# ---------------------------------------------------------------------------
+
+def _seed(redis, token="tok-1", session_id="sess", **over):
+    rec = {
+        "attachment_id": 5, "filename": "2026_07_14.pdf", "category": "Posteingang",
+        "type": "Schriftverkehr", "description": None, "comment": None,
+        "session_id": session_id, "user_id": 1, "month": 7, "year": 2026,
+    }
+    rec.update(over)
+    redis.store[f"simba:pending:{token}"] = json.dumps(rec)
+    return token
+
+
+@pytest.mark.asyncio
+async def test_commit_yes_does_real_upload():
+    redis = FakeRedis()
+    _seed(redis)
+    upload = _upload()
+    mcp = _mcp({"success": True, "message": '{"uebertragen":1,"fehlgeschlagen":0}'})
+    p_isfile, p_open = _fs()
+    with _redis_patch(redis), _db_patch(upload), p_isfile, p_open:
+        r = await simba_commit_upload(
+            {"confirm_token": "tok-1", "user_response_text": "ja, bitte übertragen"},
             mcp_manager=mcp, session_id="sess",
         )
-    payload = mcp.execute_tool.await_args.args[1]
-    assert payload["dry_run"] is False and payload["confirm"] is True
-    assert r["action_taken"] is True
+    args = mcp.execute_tool.await_args.args[1]
+    assert args["dry_run"] is False and args["confirm"] is True
+    assert args["files"][0]["content_base64"] == B64
+    assert r["success"] is True and r["action_taken"] is True
+    assert "simba:pending:tok-1" not in redis.store  # single-use
 
 
 @pytest.mark.asyncio
-async def test_real_upload_zero_transferred_is_honest_failure():
-    """The MCP call succeeds but 0 files landed → the bridge must report FAILURE
-    (the agent can't claim success). Regression for 2026-08-28."""
+async def test_commit_no_aborts_without_upload():
+    redis = FakeRedis()
+    _seed(redis)
+    mcp = _mcp()
+    with _redis_patch(redis):
+        r = await simba_commit_upload(
+            {"confirm_token": "tok-1", "user_response_text": "nein, lieber nicht"},
+            mcp_manager=mcp, session_id="sess",
+        )
+    mcp.execute_tool.assert_not_awaited()
+    assert r["action_taken"] is False
+    assert "NICHTS" in r["message"]
+    assert "simba:pending:tok-1" not in redis.store
+
+
+@pytest.mark.asyncio
+async def test_commit_ambiguous_asks_again_no_upload():
+    redis = FakeRedis()
+    _seed(redis)
+    mcp = _mcp()
+    with _redis_patch(redis):
+        r = await simba_commit_upload(
+            {"confirm_token": "tok-1", "user_response_text": "was meinst du?"},
+            mcp_manager=mcp, session_id="sess",
+        )
+    mcp.execute_tool.assert_not_awaited()
+    assert r["action_taken"] is False
+    assert "simba:pending:tok-1" in redis.store  # kept for a retry
+
+
+@pytest.mark.asyncio
+async def test_commit_unknown_token():
+    redis = FakeRedis()
+    mcp = _mcp()
+    with _redis_patch(redis):
+        r = await simba_commit_upload(
+            {"confirm_token": "missing", "user_response_text": "ja"}, mcp_manager=mcp, session_id="sess",
+        )
+    assert r["success"] is False and "abgelaufen" in r["message"].lower()
+    mcp.execute_tool.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_commit_cross_session_token_rejected():
+    redis = FakeRedis()
+    _seed(redis, session_id="other-sess")
+    mcp = _mcp()
+    with _redis_patch(redis):
+        r = await simba_commit_upload(
+            {"confirm_token": "tok-1", "user_response_text": "ja"}, mcp_manager=mcp, session_id="my-sess",
+        )
+    assert r["success"] is False
+    mcp.execute_tool.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_commit_yes_but_zero_transferred_is_honest_failure():
+    redis = FakeRedis()
+    _seed(redis)
     upload = _upload()
     mcp = _mcp({
         "success": True,
-        "message": '{"modus":"echter Upload","uebertragen":0,"fehlgeschlagen":1,'
-                   '"ergebnisse":[{"ok":false,"status":401,"response":"token abgelaufen"}]}',
+        "message": '{"uebertragen":0,"fehlgeschlagen":1,"ergebnisse":[{"ok":false,"status":401,"response":"denied"}]}',
     })
-    with _db_patch(upload), patch("pathlib.Path.is_file", return_value=True), patch(
-        "builtins.open", mock_open(read_data=FILE_BYTES)
-    ):
-        r = await forward_attachment_to_simba(
-            {"category": "Belege", "type": "x", "dry_run": False, "confirm": True},
-            mcp_manager=mcp, session_id="sess",
+    p_isfile, p_open = _fs()
+    with _redis_patch(redis), _db_patch(upload), p_isfile, p_open:
+        r = await simba_commit_upload(
+            {"confirm_token": "tok-1", "user_response_text": "ja"}, mcp_manager=mcp, session_id="sess",
         )
-    assert r["success"] is False
-    assert r["action_taken"] is False
-    assert "NICHT angekommen" in r["message"]
+    assert r["success"] is False and "NICHT angekommen" in r["message"]
     assert "401" in r["message"]
-
-
-@pytest.mark.asyncio
-async def test_confirm_gate_relayed_not_marked_success():
-    """A real-upload attempt the server refused for missing confirm is relayed as
-    needs-confirmation (not a landed upload)."""
-    upload = _upload()
-    mcp = _mcp({"success": True, "message": '{"status":"bestaetigung_erforderlich","hinweis":"..."}'})
-    with _db_patch(upload), patch("pathlib.Path.is_file", return_value=True), patch(
-        "builtins.open", mock_open(read_data=FILE_BYTES)
-    ):
-        r = await forward_attachment_to_simba(
-            {"category": "Belege", "type": "x", "dry_run": False},
-            mcp_manager=mcp, session_id="sess",
-        )
-    assert r["success"] is True
-    assert r["action_taken"] is False
-    assert r["data"].get("needs_confirmation") is True
-
-
-@pytest.mark.asyncio
-async def test_llm_supplied_content_base64_is_ignored():
-    """The agent can't smuggle bytes — the tool reads them from disk itself."""
-    upload = _upload()
-    mcp = _mcp()
-    with _db_patch(upload), patch("pathlib.Path.is_file", return_value=True), patch(
-        "builtins.open", mock_open(read_data=FILE_BYTES)
-    ):
-        await forward_attachment_to_simba(
-            {"category": "Belege", "type": "x", "content_base64": "PLACEHOLDER", "files": []},
-            mcp_manager=mcp, session_id="sess",
-        )
-    f0 = mcp.execute_tool.await_args.args[1]["files"][0]
-    assert f0["content_base64"] == base64.b64encode(FILE_BYTES).decode("ascii")
-
-
-@pytest.mark.asyncio
-async def test_no_upload_found():
-    mcp = _mcp()
-    with _db_patch(None):
-        r = await forward_attachment_to_simba(
-            {"category": "Belege", "type": "x"}, mcp_manager=mcp, session_id="sess",
-        )
-    assert r["success"] is False and r["action_taken"] is False
-    mcp.execute_tool.assert_not_awaited()
-
-
-@pytest.mark.asyncio
-async def test_file_missing_on_disk():
-    upload = _upload()
-    mcp = _mcp()
-    with _db_patch(upload), patch("pathlib.Path.is_file", return_value=False):
-        r = await forward_attachment_to_simba(
-            {"category": "Belege", "type": "x"}, mcp_manager=mcp, session_id="sess",
-        )
-    assert r["success"] is False
-    mcp.execute_tool.assert_not_awaited()
-
-
-@pytest.mark.asyncio
-async def test_mcp_failure_relayed():
-    upload = _upload()
-    mcp = _mcp({"success": False, "message": "portal down"})
-    with _db_patch(upload), patch("pathlib.Path.is_file", return_value=True), patch(
-        "builtins.open", mock_open(read_data=FILE_BYTES)
-    ):
-        r = await forward_attachment_to_simba(
-            {"category": "Belege", "type": "x"}, mcp_manager=mcp, session_id="sess",
-        )
-    assert r["success"] is False and "portal down" in r["message"]
