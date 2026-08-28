@@ -68,3 +68,9 @@ class SimbaUploadRequest(BaseModel):
 class SimbaUploadResponse(BaseModel):
     success: bool
     message: str
+
+
+class SimbaSuggestResponse(BaseModel):
+    """Category/type suggested from the document content (null when unknown)."""
+    category: str | None = None
+    type: str | None = None

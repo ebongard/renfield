@@ -55,6 +55,11 @@ export default function AttachmentQuickActions({
   const [simbaCategories, setSimbaCategories] = useState<Record<string, string[]>>({});
   const [simbaCategory, setSimbaCategory] = useState<string | null>(null);
   const [simbaLoading, setSimbaLoading] = useState(false);
+  // Content-derived suggestion (prefill): {category?, type?}. undefined = not
+  // fetched yet; an object (possibly empty) = fetched. Auto-drills to the
+  // suggested category and marks the suggested type.
+  const [simbaSuggestion, setSimbaSuggestion] = useState<{ category?: string; type?: string } | undefined>();
+  const [suggestionLoading, setSuggestionLoading] = useState(false);
   const menuRef = useRef<HTMLDivElement | null>(null);
 
   const isLoading = actionLoading?.[attachment.id];
@@ -99,6 +104,28 @@ export default function AttachmentQuickActions({
     }
   };
 
+  // Fetch the content-derived category/type suggestion once, then auto-drill
+  // into the suggested category (only while the user is still at the category
+  // level, so it never yanks the view out from under an active pick).
+  const ensureSuggestion = async () => {
+    if (simbaSuggestion !== undefined || suggestionLoading) return;
+    setSuggestionLoading(true);
+    try {
+      const response = await apiClient.get<{ category?: string; type?: string }>(
+        `/api/chat/upload/${attachment.id}/simba/suggest`,
+      );
+      const s = response.data || {};
+      setSimbaSuggestion(s);
+      if (s.category) {
+        setSimbaCategory((cur) => cur ?? s.category ?? null);
+      }
+    } catch {
+      setSimbaSuggestion({});
+    } finally {
+      setSuggestionLoading(false);
+    }
+  };
+
   const handleSimba = async (e: MouseEvent<HTMLButtonElement>, both: boolean) => {
     e.stopPropagation();
     const target: SubMenu = both ? 'simba_both' : 'simba';
@@ -109,6 +136,14 @@ export default function AttachmentQuickActions({
     setSimbaCategory(null);
     await ensureSimbaCategories();
     setSubmenu(target);
+    // Prefill: if we already classified this file, drill into the suggested
+    // category now; otherwise fetch it in the background (ensureSuggestion drills
+    // in when it resolves, unless the user has navigated by then).
+    if (simbaSuggestion?.category) {
+      setSimbaCategory(simbaSuggestion.category);
+    } else {
+      void ensureSuggestion();
+    }
   };
 
   const handleSelectSimbaType = (e: MouseEvent<HTMLButtonElement>, type: string) => {
@@ -309,19 +344,31 @@ export default function AttachmentQuickActions({
               ) : Object.keys(simbaCategories).length === 0 ? (
                 <div className="px-3 py-1.5 text-xs text-gray-400">{t('common.noResults')}</div>
               ) : simbaCategory === null ? (
-                Object.keys(simbaCategories).map((cat) => (
-                  <button
-                    key={cat}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      setSimbaCategory(cat);
-                    }}
-                    className="w-full text-left px-5 py-1.5 text-xs hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors truncate flex items-center justify-between"
-                  >
-                    <span className="truncate">{cat}</span>
-                    <span className="text-gray-400">›</span>
-                  </button>
-                ))
+                Object.keys(simbaCategories).map((cat) => {
+                  const suggested = simbaSuggestion?.category === cat;
+                  return (
+                    <button
+                      key={cat}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setSimbaCategory(cat);
+                      }}
+                      className={`w-full text-left px-5 py-1.5 text-xs hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors truncate flex items-center justify-between ${
+                        suggested ? 'font-medium' : ''
+                      }`}
+                    >
+                      <span className="truncate">
+                        {cat}
+                        {suggested && (
+                          <span className="ml-1.5 text-[10px] text-blue-600 dark:text-blue-400">
+                            {t('chat.simbaSuggestion')}
+                          </span>
+                        )}
+                      </span>
+                      <span className="text-gray-400">›</span>
+                    </button>
+                  );
+                })
               ) : (
                 <>
                   <button
@@ -333,15 +380,26 @@ export default function AttachmentQuickActions({
                   >
                     ‹ {simbaCategory}
                   </button>
-                  {(simbaCategories[simbaCategory] || []).map((tp) => (
-                    <button
-                      key={tp}
-                      onClick={(e) => handleSelectSimbaType(e, tp)}
-                      className="w-full text-left px-6 py-1.5 text-xs hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors truncate"
-                    >
-                      {tp}
-                    </button>
-                  ))}
+                  {(simbaCategories[simbaCategory] || []).map((tp) => {
+                    const suggested =
+                      simbaSuggestion?.type === tp && simbaSuggestion?.category === simbaCategory;
+                    return (
+                      <button
+                        key={tp}
+                        onClick={(e) => handleSelectSimbaType(e, tp)}
+                        className={`w-full text-left px-6 py-1.5 text-xs hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors truncate ${
+                          suggested ? 'font-medium bg-blue-50 dark:bg-blue-900/20' : ''
+                        }`}
+                      >
+                        {tp}
+                        {suggested && (
+                          <span className="ml-1.5 text-[10px] text-blue-600 dark:text-blue-400">
+                            {t('chat.simbaSuggestion')}
+                          </span>
+                        )}
+                      </button>
+                    );
+                  })}
                 </>
               )}
             </div>

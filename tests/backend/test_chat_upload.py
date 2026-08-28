@@ -1707,3 +1707,48 @@ class TestChatUploadSimba:
             "/api/chat/upload/99999/simba", json={"category": "Belege", "type": "x"},
         )
         assert resp.status_code == 404
+
+    @pytest.mark.backend
+    async def test_simba_suggest(self, async_client: AsyncClient, db_session: AsyncSession):
+        """Suggest returns a content-derived category/type."""
+        import json as _json
+        from unittest.mock import AsyncMock, patch
+
+        upload = ChatUpload(
+            session_id="simba-suggest", filename="brief.pdf", file_type="pdf",
+            file_size=500, status="completed", file_path="/tmp/none",
+            extracted_text="Sehr geehrte Damen und Herren, anbei das Schreiben vom Finanzamt.",
+        )
+        db_session.add(upload)
+        await db_session.commit()
+        await db_session.refresh(upload)
+
+        from main import app
+        mock = AsyncMock()
+        mock.execute_tool = AsyncMock(return_value={
+            "success": True,
+            "message": _json.dumps({"kategorien": {"Posteingang": ["Schriftverkehr"]}}),
+        })
+        app.state.mcp_manager = mock
+        try:
+            with patch("services.simba_classify.classify_simba",
+                       AsyncMock(return_value=("Posteingang", "Schriftverkehr"))):
+                resp = await async_client.get(f"/api/chat/upload/{upload.id}/simba/suggest")
+        finally:
+            app.state.mcp_manager = None
+        assert resp.status_code == 200
+        assert resp.json() == {"category": "Posteingang", "type": "Schriftverkehr"}
+
+    @pytest.mark.backend
+    async def test_simba_suggest_no_text(self, async_client: AsyncClient, db_session: AsyncSession):
+        """No extracted text → empty suggestion (no classification)."""
+        upload = ChatUpload(
+            session_id="simba-suggest-empty", filename="x.pdf", file_type="pdf",
+            file_size=1, status="completed", file_path="/tmp/none", extracted_text="",
+        )
+        db_session.add(upload)
+        await db_session.commit()
+        await db_session.refresh(upload)
+        resp = await async_client.get(f"/api/chat/upload/{upload.id}/simba/suggest")
+        assert resp.status_code == 200
+        assert resp.json() == {"category": None, "type": None}

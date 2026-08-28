@@ -6,26 +6,36 @@ import type { MessageAttachment } from '../../../../../src/frontend/src/pages/Ch
 
 // Mock axios — the component uses it to fetch the KB list AND (for Simba) the
 // category→type map. Return the right shape per URL.
+// Mutable refs for per-test control of the feature flag and the content
+// suggestion (both read inside the hoisted mocks below).
+const { flagsRef, suggestRef } = vi.hoisted(() => ({
+  flagsRef: { current: {} as { simba_upload_enabled?: boolean } },
+  suggestRef: { current: {} as { category?: string; type?: string } },
+}));
+
 vi.mock('../../../../../src/frontend/src/utils/axios', () => ({
   default: {
-    get: vi.fn((url: string) =>
-      url.includes('simba/categories')
-        ? Promise.resolve({ data: { categories: { Belege: ['Ausgangsrechnung'] } } })
-        : Promise.resolve({
-            data: [
-              { id: 1, name: 'Hauptwissensbasis' },
-              { id: 2, name: 'Reise-KB' },
-            ],
-          }),
-    ),
+    get: vi.fn((url: string) => {
+      if (url.includes('simba/categories')) {
+        return Promise.resolve({
+          data: { categories: { Belege: ['Ausgangsrechnung'], Posteingang: ['Schriftverkehr'] } },
+        });
+      }
+      if (url.includes('simba/suggest')) {
+        return Promise.resolve({ data: suggestRef.current });
+      }
+      return Promise.resolve({
+        data: [
+          { id: 1, name: 'Hauptwissensbasis' },
+          { id: 2, name: 'Reise-KB' },
+        ],
+      });
+    }),
   },
 }));
 
 // Mock the feature-flags hook (react-query) — the component gates the Simba
-// items on simba_upload_enabled. A mutable ref lets each test set it.
-const { flagsRef } = vi.hoisted(() => ({
-  flagsRef: { current: {} as { simba_upload_enabled?: boolean } },
-}));
+// items on simba_upload_enabled.
 vi.mock('../../../../../src/frontend/src/api/resources/brain', () => ({
   useFeatureFlags: () => ({ data: flagsRef.current }),
 }));
@@ -90,6 +100,7 @@ describe('AttachmentQuickActions', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     flagsRef.current = {}; // simba disabled by default
+    suggestRef.current = {}; // no content suggestion by default
   });
 
   it('opens the menu and shows the Paperless + KB combo at the top', async () => {
@@ -191,6 +202,24 @@ describe('AttachmentQuickActions', () => {
     expect(confirmSpy).toHaveBeenCalledTimes(1);
     expect(onSendToSimba).toHaveBeenCalledWith('upload-42', 'Belege', 'Ausgangsrechnung');
     confirmSpy.mockRestore();
+  });
+
+  it('prefills the Simba picker from content: auto-drills to the suggested category and marks the type', async () => {
+    flagsRef.current = { simba_upload_enabled: true };
+    suggestRef.current = { category: 'Posteingang', type: 'Schriftverkehr' };
+    const user = userEvent.setup();
+    renderActions();
+
+    await user.click(screen.getByRole('button', { name: 'chat.quickActions' }));
+    await user.click(screen.getByText('chat.sendToSimba'));
+
+    // Auto-drilled into the suggested category → its types are shown, and the
+    // suggested type carries the 'suggested' badge (chat.simbaSuggestion).
+    await waitFor(() => expect(screen.getByText('Schriftverkehr')).toBeInTheDocument());
+    const suggestedType = screen.getByText('Schriftverkehr').closest('button');
+    expect(suggestedType?.textContent).toContain('chat.simbaSuggestion');
+    // The non-suggested category's type is NOT shown (we drilled into Posteingang).
+    expect(screen.queryByText('Ausgangsrechnung')).not.toBeInTheDocument();
   });
 
   it('cancelling the Simba confirm does not upload', async () => {

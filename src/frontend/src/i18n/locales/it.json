@@ -280,6 +280,7 @@
     "sendToPaperlessAndKb": "Invia a Paperless + Base di conoscenza",
     "sendToPaperlessAndKbSuccess": "Inviato a Paperless e Base di conoscenza",
     "sendToPaperlessAndKbFailed": "Invio parzialmente fallito: {{detail}}",
+    "simbaSuggestion": "suggerito",
     "sendToSimba": "Invia a Simba (commercialista)",
     "sendToPaperlessAndSimba": "Invia a Paperless + Simba",
     "confirmSimba": "Trasferire il file al commercialista (Simba) DEFINITIVAMENTE?\n{{category}} / {{type}}\nQuesta operazione non può essere annullata.",

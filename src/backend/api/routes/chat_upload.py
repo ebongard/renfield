@@ -40,6 +40,7 @@ from .chat_upload_schemas import (
     IndexResponse,
     PaperlessResponse,
     SimbaCategoriesResponse,
+    SimbaSuggestResponse,
     SimbaUploadRequest,
     SimbaUploadResponse,
 )
@@ -465,21 +466,17 @@ async def forward_to_paperless(
 # ============================================================================
 
 
-@router.get("/upload/simba/categories", response_model=SimbaCategoriesResponse)
-async def simba_categories(request: Request, user=Depends(get_optional_user)):
-    """Categories → document types for the Simba transfer. Also the availability
-    gate: 503 when the simba MCP isn't configured (so the UI hides the menu)."""
-    manager = getattr(request.app.state, "mcp_manager", None)
+async def _simba_taxonomy(manager) -> dict[str, list[str]]:
+    """Fetch the Simba category→type map via the MCP. Returns {} when unavailable."""
     if not manager:
-        raise HTTPException(status_code=503, detail="MCP not available")
+        return {}
     try:
         result = await manager.execute_tool("mcp.simba.list_categories", {"live": False})
     except Exception as e:
         logger.warning(f"Simba categories unavailable: {e}")
-        raise HTTPException(status_code=503, detail="Simba not available")
+        return {}
     if not result or not result.get("success"):
-        raise HTTPException(status_code=503, detail="Simba not available")
-
+        return {}
     categories: dict = {}
     raw = result.get("message")
     if isinstance(raw, str):
@@ -488,11 +485,51 @@ async def simba_categories(request: Request, user=Depends(get_optional_user)):
             categories = inner.get("kategorien") or inner.get("categories") or {}
         except (json.JSONDecodeError, TypeError):
             categories = {}
-    if not isinstance(categories, dict) or not categories:
+    if not isinstance(categories, dict):
+        return {}
+    return {str(k): [str(t) for t in (v or [])] for k, v in categories.items()}
+
+
+@router.get("/upload/simba/categories", response_model=SimbaCategoriesResponse)
+async def simba_categories(request: Request, user=Depends(get_optional_user)):
+    """Categories → document types for the Simba transfer. Also the availability
+    gate: 503 when the simba MCP isn't configured (so the UI hides the menu)."""
+    manager = getattr(request.app.state, "mcp_manager", None)
+    if not manager:
+        raise HTTPException(status_code=503, detail="MCP not available")
+    categories = await _simba_taxonomy(manager)
+    if not categories:
         raise HTTPException(status_code=503, detail="Simba not available")
-    # Normalize to {str: [str, ...]}
-    norm = {str(k): [str(t) for t in (v or [])] for k, v in categories.items()}
-    return SimbaCategoriesResponse(categories=norm)
+    return SimbaCategoriesResponse(categories=categories)
+
+
+@router.get("/upload/{upload_id}/simba/suggest", response_model=SimbaSuggestResponse)
+async def simba_suggest(
+    upload_id: int,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    user=Depends(get_optional_user),
+):
+    """Suggest a Simba category/type from the document content, to prefill the
+    chat menu picker. Best-effort — nulls when the text/model/taxonomy is missing
+    or the classification is invalid. Never a hard error (the user picks manually)."""
+    upload = await _get_owned_upload(db, upload_id, user)
+    if not upload:
+        raise HTTPException(status_code=404, detail="Upload not found")
+
+    text = (upload.extracted_text or "").strip()
+    if not text:
+        return SimbaSuggestResponse()
+
+    manager = getattr(request.app.state, "mcp_manager", None)
+    categories = await _simba_taxonomy(manager)
+    if not categories:
+        return SimbaSuggestResponse()
+
+    from services.simba_classify import classify_simba
+
+    category, type_ = await classify_simba(text, categories)
+    return SimbaSuggestResponse(category=category, type=type_)
 
 
 @router.post("/upload/{upload_id}/simba", response_model=SimbaUploadResponse)

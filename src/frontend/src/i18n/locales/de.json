@@ -334,6 +334,7 @@
     "sendToPaperlessAndKb": "An Paperless + Wissensdatenbank",
     "sendToPaperlessAndKbSuccess": "An Paperless und Wissensdatenbank gesendet",
     "sendToPaperlessAndKbFailed": "Senden teilweise fehlgeschlagen: {{detail}}",
+    "simbaSuggestion": "Vorschlag",
     "sendToSimba": "An Simba (Steuerkanzlei) senden",
     "sendToPaperlessAndSimba": "An Paperless + Simba",
     "confirmSimba": "Datei ENDGÜLTIG an die Steuerkanzlei (Simba) übertragen?\n{{category}} / {{type}}\nDies kann nicht widerrufen werden.",

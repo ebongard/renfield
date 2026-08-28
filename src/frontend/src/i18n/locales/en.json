@@ -334,6 +334,7 @@
     "sendToPaperlessAndKb": "Send to Paperless + Knowledge Base",
     "sendToPaperlessAndKbSuccess": "Sent to Paperless and Knowledge Base",
     "sendToPaperlessAndKbFailed": "Send partially failed: {{detail}}",
+    "simbaSuggestion": "suggested",
     "sendToSimba": "Send to Simba (tax office)",
     "sendToPaperlessAndSimba": "Send to Paperless + Simba",
     "confirmSimba": "Transfer the file to the tax accountant (Simba) FOR GOOD?\n{{category}} / {{type}}\nThis cannot be undone.",
