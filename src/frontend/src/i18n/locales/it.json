@@ -2045,6 +2045,8 @@
     "hint": "PDF importati dalla cartella condivisa, per il commercialista. Controlla categoria/tipo e conferma — il trasferimento è irreversibile.",
     "category": "Categoria",
     "type": "Tipo",
+    "description": "Denominazione",
+    "descriptionPlaceholder": "Denominazione per Simba (opzionale)",
     "confirm": "Invia",
     "reject": "Scarta",
     "needCategoryType": "Scegli categoria e tipo.",

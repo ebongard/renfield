@@ -2305,6 +2305,8 @@
     "hint": "Aus dem Ordner importierte PDFs für die Steuerkanzlei. Kategorie/Typ prüfen und bestätigen — die Übertragung ist unwiderruflich.",
     "category": "Kategorie",
     "type": "Typ",
+    "description": "Bezeichnung",
+    "descriptionPlaceholder": "Bezeichnung für Simba (optional)",
     "confirm": "Übertragen",
     "reject": "Verwerfen",
     "needCategoryType": "Bitte Kategorie und Typ wählen.",

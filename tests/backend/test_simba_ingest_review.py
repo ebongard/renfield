@@ -166,6 +166,15 @@ def test_bezeichnung_empty_when_no_source():
     assert review._bezeichnung(SimpleNamespace(generated_title=None, title=None, filename="")) == ""
 
 
+@pytest.mark.unit
+def test_sanitize_desc_all_disallowed_or_none_is_empty():
+    # An all-disallowed edited value (or None) sanitizes to "" so confirm()'s
+    # `_sanitize_desc(description) or _bezeichnung(doc)` falls back to the title.
+    assert review._sanitize_desc("///") == ""
+    assert review._sanitize_desc(None) == ""
+    assert review._sanitize_desc("  ") == ""
+
+
 # --------------------------------------------------------------------------
 # Ownership gate (_owns) — the auth-bypass fix
 # --------------------------------------------------------------------------
@@ -298,6 +307,74 @@ class TestSimbaIngestRoutes:
             assert p.suggested_category == "Posteingang"  # edited value persisted
         finally:
             Path(tmp).unlink(missing_ok=True)
+
+    @pytest.mark.backend
+    async def test_confirm_uses_edited_description_sanitized(
+        self, async_client: AsyncClient, db_session: AsyncSession
+    ):
+        """A user-edited Bezeichnung overrides the derived title and is sanitized
+        to the portal charset (so a comma/slash can't break the upload)."""
+        import json as _json
+
+        from models.database import Document
+
+        with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as f:
+            f.write(b"%PDF-1.4 x")
+            tmp = f.name
+        try:
+            doc = Document(
+                filename="g.pdf", file_path=tmp, status="completed",
+                generated_title="Auto Titel",
+            )
+            db_session.add(doc)
+            await db_session.commit()
+            await db_session.refresh(doc)
+            p = SimbaIngestProposal(document_id=doc.id, filename="g.pdf", status=SIMBA_PROPOSAL_PENDING)
+            db_session.add(p)
+            await db_session.commit()
+            await db_session.refresh(p)
+
+            from main import app
+            mock = AsyncMock()
+            mock.execute_tool = AsyncMock(return_value={
+                "success": True, "message": _json.dumps({"uebertragen": 1, "fehlgeschlagen": 0}),
+            })
+            app.state.mcp_manager = mock
+            try:
+                resp = await async_client.post(
+                    f"/api/simba-ingest/{p.id}/confirm",
+                    json={"category": "Belege", "type": "Ausgangsrechnung",
+                          "description": "Rechnung 4/2026, Müller GmbH"},
+                )
+            finally:
+                app.state.mcp_manager = None
+            assert resp.status_code == 200
+            # em-dash/comma/slash → spaces; umlaut kept; overrides "Auto Titel".
+            assert mock.execute_tool.await_args.args[1]["files"][0]["description"] == "Rechnung 4 2026 Müller GmbH"
+        finally:
+            Path(tmp).unlink(missing_ok=True)
+
+    @pytest.mark.backend
+    async def test_list_returns_suggested_description(
+        self, async_client: AsyncClient, db_session: AsyncSession
+    ):
+        """The list endpoint prefills the Bezeichnung from the document title."""
+        from models.database import Document
+
+        doc = Document(filename="h.pdf", file_path="/tmp/h.pdf", status="completed",
+                       generated_title="Vorschlag Titel")
+        db_session.add(doc)
+        await db_session.commit()
+        await db_session.refresh(doc)
+        p = SimbaIngestProposal(document_id=doc.id, filename="h.pdf", status=SIMBA_PROPOSAL_PENDING)
+        db_session.add(p)
+        await db_session.commit()
+        await db_session.refresh(p)
+
+        resp = await async_client.get("/api/simba-ingest")
+        assert resp.status_code == 200
+        row = next(x for x in resp.json()["proposals"] if x["id"] == p.id)
+        assert row["suggested_description"] == "Vorschlag Titel"
 
     @pytest.mark.backend
     async def test_confirm_second_call_is_409_and_no_reupload(

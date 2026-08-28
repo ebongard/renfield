@@ -61,6 +61,7 @@ function ProposalRow({
   const categoryNames = Object.keys(categories);
   const [category, setCategory] = useState(proposal.suggested_category ?? '');
   const [type, setType] = useState(proposal.suggested_type ?? '');
+  const [description, setDescription] = useState(proposal.suggested_description ?? '');
   const [error, setError] = useState<string | null>(null);
 
   const typeOptions = category ? categories[category] ?? [] : [];
@@ -77,7 +78,7 @@ function ProposalRow({
       return;
     }
     confirm.mutate(
-      { id: proposal.id, category, type },
+      { id: proposal.id, category, type, description: description.trim() },
       { onError: (e) => setError((e as Error).message || t('simbaReview.uploadFailed')) },
     );
   };
@@ -90,6 +91,18 @@ function ProposalRow({
         </span>
         {busy && <Loader className="w-4 h-4 animate-spin flex-shrink-0" aria-hidden="true" />}
       </div>
+      <label className="flex flex-col text-xs gap-1 mb-2">
+        <span className="text-gray-500">{t('simbaReview.description')}</span>
+        <input
+          type="text"
+          className="input py-1 text-xs"
+          value={description}
+          maxLength={100}
+          placeholder={t('simbaReview.descriptionPlaceholder')}
+          onChange={(e) => setDescription(e.target.value)}
+          disabled={busy}
+        />
+      </label>
       <div className="flex flex-wrap items-end gap-2">
         <label className="flex flex-col text-xs gap-1">
           <span className="text-gray-500">{t('simbaReview.category')}</span>

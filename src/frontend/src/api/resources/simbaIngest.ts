@@ -8,6 +8,7 @@ export interface SimbaProposal {
   filename: string;
   suggested_category: string | null;
   suggested_type: string | null;
+  suggested_description: string;
 }
 
 const PROPOSALS_KEY = ['simbaIngest', 'proposals'] as const;
@@ -41,10 +42,20 @@ export function useSimbaCategoriesQuery(enabled = true) {
 export function useConfirmSimbaProposal() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: async ({ id, category, type }: { id: number; category: string; type: string }) => {
+    mutationFn: async ({
+      id,
+      category,
+      type,
+      description,
+    }: {
+      id: number;
+      category: string;
+      type: string;
+      description: string;
+    }) => {
       const r = await apiClient.post<{ success: boolean; message: string }>(
         `/api/simba-ingest/${id}/confirm`,
-        { category, type },
+        { category, type, description },
       );
       return r.data;
     },

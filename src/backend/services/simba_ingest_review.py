@@ -64,14 +64,23 @@ _SIMBA_DESC_DISALLOWED = re.compile(r"[^A-Za-z0-9ÄÖÜäöüß ._-]+")
 _SIMBA_DESC_MAX = 100
 
 
+def _sanitize_desc(raw: str | None) -> str:
+    """Coerce any string to the Simba portal's allowed Bezeichnung charset
+    (disallowed chars → space, whitespace collapsed, capped). Applied to both the
+    auto-derived title AND a user-edited value, so neither can break the upload."""
+    cleaned = _SIMBA_DESC_DISALLOWED.sub(" ", raw or "")
+    cleaned = re.sub(r"\s+", " ", cleaned).strip()
+    return cleaned[:_SIMBA_DESC_MAX].strip()
+
+
 def _bezeichnung(doc) -> str:
     """Human 'Bezeichnung' for a Simba upload from the folder-ingest review flow.
 
     Source = the document's generated title (Schicht A) → title → filename stem;
-    sanitized to the portal's allowed charset and capped at 100 chars. Without
-    this the Bezeichnung was empty when a document was pushed via /brain/review
-    (the review UI carries no description field), unlike the chat-menu / bridge
-    paths that pass one.
+    sanitized to the portal's allowed charset and capped at 100 chars. Used to
+    prefill the (editable) review field and as the fallback when the user leaves
+    it blank — unlike the chat-menu / bridge paths, the review flow had no
+    description at all before this.
     """
     raw = (
         getattr(doc, "generated_title", None)
@@ -79,9 +88,7 @@ def _bezeichnung(doc) -> str:
         or Path(doc.filename or "").stem
         or ""
     ).strip()
-    cleaned = _SIMBA_DESC_DISALLOWED.sub(" ", raw)
-    cleaned = re.sub(r"\s+", " ", cleaned).strip()
-    return cleaned[:_SIMBA_DESC_MAX].strip()
+    return _sanitize_desc(raw)
 
 
 async def simba_ingest_post_hook(
@@ -203,12 +210,21 @@ def _owns(proposal: SimbaIngestProposal, user) -> bool:
     return proposal.user_id is None and _is_admin(user)
 
 
-async def list_pending(db, user) -> list[SimbaIngestProposal]:
-    q = select(SimbaIngestProposal).where(
-        SimbaIngestProposal.status == SIMBA_PROPOSAL_PENDING
-    ).order_by(SimbaIngestProposal.id.desc())
-    rows = list((await db.execute(q)).scalars().all())
-    return [p for p in rows if _owns(p, user)]
+async def list_pending(db, user) -> list[tuple[SimbaIngestProposal, str]]:
+    """Owner-scoped pending proposals, each paired with a suggested Bezeichnung
+    (derived from the document's title) that prefills the editable review field."""
+    q = (
+        select(SimbaIngestProposal, Document)
+        .join(Document, Document.id == SimbaIngestProposal.document_id, isouter=True)
+        .where(SimbaIngestProposal.status == SIMBA_PROPOSAL_PENDING)
+        .order_by(SimbaIngestProposal.id.desc())
+    )
+    rows = (await db.execute(q)).all()
+    return [
+        (p, _bezeichnung(doc) if doc is not None else "")
+        for (p, doc) in rows
+        if _owns(p, user)
+    ]
 
 
 async def reject(db, proposal_id: int, user) -> bool:
@@ -263,8 +279,14 @@ async def _revert_claim(db, proposal_id: int) -> None:
     await db.commit()
 
 
-async def confirm(db, proposal_id: int, category: str, type_: str, user, mcp_manager) -> dict:
+async def confirm(
+    db, proposal_id: int, category: str, type_: str, user, mcp_manager,
+    description: str | None = None,
+) -> dict:
     """Confirm a pending proposal → REAL upload to Simba, then mark uploaded.
+
+    ``description`` is the (editable) Bezeichnung from the review UI — sanitized
+    and used when non-empty, else auto-derived from the document title.
 
     Returns {"success": bool, "message": str}. The proposal is only marked
     uploaded when the document actually landed (uebertragen>0).
@@ -297,7 +319,9 @@ async def confirm(db, proposal_id: int, category: str, type_: str, user, mcp_man
         return {"success": False, "message": "already_resolved"}
 
     file_entry: dict[str, str] = {"content_base64": content_base64, "filename": doc.filename}
-    bezeichnung = _bezeichnung(doc)
+    # User-edited Bezeichnung wins when it survives sanitization; blank OR an
+    # all-disallowed value falls back to the derived title (never sends nothing).
+    bezeichnung = _sanitize_desc(description) or _bezeichnung(doc)
     if bezeichnung:
         file_entry["description"] = bezeichnung
     tool_args = {

@@ -2305,6 +2305,8 @@
     "hint": "PDFs imported from the watch folder, for the tax accountant. Check the category/type and confirm — the transfer is irreversible.",
     "category": "Category",
     "type": "Type",
+    "description": "Label",
+    "descriptionPlaceholder": "Label for Simba (optional)",
     "confirm": "Send",
     "reject": "Discard",
     "needCategoryType": "Please choose a category and type.",

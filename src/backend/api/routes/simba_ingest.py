@@ -32,6 +32,7 @@ class SimbaProposalOut(BaseModel):
     filename: str
     suggested_category: str | None = None
     suggested_type: str | None = None
+    suggested_description: str = ""
 
 
 class SimbaProposalsResponse(BaseModel):
@@ -41,6 +42,7 @@ class SimbaProposalsResponse(BaseModel):
 class SimbaConfirmRequest(BaseModel):
     category: str
     type: str
+    description: str | None = None
 
 
 class SimbaActionResponse(BaseModel):
@@ -62,8 +64,9 @@ async def list_proposals(
                 filename=p.filename,
                 suggested_category=p.suggested_category,
                 suggested_type=p.suggested_type,
+                suggested_description=desc,
             )
-            for p in rows
+            for (p, desc) in rows
         ]
     )
 
@@ -78,7 +81,9 @@ async def confirm_proposal(
 ):
     _require_user(user)
     mgr = getattr(request.app.state, "mcp_manager", None)
-    res = await review.confirm(db, proposal_id, body.category, body.type, user, mgr)
+    res = await review.confirm(
+        db, proposal_id, body.category, body.type, user, mgr, description=body.description
+    )
     if not res["success"]:
         msg = res["message"]
         if msg == "not_found":
