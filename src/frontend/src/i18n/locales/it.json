@@ -2039,5 +2039,16 @@
     "pageThumbAlt": "Anteprima pagina {{page}}",
     "couldNotLoad": "Impossibile caricare le proposte di suddivisione PDF.",
     "loadThumbs": "Carica anteprime pagine"
+  },
+  "simbaReview": {
+    "title": "Invia a Simba — Revisione",
+    "hint": "PDF importati dalla cartella condivisa, per il commercialista. Controlla categoria/tipo e conferma — il trasferimento è irreversibile.",
+    "category": "Categoria",
+    "type": "Tipo",
+    "confirm": "Invia",
+    "reject": "Scarta",
+    "needCategoryType": "Scegli categoria e tipo.",
+    "confirmUpload": "Trasferire \"{{filename}}\" al commercialista (Simba) DEFINITIVAMENTE?\n{{category}} / {{type}}\nNon può essere annullato.",
+    "uploadFailed": "Trasferimento non riuscito."
   }
 }

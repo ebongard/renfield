@@ -1015,6 +1015,15 @@ DOC_SPLIT_OWNED_STATUSES = (
 # parent has no source of its own to inherit).
 PDF_SPLIT_CHILD_SOURCE = "pdf_split"
 
+# Document.source value for a file ingested from a watch-folder (SMB/NFS share).
+# Used as the provenance gate for the xidra folder-ingest → Simba review flow.
+FOLDER_INGEST_SOURCE = "folder_ingest"
+
+# simba_ingest_proposals.status values.
+SIMBA_PROPOSAL_PENDING = "pending"
+SIMBA_PROPOSAL_UPLOADED = "uploaded"
+SIMBA_PROPOSAL_REJECTED = "rejected"
+
 # pdf_split_proposals.status values.
 PDF_SPLIT_PROPOSAL_PENDING = "pending"
 PDF_SPLIT_PROPOSAL_APPROVED = "approved"
@@ -2199,6 +2208,47 @@ class PdfSplitProposal(Base):
         # enforce the same invariant as migrated PG databases.
         Index(
             "uq_pdf_split_proposals_pending_doc",
+            "document_id",
+            unique=True,
+            postgresql_where=sa_text("status = 'pending'"),
+            sqlite_where=sa_text("status = 'pending'"),
+        ),
+    )
+
+    document = relationship("Document", foreign_keys=[document_id])
+
+
+class SimbaIngestProposal(Base):
+    """A watch-folder-ingested PDF awaiting owner confirmation before the
+    (irreversible) upload to the Simba tax portal.
+
+    Created by the document-worker's post-ingest hook (xidra only, PDF only,
+    source='folder_ingest') with a content-classified category/type SUGGESTION.
+    The owner confirms it on /brain/review — optionally editing category/type —
+    which triggers the real upload, or rejects it. Nothing is ever auto-uploaded
+    to the tax accountant.
+    """
+    __tablename__ = "simba_ingest_proposals"
+
+    id = Column(Integer, primary_key=True, index=True)
+    document_id = Column(
+        Integer, ForeignKey("documents.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    status = Column(String(20), nullable=False, default=SIMBA_PROPOSAL_PENDING, index=True)
+    filename = Column(String, nullable=False)
+    # Content-derived suggestion (nullable — the user picks/edits on review).
+    suggested_category = Column(String(100), nullable=True)
+    suggested_type = Column(String(100), nullable=True)
+    created_at = Column(DateTime, default=_utcnow)
+    resolved_at = Column(DateTime, nullable=True)
+    resolved_by_user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+
+    __table_args__ = (
+        Index("ix_simba_ingest_proposals_user_status", "user_id", "status"),
+        # One PENDING proposal per document (create_all + migrated PG parity).
+        Index(
+            "uq_simba_ingest_proposals_pending_doc",
             "document_id",
             unique=True,
             postgresql_where=sa_text("status = 'pending'"),

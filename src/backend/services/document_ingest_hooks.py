@@ -86,6 +86,20 @@ def register_document_ingest_hooks() -> None:
                 "Paperless filing disabled for this process; ingestion continues."
             )
 
+    # xidra-only: file a REVIEW proposal for a watch-folder PDF so the owner can
+    # confirm the (irreversible) Simba tax-portal upload. Classifies from the same
+    # field_text; never auto-uploads.
+    if settings.folder_ingest_simba_enabled:
+        try:
+            from services.simba_ingest_review import simba_ingest_post_hook
+
+            _maybe_register("simba_ingest", simba_ingest_post_hook)
+        except Exception:  # noqa: BLE001 — fail-open, never block ingestion
+            logger.opt(exception=True).warning(
+                "Failed to register Simba-ingest post_document_ingest hook — "
+                "Simba review disabled for this process; ingestion continues."
+            )
+
     if registered:
         logger.info(
             f"✅ post_document_ingest hooks registered: {', '.join(registered)}"

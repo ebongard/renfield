@@ -2299,5 +2299,16 @@
     "pageThumbAlt": "Vorschau Seite {{page}}",
     "couldNotLoad": "PDF-Aufteilungsvorschläge konnten nicht geladen werden.",
     "loadThumbs": "Seiten-Vorschauen laden"
+  },
+  "simbaReview": {
+    "title": "An Simba übertragen — Prüfen",
+    "hint": "Aus dem Ordner importierte PDFs für die Steuerkanzlei. Kategorie/Typ prüfen und bestätigen — die Übertragung ist unwiderruflich.",
+    "category": "Kategorie",
+    "type": "Typ",
+    "confirm": "Übertragen",
+    "reject": "Verwerfen",
+    "needCategoryType": "Bitte Kategorie und Typ wählen.",
+    "confirmUpload": "„{{filename}}“ ENDGÜLTIG an die Steuerkanzlei (Simba) übertragen?\n{{category}} / {{type}}\nKann nicht widerrufen werden.",
+    "uploadFailed": "Übertragung fehlgeschlagen."
   }
 }

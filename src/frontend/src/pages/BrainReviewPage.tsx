@@ -6,6 +6,7 @@ import { formatDateTime } from '../utils/datetime';
 import LensFrame from '../components/wissen/LensFrame';
 import MergeProposalsSection from '../components/MergeProposalsSection';
 import PdfSplitReviewSection from '../components/PdfSplitReviewSection';
+import SimbaIngestReviewSection from '../components/SimbaIngestReviewSection';
 import Alert from '../components/Alert';
 import Badge from '../components/Badge';
 import type { BadgeColor } from '../components/Badge';
@@ -103,6 +104,7 @@ export default function BrainReviewPage() {
       {/* D7: merge-proposal review queue, above the per-atom tier review list */}
       <MergeProposalsSection />
       <PdfSplitReviewSection enabled={features?.pdf_split_enabled ?? false} />
+      <SimbaIngestReviewSection enabled={features?.simba_ingest_review_enabled ?? false} />
 
       <div className="flex items-center gap-3">
         <Calendar className="w-4 h-4 text-gray-500" aria-hidden="true" />

@@ -30,6 +30,7 @@ from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.routes.knowledge import _worker_is_alive
+from models.database import FOLDER_INGEST_SOURCE
 from models.permissions import Permission
 from services.api_rate_limiter import limiter
 from services.auth_service import require_permission
@@ -185,6 +186,7 @@ async def ingest_pushed_document(
             owner_user_id=owner_user_id,
             default_tier=settings.folder_ingest_default_tier,
             file_to_paperless=_should_file_paperless(),
+            source=FOLDER_INGEST_SOURCE,  # provenance for the Simba review flow
         )
     except Exception as exc:  # noqa: BLE001 - never 500 the push contract
         logger.error(f"folder-ingest: unexpected error processing {meta.filename!r}: {exc}")

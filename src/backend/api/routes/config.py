@@ -117,6 +117,9 @@ class FeatureFlags(BaseModel):
     # True when the Simba tax-portal MCP is connected (xidra). Gates the chat
     # attachment menu's Simba items so they only show where it's configured.
     simba_upload_enabled: bool = False
+    # True when watch-folder PDFs are routed to the Simba review queue (xidra).
+    # Gates the Simba review section on /brain/review.
+    simba_ingest_review_enabled: bool = False
 
 
 @router.get("/features", response_model=FeatureFlags)
@@ -143,4 +146,5 @@ async def get_features(
         scheduled_tasks_enabled=settings.scheduled_tasks_enabled,
         wissensbasis_reva_available=_reva_wissensbasis_mounted(request),
         simba_upload_enabled=_simba_available(request),
+        simba_ingest_review_enabled=settings.folder_ingest_simba_enabled,
     )

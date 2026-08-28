@@ -2299,5 +2299,16 @@
     "pageThumbAlt": "Preview of page {{page}}",
     "couldNotLoad": "Could not load PDF split proposals.",
     "loadThumbs": "Load page previews"
+  },
+  "simbaReview": {
+    "title": "Send to Simba — Review",
+    "hint": "PDFs imported from the watch folder, for the tax accountant. Check the category/type and confirm — the transfer is irreversible.",
+    "category": "Category",
+    "type": "Type",
+    "confirm": "Send",
+    "reject": "Discard",
+    "needCategoryType": "Please choose a category and type.",
+    "confirmUpload": "Transfer \"{{filename}}\" to the tax accountant (Simba) FOR GOOD?\n{{category}} / {{type}}\nThis cannot be undone.",
+    "uploadFailed": "Transfer failed."
   }
 }

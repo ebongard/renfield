@@ -132,6 +132,9 @@ export interface FeatureFlags {
   /** True when the Simba tax-portal MCP is connected (xidra). Gates the chat
    *  attachment menu's 'Send to Simba' items. */
   simba_upload_enabled?: boolean;
+  /** True when watch-folder PDFs are routed to the Simba review queue (xidra).
+   *  Gates the Simba review section on /brain/review. */
+  simba_ingest_review_enabled?: boolean;
 }
 
 async function fetchAtomSearch(query: string): Promise<AtomMatch[]> {

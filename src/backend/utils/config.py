@@ -886,6 +886,10 @@ class Settings(BaseSettings):
     folder_ingest_target_user: str = ""  # owner username/id; empty → admin/first user
     folder_ingest_default_tier: int = Field(default=0, ge=0, le=4)  # circle tier at create
     folder_ingest_to_paperless: bool = True
+    # xidra-only: watch-folder PDFs also go to the Simba tax portal — but via a
+    # REVIEW queue (owner confirms category/type before the irreversible upload),
+    # never automatically. Off elsewhere. See services/simba_ingest_review.py.
+    folder_ingest_simba_enabled: bool = False
     # Auto-populate the Paperless taxonomy: when on (default), the filing leg
     # resolve-OR-CREATEs document types / tags (like it already does for
     # correspondents) instead of only matching against the pre-curated taxonomy —
