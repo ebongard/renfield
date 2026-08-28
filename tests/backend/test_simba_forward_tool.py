@@ -112,6 +112,47 @@ async def test_real_upload_passes_confirm_and_marks_action():
 
 
 @pytest.mark.asyncio
+async def test_real_upload_zero_transferred_is_honest_failure():
+    """The MCP call succeeds but 0 files landed → the bridge must report FAILURE
+    (the agent can't claim success). Regression for 2026-08-28."""
+    upload = _upload()
+    mcp = _mcp({
+        "success": True,
+        "message": '{"modus":"echter Upload","uebertragen":0,"fehlgeschlagen":1,'
+                   '"ergebnisse":[{"ok":false,"status":401,"response":"token abgelaufen"}]}',
+    })
+    with _db_patch(upload), patch("pathlib.Path.is_file", return_value=True), patch(
+        "builtins.open", mock_open(read_data=FILE_BYTES)
+    ):
+        r = await forward_attachment_to_simba(
+            {"category": "Belege", "type": "x", "dry_run": False, "confirm": True},
+            mcp_manager=mcp, session_id="sess",
+        )
+    assert r["success"] is False
+    assert r["action_taken"] is False
+    assert "NICHT angekommen" in r["message"]
+    assert "401" in r["message"]
+
+
+@pytest.mark.asyncio
+async def test_confirm_gate_relayed_not_marked_success():
+    """A real-upload attempt the server refused for missing confirm is relayed as
+    needs-confirmation (not a landed upload)."""
+    upload = _upload()
+    mcp = _mcp({"success": True, "message": '{"status":"bestaetigung_erforderlich","hinweis":"..."}'})
+    with _db_patch(upload), patch("pathlib.Path.is_file", return_value=True), patch(
+        "builtins.open", mock_open(read_data=FILE_BYTES)
+    ):
+        r = await forward_attachment_to_simba(
+            {"category": "Belege", "type": "x", "dry_run": False},
+            mcp_manager=mcp, session_id="sess",
+        )
+    assert r["success"] is True
+    assert r["action_taken"] is False
+    assert r["data"].get("needs_confirmation") is True
+
+
+@pytest.mark.asyncio
 async def test_llm_supplied_content_base64_is_ignored():
     """The agent can't smuggle bytes — the tool reads them from disk itself."""
     upload = _upload()

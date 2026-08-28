@@ -210,6 +210,11 @@ async def forward_attachment_to_simba(
 
         mcp_result = await mcp_manager.execute_tool("mcp.simba.upload_documents", tool_args)
 
+        # The MCP envelope `success` only says the tool didn't throw — NOT that a
+        # document landed. The simba tool returns a text/JSON body reporting
+        # `uebertragen` (how many actually POSTed) even for a failed upload, so we
+        # MUST parse it; otherwise the agent claims success while nothing was sent
+        # (observed 2026-08-28). Envelope failure = the call itself broke.
         if not mcp_result or not mcp_result.get("success"):
             detail = (mcp_result or {}).get("message") or "unbekannter Fehler"
             return {
@@ -218,19 +223,73 @@ async def forward_attachment_to_simba(
                 "action_taken": False,
             }
 
-        # Relay the simba server's own message (dry-run preview /
-        # bestaetigung_erforderlich / real-upload result) verbatim to the agent.
-        real_upload_done = (not dry_run) and confirm
+        import json as _json
+
+        raw_msg = mcp_result.get("message")
+        inner: dict = {}
+        if isinstance(raw_msg, str):
+            try:
+                parsed = _json.loads(raw_msg)
+                if isinstance(parsed, dict):
+                    inner = parsed
+            except (ValueError, TypeError):
+                inner = {}
+
+        base_data = {
+            "attachment_id": upload.id,
+            "filename": upload.filename,
+            "ziel": f"{category} / {type_}",
+            "dry_run": dry_run,
+        }
+
+        # The server's confirm gate: real upload attempted without confirm.
+        if inner.get("status") == "bestaetigung_erforderlich":
+            return {
+                "success": True,
+                "message": raw_msg,
+                "action_taken": False,
+                "data": {**base_data, "needs_confirmation": True},
+            }
+
+        # Dry-run: relay the preview (nothing sent).
+        if dry_run:
+            return {"success": True, "message": raw_msg or "Probelauf ok", "action_taken": False, "data": base_data}
+
+        # Real upload: honest outcome from `uebertragen` / `fehlgeschlagen`.
+        def _as_int(v):
+            try:
+                return int(v)
+            except (TypeError, ValueError):
+                return None
+
+        uebertragen = _as_int(inner.get("uebertragen"))
+        fehlgeschlagen = _as_int(inner.get("fehlgeschlagen"))
+        landed = uebertragen is not None and uebertragen > 0 and not (fehlgeschlagen or 0)
+
+        if landed:
+            return {"success": True, "message": raw_msg or "Übertragen.", "action_taken": True, "data": base_data}
+
+        # Failed real upload — surface the concrete reason (HTTP status / portal
+        # response / validation error) so the agent CANNOT claim false success.
+        result0 = (inner.get("ergebnisse") or [{}])
+        result0 = result0[0] if result0 else {}
+        errors = inner.get("fehler") or []
+        reason = ""
+        if errors:
+            reason = errors[0].get("error") if isinstance(errors[0], dict) else str(errors[0])
+        elif result0:
+            status = result0.get("status")
+            resp = (result0.get("response") or "")[:300]
+            reason = f"HTTP {status}: {resp}" if status else resp
         return {
-            "success": True,
-            "message": mcp_result.get("message") or "OK",
-            "action_taken": real_upload_done,
-            "data": {
-                "attachment_id": upload.id,
-                "filename": upload.filename,
-                "ziel": f"{category} / {type_}",
-                "dry_run": dry_run,
-            },
+            "success": False,
+            "message": (
+                "Der Upload an Simba ist NICHT angekommen (0 Dateien übertragen)"
+                + (f": {reason}" if reason else ".")
+                + " Bitte dem Nutzer melden — behaupte KEINEN Erfolg."
+            ),
+            "action_taken": False,
+            "data": {**base_data, "uebertragen": uebertragen, "fehlgeschlagen": fehlgeschlagen, "raw": raw_msg},
         }
     except Exception as e:
         logger.error(f"forward_attachment_to_simba error: {e}")
