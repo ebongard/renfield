@@ -258,6 +258,19 @@ files a **review proposal** the owner confirms by hand.
   failures), reverts to `PENDING` on any non-landed outcome (retryable), and a
   row stuck in `UPLOADING` (process died mid-upload) is the fail-safe direction —
   it never auto-re-uploads.
+- **Send an EXISTING KB document.** The hook only fires on a **new** folder-ingest
+  document; a document already in the knowledge base is **deduped at ingest**
+  (`classify_existing`, content-hash + KB, across ALL sources) and never reaches
+  the hook — so re-dropping it into the share produces nothing. To send such a
+  document, use the **"An Simba senden"** action on the KB document row
+  (`/knowledge` and the `/wissen/dokumente` lens): `POST /api/simba-ingest/from-document/{id}`
+  → `create_proposal_for_document` files the same PENDING proposal on `/brain/review`.
+  It's owner/admin-gated (owner = the document's **atom** owner; an atom-less /
+  unresolved-owner document is **admin-only**, `fallback=None`, so a non-owner
+  can't queue someone else's document), idempotent on the pending state, and
+  classifies category/type from the document's stored chunk text. So **two**
+  paths feed the queue: a new watch-folder PDF (auto) and an existing KB document
+  (the button).
 - **Related:** the interactive chat path uses the two-tool human-gated bridge
   `internal.forward_attachment_to_simba` + `internal.simba_commit_upload` (see
   `CLAUDE.md`); this review queue is the folder-ingest analogue — same irreversible-
