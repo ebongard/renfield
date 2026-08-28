@@ -2318,6 +2318,9 @@
     "confirmUpload": "„{{filename}}“ ENDGÜLTIG an die Steuerkanzlei (Simba) übertragen?\n{{category}} / {{type}} · Zeitraum {{period}}\nKann nicht widerrufen werden.",
     "uploadFailed": "Übertragung fehlgeschlagen.",
     "month": "Monat",
-    "year": "Jahr"
+    "year": "Jahr",
+    "dupWarning": "Dieses Dokument scheint bereits in Simba zu sein: {{existing}}",
+    "forceUpload": "Trotzdem übertragen",
+    "dupUnknown": "vorhandener Eintrag"
   }
 }

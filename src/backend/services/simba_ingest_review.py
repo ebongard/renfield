@@ -397,6 +397,7 @@ async def _revert_claim(db, proposal_id: int) -> None:
 async def confirm(
     db, proposal_id: int, category: str, type_: str, user, mcp_manager,
     description: str | None = None, month: int | None = None, year: int | None = None,
+    force: bool = False,
 ) -> dict:
     """Confirm a pending proposal → REAL upload to Simba, then mark uploaded.
 
@@ -431,6 +432,22 @@ async def confirm(
     if doc is None or not doc.file_path or not Path(doc.file_path).is_file():
         return {"success": False, "message": "document file no longer available"}
 
+    # User-edited Bezeichnung wins when it survives sanitization; blank OR an
+    # all-disallowed value falls back to the derived title (never sends nothing).
+    bezeichnung = _sanitize_desc(description) or _bezeichnung(doc)
+
+    # Pre-upload duplicate guard: is this document ALREADY in Simba? The portal
+    # forbids withdrawal, so surface a likely-existing copy and require an
+    # explicit `force` to proceed. Best-effort (a check failure never blocks).
+    if not force:
+        existing = await _find_in_simba(mcp_manager, bezeichnung or Path(doc.filename or "").stem)
+        if existing:
+            return {
+                "success": False,
+                "message": "already_in_simba",
+                "existing": _summarize_transfer(existing[0]),
+            }
+
     with open(doc.file_path, "rb") as f:
         content_base64 = base64.b64encode(f.read()).decode("ascii")
 
@@ -439,9 +456,6 @@ async def confirm(
         return {"success": False, "message": "already_resolved"}
 
     file_entry: dict[str, str] = {"content_base64": content_base64, "filename": doc.filename}
-    # User-edited Bezeichnung wins when it survives sanitization; blank OR an
-    # all-disallowed value falls back to the derived title (never sends nothing).
-    bezeichnung = _sanitize_desc(description) or _bezeichnung(doc)
     if bezeichnung:
         file_entry["description"] = bezeichnung
     tool_args: dict = {
@@ -515,6 +529,44 @@ def _inner(result) -> dict:
         except (ValueError, TypeError):
             return {}
     return {}
+
+
+async def _find_in_simba(mcp_manager, contains: str) -> list[dict]:
+    """Best-effort duplicate check: does Simba already have a transfer whose
+    Dateiname or Beschreibung contains ``contains``? Returns the matching rows
+    (empty on no match, empty/blank query, or any error — the check never blocks
+    a legitimate upload). Uses only the `contains` filter, which is reliable on
+    the live grid (the combined Kategorie/Monat columns are not — see the MCP)."""
+    if mcp_manager is None or not (contains or "").strip():
+        return []
+    try:
+        res = await mcp_manager.execute_tool(
+            "mcp.simba.list_transfers", {"contains": contains.strip(), "limit": 20},
+            truncate=False,
+        )
+    except Exception as e:  # noqa: BLE001 — the guard is advisory, never fatal
+        logger.warning(f"simba-ingest: list_transfers check failed: {e}")
+        return []
+    rows = _inner(res).get("zeilen")
+    return rows if isinstance(rows, list) else []
+
+
+def _summarize_transfer(row: dict) -> str:
+    """A short, human label for an existing Simba transfer row (column names vary,
+    so probe the likely keys)."""
+    if not isinstance(row, dict):
+        return "vorhandener Eintrag"
+    def _pick(*keys):
+        for k in row:
+            kl = str(k).lower()
+            if any(w in kl for w in keys):
+                v = str(row[k]).strip()
+                if v:
+                    return v
+        return ""
+    name = _pick("beschreibung", "bezeichnung", "dateiname", "datei", "name")
+    period = _pick("monat", "jahr", "zeitraum")
+    return " · ".join(x for x in (name, period) if x) or "vorhandener Eintrag"
 
 
 def _landed(result) -> bool:

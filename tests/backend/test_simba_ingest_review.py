@@ -505,10 +505,109 @@ class TestSimbaIngestRoutes:
                 app.state.mcp_manager = None
             assert r1.status_code == 200
             assert r2.status_code == 409
-            # The irreversible upload happened exactly once.
-            assert mock.execute_tool.await_count == 1
+            # The irreversible UPLOAD happened exactly once (there's also a
+            # list_transfers duplicate-check call per confirm — count uploads only).
+            uploads = [c for c in mock.execute_tool.await_args_list
+                       if c.args[0] == "mcp.simba.upload_documents"]
+            assert len(uploads) == 1
             # And truncate=False was passed so a truncated envelope can't misread landing.
-            assert mock.execute_tool.await_args.kwargs.get("truncate") is False
+            assert uploads[0].kwargs.get("truncate") is False
+        finally:
+            Path(tmp).unlink(missing_ok=True)
+
+    @pytest.mark.backend
+    async def test_confirm_blocks_when_already_in_simba(
+        self, async_client: AsyncClient, db_session: AsyncSession
+    ):
+        """If Simba already has a matching transfer, confirm does NOT upload —
+        it returns already_in_simba and the proposal stays pending (force absent)."""
+        import json as _json
+
+        from models.database import Document
+
+        with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as f:
+            f.write(b"%PDF-1.4 x")
+            tmp = f.name
+        try:
+            doc = Document(filename="dup.pdf", file_path=tmp, status="completed",
+                           generated_title="Schon vorhanden")
+            db_session.add(doc)
+            await db_session.commit()
+            await db_session.refresh(doc)
+            p = SimbaIngestProposal(document_id=doc.id, filename="dup.pdf", status=SIMBA_PROPOSAL_PENDING)
+            db_session.add(p)
+            await db_session.commit()
+            await db_session.refresh(p)
+
+            def _exec(name, args, **kw):
+                if name == "mcp.simba.list_transfers":
+                    return {"success": True, "message": _json.dumps(
+                        {"anzahl": 1, "zeilen": [{"Beschreibung": "Schon vorhanden", "Monat/Jahr": "07/2025"}]})}
+                return {"success": True, "message": _json.dumps({"uebertragen": 1})}
+
+            from main import app
+            mock = AsyncMock()
+            mock.execute_tool = AsyncMock(side_effect=_exec)
+            app.state.mcp_manager = mock
+            try:
+                resp = await async_client.post(
+                    f"/api/simba-ingest/{p.id}/confirm",
+                    json={"category": "Belege", "type": "Ausgangsrechnung"},
+                )
+            finally:
+                app.state.mcp_manager = None
+            assert resp.status_code == 200
+            assert resp.json()["already_in_simba"] is True
+            assert "Schon vorhanden" in (resp.json()["existing"] or "")
+            # No upload happened; the proposal is still actionable.
+            assert not [c for c in mock.execute_tool.await_args_list
+                        if c.args[0] == "mcp.simba.upload_documents"]
+            await db_session.refresh(p)
+            assert p.status == SIMBA_PROPOSAL_PENDING
+        finally:
+            Path(tmp).unlink(missing_ok=True)
+
+    @pytest.mark.backend
+    async def test_confirm_force_uploads_despite_match(
+        self, async_client: AsyncClient, db_session: AsyncSession
+    ):
+        """force=true skips the duplicate check and uploads."""
+        import json as _json
+
+        from models.database import Document
+
+        with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as f:
+            f.write(b"%PDF-1.4 x")
+            tmp = f.name
+        try:
+            doc = Document(filename="force.pdf", file_path=tmp, status="completed")
+            db_session.add(doc)
+            await db_session.commit()
+            await db_session.refresh(doc)
+            p = SimbaIngestProposal(document_id=doc.id, filename="force.pdf", status=SIMBA_PROPOSAL_PENDING)
+            db_session.add(p)
+            await db_session.commit()
+            await db_session.refresh(p)
+
+            from main import app
+            mock = AsyncMock()
+            mock.execute_tool = AsyncMock(return_value={
+                "success": True, "message": _json.dumps({"uebertragen": 1, "fehlgeschlagen": 0})})
+            app.state.mcp_manager = mock
+            try:
+                resp = await async_client.post(
+                    f"/api/simba-ingest/{p.id}/confirm",
+                    json={"category": "Belege", "type": "Ausgangsrechnung", "force": True},
+                )
+            finally:
+                app.state.mcp_manager = None
+            assert resp.status_code == 200 and resp.json()["success"] is True
+            # No list_transfers check ran; the upload did.
+            names = [c.args[0] for c in mock.execute_tool.await_args_list]
+            assert "mcp.simba.list_transfers" not in names
+            assert "mcp.simba.upload_documents" in names
+            await db_session.refresh(p)
+            assert p.status == SIMBA_PROPOSAL_UPLOADED
         finally:
             Path(tmp).unlink(missing_ok=True)
 

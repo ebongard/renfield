@@ -2318,6 +2318,9 @@
     "confirmUpload": "Transfer \"{{filename}}\" to the tax accountant (Simba) FOR GOOD?\n{{category}} / {{type}} · period {{period}}\nThis cannot be undone.",
     "uploadFailed": "Transfer failed.",
     "month": "Month",
-    "year": "Year"
+    "year": "Year",
+    "dupWarning": "This document appears to already be in Simba: {{existing}}",
+    "forceUpload": "Transfer anyway",
+    "dupUnknown": "existing entry"
   }
 }

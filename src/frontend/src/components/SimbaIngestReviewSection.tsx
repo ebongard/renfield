@@ -77,6 +77,9 @@ function ProposalRow({
   const [month, setMonth] = useState(now.getMonth() + 1);
   const [year, setYear] = useState(now.getFullYear());
   const [error, setError] = useState<string | null>(null);
+  // Set when Simba already has a matching transfer — the user must explicitly
+  // force the (irreversible) upload past this warning.
+  const [dupWarning, setDupWarning] = useState<string | null>(null);
 
   const monthName = (m: number) =>
     new Intl.DateTimeFormat(i18n.language, { month: 'long' }).format(new Date(2000, m - 1, 1));
@@ -84,8 +87,25 @@ function ProposalRow({
   const typeOptions = category ? categories[category] ?? [] : [];
   const busy = confirm.isPending || reject.isPending;
 
+  const submit = (force: boolean) => {
+    setError(null);
+    setDupWarning(null);
+    confirm.mutate(
+      { id: proposal.id, category, type, description: description.trim(), month, year, force },
+      {
+        onSuccess: (data) => {
+          if (data.already_in_simba) {
+            setDupWarning(data.existing || t('simbaReview.dupUnknown'));
+          }
+        },
+        onError: (e) => setError((e as Error).message || t('simbaReview.uploadFailed')),
+      },
+    );
+  };
+
   const onConfirm = () => {
     setError(null);
+    setDupWarning(null);
     if (!category || !type) {
       setError(t('simbaReview.needCategoryType'));
       return;
@@ -99,10 +119,7 @@ function ProposalRow({
     )) {
       return;
     }
-    confirm.mutate(
-      { id: proposal.id, category, type, description: description.trim(), month, year },
-      { onError: (e) => setError((e as Error).message || t('simbaReview.uploadFailed')) },
-    );
+    submit(false);
   };
 
   return (
@@ -209,6 +226,18 @@ function ProposalRow({
         </button>
       </div>
       {error && <p className="text-xs text-primary-700 dark:text-primary-300 mt-2">{error}</p>}
+      {dupWarning && (
+        <div className="mt-2 flex flex-wrap items-center gap-2 rounded-lg border border-primary-300 bg-primary-50 p-2 text-xs text-primary-800 dark:border-primary-800 dark:bg-primary-900/20 dark:text-primary-200">
+          <span className="grow">{t('simbaReview.dupWarning', { existing: dupWarning })}</span>
+          <button
+            onClick={() => submit(true)}
+            disabled={busy}
+            className="btn-secondary text-xs py-1 px-2"
+          >
+            {t('simbaReview.forceUpload')}
+          </button>
+        </div>
+      )}
     </div>
   );
 }

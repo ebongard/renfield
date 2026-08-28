@@ -45,12 +45,15 @@ class SimbaConfirmRequest(BaseModel):
     description: str | None = None
     month: int | None = None
     year: int | None = None
+    force: bool = False
 
 
 class SimbaActionResponse(BaseModel):
     success: bool
     message: str = ""
     proposal_id: int | None = None
+    already_in_simba: bool = False
+    existing: str | None = None
 
 
 def _require_enabled() -> None:
@@ -112,7 +115,7 @@ async def confirm_proposal(
     mgr = getattr(request.app.state, "mcp_manager", None)
     res = await review.confirm(
         db, proposal_id, body.category, body.type, user, mgr,
-        description=body.description, month=body.month, year=body.year,
+        description=body.description, month=body.month, year=body.year, force=body.force,
     )
     if not res["success"]:
         msg = res["message"]
@@ -120,6 +123,13 @@ async def confirm_proposal(
             raise HTTPException(status_code=404, detail="Proposal not found")
         if msg == "already_resolved":
             raise HTTPException(status_code=409, detail="Already resolved")
+        if msg == "already_in_simba":
+            # Not an error: an informative gate. The document appears to already
+            # be in Simba — the UI warns and offers an explicit "force" re-confirm.
+            return SimbaActionResponse(
+                success=False, message="already_in_simba", already_in_simba=True,
+                existing=res.get("existing"),
+            )
         raise HTTPException(status_code=502, detail=msg)
     return SimbaActionResponse(success=True, message=res["message"])
 

@@ -2058,6 +2058,9 @@
     "confirmUpload": "Trasferire \"{{filename}}\" al commercialista (Simba) DEFINITIVAMENTE?\n{{category}} / {{type}} · periodo {{period}}\nNon può essere annullato.",
     "uploadFailed": "Trasferimento non riuscito.",
     "month": "Mese",
-    "year": "Anno"
+    "year": "Anno",
+    "dupWarning": "Questo documento sembra essere già in Simba: {{existing}}",
+    "forceUpload": "Trasferisci comunque",
+    "dupUnknown": "voce esistente"
   }
 }
