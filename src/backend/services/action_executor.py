@@ -159,6 +159,19 @@ class ActionExecutor:
                 user_id=user_id,
             )
 
+        # Platform-owned bridge: forward a chat attachment to the Simba tax portal
+        # (xidra `simba` MCP). Reads real stored bytes and hands them to
+        # mcp.simba.upload_documents as content_base64 — the LLM never sees base64.
+        # mcp_manager + session_id + the authenticated user_id are injected here.
+        if intent == "internal.forward_attachment_to_simba":
+            from services.simba_forward_tool import forward_attachment_to_simba
+            return await forward_attachment_to_simba(
+                parameters,
+                mcp_manager=self.mcp_manager,
+                session_id=self.session_id,
+                user_id=user_id,
+            )
+
         # Platform-owned internal tool: interactive folder-ingest. The agent
         # passes a file ``path`` on a watched share; the tool pulls the bytes
         # through the filesystem MCP (truncate=False) and runs them through the

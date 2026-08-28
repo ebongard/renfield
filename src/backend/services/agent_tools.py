@@ -188,13 +188,14 @@ class AgentToolRegistry:
         from services.paperless_dedupe_tool import PAPERLESS_DEDUPE_TOOL
         from services.paperless_reextract_tool import PAPERLESS_REEXTRACT_TOOL
         from services.reminder_tool import REMINDER_TOOL
+        from services.simba_forward_tool import SIMBA_FORWARD_TOOL
         from services.system_health_tool import SYSTEM_HEALTH_TOOL
         from services.widget_tools import WIDGET_TOOLS
 
         platform_tools: dict = {
             **KNOWLEDGE_TOOL, **MEMORY_LIST_TOOL, **CHAT_UPLOAD_TOOLS, **WIDGET_TOOLS,
             **KB_MAINTENANCE_TOOLS, **SYSTEM_HEALTH_TOOL, **PAPERLESS_REEXTRACT_TOOL,
-            **PAPERLESS_DEDUPE_TOOL, **REMINDER_TOOL,
+            **PAPERLESS_DEDUPE_TOOL, **REMINDER_TOOL, **SIMBA_FORWARD_TOOL,
         }
 
         for name, definition in platform_tools.items():
