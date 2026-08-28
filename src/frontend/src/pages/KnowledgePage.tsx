@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import type { ChangeEvent } from 'react';
-import { useSearchParams } from 'react-router';
+import { useSearchParams, Link } from 'react-router';
 import { useTranslation } from 'react-i18next';
 import { useQueryClient } from '@tanstack/react-query';
 import type { AxiosError } from 'axios';
@@ -88,7 +88,9 @@ export default function KnowledgePage() {
   const { embedded } = useLensContext();
 
   const [uploading, setUploading] = useState(false);
-  const [uploadProgress, setUploadProgress] = useState<{ text: string; variant: AlertVariant } | null>(null);
+  const [uploadProgress, setUploadProgress] = useState<
+    { text: string; variant: AlertVariant; link?: { to: string; label: string } } | null
+  >(null);
 
   // Filter state
   const [selectedKnowledgeBase, setSelectedKnowledgeBase] = useState<number | null>(null);
@@ -349,6 +351,10 @@ export default function KnowledgePage() {
           ? t('knowledge.simbaAlreadyQueued')
           : t('knowledge.simbaQueued'),
         variant: 'success',
+        // One click straight to the queued row on the review page — no hunting.
+        link: res.proposal_id
+          ? { to: `/brain/review#simba-${res.proposal_id}`, label: t('knowledge.simbaGoConfirm') }
+          : undefined,
       });
     } catch (err) {
       setUploadProgress({ text: extractApiError(err, t('knowledge.simbaSendFailed')), variant: 'error' });
@@ -705,6 +711,14 @@ export default function KnowledgePage() {
                 >
                   {t('knowledge.retry')}
                 </button>
+              )}
+              {uploadProgress.link && (
+                <Link
+                  to={uploadProgress.link.to}
+                  className="btn-secondary !py-1 !px-3 text-sm min-h-[44px] sm:min-h-0 whitespace-nowrap"
+                >
+                  {uploadProgress.link.label}
+                </Link>
               )}
             </div>
           </Alert>

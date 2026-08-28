@@ -292,7 +292,8 @@ class TestSimbaIngestRoutes:
             try:
                 resp = await async_client.post(
                     f"/api/simba-ingest/{p.id}/confirm",
-                    json={"category": "Posteingang", "type": "Schriftverkehr"},
+                    json={"category": "Posteingang", "type": "Schriftverkehr",
+                          "month": 7, "year": 2025, "description": ""},
                 )
             finally:
                 app.state.mcp_manager = None
@@ -302,6 +303,8 @@ class TestSimbaIngestRoutes:
             assert args["category"] == "Posteingang"
             # Bezeichnung (description) is carried from the document's title.
             assert args["files"][0]["description"] == "Muster Rechnung 2026"
+            # Booking period forwarded (not the MCP's current-month default).
+            assert args["month"] == 7 and args["year"] == 2025
             await db_session.refresh(p)
             assert p.status == SIMBA_PROPOSAL_UPLOADED
             assert p.suggested_category == "Posteingang"  # edited value persisted

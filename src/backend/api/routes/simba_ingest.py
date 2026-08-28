@@ -43,6 +43,8 @@ class SimbaConfirmRequest(BaseModel):
     category: str
     type: str
     description: str | None = None
+    month: int | None = None
+    year: int | None = None
 
 
 class SimbaActionResponse(BaseModel):
@@ -109,7 +111,8 @@ async def confirm_proposal(
     _require_user(user)
     mgr = getattr(request.app.state, "mcp_manager", None)
     res = await review.confirm(
-        db, proposal_id, body.category, body.type, user, mgr, description=body.description
+        db, proposal_id, body.category, body.type, user, mgr,
+        description=body.description, month=body.month, year=body.year,
     )
     if not res["success"]:
         msg = res["message"]

@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Landmark, Loader, Check, X } from 'lucide-react';
 
@@ -25,9 +25,18 @@ export default function SimbaIngestReviewSection({ enabled }: Props) {
   const { t } = useTranslation();
   const proposalsQuery = useSimbaProposalsQuery(enabled);
   const categoriesQuery = useSimbaCategoriesQuery(enabled);
+  const proposals = proposalsQuery.data ?? [];
+
+  // Deep-link from the "send to Simba" toast: /wissen/review#simba-{id} scrolls
+  // to and highlights the just-queued row (no manual hunting across pages).
+  useEffect(() => {
+    const hash = window.location.hash;
+    if (!hash.startsWith('#simba-') || proposals.length === 0) return;
+    const el = document.getElementById(hash.slice(1));
+    if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  }, [proposals.length]);
 
   if (!enabled) return null;
-  const proposals = proposalsQuery.data ?? [];
   if (proposalsQuery.isLoading || proposals.length === 0) return null;
 
   return (
@@ -54,16 +63,24 @@ function ProposalRow({
   proposal: SimbaProposal;
   categories: Record<string, string[]>;
 }) {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const confirm = useConfirmSimbaProposal();
   const reject = useRejectSimbaProposal();
 
+  const now = new Date();
   const categoryNames = Object.keys(categories);
   const [category, setCategory] = useState(proposal.suggested_category ?? '');
   const [type, setType] = useState(proposal.suggested_type ?? '');
   const [description, setDescription] = useState(proposal.suggested_description ?? '');
+  // Buchungszeitraum (Simba booking period) — default the current month/year, but
+  // ALWAYS shown + editable: the portal otherwise silently stamps "now".
+  const [month, setMonth] = useState(now.getMonth() + 1);
+  const [year, setYear] = useState(now.getFullYear());
   const [error, setError] = useState<string | null>(null);
 
+  const monthName = (m: number) =>
+    new Intl.DateTimeFormat(i18n.language, { month: 'long' }).format(new Date(2000, m - 1, 1));
+  const yearOptions = [now.getFullYear(), now.getFullYear() - 1, now.getFullYear() - 2];
   const typeOptions = category ? categories[category] ?? [] : [];
   const busy = confirm.isPending || reject.isPending;
 
@@ -74,17 +91,22 @@ function ProposalRow({
       return;
     }
     // eslint-disable-next-line no-alert
-    if (!window.confirm(t('simbaReview.confirmUpload', { category, type, filename: proposal.filename }))) {
+    if (!window.confirm(
+      t('simbaReview.confirmUpload', {
+        category, type, filename: proposal.filename,
+        period: `${String(month).padStart(2, '0')}/${year}`,
+      }),
+    )) {
       return;
     }
     confirm.mutate(
-      { id: proposal.id, category, type, description: description.trim() },
+      { id: proposal.id, category, type, description: description.trim(), month, year },
       { onError: (e) => setError((e as Error).message || t('simbaReview.uploadFailed')) },
     );
   };
 
   return (
-    <div className="border border-gray-200 dark:border-gray-700 rounded-lg p-3">
+    <div id={`simba-${proposal.id}`} className="border border-gray-200 dark:border-gray-700 rounded-lg p-3">
       <div className="flex items-center justify-between gap-2 mb-2">
         <span className="text-sm font-medium truncate" title={proposal.filename}>
           {proposal.filename}
@@ -139,6 +161,36 @@ function ProposalRow({
             ))}
           </select>
         </label>
+        <label className="flex flex-col text-xs gap-1">
+          <span className="text-gray-500">{t('simbaReview.month')}</span>
+          <select
+            className="input py-1 text-xs"
+            value={month}
+            onChange={(e) => setMonth(Number(e.target.value))}
+            disabled={busy}
+          >
+            {Array.from({ length: 12 }, (_, i) => i + 1).map((m) => (
+              <option key={m} value={m}>
+                {monthName(m)}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="flex flex-col text-xs gap-1">
+          <span className="text-gray-500">{t('simbaReview.year')}</span>
+          <select
+            className="input py-1 text-xs"
+            value={year}
+            onChange={(e) => setYear(Number(e.target.value))}
+            disabled={busy}
+          >
+            {yearOptions.map((y) => (
+              <option key={y} value={y}>
+                {y}
+              </option>
+            ))}
+          </select>
+        </label>
         <button
           onClick={onConfirm}
           disabled={busy}
@@ -156,7 +208,7 @@ function ProposalRow({
           {t('simbaReview.reject')}
         </button>
       </div>
-      {error && <p className="text-xs text-red-600 dark:text-red-400 mt-2">{error}</p>}
+      {error && <p className="text-xs text-primary-700 dark:text-primary-300 mt-2">{error}</p>}
     </div>
   );
 }

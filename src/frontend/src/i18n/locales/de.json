@@ -1000,9 +1000,10 @@
     "statusSplitReview": "Aufteilung prüfen",
     "statusSplitArchived": "Aufgeteilt (Original archiviert)",
     "sendToSimba": "An Simba senden",
-    "simbaQueued": "Zur Simba-Prüfung hinzugefügt — auf /brain/review bestätigen.",
+    "simbaQueued": "Zur Simba-Prüfung hinzugefügt.",
     "simbaAlreadyQueued": "Dieses Dokument wartet bereits auf die Simba-Prüfung.",
-    "simbaSendFailed": "Konnte nicht zur Simba-Prüfung hinzugefügt werden."
+    "simbaSendFailed": "Konnte nicht zur Simba-Prüfung hinzugefügt werden.",
+    "simbaGoConfirm": "Jetzt prüfen"
   },
   "memory": {
     "title": "Erinnerungen",
@@ -2314,7 +2315,9 @@
     "confirm": "Übertragen",
     "reject": "Verwerfen",
     "needCategoryType": "Bitte Kategorie und Typ wählen.",
-    "confirmUpload": "„{{filename}}“ ENDGÜLTIG an die Steuerkanzlei (Simba) übertragen?\n{{category}} / {{type}}\nKann nicht widerrufen werden.",
-    "uploadFailed": "Übertragung fehlgeschlagen."
+    "confirmUpload": "„{{filename}}“ ENDGÜLTIG an die Steuerkanzlei (Simba) übertragen?\n{{category}} / {{type}} · Zeitraum {{period}}\nKann nicht widerrufen werden.",
+    "uploadFailed": "Übertragung fehlgeschlagen.",
+    "month": "Monat",
+    "year": "Jahr"
   }
 }

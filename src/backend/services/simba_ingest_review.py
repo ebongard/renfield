@@ -396,12 +396,17 @@ async def _revert_claim(db, proposal_id: int) -> None:
 
 async def confirm(
     db, proposal_id: int, category: str, type_: str, user, mcp_manager,
-    description: str | None = None,
+    description: str | None = None, month: int | None = None, year: int | None = None,
 ) -> dict:
     """Confirm a pending proposal → REAL upload to Simba, then mark uploaded.
 
     ``description`` is the (editable) Bezeichnung from the review UI — sanitized
     and used when non-empty, else auto-derived from the document title.
+
+    ``month``/``year`` are the Simba booking period (Buchungszeitraum). The MCP
+    silently defaults an omitted period to the CURRENT month/year, so the review
+    UI always sends an explicit (user-editable) value — otherwise every upload
+    is mis-stamped with "now" instead of the document's actual period.
 
     Returns {"success": bool, "message": str}. The proposal is only marked
     uploaded when the document actually landed (uebertragen>0).
@@ -439,13 +444,20 @@ async def confirm(
     bezeichnung = _sanitize_desc(description) or _bezeichnung(doc)
     if bezeichnung:
         file_entry["description"] = bezeichnung
-    tool_args = {
+    tool_args: dict = {
         "category": category.strip(),
         "type": type_.strip(),
         "dry_run": False,
         "confirm": True,
         "files": [file_entry],
     }
+    # Booking period (Buchungszeitraum) — validated; only forwarded when sane so
+    # a bad value can't reach the portal. An omitted period lets the MCP fall back
+    # to the current month/year (its documented default).
+    if isinstance(month, int) and 1 <= month <= 12:
+        tool_args["month"] = month
+    if isinstance(year, int) and 2000 <= year <= 2100:
+        tool_args["year"] = year
     try:
         # truncate=False: a truncated envelope would mangle the JSON result →
         # a landed upload misread as failed → a retry that double-uploads.

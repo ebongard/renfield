@@ -1000,9 +1000,10 @@
     "statusSplitReview": "Split review pending",
     "statusSplitArchived": "Split (original archived)",
     "sendToSimba": "Send to Simba",
-    "simbaQueued": "Queued for Simba review — confirm on /brain/review.",
+    "simbaQueued": "Queued for Simba review.",
     "simbaAlreadyQueued": "This document is already awaiting Simba review.",
-    "simbaSendFailed": "Could not queue for Simba review."
+    "simbaSendFailed": "Could not queue for Simba review.",
+    "simbaGoConfirm": "Review now"
   },
   "memory": {
     "title": "Memories",
@@ -2314,7 +2315,9 @@
     "confirm": "Send",
     "reject": "Discard",
     "needCategoryType": "Please choose a category and type.",
-    "confirmUpload": "Transfer \"{{filename}}\" to the tax accountant (Simba) FOR GOOD?\n{{category}} / {{type}}\nThis cannot be undone.",
-    "uploadFailed": "Transfer failed."
+    "confirmUpload": "Transfer \"{{filename}}\" to the tax accountant (Simba) FOR GOOD?\n{{category}} / {{type}} · period {{period}}\nThis cannot be undone.",
+    "uploadFailed": "Transfer failed.",
+    "month": "Month",
+    "year": "Year"
   }
 }

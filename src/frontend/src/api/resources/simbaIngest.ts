@@ -47,15 +47,19 @@ export function useConfirmSimbaProposal() {
       category,
       type,
       description,
+      month,
+      year,
     }: {
       id: number;
       category: string;
       type: string;
       description: string;
+      month: number;
+      year: number;
     }) => {
       const r = await apiClient.post<{ success: boolean; message: string }>(
         `/api/simba-ingest/${id}/confirm`,
-        { category, type, description },
+        { category, type, description, month, year },
       );
       return r.data;
     },
