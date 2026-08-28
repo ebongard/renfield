@@ -99,6 +99,58 @@ async def test_hook_noop_when_flag_off():
 
 
 # --------------------------------------------------------------------------
+# Ownership gate (_owns) — the auth-bypass fix
+# --------------------------------------------------------------------------
+
+def _user(uid, admin=False):
+    u = MagicMock()
+    u.id = uid
+    u.get_permissions.return_value = ["admin"] if admin else ["ha.read"]
+    return u
+
+
+def _prop(owner):
+    p = MagicMock(spec=SimbaIngestProposal)
+    p.user_id = owner
+    return p
+
+
+@pytest.mark.unit
+def test_owns_auth_off_sees_everything():
+    with patch("services.simba_ingest_review.settings") as ms:
+        ms.auth_enabled = False
+        assert review._owns(_prop(7), None) is True
+        assert review._owns(_prop(None), None) is True
+
+
+@pytest.mark.unit
+def test_owns_auth_on_unauthenticated_denied():
+    with patch("services.simba_ingest_review.settings") as ms:
+        ms.auth_enabled = True
+        assert review._owns(_prop(7), None) is False
+        assert review._owns(_prop(None), None) is False
+
+
+@pytest.mark.unit
+def test_owns_auth_on_owner_only():
+    with patch("services.simba_ingest_review.settings") as ms:
+        ms.auth_enabled = True
+        assert review._owns(_prop(7), _user(7)) is True
+        # A different logged-in user cannot see someone else's proposal.
+        assert review._owns(_prop(7), _user(8)) is False
+
+
+@pytest.mark.unit
+def test_owns_auth_on_null_owner_admin_only():
+    with patch("services.simba_ingest_review.settings") as ms:
+        ms.auth_enabled = True
+        # Null-owner (folder-ingest with no atom owner) — admins only, not every user.
+        with patch("models.permissions.has_permission", lambda perms, p: "admin" in perms):
+            assert review._owns(_prop(None), _user(8, admin=True)) is True
+            assert review._owns(_prop(None), _user(8, admin=False)) is False
+
+
+# --------------------------------------------------------------------------
 # Review routes (real DB via fixtures)
 # --------------------------------------------------------------------------
 

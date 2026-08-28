@@ -118,13 +118,33 @@ async def simba_ingest_post_hook(
 # ---------------------------------------------------------------------------
 
 
+def _is_admin(user) -> bool:
+    if user is None:
+        return False
+    try:
+        from models.permissions import Permission, has_permission
+
+        return has_permission(user.get_permissions(), Permission.ADMIN)
+    except Exception:  # noqa: BLE001 — permission parse must not 500 the route
+        return False
+
+
 def _owns(proposal: SimbaIngestProposal, user) -> bool:
-    """Owner scoping: the proposal's user, or any auth-off / null-owner case."""
+    """Ownership gate (mirrors pdf_split ``_owned_proposal``).
+
+    - Auth OFF (single-user) → sees everything.
+    - Auth ON, unauthenticated (user None) → denied (the routes also 401 first).
+    - Auth ON → the proposal's owner, or an ADMIN for an ownerless proposal
+      (so a null-owner folder-ingest proposal can't be seen/acted on by every
+      logged-in user — only its owner or an admin).
+    """
+    if not settings.auth_enabled:
+        return True
     if user is None or getattr(user, "id", None) is None:
-        return True  # auth disabled — single-user sees all
-    if proposal.user_id is None:
-        return True  # null-owner proposals are admin/owner-visible
-    return proposal.user_id == user.id
+        return False
+    if proposal.user_id == user.id:
+        return True
+    return proposal.user_id is None and _is_admin(user)
 
 
 async def list_pending(db, user) -> list[SimbaIngestProposal]:
