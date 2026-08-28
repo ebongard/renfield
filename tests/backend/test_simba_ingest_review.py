@@ -24,21 +24,33 @@ from services import simba_ingest_review as review
 # Hook gating (mocked DB)
 # --------------------------------------------------------------------------
 
-def _doc(source=FOLDER_INGEST_SOURCE, filename="scan_2026.pdf", uid=7):
-    d = MagicMock()
+def _doc(source=FOLDER_INGEST_SOURCE, filename="scan_2026.pdf", atom_id=None):
+    from models.database import Document
+
+    # spec=Document: a real Document has NO ``user_id`` column, so a regression to
+    # ``doc.user_id`` (the bug this feature shipped with) raises AttributeError
+    # instead of silently returning a phantom mock attribute.
+    d = MagicMock(spec=Document)
     d.id = 1
     d.source = source
     d.filename = filename
-    d.user_id = uid
+    d.atom_id = atom_id
     return d
 
 
-async def _run_hook(doc, existing=None):
-    db = MagicMock()
-    db.execute = AsyncMock(side_effect=[
+async def _run_hook(doc, existing=None, atom_owner=None, user_id=None):
+    responses = [
         MagicMock(scalar_one_or_none=MagicMock(return_value=doc)),
         MagicMock(scalar_one_or_none=MagicMock(return_value=existing)),
-    ])
+    ]
+    # An atom-backed doc (not short-circuited by an existing proposal) triggers the
+    # owner-resolution Atom query.
+    if getattr(doc, "atom_id", None) and existing is None:
+        atom = MagicMock(owner_user_id=atom_owner) if atom_owner is not None else None
+        responses.append(MagicMock(scalar_one_or_none=MagicMock(return_value=atom)))
+
+    db = MagicMock()
+    db.execute = AsyncMock(side_effect=responses)
     db.add = MagicMock()
     db.commit = AsyncMock()
     db.rollback = AsyncMock()
@@ -53,19 +65,32 @@ async def _run_hook(doc, existing=None):
         "services.simba_classify.classify_simba", AsyncMock(return_value=("Belege", "Ausgangsrechnung"))
     ):
         ms.folder_ingest_simba_enabled = True
-        await review.simba_ingest_post_hook(document_id=1, field_text="Rechnung", lang="de")
+        await review.simba_ingest_post_hook(
+            document_id=1, field_text="Rechnung", lang="de", user_id=user_id
+        )
     return db
 
 
 @pytest.mark.unit
 @pytest.mark.asyncio
-async def test_hook_creates_proposal_for_folder_pdf():
-    db = await _run_hook(_doc())
+async def test_hook_creates_proposal_owner_from_atom():
+    """Owner = the document's atom owner (authoritative) — NOT doc.user_id
+    (which doesn't exist on Document; the shipped-then-fixed bug)."""
+    db = await _run_hook(_doc(atom_id="atom-1"), atom_owner=7)
     db.add.assert_called_once()
     prop = db.add.call_args.args[0]
     assert isinstance(prop, SimbaIngestProposal)
     assert prop.suggested_category == "Belege" and prop.suggested_type == "Ausgangsrechnung"
     assert prop.user_id == 7
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_hook_owner_falls_back_to_ingesting_user():
+    """No atom → owner falls back to the ingesting user_id the hook was given."""
+    db = await _run_hook(_doc(atom_id=None), user_id=9)
+    db.add.assert_called_once()
+    assert db.add.call_args.args[0].user_id == 9
 
 
 @pytest.mark.unit

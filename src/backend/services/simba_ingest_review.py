@@ -32,6 +32,7 @@ from models.database import (
     SIMBA_PROPOSAL_REJECTED,
     SIMBA_PROPOSAL_UPLOADED,
     SIMBA_PROPOSAL_UPLOADING,
+    Atom,
     Document,
     SimbaIngestProposal,
 )
@@ -84,6 +85,18 @@ async def simba_ingest_post_hook(
         if exists is not None:
             return
 
+        # Owner = the document's own atom owner (authoritative), else the ingesting
+        # user. Document has NO user_id column — the owner lives on the atom
+        # (mirrors schicht_a_post_document_ingest_hook). A null owner is fine here
+        # (the proposal is admin-visible), so we never skip on it.
+        owner_id: int | None = user_id
+        if doc.atom_id:
+            doc_atom = (
+                await db.execute(select(Atom).where(Atom.atom_id == doc.atom_id))
+            ).scalar_one_or_none()
+            if doc_atom is not None:
+                owner_id = doc_atom.owner_user_id
+
         category = type_ = None
         try:
             from services.simba_classify import classify_simba
@@ -98,7 +111,7 @@ async def simba_ingest_post_hook(
             db.add(
                 SimbaIngestProposal(
                     document_id=document_id,
-                    user_id=doc.user_id if doc.user_id is not None else user_id,
+                    user_id=owner_id,
                     filename=doc.filename,
                     suggested_category=category,
                     suggested_type=type_,
