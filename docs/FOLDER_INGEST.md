@@ -207,11 +207,61 @@ the role descriptions in `config/agent_roles.yaml`.
   locates the Paperless doc by the stored id else a filename match over recently-added
   docs, and skips any doc that already has a correspondent.
 
+## Simba review queue (xidra-only, `FOLDER_INGEST_SIMBA_ENABLED`, dark by default)
+
+On xidra a watch-folder PDF should also reach the **Simba tax portal** — but the
+upload to the tax accountant is **irreversible** (the portal forbids withdrawal),
+so it is **NEVER auto-uploaded**. Instead the document-worker's post-ingest hook
+files a **review proposal** the owner confirms by hand.
+
+- **Hook** (`services/simba_ingest_review.py::simba_ingest_post_hook`, a
+  `post_document_ingest` consumer registered alongside knowledge_graph / schicht_a
+  / paperless_filing): gated on `FOLDER_INGEST_SIMBA_ENABLED` **+** `source ==
+  'folder_ingest'` **+** a `.pdf` filename (the `documents.source` tag is set by
+  the folder-ingest push, so only watch-folder PDFs qualify — chat uploads,
+  meeting transcripts, PDF-split children etc. are excluded). It classifies the
+  content against a stable built-in taxonomy (`KNOWN_SIMBA_TAXONOMY`, so the
+  worker needs no simba MCP client) and inserts a **PENDING** `simba_ingest_proposals`
+  row carrying a category/type **suggestion**. Best-effort: it never affects the
+  KB/Paperless legs, and a benign concurrent-pending race (partial-unique
+  `uq_simba_ingest_proposals_pending_doc`) is swallowed at INFO while any other
+  insert failure is logged WARNING (a silent drop = the PDF never surfaces for
+  review).
+- **Review** on `/brain/review` (`SimbaIngestReviewSection`, gated on the
+  `simba_ingest_review_enabled` feature flag = `FOLDER_INGEST_SIMBA_ENABLED`):
+  the owner sees each pending proposal with the category/type prefilled from the
+  suggestion, can **edit** them, then **Confirm** (→ the real upload) or **Reject**.
+- **Routes** (`api/routes/simba_ingest.py`, all **required-auth** when auth is on —
+  the actions can trigger an irreversible upload, so never reachable anonymously):
+  `GET /api/simba-ingest` (pending, owner-scoped — a proposal is visible only to
+  its owner, or to an admin for an ownerless one), `POST …/{id}/confirm`
+  `{category,type}`, `POST …/{id}/reject`.
+- **No double-upload.** `confirm()` is **claim-before-act**: a conditional
+  `PENDING → UPLOADING` UPDATE claims the row *before* the irreversible
+  `mcp.simba.upload_documents` (`dry_run:false, confirm:true`), so two concurrent
+  confirms (double-click / retry / two tabs) can't both upload — the loser 409s.
+  The upload uses `truncate=False` (a truncated MCP envelope would misread a
+  landed upload as failed → a retry that double-uploads); the proposal is marked
+  `UPLOADED` only when the document genuinely landed (`uebertragen>0`, no
+  failures), reverts to `PENDING` on any non-landed outcome (retryable), and a
+  row stuck in `UPLOADING` (process died mid-upload) is the fail-safe direction —
+  it never auto-re-uploads.
+- **Related:** the interactive chat path uses the two-tool human-gated bridge
+  `internal.forward_attachment_to_simba` + `internal.simba_commit_upload` (see
+  `CLAUDE.md`); this review queue is the folder-ingest analogue — same irreversible-
+  upload discipline, owner-confirmed.
+
+Model + migration: `SimbaIngestProposal` / `simba_ingest_proposals`
+(`pc20260828b_simba_ingest`).
+
 ## Troubleshooting
 
 | Symptom | Cause | Fix |
 |---|---|---|
 | MCP logs `401`/`403` on every push | token missing / wrong | re-mint via `POST /api/folder-ingest/token`, update the MCP secret |
+| Simba review section empty / absent on `/brain/review` | `FOLDER_INGEST_SIMBA_ENABLED=false`, or the simba MCP isn't configured | enable the flag (xidra) + restart backend+worker; PDFs ingested while off produce no proposal |
+| A watch-folder PDF never appears as a Simba proposal | not a `.pdf`, or `source != 'folder_ingest'` (chat/meeting/split docs are excluded by design), or the worker's insert failed | check the worker log for `simba-ingest: proposal insert FAILED` (WARNING); re-push the file |
+| A proposal is stuck in `uploading` | the backend died mid-upload (fail-safe: never auto-re-uploads) | verify in Simba whether it landed; resolve the row by hand — do NOT blindly re-confirm |
 | Nothing ingests, push gets `503 feature_disabled` | `FOLDER_INGEST_ENABLED=false` | enable the flag + restart the backend |
 | Push gets `503 worker_unavailable` | document worker pod down | check the worker pod; it self-heals when back (the file stays in the inbox) |
 | File lands in `failed/` | bad extension / empty / oversize / malformed metadata | check `ALLOWED_EXTENSIONS` + `MAX_FILE_SIZE_MB`; inspect the file |
@@ -223,6 +273,7 @@ the role descriptions in `config/agent_roles.yaml`.
 
 - Bridge: `services/folder_ingest.py` (dedup, 4-state, owner/tier, token helpers, resolvers)
 - Paperless leg: `services/folder_ingest_paperless.py`
+- Simba review (xidra): `services/simba_ingest_review.py` (hook + list/reject/confirm) + `api/routes/simba_ingest.py` + frontend `SimbaIngestReviewSection`
 - Routes: `api/routes/folder_ingest.py` (`POST /document`, `GET /health`, `POST /token`)
 - Interactive tool: `services/folder_ingest_tool.py` (+ dispatch in `services/action_executor.py`)
 - Worker terminal-failure handling: `workers/document_processor_worker.py`
