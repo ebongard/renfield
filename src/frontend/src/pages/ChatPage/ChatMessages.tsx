@@ -145,7 +145,8 @@ export default function ChatMessages() {
   const {
     messages, loading, historyLoading, speakText, handleFeedbackSubmit,
     regenerateWithCorrectedIntent,
-    actionLoading, actionResult, indexToKb, sendToPaperless, sendToBoth, handleSummarize,
+    actionLoading, actionResult, indexToKb, sendToPaperless, sendToBoth, sendToSimba,
+    sendToPaperlessAndSimba, handleSummarize,
     handleSendViaEmail, emailDialog, confirmSendViaEmail, cancelEmailDialog,
     sendMessage, sessionId, submitPaperlessConfirm,
     pendingScrollIndex, clearPendingScroll,
@@ -588,6 +589,8 @@ export default function ChatMessages() {
                       onIndexToKb={indexToKb}
                       onSendToPaperless={sendToPaperless}
                       onSendToBoth={sendToBoth}
+                      onSendToSimba={sendToSimba}
+                      onSendToPaperlessAndSimba={sendToPaperlessAndSimba}
                       onSendViaEmail={handleSendViaEmail}
                       onSummarize={handleSummarize}
                       actionLoading={actionLoading}
@@ -680,10 +683,14 @@ export default function ChatMessages() {
             ? (actionResult.type === 'indexing' ? t('chat.indexingSuccess')
               : actionResult.type === 'email' ? t('chat.emailSuccess')
               : actionResult.type === 'both' ? t('chat.sendToPaperlessAndKbSuccess')
+              : actionResult.type === 'simba' ? t('chat.simbaSuccess')
+              : actionResult.type === 'paperless_simba' ? t('chat.sendToPaperlessAndSimbaSuccess')
               : t('chat.paperlessSuccess'))
             : (actionResult.type === 'indexing' ? t('chat.indexingFailed')
               : actionResult.type === 'email' ? t('chat.emailFailed')
               : actionResult.type === 'both' ? t('chat.sendToPaperlessAndKbFailed', { detail: actionResult.message })
+              : actionResult.type === 'simba' ? t('chat.simbaFailed', { detail: actionResult.message })
+              : actionResult.type === 'paperless_simba' ? t('chat.sendToPaperlessAndSimbaFailed', { detail: actionResult.message })
               : t('chat.paperlessFailed'))
           }
         </div>

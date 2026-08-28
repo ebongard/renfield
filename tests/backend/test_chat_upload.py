@@ -1590,3 +1590,120 @@ class TestOCRSupport:
         assert body["filename"] == "scan.jpg"
         assert body["file_type"] == "jpg"
         assert body["status"] == "processing"  # async: OCR runs in background
+
+
+class TestChatUploadSimba:
+    """Tests for the Simba tax-portal transfer endpoints."""
+
+    @pytest.mark.backend
+    async def test_simba_categories(self, async_client: AsyncClient):
+        """GET categories returns the category→type map from the simba MCP."""
+        import json as _json
+        from unittest.mock import AsyncMock
+
+        from main import app
+
+        mock = AsyncMock()
+        mock.execute_tool = AsyncMock(return_value={
+            "success": True,
+            "message": _json.dumps({"kategorien": {"Belege": ["Ausgangsrechnung", "Eingangsrechnung"]}}),
+        })
+        app.state.mcp_manager = mock
+        try:
+            resp = await async_client.get("/api/chat/upload/simba/categories")
+        finally:
+            app.state.mcp_manager = None
+        assert resp.status_code == 200
+        assert resp.json()["categories"]["Belege"] == ["Ausgangsrechnung", "Eingangsrechnung"]
+
+    @pytest.mark.backend
+    async def test_simba_categories_unavailable(self, async_client: AsyncClient):
+        """No MCP → 503 (the UI hides the Simba menu)."""
+        from main import app
+        app.state.mcp_manager = None
+        resp = await async_client.get("/api/chat/upload/simba/categories")
+        assert resp.status_code == 503
+
+    @pytest.mark.backend
+    async def test_simba_upload_success(self, async_client: AsyncClient, db_session: AsyncSession):
+        """A real transfer that lands (uebertragen>0) returns 200."""
+        import json as _json
+        from unittest.mock import AsyncMock
+
+        with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as f:
+            f.write(b"%PDF-1.4 test")
+            tmp = f.name
+        try:
+            upload = ChatUpload(
+                session_id="simba-test", filename="2026_07_14.pdf", file_type="pdf",
+                file_size=500, status="completed", file_path=tmp,
+            )
+            db_session.add(upload)
+            await db_session.commit()
+            await db_session.refresh(upload)
+
+            from main import app
+            mock = AsyncMock()
+            mock.execute_tool = AsyncMock(return_value={
+                "success": True, "message": _json.dumps({"uebertragen": 1, "fehlgeschlagen": 0}),
+            })
+            app.state.mcp_manager = mock
+            try:
+                resp = await async_client.post(
+                    f"/api/chat/upload/{upload.id}/simba",
+                    json={"category": "Posteingang", "type": "Schriftverkehr", "month": 7, "year": 2026},
+                )
+            finally:
+                app.state.mcp_manager = None
+            assert resp.status_code == 200
+            assert resp.json()["success"] is True
+            # real upload was requested (dry_run false + confirm true + base64)
+            args = mock.execute_tool.await_args.args[1]
+            assert args["dry_run"] is False and args["confirm"] is True
+            assert args["files"][0]["content_base64"]
+        finally:
+            Path(tmp).unlink(missing_ok=True)
+
+    @pytest.mark.backend
+    async def test_simba_upload_zero_transferred_is_502(self, async_client: AsyncClient, db_session: AsyncSession):
+        """MCP call succeeds but 0 files landed → 502 (never a false success)."""
+        import json as _json
+        from unittest.mock import AsyncMock
+
+        with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as f:
+            f.write(b"%PDF-1.4 test")
+            tmp = f.name
+        try:
+            upload = ChatUpload(
+                session_id="simba-fail", filename="x.pdf", file_type="pdf",
+                file_size=500, status="completed", file_path=tmp,
+            )
+            db_session.add(upload)
+            await db_session.commit()
+            await db_session.refresh(upload)
+
+            from main import app
+            mock = AsyncMock()
+            mock.execute_tool = AsyncMock(return_value={
+                "success": True,
+                "message": _json.dumps({"uebertragen": 0, "fehlgeschlagen": 1,
+                                        "ergebnisse": [{"ok": False, "status": 401, "response": "no"}]}),
+            })
+            app.state.mcp_manager = mock
+            try:
+                resp = await async_client.post(
+                    f"/api/chat/upload/{upload.id}/simba",
+                    json={"category": "Belege", "type": "x"},
+                )
+            finally:
+                app.state.mcp_manager = None
+            assert resp.status_code == 502
+        finally:
+            Path(tmp).unlink(missing_ok=True)
+
+    @pytest.mark.backend
+    async def test_simba_not_found(self, async_client: AsyncClient):
+        resp = await async_client.post(
+            "/api/chat/upload/99999/simba", json={"category": "Belege", "type": "x"},
+        )
+        assert resp.status_code == 404

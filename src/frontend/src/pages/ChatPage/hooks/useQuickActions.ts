@@ -2,7 +2,7 @@ import { useState, useCallback } from 'react';
 import type { AxiosError } from 'axios';
 import apiClient from '../../../utils/axios';
 
-type ActionKind = 'indexing' | 'paperless' | 'email' | 'both';
+type ActionKind = 'indexing' | 'paperless' | 'email' | 'both' | 'simba' | 'paperless_simba';
 
 interface ActionResult {
   type: ActionKind;
@@ -148,6 +148,64 @@ export function useQuickActions() {
     [],
   );
 
+  const sendToSimba = useCallback(
+    async (uploadId: string, category: string, type: string) => {
+      setActionLoading((prev) => ({ ...prev, [uploadId]: 'simba' }));
+      try {
+        const response = await apiClient.post<ActionResponse>(`/api/chat/upload/${uploadId}/simba`, {
+          category,
+          type,
+        });
+        setActionResult({ type: 'simba', success: true, message: response.data.message });
+      } catch (error) {
+        setActionResult({ type: 'simba', success: false, message: detailFromError(error, 'Simba failed') });
+      } finally {
+        setActionLoading((prev) => {
+          const next = { ...prev };
+          delete next[uploadId];
+          return next;
+        });
+      }
+    },
+    [],
+  );
+
+  const sendToPaperlessAndSimba = useCallback(
+    async (uploadId: string, category: string, type: string) => {
+      // Forward to BOTH Paperless (OCR/archive) and Simba (tax accountant) in
+      // parallel — independent backends. Success only if both succeed; on partial
+      // failure the message names which side failed so the user can retry it.
+      setActionLoading((prev) => ({ ...prev, [uploadId]: 'paperless_simba' }));
+      try {
+        const [paperlessRes, simbaRes] = await Promise.allSettled([
+          apiClient.post<ActionResponse>(`/api/chat/upload/${uploadId}/paperless`),
+          apiClient.post<ActionResponse>(`/api/chat/upload/${uploadId}/simba`, { category, type }),
+        ]);
+        const paperlessOk = paperlessRes.status === 'fulfilled';
+        const simbaOk = simbaRes.status === 'fulfilled';
+        if (paperlessOk && simbaOk) {
+          setActionResult({ type: 'paperless_simba', success: true, message: '' });
+        } else {
+          const failures: string[] = [];
+          if (!paperlessOk) {
+            failures.push(detailFromError((paperlessRes as PromiseRejectedResult).reason, 'Paperless failed'));
+          }
+          if (!simbaOk) {
+            failures.push(detailFromError((simbaRes as PromiseRejectedResult).reason, 'Simba failed'));
+          }
+          setActionResult({ type: 'paperless_simba', success: false, message: failures.join(' | ') });
+        }
+      } finally {
+        setActionLoading((prev) => {
+          const next = { ...prev };
+          delete next[uploadId];
+          return next;
+        });
+      }
+    },
+    [],
+  );
+
   const clearResult = useCallback(() => {
     setActionResult(null);
   }, []);
@@ -159,6 +217,8 @@ export function useQuickActions() {
     indexToKb,
     sendToPaperless,
     sendToBoth,
+    sendToSimba,
+    sendToPaperlessAndSimba,
     sendViaEmail,
   };
 }

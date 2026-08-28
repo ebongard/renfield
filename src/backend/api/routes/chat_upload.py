@@ -39,6 +39,9 @@ from .chat_upload_schemas import (
     IndexRequest,
     IndexResponse,
     PaperlessResponse,
+    SimbaCategoriesResponse,
+    SimbaUploadRequest,
+    SimbaUploadResponse,
 )
 
 router = APIRouter()
@@ -454,6 +457,130 @@ async def forward_to_paperless(
         success=True,
         paperless_task_id=str(task_id) if task_id else None,
         message=message,
+    )
+
+
+# ============================================================================
+# Simba tax-portal transfer (xidra-only; the `simba` MCP)
+# ============================================================================
+
+
+@router.get("/upload/simba/categories", response_model=SimbaCategoriesResponse)
+async def simba_categories(request: Request, user=Depends(get_optional_user)):
+    """Categories → document types for the Simba transfer. Also the availability
+    gate: 503 when the simba MCP isn't configured (so the UI hides the menu)."""
+    manager = getattr(request.app.state, "mcp_manager", None)
+    if not manager:
+        raise HTTPException(status_code=503, detail="MCP not available")
+    try:
+        result = await manager.execute_tool("mcp.simba.list_categories", {"live": False})
+    except Exception as e:
+        logger.warning(f"Simba categories unavailable: {e}")
+        raise HTTPException(status_code=503, detail="Simba not available")
+    if not result or not result.get("success"):
+        raise HTTPException(status_code=503, detail="Simba not available")
+
+    categories: dict = {}
+    raw = result.get("message")
+    if isinstance(raw, str):
+        try:
+            inner = json.loads(raw)
+            categories = inner.get("kategorien") or inner.get("categories") or {}
+        except (json.JSONDecodeError, TypeError):
+            categories = {}
+    if not isinstance(categories, dict) or not categories:
+        raise HTTPException(status_code=503, detail="Simba not available")
+    # Normalize to {str: [str, ...]}
+    norm = {str(k): [str(t) for t in (v or [])] for k, v in categories.items()}
+    return SimbaCategoriesResponse(categories=norm)
+
+
+@router.post("/upload/{upload_id}/simba", response_model=SimbaUploadResponse)
+async def forward_to_simba(
+    upload_id: int,
+    body: SimbaUploadRequest,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    user=Depends(get_optional_user),
+):
+    """Forward a chat upload to the Simba tax portal. A real, irreversible
+    transfer to the tax accountant — the explicit UI action (with category/type)
+    is the user's confirmation, so this uploads for real (dry_run=false)."""
+    if not body.category.strip() or not body.type.strip():
+        raise HTTPException(status_code=400, detail="category and type are required")
+
+    upload = await _get_owned_upload(db, upload_id, user)
+    if not upload:
+        raise HTTPException(status_code=404, detail="Upload not found")
+    if not upload.file_path or not Path(upload.file_path).is_file():
+        raise HTTPException(status_code=400, detail="File no longer available on disk")
+
+    manager = getattr(request.app.state, "mcp_manager", None)
+    if not manager:
+        raise HTTPException(status_code=503, detail="MCP not available")
+
+    async with aiofiles.open(upload.file_path, 'rb') as f:
+        content_base64 = base64.b64encode(await f.read()).decode("ascii")
+
+    tool_args: dict = {
+        "category": body.category.strip(),
+        "type": body.type.strip(),
+        "dry_run": False,
+        "confirm": True,
+        "files": [{
+            "content_base64": content_base64,
+            "filename": upload.filename,
+            **({"description": body.description} if body.description else {}),
+            **({"comment": body.comment} if body.comment else {}),
+        }],
+    }
+    if body.month is not None:
+        tool_args["month"] = body.month
+    if body.year is not None:
+        tool_args["year"] = body.year
+
+    try:
+        result = await manager.execute_tool("mcp.simba.upload_documents", tool_args)
+    except Exception as e:
+        logger.error(f"Simba forward failed: {e}")
+        raise HTTPException(status_code=502, detail=f"Simba forwarding failed: {e}")
+
+    # Honest outcome: the MCP envelope success only means "didn't throw"; the doc
+    # landed only if uebertragen>0. Mirror the agent bridge's parsing.
+    if not result or not result.get("success"):
+        detail = (result or {}).get("message") or "unknown error"
+        raise HTTPException(status_code=502, detail=f"Simba forwarding failed: {detail}")
+
+    inner: dict = {}
+    if isinstance(result.get("message"), str):
+        try:
+            inner = json.loads(result["message"])
+        except (json.JSONDecodeError, TypeError):
+            inner = {}
+
+    def _int(v):
+        try:
+            return int(v)
+        except (TypeError, ValueError):
+            return None
+
+    uebertragen = _int(inner.get("uebertragen"))
+    fehlgeschlagen = _int(inner.get("fehlgeschlagen"))
+    if not (uebertragen and uebertragen > 0 and not (fehlgeschlagen or 0)):
+        res0 = (inner.get("ergebnisse") or [{}])
+        res0 = res0[0] if res0 else {}
+        errs = inner.get("fehler") or []
+        reason = ""
+        if errs:
+            reason = errs[0].get("error") if isinstance(errs[0], dict) else str(errs[0])
+        elif res0:
+            status = res0.get("status")
+            reason = f"HTTP {status}: {(res0.get('response') or '')[:200]}" if status else (res0.get("response") or "")
+        raise HTTPException(status_code=502, detail=f"Simba-Upload nicht angekommen: {reason or 'unbekannt'}")
+
+    return SimbaUploadResponse(
+        success=True,
+        message=f"An Simba übertragen: {body.category} / {body.type}",
     )
 
 

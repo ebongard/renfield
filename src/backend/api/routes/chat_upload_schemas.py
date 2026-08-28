@@ -49,3 +49,22 @@ class CleanupResponse(BaseModel):
     deleted_count: int
     deleted_files: int
     message: str
+
+
+class SimbaCategoriesResponse(BaseModel):
+    """Categories → allowed document types for the Simba tax-portal transfer."""
+    categories: dict[str, list[str]]
+
+
+class SimbaUploadRequest(BaseModel):
+    category: str
+    type: str
+    month: int | None = None
+    year: int | None = None
+    description: str | None = None
+    comment: str | None = None
+
+
+class SimbaUploadResponse(BaseModel):
+    success: bool
+    message: str

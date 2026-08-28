@@ -258,7 +258,7 @@ interface TtsErrorWindow {
 }
 
 type WakeWordHook = ReturnType<typeof useWakeWord>;
-type ActionLoading = Record<string, 'indexing' | 'paperless' | 'email' | 'both'>;
+type ActionLoading = ReturnType<typeof useQuickActions>['actionLoading'];
 type ActionResult = ReturnType<typeof useQuickActions>['actionResult'];
 
 export interface ChatContextValue {
@@ -347,6 +347,8 @@ export interface ChatContextValue {
   indexToKb: (uploadId: string, kbId: string | number) => Promise<void>;
   sendToPaperless: (uploadId: string) => Promise<void>;
   sendToBoth: (uploadId: string, kbId: string | number) => Promise<void>;
+  sendToSimba: (uploadId: string, category: string, type: string) => Promise<void>;
+  sendToPaperlessAndSimba: (uploadId: string, category: string, type: string) => Promise<void>;
   handleSummarize: (uploadId: string) => void;
   handleSendViaEmail: (uploadId: string) => void;
 
@@ -1624,7 +1626,7 @@ export function ChatProvider({ children }: ChatProviderProps) {
   }, []);
 
   // Quick actions hook
-  const { actionLoading, actionResult, clearResult, indexToKb, sendToPaperless, sendToBoth, sendViaEmail } = useQuickActions();
+  const { actionLoading, actionResult, clearResult, indexToKb, sendToPaperless, sendToBoth, sendToSimba, sendToPaperlessAndSimba, sendViaEmail } = useQuickActions();
 
   // Email dialog state
   const [emailDialog, setEmailDialog] = useState<EmailDialogState | null>(null);
@@ -2110,6 +2112,8 @@ export function ChatProvider({ children }: ChatProviderProps) {
     indexToKb,
     sendToPaperless,
     sendToBoth,
+    sendToSimba,
+    sendToPaperlessAndSimba,
     handleSummarize,
     handleSendViaEmail,
 
