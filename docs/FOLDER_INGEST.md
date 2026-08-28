@@ -229,13 +229,25 @@ files a **review proposal** the owner confirms by hand.
   review).
 - **Review** on `/brain/review` (`SimbaIngestReviewSection`, gated on the
   `simba_ingest_review_enabled` feature flag = `FOLDER_INGEST_SIMBA_ENABLED`):
-  the owner sees each pending proposal with the category/type prefilled from the
-  suggestion, can **edit** them, then **Confirm** (→ the real upload) or **Reject**.
+  the owner sees each pending proposal with the category/type **and Bezeichnung
+  (description)** prefilled, can **edit** them, then **Confirm** (→ the real
+  upload) or **Reject**.
+- **Bezeichnung (description).** The Simba per-file `description` was empty when a
+  document was pushed via /brain/review (the review flow had no description). It
+  is now derived from the document title (`generated_title` → `title` → filename
+  stem), **sanitized** to the portal's allowed charset (mirrors the simba MCP
+  `DEFAULT_TEXT_PATTERN`: letters+digits+umlauts+space `. _ -`, cap 100) and shown
+  as an **editable** field prefilled with that suggestion. The MCP *validates and
+  throws* on a bad description (it does not sanitize), so an un-sanitized title
+  with an em-dash/comma/slash would break the upload — hence the renfield-side
+  sanitize. A user-edited value wins (also sanitized); blank or all-disallowed
+  falls back to the derived title (`_bezeichnung`/`_sanitize_desc`).
 - **Routes** (`api/routes/simba_ingest.py`, all **required-auth** when auth is on —
   the actions can trigger an irreversible upload, so never reachable anonymously):
   `GET /api/simba-ingest` (pending, owner-scoped — a proposal is visible only to
-  its owner, or to an admin for an ownerless one), `POST …/{id}/confirm`
-  `{category,type}`, `POST …/{id}/reject`.
+  its owner, or to an admin for an ownerless one; each carries a
+  `suggested_description`), `POST …/{id}/confirm` `{category,type,description?}`,
+  `POST …/{id}/reject`.
 - **No double-upload.** `confirm()` is **claim-before-act**: a conditional
   `PENDING → UPLOADING` UPDATE claims the row *before* the irreversible
   `mcp.simba.upload_documents` (`dry_run:false, confirm:true`), so two concurrent
