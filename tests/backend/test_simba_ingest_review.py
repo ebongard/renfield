@@ -377,6 +377,90 @@ class TestSimbaIngestRoutes:
         assert row["suggested_description"] == "Vorschlag Titel"
 
     @pytest.mark.backend
+    async def test_send_existing_document_creates_and_is_idempotent(
+        self, async_client: AsyncClient, db_session: AsyncSession, monkeypatch
+    ):
+        """The 'send to Simba' action queues an EXISTING KB doc for review, and
+        a second send returns the same pending proposal (idempotent)."""
+        from models.database import Document
+        from utils.config import settings as cfg
+
+        monkeypatch.setattr(cfg, "folder_ingest_simba_enabled", True)
+        doc = Document(filename="kb1.pdf", file_path="/tmp/kb1.pdf", status="completed",
+                       generated_title="Bestehendes Dokument")
+        db_session.add(doc)
+        await db_session.commit()
+        await db_session.refresh(doc)
+
+        r1 = await async_client.post(f"/api/simba-ingest/from-document/{doc.id}")
+        assert r1.status_code == 200
+        pid = r1.json()["proposal_id"]
+        assert pid is not None and r1.json()["message"] == "created"
+
+        # It now shows in the pending list.
+        lst = await async_client.get("/api/simba-ingest")
+        assert pid in [x["id"] for x in lst.json()["proposals"]]
+
+        # Second send → same proposal, not a duplicate.
+        r2 = await async_client.post(f"/api/simba-ingest/from-document/{doc.id}")
+        assert r2.status_code == 200
+        assert r2.json()["proposal_id"] == pid and r2.json()["message"] == "already_pending"
+
+    @pytest.mark.backend
+    async def test_send_document_owner_gate(self, db_session: AsyncSession, monkeypatch):
+        """Auth-on: only the document's atom-owner (or an admin) may queue it;
+        an atom-less/ownerless doc is admin-only (fail-closed)."""
+        import uuid
+
+        from models.database import Atom, Document
+        from utils.config import settings as cfg
+
+        monkeypatch.setattr(cfg, "auth_enabled", True)
+        monkeypatch.setattr("models.permissions.has_permission", lambda perms, p: "admin" in perms)
+
+        def _user(uid, admin=False):
+            u = MagicMock()
+            u.id = uid
+            u.get_permissions.return_value = ["admin"] if admin else ["kb.own"]
+            return u
+
+        # Doc owned (via atom) by user 1.
+        aid = str(uuid.uuid4())
+        db_session.add(Atom(atom_id=aid, atom_type="kb_document", source_table="documents",
+                            source_id="1", owner_user_id=1, policy={"tier": 0}))
+        owned = Document(filename="o.pdf", file_path="/tmp/o.pdf", status="completed", atom_id=aid)
+        db_session.add(owned)
+        # Atom-less doc (no owner resolvable).
+        orphan = Document(filename="orphan.pdf", file_path="/tmp/orphan.pdf", status="completed")
+        db_session.add(orphan)
+        await db_session.commit()
+        await db_session.refresh(owned)
+        await db_session.refresh(orphan)
+
+        # Non-owner (user 2) denied on the owned doc.
+        r = await review.create_proposal_for_document(db_session, owned.id, _user(2))
+        assert r["message"] == "not_found"
+        # Owner (user 1) allowed.
+        r = await review.create_proposal_for_document(db_session, owned.id, _user(1))
+        assert r["success"] and r["message"] == "created"
+        # Atom-less doc: non-admin denied, admin allowed.
+        assert (await review.create_proposal_for_document(db_session, orphan.id, _user(2)))["message"] == "not_found"
+        assert (await review.create_proposal_for_document(db_session, orphan.id, _user(9, admin=True)))["success"]
+
+    @pytest.mark.backend
+    async def test_send_document_404_when_missing_or_disabled(
+        self, async_client: AsyncClient, db_session: AsyncSession, monkeypatch
+    ):
+        from utils.config import settings as cfg
+
+        # Disabled → 404 even for a would-be valid id.
+        monkeypatch.setattr(cfg, "folder_ingest_simba_enabled", False)
+        assert (await async_client.post("/api/simba-ingest/from-document/999999")).status_code == 404
+        # Enabled but missing doc → 404.
+        monkeypatch.setattr(cfg, "folder_ingest_simba_enabled", True)
+        assert (await async_client.post("/api/simba-ingest/from-document/999999")).status_code == 404
+
+    @pytest.mark.backend
     async def test_confirm_second_call_is_409_and_no_reupload(
         self, async_client: AsyncClient, db_session: AsyncSession
     ):

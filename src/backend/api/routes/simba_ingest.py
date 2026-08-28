@@ -48,6 +48,33 @@ class SimbaConfirmRequest(BaseModel):
 class SimbaActionResponse(BaseModel):
     success: bool
     message: str = ""
+    proposal_id: int | None = None
+
+
+def _require_enabled() -> None:
+    if not settings.folder_ingest_simba_enabled:
+        raise HTTPException(status_code=404, detail="Simba review not enabled")
+
+
+@router.post("/simba-ingest/from-document/{document_id}", response_model=SimbaActionResponse)
+async def send_document_to_simba(
+    document_id: int,
+    db: AsyncSession = Depends(get_db),
+    user=Depends(get_optional_user),
+):
+    """Queue an EXISTING knowledge-base document for Simba review (the
+    'send to Simba' action). Creates a pending proposal on /brain/review;
+    the actual irreversible upload still happens via the confirm step."""
+    _require_user(user)
+    _require_enabled()
+    res = await review.create_proposal_for_document(db, document_id, user)
+    if not res["success"]:
+        if res["message"] == "not_found":
+            raise HTTPException(status_code=404, detail="Document not found")
+        raise HTTPException(status_code=400, detail=res["message"])
+    return SimbaActionResponse(
+        success=True, message=res["message"], proposal_id=res.get("proposal_id")
+    )
 
 
 @router.get("/simba-ingest", response_model=SimbaProposalsResponse)

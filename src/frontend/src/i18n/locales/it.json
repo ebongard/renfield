@@ -657,7 +657,11 @@
     "pollingTimeout": "L'elaborazione di \"{{filename}}\" sta richiedendo più tempo del previsto. Aggiorna per vedere lo stato attuale.",
     "statusSplitPending": "Suddivisione in corso",
     "statusSplitReview": "Suddivisione da verificare",
-    "statusSplitArchived": "Suddiviso (originale archiviato)"
+    "statusSplitArchived": "Suddiviso (originale archiviato)",
+    "sendToSimba": "Invia a Simba",
+    "simbaQueued": "In coda per la revisione Simba — conferma su /brain/review.",
+    "simbaAlreadyQueued": "Questo documento è già in attesa di revisione Simba.",
+    "simbaSendFailed": "Impossibile mettere in coda per la revisione Simba."
   },
   "memory": {
     "title": "Memorie",

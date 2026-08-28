@@ -998,7 +998,11 @@
     "pollingTimeout": "Die Verarbeitung von „{{filename}}\" dauert länger als erwartet. Bitte die Seite neu laden, um den aktuellen Status zu sehen.",
     "statusSplitPending": "Wird aufgeteilt",
     "statusSplitReview": "Aufteilung prüfen",
-    "statusSplitArchived": "Aufgeteilt (Original archiviert)"
+    "statusSplitArchived": "Aufgeteilt (Original archiviert)",
+    "sendToSimba": "An Simba senden",
+    "simbaQueued": "Zur Simba-Prüfung hinzugefügt — auf /brain/review bestätigen.",
+    "simbaAlreadyQueued": "Dieses Dokument wartet bereits auf die Simba-Prüfung.",
+    "simbaSendFailed": "Konnte nicht zur Simba-Prüfung hinzugefügt werden."
   },
   "memory": {
     "title": "Erinnerungen",

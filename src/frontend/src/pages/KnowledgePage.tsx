@@ -19,6 +19,7 @@ import {
   Layers,
   File,
   ArrowRightLeft,
+  Landmark,
 } from 'lucide-react';
 import apiClient from '../utils/axios';
 import { formatDateTime } from '../utils/datetime';
@@ -53,6 +54,8 @@ import {
   type DocumentRow,
 } from '../api/resources/knowledge';
 import { keys } from '../api/keys';
+import { useFeatureFlags } from '../api/resources/brain';
+import { useSendDocumentToSimba } from '../api/resources/simbaIngest';
 import TierControlPopover from '../components/knowledge/TierControlPopover';
 import TierChangeToast, { TIER_UNDO_WINDOW_MS } from '../components/knowledge/TierChangeToast';
 import type { CircleTier } from '../components/TierBadge';
@@ -179,6 +182,8 @@ export default function KnowledgePage() {
   const deleteDocMutation = useDeleteKnowledgeDocument();
   const reindexDocMutation = useReindexKnowledgeDocument();
   const moveDocsMutation = useMoveKnowledgeDocuments();
+  const sendToSimbaMutation = useSendDocumentToSimba();
+  const simbaEnabled = useFeatureFlags().data?.simba_ingest_review_enabled ?? false;
 
   const searching = searchMutation.isPending;
 
@@ -331,6 +336,22 @@ export default function KnowledgePage() {
       await queryClient.invalidateQueries({ queryKey: keys.brain.facts(id) });
     } catch {
       alert(t('knowledge.reindexFailed'));
+    }
+  };
+
+  // Send an EXISTING document to the Simba review queue (xidra). Creates a
+  // pending proposal on /brain/review; the irreversible upload happens there.
+  const handleSendToSimba = async (id: number) => {
+    try {
+      const res = await sendToSimbaMutation.mutateAsync(id);
+      setUploadProgress({
+        text: res.message === 'already_pending'
+          ? t('knowledge.simbaAlreadyQueued')
+          : t('knowledge.simbaQueued'),
+        variant: 'success',
+      });
+    } catch (err) {
+      setUploadProgress({ text: extractApiError(err, t('knowledge.simbaSendFailed')), variant: 'error' });
     }
   };
 
@@ -964,6 +985,16 @@ export default function KnowledgePage() {
                             />
                           )}
                         </div>
+                      )}
+                      {simbaEnabled && (
+                        <button
+                          onClick={() => handleSendToSimba(doc.id)}
+                          disabled={sendToSimbaMutation.isPending}
+                          className="btn-icon btn-icon-ghost"
+                          title={t('knowledge.sendToSimba')}
+                        >
+                          <Landmark className="w-4 h-4" />
+                        </button>
                       )}
                       <button
                         onClick={() => handleReindexDocument(doc.id)}

@@ -35,6 +35,7 @@ from models.database import (
     SIMBA_PROPOSAL_UPLOADING,
     Atom,
     Document,
+    DocumentChunk,
     SimbaIngestProposal,
 )
 from services.database import AsyncSessionLocal
@@ -122,17 +123,9 @@ async def simba_ingest_post_hook(
         if exists is not None:
             return
 
-        # Owner = the document's own atom owner (authoritative), else the ingesting
-        # user. Document has NO user_id column — the owner lives on the atom
-        # (mirrors schicht_a_post_document_ingest_hook). A null owner is fine here
-        # (the proposal is admin-visible), so we never skip on it.
-        owner_id: int | None = user_id
-        if doc.atom_id:
-            doc_atom = (
-                await db.execute(select(Atom).where(Atom.atom_id == doc.atom_id))
-            ).scalar_one_or_none()
-            if doc_atom is not None:
-                owner_id = doc_atom.owner_user_id
+        # Owner = the document's atom owner (authoritative), else the ingesting
+        # user. A null owner is fine here (the proposal is admin-visible).
+        owner_id = await _resolve_doc_owner(db, doc, fallback=user_id)
 
         category = type_ = None
         try:
@@ -192,6 +185,32 @@ def _is_admin(user) -> bool:
         return False
 
 
+async def _resolve_doc_owner(db, doc, fallback: int | None) -> int | None:
+    """A document's owner = its atom owner (authoritative; Document has no
+    user_id column), else the given fallback. Shared by the ingest hook and the
+    send-existing-document path."""
+    owner_id = fallback
+    if getattr(doc, "atom_id", None):
+        doc_atom = (
+            await db.execute(select(Atom).where(Atom.atom_id == doc.atom_id))
+        ).scalar_one_or_none()
+        if doc_atom is not None:
+            owner_id = doc_atom.owner_user_id
+    return owner_id
+
+
+def _can_send_document(owner_id: int | None, user) -> bool:
+    """Access gate for sending an EXISTING KB document to Simba: auth-off sees
+    all; else the document's owner, or an admin (incl. an ownerless document)."""
+    if not settings.auth_enabled:
+        return True
+    if user is None or getattr(user, "id", None) is None:
+        return False
+    if owner_id is not None and owner_id == user.id:
+        return True
+    return _is_admin(user)  # an admin may send any (incl. ownerless) document
+
+
 def _owns(proposal: SimbaIngestProposal, user) -> bool:
     """Ownership gate (mirrors pdf_split ``_owned_proposal``).
 
@@ -225,6 +244,102 @@ async def list_pending(db, user) -> list[tuple[SimbaIngestProposal, str]]:
         for (p, doc) in rows
         if _owns(p, user)
     ]
+
+
+async def _classify_document(db, document_id: int) -> tuple[str | None, str | None]:
+    """Classify an EXISTING document's stored chunk text into a Simba
+    category/type suggestion (best-effort — returns (None, None) on any failure)."""
+    try:
+        rows = (
+            await db.execute(
+                select(DocumentChunk.content)
+                .where(DocumentChunk.document_id == document_id)
+                .order_by(DocumentChunk.id.asc())
+                .limit(20)
+            )
+        ).scalars().all()
+        text = " ".join(c for c in rows if c)[:8000]
+        if not text.strip():
+            return None, None
+        from services.simba_classify import classify_simba
+
+        return await classify_simba(text, KNOWN_SIMBA_TAXONOMY, lang="de")
+    except Exception as e:  # noqa: BLE001 — classification is optional
+        logger.warning(f"simba-ingest: classify failed for existing doc {document_id}: {e}")
+        return None, None
+
+
+async def create_proposal_for_document(db, document_id: int, user) -> dict:
+    """Create a PENDING Simba review proposal for an EXISTING knowledge-base
+    document (the "send to Simba" action — complements the folder-ingest hook,
+    which only fires on NEW documents; a doc already in the KB is deduped at
+    ingest and never reaches that hook).
+
+    Returns {"success": bool, "message": str, "proposal_id": int|None}.
+    Idempotent on the pending state: a doc that already has a pending proposal
+    returns it rather than creating a second (the partial-unique index also
+    guards this). Owner/admin-gated.
+    """
+    doc = await db.get(Document, document_id)
+    if doc is None:
+        return {"success": False, "message": "not_found", "proposal_id": None}
+
+    # fallback=None (NOT the caller): an atom-less / unresolved-owner document is
+    # admin-only, never auto-owned by whoever asked — else any authenticated user
+    # could queue someone else's document for the irreversible upload. Mirrors the
+    # null-owner→admin rule in _owns.
+    owner_id = await _resolve_doc_owner(db, doc, fallback=None)
+    if not _can_send_document(owner_id, user):
+        # 404-style: don't leak existence to a non-owner.
+        return {"success": False, "message": "not_found", "proposal_id": None}
+
+    if not (doc.filename or "").strip():
+        return {"success": False, "message": "document has no filename", "proposal_id": None}
+    if not doc.file_path:
+        return {"success": False, "message": "document file no longer available", "proposal_id": None}
+
+    # Idempotency: reuse an existing pending proposal for this document.
+    existing = (
+        await db.execute(
+            select(SimbaIngestProposal)
+            .where(
+                SimbaIngestProposal.document_id == document_id,
+                SimbaIngestProposal.status == SIMBA_PROPOSAL_PENDING,
+            )
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+    if existing is not None:
+        return {"success": True, "message": "already_pending", "proposal_id": existing.id}
+
+    category, type_ = await _classify_document(db, document_id)
+    proposal = SimbaIngestProposal(
+        document_id=document_id,
+        user_id=owner_id,
+        filename=doc.filename,
+        suggested_category=category,
+        suggested_type=type_,
+        status=SIMBA_PROPOSAL_PENDING,
+    )
+    try:
+        db.add(proposal)
+        await db.commit()
+        await db.refresh(proposal)
+    except IntegrityError:
+        # A concurrent send won the pending slot — return that one.
+        await db.rollback()
+        again = (
+            await db.execute(
+                select(SimbaIngestProposal).where(
+                    SimbaIngestProposal.document_id == document_id,
+                    SimbaIngestProposal.status == SIMBA_PROPOSAL_PENDING,
+                ).limit(1)
+            )
+        ).scalar_one_or_none()
+        return {"success": True, "message": "already_pending",
+                "proposal_id": again.id if again else None}
+    logger.info(f"simba-ingest: review proposal for existing doc {document_id} (send-to-simba)")
+    return {"success": True, "message": "created", "proposal_id": proposal.id}
 
 
 async def reject(db, proposal_id: int, user) -> bool:

@@ -998,7 +998,11 @@
     "pollingTimeout": "Processing of \"{{filename}}\" is taking longer than expected. Please refresh to see the current status.",
     "statusSplitPending": "Splitting",
     "statusSplitReview": "Split review pending",
-    "statusSplitArchived": "Split (original archived)"
+    "statusSplitArchived": "Split (original archived)",
+    "sendToSimba": "Send to Simba",
+    "simbaQueued": "Queued for Simba review — confirm on /brain/review.",
+    "simbaAlreadyQueued": "This document is already awaiting Simba review.",
+    "simbaSendFailed": "Could not queue for Simba review."
   },
   "memory": {
     "title": "Memories",

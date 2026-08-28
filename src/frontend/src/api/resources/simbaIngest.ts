@@ -63,6 +63,22 @@ export function useConfirmSimbaProposal() {
   });
 }
 
+/** Queue an EXISTING knowledge-base document for Simba review (the "send to
+ * Simba" action). Complements the folder-ingest flow, which only fires on new
+ * documents. Creates a pending proposal on /brain/review. */
+export function useSendDocumentToSimba() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (documentId: number) => {
+      const r = await apiClient.post<{ success: boolean; message: string; proposal_id: number | null }>(
+        `/api/simba-ingest/from-document/${documentId}`,
+      );
+      return r.data;
+    },
+    onSuccess: () => void queryClient.invalidateQueries({ queryKey: PROPOSALS_KEY }),
+  });
+}
+
 export function useRejectSimbaProposal() {
   const queryClient = useQueryClient();
   return useMutation({
