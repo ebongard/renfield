@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import base64
 import json
+import re
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -52,6 +53,35 @@ KNOWN_SIMBA_TAXONOMY: dict[str, list[str]] = {
 
 def _utcnow() -> datetime:
     return datetime.now(UTC).replace(tzinfo=None)
+
+
+# The Simba portal's "Bezeichnung" (description) accepts only this charset — it
+# MUST mirror the simba MCP's DEFAULT_TEXT_PATTERN (letters+digits+German
+# umlauts+space . _ -). Any other char (em-dash, comma, colon, slash, …) makes
+# the MCP reject the upload, so we sanitize renfield-side rather than send a raw
+# title that would fail.
+_SIMBA_DESC_DISALLOWED = re.compile(r"[^A-Za-z0-9ÄÖÜäöüß ._-]+")
+_SIMBA_DESC_MAX = 100
+
+
+def _bezeichnung(doc) -> str:
+    """Human 'Bezeichnung' for a Simba upload from the folder-ingest review flow.
+
+    Source = the document's generated title (Schicht A) → title → filename stem;
+    sanitized to the portal's allowed charset and capped at 100 chars. Without
+    this the Bezeichnung was empty when a document was pushed via /brain/review
+    (the review UI carries no description field), unlike the chat-menu / bridge
+    paths that pass one.
+    """
+    raw = (
+        getattr(doc, "generated_title", None)
+        or getattr(doc, "title", None)
+        or Path(doc.filename or "").stem
+        or ""
+    ).strip()
+    cleaned = _SIMBA_DESC_DISALLOWED.sub(" ", raw)
+    cleaned = re.sub(r"\s+", " ", cleaned).strip()
+    return cleaned[:_SIMBA_DESC_MAX].strip()
 
 
 async def simba_ingest_post_hook(
@@ -266,12 +296,16 @@ async def confirm(db, proposal_id: int, category: str, type_: str, user, mcp_man
     if not await _claim_pending(db, proposal_id):
         return {"success": False, "message": "already_resolved"}
 
+    file_entry: dict[str, str] = {"content_base64": content_base64, "filename": doc.filename}
+    bezeichnung = _bezeichnung(doc)
+    if bezeichnung:
+        file_entry["description"] = bezeichnung
     tool_args = {
         "category": category.strip(),
         "type": type_.strip(),
         "dry_run": False,
         "confirm": True,
-        "files": [{"content_base64": content_base64, "filename": doc.filename}],
+        "files": [file_entry],
     }
     try:
         # truncate=False: a truncated envelope would mangle the JSON result →

@@ -124,6 +124,49 @@ async def test_hook_noop_when_flag_off():
 
 
 # --------------------------------------------------------------------------
+# Bezeichnung (Simba description) derivation + sanitization
+# --------------------------------------------------------------------------
+
+from types import SimpleNamespace
+
+
+@pytest.mark.unit
+def test_bezeichnung_prefers_generated_title():
+    doc = SimpleNamespace(generated_title="Audi Rechnung", title="raw", filename="x.pdf")
+    assert review._bezeichnung(doc) == "Audi Rechnung"
+
+
+@pytest.mark.unit
+def test_bezeichnung_falls_back_to_title_then_filename_stem():
+    assert review._bezeichnung(
+        SimpleNamespace(generated_title=None, title="Der Titel", filename="x.pdf")
+    ) == "Der Titel"
+    assert review._bezeichnung(
+        SimpleNamespace(generated_title=None, title=None, filename="scan_2026.pdf")
+    ) == "scan_2026"
+
+
+@pytest.mark.unit
+def test_bezeichnung_sanitizes_disallowed_chars():
+    # em-dash, comma, colon, slash → collapsed to single spaces; umlauts kept.
+    doc = SimpleNamespace(
+        generated_title="Audi AG — Rechnung, 14/07: Ölwechsel", title=None, filename="x.pdf"
+    )
+    assert review._bezeichnung(doc) == "Audi AG Rechnung 14 07 Ölwechsel"
+
+
+@pytest.mark.unit
+def test_bezeichnung_caps_at_100():
+    doc = SimpleNamespace(generated_title="A" * 250, title=None, filename="x.pdf")
+    assert len(review._bezeichnung(doc)) == 100
+
+
+@pytest.mark.unit
+def test_bezeichnung_empty_when_no_source():
+    assert review._bezeichnung(SimpleNamespace(generated_title=None, title=None, filename="")) == ""
+
+
+# --------------------------------------------------------------------------
 # Ownership gate (_owns) — the auth-bypass fix
 # --------------------------------------------------------------------------
 
@@ -215,7 +258,10 @@ class TestSimbaIngestRoutes:
             f.write(b"%PDF-1.4 x")
             tmp = f.name
         try:
-            doc = Document(filename="b.pdf", file_path=tmp, status="completed")
+            doc = Document(
+                filename="b.pdf", file_path=tmp, status="completed",
+                generated_title="Muster Rechnung 2026",
+            )
             db_session.add(doc)
             await db_session.commit()
             await db_session.refresh(doc)
@@ -245,6 +291,8 @@ class TestSimbaIngestRoutes:
             args = mock.execute_tool.await_args.args[1]
             assert args["dry_run"] is False and args["confirm"] is True
             assert args["category"] == "Posteingang"
+            # Bezeichnung (description) is carried from the document's title.
+            assert args["files"][0]["description"] == "Muster Rechnung 2026"
             await db_session.refresh(p)
             assert p.status == SIMBA_PROPOSAL_UPLOADED
             assert p.suggested_category == "Posteingang"  # edited value persisted
