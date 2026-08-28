@@ -42,6 +42,18 @@ def _reva_wissensbasis_mounted(request: Request) -> bool:
     )
 
 
+def _simba_available(request: Request) -> bool:
+    """True when the Simba MCP is connected — gates the chat attachment menu's
+    'Send to Simba' items so they only appear where the server is configured."""
+    manager = getattr(request.app.state, "mcp_manager", None)
+    if not manager:
+        return False
+    try:
+        return any(getattr(t, "server_name", None) == "simba" for t in manager.get_all_tools())
+    except Exception:
+        return False
+
+
 class FeatureFlags(BaseModel):
     """Frontend-visible feature flags. Allowlist — add a field here only when
     the frontend must branch on it."""
@@ -102,6 +114,9 @@ class FeatureFlags(BaseModel):
     # (Reva adapter present). Standalone Renfield => False. Lets the frontend
     # hide the Reva-only side panels without probing an endpoint that 404s.
     wissensbasis_reva_available: bool
+    # True when the Simba tax-portal MCP is connected (xidra). Gates the chat
+    # attachment menu's Simba items so they only show where it's configured.
+    simba_upload_enabled: bool = False
 
 
 @router.get("/features", response_model=FeatureFlags)
@@ -127,4 +142,5 @@ async def get_features(
         pdf_split_enabled=settings.pdf_split_enabled,
         scheduled_tasks_enabled=settings.scheduled_tasks_enabled,
         wissensbasis_reva_available=_reva_wissensbasis_mounted(request),
+        simba_upload_enabled=_simba_available(request),
     )

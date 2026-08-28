@@ -3,6 +3,7 @@ import type { MouseEvent } from 'react';
 import { useTranslation } from 'react-i18next';
 import { MoreVertical, BookOpen, Send, FileSearch, Mail, Loader, Layers, Landmark } from 'lucide-react';
 import apiClient from '../../utils/axios';
+import { useFeatureFlags } from '../../api/resources/brain';
 import type { MessageAttachment } from './context/ChatContext';
 
 interface KnowledgeBase {
@@ -47,12 +48,13 @@ export default function AttachmentQuickActions({
   const [submenu, setSubmenu] = useState<SubMenu>(null);
   const [knowledgeBases, setKnowledgeBases] = useState<KnowledgeBase[]>([]);
   const [kbLoading, setKbLoading] = useState(false);
-  // Simba (tax portal) — categories→types, availability, and the drilled-in
-  // category. Only rendered when the simba MCP is reachable (xidra).
+  // Simba (tax portal) — categories→types and the drilled-in category. The
+  // menu items only render when the simba MCP is configured (config flag).
+  const { data: features } = useFeatureFlags();
+  const simbaEnabled = !!features?.simba_upload_enabled;
   const [simbaCategories, setSimbaCategories] = useState<Record<string, string[]>>({});
   const [simbaCategory, setSimbaCategory] = useState<string | null>(null);
   const [simbaLoading, setSimbaLoading] = useState(false);
-  const [simbaAvailable, setSimbaAvailable] = useState<boolean | null>(null);
   const menuRef = useRef<HTMLDivElement | null>(null);
 
   const isLoading = actionLoading?.[attachment.id];
@@ -75,29 +77,23 @@ export default function AttachmentQuickActions({
   const handleToggle = (e: MouseEvent<HTMLButtonElement>) => {
     e.stopPropagation();
     if (isDisabled) return;
-    const willOpen = !open;
-    setOpen(willOpen);
+    setOpen((prev) => !prev);
     setSubmenu(null);
     setSimbaCategory(null);
-    // Probe Simba availability on open so the menu items only appear on
-    // instances where the simba MCP is reachable (xidra), not the household.
-    if (willOpen) void ensureSimbaCategories();
   };
 
-  // Lazy-load the Simba category→type map the first time the menu opens.
-  // A 503 (simba MCP absent) sets simbaAvailable=false → the items stay hidden.
+  // Lazy-load the Simba category→type map the first time the Simba submenu opens
+  // (the menu items' visibility is gated by the config flag, not this fetch).
   const ensureSimbaCategories = async () => {
-    if (Object.keys(simbaCategories).length > 0 || simbaAvailable === false) return;
+    if (Object.keys(simbaCategories).length > 0) return;
     setSimbaLoading(true);
     try {
       const response = await apiClient.get<{ categories: Record<string, string[]> }>(
         '/api/chat/upload/simba/categories',
       );
       setSimbaCategories(response.data?.categories || {});
-      setSimbaAvailable(true);
     } catch {
       setSimbaCategories({});
-      setSimbaAvailable(false);
     } finally {
       setSimbaLoading(false);
     }
@@ -283,7 +279,7 @@ export default function AttachmentQuickActions({
           {/* Send to Simba (tax portal) — only where the simba MCP is reachable.
               Needs a category → type pick (Simba metadata) and is irreversible,
               so it drills into a picker + confirms before uploading. */}
-          {simbaAvailable && onSendToSimba && (
+          {simbaEnabled && onSendToSimba && (
             <button
               onClick={(e) => handleSimba(e, false)}
               className="w-full flex items-center gap-2 px-3 py-1.5 text-xs text-left hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
@@ -292,7 +288,7 @@ export default function AttachmentQuickActions({
               {t('chat.sendToSimba')}
             </button>
           )}
-          {simbaAvailable && onSendToPaperlessAndSimba && (
+          {simbaEnabled && onSendToPaperlessAndSimba && (
             <button
               onClick={(e) => handleSimba(e, true)}
               className="w-full flex items-center gap-2 px-3 py-1.5 text-xs text-left hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"

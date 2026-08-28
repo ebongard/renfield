@@ -129,6 +129,9 @@ export interface FeatureFlags {
    *  Standalone Renfield => false. Lets the frontend hide the Reva-only side
    *  panels without probing an endpoint that 404s (console-noise fix). */
   wissensbasis_reva_available: boolean;
+  /** True when the Simba tax-portal MCP is connected (xidra). Gates the chat
+   *  attachment menu's 'Send to Simba' items. */
+  simba_upload_enabled?: boolean;
 }
 
 async function fetchAtomSearch(query: string): Promise<AtomMatch[]> {
