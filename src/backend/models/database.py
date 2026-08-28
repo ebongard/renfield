@@ -1021,6 +1021,12 @@ FOLDER_INGEST_SOURCE = "folder_ingest"
 
 # simba_ingest_proposals.status values.
 SIMBA_PROPOSAL_PENDING = "pending"
+# Intermediate in-flight claim: a confirm() has claimed this row and is mid-upload
+# to the tax portal. Prevents a concurrent confirm from re-uploading the same
+# (irreversible) document. Reverts to pending on failure; advances to uploaded on
+# a landed upload. A row stuck here (process died mid-upload) is the fail-SAFE
+# direction — it will not auto-re-upload; recover it manually.
+SIMBA_PROPOSAL_UPLOADING = "uploading"
 SIMBA_PROPOSAL_UPLOADED = "uploaded"
 SIMBA_PROPOSAL_REJECTED = "rejected"
 

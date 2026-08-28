@@ -227,6 +227,139 @@ class TestSimbaIngestRoutes:
             Path(tmp).unlink(missing_ok=True)
 
     @pytest.mark.backend
+    async def test_confirm_second_call_is_409_and_no_reupload(
+        self, async_client: AsyncClient, db_session: AsyncSession
+    ):
+        """Claim-before-act: once a proposal is UPLOADED, a second confirm must
+        NOT trigger a second (irreversible) upload — it 409s."""
+        import json as _json
+
+        from models.database import Document
+
+        with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as f:
+            f.write(b"%PDF-1.4 x")
+            tmp = f.name
+        try:
+            doc = Document(filename="d.pdf", file_path=tmp, status="completed")
+            db_session.add(doc)
+            await db_session.commit()
+            await db_session.refresh(doc)
+            p = SimbaIngestProposal(document_id=doc.id, filename="d.pdf", status=SIMBA_PROPOSAL_PENDING)
+            db_session.add(p)
+            await db_session.commit()
+            await db_session.refresh(p)
+
+            from main import app
+            mock = AsyncMock()
+            mock.execute_tool = AsyncMock(return_value={
+                "success": True, "message": _json.dumps({"uebertragen": 1, "fehlgeschlagen": 0}),
+            })
+            app.state.mcp_manager = mock
+            try:
+                r1 = await async_client.post(
+                    f"/api/simba-ingest/{p.id}/confirm",
+                    json={"category": "Belege", "type": "Ausgangsrechnung"},
+                )
+                r2 = await async_client.post(
+                    f"/api/simba-ingest/{p.id}/confirm",
+                    json={"category": "Belege", "type": "Ausgangsrechnung"},
+                )
+            finally:
+                app.state.mcp_manager = None
+            assert r1.status_code == 200
+            assert r2.status_code == 409
+            # The irreversible upload happened exactly once.
+            assert mock.execute_tool.await_count == 1
+            # And truncate=False was passed so a truncated envelope can't misread landing.
+            assert mock.execute_tool.await_args.kwargs.get("truncate") is False
+        finally:
+            Path(tmp).unlink(missing_ok=True)
+
+    @pytest.mark.backend
+    async def test_confirm_upload_error_reverts_to_pending(
+        self, async_client: AsyncClient, db_session: AsyncSession
+    ):
+        """An upload exception reverts the claim (UPLOADING → PENDING) so the
+        owner can retry — the proposal must not strand in UPLOADING."""
+        from models.database import Document
+
+        with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as f:
+            f.write(b"%PDF-1.4 x")
+            tmp = f.name
+        try:
+            doc = Document(filename="e.pdf", file_path=tmp, status="completed")
+            db_session.add(doc)
+            await db_session.commit()
+            await db_session.refresh(doc)
+            p = SimbaIngestProposal(document_id=doc.id, filename="e.pdf", status=SIMBA_PROPOSAL_PENDING)
+            db_session.add(p)
+            await db_session.commit()
+            await db_session.refresh(p)
+
+            from main import app
+            mock = AsyncMock()
+            mock.execute_tool = AsyncMock(side_effect=RuntimeError("portal down"))
+            app.state.mcp_manager = mock
+            try:
+                resp = await async_client.post(
+                    f"/api/simba-ingest/{p.id}/confirm",
+                    json={"category": "Belege", "type": "Ausgangsrechnung"},
+                )
+            finally:
+                app.state.mcp_manager = None
+            assert resp.status_code == 502
+            await db_session.refresh(p)
+            assert p.status == SIMBA_PROPOSAL_PENDING  # claim reverted, retryable
+        finally:
+            Path(tmp).unlink(missing_ok=True)
+
+    @pytest.mark.backend
+    async def test_reject_twice_second_is_404(
+        self, async_client: AsyncClient, db_session: AsyncSession
+    ):
+        """The conditional UPDATE makes a double-resolve safe: the second reject
+        finds no PENDING row → 404."""
+        p = SimbaIngestProposal(
+            document_id=456, filename="f.pdf", status=SIMBA_PROPOSAL_PENDING,
+        )
+        db_session.add(p)
+        await db_session.commit()
+        await db_session.refresh(p)
+
+        r1 = await async_client.post(f"/api/simba-ingest/{p.id}/reject")
+        r2 = await async_client.post(f"/api/simba-ingest/{p.id}/reject")
+        assert r1.status_code == 200
+        assert r2.status_code == 404
+
+    @pytest.mark.backend
+    async def test_routes_require_auth_when_enabled(self, db_session: AsyncSession, monkeypatch):
+        """The routes 401 an unauthenticated caller when auth is on — proving
+        _require_user is actually wired in (not just the _owns predicate)."""
+        from fastapi import HTTPException
+
+        from api.routes import simba_ingest as routes
+        from utils.config import settings as cfg
+
+        monkeypatch.setattr(cfg, "auth_enabled", True)
+        req = MagicMock()
+
+        with pytest.raises(HTTPException) as e1:
+            await routes.list_proposals(db=db_session, user=None)
+        assert e1.value.status_code == 401
+        with pytest.raises(HTTPException) as e2:
+            await routes.reject_proposal(proposal_id=1, db=db_session, user=None)
+        assert e2.value.status_code == 401
+        with pytest.raises(HTTPException) as e3:
+            await routes.confirm_proposal(
+                proposal_id=1,
+                body=routes.SimbaConfirmRequest(category="Belege", type="Ausgangsrechnung"),
+                request=req,
+                db=db_session,
+                user=None,
+            )
+        assert e3.value.status_code == 401
+
+    @pytest.mark.backend
     async def test_confirm_not_landed_is_502(self, async_client: AsyncClient, db_session: AsyncSession):
         import json as _json
 

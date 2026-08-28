@@ -24,12 +24,14 @@ from typing import Any
 
 from loguru import logger
 from sqlalchemy import select, update
+from sqlalchemy.exc import IntegrityError
 
 from models.database import (
     FOLDER_INGEST_SOURCE,
     SIMBA_PROPOSAL_PENDING,
     SIMBA_PROPOSAL_REJECTED,
     SIMBA_PROPOSAL_UPLOADED,
+    SIMBA_PROPOSAL_UPLOADING,
     Document,
     SimbaIngestProposal,
 )
@@ -108,9 +110,20 @@ async def simba_ingest_post_hook(
                 f"simba-ingest: review proposal for doc {document_id} "
                 f"(suggest {category}/{type_})"
             )
-        except Exception as e:  # noqa: BLE001 — unique-pending race is benign
+        except IntegrityError as e:
+            # Benign: a concurrent hook already filed the pending proposal
+            # (partial-unique uq_simba_ingest_proposals_pending_doc).
             await db.rollback()
-            logger.info(f"simba-ingest: proposal not created for doc {document_id}: {e}")
+            logger.info(f"simba-ingest: proposal already pending for doc {document_id}: {e}")
+        except Exception as e:  # noqa: BLE001
+            # Real failure (FK/connection/serialization) — this hook is the ONLY
+            # path that surfaces the PDF for Simba review, so a silent drop means
+            # the document never reaches the queue. Log loud, not as a race.
+            await db.rollback()
+            logger.warning(
+                f"simba-ingest: proposal insert FAILED for doc {document_id} "
+                f"(will NOT surface for Simba review): {e}"
+            )
 
 
 # ---------------------------------------------------------------------------
@@ -178,11 +191,46 @@ async def reject(db, proposal_id: int, user) -> bool:
     return res.rowcount > 0
 
 
+async def _claim_pending(db, proposal_id: int) -> bool:
+    """Atomically flip PENDING → UPLOADING so exactly one confirm() proceeds to
+    the irreversible upload. Returns True iff this caller won the claim."""
+    res = await db.execute(
+        update(SimbaIngestProposal)
+        .where(
+            SimbaIngestProposal.id == proposal_id,
+            SimbaIngestProposal.status == SIMBA_PROPOSAL_PENDING,
+        )
+        .values(status=SIMBA_PROPOSAL_UPLOADING)
+    )
+    await db.commit()
+    return res.rowcount > 0
+
+
+async def _revert_claim(db, proposal_id: int) -> None:
+    """Undo a claim (UPLOADING → PENDING) after a failed upload so the owner can
+    retry. Conditional on UPLOADING so a concurrent resolve can't be clobbered."""
+    await db.execute(
+        update(SimbaIngestProposal)
+        .where(
+            SimbaIngestProposal.id == proposal_id,
+            SimbaIngestProposal.status == SIMBA_PROPOSAL_UPLOADING,
+        )
+        .values(status=SIMBA_PROPOSAL_PENDING)
+    )
+    await db.commit()
+
+
 async def confirm(db, proposal_id: int, category: str, type_: str, user, mcp_manager) -> dict:
     """Confirm a pending proposal → REAL upload to Simba, then mark uploaded.
 
     Returns {"success": bool, "message": str}. The proposal is only marked
     uploaded when the document actually landed (uebertragen>0).
+
+    The upload to the tax accountant is IRREVERSIBLE and the portal forbids
+    withdrawal, so this MUST NOT double-upload. Pre-conditions are validated
+    first, then the row is CLAIMED (PENDING → UPLOADING via a conditional UPDATE)
+    BEFORE the upload — two concurrent confirms can't both pass the claim, so
+    only the winner uploads. A claim is reverted on any non-landed outcome.
     """
     p = await db.get(SimbaIngestProposal, proposal_id)
     if p is None or not _owns(p, user):
@@ -201,6 +249,10 @@ async def confirm(db, proposal_id: int, category: str, type_: str, user, mcp_man
     with open(doc.file_path, "rb") as f:
         content_base64 = base64.b64encode(f.read()).decode("ascii")
 
+    # Claim BEFORE the irreversible upload — the mutual-exclusion window.
+    if not await _claim_pending(db, proposal_id):
+        return {"success": False, "message": "already_resolved"}
+
     tool_args = {
         "category": category.strip(),
         "type": type_.strip(),
@@ -209,19 +261,30 @@ async def confirm(db, proposal_id: int, category: str, type_: str, user, mcp_man
         "files": [{"content_base64": content_base64, "filename": doc.filename}],
     }
     try:
-        result = await mcp_manager.execute_tool("mcp.simba.upload_documents", tool_args)
+        # truncate=False: a truncated envelope would mangle the JSON result →
+        # a landed upload misread as failed → a retry that double-uploads.
+        result = await mcp_manager.execute_tool(
+            "mcp.simba.upload_documents", tool_args, truncate=False
+        )
     except Exception as e:  # noqa: BLE001
         logger.error(f"simba-ingest confirm: upload error for proposal {proposal_id}: {e}")
+        await _revert_claim(db, proposal_id)
         return {"success": False, "message": f"upload error: {e}"}
 
     if not _landed(result):
+        # Log the raw envelope so a "landed-but-misparsed" case is diagnosable
+        # (vs. a genuine 0-transfer) — the two are otherwise indistinguishable.
+        logger.error(
+            f"simba-ingest confirm: proposal {proposal_id} not landed; raw={result!r}"
+        )
+        await _revert_claim(db, proposal_id)
         return {"success": False, "message": _failure_reason(result)}
 
-    await db.execute(
+    res = await db.execute(
         update(SimbaIngestProposal)
         .where(
             SimbaIngestProposal.id == proposal_id,
-            SimbaIngestProposal.status == SIMBA_PROPOSAL_PENDING,
+            SimbaIngestProposal.status == SIMBA_PROPOSAL_UPLOADING,
         )
         .values(
             status=SIMBA_PROPOSAL_UPLOADED,
@@ -232,6 +295,14 @@ async def confirm(db, proposal_id: int, category: str, type_: str, user, mcp_man
         )
     )
     await db.commit()
+    if res.rowcount == 0:
+        # The upload LANDED but the row left UPLOADING out from under us — the
+        # terminal state is lost. Never a double upload (we held the claim), but
+        # surface the inconsistency for reconciliation.
+        logger.error(
+            f"simba-ingest confirm: proposal {proposal_id} uploaded to Simba but "
+            f"could not be marked UPLOADED (row no longer UPLOADING)"
+        )
     return {"success": True, "message": f"An Simba übertragen: {category} / {type_}"}
 
 
@@ -266,7 +337,9 @@ def _failure_reason(result) -> str:
     inner = _inner(result)
     errs = inner.get("fehler") or []
     if errs:
-        return errs[0].get("error") if isinstance(errs[0], dict) else str(errs[0])
+        e0 = errs[0]
+        reason = e0.get("error") if isinstance(e0, dict) else str(e0)
+        return reason or "Simba-Upload fehlgeschlagen"
     res0 = (inner.get("ergebnisse") or [{}])
     res0 = res0[0] if res0 else {}
     status = res0.get("status")
