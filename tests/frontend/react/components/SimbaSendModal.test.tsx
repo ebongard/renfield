@@ -55,6 +55,8 @@ describe('SimbaSendModal', () => {
             suggested_category: 'Belege',
             suggested_type: 'Eingangsrechnung',
             suggested_description: 'Rechnung Arkadon',
+            suggested_month: 3,
+            suggested_year: 2026,
           },
         } as never;
       }
@@ -92,6 +94,8 @@ describe('SimbaSendModal', () => {
           category: 'Belege',
           type: 'Eingangsrechnung',
           force: false,
+          month: 3, // prefilled from the document date (#1167), not the current month
+          year: 2026,
         }),
       ),
     );

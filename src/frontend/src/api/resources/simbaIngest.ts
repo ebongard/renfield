@@ -9,6 +9,9 @@ export interface SimbaProposal {
   suggested_category: string | null;
   suggested_type: string | null;
   suggested_description: string;
+  /** Booking period (Zeitraum) from the document's date; null → form uses now. */
+  suggested_month?: number | null;
+  suggested_year?: number | null;
 }
 
 const PROPOSALS_KEY = ['simbaIngest', 'proposals'] as const;
@@ -78,6 +81,8 @@ export interface SendToSimbaResult {
   suggested_category: string | null;
   suggested_type: string | null;
   suggested_description: string;
+  suggested_month?: number | null;
+  suggested_year?: number | null;
 }
 
 /** Create (or reuse) a pending Simba proposal for an EXISTING knowledge-base

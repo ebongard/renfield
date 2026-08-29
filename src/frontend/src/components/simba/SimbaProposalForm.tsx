@@ -53,8 +53,10 @@ export default function SimbaProposalForm({
   const [category, setCategory] = useState(proposal.suggested_category ?? '');
   const [type, setType] = useState(proposal.suggested_type ?? '');
   const [description, setDescription] = useState(proposal.suggested_description ?? '');
-  const [month, setMonth] = useState(now.getMonth() + 1);
-  const [year, setYear] = useState(now.getFullYear());
+  // Default the booking period to the DOCUMENT's date (from Schicht-A facts), not
+  // the current month (#1167) — falling back to now when no date was derivable.
+  const [month, setMonth] = useState(proposal.suggested_month ?? now.getMonth() + 1);
+  const [year, setYear] = useState(proposal.suggested_year ?? now.getFullYear());
   const [error, setError] = useState<string | null>(null);
   const [dupWarning, setDupWarning] = useState<string | null>(null);
   // Styled two-step confirm (replaces window.confirm): the transfer is
@@ -63,7 +65,12 @@ export default function SimbaProposalForm({
 
   const monthName = (m: number) =>
     new Intl.DateTimeFormat(i18n.language, { month: 'long' }).format(new Date(2000, m - 1, 1));
-  const yearOptions = [now.getFullYear(), now.getFullYear() - 1, now.getFullYear() - 2];
+  const baseYears = [now.getFullYear(), now.getFullYear() - 1, now.getFullYear() - 2];
+  // Ensure the document's year is selectable even if it's older than the last 3.
+  const yearOptions =
+    proposal.suggested_year && !baseYears.includes(proposal.suggested_year)
+      ? [proposal.suggested_year, ...baseYears]
+      : baseYears;
   const typeOptions = category ? categories[category] ?? [] : [];
   const busy = confirm.isPending || reject.isPending;
 

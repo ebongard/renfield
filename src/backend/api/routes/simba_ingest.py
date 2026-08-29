@@ -33,6 +33,10 @@ class SimbaProposalOut(BaseModel):
     suggested_category: str | None = None
     suggested_type: str | None = None
     suggested_description: str = ""
+    # Booking period (Zeitraum) derived from the document's date, so the review
+    # form defaults to the invoice month rather than the current one (#1167).
+    suggested_month: int | None = None
+    suggested_year: int | None = None
 
 
 class SimbaProposalsResponse(BaseModel):
@@ -60,6 +64,8 @@ class SimbaActionResponse(BaseModel):
     suggested_category: str | None = None
     suggested_type: str | None = None
     suggested_description: str = ""
+    suggested_month: int | None = None
+    suggested_year: int | None = None
 
 
 def _require_enabled() -> None:
@@ -88,6 +94,8 @@ async def send_document_to_simba(
         suggested_category=res.get("suggested_category"),
         suggested_type=res.get("suggested_type"),
         suggested_description=res.get("suggested_description", ""),
+        suggested_month=res.get("suggested_month"),
+        suggested_year=res.get("suggested_year"),
     )
 
 
@@ -106,8 +114,10 @@ async def list_proposals(
                 suggested_category=p.suggested_category,
                 suggested_type=p.suggested_type,
                 suggested_description=desc,
+                suggested_month=month,
+                suggested_year=year,
             )
-            for (p, desc) in rows
+            for (p, desc, month, year) in rows
         ]
     )
 

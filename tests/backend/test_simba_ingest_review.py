@@ -734,3 +734,69 @@ class TestSimbaIngestRoutes:
             assert p.status == SIMBA_PROPOSAL_PENDING  # stays pending on failure
         finally:
             Path(tmp).unlink(missing_ok=True)
+
+
+# --- #1167: Simba booking period from the document date (not the current month) ---
+
+def test_parse_month_year_forms():
+    assert review._parse_month_year("18.03.2026") == (3, 2026)      # DD.MM.YYYY
+    assert review._parse_month_year("2026-03-18") == (3, 2026)      # ISO
+    assert review._parse_month_year("Rechnung vom 05.11.2024 faellig") == (11, 2024)
+    assert review._parse_month_year("no date here") is None
+    assert review._parse_month_year("99.99.2026") is None           # invalid month
+    assert review._parse_month_year("") is None
+    assert review._parse_month_year(None) is None
+
+
+async def test_document_period_prefers_rechnungsdatum_fact(db_session):
+    """The booking period comes from the Schicht-A rechnungsdatum fact (not now,
+    and preferred over other date facts)."""
+    from models.database import Atom, Document, DocumentFact
+
+    doc = Document(filename="scan.pdf", file_path="/x.pdf", status="completed",
+                   generated_title="Rechnung vom 01.01.2099")  # title date must LOSE to the fact
+    db_session.add(doc)
+    await db_session.commit()
+    await db_session.refresh(doc)
+
+    atom = Atom(atom_id="fact-atom-1167", atom_type="document_fact",
+                source_table="document_facts", source_id="1", owner_user_id=1,
+                policy={"tier": 0})
+    db_session.add(atom)
+    await db_session.flush()
+    db_session.add_all([
+        DocumentFact(document_id=doc.id, category="universal", kind="leistungsabschluss",
+                     value="02.02.2020", atom_id=atom.atom_id),   # lower priority
+        DocumentFact(document_id=doc.id, category="universal", kind="rechnungsdatum",
+                     value="18.03.2026", normalized_value="2026-03-18", atom_id=atom.atom_id),
+    ])
+    await db_session.commit()
+
+    month, year = await review._document_period(db_session, doc.id, doc)
+    assert (month, year) == (3, 2026)
+
+
+async def test_document_period_falls_back_to_title(db_session):
+    """No date facts → parse the date out of the generated title."""
+    from models.database import Document
+
+    doc = Document(filename="scan.pdf", file_path="/x.pdf", status="completed",
+                   generated_title="Rechnung der TAXON GmbH vom 18.03.2026")
+    db_session.add(doc)
+    await db_session.commit()
+    await db_session.refresh(doc)
+
+    assert await review._document_period(db_session, doc.id, doc) == (3, 2026)
+
+
+async def test_document_period_none_when_no_date(db_session):
+    """No derivable date → (None, None) so the UI falls back to the current month."""
+    from models.database import Document
+
+    doc = Document(filename="scan.pdf", file_path="/x.pdf", status="completed",
+                   generated_title="Ein Dokument ohne Datum")
+    db_session.add(doc)
+    await db_session.commit()
+    await db_session.refresh(doc)
+
+    assert await review._document_period(db_session, doc.id, doc) == (None, None)

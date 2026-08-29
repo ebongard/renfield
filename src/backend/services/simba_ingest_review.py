@@ -36,6 +36,7 @@ from models.database import (
     Atom,
     Document,
     DocumentChunk,
+    DocumentFact,
     SimbaIngestProposal,
 )
 from services.database import AsyncSessionLocal
@@ -90,6 +91,70 @@ def _bezeichnung(doc) -> str:
         or ""
     ).strip()
     return _sanitize_desc(raw)
+
+
+# Date parsing for the Simba booking period (Zeitraum). Handles ISO (2026-03-18)
+# and German DD.MM.YYYY (18.03.2026) — the two forms Schicht-A facts / titles use.
+_DATE_ISO = re.compile(r"\b(\d{4})-(\d{1,2})-(\d{1,2})\b")
+_DATE_DMY = re.compile(r"\b(\d{1,2})[.\-/](\d{1,2})[.\-/](\d{4})\b")
+
+
+def _parse_month_year(s: str | None) -> tuple[int, int] | None:
+    """(month, year) from a date string (ISO first, then DD.MM.YYYY), or None."""
+    if not s:
+        return None
+    m = _DATE_ISO.search(s)
+    if m:
+        yy, mm = int(m.group(1)), int(m.group(2))
+    else:
+        m = _DATE_DMY.search(s)
+        if not m:
+            return None
+        mm, yy = int(m.group(2)), int(m.group(3))
+    if 1 <= mm <= 12 and 2000 <= yy <= 2100:
+        return mm, yy
+    return None
+
+
+async def _document_period(db, document_id: int, doc=None) -> tuple[int | None, int | None]:
+    """Booking period (month, year) for the Simba upload, derived from the
+    document's OWN date so the review form does not default to the CURRENT month
+    (the #1167 bug — every upload was stamped with today's month). Prefers the
+    Schicht-A ``rechnungsdatum`` fact, then other date-bearing facts, then a date
+    parsed from the generated title (``… vom 18.03.2026``). (None, None) if no
+    date is derivable — the UI then falls back to now."""
+    def _rank(kind: str | None) -> int:
+        k = (kind or "").lower()
+        if "rechnungsdatum" in k:
+            return 0
+        if "leistung" in k or "datum" in k or "date" in k:
+            return 1
+        return 2
+
+    try:
+        rows = (
+            await db.execute(
+                select(DocumentFact.kind, DocumentFact.normalized_value, DocumentFact.value)
+                .where(DocumentFact.document_id == document_id)
+            )
+        ).all()
+        for kind, nv, v in sorted(rows, key=lambda r: _rank(r[0])):
+            got = _parse_month_year(nv) or _parse_month_year(v)
+            if got:
+                return got
+    except Exception as e:  # noqa: BLE001 — period is best-effort
+        logger.debug(f"simba period: fact-date lookup failed for doc {document_id}: {e}")
+
+    try:
+        if doc is None:
+            doc = await db.get(Document, document_id)
+        title = (getattr(doc, "generated_title", None) or getattr(doc, "title", None) or "") if doc else ""
+        got = _parse_month_year(title)
+        if got:
+            return got
+    except Exception:  # noqa: BLE001
+        pass
+    return None, None
 
 
 async def simba_ingest_post_hook(
@@ -229,9 +294,13 @@ def _owns(proposal: SimbaIngestProposal, user) -> bool:
     return proposal.user_id is None and _is_admin(user)
 
 
-async def list_pending(db, user) -> list[tuple[SimbaIngestProposal, str]]:
+async def list_pending(
+    db, user
+) -> list[tuple[SimbaIngestProposal, str, int | None, int | None]]:
     """Owner-scoped pending proposals, each paired with a suggested Bezeichnung
-    (derived from the document's title) that prefills the editable review field."""
+    (from the document's title) and a suggested booking period (month, year) from
+    the document's date — both prefill the editable review fields, so the period
+    defaults to the invoice month rather than the current one (#1167)."""
     q = (
         select(SimbaIngestProposal, Document)
         .join(Document, Document.id == SimbaIngestProposal.document_id, isouter=True)
@@ -239,11 +308,14 @@ async def list_pending(db, user) -> list[tuple[SimbaIngestProposal, str]]:
         .order_by(SimbaIngestProposal.id.desc())
     )
     rows = (await db.execute(q)).all()
-    return [
-        (p, _bezeichnung(doc) if doc is not None else "")
-        for (p, doc) in rows
-        if _owns(p, user)
-    ]
+    out: list[tuple[SimbaIngestProposal, str, int | None, int | None]] = []
+    for (p, doc) in rows:
+        if not _owns(p, user):
+            continue
+        desc = _bezeichnung(doc) if doc is not None else ""
+        month, year = await _document_period(db, p.document_id, doc) if doc is not None else (None, None)
+        out.append((p, desc, month, year))
+    return out
 
 
 async def _classify_document(db, document_id: int) -> tuple[str | None, str | None]:
@@ -315,12 +387,16 @@ async def create_proposal_for_document(db, document_id: int, user) -> dict:
     # Bezeichnung prefill — a pure function of the document (generated_title →
     # title → filename), the same value list_pending pairs with each row.
     desc = _bezeichnung(doc)
+    # Booking period (Zeitraum) from the document's OWN date — so the review form
+    # defaults to the invoice month, not the current month (#1167).
+    pmonth, pyear = await _document_period(db, document_id, doc)
     if existing is not None:
         return {
             "success": True, "message": "already_pending", "proposal_id": existing.id,
             "suggested_category": existing.suggested_category,
             "suggested_type": existing.suggested_type,
             "suggested_description": desc,
+            "suggested_month": pmonth, "suggested_year": pyear,
         }
 
     category, type_ = await _classify_document(db, document_id)
@@ -353,12 +429,14 @@ async def create_proposal_for_document(db, document_id: int, user) -> dict:
             "suggested_category": again.suggested_category if again else category,
             "suggested_type": again.suggested_type if again else type_,
             "suggested_description": desc,
+            "suggested_month": pmonth, "suggested_year": pyear,
         }
     logger.info(f"simba-ingest: review proposal for existing doc {document_id} (send-to-simba)")
     return {
         "success": True, "message": "created", "proposal_id": proposal.id,
         "suggested_category": category, "suggested_type": type_,
         "suggested_description": desc,
+        "suggested_month": pmonth, "suggested_year": pyear,
     }
 
 

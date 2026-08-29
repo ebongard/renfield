@@ -66,6 +66,8 @@ export default function SimbaSendModal({ documentId, filename, enabled, onClose 
           suggested_category: data.suggested_category,
           suggested_type: data.suggested_type,
           suggested_description: data.suggested_description,
+          suggested_month: data.suggested_month,
+          suggested_year: data.suggested_year,
         });
       },
       onError: (e) => {
