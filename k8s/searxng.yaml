@@ -32,6 +32,11 @@ data:
       secret_key: "changeme-renfield-searxng"
       bind_address: "0.0.0.0"
       port: 8080
+      # limiter MUST stay false: its botdetection blocks non-browser clients and
+      # in particular rejects format=json requests — which is exactly how the
+      # Renfield backend consumes SearXNG. Turning it on would 0-result our own
+      # backend. (It protects an instance from abusive traffic; irrelevant for a
+      # private cluster-internal instance reached only by the backend.)
       limiter: false
       image_proxy: false
     search:
@@ -42,6 +47,29 @@ data:
     outgoing:
       request_timeout: 5.0
       max_request_timeout: 10.0
+    # Engine retune (2026-08-29): from a single self-hosted IP the big scrapers
+    # (Google/Startpage/Brave) get CAPTCHA-blocked, so SearXNG returned HTTP 200
+    # with 0 results + unresponsive_engines CAPTCHA errors. Disable those and
+    # lean on engines that do NOT bot-block a small independent client
+    # (DuckDuckGo, Bing, Mojeek + the already-on Wikipedia). use_default_settings
+    # merges this list into the defaults by engine `name`, so unlisted engines
+    # keep their default state. No API key, fully self-hosted. If result quality
+    # proves thin, add the native `braveapi` engine with a key (PR2 / Option B).
+    engines:
+      - name: google
+        disabled: true
+      - name: startpage
+        disabled: true
+      - name: brave
+        disabled: true
+      - name: duckduckgo
+        disabled: false
+      - name: bing
+        disabled: false
+      - name: mojeek
+        disabled: false
+      - name: wikipedia
+        disabled: false
     ui:
       default_theme: simple
 
