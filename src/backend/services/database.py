@@ -64,6 +64,23 @@ def _release_leaked_advisory_locks_on_checkin(dbapi_connection, connection_recor
                 cursor.close()
             except Exception:
                 pass
+        # Close the transaction the reset SELECT opened. SQLAlchemy's asyncpg
+        # DBAPI adapter is NOT autocommit — it lazily opens a real transaction
+        # for the SELECT above and relies on an explicit commit/rollback to
+        # close it. reset_on_return has already fired (closing the work
+        # session's txn) before this checkin hook runs, so nothing else closes
+        # this one. Without the rollback the connection returns to the pool
+        # `idle in transaction` (last query pg_advisory_unlock_all()) holding a
+        # virtualxid lock; a rarely-reused overflow connection can sit wedged
+        # for hours — long enough to block a CREATE INDEX CONCURRENTLY migration
+        # (observed on xidra 2026-08-29: two connections idle ~4.5 h stalled the
+        # FTS index build ~27 min). pg_advisory_unlock_all() is session-level
+        # and non-transactional, so this rollback does NOT re-acquire the locks.
+        # Must never raise — a throwing checkin hook breaks pool return.
+        try:
+            dbapi_connection.rollback()
+        except Exception as e:
+            logger.warning(f"checkin: post-unlock rollback failed (swallowed): {type(e).__name__}: {e}")
 
 
 # Session Factory
