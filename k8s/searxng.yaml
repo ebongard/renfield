@@ -55,6 +55,19 @@ data:
     # merges this list into the defaults by engine `name`, so unlisted engines
     # keep their default state. No API key, fully self-hosted. If result quality
     # proves thin, add the native `braveapi` engine with a key (PR2 / Option B).
+    #
+    # Redundancy (2026-08-29 follow-up): DuckDuckGo, like Google/Startpage/Brave,
+    # is blocked BY IP from a datacenter/self-hosted egress (DDG changed to
+    # IP-reputation blocking in late 2025 — SearXNG issues #4824/#5541, won't-fix:
+    # it's not a scraper bug, no config or image upgrade recovers it). We keep DDG
+    # enabled as best-effort (it self-recovers after ~1h idle) but must NOT depend
+    # on it. So enable several independent CAPTCHA-tolerant general engines — Yahoo
+    # + Marginalia on top of Bing/Mojeek/Wikipedia — so any single engine's CAPTCHA
+    # is a non-event. (Yandex/Baidu are also CAPTCHA-tolerant but deliberately
+    # omitted: routing queries to a Russian/Chinese engine is the wrong privacy
+    # posture for this product. Crossref is academic-only, not general web search.)
+    # For Google-grade coverage the real lever is a key-based engine (braveapi /
+    # the already-working google-cse), NOT scraping from this IP.
     engines:
       - name: google
         disabled: true
@@ -69,6 +82,10 @@ data:
       - name: mojeek
         disabled: false
       - name: wikipedia
+        disabled: false
+      - name: yahoo
+        disabled: false
+      - name: marginalia
         disabled: false
     ui:
       default_theme: simple
@@ -113,7 +130,13 @@ spec:
             runAsUser: 0
       containers:
         - name: searxng
-          image: searxng/searxng:latest
+          # Pinned by digest (2026-08-29) for reproducibility — SearXNG ships
+          # rolling date tags and its scraper code shifts every build as upstreams
+          # change bot defenses, so :latest could silently alter engine behavior
+          # mid-outage. This digest == version 2026.8.29+d226b78bc (the build in
+          # use, verified returning results). Bump deliberately to adopt newer
+          # engine fixes. An immutable digest makes the pull policy moot.
+          image: searxng/searxng@sha256:b36af7984b87191b595bc5301418ed6432c047668a4547ab531a7439b816fac3
           imagePullPolicy: IfNotPresent
           ports:
             - containerPort: 8080
