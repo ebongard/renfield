@@ -440,7 +440,12 @@ async def confirm(
     # forbids withdrawal, so surface a likely-existing copy and require an
     # explicit `force` to proceed. Best-effort (a check failure never blocks).
     if not force:
-        existing = await _find_in_simba(mcp_manager, bezeichnung or Path(doc.filename or "").stem)
+        existing = await _find_in_simba(
+            mcp_manager,
+            bezeichnung or Path(doc.filename or "").stem,
+            category=category,
+            type_=type_,
+        )
         if existing:
             return {
                 "success": False,
@@ -531,19 +536,24 @@ def _inner(result) -> dict:
     return {}
 
 
-async def _find_in_simba(mcp_manager, contains: str) -> list[dict]:
-    """Best-effort duplicate check: does Simba already have a transfer whose
-    Dateiname or Beschreibung contains ``contains``? Returns the matching rows
-    (empty on no match, empty/blank query, or any error — the check never blocks
-    a legitimate upload). Uses only the `contains` filter, which is reliable on
-    the live grid (the combined Kategorie/Monat columns are not — see the MCP)."""
+async def _find_in_simba(
+    mcp_manager, contains: str, category: str | None = None, type_: str | None = None
+) -> list[dict]:
+    """Best-effort duplicate check: does Simba already have a transfer matching
+    this document? Narrows by the Suchbegriff (Bezeichnung/Dateiname) AND the
+    Kategorie/Typ — all driven SERVER-SIDE by the MCP (≥v1.0.8), so the portal
+    returns only matching rows (no full-grid scan). Returns the matching rows
+    (empty on no match, blank query, or any error — the check never blocks a
+    legitimate upload)."""
     if mcp_manager is None or not (contains or "").strip():
         return []
+    args: dict = {"contains": contains.strip(), "limit": 20}
+    if category and category.strip():
+        args["category"] = category.strip()
+    if type_ and type_.strip():
+        args["type"] = type_.strip()
     try:
-        res = await mcp_manager.execute_tool(
-            "mcp.simba.list_transfers", {"contains": contains.strip(), "limit": 20},
-            truncate=False,
-        )
+        res = await mcp_manager.execute_tool("mcp.simba.list_transfers", args, truncate=False)
     except Exception as e:  # noqa: BLE001 — the guard is advisory, never fatal
         logger.warning(f"simba-ingest: list_transfers check failed: {e}")
         return []
