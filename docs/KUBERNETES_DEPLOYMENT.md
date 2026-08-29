@@ -72,11 +72,13 @@ Cluster-wide Traefik changes (entrypoints, TLS, CRDs) are tracked in `../private
 | PostgreSQL | `pgvector/pgvector:pg16` | pgvector for embedding search. Single-node StatefulSet; an HA CloudNativePG track for the app DB is in progress — see "Postgres HA (CloudNativePG)" below |
 | Redis | `redis:7-alpine` | Message queue + cache (AOF enabled) |
 | Ollama | `ollama/ollama:latest` | LLM inference, requires GPU |
-| SearXNG | `searxng/searxng:latest` | In-cluster metasearch |
+| SearXNG | `searxng/searxng` (digest-pinned, == `2026.8.29`) | In-cluster metasearch. Engine set tuned for a datacenter egress IP (scraper engines CAPTCHA-block → backbone is Bing + Google-CSE, the rest best-effort; limiter stays OFF — it rejects the backend's `format=json`). **Per-instance — see note below.** |
 | DLNA-MCP | reuses backend image | Runs `/opt/venv/bin/renfield-mcp-dlna` as main entrypoint |
 | mDNS responder | `debian:bookworm-slim` | Installs avahi at container start; small, runs once per lifecycle |
 
 Harbor is the registry. A `harbor-pull-secret` of type `kubernetes.io/dockerconfigjson` lives in the renfield namespace and is referenced by every pod that pulls from there.
+
+**SearXNG is per-instance.** Each Renfield instance runs its **own** dedicated SearXNG in its own namespace so web search is isolated (independent lifecycle, no shared engine-suspension state): the household in `renfield` (`k8s/searxng.yaml`), and the **xidra business instance** in `renfield-xidra` (its manifest lives in the private, gitignored `k8s/xidra/searxng.yaml`). Each backend points at its local instance via `SEARXNG_API_URL`/`SEARXNG_INSTANCES` (household → `searxng.renfield.svc`; xidra → `searxng.renfield-xidra.svc`). An engine-config change must be mirrored to **both** manifests. The public `searxng/searxng` image needs no `harbor-pull-secret`.
 
 ### Why torch+cpu via constraints
 
@@ -206,7 +208,7 @@ DATABASE_URL: postgresql+asyncpg://renfield:…@postgres:5432/renfield
 OLLAMA_URL: http://ollama:11434
 REDIS_URL: redis://redis:6379
 DLNA_MCP_URL: http://dlna-mcp:9091/mcp
-SEARXNG_API_URL: http://searxng:8080
+SEARXNG_API_URL: http://searxng:8080   # this instance's own SearXNG (xidra → searxng.renfield-xidra.svc)
 HOME_ASSISTANT_URL: http://192.168.1.80:8123
 JELLYFIN_URL: http://192.168.1.123:8096
 OLLAMA_CHAT_MODEL: qwen3:14b
