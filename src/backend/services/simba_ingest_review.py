@@ -275,10 +275,13 @@ async def create_proposal_for_document(db, document_id: int, user) -> dict:
     which only fires on NEW documents; a doc already in the KB is deduped at
     ingest and never reaches that hook).
 
-    Returns {"success": bool, "message": str, "proposal_id": int|None}.
-    Idempotent on the pending state: a doc that already has a pending proposal
-    returns it rather than creating a second (the partial-unique index also
-    guards this). Owner/admin-gated.
+    Returns {"success": bool, "message": str, "proposal_id": int|None,
+    "suggested_category": str|None, "suggested_type": str|None,
+    "suggested_description": str}. The suggested_* fields let the caller (the
+    doc-page "send to Simba" overlay) prefill the confirm form without a second
+    fetch. Idempotent on the pending state: a doc that already has a pending
+    proposal returns it rather than creating a second (the partial-unique index
+    also guards this). Owner/admin-gated.
     """
     doc = await db.get(Document, document_id)
     if doc is None:
@@ -309,8 +312,16 @@ async def create_proposal_for_document(db, document_id: int, user) -> dict:
             .limit(1)
         )
     ).scalar_one_or_none()
+    # Bezeichnung prefill — a pure function of the document (generated_title →
+    # title → filename), the same value list_pending pairs with each row.
+    desc = _bezeichnung(doc)
     if existing is not None:
-        return {"success": True, "message": "already_pending", "proposal_id": existing.id}
+        return {
+            "success": True, "message": "already_pending", "proposal_id": existing.id,
+            "suggested_category": existing.suggested_category,
+            "suggested_type": existing.suggested_type,
+            "suggested_description": desc,
+        }
 
     category, type_ = await _classify_document(db, document_id)
     proposal = SimbaIngestProposal(
@@ -336,10 +347,19 @@ async def create_proposal_for_document(db, document_id: int, user) -> dict:
                 ).limit(1)
             )
         ).scalar_one_or_none()
-        return {"success": True, "message": "already_pending",
-                "proposal_id": again.id if again else None}
+        return {
+            "success": True, "message": "already_pending",
+            "proposal_id": again.id if again else None,
+            "suggested_category": again.suggested_category if again else category,
+            "suggested_type": again.suggested_type if again else type_,
+            "suggested_description": desc,
+        }
     logger.info(f"simba-ingest: review proposal for existing doc {document_id} (send-to-simba)")
-    return {"success": True, "message": "created", "proposal_id": proposal.id}
+    return {
+        "success": True, "message": "created", "proposal_id": proposal.id,
+        "suggested_category": category, "suggested_type": type_,
+        "suggested_description": desc,
+    }
 
 
 async def reject(db, proposal_id: int, user) -> bool:

@@ -71,14 +71,25 @@ export function useConfirmSimbaProposal() {
   });
 }
 
-/** Queue an EXISTING knowledge-base document for Simba review (the "send to
- * Simba" action). Complements the folder-ingest flow, which only fires on new
- * documents. Creates a pending proposal on /brain/review. */
+export interface SendToSimbaResult {
+  success: boolean;
+  message: string;
+  proposal_id: number | null;
+  suggested_category: string | null;
+  suggested_type: string | null;
+  suggested_description: string;
+}
+
+/** Create (or reuse) a pending Simba proposal for an EXISTING knowledge-base
+ * document — the first step of the doc-page "send to Simba" overlay, which then
+ * confirms the upload in place. Idempotent on the pending state; returns the
+ * suggested category/type/Bezeichnung so the overlay prefills without a second
+ * fetch. Complements the folder-ingest flow, which only fires on new documents. */
 export function useSendDocumentToSimba() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: async (documentId: number) => {
-      const r = await apiClient.post<{ success: boolean; message: string; proposal_id: number | null }>(
+    mutationFn: async (documentId: number): Promise<SendToSimbaResult> => {
+      const r = await apiClient.post<SendToSimbaResult>(
         `/api/simba-ingest/from-document/${documentId}`,
       );
       return r.data;

@@ -54,6 +54,12 @@ class SimbaActionResponse(BaseModel):
     proposal_id: int | None = None
     already_in_simba: bool = False
     existing: str | None = None
+    # Populated by from-document so the doc-page "send to Simba" overlay can
+    # prefill the confirm form (category/type suggestion + Bezeichnung) without a
+    # second round-trip.
+    suggested_category: str | None = None
+    suggested_type: str | None = None
+    suggested_description: str = ""
 
 
 def _require_enabled() -> None:
@@ -78,7 +84,10 @@ async def send_document_to_simba(
             raise HTTPException(status_code=404, detail="Document not found")
         raise HTTPException(status_code=400, detail=res["message"])
     return SimbaActionResponse(
-        success=True, message=res["message"], proposal_id=res.get("proposal_id")
+        success=True, message=res["message"], proposal_id=res.get("proposal_id"),
+        suggested_category=res.get("suggested_category"),
+        suggested_type=res.get("suggested_type"),
+        suggested_description=res.get("suggested_description", ""),
     )
 
 

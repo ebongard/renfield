@@ -55,7 +55,7 @@ import {
 } from '../api/resources/knowledge';
 import { keys } from '../api/keys';
 import { useFeatureFlags } from '../api/resources/brain';
-import { useSendDocumentToSimba } from '../api/resources/simbaIngest';
+import SimbaSendModal from '../components/simba/SimbaSendModal';
 import TierControlPopover from '../components/knowledge/TierControlPopover';
 import TierChangeToast, { TIER_UNDO_WINDOW_MS } from '../components/knowledge/TierChangeToast';
 import type { CircleTier } from '../components/TierBadge';
@@ -188,7 +188,8 @@ export default function KnowledgePage() {
   const deleteDocMutation = useDeleteKnowledgeDocument();
   const reindexDocMutation = useReindexKnowledgeDocument();
   const moveDocsMutation = useMoveKnowledgeDocuments();
-  const sendToSimbaMutation = useSendDocumentToSimba();
+  // The doc-page "send to Simba" overlay target ({id, filename}); null = closed.
+  const [simbaSendDoc, setSimbaSendDoc] = useState<{ id: number; filename: string } | null>(null);
   const simbaEnabled = useFeatureFlags().data?.simba_ingest_review_enabled ?? false;
 
   const searching = searchMutation.isPending;
@@ -342,26 +343,6 @@ export default function KnowledgePage() {
       await queryClient.invalidateQueries({ queryKey: keys.brain.facts(id) });
     } catch {
       alert(t('knowledge.reindexFailed'));
-    }
-  };
-
-  // Send an EXISTING document to the Simba review queue (xidra). Creates a
-  // pending proposal on /brain/review; the irreversible upload happens there.
-  const handleSendToSimba = async (id: number) => {
-    try {
-      const res = await sendToSimbaMutation.mutateAsync(id);
-      setUploadProgress({
-        text: res.message === 'already_pending'
-          ? t('knowledge.simbaAlreadyQueued')
-          : t('knowledge.simbaQueued'),
-        variant: 'success',
-        // One click straight to the queued row on the review page — no hunting.
-        link: res.proposal_id
-          ? { to: `/brain/review#simba-${res.proposal_id}`, label: t('knowledge.simbaGoConfirm') }
-          : undefined,
-      });
-    } catch (err) {
-      setUploadProgress({ text: extractApiError(err, t('knowledge.simbaSendFailed')), variant: 'error' });
     }
   };
 
@@ -1017,10 +998,10 @@ export default function KnowledgePage() {
                       )}
                       {simbaEnabled && (
                         <button
-                          onClick={() => handleSendToSimba(doc.id)}
-                          disabled={sendToSimbaMutation.isPending}
+                          onClick={() => setSimbaSendDoc({ id: doc.id, filename: doc.display_name ?? doc.filename })}
                           className="btn-icon btn-icon-ghost"
                           title={t('knowledge.sendToSimba')}
+                          aria-label={t('knowledge.sendToSimba')}
                         >
                           <Landmark className="w-4 h-4" />
                         </button>
@@ -1050,6 +1031,14 @@ export default function KnowledgePage() {
       </div>
 
       {ConfirmDialogComponent}
+      {simbaEnabled && (
+        <SimbaSendModal
+          documentId={simbaSendDoc?.id ?? null}
+          filename={simbaSendDoc?.filename ?? ''}
+          enabled={simbaEnabled}
+          onClose={() => setSimbaSendDoc(null)}
+        />
+      )}
       {tierToast && (
         <TierChangeToast tier={tierToast.newTier} onUndo={handleUndoTier} />
       )}

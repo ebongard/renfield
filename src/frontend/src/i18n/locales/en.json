@@ -999,11 +999,7 @@
     "statusSplitPending": "Splitting",
     "statusSplitReview": "Split review pending",
     "statusSplitArchived": "Split (original archived)",
-    "sendToSimba": "Send to Simba",
-    "simbaQueued": "Queued for Simba review.",
-    "simbaAlreadyQueued": "This document is already awaiting Simba review.",
-    "simbaSendFailed": "Could not queue for Simba review.",
-    "simbaGoConfirm": "Review now"
+    "sendToSimba": "Send to Simba"
   },
   "memory": {
     "title": "Memories",
@@ -2321,6 +2317,15 @@
     "year": "Year",
     "dupWarning": "This document appears to already be in Simba: {{existing}}",
     "forceUpload": "Transfer anyway",
-    "dupUnknown": "existing entry"
+    "dupUnknown": "existing entry",
+    "confirmUploadInline": "Transfer \"{{filename}}\" to the tax accountant (Simba) for good — {{category}} · {{type}} · {{period}}? This cannot be undone.",
+    "confirmYes": "Yes, transfer"
+  },
+  "simbaSend": {
+    "title": "Send to Simba",
+    "hint": "Check the label, category/type and period, then transfer the document to the tax accountant. The transfer is irreversible.",
+    "preparing": "Preparing proposal…",
+    "successTitle": "Transferred",
+    "success": "\"{{filename}}\" was transferred to the tax accountant."
   }
 }

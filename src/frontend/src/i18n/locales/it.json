@@ -658,11 +658,7 @@
     "statusSplitPending": "Suddivisione in corso",
     "statusSplitReview": "Suddivisione da verificare",
     "statusSplitArchived": "Suddiviso (originale archiviato)",
-    "sendToSimba": "Invia a Simba",
-    "simbaQueued": "In coda per la revisione Simba.",
-    "simbaAlreadyQueued": "Questo documento è già in attesa di revisione Simba.",
-    "simbaSendFailed": "Impossibile mettere in coda per la revisione Simba.",
-    "simbaGoConfirm": "Rivedi ora"
+    "sendToSimba": "Invia a Simba"
   },
   "memory": {
     "title": "Memorie",
@@ -2061,6 +2057,15 @@
     "year": "Anno",
     "dupWarning": "Questo documento sembra essere già in Simba: {{existing}}",
     "forceUpload": "Trasferisci comunque",
-    "dupUnknown": "voce esistente"
+    "dupUnknown": "voce esistente",
+    "confirmUploadInline": "Trasferire \"{{filename}}\" al commercialista (Simba) in via definitiva — {{category}} · {{type}} · {{period}}? Non può essere annullato.",
+    "confirmYes": "Sì, trasferisci"
+  },
+  "simbaSend": {
+    "title": "Invia a Simba",
+    "hint": "Controlla denominazione, categoria/tipo e periodo, poi trasferisci il documento al commercialista. Il trasferimento è irreversibile.",
+    "preparing": "Preparazione proposta…",
+    "successTitle": "Trasferito",
+    "success": "\"{{filename}}\" è stato trasferito al commercialista."
   }
 }

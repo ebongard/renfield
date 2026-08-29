@@ -999,11 +999,7 @@
     "statusSplitPending": "Wird aufgeteilt",
     "statusSplitReview": "Aufteilung prüfen",
     "statusSplitArchived": "Aufgeteilt (Original archiviert)",
-    "sendToSimba": "An Simba senden",
-    "simbaQueued": "Zur Simba-Prüfung hinzugefügt.",
-    "simbaAlreadyQueued": "Dieses Dokument wartet bereits auf die Simba-Prüfung.",
-    "simbaSendFailed": "Konnte nicht zur Simba-Prüfung hinzugefügt werden.",
-    "simbaGoConfirm": "Jetzt prüfen"
+    "sendToSimba": "An Simba senden"
   },
   "memory": {
     "title": "Erinnerungen",
@@ -2321,6 +2317,15 @@
     "year": "Jahr",
     "dupWarning": "Dieses Dokument scheint bereits in Simba zu sein: {{existing}}",
     "forceUpload": "Trotzdem übertragen",
-    "dupUnknown": "vorhandener Eintrag"
+    "dupUnknown": "vorhandener Eintrag",
+    "confirmUploadInline": "„{{filename}}“ endgültig an die Steuerkanzlei (Simba) übertragen — {{category}} · {{type}} · {{period}}? Das kann nicht widerrufen werden.",
+    "confirmYes": "Ja, übertragen"
+  },
+  "simbaSend": {
+    "title": "An Simba übertragen",
+    "hint": "Prüfe Bezeichnung, Kategorie/Typ und Zeitraum und übertrage das Dokument an die Steuerkanzlei. Die Übertragung ist unwiderruflich.",
+    "preparing": "Vorschlag wird vorbereitet…",
+    "successTitle": "Übertragen",
+    "success": "„{{filename}}“ wurde an die Steuerkanzlei übertragen."
   }
 }
