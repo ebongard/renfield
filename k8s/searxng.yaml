@@ -68,13 +68,22 @@ data:
     # posture for this product. Crossref is academic-only, not general web search.)
     # For Google-grade coverage the real lever is a key-based engine (braveapi /
     # the already-working google-cse), NOT scraping from this IP.
+    # Brave/Startpage/Qwant are enabled as additional best-effort engines (by
+    # request). Honest note: from this datacenter IP Brave-scrape + Startpage are
+    # CAPTCHA-prone and Qwant tends to a ~24h suspension, so they often show as
+    # unresponsive and self-recover — harmless (each engine has its own network
+    # object, so a CAPTCHA on one does NOT suspend Bing/CSE; SearXNG drops
+    # unresponsive engines gracefully). google-scrape stays disabled: google-cse
+    # already covers it and the raw scraper is the most aggressively IP-blocked.
     engines:
       - name: google
         disabled: true
       - name: startpage
-        disabled: true
+        disabled: false
       - name: brave
-        disabled: true
+        disabled: false
+      - name: qwant
+        disabled: false
       - name: duckduckgo
         disabled: false
       - name: bing
