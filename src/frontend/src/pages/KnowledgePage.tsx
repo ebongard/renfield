@@ -99,6 +99,9 @@ export default function KnowledgePage() {
   // Search state
   const [searchQuery, setSearchQuery] = useState('');
   const [searchResults, setSearchResults] = useState<SearchResultChunk[]>([]);
+  // Debounced query that drives the ranked DOCUMENT list (name+facts+content).
+  // Set by the debounce effect below from the search box / omni ?q=.
+  const [docSearchQuery, setDocSearchQuery] = useState('');
 
   // New Knowledge Base state
   const [showNewKbModal, setShowNewKbModal] = useState(false);
@@ -170,6 +173,7 @@ export default function KnowledgePage() {
   const documentsQuery = useKnowledgeDocumentsQuery({
     knowledgeBaseId: selectedKnowledgeBase,
     statusFilter,
+    q: docSearchQuery,
   });
   const basesQuery = useKnowledgeBasesQuery();
   const statsQuery = useKnowledgeStatsQuery();
@@ -396,6 +400,17 @@ export default function KnowledgePage() {
     }, 300);
     return () => { cancelled = true; clearTimeout(id); };
   }, [embedded, omniQ, omniScope, selectedKnowledgeBase, runChunkSearch]);
+
+  // Drive the ranked DOCUMENT list from the same query (debounced). searchQuery
+  // is the source in both modes (the omni effect above mirrors ?q= into it when
+  // embedded). Suppressed only when the lens defers to the cross-corpus overlay
+  // (embedded + scope=everything), so the list isn't hijacked there.
+  useEffect(() => {
+    const suppressed = embedded && omniScope === 'everything';
+    const next = suppressed ? '' : searchQuery.trim();
+    const id = setTimeout(() => setDocSearchQuery(next), 300);
+    return () => clearTimeout(id);
+  }, [searchQuery, embedded, omniScope]);
 
   useEffect(() => {
     // New target id → allow handling again (e.g. agenda → doc A, back, → doc B).

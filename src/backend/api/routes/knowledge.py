@@ -499,13 +499,16 @@ async def upload_document(
 async def list_documents(
     knowledge_base_id: int | None = Query(None),
     status: str | None = Query(None),
+    q: str | None = Query(None, description="Ranked hybrid document search (name + facts + content). Empty → recency list."),
     limit: int = Query(100, ge=1, le=500),
     offset: int = Query(0, ge=0),
     rag: RAGService = Depends(get_rag_service),
     user: User | None = Depends(get_optional_user),
     db: AsyncSession = Depends(get_db)
 ):
-    """Listet alle indexierten Dokumente auf"""
+    """Listet Dokumente auf — nach Aktualität, ODER (mit ``q``) als gerankte
+    Hybrid-Suche (Name + Schicht-A-Fakten + Inhalt), die auch Dokumente jenseits
+    des 100-Neueste-Fensters findet."""
     if settings.auth_enabled:
         if not user:
             raise HTTPException(status_code=401, detail="Authentication required")
@@ -521,12 +524,24 @@ async def list_documents(
             # If no KB filter, only users with kb.own+ can list
             elif not has_permission(user_perms, Permission.KB_OWN):
                 raise HTTPException(status_code=403, detail="Permission required: kb.own or higher")
-    documents = await rag.list_documents(
-        knowledge_base_id=knowledge_base_id,
-        status=status,
-        limit=limit,
-        offset=offset
-    )
+    if q and q.strip():
+        from services.document_search import search_documents
+        documents = await search_documents(
+            db, q,
+            asker_id=(user.id if user else None),
+            knowledge_base_id=knowledge_base_id,
+            status=status,
+            limit=limit,
+            offset=offset,
+            enforce_circles=settings.auth_enabled,
+        )
+    else:
+        documents = await rag.list_documents(
+            knowledge_base_id=knowledge_base_id,
+            status=status,
+            limit=limit,
+            offset=offset
+        )
 
     responses: list[DocumentResponse] = []
     for doc in documents:

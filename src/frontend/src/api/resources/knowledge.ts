@@ -74,12 +74,15 @@ export interface DocumentRow {
 interface DocsFilter {
   knowledgeBaseId: number | null;
   statusFilter: StatusFilter;
+  /** Ranked hybrid document search (name + facts + content). Empty → recency list. */
+  q?: string;
 }
 
-async function fetchDocuments({ knowledgeBaseId, statusFilter }: DocsFilter): Promise<DocumentRow[]> {
+async function fetchDocuments({ knowledgeBaseId, statusFilter, q }: DocsFilter): Promise<DocumentRow[]> {
   const params: Record<string, unknown> = {};
   if (knowledgeBaseId) params.knowledge_base_id = knowledgeBaseId;
   if (statusFilter !== 'all') params.status = statusFilter;
+  if (q && q.trim()) params.q = q.trim();
   const response = await apiClient.get<DocumentRow[]>('/api/knowledge/documents', { params });
   return response.data ?? [];
 }

@@ -600,6 +600,12 @@ class Document(Base):
     atom_id = Column(String(36), ForeignKey("atoms.atom_id", ondelete="CASCADE"), nullable=True, index=True)
     circle_tier = Column(Integer, nullable=False, default=0)
 
+    # Multilingual FTS over generated_title + title + filename — a Postgres
+    # GENERATED STORED column (migration pc20260829_documents_fts). FetchedValue()
+    # keeps it out of ORM INSERTs (writing a GENERATED column raises); on sqlite
+    # it is a plain nullable TSVECTOR (document_search has an ILIKE fallback).
+    search_vector = Column(TSVECTOR, FetchedValue(), nullable=True)
+
     # Beziehungen
     knowledge_base = relationship("KnowledgeBase", back_populates="documents")
     chunks = relationship("DocumentChunk", back_populates="document", cascade="all, delete-orphan")
