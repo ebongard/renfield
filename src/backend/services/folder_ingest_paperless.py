@@ -71,6 +71,40 @@ def _parse_paperless_result(mcp_result: dict | None) -> dict:
     return {"error": "unparseable_paperless_response"}
 
 
+async def _resolve_paperless_id_by_checksum(checksum: str | None) -> int | None:
+    """Look up a filed document's Paperless id by content checksum — renfield's
+    ``documents.file_hash`` equals Paperless's ``checksum``. Read-only, best-effort
+    (returns None on any error or if ``paperless_api_url``/``_token`` is unset).
+
+    Used when the consume task settles ``success`` but returns no
+    ``related_document`` (a common Paperless quirk observed across the whole xidra
+    corpus — the document IS created/held, the task just doesn't link it), so the
+    KB row can still record the real Paperless id (#1166). Both a fresh doc and a
+    duplicate resolve here, since Paperless holds exactly one doc per checksum."""
+    from utils.config import settings as _s
+
+    base = (_s.paperless_api_url or "").rstrip("/")
+    token = _s.paperless_api_token or ""
+    if not checksum or not base or not token:
+        return None
+    try:
+        import httpx
+
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.get(
+                f"{base}/api/documents/",
+                params={"checksum__iexact": checksum, "page_size": 1, "fields": "id"},
+                headers={"Authorization": f"Token {token}"},
+            )
+            resp.raise_for_status()
+            results = (resp.json() or {}).get("results") or []
+            if results:
+                return int(results[0]["id"])
+    except Exception as e:  # noqa: BLE001 — link resolution is best-effort
+        logger.debug(f"paperless-leg: checksum id-lookup failed: {type(e).__name__}: {e}")
+    return None
+
+
 async def _settle_from_outcome(
     db: AsyncSession, doc: Document, outcome: dict
 ) -> bool:
@@ -91,7 +125,9 @@ async def _settle_from_outcome(
     status = outcome.get("status")
     if status in ("success", "duplicate"):
         doc.paperless_state = PAPERLESS_STATE_DONE
-        pid = outcome.get("document_id")
+        pid = outcome.get("document_id") or await _resolve_paperless_id_by_checksum(
+            getattr(doc, "file_hash", None)
+        )
         if pid:
             doc.paperless_document_id = pid
         doc.paperless_task_id = None
@@ -543,15 +579,21 @@ def make_paperless_leg(
         if status in ("success", "duplicate"):
             doc.paperless_state = PAPERLESS_STATE_DONE
             # Persist the filed Paperless id so a later re-tag / backfill can
-            # address it directly (a "duplicate" may carry no id — keep NULL).
-            pid = outcome.get("document_id")
+            # address it directly. The consume task frequently settles `success`
+            # with NO related_document even though Paperless created/holds the doc
+            # (observed across the whole xidra corpus) — fall back to a checksum
+            # lookup so the KB row still links to the real Paperless id (#1166).
+            task_pid = outcome.get("document_id")
+            pid = task_pid or await _resolve_paperless_id_by_checksum(
+                getattr(doc, "file_hash", None)
+            )
             if pid:
                 doc.paperless_document_id = pid
             doc.paperless_task_id = None  # settled — no outstanding upload
             await db.commit()
             logger.info(
                 f"paperless-leg: doc {doc.id} {status} "
-                f"(paperless_id={outcome.get('document_id')})"
+                f"(paperless_id={pid}{' via checksum' if pid and not task_pid else ''})"
             )
             # Post-consume PATCH — one update_document carrying two things:
             #  1. The DEFERRED metadata. With wait_for_consume=False the upload
@@ -562,10 +604,12 @@ def make_paperless_leg(
             #     Paperless keeps the consume-time date (the Jet-receipt drift).
             #  2. Renfield's high-quality OCR into Paperless's searchable
             #     content, overwriting Paperless's weaker consume-time OCR.
-            # Only on a freshly-filed 'success' with an id — a 'duplicate'
-            # already exists (leave its metadata/content untouched). Best-effort:
-            # a failure here does not un-settle the doc (it IS filed).
-            if status == "success" and pid:
+            # Only on a freshly-filed 'success' the TASK reported an id for — a
+            # 'duplicate' already exists (leave its metadata/content untouched),
+            # and a checksum-RESOLVED id may point at a pre-existing doc we must
+            # not overwrite. Best-effort: a failure here does not un-settle the
+            # doc (it IS filed).
+            if status == "success" and task_pid:
                 deferred = upload.get("deferred_patch") or {}
                 patch: dict = {"document_id": pid}
                 if deferred.get("created_date"):

@@ -408,6 +408,12 @@ class Settings(BaseSettings):
     # task that already finished returns terminal immediately; one still consuming
     # returns fast — we do not wait out a fresh consume here.
     paperless_refile_poll_timeout_s: float = 30.0
+    # Paperless REST base URL + token (same values the paperless MCP gets via
+    # mcp_servers.yaml). Used ONLY for the read-only checksum lookup that links a
+    # filed KB doc to its real Paperless document id when the consume task returns
+    # SUCCESS with no related_document (#1166). Env: PAPERLESS_API_URL / _TOKEN.
+    paperless_api_url: str | None = None
+    paperless_api_token: str | None = None
     mcp_max_response_size: int = Field(default=131072, ge=1024, le=524288)  # 128KB max response — accommodates list_correspondents on real corpora (~70KB at ~900 entries) without truncating mid-payload
     # MCP exponential-backoff for reconnect / transient failures
     mcp_backoff_initial_delay: float = Field(default=1.0, ge=0.1, le=60.0)

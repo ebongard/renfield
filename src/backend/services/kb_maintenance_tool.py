@@ -282,6 +282,25 @@ async def ingest_status(params: dict, user_id: int | None = None) -> dict:
                 ).all()
             }
 
+            # #1166: of the docs marked filed ('done'), how many actually LINK to a
+            # Paperless document id (verified present) vs. are unlinked (the id was
+            # never recorded → 'done' is unverified). Backfill links the rest.
+            pl_done_linked = int(
+                (
+                    await db.execute(
+                        select(func.count())
+                        .select_from(Document)
+                        .where(
+                            Document.paperless_state == "done",
+                            Document.paperless_document_id.isnot(None),
+                        )
+                    )
+                ).scalar()
+                or 0
+            )
+
+        pl_done_unlinked = max(0, int(pl_counts.get("done", 0)) - pl_done_linked)
+
         # worker liveness + live backlog (best-effort; never fail the readout)
         worker_alive = None
         queue_depth = None
@@ -343,6 +362,12 @@ async def ingest_status(params: dict, user_id: int | None = None) -> dict:
             f"{v} {_PL_LABELS.get(k, k)}" for k, v in sorted(pl_counts.items())
         )
         parts.append(f"Paperless: {pl_bits}.")
+        if pl_done_unlinked:
+            parts.append(
+                f"Hinweis: {pl_done_unlinked} als abgelegt markierte Dokument(e) sind noch "
+                f"nicht mit ihrer Paperless-ID verknüpft (Status unbestätigt; "
+                f"`bin/backfill_paperless_document_ids.py` verknüpft sie per Prüfsumme)."
+            )
         if worker_alive is not None:
             parts.append(
                 f"Worker: {'aktiv' if worker_alive else 'NICHT erreichbar'}"
@@ -361,6 +386,8 @@ async def ingest_status(params: dict, user_id: int | None = None) -> dict:
                 "paperless_state": pl_counts,
                 "paperless_pending": pl_pending,
                 "paperless_failed": pl_failed,
+                "paperless_done_linked": pl_done_linked,
+                "paperless_done_unlinked": pl_done_unlinked,
                 "worker_alive": worker_alive,
                 "queue_depth": queue_depth,
             },

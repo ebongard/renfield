@@ -877,3 +877,50 @@ async def test_await_consume_uses_per_call_timeout(monkeypatch):
 
     consume = [ct for tool, ct in calls if tool == "mcp.paperless.await_consume_result"]
     assert consume and consume[0] is not None and consume[0] > 30  # per-call override applied
+
+
+# ---------------------------------------------------------------------------
+# #1166: link paperless_document_id via checksum when the task returns no id
+# ---------------------------------------------------------------------------
+
+async def test_resolve_paperless_id_unconfigured_returns_none(monkeypatch):
+    from utils.config import settings
+    monkeypatch.setattr(settings, "paperless_api_url", None, raising=False)
+    monkeypatch.setattr(settings, "paperless_api_token", None, raising=False)
+    assert await leg_mod._resolve_paperless_id_by_checksum("abc123") is None
+    # no checksum → also None even if configured
+    monkeypatch.setattr(settings, "paperless_api_url", "http://paperless:8000", raising=False)
+    monkeypatch.setattr(settings, "paperless_api_token", "tok", raising=False)
+    assert await leg_mod._resolve_paperless_id_by_checksum(None) is None
+
+
+async def test_success_without_task_id_links_via_checksum(monkeypatch):
+    """The consume task settled `success` but returned NO document_id → the leg
+    resolves the real Paperless id by the file checksum and persists it (#1166)."""
+    _patch_extractor(monkeypatch)
+    resolver = AsyncMock(return_value=32)
+    monkeypatch.setattr(leg_mod, "_resolve_paperless_id_by_checksum", resolver)
+    leg = make_paperless_leg(_mcp(await_inner={"status": "success"}))  # NO document_id
+    doc, db = _doc(), AsyncMock()
+    doc.file_hash = "5d7af995"
+    doc.paperless_document_id = None
+
+    assert await leg(db, doc, _PDF, _meta()) is True
+    assert doc.paperless_state == PAPERLESS_STATE_DONE
+    assert doc.paperless_document_id == 32
+    resolver.assert_awaited_once_with("5d7af995")
+
+
+async def test_success_with_task_id_skips_checksum(monkeypatch):
+    """When the task DOES report a document_id, use it directly and never do the
+    checksum lookup (nor risk patching a pre-existing doc)."""
+    _patch_extractor(monkeypatch)
+    resolver = AsyncMock(return_value=99)
+    monkeypatch.setattr(leg_mod, "_resolve_paperless_id_by_checksum", resolver)
+    leg = make_paperless_leg(_mcp(await_inner={"status": "success", "document_id": 7}))
+    doc, db = _doc(), AsyncMock()
+    doc.paperless_document_id = None
+
+    assert await leg(db, doc, _PDF, _meta()) is True
+    assert doc.paperless_document_id == 7
+    resolver.assert_not_awaited()

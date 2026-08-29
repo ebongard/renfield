@@ -296,6 +296,7 @@ async def test_ingest_status_reports_counts(monkeypatch):
         _scalar_result(3),                                                     # chunkless total
         _scalar_result(1),                                                     # chunkless unindexable
         _all_result([("done", 8), (None, 2), ("pending", 5)]),                 # paperless group
+        _scalar_result(6),                                                     # done docs LINKED to a paperless id (#1166)
     ])
     monkeypatch.setattr(kb, "AsyncSessionLocal", cm)
     # force the worker/queue probe down the except path (keep the test hermetic)
@@ -312,6 +313,10 @@ async def test_ingest_status_reports_counts(monkeypatch):
     assert d["paperless_state"]["done"] == 8
     assert d["paperless_state"]["unfiled"] == 2   # NULL → unfiled
     assert d["paperless_pending"] == 5
+    # #1166: 6 of the 8 'done' docs actually link to a Paperless id; 2 are unverified.
+    assert d["paperless_done_linked"] == 6
+    assert d["paperless_done_unlinked"] == 2
+    assert "noch nicht mit ihrer Paperless-ID verknüpft" in out["message"]
     assert "KB-Verarbeitung" in out["message"]
     assert "3 fertige Dokument(e) haben KEINE Chunks" in out["message"]
     assert "2 reparierbar" in out["message"] and "1 vermutlich unlesbar" in out["message"]
@@ -324,6 +329,7 @@ async def test_ingest_status_all_unindexable_message(monkeypatch):
         _scalar_result(2),   # chunkless total
         _scalar_result(2),   # all unindexable
         _all_result([("done", 4)]),
+        _scalar_result(4),   # all done docs linked (#1166) → no unlinked hint
     ])
     monkeypatch.setattr(kb, "AsyncSessionLocal", cm)
     monkeypatch.setattr(
@@ -409,6 +415,7 @@ async def test_ingest_status_reports_split_lifecycle(monkeypatch):
         _scalar_result(0),
         _scalar_result(0),
         _all_result([("done", 12)]),
+        _scalar_result(12),  # all done docs linked (#1166)
     ])
     monkeypatch.setattr(kb, "AsyncSessionLocal", cm)
     monkeypatch.setattr(
@@ -429,6 +436,7 @@ async def test_ingest_status_no_split_line_when_no_split_docs(monkeypatch):
         _scalar_result(0),
         _scalar_result(0),
         _all_result([("done", 10)]),
+        _scalar_result(10),  # all done docs linked (#1166)
     ])
     monkeypatch.setattr(kb, "AsyncSessionLocal", cm)
     monkeypatch.setattr(
