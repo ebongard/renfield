@@ -166,6 +166,17 @@ the role descriptions in `config/agent_roles.yaml`.
   batch). The filed Paperless id is persisted on `documents.paperless_document_id`
   (migration `pc20260613`). The push itself never performs the external round-trip on a
   pooled DB connection — that inline leg was the 2026-07-01 pool-exhaustion outage.
+- **Paperless-id link via checksum (#1166).** The consume task frequently settles
+  `success`/`duplicate` with **no `related_document`** even though Paperless created/holds
+  the document, so the id came back NULL corpus-wide. `_resolve_paperless_id_by_checksum`
+  falls back to a read-only Paperless `?checksum__iexact=<file_hash>` lookup — renfield's
+  `documents.file_hash` equals Paperless's `checksum` (SHA256) — so the KB row still links
+  to the real Paperless doc. The deferred created_date/OCR PATCH stays guarded to the
+  TASK-reported id (never a checksum-resolved one, which may be a pre-existing doc).
+  `internal.ingest_status` reports `paperless_done_linked`/`paperless_done_unlinked` (the
+  *verified* filing count, not just `state='done'`); `bin/backfill_paperless_document_ids.py`
+  (`--dry-run`/`--commit`) links pre-fix docs by checksum. Needs `PAPERLESS_API_URL` +
+  `PAPERLESS_API_TOKEN` in the backend env (already provisioned for the MCP).
 - **Idempotent refile (no re-upload loop).** The leg persists the Paperless consume
   `task_id` on `documents.paperless_task_id` (migration `pc20260825`) BEFORE awaiting the
   verdict; on a retry it RE-POLLS that task (`await_consume_result`) instead of
