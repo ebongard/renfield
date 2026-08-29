@@ -53,8 +53,8 @@ roles:
 
   documents:
     description:
-      de: "Dokumente und E-Mail: Suche in Wissensdatenbank und Paperless, Download, Versand; SOWIE Verwaltung & Status der Dokument-VERARBEITUNG selbst: Verarbeitungsstatus/Rückstau der Indexierung, wie viele Dokumente KEINE Chunks haben / leer oder unvollständig indexiert sind, Dokumente ohne Chunks NEU INDEXIEREN / neu einlesen / reparieren; SOWIE Paperless-Pflege: DUBLETTEN / doppelte Dokumente finden und aufräumen/löschen"
-      en: "Documents and email: search knowledge base and Paperless, download, send; AND administration & status of the document PROCESSING itself: indexing status/backlog, how many documents have NO chunks / are empty or incompletely indexed, RE-INDEX documents without chunks; AND Paperless upkeep: find and clean up/delete DUPLICATE documents"
+      de: "Dokumente und E-Mail: Suche in Wissensdatenbank und Paperless, Download, Versand; SOWIE Verwaltung & Status der Dokument-VERARBEITUNG selbst: Verarbeitungsstatus/Rückstau der Indexierung, wie viele Dokumente KEINE Chunks haben / leer oder unvollständig indexiert sind, Dokumente ohne Chunks NEU INDEXIEREN / neu einlesen / reparieren; SOWIE Paperless-Ablage-STATUS & -Pflege: ob ALLE Dokumente in Paperless (vollständig) abgelegt sind, ob Dokumente in Paperless FEHLEN, wie viele (noch nicht) in Paperless sind, DUBLETTEN / doppelte Dokumente finden und aufräumen/löschen"
+      en: "Documents and email: search knowledge base and Paperless, download, send; AND administration & status of the document PROCESSING itself: indexing status/backlog, how many documents have NO chunks / are empty or incompletely indexed, RE-INDEX documents without chunks; AND Paperless filing STATUS & upkeep: whether ALL documents are (fully) filed in Paperless, whether documents are MISSING from Paperless, how many are (not yet) in Paperless, find and clean up/delete DUPLICATE documents"
     mcp_servers: [paperless, email]
     internal_tools: [internal.knowledge_search, internal.forward_attachment_to_paperless, internal.render_table, internal.render_list, internal.ingest_status, internal.reindex_documents, internal.list_chunkless_documents, internal.system_health, internal.reextract_paperless_metadata, internal.paperless_dedupe]
     max_steps: 8
@@ -98,8 +98,8 @@ roles:
 
   knowledge:
     description:
-      de: "Wissensdatenbank: INHALTLICHE Suche in eigenen hochgeladenen Dokumenten (was steht in einem Dokument, Fakten/Inhalte AUS Dokumenten). NICHT für Verwaltungs-/Statusfragen zur Verarbeitung selbst (Chunks, Indexierungsstatus, neu indexieren) — das ist 'documents'"
-      en: "Knowledge base: CONTENT search in own uploaded documents (what a document says, facts/content FROM documents). NOT for administration/status questions about the processing itself (chunks, indexing status, re-index) — that is 'documents'"
+      de: "Wissensdatenbank: INHALTLICHE Suche in eigenen hochgeladenen Dokumenten (was steht in einem Dokument, Fakten/Inhalte AUS Dokumenten). NICHT für Verwaltungs-/Statusfragen zur Verarbeitung selbst (Chunks, Indexierungsstatus, neu indexieren) und NICHT für die Frage, ob Dokumente in Paperless / vollständig abgelegt sind — das ist 'documents'"
+      en: "Knowledge base: CONTENT search in own uploaded documents (what a document says, facts/content FROM documents). NOT for administration/status questions about the processing itself (chunks, indexing status, re-index) and NOT for whether documents are filed in Paperless / fully archived — that is 'documents'"
     # No agent loop - uses RAG path directly
 
   general:
