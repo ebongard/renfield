@@ -258,10 +258,15 @@ files a **review proposal** the owner confirms by hand.
   still applies). (The portal's Zeitraum date-range filter is NOT driven — the
   Vaadin date field doesn't commit via automation; Bezeichnung + Kategorie + Typ
   is precise enough.)
-- **One-click send→confirm.** The "An Simba senden" success toast carries a
-  **"Jetzt prüfen"** link to the queued proposal (`/brain/review#simba-{id}`); the
-  review row has an `id` anchor and the section scrolls it into view on that hash
-  — no manual page-hunting.
+- **Inline send overlay.** Clicking **"An Simba senden"** on a KB doc row opens an
+  overlay (`components/simba/SimbaSendModal.tsx`) that creates/reuses the proposal,
+  **prefills** Bezeichnung/Kategorie/Typ/Zeitraum, and performs the irreversible
+  upload **in place** — a styled two-step confirm (never `window.confirm`), ≥44px
+  targets, and an explicit success acknowledgement (no silent vanish). Cancelling
+  leaves the proposal **queued** on `/brain/review` (the durable fallback;
+  idempotent per document). The overlay and the queue share one
+  `components/simba/SimbaProposalForm.tsx`. The queue row keeps an `id` anchor so
+  `/brain/review#simba-{id}` still deep-links to it.
 - **Routes** (`api/routes/simba_ingest.py`, all **required-auth** when auth is on —
   the actions can trigger an irreversible upload, so never reachable anonymously):
   `GET /api/simba-ingest` (pending, owner-scoped — a proposal is visible only to
@@ -283,8 +288,11 @@ files a **review proposal** the owner confirms by hand.
   (`classify_existing`, content-hash + KB, across ALL sources) and never reaches
   the hook — so re-dropping it into the share produces nothing. To send such a
   document, use the **"An Simba senden"** action on the KB document row
-  (`/knowledge` and the `/wissen/dokumente` lens): `POST /api/simba-ingest/from-document/{id}`
-  → `create_proposal_for_document` files the same PENDING proposal on `/brain/review`.
+  (`/knowledge` and the `/wissen/dokumente` lens) — it opens the inline send overlay
+  above. `POST /api/simba-ingest/from-document/{id}` → `create_proposal_for_document`
+  creates (or reuses) the pending proposal AND returns the suggested
+  category/type/Bezeichnung so the overlay prefills; confirm/upload happens in the
+  overlay (or later from the `/brain/review` queue).
   It's owner/admin-gated (owner = the document's **atom** owner; an atom-less /
   unresolved-owner document is **admin-only**, `fallback=None`, so a non-owner
   can't queue someone else's document), idempotent on the pending state, and
