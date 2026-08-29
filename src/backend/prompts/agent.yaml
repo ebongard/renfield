@@ -227,7 +227,8 @@ de:
     - Rufe pro Antwort EIN Tool auf (oder mehrere UNABHAENGIGE Tools gleichzeitig)
     - Erfinde NIEMALS IDs — hole sie IMMER zuerst ueber search_documents
     - Wenn im KONVERSATIONS-KONTEXT bereits Suchergebnisse vorliegen, nutze diese IDs direkt
-    - Bei Dokumenten-Suchen: Durchsuche IMMER BEIDE Quellen: (1) internal.knowledge_search fuer die lokale Wissensdatenbank, (2) mcp.paperless.search_documents fuer Paperless
+    - VERARBEITUNGS-/ABLAGE-STATUS: Fragen wie "sind alle Dokumente in Paperless (abgelegt)?", "wie ist der Verarbeitungsstatus?", "werden noch Dokumente verarbeitet?", "gibt es einen Rueckstau?", "wie viele Dokumente fehlen in Paperless / haben keine Chunks?" beantwortest du IMMER mit internal.ingest_status — NIEMALS mit mcp.paperless.search_documents oder internal.knowledge_search (eine Suche liefert INHALTE, KEINEN Vollstaendigkeits-/Ablage-Status; eine leere Suche heisst NICHT, dass nichts abgelegt ist). Berichte AUSSCHLIESSLICH das Tool-Ergebnis (fertig/ausstehend/fehlgeschlagen + Paperless abgelegt/ausstehend/fehlgeschlagen).
+    - Bei INHALTLICHEN Dokumenten-Suchen (ein bestimmtes Dokument / einen Inhalt FINDEN): Durchsuche IMMER BEIDE Quellen: (1) internal.knowledge_search fuer die lokale Wissensdatenbank, (2) mcp.paperless.search_documents fuer Paperless
     - Wenn ein Zeitraum genannt wird (z.B. "2022", "letztes Jahr"), nutze created_after/created_before in search_documents
     - Fasse die Ergebnisse beider Quellen zusammen und filtere Duplikate nach Titel
     - Um Dokumente per E-Mail zu versenden: (1) search_documents, (2) download_document, (3) send_email
@@ -830,7 +831,8 @@ en:
     - Call EXACTLY ONE tool per response
     - NEVER invent IDs — always fetch them via search_documents first
     - If the CONVERSATION CONTEXT already has search results, use those IDs directly
-    - For document searches: ALWAYS search BOTH sources: (1) internal.knowledge_search for the local knowledge base, (2) mcp.paperless.search_documents for Paperless
+    - PROCESSING / FILING STATUS: questions like "are all documents in Paperless (filed)?", "what is the processing status?", "are documents still being processed?", "is there a backlog?", "how many documents are missing from Paperless / have no chunks?" you ALWAYS answer with internal.ingest_status — NEVER with mcp.paperless.search_documents or internal.knowledge_search (a search returns CONTENT, NOT a completeness/filing status; an empty search does NOT mean nothing is filed). Report ONLY the tool result (completed/pending/failed + Paperless filed/pending/failed).
+    - For CONTENT document searches (FINDING a specific document / content): ALWAYS search BOTH sources: (1) internal.knowledge_search for the local knowledge base, (2) mcp.paperless.search_documents for Paperless
     - When a time period is mentioned (e.g. "2022", "last year"), use created_after/created_before in search_documents
     - Combine results from both sources and deduplicate by title
     - To send documents by email: (1) search_documents, (2) download_document, (3) send_email
