@@ -243,9 +243,13 @@ files a **review proposal** the owner confirms by hand.
   sanitize. A user-edited value wins (also sanitized); blank or all-disallowed
   falls back to the derived title (`_bezeichnung`/`_sanitize_desc`).
 - **Booking period (Zeitraum).** The review row shows editable **Monat/Jahr**
-  selects (localized month names, default the current month/year) — the Simba MCP
-  otherwise *silently* stamps an omitted period with the CURRENT date, so the
-  period is always shown + sent, range-validated server-side (`confirm()`,
+  selects (localized month names) **defaulted to the DOCUMENT's own date** —
+  `_document_period` derives it from the Schicht-A `rechnungsdatum` fact → other
+  date facts → a date parsed from the generated title, falling back to the current
+  month only when no date is derivable (#1167; previously it always defaulted to
+  the current month, silently mis-booking e.g. a March invoice as August). The
+  Simba MCP otherwise *silently* stamps an omitted period with the CURRENT date,
+  so the period is always shown + sent, range-validated server-side (`confirm()`,
   month 1-12, year 2000-2100). The confirm dialog shows the period.
 - **Already-in-Simba guard.** Before the irreversible upload, `confirm()` calls
   `_find_in_simba` → `mcp.simba.list_transfers` filtered by the Bezeichnung
