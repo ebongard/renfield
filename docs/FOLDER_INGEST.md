@@ -242,12 +242,32 @@ files a **review proposal** the owner confirms by hand.
   with an em-dash/comma/slash would break the upload — hence the renfield-side
   sanitize. A user-edited value wins (also sanitized); blank or all-disallowed
   falls back to the derived title (`_bezeichnung`/`_sanitize_desc`).
+- **Booking period (Zeitraum).** The review row shows editable **Monat/Jahr**
+  selects (localized month names, default the current month/year) — the Simba MCP
+  otherwise *silently* stamps an omitted period with the CURRENT date, so the
+  period is always shown + sent, range-validated server-side (`confirm()`,
+  month 1-12, year 2000-2100). The confirm dialog shows the period.
+- **Already-in-Simba guard.** Before the irreversible upload, `confirm()` calls
+  `_find_in_simba` → `mcp.simba.list_transfers` filtered by the Bezeichnung
+  (Suchbegriff) **+ Kategorie + Typ**, all driven **server-side** by the MCP's
+  own grid widgets (≥ MCP v1.0.8 — no full-grid scan, no window limit). If a
+  match exists it returns `already_in_simba` (a 200 informative gate, not an
+  error) and does NOT upload; the review row warns with the existing entry and a
+  **"Trotzdem übertragen"** button that re-confirms with `force=true`. Best-effort
+  — a check failure never blocks a legitimate upload (the explicit confirm gate
+  still applies). (The portal's Zeitraum date-range filter is NOT driven — the
+  Vaadin date field doesn't commit via automation; Bezeichnung + Kategorie + Typ
+  is precise enough.)
+- **One-click send→confirm.** The "An Simba senden" success toast carries a
+  **"Jetzt prüfen"** link to the queued proposal (`/brain/review#simba-{id}`); the
+  review row has an `id` anchor and the section scrolls it into view on that hash
+  — no manual page-hunting.
 - **Routes** (`api/routes/simba_ingest.py`, all **required-auth** when auth is on —
   the actions can trigger an irreversible upload, so never reachable anonymously):
   `GET /api/simba-ingest` (pending, owner-scoped — a proposal is visible only to
   its owner, or to an admin for an ownerless one; each carries a
-  `suggested_description`), `POST …/{id}/confirm` `{category,type,description?}`,
-  `POST …/{id}/reject`.
+  `suggested_description`), `POST …/{id}/confirm`
+  `{category,type,description?,month?,year?,force?}`, `POST …/{id}/reject`.
 - **No double-upload.** `confirm()` is **claim-before-act**: a conditional
   `PENDING → UPLOADING` UPDATE claims the row *before* the irreversible
   `mcp.simba.upload_documents` (`dry_run:false, confirm:true`), so two concurrent
