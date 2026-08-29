@@ -588,6 +588,19 @@ class Document(Base):
     # never on an estimated duration.
     split_heartbeat_at = Column(DateTime, nullable=True)
 
+    # KB near-duplicate resolution (#1170): set on the LOSER when the owner
+    # resolves a document_duplicate_proposals pair with resolution='supersede'.
+    # Points at the surviving document. A superseded document is excluded from
+    # retrieval/search/listing (WHERE superseded_by_document_id IS NULL) — a
+    # recoverable alternative to hard-delete (nulling it un-supersedes). SET NULL
+    # so deleting the survivor never cascades into the superseded loser.
+    superseded_by_document_id = Column(
+        Integer,
+        ForeignKey("documents.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+
     # Timestamps
     created_at = Column(DateTime, default=_utcnow)
     processed_at = Column(DateTime, nullable=True)
@@ -2269,6 +2282,84 @@ class SimbaIngestProposal(Base):
     )
 
     document = relationship("Document", foreign_keys=[document_id])
+
+
+# KB near-duplicate DOCUMENT proposal review queue (#1170).
+DOC_DUP_PROPOSAL_PENDING = "pending"
+DOC_DUP_PROPOSAL_APPROVED = "approved"
+DOC_DUP_PROPOSAL_REJECTED = "rejected"
+# A concurrent approve already resolved one of the two documents (superseded or
+# deleted) before this one applied — the pair is moot, closed as superseded.
+DOC_DUP_PROPOSAL_SUPERSEDED = "superseded"
+
+# Which signal flagged the pair (kept for the review UI + telemetry):
+DOC_DUP_SIGNAL_SHARED_IDENTIFIER = "shared_identifier"  # same category='identifier' normalized_value (P1)
+DOC_DUP_SIGNAL_TEXT_SIMILARITY = "text_similarity"      # near-identical normalized text (P3)
+DOC_DUP_SIGNAL_METADATA_IDENTITY = "metadata_identity"  # same issuer+date+total+page_count (P3)
+
+# How the owner chose to resolve an approved pair (set at approve time):
+DOC_DUP_RESOLUTION_SUPERSEDE = "supersede"  # recoverable — loser marked superseded_by, kept
+DOC_DUP_RESOLUTION_DELETE = "delete"        # loser deleted via the standard document-delete path
+
+
+class DocumentDuplicateProposal(Base):
+    """A detector-proposed near-duplicate KB document pair awaiting owner review.
+
+    The KB near-duplicate detector (services/document_dedupe_service.py) finds
+    two DOCUMENTS that byte-hash dedup can't (different file_hash) yet are
+    duplicates by content evidence — primarily a shared document-unique
+    identifier fact (same invoice/order number, category='identifier'
+    normalized_value). Nothing is ever auto-deleted: each candidate lands here
+    for the owner to approve (choosing supersede vs delete per-pair, #1170) or
+    reject on /brain/review — the same propose-only safety model as the KG
+    merge-proposal / PDF-split / Simba-ingest queues.
+
+    The pair is stored ORDERED (document_a_id < document_b_id) so the partial
+    unique index keeps at most one PENDING proposal per unordered pair — the
+    detector relies on this to stay idempotent across runs.
+    """
+    __tablename__ = "document_duplicate_proposals"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    document_a_id = Column(
+        Integer, ForeignKey("documents.id", ondelete="CASCADE"), nullable=False
+    )
+    document_b_id = Column(
+        Integer, ForeignKey("documents.id", ondelete="CASCADE"), nullable=False
+    )
+    signal = Column(String(30), nullable=False, default=DOC_DUP_SIGNAL_SHARED_IDENTIFIER)
+    # The evidence: for shared_identifier, "<kind>=<normalized_value>".
+    shared_key = Column(Text, nullable=True)
+    similarity = Column(Float, nullable=False, default=1.0)
+    # Detector's survivor suggestion (Paperless-linked > most facts > lowest id);
+    # the owner can override at approve time.
+    suggested_survivor_id = Column(
+        Integer, ForeignKey("documents.id", ondelete="SET NULL"), nullable=True
+    )
+    status = Column(String(20), nullable=False, default=DOC_DUP_PROPOSAL_PENDING, index=True)
+    # Set at approve: 'supersede' or 'delete' (owner's per-pair choice).
+    resolution = Column(String(16), nullable=True)
+    created_at = Column(DateTime, default=_utcnow)
+    resolved_at = Column(DateTime, nullable=True)
+    resolved_by_user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+
+    __table_args__ = (
+        Index("ix_document_duplicate_proposals_user_status", "user_id", "status"),
+        # One PENDING proposal per ordered (a, b) pair (create_all + migrated PG
+        # parity); the detector stores a<b so this covers the unordered pair.
+        Index(
+            "uq_document_duplicate_proposals_pending_pair",
+            "document_a_id",
+            "document_b_id",
+            unique=True,
+            postgresql_where=sa_text("status = 'pending'"),
+            sqlite_where=sa_text("status = 'pending'"),
+        ),
+    )
+
+    document_a = relationship("Document", foreign_keys=[document_a_id])
+    document_b = relationship("Document", foreign_keys=[document_b_id])
 
 
 class MemoryHistory(Base):

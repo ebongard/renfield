@@ -35,7 +35,8 @@ engine = create_async_engine(
 # take advisory locks, and ALL of them acquire on a DEDICATED connection they
 # hold + explicitly unlock for the lock's whole scope (the KG reconciler
 # 0x4B47, the obligation notifier/digest/calendar 0x4F42/0x4F43/0x4F44, the
-# Schicht-A fact-override reindex 0x5341, and the Scheduled Tasks engine 0x5354),
+# Schicht-A fact-override reindex 0x5341, the Scheduled Tasks engine 0x5354,
+# and the KB document-dedupe detector 0x4444),
 # so this checkin sweep only ever fires as a backstop against a leaked lock —
 # never against a live one on the pooled work session. A future feature that
 # takes an advisory lock on a POOLED session (not a dedicated connection) would

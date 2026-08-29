@@ -120,6 +120,9 @@ class FeatureFlags(BaseModel):
     # True when watch-folder PDFs are routed to the Simba review queue (xidra).
     # Gates the Simba review section on /brain/review.
     simba_ingest_review_enabled: bool = False
+    # Gates the KB near-duplicate document review section on /brain/review (#1170,
+    # Phase 2 UI). Off => surface absent. See utils/config.py::document_dedupe_enabled.
+    document_dedupe_enabled: bool = False
 
 
 @router.get("/features", response_model=FeatureFlags)
@@ -147,4 +150,5 @@ async def get_features(
         wissensbasis_reva_available=_reva_wissensbasis_mounted(request),
         simba_upload_enabled=_simba_available(request),
         simba_ingest_review_enabled=settings.folder_ingest_simba_enabled,
+        document_dedupe_enabled=settings.document_dedupe_enabled,
     )

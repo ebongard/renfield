@@ -182,6 +182,7 @@ class AgentToolRegistry:
             internal_filter: If set, only register these tool names. None = all.
         """
         from services.chat_upload_tool import CHAT_UPLOAD_TOOLS
+        from services.document_dedupe_tool import FIND_DUPLICATE_DOCUMENTS_TOOL
         from services.kb_maintenance_tool import KB_MAINTENANCE_TOOLS
         from services.knowledge_tool import KNOWLEDGE_TOOL
         from services.memory_list_tool import MEMORY_LIST_TOOL
@@ -196,6 +197,7 @@ class AgentToolRegistry:
             **KNOWLEDGE_TOOL, **MEMORY_LIST_TOOL, **CHAT_UPLOAD_TOOLS, **WIDGET_TOOLS,
             **KB_MAINTENANCE_TOOLS, **SYSTEM_HEALTH_TOOL, **PAPERLESS_REEXTRACT_TOOL,
             **PAPERLESS_DEDUPE_TOOL, **REMINDER_TOOL, **SIMBA_FORWARD_TOOL,
+            **FIND_DUPLICATE_DOCUMENTS_TOOL,
         }
 
         for name, definition in platform_tools.items():

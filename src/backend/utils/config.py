@@ -842,6 +842,16 @@ class Settings(BaseSettings):
     kg_conflation_monitor_interval: int = Field(default=86400, ge=300, le=604800)    # Seconds between scans (default 1d)
     kg_conflation_monitor_threshold: float = Field(default=0.85, ge=0.5, le=1.0)     # Cosine at/above which a distinct-name same-type pair is flagged
     kg_conflation_monitor_max_pairs: int = Field(default=100, ge=1, le=1000)         # Cap on pairs reported per user per scan
+    # KB near-duplicate DOCUMENT detection (#1170). Byte-hash ingest dedup can't
+    # catch two different-bytes files of the same document; this per-user detector
+    # self-joins document_facts on a shared document-unique identifier
+    # (category='identifier' normalized_value, e.g. the same invoice number) and
+    # proposes the pair for owner review (propose-only, never auto-deletes).
+    document_dedupe_enabled: bool = False                                        # Master switch (opt-in; dark by default)
+    document_dedupe_interval: int = Field(default=86400, ge=300, le=604800)      # Seconds between autonomous scans (P3 scheduled task; default 1d)
+    document_dedupe_max_per_run: int = Field(default=200, ge=1, le=1000)         # Safety cap on proposals created per user per run
+    document_dedupe_recurring_identifier_max_docs: int = Field(default=3, ge=1, le=100)  # An identifier value on MORE than N docs is a recurring id (Steuernummer/IBAN/Kundennr) — skip it, never emit N² pairs
+    document_dedupe_min_identifier_length: int = Field(default=4, ge=1, le=64)   # Ignore trivially short identifier values (weak signal)
     memory_kg_bridge_enabled: bool = False                                       # Phase 3: link memory subjects to canonical KG entities (save-time + entity-augmented retrieval). Opt-in.
     memory_subsume_to_kg: bool = False                                           # Phase 3-subsume: decomposable facts (category=fact + subject) live in the KG only; skip the flat duplicate. Opt-in, aggressive.
     memory_subsume_require_kg_relation: bool = True                              # Phase 3-subsume recall-loss REDUCER (subject-level proxy, NOT a per-fact guarantee): only drop the flat fact when the subject's person-entity already has >=1 relation — protects never-before-related subjects. A state/feeling fact about an already-related person is still subsumed-and-lost; per-fact fix is a TODOS follow-up. Off = legacy unguarded subsume. Does NOT make subsume multi-user-safe.

@@ -35,6 +35,7 @@ from api.routes import (
     folder_ingest,
     intents,
     internal_auth,
+    document_dedupe,
     knowledge,
     mcp_health,
     meetings,
@@ -246,6 +247,7 @@ app.include_router(knowledge.router, prefix="/api/knowledge", tags=["Knowledge"]
 app.include_router(folder_ingest.router, prefix="/api/folder-ingest", tags=["Folder Ingest"])
 app.include_router(pdf_split.router, prefix="/api/pdf-split", tags=["PDF Split"])
 app.include_router(simba_ingest.router, prefix="/api", tags=["Simba Ingest"])
+app.include_router(document_dedupe.router, prefix="/api", tags=["Document Dedupe"])
 app.include_router(mcp_health.router, prefix="/api/mcp-health", tags=["MCP Health"])
 app.include_router(email_ingest.router, prefix="/api/email-ingest", tags=["Email Ingest"])
 app.include_router(memory.router, prefix="/api/memory", tags=["Memory"])

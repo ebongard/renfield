@@ -37,6 +37,7 @@ INTERNAL_TOOL_NAMES = {
     "internal.create_reminder",           # REMINDER_TOOL
     "internal.forward_attachment_to_simba",  # SIMBA_FORWARD_TOOL
     "internal.simba_commit_upload",          # SIMBA_FORWARD_TOOL
+    "internal.find_duplicate_documents",     # FIND_DUPLICATE_DOCUMENTS_TOOL (#1170)
 }
 NUM_INTERNAL_TOOLS = len(INTERNAL_TOOL_NAMES)
 

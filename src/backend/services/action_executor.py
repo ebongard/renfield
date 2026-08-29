@@ -126,6 +126,14 @@ class ActionExecutor:
                 user_id=user_id, user_permissions=user_permissions,
             )
 
+        # KB near-duplicate detection: find documents that byte-hash dedup misses
+        # (different bytes, same document) via a shared identifier. Proposes pairs
+        # for owner review — never deletes. user_id scopes the scan to the caller's
+        # own docs. Dark until document_dedupe_enabled.
+        if intent == "internal.find_duplicate_documents":
+            from services.document_dedupe_tool import find_duplicate_documents
+            return await find_duplicate_documents(parameters, user_id=user_id)
+
         # Read-only: list completed docs that have no chunks, BY NAME.
         if intent == "internal.list_chunkless_documents":
             from services.kb_maintenance_tool import list_chunkless_documents
