@@ -176,6 +176,7 @@ class LexicalRetrieval:
             JOIN documents d ON dc.document_id = d.id
             LEFT JOIN knowledge_bases kb ON d.knowledge_base_id = kb.id
             WHERE d.status = 'completed'
+              AND d.superseded_by_document_id IS NULL
               AND dc.search_vector IS NOT NULL
               AND dc.search_vector @@ ({tsquery_union})
               AND {circles_clause}
