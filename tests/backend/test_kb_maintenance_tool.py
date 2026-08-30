@@ -605,3 +605,53 @@ async def test_refile_lease_held_skips_enqueue(monkeypatch):
     assert out["data"]["targeted"] == 1
     assert out["data"]["queued"] == 0
     assert q.enqueue.await_count == 0
+
+
+# --------------------------------------------------------------------------
+# list_unfiled_documents — owner scoping + wildcard escaping (#1171 review)
+# --------------------------------------------------------------------------
+
+def _compiled(session, call_index=0):
+    from sqlalchemy.dialects import postgresql
+    stmt = session.execute.await_args_list[call_index].args[0]
+    return str(stmt.compile(dialect=postgresql.dialect())).lower()
+
+
+@pytest.mark.asyncio
+async def test_list_unfiled_owner_scoped_for_non_admin(monkeypatch):
+    cm, session = _session([_all_result([])])
+    monkeypatch.setattr(kb, "AsyncSessionLocal", cm)
+    monkeypatch.setattr(kb.settings, "auth_enabled", True)
+    monkeypatch.setattr(kb, "has_permission", lambda *_a: False)  # non-admin
+
+    await kb.list_unfiled_documents({"query": "x"}, user_id=5, user_permissions=[])
+    sql = _compiled(session)
+    assert "atoms" in sql and "owner_user_id" in sql  # scoped to the caller's docs
+
+
+@pytest.mark.asyncio
+async def test_list_unfiled_admin_sees_all(monkeypatch):
+    cm, session = _session([_all_result([])])
+    monkeypatch.setattr(kb, "AsyncSessionLocal", cm)
+    monkeypatch.setattr(kb.settings, "auth_enabled", True)
+    monkeypatch.setattr(kb, "has_permission", lambda *_a: True)  # admin
+
+    await kb.list_unfiled_documents({"query": "x"}, user_id=5, user_permissions=["admin"])
+    sql = _compiled(session)
+    assert "atoms" not in sql  # admin: no owner scope
+
+
+@pytest.mark.asyncio
+async def test_list_unfiled_unscoped_when_auth_off(monkeypatch):
+    cm, session = _session([_all_result([])])
+    monkeypatch.setattr(kb, "AsyncSessionLocal", cm)
+    monkeypatch.setattr(kb.settings, "auth_enabled", False)
+
+    await kb.list_unfiled_documents({"query": "x"}, user_id=5, user_permissions=[])
+    sql = _compiled(session)
+    assert "atoms" not in sql  # single-user: no scope
+
+
+def test_escape_like_neutralizes_wildcards():
+    assert kb._escape_like("50%_off") == "50\\%\\_off"
+    assert kb._escape_like("a\\b") == "a\\\\b"

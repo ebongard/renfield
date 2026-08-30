@@ -133,9 +133,13 @@ class ActionExecutor:
 
         # Read-only: Paperless filing status BY NAME — list unfiled/failed docs, or
         # (with a query) check whether a specific document is in Paperless.
+        # Owner-scoped: user_permissions injected so an admin sees all, a non-admin
+        # only their own docs (the query mode is a corpus-wide name search).
         if intent == "internal.list_unfiled_documents":
             from services.kb_maintenance_tool import list_unfiled_documents
-            return await list_unfiled_documents(parameters, user_id=user_id)
+            return await list_unfiled_documents(
+                parameters, user_id=user_id, user_permissions=user_permissions
+            )
 
         # Write/maintenance: re-file FAILED docs to Paperless (reset + enqueue a
         # worker refile; Docling stays in the worker). RAG_MANAGE-gated, so

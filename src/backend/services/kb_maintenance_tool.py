@@ -783,12 +783,26 @@ def _filing_status(state: str | None, pid: int | None) -> tuple[str, bool]:
     return ("nicht für Paperless vorgesehen (interner Upload)", False)
 
 
-async def list_unfiled_documents(params: dict, user_id: int | None = None) -> dict:
+def _escape_like(term: str) -> str:
+    """Escape LIKE/ILIKE wildcards so a query containing %/_ matches literally."""
+    return term.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
+async def list_unfiled_documents(
+    params: dict,
+    user_id: int | None = None,
+    user_permissions: list[str] | None = None,
+) -> dict:
     """Report Paperless filing status by name.
 
     No ``query`` → list completed documents that are NOT successfully filed
     (paperless_state failed/pending). With ``query`` → report the filing status of
     the matching document(s), so the user can ask "is document X in Paperless?".
+
+    **Owner-scoped when auth is on:** a non-admin caller sees/searches only their
+    OWN documents (by the atom owner); an ADMIN — or the auth-off single-user —
+    sees all. This keeps the query mode from becoming a corpus-wide document-name
+    search reachable by a low-privilege user on a multi-user instance (xidra).
     """
     limit = LIST_DEFAULT_LIMIT
     if params.get("limit"):
@@ -798,6 +812,24 @@ async def list_unfiled_documents(params: dict, user_id: int | None = None) -> di
             pass
     query = (params.get("query") or "").strip()
 
+    # Owner scope: auth on + a known non-admin caller → own documents only.
+    apply_scope = (
+        settings.auth_enabled
+        and user_id is not None
+        and not has_permission(user_permissions or [], Permission.ADMIN)
+    )
+
+    def _scoped(stmt):
+        """Restrict a Document select to the caller's own docs (atom owner).
+
+        INNER-joins atoms, so an atom-less (owner-less) document is invisible to a
+        scoped non-admin caller — fail-closed, the intended privacy behavior."""
+        if not apply_scope:
+            return stmt
+        return stmt.join(Atom, Document.atom_id == Atom.atom_id).where(
+            Atom.owner_user_id == user_id
+        )
+
     display_name = func.coalesce(
         Document.generated_title, Document.title, Document.filename
     )
@@ -805,22 +837,23 @@ async def list_unfiled_documents(params: dict, user_id: int | None = None) -> di
     try:
         async with AsyncSessionLocal() as db:
             if query:
-                like = f"%{query}%"
+                like = f"%{_escape_like(query)}%"
                 rows = (
                     await db.execute(
-                        select(
-                            Document.id,
-                            display_name,
-                            Document.paperless_state,
-                            Document.paperless_document_id,
-                        )
-                        .where(
-                            Document.status == DOC_STATUS_COMPLETED,
-                            or_(
-                                Document.generated_title.ilike(like),
-                                Document.title.ilike(like),
-                                Document.filename.ilike(like),
-                            ),
+                        _scoped(
+                            select(
+                                Document.id,
+                                display_name,
+                                Document.paperless_state,
+                                Document.paperless_document_id,
+                            ).where(
+                                Document.status == DOC_STATUS_COMPLETED,
+                                or_(
+                                    Document.generated_title.ilike(like),
+                                    Document.title.ilike(like),
+                                    Document.filename.ilike(like),
+                                ),
+                            )
                         )
                         .order_by(Document.id.desc())
                         .limit(limit)
@@ -863,7 +896,7 @@ async def list_unfiled_documents(params: dict, user_id: int | None = None) -> di
                 }
 
             # list mode: documents that should be filed but aren't
-            base = (
+            base = _scoped(
                 select(
                     Document.id, display_name, Document.paperless_state,
                     Document.paperless_document_id,
@@ -876,10 +909,12 @@ async def list_unfiled_documents(params: dict, user_id: int | None = None) -> di
             total = (
                 await db.execute(
                     select(func.count()).select_from(
-                        select(Document.id)
-                        .where(
-                            Document.status == DOC_STATUS_COMPLETED,
-                            Document.paperless_state.in_(_UNFILED_STATES),
+                        _scoped(
+                            select(Document.id)
+                            .where(
+                                Document.status == DOC_STATUS_COMPLETED,
+                                Document.paperless_state.in_(_UNFILED_STATES),
+                            )
                         )
                         .subquery()
                     )
