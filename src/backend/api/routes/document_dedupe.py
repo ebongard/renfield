@@ -1,8 +1,8 @@
 """KB near-duplicate document review routes (#1170).
 
 Owner surfaces the near-duplicate DOCUMENT pairs the detector proposed: list the
-pending pairs, or trigger a fresh scan. Approve/reject (with the per-pair
-supersede-vs-delete resolution) + the /brain/review UI land in Phase 2.
+pending pairs, trigger a fresh scan, and (Phase 2) approve — choosing per-pair
+SUPERSEDE (recoverable) vs DELETE for the loser — or reject.
 
 All routes are owner-scoped and gated on ``document_dedupe_enabled`` (404 when
 off — dark by default). See services/document_dedupe_service.py.
@@ -16,6 +16,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.database import (
     DOC_DUP_PROPOSAL_PENDING,
+    DOC_DUP_RESOLUTION_DELETE,
+    DOC_DUP_RESOLUTION_SUPERSEDE,
     Document,
     DocumentDuplicateProposal,
 )
@@ -41,10 +43,37 @@ def _uid(user) -> int | None:
     return getattr(user, "id", None) if user is not None else None
 
 
+def _is_admin(user) -> bool:
+    if user is None:
+        return False
+    try:
+        from models.permissions import Permission, has_permission
+
+        return has_permission(user.get_permissions(), Permission.ADMIN)
+    except Exception:
+        return False
+
+
+async def _owned_proposal(db: AsyncSession, proposal_id: int, user) -> DocumentDuplicateProposal:
+    """Load a proposal, gating on ownership (uniform 404). Admin sees all; a
+    non-admin only their own; auth-off sees all."""
+    p = (
+        await db.execute(
+            select(DocumentDuplicateProposal).where(DocumentDuplicateProposal.id == proposal_id)
+        )
+    ).scalar_one_or_none()
+    if p is None:
+        raise HTTPException(status_code=404, detail="Proposal not found")
+    if settings.auth_enabled and not _is_admin(user) and p.user_id != _uid(user):
+        raise HTTPException(status_code=404, detail="Proposal not found")
+    return p
+
+
 class DupDocBrief(BaseModel):
     id: int
     name: str
     paperless_document_id: int | None = None
+    created_at: str | None = None
 
 
 class DuplicateProposalOut(BaseModel):
@@ -79,6 +108,7 @@ async def _brief(db: AsyncSession, doc_id: int) -> DupDocBrief:
         id=doc_id,
         name=_display_name(doc),
         paperless_document_id=(doc.paperless_document_id if doc is not None else None),
+        created_at=(doc.created_at.isoformat() if doc is not None and doc.created_at else None),
     )
 
 
@@ -131,3 +161,58 @@ async def run_document_dedupe(
         newly_proposed=report.proposed,
         pending_pairs=len(pending),
     )
+
+
+class ResolveRequest(BaseModel):
+    # 'supersede' (recoverable: loser hidden from retrieval) or 'delete' (loser
+    # removed via the standard document-delete path).
+    resolution: str = DOC_DUP_RESOLUTION_SUPERSEDE
+    # Optional survivor override (must be one of the pair); else the suggestion.
+    survivor_id: int | None = None
+
+
+class ResolveResponse(BaseModel):
+    status: str
+    resolution: str | None = None
+    survivor_id: int | None = None
+    loser_id: int | None = None
+
+
+@router.post("/document-duplicates/{proposal_id}/approve", response_model=ResolveResponse)
+async def approve_document_duplicate(
+    proposal_id: int,
+    body: ResolveRequest,
+    db: AsyncSession = Depends(get_db),
+    user=Depends(get_optional_user),
+) -> ResolveResponse:
+    _require_enabled()
+    _require_user(user)
+    if body.resolution not in (DOC_DUP_RESOLUTION_SUPERSEDE, DOC_DUP_RESOLUTION_DELETE):
+        raise HTTPException(status_code=422, detail="resolution must be 'supersede' or 'delete'")
+    p = await _owned_proposal(db, proposal_id, user)
+    if p.status != DOC_DUP_PROPOSAL_PENDING:
+        raise HTTPException(status_code=409, detail="Proposal already resolved")
+    res = await DocumentDedupeService(db).resolve_proposal(
+        p, user_id=_uid(user), resolution=body.resolution, survivor_id=body.survivor_id
+    )
+    return ResolveResponse(
+        status=res.get("status", "invalid"),
+        resolution=res.get("resolution"),
+        survivor_id=res.get("survivor_id"),
+        loser_id=res.get("loser_id"),
+    )
+
+
+@router.post("/document-duplicates/{proposal_id}/reject", response_model=ResolveResponse)
+async def reject_document_duplicate(
+    proposal_id: int,
+    db: AsyncSession = Depends(get_db),
+    user=Depends(get_optional_user),
+) -> ResolveResponse:
+    _require_enabled()
+    _require_user(user)
+    p = await _owned_proposal(db, proposal_id, user)
+    if p.status != DOC_DUP_PROPOSAL_PENDING:
+        raise HTTPException(status_code=409, detail="Proposal already resolved")
+    res = await DocumentDedupeService(db).reject_proposal(p, user_id=_uid(user))
+    return ResolveResponse(status=res.get("status", "invalid"))

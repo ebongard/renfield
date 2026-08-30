@@ -37,14 +37,20 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+from datetime import UTC, datetime
+
 from loguru import logger
-from sqlalchemy import and_, exists, func, select, text
+from sqlalchemy import and_, exists, func, select, text, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine, AsyncSession
 from sqlalchemy.orm import aliased
 
 from models.database import (
+    DOC_DUP_PROPOSAL_APPROVED,
     DOC_DUP_PROPOSAL_PENDING,
+    DOC_DUP_PROPOSAL_REJECTED,
+    DOC_DUP_RESOLUTION_DELETE,
+    DOC_DUP_RESOLUTION_SUPERSEDE,
     DOC_DUP_SIGNAL_SHARED_IDENTIFIER,
     Atom,
     Document,
@@ -317,3 +323,121 @@ class DocumentDedupeService:
                     text("SELECT pg_advisory_unlock(:ns, :uid)"),
                     {"ns": _DEDUPE_LOCK_NS, "uid": lock_objid},
                 )
+
+    # ---- Phase 2: owner resolution (approve / reject) ---------------------
+
+    async def resolve_proposal(
+        self,
+        proposal: DocumentDuplicateProposal,
+        *,
+        user_id: int | None,
+        resolution: str,
+        survivor_id: int | None = None,
+    ) -> dict:
+        """Approve a pending pair: keep the survivor, and either SUPERSEDE
+        (recoverable — mark the loser ``superseded_by_document_id`` so it drops out
+        of retrieval) or DELETE the loser via the standard document-delete path.
+
+        The ``proposal`` is already ownership-gated by the route. Returns
+        ``{"status": "approved"|"superseded"|"invalid", ...}``. ``superseded``
+        (the return status, distinct from the resolution) means a concurrent
+        resolve already handled it → no-op.
+
+        Survivor selection: the caller may override (``survivor_id`` must be one of
+        the pair); else the detector's ``suggested_survivor_id``; else the lower id.
+        """
+        pair = {proposal.document_a_id, proposal.document_b_id}
+        survivor = survivor_id if survivor_id in pair else proposal.suggested_survivor_id
+        if survivor not in pair:
+            survivor = min(pair)
+        loser = (pair - {survivor}).pop()
+
+        if resolution == DOC_DUP_RESOLUTION_DELETE:
+            # Deleting the loser CASCADE-deletes this proposal row (FK ON DELETE
+            # CASCADE) — intended: with the loser gone the pair can never re-form,
+            # so no lasting proposal record is needed. delete_document commits.
+            from services.rag_service import RAGService
+
+            # Guard double-resolve: claim the proposal (pending→approved) first;
+            # if 0 rows, another resolve already took it → no-op.
+            claimed = await self.db.execute(
+                update(DocumentDuplicateProposal)
+                .where(
+                    DocumentDuplicateProposal.id == proposal.id,
+                    DocumentDuplicateProposal.status == DOC_DUP_PROPOSAL_PENDING,
+                )
+                .values(
+                    status=DOC_DUP_PROPOSAL_APPROVED,
+                    resolution=DOC_DUP_RESOLUTION_DELETE,
+                    resolved_at=datetime.now(UTC).replace(tzinfo=None),
+                    resolved_by_user_id=user_id,
+                    suggested_survivor_id=survivor,
+                )
+            )
+            if (claimed.rowcount or 0) == 0:
+                await self.db.rollback()
+                return {"status": "superseded"}
+            await self.db.flush()
+            deleted = await RAGService(self.db).delete_document(loser)  # commits
+            return {
+                "status": "approved",
+                "resolution": DOC_DUP_RESOLUTION_DELETE,
+                "survivor_id": survivor,
+                "loser_id": loser,
+                "deleted": bool(deleted),
+            }
+
+        # supersede (default): mark the loser superseded + resolve the proposal.
+        await self.db.execute(
+            update(Document)
+            .where(Document.id == loser)
+            .values(superseded_by_document_id=survivor)
+        )
+        claimed = await self.db.execute(
+            update(DocumentDuplicateProposal)
+            .where(
+                DocumentDuplicateProposal.id == proposal.id,
+                DocumentDuplicateProposal.status == DOC_DUP_PROPOSAL_PENDING,
+            )
+            .values(
+                status=DOC_DUP_PROPOSAL_APPROVED,
+                resolution=DOC_DUP_RESOLUTION_SUPERSEDE,
+                resolved_at=datetime.now(UTC).replace(tzinfo=None),
+                resolved_by_user_id=user_id,
+                suggested_survivor_id=survivor,
+            )
+        )
+        if (claimed.rowcount or 0) == 0:
+            await self.db.rollback()
+            return {"status": "superseded"}
+        await self.db.commit()
+        return {
+            "status": "approved",
+            "resolution": DOC_DUP_RESOLUTION_SUPERSEDE,
+            "survivor_id": survivor,
+            "loser_id": loser,
+        }
+
+    async def reject_proposal(
+        self, proposal: DocumentDuplicateProposal, *, user_id: int | None
+    ) -> dict:
+        """Reject a pending pair (not a duplicate). Durable — the detector's
+        idempotency guard skips any pair with a proposal of ANY status, so a
+        rejected pair is never re-proposed."""
+        claimed = await self.db.execute(
+            update(DocumentDuplicateProposal)
+            .where(
+                DocumentDuplicateProposal.id == proposal.id,
+                DocumentDuplicateProposal.status == DOC_DUP_PROPOSAL_PENDING,
+            )
+            .values(
+                status=DOC_DUP_PROPOSAL_REJECTED,
+                resolved_at=datetime.now(UTC).replace(tzinfo=None),
+                resolved_by_user_id=user_id,
+            )
+        )
+        if (claimed.rowcount or 0) == 0:
+            await self.db.rollback()
+            return {"status": "superseded"}
+        await self.db.commit()
+        return {"status": "rejected"}

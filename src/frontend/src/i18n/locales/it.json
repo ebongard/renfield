@@ -2041,6 +2041,25 @@
     "couldNotLoad": "Impossibile caricare le proposte di suddivisione PDF.",
     "loadThumbs": "Carica anteprime pagine"
   },
+  "documentDuplicates": {
+    "sectionTitle": "Possibili duplicati nella base di conoscenza",
+    "whyShared": "Identificatore condiviso: {{key}}",
+    "survivorLegend": "Quale documento va mantenuto?",
+    "keepThis": "Mantieni {{name}}",
+    "imported": "importato {{date}}",
+    "inPaperless": "In Paperless #{{id}}",
+    "notInPaperless": "non in Paperless",
+    "resolutionLegend": "Cosa fare con il documento duplicato:",
+    "supersede": "Nascondi",
+    "supersedeHint": "recuperabile; nascosto da ricerca ed elenco ma conservato",
+    "delete": "Elimina",
+    "deleteHint": "rimuove definitivamente il documento duplicato",
+    "deleteWarning": "Il documento duplicato verrà eliminato definitivamente (la copia su Paperless resta).",
+    "approve": "Conferma",
+    "reject": "Non è un duplicato",
+    "resolved": "Fatto",
+    "undo": "Annulla"
+  },
   "simbaReview": {
     "title": "Invia a Simba — Revisione",
     "hint": "PDF importati dalla cartella condivisa, per il commercialista. Controlla categoria/tipo e conferma — il trasferimento è irreversibile.",

@@ -2301,6 +2301,25 @@
     "couldNotLoad": "Could not load PDF split proposals.",
     "loadThumbs": "Load page previews"
   },
+  "documentDuplicates": {
+    "sectionTitle": "Possible duplicates in the knowledge base",
+    "whyShared": "Shared identifier: {{key}}",
+    "survivorLegend": "Which document should be kept?",
+    "keepThis": "Keep {{name}}",
+    "imported": "imported {{date}}",
+    "inPaperless": "In Paperless #{{id}}",
+    "notInPaperless": "not in Paperless",
+    "resolutionLegend": "What to do with the duplicate document:",
+    "supersede": "Hide",
+    "supersedeHint": "recoverable; hidden from search and listing but kept",
+    "delete": "Delete",
+    "deleteHint": "permanently removes the duplicate document",
+    "deleteWarning": "The duplicate document will be permanently deleted (the Paperless copy is kept).",
+    "approve": "Confirm",
+    "reject": "Not a duplicate",
+    "resolved": "Done",
+    "undo": "Undo"
+  },
   "simbaReview": {
     "title": "Send to Simba — Review",
     "hint": "PDFs imported from the watch folder, for the tax accountant. Check the category/type and confirm — the transfer is irreversible.",

@@ -234,6 +234,7 @@ class DocumentFactRetrieval:
             JOIN documents d ON df.document_id = d.id
             LEFT JOIN knowledge_bases kb ON d.knowledge_base_id = kb.id
             WHERE d.status = 'completed'
+              AND d.superseded_by_document_id IS NULL
               AND ({match_clause})
               AND {circles_clause}
             ORDER BY rank DESC, df.id DESC
@@ -282,7 +283,8 @@ class DocumentFactRetrieval:
             FROM document_facts df
             JOIN documents d ON df.document_id = d.id
             LEFT JOIN knowledge_bases kb ON d.knowledge_base_id = kb.id
-            WHERE ({or_clause})
+            WHERE d.superseded_by_document_id IS NULL
+              AND ({or_clause})
               AND {circles_clause}
             ORDER BY rank DESC, df.id DESC
             LIMIT :limit
@@ -364,6 +366,7 @@ class DocumentFactRetrieval:
             JOIN documents d ON df.document_id = d.id
             LEFT JOIN knowledge_bases kb ON d.knowledge_base_id = kb.id
             WHERE df.category = 'obligation'
+              AND d.superseded_by_document_id IS NULL
               AND df.obligation_date IS NOT NULL
               {due_filter}
               AND {circles_clause}
@@ -384,6 +387,7 @@ class DocumentFactRetrieval:
             JOIN documents d ON df.document_id = d.id
             LEFT JOIN knowledge_bases kb ON d.knowledge_base_id = kb.id
             WHERE df.id = :fact_id
+              AND d.superseded_by_document_id IS NULL
               AND {circles_clause}
             LIMIT 1
         """)

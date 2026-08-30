@@ -190,3 +190,103 @@ async def test_tool_reports_found_pairs(monkeypatch):
     assert out["action_taken"] is True
     assert "1SOGUR2D-0011" in out["message"]
     assert out["data"]["pairs"][0]["suggested_survivor_id"] == 44
+
+
+# --------------------------------------------------------------------------
+# Phase 2: resolve (approve) / reject
+# --------------------------------------------------------------------------
+
+def _rc(rowcount=1):
+    r = MagicMock()
+    r.rowcount = rowcount
+    return r
+
+
+def _resolve_session(execute_results):
+    db = MagicMock()
+    db.execute = AsyncMock(side_effect=list(execute_results))
+    db.commit = AsyncMock()
+    db.rollback = AsyncMock()
+    db.flush = AsyncMock()
+    return DocumentDedupeService(db), db
+
+
+def _proposal_obj(sid=44, a=44, b=45):
+    p = MagicMock()
+    p.id = 1
+    p.document_a_id = a
+    p.document_b_id = b
+    p.suggested_survivor_id = sid
+    return p
+
+
+@pytest.mark.asyncio
+async def test_resolve_supersede_sets_column_and_approves():
+    svc, db = _resolve_session([_rc(), _rc(1)])  # Document UPDATE, proposal claim
+    out = await svc.resolve_proposal(_proposal_obj(), user_id=7, resolution="supersede")
+    assert out["status"] == "approved"
+    assert out["resolution"] == "supersede"
+    assert out["survivor_id"] == 44 and out["loser_id"] == 45
+    assert db.commit.await_count == 1
+
+
+@pytest.mark.asyncio
+async def test_resolve_survivor_override_flips_loser():
+    svc, db = _resolve_session([_rc(), _rc(1)])
+    out = await svc.resolve_proposal(_proposal_obj(), user_id=7, resolution="supersede", survivor_id=45)
+    assert out["survivor_id"] == 45 and out["loser_id"] == 44
+
+
+@pytest.mark.asyncio
+async def test_resolve_invalid_survivor_falls_back_to_suggested():
+    svc, db = _resolve_session([_rc(), _rc(1)])
+    out = await svc.resolve_proposal(_proposal_obj(sid=44), user_id=7, resolution="supersede", survivor_id=999)
+    assert out["survivor_id"] == 44  # 999 not in the pair → suggested
+
+
+@pytest.mark.asyncio
+async def test_resolve_supersede_double_resolve_is_noop(monkeypatch):
+    svc, db = _resolve_session([_rc(), _rc(0)])  # claim finds 0 rows (already resolved)
+    out = await svc.resolve_proposal(_proposal_obj(), user_id=7, resolution="supersede")
+    assert out["status"] == "superseded"
+    assert db.rollback.await_count == 1
+    assert db.commit.await_count == 0
+
+
+@pytest.mark.asyncio
+async def test_resolve_delete_calls_delete_document(monkeypatch):
+    svc, db = _resolve_session([_rc(1)])  # only the proposal claim
+    rag = MagicMock()
+    rag.delete_document = AsyncMock(return_value=True)
+    monkeypatch.setattr("services.rag_service.RAGService", MagicMock(return_value=rag))
+    out = await svc.resolve_proposal(_proposal_obj(), user_id=7, resolution="delete")
+    assert out["status"] == "approved" and out["resolution"] == "delete"
+    assert out["loser_id"] == 45
+    rag.delete_document.assert_awaited_once_with(45)
+
+
+@pytest.mark.asyncio
+async def test_resolve_delete_double_resolve_noop(monkeypatch):
+    svc, db = _resolve_session([_rc(0)])  # claim finds 0 rows
+    rag = MagicMock()
+    rag.delete_document = AsyncMock(return_value=True)
+    monkeypatch.setattr("services.rag_service.RAGService", MagicMock(return_value=rag))
+    out = await svc.resolve_proposal(_proposal_obj(), user_id=7, resolution="delete")
+    assert out["status"] == "superseded"
+    rag.delete_document.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_reject_marks_rejected():
+    svc, db = _resolve_session([_rc(1)])
+    out = await svc.reject_proposal(_proposal_obj(), user_id=7)
+    assert out["status"] == "rejected"
+    assert db.commit.await_count == 1
+
+
+@pytest.mark.asyncio
+async def test_reject_double_is_noop():
+    svc, db = _resolve_session([_rc(0)])
+    out = await svc.reject_proposal(_proposal_obj(), user_id=7)
+    assert out["status"] == "superseded"
+    assert db.rollback.await_count == 1

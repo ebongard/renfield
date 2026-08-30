@@ -210,7 +210,16 @@ async def search_documents(
     window = fused[offset : offset + limit]
     if not window:
         return []
-    rows = (await db.execute(select(Document).where(Document.id.in_(window)))).scalars().all()
+    # The single chokepoint: exclude superseded docs here (a KB near-dup loser
+    # resolved as 'supersede', #1170) regardless of which signal proposed the id.
+    rows = (
+        await db.execute(
+            select(Document).where(
+                Document.id.in_(window),
+                Document.superseded_by_document_id.is_(None),
+            )
+        )
+    ).scalars().all()
     by_id = {d.id: d for d in rows}
     ordered: list[Document] = []
     for did in window:

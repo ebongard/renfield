@@ -2301,6 +2301,25 @@
     "couldNotLoad": "PDF-Aufteilungsvorschläge konnten nicht geladen werden.",
     "loadThumbs": "Seiten-Vorschauen laden"
   },
+  "documentDuplicates": {
+    "sectionTitle": "Mögliche Dubletten in der Wissensbasis",
+    "whyShared": "Gemeinsame Kennung: {{key}}",
+    "survivorLegend": "Welches Dokument soll erhalten bleiben?",
+    "keepThis": "{{name}} behalten",
+    "imported": "importiert {{date}}",
+    "inPaperless": "In Paperless #{{id}}",
+    "notInPaperless": "nicht in Paperless",
+    "resolutionLegend": "Was mit dem doppelten Dokument geschehen soll:",
+    "supersede": "Ausblenden",
+    "supersedeHint": "wiederherstellbar; wird aus Suche und Ablage versteckt, bleibt aber erhalten",
+    "delete": "Löschen",
+    "deleteHint": "entfernt das doppelte Dokument endgültig",
+    "deleteWarning": "Das doppelte Dokument wird endgültig gelöscht (die Paperless-Kopie bleibt bestehen).",
+    "approve": "Bestätigen",
+    "reject": "Kein Duplikat",
+    "resolved": "Erledigt",
+    "undo": "Rückgängig"
+  },
   "simbaReview": {
     "title": "An Simba übertragen — Prüfen",
     "hint": "Aus dem Ordner importierte PDFs für die Steuerkanzlei. Kategorie/Typ prüfen und bestätigen — die Übertragung ist unwiderruflich.",

@@ -893,7 +893,13 @@ class RAGService:
         offset: int = 0
     ) -> list[Document]:
         """Listet Dokumente auf"""
-        stmt = select(Document).order_by(Document.created_at.desc())
+        # Hide superseded documents (a KB near-dup loser resolved as 'supersede',
+        # #1170) — recoverable soft-delete, excluded from the list.
+        stmt = (
+            select(Document)
+            .where(Document.superseded_by_document_id.is_(None))
+            .order_by(Document.created_at.desc())
+        )
 
         if knowledge_base_id:
             stmt = stmt.where(Document.knowledge_base_id == knowledge_base_id)

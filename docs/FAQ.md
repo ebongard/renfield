@@ -88,6 +88,24 @@ in Schüben — Renfield meldet, wie viele noch übrig sind; einfach erneut frag
 
 ---
 
+## „Doppelte Dokumente in der Wissensbasis finden"
+
+- **Chat:** *„Gibt es Dubletten in der Wissensbasis?"* / *„Sind Dokumente doppelt vorhanden?"*
+
+Das ist eine **andere** Prüfung als die Paperless-Duplikate oben: sie findet
+zwei Dokumente in der **Wissensbasis**, die inhaltlich dasselbe Dokument sind
+(z. B. dieselbe Rechnung aus zwei Quellen), aber **unterschiedliche Dateien**
+sind — die byte-genaue Dublettenerkennung beim Einlesen übersieht sie. Erkannt
+werden sie an einer gemeinsamen eindeutigen Kennung (z. B. gleiche
+Rechnungsnummer).
+
+Renfield **löscht nie automatisch** — jedes Paar landet zur Prüfung unter
+`/brain/review` (bzw. `/wissen` → „Prüfen"). Dort wählst du, welches Dokument
+erhalten bleibt und ob das doppelte **ausgeblendet** (wiederherstellbar) oder
+**gelöscht** wird.
+
+---
+
 ## „Ein Dokument an Simba (Steuerkanzlei) senden" *(nur xidra)*
 
 Auf einer Dokumentzeile in `/wissen/dokumente` (oder `/knowledge`) gibt es die
@@ -131,6 +149,7 @@ E-Mail-Anhänge aus dem überwachten Postfach laufen durch dieselbe Pipeline.
 | Dokumente ohne Chunks auflisten | *„Welche Dokumente haben keine Chunks?"* |
 | Dokumente ohne Chunks reparieren | *„Indexiere die Dokumente ohne Chunks neu."* |
 | Paperless-Duplikate aufräumen | *„Finde und lösche die Duplikate in Paperless."* |
+| Dubletten in der Wissensbasis finden | *„Gibt es Dubletten in der Wissensbasis?"* (Prüfung unter `/brain/review`) |
 | Dokument an Simba senden *(xidra)* | Aktion **„An Simba senden"** auf der Dokumentzeile |
 
 > Funktioniert eine Chat-Frage einmal nicht wie erwartet, findest du dieselben

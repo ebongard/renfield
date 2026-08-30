@@ -135,6 +135,8 @@ export interface FeatureFlags {
   /** True when watch-folder PDFs are routed to the Simba review queue (xidra).
    *  Gates the Simba review section on /brain/review. */
   simba_ingest_review_enabled?: boolean;
+  /** Gates the KB near-duplicate document review section on /brain/review (#1170). */
+  document_dedupe_enabled?: boolean;
 }
 
 async function fetchAtomSearch(query: string): Promise<AtomMatch[]> {

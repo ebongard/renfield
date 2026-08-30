@@ -108,6 +108,10 @@ export const keys = {
     proposals: () => ['pdfSplit', 'proposals'] as const,
     proposal: (id: number) => ['pdfSplit', 'proposals', id] as const,
   },
+  documentDuplicates: {
+    all: ['documentDuplicates'] as const,
+    proposals: () => ['documentDuplicates', 'proposals'] as const,
+  },
   knowledgeGraph: {
     all: ['knowledgeGraph'] as const,
     entities: (filters?: Record<string, unknown>) => ['knowledgeGraph', 'entities', filters ?? {}] as const,
