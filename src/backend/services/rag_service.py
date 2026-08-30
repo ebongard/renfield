@@ -924,6 +924,12 @@ class RAGService:
         else:
             stmt = stmt.order_by(Document.created_at.desc())
 
+        # Stable tiebreaker: every sort column above is non-unique (esp. the large
+        # NULL document_date tie-group), and OFFSET pagination executes each page
+        # separately — without a unique secondary key a tied row could repeat or
+        # vanish across pages. id.desc() makes the order total + deterministic.
+        stmt = stmt.order_by(Document.id.desc())
+
         stmt = stmt.limit(limit).offset(offset)
 
         result = await self.db.execute(stmt)
