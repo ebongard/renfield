@@ -143,9 +143,13 @@ class DocumentDedupeService:
             da.superseded_by_document_id.is_(None),
             db_.superseded_by_document_id.is_(None),
             doc_count <= recurring_max,
-            # idempotency: no pending proposal already covers this ordered pair
+            # idempotency + DURABLE RESOLUTION: skip any pair that has EVER been
+            # proposed — pending (awaiting review), approved (already resolved), OR
+            # rejected. Excluding rejected is the durable-reject contract (mirrors
+            # PDF-split "reject = permanent, consulted by detection"): a pair the
+            # owner dismissed as not-a-duplicate must never be re-proposed on the
+            # next scan. Deliberately NOT filtered by status.
             ~exists().where(
-                DocumentDuplicateProposal.status == DOC_DUP_PROPOSAL_PENDING,
                 DocumentDuplicateProposal.document_a_id == fa.document_id,
                 DocumentDuplicateProposal.document_b_id == fb.document_id,
             ),
@@ -238,24 +242,33 @@ class DocumentDedupeService:
 
     async def _propose(self, user_id: int | None, pair: _Pair) -> bool:
         """Persist one PENDING proposal (a<b). Idempotent — swallows the
-        partial-unique / concurrent-insert loser. Returns True if a row landed."""
+        partial-unique / concurrent-insert loser. Returns True if a row landed.
+
+        The insert runs inside a SAVEPOINT (``begin_nested``) so a partial-unique
+        collision rolls back ONLY this row, not the whole batch's prior successful
+        proposals (a plain ``session.rollback()`` would discard them and the outer
+        commit would then over-report). The collision is already unreachable in
+        practice — the per-user advisory lock serializes writers and the query's
+        NOT EXISTS excludes proposed pairs — but the savepoint makes the swallow
+        genuinely local, matching the docstring's intent."""
         survivor = await self._pick_survivor(pair.doc_a_id, pair.doc_b_id)
-        proposal = DocumentDuplicateProposal(
-            user_id=user_id,
-            document_a_id=pair.doc_a_id,
-            document_b_id=pair.doc_b_id,
-            signal=DOC_DUP_SIGNAL_SHARED_IDENTIFIER,
-            shared_key=f"{pair.kind}={pair.normalized_value}",
-            similarity=1.0,
-            suggested_survivor_id=survivor,
-            status=DOC_DUP_PROPOSAL_PENDING,
-        )
-        self.db.add(proposal)
         try:
-            await self.db.flush()
+            async with self.db.begin_nested():
+                self.db.add(
+                    DocumentDuplicateProposal(
+                        user_id=user_id,
+                        document_a_id=pair.doc_a_id,
+                        document_b_id=pair.doc_b_id,
+                        signal=DOC_DUP_SIGNAL_SHARED_IDENTIFIER,
+                        shared_key=f"{pair.kind}={pair.normalized_value}",
+                        similarity=1.0,
+                        suggested_survivor_id=survivor,
+                        status=DOC_DUP_PROPOSAL_PENDING,
+                    )
+                )
+                await self.db.flush()
             return True
         except IntegrityError:
-            await self.db.rollback()
             return False
 
     async def _detect_pass(self, user_id: int | None, report: DedupeReport) -> DedupeReport:

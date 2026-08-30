@@ -36,7 +36,7 @@ def upgrade() -> None:
         "REFERENCES documents(id) ON DELETE SET NULL"
     )
     op.execute(
-        "CREATE INDEX IF NOT EXISTS ix_documents_superseded_by "
+        "CREATE INDEX IF NOT EXISTS ix_documents_superseded_by_document_id "
         "ON documents (superseded_by_document_id)"
     )
 
@@ -79,5 +79,5 @@ def downgrade() -> None:
     if (bind.dialect.name if bind is not None else "postgresql") != "postgresql":
         return
     op.execute("DROP TABLE IF EXISTS document_duplicate_proposals")
-    op.execute("DROP INDEX IF EXISTS ix_documents_superseded_by")
+    op.execute("DROP INDEX IF EXISTS ix_documents_superseded_by_document_id")
     op.execute("ALTER TABLE documents DROP COLUMN IF EXISTS superseded_by_document_id")
