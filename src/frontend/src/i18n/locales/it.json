@@ -586,6 +586,20 @@
     "deleteKnowledgeBaseConfirm": "Eliminare davvero la base di conoscenza \"{{name}}\" e tutti i documenti associati?",
     "knowledgeBases": "Conoscenza Base",
     "documents": "Documenti",
+    "documentDate": "Data del documento: {{date}}",
+    "sort": {
+      "label": "Ordina:",
+      "name": "Nome",
+      "imported": "Data di importazione",
+      "document_date": "Data del documento"
+    },
+    "integrations": {
+      "label": "Integrazioni",
+      "inPaperless": "Archiviato in Paperless",
+      "notInPaperless": "Non in Paperless",
+      "inSimba": "Inviato a Simba",
+      "notInSimba": "Non inviato a Simba"
+    },
     "indexed": "Indicizzato",
     "chunks": "Frammenti",
     "uploadDocument": "Carica documento",

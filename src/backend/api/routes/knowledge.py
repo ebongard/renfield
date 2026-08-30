@@ -500,6 +500,8 @@ async def list_documents(
     knowledge_base_id: int | None = Query(None),
     status: str | None = Query(None),
     q: str | None = Query(None, description="Ranked hybrid document search (name + facts + content). Empty → recency list."),
+    sort: str | None = Query(None, description="Sort key: name | imported | document_date. Default: recency."),
+    order: str = Query("desc", description="asc | desc"),
     limit: int = Query(100, ge=1, le=500),
     offset: int = Query(0, ge=0),
     rag: RAGService = Depends(get_rag_service),
@@ -535,17 +537,26 @@ async def list_documents(
             offset=offset,
             enforce_circles=settings.auth_enabled,
         )
+        # Search returns relevance-ranked; if the user picked a sort, apply it to
+        # the returned page (page-level — the recency branch sorts the full set).
+        documents = _sort_document_page(documents, sort, order)
     else:
         documents = await rag.list_documents(
             knowledge_base_id=knowledge_base_id,
             status=status,
             limit=limit,
-            offset=offset
+            offset=offset,
+            sort_by=sort,
+            order=order,
         )
+
+    # Batch-compute Simba-uploaded membership for the page (one query) so the
+    # per-row status icon doesn't fan out N queries.
+    simba_uploaded = await _simba_uploaded_ids(db, [d.id for d in documents])
 
     responses: list[DocumentResponse] = []
     for doc in documents:
-        kwargs = _doc_to_response_kwargs(doc)
+        kwargs = _doc_to_response_kwargs(doc, in_simba=doc.id in simba_uploaded)
         # Queue position only meaningful on single-doc + batch polling
         # endpoints; the list view is a bulk screen and we don't want to
         # spam Redis with XPENDING on every listed row.
@@ -554,10 +565,54 @@ async def list_documents(
     return responses
 
 
-def _doc_to_response_kwargs(doc: Document) -> dict:
+def _sort_document_page(documents: list[Document], sort: str | None, order: str) -> list[Document]:
+    """Sort a fetched page of Documents (used for the q-search branch). NULL
+    document dates sort last regardless of direction."""
+    if not sort:
+        return documents
+    reverse = (order or "desc").lower() != "asc"
+    if sort == "name":
+        return sorted(
+            documents,
+            key=lambda d: (d.generated_title or d.title or d.filename or "").lower(),
+            reverse=reverse,
+        )
+    keyfn = {
+        "imported": lambda d: d.created_at,
+        "document_date": lambda d: d.document_date,
+    }.get(sort)
+    if keyfn is None:
+        return documents
+    with_val = [d for d in documents if keyfn(d) is not None]
+    without = [d for d in documents if keyfn(d) is None]
+    with_val.sort(key=keyfn, reverse=reverse)
+    return with_val + without
+
+
+async def _simba_uploaded_ids(db: AsyncSession, doc_ids: list[int]) -> set[int]:
+    """Document ids (from the given page) that have a Simba proposal in the
+    UPLOADED state → the 'in Simba' status icon. Empty when none / no ids."""
+    if not doc_ids:
+        return set()
+    from models.database import SIMBA_PROPOSAL_UPLOADED, SimbaIngestProposal
+    rows = (
+        await db.execute(
+            select(SimbaIngestProposal.document_id).where(
+                SimbaIngestProposal.document_id.in_(doc_ids),
+                SimbaIngestProposal.status == SIMBA_PROPOSAL_UPLOADED,
+            )
+        )
+    ).scalars().all()
+    return {int(r) for r in rows}
+
+
+def _doc_to_response_kwargs(doc: Document, *, in_simba: bool = False) -> dict:
     """Common Document → DocumentResponse mapping. Lives in one place so
     new fields land consistently across single-doc, list, and batch
-    endpoints."""
+    endpoints.
+
+    ``in_simba`` is passed by the list handler (batch-computed once); other
+    callers default it to False."""
     return {
         "id": doc.id,
         "filename": doc.filename,
@@ -575,6 +630,12 @@ def _doc_to_response_kwargs(doc: Document) -> dict:
         "knowledge_base_id": doc.knowledge_base_id,
         "created_at": doc.created_at.isoformat() if doc.created_at else "",
         "processed_at": doc.processed_at.isoformat() if doc.processed_at else None,
+        # The document's own date (invoice/letter date) for the "Dokumentdatum"
+        # sort; NULL when none was derivable.
+        "document_date": doc.document_date.isoformat() if doc.document_date else None,
+        # Integration upload status for the per-row status icons.
+        "in_paperless": (doc.paperless_document_id is not None or doc.paperless_state == "done"),
+        "in_simba": in_simba,
         # Circle visibility for the tier-control UX. Denormalized on the
         # documents row; atom_id may be NULL on legacy / global-RAG docs.
         "circle_tier": doc.circle_tier or 0,

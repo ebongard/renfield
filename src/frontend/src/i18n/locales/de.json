@@ -934,6 +934,20 @@
     "section": "Abschnitt",
     "loadingDocuments": "Lade Dokumente...",
     "createdAt": "Erstellt: {{date}}",
+    "documentDate": "Dokumentdatum: {{date}}",
+    "sort": {
+      "label": "Sortieren:",
+      "name": "Name",
+      "imported": "Importdatum",
+      "document_date": "Dokumentdatum"
+    },
+    "integrations": {
+      "label": "Integrationen",
+      "inPaperless": "In Paperless abgelegt",
+      "notInPaperless": "Nicht in Paperless",
+      "inSimba": "An Simba übertragen",
+      "notInSimba": "Nicht an Simba übertragen"
+    },
     "visibility": {
       "hint": "Tippe auf das Sichtbarkeits-Abzeichen, um festzulegen, wer ein Dokument sehen darf.",
       "bulkSet": "Sichtbarkeit setzen",

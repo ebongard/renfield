@@ -11,7 +11,7 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 from loguru import logger
-from sqlalchemy import delete, func, select, text
+from sqlalchemy import delete, func, nulls_last, select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -890,21 +890,39 @@ class RAGService:
         knowledge_base_id: int | None = None,
         status: str | None = None,
         limit: int = 100,
-        offset: int = 0
+        offset: int = 0,
+        sort_by: str | None = None,
+        order: str = "desc",
     ) -> list[Document]:
-        """Listet Dokumente auf"""
+        """Listet Dokumente auf.
+
+        ``sort_by`` ∈ {name, imported, document_date} orders the FULL result set
+        before paginating (so the sort is correct across pages, not just the page).
+        Default (None) = recency (created_at desc). NULL document_date sorts last.
+        """
         # Hide superseded documents (a KB near-dup loser resolved as 'supersede',
         # #1170) — recoverable soft-delete, excluded from the list.
-        stmt = (
-            select(Document)
-            .where(Document.superseded_by_document_id.is_(None))
-            .order_by(Document.created_at.desc())
-        )
+        stmt = select(Document).where(Document.superseded_by_document_id.is_(None))
 
         if knowledge_base_id:
             stmt = stmt.where(Document.knowledge_base_id == knowledge_base_id)
         if status:
             stmt = stmt.where(Document.status == status)
+
+        asc = (order or "desc").lower() == "asc"
+        if sort_by == "name":
+            col = func.lower(func.coalesce(Document.generated_title, Document.title, Document.filename))
+            stmt = stmt.order_by(col.asc() if asc else col.desc())
+        elif sort_by == "imported":
+            stmt = stmt.order_by(Document.created_at.asc() if asc else Document.created_at.desc())
+        elif sort_by == "document_date":
+            col = Document.document_date
+            # NULLs last in both directions (a doc with no date shouldn't lead).
+            stmt = stmt.order_by(
+                nulls_last(col.asc()) if asc else nulls_last(col.desc())
+            )
+        else:
+            stmt = stmt.order_by(Document.created_at.desc())
 
         stmt = stmt.limit(limit).offset(offset)
 

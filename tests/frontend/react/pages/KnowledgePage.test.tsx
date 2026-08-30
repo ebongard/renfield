@@ -21,6 +21,8 @@ const mockedPost = vi.mocked(apiClient.post);
 const DOC = {
   id: 5, filename: 'steuer.pdf', title: 'Steuerbescheid', status: 'completed',
   file_type: 'pdf', chunk_count: 3, page_count: 4,
+  created_at: '2026-01-02T00:00:00', document_date: '2025-12-16',
+  in_paperless: true, in_simba: false,
 };
 
 function wire() {
@@ -62,6 +64,28 @@ describe('KnowledgePage Schicht A integration', () => {
     renderWithProviders(<KnowledgePage />, { route: '/knowledge' });
     const toggle = await screen.findByRole('button', { name: /Fakten/ });
     expect(toggle).toHaveAttribute('aria-expanded', 'false');
+  });
+
+  it('shows the Paperless status icon for a filed document', async () => {
+    renderWithProviders(<KnowledgePage />, { route: '/knowledge' });
+    await screen.findByText('Steuerbescheid');
+    // in_paperless=true → the "filed in Paperless" icon (aria-label)
+    expect(screen.getByLabelText('In Paperless abgelegt')).toBeInTheDocument();
+  });
+
+  it('sorting by import date refetches with sort params', async () => {
+    renderWithProviders(<KnowledgePage />, { route: '/knowledge' });
+    await screen.findByText('Steuerbescheid');
+    fireEvent.click(screen.getByRole('button', { name: /Importdatum/ }));
+    await waitFor(() => {
+      const sorted = mockedGet.mock.calls.some(
+        ([url, cfg]: [string, { params?: Record<string, unknown> }?]) =>
+          typeof url === 'string' &&
+          url.includes('/api/knowledge/documents') &&
+          cfg?.params?.sort === 'imported',
+      );
+      expect(sorted).toBe(true);
+    });
   });
 
   it('reindex invalidates the document\'s facts cache (D5)', async () => {

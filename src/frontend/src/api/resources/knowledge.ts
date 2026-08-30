@@ -65,24 +65,40 @@ export interface DocumentRow {
   // title → filename. Prefer this over title/filename when rendering.
   display_name?: string;
   created_at?: string;
+  /** The document's own date (invoice/letter date) for the Dokumentdatum sort;
+   *  null when none derivable. Distinct from created_at (import). */
+  document_date?: string | null;
+  /** Integration upload status for the per-row icons. */
+  in_paperless?: boolean;
+  in_simba?: boolean;
   // Circle visibility (tier-control UX). circle_tier is the document's tier
   // (0 self … 4 public); atom_id is its atoms-row UUID (null on legacy docs).
   circle_tier?: number;
   atom_id?: string | null;
 }
 
+export type DocSortKey = 'name' | 'imported' | 'document_date';
+export type SortOrder = 'asc' | 'desc';
+
 interface DocsFilter {
   knowledgeBaseId: number | null;
   statusFilter: StatusFilter;
   /** Ranked hybrid document search (name + facts + content). Empty → recency list. */
   q?: string;
+  /** Sort key + direction; default (undefined) = recency. */
+  sortBy?: DocSortKey | null;
+  sortOrder?: SortOrder;
 }
 
-async function fetchDocuments({ knowledgeBaseId, statusFilter, q }: DocsFilter): Promise<DocumentRow[]> {
+async function fetchDocuments({ knowledgeBaseId, statusFilter, q, sortBy, sortOrder }: DocsFilter): Promise<DocumentRow[]> {
   const params: Record<string, unknown> = {};
   if (knowledgeBaseId) params.knowledge_base_id = knowledgeBaseId;
   if (statusFilter !== 'all') params.status = statusFilter;
   if (q && q.trim()) params.q = q.trim();
+  if (sortBy) {
+    params.sort = sortBy;
+    params.order = sortOrder ?? 'desc';
+  }
   const response = await apiClient.get<DocumentRow[]>('/api/knowledge/documents', { params });
   return response.data ?? [];
 }

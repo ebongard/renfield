@@ -951,5 +951,22 @@ async def schicht_a_post_document_ingest_hook(
                     await db.commit()
             except Exception as e:  # noqa: BLE001 — title is non-essential
                 logger.warning(f"Schicht A: title synthesis failed for doc {document_id}: {e}")
+
+            # Derive the document's OWN date (invoice/letter date) for sorting on
+            # /wissen/dokumente — same fact-ranking as the Simba period, as a full
+            # date. Best-effort; a miss leaves document_date NULL (sorted last).
+            try:
+                from services.document_date import derive_document_date
+
+                fact_tuples = [
+                    (getattr(f, "kind", None), getattr(f, "normalized_value", None), getattr(f, "value", None))
+                    for f in capped
+                ]
+                ddate = derive_document_date(fact_tuples, [doc.generated_title, doc.title])
+                if ddate is not None and doc.document_date != ddate:
+                    doc.document_date = ddate
+                    await db.commit()
+            except Exception as e:  # noqa: BLE001 — document_date is non-essential
+                logger.warning(f"Schicht A: document_date derivation failed for doc {document_id}: {e}")
     except Exception as e:  # noqa: BLE001 — never fail the ingest on a fact miss
         logger.warning(f"Schicht A post_document_ingest hook failed: {e}")

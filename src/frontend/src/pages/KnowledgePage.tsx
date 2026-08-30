@@ -20,6 +20,9 @@ import {
   File,
   ArrowRightLeft,
   Landmark,
+  Archive,
+  ArrowUp,
+  ArrowDown,
 } from 'lucide-react';
 import apiClient from '../utils/axios';
 import { formatDateTime } from '../utils/datetime';
@@ -52,6 +55,8 @@ import {
   type StatusFilter,
   type SearchResultChunk,
   type DocumentRow,
+  type DocSortKey,
+  type SortOrder,
 } from '../api/resources/knowledge';
 import { keys } from '../api/keys';
 import { useFeatureFlags } from '../api/resources/brain';
@@ -102,6 +107,18 @@ export default function KnowledgePage() {
   // Debounced query that drives the ranked DOCUMENT list (name+facts+content).
   // Set by the debounce effect below from the search box / omni ?q=.
   const [docSearchQuery, setDocSearchQuery] = useState('');
+  // Documents sort: null = recency (default). Toggling the active key flips
+  // direction; picking a new key starts descending.
+  const [sortBy, setSortBy] = useState<DocSortKey | null>(null);
+  const [sortOrder, setSortOrder] = useState<SortOrder>('desc');
+  const handleSort = (key: DocSortKey) => {
+    if (sortBy === key) {
+      setSortOrder((o) => (o === 'asc' ? 'desc' : 'asc'));
+    } else {
+      setSortBy(key);
+      setSortOrder('desc');
+    }
+  };
 
   // New Knowledge Base state
   const [showNewKbModal, setShowNewKbModal] = useState(false);
@@ -174,6 +191,8 @@ export default function KnowledgePage() {
     knowledgeBaseId: selectedKnowledgeBase,
     statusFilter,
     q: docSearchQuery,
+    sortBy,
+    sortOrder,
   });
   const basesQuery = useKnowledgeBasesQuery();
   const statsQuery = useKnowledgeStatsQuery();
@@ -821,6 +840,34 @@ export default function KnowledgePage() {
         ))}
       </div>
 
+      {/* Sort controls */}
+      <div className="flex items-center gap-2 text-sm flex-wrap">
+        <span className="text-gray-500 dark:text-gray-400">{t('knowledge.sort.label')}</span>
+        {(['name', 'imported', 'document_date'] as DocSortKey[]).map((key) => {
+          const active = sortBy === key;
+          return (
+            <button
+              key={key}
+              onClick={() => handleSort(key)}
+              aria-pressed={active}
+              className={`inline-flex items-center gap-1 px-3 py-1.5 rounded-lg transition-colors ${
+                active
+                  ? 'bg-primary-100 text-primary-800 dark:bg-primary-900/30 dark:text-primary-200'
+                  : 'bg-gray-100 text-gray-600 hover:bg-gray-200 dark:bg-gray-800 dark:text-gray-400 dark:hover:bg-gray-700'
+              }`}
+            >
+              {t(`knowledge.sort.${key}`)}
+              {active &&
+                (sortOrder === 'asc' ? (
+                  <ArrowUp className="w-3.5 h-3.5" aria-hidden="true" />
+                ) : (
+                  <ArrowDown className="w-3.5 h-3.5" aria-hidden="true" />
+                ))}
+            </button>
+          );
+        })}
+      </div>
+
       {/* Bulk Action Toolbar */}
       {selectedDocs.size > 0 && knowledgeBases.length > 0 && (
         <div className="card bg-primary-50 dark:bg-primary-900/20 border-primary-200 dark:border-primary-700">
@@ -938,6 +985,13 @@ export default function KnowledgePage() {
                         {t('knowledge.createdAt', {
                           date: formatDateTime(doc.created_at, i18n.language),
                         })}
+                        {doc.document_date && (
+                          <span className="ml-2">
+                            · {t('knowledge.documentDate', {
+                              date: new Date(doc.document_date).toLocaleDateString(i18n.language),
+                            })}
+                          </span>
+                        )}
                       </p>
                     )}
                     {doc.status === 'failed' && doc.error_message && (
@@ -977,6 +1031,41 @@ export default function KnowledgePage() {
                       confirmPublic={confirmPublicTier}
                       busy={setDocTier.isPending}
                     />
+                    {/* Integration upload status — Paperless (always) + Simba (xidra). */}
+                    <div className="flex items-center gap-1.5">
+                      <span
+                        className="inline-flex"
+                        title={doc.in_paperless
+                          ? t('knowledge.integrations.inPaperless')
+                          : t('knowledge.integrations.notInPaperless')}
+                      >
+                        <Archive
+                          className={`w-4 h-4 ${doc.in_paperless
+                            ? 'text-green-600 dark:text-green-400'
+                            : 'text-gray-300 dark:text-gray-600'}`}
+                          aria-label={doc.in_paperless
+                            ? t('knowledge.integrations.inPaperless')
+                            : t('knowledge.integrations.notInPaperless')}
+                        />
+                      </span>
+                      {simbaEnabled && (
+                        <span
+                          className="inline-flex"
+                          title={doc.in_simba
+                            ? t('knowledge.integrations.inSimba')
+                            : t('knowledge.integrations.notInSimba')}
+                        >
+                          <Landmark
+                            className={`w-4 h-4 ${doc.in_simba
+                              ? 'text-green-600 dark:text-green-400'
+                              : 'text-gray-300 dark:text-gray-600'}`}
+                            aria-label={doc.in_simba
+                              ? t('knowledge.integrations.inSimba')
+                              : t('knowledge.integrations.notInSimba')}
+                          />
+                        </span>
+                      )}
+                    </div>
                     <StatusBadge doc={doc} filename={doc.filename} />
                     <div className="flex items-center gap-2 opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity">
                       {knowledgeBases.length > 0 && (

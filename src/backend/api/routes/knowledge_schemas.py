@@ -79,6 +79,14 @@ class DocumentResponse(BaseModel):
     knowledge_base_id: int | None
     created_at: str
     processed_at: str | None
+    # The document's own date (invoice/letter date), for the /wissen/dokumente
+    # "Dokumentdatum" sort — distinct from created_at (import). NULL when none
+    # derivable. Migration pc20260831.
+    document_date: str | None = None
+    # Integration upload status for the per-row status icons: whether the doc has
+    # been filed in Paperless / uploaded to Simba (xidra). Default False.
+    in_paperless: bool = False
+    in_simba: bool = False
     # Circle visibility (tier-control UX). circle_tier is the document's
     # denormalized tier (0 self … 4 public); atom_id is its atoms-row UUID
     # (nullable for legacy / global-RAG docs that were never atom-registered).

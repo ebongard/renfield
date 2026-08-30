@@ -934,6 +934,20 @@
     "section": "Section",
     "loadingDocuments": "Loading documents...",
     "createdAt": "Created: {{date}}",
+    "documentDate": "Document date: {{date}}",
+    "sort": {
+      "label": "Sort:",
+      "name": "Name",
+      "imported": "Import date",
+      "document_date": "Document date"
+    },
+    "integrations": {
+      "label": "Integrations",
+      "inPaperless": "Filed in Paperless",
+      "notInPaperless": "Not in Paperless",
+      "inSimba": "Uploaded to Simba",
+      "notInSimba": "Not uploaded to Simba"
+    },
     "visibility": {
       "hint": "Tap the visibility badge to choose who can see a document.",
       "bulkSet": "Set visibility",
