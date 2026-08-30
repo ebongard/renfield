@@ -41,6 +41,29 @@ die Statusausgabe enthält genau diese Zahlen (z. B. „391 abgelegt, 7 ausstehe
 
 ---
 
+## „Welche Dokumente sind nicht in Paperless? / Ist Dokument X abgelegt?"
+
+- **Nicht abgelegte auflisten:** *„Welche Dokumente sind nicht in Paperless?"* /
+  *„Welche Dokumente konnten nicht abgelegt werden?"* — Renfield listet **mit
+  Namen** die Dokumente, deren Paperless-Ablage **fehlgeschlagen** oder noch
+  **ausstehend** ist.
+- **Ein bestimmtes prüfen:** *„Ist die Rechnung Taxon in Paperless?"* /
+  *„Ist Dokument X abgelegt?"* — Renfield meldet den Ablage-Status (abgelegt mit
+  Paperless-Nummer / als Duplikat vorhanden / fehlgeschlagen / ausstehend).
+- **Erneut ablegen (reparieren):** *„Lege die fehlgeschlagenen Dokumente in
+  Paperless ab."* — Renfield stellt die fehlgeschlagenen Ablagen erneut in die
+  Warteschlange; die Ablage läuft im Hintergrund. Gezielt geht auch:
+  *„Lege Dokument X erneut in Paperless ab."*
+
+> **Wichtig:** Ein **normaler Upload** über die Oberfläche oder den Chat wird
+> **nicht** automatisch nach Paperless abgelegt — nur Dateien aus dem
+> **Überwachungsordner** und dem **E-Mail-Postfach** laufen in Paperless. Und in
+> Paperless erscheinen Dokumente unter ihrem **aus dem Inhalt erkannten Titel /
+> Korrespondenten**, nicht unter dem Dateinamen — suche dort also nach
+> **Korrespondent oder Inhalt**, nicht nach dem ursprünglichen Dateinamen.
+
+---
+
 ## „Welche Dokumente sind nicht durchsuchbar / leer?"
 
 Ein Dokument ist nur auffindbar, wenn es **Chunks** (durchsuchbare Textabschnitte)
@@ -102,6 +125,9 @@ E-Mail-Anhänge aus dem überwachten Postfach laufen durch dieselbe Pipeline.
 | Ein Dokument finden | *„Suche &lt;Begriff&gt;"* |
 | Verarbeitungsstatus / was hängt | *„Wie ist der Verarbeitungsstatus?"* |
 | Paperless-Ablagestatus | *„Wie ist der Verarbeitungsstatus?"* (enthält Paperless-Zahlen) |
+| Nicht abgelegte Dokumente auflisten | *„Welche Dokumente sind nicht in Paperless?"* |
+| Ein Dokument in Paperless prüfen | *„Ist die Rechnung X in Paperless?"* |
+| Fehlgeschlagene Ablagen erneut ablegen | *„Lege die fehlgeschlagenen Dokumente in Paperless ab."* |
 | Dokumente ohne Chunks auflisten | *„Welche Dokumente haben keine Chunks?"* |
 | Dokumente ohne Chunks reparieren | *„Indexiere die Dokumente ohne Chunks neu."* |
 | Paperless-Duplikate aufräumen | *„Finde und lösche die Duplikate in Paperless."* |

@@ -131,6 +131,21 @@ class ActionExecutor:
             from services.kb_maintenance_tool import list_chunkless_documents
             return await list_chunkless_documents(parameters, user_id=user_id)
 
+        # Read-only: Paperless filing status BY NAME — list unfiled/failed docs, or
+        # (with a query) check whether a specific document is in Paperless.
+        if intent == "internal.list_unfiled_documents":
+            from services.kb_maintenance_tool import list_unfiled_documents
+            return await list_unfiled_documents(parameters, user_id=user_id)
+
+        # Write/maintenance: re-file FAILED docs to Paperless (reset + enqueue a
+        # worker refile; Docling stays in the worker). RAG_MANAGE-gated, so
+        # user_permissions is injected.
+        if intent == "internal.refile_to_paperless":
+            from services.kb_maintenance_tool import refile_to_paperless
+            return await refile_to_paperless(
+                parameters, user_id=user_id, user_permissions=user_permissions
+            )
+
         # Platform-owned internal tool: reindex completed docs that have 0 chunks
         # (purge + rebuild via the user_reindex worker path). Write/maintenance —
         # gated on Permission.RAG_MANAGE, so user_permissions is injected here (the

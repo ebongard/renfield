@@ -40,6 +40,9 @@ from models.database import (
     DOC_STATUS_SPLIT_ARCHIVED,
     DOC_STATUS_SPLIT_PENDING,
     DOC_STATUS_SPLIT_REVIEW,
+    PAPERLESS_STATE_FAILED,
+    PAPERLESS_STATE_PENDING,
+    Atom,
     Document,
     DocumentChunk,
     DocumentProcessingHistory,
@@ -202,7 +205,63 @@ KB_MAINTENANCE_TOOLS: dict = {
             ),
         },
     },
+    "internal.list_unfiled_documents": {
+        "description": (
+            "Report the PAPERLESS FILING status of documents BY NAME. Two modes: "
+            "(1) NO query → list the documents that are NOT (successfully) filed in "
+            "Paperless — the ones whose filing FAILED or is still pending. Use for "
+            "'welche Dokumente sind nicht in Paperless?', 'welche Dokumente konnten "
+            "nicht abgelegt werden?', 'welche Dokumente fehlen in Paperless?', "
+            "'which documents failed to file to Paperless?'. "
+            "(2) WITH a query (a document name / invoice number / correspondent) → "
+            "check whether THAT specific document is in Paperless and report its "
+            "filing status. Use for 'ist die Rechnung X in Paperless?', 'ist das "
+            "Dokument Y abgelegt?', 'is document Z in Paperless?'. Returns id + "
+            "display name + filing state (filed/failed/pending/not-intended) and, "
+            "when filed, the Paperless document id. This is the FILING-status "
+            "readout; for the COUNT use ingest_status, for DUPLICATES use the dedupe "
+            "tools."
+        ),
+        "parameters": {
+            "query": (
+                "Optional: a document name, invoice number, or correspondent to "
+                "check a SPECIFIC document's Paperless status. Omit to list ALL "
+                "documents that are not (successfully) filed."
+            ),
+            "limit": (
+                "Max documents to list (optional; default "
+                f"{LIST_DEFAULT_LIMIT}, max {LIST_MAX_LIMIT})"
+            ),
+        },
+    },
+    "internal.refile_to_paperless": {
+        "description": (
+            "RE-FILE documents to Paperless whose filing FAILED. Use when the user "
+            "wants to FIX / retry the Paperless filing: 'lege die fehlgeschlagenen "
+            "Dokumente in Paperless ab', 'versuche die fehlgeschlagenen Ablagen "
+            "erneut', 'stelle die fehlenden Dokumente in Paperless ein', 're-file "
+            "the failed documents to Paperless', 'retry filing to Paperless'. It "
+            "resets each FAILED document and queues a fresh Paperless upload in the "
+            "document worker (the backend never runs the heavy OCR itself). With a "
+            "query it re-files only the matching failed document(s). Reports how many "
+            "were queued. (To SEE which failed first, use list_unfiled_documents.)"
+        ),
+        "parameters": {
+            "query": (
+                "Optional: a document name / invoice number / correspondent to "
+                "re-file only THAT failed document. Omit to re-file all failed ones."
+            ),
+            "limit": (
+                "Max documents to re-file (optional; default "
+                f"{REINDEX_DEFAULT_CAP}, max {REINDEX_MAX_CAP})"
+            ),
+        },
+    },
 }
+
+# Redis lease key mirrors services/paperless_reconciler so a chat-triggered
+# re-file and the periodic reconciler never double-enqueue the same doc.
+_REFILE_LEASE_KEY = "paperless:refile:lease:{doc_id}"
 
 # paperless_state → human label for the status readout.
 _PL_LABELS = {
@@ -700,5 +759,323 @@ async def list_chunkless_documents(params: dict, user_id: int | None = None) -> 
         return {
             "success": False,
             "message": f"Auflisten fehlgeschlagen: {e!s}",
+            "action_taken": False,
+        }
+
+
+# paperless_state values that mean "should be in Paperless but isn't (yet)".
+_UNFILED_STATES = ("failed", "pending")
+
+
+def _filing_status(state: str | None, pid: int | None) -> tuple[str, bool]:
+    """(human label, is_in_paperless) for a document's Paperless filing state."""
+    if state == "done":
+        if pid:
+            return (f"in Paperless abgelegt (Paperless-Dokument #{pid})", True)
+        # done without a linked id = Paperless accepted it as a duplicate of an
+        # existing document at consume time (no separate Paperless doc created).
+        return ("in Paperless vorhanden (als Duplikat einer bestehenden Ablage)", True)
+    if state == "failed":
+        return ("Ablage FEHLGESCHLAGEN — nicht in Paperless", False)
+    if state == "pending":
+        return ("Ablage läuft noch (ausstehend)", False)
+    # NULL → interactive/normal upload, never routed to Paperless by design.
+    return ("nicht für Paperless vorgesehen (interner Upload)", False)
+
+
+async def list_unfiled_documents(params: dict, user_id: int | None = None) -> dict:
+    """Report Paperless filing status by name.
+
+    No ``query`` → list completed documents that are NOT successfully filed
+    (paperless_state failed/pending). With ``query`` → report the filing status of
+    the matching document(s), so the user can ask "is document X in Paperless?".
+    """
+    limit = LIST_DEFAULT_LIMIT
+    if params.get("limit"):
+        try:
+            limit = max(1, min(LIST_MAX_LIMIT, int(params["limit"])))
+        except (ValueError, TypeError):
+            pass
+    query = (params.get("query") or "").strip()
+
+    display_name = func.coalesce(
+        Document.generated_title, Document.title, Document.filename
+    )
+
+    try:
+        async with AsyncSessionLocal() as db:
+            if query:
+                like = f"%{query}%"
+                rows = (
+                    await db.execute(
+                        select(
+                            Document.id,
+                            display_name,
+                            Document.paperless_state,
+                            Document.paperless_document_id,
+                        )
+                        .where(
+                            Document.status == DOC_STATUS_COMPLETED,
+                            or_(
+                                Document.generated_title.ilike(like),
+                                Document.title.ilike(like),
+                                Document.filename.ilike(like),
+                            ),
+                        )
+                        .order_by(Document.id.desc())
+                        .limit(limit)
+                    )
+                ).all()
+
+                if not rows:
+                    return {
+                        "success": True,
+                        "message": (
+                            f"Ich habe kein Dokument gefunden, das zu „{query}“ passt."
+                        ),
+                        "action_taken": True,
+                        "empty_result": True,
+                        "data": {"query": query, "count": 0, "documents": []},
+                    }
+
+                documents = []
+                lines = []
+                for _id, name, state, pid in rows:
+                    label, in_pl = _filing_status(state, pid)
+                    documents.append(
+                        {
+                            "id": _id,
+                            "name": name,
+                            "paperless_state": state,
+                            "paperless_document_id": pid,
+                            "in_paperless": in_pl,
+                            "status_label": label,
+                        }
+                    )
+                    lines.append(f"- {name} (#{_id}): {label}")
+                return {
+                    "success": True,
+                    "message": (
+                        f"Ablage-Status zu „{query}“:\n" + "\n".join(lines)
+                    ),
+                    "action_taken": True,
+                    "data": {"query": query, "count": len(documents), "documents": documents},
+                }
+
+            # list mode: documents that should be filed but aren't
+            base = (
+                select(
+                    Document.id, display_name, Document.paperless_state,
+                    Document.paperless_document_id,
+                )
+                .where(
+                    Document.status == DOC_STATUS_COMPLETED,
+                    Document.paperless_state.in_(_UNFILED_STATES),
+                )
+            )
+            total = (
+                await db.execute(
+                    select(func.count()).select_from(
+                        select(Document.id)
+                        .where(
+                            Document.status == DOC_STATUS_COMPLETED,
+                            Document.paperless_state.in_(_UNFILED_STATES),
+                        )
+                        .subquery()
+                    )
+                )
+            ).scalar() or 0
+            rows = (
+                await db.execute(base.order_by(Document.id.desc()).limit(limit))
+            ).all()
+
+        if not rows:
+            return {
+                "success": True,
+                "message": (
+                    "Alle für Paperless vorgesehenen Dokumente sind abgelegt — "
+                    "keine fehlgeschlagenen oder ausstehenden Ablagen."
+                ),
+                "action_taken": True,
+                "empty_result": True,
+                "data": {"count": 0, "total": 0, "documents": []},
+            }
+
+        documents = []
+        lines = []
+        for _id, name, state, pid in rows:
+            label, in_pl = _filing_status(state, pid)
+            documents.append(
+                {
+                    "id": _id, "name": name, "paperless_state": state,
+                    "paperless_document_id": pid, "in_paperless": in_pl,
+                    "status_label": label,
+                }
+            )
+            lines.append(f"- {name} (#{_id}): {label}")
+        truncated = total > len(documents)
+        suffix = (
+            f" (zeige {len(documents)} von {total}; höheres 'limit' für mehr)"
+            if truncated else ""
+        )
+        header = f"{total} Dokument(e) nicht (erfolgreich) in Paperless abgelegt{suffix}:"
+        return {
+            "success": True,
+            "message": header + "\n" + "\n".join(lines),
+            "action_taken": True,
+            "data": {
+                "count": len(documents), "total": total,
+                "truncated": truncated, "documents": documents,
+            },
+        }
+    except Exception as e:
+        logger.error(f"Error in list_unfiled_documents: {e}")
+        return {
+            "success": False,
+            "message": f"Abfrage fehlgeschlagen: {e!s}",
+            "action_taken": False,
+        }
+
+
+async def refile_to_paperless(
+    params: dict,
+    user_id: int | None = None,
+    user_permissions: list[str] | None = None,
+) -> dict:
+    """Re-file FAILED documents to Paperless: reset each + enqueue a worker refile.
+
+    Targets only ``paperless_state='failed'`` (the genuinely stuck ones) — pending
+    docs are already handled by the periodic reconciler, and clearing their
+    ``paperless_task_id`` would risk a duplicate re-upload (the re-ingest-loop bug).
+    A failed doc's task is terminal, so we clear it and flip to ``pending`` so the
+    worker leg does a FRESH upload. The heavy Docling/upload runs in the document
+    worker (``paperless_refile`` task) — the backend only resets + enqueues, never
+    OCRs (the OOM lesson). Flip-then-enqueue is safe: a failed enqueue leaves the
+    doc ``pending``, which the periodic reconciler re-enqueues as a backstop.
+
+    Gated on ``Permission.RAG_MANAGE`` when auth is enabled (auth-off / unidentified
+    turn allowed; an authenticated low-privilege user is refused).
+    """
+    if settings.auth_enabled and user_permissions is not None:
+        if not has_permission(user_permissions, Permission.RAG_MANAGE):
+            return {
+                "success": False,
+                "message": (
+                    "Zum erneuten Ablegen in Paperless fehlt die Berechtigung "
+                    "(rag.manage / Dokumentenverwaltung)."
+                ),
+                "action_taken": False,
+            }
+
+    cap = REINDEX_DEFAULT_CAP
+    if params.get("limit"):
+        try:
+            cap = max(1, min(REINDEX_MAX_CAP, int(params["limit"])))
+        except (ValueError, TypeError):
+            pass
+    query = (params.get("query") or "").strip()
+    display_name = func.coalesce(
+        Document.generated_title, Document.title, Document.filename
+    )
+
+    try:
+        async with AsyncSessionLocal() as db:
+            # failed docs (+ their atom owner, for owner-scoped Paperless metadata),
+            # optionally filtered by name.
+            q = (
+                select(Document.id, Atom.owner_user_id)
+                .join(Atom, Document.atom_id == Atom.atom_id, isouter=True)
+                .where(
+                    Document.status == DOC_STATUS_COMPLETED,
+                    Document.paperless_state == PAPERLESS_STATE_FAILED,
+                )
+            )
+            if query:
+                like = f"%{query}%"
+                q = q.where(
+                    or_(
+                        Document.generated_title.ilike(like),
+                        Document.title.ilike(like),
+                        Document.filename.ilike(like),
+                    )
+                )
+            rows = (await db.execute(q.order_by(Document.id).limit(cap))).all()
+
+            if not rows:
+                msg = (
+                    f"Kein fehlgeschlagenes Dokument gefunden, das zu „{query}“ passt."
+                    if query
+                    else "Keine fehlgeschlagenen Paperless-Ablagen — nichts erneut abzulegen."
+                )
+                return {
+                    "success": True,
+                    "message": msg,
+                    "action_taken": True,
+                    "empty_result": True,
+                    "data": {"queued": 0},
+                }
+
+            ids = [r[0] for r in rows]
+            # Flip failed → pending + clear the terminal task_id so the worker leg
+            # does a fresh upload (guard on paperless_state so a concurrent settle
+            # isn't overwritten).
+            await db.execute(
+                update(Document)
+                .where(
+                    Document.id.in_(ids),
+                    Document.paperless_state == PAPERLESS_STATE_FAILED,
+                )
+                .values(
+                    paperless_state=PAPERLESS_STATE_PENDING,
+                    paperless_task_id=None,
+                    error_message=None,
+                )
+            )
+            await db.commit()
+
+        from services.redis_client import get_redis
+        from services.task_queue import DocumentTaskQueue
+
+        redis = get_redis()
+        ttl = settings.paperless_reconciler_refile_lease_seconds
+        queue = DocumentTaskQueue(redis_client=redis)
+        queued = 0
+        for doc_id, owner_user_id in rows:
+            try:
+                # Lease so a concurrent periodic reconciler doesn't double-enqueue.
+                acquired = await redis.set(
+                    _REFILE_LEASE_KEY.format(doc_id=doc_id), "1", nx=True, ex=ttl
+                )
+                if not acquired:
+                    continue
+                await queue.enqueue(
+                    {
+                        "document_id": doc_id,
+                        "trigger": "paperless_refile",
+                        "user_id": owner_user_id,
+                    }
+                )
+                queued += 1
+            except Exception as e:  # noqa: BLE001 — one bad enqueue mustn't abort the batch
+                logger.warning(f"refile_to_paperless: enqueue failed for doc {doc_id}: {e}")
+
+        # The docs are already flipped to 'pending', so even if every direct enqueue
+        # failed the periodic reconciler re-enqueues them — report honestly.
+        more = " (weitere folgen beim nächsten Aufruf)" if len(rows) == cap else ""
+        return {
+            "success": True,
+            "message": (
+                f"{len(rows)} fehlgeschlagene(s) Dokument(e) für die erneute "
+                f"Paperless-Ablage vorgemerkt, {queued} sofort eingereiht{more}. "
+                "Die Ablage läuft im Hintergrund (Dokument-Worker)."
+            ),
+            "action_taken": True,
+            "data": {"targeted": len(rows), "queued": queued, "truncated": len(rows) == cap},
+        }
+    except Exception as e:
+        logger.error(f"Error in refile_to_paperless: {e}")
+        return {
+            "success": False,
+            "message": f"Erneutes Ablegen fehlgeschlagen: {e!s}",
             "action_taken": False,
         }

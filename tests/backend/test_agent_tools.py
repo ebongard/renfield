@@ -29,6 +29,8 @@ INTERNAL_TOOL_NAMES = {
     "internal.ingest_status",             # KB_MAINTENANCE_TOOLS
     "internal.reindex_documents",         # KB_MAINTENANCE_TOOLS
     "internal.list_chunkless_documents",  # KB_MAINTENANCE_TOOLS
+    "internal.list_unfiled_documents",    # KB_MAINTENANCE_TOOLS
+    "internal.refile_to_paperless",       # KB_MAINTENANCE_TOOLS
     "internal.system_health",             # SYSTEM_HEALTH_TOOL
     "internal.reextract_paperless_metadata",  # PAPERLESS_REEXTRACT_TOOL
     "internal.paperless_dedupe",          # PAPERLESS_DEDUPE_TOOL
