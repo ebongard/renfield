@@ -229,34 +229,51 @@ class DocumentDedupeService:
 
     @staticmethod
     def build_text_similar_sql(auth_enabled: bool) -> str:
-        """The content-embedding halfvec cosine self-join SQL (extracted so a unit
-        test can assert its shape without a live DB). Owner-scoped when auth is on."""
+        """Per-anchor top-k nearest-neighbour SQL for the text signal (extracted so
+        a unit test can assert its shape without a live DB). Owner-scoped when auth
+        is on.
+
+        Uses a CROSS JOIN LATERAL: for each anchor ``a``, an ``ORDER BY
+        content_embedding <=> a.content_embedding LIMIT :k`` neighbour lookup that
+        the ``idx_documents_content_embedding_hnsw`` HNSW index ACCELERATES (the
+        anchor vector is constant per LATERAL execution) — O(N·k·log N), not the
+        O(N²) all-pairs cross-join a naive self-join would be. kNN is asymmetric, so
+        a pair may surface from only one side; the caller dedups (min,max)."""
         dim = EMBEDDING_DIMENSION
-        cos = (
-            f"1 - (a.content_embedding::halfvec({dim}) "
-            f"<=> b.content_embedding::halfvec({dim}))"
-        )
-        owner_join = ""
-        if auth_enabled:
-            owner_join = (
-                "JOIN atoms aa ON aa.atom_id = a.atom_id AND aa.owner_user_id = :uid "
-                "JOIN atoms ab ON ab.atom_id = b.atom_id AND ab.owner_user_id = :uid "
+        dist = f"b.content_embedding::halfvec({dim}) <=> a.content_embedding::halfvec({dim})"
+
+        def _live(alias: str) -> str:
+            return (
+                f"{alias}.content_embedding IS NOT NULL "
+                f"AND {alias}.status = 'completed' "
+                f"AND {alias}.superseded_by_document_id IS NULL"
             )
+
+        owner_a = owner_b = ""
+        if auth_enabled:
+            owner_a = "JOIN atoms aa ON aa.atom_id = a.atom_id AND aa.owner_user_id = :uid "
+            owner_b = "JOIN atoms ab ON ab.atom_id = b.atom_id AND ab.owner_user_id = :uid "
+
         return f"""
-            SELECT a.id AS id_a, b.id AS id_b, {cos} AS similarity
+            SELECT a.id AS id_a, nn.id AS id_b, nn.similarity AS similarity
             FROM documents a
-            JOIN documents b ON a.id < b.id
-            {owner_join}
-            WHERE a.content_embedding IS NOT NULL AND b.content_embedding IS NOT NULL
-              AND a.status = 'completed' AND b.status = 'completed'
-              AND a.superseded_by_document_id IS NULL
-              AND b.superseded_by_document_id IS NULL
-              AND ({cos}) >= :thr
+            {owner_a}
+            CROSS JOIN LATERAL (
+                SELECT b.id AS id, 1 - ({dist}) AS similarity
+                FROM documents b
+                {owner_b}
+                WHERE b.id <> a.id
+                  AND {_live('b')}
+                ORDER BY {dist}
+                LIMIT :k
+            ) nn
+            WHERE {_live('a')}
+              AND nn.similarity >= :thr
               AND NOT EXISTS (
                   SELECT 1 FROM document_duplicate_proposals p
-                  WHERE (p.document_a_id = a.id AND p.document_b_id = b.id)
-                     OR (p.document_a_id = b.id AND p.document_b_id = a.id))
-            ORDER BY similarity DESC
+                  WHERE (p.document_a_id = a.id AND p.document_b_id = nn.id)
+                     OR (p.document_a_id = nn.id AND p.document_b_id = a.id))
+            ORDER BY nn.similarity DESC
             LIMIT :cap
         """
 
@@ -278,14 +295,21 @@ class DocumentDedupeService:
         params: dict = {
             "thr": settings.document_dedupe_text_threshold,
             "cap": settings.document_dedupe_text_max_pairs,
+            "k": settings.document_dedupe_text_neighbors,
         }
         if settings.auth_enabled:
             params["uid"] = user_id
         rows = (await self.db.execute(text(sql_str), params)).all()
+
+        # kNN is asymmetric — a pair can surface from either or both anchors; keep
+        # one _Pair per unordered (lo, hi), the first (highest-similarity) seen.
+        seen: set[tuple[int, int]] = set()
         pairs: list[_Pair] = []
         for id_a, id_b, sim in rows:
-            a, b = (int(id_a), int(id_b))
-            lo, hi = (a, b) if a < b else (b, a)
+            lo, hi = sorted((int(id_a), int(id_b)))
+            if (lo, hi) in seen:
+                continue
+            seen.add((lo, hi))
             pairs.append(_Pair(
                 doc_a_id=lo, doc_b_id=hi,
                 signal=DOC_DUP_SIGNAL_TEXT_SIMILARITY,

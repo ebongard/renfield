@@ -300,6 +300,9 @@ def test_text_similar_sql_shape_auth_on():
     sql = DocumentDedupeService.build_text_similar_sql(True).lower()
     assert "content_embedding::halfvec" in sql
     assert "<=>" in sql  # cosine distance
+    # index-using per-anchor top-k (NOT an O(N²) cross-join)
+    assert "cross join lateral" in sql
+    assert "limit :k" in sql and "order by" in sql
     assert "document_duplicate_proposals" in sql  # durable idempotency guard
     assert "not exists" in sql
     assert "superseded_by_document_id is null" in sql
@@ -309,15 +312,16 @@ def test_text_similar_sql_shape_auth_on():
 def test_text_similar_sql_no_owner_join_when_auth_off():
     sql = DocumentDedupeService.build_text_similar_sql(False).lower()
     assert "content_embedding::halfvec" in sql
+    assert "cross join lateral" in sql
     assert "atoms" not in sql  # no owner scope in single-user mode
 
 
-def test_find_text_similar_empty_on_sqlite():
-    import asyncio
+@pytest.mark.asyncio
+async def test_find_text_similar_empty_on_sqlite():
     db = MagicMock()
     db.bind.dialect.name = "sqlite"
     svc = DocumentDedupeService(db)
-    assert asyncio.get_event_loop().run_until_complete(svc.find_text_similar_pairs(1)) == []
+    assert await svc.find_text_similar_pairs(1) == []
 
 
 @pytest.mark.asyncio
