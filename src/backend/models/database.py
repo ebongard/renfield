@@ -495,6 +495,12 @@ class MeetingSpeakerFingerprint(Base):
     speaker = relationship("Speaker")
 
 
+# Document Chunk Embedding Dimension (configurable, default: nomic-embed-text = 768).
+# Defined here — BEFORE Document — because Document.content_embedding references it
+# in its class body (every other model that uses it is defined further below).
+EMBEDDING_DIMENSION = settings.embedding_dimension
+
+
 class Document(Base):
     """Hochgeladene Dokumente (Metadaten)"""
     __tablename__ = "documents"
@@ -625,13 +631,19 @@ class Document(Base):
     # it is a plain nullable TSVECTOR (document_search has an ILIKE fallback).
     search_vector = Column(TSVECTOR, FetchedValue(), nullable=True)
 
+    # Document-level content embedding = mean of the doc's chunk embeddings,
+    # populated best-effort at ingest (np.mean). Backs the KB near-duplicate
+    # text-similarity signal (#1170 P3) — a halfvec cosine self-join. NULL until
+    # embedded / backfilled (bin/backfill_document_content_embeddings.py).
+    # Migration pc20260901; HNSW index on the ::halfvec cast.
+    content_embedding = Column(
+        Vector(EMBEDDING_DIMENSION) if PGVECTOR_AVAILABLE else Text,
+        nullable=True,
+    )
+
     # Beziehungen
     knowledge_base = relationship("KnowledgeBase", back_populates="documents")
     chunks = relationship("DocumentChunk", back_populates="document", cascade="all, delete-orphan")
-
-
-# Document Chunk Embedding Dimension (configurable, default: nomic-embed-text = 768)
-EMBEDDING_DIMENSION = settings.embedding_dimension
 
 
 class DocumentChunk(Base):

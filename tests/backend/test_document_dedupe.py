@@ -290,3 +290,49 @@ async def test_reject_double_is_noop():
     out = await svc.reject_proposal(_proposal_obj(), user_id=7)
     assert out["status"] == "superseded"
     assert db.rollback.await_count == 1
+
+
+# --------------------------------------------------------------------------
+# Phase 3: text-similarity signal + owner enumeration
+# --------------------------------------------------------------------------
+
+def test_text_similar_sql_shape_auth_on():
+    sql = DocumentDedupeService.build_text_similar_sql(True).lower()
+    assert "content_embedding::halfvec" in sql
+    assert "<=>" in sql  # cosine distance
+    assert "document_duplicate_proposals" in sql  # durable idempotency guard
+    assert "not exists" in sql
+    assert "superseded_by_document_id is null" in sql
+    assert "atoms aa" in sql and "owner_user_id = :uid" in sql  # owner scope
+
+
+def test_text_similar_sql_no_owner_join_when_auth_off():
+    sql = DocumentDedupeService.build_text_similar_sql(False).lower()
+    assert "content_embedding::halfvec" in sql
+    assert "atoms" not in sql  # no owner scope in single-user mode
+
+
+def test_find_text_similar_empty_on_sqlite():
+    import asyncio
+    db = MagicMock()
+    db.bind.dialect.name = "sqlite"
+    svc = DocumentDedupeService(db)
+    assert asyncio.get_event_loop().run_until_complete(svc.find_text_similar_pairs(1)) == []
+
+
+@pytest.mark.asyncio
+async def test_list_owner_ids_auth_off_returns_none(monkeypatch):
+    monkeypatch.setattr("services.document_dedupe_service.settings.auth_enabled", False)
+    svc = DocumentDedupeService(MagicMock())
+    assert await svc.list_owner_ids() == [None]
+
+
+@pytest.mark.asyncio
+async def test_list_owner_ids_auth_on_enumerates(monkeypatch):
+    monkeypatch.setattr("services.document_dedupe_service.settings.auth_enabled", True)
+    db = MagicMock()
+    result = MagicMock()
+    result.scalars.return_value.all.return_value = [3, 7, None]
+    db.execute = AsyncMock(return_value=result)
+    svc = DocumentDedupeService(db)
+    assert await svc.list_owner_ids() == [3, 7]  # None dropped

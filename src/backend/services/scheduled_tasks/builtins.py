@@ -356,6 +356,29 @@ async def _kg_reconciler_handler(app: "FastAPI", params: dict) -> str | None:
     return f"users={len(user_ids)}" if user_ids else None
 
 
+async def _document_dedupe_handler(app: "FastAPI", params: dict) -> str | None:
+    """Autonomous KB near-duplicate DOCUMENT scan (#1170 P3). Per-user; the
+    advisory lock (ns 0x4444) lives INSIDE run_for_user on its own dedicated
+    connection, so the handler must NOT re-wrap it. Self-gates on the runtime flag
+    (M7) so a ConfigMap flip activates it without a UI toggle."""
+    if not settings.document_dedupe_enabled:
+        return "skipped: document_dedupe_enabled is off"
+    from services.database import AsyncSessionLocal
+    from services.document_dedupe_service import DocumentDedupeService
+
+    async with AsyncSessionLocal() as enum_session:
+        user_ids = await DocumentDedupeService(enum_session).list_owner_ids()
+    proposed = 0
+    for uid in user_ids:
+        try:
+            async with AsyncSessionLocal() as per_user_db:
+                report = await DocumentDedupeService(per_user_db).run_for_user(uid)
+                proposed += report.proposed
+        except Exception as e:  # noqa: BLE001
+            logger.warning(f"Document dedupe failed for user {uid}: {e}")
+    return f"users={len(user_ids)} proposed={proposed}" if user_ids else None
+
+
 async def _skill_shadow_log_cleanup_handler(app: "FastAPI", params: dict) -> str | None:
     if not (settings.skills_enabled and settings.skill_shadow_log_enabled):
         return "skipped: skills_enabled AND skill_shadow_log_enabled required"
@@ -429,6 +452,7 @@ def register_builtin_handlers() -> None:
     register_handler("speaker_vocab_rebuild", _speaker_vocab_rebuild_handler)
     register_handler("skill_curator", _skill_curator_handler)
     register_handler("kg_reconciler", _kg_reconciler_handler)
+    register_handler("document_dedupe", _document_dedupe_handler)
     register_handler("skill_shadow_log_cleanup", _skill_shadow_log_cleanup_handler)
     register_handler("paperless_ui_edit_sweep", _paperless_ui_edit_sweep_handler)
     register_handler("paperless_abandoned_confirm_sweep", _paperless_abandoned_confirm_sweep_handler)
@@ -495,6 +519,9 @@ def builtin_task_seeds() -> list[TaskSeed]:
         TaskSeed(name="Sprecher-Vokabular neu aufbauen", handler_key="speaker_vocab_rebuild", interval_seconds=settings.speaker_vocab_rebuild_interval_seconds, run_at_boot=True, enabled=True),
         TaskSeed(name="Fähigkeiten-Kurator", handler_key="skill_curator", interval_seconds=settings.skill_curator_interval, run_at_boot=True, enabled=True),
         TaskSeed(name="KG-Reconciler", handler_key="kg_reconciler", interval_seconds=settings.kg_reconciler_interval, run_at_boot=True, enabled=True),
+        # Seeded enabled; the handler self-gates on document_dedupe_enabled (M7) so it's
+        # inert until the flag is flipped, then the ConfigMap-flip activates it.
+        TaskSeed(name="Dokument-Dedupe", handler_key="document_dedupe", interval_seconds=settings.document_dedupe_interval, run_at_boot=True, enabled=True),
         TaskSeed(name="Skill-Schattenlog aufräumen", handler_key="skill_shadow_log_cleanup", interval_seconds=settings.skill_shadow_log_cleanup_interval, run_at_boot=True, enabled=True),
         TaskSeed(name="Paperless UI-Änderungen auswerten", handler_key="paperless_ui_edit_sweep", interval_seconds=3600, run_at_boot=True, enabled=True),
         TaskSeed(name="Paperless verwaiste Bestätigungen aufräumen", handler_key="paperless_abandoned_confirm_sweep", interval_seconds=3600, run_at_boot=True, enabled=True),

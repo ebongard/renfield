@@ -52,6 +52,8 @@ from models.database import (
     DOC_DUP_RESOLUTION_DELETE,
     DOC_DUP_RESOLUTION_SUPERSEDE,
     DOC_DUP_SIGNAL_SHARED_IDENTIFIER,
+    DOC_DUP_SIGNAL_TEXT_SIMILARITY,
+    EMBEDDING_DIMENSION,
     Atom,
     Document,
     DocumentDuplicateProposal,
@@ -72,8 +74,9 @@ _IDENTIFIER = "identifier"
 class _Pair:
     doc_a_id: int          # always < doc_b_id
     doc_b_id: int
-    kind: str
-    normalized_value: str
+    signal: str            # DOC_DUP_SIGNAL_SHARED_IDENTIFIER | DOC_DUP_SIGNAL_TEXT_SIMILARITY
+    shared_key: str | None # "<kind>=<normalized_value>" for identifier; a "~NN%" note for text
+    similarity: float = 1.0
 
 
 @dataclass
@@ -214,9 +217,81 @@ class DocumentDedupeService:
             if key in seen:
                 continue
             seen.add(key)
-            pairs.append(_Pair(doc_a_id=int(a), doc_b_id=int(b), kind=str(kind), normalized_value=str(nv)))
+            pairs.append(_Pair(
+                doc_a_id=int(a), doc_b_id=int(b),
+                signal=DOC_DUP_SIGNAL_SHARED_IDENTIFIER,
+                shared_key=f"{kind}={nv}",
+                similarity=1.0,
+            ))
             if len(pairs) >= cap:
                 break
+        return pairs
+
+    @staticmethod
+    def build_text_similar_sql(auth_enabled: bool) -> str:
+        """The content-embedding halfvec cosine self-join SQL (extracted so a unit
+        test can assert its shape without a live DB). Owner-scoped when auth is on."""
+        dim = EMBEDDING_DIMENSION
+        cos = (
+            f"1 - (a.content_embedding::halfvec({dim}) "
+            f"<=> b.content_embedding::halfvec({dim}))"
+        )
+        owner_join = ""
+        if auth_enabled:
+            owner_join = (
+                "JOIN atoms aa ON aa.atom_id = a.atom_id AND aa.owner_user_id = :uid "
+                "JOIN atoms ab ON ab.atom_id = b.atom_id AND ab.owner_user_id = :uid "
+            )
+        return f"""
+            SELECT a.id AS id_a, b.id AS id_b, {cos} AS similarity
+            FROM documents a
+            JOIN documents b ON a.id < b.id
+            {owner_join}
+            WHERE a.content_embedding IS NOT NULL AND b.content_embedding IS NOT NULL
+              AND a.status = 'completed' AND b.status = 'completed'
+              AND a.superseded_by_document_id IS NULL
+              AND b.superseded_by_document_id IS NULL
+              AND ({cos}) >= :thr
+              AND NOT EXISTS (
+                  SELECT 1 FROM document_duplicate_proposals p
+                  WHERE (p.document_a_id = a.id AND p.document_b_id = b.id)
+                     OR (p.document_a_id = b.id AND p.document_b_id = a.id))
+            ORDER BY similarity DESC
+            LIMIT :cap
+        """
+
+    async def find_text_similar_pairs(self, user_id: int | None) -> list[_Pair]:
+        """P3 fuzzy signal: near-duplicate pairs by document CONTENT-EMBEDDING
+        cosine (mean of chunk embeddings). Catches re-scans/re-exports that share
+        NO extracted identifier. Postgres-only halfvec self-join, mirroring the KG
+        reconciler; high threshold + propose-only keeps distinct-but-similar docs
+        (e.g. two invoices from one vendor) from being merged.
+
+        Skips pairs that already have a proposal of ANY status (so the identifier
+        pass — run first — isn't re-proposed, and rejected pairs stay durable).
+        """
+        dialect = self.db.bind.dialect.name if self.db.bind is not None else ""
+        if dialect != "postgresql":
+            return []
+
+        sql_str = self.build_text_similar_sql(settings.auth_enabled)
+        params: dict = {
+            "thr": settings.document_dedupe_text_threshold,
+            "cap": settings.document_dedupe_text_max_pairs,
+        }
+        if settings.auth_enabled:
+            params["uid"] = user_id
+        rows = (await self.db.execute(text(sql_str), params)).all()
+        pairs: list[_Pair] = []
+        for id_a, id_b, sim in rows:
+            a, b = (int(id_a), int(id_b))
+            lo, hi = (a, b) if a < b else (b, a)
+            pairs.append(_Pair(
+                doc_a_id=lo, doc_b_id=hi,
+                signal=DOC_DUP_SIGNAL_TEXT_SIMILARITY,
+                shared_key=f"~{round(float(sim) * 100)}% Textähnlichkeit",
+                similarity=float(sim),
+            ))
         return pairs
 
     async def _pick_survivor(self, a_id: int, b_id: int) -> int:
@@ -265,9 +340,9 @@ class DocumentDedupeService:
                         user_id=user_id,
                         document_a_id=pair.doc_a_id,
                         document_b_id=pair.doc_b_id,
-                        signal=DOC_DUP_SIGNAL_SHARED_IDENTIFIER,
-                        shared_key=f"{pair.kind}={pair.normalized_value}",
-                        similarity=1.0,
+                        signal=pair.signal,
+                        shared_key=pair.shared_key,
+                        similarity=pair.similarity,
                         suggested_survivor_id=survivor,
                         status=DOC_DUP_PROPOSAL_PENDING,
                     )
@@ -277,6 +352,23 @@ class DocumentDedupeService:
         except IntegrityError:
             return False
 
+    async def list_owner_ids(self) -> list[int | None]:
+        """Users to scan in the autonomous pass (#1170 P3 scheduled task).
+
+        Auth-off single-user → ``[None]`` (one pass over all docs). Auth-on →
+        distinct owners of ``kb_document`` atoms (a non-doc owner would find no
+        pairs anyway). Mirrors ``KgReconcilerService.list_active_user_ids``."""
+        if not settings.auth_enabled:
+            return [None]
+        rows = (
+            await self.db.execute(
+                select(Atom.owner_user_id)
+                .where(Atom.atom_type == "kb_document")
+                .distinct()
+            )
+        ).scalars().all()
+        return [int(r) for r in rows if r is not None]
+
     async def _detect_pass(self, user_id: int | None, report: DedupeReport) -> DedupeReport:
         pairs = await self.find_duplicate_pairs(user_id)
         report.candidates = len(pairs)
@@ -285,6 +377,16 @@ class DocumentDedupeService:
                 report.proposed += 1
             else:
                 report.skipped_existing += 1
+        # P3: the text-similarity pass (fuzzy — catches re-scans that share no
+        # identifier), after the identifier pass so it skips already-proposed pairs.
+        if settings.document_dedupe_text_similarity_enabled:
+            text_pairs = await self.find_text_similar_pairs(user_id)
+            report.candidates += len(text_pairs)
+            for pair in text_pairs:
+                if await self._propose(user_id, pair):
+                    report.proposed += 1
+                else:
+                    report.skipped_existing += 1
         if report.proposed:
             await self.db.commit()
         return report

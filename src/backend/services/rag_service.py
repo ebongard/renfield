@@ -507,6 +507,26 @@ class RAGService:
                         self.db.add_all(chunk_objects)
 
                     doc.chunk_count = chunk_count
+
+                    # Doc-level content embedding = mean of the chunk embeddings
+                    # that have one (children in parent/child mode; all in flat).
+                    # Backs the KB near-duplicate TEXT-similarity signal (#1170 P3);
+                    # best-effort, Postgres-only (the column is a real vector there),
+                    # np.mean like the speaker-centroid precedent.
+                    try:
+                        if self.db.bind is not None and self.db.bind.dialect.name == "postgresql":
+                            embs = [
+                                c.embedding for c in chunk_objects
+                                if getattr(c, "embedding", None) is not None
+                            ]
+                            if embs:
+                                import numpy as np
+                                doc.content_embedding = np.mean(
+                                    np.array(embs, dtype=float), axis=0
+                                ).tolist()
+                    except Exception as e:  # noqa: BLE001 — non-essential
+                        logger.warning(f"content_embedding mean failed for doc {doc.id}: {e}")
+
                     doc.status = DOC_STATUS_COMPLETED
                     doc.processed_at = datetime.now(UTC).replace(tzinfo=None)
                     await self.db.commit()

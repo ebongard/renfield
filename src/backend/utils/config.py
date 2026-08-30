@@ -852,6 +852,14 @@ class Settings(BaseSettings):
     document_dedupe_max_per_run: int = Field(default=200, ge=1, le=1000)         # Safety cap on proposals created per user per run
     document_dedupe_recurring_identifier_max_docs: int = Field(default=3, ge=1, le=100)  # An identifier value on MORE than N docs is a recurring id (Steuernummer/IBAN/Kundennr) — skip it, never emit N² pairs
     document_dedupe_min_identifier_length: int = Field(default=4, ge=1, le=64)   # Ignore trivially short identifier values (weak signal)
+    # P3 text-similarity signal: a per-user halfvec cosine self-join on the
+    # document content_embedding (mean of chunk embeddings) catches re-scans /
+    # re-exports that share NO extracted identifier. Needs the content_embedding
+    # backfilled first (bin/backfill_document_content_embeddings.py); high threshold
+    # keeps distinct-but-similar docs (e.g. two invoices from one vendor) apart.
+    document_dedupe_text_similarity_enabled: bool = False                        # Opt-in text pass (needs embeddings backfilled)
+    document_dedupe_text_threshold: float = Field(default=0.97, ge=0.5, le=1.0)  # Cosine ≥ this ⇒ near-duplicate candidate (high = near-identical)
+    document_dedupe_text_max_pairs: int = Field(default=100, ge=1, le=1000)      # Cap on text-similar pairs proposed per user per run
     memory_kg_bridge_enabled: bool = False                                       # Phase 3: link memory subjects to canonical KG entities (save-time + entity-augmented retrieval). Opt-in.
     memory_subsume_to_kg: bool = False                                           # Phase 3-subsume: decomposable facts (category=fact + subject) live in the KG only; skip the flat duplicate. Opt-in, aggressive.
     memory_subsume_require_kg_relation: bool = True                              # Phase 3-subsume recall-loss REDUCER (subject-level proxy, NOT a per-fact guarantee): only drop the flat fact when the subject's person-entity already has >=1 relation — protects never-before-related subjects. A state/feeling fact about an already-related person is still subsumed-and-lost; per-fact fix is a TODOS follow-up. Off = legacy unguarded subsume. Does NOT make subsume multi-user-safe.
