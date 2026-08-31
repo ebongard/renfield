@@ -15,7 +15,9 @@ from __future__ import annotations
 
 import asyncio
 import re
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -438,3 +440,105 @@ async def test_snapshot_roles_content_free(monkeypatch):
             "has_agent_loop": True,
         }
     ]
+
+
+# --------------------------------------------------------------------------
+# build_kiosk_snapshot — tool-health staleness / min-sample guards
+# --------------------------------------------------------------------------
+#
+# The tool-outcome counters are cumulative over ALL time (no window/decay), so
+# without these guards a handful of days-old failures pins a kiosk node red
+# forever even after the server recovered (the xidra search+simba regression).
+# The snapshot must only emit a functional-health verdict for tools that were
+# exercised RECENTLY and have enough samples; everything else is omitted so the
+# node falls back to its (green) connectivity/get_status health.
+
+
+class _Stat:
+    """Minimal stand-in for a ToolOutcomeStat row."""
+
+    def __init__(self, tool_name, success, failure, last_used_at):
+        self.tool_name = tool_name
+        self.success_count = success
+        self.failure_count = failure
+        self.last_used_at = last_used_at
+
+
+class _NoopSession:
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *a):
+        return False
+
+    async def execute(self, *a, **k):  # every other DB-backed section degrades
+        raise RuntimeError("no db in unit test")
+
+
+def _patch_stats(monkeypatch, stats):
+    """Route build_kiosk_snapshot's tool-health query to `stats`, and make all
+    OTHER db-backed sections degrade to their empty branches (no real DB)."""
+    from services.tool_outcome_service import ToolOutcomeService
+
+    monkeypatch.setattr(kiosk, "AsyncSessionLocal", lambda: _NoopSession(), raising=True)
+    monkeypatch.setattr(
+        ToolOutcomeService, "list_stats", AsyncMock(return_value=stats), raising=True
+    )
+
+
+@pytest.mark.backend
+@pytest.mark.asyncio
+async def test_tool_health_excludes_stale_and_thin(monkeypatch):
+    """A recent, well-sampled failing tool is reported degraded; a STALE failing
+    tool and a THIN (too few samples) failing tool are omitted entirely."""
+    now = datetime.now(UTC).replace(tzinfo=None)
+    recent = now - timedelta(hours=1)
+    stale = now - timedelta(hours=kiosk._TOOL_HEALTH_RECENT_HOURS + 5)
+    stats = [
+        # recent + enough samples + low rate → reported, degraded
+        _Stat("mcp.a.tool", success=1, failure=5, last_used_at=recent),
+        # stale (old) + low rate → omitted (no current signal)
+        _Stat("mcp.b.tool", success=0, failure=5, last_used_at=stale),
+        # recent but too few samples → omitted (noise)
+        _Stat("mcp.c.tool", success=0, failure=2, last_used_at=recent),
+    ]
+    _patch_stats(monkeypatch, stats)
+
+    snap = await build_kiosk_snapshot(_FakeApp())
+    th = {t["tool_name"]: t for t in snap["tool_health"]}
+
+    assert set(th) == {"mcp.a.tool"}
+    assert th["mcp.a.tool"]["degraded"] is True
+    assert th["mcp.a.tool"]["total"] == 6
+
+
+@pytest.mark.backend
+@pytest.mark.asyncio
+async def test_tool_health_recent_healthy_reported_not_degraded(monkeypatch):
+    """A recent, well-sampled tool with a good success rate is reported and NOT
+    degraded (the guards don't hide healthy live signal)."""
+    recent = datetime.now(UTC).replace(tzinfo=None) - timedelta(minutes=30)
+    _patch_stats(monkeypatch, [_Stat("mcp.a.tool", success=9, failure=1, last_used_at=recent)])
+
+    snap = await build_kiosk_snapshot(_FakeApp())
+    th = {t["tool_name"]: t for t in snap["tool_health"]}
+
+    assert th["mcp.a.tool"]["degraded"] is False
+    assert th["mcp.a.tool"]["success_rate"] == 0.9
+
+
+@pytest.mark.backend
+@pytest.mark.asyncio
+async def test_tool_health_all_stale_yields_empty(monkeypatch):
+    """When every failing tool is stale (the xidra search+simba case), the
+    payload is empty so the nodes fall back to connectivity health (green)."""
+    stale = datetime.now(UTC).replace(tzinfo=None) - timedelta(days=3)
+    stats = [
+        _Stat("mcp.search.web_search", success=1, failure=5, last_used_at=stale),
+        _Stat("mcp.simba.upload_documents", success=0, failure=5, last_used_at=stale),
+        _Stat("mcp.simba.check_connection", success=0, failure=3, last_used_at=stale),
+    ]
+    _patch_stats(monkeypatch, stats)
+
+    snap = await build_kiosk_snapshot(_FakeApp())
+    assert snap["tool_health"] == []

@@ -59,7 +59,7 @@ each into the same reducer-held model. Every event is CONTENT-FREE.
 """
 
 import asyncio
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 from fastapi import APIRouter, Query, WebSocket, WebSocketDisconnect
 from loguru import logger
@@ -187,6 +187,20 @@ async def _broadcast_consumer() -> None:
 # aggregated, user-id-free kiosk health view.
 _TOOL_HEALTH_DEGRADED_BELOW = 0.5
 
+# A LIVE wall display must not paint a node red from STALE or thin evidence.
+# The tool-outcome counters (services.tool_outcome_service.ToolOutcomeStat) are
+# cumulative over ALL time — no window, no decay — so without these guards a
+# handful of days-old failures pins a node "degraded" indefinitely, even after
+# the server has fully recovered (observed on the xidra kiosk: `search` and
+# `simba` stuck red from failures 2-3 days prior, while the live connectivity /
+# get_status verdict was healthy the whole time). A tool may contribute a
+# functional-health verdict ONLY when its most recent call is within this window
+# AND it has enough samples to be meaningful; otherwise it is omitted from the
+# `tool_health` payload entirely, so the node falls back to its authoritative
+# connectivity/get_status health instead of a never-forgetting cumulative ratio.
+_TOOL_HEALTH_RECENT_HOURS = 24
+_TOOL_HEALTH_MIN_SAMPLES = 3
+
 def build_presence_payload(presence) -> dict:
     """Content-free rooms→occupant-count rollup of the live presence map.
 
@@ -267,23 +281,45 @@ async def build_kiosk_snapshot(app) -> dict:
 
         async with AsyncSessionLocal() as db:
             stats = await ToolOutcomeService(db).list_stats(limit=500)
+        # Aggregate the per-(user, tool) rows into a per-tool view, tracking the
+        # MOST RECENT activity across users (a tool is "recent" if ANY user
+        # exercised it within the window).
         agg: dict[str, dict] = {}
         for st in stats:
             row = agg.setdefault(
-                st.tool_name, {"tool_name": st.tool_name, "success": 0, "failure": 0}
+                st.tool_name,
+                {"tool_name": st.tool_name, "success": 0, "failure": 0, "last_used": None},
             )
             row["success"] += st.success_count
             row["failure"] += st.failure_count
+            lu = st.last_used_at
+            if lu is not None and (row["last_used"] is None or lu > row["last_used"]):
+                row["last_used"] = lu
+        # last_used_at is stored as naive UTC (see ToolOutcomeService.record), so
+        # compare against a naive-UTC cutoff.
+        recent_cutoff = datetime.now(UTC).replace(tzinfo=None) - timedelta(
+            hours=_TOOL_HEALTH_RECENT_HOURS
+        )
         tool_health: list[dict] = []
         for row in agg.values():
             total = row["success"] + row["failure"]
-            rate = (row["success"] / total) if total else 1.0
+            # Omit tools with too little history (noise) or whose most recent
+            # call predates the window (stale): they carry no CURRENT functional
+            # signal, so the node should fall back to its connectivity health
+            # rather than a cumulative all-time ratio that never forgets. See
+            # _TOOL_HEALTH_RECENT_HOURS / _TOOL_HEALTH_MIN_SAMPLES above.
+            if total < _TOOL_HEALTH_MIN_SAMPLES:
+                continue
+            last_used = row["last_used"]
+            if last_used is None or last_used < recent_cutoff:
+                continue
+            rate = row["success"] / total
             tool_health.append(
                 {
                     "tool_name": row["tool_name"],
                     "total": total,
                     "success_rate": round(rate, 3),
-                    "degraded": total > 0 and rate < _TOOL_HEALTH_DEGRADED_BELOW,
+                    "degraded": rate < _TOOL_HEALTH_DEGRADED_BELOW,
                 }
             )
         snapshot["tool_health"] = tool_health
