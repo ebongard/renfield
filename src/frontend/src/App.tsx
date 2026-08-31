@@ -7,6 +7,7 @@ import ErrorBoundary from './components/ErrorBoundary';
 import ProtectedRoute, { AdminRoute } from './components/ProtectedRoute';
 import RedirectPreserving from './components/RedirectPreserving';
 import { useFeatureFlags } from './api/resources/brain';
+import { useUserEvents } from './hooks/useUserEvents';
 import ChatPage from './pages/ChatPage';
 import LoginPage from './pages/LoginPage';
 import RegisterPage from './pages/RegisterPage';
@@ -63,7 +64,7 @@ const WissenLayout = lazy(() => import('./pages/wissen/WissenLayout'));
 const OverviewLens = lazy(() => import('./pages/wissen/OverviewLens'));
 
 function AppRoutes() {
-  const { isFeatureEnabled } = useAuth();
+  const { isFeatureEnabled, authEnabled, isAuthenticated } = useAuth();
   // D10: the unified workspace is gated by a runtime flag (/api/config/features).
   // Until it resolves (or when off) we render the legacy flat corpus routes — the
   // safe default, so a slow/failed flag fetch never breaks navigation.
@@ -79,6 +80,14 @@ function AppRoutes() {
   // §2 meeting transcription: the /meetings surface is gated by a runtime flag
   // (/api/config/features). Off (the default on both instances) => route absent.
   const meetingsEnabled = featureFlags?.meeting_transcription_enabled ?? false;
+
+  // Per-user live event socket (/ws/user): content-free "refetch" push so KB
+  // surfaces reflect server-side changes without polling/reload. Connect only
+  // when the feature is on AND (auth is off OR the user is logged in) — never on
+  // the login/unauth surface. See docs/design/user-events-ws.md.
+  useUserEvents({
+    enabled: (featureFlags?.user_events_enabled ?? false) && (!authEnabled || isAuthenticated),
+  });
 
   return (
     <Routes>

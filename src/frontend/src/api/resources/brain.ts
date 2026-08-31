@@ -137,6 +137,9 @@ export interface FeatureFlags {
   simba_ingest_review_enabled?: boolean;
   /** Gates the KB near-duplicate document review section on /brain/review (#1170). */
   document_dedupe_enabled?: boolean;
+  /** Per-user live event push (/ws/user): open the socket + invalidate KB queries
+   * on server-side changes. On by default. See docs/design/user-events-ws.md. */
+  user_events_enabled?: boolean;
 }
 
 async function fetchAtomSearch(query: string): Promise<AtomMatch[]> {

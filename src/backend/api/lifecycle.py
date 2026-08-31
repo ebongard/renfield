@@ -289,6 +289,29 @@ def _schedule_kiosk_peer_status_refresh(app):
     )
 
 
+def _schedule_user_events_subscriber(app):
+    """Start the ONE per-pod Redis subscriber that fans per-user events out to
+    local ``/ws/user`` sockets. Dark when the feature is off. Persistent loop
+    (like the notification poller), tracked in ``_startup_tasks`` → cancelled on
+    shutdown; the shared Redis client is closed separately via ``close_redis()``.
+    """
+    if not settings.user_events_enabled:
+        return
+
+    async def subscriber_main():
+        from services.redis_client import get_redis
+        from services.user_events import run_user_events_subscriber
+
+        await run_user_events_subscriber(
+            get_redis(),
+            coalesce_window_seconds=settings.user_events_coalesce_window_seconds,
+        )
+
+    task = asyncio.create_task(subscriber_main())
+    _startup_tasks.append(task)
+    logger.info("User-events subscriber scheduled (/ws/user)")
+
+
 def _schedule_notification_poller(app):
     """Start the MCP notification poller for servers with notifications enabled."""
     if not settings.notification_poller_enabled:
@@ -735,6 +758,7 @@ async def lifespan(app: "FastAPI"):
     _schedule_kiosk_weather_refresh(app)
     _schedule_kiosk_internal_health_refresh(app)
     _schedule_kiosk_peer_status_refresh(app)
+    _schedule_user_events_subscriber(app)
     await _setup_task_engine(app)
 
     # Self-learning Phase 1: load bundled seed skills into the database.

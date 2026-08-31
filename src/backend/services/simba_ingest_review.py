@@ -610,6 +610,19 @@ async def confirm(
         )
     )
     await db.commit()
+    # Push a content-free documents_changed(simba) so the owner's KB tabs flip the
+    # Simba status icon without a reload. API-pod path, but publishes to Redis for
+    # one uniform delivery route. Best-effort.
+    try:
+        from services.redis_client import get_redis
+        from services.user_events import emit_documents_changed
+
+        await emit_documents_changed(
+            get_redis(), reason="simba",
+            owner_user_id=getattr(p, "user_id", None), db=db, document=doc,
+        )
+    except Exception:  # noqa: BLE001 — never break a completed upload on an event
+        pass
     if res.rowcount == 0:
         # The upload LANDED but the row left UPLOADING out from under us — the
         # terminal state is lost. Never a double upload (we held the claim), but

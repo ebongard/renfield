@@ -59,7 +59,7 @@ from api.routes import knowledge_graph as kg_routes
 from api.routes import mcp as mcp_routes
 from api.routes import settings as settings_routes
 from api.routes import wissensbasis as wissensbasis_routes
-from api.websocket import chat_router, kg_live_router, kiosk_router
+from api.websocket import chat_router, kg_live_router, kiosk_router, user_events_router
 # NOTE: device_router, satellite_router, and the HA-specific REST routers
 # (camera, homeassistant, paperless_audit, presence, rooms, satellites)
 # all moved to ha_glue.api.* and are mounted via the register_routes hook
@@ -278,6 +278,9 @@ if settings.knowledge_graph_enabled:
     app.include_router(kg_live_router, tags=["WebSocket Knowledge Graph"])
 # Kiosk push hub (/ws/kiosk) — ADMIN-gated live wall-display projection.
 app.include_router(kiosk_router, tags=["WebSocket Kiosk"])
+# Per-user event hub (/ws/user) — content-free "refetch" push to a user's tabs.
+if settings.user_events_enabled:
+    app.include_router(user_events_router, tags=["WebSocket User Events"])
 
 
 # WebSocket for Wake Word Detection (Server-Side Fallback)

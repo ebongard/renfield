@@ -531,6 +531,20 @@ class RAGService:
                     doc.processed_at = datetime.now(UTC).replace(tzinfo=None)
                     await self.db.commit()
 
+                    # Push a content-free "documents_changed" so the owner's open
+                    # KB tabs refetch without polling/reload. Runs in the worker →
+                    # publishes to Redis; the API pods' subscribers fan it out.
+                    try:
+                        from services.redis_client import get_redis
+                        from services.user_events import emit_documents_changed
+
+                        await emit_documents_changed(
+                            get_redis(), reason="ingested",
+                            owner_user_id=user_id, db=self.db, document=doc,
+                        )
+                    except Exception:  # noqa: BLE001 — never break ingest on an event
+                        pass
+
                     # Record metrics on the history handle. The track() context
                     # manager UPDATEs the row to ``completed`` on clean exit.
                     hrow.chunks_produced = chunk_count
@@ -968,6 +982,16 @@ class RAGService:
         if not doc:
             return False
 
+        # Capture the owner NOW, before the cascade removes the atom — used to
+        # push a content-free "documents_changed" after a successful delete so
+        # other tabs/devices of the owner drop the row without a reload.
+        try:
+            from services.user_events import resolve_document_owner
+
+            _deleted_owner = await resolve_document_owner(self.db, doc)
+        except Exception:  # noqa: BLE001
+            _deleted_owner = None
+
         # Lösche auch die Datei
         try:
             if doc.file_path and os.path.exists(doc.file_path):
@@ -1007,7 +1031,18 @@ class RAGService:
         await self.db.commit()
 
         logger.info(f"Dokument gelöscht: ID={document_id}")
-        return result.rowcount > 0
+        deleted = result.rowcount > 0
+        if deleted:
+            try:
+                from services.redis_client import get_redis
+                from services.user_events import emit_documents_changed
+
+                await emit_documents_changed(
+                    get_redis(), reason="deleted", owner_user_id=_deleted_owner,
+                )
+            except Exception:  # noqa: BLE001 — never break delete on an event
+                pass
+        return deleted
 
     # ==========================================================================
     # Knowledge Base Management

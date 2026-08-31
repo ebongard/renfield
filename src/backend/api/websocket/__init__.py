@@ -15,6 +15,7 @@ Platform-only deploys don't see these endpoints.
 from .chat_handler import router as chat_router
 from .kg_live_handler import router as kg_live_router
 from .kiosk_handler import router as kiosk_router
+from .user_events_handler import router as user_events_router
 from .shared import (
     ConversationSessionState,
     RAGSessionState,
@@ -32,4 +33,5 @@ __all__ = [
     "kg_live_router",
     "kiosk_router",
     "send_ws_error",
+    "user_events_router",
 ]

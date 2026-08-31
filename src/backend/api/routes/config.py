@@ -123,6 +123,9 @@ class FeatureFlags(BaseModel):
     # Gates the KB near-duplicate document review section on /brain/review (#1170,
     # Phase 2 UI). Off => surface absent. See utils/config.py::document_dedupe_enabled.
     document_dedupe_enabled: bool = False
+    # Per-user live event push (/ws/user). On => the frontend opens the socket and
+    # invalidates KB queries on server-side changes. See utils/config.py.
+    user_events_enabled: bool = True
 
 
 @router.get("/features", response_model=FeatureFlags)
@@ -151,4 +154,5 @@ async def get_features(
         simba_upload_enabled=_simba_available(request),
         simba_ingest_review_enabled=settings.folder_ingest_simba_enabled,
         document_dedupe_enabled=settings.document_dedupe_enabled,
+        user_events_enabled=settings.user_events_enabled,
     )

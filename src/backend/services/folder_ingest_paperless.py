@@ -105,6 +105,20 @@ async def _resolve_paperless_id_by_checksum(checksum: str | None) -> int | None:
     return None
 
 
+async def _emit_paperless_changed(db: AsyncSession, doc: Document) -> None:
+    """Push a content-free ``documents_changed(reason="paperless")`` so the
+    owner's open KB tabs refresh the Paperless status icon after a filing-state
+    transition. Best-effort; runs in the worker → publishes to Redis, the API
+    pods' subscribers fan it out."""
+    try:
+        from services.redis_client import get_redis
+        from services.user_events import emit_documents_changed
+
+        await emit_documents_changed(get_redis(), reason="paperless", db=db, document=doc)
+    except Exception:  # noqa: BLE001 — never break filing on an event
+        pass
+
+
 async def _settle_from_outcome(
     db: AsyncSession, doc: Document, outcome: dict
 ) -> bool:
@@ -132,11 +146,13 @@ async def _settle_from_outcome(
             doc.paperless_document_id = pid
         doc.paperless_task_id = None
         await db.commit()
+        await _emit_paperless_changed(db, doc)
         return True
     if status == "failure":
         doc.paperless_state = PAPERLESS_STATE_FAILED
         doc.paperless_task_id = None
         await db.commit()
+        await _emit_paperless_changed(db, doc)
         return True
     return False
 
@@ -546,6 +562,7 @@ def make_paperless_leg(
             doc.paperless_state = PAPERLESS_STATE_FAILED
             doc.paperless_task_id = None
             await db.commit()
+            await _emit_paperless_changed(db, doc)
             logger.warning(
                 f"folder-ingest paperless: Paperless rejected doc {doc.id} "
                 f"({upload.get('error') or 'no task_id'}); recorded failed"
@@ -591,6 +608,7 @@ def make_paperless_leg(
                 doc.paperless_document_id = pid
             doc.paperless_task_id = None  # settled — no outstanding upload
             await db.commit()
+            await _emit_paperless_changed(db, doc)
             logger.info(
                 f"paperless-leg: doc {doc.id} {status} "
                 f"(paperless_id={pid}{' via checksum' if pid and not task_pid else ''})"
@@ -649,6 +667,7 @@ def make_paperless_leg(
             doc.paperless_state = PAPERLESS_STATE_FAILED
             doc.paperless_task_id = None  # settled terminal — no outstanding upload
             await db.commit()
+            await _emit_paperless_changed(db, doc)
             logger.warning(
                 f"folder-ingest paperless: doc {doc.id} consume FAILED "
                 f"(non-duplicate): {outcome.get('detail')}"

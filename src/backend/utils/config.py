@@ -265,6 +265,16 @@ class Settings(BaseSettings):
     followup_chips_count: int = Field(default=3, ge=1, le=5)
     followup_chips_timeout_seconds: float = Field(default=5.0, ge=1.0, le=30.0)
 
+    # Per-user server→browser event push (/ws/user): content-free "refetch"
+    # signals so KB surfaces reflect server-side changes (ingest/paperless/simba)
+    # without polling or a manual reload. Redis pub/sub bridge → per-pod
+    # subscriber → local WS fan-out. On by default (kill-switch, not dark).
+    # See docs/design/user-events-ws.md.
+    user_events_enabled: bool = True
+    # Server-side coalescing window: a burst of same-(user,type) events collapses
+    # to one fan-out per window (folder-ingest-backlog guard). <=0 disables.
+    user_events_coalesce_window_seconds: float = Field(default=1.0, ge=0.0, le=30.0)
+
     # OpenAI-compatible LLM endpoint (e.g. llama-server). When set, the agent
     # tier (and optionally chat/RAG/intent via per-tier overrides below) routes
     # through this endpoint instead of Ollama. The URL must include the
