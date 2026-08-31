@@ -88,6 +88,8 @@ export const defaultChatContextValue: ChatContextValue = {
   indexToKb: async () => {},
   sendToPaperless: async () => {},
   sendToBoth: async () => {},
+  sendToSimba: async () => {},
+  sendToPaperlessAndSimba: async () => {},
   handleSummarize: () => {},
   handleSendViaEmail: () => {},
 
