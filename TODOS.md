@@ -391,6 +391,9 @@ The hybrid extractor (deterministic Steuernummer/IBAN with whitespace normalizat
 
 ## P3 — Conditional / on signal
 
+### GUI contribution model — pluggable per-instance-clean feature UI (DESIGN, not built)
+`docs/design/gui-contribution-model.md` (2026-08-31, rewritten after a 3-lens eng/UI/design review). Motivated by the Simba per-instance-optional analysis (#1178): the shared frontend image ships every feature's UI even where unused. Recommendation: **a contribution registry (declarative slots) is the DEFAULT for feature UI** — formalise the existing review-section / attachment-action / doc-row-action+status / nav slots so features register bespoke React instead of editing 5+ shell files; **server-driven typed artifacts are the default only for agent-generated, read-only, data-shaped content** (table/list/chart/weather/…), NOT interactive/durable UI. Governed by a §4 artifact-vs-slot checklist, §7 design-compliance invariants (style-free data + renderer-as-design-review-chokepoint + lint gate over `artifacts/**` + tier/severity/provenance schema fields), a §8 i18n rule (data-only payloads, key-based chrome), and §9 artifact contract-versioning. **Rejected:** micro-frontends / module federation (fights the integrated single-app UX + offline/CSP + one-shared-image model). Build-time `VITE_FEATURE_*` tree-shaking = last resort. Trigger to pull forward: the next feature that would otherwise hand-wire UI into 5+ shell files. First migration candidates: the Simba / dedupe / pdf-split review sections. Prereq before widening the artifact vocabulary: remediate the shipped off-token drift the review found (`ChartArtifact` hardcoded hex, `DeviceControl` `amber-500`, `ArtifactShell` not using `.card`).
+
 ### ℹ️ Reference (info only, NOT a work item): Meetily — self-hosted call-meeting notetaker
 
 Recorded 2026-07-06 on request — **deliberately no decision taken, no planned
