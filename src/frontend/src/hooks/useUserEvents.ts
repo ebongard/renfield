@@ -55,7 +55,10 @@ export function useUserEvents({ enabled }: UseUserEventsOptions): void {
       if (debounceTimer) return;
       debounceTimer = setTimeout(() => {
         debounceTimer = null;
-        void queryClient.invalidateQueries({ queryKey: keys.knowledge.all });
+        // Narrow to the documents LIST key (design §4/T7 blast-radius decision):
+        // the page query is [...keys.knowledge.list(), {filter}], so this prefix
+        // matches it without churning detail/bases/stats.
+        void queryClient.invalidateQueries({ queryKey: keys.knowledge.list() });
       }, INVALIDATE_DEBOUNCE_MS);
     };
 

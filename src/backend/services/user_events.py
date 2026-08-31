@@ -211,12 +211,22 @@ class EventCoalescer:
     async def _run(self) -> None:
         if self._window > 0:
             await asyncio.sleep(self._window)
-        pending, self._pending = self._pending, {}
-        for (target, _type), event in pending.items():
-            try:
-                await self._flush(target, event)
-            except Exception as exc:  # noqa: BLE001 — one bad flush never kills the loop
-                logger.warning(f"user-events: coalesced flush failed: {exc}")
+        # Drain until empty so an event submitted DURING a flush (after the swap
+        # below, before the awaits complete) is delivered in THIS run rather than
+        # stranded until the next submit() (L2).
+        while self._pending:
+            pending, self._pending = self._pending, {}
+            for (target, _type), event in pending.items():
+                try:
+                    await self._flush(target, event)
+                except Exception as exc:  # noqa: BLE001 — one bad flush never kills the loop
+                    logger.warning(f"user-events: coalesced flush failed: {exc}")
+
+    def close(self) -> None:
+        """Cancel any in-flight flush task — called when the subscriber loop exits
+        so a pending flush isn't orphaned at shutdown (L5)."""
+        if self._task is not None and not self._task.done():
+            self._task.cancel()
 
 
 # Module-level singleton registry — the API pod's live socket set. The subscriber
@@ -241,6 +251,13 @@ async def run_user_events_subscriber(
     reg = registry or _registry
     coalescer = EventCoalescer(coalesce_window_seconds, reg.fan_out)
     backoff = 1.0
+    try:
+        await _subscriber_loop(redis, coalescer, backoff, stop_event)
+    finally:
+        coalescer.close()
+
+
+async def _subscriber_loop(redis, coalescer, backoff, stop_event) -> None:
     while stop_event is None or not stop_event.is_set():
         pubsub = None
         try:

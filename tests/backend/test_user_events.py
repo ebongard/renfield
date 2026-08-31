@@ -293,9 +293,10 @@ class FakePubSub:
     which suspends waiting for the next message and only returns on close). This
     keeps the subscriber suspended — never a busy-loop — until it is cancelled."""
 
-    def __init__(self, messages, raise_on_listen: Exception | None = None):
+    def __init__(self, messages, raise_on_listen: Exception | None = None, block: bool = True):
         self._messages = messages
         self._raise = raise_on_listen
+        self._block = block
         self.subscribed = None
         self.closed = False
 
@@ -307,7 +308,9 @@ class FakePubSub:
             raise self._raise
         for m in self._messages:
             yield m
-        await asyncio.Event().wait()  # block for "the next message" (real redis)
+        if self._block:
+            await asyncio.Event().wait()  # block for "the next message" (real redis)
+        # block=False → listen() RETURNS normally (the busy-loop-regression path)
 
     async def aclose(self):
         self.closed = True
@@ -382,6 +385,20 @@ async def test_subscriber_reconnects_after_error():
     await _run_subscriber_until(reg, FakeRedisWithPubSub(bad, good), settle=1.3)
     assert bad.closed  # first (failed) pubsub was cleaned up
     assert ws.sent == [{"type": "documents_changed"}]  # reconnected + delivered
+
+
+async def test_subscriber_normal_listen_return_reconnects_not_busyloop():
+    # Regression guard for the busy-loop fix: a listen() that RETURNS normally
+    # (block=False) must NOT be re-entered immediately — the subscriber backs off
+    # then reconnects. If the busy-loop regressed, this test would hang.
+    reg = ue.UserEventRegistry()
+    ws = FakeWS()
+    reg.register(7, ws)
+    empty = FakePubSub([], block=False)  # listen() returns at once, no messages
+    good = FakePubSub([{"type": "message", "data": json.dumps({"target": 7, "type": "documents_changed"})}])
+    await _run_subscriber_until(reg, FakeRedisWithPubSub(empty, good), settle=1.3)
+    assert empty.closed
+    assert ws.sent == [{"type": "documents_changed"}]  # backed off, reconnected, delivered
 
 
 # --------------------------------------------------------------------------- _is_admin helper

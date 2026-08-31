@@ -536,11 +536,19 @@ class RAGService:
                     # publishes to Redis; the API pods' subscribers fan it out.
                     try:
                         from services.redis_client import get_redis
-                        from services.user_events import emit_documents_changed
+                        from services.user_events import (
+                            emit_documents_changed,
+                            resolve_document_owner,
+                        )
 
+                        # Prefer the document's ATOM owner (correct when an admin
+                        # reindexes another user's doc); fall back to the
+                        # triggering user for atom-less docs.
+                        _owner = await resolve_document_owner(self.db, doc)
                         await emit_documents_changed(
                             get_redis(), reason="ingested",
-                            owner_user_id=user_id, db=self.db, document=doc,
+                            owner_user_id=_owner if _owner is not None else user_id,
+                            db=self.db, document=doc,
                         )
                     except Exception:  # noqa: BLE001 — never break ingest on an event
                         pass

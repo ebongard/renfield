@@ -112,7 +112,7 @@ describe('useUserEvents', () => {
     ws.fireMessage({ type: 'documents_changed', reason: 'ingested' });
     expect(spy).not.toHaveBeenCalled(); // debounced — not yet
     vi.advanceTimersByTime(1000);
-    expect(spy).toHaveBeenCalledWith({ queryKey: ['knowledge'] });
+    expect(spy).toHaveBeenCalledWith({ queryKey: ['knowledge', 'list'] });
     expect(spy).toHaveBeenCalledTimes(1);
   });
 

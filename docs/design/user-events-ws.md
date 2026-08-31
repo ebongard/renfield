@@ -64,7 +64,7 @@ The corrected design below fixes all of these **by construction**.
 | Component | File (new unless noted) | Responsibility |
 |---|---|---|
 | `publish_user_event(redis, target_user_id, event: dict)` | `services/user_events.py` | Serialize + `PUBLISH` to `renfield:events:user`. Callable from ANY process; workers pass their existing `aioredis` client (mirrors `services/progress.py`). `target_user_id=None` ⇒ broadcast-to-all. |
-| `UserEventRegistry` | `services/user_events.py` | Per-process `dict[int|_ALL, set[WebSocket]]` + `register/unregister/fan_out(target, event)`. `fan_out` no-ops when empty; drops broken sockets (never raises). Delivers to `target`'s set **plus** the `_ALL` set. |
+| `UserEventRegistry` | `services/user_events.py` | Per-process `dict[int|_ALL, set[WebSocket]]` + `register/unregister/fan_out(target, event)`. `fan_out` no-ops when empty; drops broken sockets (never raises). **Delivery (as implemented): `target=int` → ONLY that user's set (never `_ALL` — a normal targeted event does not spam admins); `target=None` → ONLY the `_ALL` set.**  An admin (registered under both its `user_id` and `_ALL`) thus receives its own targeted events plus every `target=None` (unattributable) event. |
 | `user_events_subscriber(app)` | `api/lifecycle.py` | ONE background task per pod (lifespan), `SUBSCRIBE renfield:events:user`, decode, `registry.fan_out(...)`. Reconnects on Redis blip (backoff). |
 | `/ws/user` endpoint | `api/websocket/user_events_handler.py` | Authenticate via `services/websocket_auth.authenticate_websocket` (cookie→JWT→ws-token). Register socket under `user_id` (or `_ALL` in auth-off). Heartbeat ping loop; drain on disconnect. Modeled on `kiosk_handler.py`'s connection lifecycle (send-timeout, prune-on-fail), NOT its in-memory single-registry assumption. |
 | `resolve_document_owner(db, document)` | `services/user_events.py` (or reuse existing) | Map a `Document` → owner `user_id` via its `kb_document` atom (circles). `None` when unowned (null-KB/global-RAG/auth-off). |
@@ -74,7 +74,7 @@ The corrected design below fixes all of these **by construction**.
 | Seam | File:line | Event |
 |---|---|---|
 | Ingest completion | `services/rag_service.py` (status→`COMPLETED`) | `{type:"documents_changed", reason:"ingested"}` → owner |
-| Paperless filing | `services/paperless_reconciler.py` (state→done/failed) | `reason:"paperless"` → owner |
+| Paperless filing | `services/folder_ingest_paperless.py` (`_settle_from_outcome` + the 5 terminal `paperless_state` writes, via the shared `_emit_paperless_changed` helper) — NOT `paperless_reconciler.py`, which only re-enqueues and feeds this settle path | `reason:"paperless"` → owner |
 | Simba upload | `services/simba_ingest_review.py::confirm` (→`UPLOADED`) | `reason:"simba"` → owner |
 | Document delete/reindex | `services/rag_service.delete_document` / reindex enqueue | `reason:"deleted"`/`"reindex"` → owner (covers cross-tab/cross-device) |
 
@@ -92,7 +92,7 @@ The worker path (`rag_service`) publishes through the worker's `aioredis` client
 ## 4. Key decisions (addressing every review finding)
 
 1. **Redis pub/sub is mandatory (T1/T2).** Not optional, not "later". It is the spine. Publish-always / subscriber-only-fan-out eliminates both the worker-unreachability and the multi-replica gaps. New channel `renfield:events:user`; JSON payload `{target: int|null, type: str, reason?: str}`.
-2. **Auth-off / single-user (T3):** `ws_auth_enabled=false` ⇒ `authenticate_websocket` returns no user ⇒ the socket registers under the `_ALL` group, and every event (regardless of `target`) is delivered to `_ALL`. One household, no circle boundary — safe.
+2. **Auth-off / single-user (T3):** `ws_auth_enabled=false` ⇒ `authenticate_websocket` returns no user ⇒ the socket registers under the `_ALL` group, and `emit_documents_changed` forces `target=None` (both key on `ws_auth_enabled`), so every event lands in `_ALL`. One household, no circle boundary — safe. **Edge config note:** with `ws_auth_enabled=false` but multiple real users (an unusual mix — WS auth off while app auth on), every user's change fans a *content-free* refetch to all connected sockets. Still privacy-safe (no identity on the wire; the refetch is circle-filtered), just broader than necessary — don't run that mix if per-user targeting matters.
 3. **`owner=None` (T4):** publish with `target=None` ⇒ delivered to the `_ALL` group only. In auth-on multi-user, `_ALL` is **admins-only** (admin sockets also join `_ALL`); a content-free "refetch" to an admin leaks nothing (the refetch itself is circle-filtered server-side). Documented so it is a decision, not an accident.
 4. **Coalescing / blast radius (T7):** (a) narrow the invalidation to `keys.knowledge.list()` (not `keys.knowledge.all`); (b) **client-side debounce** (~1s) so a folder-ingest backlog of N completions collapses to one refetch per tab; (c) the server subscriber additionally coalesces same-`(target,type)` events within a short window before fan-out (defense in depth). A batch of 200 completions ⇒ ~1 refetch, not 200.
 5. **Content-free payload (privacy, §5).** No id/title/filename. The refetch goes through the already circle-filtered `/api/knowledge/documents`, so visibility is re-enforced server-side; even a mis-targeted event is a harmless extra refetch, never a title leak.
