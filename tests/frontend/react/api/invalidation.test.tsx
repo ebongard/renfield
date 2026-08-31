@@ -16,6 +16,8 @@ import type {
   Memory,
   MemoryInput,
 } from '../../../../src/frontend/src/api/resources/memories';
+import { useKnowledgeDocumentsQuery } from '../../../../src/frontend/src/api/resources/knowledge';
+import { useConfirmSimbaProposal } from '../../../../src/frontend/src/api/resources/simbaIngest';
 
 const BASE = TEST_CONFIG.API_BASE_URL;
 
@@ -87,5 +89,105 @@ describe('Resource invalidation contract (memories as canonical example)', () =>
     // The list now shows the new item without anyone calling refetch()
     await waitFor(() => expect(queryResult.current.data?.memories).toHaveLength(2));
     expect(queryResult.current.data?.memories[1].content).toBe('second');
+  });
+});
+
+describe('Simba upload invalidates the knowledge documents list (in_simba status icon)', () => {
+  it('a successful confirm refetches useKnowledgeDocumentsQuery so in_simba flips to true', async () => {
+    // Regression: the confirm mutation only invalidated the Simba proposals list,
+    // not keys.knowledge.all, so the doc row's Simba status icon stayed stale
+    // after a successful upload until a manual reload.
+    let inSimba = false;
+
+    server.use(
+      http.get(`${BASE}/api/knowledge/documents`, () =>
+        HttpResponse.json([{ id: 5, filename: 'rechnung.pdf', in_simba: inSimba }]),
+      ),
+      http.post(`${BASE}/api/simba-ingest/42/confirm`, () => {
+        inSimba = true; // the upload landed → backend now reports in_simba: true
+        return HttpResponse.json({ success: true, message: 'An Simba übertragen' });
+      }),
+    );
+
+    const client = new QueryClient({
+      defaultOptions: {
+        queries: { retry: false, gcTime: 0, staleTime: 0 },
+        mutations: { retry: false },
+      },
+    });
+    const wrapper = makeWrapper(client);
+
+    const { result: docs } = renderHook(
+      () => useKnowledgeDocumentsQuery({ knowledgeBaseId: null, statusFilter: 'all' }),
+      { wrapper },
+    );
+    const { result: confirm } = renderHook(() => useConfirmSimbaProposal(), { wrapper });
+
+    await waitFor(() => expect(docs.current.data?.[0]?.in_simba).toBe(false));
+
+    await act(async () => {
+      await confirm.current.mutateAsync({
+        id: 42,
+        category: 'Belege',
+        type: 'Eingangsrechnung',
+        description: 'Rechnung',
+        month: 3,
+        year: 2026,
+      });
+    });
+
+    // The documents list refetched itself (no explicit refetch) and the icon flips.
+    await waitFor(() => expect(docs.current.data?.[0]?.in_simba).toBe(true));
+  });
+
+  it('an already-in-Simba confirm (success:false) does NOT refetch the documents list', async () => {
+    // Guard the gate: only a genuine upload should refetch knowledge; an
+    // already-in-Simba / rejected confirm returns success:false and changes no
+    // document state, so it must not thrash the documents query.
+    let docFetches = 0;
+
+    server.use(
+      http.get(`${BASE}/api/knowledge/documents`, () => {
+        docFetches += 1;
+        return HttpResponse.json([{ id: 5, filename: 'rechnung.pdf', in_simba: false }]);
+      }),
+      http.post(`${BASE}/api/simba-ingest/42/confirm`, () =>
+        HttpResponse.json({ success: false, message: 'already_in_simba', already_in_simba: true }),
+      ),
+    );
+
+    const client = new QueryClient({
+      defaultOptions: {
+        queries: { retry: false, gcTime: 0, staleTime: 0 },
+        mutations: { retry: false },
+      },
+    });
+    const wrapper = makeWrapper(client);
+
+    const { result: docs } = renderHook(
+      () => useKnowledgeDocumentsQuery({ knowledgeBaseId: null, statusFilter: 'all' }),
+      { wrapper },
+    );
+    const { result: confirm } = renderHook(() => useConfirmSimbaProposal(), { wrapper });
+
+    await waitFor(() => expect(docs.current.data).toHaveLength(1));
+    const fetchesAfterInitial = docFetches;
+
+    await act(async () => {
+      await confirm.current.mutateAsync({
+        id: 42,
+        category: 'Belege',
+        type: 'Eingangsrechnung',
+        description: 'Rechnung',
+        month: 3,
+        year: 2026,
+      });
+    });
+
+    // No extra documents fetch was triggered by the non-upload confirm.
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 20));
+    });
+    expect(docFetches).toBe(fetchesAfterInitial);
   });
 });

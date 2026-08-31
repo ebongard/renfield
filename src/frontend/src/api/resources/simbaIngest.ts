@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
+import { keys } from '../keys';
 import apiClient from '../../utils/axios';
 
 export interface SimbaProposal {
@@ -70,7 +71,18 @@ export function useConfirmSimbaProposal() {
       }>(`/api/simba-ingest/${id}/confirm`, { category, type, description, month, year, force });
       return r.data;
     },
-    onSuccess: () => void queryClient.invalidateQueries({ queryKey: PROPOSALS_KEY }),
+    onSuccess: (data) => {
+      void queryClient.invalidateQueries({ queryKey: PROPOSALS_KEY });
+      // A landed upload flips the document's `in_simba` state → refresh the
+      // knowledge documents list so the row's Simba status icon updates without
+      // a manual reload. Both the doc-page send overlay and the /brain/review
+      // section confirm through here. Gated on an actual upload — an
+      // already-in-Simba (no force) or rejected confirm returns success:false
+      // and changes no document state, so it needs no documents refetch.
+      if (data?.success) {
+        void queryClient.invalidateQueries({ queryKey: keys.knowledge.all });
+      }
+    },
   });
 }
 
