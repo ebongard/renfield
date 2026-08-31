@@ -133,8 +133,20 @@ class AgentToolRegistry:
         if mcp_manager:
             self._register_mcp_tools(mcp_manager, server_filter=server_filter)
 
+        # Is the Simba MCP configured on THIS instance? The Simba internal tools
+        # (forward_attachment_to_simba / simba_commit_upload) are useless without
+        # it, so we register them ONLY when it's present — otherwise a Simba-less
+        # instance would leak them into the `general` role (internal_tools: null =
+        # all tools) and offer the agent tools that fail at call time. Mirrors the
+        # `_simba_available` signal that gates the frontend chat menu.
+        simba_available = bool(mcp_manager) and any(
+            t.server_name == "simba" for t in mcp_manager.get_all_tools()
+        )
+
         # Register internal agent tools (room resolution, media playback)
-        self._register_internal_tools(internal_filter=internal_filter)
+        self._register_internal_tools(
+            internal_filter=internal_filter, simba_available=simba_available
+        )
 
     @classmethod
     async def create(
@@ -169,7 +181,9 @@ class AgentToolRegistry:
             await hook(registry=registry)
         return registry
 
-    def _register_internal_tools(self, internal_filter: list[str] | None = None) -> None:
+    def _register_internal_tools(
+        self, internal_filter: list[str] | None = None, simba_available: bool = False
+    ) -> None:
         """Register platform-owned internal agent tools.
 
         The only `internal.*` tool the platform ships is `knowledge_search`
@@ -189,16 +203,20 @@ class AgentToolRegistry:
         from services.paperless_dedupe_tool import PAPERLESS_DEDUPE_TOOL
         from services.paperless_reextract_tool import PAPERLESS_REEXTRACT_TOOL
         from services.reminder_tool import REMINDER_TOOL
-        from services.simba_forward_tool import SIMBA_FORWARD_TOOL
         from services.system_health_tool import SYSTEM_HEALTH_TOOL
         from services.widget_tools import WIDGET_TOOLS
 
         platform_tools: dict = {
             **KNOWLEDGE_TOOL, **MEMORY_LIST_TOOL, **CHAT_UPLOAD_TOOLS, **WIDGET_TOOLS,
             **KB_MAINTENANCE_TOOLS, **SYSTEM_HEALTH_TOOL, **PAPERLESS_REEXTRACT_TOOL,
-            **PAPERLESS_DEDUPE_TOOL, **REMINDER_TOOL, **SIMBA_FORWARD_TOOL,
+            **PAPERLESS_DEDUPE_TOOL, **REMINDER_TOOL,
             **FIND_DUPLICATE_DOCUMENTS_TOOL,
         }
+        # Simba tools only where the Simba MCP is present (per-instance-optional —
+        # a Simba-less instance carries no Simba tool artifact).
+        if simba_available:
+            from services.simba_forward_tool import SIMBA_FORWARD_TOOL
+            platform_tools.update(SIMBA_FORWARD_TOOL)
 
         for name, definition in platform_tools.items():
             if internal_filter is not None and name not in internal_filter:

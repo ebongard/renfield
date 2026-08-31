@@ -35,9 +35,11 @@ INTERNAL_TOOL_NAMES = {
     "internal.reextract_paperless_metadata",  # PAPERLESS_REEXTRACT_TOOL
     "internal.paperless_dedupe",          # PAPERLESS_DEDUPE_TOOL
     "internal.create_reminder",           # REMINDER_TOOL
-    "internal.forward_attachment_to_simba",  # SIMBA_FORWARD_TOOL
-    "internal.simba_commit_upload",          # SIMBA_FORWARD_TOOL
     "internal.find_duplicate_documents",     # FIND_DUPLICATE_DOCUMENTS_TOOL (#1170)
+    # NOTE: the SIMBA_FORWARD_TOOL tools (forward_attachment_to_simba /
+    # simba_commit_upload) are NOT in this baseline — they register ONLY when the
+    # Simba MCP is present on the instance (per-instance-optional). See
+    # test_simba_tools_gated_on_mcp_presence.
 }
 NUM_INTERNAL_TOOLS = len(INTERNAL_TOOL_NAMES)
 
@@ -232,6 +234,29 @@ class TestAgentToolRegistryMCPTools:
         """Without MCP or plugins, registry holds only the internal tools."""
         registry = AgentToolRegistry(_init_only=True)
         assert set(registry.get_tool_names()) == INTERNAL_TOOL_NAMES
+
+    @pytest.mark.unit
+    def test_simba_tools_gated_on_mcp_presence(self):
+        """The Simba internal tools register ONLY when the Simba MCP is present on
+        the instance — so a Simba-less instance carries no Simba tool artifact
+        (they must not leak into the `general` role's null internal_filter)."""
+        # No Simba MCP → Simba tools absent (a non-Simba instance is clean).
+        bare = AgentToolRegistry(_init_only=True)
+        assert "internal.forward_attachment_to_simba" not in bare.get_tool_names()
+        assert "internal.simba_commit_upload" not in bare.get_tool_names()
+
+        # A connected Simba MCP → the two Simba tools register.
+        mock_mcp = MagicMock()
+        simba_tool = MagicMock()
+        simba_tool.namespaced_name = "mcp.simba.upload_documents"
+        simba_tool.server_name = "simba"
+        simba_tool.description = "Upload to Simba"
+        simba_tool.input_schema = {"properties": {}, "required": []}
+        mock_mcp.get_all_tools.return_value = [simba_tool]
+        with_simba = AgentToolRegistry(mcp_manager=mock_mcp, _init_only=True)
+        names = with_simba.get_tool_names()
+        assert "internal.forward_attachment_to_simba" in names
+        assert "internal.simba_commit_upload" in names
 
     @pytest.mark.unit
     def test_get_tool_returns_none_for_unknown(self):
