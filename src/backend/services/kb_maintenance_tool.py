@@ -32,7 +32,7 @@ for reindex, ``user_permissions``).
 from __future__ import annotations
 
 from loguru import logger
-from sqlalchemy import exists, func, or_, select, update
+from sqlalchemy import and_, exists, func, or_, select, update
 from sqlalchemy.orm import aliased
 
 from models.database import (
@@ -160,7 +160,12 @@ def _low_coverage_exists(threshold: float, *, reindexable: bool):
         ~exists().where(
             newer.document_id == dph.document_id,
             newer.status == DOC_STATUS_COMPLETED,
-            newer.finished_at > dph.finished_at,
+            # Latest run — tiebreak on id when finished_at ties, so a doc with two
+            # completed runs at the same timestamp can't match BOTH queries (L1).
+            or_(
+                newer.finished_at > dph.finished_at,
+                and_(newer.finished_at == dph.finished_at, newer.id > dph.id),
+            ),
         ),
     )
 
@@ -175,6 +180,14 @@ async def sweep_low_coverage_reindex(cap: int = 50, threshold: float | None = No
     coverage path runs (force-OCR would drop positioned tokens). Returns
     ``{enqueued, skipped_attempted}``. Mirrors ``reindex_documents``'s
     enqueue-then-flip-status crash-safety.
+
+    Known bounded cost (review M1): a doc ingested AFTER the coverage-trigger fix
+    whose ingest-time VLM already fired but was REJECTED (couldn't recover) still
+    records ``trigger=initial_ingest`` + high drop — indistinguishable from a
+    pre-fix never-attempted doc — so it is re-enqueued ONCE (one wasted VLM pass),
+    after which its ``user_reindex`` run classifies it ``attempted`` and it is
+    skipped. Bounded to a single pass per doc; a "VLM attempted at ingest" marker
+    (schema/``extra`` field) to skip these from the start is a deferred follow-up.
     """
     if threshold is None:
         threshold = settings.ocr_vlm_coverage_drop_threshold

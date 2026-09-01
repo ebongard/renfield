@@ -158,3 +158,90 @@ async def test_handler_runs_sweep_when_enabled(monkeypatch):
 
     assert "enqueued=3" in out and "skipped_attempted=1" in out
     fake.assert_awaited_once()
+
+
+# ------------------------------------------------ real-Postgres predicate (H1)
+# The mocked tests above feed canned rows and so cannot catch a WRONG predicate
+# (inverted drop-rate, wrong latest-run isolation, or a dropped trigger filter).
+# This exercises the actual SQL against Postgres and pins the loop-prevention
+# property: an already-reindexed-still-bad doc is 'attempted', NOT reindexable.
+from datetime import datetime, timezone  # noqa: E402
+
+import pytest_asyncio  # noqa: E402
+from sqlalchemy import select, text  # noqa: E402
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker  # noqa: E402
+
+
+@pytest_asyncio.fixture
+async def committing_session(pg_async_engine):
+    maker = async_sessionmaker(pg_async_engine, class_=AsyncSession, expire_on_commit=False)
+    async with maker() as session:
+        yield session
+    async with pg_async_engine.begin() as conn:
+        await conn.execute(text(
+            "TRUNCATE document_processing_history, document_chunks, documents "
+            "RESTART IDENTITY CASCADE"
+        ))
+
+
+async def _doc(session, status="completed"):
+    from models.database import Document
+
+    d = Document(filename="t.pdf", file_path="/tmp/t.pdf", status=status)
+    session.add(d)
+    await session.commit()
+    await session.refresh(d)
+    return d
+
+
+async def _hist(session, doc_id, *, trigger, prod, drop, minute, status="completed"):
+    from models.database import DocumentProcessingHistory
+
+    session.add(DocumentProcessingHistory(
+        document_id=doc_id, status=status, force_ocr=False,
+        ocr_engine="poppler_text_layer", chunks_produced=prod,
+        chunks_dropped_low_quality=drop, trigger=trigger,
+        started_at=datetime(2026, 1, 1, 0, 0, tzinfo=timezone.utc),
+        finished_at=datetime(2026, 1, 1, 0, minute, tzinfo=timezone.utc),
+    ))
+    await session.commit()
+
+
+@pytest.mark.database
+@pytest.mark.asyncio
+async def test_predicate_selects_correct_docs_real_pg(committing_session):
+    from models.database import DOC_STATUS_COMPLETED, Document
+    from services.document_processing_history import ProcessingTrigger
+
+    s = committing_session
+    INIT = ProcessingTrigger.INITIAL_INGEST.value
+    REIDX = ProcessingTrigger.USER_REINDEX.value
+
+    a = await _doc(s)                                                   # reindexable
+    await _hist(s, a.id, trigger=INIT, prod=1, drop=9, minute=10)
+    b = await _doc(s)                                                   # attempted (loop guard)
+    await _hist(s, b.id, trigger=INIT, prod=1, drop=9, minute=10)
+    await _hist(s, b.id, trigger=REIDX, prod=1, drop=9, minute=20)
+    c = await _doc(s)                                                   # recovered → neither
+    await _hist(s, c.id, trigger=INIT, prod=1, drop=9, minute=10)
+    await _hist(s, c.id, trigger=REIDX, prod=9, drop=1, minute=20)
+    d = await _doc(s)                                                   # low drop → neither
+    await _hist(s, d.id, trigger=INIT, prod=10, drop=1, minute=10)
+    e = await _doc(s, status="failed")                                  # failed doc → excluded
+    await _hist(s, e.id, trigger=INIT, prod=1, drop=9, minute=10)
+
+    async def ids(reindexable):
+        rows = await s.execute(
+            select(Document.id).where(
+                Document.status == DOC_STATUS_COMPLETED,
+                kb._low_coverage_exists(0.7, reindexable=reindexable),
+            )
+        )
+        return set(rows.scalars().all())
+
+    assert await ids(reindexable=True) == {a.id}   # only never-attempted high-drop
+    assert await ids(reindexable=False) == {b.id}  # only already-attempted-still-bad
+    both = (await ids(reindexable=True)) | (await ids(reindexable=False))
+    assert c.id not in both  # recovered (latest run low drop)
+    assert d.id not in both  # legitimately low drop
+    assert e.id not in both  # not completed

@@ -568,7 +568,7 @@ class Settings(BaseSettings):
     # stragglers, then idles. Self-gates on this flag (seeded enabled). A doc already
     # re-derived and still low-coverage is 'attempted' → skipped (no re-OCR loop).
     low_coverage_reindex_enabled: bool = False
-    low_coverage_reindex_interval: int = 3600      # hourly sweep
+    low_coverage_reindex_interval: int = Field(default=3600, ge=60)   # hourly sweep (>= engine tick)
     low_coverage_reindex_cap: int = Field(default=50, ge=1, le=500)  # docs re-enqueued per tick
     # Adds a fast LM gibberish check (is_ocr_gibberish, intent model) to the VLM
     # trigger + acceptance — catches the 'pronounceable pseudo-word' garble
