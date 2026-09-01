@@ -1,0 +1,77 @@
+# Baut das pgvector-Operandenimage IM CLUSTER und schiebt es nach Harbor.
+#
+# WARUM als Aufgabe im Repo und nicht als Befehlszeile in einem Kommentar: das Image ist
+# GETEILTE Infrastruktur — reva, twin-reva, konfigure und konfigure-cloud ziehen dieselbe Marke —,
+# hat aber keine CI-Aufgabe, und aus keinem der vier Verbraucher zeigt etwas hierher. Bis zum
+# 01.09.2026 stand der Bau nur im Kopf von Dockerfile.pgvector, mit Verweis auf eine
+# „.159-Baumaschine", die von aussen nicht per Schluessel erreichbar war. Ein Neubau wegen einer
+# PG-Luecke haengt dann daran, dass jemand die richtige Datei kennt.
+#
+# WARUM im Cluster: die Knoten sind amd64 (Entwicklungsrechner sind arm64, cross-build braucht
+# Emulation), und die Harbor-Zugangsdaten liegen dort ohnehin. kaniko braucht keinen
+# Docker-Daemon und keine privilegierten Rechte.
+#
+# ANWENDEN — die Marke in `args` vorher auf den Zielstand setzen:
+#
+#   NS=imagebuild
+#   kubectl create namespace $NS
+#   # Harbor-Zugang aus einem Namensraum kopieren, der ihn schon hat:
+#   kubectl -n reva get secret harbor-pull-secret -o yaml \
+#     | sed "s/namespace: reva/namespace: $NS/" | kubectl apply -f -
+#   # Der Bauplan als ConfigMap (Quelle bleibt die Datei, nicht eine Kopie hier):
+#   kubectl -n $NS create configmap pgvector-dockerfile \
+#     --from-file=Dockerfile=k8s/cnpg/Dockerfile.pgvector
+#   kubectl apply -f k8s/cnpg/build-pgvector-job.yaml
+#   kubectl -n $NS logs -f job/build-pgvector
+#
+# NACH dem Bau pruefen (der Grund, warum es dieses Image gibt) — im fertigen Cluster:
+#   psql -c '\dx vector'      # Erweiterung da, Version >= 0.8.1
+#
+# Aufraeumen: kubectl delete namespace $NS
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: build-pgvector
+  namespace: imagebuild
+spec:
+  backoffLimit: 0          # ein Fehlschlag soll sichtbar stehenbleiben, nicht dreimal wiederholt
+  ttlSecondsAfterFinished: 3600
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: kaniko
+          image: gcr.io/kaniko-project/executor:v1.23.2
+          args:
+            - --dockerfile=/workspace/Dockerfile
+            - --context=dir:///workspace
+            # Die Marke bildet BEIDE Versionen ab, Postgres und pgvector. Der apt-Pin im
+            # Dockerfile ist damit gekoppelt: zieht PGDG die pgvector-Version weiter, schlaegt
+            # der Bau LAUT fehl, statt still etwas anderes zu liefern.
+            - --destination=registry.treehouse.x-idra.de/renfield/cnpg-pg16-pgvector:16.14-pgvector0.8.6
+            # `latest` bewusst MIT gepflegt: vier Manifeste zeigen auf die feste Marke, aber eine
+            # veraltete `latest` daneben ist eine Falle fuer den naechsten, der schnell etwas
+            # ausprobiert.
+            - --destination=registry.treehouse.x-idra.de/renfield/cnpg-pg16-pgvector:latest
+            - --cache=false
+          volumeMounts:
+            - name: dockerfile
+              mountPath: /workspace
+            - name: harbor
+              mountPath: /kaniko/.docker
+          resources:
+            requests: {cpu: 500m, memory: 1Gi}
+            limits: {memory: 2Gi}
+      volumes:
+        - name: dockerfile
+          configMap:
+            name: pgvector-dockerfile
+        - name: harbor
+          secret:
+            secretName: harbor-pull-secret
+            items:
+              # kaniko liest /kaniko/.docker/config.json; das Pull-Secret heisst den Schluessel
+              # anders. Ohne dieses Umbenennen scheitert erst der PUSH, ganz am Ende des Baus.
+              - key: .dockerconfigjson
+                path: config.json

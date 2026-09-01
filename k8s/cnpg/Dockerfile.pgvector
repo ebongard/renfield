@@ -1,3 +1,24 @@
+# ================================================================================================
+# STAND 01.09.2026: DIESES IMAGE WIRD DERZEIT VON NIEMANDEM MEHR BENUTZT.
+#
+# Es entstand im August, weil das Standard-CNPG-Image damals pgvector 0.8.0 mitbrachte und die
+# Anwendung 0.8.6 braucht. Das hat sich erledigt — nachgesehen in
+# /usr/share/postgresql/16/extension/vector.control:
+#
+#     ghcr.io/cloudnative-pg/postgresql:16.9-standard-bookworm   ->  pgvector 0.8.0
+#     ghcr.io/cloudnative-pg/postgresql:16.14                    ->  pgvector 0.8.6
+#
+# Beim Neubau gegen die 16.14-Basis sagte apt woertlich „postgresql-16-pgvector is already the
+# newest version (0.8.6-1.pgdg12+1)". Das Image fuegte also nichts mehr hinzu, kostete aber eine
+# echte Abhaengigkeit: vier Cluster (reva, twin-reva, konfigure, konfigure-cloud) zogen dieselbe
+# Marke, der Bauplan lag NUR hier, ohne CI, und die im Kopf genannte Baumaschine war von aussen
+# nicht per Schluessel erreichbar. Alle vier stehen seit dem 01.09.2026 auf dem Standard-Image.
+#
+# Die Datei bleibt trotzdem — gepflegt und lauffaehig —, weil der Grund wiederkommen kann: eine
+# neue PG-Nebenversion kann pgvector wieder hinter dem zurueecklassen, was die Anwendung braucht.
+# Dann ist der Weg hier fertig beschrieben, statt ein zweites Mal rekonstruiert zu werden.
+# ================================================================================================
+#
 # Thin CNPG operand image = stock CloudNativePG PostgreSQL 16 + pgvector.
 #
 # WHY a custom image: the stock CNPG operand images
@@ -7,18 +28,33 @@
 # intact) and add ONLY the pgvector extension from the PGDG apt repo the base
 # image already trusts.
 #
-# Build + push (Phase 2, on the .159 build box):
-#   R=your-registry.example/renfield
+# Build + push. Dieses Image ist GETEILTE Infrastruktur — reva, twin-reva, konfigure und
+# konfigure-cloud ziehen dieselbe Marke —, aber sein Bauplan liegt nur hier, es gibt keine
+# CI-Aufgabe und aus den vier Verbrauchern zeigt nichts hierher. Wer wegen einer PG-Luecke neu
+# bauen muss, muss also WISSEN, dass es diese Datei gibt. Deshalb steht der Bau seit dem
+# 01.09.2026 als anwendbare Aufgabe daneben: k8s/cnpg/build-pgvector-job.yaml. Sie baut mit
+# kaniko IM CLUSTER (nativ amd64, Harbor-Zugang liegt dort schon) statt auf einer Maschine,
+# deren Zustand niemand kennt — die frueher hier genannte „.159-Baumaschine" war von diesem
+# Rechner aus nicht einmal per Schluessel erreichbar.
+#
+#   kubectl apply -f k8s/cnpg/build-pgvector-job.yaml   # Marke dort eintragen
+#
+# Von Hand geht es weiter wie bisher, auf einer amd64-Maschine mit docker:
+#   R=registry.treehouse.x-idra.de/renfield
 #   docker build -f Dockerfile.pgvector \
-#     -t $R/cnpg-pg16-pgvector:16.9-pgvector0.8.6 \
+#     -t $R/cnpg-pg16-pgvector:16.14-pgvector0.8.6 \
 #     -t $R/cnpg-pg16-pgvector:latest .
-#   docker push $R/cnpg-pg16-pgvector:16.9-pgvector0.8.6
-#   docker push $R/cnpg-pg16-pgvector:latest
+#   docker push $R/cnpg-pg16-pgvector:16.14-pgvector0.8.6
 #
 # VERIFY after first boot (the whole reason this image exists):
 #   psql -c '\dx vector'      # extension present, version >= 0.8.1
 # Re-pin the base tag to the current 16.x minor at build time; never :latest base.
-FROM ghcr.io/cloudnative-pg/postgresql:16.9-standard-bookworm
+#
+# 16.14 seit 01.09.2026, vorher 16.9. Die 16.9 stammte vom Aufbau Ende August und war
+# liegengeblieben: beim Umzug von speisekarte fiel auf, dass DEREN Quelle schon auf 16.13 lief —
+# „wie die anderen" waere also vier Patch-Staende ZURUECK gewesen. Konsistenz mit einem
+# veralteten Stand ist keine Konsistenz.
+FROM ghcr.io/cloudnative-pg/postgresql:16.14-standard-bookworm
 
 USER root
 # Pin the pgvector version so a rebuild can't silently drift from the :pgvectorX.Y.Z
