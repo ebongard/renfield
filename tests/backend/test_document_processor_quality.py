@@ -380,6 +380,38 @@ class TestProcessDocumentTextLayerChunkPath:
         assert "23.07.2026" in joined             # the dropped deadline date too
         assert "114/5876/5293" in result["field_text"]
 
+    async def test_call_site_passes_high_drop_rate_on_text_layer_path(
+        self, processor, tmp_path, monkeypatch
+    ):
+        """Second half of the coverage fix: when the text-layer short-circuit is
+        taken but the text layer ITSELF is garbled (usable-but-garbled), the
+        call-site `_final_drop_rate` fed into the VLM fallback is high (>0.7).
+        Bypass the VLM to capture exactly what process_document passes."""
+        f = tmp_path / "garbled_layer.pdf"
+        f.write_bytes(b"%PDF-1.4")
+        garbled_layer = "\n\n".join([GARBAGE_CHUNK] * 10)  # usable-but-garbled
+        self._wire(
+            processor,
+            first_chunks=[GARBAGE_CHUNK, GARBAGE_CHUNK, GARBAGE_CHUNK, CLEAN_CHUNK],
+            text_layer=garbled_layer,
+            tl_usable=True,
+        )
+        monkeypatch.setattr(
+            "services.document_processor.settings.rag_ocr_auto_detect", False
+        )
+        captured = {}
+
+        async def _fake_vlm(file_path, ocr_text, drop_rate=None):
+            captured["drop_rate"] = drop_rate
+            return None  # don't alter the result
+
+        processor._vlm_ocr_fallback = _fake_vlm
+
+        await processor.process_document(str(f), force_ocr=False)
+
+        assert captured.get("drop_rate") is not None
+        assert captured["drop_rate"] > 0.7  # text-layer path fed a high rate to the VLM
+
     async def test_unusable_text_layer_still_force_ocrs(
         self, processor, tmp_path, monkeypatch
     ):
@@ -588,18 +620,54 @@ def _vlm_settings(monkeypatch, *, coverage=0.7, score_thr=2, gibberish=False, en
 
 class TestVlmCoverageTrigger:
     async def test_coverage_trigger_fires_and_accepts(self, processor, monkeypatch):
-        """Survivors score clean, but drop_rate>threshold → VLM runs from the image
-        and its fuller readable transcription is accepted (coverage acceptance)."""
+        """Survivors score clean, but drop_rate>threshold → VLM runs from the image;
+        a FAITHFUL transcription (contains the survivor tokens) + materially longer
+        is accepted."""
         _vlm_settings(monkeypatch)
-        # No trailing space — the source strips the joined VLM text (…join().strip()).
-        long_clean = ("Pflegeversicherung freiwillige Mitglieder Beitrag " * 8).strip()
-        processor._ollama_service = _FakeOllama(long_clean)
+        survivor = "Pflegeversicherung freiwillige Mitglieder Beitrag"
+        # Faithful: repeats the survivor content (high token overlap) + recovers more.
+        vlm_text = (survivor + " " + "wiederhergestellte Zeile Betrag Euro " * 8).strip()
+        processor._ollama_service = _FakeOllama(vlm_text)
         processor._render_pages_b64 = lambda *a, **k: ["img1"]
 
-        out = await processor._vlm_ocr_fallback("x.pdf", "clean survivor", drop_rate=0.98)
+        out = await processor._vlm_ocr_fallback("x.pdf", survivor, drop_rate=0.98)
 
-        assert out == long_clean
+        assert out == vlm_text
         assert processor._ollama_service.extract_calls == 1
+
+    async def test_coverage_rejects_hallucination_low_overlap(self, processor, monkeypatch):
+        """The HIGH finding: a longer + readable but FABRICATED VLM transcription
+        (no survivor-token overlap) must be rejected, not silently replace the
+        correct sparse chunks."""
+        _vlm_settings(monkeypatch)
+        survivor = "Pflegeversicherung Beitrag Steuernummer Mitglied"
+        # Fluent, longer, readable — but entirely different content (a hallucination).
+        hallucination = "Vollkommen andere erfundene Rechnung Betrag Kaufvertrag " * 8
+        processor._ollama_service = _FakeOllama(hallucination)
+        processor._render_pages_b64 = lambda *a, **k: ["img1"]
+
+        out = await processor._vlm_ocr_fallback("x.pdf", survivor, drop_rate=0.98)
+
+        assert out is None  # rejected on low survivor overlap
+        assert processor._ollama_service.extract_calls == 1  # VLM DID run, then rejected
+
+    async def test_coverage_much_more_boundary(self, processor, monkeypatch):
+        """`much_more` is strict > 1.5×: a VLM text at exactly 1.5× (with full
+        overlap) is rejected; just over 1.5× is accepted."""
+        _vlm_settings(monkeypatch)
+        survivor = "alpha bravo charlie delta"  # 25 chars
+        processor._render_pages_b64 = lambda *a, **k: ["img1"]
+
+        # Exactly 1.5× (len 25 → boundary at 37.5; build 37 ≤ 37.5 → reject even
+        # though every survivor token is present).
+        at_boundary = (survivor + " echo foxtrot")[:37]
+        processor._ollama_service = _FakeOllama(at_boundary)
+        assert await processor._vlm_ocr_fallback("x.pdf", survivor, drop_rate=0.98) is None
+
+        # Comfortably over 1.5× with full overlap → accepted.
+        over = survivor + " echo foxtrot golf hotel india juliet kilo"
+        processor._ollama_service = _FakeOllama(over)
+        assert await processor._vlm_ocr_fallback("x.pdf", survivor, drop_rate=0.98) == over
 
     async def test_no_trigger_when_drop_rate_low(self, processor, monkeypatch):
         """Low drop-rate + clean survivor score → VLM never runs."""
@@ -623,6 +691,7 @@ class TestVlmCoverageTrigger:
         out = await processor._vlm_ocr_fallback("x.pdf", long_survivor, drop_rate=0.95)
 
         assert out is None  # VLM ran but its output wasn't a coverage improvement
+        assert processor._ollama_service.extract_calls == 1  # proves the trigger fired
 
     async def test_coverage_threshold_zero_disables(self, processor, monkeypatch):
         """coverage_drop_threshold=0 → coverage trigger off; clean survivor → no VLM."""
@@ -652,3 +721,22 @@ class TestVlmCoverageTrigger:
         processor._render_pages_b64 = lambda *a, **k: ["img1"]
         out = await processor._vlm_ocr_fallback("x.pdf", "clean", drop_rate=0.99)
         assert out is None
+
+
+class TestTokenOverlap:
+    """Direct unit tests for the anti-hallucination survivor-overlap helper."""
+
+    def test_full_overlap(self):
+        assert DocumentProcessor._token_overlap("alpha bravo charlie", "alpha bravo charlie delta") == 1.0
+
+    def test_no_overlap(self):
+        assert DocumentProcessor._token_overlap("alpha bravo", "xxxx yyyy zzzz") == 0.0
+
+    def test_partial_overlap(self):
+        # survivors {alpha,bravo,charlie,delta}; candidate has alpha,bravo → 0.5
+        assert DocumentProcessor._token_overlap("alpha bravo charlie delta", "alpha bravo") == 0.5
+
+    def test_empty_survivor_returns_one(self):
+        # No survivor tokens to verify → don't block (1.0). Covers the early-return.
+        assert DocumentProcessor._token_overlap("", "anything here") == 1.0
+        assert DocumentProcessor._token_overlap("a b", "nothing") == 1.0  # <3-char tokens ignored

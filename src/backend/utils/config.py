@@ -553,6 +553,14 @@ class Settings(BaseSettings):
     # raw text layer). 0 disables the coverage trigger (score gate only).
     # Measured 2026-09-01: ~15 xidra + ~56 household docs sit above 0.7.
     ocr_vlm_coverage_drop_threshold: float = Field(default=0.7, ge=0.0, le=1.0)
+    # Anti-hallucination guard for the COVERAGE-acceptance path: the surviving
+    # chunks are known-correct fragments, so a faithful VLM transcription
+    # reproduces most of their tokens while a fabrication does not. Require at
+    # least this fraction of the survivors' distinct tokens to appear in the VLM
+    # text before replacing chunks with it (on financial docs a longer-but-wrong
+    # transcription must NOT win on length alone). Only applies when there are
+    # survivor tokens to check.
+    ocr_vlm_coverage_min_overlap: float = Field(default=0.5, ge=0.0, le=1.0)
     # Adds a fast LM gibberish check (is_ocr_gibberish, intent model) to the VLM
     # trigger + acceptance — catches the 'pronounceable pseudo-word' garble
     # ('ZOGEOLONIGGY') that character statistics can't tell from real words. Without

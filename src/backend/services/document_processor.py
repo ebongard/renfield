@@ -573,6 +573,22 @@ class DocumentProcessor:
             return []
         return out
 
+    @staticmethod
+    def _token_overlap(survivor_text: str, candidate_text: str) -> float:
+        """Fraction of the survivor's distinct alnum tokens (len≥3, lowercased)
+        that also appear in ``candidate_text``. 1.0 when the survivor has no such
+        tokens (nothing to verify → don't block). Anti-hallucination signal for
+        the VLM coverage-acceptance path."""
+        import re
+
+        def toks(s: str) -> set[str]:
+            return {t for t in re.findall(r"[A-Za-z0-9]{3,}", (s or "").lower())}
+
+        survivors = toks(survivor_text)
+        if not survivors:
+            return 1.0
+        return len(survivors & toks(candidate_text)) / len(survivors)
+
     async def _vlm_ocr_fallback(
         self, file_path: str, ocr_text: str, drop_rate: float | None = None
     ) -> str | None:
@@ -658,8 +674,20 @@ class DocumentProcessor:
                 if readable and settings.ocr_vlm_gibberish_gate_enabled:
                     readable = await svc.is_ocr_gibberish(vlm_text) is False
                 much_more = len(vlm_text) > 1.5 * max(1, len(ocr_text or ""))
-                coverage_accept = readable and much_more
+                # Anti-hallucination: a faithful transcription reproduces the
+                # known-correct survivor tokens; a fabrication (invented amounts /
+                # boilerplate) does not. Reject a longer-but-wrong VLM output.
+                overlap = self._token_overlap(ocr_text or "", vlm_text)
+                overlap_ok = overlap >= settings.ocr_vlm_coverage_min_overlap
+                coverage_accept = readable and much_more and overlap_ok
                 accept = coverage_accept
+                if not coverage_accept and much_more and readable and not overlap_ok:
+                    logger.info(
+                        f"VLM re-OCR coverage REJECTED for {Path(file_path).name}: "
+                        f"survivor-token overlap {overlap:.0%} < "
+                        f"{settings.ocr_vlm_coverage_min_overlap:.0%} — likely "
+                        f"hallucination, keeping OCR text"
+                    )
             if accept:
                 logger.info(
                     f"VLM re-OCR: using vision transcription for "
