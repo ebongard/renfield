@@ -722,6 +722,50 @@ class TestVlmCoverageTrigger:
         out = await processor._vlm_ocr_fallback("x.pdf", "clean", drop_rate=0.99)
         assert out is None
 
+    # ---- observability of the previously-SILENT reject branches ---------------
+    # A low-coverage doc that triggered the VLM but recovered nothing used to
+    # return None with no log, indistinguishable from "never triggered". These
+    # assert the reason is now logged (filename only, never doc content).
+
+    async def test_no_images_rendered_logs_skip_reason(self, processor, monkeypatch):
+        """Coverage triggers, but page rendering yields no images → the VLM cannot
+        run; log the SKIP reason with the trigger context instead of a silent None.
+
+        The module logs via loguru, not stdlib logging, so caplog can't see it —
+        patch the module logger (the local convention, see test_warning_log_on_drop)."""
+        _vlm_settings(monkeypatch)
+        processor._ollama_service = _FakeOllama("unused")
+        processor._render_pages_b64 = lambda *a, **k: []  # render produced nothing
+
+        with patch("services.document_processor.logger") as mock_logger:
+            out = await processor._vlm_ocr_fallback("garbled.pdf", "clean survivor", drop_rate=0.98)
+
+        assert out is None
+        assert processor._ollama_service.extract_calls == 0  # VLM never queried
+        assert mock_logger.info.called
+        msg = " ".join(str(c.args[0]) for c in mock_logger.info.call_args_list)
+        assert "no page images rendered" in msg
+        assert "garbled.pdf" in msg
+        assert "coverage_bad=True" in msg
+
+    async def test_empty_vlm_text_logs_reason(self, processor, monkeypatch):
+        """Images render and the VLM runs, but returns empty text → log the reason
+        (VLM produced nothing) instead of a silent None."""
+        _vlm_settings(monkeypatch)
+        processor._ollama_service = _FakeOllama("")  # VLM returns empty
+        processor._render_pages_b64 = lambda *a, **k: ["img1", "img2"]
+
+        with patch("services.document_processor.logger") as mock_logger:
+            out = await processor._vlm_ocr_fallback("garbled.pdf", "clean survivor", drop_rate=0.98)
+
+        assert out is None
+        assert processor._ollama_service.extract_calls == 2  # VLM DID run on both pages
+        assert mock_logger.info.called
+        msg = " ".join(str(c.args[0]) for c in mock_logger.info.call_args_list)
+        assert "EMPTY text" in msg
+        assert "garbled.pdf" in msg
+        assert "2 page(s)" in msg
+
 
 class TestTokenOverlap:
     """Direct unit tests for the anti-hallucination survivor-overlap helper."""

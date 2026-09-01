@@ -640,13 +640,31 @@ class DocumentProcessor:
                     f"{old_score} was ok) — re-transcribing from the page image"
                 )
             if not ocr_bad and not coverage_bad:
+                logger.debug(
+                    f"VLM re-OCR not triggered for {Path(file_path).name}: "
+                    f"survivor score {old_score} ok and drop_rate "
+                    + (f"{drop_rate:.0%}" if drop_rate is not None else "n/a")
+                    + f" ≤ {settings.ocr_vlm_coverage_drop_threshold:.0%}"
+                )
                 return None
 
             loop = asyncio.get_event_loop()
             images = await loop.run_in_executor(
                 None, self._render_pages_b64, file_path, settings.ocr_vlm_fallback_max_pages
             )
+            # Observability: the two branches below used to return None SILENTLY, so a
+            # low-coverage doc that reached the VLM but recovered nothing was
+            # indistinguishable in the logs from one that never triggered. That masks the
+            # real failure mode (page render fails → the VLM never sees the image) exactly
+            # for the hard garbled scans one wants to diagnose. Log the trigger context
+            # (drop_rate + which trigger) and the reason — filename only, no doc content.
             if not images:
+                logger.info(
+                    f"VLM re-OCR SKIPPED for {Path(file_path).name}: no page images "
+                    f"rendered (ocr_bad={ocr_bad}, coverage_bad={coverage_bad}, drop_rate="
+                    + (f"{drop_rate:.0%}" if drop_rate is not None else "n/a")
+                    + ") — cannot re-transcribe, keeping OCR text"
+                )
                 return None
 
             parts: list[str] = []
@@ -656,6 +674,11 @@ class DocumentProcessor:
                     parts.append(t)
             vlm_text = "\n\n".join(parts).strip()
             if not vlm_text:
+                logger.info(
+                    f"VLM re-OCR produced EMPTY text for {Path(file_path).name} "
+                    f"({len(images)} page(s) rendered, ocr_bad={ocr_bad}, "
+                    f"coverage_bad={coverage_bad}) — keeping OCR text"
+                )
                 return None
 
             # Accept when the VLM is strictly better by the char score, OR (for the
