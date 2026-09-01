@@ -483,7 +483,16 @@ class DocumentProcessor:
             # result scores strictly better. Benefits ingest AND reindex, so an audit
             # re-OCR improvement actually reaches the KB (not re-garbled by Tesseract).
             _ocr_text = docling_text or "\n".join(c.get("text", "") for c in chunks)
-            _vlm_text = await self._vlm_ocr_fallback(file_path, _ocr_text)
+            # Effective drop-rate of the FINAL chunk set (text-layer or force-OCR
+            # path). A high value means most content was dropped even though the
+            # SURVIVING text scores clean — the letter-spacing "usable text layer"
+            # case that skips force-OCR. Pass it so the VLM coverage trigger can
+            # fire regardless of the survivor score.
+            _final_total = len(chunks) + dropped
+            _final_drop_rate = (dropped / _final_total) if _final_total else 0.0
+            _vlm_text = await self._vlm_ocr_fallback(
+                file_path, _ocr_text, drop_rate=_final_drop_rate
+            )
             if _vlm_text:
                 from utils.content_quality import is_low_quality_text
 
@@ -564,7 +573,9 @@ class DocumentProcessor:
             return []
         return out
 
-    async def _vlm_ocr_fallback(self, file_path: str, ocr_text: str) -> str | None:
+    async def _vlm_ocr_fallback(
+        self, file_path: str, ocr_text: str, drop_rate: float | None = None
+    ) -> str | None:
         """Vision-model re-OCR when the OCR text is bad (rotated / poor scan).
 
         Both Tesseract and EasyOCR fail on the same bad pixels; a vision model reads
@@ -597,7 +608,22 @@ class DocumentProcessor:
             ocr_bad = old_score <= settings.ocr_vlm_fallback_score_threshold
             if not ocr_bad and settings.ocr_vlm_gibberish_gate_enabled:
                 ocr_bad = await svc.is_ocr_gibberish(ocr_text) is True
-            if not ocr_bad:
+            # Coverage trigger (style-3): the survivors score clean, but most of the
+            # document was dropped as low-quality — a "usable-but-garbled" text layer
+            # that skipped force-OCR. The survivor score can't see the lost content;
+            # the high drop-rate can. Re-OCR from the page image regardless of score.
+            coverage_bad = (
+                drop_rate is not None
+                and settings.ocr_vlm_coverage_drop_threshold > 0
+                and drop_rate > settings.ocr_vlm_coverage_drop_threshold
+            )
+            if coverage_bad and not ocr_bad:
+                logger.info(
+                    f"VLM re-OCR coverage trigger: drop_rate={drop_rate:.0%} > "
+                    f"{settings.ocr_vlm_coverage_drop_threshold:.0%} (survivor score "
+                    f"{old_score} was ok) — re-transcribing from the page image"
+                )
+            if not ocr_bad and not coverage_bad:
                 return None
 
             loop = asyncio.get_event_loop()
@@ -622,11 +648,26 @@ class DocumentProcessor:
             accept = new_score > old_score
             if not accept and settings.ocr_vlm_gibberish_gate_enabled:
                 accept = await svc.is_ocr_gibberish(vlm_text) is False
+            # Coverage acceptance: on a coverage-triggered doc the survivors are a
+            # small CLEAN fragment, so the char score can tie/beat the fuller VLM
+            # text — accept when the VLM is itself readable (not garbled) AND
+            # recovers materially MORE content than the survivors.
+            coverage_accept = False
+            if not accept and coverage_bad:
+                readable = new_score > settings.ocr_vlm_fallback_score_threshold
+                if readable and settings.ocr_vlm_gibberish_gate_enabled:
+                    readable = await svc.is_ocr_gibberish(vlm_text) is False
+                much_more = len(vlm_text) > 1.5 * max(1, len(ocr_text or ""))
+                coverage_accept = readable and much_more
+                accept = coverage_accept
             if accept:
                 logger.info(
                     f"VLM re-OCR: using vision transcription for "
                     f"{Path(file_path).name} ({len(images)} page(s), "
-                    f"score {old_score}→{new_score})"
+                    f"score {old_score}→{new_score}"
+                    + (f", coverage-recovered {len(ocr_text or '')}→{len(vlm_text)} chars"
+                       if coverage_accept else "")
+                    + ")"
                 )
                 return vlm_text
             logger.info(

@@ -544,6 +544,15 @@ class Settings(BaseSettings):
     ocr_vlm_fallback_enabled: bool = False
     ocr_vlm_fallback_score_threshold: int = 2   # OCR score <= this → try the VLM
     ocr_vlm_fallback_max_pages: int = Field(default=5, ge=1, le=20)
+    # Coverage trigger: even when the SURVIVING (post-drop) text scores fine, a
+    # doc whose chunker dropped more than this fraction is mostly-lost content —
+    # classically a "usable-but-garbled" embedded text layer (DATEV letter-
+    # spacing) that takes the text-layer short-circuit and skips force-OCR. The
+    # VLM reads the page IMAGE (unaffected by the broken text layer) and recovers
+    # it; Schicht-A positioned tokens are preserved (field_text still unions the
+    # raw text layer). 0 disables the coverage trigger (score gate only).
+    # Measured 2026-09-01: ~15 xidra + ~56 household docs sit above 0.7.
+    ocr_vlm_coverage_drop_threshold: float = Field(default=0.7, ge=0.0, le=1.0)
     # Adds a fast LM gibberish check (is_ocr_gibberish, intent model) to the VLM
     # trigger + acceptance — catches the 'pronounceable pseudo-word' garble
     # ('ZOGEOLONIGGY') that character statistics can't tell from real words. Without

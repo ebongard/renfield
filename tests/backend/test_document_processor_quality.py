@@ -543,3 +543,112 @@ def test_images_scale_config_default_within_bounds():
 
     assert 0.5 <= settings.rag_ocr_images_scale <= 4.0
     assert settings.rag_ocr_images_scale == 1.5
+
+
+# ---- VLM re-OCR coverage trigger (fix/vlm-ocr-coverage-trigger) ------------
+#
+# The VLM fallback historically triggered ONLY on the SURVIVING text's char
+# score. A "usable-but-garbled" text layer (DATEV letter-spacing) drops most
+# chunks, the few survivors score clean, and the VLM was skipped — the doc lost
+# ~98% of its content with no recovery. The coverage trigger fires the VLM from
+# the page image when the drop-rate is high regardless of the survivor score,
+# and a coverage-aware acceptance keeps the fuller VLM transcription.
+
+
+class _FakeOllama:
+    def __init__(self, vlm_text, gibberish=False):
+        self._vlm = vlm_text
+        self._gib = gibberish
+        self.extract_calls = 0
+
+    async def extract_text_from_image(self, _img):
+        self.extract_calls += 1
+        return self._vlm
+
+    async def is_ocr_gibberish(self, _text):
+        return self._gib
+
+
+def _fake_score(text):
+    # Marker-based: "GARBAGE" → bad (1), else clean (5). Returns (score, meta).
+    return (1, {}) if "GARBAGE" in (text or "") else (5, {})
+
+
+def _vlm_settings(monkeypatch, *, coverage=0.7, score_thr=2, gibberish=False, enabled=True):
+    for k, v in {
+        "ocr_vlm_fallback_enabled": enabled,
+        "ocr_vlm_fallback_score_threshold": score_thr,
+        "ocr_vlm_coverage_drop_threshold": coverage,
+        "ocr_vlm_gibberish_gate_enabled": gibberish,
+        "ocr_vlm_fallback_max_pages": 3,
+    }.items():
+        monkeypatch.setattr(f"services.document_processor.settings.{k}", v)
+    monkeypatch.setattr("utils.ocr_quality.score_ocr_quality", _fake_score)
+
+
+class TestVlmCoverageTrigger:
+    async def test_coverage_trigger_fires_and_accepts(self, processor, monkeypatch):
+        """Survivors score clean, but drop_rate>threshold → VLM runs from the image
+        and its fuller readable transcription is accepted (coverage acceptance)."""
+        _vlm_settings(monkeypatch)
+        # No trailing space — the source strips the joined VLM text (…join().strip()).
+        long_clean = ("Pflegeversicherung freiwillige Mitglieder Beitrag " * 8).strip()
+        processor._ollama_service = _FakeOllama(long_clean)
+        processor._render_pages_b64 = lambda *a, **k: ["img1"]
+
+        out = await processor._vlm_ocr_fallback("x.pdf", "clean survivor", drop_rate=0.98)
+
+        assert out == long_clean
+        assert processor._ollama_service.extract_calls == 1
+
+    async def test_no_trigger_when_drop_rate_low(self, processor, monkeypatch):
+        """Low drop-rate + clean survivor score → VLM never runs."""
+        _vlm_settings(monkeypatch)
+        processor._ollama_service = _FakeOllama("should not be used")
+        processor._render_pages_b64 = lambda *a, **k: ["img1"]
+
+        out = await processor._vlm_ocr_fallback("x.pdf", "clean survivor", drop_rate=0.10)
+
+        assert out is None
+        assert processor._ollama_service.extract_calls == 0
+
+    async def test_coverage_rejects_when_vlm_not_longer(self, processor, monkeypatch):
+        """Coverage triggers, but the VLM text isn't materially longer than the
+        survivors → not a coverage gain → rejected."""
+        _vlm_settings(monkeypatch)
+        long_survivor = "clean survivor text " * 30  # ~600 chars
+        processor._ollama_service = _FakeOllama("tiny clean")  # much shorter
+        processor._render_pages_b64 = lambda *a, **k: ["img1"]
+
+        out = await processor._vlm_ocr_fallback("x.pdf", long_survivor, drop_rate=0.95)
+
+        assert out is None  # VLM ran but its output wasn't a coverage improvement
+
+    async def test_coverage_threshold_zero_disables(self, processor, monkeypatch):
+        """coverage_drop_threshold=0 → coverage trigger off; clean survivor → no VLM."""
+        _vlm_settings(monkeypatch, coverage=0.0)
+        processor._ollama_service = _FakeOllama("should not be used")
+        processor._render_pages_b64 = lambda *a, **k: ["img1"]
+
+        out = await processor._vlm_ocr_fallback("x.pdf", "clean survivor", drop_rate=0.99)
+
+        assert out is None
+        assert processor._ollama_service.extract_calls == 0
+
+    async def test_score_trigger_still_works(self, processor, monkeypatch):
+        """Legacy path: a garbled survivor (bad score) still triggers + accepts on a
+        strictly-better VLM score, independent of drop_rate."""
+        _vlm_settings(monkeypatch)
+        processor._ollama_service = _FakeOllama("clean recovered text")
+        processor._render_pages_b64 = lambda *a, **k: ["img1"]
+
+        out = await processor._vlm_ocr_fallback("x.pdf", "GARBAGE r . : n ; :", drop_rate=None)
+
+        assert out == "clean recovered text"
+
+    async def test_disabled_returns_none(self, processor, monkeypatch):
+        _vlm_settings(monkeypatch, enabled=False)
+        processor._ollama_service = _FakeOllama("x")
+        processor._render_pages_b64 = lambda *a, **k: ["img1"]
+        out = await processor._vlm_ocr_fallback("x.pdf", "clean", drop_rate=0.99)
+        assert out is None
