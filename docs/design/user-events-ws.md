@@ -1,7 +1,7 @@
 # User-Events WebSocket — per-user server→browser push substrate
 
 **Status:** Design (approval-gated, not yet built). 2026-08-31.
-**Motivation:** `/wissen/dokumente` (and other corpus surfaces) do not reflect server-originated changes (folder/email ingest completion, Paperless/Simba status) without a manual reload — and **polling is explicitly rejected**. This introduces a **reusable per-user event channel** so any backend surface can push a content-free "something changed, refetch" signal to that user's open browsers.
+**Motivation:** `/wissen/dokumente` (and other corpus surfaces) do not reflect server-originated changes (folder/email ingest completion, Paperless status) without a manual reload — and **polling is explicitly rejected**. This introduces a **reusable per-user event channel** so any backend surface can push a content-free "something changed, refetch" signal to that user's open browsers.
 **Constraints (owner-set):** no shortcuts; robust long-term architecture; minimal tech debt; ≥80% test coverage.
 **Supersedes:** the naive "in-memory broadcast like the kiosk" proposal, which an adversarial review proved **broken** for the primary trigger (see §2).
 
@@ -26,7 +26,7 @@
 The proposed "new `/ws/user` with an in-memory `set[WebSocket]` registry, broadcast from `rag_service.py`" is **broken**:
 
 - **T1 (cross-process, BLOCKER):** ingest completion (`services/rag_service.py:530`, `status=COMPLETED`) runs in the **`document-worker` pod** (`k8s/document-worker.yaml`; `workers/document_processor_worker.py` must not import the FastAPI app — enforced by `test_worker_module_isolation`). A broadcast there hits an **empty** registry → silent no-op. The only worker→browser mechanism today is **polling** (`services/progress.py` Redis keys read on a client request). **No Redis pub/sub exists** in the codebase (`grep '.pubsub()|.publish('` → 0 hits).
-- **T2 (multi-replica, HIGH):** `k8s/backend.yaml` is `replicas: 1` today, but an in-memory registry breaks the moment it scales — each replica holds a disjoint socket subset. Even API-pod-local emits (Simba/Paperless) only reach the replica they ran on.
+- **T2 (multi-replica, HIGH):** `k8s/backend.yaml` is `replicas: 1` today, but an in-memory registry breaks the moment it scales — each replica holds a disjoint socket subset. Even API-pod-local emits (Paperless) only reach the replica they ran on.
 - **T3/T4:** auth-off (`ws_auth_enabled=false`) has no `user_id` to target; `owner=None` docs (null-KB/global-RAG) target nobody.
 - **T7:** invalidating `keys.knowledge.all` on every completion during a folder-ingest backlog → refetch storm.
 
@@ -75,7 +75,6 @@ The corrected design below fixes all of these **by construction**.
 |---|---|---|
 | Ingest completion | `services/rag_service.py` (status→`COMPLETED`) | `{type:"documents_changed", reason:"ingested"}` → owner |
 | Paperless filing | `services/folder_ingest_paperless.py` (`_settle_from_outcome` + the 5 terminal `paperless_state` writes, via the shared `_emit_paperless_changed` helper) — NOT `paperless_reconciler.py`, which only re-enqueues and feeds this settle path | `reason:"paperless"` → owner |
-| Simba upload | `services/simba_ingest_review.py::confirm` (→`UPLOADED`) | `reason:"simba"` → owner |
 | Document delete/reindex | `services/rag_service.delete_document` / reindex enqueue | `reason:"deleted"`/`"reindex"` → owner (covers cross-tab/cross-device) |
 
 The worker path (`rag_service`) publishes through the worker's `aioredis` client — the ONLY way its completion reaches browsers. Owner is resolved at the seam (§3.1).
@@ -119,7 +118,7 @@ The worker path (`rag_service`) publishes through the worker's `aioredis` client
   - `resolve_document_owner`: owned doc → owner id; null-KB/global-RAG → None; auth-off → None.
 - `user_events_subscriber`: given a published message, calls `registry.fan_out` with the decoded target/event; reconnects after a simulated Redis drop; coalesces same-`(target,type)` within the window.
 - `/ws/user` endpoint (via FastAPI `TestClient` websocket): auth-on accepts a valid token and registers under the user; auth-on rejects an unauthenticated socket; auth-off registers under `_ALL`; heartbeat ping/pong; disconnect unregisters.
-- Emit-point tests: each seam (ingest-complete, paperless, simba-confirm, delete) calls `publish_user_event` with the correct `target` + `reason` (assert via a patched publisher). The worker path is tested at the `rag_service` seam (owner resolved, publish called) — proving the worker-origin event is emitted.
+- Emit-point tests: each seam (ingest-complete, paperless, delete) calls `publish_user_event` with the correct `target` + `reason` (assert via a patched publisher). The worker path is tested at the `rag_service` seam (owner resolved, publish called) — proving the worker-origin event is emitted.
 
 **Frontend (`tests/frontend/react/`):**
 - `useUserEvents` (mock WebSocket): connects when authenticated, not when unauth; on `documents_changed` invalidates `keys.knowledge.list()` (spied QueryClient); **debounce** collapses N rapid events into ONE invalidation; reconnect with backoff after a socket close; heartbeat sent on interval; cleanup on unmount closes the socket.
@@ -144,4 +143,4 @@ The channel carries a typed `{type, reason}` — `documents_changed` is the firs
 
 1. **`_ALL` in auth-on multi-user = admins-only?** (recommended) vs. no `_ALL` fan-out at all (drop `owner=None` events). Recommendation: admins-only — content-free, harmless, and keeps admin dashboards live.
 2. **Server-side coalescing window** (default 1s) + **client debounce** (default 1s) — both, or client-only? Recommendation: both (cheap defense in depth), server window configurable.
-3. **Scope of v1 emit points:** documents only (ingest/paperless/simba/delete) — obligations/notes deferred to a follow-up that only adds event types. Recommendation: documents-only v1.
+3. **Scope of v1 emit points:** documents only (ingest/paperless/delete) — obligations/notes deferred to a follow-up that only adds event types. Recommendation: documents-only v1.

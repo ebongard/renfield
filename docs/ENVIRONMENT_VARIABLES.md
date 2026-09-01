@@ -1010,12 +1010,6 @@ FOLDER_INGEST_TARGET_USER=            # Owner der auto-abgelegten Dokumente (Use
 FOLDER_INGEST_DEFAULT_TIER=0          # Circle-Tier beim Anlegen (0=self … 4=public)
 FOLDER_INGEST_TO_PAPERLESS=true       # zusätzlich in Paperless ablegen
 FOLDER_INGEST_NOTIFY_ON_FILED=true    # Bestätigungs-Notification nach Ablage
-# xidra-only: eine watch-folder-ingestete PDF zusätzlich als Simba-Upload-Kandidat
-# aufnehmen. NIE Auto-Upload (die Übertragung an den Steuerberater ist irreversibel) —
-# der Post-Ingest-Hook legt einen PENDING-Review-Vorschlag (mit Kategorie/Typ-VORSCHLAG)
-# auf /brain/review an, den der Owner bestätigt (→ echter Upload) oder verwirft. Nur PDF,
-# nur source='folder_ingest'. Braucht den simba-MCP. Siehe docs/FOLDER_INGEST.md.
-FOLDER_INGEST_SIMBA_ENABLED=false
 # Autoritativer Push-Token (optional). Wenn gesetzt, seedet der Boot-Credential-
 # Reconciler (services/credential_reconciler.py) den DB-Token (SystemSetting
 # folder_ingest.token) aus diesem Wert — so heilt sich der Token nach einem DB-Wipe
@@ -1114,7 +1108,6 @@ FILES_HEALTH_POLL_SECONDS=30          # Backend-Health-Poll; bei down→up wird 
 - `FOLDER_INGEST_DEFAULT_TIER`: `0`
 - `FOLDER_INGEST_TO_PAPERLESS`: `true`
 - `FOLDER_INGEST_NOTIFY_ON_FILED`: `true`
-- `FOLDER_INGEST_SIMBA_ENABLED`: `false` (xidra-only; Simba-Review-Queue für watch-folder-PDFs)
 - `PAPERLESS_CONSUME_TIMEOUT_S`: `300` · `PAPERLESS_REFILE_POLL_TIMEOUT_S`: `30` · `PAPERLESS_RECONCILER_INTERVAL`: `120` · `PAPERLESS_RECONCILER_BATCH`: `25` · `PAPERLESS_RECONCILER_REFILE_GRACE_SECONDS`: `360` · `PAPERLESS_RECONCILER_REFILE_LEASE_SECONDS`: `900`
 - `PAPERLESS_FINALIZE_RECONCILER_INTERVAL`: `120` · `_BATCH`: `25` · `_GRACE_SECONDS`: `360` · `_POLL_SECONDS`: `30` · `_LEASE_SECONDS`: `120` · `_MAX_ATTEMPTS`: `5` · `_GIVEUP_HOURS`: `24`
 - `FILES_MAX_CONCURRENT_PUSHES`: `4` · `FILES_HEALTH_POLL_SECONDS`: `30`

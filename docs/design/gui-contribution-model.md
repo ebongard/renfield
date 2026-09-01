@@ -1,6 +1,6 @@
 # GUI Contribution Model — how features (esp. MCP-backed ones) plug in UI
 
-**Status:** Design / proposal (not yet built). Motivated by the Simba per-instance-optional analysis (#1170/#1178, 2026-08-31).
+**Status:** Design / proposal (not yet built). Motivated by the per-instance-optional capability analysis (#1178, 2026-08-31).
 **Author:** design pass, 2026-08-31 (rewritten after a three-lens eng/UI/design review the same day — see §11).
 **Scope:** how a new capability — usually an MCP server — contributes GUI (a menu action, a review queue, a status icon, a widget, a settings panel) **without** bloating the shared frontend or requiring an N-file edit of the shell, and such that an instance **without** that capability carries **zero** of its UI.
 **Design authority:** `DESIGN.md` at the repo root is the binding constraint on everything in this doc — tokens, spacing, motion, semantic colors, the tier visual language. Any renderer or component introduced under this model must pass `/plan-design-review` + `/review` against it (see §7).
@@ -11,19 +11,19 @@
 
 Renfield ships **one** frontend image across all instances (household, xidra, any future one); per-instance behaviour comes from runtime config (`GET /api/config/features`, `chat_starters`, etc.). Today, when a capability needs UI it is hand-wired into the shared React app in several places and gated by a feature flag:
 
-- a review section slotted into `pages/BrainReviewPage.tsx` (e.g. `SimbaIngestReviewSection`, `DocumentDuplicatesSection`, `PdfSplitReviewSection` — each imported and rendered with an `enabled={features?.…}` prop; `MergeProposalsSection` is the odd one out, rendered bare and self-hiding via `return null`);
+- a review section slotted into `pages/BrainReviewPage.tsx` (e.g. `DocumentDuplicatesSection`, `PdfSplitReviewSection` — each imported and rendered with an `enabled={features?.…}` prop; `MergeProposalsSection` is the odd one out, rendered bare and self-hiding via `return null`);
 - an action in `pages/ChatPage/AttachmentQuickActions.tsx`;
-- a row action + status icon in `pages/KnowledgePage.tsx` (`Archive`=Paperless, `Landmark`=Simba, the latter also gated on `simba_ingest_review_enabled`);
+- a row action + status icon in `pages/KnowledgePage.tsx` (`Archive`=Paperless, plus a flag-gated integration send action);
 - feature-flag plumbing in `api/resources/brain.ts` → `api/routes/config.py`;
 - i18n keys in `i18n/locales/{de,en,it}.json`.
 
-This works, but has three costs, made concrete by the **Simba** case:
+This works, but has three costs, made concrete by the KB **duplicate-review** case:
 
-1. **Bundle/footprint residue.** The shared image ships every feature's bespoke components even on instances that don't use them (Simba UI ships to household, flag-hidden). Not visible or behavioural, but it *is* "carried."
+1. **Bundle/footprint residue.** The shared image ships every feature's bespoke components even on instances that don't use them (a dark-by-default feature's UI ships to every instance, flag-hidden). Not visible or behavioural, but it *is* "carried."
 2. **Friction.** Adding UI for one capability means editing 5+ shell files + a flag + three locale files, coupling the capability's cadence to the shell's.
-3. **Leak risk.** Anything registered unconditionally leaks. The Simba internal agent tools were registered for *every* instance and surfaced via the `general` role (`internal_tools: null` = all tools) even where Simba wasn't configured — fixed in #1178 by gating registration on MCP presence (the `simba_available` guard in `services/agent_tools.py`). UI has the same failure mode if not gated.
+3. **Leak risk.** Anything registered unconditionally leaks. A capability's internal agent tools that are registered for *every* instance and surfaced via the `general` role (`internal_tools: null` = all tools) leak even where the capability isn't configured — the failure mode fixed in #1178 by gating registration on MCP presence. UI has the same failure mode if not gated.
 
-**Requirement (from the operator):** keep Simba on xidra, but a Simba-less instance must carry **no** Simba artifacts. Generalised: *a capability's UI should be present exactly where the capability is, and nowhere else — ideally without shipping its code at all where it's absent.*
+**Requirement (from the operator):** keep a per-instance capability where it's configured, but an instance without it must carry **no** artifacts of it. Generalised: *a capability's UI should be present exactly where the capability is, and nowhere else — ideally without shipping its code at all where it's absent.*
 
 ---
 
@@ -63,7 +63,7 @@ The backend/MCP emits **typed JSON** (`{kind, data}`); the shell renders it with
 
 So the honest per-instance-clean property is: **artifact *data* is per-instance-clean (no data ⇒ no UI); a new kind's *code* is not — it ships everywhere unless removed by the build-time flag (Option D).** SDUI-clean only truly holds when a feature reuses existing read-only kinds.
 
-**Limits (decisive for the default, see §3):** interactive/stateful/durable UI — the Simba two-step claim-before-act confirm, the branch `‹ n/m ›` switcher, the dedupe survivor-radio + supersede/delete + 5s undo, the 3D Wissensgraph — can't be pure SDUI without dragging bespoke state and validation back in, and SDUI's data-owns-text model breaks the repo's i18n mandate for feature UI (§8).
+**Limits (decisive for the default, see §3):** interactive/stateful/durable UI — the branch `‹ n/m ›` switcher, the dedupe survivor-radio + supersede/delete + 5s undo, the pdf-split review flow, the 3D Wissensgraph — can't be pure SDUI without dragging bespoke state and validation back in, and SDUI's data-owns-text model breaks the repo's i18n mandate for feature UI (§8).
 
 ### Option D — Build-time feature tree-shaking (`VITE_FEATURE_*`)
 
@@ -77,12 +77,12 @@ Build **B as the default for feature UI**, use **C for what it's genuinely good 
 
 1. **The contribution registry (Option B) is the default way a capability contributes *feature* UI** — anything durable, actionable, stateful, or risk-bearing (review queues, settings, upload/confirm flows, nav, doc-row actions). Features register bespoke React into declared slots instead of editing the shell. This delivers the "register, don't edit 5 files" win at **full interaction and design fidelity**, and is a near-pure refactor of what already exists.
 2. **Server-driven typed artifacts (Option C) are the default for *agent-generated, read-only, data-shaped, in-conversation* output** — `table`/`list`/`keyvalue`/`chart`/`weather`/`presence_map`. These already ship; keep pushing them. Investment = widen the **read-only** artifact vocabulary as needed, under the design-compliance invariant in §7.
-3. **Every contribution is capability-gated** by the same signal that gates the backend (a feature flag from `/api/config/features`, itself often derived from MCP presence — the UI analogue of the #1178 `simba_available` tool-registration gate).
+3. **Every contribution is capability-gated** by the same signal that gates the backend (a feature flag from `/api/config/features`, itself often derived from MCP presence — the UI analogue of the #1178 tool-registration gate).
 4. **Build-time tree-shaking (Option D) is the last resort**, only if bundle purity itself becomes a hard requirement.
 
 The dividing line between B and C is not a per-PR judgement call — it's a checklist (§4).
 
-> **Why this inverts the first draft.** The original recommendation made SDUI the *default* GUI-contribution path and claimed it absorbs "~80%" of feature UI with "zero frontend code, per-instance-clean for free." The review (§11) showed: a new kind *is* a shell edit shipped to every instance; the generic `form`/`review_card` premise collapses on the first stateful feature (Simba, dedupe); SDUI's server-owned text violates the i18n mandate for feature UI; and the existing renderers already drift off-token. The "~80%" figure had no evidence and is dropped. Registry-first keeps the genuine win (pluggable, per-instance-gated, low-friction) without those costs.
+> **Why this inverts the first draft.** The original recommendation made SDUI the *default* GUI-contribution path and claimed it absorbs "~80%" of feature UI with "zero frontend code, per-instance-clean for free." The review (§11) showed: a new kind *is* a shell edit shipped to every instance; the generic `form`/`review_card` premise collapses on the first stateful feature (dedupe, pdf-split); SDUI's server-owned text violates the i18n mandate for feature UI; and the existing renderers already drift off-token. The "~80%" figure had no evidence and is dropped. Registry-first keeps the genuine win (pluggable, per-instance-gated, low-friction) without those costs.
 
 ---
 
@@ -91,9 +91,9 @@ The dividing line between B and C is not a per-PR judgement call — it's a chec
 A surface **MUST be a bespoke slot component (Option B)** if **any** of these hold:
 
 - it is **durable/actionable** (a review queue, settings panel, upload flow) rather than an ephemeral answer in a chat turn;
-- it carries an **irreversible or destructive** action (Simba upload, delete, merge);
+- it carries an **irreversible or destructive** action (delete, merge);
 - it needs **undo**, **staged confirm**, **optimistic reconcile**, or **dependent/reactive fields** (category→type, survivor→supersede);
-- it needs **cross-surface deep-linking** (a stable DOM anchor on a routed page — the `#frist-{id}` ↔ `?doc={id}#fakten` ↔ `#simba-{id}` web);
+- it needs **cross-surface deep-linking** (a stable DOM anchor on a routed page — the `#frist-{id}` ↔ `?doc={id}#fakten` web);
 - it needs **risk-aware focus/emphasis** (e.g. autofocus Reject + de-emphasize the destructive control on a cross-tier merge);
 - it must survive **offline / history-reload as a *live* control** (not a frozen snapshot);
 - it renders **tier / provenance / legal-gate** visual language (see §7).
@@ -101,8 +101,8 @@ A surface **MUST be a bespoke slot component (Option B)** if **any** of these ho
 A surface **defaults to a read-only artifact (Option C)** only when it is **all** of: agent-generated (or trivially data-derived), read-only, data-shaped, and acceptable as a point-in-time snapshot inside a chat turn — i.e. `table`/`list`/`keyvalue`/`chart`/`weather`/`presence_map`.
 
 **Consequences for the proposed new kinds:**
-- **`form`** — allowed only for *trivial, stateless* pickers whose submit is a single safe write-back frame (the `device_action` precedent). It may **not** carry staged confirm, response-driven reshape, or dependent-field logic — those pull the interaction back to a bespoke slot. Simba's picker + irreversible two-step confirm therefore stays a bespoke slot; a `form` could at most replace the trivial field entry, not the claim-before-act flow, so it earns little here.
-- **`review_card`** — **not adopted.** The three flows it would generalize (`MergeProposalCard`, `DocumentDuplicateCard`, `SimbaProposalForm`) each carry undo, conditional emphasis, staged confirm, or response-driven reshape that JSON can't express without becoming a worse, stringly-typed React. Genericize them instead via a **shared bespoke React component + the slot registry** (§5) — that delivers the "register, don't edit 5 files" win without the SDUI tax.
+- **`form`** — allowed only for *trivial, stateless* pickers whose submit is a single safe write-back frame (the `device_action` precedent). It may **not** carry staged confirm, response-driven reshape, or dependent-field logic — those pull the interaction back to a bespoke slot. The dedupe survivor-radio + supersede/delete confirm therefore stays a bespoke slot; a `form` could at most replace a trivial field entry, not the staged-confirm flow, so it earns little here.
+- **`review_card`** — **not adopted.** The three flows it would generalize (`MergeProposalCard`, `DocumentDuplicateCard`, `PdfSplitReviewSection`) each carry undo, conditional emphasis, staged confirm, or response-driven reshape that JSON can't express without becoming a worse, stringly-typed React. Genericize them instead via a **shared bespoke React component + the slot registry** (§5) — that delivers the "register, don't edit 5 files" win without the SDUI tax.
 - **`status_badge` / `row_action`** — as **slot contributions**, not artifacts (they belong on routed list/table rows, and must reuse the existing tier/status primitives; §7).
 
 ---
@@ -114,10 +114,10 @@ A declared registry (`features/contributions.ts` or similar) exposing named slot
 | Slot | Shell host today | Contribution shape |
 |---|---|---|
 | `nav.item` | `components/Layout.tsx` | label + icon + route + permission + `feature` flag |
-| `review.section` | `pages/BrainReviewPage.tsx` | a component + `enabled` flag (Simba / dedupe / pdf-split already fit) |
+| `review.section` | `pages/BrainReviewPage.tsx` | a component + `enabled` flag (dedupe / pdf-split / merge already fit) |
 | `attachment.action` | `pages/ChatPage/AttachmentQuickActions.tsx` | label + icon + handler + `enabled` flag |
 | `documentRow.action` | `pages/KnowledgePage.tsx` | icon + handler + `enabled` flag |
-| `documentRow.statusIcon` | `pages/KnowledgePage.tsx` | icon + predicate over the row (`in_paperless`, `in_simba`) + flag |
+| `documentRow.statusIcon` | `pages/KnowledgePage.tsx` | icon + predicate over the row (`in_paperless`) + flag |
 | `settings.panel` | settings pages | a component + flag |
 | `dashboard.widget` / kiosk | kiosk / dashboard | a component + flag |
 
@@ -165,7 +165,7 @@ The whole model is "one frontend image, many per-instance backends," and `artifa
 
 ## 10. Migration path (incremental, no big bang)
 
-1. **Ship the contribution registry + the `review.section` / `documentRow.*` / `attachment.action` slots**, and move the *existing* flag-gated sections onto them (Simba, dedupe, pdf-split review sections; the doc-row Simba action + status icon). Behaviour-preserving refactor — preserve each section's undo/invalidation/permission state (§5), verify against current behaviour before removing the hand-wiring.
+1. **Ship the contribution registry + the `review.section` / `documentRow.*` / `attachment.action` slots**, and move the *existing* flag-gated sections onto them (dedupe, pdf-split, merge review sections; the doc-row integration action + status icon). Behaviour-preserving refactor — preserve each section's undo/invalidation/permission state (§5), verify against current behaviour before removing the hand-wiring.
 2. **Land the design-compliance gate first** (§7): remediate `ChartArtifact` hex + `DeviceControl` amber + `ArtifactShell` `.card`, add the lint rule over `artifacts/**`. Do this before widening the vocabulary.
 3. **New capabilities default to slots for feature UI; read-only agent output defaults to artifacts.** A feature touches the shell only to register a slot contribution.
 4. **(Optional, later)** `VITE_FEATURE_*` build flags (Option D) to tree-shake bespoke slot contributions out of an instance's build, if per-instance bundle purity is ever required.
@@ -174,24 +174,24 @@ The whole model is "one frontend image, many per-instance backends," and `artifa
 
 Three independent reviewers (staff-eng/architecture, UI/interaction, design-system) grounded the first draft against the code and **converged** on one conclusion: the "SDUI-first as the default" headline was wrong and should invert. Specifics folded in:
 
-- **Eng:** "zero frontend code / per-instance-clean for free" was overstated — a new kind is a shell edit shipped to all instances; `form`/`review_card` collapse on the Simba/dedupe stress test; contract versioning was missing; the "~80%" figure had no evidence (dropped). Foundations (reject A, formalize slots, gate-on-flag) verified sound.
+- **Eng:** "zero frontend code / per-instance-clean for free" was overstated — a new kind is a shell edit shipped to all instances; `form`/`review_card` collapse on the dedupe/pdf-split stress test; contract versioning was missing; the "~80%" figure had no evidence (dropped). Foundations (reject A, formalize slots, gate-on-flag) verified sound.
 - **UI:** enumerated the interactions that don't map to JSON (undo-with-deferred-commit, response-driven reshape, staged confirm, risk-aware focus, dependent selects, cross-surface deep-linking, optimistic reconcile); flagged the "generiert ✨" shell mis-branding a deterministic review queue; showed i18n breaks for feature UI; showed the offline "live controls on a dead socket" cliff. Recommended: registry-first, drop `review_card`, add the §4 checklist.
 - **Design:** the existing renderers already drift off-token (hardcoded hex, off-palette amber, no `.card`, zero tier language); SDUI has no design-enforcement seam and the draft referenced `DESIGN.md` only once (in the rejection of A). Recommended the §7 invariants (style-free data, renderer-as-chokepoint, lint gate, tier/severity/provenance schema fields, motion clause) as the guardrail that makes SDUI safe.
 
-Factual corrections also applied: the Simba gate is the `simba_available` local in `services/agent_tools.py` (not a `config._simba_available` attribute); the enforcing CSP is `src/frontend/nginx.conf`; `MergeProposalsSection` self-gates without an `enabled` prop.
+Factual corrections also applied: the #1178 tool-registration gate is a local in `services/agent_tools.py` (not a `config` attribute); the enforcing CSP is `src/frontend/nginx.conf`; `MergeProposalsSection` self-gates without an `enabled` prop.
 
 ## 12. Non-goals / what stays bespoke
 
-- Rich stateful UIs: the Simba two-step irreversible-upload confirm (claim-before-act), chat message branching (`‹ n/m ›` switcher), the 3D Wissensgraph (`GraphView.tsx`), the kiosk constellation, the dedupe/merge review cards. These stay bespoke React, registered via a slot (Option B).
+- Rich stateful UIs: chat message branching (`‹ n/m ›` switcher), the 3D Wissensgraph (`GraphView.tsx`), the kiosk constellation, the dedupe/merge review cards, the pdf-split review flow. These stay bespoke React, registered via a slot (Option B).
 - Micro-frontends / runtime remote bundles (Option A) — explicitly out of scope.
 - Interactive artifact kinds beyond the existing `device_control` — out of scope for the vocabulary (§4/§6).
 - Cross-instance UI federation — out of scope.
 
-## 13. How this answers the Simba case
+## 13. How this answers a per-instance-optional review feature
 
-- **Doc-row send action + status icon** → `documentRow.action` / `documentRow.statusIcon` slots (reusing the existing tier/status primitives). **Review section** → a `review.section` slot (bespoke React, full fidelity — undo, staged confirm, dependent fields intact). **Two-step irreversible confirm + picker** → bespoke slot component.
-- On a **non-Simba instance**, no Simba contribution is registered (the `feature`-flag gate, the UI analogue of #1178) → no Simba UI. With the optional Option-D build flag, no Simba UI *code* either.
-- Nothing about Simba maps onto an artifact — it's actionable, irreversible, deep-linked, and stateful, so §4 routes it entirely to slots. That's the honest outcome; the first draft's "~80% expressible as SDUI" claim did not survive review.
+- **Doc-row send action + status icon** → `documentRow.action` / `documentRow.statusIcon` slots (reusing the existing tier/status primitives — e.g. the Paperless `Archive` icon). **Review section** (the dedupe / pdf-split queue) → a `review.section` slot (bespoke React, full fidelity — survivor-radio, supersede-vs-delete, 5s undo, staged confirm intact). **Irreversible/stateful confirm** → a bespoke slot component.
+- On an **instance without the capability**, no contribution is registered (the `feature`-flag gate, the UI analogue of #1178) → no UI. With the optional Option-D build flag, no UI *code* either.
+- Nothing about such a review flow maps onto an artifact — it's actionable, irreversible, deep-linked, and stateful, so §4 routes it entirely to slots. That's the honest outcome; the first draft's "~80% expressible as SDUI" claim did not survive review.
 
 ## 14. Open questions
 
