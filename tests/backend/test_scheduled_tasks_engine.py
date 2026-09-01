@@ -707,9 +707,9 @@ class TestBatchBCHandlers:
         builtins.register_builtin_handlers()
         seeds = builtins.builtin_task_seeds()
 
-        assert len(seeds) == 22  # +1: Dokument-Dedupe (#1170 P3 autonomous scan)
+        assert len(seeds) == 23  # +1: Low-Coverage-Reindex (autonomous OCR-recovery sweep)
         names = [s.name for s in seeds]
-        assert len(set(names)) == 22  # unique names
+        assert len(set(names)) == 23  # unique names
         for seed in seeds:
             assert registry.get_handler(seed.handler_key) is not None, seed.handler_key
             if seed.interval_seconds is not None:

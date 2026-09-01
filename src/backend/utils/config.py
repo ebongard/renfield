@@ -561,6 +561,15 @@ class Settings(BaseSettings):
     # transcription must NOT win on length alone). Only applies when there are
     # survivor tokens to check.
     ocr_vlm_coverage_min_overlap: float = Field(default=0.5, ge=0.0, le=1.0)
+    # Autonomous self-healing sweep (scheduled-task built-in `low_coverage_reindex`):
+    # finds completed docs whose LATEST processing run dropped most of their content
+    # (low coverage) and re-enqueues them so the ingest-time VLM coverage trigger
+    # recovers them — no manual action. Drains the pre-fix backlog + future
+    # stragglers, then idles. Self-gates on this flag (seeded enabled). A doc already
+    # re-derived and still low-coverage is 'attempted' → skipped (no re-OCR loop).
+    low_coverage_reindex_enabled: bool = False
+    low_coverage_reindex_interval: int = 3600      # hourly sweep
+    low_coverage_reindex_cap: int = Field(default=50, ge=1, le=500)  # docs re-enqueued per tick
     # Adds a fast LM gibberish check (is_ocr_gibberish, intent model) to the VLM
     # trigger + acceptance — catches the 'pronounceable pseudo-word' garble
     # ('ZOGEOLONIGGY') that character statistics can't tell from real words. Without

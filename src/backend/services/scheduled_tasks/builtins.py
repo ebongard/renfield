@@ -379,6 +379,22 @@ async def _document_dedupe_handler(app: "FastAPI", params: dict) -> str | None:
     return f"users={len(user_ids)} proposed={proposed}" if user_ids else None
 
 
+async def _low_coverage_reindex_handler(app: "FastAPI", params: dict) -> str | None:
+    """Autonomous self-healing sweep: re-enqueue completed LOW-COVERAGE docs so
+    the ingest-time VLM coverage trigger recovers them on re-processing. Self-gates
+    on the runtime flag (M7). Drains the pre-fix backlog + future stragglers, then
+    idles (only initial-ingest low-coverage docs match; a re-attempted-still-bad
+    doc is classified 'attempted' and skipped → no re-OCR loop)."""
+    if not settings.low_coverage_reindex_enabled:
+        return "skipped: low_coverage_reindex_enabled is off"
+    from services.kb_maintenance_tool import sweep_low_coverage_reindex
+
+    report = await sweep_low_coverage_reindex(cap=settings.low_coverage_reindex_cap)
+    if not report.get("enqueued") and not report.get("skipped_attempted"):
+        return None
+    return f"enqueued={report['enqueued']} skipped_attempted={report['skipped_attempted']}"
+
+
 async def _skill_shadow_log_cleanup_handler(app: "FastAPI", params: dict) -> str | None:
     if not (settings.skills_enabled and settings.skill_shadow_log_enabled):
         return "skipped: skills_enabled AND skill_shadow_log_enabled required"
@@ -453,6 +469,7 @@ def register_builtin_handlers() -> None:
     register_handler("skill_curator", _skill_curator_handler)
     register_handler("kg_reconciler", _kg_reconciler_handler)
     register_handler("document_dedupe", _document_dedupe_handler)
+    register_handler("low_coverage_reindex", _low_coverage_reindex_handler)
     register_handler("skill_shadow_log_cleanup", _skill_shadow_log_cleanup_handler)
     register_handler("paperless_ui_edit_sweep", _paperless_ui_edit_sweep_handler)
     register_handler("paperless_abandoned_confirm_sweep", _paperless_abandoned_confirm_sweep_handler)
@@ -522,6 +539,9 @@ def builtin_task_seeds() -> list[TaskSeed]:
         # Seeded enabled; the handler self-gates on document_dedupe_enabled (M7) so it's
         # inert until the flag is flipped, then the ConfigMap-flip activates it.
         TaskSeed(name="Dokument-Dedupe", handler_key="document_dedupe", interval_seconds=settings.document_dedupe_interval, run_at_boot=True, enabled=True),
+        # Self-gates on low_coverage_reindex_enabled (M7): re-enqueues low-coverage
+        # docs so the ingest-time VLM coverage trigger recovers them; drains then idles.
+        TaskSeed(name="Low-Coverage-Docs neu indexieren", handler_key="low_coverage_reindex", interval_seconds=settings.low_coverage_reindex_interval, run_at_boot=True, enabled=True),
         TaskSeed(name="Skill-Schattenlog aufräumen", handler_key="skill_shadow_log_cleanup", interval_seconds=settings.skill_shadow_log_cleanup_interval, run_at_boot=True, enabled=True),
         TaskSeed(name="Paperless UI-Änderungen auswerten", handler_key="paperless_ui_edit_sweep", interval_seconds=3600, run_at_boot=True, enabled=True),
         TaskSeed(name="Paperless verwaiste Bestätigungen aufräumen", handler_key="paperless_abandoned_confirm_sweep", interval_seconds=3600, run_at_boot=True, enabled=True),
