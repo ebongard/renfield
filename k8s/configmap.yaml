@@ -315,6 +315,9 @@ data:
   # docs/FEATURES.md "Paperless Audit → VLM-Re-OCR-Fallback".
   OCR_VLM_FALLBACK_ENABLED: "true"
   OCR_VLM_GIBBERISH_GATE_ENABLED: "true"
+  # Autonomous self-healing sweep: re-enqueue low-coverage docs so the ingest-time
+  # VLM coverage trigger recovers them. Drains the backlog, then idles.
+  LOW_COVERAGE_REINDEX_ENABLED: "true"
   PROACTIVE_ENABLED: "true"
   PROACTIVE_REMINDERS_ENABLED: "true"
   PROACTIVE_SEMANTIC_DEDUP_ENABLED: "true"
