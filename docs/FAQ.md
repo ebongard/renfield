@@ -135,23 +135,6 @@ erhalten bleibt und ob das doppelte **ausgeblendet** (wiederherstellbar) oder
 
 ---
 
-## „Ein Dokument an Simba (Steuerkanzlei) senden" *(nur xidra)*
-
-Auf einer Dokumentzeile in `/wissen/dokumente` (oder `/knowledge`) gibt es die
-Aktion **„An Simba senden"**. Ein Klick öffnet ein **Overlay**: du prüfst
-**Bezeichnung, Kategorie, Typ und Zeitraum** (vorbefüllt), bestätigst in **zwei
-Schritten** und überträgst das Dokument **direkt dort** an die Steuerkanzlei.
-
-> ⚠️ **Die Übertragung ist unwiderruflich.** Das Portal erlaubt keinen Rückzug.
-> Deshalb der bewusste Zwei-Schritt-Bestätigen-Dialog. Brichst du ab, bleibt der
-> Vorschlag in der Prüf-Queue unter `/brain/review` liegen (dort kannst du ihn
-> später übertragen oder verwerfen).
-
-Watch-Folder-PDFs landen automatisch als Vorschlag in derselben Queue — sie
-werden **nie** automatisch übertragen.
-
----
-
 ## Wie funktioniert die Dokument-Pipeline?
 
 1. Datei in den **Überwachungsordner** legen (SMB-Share).
@@ -181,7 +164,6 @@ E-Mail-Anhänge aus dem überwachten Postfach laufen durch dieselbe Pipeline.
 | Paperless-Duplikate aufräumen | *„Finde und lösche die Duplikate in Paperless."* |
 | Paperless-Duplikate nur anzeigen (ohne Löschen) | *„Zeig mir die Duplikate in Paperless, ohne zu löschen."* |
 | Dubletten in der Wissensbasis finden | *„Gibt es Dubletten in der Wissensbasis?"* (Prüfung unter `/brain/review`) |
-| Dokument an Simba senden *(xidra)* | Aktion **„An Simba senden"** auf der Dokumentzeile |
 
 > Funktioniert eine Chat-Frage einmal nicht wie erwartet, findest du dieselben
 > Informationen auch in der Oberfläche unter `/wissen` (Suche, Status, Prüfen).
