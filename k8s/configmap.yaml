@@ -300,10 +300,16 @@ data:
   MEMORY_KG_BRIDGE_ENABLED: "true"
   MEMORY_SUBSUME_TO_KG: "true"
   MESSAGE_SEARCH_ENABLED: "true"
+  NOTES_ENABLED: "true"
   OBLIGATION_DIGEST_ENABLED: "true"
   OBLIGATION_NOTIFIER_ENABLED: "true"
   OUTPUT_PROVIDERS_ENABLED: "true"
   PAPERLESS_AUDIT_ENABLED: "true"
+  # Autonomous Paperless dedupe (Scheduled-Task built-in): finds + deletes
+  # duplicate Paperless docs (byte-/metadata-identical) to the recoverable
+  # trash, keeping the oldest. Self-gates on this flag; needs the scheduled
+  # task row active. Rollback: "false".
+  PAPERLESS_DEDUPE_RECONCILER_ENABLED: "true"
   # PDF-Split (docs/design/pdf-split.md): Multi-Dokument-Stapelscans beim
   # Ingest erkennen + trennen. VLM-Slow-Lane nutzt OLLAMA_VISION_MODEL (oben
   # gesetzt) und den pdf-split-worker (k8s/pdf-split-worker.yaml). Rollback:
