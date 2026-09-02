@@ -60,7 +60,7 @@ from loguru import logger
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from models.database import KGEntity, KGRelation
+from models.database import KGEntity
 from utils.config import settings
 from utils.llm_client import get_default_client, get_embed_client
 from utils.prompt_safety import neutralize_delimiters
@@ -276,6 +276,11 @@ class KGRetrieval:
         # Search for each text, collecting matching entity IDs
         relevant_ids: list[int] = []
         seen_ids: set[int] = set()
+        # Captured for the graph-expansion seam below: the per-entity match score
+        # (becomes the pivot score expand_fused decays from) and name (for the
+        # seed atom payload). Both are inert when graph expansion is flag-off.
+        seed_scores: dict[int, float] = {}
+        seed_names: dict[int, str] = {}
 
         for search_text in search_texts:
             try:
@@ -309,6 +314,8 @@ class KGRetrieval:
                 if sim >= threshold and row.id not in seen_ids:
                     relevant_ids.append(row.id)
                     seen_ids.add(row.id)
+                    seed_scores[row.id] = sim
+                    seed_names[row.id] = row.name
 
         if not relevant_ids:
             return None
@@ -357,14 +364,72 @@ class KGRetrieval:
             entity_ids, user_id, enforce_circles=enforce_circles
         )
 
-        # Format triples
+        # Format triples (the direct, flat-1-hop seed relations)
         triples = []
+        seed_relation_ids: set[int] = set()
         for r in relation_rows:
+            seed_relation_ids.add(r.id)
             # #686: KG entity names + predicates are document/conversation-derived
             # (untrusted); neutralize before they join the shared prompt context.
             subj = neutralize_delimiters(entity_map.get(r.subject_id, "?"))
             obj = neutralize_delimiters(entity_map.get(r.object_id, "?"))
             triples.append(f"- {subj} {neutralize_delimiters(r.predicate)} {obj}")
+
+        # Phase 4: graph expansion (#874). Route this STRING context path through
+        # the SAME expand_fused seam PolymorphicAtomStore uses, so the agent loop
+        # (`internal.knowledge_search`, ReAct) benefits from 1-2-hop multi-hop
+        # traversal — not just the fused-store path. Reuses expand_fused verbatim:
+        # per-hop kg_entities_circles_filter, leak-safe edges (both endpoints
+        # accessible), canonical_id tombstone-skip, decay + max_expanded cap.
+        # Flag-off (GRAPH_EXPANSION_ENABLED false) => the whole block is skipped
+        # and expand_fused would return [] anyway, so the output stays
+        # byte-identical to the flat-1-hop path.
+        if settings.graph_expansion_enabled and relevant_ids:
+            from datetime import datetime as _dt
+
+            from services.atom_types import Atom, AtomMatch
+            from services.graph_expansion import expand_fused
+
+            _now = _dt.now()
+            seeds = [
+                AtomMatch(
+                    atom=Atom(
+                        atom_id=f"kg_node:{eid}", atom_type="kg_node",
+                        owner_user_id=0, policy={"tier": 0},
+                        created_at=_now, updated_at=_now,
+                        payload={"entity_id": eid, "name": seed_names.get(eid, "")},
+                    ),
+                    score=seed_scores.get(eid, 0.0),
+                    snippet=seed_names.get(eid, ""), rank=0,
+                )
+                for eid in relevant_ids
+            ]
+            extra = await expand_fused(
+                seeds, user_id, self.db,
+                max_pivots=settings.graph_expansion_max_pivots,
+                max_hops=settings.graph_expansion_max_hops,
+                max_expanded=settings.graph_expansion_max_expanded,
+                enforce_circles=enforce_circles,
+            )
+            # The expanded kg_edge atoms are ALREADY circle-filtered + leak-safe
+            # (both endpoints accessible, relation-tier gated), so their names are
+            # safe to render. Dedup against the seed relations by relation id: the
+            # hop-1 edges touching a seed entity are already in `triples` above.
+            for m in extra:
+                if m.atom.atom_type != "kg_edge":
+                    continue
+                rid = m.atom.payload.get("relation_id")
+                if rid is None or rid in seed_relation_ids:
+                    continue
+                seed_relation_ids.add(rid)
+                subj = neutralize_delimiters(m.atom.payload.get("subject_name", "?"))
+                obj = neutralize_delimiters(m.atom.payload.get("object_name", "?"))
+                pred = neutralize_delimiters(m.atom.payload.get("predicate", ""))
+                triples.append(f"- {subj} {pred} {obj}")
+
+            # Cap the combined (seed + expanded) list. No-op when flag-off (the
+            # seed fetch is already SQL-LIMIT'd to max_triples), so byte-identical.
+            triples = triples[:max_triples]
 
         if not triples:
             return None
