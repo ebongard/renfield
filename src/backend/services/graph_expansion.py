@@ -33,7 +33,7 @@ from typing import Any
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from models.database import TIER_PUBLIC
+from models.database import ATOM_TYPE_KG_EDGE, ATOM_TYPE_KG_NODE, TIER_PUBLIC
 from services.atom_types import Atom, AtomMatch
 from utils.config import settings
 
@@ -123,7 +123,7 @@ def _node_atom(e: dict[str, Any], score: float, hop: int) -> AtomMatch:
     now = datetime.now()
     return AtomMatch(
         atom=Atom(
-            atom_id=f"kg_node:{e['id']}", atom_type="kg_node", owner_user_id=0,
+            atom_id=f"kg_node:{e['id']}", atom_type=ATOM_TYPE_KG_NODE, owner_user_id=0,
             policy={"tier": e["circle_tier"]}, created_at=now, updated_at=now,
             payload={"entity_id": e["id"], "name": e.get("name", ""),
                      "entity_type": e.get("entity_type"), "expanded": True, "hop": hop},
@@ -138,7 +138,7 @@ def _edge_atom(r: dict[str, Any], names: dict[int, str], score: float, hop: int)
     subj, obj = names.get(r["subject_id"], "?"), names.get(r["object_id"], "?")
     return AtomMatch(
         atom=Atom(
-            atom_id=f"kg_edge:{r['id']}", atom_type="kg_edge", owner_user_id=0,
+            atom_id=f"kg_edge:{r['id']}", atom_type=ATOM_TYPE_KG_EDGE, owner_user_id=0,
             policy={"tier": r["circle_tier"]}, created_at=now, updated_at=now,
             payload={"relation_id": r["id"], "subject_id": r["subject_id"], "subject_name": subj,
                      "predicate": r["predicate"], "object_id": r["object_id"], "object_name": obj,

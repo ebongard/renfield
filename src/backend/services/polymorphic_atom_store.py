@@ -44,6 +44,12 @@ from typing import Any, Sequence
 from loguru import logger
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from models.database import (
+    ATOM_TYPE_CONVERSATION_MEMORY,
+    ATOM_TYPE_KB_DOCUMENT,
+    ATOM_TYPE_KG_EDGE,
+    ATOM_TYPE_KG_NODE,
+)
 from services.atom_service import AtomService
 from services.atom_types import Atom, AtomMatch
 from services.circle_resolver import CircleResolver
@@ -284,7 +290,7 @@ def _wrap_rag_results(rag_results: Any) -> list[AtomMatch]:
         seen_atoms[atom_id] = AtomMatch(
             atom=Atom(
                 atom_id=atom_id,
-                atom_type="kb_document",
+                atom_type=ATOM_TYPE_KB_DOCUMENT,
                 owner_user_id=0,
                 # Chunks carry the denormalized tier from their document;
                 # either side gives the same value, chunk-side is cheap.
@@ -336,7 +342,7 @@ def _wrap_kg_atoms(kg_atoms: Any) -> list[AtomMatch]:
             AtomMatch(
                 atom=Atom(
                     atom_id=f"kg_node:{eid}",
-                    atom_type="kg_node",
+                    atom_type=ATOM_TYPE_KG_NODE,
                     owner_user_id=0,
                     policy={"tier": int(e.get("circle_tier", 0) or 0)},
                     created_at=now,
@@ -362,7 +368,7 @@ def _wrap_kg_atoms(kg_atoms: Any) -> list[AtomMatch]:
             AtomMatch(
                 atom=Atom(
                     atom_id=f"kg_edge:{rid}",
-                    atom_type="kg_edge",
+                    atom_type=ATOM_TYPE_KG_EDGE,
                     owner_user_id=0,
                     policy={"tier": int(r.get("circle_tier", 0) or 0)},
                     created_at=now,
@@ -522,7 +528,7 @@ def _wrap_memory_results(memory_results: Any) -> list[AtomMatch]:
             AtomMatch(
                 atom=Atom(
                     atom_id=str(atom_id),
-                    atom_type="conversation_memory",
+                    atom_type=ATOM_TYPE_CONVERSATION_MEMORY,
                     owner_user_id=0,
                     policy={"tier": m.get("circle_tier", 0)},
                     created_at=now,

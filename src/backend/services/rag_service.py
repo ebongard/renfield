@@ -53,6 +53,7 @@ def detect_document_language(field_text: str, default: str) -> str:
 from sqlalchemy.orm import selectinload
 
 from models.database import (
+    ATOM_TYPE_KB_DOCUMENT,
     DOC_STATUS_COMPLETED,
     DOC_STATUS_FAILED,
     DOC_STATUS_PENDING,
@@ -63,6 +64,7 @@ from models.database import (
     DocumentFact,
     KnowledgeBase,
 )
+from services.atom_owner import AtomOwnerResolverMixin
 from services.document_processing_history import (
     DocumentProcessingHistoryService,
     ProcessingTrigger,
@@ -95,7 +97,7 @@ class DuplicateDocumentError(Exception):
         super().__init__("duplicate document")
 
 
-class RAGService:
+class RAGService(AtomOwnerResolverMixin):
     """
     RAG Service für Dokument-basierte Anfragen.
 
@@ -117,31 +119,6 @@ class RAGService:
         self.processor = DocumentProcessor()
         self.history = DocumentProcessingHistoryService(db)
         self._ollama_client = None
-        # Cached admin fallback id for atoms registration when the parent KB
-        # has no explicit owner (legacy rows / pre-auth KBs). Resolved lazily.
-        self._fallback_owner_id: int | None = None
-
-    async def _resolve_owner_user_id(self, user_id: int | None) -> int | None:
-        """Resolve a non-null atoms owner, or None when no users exist.
-
-        Matches pc20260420_circles_v1_schema.py back-fill logic: prefer the
-        explicit owner, else fall back to the first user (admin). Returns
-        None only in empty-users fresh-DB dev setups so callers can skip
-        atom registration (e.g. pre-bootstrap unit tests).
-        """
-        if user_id is not None:
-            return user_id
-        if self._fallback_owner_id is not None:
-            return self._fallback_owner_id
-        from models.database import User
-        result = await self.db.execute(
-            select(User.id).order_by(User.id.asc()).limit(1)
-        )
-        fallback = result.scalar()
-        if fallback is None:
-            return None
-        self._fallback_owner_id = int(fallback)
-        return self._fallback_owner_id
 
     def _atom_service(self):
         """Lazy AtomService bound to the same DB session."""
@@ -322,7 +299,7 @@ class RAGService:
         atom_svc = self._atom_service()
         if atom_owner is not None:
             atom_id = await atom_svc.create_with_source(
-                atom_type="kb_document",
+                atom_type=ATOM_TYPE_KB_DOCUMENT,
                 owner_user_id=atom_owner,
                 tier=kb_default_tier,
             )

@@ -18,12 +18,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.database import (
     ATOM_TYPE_KG_EDGE,
+    ATOM_TYPE_KG_NODE,
     EMBEDDING_DIMENSION,
     KG_ENTITY_TYPES,
     TIER_PUBLIC,
     KGEntity,
     KGRelation,
 )
+from services.atom_owner import AtomOwnerResolverMixin
 from services.kg_validator import load_heuristics as load_kg_heuristics
 from services.kg_validator import validate_relation as validate_kg_relation
 from services.merge_guard import is_already_merged
@@ -153,43 +155,13 @@ _GENERIC_ROLES = frozenset({
 })
 
 
-class KnowledgeGraphService:
+class KnowledgeGraphService(AtomOwnerResolverMixin):
     """Manages knowledge graph entities and relations with pgvector."""
 
     def __init__(self, db: AsyncSession):
         self.db = db
         self._embed_client = None
         self._chat_client = None
-        # Cached fallback owner id — resolved lazily via _resolve_owner_user_id
-        # when a writer doesn't carry an authenticated user (auth disabled, or
-        # background jobs extracted from anonymous context). Matches the
-        # migration's back-fill pattern: "first user by id" (see
-        # pc20260420_circles_v1_schema.py:344).
-        self._fallback_owner_id: int | None = None
-
-    async def _resolve_owner_user_id(self, user_id: int | None) -> int | None:
-        """Resolve a non-null owner for atom rows, or None if unavailable.
-
-        Falls back to the first user's id when ``user_id`` is None — matches
-        the migration's back-fill pattern (pc20260420_circles_v1_schema.py:344).
-        Returns None only in dev setups (empty users table) where atom
-        registration is skipped and the source row is written with
-        ``atom_id=None``. Production always has the admin user from
-        bootstrap, so this is never None in real deploys.
-        """
-        if user_id is not None:
-            return user_id
-        if self._fallback_owner_id is not None:
-            return self._fallback_owner_id
-        from models.database import User
-        result = await self.db.execute(
-            select(User.id).order_by(User.id.asc()).limit(1)
-        )
-        fallback = result.scalar()
-        if fallback is None:
-            return None
-        self._fallback_owner_id = int(fallback)
-        return self._fallback_owner_id
 
     # Speaker name is user-controlled (first_name/last_name/username are
     # free-text profile fields). It is interpolated into the instruction region
@@ -685,7 +657,7 @@ class KnowledgeGraphService:
         if owner_id is not None:
             async with self.db.begin_nested():
                 atom_id = await self._atom_service().create_with_source(
-                    atom_type="kg_node",
+                    atom_type=ATOM_TYPE_KG_NODE,
                     owner_user_id=owner_id,
                     tier=default_tier,
                 )
@@ -850,7 +822,7 @@ class KnowledgeGraphService:
         atom_id: str | None = None
         if owner_id is not None:
             atom_id = await self._atom_service().create_with_source(
-                atom_type="kg_edge",
+                atom_type=ATOM_TYPE_KG_EDGE,
                 owner_user_id=owner_id,
                 tier=relation_tier,
             )

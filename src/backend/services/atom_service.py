@@ -199,7 +199,7 @@ class AtomService:
         Returns the minted atom_id. Intended call pattern:
 
             atom_id = await atom_svc.create_with_source(
-                atom_type="conversation_memory",
+                atom_type=ATOM_TYPE_CONVERSATION_MEMORY,
                 owner_user_id=42, tier=0,
             )
             memory = ConversationMemory(..., atom_id=atom_id, circle_tier=0)

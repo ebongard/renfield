@@ -19,6 +19,7 @@ from sqlalchemy import func, select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.database import (
+    ATOM_TYPE_CONVERSATION_MEMORY,
     MEMORY_ACTION_CREATED,
     MEMORY_ACTION_DELETED,
     MEMORY_ACTION_UPDATED,
@@ -33,6 +34,7 @@ from models.database import (
     ConversationMemory,
     MemoryHistory,
 )
+from services.atom_owner import AtomOwnerResolverMixin
 from utils.config import settings
 from utils.llm_client import get_default_client, get_embed_client
 
@@ -67,7 +69,7 @@ _TRANSACTIONAL_PATTERNS = [
 ]
 
 
-class ConversationMemoryService:
+class ConversationMemoryService(AtomOwnerResolverMixin):
     """
     Manages long-term conversation memories with semantic deduplication
     and retrieval via pgvector cosine similarity.
@@ -77,31 +79,6 @@ class ConversationMemoryService:
         self.db = db
         self._embed_client = None
         self._chat_client = None
-        # Cached fallback admin id for atoms registration when save() is
-        # called without an authenticated user_id (single-user mode). See
-        # _resolve_owner_user_id.
-        self._fallback_owner_id: int | None = None
-
-    async def _resolve_owner_user_id(self, user_id: int | None) -> int | None:
-        """Resolve a non-null atoms owner, or None if no users exist.
-
-        Matches pc20260420_circles_v1_schema.py back-fill: explicit user_id,
-        else first user (admin), else None (empty-users-table dev setups
-        where atom registration is skipped).
-        """
-        if user_id is not None:
-            return user_id
-        if self._fallback_owner_id is not None:
-            return self._fallback_owner_id
-        from models.database import User
-        result = await self.db.execute(
-            select(User.id).order_by(User.id.asc()).limit(1)
-        )
-        fallback = result.scalar()
-        if fallback is None:
-            return None
-        self._fallback_owner_id = int(fallback)
-        return self._fallback_owner_id
 
     def _atom_service(self):
         """Lazy AtomService bound to the same DB session."""
@@ -204,7 +181,7 @@ class ConversationMemoryService:
         atom_svc = self._atom_service()
         if owner_id is not None:
             atom_id = await atom_svc.create_with_source(
-                atom_type="conversation_memory",
+                atom_type=ATOM_TYPE_CONVERSATION_MEMORY,
                 owner_user_id=owner_id,
                 tier=default_tier,
             )
@@ -1089,7 +1066,7 @@ class ConversationMemoryService:
         atom_svc = self._atom_service()
         if owner_id is not None:
             atom_id = await atom_svc.create_with_source(
-                atom_type="conversation_memory",
+                atom_type=ATOM_TYPE_CONVERSATION_MEMORY,
                 owner_user_id=owner_id,
                 tier=default_tier,
             )
