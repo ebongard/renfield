@@ -206,6 +206,20 @@ async def system_health(
     except Exception as e:  # noqa: BLE001
         logger.warning(f"system_health: subsystem probe failed: {e}")
 
+    # Functional search-backbone probe (#1162): connectivity-only MCP health can't see
+    # a reachable SearXNG whose scraper engines are all CAPTCHA-blocked. Flag-gated —
+    # probe_search_functional() is inert (no HTTP) when the flag is off.
+    if settings.search_functional_probe_enabled:
+        try:
+            from services.search_health import probe_search_functional
+
+            sh = await probe_search_functional()
+            data["search_functional"] = sh
+            if sh.get("verdict") == "degraded":
+                problems.append(f"Websuche (SearXNG): DEGRADED ({sh.get('reason')})")
+        except Exception as e:  # noqa: BLE001
+            logger.warning(f"system_health: search functional probe failed: {e}")
+
     try:
         from services.kb_maintenance_tool import ingest_worker_and_backlog
 

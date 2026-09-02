@@ -1246,6 +1246,13 @@ class Settings(BaseSettings):
     # SearXNG
     searxng_api_url: str | None = None
     searxng_instances: str | None = None
+    # SearXNG functional health probe (#1162): a reachable instance whose upstream
+    # scraper engines are all CAPTCHA-blocked returns 0 real results yet shows green
+    # under connectivity-only MCP health. Dark by default; when on, system_health
+    # issues a fixed neutral query and marks `search` degraded (never down) when too
+    # few distinct general engines contribute, or the backbone is unresponsive.
+    search_functional_probe_enabled: bool = False
+    search_functional_min_engines: int = Field(default=2, ge=1)
 
     # n8n MCP
     n8n_base_url: str | None = None
