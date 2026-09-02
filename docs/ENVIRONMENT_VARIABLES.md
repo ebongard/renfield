@@ -1010,6 +1010,12 @@ FOLDER_INGEST_TARGET_USER=            # Owner der auto-abgelegten Dokumente (Use
 FOLDER_INGEST_DEFAULT_TIER=0          # Circle-Tier beim Anlegen (0=self … 4=public)
 FOLDER_INGEST_TO_PAPERLESS=true       # zusätzlich in Paperless ablegen
 FOLDER_INGEST_NOTIFY_ON_FILED=true    # Bestätigungs-Notification nach Ablage
+# #881, dark: nach dem Ingest die bereits nach processed/ verschobene Quelldatei
+# auf den generierten Dokumenttitel umbenennen (menschenlesbarer Share). Best-effort
+# (ein Rename-Fehler bricht den Ingest NIE), idempotent + kollisionssicher; braucht
+# den filesystem-MCP-Tool `rename_processed` (renfield-mcp-filesystem). Siehe
+# docs/FOLDER_INGEST.md.
+FOLDER_INGEST_RENAME_PROCESSED_ENABLED=false
 # Autoritativer Push-Token (optional). Wenn gesetzt, seedet der Boot-Credential-
 # Reconciler (services/credential_reconciler.py) den DB-Token (SystemSetting
 # folder_ingest.token) aus diesem Wert — so heilt sich der Token nach einem DB-Wipe
@@ -2192,6 +2198,13 @@ N8N_BASE_URL=http://192.168.1.78:5678
 
 # SearXNG URL
 SEARXNG_API_URL=http://cuda.local:3002
+# #1162, dark: funktionale Health-Probe für den `search`-MCP. Ohne sie zeigt eine
+# erreichbare SearXNG-Instanz, deren Scraper-Engines alle CAPTCHA-blockiert sind
+# (0 echte Ergebnisse), grün. Die Probe fragt SearXNG direkt per JSON ab und meldet
+# `degraded` (nie down), wenn zu wenige distinct *general*-Engines beitragen bzw. das
+# Backbone in `unresponsive_engines` steht. Surface: internal.system_health.
+SEARCH_FUNCTIONAL_PROBE_ENABLED=false
+SEARCH_FUNCTIONAL_MIN_ENGINES=2       # degraded, wenn < N distinct general-Engines beitragen
 
 # Paperless-NGX URL
 PAPERLESS_API_URL=http://paperless.local:8000

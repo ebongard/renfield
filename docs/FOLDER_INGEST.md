@@ -218,6 +218,29 @@ the role descriptions in `config/agent_roles.yaml`.
   locates the Paperless doc by the stored id else a filename match over recently-added
   docs, and skips any doc that already has a correspondent.
 
+## Processed-file rename (#881, `FOLDER_INGEST_RENAME_PROCESSED_ENABLED`, dark)
+
+The MCP moves the source file to `processed/` under its **original** filename at
+push time — but the human-readable `documents.generated_title` (issuer + type +
+date) does not exist yet; it's synthesized later in the worker, after the
+Schicht-A facts commit. So a **decoupled post-ingest step** renames the already-moved
+file once the title is known.
+
+- After the worker sets `generated_title` (`schicht_a_extractor.post_document_ingest`),
+  `services/folder_ingest_rename.py::rename_processed_to_title` — gated on
+  `FOLDER_INGEST_RENAME_PROCESSED_ENABLED` **+** `source == 'folder_ingest'` **+** a
+  non-empty title — calls the filesystem MCP `mcp.files.rename_processed(original_name,
+  new_base)`. The worker uses a lazy single-server (`files`) client
+  (`services/files_worker_client.py`), mirroring the Paperless worker client.
+- The MCP tool renames `processed/<original_name>` → `processed/<sanitized title><ext>`:
+  **idempotent** (missing source → success no-op), **collision-safe** (` (2)`, ` (3)`
+  suffix), **traversal-safe** (`original_name` must be a bare filename; separators are
+  scrubbed from `new_base`), keeping the original extension.
+- **Best-effort:** a rename failure (MCP down, tool absent, file gone) is swallowed +
+  logged — the ingest never breaks. It does NOT touch the 4-state move contract or the
+  `paperless_state` dedup (a purely post-move step). **Rollout:** deploy the MCP tool
+  first, then the backend, then flip the flag (dark until both are live).
+
 ## Troubleshooting
 
 | Symptom | Cause | Fix |
@@ -234,6 +257,7 @@ the role descriptions in `config/agent_roles.yaml`.
 
 - Bridge: `services/folder_ingest.py` (dedup, 4-state, owner/tier, token helpers, resolvers)
 - Paperless leg: `services/folder_ingest_paperless.py`
+- Processed-file rename (#881): `services/folder_ingest_rename.py` + `services/files_worker_client.py` + the `rename_processed` tool in `renfield-mcp-filesystem`
 - Routes: `api/routes/folder_ingest.py` (`POST /document`, `GET /health`, `POST /token`)
 - Interactive tool: `services/folder_ingest_tool.py` (+ dispatch in `services/action_executor.py`)
 - Worker terminal-failure handling: `workers/document_processor_worker.py`
