@@ -1,0 +1,52 @@
+{
+  "name": "@x-idra/mcp-server-searxng",
+  "version": "0.3.11",
+  "description": "Fork of @kevinwatt/mcp-server-searxng carrying the unreleased 0.3.11 fix that distinguishes a reachable-but-0-results SearXNG instance from an actual outage (no more mislabelled 'All SearXNG instances failed'). Vendored into the Renfield backend image.",
+  "license": "MIT",
+  "author": "Dewei Yen",
+  "homepage": "https://github.com/kevinwatt/mcp-server-searxng#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/kevinwatt/mcp-server-searxng.git"
+  },
+  "bugs": {
+    "url": "https://github.com/kevinwatt/mcp-server-searxng/issues"
+  },
+  "type": "module",
+  "bin": {
+    "mcp-server-searxng": "dist/src/index.js"
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "test": "node --experimental-vm-modules node_modules/jest/bin/jest.js",
+    "test:watch": "node --experimental-vm-modules node_modules/jest/bin/jest.js --watch",
+    "build": "tsc && shx chmod +x dist/src/*.js",
+    "version": "node scripts/sync-version.mjs && git add src/index.ts",
+    "watch": "tsc --watch"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.0.1",
+    "@types/node-fetch": "^2.6.12",
+    "node-fetch": "^2.7.0"
+  },
+  "devDependencies": {
+    "@types/jest": "^29.5.14",
+    "@types/node": "^22",
+    "jest": "^29.7.0",
+    "nock": "^14.0.1",
+    "shx": "^0.3.4",
+    "ts-jest": "^29.2.5",
+    "typescript": "^5.6.2"
+  },
+  "keywords": [
+    "mcp",
+    "searxng",
+    "search",
+    "meta-search",
+    "claude",
+    "dive",
+    "ai"
+  ]
+}

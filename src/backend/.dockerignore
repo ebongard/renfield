@@ -51,3 +51,4 @@ venv
 # image regardless of what the rsync left in the context.
 satellite/provisioning
 satellite/tests
+vendor/mcp-server-searxng/node_modules/

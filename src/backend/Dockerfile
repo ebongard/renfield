@@ -183,6 +183,23 @@ RUN npm install -g n8n-mcp@latest
 # Application code
 COPY . .
 
+# Vendored SearXNG MCP fork (@x-idra/mcp-server-searxng) — carries the unreleased
+# upstream 0.3.11 fix that stops mislabelling a reachable-but-0-results SearXNG
+# instance as "All SearXNG instances failed" (#1161). npm's latest is the buggy
+# 0.3.9, so we install our fork globally instead of `npx @kevinwatt/...`. dist is
+# prebuilt and the `prepare` script removed, so --omit=dev needs no toolchain.
+# Local (not -g) install so node-fetch/@modelcontextprotocol/sdk land in the
+# fork's own node_modules — `npm install -g <localdir>` only symlinks the source
+# dir, leaving the runtime imports unresolvable (ERR_MODULE_NOT_FOUND). Then put
+# the prebuilt entrypoint on PATH via a symlink (dist is prebuilt, no toolchain).
+RUN cd /app/vendor/mcp-server-searxng \
+    && npm install --omit=dev --no-audit --no-fund \
+    && test -d node_modules/node-fetch \
+    && chmod +x dist/src/index.js \
+    && ln -sf /app/vendor/mcp-server-searxng/dist/src/index.js /usr/local/bin/mcp-server-searxng \
+    && command -v mcp-server-searxng >/dev/null \
+    || (echo "ERROR: mcp-server-searxng not runnable (deps missing or bin not on PATH)" && exit 1)
+
 # Wake word models — TFLite/ONNX files served to satellites via
 # /api/settings/wakeword/models/{id}. On docker-compose these were bind-mounted
 # from ./data/wakeword-models; in the image build context they must sit next to
