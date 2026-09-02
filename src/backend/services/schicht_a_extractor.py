@@ -952,6 +952,24 @@ async def schicht_a_post_document_ingest_hook(
             except Exception as e:  # noqa: BLE001 — title is non-essential
                 logger.warning(f"Schicht A: title synthesis failed for doc {document_id}: {e}")
 
+            # #881: rename the archived folder-ingest copy in the share's
+            # processed/ dir to the freshly-synthesized human title so the SMB
+            # share is browsable. Dark by default + best-effort — this NEVER
+            # breaks ingest (the helper swallows its own errors; the wrap is
+            # belt-and-braces). Gated on source=='folder_ingest' + a title inside.
+            try:
+                from services.folder_ingest_rename import rename_processed_to_title
+
+                await rename_processed_to_title(
+                    source=doc.source,
+                    filename=doc.filename,
+                    generated_title=doc.generated_title,
+                )
+            except Exception as e:  # noqa: BLE001 — archive rename is non-essential
+                logger.warning(
+                    f"Schicht A: processed rename failed for doc {document_id}: {e}"
+                )
+
             # Derive the document's OWN date (invoice/letter date) for sorting on
             # /wissen/dokumente — same fact-ranking as the Simba period, as a full
             # date. Best-effort; a miss leaves document_date NULL (sorted last).

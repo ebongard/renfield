@@ -954,6 +954,14 @@ class Settings(BaseSettings):
     # REVIEW queue (owner confirms category/type before the irreversible upload),
     # never automatically. Off elsewhere. See services/simba_ingest_review.py.
     folder_ingest_simba_enabled: bool = False
+    # After the worker synthesizes documents.generated_title (issuer+type+date),
+    # rename the already-moved archive copy in the share's processed/ dir to that
+    # human-readable title via the filesystem MCP (mcp.files.rename_processed) so
+    # the share is browsable (#881). DARK by default: the post-ingest rename hook
+    # is inert until BOTH the backend and the filesystem MCP (rename_processed
+    # tool) are deployed and this flag is flipped. Best-effort — a rename failure
+    # never breaks ingest.
+    folder_ingest_rename_processed_enabled: bool = False
     # Auto-populate the Paperless taxonomy: when on (default), the filing leg
     # resolve-OR-CREATEs document types / tags (like it already does for
     # correspondents) instead of only matching against the pre-curated taxonomy —
