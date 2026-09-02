@@ -338,6 +338,9 @@ data:
   # #1162: functional health probe for the search MCP (degraded when too few
   # distinct general engines contribute / backbone in unresponsive_engines).
   SEARCH_FUNCTIONAL_PROBE_ENABLED: "true"
+  # Reliable backbone (CSV) — tune here, no code release. Excludes CAPTCHA-prone
+  # scrapers (duckduckgo, google-scrape) whose blockage is expected.
+  SEARCH_FUNCTIONAL_BACKBONE_ENGINES: "bing,google-cse"
   SKILLS_ENABLED: "true"
   SKILL_CURATOR_ENABLED: "true"
   SPEAKER_CONTROLLED_ENROLLMENT_ENABLED: "true"

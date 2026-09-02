@@ -1261,6 +1261,11 @@ class Settings(BaseSettings):
     # few distinct general engines contribute, or the backbone is unresponsive.
     search_functional_probe_enabled: bool = False
     search_functional_min_engines: int = Field(default=2, ge=1)
+    # Reliable search backbone (CSV) for the #1162 probe — ConfigMap-tunable, no
+    # code release needed to change it. Default = the API backbone (bing, google-cse);
+    # excludes CAPTCHA-prone scrapers (duckduckgo, google-scrape) whose blockage is
+    # expected and must not by itself flag a healthy instance degraded.
+    search_functional_backbone_engines: str = "bing,google-cse"
 
     # n8n MCP
     n8n_base_url: str | None = None

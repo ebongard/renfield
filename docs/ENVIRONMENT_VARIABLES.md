@@ -2205,6 +2205,11 @@ SEARXNG_API_URL=http://cuda.local:3002
 # Backbone in `unresponsive_engines` steht. Surface: internal.system_health.
 SEARCH_FUNCTIONAL_PROBE_ENABLED=false
 SEARCH_FUNCTIONAL_MIN_ENGINES=2       # degraded, wenn < N distinct general-Engines beitragen
+# Verlässliche Backbone-Engines (CSV) — ConfigMap-tunebar, KEIN Code-Release nötig,
+# um die Liste zu ändern. Default = API-Backbone (bing, google-cse); schließt bewusst
+# die CAPTCHA-anfälligen Scraper (duckduckgo, google-Scraper) aus, deren Blockade
+# erwartet ist und eine gesunde Instanz NICHT allein degraded flaggen darf.
+SEARCH_FUNCTIONAL_BACKBONE_ENGINES=bing,google-cse
 
 # Paperless-NGX URL
 PAPERLESS_API_URL=http://paperless.local:8000

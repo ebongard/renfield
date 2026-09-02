@@ -95,6 +95,7 @@ class TestClassify:
 
     def test_degraded_when_backbone_unresponsive(self, monkeypatch):
         monkeypatch.setattr(settings, "search_functional_min_engines", 2)
+        monkeypatch.setattr(settings, "search_functional_backbone_engines", "bing,google-cse")
         # Enough distinct engines to clear the count threshold, but the backbone is down.
         payload = _payload(
             results=[
@@ -102,12 +103,41 @@ class TestClassify:
                 {"engine": "wikidata"},
                 {"engine": "qwant"},
             ],
-            unresponsive=[["bing", "timeout"], ["google", "CAPTCHA"]],
+            unresponsive=[["bing", "timeout"], ["google-cse", "CAPTCHA"]],
         )
         v = _classify(payload)
         assert v["verdict"] == "degraded"
-        assert "bing" in v["reason"] or "google" in v["reason"]
-        assert set(v["unresponsive"]) == {"bing", "google"}
+        assert "bing" in v["reason"] or "google-cse" in v["reason"]
+        assert set(v["unresponsive"]) == {"bing", "google-cse"}
+
+    def test_scraper_unresponsive_with_backbone_up_is_healthy(self, monkeypatch):
+        """#1162 over-sensitivity fix: a CAPTCHA-prone scraper (duckduckgo) being
+        unresponsive must NOT flag degraded while the real backbone still answers —
+        ddg is not in the default backbone set."""
+        monkeypatch.setattr(settings, "search_functional_min_engines", 2)
+        monkeypatch.setattr(settings, "search_functional_backbone_engines", "bing,google-cse")
+        payload = _payload(
+            results=[{"engine": "bing"}, {"engine": "google-cse"}],
+            unresponsive=[["duckduckgo", "CAPTCHA"]],
+        )
+        v = _classify(payload)
+        assert v["verdict"] == "healthy"
+        assert v["unresponsive"] == ["duckduckgo"]
+
+    def test_backbone_engines_config_driven(self, monkeypatch):
+        """The backbone set is read from config (ConfigMap-tunable, no release) —
+        adding an engine makes its outage count; removing one makes it not."""
+        monkeypatch.setattr(settings, "search_functional_min_engines", 2)
+        payload = _payload(
+            results=[{"engine": "bing"}, {"engine": "google-cse"}],
+            unresponsive=[["duckduckgo", "CAPTCHA"]],
+        )
+        # ddg IN the configured backbone → its outage now flags degraded
+        monkeypatch.setattr(settings, "search_functional_backbone_engines", "bing,duckduckgo")
+        assert _classify(payload)["verdict"] == "degraded"
+        # ddg NOT in the configured backbone → healthy
+        monkeypatch.setattr(settings, "search_functional_backbone_engines", "bing,google-cse")
+        assert _classify(payload)["verdict"] == "healthy"
 
     def test_scalar_unresponsive_entries(self, monkeypatch):
         monkeypatch.setattr(settings, "search_functional_min_engines", 1)

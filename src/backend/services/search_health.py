@@ -32,11 +32,21 @@ from utils.config import settings
 # not a query that happens to be obscure. Module-level constant, NOT user config.
 PROBE_QUERY = "wikipedia"
 
-# The search backbone: if SearXNG reports these as unresponsive, general web search
-# is effectively dark regardless of how many niche engines still answer.
-BACKBONE_ENGINES = frozenset({"bing", "google", "google-cse", "duckduckgo"})
-
 _PROBE_TIMEOUT_S = 8.0
+
+
+def _backbone_engines() -> set[str]:
+    """The reliable search backbone, read from config (``SEARCH_FUNCTIONAL_BACKBONE_ENGINES``,
+    CSV) so it can be tuned via the ConfigMap WITHOUT a code release.
+
+    If SearXNG reports any of these as unresponsive, general web search is materially
+    degraded. The default (`bing,google-cse`) is the API-based backbone; it deliberately
+    EXCLUDES the CAPTCHA-prone scrapers (e.g. duckduckgo, the google scraper) whose
+    datacenter-IP blockage is EXPECTED and must not by itself flag a healthy instance
+    degraded.
+    """
+    raw = settings.search_functional_backbone_engines or ""
+    return {e.strip().lower() for e in raw.split(",") if e.strip()}
 
 
 def _distinct_general_engines(results: list[dict[str, Any]]) -> set[str]:
@@ -76,7 +86,7 @@ def _classify(payload: dict[str, Any]) -> dict[str, Any]:
     contributing = _distinct_general_engines(results)
     min_engines = settings.search_functional_min_engines
 
-    backbone_down = BACKBONE_ENGINES.intersection(e.lower() for e in unresponsive)
+    backbone_down = _backbone_engines().intersection(e.lower() for e in unresponsive)
 
     if len(contributing) < min_engines:
         verdict = "degraded"
