@@ -41,11 +41,11 @@ from __future__ import annotations
 
 import json
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from loguru import logger
-from sqlalchemy import select, text, update
+from sqlalchemy import delete, select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.database import (
@@ -526,3 +526,33 @@ def _source_id_for(atom: Atom) -> str:
         f"payload missing document_id/chunk_id/entity_id/relation_id/"
         f"memory_id/skill_id/note_id"
     )
+
+
+async def reap_orphan_placeholder_atoms(
+    db: AsyncSession, older_than_seconds: int = 3600
+) -> int:
+    """Delete orphaned placeholder atoms (#446).
+
+    ``AtomService.create_with_source`` runs a 3-phase write: (1) INSERT the atoms
+    row with a ``__pending__<uuid>`` placeholder ``source_id``, (2) INSERT the
+    source row carrying the minted ``atom_id``, (3) ``finalize_source_id`` →
+    UPDATE the placeholder to the real PK. If the caller crashes (or forgets to
+    finalize) between steps 1 and 3, the placeholder atoms row survives the outer
+    commit with ``source_id = '__pending__…'`` and pollutes retrieval/review.
+
+    This reaps such rows, but ONLY those OLDER than ``older_than_seconds`` — a
+    legitimately in-flight create holds its placeholder for milliseconds, so the
+    age floor guarantees an active write is never reaped. Returns the count
+    deleted.
+    """
+    cutoff = datetime.now(UTC).replace(tzinfo=None) - timedelta(
+        seconds=older_than_seconds
+    )
+    result = await db.execute(
+        delete(AtomModel).where(
+            AtomModel.source_id.like("__pending__%"),
+            AtomModel.created_at < cutoff,
+        )
+    )
+    await db.commit()
+    return int(result.rowcount or 0)

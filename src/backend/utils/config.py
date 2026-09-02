@@ -570,6 +570,9 @@ class Settings(BaseSettings):
     low_coverage_reindex_enabled: bool = False
     low_coverage_reindex_interval: int = Field(default=3600, ge=60)   # hourly sweep (>= engine tick)
     low_coverage_reindex_cap: int = Field(default=50, ge=1, le=500)  # docs re-enqueued per tick
+    # #446: interval for the placeholder-atom reaper scheduled task (deletes
+    # orphaned __pending__ atoms left by a crash mid create_with_source).
+    placeholder_atom_reaper_interval: int = Field(default=3600, ge=60)  # hourly
     # Adds a fast LM gibberish check (is_ocr_gibberish, intent model) to the VLM
     # trigger + acceptance — catches the 'pronounceable pseudo-word' garble
     # ('ZOGEOLONIGGY') that character statistics can't tell from real words. Without

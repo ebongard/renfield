@@ -441,6 +441,22 @@ async def _paperless_abandoned_confirm_sweep_handler(app: "FastAPI", params: dic
     return None
 
 
+async def _placeholder_atom_reaper_handler(app: "FastAPI", params: dict) -> str | None:
+    # No gate; DB-only. Reaps orphaned __pending__ placeholder atoms left by a
+    # crash between the placeholder INSERT and finalize_source_id (#446). Only
+    # rows older than older_than_seconds are reaped so an in-flight create is safe.
+    from services.atom_service import reap_orphan_placeholder_atoms
+    from services.database import AsyncSessionLocal
+
+    older = int(params.get("older_than_seconds", 3600))
+    async with AsyncSessionLocal() as db_session:
+        n = await reap_orphan_placeholder_atoms(db_session, older_than_seconds=older)
+    if n:
+        logger.info(f"Placeholder-atom reaper: deleted {n} orphaned __pending__ atom(s)")
+        return f"reaped={n}"
+    return None
+
+
 # ---------------------------------------------------------------------------
 # Registration + seeds
 # ---------------------------------------------------------------------------
@@ -473,6 +489,7 @@ def register_builtin_handlers() -> None:
     register_handler("skill_shadow_log_cleanup", _skill_shadow_log_cleanup_handler)
     register_handler("paperless_ui_edit_sweep", _paperless_ui_edit_sweep_handler)
     register_handler("paperless_abandoned_confirm_sweep", _paperless_abandoned_confirm_sweep_handler)
+    register_handler("placeholder_atom_reaper", _placeholder_atom_reaper_handler)
 
 
 def builtin_task_seeds() -> list[TaskSeed]:
@@ -545,4 +562,8 @@ def builtin_task_seeds() -> list[TaskSeed]:
         TaskSeed(name="Skill-Schattenlog aufräumen", handler_key="skill_shadow_log_cleanup", interval_seconds=settings.skill_shadow_log_cleanup_interval, run_at_boot=True, enabled=True),
         TaskSeed(name="Paperless UI-Änderungen auswerten", handler_key="paperless_ui_edit_sweep", interval_seconds=3600, run_at_boot=True, enabled=True),
         TaskSeed(name="Paperless verwaiste Bestätigungen aufräumen", handler_key="paperless_abandoned_confirm_sweep", interval_seconds=3600, run_at_boot=True, enabled=True),
+        # #446: reap orphaned __pending__ placeholder atoms left by a crash mid
+        # create_with_source. DB-only, no runtime gate; the reaper's age floor
+        # protects in-flight creates.
+        TaskSeed(name="Verwaiste Platzhalter-Atoms aufräumen", handler_key="placeholder_atom_reaper", interval_seconds=settings.placeholder_atom_reaper_interval, run_at_boot=True, enabled=True),
     ]
