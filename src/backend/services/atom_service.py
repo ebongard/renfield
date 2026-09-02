@@ -550,7 +550,9 @@ async def reap_orphan_placeholder_atoms(
     )
     result = await db.execute(
         delete(AtomModel).where(
-            AtomModel.source_id.like("__pending__%"),
+            # Escape the literal underscores — in LIKE, a bare `_` is a
+            # single-char wildcard, so the intent is only exact with ESCAPE.
+            AtomModel.source_id.like(r"\_\_pending\_\_%", escape="\\"),
             AtomModel.created_at < cutoff,
         )
     )
