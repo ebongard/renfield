@@ -292,6 +292,9 @@ data:
   EMAIL_INGEST_ENABLED: "true"
   FILES_MCP_ENABLED: "true"
   FOLDER_INGEST_ENABLED: "true"
+  # #881: rename the processed/ file to the generated title (best-effort, needs
+  # filesystem-MCP >= v0.1.8 rename_processed tool).
+  FOLDER_INGEST_RENAME_PROCESSED_ENABLED: "true"
   FOLLOWUP_CHIPS_ENABLED: "true"
   GRAPH_EXPANSION_ENABLED: "true"
   KG_CONFLATION_MONITOR_ENABLED: "true"
@@ -326,6 +329,9 @@ data:
   SATELLITE_ENROLLMENT_ENABLED: "true"
   SCHEDULED_TASKS_ENABLED: "true"
   SCHICHT_A_EXTRACTION_ENABLED: "true"
+  # #1162: functional health probe for the search MCP (degraded when too few
+  # distinct general engines contribute / backbone in unresponsive_engines).
+  SEARCH_FUNCTIONAL_PROBE_ENABLED: "true"
   SKILLS_ENABLED: "true"
   SKILL_CURATOR_ENABLED: "true"
   SPEAKER_CONTROLLED_ENROLLMENT_ENABLED: "true"
