@@ -463,17 +463,24 @@ async def _resolve_review_labels(
                 select(Document).where(Document.id.in_(source_ids))
             )).scalars().all()
             docs = {d.id: d for d in rows}
-            # Pull a preview chunk per document (lowest chunk_index) for the
+            # Pull ONE preview chunk per document (lowest chunk_index) for the
             # review-UI snippet. Chunks no longer carry atoms, so we fetch
-            # through document_chunks directly.
-            chunk_rows = (await db.execute(
+            # through document_chunks directly. Use Postgres DISTINCT ON so we
+            # transfer one row per document instead of EVERY chunk of every
+            # reviewed document just to keep the first (#450). sqlite has no
+            # DISTINCT ON, so there the client-side first-wins dedup below still
+            # applies (correctness identical, only the row count differs).
+            chunk_q = (
                 select(DocumentChunk)
                 .where(DocumentChunk.document_id.in_(source_ids))
                 .order_by(
                     DocumentChunk.document_id.asc(),
                     DocumentChunk.chunk_index.asc(),
                 )
-            )).scalars().all()
+            )
+            if db.bind is not None and db.bind.dialect.name == "postgresql":
+                chunk_q = chunk_q.distinct(DocumentChunk.document_id)
+            chunk_rows = (await db.execute(chunk_q)).scalars().all()
             for c in chunk_rows:
                 first_chunks.setdefault(c.document_id, c)
         for a in doc_atoms:

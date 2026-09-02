@@ -96,6 +96,35 @@ class TestResolveReviewLabels:
 
     @pytest.mark.asyncio
     @pytest.mark.unit
+    @pytest.mark.parametrize("dialect", [None, "postgresql", "sqlite"])
+    async def test_documents_branch_uses_first_chunk_preview(self, dialect):
+        """#450: the post-pc20260423 'documents' branch resolves the title +
+        a preview from the FIRST chunk (lowest chunk_index) per document. On
+        Postgres the query uses DISTINCT ON (one row/doc); elsewhere the
+        client-side first-wins dedup applies — identical result either way."""
+        atom = _atom("d1", "kb_document", "documents", "10")
+        doc = SimpleNamespace(id=10, title="Nebenkostenabrechnung 2025",
+                              filename="NK_2025.pdf")
+        # Two chunks in index order; the resolver keeps chunk_index=0 as preview.
+        chunk0 = SimpleNamespace(document_id=10, chunk_index=0,
+                                 content="Zusammenfassung der Nebenkosten 2025")
+        chunk1 = SimpleNamespace(document_id=10, chunk_index=1, content="Kapitel 2")
+
+        db = MagicMock()
+        db.bind = None if dialect is None else SimpleNamespace(
+            dialect=SimpleNamespace(name=dialect))
+        # The 'documents' branch issues two queries: Document, then DocumentChunk.
+        db.execute = AsyncMock(side_effect=[
+            _scalars_returning([doc]),
+            _scalars_returning([chunk0, chunk1]),
+        ])
+
+        out = await _resolve_review_labels(db, [atom])
+        assert out["d1"][0] == "Nebenkostenabrechnung 2025"
+        assert out["d1"][1].startswith("Zusammenfassung der Nebenkosten")
+
+    @pytest.mark.asyncio
+    @pytest.mark.unit
     async def test_conversation_memory_uses_timestamp_prefix(self):
         atom = _atom("m1", "conversation_memory", "conversation_memories", "99")
         mem = SimpleNamespace(
