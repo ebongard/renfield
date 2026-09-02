@@ -1,6 +1,8 @@
 # Cross-user / household KG entity canonicalization — design (#876)
 
-> **Status: DESIGN DRAFT — build BLOCKED on the named-circles-v2 prerequisite (Phase A).**
+> **Status: DESIGN DRAFT — build REDIRECTED by eng review (2026-09-02) to a co-reference
+> vs. shared-ownership spike BEFORE any Phase A code. See §14. Named-circles-v2 is NOT
+> cleared to build; it must first win against a `sameAs` co-reference linker.**
 > Structured-Memory **Phase 5** deferred item. Today entity resolution + every merge
 > path are strictly **per-user** (`resolve_entity` filters `user_id == asker OR NULL`;
 > `merge_entities` refuses a cross-user pair). This doc designs how a **household** can
@@ -562,3 +564,102 @@ audience(winner)`, enforced by the **same-owner-AND-same-tier** auto-merge gate,
 by the `merge_entities` owner-equality assertion, and guarded by a mandatory `.159` leak-property
 test. Two operator decisions (the primitive's shape, the scope of "canonicalization") must be
 confirmed before Phase A starts.
+
+---
+
+## 14. Engineering review outcome (2026-09-02, `/plan-eng-review`)
+
+**Verdict: build BLOCKED. Redirected to a design spike.** The review (4 architecture
+findings + a same-family outside voice) surfaced that the whole shared-ownership
+prerequisite may be over-built for #876's actual goal, and that no current deployment
+would even exercise it. Before any `circle_sql` edit, run a short **co-reference vs.
+shared-ownership** comparison design and let it decide whether Phase A is built at all.
+
+### 14.1 The redirect (the load-bearing decision)
+
+`#876`'s real goal is: *Alice and Bob resolve/retrieve the SAME "Jutta".* The outside
+voice argues that a **`sameAs` co-reference edge** achieves this with **zero** ownership
+change, **zero** new SQL branch, **zero** rollback hazard, and **zero** new leak surface —
+each per-user node stays user-owned and independently filtered by the EXISTING
+`circle_sql`; retrieval / `graph_expansion` expands across the link. This is essentially
+the **#877 `external_id` linker**, so the spike also weighs swapping #877 before #876.
+
+Two facts make the redirect urgent (do not skip the spike):
+- **No live consumer runs shared-ownership** (OV-8): household is `AUTH_ENABLED=false` →
+  `circle_sql` short-circuits → feature inert; xidra is auth-on but a *business* instance
+  (no "Familie", `kind='household'` only); voice/unidentified turns have `user_id=None` →
+  no `stated_by` → no `C`. Question the sequencing against #875/#877 first.
+- **The riskiest edit in the codebase** (the doc's own words: `circle_sql`, §12) is being
+  spent on shared ownership when co-reference likely satisfies the issue.
+
+**The spike deliverable:** a data-driven `sameAs`-link vs. shared-ownership comparison
+covering retrieval quality (does link-expansion answer "was weiß ich über Jutta" as well
+as a merged node?), leak surface, rollback, and the `#875/#877` interaction — a `≤1`
+design cycle that can eliminate Phase A/B/C/D entirely.
+
+### 14.2 If shared-ownership still wins the spike — the accepted hardening
+
+These four architecture findings were confirmed against the code and their fixes ACCEPTED;
+they are prerequisites for the shared-ownership path IF the spike keeps it:
+
+1. **Household-tier selector is missing in the main path.** `knowledge_graph_service.py:1121`
+   (`extract_and_save`) calls `resolve_entity(...)` with no `create_tier`; `:560`
+   `default_tier = 0 if create_tier is None`; `:810` relation tier = `MIN`. Every chat-extracted
+   fact is tier 0, so Phase B's `T >= household` gate never fires → zero shared nodes.
+   **Fix (accepted):** an explicit `household_tier_derivation` component in Phase B threading
+   `create_tier` into `extract_and_save`; conservative signal (attach to an already-C-owned
+   subject = audience-neutral; mint a NEW shared node only on an explicit household signal,
+   never a silent heuristic on private chat). This selector IS the R1 leak surface → the
+   §9.4 leak-guard tests it directly.
+2. **Reconciler is blind to circle-owned nodes.** `kg_reconciler_service.py:176`
+   (`user_id IS NOT NULL`), `:206/:209` (`a.user_id=b.user_id ... WHERE a.user_id=:uid`) →
+   circle nodes (`user_id NULL`) never enumerated → the only permitted auto-merge
+   (same-circle dedup) never fires. **Fix (accepted):** add a per-circle scan dimension
+   (`list_active_circle_ids` + `find_duplicate_pairs_for_circle`, self-join
+   `a.owner_circle_id=b.owner_circle_id=:cid AND a.circle_tier=b.circle_tier`) with a NEW
+   advisory-lock namespace (clash-free vs `0x4B47/0x4F42/0x4F43/0x4F44/0x5341/0x5354/0x4444`);
+   the scheduled-task builtin enumerates users AND circles.
+3. **The 5th branch changes SQL for all 6 `circle_sql` consumers, but §9 tests only KG.**
+   `circle_sql.py:37` is shared by knowledge_tool / memory_retrieval / rag_retrieval /
+   rag_service (docs) / note_retrieval / KG. **Fix (accepted):** per-consumer named-circle
+   filter test (member sees / non-member doesn't / peer never) + a flag-off byte-identical
+   golden-SQL test per consumer. Also (OV-2) pin an explicit invariant + test that each
+   *legacy* branch is dead on circle-owned rows — today it is dead only by `NULL = x`
+   accident (`:134` owner-fallback, `:190` pairwise tier-reach), undocumented and unpinned.
+4. **Multi-household routing ambiguity.** Decision (accepted): bind `C` to a new
+   `conversations.scoped_circle_id` (nullable FK, **`ON DELETE SET NULL`**), NOT the speaker's
+   membership set — multi-household/multi-mandant is real (xidra teams overlap). Unbound
+   conversation → `NULL` → per-user lane, byte-identical. **Guard (required):** the tier
+   derivation must fail-closed to the per-user lane when the speaker ∉ `members(C)` (binding
+   ≠ membership). **Caveat (OV-4):** without an in-phase UI that SETS `scoped_circle_id`, the
+   default-NULL binding makes the feature inert AND mints per-user tier-2 duplicates the
+   reconciler can never merge with circle nodes — so the scope-setting UX is **in-phase
+   required**, not deferred.
+
+### 14.3 Outside-voice risk register (spike inputs — resolved by choosing co-reference OR by
+building the fix if shared-ownership wins)
+
+- **OV-1 — the proof models entities, but facts live on relations (edges).** A mixed-ownership
+  edge (circle-owned subject, tier-0 author) has no defined owner/tier; circle-owned at
+  `tier=LEAST(0,2)=0` with dead owner-equality → reachable by no one incl. the author (silent
+  loss). §5 must be restated over *relations*, not entities, and define mixed-owner-edge
+  ownership. **HIGH.**
+- **OV-5 — "additive/reversible" (§7) holds only pre-use.** Once atoms carry `owner_circle_id`
+  (`owner_user_id NULL`), flag-off makes the 5th branch dead → those atoms visible to no one,
+  and the `CHECK` blocks nulling the circle id. Real rollback = a documented **un-share data
+  migration** (re-home circle-owned atoms to a member owner) BEFORE flag-off, not
+  `alembic downgrade`. **HIGH.**
+- **OV-6 — read-time coherence private↔shared is undesigned.** Household holds shared-Jutta +
+  Alice-private-Jutta + Bob-private-Jutta at once; "was weiß ich über Jutta" must union shared
+  ∪ asker-private and `graph_expansion` treat them as one person. Co-reference solves this by
+  construction; shared-ownership needs a new union step. **MEDIUM.**
+- **OV-3 — `member_tier` (§3.1) contradicts the "symmetric across all members" claim (§3.3).**
+  Differing `member_tier` ⇒ differing audiences ⇒ "no member privileged" is false. For v2,
+  **drop `member_tier`** (YAGNI — a plain household is all tier 2), which shrinks the proof
+  surface and makes symmetry true. **MEDIUM.**
+
+### 14.4 Recommended next action
+
+Run the co-reference vs. shared-ownership spike (`/office-hours` scope) with §14.1's
+deliverable. Only if shared-ownership wins does Phase A start, and then with §14.2's four
+fixes and §14.3's risk register folded in from the first commit.
