@@ -1203,14 +1203,27 @@ class InternalToolService:
             # If device is busy and force is set, use the entity from the
             # busy-device data to proceed anyway.
             if force and resolve_result.get("data", {}).get("status") == "busy":
-                entity_id = resolve_result["data"].get("entity_id")
-                if not entity_id:
+                busy_data = resolve_result["data"]
+                # A forced play needs SOME routable target on the busy device.
+                # HA devices carry entity_id; DLNA renderers carry
+                # dlna_renderer_name (no entity_id); output providers carry
+                # output_target_id. The old entity_id-only guard made force=true a
+                # silent no-op on a busy DLNA (or output-provider) device — the
+                # user was told "busy" even when asking to interrupt (#668).
+                if not (
+                    busy_data.get("entity_id")
+                    or busy_data.get("dlna_renderer_name")
+                    or busy_data.get("output_target_id")
+                ):
                     return resolve_result
                 resolve_result = {
                     "success": True,
-                    "data": resolve_result["data"],
+                    "data": busy_data,
                 }
-                logger.info(f"Force-playing on busy device {entity_id} in {room_name}")
+                logger.info(
+                    f"Force-playing on busy device in {room_name} "
+                    f"(target_type={busy_data.get('target_type') or 'homeassistant'})"
+                )
             else:
                 return resolve_result
 

@@ -289,6 +289,67 @@ class TestResolveRoomPlayer:
         assert result["data"]["entity_id"] == "media_player.arbeitszimmer"
 
     @pytest.mark.unit
+    async def test_force_play_on_busy_dlna_proceeds(self, internal_tools):
+        """#668: force=true on a busy DLNA renderer (no entity_id, only
+        dlna_renderer_name) must reach the DLNA play path — not silently return
+        'busy'. The old entity_id-only force guard made it a no-op."""
+        busy_dlna = {
+            "success": False,
+            "message": "busy",
+            "action_taken": False,
+            "data": {
+                "target_type": "dlna",
+                "dlna_renderer_name": "HiFiBerry Garten",
+                "room_name": "Garten",
+                "device_name": "HiFiBerry Garten",
+                "status": "busy",
+            },
+        }
+        with patch.object(internal_tools, "_resolve_room_player",
+                          new_callable=AsyncMock, return_value=busy_dlna), \
+             patch.object(internal_tools, "_get_output_provider",
+                          return_value=None), \
+             patch.object(internal_tools, "_play_url_on_dlna",
+                          new_callable=AsyncMock,
+                          return_value={"success": True, "action_taken": True}) as mock_dlna:
+            result = await internal_tools._play_in_room({
+                "media_url": "http://jellyfin:8096/Audio/abc/universal",
+                "room_name": "Garten",
+                "force": "true",
+            })
+
+        mock_dlna.assert_awaited_once()
+        assert mock_dlna.await_args.kwargs.get("renderer_name") == "HiFiBerry Garten"
+        assert result["success"] is True
+
+    @pytest.mark.unit
+    async def test_force_play_on_busy_without_target_stays_busy(self, internal_tools):
+        """The force guard still holds: a busy device with NO routable target id
+        (no entity_id / dlna_renderer_name / output_target_id) returns busy even
+        with force=true — force can't play onto nothing."""
+        busy_no_target = {
+            "success": False,
+            "message": "busy",
+            "action_taken": False,
+            "data": {
+                "target_type": "homeassistant",
+                "entity_id": None,
+                "room_name": "Flur",
+                "status": "busy",
+            },
+        }
+        with patch.object(internal_tools, "_resolve_room_player",
+                          new_callable=AsyncMock, return_value=busy_no_target):
+            result = await internal_tools._play_in_room({
+                "media_url": "http://jellyfin:8096/Audio/abc/universal",
+                "room_name": "Flur",
+                "force": "true",
+            })
+
+        assert result["success"] is False
+        assert result["data"]["status"] == "busy"
+
+    @pytest.mark.unit
     async def test_resolve_room_player_dlna_device(self, internal_tools):
         """Room with DLNA renderer returns target_type='dlna' + renderer name."""
         mock_room = MagicMock()
