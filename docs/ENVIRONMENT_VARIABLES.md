@@ -2005,6 +2005,36 @@ curl -X POST "http://localhost:8000/api/ws/token?device_id=my-device&device_type
 const ws = new WebSocket(`ws://localhost:8000/ws?token=${token}`);
 ```
 
+### `WS_REQUIRE_SCOPED_QUERY_TOKEN` (Security-Audit #1116, Befund A)
+
+Erzwingt serverseitig, dass ein Token **im URL-Query-String** ein kurzlebiges
+`scope:ws`-Token ist. Ohne das Flag akzeptiert `authenticate_websocket` jedes
+`type:access`-JWT auf `?token=` — die Eigenschaft "nur kurzlebige Scope-Tokens
+stehen in URLs" ist dann reine Frontend-Disziplin, und genau so blieb der
+Voice-Pfad unbemerkt. Ein URL-Token landet in Proxy-Access-Logs, im
+Browser-Verlauf und in `Referer`-Headern.
+
+| Wert | Verhalten |
+|---|---|
+| `false` (Default) | Byte-identisch zu vorher. Ein ungescoptes Access-JWT aus der URL wird **akzeptiert**, aber mit einer WARNING protokolliert — so werden die verbliebenen Aufrufer sichtbar, bevor etwas bricht. |
+| `true` | Ein Query-String-Token **muss** `scope == "ws"` tragen. Vollwertige Access-JWTs funktionieren dann nur noch über `Authorization: Bearer` oder das Auth-Cookie. |
+
+Der Header- und der Cookie-Pfad sind unberührt: dieselbe Anmeldung funktioniert
+weiter, nur der Transportweg, der sie preisgibt, wird geschlossen.
+
+**Reihenfolge beim Ausrollen** (wie bei der Satelliten-Enrollment-Leiter):
+
+1. Deployen mit `false`, Logs auf die Soak-WARNING beobachten.
+2. Jeden gemeldeten Aufrufer auf Header, Cookie oder ein `POST /api/ws/token`
+   gemintetes `scope:ws`-Token umstellen.
+3. Erst wenn die WARNING über einen vollen Deploy-Zyklus stumm bleibt, auf
+   `true` flippen.
+
+**Cross-Repo-Abhängigkeit:** Der externe Voice-Server validiert Tokens mit
+eigenem Code (`voice_server/auth.py::_validate_local` prüft weder `type` noch
+`scope`). Dessen Umstellung ist ein eigener Schritt in einem anderen Repository
+und gatet Schritt 3.
+
 ---
 
 ## Integrationen

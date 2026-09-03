@@ -1402,6 +1402,29 @@ class Settings(BaseSettings):
     # WebSocket Security
     ws_auth_enabled: bool = False  # Enable WebSocket authentication (set True in production)
     ws_token_expire_minutes: int = 60  # WebSocket token expiration (device token store)
+    # Security audit #1116 finding A — server-side scope enforcement for tokens
+    # that arrive in the URL query string.
+    #
+    # `authenticate_websocket` accepts any `type:access` JWT on `?token=`; it
+    # does NOT require `scope == "ws"`. The "only short-lived scoped tokens
+    # travel in URLs" property is therefore frontend discipline only, which is
+    # exactly how the voice path went unnoticed. A URL token lands in proxy
+    # access logs, browser history and Referer headers; a full access JWT there
+    # is a durable credential in places that are not treated as secret.
+    #
+    # Rollout mirrors the satellite-enrollment ladder (OFF → soak → enforce):
+    #   False (default) — byte-identical to before, except one WARNING per
+    #                     unscoped URL token so the remaining callers become
+    #                     visible in the logs before anything breaks.
+    #   True            — a query-string token MUST carry `scope == "ws"`;
+    #                     full access JWTs then only work via the
+    #                     `Authorization: Bearer` header or the auth cookie.
+    #
+    # Do NOT flip this before the soak WARNING is silent for a full deploy
+    # cycle: the external voice-server validates tokens with its own code
+    # (`voice_server/auth.py::_validate_local` checks neither type nor scope),
+    # so its cutover is a separate, cross-repo step.
+    ws_require_scoped_query_token: bool = False
     # Lifetime of the short-lived, WS-scoped access JWT the browser fetches from
     # /api/ws/token and passes as ?token= on the WebSocket URL (security audit M2).
     # Kept tiny: long enough to open the socket, far too short to be useful if

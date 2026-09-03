@@ -616,6 +616,119 @@ class TestWebSocketAuthentication:
 
     @pytest.mark.unit
     @pytest.mark.asyncio
+    async def test_unscoped_url_token_rejected_when_enforcement_on(self):
+        """#1116 A: with enforcement on, a full access JWT in the URL is refused.
+
+        The header/cookie paths are untouched — see the companion test — so the
+        same credential still works, just not from a place that lands in proxy
+        logs and browser history.
+        """
+        from unittest.mock import AsyncMock, MagicMock, patch
+
+        from services.auth_service import create_access_token
+        from services.websocket_auth import authenticate_websocket
+        from utils.config import settings
+
+        tok = create_access_token({"sub": "7"}, token_epoch=0)
+        fake_user = MagicMock(id=7, is_active=True, must_change_password=False, token_epoch=0)
+        ws = MagicMock(); ws.headers = {}; ws.cookies = {}
+        orig_auth, orig_scope = settings.ws_auth_enabled, settings.ws_require_scoped_query_token
+        settings.ws_auth_enabled = True
+        settings.ws_require_scoped_query_token = True
+        try:
+            with patch("services.auth_service.get_user_by_id", new=AsyncMock(return_value=fake_user)), \
+                 patch("services.database.AsyncSessionLocal", new=_fake_session_local()), \
+                 patch("services.token_blacklist.token_blacklist.is_blacklisted", new=AsyncMock(return_value=False)):
+                result = await authenticate_websocket(ws, token=tok)
+        finally:
+            settings.ws_auth_enabled = orig_auth
+            settings.ws_require_scoped_query_token = orig_scope
+        assert result is None
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_unscoped_url_token_accepted_when_enforcement_off(self):
+        """Flag off is byte-identical to before — soak logs, never rejects."""
+        from unittest.mock import AsyncMock, MagicMock, patch
+
+        from services.auth_service import create_access_token
+        from services.websocket_auth import authenticate_websocket
+        from utils.config import settings
+
+        tok = create_access_token({"sub": "7"}, token_epoch=0)
+        fake_user = MagicMock(id=7, is_active=True, must_change_password=False, token_epoch=0)
+        ws = MagicMock(); ws.headers = {}; ws.cookies = {}
+        orig_auth, orig_scope = settings.ws_auth_enabled, settings.ws_require_scoped_query_token
+        settings.ws_auth_enabled = True
+        settings.ws_require_scoped_query_token = False
+        try:
+            with patch("services.auth_service.get_user_by_id", new=AsyncMock(return_value=fake_user)), \
+                 patch("services.database.AsyncSessionLocal", new=_fake_session_local()), \
+                 patch("services.token_blacklist.token_blacklist.is_blacklisted", new=AsyncMock(return_value=False)):
+                result = await authenticate_websocket(ws, token=tok)
+        finally:
+            settings.ws_auth_enabled = orig_auth
+            settings.ws_require_scoped_query_token = orig_scope
+        assert result is not None and result.get("user_id") == 7
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_scoped_url_token_still_accepted_under_enforcement(self):
+        """The scope:ws faucet token is exactly what enforcement wants in a URL."""
+        from unittest.mock import AsyncMock, MagicMock, patch
+
+        from services.auth_service import create_ws_token_jwt
+        from services.websocket_auth import authenticate_websocket
+        from utils.config import settings
+
+        tok = create_ws_token_jwt(7, token_epoch=0)
+        fake_user = MagicMock(id=7, is_active=True, must_change_password=False, token_epoch=0)
+        ws = MagicMock(); ws.headers = {}; ws.cookies = {}
+        orig_auth, orig_scope = settings.ws_auth_enabled, settings.ws_require_scoped_query_token
+        settings.ws_auth_enabled = True
+        settings.ws_require_scoped_query_token = True
+        try:
+            with patch("services.auth_service.get_user_by_id", new=AsyncMock(return_value=fake_user)), \
+                 patch("services.database.AsyncSessionLocal", new=_fake_session_local()), \
+                 patch("services.token_blacklist.token_blacklist.is_blacklisted", new=AsyncMock(return_value=False)):
+                result = await authenticate_websocket(ws, token=tok)
+        finally:
+            settings.ws_auth_enabled = orig_auth
+            settings.ws_require_scoped_query_token = orig_scope
+        assert result is not None and result.get("user_id") == 7
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_header_bearer_token_bypasses_scope_enforcement(self):
+        """A full JWT stays valid via Authorization: Bearer under enforcement.
+
+        This is the property that makes the flag safe to flip: the credential
+        is not devalued, only the transport that leaks it is closed.
+        """
+        from unittest.mock import AsyncMock, MagicMock, patch
+
+        from services.auth_service import create_access_token
+        from services.websocket_auth import authenticate_websocket
+        from utils.config import settings
+
+        tok = create_access_token({"sub": "7"}, token_epoch=0)
+        fake_user = MagicMock(id=7, is_active=True, must_change_password=False, token_epoch=0)
+        ws = MagicMock(); ws.headers = {"authorization": f"Bearer {tok}"}; ws.cookies = {}
+        orig_auth, orig_scope = settings.ws_auth_enabled, settings.ws_require_scoped_query_token
+        settings.ws_auth_enabled = True
+        settings.ws_require_scoped_query_token = True
+        try:
+            with patch("services.auth_service.get_user_by_id", new=AsyncMock(return_value=fake_user)), \
+                 patch("services.database.AsyncSessionLocal", new=_fake_session_local()), \
+                 patch("services.token_blacklist.token_blacklist.is_blacklisted", new=AsyncMock(return_value=False)):
+                result = await authenticate_websocket(ws, token=None)
+        finally:
+            settings.ws_auth_enabled = orig_auth
+            settings.ws_require_scoped_query_token = orig_scope
+        assert result is not None and result.get("user_id") == 7
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
     async def test_authenticate_websocket_rejects_stale_epoch(self):
         """H3/H4: a token minted before token_epoch was bumped can't (re)connect."""
         from unittest.mock import AsyncMock, MagicMock, patch

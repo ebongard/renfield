@@ -162,6 +162,13 @@ async def authenticate_websocket(
         )
         return None
 
+    # Whether the token travelled in the URL query string. Every caller passes
+    # its `token: str = Query(None)` straight through, so a non-None argument
+    # here means "came from the URL" — the cookie and Authorization-header
+    # fallbacks below only ever run when this is None. Captured BEFORE those
+    # fallbacks, because afterwards the two sources are indistinguishable.
+    token_from_url = token is not None
+
     # Skip authentication if disabled
     if not settings.ws_auth_enabled:
         return {"authenticated": True, "auth_skipped": True}
@@ -220,6 +227,29 @@ async def authenticate_websocket(
     if payload and payload.get("scope") == "voice":
         logger.debug("WebSocket JWT rejected: voice-scoped token not valid on this socket")
         return None
+
+    # Security audit #1116 finding A: a token in the URL must be a scoped,
+    # short-lived one. A full access JWT on `?token=` is a durable credential
+    # sitting in proxy logs, browser history and Referer headers — the header
+    # and cookie paths carry the same JWT without that exposure, so the
+    # restriction costs nothing there. Soak first (WARNING only), enforce once
+    # `ws_require_scoped_query_token` is flipped; see the config comment for
+    # why the external voice-server gates that flip.
+    if payload and payload.get("type") == "access" and token_from_url:
+        if payload.get("scope") != "ws":
+            if settings.ws_require_scoped_query_token:
+                logger.warning(
+                    "WebSocket JWT rejected: unscoped access token in the URL "
+                    "query string (ws_require_scoped_query_token is on)"
+                )
+                return None
+            logger.warning(
+                "WebSocket auth: unscoped access token accepted from the URL "
+                "query string — will be REJECTED once "
+                "ws_require_scoped_query_token is enabled. Move it to the "
+                "Authorization header, the auth cookie, or mint a scope:ws "
+                "token via POST /api/ws/token."
+            )
 
     if payload and payload.get("type") == "access":
         sub = payload.get("sub")
