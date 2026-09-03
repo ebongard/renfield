@@ -1725,6 +1725,41 @@ class TestCountingEmbedClient:
 
     @pytest.mark.unit
     @pytest.mark.asyncio
+    async def test_positional_model_is_labelled(self):
+        """``model`` is the first POSITIONAL parameter of the protocol.
+
+        Every call site today passes it as a keyword, but a positional caller
+        must not silently produce an empty label — a counter that cannot be
+        grouped by model defeats the purpose of the metric.
+        """
+        from utils.llm_client import _CountingEmbedClient
+
+        inner = MagicMock()
+        inner.embeddings = AsyncMock(side_effect=RuntimeError("down"))
+        client = _CountingEmbedClient(inner)
+
+        with patch("utils.metrics.record_embedding_error") as rec:
+            with pytest.raises(RuntimeError):
+                await client.embeddings("qwen3-embedding:4b", "some text")
+        rec.assert_called_once_with("qwen3-embedding:4b")
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_missing_model_labels_empty_string(self):
+        """No model anywhere → empty label, never a TypeError or ``None``."""
+        from utils.llm_client import _CountingEmbedClient
+
+        inner = MagicMock()
+        inner.embeddings = AsyncMock(side_effect=RuntimeError("down"))
+        client = _CountingEmbedClient(inner)
+
+        with patch("utils.metrics.record_embedding_error") as rec:
+            with pytest.raises(RuntimeError):
+                await client.embeddings(prompt="x")
+        rec.assert_called_once_with("")
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
     async def test_other_methods_delegate(self):
         from utils.llm_client import _CountingEmbedClient
 

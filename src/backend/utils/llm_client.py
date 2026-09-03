@@ -484,8 +484,23 @@ class _CountingEmbedClient:
         except Exception:
             from utils.metrics import record_embedding_error
 
-            record_embedding_error(str(kwargs.get("model") or ""))
+            record_embedding_error(self._model_label(args, kwargs))
             raise
+
+    @staticmethod
+    def _model_label(args: tuple[Any, ...], kwargs: dict[str, Any]) -> str:
+        """Resolve the ``model`` label from either calling convention.
+
+        Every call site today passes ``model=`` as a keyword, but ``model`` is
+        the FIRST positional parameter of the ``LLMClient.embeddings``
+        protocol. Reading only ``kwargs`` would silently label a future
+        positional caller ``""`` — a metric that exists but cannot be grouped
+        by model is worse than one that is obviously missing.
+        """
+        model = kwargs.get("model")
+        if model is None and args:
+            model = args[0]
+        return str(model or "")
 
     async def chat(self, *args: Any, **kwargs: Any) -> Any:  # noqa: D102
         return await self.inner.chat(*args, **kwargs)
