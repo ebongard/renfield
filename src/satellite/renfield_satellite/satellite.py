@@ -19,6 +19,7 @@ from enum import Enum
 from typing import Optional, Dict, Any
 
 from .config import Config
+from .metrics import RollingCounter
 from .audio.capture import AudioCapture
 from .audio.playback import AudioPlayback, AudioPlaybackAsync
 from .audio.preprocessor import AudioPreprocessor
@@ -94,8 +95,8 @@ class Satellite:
 
         # Metrics tracking
         self._last_wakeword: Optional[Dict[str, Any]] = None
-        self._session_count_1h: int = 0
-        self._error_count_1h: int = 0
+        self._session_counter = RollingCounter()
+        self._error_counter = RollingCounter()
 
         # Real-time audio level tracking (updated on every audio chunk)
         self._current_audio_rms: float = 0.0
@@ -882,8 +883,8 @@ class Satellite:
             "timestamp": time.time()
         }
 
-        # Increment session counter
-        self._session_count_1h = getattr(self, "_session_count_1h", 0) + 1
+        # Increment session counter (trailing 1h window)
+        self._session_counter.record()
 
         if self._state != SatelliteState.IDLE:
             print("Ignoring - not in idle state")
@@ -1094,8 +1095,8 @@ class Satellite:
         """Handle error from server"""
         print(f"Server error: {message}")
 
-        # Increment error counter for metrics
-        self._error_count_1h = getattr(self, "_error_count_1h", 0) + 1
+        # Increment error counter for metrics (trailing 1h window)
+        self._error_counter.record()
 
         # Show error LED briefly
         self.leds.set_pattern(LEDPattern.ERROR)
@@ -1137,9 +1138,10 @@ class Satellite:
         if self._last_wakeword:
             metrics["last_wakeword"] = self._last_wakeword
 
-        # Session counters (track in instance variables)
-        metrics["session_count_1h"] = getattr(self, "_session_count_1h", 0)
-        metrics["error_count_1h"] = getattr(self, "_error_count_1h", 0)
+        # Session counters — trailing 1h window, pruned on read so a quiet
+        # satellite decays back to 0 instead of carrying a boot-time total.
+        metrics["session_count_1h"] = self._session_counter.count()
+        metrics["error_count_1h"] = self._error_counter.count()
 
         # Environment sensors (Enviro pHAT)
         if self.enviro and self.enviro.available:

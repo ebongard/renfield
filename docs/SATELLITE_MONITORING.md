@@ -272,8 +272,16 @@ Heartbeat messages now include optional metrics:
 | `memory_percent` | float | Memory usage percentage |
 | `temperature` | float | CPU temperature in Celsius |
 | `last_wakeword` | object | Last wake word detection info |
-| `session_count_1h` | int | Sessions in last hour |
-| `error_count_1h` | int | Errors in last hour |
+| `session_count_1h` | int | Wake-word sessions started in the trailing 60 minutes |
+| `error_count_1h` | int | Server errors received in the trailing 60 minutes |
+
+Both are **trailing-window** counters (`renfield_satellite/metrics.py::RollingCounter`),
+pruned on every read, so a satellite that stops erroring decays back to `0`. They were
+cumulative-since-boot until 2026-09-03, which made the value incomparable between
+satellites with different uptimes — a box up for 50 minutes reporting `70` looked ten
+times worse than one up for six hours reporting `7`, while the actual rates differed by
+a factor of sixty the other way. When comparing satellites, compare these directly; do
+**not** normalise by uptime.
 
 ## Troubleshooting
 
