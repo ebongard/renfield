@@ -462,6 +462,41 @@ def get_default_client() -> LLMClient:
     return _make_client_with_fallback(settings.ollama_url)
 
 
+class _CountingEmbedClient:
+    """Wrap the embed client so a raising ``embeddings()`` is counted.
+
+    Every consumer of embeddings (semantic router, memory retrieval, KG,
+    episodic memory, intent feedback) catches the exception, logs a WARNING
+    and degrades to "no context". That is the right per-turn behaviour, but
+    it means a dead embedding endpoint leaves no metric anywhere: in 2026-09
+    the embed model failed to load for two days and the only trace was one
+    WARNING per call in the pod log. Counting here, at the single chokepoint
+    every consumer goes through, makes it alertable. The exception is
+    re-raised unchanged; ``inner`` exposes the wrapped client.
+    """
+
+    def __init__(self, inner: LLMClient) -> None:
+        self.inner = inner
+
+    async def embeddings(self, *args: Any, **kwargs: Any) -> Any:  # noqa: D102
+        try:
+            return await self.inner.embeddings(*args, **kwargs)
+        except Exception:
+            from utils.metrics import record_embedding_error
+
+            record_embedding_error(str(kwargs.get("model") or ""))
+            raise
+
+    async def chat(self, *args: Any, **kwargs: Any) -> Any:  # noqa: D102
+        return await self.inner.chat(*args, **kwargs)
+
+    async def list(self, *args: Any, **kwargs: Any) -> Any:  # noqa: D102
+        return await self.inner.list(*args, **kwargs)
+
+    async def generate(self, *args: Any, **kwargs: Any) -> Any:  # noqa: D102
+        return await self.inner.generate(*args, **kwargs)
+
+
 def get_embed_client() -> LLMClient:
     """Return the client for embedding calls.
 
@@ -474,10 +509,10 @@ def get_embed_client() -> LLMClient:
     """
     embed_oa = get_openai_compat_embed_client()
     if embed_oa is not None:
-        return embed_oa  # type: ignore[return-value]
+        return _CountingEmbedClient(embed_oa)  # type: ignore[return-value]
     if settings.ollama_embed_url:
-        return _make_client_with_fallback(settings.ollama_embed_url)
-    return _make_client_with_fallback(settings.ollama_url)
+        return _CountingEmbedClient(_make_client_with_fallback(settings.ollama_embed_url))  # type: ignore[return-value]
+    return _CountingEmbedClient(_make_client_with_fallback(settings.ollama_url))  # type: ignore[return-value]
 
 
 def get_agent_client(

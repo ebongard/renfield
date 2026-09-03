@@ -38,6 +38,7 @@ _ANTI_DASHBOARD = re.compile(
 
 from services.prompt_manager import prompt_manager
 from utils.config import settings
+from utils.metrics import record_router_fallback
 from utils.llm_client import (
     extract_response_content,
     get_agent_client,
@@ -604,13 +605,16 @@ class AgentRouter:
                 f"Router: invalid role '{role_name}' from LLM, "
                 f"falling back to 'general'"
             )
+            record_router_fallback("invalid_role")
             return self.get_role("general")
 
         except TimeoutError:
             logger.warning("Router: LLM timeout, falling back to 'general'")
+            record_router_fallback("timeout")
             return self.get_role("general")
         except Exception as e:
             logger.error(f"Router classification failed: {e}")
+            record_router_fallback("error")
             return self.get_role("general")
 
     @staticmethod

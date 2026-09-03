@@ -40,6 +40,8 @@ _injection_attempts_total = None
 _budget_reductions_total = None
 _output_guard_violations_total = None
 _llm_response_truncated_total = None
+_router_fallback_total = None
+_embedding_errors_total = None
 _auth_provider_unreachable_total = None
 _login_failure_total = None
 _authz_denied_total = None
@@ -65,6 +67,7 @@ def _init_metrics():
     global _agent_outcome_total, _injection_attempts_total
     global _budget_reductions_total, _output_guard_violations_total
     global _llm_response_truncated_total
+    global _router_fallback_total, _embedding_errors_total
     global _auth_provider_unreachable_total
     global _login_failure_total, _authz_denied_total
     global _kg_conflation_candidates
@@ -198,6 +201,28 @@ def _init_metrics():
             "renfield_llm_response_truncated_total",
             "LLM completions that hit the output-token cap (finish_reason=length)",
             ["model", "call_type"],
+        )
+
+        # Routing silently collapsed to the generic role. The LLM router
+        # (AGENT_ROUTER_URL) failing does not error the turn: classify()
+        # returns 'general' and the user gets a generic answer with no
+        # role prompt, no sub-intent and no deterministic tool filter.
+        # Two days of that in 2026-09 left no trace beyond a WARNING per
+        # turn, while /api/health stayed green (it only lists models).
+        _router_fallback_total = Counter(
+            "renfield_router_fallback_total",
+            "Router LLM classification fell back to the general role",
+            ["reason"],
+        )
+
+        # Embedding calls that raised. Every consumer (semantic router,
+        # memory retrieval, KG, episodic memory) catches the exception,
+        # logs a WARNING and degrades to 'no context' — so a dead
+        # embedding endpoint is invisible everywhere except the log.
+        _embedding_errors_total = Counter(
+            "renfield_embedding_errors_total",
+            "Embedding requests that raised (endpoint down, model failed to load)",
+            ["model"],
         )
 
         # Pluggable-auth fail-open observability. Name intentionally matches
@@ -483,6 +508,23 @@ def record_llm_response_truncated(model: str, call_type: str):
     if not _metrics_initialized:
         return
     _llm_response_truncated_total.labels(model=model, call_type=call_type).inc()
+
+
+def record_router_fallback(reason: str):
+    """Record an LLM router classification that fell back to 'general'.
+
+    ``reason`` is one of ``timeout``, ``error`` or ``invalid_role``.
+    """
+    if not _metrics_initialized:
+        return
+    _router_fallback_total.labels(reason=reason).inc()
+
+
+def record_embedding_error(model: str):
+    """Record an embedding request that raised."""
+    if not _metrics_initialized:
+        return
+    _embedding_errors_total.labels(model=model or "").inc()
 
 
 # === Middleware & Endpoint Setup ===

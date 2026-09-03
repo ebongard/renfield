@@ -313,3 +313,61 @@ class TestNormalizeEndpoint:
         assert normalize_endpoint("/health") == "/health"
         # Short hex-looking words stay literal (only >=16 hex chars collapse)
         assert normalize_endpoint("/api/atoms/facade") == "/api/atoms/facade"
+
+
+class TestRoutingAndEmbeddingCounters:
+    """renfield_router_fallback_total / renfield_embedding_errors_total."""
+
+    def test_noop_when_not_initialized(self):
+        from utils.metrics import record_embedding_error, record_router_fallback
+
+        record_router_fallback("error")
+        record_embedding_error("qwen3-embedding:4b")
+
+    def test_router_fallback_labels_reason(self):
+        import utils.metrics as metrics_module
+
+        counter = MagicMock()
+        metrics_module._metrics_initialized = True
+        metrics_module._router_fallback_total = counter
+        try:
+            metrics_module.record_router_fallback("timeout")
+            counter.labels.assert_called_once_with(reason="timeout")
+            counter.labels().inc.assert_called_once()
+        finally:
+            metrics_module._metrics_initialized = False
+            metrics_module._router_fallback_total = None
+
+    def test_embedding_error_labels_model(self):
+        import utils.metrics as metrics_module
+
+        counter = MagicMock()
+        metrics_module._metrics_initialized = True
+        metrics_module._embedding_errors_total = counter
+        try:
+            metrics_module.record_embedding_error("qwen3-embedding:4b")
+            counter.labels.assert_called_once_with(model="qwen3-embedding:4b")
+            counter.labels().inc.assert_called_once()
+        finally:
+            metrics_module._metrics_initialized = False
+            metrics_module._embedding_errors_total = None
+
+    def test_init_metrics_registers_the_counters(self):
+        """The #1109 lesson: a counter whose global was never declared stays
+        None after init and every record call dies in the except."""
+        import utils.metrics as metrics_module
+
+        metrics_module._metrics_initialized = False
+        with patch("prometheus_client.Counter") as counter_cls, patch(
+            "prometheus_client.Gauge"
+        ), patch("prometheus_client.Histogram"):
+            counter_cls.side_effect = lambda *a, **k: MagicMock(name=a[0])
+            metrics_module._init_metrics()
+            try:
+                names = {c.args[0] for c in counter_cls.call_args_list}
+                assert "renfield_router_fallback_total" in names
+                assert "renfield_embedding_errors_total" in names
+                assert metrics_module._router_fallback_total is not None
+                assert metrics_module._embedding_errors_total is not None
+            finally:
+                metrics_module._metrics_initialized = False

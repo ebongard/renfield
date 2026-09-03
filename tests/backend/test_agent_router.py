@@ -1722,3 +1722,80 @@ class TestInferSubIntent:
         assert AgentRouter._infer_sub_intent(
             "Hello world", defs, "de",
         ) is None
+
+
+# ============================================================================
+# Fallback-to-general is counted (renfield_router_fallback_total)
+# ============================================================================
+
+class TestRouterFallbackCounter:
+    """A router LLM failure must leave a metric, not just a WARNING."""
+
+    def _settings(self, mock_settings):
+        mock_settings.ollama_intent_model = "test-model"
+        mock_settings.ollama_model = "test-model"
+        mock_settings.agent_ollama_url = None
+        mock_settings.agent_router_model = None
+        mock_settings.agent_router_url = None
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_exception_falls_back_and_records_error(self):
+        ollama = make_mock_ollama("unused")
+        ollama.client.chat = AsyncMock(side_effect=RuntimeError("500: model requires more system memory"))
+        router = AgentRouter(SAMPLE_CONFIG)
+
+        with patch("services.agent_router.settings") as mock_settings, patch(
+            "services.agent_router.record_router_fallback"
+        ) as rec:
+            self._settings(mock_settings)
+            role = await router.classify("Welche Freeze Fenster haben wir 2027?", ollama)
+
+        assert role.name == "general"
+        rec.assert_called_once_with("error")
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_timeout_falls_back_and_records_timeout(self):
+        ollama = make_mock_ollama("unused")
+        ollama.client.chat = AsyncMock(side_effect=TimeoutError())
+        router = AgentRouter(SAMPLE_CONFIG)
+
+        with patch("services.agent_router.settings") as mock_settings, patch(
+            "services.agent_router.record_router_fallback"
+        ) as rec:
+            self._settings(mock_settings)
+            role = await router.classify("hallo", ollama)
+
+        assert role.name == "general"
+        rec.assert_called_once_with("timeout")
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_invalid_role_records_invalid_role(self):
+        ollama = make_mock_ollama('{"role": "does_not_exist"}')
+        router = AgentRouter(SAMPLE_CONFIG)
+
+        with patch("services.agent_router.settings") as mock_settings, patch(
+            "services.agent_router.record_router_fallback"
+        ) as rec:
+            self._settings(mock_settings)
+            role = await router.classify("hallo", ollama)
+
+        assert role.name == "general"
+        rec.assert_called_once_with("invalid_role")
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_successful_classification_records_nothing(self):
+        ollama = make_mock_ollama('{"role": "smart_home", "reason": "x"}')
+        router = AgentRouter(SAMPLE_CONFIG)
+
+        with patch("services.agent_router.settings") as mock_settings, patch(
+            "services.agent_router.record_router_fallback"
+        ) as rec:
+            self._settings(mock_settings)
+            role = await router.classify("Schalte das Licht ein", ollama)
+
+        assert role.name == "smart_home"
+        rec.assert_not_called()

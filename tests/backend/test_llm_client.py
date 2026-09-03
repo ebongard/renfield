@@ -261,7 +261,7 @@ class TestGetEmbedClient:
 
         args, kwargs = mock_cls.call_args
         assert kwargs.get("host") == "http://embed-host:11434"
-        assert result is sentinel
+        assert result.inner is sentinel
 
     @pytest.mark.unit
     @patch("ollama.AsyncClient")
@@ -282,7 +282,7 @@ class TestGetEmbedClient:
 
         args, kwargs = mock_cls.call_args
         assert kwargs.get("host") == "http://default:11434"
-        assert result is sentinel
+        assert result.inner is sentinel
 
     @pytest.mark.unit
     @patch("ollama.AsyncClient")
@@ -301,7 +301,7 @@ class TestGetEmbedClient:
 
         result = get_embed_client()
 
-        assert isinstance(result, _FallbackLLMClient)
+        assert isinstance(result.inner, _FallbackLLMClient)
 
     @pytest.mark.unit
     @patch("ollama.AsyncClient")
@@ -1686,3 +1686,54 @@ class TestFinishReasonSurvivesTheAdapter:
         )]
 
         assert seen[-1].done_reason == "length"
+
+
+# ============================================================================
+# _CountingEmbedClient Tests
+# ============================================================================
+
+class TestCountingEmbedClient:
+    """The embed chokepoint counts raising embeddings() calls and re-raises."""
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_embedding_error_is_counted_and_reraised(self):
+        from utils.llm_client import _CountingEmbedClient
+
+        inner = MagicMock()
+        inner.embeddings = AsyncMock(side_effect=RuntimeError("model requires more system memory"))
+        client = _CountingEmbedClient(inner)
+
+        with patch("utils.metrics.record_embedding_error") as rec:
+            with pytest.raises(RuntimeError):
+                await client.embeddings(model="qwen3-embedding:4b", prompt="x")
+        rec.assert_called_once_with("qwen3-embedding:4b")
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_successful_embedding_is_not_counted(self):
+        from utils.llm_client import _CountingEmbedClient
+
+        inner = MagicMock()
+        inner.embeddings = AsyncMock(return_value={"embedding": [0.1]})
+        client = _CountingEmbedClient(inner)
+
+        with patch("utils.metrics.record_embedding_error") as rec:
+            result = await client.embeddings(model="m", prompt="x")
+        assert result == {"embedding": [0.1]}
+        rec.assert_not_called()
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_other_methods_delegate(self):
+        from utils.llm_client import _CountingEmbedClient
+
+        inner = MagicMock()
+        inner.chat = AsyncMock(return_value="c")
+        inner.list = AsyncMock(return_value="l")
+        inner.generate = AsyncMock(return_value="g")
+        client = _CountingEmbedClient(inner)
+        assert await client.chat(model="m") == "c"
+        assert await client.list() == "l"
+        assert await client.generate(model="m") == "g"
+        assert client.inner is inner
