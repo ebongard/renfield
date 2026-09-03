@@ -36,6 +36,7 @@ if "openai" not in sys.modules:
 from utils.llm_client import (
     LLMClient,
     OpenAICompatibleClient,
+    _CountingEmbedClient,
     clear_client_cache,
     create_llm_client,
     effective_agent_num_ctx,
@@ -1120,10 +1121,19 @@ class TestGetDefaultClientRoutesToOpenAI:
         monkeypatch.setattr("utils.llm_client.settings.llm_openai_embed_model", "qwen3-embedding")
         monkeypatch.setattr("utils.llm_client.settings.llm_openai_api_key", None)
 
+        # The factory now returns a _CountingEmbedClient wrapper (#1201 —
+        # embedding failures are counted at this single chokepoint). Unwrap it:
+        # the invariant under test is WHICH ENDPOINT the client points at, not
+        # the wrapper type. Asserting through `.inner` keeps the #527 guard
+        # exact instead of loosening it to "some object".
         embed = get_embed_client()
-        assert isinstance(embed, OpenAICompatibleClient)
-        assert embed._base_url == "http://embed:8080/v1"
-        assert embed._default_model == "qwen3-embedding"
+        assert isinstance(embed, _CountingEmbedClient), (
+            "embed factory must route through the failure-counting wrapper"
+        )
+        inner = embed.inner
+        assert isinstance(inner, OpenAICompatibleClient)
+        assert inner._base_url == "http://embed:8080/v1"
+        assert inner._default_model == "qwen3-embedding"
 
 
 # ============================================================================
