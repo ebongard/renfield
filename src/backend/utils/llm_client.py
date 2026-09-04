@@ -656,19 +656,69 @@ class OpenAICompatibleClient:
         self._default_model = default_model
         self._base_url = base_url
 
-    @staticmethod
-    def _convert_messages(messages: list[dict[str, Any]] | None) -> list[dict[str, Any]]:
+    # base64 magic prefixes -> mime type. Everything Renfield renders itself is
+    # PNG (document_processor re-encodes every page that way), but the satellite
+    # camera path forwards whatever the device sent, so sniff rather than assume.
+    _B64_IMAGE_MAGIC: tuple[tuple[str, str], ...] = (
+        ("iVBORw0KGgo", "image/png"),
+        ("/9j/", "image/jpeg"),
+        ("R0lGOD", "image/gif"),
+        ("UklGR", "image/webp"),
+    )
+
+    @classmethod
+    def _image_data_url(cls, raw: str) -> str:
+        """Turn a bare base64 image into a data: URL, passing through real URLs.
+
+        Ollama takes bare base64 in `images`; the OpenAI schema wants a URL, and
+        llama-server accepts a data: URL there.
+        """
+        s = (raw or "").strip()
+        if s.startswith("data:") or s.startswith("http://") or s.startswith("https://"):
+            return s
+        mime = "image/png"
+        for prefix, candidate in cls._B64_IMAGE_MAGIC:
+            if s.startswith(prefix):
+                mime = candidate
+                break
+        return f"data:{mime};base64,{s}"
+
+    @classmethod
+    def _convert_messages(cls, messages: list[dict[str, Any]] | None) -> list[dict[str, Any]]:
         """Pass Renfield's chat-message list through with minor normalization.
 
-        Ollama and OpenAI use the same {role, content} shape; tool messages
-        and tool_calls also match. Only difference: Ollama allows `images`
-        on user messages — we strip those (vision goes to a separate tier).
+        Ollama and OpenAI use the same {role, content} shape; tool messages and
+        tool_calls also match. The one real difference is images: Ollama carries
+        them as a sibling `images: [b64]` key, OpenAI as typed parts inside
+        `content`.
+
+        This used to STRIP `images` ("vision goes to a separate tier"). That held
+        while vision only ever went to native Ollama, but it left a trap on the
+        OpenAI-compat path: the prompt still says "transcribe this document
+        image" while the image is silently dropped. Measured against
+        qwen3.6-35b-a3b the model then refuses ("no image has been provided")
+        rather than inventing text — a loud failure, but one whose cause is
+        invisible from the caller's side. Translating instead is what lets the
+        multimodal main model serve the vision tier (renfield#1206).
         """
         if not messages:
             return []
         out: list[dict[str, Any]] = []
         for m in messages:
+            images = m.get("images") or []
             mm = {k: v for k, v in m.items() if k != "images"}
+            if images:
+                content = mm.get("content")
+                parts: list[dict[str, Any]] = []
+                if isinstance(content, list):
+                    parts.extend(content)
+                elif content:
+                    parts.append({"type": "text", "text": content})
+                parts.extend(
+                    {"type": "image_url", "image_url": {"url": cls._image_data_url(img)}}
+                    for img in images
+                )
+                mm["content"] = parts
             out.append(mm)
         return out
 
@@ -857,6 +907,40 @@ def get_openai_compat_client() -> OpenAICompatibleClient | None:
             default_model=settings.llm_openai_model,
         )
     return _client_cache.get(cache_key)  # type: ignore[return-value]
+
+
+def get_vision_client() -> tuple[LLMClient, str] | None:
+    """Client + model for the vision tier, or None when vision is disabled.
+
+    ``OLLAMA_VISION_URL`` decides the protocol, because the two backends speak
+    different schemas and the caller must not have to care:
+
+    - a URL containing ``/v1`` -> the OpenAI-compatible adapter, which now
+      translates Ollama-style ``images`` into typed content parts
+      (``_convert_messages``). This is what lets the multimodal MAIN model serve
+      vision from cuda.local instead of loading a second VLM (renfield#1206).
+    - anything else -> the native Ollama client, unchanged behaviour.
+    - unset -> None, and the caller keeps using its chat client.
+
+    Sniffing the URL rather than adding another tier flag is deliberate: the
+    protocol is a property of the endpoint, not a preference. A flag could be
+    set to disagree with the URL, and the failure mode would be a 404 at request
+    time (llama-server has no ``/api/chat``) — or, before this change, a
+    silently image-less prompt the model could only refuse.
+    """
+    url = settings.ollama_vision_url
+    model = settings.ollama_vision_model
+    if not url or not model:
+        return None
+    if "/v1" in url:
+        cache_key = f"__openai_compat_vision__:{_normalize_url(url)}"
+        if cache_key not in _client_cache:
+            _client_cache[cache_key] = _make_openai_compat_client(  # type: ignore[assignment]
+                base_url=url,
+                default_model=model,
+            )
+        return _client_cache[cache_key], model  # type: ignore[return-value]
+    return _make_client_with_fallback(url), model
 
 
 def get_openai_compat_embed_client() -> OpenAICompatibleClient | None:

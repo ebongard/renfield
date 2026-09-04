@@ -285,11 +285,13 @@ WICHTIGE REGELN FÜR ANTWORTEN:
                 "Answer with ONLY a single integer. /no_think"
             )
             messages = [{"role": "user", "content": prompt, "images": [image_b64]}]
-            if settings.ollama_vision_url:
-                from utils.llm_client import _make_client_with_fallback
-                vision_client = _make_client_with_fallback(settings.ollama_vision_url)
-            else:
-                vision_client = self.client
+            # Vision tier: get_vision_client picks the protocol from the URL, so a
+            # /v1 endpoint (the multimodal main model on cuda.local) gets the
+            # OpenAI-compat adapter and a plain host keeps the native Ollama
+            # client. Falls back to the chat client when vision has no own URL.
+            from utils.llm_client import get_vision_client
+            _vision = get_vision_client()
+            vision_client = _vision[0] if _vision else self.client
 
             resp = await vision_client.chat(
                 model=vision_model,
@@ -387,11 +389,13 @@ WICHTIGE REGELN FÜR ANTWORTEN:
                 "no markdown, no code fences. /no_think"
             )
             messages = [{"role": "user", "content": prompt, "images": [image_b64]}]
-            if settings.ollama_vision_url:
-                from utils.llm_client import _make_client_with_fallback
-                vision_client = _make_client_with_fallback(settings.ollama_vision_url)
-            else:
-                vision_client = self.client
+            # Vision tier: get_vision_client picks the protocol from the URL, so a
+            # /v1 endpoint (the multimodal main model on cuda.local) gets the
+            # OpenAI-compat adapter and a plain host keeps the native Ollama
+            # client. Falls back to the chat client when vision has no own URL.
+            from utils.llm_client import get_vision_client
+            _vision = get_vision_client()
+            vision_client = _vision[0] if _vision else self.client
 
             resp = await vision_client.chat(
                 model=vision_model,
@@ -455,11 +459,13 @@ WICHTIGE REGELN FÜR ANTWORTEN:
             })
 
             # Use dedicated vision URL if configured, otherwise default client
-            if settings.ollama_vision_url:
-                from utils.llm_client import _make_client_with_fallback
-                vision_client = _make_client_with_fallback(settings.ollama_vision_url)
-            else:
-                vision_client = self.client
+            # Vision tier: get_vision_client picks the protocol from the URL, so a
+            # /v1 endpoint (the multimodal main model on cuda.local) gets the
+            # OpenAI-compat adapter and a plain host keeps the native Ollama
+            # client. Falls back to the chat client when vision has no own URL.
+            from utils.llm_client import get_vision_client
+            _vision = get_vision_client()
+            vision_client = _vision[0] if _vision else self.client
 
             classification_kwargs = get_classification_chat_kwargs(vision_model)
             async for chunk in await vision_client.chat(

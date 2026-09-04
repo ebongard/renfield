@@ -47,6 +47,7 @@ from utils.llm_client import (
     get_embed_client,
     get_intent_client,
     get_openai_compat_client,
+    get_vision_client,
     get_openai_compat_embed_client,
     is_thinking_model,
     use_openai_for_tier,
@@ -766,22 +767,32 @@ class TestOpenAICompatibleClientChat:
 
     @pytest.mark.unit
     @pytest.mark.asyncio
-    async def test_strips_images_from_user_message(self, monkeypatch):
-        """Vision payloads (`images=[…]`) on user messages aren't supported
-        by the agent llama-server (single-model) and would otherwise be sent
-        as an unknown field. The adapter strips them silently."""
+    async def test_translates_images_on_user_message(self, monkeypatch):
+        """SUPERSEDES `test_strips_images_from_user_message` (renfield#1206).
+
+        The old expectation — strip `images` silently — was written when the
+        agent llama-server was text-only. It is now multimodal (`--mmproj`) and
+        serves the vision tier, so stripping would send "transcribe this image"
+        with no image attached; the model can only refuse, and nothing upstream
+        shows why. The adapter translates into typed OpenAI content parts
+        instead. The Ollama-only `images` key must still not reach the request.
+        """
         adapter = _make_openai_compat(monkeypatch)
         adapter._client.chat.completions.create.return_value = _stub_openai_response()
 
         await adapter.chat(
             messages=[
-                {"role": "user", "content": "describe", "images": ["base64-blob"]},
+                {"role": "user", "content": "describe", "images": ["iVBORw0KGgoAAAA"]},
             ],
         )
 
         sent = adapter._client.chat.completions.create.call_args.kwargs["messages"]
-        assert sent[0] == {"role": "user", "content": "describe"}
         assert "images" not in sent[0]
+        assert sent[0]["role"] == "user"
+        parts = sent[0]["content"]
+        assert parts[0] == {"type": "text", "text": "describe"}
+        assert parts[1]["type"] == "image_url"
+        assert parts[1]["image_url"]["url"].startswith("data:image/png;base64,")
 
 
 class TestOpenAICompatibleClientStreaming:
@@ -1760,6 +1771,95 @@ class TestGetIntentClient:
         monkeypatch.setattr("utils.llm_client.settings.ollama_url", "http://ollama:11434")
 
         assert not isinstance(get_intent_client(), OpenAICompatibleClient)
+# Vision tier — image translation + endpoint protocol (renfield#1206)
+# ============================================================================
+
+class TestVisionImageTranslation:
+    """`_convert_messages` used to DROP Ollama-style `images`. On the
+    OpenAI-compat path that silently produced an image-less prompt — the model
+    can only refuse, and nothing upstream shows why."""
+
+    @pytest.mark.unit
+    def test_images_become_typed_content_parts(self):
+        out = OpenAICompatibleClient._convert_messages(
+            [{"role": "user", "content": "transcribe this", "images": ["iVBORw0KGgoAAAA"]}]
+        )
+        assert len(out) == 1
+        parts = out[0]["content"]
+        assert isinstance(parts, list), "images must be translated, not dropped"
+        assert parts[0] == {"type": "text", "text": "transcribe this"}
+        assert parts[1]["type"] == "image_url"
+        assert parts[1]["image_url"]["url"].startswith("data:image/png;base64,iVBORw0KGgo")
+        assert "images" not in out[0], "the Ollama-only key must not leak into the request"
+
+    @pytest.mark.unit
+    def test_mime_is_sniffed_not_assumed(self):
+        """The satellite camera path forwards whatever the device sent."""
+        cases = [
+            ("iVBORw0KGgoAAAA", "image/png"),
+            ("/9j/4AAQSkZJRg", "image/jpeg"),
+            ("R0lGODlhAQAB", "image/gif"),
+            ("UklGRiQAAABX", "image/webp"),
+            ("Zm9vYmFy", "image/png"),  # unknown -> PNG, what Renfield renders
+        ]
+        for b64, expected in cases:
+            url = OpenAICompatibleClient._image_data_url(b64)
+            assert url.startswith(f"data:{expected};base64,"), f"{b64} -> {url}"
+
+    @pytest.mark.unit
+    def test_existing_data_url_and_http_pass_through(self):
+        for raw in ("data:image/png;base64,AAAA", "https://example.invalid/a.png"):
+            assert OpenAICompatibleClient._image_data_url(raw) == raw
+
+    @pytest.mark.unit
+    def test_messages_without_images_are_untouched(self):
+        """Every non-vision call must stay byte-identical."""
+        msgs = [
+            {"role": "system", "content": "s"},
+            {"role": "user", "content": "u"},
+            {"role": "assistant", "content": "", "tool_calls": [{"id": "1"}]},
+        ]
+        assert OpenAICompatibleClient._convert_messages(msgs) == msgs
+
+    @pytest.mark.unit
+    def test_multiple_images_all_appended(self):
+        out = OpenAICompatibleClient._convert_messages(
+            [{"role": "user", "content": "t", "images": ["iVBORw0KGgo1", "iVBORw0KGgo2"]}]
+        )
+        parts = out[0]["content"]
+        assert [p["type"] for p in parts] == ["text", "image_url", "image_url"]
+
+
+class TestGetVisionClient:
+    """The vision endpoint's PROTOCOL is a property of its URL: llama-server has
+    no /api/chat, so sending it the Ollama schema is a 404."""
+
+    @pytest.mark.unit
+    def test_v1_url_selects_the_openai_adapter(self, monkeypatch):
+        monkeypatch.setattr("utils.llm_client.settings.ollama_vision_url", "http://cuda.local:8081/v1")
+        monkeypatch.setattr("utils.llm_client.settings.ollama_vision_model", "qwen3.6")
+        monkeypatch.setattr("utils.llm_client.settings.llm_openai_api_key", None)
+        client, model = get_vision_client()
+        assert isinstance(client, OpenAICompatibleClient)
+        assert client._base_url == "http://cuda.local:8081/v1"
+        assert model == "qwen3.6"
+
+    @pytest.mark.unit
+    def test_plain_host_keeps_the_ollama_client(self, monkeypatch):
+        monkeypatch.setattr("utils.llm_client.settings.ollama_vision_url", "http://ollama:11434")
+        monkeypatch.setattr("utils.llm_client.settings.ollama_vision_model", "qwen3-vl:8b")
+        client, model = get_vision_client()
+        assert not isinstance(client, OpenAICompatibleClient)
+        assert model == "qwen3-vl:8b"
+
+    @pytest.mark.unit
+    def test_none_when_vision_disabled(self, monkeypatch):
+        monkeypatch.setattr("utils.llm_client.settings.ollama_vision_url", "http://cuda.local:8081/v1")
+        monkeypatch.setattr("utils.llm_client.settings.ollama_vision_model", "")
+        assert get_vision_client() is None
+        monkeypatch.setattr("utils.llm_client.settings.ollama_vision_model", "qwen3.6")
+        monkeypatch.setattr("utils.llm_client.settings.ollama_vision_url", "")
+        assert get_vision_client() is None
 
 
 # ============================================================================

@@ -47,7 +47,12 @@ data:
   REDIS_URL: "redis://redis:6379"
   OLLAMA_URL: "http://ollama:11434"
   OLLAMA_EMBED_URL: "http://ollama:11434"
-  OLLAMA_VISION_URL: "http://ollama:11434"
+  # Vision tier moved to the multimodal MAIN model (renfield#1206, 2026-09-04).
+  # A /v1 URL selects the OpenAI-compat adapter (get_vision_client), which
+  # translates Ollama-style `images` into typed content parts. Rollback to a
+  # dedicated VLM = set this back to http://ollama:11434 AND
+  # OLLAMA_VISION_MODEL back to qwen3-vl:8b — the two must move together.
+  OLLAMA_VISION_URL: "http://cuda.local:8081/v1"
   OLLAMA_FALLBACK_URL: ""
   # DLNA MCP runs on hostNetwork (any worker); the `dlna-mcp` Service routes to it.
   DLNA_MCP_URL: "http://dlna-mcp:9091/mcp"
@@ -77,11 +82,26 @@ data:
   #     /v1/embeddings. Same qwen3-embedding:4b model, just GPU-served
   #     (10-20x faster than the previous CPU path on k8s-gpu-2).
   #     llama-server-embed deployment is scaled to 0 (replicas=0).
-  # Vision tier ENABLED — OLLAMA_VISION_MODEL=qwen3-vl:8b (see below),
-  # served by the existing in-cluster `ollama` pod on k8s-gpu-1 (idle
-  # 16 GB RTX 5060 Ti). OLLAMA_VISION_URL already routes there, so no
-  # separate llama-server-vision pod is needed. Rollback: set the model
-  # back to "".
+  # Vision tier ENABLED and served by the MAIN model since 2026-09-04
+  # (renfield#1206): qwen3.6-35b-a3b carries --mmproj and is already hot on the
+  # 5090, so vision costs no extra VRAM anywhere.
+  #
+  # It previously ran qwen3-vl:8b on the in-cluster Ollama. Measured, that model
+  # takes 11.9 GB resident (not the 6.14 GB catalogue file size) on a 16.3 GB
+  # card shared with reva — loading it EVICTED ALL THREE other models, and cost
+  # 25 s to load cold.
+  #
+  # Benchmarked head-to-head on synthetic scans across 3 degradation levels,
+  # 14 ground-truth fields each (invoice/customer/meter numbers, IBAN, tax id,
+  # amounts, dates):
+  #   main model      41/42 fields, 1.2-1.7 s, 0 GB extra, no eviction
+  #   qwen3-vl:8b     42/42 fields, 5.5-26.6 s warm (+25 s cold), evicts the card
+  # The single miss is one digit of a tax id on the most degraded page. Those
+  # scans land in /brain/review anyway.
+  #
+  # Rollback: OLLAMA_VISION_URL back to http://ollama:11434 AND
+  # OLLAMA_VISION_MODEL back to qwen3-vl:8b (both, or the schema mismatches).
+  # Disable entirely: OLLAMA_VISION_MODEL="".
   LLM_OPENAI_BASE_URL: "http://cuda.local:8081/v1"
   # LLM_OPENAI_API_KEY is sourced from the `renfield-secrets`/`llm-openai-api-key`
   # Secret in backend.yaml. llama-server accepts any non-empty value today;
@@ -212,7 +232,7 @@ data:
   OLLAMA_RAG_MODEL: "qwen3:14b"
   OLLAMA_INTENT_MODEL: "qwen3:8b"
   OLLAMA_EMBED_MODEL: "qwen3-embedding:4b"
-  OLLAMA_VISION_MODEL: "qwen3-vl:8b"
+  OLLAMA_VISION_MODEL: "qwen3.6"
   AGENT_MODEL: "qwen3.6"
   EMBEDDING_DIMENSION: "2560"
   # B.4.d: WHISPER_MODEL, PIPER_VOICES, PIPER_DEFAULT_VOICE removed.

@@ -115,16 +115,38 @@ OLLAMA_NUM_CTX=32768                  # Context Window für alle Ollama-Calls
 # Leer = Visual Queries deaktiviert (Bilder werden ignoriert)
 OLLAMA_VISION_MODEL=qwen3-vl:8b
 
-# Optional: Separate Ollama-URL für das Vision-Modell
-# Nützlich wenn Vision auf einer anderen GPU läuft als Chat
-OLLAMA_VISION_URL=http://host.docker.internal:11434
+# Separate URL für den Vision-Tier. Die URL bestimmt das PROTOKOLL:
+#   …/v1        → OpenAI-kompatibler Adapter (llama-server, multimodal)
+#   Host:Port   → nativer Ollama-Client
+OLLAMA_VISION_URL=http://cuda.local:8081/v1
 ```
 
 **Defaults:**
-- `OLLAMA_VISION_MODEL`: `""` (deaktiviert) — Code-Default. **Produktion setzt `qwen3-vl:8b`** (siehe `k8s/configmap.yaml`); der Vision-Tier ist seit 2026-05-22 aktiv und läuft auf dem cluster-internen `ollama`-Pod (k8s-gpu-1).
+- `OLLAMA_VISION_MODEL`: `""` (deaktiviert) — Code-Default. **Produktion setzt `qwen3.6`** (siehe `k8s/configmap.yaml`).
 - `OLLAMA_VISION_URL`: `None` (verwendet Standard-OLLAMA_URL)
 
-**Empfohlenes Modell:** `qwen3-vl:8b` (~12 GB VRAM, passt auf 16 GB Karten, gutes Deutsch).
+### Die URL bestimmt das Protokoll — beide Werte gehören zusammen
+
+`get_vision_client()` wählt anhand der URL: enthält sie `/v1`, kommt der OpenAI-kompatible Adapter zum Einsatz, sonst der native Ollama-Client. Das ist kein Flag, weil das Protokoll eine Eigenschaft des Endpunkts ist, nicht eine Präferenz.
+
+**Konsequenz:** `OLLAMA_VISION_URL` und `OLLAMA_VISION_MODEL` müssen **gemeinsam** umgestellt werden. Eine `/v1`-URL mit `qwen3-vl:8b` schickt einen Modellnamen an llama-server, den es ignoriert; ein Ollama-Host mit `qwen3.6` liefert ein 404, weil das Modell dort nicht liegt.
+
+### Vision läuft seit 2026-09-04 auf dem Hauptmodell (renfield#1206)
+
+`qwen3.6-35b-a3b` trägt `--mmproj` und ist auf der 5090 ohnehin geladen — Vision kostet damit **nirgends zusätzliches VRAM**.
+
+Vorher lief `qwen3-vl:8b` auf dem cluster-internen Ollama. Gemessen belegt dieses Modell **11,9 GB** (nicht die 6,14 GB Dateigröße aus dem Katalog) auf einer 16,3-GB-Karte, die sich Haushalt, xidra und reva teilen — das Laden **verdrängte alle drei anderen Modelle**, Kaltstart 25 s.
+
+Direktvergleich auf synthetischen Scans, drei Degradationsstufen, je 14 Ground-Truth-Felder:
+
+| | Felder | Latenz | VRAM | Kollateralschaden |
+|---|---|---|---|---|
+| **Hauptmodell** | **41/42** | **1,2–1,7 s** | 0 | keiner |
+| `qwen3-vl:8b` | 42/42 | 5,5–26,6 s warm, +25 s kalt | 11,9 GB | räumt die Karte leer |
+
+Der eine Fehltreffer ist eine Ziffer einer Steuernummer auf der am stärksten degradierten Vorlage. Solche Scans landen ohnehin in `/brain/review`.
+
+**Rückbau auf ein dediziertes VLM:** `OLLAMA_VISION_URL` zurück auf den Ollama-Host **und** `OLLAMA_VISION_MODEL` zurück auf `qwen3-vl:8b`. Vision ganz abschalten: `OLLAMA_VISION_MODEL=""`.
 
 Siehe [SATELLITE_CAMERA.md](SATELLITE_CAMERA.md) für Setup und Modellvergleich.
 
