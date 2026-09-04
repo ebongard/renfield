@@ -107,14 +107,29 @@ data:
   # cuda outage. Enabled here after the 2026-08-09 cuda outages; the in-code
   # default is false (dark).
   LLM_OPENAI_FALLBACK_ENABLED: "true"
-  # Downgraded 14b -> 8b (2026-09-04). k8s-gpu-1 has 16.3 GB and was 14.6 GB
-  # resident (qwen3:14b 10.14 + qwen3-embedding 3.86 + nomic 0.60), leaving
-  # 1.9 GB — not enough for a dedicated intent model, and not even enough for
-  # OLLAMA_VISION_MODEL (qwen3-vl:8b, 6.14 GB) to sit alongside, so every
-  # vision request forced an eviction. The fallback is a keep-the-lights-on
-  # path for a cuda.local outage; 8b vs 14b is a small step down there, while
-  # freeing ~4 GB buys back BOTH the intent tier and vision headroom. Operator
-  # decision: an intent model is worth more than a stronger fallback.
+  # Downgraded 14b -> 8b (2026-09-04). NOTE the actual reason, which is not the
+  # obvious one: qwen3:14b was resident because REVA's AGENT_ROUTER_MODEL loaded
+  # it, not because of this fallback. ollama.test.local (reva) and
+  # http://ollama (here) are the SAME Ollama on k8s-gpu-1 — one 16.3 GB card
+  # shared by both instances, with OLLAMA_KEEP_ALIVE=-1 so nothing is released.
+  #
+  # Pointing the fallback at 14b would therefore RELOAD a 10.14 GB model on top
+  # of the intent tier during an outage and thrash. Pointing it at qwen3:8b
+  # makes it the SAME model the intent tier already keeps resident: the fallback
+  # then costs zero additional VRAM.
+  #
+  # Shared budget after reva switches its router back to llama3.2:3b
+  # (reva!fix/router-model-shared-vram), 4 models = OLLAMA_MAX_LOADED_MODELS:
+  #   llama3.2:3b          ~2.0 GB  reva router
+  #   qwen3:8b             ~6.0 GB  renfield intent tier + this fallback
+  #   qwen3-embedding:4b    3.86 GB renfield embeddings
+  #   nomic-embed-text      0.60 GB reva embeddings
+  #   = ~12.5 GB of 16.3, ~3.8 GB free
+  #
+  # 8b vs 14b is a small step down for a keep-the-lights-on path during a
+  # cuda.local outage; both sit far below the 35B-A3B anyway. Do not raise this
+  # without recounting the budget above — the card is shared with reva and
+  # nothing enforces the total.
   LLM_OPENAI_FALLBACK_MODEL: "qwen3:8b"
   WAIT_CUDA_MAX_SECONDS: "30"
 
