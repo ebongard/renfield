@@ -516,9 +516,56 @@
     # Persist the WM8960 mixer state ONCE, after whichever of the two tuning
     # tasks above ran — so a host with BOTH ALC + input-path enabled doesn't
     # store twice. Restored on boot by alsa-restore.service.
-    - name: Persist WM8960 ALSA mixer state
+    # --- TLV320AIC3104 (hat_type "2mic-v2") ADC high-pass filter ---
+    # The AIC3104 ships with 'ADC HPF Cut-off' = Disabled, which leaves a large
+    # DC offset on the capture path. Measured on sat-kinderbad 2026-09-04:
+    #
+    #   DC component  2320.9  (-23.0 dBFS)
+    #   real ambient    56.4  (-55.3 dBFS)
+    #
+    # i.e. the offset sat 32 dB ABOVE the room. A spectrum of the capture put
+    # 100 % of the energy below 100 Hz, dominated by 0 Hz.
+    #
+    # Two consequences, and the second is the expensive one:
+    #   1. `audio_rms` in the heartbeat is computed without removing the mean,
+    #      so the satellite reported ~1812 where the true ambient was ~5. Any
+    #      comparison of mic levels across satellites was meaningless.
+    #   2. The wakeword model sees a constant offset it was never trained on and
+    #      fires at high confidence on it — sat-kinderbad produced false wakes at
+    #      0.84-0.98 (4 of 5 sessions ended in an empty transcription), while the
+    #      threshold sits at 0.5. Raising the threshold cannot fix that, and the
+    #      threshold is fleet-wide anyway.
+    #
+    # 0.0045xFs is the gentlest of the three cut-offs (~72 Hz at 16 kHz) — it
+    # removes the offset and leaves the speech band untouched. After enabling:
+    # DC 0.0, ambient -76 dBFS.
+    #
+    # Off by default; enable per host. Same `audio` tag → applies restart-free:
+    #   ansible-playbook … --tags audio --limit <host>
+    - name: Configure AIC3104 ADC high-pass filter (removes capture DC offset)
       tags: [driver, config, audio]
-      when: (wm8960_alc_enabled | default(false)) or (wm8960_input_path_enabled | default(false))
+      when: aic3104_adc_hpf_enabled | default(false)
+      ansible.builtin.command:
+        argv:
+          - amixer
+          - -c
+          - "{{ aic3104_alsa_card | default('0') }}"
+          - sset
+          - "ADC HPF Cut-off"
+          # Both channels: a single value only sets Item0 and leaves the right
+          # channel Disabled (verified on sat-kinderbad).
+          - "{{ aic3104_adc_hpf }},{{ aic3104_adc_hpf }}"
+      changed_when: true
+
+    # Persist the mixer state ONCE, after whichever tuning task above ran — so a
+    # host with several enabled doesn't store repeatedly. Restored on boot by
+    # alsa-restore.service.
+    - name: Persist ALSA mixer state
+      tags: [driver, config, audio]
+      when: >-
+        (wm8960_alc_enabled | default(false))
+        or (wm8960_input_path_enabled | default(false))
+        or (aic3104_adc_hpf_enabled | default(false))
       ansible.builtin.command:
         argv: [alsactl, store]
       changed_when: true
