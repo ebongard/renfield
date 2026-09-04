@@ -86,15 +86,24 @@ bleiben.
 ## 4. Warum `is_active` nicht reicht
 
 Naheliegend wäre, den widersprochenen Datensatz einfach auf `is_active = false` zu setzen. Das
-ist falsch, weil `is_active` bereits **drei** verschiedene Bedeutungen trägt:
+ist falsch, weil `KGRelation.is_active` bereits **vier** verschiedene Bedeutungen trägt.
+Vollständige Liste aller Schreibstellen, repo-weit ermittelt:
 
-| Heutige Verwendung | Ort |
+| Bedeutung | Ort |
 |---|---|
-| Merge-Dedup (Verlierer-Kante nach Entity-Merge) | `knowledge_graph_service.py:965-982` |
-| Aufräumen / Löschung | `kg_cleanup_service.py` |
-| Grabstein einer zusammengeführten Entität | `:949` |
+| Merge-Dedup — Verlierer-Kante nach einem Entity-Merge | `knowledge_graph_service.py:965`, `:982` |
+| Kaskade — Entität wird gelöscht, ihre Kanten fallen mit | `knowledge_graph_service.py:1667-1672` |
+| Aufräumen — verwaiste Kante nach Soft-Delete ungültiger Entitäten | `kg_cleanup_service.py:88-92` |
+| Wikilink entfernt — `[[Ziel]]` steht nicht mehr in der Notiz | `note_links.py:107`, `:128` |
 
-Würde „widersprochen" als vierte Bedeutung dazukommen, ließe sich hinterher nicht mehr sagen,
+Alle vier heißen „diese Kante zählt nicht mehr", aber aus **strukturell verschiedenen Gründen**,
+und keiner davon ist „war wahr, ist es nicht mehr".
+
+`KGEntity.is_active` (etwa `:949`, Grabstein einer zusammengeführten Entität) ist eine **andere
+Spalte auf einer anderen Tabelle** und gehört nicht in diese Aufzählung — beim Zählen leicht zu
+verwechseln.
+
+Käme „widersprochen" als fünfte Bedeutung dazu, ließe sich hinterher nicht mehr sagen,
 **warum** eine Kante inaktiv ist — und damit weder „was galt im März" beantworten noch ein
 falsches Expire zurücknehmen. Gültigkeit braucht ihren eigenen Ausdruck.
 
@@ -183,6 +192,11 @@ Zwei Vorschläge, in dieser Reihenfolge:
 **strukturell**, nicht behauptend: Sie sagen „Notiz A verweist auf B", nicht „X ist wahr". Sie
 können nicht widersprochen werden und dürfen nie ein `valid_to` bekommen — sonst verschwinden
 Wikilinks aus dem Graphen, weil ein Widerspruchsdetektor sie missversteht.
+
+Zur Klarstellung: Diese Kanten werden durchaus deaktiviert, nämlich wenn der Wikilink aus der
+Notiz verschwindet (`note_links.py:107`, `:128`). Das ist eine **Strukturänderung**, kein
+Widerspruch — der Verweis existiert nicht mehr, nicht „er war falsch". Genau diese Unterscheidung
+geht verloren, wenn Gültigkeit auf `is_active` abgebildet wird (§4).
 
 **Empfehlung:** Die Widerspruchserkennung arbeitet auf einer **Allowlist von Prädikaten**, nicht
 auf allen. Kein Prädikat auf der Liste ⇒ kein Expire, egal was das LLM meint.
