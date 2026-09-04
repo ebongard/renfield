@@ -654,6 +654,23 @@ class UpdateManager:
         "lgpio", "python-mpv", "psutil", "pyyaml", "zeroconf",
         "sounddevice", "pyaudio", "scipy", "librosa", "RPi.GPIO",
         "cryptography",
+        # Binary Opus transport (C1). Shipped in requirements.txt since the Opus
+        # rollout but never added here, so EVERY OTA failed at the install step
+        # with "Unknown packages in requirements: ['opuslib>=3.0.1']" and rolled
+        # back. It went unnoticed because the satellite version was not bumped
+        # between 2026-08-22 and 2026-09-04, so no update was ever attempted —
+        # the same blind spot that hid the stale RELEASE_MANIFEST signature.
+        #
+        # tests/satellite/test_update_security.py::test_shipped_requirements_pass_validation
+        # HAS been reporting this the whole time. It was mistaken for pre-existing
+        # test rot. It was not.
+        #
+        # Canonicalisation check before adding a name to a security allowlist:
+        # `opuslib` canonicalises to `opuslib` and collides with nothing here.
+        # `opus-lib` / `opus_lib` / `opus.lib` collapse to `opus-lib` — a
+        # DIFFERENT canonical name — so this entry does not implicitly allow a
+        # look-alike project an attacker could register on PyPI.
+        "opuslib",
     })
 
     @staticmethod

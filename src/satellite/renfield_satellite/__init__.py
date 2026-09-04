@@ -5,7 +5,7 @@ A headless voice assistant satellite for the Renfield ecosystem.
 Designed for Raspberry Pi Zero 2 W with ReSpeaker 2-Mics Pi HAT.
 """
 
-__version__ = "1.4.7"
+__version__ = "1.4.8"
 __author__ = "Renfield Team"
 
 # Lazy imports to allow CLI tools to run without all dependencies
