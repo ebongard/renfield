@@ -512,6 +512,36 @@ class _CountingEmbedClient:
         return await self.inner.generate(*args, **kwargs)
 
 
+def get_intent_client() -> LLMClient:
+    """Return the client for the small/fast "intent" tier.
+
+    The intent tier is short classification work — agent-role routing, the
+    OCR-gibberish verdict, follow-up chips. None of it needs the main model,
+    and running it there costs a slot on the primary GPU and pollutes that
+    server's prefix cache with one-off prompts.
+
+    ``llm_openai_for_intent`` decides where it goes:
+
+    - unset / True  → the OpenAI-compat endpoint, i.e. the main llama-server.
+      That is the pre-2026-09 behaviour and stays the default, so this function
+      is a no-op until the flag is set.
+    - False         → the Ollama endpoint (``ollama_url``), which serves the
+      dedicated ``ollama_intent_model``.
+
+    Before this existed the flag was dead config: only the ``chat`` and
+    ``agent`` tiers were ever passed to ``use_openai_for_tier``, so
+    ``LLM_OPENAI_FOR_INTENT`` could be set to anything with no effect, and the
+    intent consumers silently ran on the main model. The model NAME was still
+    read from ``ollama_intent_model`` and handed to llama-server, which ignores
+    a requested model name — so the setting looked configured and did nothing.
+    """
+    if use_openai_for_tier("intent"):
+        client = get_openai_compat_client()
+        if client is not None:
+            return _maybe_wrap_openai_fallback(client)  # type: ignore[return-value]
+    return _make_client_with_fallback(settings.ollama_url)
+
+
 def get_embed_client() -> LLMClient:
     """Return the client for embedding calls.
 

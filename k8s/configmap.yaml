@@ -107,8 +107,33 @@ data:
   # cuda outage. Enabled here after the 2026-08-09 cuda outages; the in-code
   # default is false (dark).
   LLM_OPENAI_FALLBACK_ENABLED: "true"
-  LLM_OPENAI_FALLBACK_MODEL: "qwen3:14b"
+  # Downgraded 14b -> 8b (2026-09-04). k8s-gpu-1 has 16.3 GB and was 14.6 GB
+  # resident (qwen3:14b 10.14 + qwen3-embedding 3.86 + nomic 0.60), leaving
+  # 1.9 GB — not enough for a dedicated intent model, and not even enough for
+  # OLLAMA_VISION_MODEL (qwen3-vl:8b, 6.14 GB) to sit alongside, so every
+  # vision request forced an eviction. The fallback is a keep-the-lights-on
+  # path for a cuda.local outage; 8b vs 14b is a small step down there, while
+  # freeing ~4 GB buys back BOTH the intent tier and vision headroom. Operator
+  # decision: an intent model is worth more than a stronger fallback.
+  LLM_OPENAI_FALLBACK_MODEL: "qwen3:8b"
   WAIT_CUDA_MAX_SECONDS: "30"
+
+  # Agent-role classification runs on EVERY turn and is short, deterministic
+  # classification — it does not need the 35B main model, and running it there
+  # burns a slot on the primary GPU and pollutes that server's prefix cache
+  # (measured 36.7% hit rate, 9.1:1 prompt-to-generation) with one-off prompts.
+  # agent_router deliberately bypasses get_agent_client (see the comment at
+  # services/agent_router.py::classify), so this URL — not LLM_OPENAI_FOR_INTENT
+  # — is the lever that moves it. Serves OLLAMA_INTENT_MODEL.
+  AGENT_ROUTER_URL: "http://ollama:11434"
+
+  # Routes the remaining intent-tier consumers (is_ocr_gibberish, follow-up
+  # chips) to OLLAMA_URL / OLLAMA_INTENT_MODEL instead of the main model.
+  # Until 2026-09 this flag was DEAD CONFIG: only the chat and agent tiers were
+  # ever passed to use_openai_for_tier(), so setting it had no effect and the
+  # consumers silently ran on the main model — while the configured model name
+  # was still handed to llama-server, which ignores a requested model name.
+  LLM_OPENAI_FOR_INTENT: "false"
 
   # Exploit the llama-server's large context window. LLM_OPENAI_NUM_CTX must
   # match the server's --ctx-size (cuda.local:8081 runs 262144); it only

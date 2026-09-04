@@ -52,7 +52,7 @@ def test_empty_or_garbage_yields_empty():
 async def test_generate_returns_parsed_chips():
     mock_client = MagicMock()
     mock_client.chat = AsyncMock(return_value={"message": {"content": '["X?", "Y?"]'}})
-    with patch("utils.llm_client.get_default_client", return_value=mock_client), \
+    with patch("utils.llm_client.get_intent_client", return_value=mock_client), \
          patch("utils.llm_client.extract_response_content", return_value='["X?", "Y?"]'):
         out = await generate_followups("q", "an answer long enough", lang="de", model="m", count=3)
     assert out == ["X?", "Y?"]
@@ -61,7 +61,7 @@ async def test_generate_returns_parsed_chips():
 @pytest.mark.unit
 async def test_generate_empty_answer_short_circuits():
     # No client call when there's no answer to follow up on.
-    with patch("utils.llm_client.get_default_client", side_effect=AssertionError("should not be called")):
+    with patch("utils.llm_client.get_intent_client", side_effect=AssertionError("should not be called")):
         assert await generate_followups("q", "   ", model="m") == []
 
 
@@ -69,7 +69,7 @@ async def test_generate_empty_answer_short_circuits():
 async def test_generate_is_best_effort_on_failure():
     mock_client = MagicMock()
     mock_client.chat = AsyncMock(side_effect=RuntimeError("ollama down"))
-    with patch("utils.llm_client.get_default_client", return_value=mock_client), \
+    with patch("utils.llm_client.get_intent_client", return_value=mock_client), \
          patch("utils.llm_client.extract_response_content", return_value=""):
         assert await generate_followups("q", "an answer", model="m") == []
 
@@ -80,7 +80,7 @@ async def test_generate_disables_thinking_for_thinking_model():
     ollama-python bug returns empty content and no chips are ever produced."""
     mock_client = MagicMock()
     mock_client.chat = AsyncMock(return_value={"message": {"content": '["X?"]'}})
-    with patch("utils.llm_client.get_default_client", return_value=mock_client), \
+    with patch("utils.llm_client.get_intent_client", return_value=mock_client), \
          patch("utils.llm_client.extract_response_content", return_value='["X?"]'):
         await generate_followups("q", "an answer long enough", model="qwen3:8b", count=3)
     assert mock_client.chat.await_args.kwargs.get("think") is False  # thinking disabled
@@ -91,7 +91,7 @@ async def test_generate_no_think_kwarg_for_non_thinking_model():
     """A non-thinking model gets no `think` kwarg (get_classification_chat_kwargs → {})."""
     mock_client = MagicMock()
     mock_client.chat = AsyncMock(return_value={"message": {"content": '["X?"]'}})
-    with patch("utils.llm_client.get_default_client", return_value=mock_client), \
+    with patch("utils.llm_client.get_intent_client", return_value=mock_client), \
          patch("utils.llm_client.extract_response_content", return_value='["X?"]'):
         await generate_followups("q", "an answer long enough", model="llama3.1:8b", count=3)
     assert "think" not in mock_client.chat.await_args.kwargs

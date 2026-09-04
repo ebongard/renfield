@@ -326,6 +326,13 @@ WICHTIGE REGELN FÜR ANTWORTEN:
             return None
         if not await llm_circuit_breaker.allow_request():
             return None
+        # Intent tier, not the chat client: this is a short classification and
+        # belongs on the small/fast endpoint when one is configured. Resolved
+        # AFTER the guards so a too-short sample costs nothing. No-op until
+        # llm_openai_for_intent=False (then it routes to ollama_intent_model).
+        from utils.llm_client import get_intent_client
+
+        client = get_intent_client()
         try:
             prompt = (
                 "You are checking OCR output quality. Below is text extracted from a "
@@ -336,7 +343,7 @@ WICHTIGE REGELN FÜR ANTWORTEN:
                 "Answer with ONE word only: READABLE or GIBBERISH. /no_think\n\n"
                 f"TEXT:\n{sample}"
             )
-            resp = await self.client.chat(
+            resp = await client.chat(
                 model=model,
                 messages=[{"role": "user", "content": prompt}],
                 stream=False,

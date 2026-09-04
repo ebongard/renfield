@@ -101,7 +101,7 @@ async def generate_followups(
         from utils.llm_client import (
             extract_response_content,
             get_classification_chat_kwargs,
-            get_default_client,
+            get_intent_client,
         )
 
         lang_name = "Deutsch" if (lang or "de").startswith("de") else "English"
@@ -118,7 +118,9 @@ async def generate_followups(
             f"Up to {count} follow-up questions as a JSON array:"
         )
 
-        client = get_default_client()
+        # Intent tier: chips are a throwaway background call, not worth a
+        # slot on the main model. No-op until llm_openai_for_intent=False.
+        client = get_intent_client()
         response = await client.chat(
             model=model,
             messages=[

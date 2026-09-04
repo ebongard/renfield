@@ -45,6 +45,7 @@ from utils.llm_client import (
     get_classification_chat_kwargs,
     get_default_client,
     get_embed_client,
+    get_intent_client,
     get_openai_compat_client,
     get_openai_compat_embed_client,
     is_thinking_model,
@@ -1696,6 +1697,69 @@ class TestFinishReasonSurvivesTheAdapter:
         )]
 
         assert seen[-1].done_reason == "length"
+
+
+# ============================================================================
+# Intent tier (get_intent_client)
+# ============================================================================
+
+class TestGetIntentClient:
+    """`llm_openai_for_intent` was dead config until 2026-09: only the chat and
+    agent tiers were ever passed to `use_openai_for_tier`, so the flag could be
+    set to anything and the intent consumers still ran on the main model."""
+
+    @pytest.mark.unit
+    def test_defaults_to_the_main_model(self, monkeypatch):
+        """Flag unset -> follows the agent tier -> llama-server. Byte-identical
+        to the pre-2026-09 behaviour, so this change is inert until flipped."""
+        monkeypatch.setattr("utils.llm_client.settings.llm_openai_base_url", "http://chat:8080/v1")
+        monkeypatch.setattr("utils.llm_client.settings.llm_openai_model", "qwen3.6")
+        monkeypatch.setattr("utils.llm_client.settings.llm_openai_api_key", None)
+        monkeypatch.setattr("utils.llm_client.settings.llm_openai_for_intent", None)
+        monkeypatch.setattr("utils.llm_client.settings.llm_openai_for_agent", None)
+        monkeypatch.setattr("utils.llm_client.settings.llm_openai_fallback_enabled", False)
+
+        client = get_intent_client()
+        assert isinstance(client, OpenAICompatibleClient)
+        assert client._base_url == "http://chat:8080/v1"
+
+    @pytest.mark.unit
+    def test_flag_false_routes_to_ollama(self, monkeypatch):
+        """The whole point: intent work lands on the small/fast endpoint, NOT
+        on the main model whose slots and prefix cache we want to protect."""
+        monkeypatch.setattr("utils.llm_client.settings.llm_openai_base_url", "http://chat:8080/v1")
+        monkeypatch.setattr("utils.llm_client.settings.llm_openai_model", "qwen3.6")
+        monkeypatch.setattr("utils.llm_client.settings.llm_openai_api_key", None)
+        monkeypatch.setattr("utils.llm_client.settings.llm_openai_for_intent", False)
+        monkeypatch.setattr("utils.llm_client.settings.llm_openai_for_agent", None)
+        monkeypatch.setattr("utils.llm_client.settings.ollama_url", "http://ollama:11434")
+
+        client = get_intent_client()
+        assert not isinstance(client, OpenAICompatibleClient), (
+            "intent tier must not resolve to the OpenAI-compat main model when "
+            "llm_openai_for_intent is False"
+        )
+
+    @pytest.mark.unit
+    def test_flag_true_routes_to_openai_even_if_agent_is_false(self, monkeypatch):
+        """An explicit per-tier True must win over the agent-tier default."""
+        monkeypatch.setattr("utils.llm_client.settings.llm_openai_base_url", "http://chat:8080/v1")
+        monkeypatch.setattr("utils.llm_client.settings.llm_openai_model", "qwen3.6")
+        monkeypatch.setattr("utils.llm_client.settings.llm_openai_api_key", None)
+        monkeypatch.setattr("utils.llm_client.settings.llm_openai_for_intent", True)
+        monkeypatch.setattr("utils.llm_client.settings.llm_openai_for_agent", False)
+        monkeypatch.setattr("utils.llm_client.settings.llm_openai_fallback_enabled", False)
+
+        assert isinstance(get_intent_client(), OpenAICompatibleClient)
+
+    @pytest.mark.unit
+    def test_no_openai_endpoint_configured_uses_ollama(self, monkeypatch):
+        """No llama-server at all -> Ollama, regardless of the flag."""
+        monkeypatch.setattr("utils.llm_client.settings.llm_openai_base_url", None)
+        monkeypatch.setattr("utils.llm_client.settings.llm_openai_for_intent", True)
+        monkeypatch.setattr("utils.llm_client.settings.ollama_url", "http://ollama:11434")
+
+        assert not isinstance(get_intent_client(), OpenAICompatibleClient)
 
 
 # ============================================================================

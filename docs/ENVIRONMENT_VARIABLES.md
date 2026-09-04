@@ -301,8 +301,9 @@ AGENT_ROUTER_TIMEOUT=30.0
 
 ```bash
 # Basis-URL eines OpenAI-kompatiblen Endpoints. Wenn gesetzt, nutzt der
-# Agent-Tier (und standardmäßig chat/rag/intent/kg/memory) diesen Endpoint
-# statt Ollama. Per-Tier abschaltbar: LLM_OPENAI_FOR_{AGENT,CHAT,RAG,INTENT,KG,MEMORY}=false
+# Agent-Tier (und standardmäßig chat + intent) diesen Endpoint statt Ollama.
+# Per-Tier abschaltbar: LLM_OPENAI_FOR_{AGENT,CHAT,INTENT}=false — RAG/KG/MEMORY
+# existieren als Flags, werden aber NICHT gelesen (s. Abschnitt unten).
 # LLM_OPENAI_BASE_URL=http://cuda.local:8081/v1
 
 # Bearer-Key für externe APIs (OpenRouter, vLLM mit Auth). llama-server
@@ -382,6 +383,47 @@ Der Agent Loop ermöglicht komplexe, mehrstufige Anfragen mit bedingter Logik un
 - "Schalte das Licht ein und dann stelle die Heizung auf 22 Grad"
 
 Einfache Anfragen ("Schalte das Licht ein") nutzen weiterhin den schnellen Single-Intent-Pfad.
+
+#### Welche Tiers wirklich verdrahtet sind
+
+`LLM_OPENAI_FOR_*` existiert für sechs Tiers, aber **nur drei werden im Code abgefragt**:
+
+| Flag | Wirksam? | Wer liest es |
+|---|---|---|
+| `LLM_OPENAI_FOR_AGENT` | ja | `llm_client`, `agent_service`, `orchestrator` |
+| `LLM_OPENAI_FOR_CHAT` | ja | `llm_client.get_default_client` |
+| `LLM_OPENAI_FOR_INTENT` | ja (seit 2026-09) | `llm_client.get_intent_client` → `is_ocr_gibberish`, Follow-up-Chips |
+| `LLM_OPENAI_FOR_RAG` | **nein** | — |
+| `LLM_OPENAI_FOR_KG` | **nein** | — |
+| `LLM_OPENAI_FOR_MEMORY` | **nein** | — |
+
+Die drei unwirksamen Flags sind tote Konfiguration — Setzen ändert nichts. Sie bleiben
+vorhanden, weil die Tiers existieren; verdrahtet werden sie, wenn ein Bedarf entsteht.
+
+**`LLM_OPENAI_FOR_INTENT` war bis 2026-09 ebenfalls tot.** Der Intent-Tier lief still auf
+dem Hauptmodell, während der konfigurierte `OLLAMA_INTENT_MODEL`-Name an llama-server
+übergeben wurde — das ignoriert angeforderte Modellnamen, also sah die Einstellung
+konfiguriert aus und tat nichts.
+
+#### `AGENT_ROUTER_URL` — der Router folgt den Tier-Flags NICHT
+
+Die Rollen-Klassifikation (`agent_router.classify`, läuft bei **jedem** Turn) umgeht
+`use_openai_for_tier` absichtlich und wählt ihren Client so:
+
+```
+AGENT_ROUTER_URL > AGENT_OLLAMA_URL > (sonst) der Chat-Client
+```
+
+Ohne gesetzte URL landet sie damit auf dem Hauptmodell. `LLM_OPENAI_FOR_INTENT` bewegt
+sie **nicht** — der Hebel ist:
+
+```bash
+AGENT_ROUTER_URL=http://ollama:11434   # klassifiziert mit OLLAMA_INTENT_MODEL
+```
+
+Warum das lohnt: Die Klassifikation ist kurz und deterministisch, braucht kein
+35B-Modell, belegt sonst aber einen Slot der Haupt-GPU und verdünnt deren Prefix-Cache
+(gemessen 36,7 % Trefferquote bei 9,1:1 prompt-dominierter Last) mit Einmal-Prompts.
 
 ### Folgefragen-Chips (Follow-up Chips)
 
