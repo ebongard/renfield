@@ -21,8 +21,18 @@ print(f"== model {os.path.basename(model_path)} (key {key}) ==")
 
 for path in wavs:
     with wave.open(path) as w:
-        rate = w.getframerate()
+        rate, channels, width = w.getframerate(), w.getnchannels(), w.getsampwidth()
         a = np.frombuffer(w.readframes(w.getnframes()), dtype=np.int16)
+    # Refuse rather than mis-measure. openWakeWord's melspectrogram assumes
+    # 16 kHz mono; hand it a stereo capture and np.frombuffer yields interleaved
+    # samples that score as garbage, with a plausible-looking number as output.
+    # This tool is the acceptance gate for a room capture, and the raw
+    # multi-channel file sits right next to the derived -mono.wav.
+    if channels != 1 or rate != 16000 or width != 2:
+        print(f"\n  {os.path.basename(path)}: SKIPPED — need 16 kHz mono 16-bit, "
+              f"got {rate} Hz / {channels} ch / {width * 8}-bit. "
+              f"Run derive_detector_mono.py on it first.")
+        continue
     m.reset()
     scores = []
     for i in range(0, len(a) - CHUNK, CHUNK):

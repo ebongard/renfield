@@ -61,7 +61,9 @@ done
 [[ -n "$HOST" ]] || { echo "error: no satellite host given" >&2; usage 1; }
 [[ -f "$INVENTORY" ]] || { echo "error: inventory not found: $INVENTORY" >&2; exit 1; }
 [[ -f "$INSPECT" ]] || { echo "error: helper not found: $INSPECT" >&2; exit 1; }
-# The label lands in a filename — keep it a safe fragment.
+# HOST and LABEL both land in filenames, remote paths, and an embedded Python
+# string literal (see the ansible-inventory call below) — keep them safe fragments.
+[[ "$HOST" =~ ^[A-Za-z0-9._-]+$ ]] || { echo "error: host must match [A-Za-z0-9._-]" >&2; exit 1; }
 [[ "$LABEL" =~ ^[A-Za-z0-9._-]+$ ]] || { echo "error: --label must match [A-Za-z0-9._-]" >&2; exit 1; }
 [[ "$MINUTES" =~ ^[0-9]+$ ]] && (( MINUTES > 0 )) || { echo "error: --minutes must be a positive integer" >&2; exit 1; }
 
@@ -88,7 +90,11 @@ ansible_sh "mkdir -p $REMOTE_DIR" >/dev/null
 PROBE="$(run_inspect probe | extract_json)"
 [[ -n "$PROBE" ]] || { echo "error: probe returned nothing — is $HOST reachable?" >&2; exit 1; }
 
-read -r DEVICE CHANNELS RATE BEAMFORMING <<<"$(
+# `read` succeeds on empty input, so a failing command substitution here does
+# NOT trip `set -e`. Without the explicit check below, a helper error (e.g.
+# satellite.yaml unreadable) left every field empty and the run died later as a
+# misleading "capture failed".
+PARSED="$(
     python3 -c '
 import json, sys
 p = json.load(sys.stdin)
@@ -96,7 +102,10 @@ if "error" in p:
     sys.exit(p["error"])
 print(p["device"], p["channels"], p["sample_rate"], p["beamforming"])
 ' <<<"$PROBE"
-)"
+)" || { echo "error: could not read the audio config from $HOST" >&2; exit 1; }
+read -r DEVICE CHANNELS RATE BEAMFORMING <<<"$PARSED"
+[[ -n "$DEVICE" && "$CHANNELS" =~ ^[0-9]+$ && "$RATE" =~ ^[0-9]+$ ]] \
+    || { echo "error: incomplete audio config from $HOST: '$PARSED'" >&2; exit 1; }
 
 echo "    device=$DEVICE channels=$CHANNELS rate=$RATE beamforming=$BEAMFORMING"
 echo "    gains: $(python3 -c '
@@ -189,8 +198,15 @@ GATE_RC=$?
 set -e
 
 if [[ $GATE_RC -ne 0 ]]; then
+    # Keep the file as evidence, but move it out of the glob that the next step
+    # (derive_detector_mono.py <dir>/*.wav) uses — otherwise "do not train on
+    # this capture" is a sentence in the output, not a property of the corpus.
+    mv -f "$DEST_DIR/${BASENAME}.wav" "$DEST_DIR/${BASENAME}.REJECTED.wav.bak"
+    [[ -f "$DEST_DIR/${BASENAME}.json" ]] \
+        && mv -f "$DEST_DIR/${BASENAME}.json" "$DEST_DIR/${BASENAME}.REJECTED.json"
     echo
-    echo "REJECTED — do not train on this capture. Fix the cause, then re-capture."
+    echo "REJECTED — quarantined as ${BASENAME}.REJECTED.wav.bak (not picked up by"
+    echo "the corpus glob). Fix the cause, then re-capture."
     exit 1
 fi
 
