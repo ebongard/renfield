@@ -24,7 +24,7 @@ Three production incidents, each the same root cause:
 |---|---|---|---|
 | 2026-06-30 | fleet-wide | `renfield_de` v1 measured ~16 FP/hr on synthetic speech, then false-fired **~500/hr** in real rooms. Constant wake to empty-transcription storm. | Threshold. A model scoring 0.90-0.99 on noise cannot be thresholded out without destroying recall. |
 | 2026-07-06 | Arbeitszimmer | An audiobook on the room's speaker false-woke the satellite **~24x/day**; the model scored narration up to 97%. v3 had been hardened against room *ambient* but never against continuous media speech. | Cutting `ALC Max Gain` 7 to 4 halved it. It did not eliminate it. Only v4, retrained with the audiobook as a hard-negative, reached 0. |
-| 2026-09-04 | Kinderbad | 21 wakes over 11h, **every one** an empty transcription, zero successful sessions. | Enabling the ADC high-pass filter. It removed a real measurement artefact (a DC offset reading as `audio_rms` 1812 while the room actually sat at -55 dBFS) but **6 false wakes still followed in the next 8 hours.** |
+| 2026-09-04/05 | Kinderbad | **25 wakes in 9 h** (~3/h), every one an empty transcription, zero successful sessions. | Enabling the ADC high-pass filter. It removed a real measurement artefact (a DC offset reading as `audio_rms` 1812 while the room actually sat at -55 dBFS) but the false wakes continued unabated. |
 
 The pattern is consistent: **mic-gain and filter levers reduce false positives;
 only room-specific hard-negatives eliminate them.** Reach for the levers first
@@ -114,22 +114,44 @@ threshold. This is what caught the Arbeitszimmer.
 Repeat with different `--label` values to build a corpus. More material from
 more acoustic states is strictly better.
 
-**Anchor the capture against real false positives.** After the capture, check
-whether the satellite false-fired *while it was running*. If it did, the wav
-contains the exact audio that crosses threshold — that turns plausible material
-into verified material, and gives you a precise regression target.
+**Prove the capture is provocative before you train on it.** This is the real
+acceptance test for a capture, and it is cheap: score it with the model that is
+currently deployed. Material the model never reacts to teaches it nothing.
 
 ```bash
-kubectl --context renfield-private -n renfield logs deploy/backend --since=6h --tail=60000 \
-  | grep "sat-<room>" | grep -E "empty_transcription|session:" \
-  | awk '$2 >= "<capture-start>" && $2 <= "<capture-end>"'
+python src/satellite/wakeword-training/scripts/score_wav.py \
+    <deployed-model>.onnx <capture>-mono.wav
 ```
 
-Convert each hit to an offset into the wav (event wall-clock minus capture
-start) and record it in the sidecar under `confirmed_false_positives`. After
-retraining, score those offsets specifically: they must no longer cross
-threshold. The Kinderbad commissioning capture of 2026-09-05 contains two
-(t=1288s, t=1514s).
+Kinderbad, 2026-09-05, scored against the deployed `renfield_de` v3:
+
+| Capture | Peak score | Detections |
+|---|---|---|
+| The 10-min capture already in the v3 corpus (June, quiet) | **0.127** | **0** |
+| The 45-min in-use capture (September) | **0.969** | **8** (~11/h) |
+
+That is the whole argument for this gate in one table. Kinderbad *was* already
+represented in the negative set — with ten quiet minutes the model never reacted
+to, which is why v3 learned nothing about the room and kept false-firing.
+**A capture that peaks below ~0.3 is not usable hard-negative material.**
+
+**Counting false positives in the log — use the right line.** A false positive
+is the `Wake word '<model>' detected` line. Do NOT grep for `session:`: satellite
+re-registrations also carry a `DB session:` line, which inflates the count.
+
+```bash
+kubectl --context renfield-private -n renfield logs deploy/backend --since=8h --tail=80000 \
+  | grep "Wake word '" | grep -oE "detected by sat-[a-z]+" | sort | uniq -c
+```
+
+**Do not expect wall-clock alignment.** It is tempting to correlate a logged wake
+with an offset in the capture and call that the triggering audio. On Kinderbad
+that did not hold: the one wake logged during the capture window (09:02:55, i.e.
+t=1288s) scores **0.001** offline in every channel variant — beamformed, either
+raw channel, and the plain downmix. Clocks were verified synchronized and the
+detector path was verified to take the beamformed mono unmodified, so neither
+explains it; ALSA capture drift on a loaded Pi Zero is the leading suspect but is
+unproven. Judge a capture by the aggregate score above, not by frame alignment.
 
 **Privacy.** These recordings capture whatever is said in the room. Treat them
 as private household data: `data/wakeword-ambient/` is gitignored, keep the
@@ -223,7 +245,7 @@ commissioned, whatever its provisioning status says.
 | Fitnessraum | XVF3800 | yes (v3) | `PP_AGCDESIREDLEVEL=0.015` |
 | Arbeitszimmer | WM8960 / Whisplay | yes (v3 + v4 audiobook) | `ALC Max Gain=4` |
 | Wohnzimmer | 2-mic HAT | yes (v3) | |
-| Kinderbad | 2-mic HAT (AIC3104) | **captured, not yet trained** | ADC HPF enabled 2026-09-04; FPs persisted (6 in the following 8h). 45-min commissioning capture 2026-09-05 08:41-09:26 contains 2 confirmed false positives. Awaiting retrain. |
+| Kinderbad | 2-mic HAT (AIC3104) | **yes (v5, 2026-09-05)** | ADC HPF enabled 2026-09-04; FPs persisted (25 genuine wakes in the following 9 h). Its 10-min June capture scored peak 0.127 (0 detections) — useless as a negative. The 45-min in-use capture scores 0.969 / 8 against v3; v5 brings that to 0.609 / 1. **v5 not yet deployed; live recall unverified.** |
 | Esszimmer | Orange Pi / XVF3800 | yes (v3) | parked, needs new hardware |
 
 ---
