@@ -242,10 +242,10 @@ commissioned, whatever its provisioning status says.
 
 | Satellite | Hardware | Room ambient in the negative set | Notes |
 |---|---|---|---|
-| Fitnessraum | XVF3800 | yes (v3) | `PP_AGCDESIREDLEVEL=0.015` |
+| Fitnessraum | XVF3800 | yes (v3) | `PP_AGCDESIREDLEVEL=0.015`; still on v3, v5 available |
 | Arbeitszimmer | WM8960 / Whisplay | yes (v3 + v4 audiobook) | `ALC Max Gain=4` |
-| Wohnzimmer | 2-mic HAT | yes (v3) | |
-| Kinderbad | 2-mic HAT (AIC3104) | **yes (v5, 2026-09-05)** | ADC HPF enabled 2026-09-04; FPs persisted (25 genuine wakes in the following 9 h). Its 10-min June capture scored peak 0.127 (0 detections) — useless as a negative. The 45-min in-use capture scores 0.969 / 8 against v3; v5 brings that to 0.609 / 1. **v5 not yet deployed; live recall unverified.** |
+| Wohnzimmer | 2-mic HAT | yes (v3) | still on v3, v5 available |
+| Kinderbad | 2-mic HAT (AIC3104) | **yes (v5, 2026-09-05)** | ADC HPF enabled 2026-09-04; FPs persisted (25 genuine wakes in the following 9 h). Its 10-min June capture scored peak 0.127 (0 detections) — useless as a negative. The 45-min in-use capture scores 0.969 / 8 against v3; v5 brings that to 0.609 / 1. **v5 deployed 2026-09-05 16:13** (backend `2026-09-05-renfield-de-v5`); live recall not yet re-verified for v5. |
 | Esszimmer | Orange Pi / XVF3800 | yes (v3) | parked, needs new hardware |
 
 ---
