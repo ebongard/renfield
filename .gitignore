@@ -97,6 +97,11 @@ coverage/
 data/wakeword-models/*.tflite
 data/wakeword-models/*.onnx
 
+# Room-ambient captures for wakeword hard-negative training.
+# Private household audio — never committed. See
+# docs/SATELLITE_ACOUSTIC_COMMISSIONING.md (delete after training).
+data/wakeword-ambient/
+
 # Test screenshots (ephemeral browser test artifacts)
 test-screenshots/
 

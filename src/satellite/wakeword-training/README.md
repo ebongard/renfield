@@ -93,6 +93,15 @@ The blocker was Blackwell (sm_120) + CUDA versions. What works:
 
 ## Real-ambient false-positive hardening (v2/v3 — REQUIRED before shipping)
 
+> **Per-room capture is a commissioning gate, not a training option.** Every
+> satellite must have its own room in this negative set before it counts as
+> live. The procedure, the acceptance thresholds, and the per-room event
+> checklist are in [`docs/SATELLITE_ACOUSTIC_COMMISSIONING.md`](../../../docs/SATELLITE_ACOUSTIC_COMMISSIONING.md).
+> Capture with `bin/capture-room-ambient.sh` (records raw multi-channel with a
+> sanity gate) and collapse it with `scripts/derive_detector_mono.py` (replays
+> the satellite's own beamform/select/downmix, so the negatives match what the
+> detector actually scores).
+
 **The synthetic FP metric lied by ~30×.** v1 measured ~16 fp/hr @0.9 on synthetic
 speech, but in the real house it false-fired **~500×/hr fleet-wide** — a constant
 wake→empty-transcription storm. Synthetic negatives do not represent your rooms.
@@ -100,9 +109,16 @@ wake→empty-transcription storm. Synthetic negatives do not represent your room
 The fix (scripts: `gen_hard_negs.py`, `validate_ambient.py`, `measure_wav.py`,
 `renfield_de_v2.yaml`, `renfield_de_v3.yaml`):
 
-1. **Record real room ambient** on each satellite (~10 min; `arecord -D default
-   -f S16_LE -r 16000 -c 1`). XVF3800/USB mics are exclusive → stop the service
-   to record; HAT mics allow concurrent capture via the shared `default` device.
+1. **Record real room ambient** on each satellite:
+   `bin/capture-room-ambient.sh satellite-<room> --minutes 45`. XVF3800/USB mics
+   are exclusive → stop the service to record; HAT mics allow concurrent capture
+   via the shared `dsnoop` PCM. Capture while the room is **in use** — a quiet
+   noise floor is not what false-fires the model — and at the **deployment mic
+   gain**. The script records RAW multi-channel (never a pre-downmixed mono: on a
+   beamforming satellite that is a different signal than the detector scores) and
+   rejects captures with a DC offset, clipping, or a dead channel.
+   `scripts/derive_detector_mono.py` then produces the detector-side mono for
+   `/work/ambient/`.
 2. **`gen_hard_negs.py`** embeds each wav (`AudioFeatures._get_embeddings` →
    `(frames,96)`) and splits each room **75/25 by time**: first 75% → windowed
    `(N,16,96)` training **hard-negatives**; last 25% → concatenated **held-out
