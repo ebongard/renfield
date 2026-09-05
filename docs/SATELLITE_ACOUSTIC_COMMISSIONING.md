@@ -58,7 +58,10 @@ Two hard requirements:
 - **No DC offset.** On the TLV320AIC3104 (`seeed2micvoicec` 2-mic HAT) the ADC
   high-pass filter defaults to `Disabled`, and the resulting DC bias dominates
   the signal. Set `ADC HPF Cut-off` to `0.0045xFs` on **both** channels and
-  persist it via `aic3104_adc_hpf` in `host_vars/satellite-<room>.yml`.
+  persist it in `host_vars/satellite-<room>.yml` with **both**
+  `aic3104_adc_hpf_enabled: true` (the task gate) and `aic3104_adc_hpf: "0.0045xFs"`.
+  Setting only the value leaves the gate false and the playbook skips the task
+  silently.
   Symptom when missed: an implausibly high `audio_rms` in the fleet heartbeat
   with a quiet room, and all signal energy below 100 Hz.
 - **No clipping, no dead channel.** Every channel must show a plausible level.
