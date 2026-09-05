@@ -116,6 +116,28 @@ wipes the `/etc/hosts` edit.
 1. Add the host to `inventory.yml`
 2. Create `host_vars/<hostname>.yml` with HAT-specific settings
 3. Run the playbook
+4. **Acoustically commission the room — MANDATORY.**
+   See [`docs/SATELLITE_ACOUSTIC_COMMISSIONING.md`](../../../docs/SATELLITE_ACOUSTIC_COMMISSIONING.md).
+
+### Step 4 is not optional
+
+Provisioning gets the hardware working. It does NOT make the satellite usable.
+
+A wakeword model only rejects noise it was trained to reject, and every room has
+its own signature. A satellite whose room is absent from the model's
+hard-negative set will false-fire — `renfield_de` v1 measured ~16 FP/hr on
+synthetic speech and then fired **~500/hr** in real rooms. Mic-gain levers
+reduce this; only room-specific hard-negatives eliminate it.
+
+```bash
+# From the repo root, after provisioning:
+bin/capture-room-ambient.sh satellite-<room> --minutes 45 --label commissioning
+```
+
+Capture while the room is **in use** — a quiet noise floor is not what
+false-fires the model. Then derive the detector-side mono, retrain, and validate
+against the room's held-out ambient. The full six-step gate, the acceptance
+thresholds, and the per-room event checklist are in the commissioning doc.
 
 ## Host Variables
 
@@ -155,3 +177,20 @@ ssh satellite-fitnessraum.local "sudo journalctl -u renfield-satellite -n 30"
 #   SPI opened: bus 0, device 1      (4-mic only)
 #   Connected to server
 ```
+
+These checks prove the hardware works. They do NOT prove the satellite is
+usable. The acoustic gate is what closes that gap:
+
+```bash
+# No DC offset on the capture chain (AIC3104 HATs default to HPF Disabled)
+ansible satellite-<room> -i inventory.yml -m shell \
+  -a "amixer -c 0 sget 'ADC HPF Cut-off' | grep Item"
+
+# False positives show up as wakes with empty transcriptions
+kubectl --context renfield-private -n renfield logs deploy/backend --since=12h \
+  | grep empty_transcription | grep -oE "sat-[a-z]+" | sort | uniq -c | sort -rn
+```
+
+A room that dominates the empty-transcription count, with near-zero successful
+sessions, has not passed acoustic commissioning — regardless of what the
+provisioning checks say.

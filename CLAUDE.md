@@ -95,6 +95,29 @@ Modern phones advertise a **rotating** BLE Resolvable Private Address (RPA), so 
 - **Bonded vs resolver:** a satellite that has *bonded* the phone (Esszimmer did) lets BlueZ resolve the RPA to the identity MAC natively → it's tracked as a normal `ble` known-device. Non-bonded satellites use the pushed IRK + the software resolver. Device identities live in the **backend known-devices DB** (`UserBleDevice`) — not in the manifest. With the BLE stack on multiple satellites, the backend's `_assign_room` does multi-satellite RSSI arbitration (mean RSSI + per-extra-satellite bonus + hysteresis). **Bonding can BIAS that arbitration (fixed 2026-06-22):** a bonded satellite resolves the phone *natively on every advert* and reports a strong, near-constant signal, so in adjacent/open-plan rooms it **out-shouts** a non-bonded neighbour and wins the room even when the user is physically in the other room (observed Esszimmer-bonded ~20 matches/min vs Wohnzimmer Pi-Zero ~2/min → always assigned Esszimmer). Fix: **un-bond the phone** so *every* satellite uses the same software IRK resolver — `bluetoothctl remove <identity-mac>` on the bonding satellite's **host** (the bond lives in the host's `/var/lib/bluetooth`; the k8s pod mounts it RO and can't remove it). The IRK is already in the backend, so detection continues via software; only the unfair native edge is removed, and RSSI/placement then decides the room correctly (verified: presence tracks the actual room bidirectionally). Re-bond anytime via the IRK pairing flow if a satellite needs native resolution. See `docs/design/ble-presence-improvement.md`.
 - Deploy note: the satellite image needs `bluez`/`bluez-tools` + `cryptography`; bare-metal Pis need the `cryptography` dep and `sudo` for the `/var/lib/bluetooth` read. **`cryptography` is mandatory for IRK resolution and `rpa.py` silently no-ops without it** (`resolve_rpa()` returns `False` for every address → phone presence dies invisibly). It was missing from every bare-metal venv (it lived only in `satellite_python_packages`, installed under the `[python]` tag, which the safety code-only `--tags app` deploy skips — the same drift the `envirophat` task documents). Now installed by a dedicated `[python, app]` task **and** in the satellite `requirements.txt`; the satellite also logs a loud warning if IRKs arrive while `_CRYPTO_AVAILABLE` is False. Verify after deploy: `venv/bin/python -c "from renfield_satellite.ble.rpa import _CRYPTO_AVAILABLE; print(_CRYPTO_AVAILABLE)"`.
 
+### Satellite acoustic commissioning (MANDATORY per installation)
+
+Provisioning a satellite makes the hardware work; it does NOT make the satellite
+usable. **Every new installation must have its room's ambient audio recorded and
+folded into the wakeword model's hard-negative set before it counts as live** —
+`docs/SATELLITE_ACOUSTIC_COMMISSIONING.md` (six-step gate, acceptance
+thresholds, per-room event checklist).
+
+A wakeword model only rejects noise it was trained to reject, and the synthetic
+FP metric lies by ~30×: `renfield_de` v1 measured ~16 FP/hr on synthetic speech
+and fired **~500/hr** in real rooms. Mic-gain levers (`PP_AGCDESIREDLEVEL`,
+`ALC Max Gain`, `ADC HPF Cut-off`) **reduce** false positives; only
+room-specific hard-negatives **eliminate** them — Kinderbad 2026-09-04 is the
+worked counter-example, where enabling the ADC high-pass filter fixed a real
+measurement artefact yet 6 false wakes still followed in the next 8 hours.
+
+Tooling: `bin/capture-room-ambient.sh` (raw multi-channel capture off the shared
+`dsnoop` PCM + a sanity gate that rejects DC offset / clipping / a dead mic) and
+`src/satellite/wakeword-training/scripts/derive_detector_mono.py` (replays the
+satellite's own beamform/select/downmix so negatives match what the detector
+scores). Captures are private household audio — `data/wakeword-ambient/` is
+gitignored; delete after training.
+
 ### Satellite enrollment credential (security review H1 — full fix)
 
 A satellite's trust *was* assertion-based: any LAN device could connect to `/ws/satellite`, **claim** any `satellite_id` in its register frame, evict the incumbent, and harvest the per-person IRK push (location-tracking keys). The full fix gives each satellite a **per-device enrollment PSK** (256-bit), stored server-side only as a bcrypt hash in the `satellites` table (migration `pc20260624`); the satellite presents the plaintext in its register frame's `token` field and the backend verifies it constant-time. Design + the 4 resolved decisions: `docs/private/security/satellite-trust-design.md`.
