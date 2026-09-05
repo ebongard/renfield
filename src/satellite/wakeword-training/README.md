@@ -216,12 +216,21 @@ Two honest caveats:
   v4 — visible as a lone 0.815 hit at **t=1 s** of the Arbeitszimmer file that
   vanishes (peak 0.028) once the first 5 s are skipped. In production a satellite
   warms up once per restart, so prefer the per-file streaming numbers above.
-- **Kinderbad B still peaks 0.970 at t=243 s**, and that segment is in the
-  *training* portion — v5 failed to suppress it. Possibly genuinely speech-like
-  audio rather than a defect. Not investigated.
+- **Kinderbad B still peaks 0.970 at t=243 s.** That segment is in v5's own
+  *training* portion, and it is the one point in the whole corpus that lines up
+  exactly with a logged false positive (09:08:50 CEST). So the single verifiable
+  false positive in the material is precisely the one v5 did **not** learn to
+  reject. Worth attacking directly in a v6 (weight that window harder, or add
+  more captures containing whatever that sound is) rather than assuming more
+  ambient in general will cover it.
 
-Recall is verified only synthetically. Per the commissioning gate, a human must
-still speak "Renfield" in the room before this counts as passed.
+**Live recall CONFIRMED 2026-09-05** after deploy: 7 wakes in the first 1.6 h,
+**4 of them `completed`** transcriptions from a human speaking in the room. Under
+v3 the same room produced 25 wakes and **zero** successful sessions in 9 h, so
+the decisive change is that real sessions exist at all. A clean false-positive
+rate still needs a long quiet window with nobody in the bathroom — the three
+`empty_transcription` turns cannot be attributed while someone is actively
+testing.
 
 ## Train a new language (e.g. EN-US, EN-UK, IT)
 

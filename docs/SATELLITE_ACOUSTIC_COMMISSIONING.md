@@ -147,14 +147,30 @@ kubectl --context renfield-private -n renfield logs deploy/backend --since=8h --
   | grep "Wake word '" | grep -oE "detected by sat-[a-z]+" | sort | uniq -c
 ```
 
-**Do not expect wall-clock alignment.** It is tempting to correlate a logged wake
-with an offset in the capture and call that the triggering audio. On Kinderbad
-that did not hold: the one wake logged during the capture window (09:02:55, i.e.
-t=1288s) scores **0.001** offline in every channel variant — beamformed, either
-raw channel, and the plain downmix. Clocks were verified synchronized and the
-detector path was verified to take the beamformed mono unmodified, so neither
-explains it; ALSA capture drift on a loaded Pi Zero is the leading suspect but is
-unproven. Judge a capture by the aggregate score above, not by frame alignment.
+**Convert the timezone before you correlate anything.** The backend logs in
+**UTC**; a capture's filename and mtime are in the satellite's **local** time.
+Comparing them directly puts every wake two hours (CEST) off its true offset —
+which is exactly the mistake that first made the Kinderbad capture look like it
+contained no triggering audio at all. Verify with the pod's own log rather than
+assuming:
+
+```bash
+kubectl --context renfield-private -n renfield get pods -o json \
+  | python3 -c "import json,sys; print([p['status']['startTime'] for p in json.load(sys.stdin)['items'] if p['metadata']['name'].startswith('backend-')])"
+kubectl --context renfield-private -n renfield logs deploy/backend --tail=100000 | head -1
+```
+
+The pod's `startTime` is UTC; if the first log line carries the same clock, the
+logs are UTC too.
+
+**Even with the timezone right, alignment is partial.** On the Kinderbad capture,
+four logged wakes fall inside the window and exactly **one** (09:08:50 CEST,
+t=1643 s) lands on an offline detection; the other three have no offline hit
+within 120 s. The satellite gates a wake on VAD as well as the wakeword, so the
+two signals are not the same event stream. Use an aligned hit as a bonus — a
+named regression target — and judge the capture itself by the aggregate score
+above.
+
 
 **Privacy.** These recordings capture whatever is said in the room. Treat them
 as private household data: `data/wakeword-ambient/` is gitignored, keep the
@@ -248,7 +264,7 @@ commissioned, whatever its provisioning status says.
 | Fitnessraum | XVF3800 | yes (v3) | `PP_AGCDESIREDLEVEL=0.015`; still on v3, v5 available |
 | Arbeitszimmer | WM8960 / Whisplay | yes (v3 + v4 audiobook) | `ALC Max Gain=4` |
 | Wohnzimmer | 2-mic HAT | yes (v3) | still on v3, v5 available |
-| Kinderbad | 2-mic HAT (AIC3104) | **yes (v5, 2026-09-05)** | ADC HPF enabled 2026-09-04; FPs persisted (25 genuine wakes in the following 9 h). Its 10-min June capture scored peak 0.127 (0 detections) — useless as a negative. The 45-min in-use capture scores 0.969 / 8 against v3; v5 brings that to 0.609 / 1. **v5 deployed 2026-09-05 16:13** (backend `2026-09-05-renfield-de-v5`); live recall not yet re-verified for v5. |
+| Kinderbad | 2-mic HAT (AIC3104) | **yes (v5, 2026-09-05)** | ADC HPF enabled 2026-09-04; FPs persisted (25 genuine wakes in the following 9 h). Its 10-min June capture scored peak 0.127 (0 detections) — useless as a negative. The 45-min in-use capture scores 0.969 / 8 against v3; v5 brings that to 0.609 / 1. **v5 deployed + live-verified 2026-09-05** (backend `2026-09-05-renfield-de-v5`): 4 `completed` sessions in the first 1.6 h, versus 0 in 9 h under v3. |
 | Esszimmer | Orange Pi / XVF3800 | yes (v3) | parked, needs new hardware |
 
 ---
