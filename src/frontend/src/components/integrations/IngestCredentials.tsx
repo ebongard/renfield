@@ -44,6 +44,7 @@ export default function IngestCredentials() {
   const [clientId, setClientId] = useState('');
   const [label, setLabel] = useState('');
   const [route, setRoute] = useState<IngestRoute>('folder_ingest');
+  const [kbName, setKbName] = useState('');
   const [minted, setMinted] = useState<(MintResult & { rotated: boolean }) | null>(null);
   const [copied, setCopied] = useState(false);
   const [copyFailed, setCopyFailed] = useState(false);
@@ -63,9 +64,15 @@ export default function IngestCredentials() {
 
   const doMint = async () => {
     try {
-      reveal(await mint.mutateAsync({ client_id: clientId.trim(), label: label.trim() || clientId.trim(), route }), false);
+      reveal(await mint.mutateAsync({
+        client_id: clientId.trim(),
+        label: label.trim() || clientId.trim(),
+        route,
+        kb_name: kbName.trim() || null,
+      }), false);
       setClientId('');
       setLabel('');
+      setKbName('');
     } catch {
       setError(t('integrations.credentials.mintFailed'));
     }
@@ -176,6 +183,12 @@ export default function IngestCredentials() {
             ))}
           </select>
         </label>
+        <label className="flex flex-col text-xs text-gray-500 dark:text-gray-400">
+          {t('integrations.credentials.kb')}
+          <input className="input mt-1 w-40" value={kbName}
+                 placeholder={t('integrations.credentials.kbDefault')}
+                 onChange={(e) => setKbName(e.target.value)} />
+        </label>
         <button className="btn-primary" disabled={!clientId.trim() || mint.isPending} onClick={doMint}>
           {t('integrations.credentials.mint')}
         </button>
@@ -207,6 +220,14 @@ export default function IngestCredentials() {
                   )}
                 </span>
               </div>
+              <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                {/* Where this client's documents land. The client cannot choose
+                    this — it is read from the credential it authenticates as. */}
+                {t('integrations.credentials.filesInto')}:{' '}
+                {c.kb_name || t('integrations.credentials.kbDefault')}
+                {c.tier != null && ` · ${t('integrations.credentials.tier')} ${c.tier}`}
+                {c.owner && ` · ${c.owner}`}
+              </p>
               <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
                 {t('integrations.credentials.lastSeen')}: {fmt(c.last_authenticated_at)}
                 {' · '}

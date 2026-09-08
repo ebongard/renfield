@@ -37,6 +37,7 @@ from services.ingest_credentials import (
     mint_credential,
     revoke_credential,
     rotate_credential,
+    set_client_sphere,
 )
 from utils.config import settings
 
@@ -54,6 +55,10 @@ class CredentialOut(BaseModel):
     client_id: str
     label: str
     route: str
+    # Where this client's documents land. null => the global default.
+    owner: str | None = None
+    tier: int | None = None
+    kb_name: str | None = None
     created_at: str | None = None
     rotated_at: str | None = None
     last_authenticated_at: str | None = None
@@ -81,6 +86,16 @@ class MintIn(BaseModel):
     client_id: str = Field(min_length=1, max_length=64)
     label: str = Field(min_length=1, max_length=200)
     route: str
+    # Optional sphere routing. Set by the ADMIN here, never by the client.
+    owner: str | None = None
+    tier: int | None = Field(default=None, ge=0, le=4)
+    kb_name: str | None = None
+
+
+class SphereIn(BaseModel):
+    owner: str | None = None
+    tier: int | None = Field(default=None, ge=0, le=4)
+    kb_name: str | None = None
 
 
 class TokenOut(BaseModel):
@@ -124,6 +139,7 @@ async def list_all(
         credentials=[
             CredentialOut(
                 client_id=r.client_id, label=r.label, route=r.route,
+                owner=r.owner, tier=r.tier, kb_name=r.kb_name,
                 created_at=_iso(r.created_at), rotated_at=_iso(r.rotated_at),
                 last_authenticated_at=_iso(r.last_authenticated_at),
                 revoked_at=_iso(r.revoked_at), is_enabled=bool(r.is_enabled),
@@ -150,6 +166,7 @@ async def mint(
         token = await mint_credential(
             db, client_id=body.client_id, label=body.label, route=body.route,
             created_by_user_id=getattr(user, "id", None),
+            owner=body.owner, tier=body.tier, kb_name=body.kb_name,
         )
     except InvalidClientId as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from None
@@ -194,3 +211,29 @@ async def revoke(
     if not ok:
         raise HTTPException(status_code=404, detail=f"unknown client_id: {client_id}")
     return {"revoked": True, "client_id": client_id.strip().lower()}
+
+
+@router.put("/{client_id}/sphere")
+@limiter.limit(settings.api_rate_limit_admin)
+async def set_sphere(
+    request: Request,
+    client_id: str,
+    body: SphereIn,
+    db: AsyncSession = Depends(get_db),
+    user=Depends(require_permission(Permission.SETTINGS_MANAGE)),
+):
+    """Set where this client's documents land (owner / tier / knowledge base).
+
+    Admin-only and server-side by design: the client never sends these, so a
+    stolen push token cannot choose an owner, raise a tier, or file elsewhere.
+    A null field clears the override back to the global default.
+    """
+    try:
+        ok = await set_client_sphere(
+            db, client_id, owner=body.owner, tier=body.tier, kb_name=body.kb_name
+        )
+    except InvalidClientId as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from None
+    if not ok:
+        raise HTTPException(status_code=404, detail=f"unknown client_id: {client_id}")
+    return {"updated": True, "client_id": client_id.strip().lower()}

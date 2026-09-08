@@ -34,6 +34,9 @@ const credential = {
   client_id: 'scanner',
   label: 'Scanner',
   route: 'folder_ingest',
+  owner: null,
+  tier: 1,
+  kb_name: 'Scans',
   created_at: '2026-09-08T10:00:00Z',
   rotated_at: null,
   last_authenticated_at: '2026-09-08T11:00:00Z',
@@ -108,6 +111,24 @@ describe('IngestCredentials', () => {
     // to get it back rather than implying the name is freed.
     expect(document.body.textContent).toMatch(/stays taken/i);
     expect(del).not.toHaveBeenCalled();
+  });
+
+  it('shows where the client files, which the client itself cannot choose', async () => {
+    renderIt();
+    await screen.findByText('scanner');
+    expect(document.body.textContent).toMatch(/Files into/i);
+    expect(document.body.textContent).toMatch(/Scans/);
+    expect(document.body.textContent).toMatch(/Tier 1/);
+  });
+
+  it('does not render a tier when the field is absent, not just null', async () => {
+    // A response missing the field would otherwise render "Tier undefined".
+    get.mockResolvedValue(body({
+      credentials: [{ ...credential, tier: undefined, kb_name: undefined }],
+    }));
+    renderIt();
+    await screen.findByText('scanner');
+    expect(document.body.textContent).not.toMatch(/undefined/);
   });
 
   it('warns when the feature flag is off', async () => {
