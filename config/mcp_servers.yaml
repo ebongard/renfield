@@ -447,6 +447,11 @@ servers:
     transport: streamable_http
     url: "${SCANNER_MCP_URL:-http://127.0.0.1:9093/mcp}"
     enabled: "${SCANNER_MCP_ENABLED:-false}"
+    # Authenticates RENFIELD TO THE SCANNER — the opposite direction from the
+    # scanner's folder-ingest push token, and a separate secret. Without it the
+    # server would be an unauthenticated device-control and document-ingest
+    # endpoint on the LAN; it refuses to bind a non-loopback address without one.
+    auth_token_env: SCANNER_MCP_TOKEN
     refresh_interval: 300
     example_intent: mcp.scanner.scanner_status
     examples:
