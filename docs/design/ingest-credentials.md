@@ -106,26 +106,39 @@ after which the old one is dropped. Without the overlap, a client that dies
 between "server rotated" and "client persisted" is permanently locked out and
 needs manual re-provisioning.
 
-### The unresolved fork: where does a client persist a rotated token?
+### Client-side persistence: a writable credential file (DECIDED 2026-09-08)
 
-Self-rotation is only useful if the new token survives a client restart. Today
-every ingest MCP reads its token from env at startup, and a k8s pod cannot write
-the Secret its env came from.
+Self-rotation is only useful if the new token survives a client restart. Every
+ingest MCP reads its token from env at startup, and a k8s pod cannot write the
+Secret its env came from — so it would receive a new token, use it, restart,
+re-read the OLD env value and start failing with 403.
 
-- **(a) Writable credential file.** Env becomes bootstrap-only; the client
-  writes the rotated token to a mounted path and prefers it on next start.
-  Trivial for the scanner on the operator Mac; needs a small volume for the k8s
-  MCPs. Keeps the backend cluster-agnostic.
-- **(b) Backend writes the k8s Secret.** No client change, but it couples the
-  backend to the cluster and needs RBAC to patch Secrets. Rejected unless (a)
-  proves impractical — an ingest route should not hold cluster credentials.
-- **(c) Operator-initiated only.** No self-rotation; the UI mints and the
-  operator updates both places. Simplest, but it leaves requirement 4 unmet and
-  keeps the hand-sync that caused the 2026-07 incident.
+**Decision: the env var becomes BOOTSTRAP-ONLY and the durable copy is a file
+the client owns.**
 
-**This decision gates Phase 3 and is deliberately left open.** Phases 1 and 2
-deliver per-integration credentials and the UI, which are valuable on their own
-and do not depend on it.
+    startup:  credential file exists and is non-empty  -> use it
+              otherwise                                -> use env, then write it
+                                                          to the file
+    rotation: write the new token to the file ATOMICALLY (temp + rename, 0600)
+              BEFORE reporting success to the backend
+
+Rejected alternatives: having the backend patch the k8s Secret would put cluster
+write access behind a document-ingest route and does nothing for the scanner,
+which is not in Kubernetes at all; dropping self-rotation would keep the
+hand-synchronisation between two places that caused the 2026-07 drift.
+
+**The k8s volume must be PERSISTENT, not `emptyDir`.** This is the trap in this
+approach and it must be caught in review, not in production. An `emptyDir` is
+lost on reschedule, so a rotated client would fall back to its env value — which
+after a rotation is the STALE token — and 403 until an operator intervenes. The
+scanner on the operator Mac writes an ordinary file and is unaffected.
+
+**Cutover is acknowledgement-based, not purely timed.** The previous token stays
+valid until the client successfully authenticates with the new one (proving it
+persisted the value), with `INGEST_CREDENTIAL_ROTATION_GRACE_SECONDS` as an
+upper bound rather than the primary mechanism. A timer alone would cut a client
+off that had not yet managed to write its file; waiting for proof of use does
+not.
 
 ### UI (requirement 1)
 
@@ -161,7 +174,8 @@ a time; the legacy credential is removed only once no client has used it, which
 |---|---|---|
 | `INGEST_CREDENTIALS_ENABLED` | `false` | Dark. Off ⇒ legacy path only |
 | `INGEST_CREDENTIAL_ROTATION_GRACE_SECONDS` | `300` | Old-token overlap window |
-| `INGEST_CREDENTIAL_SELF_ROTATION_ENABLED` | `false` | Phase 3; gated on the fork above |
+| `INGEST_CREDENTIAL_SELF_ROTATION_ENABLED` | `false` | Phase 3 |
+| `INGEST_CREDENTIAL_FILE` | *(client-side)* | Durable token path; env is bootstrap-only |
 
 ## Phasing
 
@@ -170,9 +184,9 @@ a time; the legacy credential is removed only once no client has used it, which
 - **Phase 2 — UI.** Mint / rotate / revoke on `IntegrationsPage`, blast-radius
   warning, env-managed read-only state. **This alone satisfies requirements
   1-3.**
-- **Phase 3 — self-rotation.** The rotate endpoint, the grace window, and the
-  client-side persistence chosen by the fork. Requires MCP-side changes in each
-  sibling repo.
+- **Phase 3 — self-rotation.** The rotate endpoint, acknowledgement-based
+  cutover, and the credential file. Requires MCP-side changes in each sibling
+  repo plus a persistent volume for the k8s ones.
 - **Phase 4 — sphere routing on client identity.** `client -> owner/tier/kb`,
   which makes the scanner's `scan_profile_id` meaningful and brings folder-ingest
   level with email-ingest.
@@ -185,7 +199,9 @@ a time; the legacy credential is removed only once no client has used it, which
 - **A rotation grace window means two valid tokens briefly.** Deliberate: the
   alternative is locking a client out on a mid-rotation crash. Bounded and
   configurable.
-- **Phase 3 is blocked on the persistence fork** and may land later than 1 and 2,
-  which is why the phases are ordered so requirements 1-3 ship without it.
+- **A lost credential file falls back to a stale env token**, which means 403
+  until an operator intervenes. Mitigated by requiring a persistent volume (never
+  `emptyDir`) and by acknowledgement-based cutover; not eliminated. This is the
+  cost of keeping the backend cluster-agnostic.
 - **The legacy token stays valid** through the transition; the window closes only
   when the credentials table shows no client using it.
