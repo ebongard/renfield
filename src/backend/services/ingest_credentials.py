@@ -14,6 +14,7 @@ Nothing here ever stores or returns a plaintext token except at mint/rotate
 time, where it is returned exactly once.
 """
 
+import asyncio
 import re
 import secrets
 from dataclasses import dataclass
@@ -22,6 +23,7 @@ from datetime import datetime
 from loguru import logger
 from passlib.context import CryptContext
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.database import IngestCredential
@@ -34,6 +36,23 @@ pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 # spends a full round (~250ms) — a timing oracle that enumerates valid client_ids.
 # One throwaway verify on the miss path equalises the two.
 _DUMMY_TOKEN_HASH = pwd_context.hash("renfield-ingest-timing-equalizer")
+
+# Stamping last_authenticated_at on EVERY push would put a write + commit in the
+# ingest hot path — the same pooled-connection pressure that exhausted the pool
+# in the 2026-07-01 watch-folder outage. The signal it feeds ("is this
+# credential still in use?") does not need second precision, so it is throttled.
+_LAST_SEEN_THROTTLE_SECONDS = 60
+
+# Reserved: `legacy` is the synthetic client reported for the shared token, so a
+# real credential of that name would be indistinguishable from it downstream.
+_RESERVED_CLIENT_IDS = frozenset({"legacy"})
+
+
+async def _verify(secret: str, hashed: str) -> bool:
+    """bcrypt is CPU-bound and takes ~150ms. Called inline it would block the
+    event loop — every other request in this worker — for that long ON EVERY
+    PUSH. Logins can afford it; a watch-folder backlog cannot."""
+    return await asyncio.to_thread(pwd_context.verify, secret, hashed)
 
 TOKEN_PREFIX = "rfi"
 ROUTE_FOLDER = "folder_ingest"
@@ -64,6 +83,8 @@ def _validate_client_id(client_id: str) -> str:
         raise InvalidClientId(
             f"client_id must match {_CLIENT_ID_RE.pattern!r} (got {client_id!r})"
         )
+    if cid in _RESERVED_CLIENT_IDS:
+        raise InvalidClientId(f"client_id {cid!r} is reserved")
     return cid
 
 
@@ -106,12 +127,19 @@ async def mint_credential(
             client_id=cid,
             label=label or cid,
             route=route,
-            token_hash=pwd_context.hash(secret),
+            token_hash=await asyncio.to_thread(pwd_context.hash, secret),
             created_by_user_id=created_by_user_id,
             created_at=datetime.utcnow(),
         )
     )
-    await db.commit()
+    try:
+        await db.commit()
+    except IntegrityError:
+        # The unique index on client_id makes a concurrent duplicate mint safe,
+        # but unhandled it surfaces as a 500. Report the same error the
+        # pre-check would have.
+        await db.rollback()
+        raise ValueError(f"client_id {cid!r} already exists — rotate it instead") from None
     logger.info(f"🔑 ingest credential minted: {cid} ({route})")
     return _format_token(cid, secret)
 
@@ -125,7 +153,7 @@ async def rotate_credential(db: AsyncSession, client_id: str) -> str:
     if row is None:
         raise ValueError(f"unknown client_id: {cid}")
     secret = secrets.token_urlsafe(48)
-    row.token_hash = pwd_context.hash(secret)
+    row.token_hash = await asyncio.to_thread(pwd_context.hash, secret)
     row.rotated_at = datetime.utcnow()
     await db.commit()
     logger.info(f"🔑 ingest credential rotated: {cid}")
@@ -181,9 +209,9 @@ async def resolve_ingest_client(
             if row is None:
                 # Equalise timing against the found-but-wrong-secret path so a
                 # response time cannot enumerate valid client_ids.
-                pwd_context.verify(secret, _DUMMY_TOKEN_HASH)
+                await _verify(secret, _DUMMY_TOKEN_HASH)
                 return None
-            if not pwd_context.verify(secret, row.token_hash):
+            if not await _verify(secret, row.token_hash):
                 return None
             # Checked AFTER the hash so a revoked/disabled/wrong-route client
             # cannot be distinguished from a wrong secret by timing either.
@@ -194,8 +222,11 @@ async def resolve_ingest_client(
                     f"route={row.route} wanted={route})"
                 )
                 return None
-            row.last_authenticated_at = datetime.utcnow()
-            await db.commit()
+            now = datetime.utcnow()
+            last = row.last_authenticated_at
+            if last is None or (now - last).total_seconds() >= _LAST_SEEN_THROTTLE_SECONDS:
+                row.last_authenticated_at = now
+                await db.commit()
             return IngestClient(client_id=row.client_id, label=row.label, route=row.route)
         # Not one of ours → fall through to the legacy shared token.
 

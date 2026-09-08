@@ -204,3 +204,73 @@ async def test_flag_off_ignores_credentials_entirely(db_session, monkeypatch):
 async def test_empty_token_is_rejected(db_session):
     assert await ic.resolve_ingest_client(
         db_session, ic.ROUTE_FOLDER, "", legacy_verify=_legacy_true) is None
+
+
+# --- review findings ---------------------------------------------------------
+
+def test_legacy_client_id_is_reserved():
+    # "legacy" is the synthetic client reported for the shared token; a real
+    # credential of that name would be indistinguishable from it downstream.
+    with pytest.raises(ic.InvalidClientId, match="reserved"):
+        ic._validate_client_id("legacy")
+    with pytest.raises(ic.InvalidClientId, match="reserved"):
+        ic._validate_client_id("  LEGACY  ")
+
+
+async def test_cannot_mint_a_reserved_client_id(db_session):
+    with pytest.raises(ic.InvalidClientId):
+        await ic.mint_credential(
+            db_session, client_id="legacy", label="x", route=ic.ROUTE_FOLDER)
+
+
+async def test_last_seen_write_is_throttled(db_session, monkeypatch):
+    # A write + commit on EVERY push is pooled-connection pressure in the ingest
+    # hot path. The freshness signal does not need second precision.
+    token = await ic.mint_credential(
+        db_session, client_id="scanner", label="S", route=ic.ROUTE_FOLDER)
+    await ic.resolve_ingest_client(db_session, ic.ROUTE_FOLDER, token)
+    row = (await db_session.execute(
+        select(IngestCredential).where(IngestCredential.client_id == "scanner")
+    )).scalar_one()
+    first = row.last_authenticated_at
+    assert first is not None                      # first push always stamps
+    await ic.resolve_ingest_client(db_session, ic.ROUTE_FOLDER, token)
+    await db_session.refresh(row)
+    assert row.last_authenticated_at == first     # second, immediately after, does not
+
+
+async def test_last_seen_stamps_again_once_stale(db_session):
+    from datetime import timedelta
+    token = await ic.mint_credential(
+        db_session, client_id="scanner", label="S", route=ic.ROUTE_FOLDER)
+    row = (await db_session.execute(
+        select(IngestCredential).where(IngestCredential.client_id == "scanner")
+    )).scalar_one()
+    row.last_authenticated_at = ic.datetime.utcnow() - timedelta(
+        seconds=ic._LAST_SEEN_THROTTLE_SECONDS + 5)
+    await db_session.commit()
+    stale = row.last_authenticated_at
+    await ic.resolve_ingest_client(db_session, ic.ROUTE_FOLDER, token)
+    await db_session.refresh(row)
+    assert row.last_authenticated_at > stale
+
+
+async def test_verify_does_not_block_the_event_loop(db_session):
+    # bcrypt takes ~150ms. Called inline it stalls every other request in this
+    # worker on EVERY push, so it must be offloaded to a thread.
+    import asyncio as _a
+    token = await ic.mint_credential(
+        db_session, client_id="scanner", label="S", route=ic.ROUTE_FOLDER)
+    ticks = 0
+
+    async def _ticker():
+        nonlocal ticks
+        while True:
+            await _a.sleep(0.005)
+            ticks += 1
+
+    t = _a.create_task(_ticker())
+    await ic.resolve_ingest_client(db_session, ic.ROUTE_FOLDER, token)
+    t.cancel()
+    # If bcrypt ran inline, the loop would be blocked and the ticker starved.
+    assert ticks > 0, "event loop was blocked during token verification"
