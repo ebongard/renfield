@@ -357,6 +357,11 @@ data:
   FOLDER_INGEST_RENAME_PROCESSED_ENABLED: "true"
   FOLLOWUP_CHIPS_ENABLED: "true"
   GRAPH_EXPANSION_ENABLED: "true"
+  # Per-integration ingest credentials (#1218). ADDITIVE: a token without the
+  # rfi. prefix still falls through to the legacy shared token, so the
+  # filesystem/email-ingest MCPs are unaffected. Enables minting per-client
+  # credentials in the Integrations UI, and per-client sphere routing.
+  INGEST_CREDENTIALS_ENABLED: "true"
   KG_CONFLATION_MONITOR_ENABLED: "true"
   KG_RECONCILER_ENABLED: "true"
   MEMORY_EXTRACTION_V2_SHADOW: "true"
