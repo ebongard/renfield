@@ -111,6 +111,9 @@ k8s/
 │                                    renfield-https (TLS termination + routing)
 ├── middleware-https-redirect.yaml  Traefik Middleware CRD (namespace-scoped)
 ├── alembic-upgrade-job.yaml        Opt-in Job (NOT applied by default) for
+│                                   incremental migrations. Carries NO namespace:
+│                                   field — one would override -n and migrate the
+│                                   WRONG instance. Pass -n explicitly.
 │                                    incremental migrations on an existing DB
 └── kustomization.yaml              `kubectl apply -k k8s/`
 ```
@@ -126,7 +129,7 @@ For K8s this means:
 - Incremental migrations (when a new version of the backend ships a new migration) are applied by hand, using the opt-in `k8s/alembic-upgrade-job.yaml`:
 
   ```bash
-  kubectl -n renfield apply -f k8s/alembic-upgrade-job.yaml
+  kubectl -n <namespace> apply -f k8s/alembic-upgrade-job.yaml   # renfield | renfield-xidra
   kubectl -n renfield logs -f job/alembic-upgrade
   kubectl -n renfield delete job alembic-upgrade
   ```
@@ -322,7 +325,7 @@ kubectl -n renfield set image deploy/backend backend=your-registry.example/renfi
 When the new version contains migrations:
 
 ```bash
-kubectl -n renfield apply -f k8s/alembic-upgrade-job.yaml
+kubectl -n <namespace> apply -f k8s/alembic-upgrade-job.yaml
 kubectl -n renfield logs -f job/alembic-upgrade
 kubectl -n renfield delete job alembic-upgrade
 ```
