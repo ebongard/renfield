@@ -17,6 +17,10 @@ export interface IngestCredential {
   client_id: string;
   label: string;
   route: IngestRoute;
+  /** Where this client's documents land. null => the instance default. */
+  owner: string | null;
+  tier: number | null;
+  kb_name: string | null;
   created_at: string | null;
   rotated_at: string | null;
   last_authenticated_at: string | null;
@@ -45,6 +49,9 @@ export interface MintPayload {
   client_id: string;
   label: string;
   route: IngestRoute;
+  /** Optional sphere routing, set by the ADMIN here — never by the client. */
+  kb_name?: string | null;
+  tier?: number | null;
 }
 
 /** Carries the plaintext. Shown once, never re-fetchable. */

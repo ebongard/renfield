@@ -3249,6 +3249,15 @@ class IngestCredential(Base):
     revoked_at = Column(DateTime, nullable=True)
     is_enabled = Column(Boolean, nullable=False, default=True, server_default="true")
 
+    # Server-authoritative sphere routing (Phase 4). NULL => use the global
+    # folder_ingest_* configuration, so existing credentials are unchanged.
+    # The client never SENDS these; they are read from the row it authenticated
+    # as, so a stolen token cannot pick an owner, raise a tier, or file
+    # elsewhere. Mirrors email-ingest's per-mailbox routing.
+    owner = Column(String(100), nullable=True)      # username or numeric id
+    tier = Column(SmallInteger, nullable=True)      # circle tier 0-4
+    kb_name = Column(String(200), nullable=True)
+
 
 class DocumentProcessingHistory(Base):
     """

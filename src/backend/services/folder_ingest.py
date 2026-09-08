@@ -444,20 +444,24 @@ async def resolve_folder_ingest_client(db: AsyncSession, token: str):
 # (folder_ingest_kb_name, folder_ingest_target_user) destination.
 # ---------------------------------------------------------------------------
 
-async def resolve_target_kb(db: AsyncSession) -> KnowledgeBase:
-    """Get-or-create the configured folder-ingest target KB. Mirrors the
-    chat-upload default-KB pattern so a fresh install just works."""
+async def resolve_target_kb(db: AsyncSession, kb_name: str | None = None) -> KnowledgeBase:
+    """Get-or-create the target KB. Mirrors the chat-upload default-KB pattern
+    so a fresh install just works.
+
+    ``kb_name`` comes from the authenticated CLIENT's credential row when it has
+    one (Phase 4 sphere routing); None falls back to the global configuration,
+    which is what every client did before per-integration credentials existed.
+    """
+    target_name = (kb_name or "").strip() or settings.folder_ingest_kb_name
     kb = (
         await db.execute(
-            select(KnowledgeBase).where(
-                KnowledgeBase.name == settings.folder_ingest_kb_name
-            )
+            select(KnowledgeBase).where(KnowledgeBase.name == target_name)
         )
     ).scalar_one_or_none()
     if kb:
         return kb
     kb = KnowledgeBase(
-        name=settings.folder_ingest_kb_name,
+        name=target_name,
         description="Auto-ingested documents from watched folders",
     )
     db.add(kb)
@@ -480,8 +484,11 @@ async def target_kb_exists(db: AsyncSession) -> bool:
     return kb_id is not None
 
 
-async def resolve_owner_user_id(db: AsyncSession) -> int | None:
-    """Resolve ``folder_ingest_target_user`` (username or numeric id) to a user
-    id. Empty config → None (the bridge/worker handle an ownerless enqueue the
-    same way the upload route does for unauthenticated single-user mode)."""
-    return await resolve_user_id(db, settings.folder_ingest_target_user)
+async def resolve_owner_user_id(db: AsyncSession, owner: str | None = None) -> int | None:
+    """Resolve an owner (username or numeric id) to a user id.
+
+    ``owner`` comes from the authenticated CLIENT's credential row when it has
+    one; None falls back to ``folder_ingest_target_user``. Empty → None (the
+    bridge/worker handle an ownerless enqueue the same way the upload route does
+    for unauthenticated single-user mode)."""
+    return await resolve_user_id(db, (owner or "").strip() or settings.folder_ingest_target_user)

@@ -1262,6 +1262,10 @@
       "revokeWarning": "„{{id}}“ kann sich danach nicht mehr anmelden. Die Kennung bleibt vergeben — reaktiviert wird sie über „Erneuern“, das ein neues Token ausgibt.",
       "revokeConfirm": "Widerruf bestätigen",
       "revokeFailed": "Widerruf fehlgeschlagen.",
+      "kb": "Wissensbasis",
+      "kbDefault": "Standard",
+      "filesInto": "Ablage",
+      "tier": "Stufe",
       "routes": {
         "folder_ingest": "Ordner-Ingest",
         "email_ingest": "E-Mail-Ingest"

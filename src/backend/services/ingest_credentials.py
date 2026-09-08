@@ -26,7 +26,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from models.database import IngestCredential
+from models.database import TIER_PUBLIC, TIER_SELF, IngestCredential
 from utils.config import settings
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
@@ -69,12 +69,27 @@ class InvalidClientId(ValueError):
 @dataclass(frozen=True)
 class IngestClient:
     """Who pushed. ``legacy`` marks the shared SystemSetting token, which has no
-    identity — that is precisely the gap this module closes."""
+    identity — that is precisely the gap this module closes.
+
+    The sphere fields are read from the credential ROW, never from the request.
+    A client cannot name its own owner, tier or knowledge base; if it could, a
+    stolen token would be an escalation rather than a nuisance. ``None`` on any
+    of them means "use the global folder_ingest_* configuration".
+    """
 
     client_id: str
     label: str
     route: str
     legacy: bool = False
+    owner: str | None = None
+    tier: int | None = None
+    kb_name: str | None = None
+
+
+def _clamp_tier(value) -> int:
+    """Clamp to the circle ladder using its canonical bounds, not literals — a
+    hardcoded 0/4 would silently diverge if the ladder ever changed."""
+    return min(max(int(value), TIER_SELF), TIER_PUBLIC)
 
 
 def _validate_client_id(client_id: str) -> str:
@@ -110,6 +125,9 @@ async def mint_credential(
     label: str,
     route: str,
     created_by_user_id: int | None = None,
+    owner: str | None = None,
+    tier: int | None = None,
+    kb_name: str | None = None,
 ) -> str:
     """Create a credential. Returns the plaintext ONCE; only the hash is stored."""
     cid = _validate_client_id(client_id)
@@ -130,6 +148,9 @@ async def mint_credential(
             token_hash=await asyncio.to_thread(pwd_context.hash, secret),
             created_by_user_id=created_by_user_id,
             created_at=datetime.utcnow(),
+            owner=(owner or None),
+            tier=(_clamp_tier(tier) if tier is not None else None),
+            kb_name=(kb_name or None),
         )
     )
     try:
@@ -237,10 +258,45 @@ async def resolve_ingest_client(
             if last is None or (now - last).total_seconds() >= _LAST_SEEN_THROTTLE_SECONDS:
                 row.last_authenticated_at = now
                 await db.commit()
-            return IngestClient(client_id=row.client_id, label=row.label, route=row.route)
+            return IngestClient(
+                client_id=row.client_id, label=row.label, route=row.route,
+                owner=(row.owner or None),
+                # Clamp to the circle ladder. A row edited outside the API must
+                # not be able to express a tier that does not exist.
+                tier=(_clamp_tier(row.tier) if row.tier is not None else None),
+                kb_name=(row.kb_name or None),
+            )
         # Not one of ours → fall through to the legacy shared token.
 
     if legacy_verify is not None and await legacy_verify(db, token):
         return IngestClient(client_id="legacy", label="Legacy shared token",
                             route=route, legacy=True)
     return None
+
+
+async def set_client_sphere(
+    db: AsyncSession,
+    client_id: str,
+    *,
+    owner: str | None,
+    tier: int | None,
+    kb_name: str | None,
+) -> bool:
+    """Set where this client's documents land. Admin-only, server-side.
+
+    Passing ``None`` for a field clears it back to the global default rather
+    than leaving a stale value — an operator removing an owner must actually
+    remove it.
+    """
+    cid = _validate_client_id(client_id)
+    row = (
+        await db.execute(select(IngestCredential).where(IngestCredential.client_id == cid))
+    ).scalar_one_or_none()
+    if row is None:
+        return False
+    row.owner = owner or None
+    row.tier = _clamp_tier(tier) if tier is not None else None
+    row.kb_name = kb_name or None
+    await db.commit()
+    logger.info(f"ingest credential {cid} sphere set: owner={row.owner} tier={row.tier} kb={row.kb_name}")
+    return True

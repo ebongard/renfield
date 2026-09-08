@@ -1262,6 +1262,10 @@
       "revokeWarning": "“{{id}}” can no longer authenticate. The client id stays taken — reactivate it with Rotate, which issues a new token.",
       "revokeConfirm": "Confirm revocation",
       "revokeFailed": "Could not revoke the credential.",
+      "kb": "Knowledge base",
+      "kbDefault": "default",
+      "filesInto": "Files into",
+      "tier": "Tier",
       "routes": {
         "folder_ingest": "Folder ingest",
         "email_ingest": "Email ingest"

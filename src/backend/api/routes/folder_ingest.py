@@ -179,15 +179,26 @@ async def ingest_pushed_document(
     # bridge already maps its own known errors to FAILED/RETRY; this guards the
     # residual transient ones so the 4-state transport contract never breaks.
     try:
-        kb = await resolve_target_kb(db)
-        owner_user_id = await resolve_owner_user_id(db)
+        # Sphere routing is SERVER-AUTHORITATIVE: owner/tier/kb come from the
+        # credential row this push authenticated as, never from the request. A
+        # stolen token can file a document; it cannot choose whose it is, raise
+        # its tier, or put it in another knowledge base. A client with no
+        # override configured falls back to the global folder_ingest_* settings,
+        # which is exactly what every client did before Phase 4.
+        kb = await resolve_target_kb(db, ingest_client.kb_name)
+        owner_user_id = await resolve_owner_user_id(db, ingest_client.owner)
+        tier = (
+            ingest_client.tier
+            if ingest_client.tier is not None
+            else settings.folder_ingest_default_tier
+        )
         result = await ingest_document(
             file_bytes,
             meta,
             db=db,
             kb_id=kb.id,
             owner_user_id=owner_user_id,
-            default_tier=settings.folder_ingest_default_tier,
+            default_tier=tier,
             file_to_paperless=_should_file_paperless(),
             source=FOLDER_INGEST_SOURCE,  # provenance for the Simba review flow
         )

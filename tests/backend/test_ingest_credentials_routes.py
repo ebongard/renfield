@@ -126,3 +126,41 @@ async def test_list_reports_the_feature_flag(client, monkeypatch):
     # The UI must be able to say "these are configured but not yet in effect".
     monkeypatch.setattr(routes.settings, "ingest_credentials_enabled", False, raising=False)
     assert (await client.get("/api/ingest-credentials")).json()["enabled"] is False
+
+
+# --- review findings (Phase 4) -----------------------------------------------
+
+async def test_unknown_owner_is_rejected_not_silently_dropped(client):
+    # resolve_user_id returns None for an unknown username, which the ingest
+    # path reads as "ownerless" — so a typo would silently produce unowned
+    # documents while the admin believed an owner was set.
+    r = await client.post("/api/ingest-credentials",
+                          json={"client_id": "scanner", "label": "S",
+                                "route": ROUTE_FOLDER, "owner": "nosuchuser"})
+    assert r.status_code == 400
+    assert "unknown owner" in r.text
+
+
+async def test_sphere_update_also_rejects_an_unknown_owner(client):
+    await client.post("/api/ingest-credentials",
+                      json={"client_id": "scanner", "label": "S", "route": ROUTE_FOLDER})
+    r = await client.put("/api/ingest-credentials/scanner/sphere",
+                         json={"owner": "nosuchuser", "tier": None, "kb_name": None})
+    assert r.status_code == 400
+
+
+async def test_sphere_can_be_set_and_read_back(client):
+    await client.post("/api/ingest-credentials",
+                      json={"client_id": "scanner", "label": "S", "route": ROUTE_FOLDER})
+    r = await client.put("/api/ingest-credentials/scanner/sphere",
+                         json={"owner": None, "tier": 2, "kb_name": "Scans"})
+    assert r.status_code == 200
+    row = (await client.get("/api/ingest-credentials")).json()["credentials"][0]
+    assert row["tier"] == 2 and row["kb_name"] == "Scans"
+
+
+async def test_out_of_range_tier_is_refused_by_the_schema(client):
+    r = await client.post("/api/ingest-credentials",
+                          json={"client_id": "x", "label": "x",
+                                "route": ROUTE_FOLDER, "tier": 9})
+    assert r.status_code == 422
