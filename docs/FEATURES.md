@@ -542,6 +542,38 @@ geschützt (flag-unabhängiger Worker-Guard, Reindex-409, Dedup als DUPLICATE).
   wie jeder normale Upload; `internal.ingest_status` weist archivierte
   Originale separat aus. Design: `docs/design/pdf-split.md`.
 
+### Dokumentenscan (Papier → Wissensspeicher)
+
+Ein USB-Dokumentenscanner speist Papier über den bestehenden Ingest-Pfad ein —
+Dedup, Eigentümer/Tier, PDF-Split, Docling/OCR, Schicht-A-Fakten und die
+Paperless-Ablage gelten unverändert; der Scanner ist lediglich ein weiterer
+Produzent davor.
+
+**Stand:** Phase 0 (`bin/scan.sh`) ist einsatzbereit — Duplex, A4, Farb- und
+Durchschein-Korrektur, durchsuchbares PDF. Die Ablage in den Watch-Folder bleibt
+vorerst ein Handgriff. Der MCP-Server (`renfield-mcp-scanner`) mit
+sprachgesteuertem Scan und inhaltsbasiertem Routing auf **1..n Ziel-Instanzen**
+ist entworfen, aber noch nicht gebaut: `docs/design/scanner-ingest.md`.
+
+Betriebshinweise, jeweils an echten Scans gemessen — sie gelten unverändert für
+den späteren MCP-Server, der dieselbe PDF-Assemblierung vornimmt:
+
+- SANE scannt voreingestellt **US Letter** (279,364 mm), 17,7 mm kürzer als A4.
+  Ohne `--page-height 297` wird der Fuß jeder A4-Seite stillschweigend
+  abgeschnitten — Bankverbindung, Steuernummer, Summen, Unterschriftszeile, also
+  genau das Schicht-A-Material.
+- `ocrmypdf` transkodiert Scans in der Voreinstellung (`--optimize 1`)
+  verlustbehaftet nach JPEG. Ein Archiv-Master verlangt `--optimize 0`.
+- Zweifaches Entzerren (Scanner **und** `ocrmypdf`) resampelt zweimal ohne
+  Gewinn. Einmal genügt, und zwar auf den Rohdaten des Geräts.
+- Ein **einseitiger** Schräglauf stammt immer aus der Software: ein schiefer
+  Einzug verkantet stets **beide** Seiten eines Blattes.
+- Duplex-Durchschein und der ausgeprägte Blaustich der Rohaufnahme werden über
+  eine Kanal-LUT entfernt, die am Papier-Histogrammgipfel verankert ist.
+- Ein Gerätefehler mitten im Stapel erzeugt **kein** Teil-Dokument: der Lauf
+  bricht hörbar ab und bewahrt die bereits erfassten Seiten, statt einen zu
+  kurzen Scan klaglos abzulegen.
+
 ## Multi-Room Device System
 
 ### Unterstützte Gerätetypen
