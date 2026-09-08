@@ -421,6 +421,23 @@ async def verify_folder_ingest_token(db: AsyncSession, token: str) -> bool:
     return await verify_ingest_token(db, SETTING_FOLDER_INGEST_TOKEN, token)
 
 
+async def resolve_folder_ingest_client(db: AsyncSession, token: str):
+    """Resolve a Bearer token to the pushing client (or None).
+
+    Supersedes the boolean :func:`verify_folder_ingest_token`, which could only
+    say "valid", never "who". Knowing the client is what makes per-integration
+    revocation and server-authoritative sphere routing possible.
+
+    The legacy shared token still authenticates, reported as the synthetic
+    ``legacy`` client, for the whole transition.
+    """
+    from services.ingest_credentials import ROUTE_FOLDER, resolve_ingest_client
+
+    return await resolve_ingest_client(
+        db, ROUTE_FOLDER, token, legacy_verify=verify_folder_ingest_token
+    )
+
+
 # ---------------------------------------------------------------------------
 # Target KB + owner resolution (shared by the push route and the
 # internal.ingest_file agent tool). Both file into the single configured

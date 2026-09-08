@@ -14,8 +14,8 @@ from loguru import logger
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from services.database import get_db
-from services.email_ingest import verify_email_ingest_token
-from services.folder_ingest import verify_folder_ingest_token
+from services.email_ingest import resolve_email_ingest_client
+from services.folder_ingest import resolve_folder_ingest_client
 from services.mcp_health_monitor import ingest_report
 
 router = APIRouter()
@@ -25,8 +25,9 @@ async def _verify_any_ingest_token(db: AsyncSession, token: str) -> bool:
     """A health report is not a data path — the token only proves the caller is a
     legit renfield ingest MCP. Accept EITHER provisioned ingest token so the
     filesystem MCP (folder token) AND the email-ingest MCP (email token) can report."""
-    return await verify_folder_ingest_token(db, token) or await verify_email_ingest_token(
-        db, token
+    return (
+        await resolve_folder_ingest_client(db, token) is not None
+        or await resolve_email_ingest_client(db, token) is not None
     )
 
 

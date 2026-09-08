@@ -3207,6 +3207,49 @@ class FederationQueryLog(Base):
     peer = relationship("PeerUser", foreign_keys=[peer_user_id])
 
 
+class IngestCredential(Base):
+    """One machine credential per pushing integration (folder/email ingest).
+
+    Replaces the single shared ``SystemSetting`` token, which had three
+    problems: it was stored in the CLEAR, every client of a route presented the
+    SAME string (so none could be revoked alone and the backend could not tell
+    who pushed), and it existed in three hand-synchronised places.
+
+    Mirrors the ``satellites`` table (``pc20260624_satellite_enrollment``),
+    which already solves per-device machine credentials here: bcrypt hash only,
+    never the plaintext; ``revoked_at`` + ``is_enabled`` for independent
+    revocation; ``last_authenticated_at`` to make "is this still in use?"
+    observable rather than a guess.
+
+    **Tokens are self-identifying** — ``rfi.<client_id>.<secret>``. The client_id
+    rides in the token so verification is ONE row lookup plus ONE bcrypt, not a
+    bcrypt round against every credential. That is both faster and safer: the
+    naive walk costs N bcrypt rounds per rejected token, which is a cheap
+    denial-of-service for anyone who can reach the push endpoint.
+
+    See ``docs/design/ingest-credentials.md``.
+    """
+
+    __tablename__ = "ingest_credentials"
+
+    id = Column(Integer, primary_key=True)
+    # Opaque, operator-chosen, appears IN the token: [a-z0-9][a-z0-9-]{0,63}
+    client_id = Column(String(64), nullable=False, unique=True, index=True)
+    label = Column(String(200), nullable=False)
+    # Which push route this credential may use: folder_ingest | email_ingest
+    route = Column(String(32), nullable=False, index=True)
+    # bcrypt. NEVER the plaintext — that is returned once, at mint time only.
+    token_hash = Column(String(255), nullable=False)
+    created_by_user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    rotated_at = Column(DateTime, nullable=True)
+    # Stamped on every successful push. This is what makes retiring the legacy
+    # shared token an observation instead of a guess.
+    last_authenticated_at = Column(DateTime, nullable=True)
+    revoked_at = Column(DateTime, nullable=True)
+    is_enabled = Column(Boolean, nullable=False, default=True, server_default="true")
+
+
 class DocumentProcessingHistory(Base):
     """
     Audit row for every ingestion attempt against a Document.
