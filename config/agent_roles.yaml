@@ -15,8 +15,8 @@
 roles:
   smart_home:
     description:
-      de: "Smart Home: Licht, Schalter, Sensoren, Heizung, Szenen steuern, Temperatur/Luftfeuchte in Raeumen abfragen, Bluetooth-Geraete in den Raeumen scannen (NICHT Musik/Medien, NICHT Aussenwetter)"
-      en: "Smart home: control lights, switches, sensors, heating, scenes, query temperature/humidity in rooms, scan for Bluetooth devices in the rooms (NOT music/media, NOT outdoor weather)"
+      de: "Smart Home: Licht, Schalter, Sensoren, Heizung, Szenen steuern, Temperatur/Luftfeuchte in Raeumen abfragen, nach BLUETOOTH-GERAETEN in den Raeumen suchen (NUR Bluetooth-Funkgeraete — NICHT Dokumente/Papier einscannen, NICHT Musik/Medien, NICHT Aussenwetter)"
+      en: "Smart home: control lights, switches, sensors, heating, scenes, query temperature/humidity in rooms, discover BLUETOOTH DEVICES in the rooms (ONLY Bluetooth radios — NOT scanning documents/paper, NOT music/media, NOT outdoor weather)"
     mcp_servers: [homeassistant]
     # internal.media_control is the canonical room-volume path (HA media_players
     # AND DLNA renderers). Volume commands ("lauter/leiser", "auf X% setzen")
@@ -53,8 +53,8 @@ roles:
 
   documents:
     description:
-      de: "Dokumente und E-Mail: Suche in Wissensdatenbank und Paperless, Download, Versand; SOWIE Verwaltung & Status der Dokument-VERARBEITUNG selbst: Verarbeitungsstatus/Rückstau der Indexierung, wie viele Dokumente KEINE Chunks haben / leer oder unvollständig indexiert sind, Dokumente ohne Chunks NEU INDEXIEREN / neu einlesen / reparieren; SOWIE Paperless-Ablage-STATUS & -Pflege: ob ALLE Dokumente in Paperless (vollständig) abgelegt sind, ob Dokumente in Paperless FEHLEN, wie viele (noch nicht) in Paperless sind; SOWIE DUBLETTEN / doppelte Dokumente finden — sowohl in der WISSENSBASIS (gleiches Dokument doppelt eingelesen) als auch in Paperless aufräumen/löschen"
-      en: "Documents and email: search knowledge base and Paperless, download, send; AND administration & status of the document PROCESSING itself: indexing status/backlog, how many documents have NO chunks / are empty or incompletely indexed, RE-INDEX documents without chunks; AND Paperless filing STATUS & upkeep: whether ALL documents are (fully) filed in Paperless, whether documents are MISSING from Paperless, how many are (not yet) in Paperless; AND find DUPLICATE documents — both in the KNOWLEDGE BASE (same document ingested twice) and cleaning up/deleting duplicates in Paperless"
+      de: "Dokumente und E-Mail: PAPIER-DOKUMENTE EINSCANNEN am Dokumentenscanner (\"scanne das Dokument\", \"scanne die Seiten\", \"einscannen\", Scanner-Status/bereit) — das ist IMMER das Scannen von PAPIER, nie Bluetooth; SOWIE Suche in Wissensdatenbank und Paperless, Download, Versand; SOWIE Verwaltung & Status der Dokument-VERARBEITUNG selbst: Verarbeitungsstatus/Rückstau der Indexierung, wie viele Dokumente KEINE Chunks haben / leer oder unvollständig indexiert sind, Dokumente ohne Chunks NEU INDEXIEREN / neu einlesen / reparieren; SOWIE Paperless-Ablage-STATUS & -Pflege: ob ALLE Dokumente in Paperless (vollständig) abgelegt sind, ob Dokumente in Paperless FEHLEN, wie viele (noch nicht) in Paperless sind; SOWIE DUBLETTEN / doppelte Dokumente finden — sowohl in der WISSENSBASIS (gleiches Dokument doppelt eingelesen) als auch in Paperless aufräumen/löschen"
+      en: "Documents and email: SCAN PAPER DOCUMENTS on the document scanner (\"scan the document\", \"scan these pages\", scanner status/ready) — this is ALWAYS scanning PAPER, never Bluetooth; AND search knowledge base and Paperless, download, send; AND administration & status of the document PROCESSING itself: indexing status/backlog, how many documents have NO chunks / are empty or incompletely indexed, RE-INDEX documents without chunks; AND Paperless filing STATUS & upkeep: whether ALL documents are (fully) filed in Paperless, whether documents are MISSING from Paperless, how many are (not yet) in Paperless; AND find DUPLICATE documents — both in the KNOWLEDGE BASE (same document ingested twice) and cleaning up/deleting duplicates in Paperless"
     # scanner: "scanne das Dokument" — the USB scanner pushes into the same
     # folder-ingest seam, so a scan is a document action, not a device action.
     mcp_servers: [paperless, email, scanner]
