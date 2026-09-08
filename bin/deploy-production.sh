@@ -143,6 +143,18 @@ log "rollout"
 if [[ $SKIP_BACKEND == 0 ]]; then
   run "${KUBECTL[*]} set image deploy/backend backend=$REGISTRY/backend:$BACKEND_TAG"
   run "${KUBECTL[*]} set image deploy/document-worker worker=$REGISTRY/backend:$BACKEND_TAG"  # container is 'worker'
+  # EVERY deployment running the backend image, not just the two obvious ones.
+  # meeting-worker and pdf-split-worker were skipped here for months and drifted
+  # several tags behind on BOTH instances — harmless while migrations stayed
+  # additive, but it is silent version skew that grows with every rollout, and
+  # nothing reports it. Optional by design: an instance need not run them.
+  for w in meeting-worker pdf-split-worker; do
+    if ${KUBECTL[*]} get deploy "$w" >/dev/null 2>&1; then
+      run "${KUBECTL[*]} set image deploy/$w worker=$REGISTRY/backend:$BACKEND_TAG"
+    else
+      echo "  (no $w in $NS — skipped)"
+    fi
+  done
 fi
 [[ $SKIP_FRONTEND == 0 ]] && run "${KUBECTL[*]} set image deploy/frontend frontend=$REGISTRY/frontend:$FRONTEND_TAG"
 if [[ $DRY_RUN == 0 ]]; then
