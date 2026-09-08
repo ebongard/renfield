@@ -1259,6 +1259,9 @@
       "legacyEnvManaged": "managed by the backend environment — deliberately not editable here, because a rotation would be overwritten at the next restart",
       "legacyDbManaged": "stored in the database",
       "legacyNote": "The legacy token stays valid until every integration uses its own credential.",
+      "revokeWarning": "“{{id}}” can no longer authenticate. The client id stays taken — reactivate it with Rotate, which issues a new token.",
+      "revokeConfirm": "Confirm revocation",
+      "revokeFailed": "Could not revoke the credential.",
       "routes": {
         "folder_ingest": "Folder ingest",
         "email_ingest": "Email ingest"

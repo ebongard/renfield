@@ -98,6 +98,18 @@ describe('IngestCredentials', () => {
     expect(document.body.textContent).toMatch(/cannot be retrieved again/i);
   });
 
+  it('requires confirmation before revoking, which is the more destructive action', async () => {
+    const user = userEvent.setup();
+    renderIt();
+    await screen.findByText('scanner');
+    await user.click(screen.getByRole('button', { name: /^revoke$/i }));
+    expect(await screen.findByRole('button', { name: /confirm revocation/i })).toBeInTheDocument();
+    // The client id stays taken after revocation, so the warning must say how
+    // to get it back rather than implying the name is freed.
+    expect(document.body.textContent).toMatch(/stays taken/i);
+    expect(del).not.toHaveBeenCalled();
+  });
+
   it('warns when the feature flag is off', async () => {
     get.mockResolvedValue(body({ enabled: false }));
     renderIt();

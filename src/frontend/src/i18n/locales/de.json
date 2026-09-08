@@ -1259,6 +1259,9 @@
       "legacyEnvManaged": "über die Umgebung des Backends verwaltet — hier bewusst nicht änderbar, da eine Erneuerung beim nächsten Neustart überschrieben würde",
       "legacyDbManaged": "in der Datenbank hinterlegt",
       "legacyNote": "Das Alt-Token gilt weiter, bis jede Integration eine eigene Zugangskennung nutzt.",
+      "revokeWarning": "„{{id}}“ kann sich danach nicht mehr anmelden. Die Kennung bleibt vergeben — reaktiviert wird sie über „Erneuern“, das ein neues Token ausgibt.",
+      "revokeConfirm": "Widerruf bestätigen",
+      "revokeFailed": "Widerruf fehlgeschlagen.",
       "routes": {
         "folder_ingest": "Ordner-Ingest",
         "email_ingest": "E-Mail-Ingest"

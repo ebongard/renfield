@@ -274,3 +274,30 @@ async def test_verify_does_not_block_the_event_loop(db_session):
     t.cancel()
     # If bcrypt ran inline, the loop would be blocked and the ticker starved.
     assert ticks > 0, "event loop was blocked during token verification"
+
+
+async def test_rotate_reenables_a_revoked_credential(db_session):
+    # Without this, revoking is a permanent dead end: the row keeps the
+    # client_id (unique), so mint refuses that name forever.
+    await ic.mint_credential(
+        db_session, client_id="scanner", label="S", route=ic.ROUTE_FOLDER)
+    await ic.revoke_credential(db_session, "scanner")
+    with pytest.raises(ValueError, match="already exists"):
+        await ic.mint_credential(
+            db_session, client_id="scanner", label="S", route=ic.ROUTE_FOLDER)
+
+    revived = await ic.rotate_credential(db_session, "scanner")
+    row = (await db_session.execute(
+        select(IngestCredential).where(IngestCredential.client_id == "scanner")
+    )).scalar_one()
+    assert row.is_enabled is True and row.revoked_at is None
+    assert await ic.resolve_ingest_client(db_session, ic.ROUTE_FOLDER, revived) is not None
+
+
+async def test_the_revoked_secret_stays_dead_after_reenable(db_session):
+    old = await ic.mint_credential(
+        db_session, client_id="scanner", label="S", route=ic.ROUTE_FOLDER)
+    await ic.revoke_credential(db_session, "scanner")
+    await ic.rotate_credential(db_session, "scanner")
+    # Re-enabling must not resurrect the secret that was revoked.
+    assert await ic.resolve_ingest_client(db_session, ic.ROUTE_FOLDER, old) is None

@@ -47,7 +47,7 @@ export default function IngestCredentials() {
   const [minted, setMinted] = useState<(MintResult & { rotated: boolean }) | null>(null);
   const [copied, setCopied] = useState(false);
   const [copyFailed, setCopyFailed] = useState(false);
-  const [confirming, setConfirming] = useState<string | null>(null);
+  const [confirming, setConfirming] = useState<{ id: string; action: 'rotate' | 'revoke' } | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const credentials = data?.credentials ?? [];
@@ -77,6 +77,16 @@ export default function IngestCredentials() {
       reveal(await rotate.mutateAsync(id), true);
     } catch {
       setError(t('integrations.credentials.rotateFailed'));
+    }
+  };
+
+  const doRevoke = async (id: string) => {
+    setConfirming(null);
+    try {
+      await revoke.mutateAsync(id);
+      setError(null);
+    } catch {
+      setError(t('integrations.credentials.revokeFailed'));
     }
   };
 
@@ -186,12 +196,12 @@ export default function IngestCredentials() {
                 {stateBadge(c)}
                 <span className="ml-auto flex gap-2">
                   <button className="btn-secondary text-xs" disabled={rotate.isPending}
-                          onClick={() => setConfirming(c.client_id)}>
+                          onClick={() => setConfirming({ id: c.client_id, action: 'rotate' })}>
                     {t('integrations.credentials.rotate')}
                   </button>
                   {!c.revoked_at && (
                     <button className="btn-secondary text-xs" disabled={revoke.isPending}
-                            onClick={() => revoke.mutate(c.client_id)}>
+                            onClick={() => setConfirming({ id: c.client_id, action: 'revoke' })}>
                       {t('integrations.credentials.revoke')}
                     </button>
                   )}
@@ -202,16 +212,27 @@ export default function IngestCredentials() {
                 {' · '}
                 {t('integrations.credentials.created')}: {fmt(c.created_at)}
               </p>
-              {confirming === c.client_id && (
+              {confirming?.id === c.client_id && (
                 <div className="mt-2 rounded-lg border border-amber-300 bg-amber-50 p-3 dark:border-amber-700 dark:bg-amber-900/20">
-                  {/* Blast radius, named. A bare Rotate button is a footgun: the
-                      client keeps presenting the old token until updated. */}
+                  {/* Blast radius, named. Both actions break the client until an
+                      operator acts, so neither is a bare one-click button. */}
                   <p className="text-xs text-amber-800 dark:text-amber-300">
-                    {t('integrations.credentials.rotateWarning', { id: c.client_id })}
+                    {confirming.action === 'rotate'
+                      ? t('integrations.credentials.rotateWarning', { id: c.client_id })
+                      : t('integrations.credentials.revokeWarning', { id: c.client_id })}
                   </p>
                   <div className="mt-2 flex gap-2">
-                    <button className="btn-primary text-xs" onClick={() => doRotate(c.client_id)}>
-                      {t('integrations.credentials.rotateConfirm')}
+                    <button
+                      className="btn-primary text-xs"
+                      onClick={() =>
+                        confirming.action === 'rotate'
+                          ? doRotate(c.client_id)
+                          : doRevoke(c.client_id)
+                      }
+                    >
+                      {confirming.action === 'rotate'
+                        ? t('integrations.credentials.rotateConfirm')
+                        : t('integrations.credentials.revokeConfirm')}
                     </button>
                     <button className="btn-secondary text-xs" onClick={() => setConfirming(null)}>
                       {t('common.cancel')}

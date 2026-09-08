@@ -155,8 +155,18 @@ async def rotate_credential(db: AsyncSession, client_id: str) -> str:
     secret = secrets.token_urlsafe(48)
     row.token_hash = await asyncio.to_thread(pwd_context.hash, secret)
     row.rotated_at = datetime.utcnow()
+    # Rotation is also the RECOVERY path. Without this, revoking is a permanent
+    # dead end: the row keeps the client_id (it is unique), so mint refuses it
+    # forever and the name can never be used again. Re-enabling here is safe
+    # because rotation issues a NEW secret — the revoked one stays dead — and it
+    # takes a deliberate operator action.
+    was_revoked = row.revoked_at is not None or not row.is_enabled
+    row.revoked_at = None
+    row.is_enabled = True
     await db.commit()
-    logger.info(f"🔑 ingest credential rotated: {cid}")
+    logger.info(
+        f"🔑 ingest credential rotated: {cid}" + (" (re-enabled)" if was_revoked else "")
+    )
     return _format_token(cid, secret)
 
 
