@@ -26,7 +26,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from models.database import IngestCredential
+from models.database import TIER_PUBLIC, TIER_SELF, IngestCredential
 from utils.config import settings
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
@@ -86,6 +86,12 @@ class IngestClient:
     kb_name: str | None = None
 
 
+def _clamp_tier(value) -> int:
+    """Clamp to the circle ladder using its canonical bounds, not literals — a
+    hardcoded 0/4 would silently diverge if the ladder ever changed."""
+    return min(max(int(value), TIER_SELF), TIER_PUBLIC)
+
+
 def _validate_client_id(client_id: str) -> str:
     cid = (client_id or "").strip().lower()
     if not _CLIENT_ID_RE.match(cid):
@@ -143,7 +149,7 @@ async def mint_credential(
             created_by_user_id=created_by_user_id,
             created_at=datetime.utcnow(),
             owner=(owner or None),
-            tier=(min(max(int(tier), 0), 4) if tier is not None else None),
+            tier=(_clamp_tier(tier) if tier is not None else None),
             kb_name=(kb_name or None),
         )
     )
@@ -257,7 +263,7 @@ async def resolve_ingest_client(
                 owner=(row.owner or None),
                 # Clamp to the circle ladder. A row edited outside the API must
                 # not be able to express a tier that does not exist.
-                tier=(min(max(int(row.tier), 0), 4) if row.tier is not None else None),
+                tier=(_clamp_tier(row.tier) if row.tier is not None else None),
                 kb_name=(row.kb_name or None),
             )
         # Not one of ours → fall through to the legacy shared token.
@@ -289,7 +295,7 @@ async def set_client_sphere(
     if row is None:
         return False
     row.owner = owner or None
-    row.tier = min(max(int(tier), 0), 4) if tier is not None else None
+    row.tier = _clamp_tier(tier) if tier is not None else None
     row.kb_name = kb_name or None
     await db.commit()
     logger.info(f"ingest credential {cid} sphere set: owner={row.owner} tier={row.tier} kb={row.kb_name}")

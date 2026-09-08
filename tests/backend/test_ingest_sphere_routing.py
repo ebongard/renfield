@@ -55,6 +55,13 @@ async def test_two_clients_route_to_different_spheres(db_session):
     assert (cb.kb_name, cb.tier) == ("Scans", 3)
 
 
+async def test_clamp_uses_the_canonical_ladder_bounds(db_session):
+    # Not hardcoded 0/4: a literal would silently diverge if the ladder changed.
+    from models.database import TIER_PUBLIC, TIER_SELF
+    assert ic._clamp_tier(99) == TIER_PUBLIC
+    assert ic._clamp_tier(-5) == TIER_SELF
+
+
 async def test_tier_is_clamped_to_the_circle_ladder(db_session):
     # A row edited outside the API must not express a tier that does not exist.
     await ic.mint_credential(db_session, client_id="scanner", label="S",

@@ -29,6 +29,7 @@ from models.permissions import Permission
 from services.api_rate_limiter import limiter
 from services.auth_service import require_permission
 from services.database import get_db
+from services.ingest_common import resolve_user_id
 from services.ingest_credentials import (
     ROUTE_EMAIL,
     ROUTE_FOLDER,
@@ -109,6 +110,22 @@ def _iso(value) -> str | None:
     return value.isoformat() if value else None
 
 
+async def _validated_owner(db: AsyncSession, owner: str | None) -> str | None:
+    """Reject an owner that does not resolve to a real user.
+
+    resolve_user_id returns None for an unknown username, which the ingest path
+    treats as "ownerless" — so a typo would silently produce unowned documents
+    while the admin believed they had assigned an owner. Fail here, where a
+    human is present to read the message.
+    """
+    value = (owner or "").strip()
+    if not value:
+        return None
+    if await resolve_user_id(db, value) is None:
+        raise HTTPException(status_code=400, detail=f"unknown owner: {value!r}")
+    return value
+
+
 async def _legacy_state(db: AsyncSession) -> list[LegacyOut]:
     out: list[LegacyOut] = []
     for route, (settings_attr, setting_key) in _LEGACY_ENV.items():
@@ -166,7 +183,8 @@ async def mint(
         token = await mint_credential(
             db, client_id=body.client_id, label=body.label, route=body.route,
             created_by_user_id=getattr(user, "id", None),
-            owner=body.owner, tier=body.tier, kb_name=body.kb_name,
+            owner=await _validated_owner(db, body.owner),
+            tier=body.tier, kb_name=body.kb_name,
         )
     except InvalidClientId as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from None
@@ -230,7 +248,8 @@ async def set_sphere(
     """
     try:
         ok = await set_client_sphere(
-            db, client_id, owner=body.owner, tier=body.tier, kb_name=body.kb_name
+            db, client_id, owner=await _validated_owner(db, body.owner),
+            tier=body.tier, kb_name=body.kb_name,
         )
     except InvalidClientId as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from None
