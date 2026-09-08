@@ -385,6 +385,58 @@ practice:
   configured targets.
 - **Phase 4 (optional) — promote to k8s** if the scanner ever moves to a node.
   Packaging change only.
+- **Phase 5 (optional) — the physical Scan button.** Separated from Phase 4
+  because it is not a packaging change: it is the one place in this design that
+  has to break a project rule, and it raises a routing question the rest of the
+  design deliberately refuses to answer. See below.
+
+### Phase 5 — the physical Scan button
+
+Today, pressing the blue button does **nothing**. The button works and its state
+is readable (`--scan`), but nothing is watching: `read_sensors()` runs only on
+request, from `scanner_status` and the preflight. The former listener was the
+vendor software, and disabling that is precisely what freed the USB device for
+SANE — the button lost its consumer as a direct consequence of getting the
+scanner working at all.
+
+**Three things must be settled before building it, and none is about code.**
+
+**1. It requires polling, and that breaks a standing rule.** SANE exposes no
+event or interrupt API for the sensor group — a button press can only be
+*discovered by asking*. So a trigger is necessarily a loop reading
+`--page-loaded` and `--scan` (roughly every second) and starting a scan when
+paper is present AND the button is down. The project rule is "no polling —
+event-driven watcher"; this is the single point in the design where the hardware
+offers nothing to subscribe to. It is a deliberate, documented exception, not an
+oversight — and it should stay the only one.
+
+**2. A button press carries no destination.** This is the harder problem. With
+`n = 1` it does not arise: the short-circuit routes everything to the only
+target. From the second target onward, a press is a scan with **no declared
+intent** — exactly the case the invariant forbids guessing at. Two honest
+options, and they compose:
+
+  * The scan lands **unrouted in the review queue** (Phase 3), and a human says
+    where it goes. Safe, but it makes the button a two-step action, which
+    undercuts the convenience that is its whole point.
+  * **Separator sheets (Phase 2) give an unattended scan its destination back.**
+    This is the strongest argument for building Phase 2 before Phase 5: a sheet
+    carries the intent that a button press cannot, so pressing the button on a
+    stack with a cover sheet is fully determined. Phase 5 without Phase 2 is a
+    convenience feature that mostly produces review-queue entries.
+
+**3. The polling cost must be measured, not assumed.** `read_sensors()` spawns a
+`scanimage` process per call. At one call a second that is a permanent process
+churn against a device that has only just become reliable, and against a USB
+stack that the vendor software already proved fragile. Measure the cost of the
+poll at the intended interval BEFORE committing to it, and be willing to
+lengthen the interval or drop the phase if it destabilises the device. A scan
+button that makes scanning less reliable is a bad trade.
+
+**Sequencing, therefore:** Phase 5 depends on Phase 2 for anything beyond a
+single target, and it is worth building only once the poll has been shown to be
+free of side effects. It is genuinely optional — every scan is already reachable
+by voice, which is how the design intends it.
 
 ### A partial scan must never be filed
 
@@ -411,11 +463,11 @@ server must never push a batch that faulted mid-stack.
   staging, FileVault, and retention purge — reduced, not eliminated.
 - **Availability is tied to a logged-in user session.** Accepted per the host
   decision; the durable queue means scans are delayed, never lost.
-- **SANE exposes no event API for the Scan button.** If a
-  press-the-button-to-scan trigger is added, it must poll `--page-loaded` /
-  `--scan` (~1s). This is a **documented exception** to the repo's
-  "no polling — event-driven watcher" rule: the driver offers nothing to
-  subscribe to.
+- **SANE exposes no event API for the Scan button.** A press-the-button trigger
+  must poll `--page-loaded` / `--scan` (~1s) — a **documented exception** to the
+  "no polling — event-driven watcher" rule, because the driver offers nothing to
+  subscribe to. Scoped to Phase 5 and deliberately optional; see that section for
+  the routing and poll-cost questions that gate it.
 - **Blank-page dropping via `--swskip` is not reliably tunable.** Measured on
   the first real duplex scan: a content page read 7.62 % dark pixels and its
   reverse 3.97 % — too narrow a margin to threshold without also dropping
