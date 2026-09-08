@@ -59,6 +59,7 @@ export const keys = {
   integrations: {
     all: ['integrations'] as const,
     list: () => ['integrations', 'list'] as const,
+    ingestCredentials: () => ['integrations', 'ingest-credentials'] as const,
   },
   knowledge: {
     all: ['knowledge'] as const,

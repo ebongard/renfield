@@ -1228,7 +1228,42 @@
     "toolInactive": "Inactive",
     "resetDefaults": "Reset to defaults",
     "toolToggleError": "Failed to update tool activation",
-    "activeTools": "active"
+    "activeTools": "active",
+    "credentials": {
+      "title": "Ingest credentials",
+      "description": "One token per pushing integration (MCP). Each can be rotated or revoked on its own; the plaintext is shown exactly once.",
+      "flagOff": "Credentials are configured but not yet in effect: INGEST_CREDENTIALS_ENABLED is off. The shared legacy token remains in use until it is switched on.",
+      "clientId": "Client ID",
+      "label": "Label",
+      "route": "Route",
+      "mint": "Create token",
+      "rotate": "Rotate",
+      "rotateConfirm": "Confirm rotation",
+      "revoke": "Revoke",
+      "copy": "Copy",
+      "copied": "Copied",
+      "copyFailed": "Copy failed — select the token manually and store it. It is shown only this once.",
+      "tokenMinted": "Token created for {{id}}",
+      "tokenRotated": "Token rotated for {{id}}",
+      "tokenOnceWarning": "This token is shown only now and cannot be retrieved again — only a hash is stored.",
+      "rotateWarning": "“{{id}}” keeps presenting the old token and will fail until its copy is updated there.",
+      "lastSeen": "Last used",
+      "created": "Created",
+      "never": "never",
+      "active": "Active",
+      "neverUsed": "Not yet used",
+      "revoked": "Revoked",
+      "mintFailed": "Could not create the token.",
+      "rotateFailed": "Could not rotate the token.",
+      "legacyTitle": "Legacy shared token",
+      "legacyEnvManaged": "managed by the backend environment — deliberately not editable here, because a rotation would be overwritten at the next restart",
+      "legacyDbManaged": "stored in the database",
+      "legacyNote": "The legacy token stays valid until every integration uses its own credential.",
+      "routes": {
+        "folder_ingest": "Folder ingest",
+        "email_ingest": "Email ingest"
+      }
+    }
   },
   "intents": {
     "title": "Intent Overview",

@@ -1228,7 +1228,42 @@
     "toolInactive": "Inaktiv",
     "resetDefaults": "Auf Standard zurücksetzen",
     "toolToggleError": "Tool-Aktivierung konnte nicht aktualisiert werden",
-    "activeTools": "aktiv"
+    "activeTools": "aktiv",
+    "credentials": {
+      "title": "Ingest-Zugangsdaten",
+      "description": "Je ein Token pro anbindender Integration (MCP). Jedes lässt sich einzeln erneuern oder widerrufen; der Klartext erscheint genau einmal.",
+      "flagOff": "Die Zugangsdaten sind angelegt, aber noch nicht aktiv: INGEST_CREDENTIALS_ENABLED ist ausgeschaltet. Bis dahin gilt weiterhin das gemeinsame Alt-Token.",
+      "clientId": "Client-ID",
+      "label": "Bezeichnung",
+      "route": "Route",
+      "mint": "Token erzeugen",
+      "rotate": "Erneuern",
+      "rotateConfirm": "Erneuern bestätigen",
+      "revoke": "Widerrufen",
+      "copy": "Kopieren",
+      "copied": "Kopiert",
+      "copyFailed": "Kopieren fehlgeschlagen — bitte das Token manuell markieren und sichern. Es wird nur dieses eine Mal angezeigt.",
+      "tokenMinted": "Token für {{id}} erzeugt",
+      "tokenRotated": "Token für {{id}} erneuert",
+      "tokenOnceWarning": "Dieses Token wird nur jetzt angezeigt und lässt sich nicht erneut abrufen — es wird ausschließlich als Hash gespeichert.",
+      "rotateWarning": "„{{id}}“ meldet sich weiterhin mit dem alten Token an und schlägt fehl, bis dessen Kopie dort aktualisiert ist.",
+      "lastSeen": "Zuletzt verwendet",
+      "created": "Erstellt",
+      "never": "nie",
+      "active": "Aktiv",
+      "neverUsed": "Noch nicht verwendet",
+      "revoked": "Widerrufen",
+      "mintFailed": "Token konnte nicht erzeugt werden.",
+      "rotateFailed": "Token konnte nicht erneuert werden.",
+      "legacyTitle": "Gemeinsames Alt-Token",
+      "legacyEnvManaged": "über die Umgebung des Backends verwaltet — hier bewusst nicht änderbar, da eine Erneuerung beim nächsten Neustart überschrieben würde",
+      "legacyDbManaged": "in der Datenbank hinterlegt",
+      "legacyNote": "Das Alt-Token gilt weiter, bis jede Integration eine eigene Zugangskennung nutzt.",
+      "routes": {
+        "folder_ingest": "Ordner-Ingest",
+        "email_ingest": "E-Mail-Ingest"
+      }
+    }
   },
   "intents": {
     "title": "Intent-Übersicht",
