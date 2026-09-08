@@ -327,7 +327,7 @@ Tests in `tests/` at project root. Backend: 3,400+ tests.
 | `pr-check.yml` | Pull requests | **Non-functional** — same |
 | `release.yml` | Tag push (v*.*.*) | **Non-functional** — does NOT actually build images; tag is for git audit only |
 
-The real release flow lives in `.claude/skills/deploy-production/SKILL.md`: build on `192.168.1.159`, push to Harbor at `your-registry.example`, kubectl rollout against the private cluster (context `renfield-private`). Backend image is multi-stage Dockerfile with split pip-install layers (Harbor proxy times out on >2.5 GB layers). Migrations: `kubectl -n renfield apply -f k8s/alembic-upgrade-job.yaml` BEFORE the rolling restart.
+The real release flow lives in `.claude/skills/deploy-production/SKILL.md`: build on `192.168.1.159`, push to Harbor at `your-registry.example`, kubectl rollout against the private cluster (context `renfield-private`). Backend image is multi-stage Dockerfile with split pip-install layers (Harbor proxy times out on >2.5 GB layers). Migrations: `kubectl -n <namespace> apply -f k8s/alembic-upgrade-job.yaml` BEFORE the rolling restart — the Job carries NO `namespace:` field, because one in the manifest overrides `-n` and would silently migrate the wrong instance.
 
 ```bash
 make release    # Create + push version tag — does NOT deploy. See deploy-production skill for the real flow.
