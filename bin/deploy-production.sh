@@ -149,7 +149,10 @@ if [[ $SKIP_BACKEND == 0 ]]; then
   # additive, but it is silent version skew that grows with every rollout, and
   # nothing reports it. Optional by design: an instance need not run them.
   for w in meeting-worker pdf-split-worker; do
-    if ${KUBECTL[*]} get deploy "$w" >/dev/null 2>&1; then
+    # The existence probe is a live call, so it must not run in a dry run — the
+    # rest of a dry run touches nothing, and without a cluster it would report
+    # both workers as absent, which is the opposite of informative.
+    if [[ $DRY_RUN == 1 ]] || ${KUBECTL[*]} get deploy "$w" >/dev/null 2>&1; then
       run "${KUBECTL[*]} set image deploy/$w worker=$REGISTRY/backend:$BACKEND_TAG"
     else
       echo "  (no $w in $NS — skipped)"
