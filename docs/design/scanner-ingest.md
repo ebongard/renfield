@@ -386,6 +386,20 @@ practice:
 - **Phase 4 (optional) — promote to k8s** if the scanner ever moves to a node.
   Packaging change only.
 
+### A partial scan must never be filed
+
+`scanimage` signals a mid-stack fault (jam, double feed, opened cover, USB
+error) through its exit status, and a batch that faults still leaves the pages
+it managed to scan on disk. Checking only "did at least one page come out?"
+therefore files a **silently truncated document** — the worst failure mode for
+an archive, because it is discovered only when the missing page is needed.
+
+Phase 0 refuses: any `scanimage:` line other than the normal end-of-feeder
+terminator (`out of documents`) or the benign `rounded value` option-quantisation
+notice aborts the run, prints the scanner's own message, and **keeps** the
+already-scanned pages instead of wiping them. Phase 1 inherits this: the MCP
+server must never push a batch that faulted mid-stack.
+
 ## Risks / accepted residuals
 
 - **Level-1 instance choice cannot be server-authoritative** (see above). The

@@ -90,6 +90,14 @@ fi
 device="$(scanimage -f '%d%n' 2>/dev/null | grep -i fujitsu | head -1 || true)"
 [ -n "$device" ] || { echo "error: no Fujitsu scanner found (scanimage -L)" >&2; exit 1; }
 
+# Pre-flight the destination BEFORE scanning. Doing this afterwards means an
+# unwritable SCAN_OUT aborts under `set -e`, the EXIT trap wipes the work dir,
+# and a whole multi-page stack is lost to a mkdir that could have been checked
+# in advance.
+mkdir -p "$SCAN_OUT" 2>/dev/null || {
+    echo "error: cannot create output folder: $SCAN_OUT" >&2; exit 1; }
+[ -w "$SCAN_OUT" ] || { echo "error: output folder not writable: $SCAN_OUT" >&2; exit 1; }
+
 work="$(mktemp -d "${TMPDIR:-/tmp}/scan.XXXXXX")"
 trap 'rm -rf "$work"' EXIT
 
@@ -105,8 +113,28 @@ scanimage -d "$device" \
     --brightness "$SCAN_BRIGHTNESS" --contrast "$SCAN_CONTRAST" \
     --emphasis "$SCAN_EMPHASIS" \
     --swdeskew="$SCAN_DESKEW" --swcrop="$SCAN_CROP" --swskip "$SCAN_SKIP_BLANK" \
-    --format=png --batch="${work}/p%04d.png" 2>&1 | grep -v 'out of documents'
+    --format=png --batch="${work}/p%04d.png" >"${work}/scan.log" 2>&1
 set -e
+grep -v 'out of documents' "${work}/scan.log" >&2 || true
+
+# A finished stack ENDS with "out of documents", so that is not a fault, and
+# "rounded value of ..." is just option quantisation (it appears on EVERY run —
+# treating any scanimage: line as an error would fault every scan). Anything
+# else scanimage reports means the stack did NOT feed completely: a jam, a
+# double feed, an opened cover, a USB fault. A silently short document is worse
+# than a loud failure when it is about to be filed into an archive, so refuse.
+scan_fault="$(grep '^scanimage:' "${work}/scan.log" \
+    | grep -Ev 'out of documents|rounded value' || true)"
+if [ -n "$scan_fault" ]; then
+    partial=$(find "$work" -name 'p*.png' | wc -l | tr -d ' ')
+    echo "error: the scanner faulted mid-stack — refusing to file a partial document." >&2
+    echo "$scan_fault" | sed 's/^/  /' >&2
+    echo "  ${partial} page(s) were already scanned and are KEPT at:" >&2
+    echo "    ${work}" >&2
+    echo "  Clear the feeder and re-scan the whole stack." >&2
+    trap - EXIT   # keep the pages rather than wiping a partly-fed stack
+    exit 1
+fi
 
 pages=$(find "$work" -name 'p*.png' | wc -l | tr -d ' ')
 [ "$pages" -gt 0 ] || { echo "error: no pages scanned — is the feeder loaded?" >&2; exit 1; }
@@ -144,7 +172,6 @@ for f in sorted(glob.glob(os.path.join(work, "p*.png"))):
 WB
 fi
 
-mkdir -p "$SCAN_OUT"
 img2pdf --output "${work}/${base}.pdf" "${work}"/p*.png
 
 # QUALITY-CRITICAL FLAGS. Getting these wrong is what made the first version
@@ -160,11 +187,12 @@ img2pdf --output "${work}/${base}.pdf" "${work}"/p*.png
 #   no --rotate-pages  its orientation detection needs a page's worth of text
 #                 and fails quietly otherwise, so it can rotate a page wrongly.
 #   --skip-text   never re-OCR a page that already carries text.
-if ocrmypdf -l "$SCAN_LANG" --skip-text --optimize 0 --quiet \
-        "${work}/${base}.pdf" "${SCAN_OUT}/${base}.pdf" 2>/dev/null; then
-    :
-else
-    echo "warning: OCR failed — writing the un-OCR'd PDF instead." >&2
+if ! ocrmypdf -l "$SCAN_LANG" --skip-text --optimize 0 --quiet \
+        "${work}/${base}.pdf" "${SCAN_OUT}/${base}.pdf" 2>"${work}/ocr.err"; then
+    # Do NOT discard the reason. A bad SCAN_LANG, a missing tessdata language or
+    # an unreadable page all land here, and "OCR failed" alone is undebuggable.
+    echo "warning: OCR failed — writing the un-OCR'd PDF instead. Reason:" >&2
+    sed 's/^/  /' "${work}/ocr.err" >&2 || true
     cp "${work}/${base}.pdf" "${SCAN_OUT}/${base}.pdf"
 fi
 
