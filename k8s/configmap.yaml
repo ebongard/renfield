@@ -58,6 +58,12 @@ data:
   DLNA_MCP_URL: "http://dlna-mcp:9091/mcp"
   # Samsung TV MCP — same hostNetwork pattern; the `samsung-mcp` Service routes to it.
   SAMSUNG_MCP_URL: "http://samsung-mcp:9092/mcp"
+  # Scanner MCP — runs on the OPERATOR HOST, not in-cluster: the scanner is USB
+  # and macOS cannot pass a USB device into a container, so the backend dials
+  # OUT to that machine. It reads `down` whenever the host is asleep or logged
+  # out; that is expected, not a fault. Needs a DHCP reservation for the host.
+  SCANNER_MCP_URL: "http://192.168.1.228:9093/mcp"
+  SCANNER_MCP_ENABLED: "true"
 
   # External integrations
   HOME_ASSISTANT_URL: "http://192.168.1.80:8123"
