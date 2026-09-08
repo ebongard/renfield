@@ -427,6 +427,36 @@ servers:
         - "List the files in the inbox folder"
         - "Ingest the PDF from the documents folder"
 
+  # --- Scanner MCP Server ---
+  # Dedicated Python MCP server (renfield-mcp-scanner) driving a USB document
+  # scanner: it scans, corrects the image, and PUSHES the resulting PDF into the
+  # backend over REST (POST /api/folder-ingest/document) — the same seam the
+  # filesystem MCP uses, so dedup / tier / PDF-split / Paperless are unchanged.
+  # This streamable_http connection is the AGENT path (scan on request).
+  #
+  # Runs on the OPERATOR HOST, not in the cluster: the scanner is USB, and macOS
+  # cannot pass a USB device into a container (Docker Desktop runs a Linux VM
+  # with no host USB access). So the backend dials OUT to that host, and this
+  # server reads `down` whenever that machine is asleep or logged out — expected,
+  # not a fault. Moving the scanner to a Linux host makes the k8s packaging
+  # viable (hostPath /dev/bus/usb).
+  #
+  # GitHub: https://github.com/ebongard/renfield-mcp-scanner
+  # See docs/design/scanner-ingest.md.
+  - name: scanner
+    transport: streamable_http
+    url: "${SCANNER_MCP_URL:-http://127.0.0.1:9093/mcp}"
+    enabled: "${SCANNER_MCP_ENABLED:-false}"
+    refresh_interval: 300
+    example_intent: mcp.scanner.scanner_status
+    examples:
+      de:
+        - "Scanne die Dokumente im Einzug"
+        - "Ist der Scanner bereit?"
+      en:
+        - "Scan the documents in the feeder"
+        - "Is the scanner ready?"
+
   # --- Email MCP Server ---
   # Custom Python MCP server for multi-account email (IMAP/SMTP).
   # Requires: MAIL_ACCOUNTS_CONFIG env var pointing to YAML config file
