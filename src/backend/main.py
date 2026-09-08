@@ -33,6 +33,7 @@ from api.routes import (
     federation_user_links,
     feedback,
     folder_ingest,
+    ingest_credentials,
     intents,
     internal_auth,
     document_dedupe,
@@ -245,6 +246,11 @@ app.include_router(config_routes.router, prefix="/api/config", tags=["Config"])
 app.include_router(speakers.router, prefix="/api/speakers", tags=["Speakers"])
 app.include_router(knowledge.router, prefix="/api/knowledge", tags=["Knowledge"])
 app.include_router(folder_ingest.router, prefix="/api/folder-ingest", tags=["Folder Ingest"])
+app.include_router(
+    ingest_credentials.router,
+    prefix="/api/ingest-credentials",
+    tags=["Ingest Credentials"],
+)
 app.include_router(pdf_split.router, prefix="/api/pdf-split", tags=["PDF Split"])
 app.include_router(simba_ingest.router, prefix="/api", tags=["Simba Ingest"])
 app.include_router(document_dedupe.router, prefix="/api", tags=["Document Dedupe"])

@@ -999,6 +999,18 @@ class Settings(BaseSettings):
     folder_ingest_token: str = ""
     folder_ingest_notify_on_filed: bool = True
 
+    # Per-integration ingest credentials (docs/design/ingest-credentials.md).
+    # Replaces the single shared SystemSetting token with one credential per
+    # pushing client, so each can be rotated/revoked alone and the backend knows
+    # WHICH client pushed (what server-authoritative sphere routing needs).
+    # OFF ⇒ the legacy shared-token path only, byte-identical to before.
+    ingest_credentials_enabled: bool = False
+    # Upper bound on the old-token overlap after a rotation. The primary cutover
+    # is acknowledgement-based (the old token stays valid until the client
+    # authenticates with the new one, proving it persisted the value) — a timer
+    # alone would cut off a client that had not yet managed to write its file.
+    ingest_credential_rotation_grace_seconds: int = 300
+
     # PDF-split: ingest-time detection + splitting of multi-document PDFs
     # (docs/design/pdf-split.md). Runs as a document-worker pre-stage on EVERY
     # ingested PDF when enabled. Deliberately NO page-count settings: input is

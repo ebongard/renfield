@@ -39,7 +39,7 @@ from services.email_ingest import (
     generate_email_ingest_token,
     ingest_email_document,
     resolve_mailbox_target,
-    verify_email_ingest_token,
+    resolve_email_ingest_client,
 )
 from services.folder_ingest import IngestStatus
 from utils.config import settings
@@ -117,7 +117,7 @@ async def ingest_pushed_email(
     if not authorization or not authorization.startswith("Bearer "):
         raise HTTPException(status_code=401, detail="Missing or invalid Authorization header")
     token = authorization.removeprefix("Bearer ").strip()
-    if not await verify_email_ingest_token(db, token):
+    if await resolve_email_ingest_client(db, token) is None:
         raise HTTPException(status_code=403, detail="Invalid email-ingest token")
 
     # 3. Worker-alive gate (enqueuing into a stream nobody consumes → orphan).
@@ -195,7 +195,7 @@ async def health(
     if not authorization or not authorization.startswith("Bearer "):
         raise HTTPException(status_code=401, detail="Missing or invalid Authorization header")
     token = authorization.removeprefix("Bearer ").strip()
-    if not await verify_email_ingest_token(db, token):
+    if await resolve_email_ingest_client(db, token) is None:
         raise HTTPException(status_code=403, detail="Invalid email-ingest token")
 
     mailbox_ids = [

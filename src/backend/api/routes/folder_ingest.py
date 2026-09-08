@@ -44,7 +44,7 @@ from services.folder_ingest import (
     resolve_owner_user_id,
     resolve_target_kb,
     target_kb_exists,
-    verify_folder_ingest_token,
+    resolve_folder_ingest_client,
 )
 from utils.config import settings
 
@@ -132,7 +132,10 @@ async def ingest_pushed_document(
     if not authorization or not authorization.startswith("Bearer "):
         raise HTTPException(status_code=401, detail="Missing or invalid Authorization header")
     token = authorization.removeprefix("Bearer ").strip()
-    if not await verify_folder_ingest_token(db, token):
+    # Resolves to the PUSHING CLIENT, not just a boolean — per-integration
+    # credentials, with the legacy shared token still accepted as `legacy`.
+    ingest_client = await resolve_folder_ingest_client(db, token)
+    if ingest_client is None:
         raise HTTPException(status_code=403, detail="Invalid folder-ingest token")
 
     # 3. Worker-alive gate (reuse knowledge.py:_worker_is_alive). Enqueuing into
@@ -216,7 +219,10 @@ async def health(
     if not authorization or not authorization.startswith("Bearer "):
         raise HTTPException(status_code=401, detail="Missing or invalid Authorization header")
     token = authorization.removeprefix("Bearer ").strip()
-    if not await verify_folder_ingest_token(db, token):
+    # Resolves to the PUSHING CLIENT, not just a boolean — per-integration
+    # credentials, with the legacy shared token still accepted as `legacy`.
+    ingest_client = await resolve_folder_ingest_client(db, token)
+    if ingest_client is None:
         raise HTTPException(status_code=403, detail="Invalid folder-ingest token")
 
     return FolderIngestHealthResponse(

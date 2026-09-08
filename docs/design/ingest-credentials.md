@@ -67,17 +67,35 @@ ingest_credentials
 Storing a **bcrypt hash, never the plaintext**, is the material improvement over
 the current SystemSetting, which holds the token in the clear.
 
-### Auth path
+### Auth path — self-identifying tokens
 
 `verify_folder_ingest_token(db, token)` becomes
-`resolve_ingest_client(db, route, token) -> IngestClient | None`: it walks the
-enabled, unrevoked credentials for that route and returns the matching client.
-Push handlers gain the client's identity.
+`resolve_ingest_client(db, route, token) -> IngestClient | None`.
 
-Cost to note honestly: bcrypt-per-push over N credentials is slower than one
-constant-time compare. With a handful of clients this is irrelevant next to the
-document processing that follows, but it is a real change and belongs in the
-plan rather than discovered later.
+**The token carries its own client_id: `rfi.<client_id>.<secret>`.** Resolution
+is one indexed lookup plus **one** bcrypt round.
+
+This replaces the obvious design — walk the stored credentials and bcrypt each
+until one matches — which costs N bcrypt rounds for every *rejected* token. At
+~250ms per round that hands anyone who can reach the push endpoint a cheap
+denial of service, and it degrades with each integration added. Putting the
+client_id in the token is not a secret leak: it names the client, it does not
+authenticate it.
+
+Two details that follow from it:
+
+- **Timing equalisation on the miss path.** An unknown client_id would
+  otherwise return without hashing (~0ms) while a real one spends a full round,
+  which enumerates valid client_ids. One throwaway verify against a dummy hash
+  equalises the branches — the same defence, for the same reason, as
+  `auth_service._DUMMY_PASSWORD_HASH`.
+- **Route/revocation checks come AFTER the hash**, so a revoked, disabled or
+  wrong-route credential cannot be distinguished from a wrong secret by timing.
+
+The parser is deliberately strict (a token containing an uppercase client_id is
+not ours) while *minting* normalises case and whitespace. Every minted token is
+already canonical, so normalising at parse time would let two spellings resolve
+to one row.
 
 ### Knowing the client unlocks server-authoritative sphere routing
 
@@ -193,9 +211,9 @@ a time; the legacy credential is removed only once no client has used it, which
 
 ## Risks / accepted residuals
 
-- **bcrypt per push, over N credentials**, replaces one constant-time compare.
-  Negligible beside document processing at this scale; revisit if the credential
-  count ever grows large.
+- **One bcrypt round per push** replaces one constant-time compare. Negligible
+  beside the document processing that follows, and it does NOT grow with the
+  number of credentials, because the token identifies its own row.
 - **A rotation grace window means two valid tokens briefly.** Deliberate: the
   alternative is locking a client out on a mid-rotation crash. Bounded and
   configurable.

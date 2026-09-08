@@ -232,3 +232,13 @@ async def generate_email_ingest_token(db: AsyncSession) -> str:
 
 async def verify_email_ingest_token(db: AsyncSession, token: str) -> bool:
     return await verify_ingest_token(db, SETTING_EMAIL_INGEST_TOKEN, token)
+
+
+async def resolve_email_ingest_client(db: AsyncSession, token: str):
+    """Resolve a Bearer token to the pushing client (or None). See
+    :func:`services.folder_ingest.resolve_folder_ingest_client`."""
+    from services.ingest_credentials import ROUTE_EMAIL, resolve_ingest_client
+
+    return await resolve_ingest_client(
+        db, ROUTE_EMAIL, token, legacy_verify=verify_email_ingest_token
+    )
