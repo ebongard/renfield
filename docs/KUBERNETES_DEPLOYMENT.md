@@ -69,7 +69,7 @@ Cluster-wide Traefik changes (entrypoints, TLS, CRDs) are tracked in `../private
 |---------|-------|-------|
 | Backend | `your-registry.example/renfield/backend:latest` | CPU image (~3.5 GB). Includes wake-word models and renfield-mcp-dlna entrypoint |
 | Frontend | `your-registry.example/renfield/frontend:latest` | Nginx serving React SPA (vite-plugin-pwa PWA). `nginx.conf` serves `sw.js`/`registerSW.js`/`index.html`/manifest `no-cache` and content-hashed bundles `immutable` — required for new deploys to reach the browser; see deploy-production skill → "Frontend PWA cache propagation" |
-| PostgreSQL | `pgvector/pgvector:pg16` | pgvector for embedding search. Single-node StatefulSet; an HA CloudNativePG track for the app DB is in progress — see "Postgres HA (CloudNativePG)" below |
+| PostgreSQL | `pgvector/pgvector:pg16` | pgvector for embedding search. Single-node StatefulSet, now only for Paperless + the digital twin; the app DB runs on the HA CloudNativePG cluster — see "Postgres HA (CloudNativePG)" below |
 | Redis | `redis:7-alpine` | Message queue + cache (AOF enabled) |
 | Ollama | `ollama/ollama:latest` | LLM inference, requires GPU |
 | SearXNG | `searxng/searxng` (digest-pinned, == `2026.8.29`) | In-cluster metasearch. Engine set tuned for a datacenter egress IP (scraper engines CAPTCHA-block → backbone is Bing + Google-CSE, the rest best-effort; limiter stays OFF — it rejects the backend's `format=json`). **Per-instance — see note below.** |
@@ -138,32 +138,59 @@ A follow-up that consolidates all 41 migrations into a single clean baseline is 
 
 ## Postgres HA (CloudNativePG)
 
-The app database is being moved off the single-node `postgres` StatefulSet onto a
-3-instance **CloudNativePG (CNPG)** cluster (`renfield-pg`) with streaming
-replication + automatic failover + external S3 PITR backups. Manifests + the full
-phased runbook live in **`k8s/cnpg/`** (`README.md` there is the source of truth).
+The app database runs on a 3-instance **CloudNativePG (CNPG)** cluster with
+streaming replication, quorum-based synchronous commit, automatic failover, and
+external S3 PITR backups. Manifests + the full phased runbook live in
+**`k8s/cnpg/`** (`README.md` there is the source of truth).
 
 Scope + status:
 
 - **Scope is the renfield app DB only.** Paperless (`paperlessdb`) and the
   digital-twin DB stay on the legacy `postgres` StatefulSet, which keeps running
-  for them. The cutover is a pure host swap in `DATABASE_URL`:
-  `@postgres` → `@renfield-pg-rw` (services: `renfield-pg-rw`/`-ro`/`-r`).
-- **Rollout is household (`ns renfield`) first, then xidra** (Phase 6). Applied by
-  hand, phase by phase — the `k8s/cnpg/` files are deliberately **not** in
+  for them.
+- **LIVE on both instances.** Household (`ns renfield`) cut over 2026-08-25,
+  xidra (`ns renfield-xidra`) the same day (Phase 6). `DATABASE_URL` points at
+  `@renfield-pg-r1-rw` (services: `<cluster>-rw`/`-ro`/`-r`). Applied by hand,
+  phase by phase — the `k8s/cnpg/` files are deliberately **not** in
   `kustomization.yaml`.
-- **Live so far:** operator stack (cert-manager, CNPG operator 1.27.0, Barman
-  Cloud plugin v0.14.0), the `longhorn-pg` StorageClass, the Garage-S3
-  `ObjectStore`, and the CNPG NetworkPolicy are applied; the pgvector operand
-  image is built (`cnpg-pg16-pgvector:16.9-pgvector0.8.6`); a scratch dry-run
-  proved import + failover with no data loss. **The household cutover (Phase 4)
-  has not run yet** — the app still uses the single-node `postgres`.
+- **Cluster name carries an `-r1` suffix** on both instances since the
+  2026-09-12 recovery (below). Renaming back is deferred; a rename is a restore.
 - **pgvector image:** the stock CNPG operand has no pgvector, so a thin custom
   image (`k8s/cnpg/Dockerfile.pgvector`) adds `postgresql-16-pgvector`.
 - **Backups:** base backups + WAL archiving go to the Garage S3 server on the NAS
-  (`renfield-pg-backups`) for PITR, plus a nightly `pg_dump` → NFS fallback.
+  (`renfield-pg-backups` / `xidra-pg-backups`) for PITR, plus a nightly
+  `pg_dump` → NFS fallback. **Restore procedure:
+  `k8s/cnpg/90-recovery-cluster.yaml`** — a Cluster manifest with the runbook in
+  its header comment. Rehearsed 2026-08-25, used in anger 2026-09-12.
 - **Known ceiling:** the single control-plane node bounds real availability until
   the control plane is also HA (separate track).
+
+### Incident 2026-09-11 — `unattended-upgrades` restarting iscsid
+
+Both clusters went down for ~21.5 h. Worth reading before touching node packages
+or the WAL sizing:
+
+1. `apt-daily-upgrade` restarted `iscsid` on k8s-gpu-1 and k8s-gpu-2
+   (06:17:44 / 06:19:39 UTC). Longhorn attaches **every** volume through that
+   initiator, so the sessions tore down and replicas faulted seconds later.
+2. `longhorn-pg` runs `numberOfReplicas: 1` (PG replicates at its own layer), so
+   there was no second copy — instance `renfield-pg-3` died in BOTH namespaces.
+3. Its CNPG HA replication slot then pinned WAL on the primary, because
+   `max_slot_wal_keep_size` was unset (= unlimited).
+4. `archive_timeout: 5min` forces a WAL segment switch every 5 minutes, so the
+   cluster generates ~4.6 GB WAL/day **even while idle**. The dedicated 2Gi WAL
+   volume filled in ~10 hours and both primaries hit
+   `PANIC: could not write to file "pg_wal/xlogtemp": No space left on device`.
+
+Fixes applied: **`k8s/node-iscsi-update-guard.sh`** (run on every Longhorn
+storage node — holds `open-iscsi` and blacklists it in unattended-upgrades; it
+also documents how to upgrade that package deliberately), `max_slot_wal_keep_size:
+2GB` in both Cluster manifests, WAL volumes 2Gi → 8Gi, and the worker VM disks
+grown to 140G/140G/160G (they were 100% allocated, which is what left Longhorn
+unable to reschedule the faulted replica in the first place).
+
+Still open: **alerting**. Nothing noticed for 21.5 hours. That gap matters more
+than any of the above.
 
 > **Auth-on instances (`AUTH_ENABLED=true` / `RENFIELD_ENV=production`):** the v2.20.0 boot
 > guard (`fail_closed_on_insecure_jwt_key`) validates `SECRET_KEY` at `Settings()` init, which
