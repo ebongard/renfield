@@ -471,6 +471,11 @@ export default function ScheduledTasksPage() {
                       ) : (
                         <Badge color="gray">{t('scheduledTasks.status.never')}</Badge>
                       )}
+                      {/* >1, not the backend alert threshold: this badge is
+                          at-a-glance context in a list the admin is already
+                          reading, not a "this is a problem" verdict — that
+                          judgement lives in the alert + internal.system_health,
+                          both of which use scheduled_task_failure_alert_threshold. */}
                       {task.consecutive_error_count > 1 && (
                         <span className="ml-1">
                           <Badge color="red">

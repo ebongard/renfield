@@ -147,10 +147,18 @@ async def _check_scheduled_tasks(db) -> list[str]:
 
     from models.database import ScheduledTask
 
+    # Report at the SAME threshold the alerting uses, not at the first failure:
+    # the threshold exists so a single blip (an upstream hiccup, a deploy window)
+    # stays quiet, and with ~25 seeded built-ins one blip anywhere would otherwise
+    # make this tool's problems-first answer permanently non-green.
+    threshold = max(1, settings.scheduled_task_failure_alert_threshold)
     rows = (
         await db.execute(
             select(ScheduledTask.name, ScheduledTask.consecutive_error_count, ScheduledTask.last_error)
-            .where(ScheduledTask.enabled.is_(True), ScheduledTask.consecutive_error_count > 0)
+            .where(
+                ScheduledTask.enabled.is_(True),
+                ScheduledTask.consecutive_error_count >= threshold,
+            )
             .order_by(ScheduledTask.consecutive_error_count.desc())
             .limit(20)
         )

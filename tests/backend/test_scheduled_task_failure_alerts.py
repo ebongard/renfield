@@ -19,6 +19,7 @@ from models.database import (
     SCHEDULE_KIND_INTERVAL,
     SCHEDULED_TASK_STATUS_ERROR,
     SCHEDULED_TASK_STATUS_OK,
+    SCHEDULED_TASK_STATUS_SKIPPED,
     ScheduledTask,
 )
 
@@ -64,6 +65,7 @@ def alerts(monkeypatch):
 
     async def _fake(**kw):
         captured.append(kw)
+        return True  # notify_admin reports whether it actually handed off
 
     monkeypatch.setattr(eng.ops_alert, "notify_admin", _fake)
     return captured
@@ -217,9 +219,11 @@ class TestFailureStreak:
         assert row.last_status == SCHEDULED_TASK_STATUS_ERROR
         assert row.next_run_at is not None
 
-    async def test_unknown_handler_skip_resets_streak(self, session_factory, alerts):
-        """A skip means the task is not failing — it is not running at all. The
-        counter must not stay frozen at a stale value forever."""
+    async def test_unknown_handler_skip_counts_as_failure(self, session_factory, alerts):
+        """A skip means the handler_key does not resolve — the task is not running
+        AT ALL, which is worse than failing, not better. Treating it as a recovery
+        would have told the admin a permanently dead task "runs again" and zeroed
+        the counter that keeps it visible in internal.system_health."""
         from types import SimpleNamespace
 
         from services.scheduled_tasks import engine, registry
@@ -227,9 +231,52 @@ class TestFailureStreak:
         task_id = await _mk(session_factory)
         await _run_n(session_factory, task_id, 3, failing=True)
         assert (await _get(session_factory, task_id)).consecutive_error_count == 3
+        assert len(alerts) == 1
 
         registry.clear_handlers()  # handler_key "h" no longer resolves
         await engine._execute_task(SimpleNamespace(state=SimpleNamespace()), task_id)
 
         row = await _get(session_factory, task_id)
-        assert row.consecutive_error_count == 0
+        assert row.consecutive_error_count == 4, "a skip must not zero the streak"
+        # And no bogus "läuft wieder" notice.
+        assert len(alerts) == 1
+        assert all("läuft wieder" not in a["title"] for a in alerts)
+
+    async def test_skip_alone_alerts_as_unrunnable(self, session_factory, alerts):
+        """A task whose handler never resolves reaches the threshold on skips
+        alone and says so — the mid-rollout ordering gap made durable."""
+        from types import SimpleNamespace
+
+        from services.scheduled_tasks import engine
+
+        task_id = await _mk(session_factory, name="Verwaiste Aufgabe", handler_key="gone")
+        app = SimpleNamespace(state=SimpleNamespace())
+        for _ in range(3):
+            await engine._execute_task(app, task_id)
+
+        assert len(alerts) == 1
+        assert "kann nicht ausgeführt werden" in alerts[0]["title"]
+        assert alerts[0]["data"]["last_status"] == SCHEDULED_TASK_STATUS_SKIPPED
+        assert "unknown handler_key" in alerts[0]["message"]
+
+    async def test_marker_not_stamped_when_delivery_failed(self, session_factory, monkeypatch):
+        """The whole point of this feature is not being silent: an alert attempted
+        while the notification pipeline is down must NOT be recorded as sent, or
+        the first genuine alert is suppressed for the full six-hour TTL."""
+        from services.scheduled_tasks import engine as eng
+
+        attempts: list[str] = []
+
+        async def _undeliverable(**kw):
+            attempts.append(kw["dedup_key"])
+            return False
+
+        monkeypatch.setattr(eng.ops_alert, "notify_admin", _undeliverable)
+        task_id = await _mk(session_factory)
+        await _run_n(session_factory, task_id, 3, failing=True)
+
+        row = await _get(session_factory, task_id)
+        assert row.error_alerted_at is None
+        # …and it keeps trying on the next run rather than going quiet.
+        await _run_n(session_factory, task_id, 1, failing=True)
+        assert len(attempts) == 2

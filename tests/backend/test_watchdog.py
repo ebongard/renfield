@@ -158,3 +158,19 @@ class TestHandlerGate:
         monkeypatch.setattr(settings, "watchdog_enabled", False)
         result = await _watchdog_handler(SimpleNamespace(state=SimpleNamespace()), {})
         assert "skipped" in result
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_redirect_counts_as_down(monkeypatch, fake_http):
+    """A 302 to a login page must not come back as a green 200 — that is the
+    exact class of lie this watchdog exists to remove, so redirects are neither
+    followed nor forgiven."""
+    from utils.config import settings
+
+    monkeypatch.setattr(settings, "watchdog_targets", "peer=http://peer/ready")
+    fake_http({"http://peer/ready": 302})
+
+    with pytest.raises(RuntimeError) as exc:
+        await watchdog.run_watchdog()
+    assert "HTTP 302" in str(exc.value)

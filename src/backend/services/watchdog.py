@@ -75,6 +75,10 @@ async def _check(client: httpx.AsyncClient, target: WatchdogTarget) -> str | Non
 
     Any non-2xx counts as a failure — ``/health/ready`` answers 503 with a JSON
     body naming the broken dependency, and that IS the signal we want.
+
+    Redirects are deliberately NOT followed and count as down: a 302 to a login
+    page would otherwise come back as a green 200, which is the exact class of
+    lie this watchdog exists to remove. A target must answer 2xx directly.
     """
     try:
         response = await client.get(target.url)

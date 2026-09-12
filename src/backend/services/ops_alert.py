@@ -97,15 +97,25 @@ async def notify_admin(
     event_type: str = "ops_health",
     source: str = "ops_alert",
     urgency: str = "critical",
-) -> None:
+) -> bool:
     """Fire ONE privacy-aware proactive notification to the admin/owner.
 
-    Best-effort by design: a dedup/suppression ``ValueError`` or any failure is
-    swallowed so a broken notification pipeline never breaks the caller's tick.
-    No-op when ``PROACTIVE_ENABLED`` is off (there is no delivery path then).
+    Returns **whether the notification actually reached the pipeline**, so a
+    caller keeping a durable "already told them" marker only stamps it on a real
+    hand-off. Without that, an alert attempted while the pipeline is transiently
+    down — or while ``PROACTIVE_ENABLED`` is still off — would be recorded as
+    delivered and then suppressed for the whole re-alert TTL, in a feature whose
+    entire purpose is not being silent.
+
+    A dedup/suppression ``ValueError`` counts as **delivered**: an equivalent
+    notification already exists, so the admin has been told; treating it as a
+    failure would retry forever.
+
+    Best-effort by design: nothing here raises, so a broken notification pipeline
+    never breaks the caller's tick.
     """
     if not settings.proactive_enabled:
-        return
+        return False
     try:
         from services.database import AsyncSessionLocal
         from services.notification_service import NotificationService
@@ -124,6 +134,8 @@ async def notify_admin(
                 data={"dedup_key": dedup_key, **(data or {})},
             )
     except ValueError:
-        pass  # deduped / suppressed by the notification pipeline
+        return True  # deduped / suppressed by the pipeline — they already know
     except Exception as e:  # noqa: BLE001
         logger.warning(f"ops_alert: notify failed for {dedup_key}: {e}")
+        return False
+    return True
