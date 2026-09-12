@@ -116,6 +116,20 @@ All three items shipped; the self-heal is gated `mcp_health_self_heal_enabled`
    (that exhausted its retries during the outage, still UNSEEN) and re-dispatches it —
    no manual restart, mirroring the filesystem MCP.
 
+## The alert path moved out (2026-09-12)
+
+`_notify`, `_should_alert`/`_clear_alert` and the admin resolution now live in
+**`services/ops_alert.py`**, because three subsystems need exactly the same three
+things (who to tell, how to tell them, how often) and none of them should grow its
+own version: this monitor, the scheduled-task failure alerts, and the HTTP
+watchdog. The names here remain as thin delegates, so the monitor's behaviour and
+its test seams are unchanged.
+
+The ledger stays **in-process on purpose**: it is a rate limiter, not a record. A
+pod restart re-arming an alert for a problem that is still broken is the safe
+direction to fail. A caller that needs restart-durable "already told them" state
+keeps its own column — see `ScheduledTask.error_alerted_at`.
+
 ## Phase 3 — rate-limit + orchestration (designed)
 
 1. **429 / Retry-After** — paperless, news, and carrier-tracking calls honor

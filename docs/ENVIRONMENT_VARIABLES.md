@@ -764,6 +764,73 @@ Ohne gesetzte Webhook-URL bleibt die MCP-eigene `OPERATOR-NOTIFY` (wie bisher) i
 den Container-Logs stecken. Design + Fehlermodus-Katalog + Phasen 2/3:
 `docs/design/mcp-self-detection.md`.
 
+#### Alarm bei scheiternden geplanten Aufgaben (A2)
+
+Eine geplante Aufgabe, die bei **jedem** Lauf scheitert, war bis 2026-09 sauber
+protokolliert und vollkommen stumm: `last_status` zeigt nur den jüngsten Lauf,
+darin lesen sich 50 Fehlläufe in Folge wie einer. Genau das geschah dem
+Paperless-Dedupe über anderthalb Tage gegen ein totes Paperless.
+
+```bash
+# Nach N Fehlläufen in Folge genau EINE Meldung an den Eigentümer-Admin (nicht
+# eine je Lauf), plus eine Erholungsmeldung, sobald die Aufgabe wieder gelingt —
+# aber nur, wenn überhaupt alarmiert worden war. Kostet nichts, solange alles
+# läuft, deshalb Not-Aus-Schalter statt opt-in: die behobene Fehlfunktion IST
+# das Schweigen. Benötigt PROACTIVE_ENABLED für die Zustellung.
+SCHEDULED_TASK_FAILURE_ALERT_ENABLED=true
+SCHEDULED_TASK_FAILURE_ALERT_THRESHOLD=3       # >1, damit ein einzelner Aussetzer still bleibt
+SCHEDULED_TASK_FAILURE_REALERT_SECONDS=21600   # laufende Fehlserie erst nach 6h erneut melden
+```
+
+Der Zähler (`scheduled_tasks.consecutive_error_count`, Migration
+`pc20260912_taskalert`) läuft **unabhängig vom Schalter** mit und erscheint in
+der Admin-Liste als Kennzeichen — abgeschaltet wird nur die Zustellung, nicht die
+Sichtbarkeit. `error_alerted_at` liegt bewusst in der Datenbank: das
+In-Prozess-Ledger wird von einem Neustart neu scharfgestellt, was bei einem Pod
+in `CrashLoopBackOff` einen Alarm pro Start bedeutet hätte.
+
+#### Externe Erreichbarkeitsprüfung — der Wächter (A3)
+
+„Wer merkt, dass Renfield selbst weg ist?" Ein System, das steht, kann sich nicht
+selbst melden. Der Wächter prüft deshalb **andere** Endpunkte; die jeweils andere
+Instanz prüft diese. Beide Deployments sind vollständig unabhängig (getrennte
+Namespaces, getrennte Datenbanken), gegenseitige Beobachtung braucht also keinen
+zusätzlichen Dienst.
+
+```bash
+# Kommagetrennte "name=url"-Ziele. LEER (Vorgabe) = vollständig wirkungslos.
+# IMMER /health/ready prüfen, NIE /health: letzteres ist ein Lastverteiler-Ping,
+# der auch mit toter Datenbank "ok" meldet — es hätte durch den 21,5-Stunden-
+# Ausfall vom 2026-09-11 hindurch geschwiegen.
+WATCHDOG_ENABLED=true
+WATCHDOG_TARGETS=xidra=http://renfield-backend.renfield-xidra.svc.cluster.local:8000/health/ready
+WATCHDOG_TIMEOUT=10
+WATCHDOG_INTERVAL=120                          # Seed-Intervall der eingebauten Aufgabe
+```
+
+Als „nicht erreichbar" gilt jede Antwort außerhalb 2xx — **auch eine Umleitung**.
+Weiterleitungen werden bewusst nicht verfolgt: eine 302 auf eine Anmeldeseite
+würde sonst als grünes 200 zurückkommen, also genau die Art Lüge, die dieser
+Wächter beseitigen soll. Ein Ziel muss deshalb eine URL sein, die unmittelbar
+2xx liefert.
+
+Der Wächter hat **keine eigene Alarmmechanik**: er läuft als geplante Aufgabe und
+wirft bei einem nicht erreichbaren Ziel, womit A2 oben Schwelle, Ledger, TTL und
+Erholungsmeldung stellt. Das löst nebenbei die Mehr-Replikat-Frage — die
+Vorschusssperre der Engine lässt je Takt genau ein Replikat prüfen.
+
+Zwei Dinge, die der Wächter **nicht** kann, hier ausdrücklich benannt:
+
+1. Fallen **beide** Instanzen gleichzeitig aus — wie am 2026-09-11, als derselbe
+   `iscsid`-Neustart beide Datenbanken erschlug — schweigt auch die gegenseitige
+   Prüfung. Dagegen hilft nur ein Beobachter außerhalb des Clusters.
+2. Fällt während einer **laufenden** Fehlserie ein zweites Ziel aus, gibt es
+   keinen zweiten Alarm; der Fehlertext der Aufgabe nennt aber alle gerade
+   ausgefallenen Ziele.
+
+Voraussetzung im Betrieb: eine Egress-Regel zwischen den Namespaces (gehört nach
+`private_k8s`, nicht in dieses Repository).
+
 #### Externe Scheduling-Templates
 
 Cron-basiertes Scheduling (z.B. Morgenbriefing) wird extern via **n8n-Workflows** oder **Home Assistant-Automationen** gelöst. Diese senden per Webhook an `POST /api/notifications/webhook`.

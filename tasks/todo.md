@@ -331,20 +331,20 @@ geschrieben) — die Kiosk-Telemetrie verfälscht sich also nicht.
 
 ## A2 — Alarm bei wiederholt scheiternden geplanten Aufgaben
 
-- [ ] **A2-1** Migration `pc20260912_task_failure_alert` (auf
+- [x] **A2-1** Migration `pc20260912_task_failure_alert` (auf
       `pc20260908b_cred_sphere`): `scheduled_tasks.consecutive_error_count`
       (NOT NULL DEFAULT 0) und `error_alerted_at` (nullable). Additiv, rein
       transaktional.
-- [ ] **A2-2** `engine._execute_task`: nach dem Statusbefund `error` hochzählen,
+- [x] **A2-2** `engine._execute_task`: nach dem Statusbefund `error` hochzählen,
       `ok`/`skipped` zurücksetzen. Ab `threshold` in Folge **genau eine**
       deduplizierte Meldung, Wiederholung erst nach der TTL.
-- [ ] **A2-3** Erholungsmeldung, wenn eine Aufgabe nach einem Alarm wieder
+- [x] **A2-3** Erholungsmeldung, wenn eine Aufgabe nach einem Alarm wieder
       gelingt — sonst bleibt der Mensch im Ungewissen, ob es noch klemmt.
-- [ ] **A2-4** Schalter: `scheduled_task_failure_alert_enabled` (an),
+- [x] **A2-4** Schalter: `scheduled_task_failure_alert_enabled` (an),
       `_threshold` (3), `_realert_seconds` (21600, wie beim MCP-Monitor).
-- [ ] **A2-5** `consecutive_error_count` in der Antwort von
+- [x] **A2-5** `consecutive_error_count` in der Antwort von
       `/api/scheduled-tasks` und als Kennzeichen in der Admin-Liste.
-- [ ] **A2-6** (A2b) Vorgabe `paperless_dedupe_reconciler_interval`
+- [x] **A2-6** (A2b) Vorgabe `paperless_dedupe_reconciler_interval`
       300 → 3600 s. **Achtung:** `ensure_builtin_tasks` sät mit
       `ON CONFLICT DO NOTHING` — bestehende Zeilen behalten ihre 300 s. Die
       Umstellung auf beiden Instanzen geschieht über `/admin/scheduled-tasks`,
@@ -358,41 +358,41 @@ greift die Maschinerie aus A2 (Schwelle, Ledger, TTL, Erholung) unverändert.
 Zugleich löst das die Mehr-Replikat-Frage: die Engine serialisiert jede Aufgabe
 über ihre Vorschusssperre, es läuft also je Takt genau ein Replikat.
 
-- [ ] **A3-1** `services/watchdog.py`: liest `WATCHDOG_TARGETS`
+- [x] **A3-1** `services/watchdog.py`: liest `WATCHDOG_TARGETS`
       (`name=url,name=url`), prüft jedes Ziel per HTTP GET, erwartet 2xx.
       Gegen `/health/ready` geprüft, nicht `/health` — letzteres antwortet
       auch dann „ok", wenn die Datenbank tot ist, und hätte am 11.09.
       geschwiegen.
-- [ ] **A3-2** Eingebaute Aufgabe `watchdog` (Registry + Seed, 120 s,
+- [x] **A3-2** Eingebaute Aufgabe `watchdog` (Registry + Seed, 120 s,
       **ohne** `run_at_boot` — sonst alarmiert der eigene Start).
       Der Handler meldet die gerade ausgefallenen Ziele im Fehlertext.
-- [ ] **A3-3** Schalter: `watchdog_enabled` (an), `watchdog_targets` (leer ⇒
+- [x] **A3-3** Schalter: `watchdog_enabled` (an), `watchdog_targets` (leer ⇒
       wirkungslos), `watchdog_timeout` (10 s). Schwelle und TTL kommen aus A2.
-- [ ] **A3-4** Bewusste Abwägung festhalten: fällt ein zweites Ziel während
+- [x] **A3-4** Bewusste Abwägung festhalten: fällt ein zweites Ziel während
       einer laufenden Fehlerserie aus, gibt es keinen zweiten Alarm. Falls je
       Ziel alarmiert werden soll, bräuchte es Zähler in Redis — dann als eigener
       Schritt, nicht hier.
 - [ ] **A3-5** Voraussetzung im Betrieb: Egress-Regel Namespace `renfield` →
       `renfield-xidra` (und zurück). Gehört nach `private_k8s`.
-- [ ] **A3-6** (A3c) Die Grenze in `docs/ENVIRONMENT_VARIABLES.md` **und** im
+- [x] **A3-6** (A3c) Die Grenze in `docs/ENVIRONMENT_VARIABLES.md` **und** im
       Entwurfsdokument ehrlich benennen: fallen beide Instanzen gleichzeitig
       aus, schweigt auch die gegenseitige Prüfung.
 
 ## Querschnitt
 
-- [ ] **Q1** `services/ops_alert.py` herauslösen: `_notify`, `_should_alert`,
+- [x] **Q1** `services/ops_alert.py` herauslösen: `_notify`, `_should_alert`,
       `_clear_alert`, `_resolve_admin_user_id` aus `mcp_health_monitor.py`
       wandern dorthin; A2 und A3 benutzen dieselbe Fassung. Verhalten
       unverändert — ein Alarmweg, eine Admin-Auflösung, ein Ledger.
-- [ ] **Q2** `internal.system_health` um zwei Abschnitte erweitern: geplante
+- [x] **Q2** `internal.system_health` um zwei Abschnitte erweitern: geplante
       Aufgaben in einer Fehlerserie, sowie Wächterziele. Die Sondenverdikte
       kommen über `_check_mcp` von selbst mit.
-- [ ] **Q3** Tests: `test_mcp_health_probe.py` (Auswertung von `expect`,
+- [x] **Q3** Tests: `test_mcp_health_probe.py` (Auswertung von `expect`,
       Hysterese, `per_user_auth`-Auslassung, Faltung in `_server_health`,
       Reihenfolge im Takt), `test_scheduled_task_failure_alerts.py` (Zähler,
       Schwelle, genau ein Alarm, Erholung), `test_watchdog.py`. Ausführung auf
       `.159`.
-- [ ] **Q4** Dokumentations-Durchgang vor dem Merge: `CLAUDE.md`,
+- [x] **Q4** Dokumentations-Durchgang vor dem Merge: `CLAUDE.md`,
       `docs/design/mcp-self-detection.md` (Phase 4 + Zeile in der
       Fehlermodus-Tabelle), `docs/ENVIRONMENT_VARIABLES.md`, `docs/FEATURES.md`,
       und die Haken hier oben.
