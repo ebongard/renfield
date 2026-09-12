@@ -153,3 +153,98 @@ vier Minuten.
 - [ ] Paperless unter 192.168.1.162 antwortet mit HTTP 500 (separates Problem,
       fiel beim Neustart des geplanten Dedupe-Tasks auf)
 - [ ] Clusternamen tragen jetzt das `-r1`-Suffix — irgendwann zurückbenennen
+
+---
+
+# Alarme und Funktionsprüfungen (Haushalt + xidra)
+
+Erhoben am 2026-09-12 aus zwei Ausfällen derselben Sitzung. Die
+infrastrukturnahen Punkte (Paperless-Container auf `192.168.1.162`, CNPG,
+Longhorn) liegen bewusst **nicht** hier, sondern in
+`private_k8s/tasks/todo-integrationen-2026-09-12.md`. Hier steht nur, was
+Renfield selbst betrifft — und das gilt für beide Instanzen gleichermaßen.
+
+## Der Befund
+
+Es fehlt keine Alarmierung. **Sie ist da, sie ist eingeschaltet, und sie hat
+geschwiegen.**
+
+| Ausfall | Dauer | `MCP_HEALTH_MONITOR_ENABLED` | `PROACTIVE_ENABLED` | Alarm |
+|---|---|---|---|---|
+| Paperless Haushalt tot | 3 d 10 h | `true` | `true` | **keiner** |
+| `renfield-pg` beide Instanzen tot | 21,5 h | `true` | `true` | **keiner** |
+
+Beide Male stand die Statusanzeige auf Grün. Bemerkt wurden beide Ausfälle von
+einem Menschen, der zufällig hinsah.
+
+## A1 — Funktionssonde statt Verbindungsprüfung
+
+**Die Ursache des Schweigens.** `mcp_health_monitor.monitor_tick`
+(`services/mcp_health_monitor.py:203`) wertet ausschließlich
+`MCPManager.get_status()` aus (Zeile 231). Das prüft, ob die Verbindung zum
+MCP-**Prozess** steht — nicht, ob der Dienst dahinter arbeitet. Bei
+`stdio`-Servern läuft dieser Prozess **im Backend-Image selbst**, meldet also
+zuverlässig „verbunden", ganz gleich wie es dem Ziel geht.
+
+Gemessen am 12.09.: `/api/mcp/status` meldete für den Haushalt 13 von 13
+Servern `healthy`. Paperless war seit drei Tagen tot, n8n aus dem Cluster gar
+nicht erreichbar. Beide grün.
+
+- [ ] **A1a** — Pro Server eine billige, lesende Funktionssonde definieren,
+      konfigurierbar in `mcp_servers.yaml` (ein Werkzeugname plus erwartete
+      Mindestantwort). Kandidaten aus der Prüfung vom 12.09.:
+      | Server | Sonde | Was sie gefangen hätte |
+      |---|---|---|
+      | `paperless` | `/api/statistics/` bzw. ein lesendes Tool | den 3-Tage-Ausfall am ersten Tag |
+      | `search` | eine Suche, Trefferzahl > 0 | die CAPTCHA-Fälle, bei denen SearXNG 0 Treffer liefert und trotzdem grün meldet |
+      | `homeassistant` | `get_states`, Entitätenzahl > 0 | einen toten HA-Token |
+      | `n8n` | Workflows auflisten | dass der Name auf eine öffentliche IP zeigt |
+- [ ] **A1b** — Verdikt in `_server_health` einspeisen, damit Kiosk und
+      `internal.system_health` es mittragen. Der Alarmweg existiert bereits
+      (`NotificationService.process_webhook` an `active_admin_ids`,
+      `mcp_health_monitor.py:62-84`) — es fehlt nur der Anlass.
+- [ ] **A1c** — Eigenes Flag, zunächst dunkel; Sonden müssen lesend, billig und
+      einzeln abschaltbar sein. Eine Sonde, die selbst Last erzeugt, ist
+      schlimmer als keine.
+
+## A2 — Alarm bei wiederholt scheiternden geplanten Aufgaben
+
+Der Task „Paperless-Duplikate aufräumen" ist **50 Mal in Folge** gescheitert,
+alle fünf Minuten, über anderthalb Tage. Die Lauf-Historie hat jeden einzelnen
+Fehlschlag sauber protokolliert (`ScheduledTaskRun`,
+`models/database.py:1484`; `last_status`, Zeile 1471). Niemand hat es erfahren.
+
+- [ ] **A2a** — Nach N aufeinanderfolgenden `error`-Läufen genau **eine**
+      deduplizierte Benachrichtigung an den Eigentümer-Admin, nicht eine pro
+      Lauf. Muster dafür steht im Fristen-Notifier (`obligation_acknowledgements`
+      als Ledger gegen Wiederholung).
+- [ ] **A2b** — Dabei mitprüfen, ob ein Fünf-Minuten-Takt für einen
+      Archiv-Dedupe die richtige Frequenz ist. Er hat 50 Fehlläufe in
+      anderthalb Tagen erzeugt — das ist auch Protokollrauschen.
+
+## A3 — Wer merkt, dass Renfield selbst weg ist?
+
+Der 21,5-Stunden-Ausfall ist der unangenehme Fall: beide Backends lagen in
+`CrashLoopBackOff` beziehungsweise meldeten `ConnectionRefused` gegen die
+Datenbank. **Ein System, das selbst steht, kann sich nicht selbst melden.**
+Dieser Punkt ist in Renfield allein nicht lösbar.
+
+- [ ] **A3a** — Naheliegender Weg, weil er nichts Neues braucht: die beiden
+      Instanzen sind vollständig unabhängige Deployments in getrennten
+      Namespaces. Jede prüft periodisch den `/health` der anderen und meldet
+      Ausbleiben über ihren eigenen, bereits vorhandenen Proaktiv-Kanal.
+      Gegenseitige Beobachtung, kein zusätzlicher Dienst.
+- [ ] **A3b** — Alternative oder Ergänzung auf Clusterebene (Deployment nicht
+      verfügbar, CNPG nicht `Ready`): gehört dann nach `private_k8s`, nicht
+      hierher.
+- [ ] **A3c** — Ehrlich bleiben, was A3a **nicht** kann: fallen beide
+      gleichzeitig aus — wie am 11.09., als derselbe `iscsid`-Neustart beide
+      Datenbanken erschlug — schweigt auch die gegenseitige Prüfung. Dagegen
+      hilft nur ein Beobachter außerhalb des Clusters.
+
+## Abgrenzung
+
+Nicht hier, sondern in `private_k8s`: der fehlende Healthcheck am
+Paperless-Container auf `192.168.1.162` (drei Tage `restart: unless-stopped`
+auf einem Container, der ausschließlich HTTP 500 auslieferte), Alarme auf
+CNPG-Cluster-Zustand und WAL-Füllstand, sowie Longhorn-Replica-Ausfälle.
