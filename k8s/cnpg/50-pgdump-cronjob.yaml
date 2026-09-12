@@ -4,7 +4,7 @@
 # any pgvector-capable Postgres, no operator/plugin required. Barman is the
 # primary (PITR); this is the "can always get the data back" belt.
 #
-# The dump runs against `renfield-pg-rw` (primary). Custom format (-Fc) preserves
+# The dump runs against `renfield-pg-r1-rw` (primary). Custom format (-Fc) preserves
 # the pgvector/halfvec column types + HNSW index definitions. Restore + verify
 # procedure is in README.md (Phase 0).
 apiVersion: v1
@@ -52,7 +52,7 @@ spec:
               imagePullPolicy: Always
               env:
                 - name: PGHOST
-                  value: renfield-pg-rw
+                  value: renfield-pg-r1-rw
                 - name: PGUSER
                   value: renfield
                 - name: PGDATABASE
