@@ -37,9 +37,19 @@
 #         kubectl -n renfield set env deploy/$d \
 #           'DATABASE_URL=postgresql+asyncpg://renfield:$(POSTGRES_PASSWORD)@renfield-pg-r1-rw:5432/renfield'
 #       done
-#  5. Only AFTER the app is healthy: re-add the synchronous block below and
+#  5. Update the COMMITTED manifests to the new cluster name — `set env` only
+#     changes the live object, and the files on disk still point at a service
+#     that now has ZERO endpoints. Missing this was the one real defect /review
+#     caught in the 2026-09-12 recovery; `bin/deploy-production.sh` applies
+#     `k8s/alembic-upgrade-job.yaml` on EVERY deploy, so a stale host there
+#     breaks the next migration run:
+#       grep -rln 'renfield-pg-rw' k8s/
+#     Covers alembic-upgrade-job, backend, document-worker, meeting-worker,
+#     pdf-split-worker, configmap, and the `cnpg.io/cluster` selector in
+#     redis-postgres-netpol.yaml.
+#  6. Only AFTER the app is healthy: re-add the synchronous block below and
 #     apply again (see the NOTE on synchronous replication).
-#  6. Only after a soak: delete the old cluster + its orphaned Longhorn volumes.
+#  7. Only after a soak: delete the old cluster + its orphaned Longhorn volumes.
 #
 # ── NOTE ON SYNCHRONOUS REPLICATION — READ BEFORE RE-USING THIS FILE ─────────
 # The production guarantee is `synchronous: {method: any, number: 1,

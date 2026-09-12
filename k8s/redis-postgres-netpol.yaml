@@ -61,6 +61,10 @@ spec:
         # this legacy DB during bootstrap.initdb.import. They carry the cnpg.io
         # cluster label, not the app labels, so without this they'd be blackholed
         # and the import would hang. Same-namespace (ns renfield). See k8s/cnpg/.
+        # BOTH names are listed: the live cluster is `renfield-pg-r1` since the
+        # 2026-09-12 restore, and `renfield-pg` is kept while the old cluster is
+        # still around for the post-incident soak. Drop the old one when it goes.
         - podSelector: {matchLabels: {cnpg.io/cluster: renfield-pg}}
+        - podSelector: {matchLabels: {cnpg.io/cluster: renfield-pg-r1}}
       ports:
         - {protocol: TCP, port: 5432}
