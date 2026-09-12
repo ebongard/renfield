@@ -60,6 +60,10 @@ class ScheduledTaskResponse(BaseModel):
     last_status: str | None
     last_error: str | None
     last_duration_ms: int | None
+    # Failure streak (A2): last_status only ever shows the newest run, so a task
+    # failing every time looks the same as one that failed once. Default-carrying
+    # so an older row read during a rolling deploy still validates.
+    consecutive_error_count: int = 0
     is_builtin: bool
     created_at: datetime
     updated_at: datetime

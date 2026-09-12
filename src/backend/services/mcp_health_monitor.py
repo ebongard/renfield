@@ -27,77 +27,36 @@ from typing import Any
 
 from loguru import logger
 
+from services import ops_alert
 from utils.config import settings
 
 # Plane-B reports keyed by "source" (the reporting MCP), latest event only.
 _reports: dict[str, dict[str, Any]] = {}
-# Alert ledger: issue-key → last-alert monotonic time. Re-alert only after the TTL,
-# so an ongoing problem doesn't spam but a recurrence (or a new problem) does.
-_alerted: dict[str, float] = {}
 
 
+# The alert ledger + admin resolution + delivery now live in services/ops_alert.py
+# (shared with the scheduled-task failure alerts and the HTTP watchdog — ONE alert
+# path, ONE admin resolution). These thin delegates keep the call sites here
+# readable and remain the seam tests monkeypatch.
 def _should_alert(key: str) -> bool:
     """True if this issue-key hasn't been alerted, or the re-alert TTL has elapsed."""
-    now = time.monotonic()
-    last = _alerted.get(key)
-    if last is None or (now - last) >= settings.mcp_health_realert_seconds:
-        _alerted[key] = now
-        return True
-    return False
+    return ops_alert.should_alert(key)
 
 
 def _clear_alert(key: str) -> None:
-    _alerted.pop(key, None)
-
-
-async def _resolve_admin_user_id(db) -> int | None:
-    """The ops target for a health alert = the owner admin (lowest-id active user
-    whose role grants ADMIN), falling back to the first user by id. Returns None on
-    an empty users table (auth-off single-user install — the notification then isn't
-    per-user-scoped, which is correct for that mode)."""
-    try:
-        from sqlalchemy import select
-
-        from models.database import User
-        from services.auth_service import active_admin_ids
-
-        admin_ids = await active_admin_ids(db)
-        if admin_ids:
-            return min(admin_ids)
-        # No admin-granting role (auth-off / dev): fall back to the first user.
-        return (
-            await db.execute(select(User.id).order_by(User.id).limit(1))
-        ).scalar_one_or_none()
-    except Exception:  # noqa: BLE001
-        return None
+    ops_alert.clear_alert(key)
 
 
 async def _notify(title: str, message: str, dedup_key: str, data: dict) -> None:
-    """Fire ONE privacy-aware proactive notification to the admin/owner. Best-effort:
-    a dedup/suppression ValueError or any failure is swallowed (never breaks a tick)."""
-    if not settings.proactive_enabled:
-        return
-    try:
-        from services.database import AsyncSessionLocal
-        from services.notification_service import NotificationService
-
-        # Dedicated session — process_webhook commits its own db.
-        async with AsyncSessionLocal() as db:
-            target = await _resolve_admin_user_id(db)
-            await NotificationService(db).process_webhook(
-                event_type="mcp_health",
-                title=title,
-                message=message,
-                urgency="critical",
-                source="mcp_health_monitor",
-                privacy="personal",
-                target_user_id=target,
-                data={"dedup_key": dedup_key, **data},
-            )
-    except ValueError:
-        pass  # deduped / suppressed by the notification pipeline
-    except Exception as e:  # noqa: BLE001
-        logger.warning(f"mcp_health: notify failed for {dedup_key}: {e}")
+    """Fire ONE privacy-aware proactive notification to the admin/owner."""
+    await ops_alert.notify_admin(
+        title=title,
+        message=message,
+        dedup_key=dedup_key,
+        data=data,
+        event_type="mcp_health",
+        source="mcp_health_monitor",
+    )
 
 
 # --- Plane-B: ingest MCPs push their own failures here -----------------------
@@ -276,7 +235,7 @@ async def _monitor_tick_body(mcp_manager) -> None:
                     },
                 )
     # Recovery: any Plane-A ledger key no longer a current problem → clear it.
-    for key in [k for k in _alerted if k.startswith("planea:")]:
+    for key in ops_alert.alerted_keys("planea:"):
         if key not in current_problems:
             _clear_alert(key)
 

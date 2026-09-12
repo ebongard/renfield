@@ -694,6 +694,7 @@
     "builtinCannotDelete": "Built-in tasks can't be deleted, only edited.",
     "enable": "Enable task",
     "disable": "Disable task",
+    "consecutiveErrors": "failed {{count}}× in a row",
     "engineTick": "Scheduler tick: every {{seconds}}s",
     "colName": "Name",
     "colSchedule": "Schedule",

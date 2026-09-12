@@ -171,6 +171,21 @@ async def _mcp_health_monitor_handler(app: "FastAPI", params: dict) -> str | Non
     return None
 
 
+async def _watchdog_handler(app: "FastAPI", params: dict) -> str | None:
+    """External HTTP watchdog (A3): probe the configured peers/endpoints.
+
+    Deliberately has no alerting of its own — it RAISES on an unreachable target
+    so the engine's failure-streak alerting does the telling (threshold, durable
+    ledger, re-alert TTL, recovery notice). Running as a scheduled task also means
+    the per-task advisory lock keeps exactly one replica probing per tick.
+    """
+    if not settings.watchdog_enabled:
+        return "skipped: watchdog_enabled is off"
+    from services.watchdog import run_watchdog
+
+    return await run_watchdog()
+
+
 # --- Phase 3 Batch B: single wrapper-gated interval jobs ---------------------
 # Each re-asserts its runtime gate in-handler (H4): the legacy _schedule_* gated
 # in the wrapper but the service fn does not, so a naive call would run the work
@@ -470,6 +485,7 @@ def register_builtin_handlers() -> None:
     register_handler("daypart_watcher", _daypart_watcher_handler)
     register_handler("paperless_finalize_reconciler", _paperless_finalize_reconciler_handler)
     register_handler("mcp_health_monitor", _mcp_health_monitor_handler)
+    register_handler("watchdog", _watchdog_handler)
     # Phase 3 Batch B
     register_handler("notification_cleanup", _notification_cleanup_handler)
     register_handler("memory_cleanup", _memory_cleanup_handler)
@@ -537,6 +553,15 @@ def builtin_task_seeds() -> list[TaskSeed]:
             interval_seconds=settings.mcp_health_monitor_interval,
             # Seeded enabled; the handler self-gates on mcp_health_monitor_enabled (M7).
             run_at_boot=True,
+            enabled=True,
+        ),
+        TaskSeed(
+            name="Externe Erreichbarkeitsprüfung",
+            handler_key="watchdog",
+            interval_seconds=settings.watchdog_interval,
+            # Deliberately NOT run_at_boot: probing while we are still coming up
+            # would alert on our own startup, and on a peer that is restarting
+            # alongside us during a coordinated deploy.
             enabled=True,
         ),
         # --- Phase 3 Batch B (seeded enabled + in-handler gate → flag controls at runtime) ---

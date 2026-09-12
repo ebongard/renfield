@@ -248,3 +248,160 @@ Nicht hier, sondern in `private_k8s`: der fehlende Healthcheck am
 Paperless-Container auf `192.168.1.162` (drei Tage `restart: unless-stopped`
 auf einem Container, der ausschließlich HTTP 500 auslieferte), Alarme auf
 CNPG-Cluster-Zustand und WAL-Füllstand, sowie Longhorn-Replica-Ausfälle.
+
+---
+
+# Umsetzungsplan zu A1–A3 (Stand 2026-09-12)
+
+Entschieden vor dem Schreiben dieses Plans: **A1** als synthetische Soll-Sonde,
+**A3** als generischer HTTP-Wächter, alle drei Schalter **eingeschaltet**
+vorbelegt.
+
+## Der Widerspruch, den A1 auflösen muss
+
+Phase 2 hat bereits eine Funktionsprüfung — sie zählt aber **ausschließlich
+Timeouts** (`MCPServerState.record_call_outcome`, `mcp_client.py:1857-1864`).
+App-Fehler (`isError`) wurden im damaligen `/review` bewusst ausgeschlossen,
+weil ein „Gerät aus" oder „Paket nicht gefunden" nichts über die Gesundheit des
+Servers aussagt. Paperless' HTTP 500 ist genau so ein App-Fehler. Dazu kommt:
+ein Server, den niemand aufruft, erzeugt überhaupt keine Stichproben.
+
+Die Sonde löst beides ohne die alte Entscheidung umzukehren: Weil **wir** den
+Aufruf auswählen und er per Konstruktion gelingen muss, **ist** sein Scheitern
+ein Gesundheitssignal. Das Verdikt bleibt getrennt von `recent_outcomes`.
+
+## A1 — Funktionssonde je MCP-Server
+
+- [ ] **A1-1** `MCPServerConfig.health_probe: dict | None` +
+      `_parse_health_probe()` nach dem Muster von `_parse_notifications`
+      (`mcp_client.py:933`), verdrahtet bei Zeile 1116.
+      Gestalt in `mcp_servers.yaml`:
+      ```yaml
+      health_probe:
+        enabled: true          # je Server einzeln abschaltbar (A1c)
+        tool: list_correspondents
+        args: {}
+        interval: 600          # Vorgabe aus settings, hier überschreibbar
+        timeout: 15
+        expect:
+          min_items: 0         # 0 = nur „kein isError"
+          path: results        # optional: welches Feld gezählt wird
+      ```
+- [ ] **A1-2** `MCPServerState` um `probe_consecutive_failures`,
+      `last_probe_at`, `last_probe_ok`, `last_probe_detail` erweitern;
+      beim (Neu-)Verbinden zurücksetzen, dort wo `recent_outcomes` geleert wird.
+- [ ] **A1-3** `MCPManager.run_health_probe(name)` — ruft das konfigurierte
+      Werkzeug über `execute_tool(user_permissions=None, user_id=None,
+      call_timeout=probe.timeout)` und wertet `expect` aus.
+      **Übersprungen wird:** `per_user_auth`-Server (fail-closed, `user_id=None`
+      würde immer verweigert), `federation`-Transport, nicht verbundene Server,
+      Server ohne oder mit abgeschalteter Stanza.
+- [ ] **A1-4** Hysterese: erst ab `mcp_health_probe_fail_threshold`
+      aufeinanderfolgenden Fehlschlägen gilt der Server als beeinträchtigt —
+      ein einzelner Ausrutscher alarmiert nicht.
+- [ ] **A1-5** `_server_health()` faltet das Verdikt als
+      `("degraded", "probe_failed")` ein, **vor** `calls_failing` (das
+      spezifischere Signal gewinnt). Kiosk und `internal.system_health` tragen
+      es damit ohne weiteres Zutun mit (A1b).
+- [ ] **A1-6** `_monitor_tick_body()` in dieser Reihenfolge:
+      `get_status` → Selbstheilung → erneut `get_status` → **fällige Sonden**
+      (gedeckelt, mit `asyncio.timeout`-Hängegarde wie `_self_heal`) → erneut
+      `get_status` → bestehender Alarmdurchgang. So läuft die Sonde auf einer
+      frisch wiederverbundenen Sitzung, und der ganze Alarmweg wird
+      wiederverwendet statt neu gebaut.
+- [ ] **A1-7** Sonden-Stanzas in `config/mcp_servers.yaml` **und**
+      `k8s/xidra/mcp_servers.yaml`:
+      | Server | Sonde | Erwartung |
+      |---|---|---|
+      | `paperless` | `list_correspondents` | kein isError |
+      | `search` | `web_search`, feste Anfrage | ≥ 1 Treffer |
+      | `homeassistant` | `get_states` | ≥ 1 Entität |
+      | `n8n` | `n8n_list_workflows` | kein isError |
+- [ ] **A1-8** Schalter: `mcp_health_probe_enabled` (an),
+      `_interval` (600 s), `_timeout` (15 s), `_fail_threshold` (2),
+      `_max_per_tick` (4). Die eigentliche Zurückhaltung liegt in der YAML:
+      ohne Stanza wird nichts gesondet.
+- [ ] **A1-9** i18n `kiosk.impaired.probe_failed` **und** das bisher fehlende
+      `calls_failing`, je in `de.json` und `en.json`.
+
+Nicht vergessen: eine Sonde verbraucht ein Token des serverseitigen
+Ratenbegrenzers; bei 600 s Abstand vernachlässigbar, aber erwähnenswert.
+`ToolOutcomeStat` bleibt unberührt (wird nur in `agent_service` mit `user_id`
+geschrieben) — die Kiosk-Telemetrie verfälscht sich also nicht.
+
+## A2 — Alarm bei wiederholt scheiternden geplanten Aufgaben
+
+- [ ] **A2-1** Migration `pc20260912_task_failure_alert` (auf
+      `pc20260908b_cred_sphere`): `scheduled_tasks.consecutive_error_count`
+      (NOT NULL DEFAULT 0) und `error_alerted_at` (nullable). Additiv, rein
+      transaktional.
+- [ ] **A2-2** `engine._execute_task`: nach dem Statusbefund `error` hochzählen,
+      `ok`/`skipped` zurücksetzen. Ab `threshold` in Folge **genau eine**
+      deduplizierte Meldung, Wiederholung erst nach der TTL.
+- [ ] **A2-3** Erholungsmeldung, wenn eine Aufgabe nach einem Alarm wieder
+      gelingt — sonst bleibt der Mensch im Ungewissen, ob es noch klemmt.
+- [ ] **A2-4** Schalter: `scheduled_task_failure_alert_enabled` (an),
+      `_threshold` (3), `_realert_seconds` (21600, wie beim MCP-Monitor).
+- [ ] **A2-5** `consecutive_error_count` in der Antwort von
+      `/api/scheduled-tasks` und als Kennzeichen in der Admin-Liste.
+- [ ] **A2-6** (A2b) Vorgabe `paperless_dedupe_reconciler_interval`
+      300 → 3600 s. **Achtung:** `ensure_builtin_tasks` sät mit
+      `ON CONFLICT DO NOTHING` — bestehende Zeilen behalten ihre 300 s. Die
+      Umstellung auf beiden Instanzen geschieht über `/admin/scheduled-tasks`,
+      nicht durch einen Eingriff in die Datenbank.
+
+## A3 — Generischer HTTP-Wächter
+
+Der elegante Teil: der Wächter braucht **keine eigene Alarmmechanik**. Er läuft
+als geplante Aufgabe und **wirft** bei einem nicht erreichbaren Ziel — damit
+greift die Maschinerie aus A2 (Schwelle, Ledger, TTL, Erholung) unverändert.
+Zugleich löst das die Mehr-Replikat-Frage: die Engine serialisiert jede Aufgabe
+über ihre Vorschusssperre, es läuft also je Takt genau ein Replikat.
+
+- [ ] **A3-1** `services/watchdog.py`: liest `WATCHDOG_TARGETS`
+      (`name=url,name=url`), prüft jedes Ziel per HTTP GET, erwartet 2xx.
+      Gegen `/health/ready` geprüft, nicht `/health` — letzteres antwortet
+      auch dann „ok", wenn die Datenbank tot ist, und hätte am 11.09.
+      geschwiegen.
+- [ ] **A3-2** Eingebaute Aufgabe `watchdog` (Registry + Seed, 120 s,
+      **ohne** `run_at_boot` — sonst alarmiert der eigene Start).
+      Der Handler meldet die gerade ausgefallenen Ziele im Fehlertext.
+- [ ] **A3-3** Schalter: `watchdog_enabled` (an), `watchdog_targets` (leer ⇒
+      wirkungslos), `watchdog_timeout` (10 s). Schwelle und TTL kommen aus A2.
+- [ ] **A3-4** Bewusste Abwägung festhalten: fällt ein zweites Ziel während
+      einer laufenden Fehlerserie aus, gibt es keinen zweiten Alarm. Falls je
+      Ziel alarmiert werden soll, bräuchte es Zähler in Redis — dann als eigener
+      Schritt, nicht hier.
+- [ ] **A3-5** Voraussetzung im Betrieb: Egress-Regel Namespace `renfield` →
+      `renfield-xidra` (und zurück). Gehört nach `private_k8s`.
+- [ ] **A3-6** (A3c) Die Grenze in `docs/ENVIRONMENT_VARIABLES.md` **und** im
+      Entwurfsdokument ehrlich benennen: fallen beide Instanzen gleichzeitig
+      aus, schweigt auch die gegenseitige Prüfung.
+
+## Querschnitt
+
+- [ ] **Q1** `services/ops_alert.py` herauslösen: `_notify`, `_should_alert`,
+      `_clear_alert`, `_resolve_admin_user_id` aus `mcp_health_monitor.py`
+      wandern dorthin; A2 und A3 benutzen dieselbe Fassung. Verhalten
+      unverändert — ein Alarmweg, eine Admin-Auflösung, ein Ledger.
+- [ ] **Q2** `internal.system_health` um zwei Abschnitte erweitern: geplante
+      Aufgaben in einer Fehlerserie, sowie Wächterziele. Die Sondenverdikte
+      kommen über `_check_mcp` von selbst mit.
+- [ ] **Q3** Tests: `test_mcp_health_probe.py` (Auswertung von `expect`,
+      Hysterese, `per_user_auth`-Auslassung, Faltung in `_server_health`,
+      Reihenfolge im Takt), `test_scheduled_task_failure_alerts.py` (Zähler,
+      Schwelle, genau ein Alarm, Erholung), `test_watchdog.py`. Ausführung auf
+      `.159`.
+- [ ] **Q4** Dokumentations-Durchgang vor dem Merge: `CLAUDE.md`,
+      `docs/design/mcp-self-detection.md` (Phase 4 + Zeile in der
+      Fehlermodus-Tabelle), `docs/ENVIRONMENT_VARIABLES.md`, `docs/FEATURES.md`,
+      und die Haken hier oben.
+
+## Zuschnitt der Zweige
+
+1. **PR 1** — Q1 + A2 + A3. Klein, in sich geschlossen, legt die Mechanik, die
+   A1 danach mitbenutzt.
+2. **PR 2** — A1. Der größere Eingriff, eigene Prüfung.
+
+Erst danach ausrollen, mit der bekannten Reihenfolge: Migration als Job vor dem
+rollenden Neustart, anschließend Browser-Prüfung auf beiden Instanzen.

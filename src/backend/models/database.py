@@ -1472,6 +1472,16 @@ class ScheduledTask(Base):
     last_error = Column(Text, nullable=True)
     last_duration_ms = Column(Integer, nullable=True)
 
+    # Failure-streak alerting (A2, migration pc20260912_taskalert). The last_*
+    # columns above keep only the MOST RECENT run, which is why 50 consecutive
+    # failures could pass unnoticed. consecutive_error_count is reset to 0 by any
+    # non-error run, so it measures a streak; error_alerted_at records that the
+    # owner admin was already told about THIS streak and is durable on purpose —
+    # the in-process ops_alert ledger is re-armed by a restart, which a
+    # crash-looping pod would turn into an alert per boot.
+    consecutive_error_count = Column(Integer, nullable=False, default=0, server_default="0")
+    error_alerted_at = Column(DateTime, nullable=True)
+
     # built-ins are edit-not-delete; custom tasks are deletable.
     is_builtin = Column(Boolean, nullable=False, default=False, server_default="false")
 

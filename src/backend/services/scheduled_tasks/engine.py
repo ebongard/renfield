@@ -37,6 +37,7 @@ from models.database import (
     ScheduledTask,
     ScheduledTaskRun,
 )
+from services import ops_alert
 from services.scheduled_tasks.registry import get_handler
 from utils.config import settings
 
@@ -349,6 +350,71 @@ async def _record_run(
     await session.commit()
 
 
+async def _handle_failure_streak(task: ScheduledTask, status: str) -> None:
+    """Maintain the consecutive-error streak and alert ONCE per streak (A2).
+
+    Mutates the passed-in ``task`` row; the caller commits. Called for every run
+    so the counter is reset by any non-error outcome — the streak is what makes
+    "50 failures in a row" visible, where ``last_status`` alone only ever showed
+    the newest one.
+
+    Two ledgers on purpose: ``error_alerted_at`` (DB) says "we already told them
+    about THIS streak" and must survive a pod restart, while the re-alert TTL
+    caps how often an ONGOING streak repeats itself.
+    """
+    if status == SCHEDULED_TASK_STATUS_ERROR:
+        task.consecutive_error_count = (task.consecutive_error_count or 0) + 1
+        if not settings.scheduled_task_failure_alert_enabled:
+            return
+        if task.consecutive_error_count < settings.scheduled_task_failure_alert_threshold:
+            return
+        ttl = settings.scheduled_task_failure_realert_seconds
+        already = task.error_alerted_at
+        if already is not None and (_naive_utcnow() - already).total_seconds() < ttl:
+            return
+        task.error_alerted_at = _naive_utcnow()
+        await ops_alert.notify_admin(
+            title=f"Geplante Aufgabe scheitert: {task.name}",
+            message=(
+                f"Die Aufgabe '{task.name}' ist {task.consecutive_error_count} Mal "
+                f"in Folge gescheitert. Letzter Fehler: {task.last_error or 'unbekannt'}"
+            ),
+            dedup_key=f"schedtask:{task.id}:error",
+            data={
+                "task_id": task.id,
+                "task_name": task.name,
+                "handler_key": task.handler_key,
+                "consecutive_errors": task.consecutive_error_count,
+                "last_error": task.last_error,
+            },
+            event_type="scheduled_task_health",
+            source="scheduled_tasks",
+        )
+        return
+
+    # Any non-error run ends the streak. Tell the admin it recovered ONLY if they
+    # were told it was broken — otherwise a task that fails twice below the
+    # threshold would announce a recovery nobody was waiting for.
+    was_alerted = task.error_alerted_at is not None
+    streak = task.consecutive_error_count or 0
+    task.consecutive_error_count = 0
+    task.error_alerted_at = None
+    if was_alerted and settings.scheduled_task_failure_alert_enabled:
+        ops_alert.clear_alert(f"schedtask:{task.id}:error")
+        await ops_alert.notify_admin(
+            title=f"Geplante Aufgabe läuft wieder: {task.name}",
+            message=(
+                f"Die Aufgabe '{task.name}' war {streak} Mal in Folge gescheitert "
+                f"und ist jetzt wieder erfolgreich gelaufen."
+            ),
+            dedup_key=f"schedtask:{task.id}:recovered",
+            data={"task_id": task.id, "task_name": task.name, "recovered_after": streak},
+            event_type="scheduled_task_health",
+            source="scheduled_tasks",
+            urgency="normal",
+        )
+
+
 async def _execute_task(app: "FastAPI", task_id: int) -> None:
     from services.database import AsyncSessionLocal
 
@@ -373,6 +439,13 @@ async def _execute_task(app: "FastAPI", task_id: int) -> None:
             task.next_run_at = compute_next_run(task, after=now) or (
                 now + timedelta(seconds=_UNSCHEDULABLE_BACKOFF_SECONDS)
             )
+            # A skip ends any error streak: the task is no longer failing, it is
+            # not running at all (already WARN-logged + backed off below). Without
+            # this the counter would stay frozen at a stale non-zero value.
+            try:
+                await _handle_failure_streak(task, SCHEDULED_TASK_STATUS_SKIPPED)
+            except Exception as e:  # noqa: BLE001
+                logger.warning(f"scheduled task '{task.name}': streak reset failed: {e}")
             await session.commit()
             await _record_run_safe(
                 session, task_id, task.name,
@@ -410,6 +483,13 @@ async def _execute_task(app: "FastAPI", task_id: int) -> None:
         task.next_run_at = compute_next_run(task, after=end) or (
             end + timedelta(seconds=_UNSCHEDULABLE_BACKOFF_SECONDS)
         )
+        # Failure-streak bookkeeping + alerting (A2). Best-effort: an alerting
+        # failure must never cost us the run-state commit below, which is what
+        # keeps the task scheduled.
+        try:
+            await _handle_failure_streak(task, status)
+        except Exception as e:  # noqa: BLE001
+            logger.warning(f"scheduled task '{task_name}': failure-streak alerting failed: {e}")
         await session.commit()
 
         # Per-run history row (isolated from the task-state commit above).

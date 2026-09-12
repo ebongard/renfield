@@ -694,6 +694,7 @@
     "builtinCannotDelete": "Eingebaute Aufgaben können nicht gelöscht, sondern nur bearbeitet werden.",
     "enable": "Aufgabe aktivieren",
     "disable": "Aufgabe deaktivieren",
+    "consecutiveErrors": "{{count}}× in Folge fehlgeschlagen",
     "engineTick": "Planer-Takt: alle {{seconds}} s",
     "colName": "Name",
     "colSchedule": "Zeitplan",

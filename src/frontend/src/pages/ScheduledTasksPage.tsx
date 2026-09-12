@@ -471,6 +471,15 @@ export default function ScheduledTasksPage() {
                       ) : (
                         <Badge color="gray">{t('scheduledTasks.status.never')}</Badge>
                       )}
+                      {task.consecutive_error_count > 1 && (
+                        <span className="ml-1">
+                          <Badge color="red">
+                            {t('scheduledTasks.consecutiveErrors', {
+                              count: task.consecutive_error_count,
+                            })}
+                          </Badge>
+                        </span>
+                      )}
                     </div>
                   </td>
 

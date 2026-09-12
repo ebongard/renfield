@@ -18,6 +18,10 @@ that actually catches that class) into one read-only, ADMIN-gated answer:
 5. worker + queue — ingest worker liveness + live backlog.
 6. infra          — DB / Redis reachability (Ollama is a shallow init check, matching
                     /health/ready — documented, not a real ping).
+7. scheduled jobs — tasks in a FAILURE STREAK (A2). Also covers the external HTTP
+                    watchdog, which is itself a scheduled task that raises on an
+                    unreachable peer — so "the other instance is gone" arrives here
+                    without a second reporting path.
 
 Every probe is isolated (one dead probe never blanks the answer). The message is
 problems-first German; an all-green run says so. Read-only — it detects & reports,
@@ -128,6 +132,36 @@ async def _check_subsystems() -> list[str]:
     return problems
 
 
+async def _check_scheduled_tasks(db) -> list[str]:
+    """Scheduled tasks currently in a FAILURE STREAK (A2).
+
+    ``last_status`` alone cannot distinguish "failed once" from "has failed every
+    run for a day and a half", which is precisely how 50 consecutive dedupe
+    failures stayed invisible. The streak counter can.
+
+    This also covers the external watchdog for free: the watchdog IS a scheduled
+    task that raises on an unreachable target, so a dead peer shows up here as a
+    failing task naming the target — no second reporting path.
+    """
+    from sqlalchemy import select
+
+    from models.database import ScheduledTask
+
+    rows = (
+        await db.execute(
+            select(ScheduledTask.name, ScheduledTask.consecutive_error_count, ScheduledTask.last_error)
+            .where(ScheduledTask.enabled.is_(True), ScheduledTask.consecutive_error_count > 0)
+            .order_by(ScheduledTask.consecutive_error_count.desc())
+            .limit(20)
+        )
+    ).all()
+    problems: list[str] = []
+    for name, streak, last_error in rows:
+        detail = f": {last_error}" if last_error else ""
+        problems.append(f"Geplante Aufgabe '{name}': {streak}x in Folge gescheitert{detail}")
+    return problems
+
+
 async def _check_infra() -> list[str]:
     """DB + Redis reachability (Ollama: shallow, see module docstring)."""
     problems: list[str] = []
@@ -174,6 +208,14 @@ async def system_health(
             data["config_state_problems"] = cfg
     except Exception as e:  # noqa: BLE001
         logger.warning(f"system_health: config/paperless probe failed: {e}")
+
+    try:
+        async with AsyncSessionLocal() as db:
+            failing = await _check_scheduled_tasks(db)
+        problems += failing
+        data["scheduled_task_problems"] = failing
+    except Exception as e:  # noqa: BLE001
+        logger.warning(f"system_health: scheduled-task probe failed: {e}")
 
     try:
         mcp_problems, mcp_ok = _check_mcp(mcp_manager)

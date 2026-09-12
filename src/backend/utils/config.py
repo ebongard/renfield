@@ -1108,6 +1108,22 @@ class Settings(BaseSettings):
     # Frontend feature flag (Phase-2 admin UI "Geplante Aufgaben"); false-safe.
     scheduled_tasks_enabled: bool = False
 
+    # Failure-streak alerting (A2). A scheduled task that fails EVERY run was
+    # recorded perfectly and announced to nobody — the Paperless dedupe task
+    # failed 50 times in a row over a day and a half in silence. After N
+    # consecutive error runs the engine fires ONE proactive alert to the owner
+    # admin (and one recovery notice when it succeeds again), never one per run.
+    # Costs nothing while everything works, which is why it is a kill-switch
+    # (default ON) rather than an opt-in: the failure mode being fixed here IS
+    # silence. Needs proactive_enabled for delivery.
+    scheduled_task_failure_alert_enabled: bool = True
+    # Consecutive error runs before the first alert. >1 so a single transient
+    # failure (an upstream blip, a deploy window) stays quiet.
+    scheduled_task_failure_alert_threshold: int = Field(default=3, ge=1, le=100)
+    # Re-alert an ONGOING failure streak only this often (mirrors
+    # mcp_health_realert_seconds — 6h).
+    scheduled_task_failure_realert_seconds: float = Field(default=21600.0, ge=60.0)
+
     # Paperless dedupe reconciler — the first built-in scheduled task. Autonomously
     # drains the Paperless duplicate backlog by calling mcp.paperless.dedupe_documents
     # on a schedule (recoverable trash; keep-lowest-id). The built-in row is seeded
@@ -1115,7 +1131,12 @@ class Settings(BaseSettings):
     # env-flip activates it in Phase 1 before the UI toggle exists (Review M7).
     paperless_dedupe_reconciler_enabled: bool = False
     # Seed interval for the built-in row (admin-overridable in the UI once it ships).
-    paperless_dedupe_reconciler_interval: int = Field(default=300, ge=30, le=86400)
+    # 3600, not the original 300: a five-minute cadence for an ARCHIVE dedupe
+    # produced 50 failed runs in a day and a half against a dead Paperless — that
+    # is log noise as much as it is a missing alarm. NOTE this only affects rows
+    # created from here on (ensure_builtin_tasks seeds ON CONFLICT DO NOTHING);
+    # an existing row keeps its interval until it is changed in the admin UI.
+    paperless_dedupe_reconciler_interval: int = Field(default=3600, ge=30, le=86400)
     # Extras deleted per dedupe pass (→ dedupe_documents max_delete). Bounded so one
     # pass stays inside the MCP rate limit + the tool's wall-clock budget; the job
     # re-runs each interval until remaining reaches 0.
@@ -1621,6 +1642,27 @@ class Settings(BaseSettings):
     mcp_health_call_window: int = 10                   # rolling outcome window per server
     mcp_health_call_min_samples: int = 4               # need this many timeouts/successes before judging
     mcp_health_call_fail_ratio: float = 0.8            # >= this share timed out → calls_failing
+
+    # --- External HTTP watchdog (A3) -----------------------------------------
+    # "Who notices that Renfield itself is gone?" A system that is down cannot
+    # report itself, so this watches OTHER endpoints and lets the peer instance
+    # watch this one. It runs as a scheduled task that RAISES on an unreachable
+    # target, which means the A2 failure-streak machinery above provides the
+    # threshold, the ledger, the re-alert TTL and the recovery notice — no second
+    # alerting mechanism, and the engine's per-task advisory lock guarantees a
+    # single replica probes per tick.
+    #
+    # HONEST LIMIT: mutual watching is silent when BOTH instances die together —
+    # exactly what the 2026-09-11 iscsid restart did. Only an observer outside
+    # the cluster covers that case.
+    watchdog_enabled: bool = True
+    # Comma-separated "name=url" targets. EMPTY (the default) → completely inert.
+    # Probe the peer's /health/ready, never /health: the latter answers "ok" with a
+    # dead database and would have stayed silent through the 21.5h outage.
+    watchdog_targets: str = ""
+    watchdog_timeout: float = Field(default=10.0, ge=1.0, le=120.0)
+    # Seed interval for the built-in watchdog row (seconds).
+    watchdog_interval: int = Field(default=120, ge=30, le=86400)
 
     # Weekly obligation digest — the safety floor under the per-milestone
     # notifier. One owner-targeted summary per ISO week of every OPEN obligation

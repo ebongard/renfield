@@ -26,6 +26,9 @@ export interface ScheduledTask {
   last_status: TaskStatus | null;
   last_error: string | null;
   last_duration_ms: number | null;
+  /** Consecutive failed runs (A2). last_status shows only the newest run, so a
+   *  task failing every time reads identically to one that failed once. */
+  consecutive_error_count: number;
   is_builtin: boolean;
   created_at: string;
   updated_at: string;
