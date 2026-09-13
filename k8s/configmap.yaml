@@ -275,6 +275,15 @@ data:
   # as ONE deduped proactive admin alert + an internal.system_health entry, instead
   # of dead-ending in logs. Needs PROACTIVE_ENABLED (on here) for the push.
   MCP_HEALTH_MONITOR_ENABLED: "true"
+
+  # Gegenseitige Erreichbarkeitsprüfung (#1230 A3). Ein System, das selbst steht,
+  # kann sich nicht selbst melden — der Haushalt beobachtet deshalb xidra, und
+  # xidra beobachtet den Haushalt. Geprüft wird /health/ready, NIE /health:
+  # letzteres meldet auch mit toter Datenbank "ok" und hätte durch den
+  # 21,5-Stunden-Ausfall vom 2026-09-11 hindurch geschwiegen.
+  # Leer = wirkungslos. Alarmiert über die Fehlserien-Logik der geplanten
+  # Aufgaben (drei Fehlläufe in Folge → EINE Meldung).
+  WATCHDOG_TARGETS: "xidra=http://backend.renfield-xidra.svc.cluster.local:8000/health/ready"
   MEMORY_ENABLED: "true"
   MEMORY_EPISODIC_ENABLED: "true"
   MEMORY_EXTRACTION_ENABLED: "true"
