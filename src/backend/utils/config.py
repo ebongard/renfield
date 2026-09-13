@@ -1643,6 +1643,37 @@ class Settings(BaseSettings):
     mcp_health_call_min_samples: int = 4               # need this many timeouts/successes before judging
     mcp_health_call_fail_ratio: float = 0.8            # >= this share timed out → calls_failing
 
+    # --- Functional health probes (A1) ---------------------------------------
+    # The gap Phase 2 left open: `calls_failing` counts only TIMEOUTS, because an
+    # app-level error (device off, parcel not found) says nothing about the SERVER's
+    # health — a correctness decision that must NOT be reversed. But it left two
+    # blind spots: an upstream that answers every call with HTTP 500 looks like a
+    # stream of app errors (Paperless, dead 3d 10h, 13/13 servers green), and a
+    # server nobody calls produces no samples at all (n8n, unreachable, green).
+    #
+    # A probe escapes the bind: WE choose a cheap read-only call that must succeed,
+    # so its failure IS a health signal. The verdict is kept separate from the
+    # timeout window and folded into _server_health as `probe_failed`.
+    #
+    # The flag is ON, but the blast radius is the YAML, not the flag: a server with
+    # no `health_probe` stanza in mcp_servers.yaml is never probed. That is the
+    # deliberate throttle — a probe that itself generates load is worse than none.
+    mcp_health_probe_enabled: bool = True
+    # Default seconds between probes per server (per-server `interval` overrides).
+    # Far longer than the monitor tick: this costs a real upstream request.
+    mcp_health_probe_interval: int = Field(default=600, ge=30, le=86400)
+    # Default per-probe call timeout (per-server `timeout` overrides).
+    mcp_health_probe_timeout: float = Field(default=15.0, ge=1.0, le=300.0)
+    # Consecutive failed probes before a server is judged degraded. >1 so a single
+    # hiccup, rate-limit or restart window stays quiet.
+    mcp_health_probe_fail_threshold: int = Field(default=2, ge=1, le=20)
+    # Cap probes per monitor tick so a fleet-wide due-time alignment can't burst.
+    mcp_health_probe_max_per_tick: int = Field(default=4, ge=1, le=50)
+    # Hard hang-guard per probe, mirroring the self-heal guard: the call itself is
+    # bounded by its own timeout, but a wedged transport can hang elsewhere and
+    # freezing the monitor loop is exactly the #1107 failure we already paid for.
+    mcp_health_probe_guard_timeout: float = Field(default=60.0, ge=5.0, le=600.0)
+
     # --- External HTTP watchdog (A3) -----------------------------------------
     # "Who notices that Renfield itself is gone?" A system that is down cannot
     # report itself, so this watches OTHER endpoints and lets the peer instance

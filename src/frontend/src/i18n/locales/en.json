@@ -2281,6 +2281,8 @@
     "impaired": {
       "plugin_failed": "backend plugin not loaded",
       "no_tools": "connected, no tools",
+      "probe_failed": "functional check failed",
+      "calls_failing": "connected, but calls are timing out",
       "presence_disabled": "Presence detection disabled",
       "presence_no_satellite": "No satellite online",
       "presence_satellite_unauthenticated": "Satellite not enrolled — receiving no IRK keys",

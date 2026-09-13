@@ -2281,6 +2281,8 @@
     "impaired": {
       "plugin_failed": "Backend-Plugin nicht geladen",
       "no_tools": "verbunden, aber keine Tools",
+      "probe_failed": "Funktionstest fehlgeschlagen",
+      "calls_failing": "verbunden, aber Aufrufe laufen in Timeout",
       "presence_disabled": "Präsenzerkennung deaktiviert",
       "presence_no_satellite": "Kein Satellit online",
       "presence_satellite_unauthenticated": "Satellit nicht angemeldet – empfängt keine IRK-Schlüssel",
