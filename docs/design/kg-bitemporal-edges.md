@@ -86,7 +86,7 @@ bleiben.
 ## 4. Warum `is_active` nicht reicht
 
 Naheliegend wäre, den widersprochenen Datensatz einfach auf `is_active = false` zu setzen. Das
-ist falsch, weil `KGRelation.is_active` bereits **vier** verschiedene Bedeutungen trägt.
+ist falsch, weil `KGRelation.is_active` bereits **fünf** verschiedene Bedeutungen trägt.
 Vollständige Liste aller Schreibstellen, repo-weit ermittelt:
 
 | Bedeutung | Ort |
@@ -95,15 +95,18 @@ Vollständige Liste aller Schreibstellen, repo-weit ermittelt:
 | Kaskade — Entität wird gelöscht, ihre Kanten fallen mit | `knowledge_graph_service.py:1667-1672` |
 | Aufräumen — verwaiste Kante nach Soft-Delete ungültiger Entitäten | `kg_cleanup_service.py:88-92` |
 | Wikilink entfernt — `[[Ziel]]` steht nicht mehr in der Notiz | `note_links.py:107`, `:128` |
+| Manuell gelöscht — Admin-Löschung über `DELETE /api/knowledge-graph/relations/{id}` (`KG_MANAGE`) | `knowledge_graph_service.py:1827` (`delete_relation`) |
 
-Alle vier heißen „diese Kante zählt nicht mehr", aber aus **strukturell verschiedenen Gründen**,
-und keiner davon ist „war wahr, ist es nicht mehr".
+Alle fünf heißen „diese Kante zählt nicht mehr", aber aus **strukturell verschiedenen Gründen**,
+und keiner davon ist „war wahr, ist es nicht mehr". Die manuelle Löschung kommt dem am nächsten,
+meint aber „war nie richtig" (Extraktionsfehler) — also gerade das Gegenteil eines Ablaufs, bei
+dem die alte Aussage für ihren Zeitraum wahr bleibt.
 
 `KGEntity.is_active` (etwa `:949`, Grabstein einer zusammengeführten Entität) ist eine **andere
 Spalte auf einer anderen Tabelle** und gehört nicht in diese Aufzählung — beim Zählen leicht zu
 verwechseln.
 
-Käme „widersprochen" als fünfte Bedeutung dazu, ließe sich hinterher nicht mehr sagen,
+Käme „widersprochen" als sechste Bedeutung dazu, ließe sich hinterher nicht mehr sagen,
 **warum** eine Kante inaktiv ist — und damit weder „was galt im März" beantworten noch ein
 falsches Expire zurücknehmen. Gültigkeit braucht ihren eigenen Ausdruck.
 
