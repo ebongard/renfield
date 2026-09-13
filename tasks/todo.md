@@ -145,6 +145,13 @@ vier Minuten.
 - [ ] **Alarmierung** — 21,5 Stunden Ausfall blieben unbemerkt. Das ist der
       wichtigste offene Punkt, wichtiger als alles technisch Reparierte:
       CNPG-Cluster nicht `Ready`, WAL-Füllstand, Backend down.
+
+      **Teilweise erledigt** (#1230, PR 1 + 2): „Backend down" deckt jetzt der
+      Wächter ab — die jeweils andere Instanz prüft `/health/ready` und meldet
+      über A2. **Weiterhin offen bleibt das Clusternahe** (CNPG nicht `Ready`,
+      WAL-Füllstand), das nach `private_k8s` gehört, sowie der Fall, in dem
+      beide Instanzen gleichzeitig ausfallen — dagegen hilft nur ein Beobachter
+      außerhalb des Clusters.
 - [ ] Alte `renfield-pg`-Cluster + verwaiste Longhorn-Volumes löschen (nach Soak)
 - [ ] `numberOfReplicas: 1` auf `longhorn-pg` überdenken — machte den
       iscsid-Neustart überhaupt erst tödlich
@@ -190,22 +197,39 @@ Gemessen am 12.09.: `/api/mcp/status` meldete für den Haushalt 13 von 13
 Servern `healthy`. Paperless war seit drei Tagen tot, n8n aus dem Cluster gar
 nicht erreichbar. Beide grün.
 
-- [ ] **A1a** — Pro Server eine billige, lesende Funktionssonde definieren,
+- [x] **A1a** — Pro Server eine billige, lesende Funktionssonde definieren,
       konfigurierbar in `mcp_servers.yaml` (ein Werkzeugname plus erwartete
       Mindestantwort). Kandidaten aus der Prüfung vom 12.09.:
       | Server | Sonde | Was sie gefangen hätte |
       |---|---|---|
       | `paperless` | `/api/statistics/` bzw. ein lesendes Tool | den 3-Tage-Ausfall am ersten Tag |
-      | `search` | eine Suche, Trefferzahl > 0 | die CAPTCHA-Fälle, bei denen SearXNG 0 Treffer liefert und trotzdem grün meldet |
+      | ~~`search`~~ | ~~eine Suche, Trefferzahl > 0~~ | **verworfen beim Bauen** — siehe unten |
       | `homeassistant` | `get_states`, Entitätenzahl > 0 | einen toten HA-Token |
       | `n8n` | Workflows auflisten | dass der Name auf eine öffentliche IP zeigt |
-- [ ] **A1b** — Verdikt in `_server_health` einspeisen, damit Kiosk und
+
+      **Zur gestrichenen `search`-Zeile:** eine Trefferzahl ist dort ein
+      dokumentiertes Falsch-Grün — `services/search_health.py` (#1162) hält seit
+      Langem fest, dass Wikipedia fast jede Anfrage beantwortet und eine
+      nicht-leere Trefferliste deshalb einen vollständigen Scraper-Ausfall
+      verdeckt. Die richtige Sonde (Zahl der beitragenden allgemeinen Engines)
+      gab es also schon; sie mündete nur in `internal.system_health` und wurde
+      damit nur gesehen, wenn ein Mensch danach fragte. Sie ist jetzt über
+      `_BESPOKE_PROBES` an denselben Kanal angeschlossen, statt schlechter
+      nachgebaut zu werden.
+- [x] **A1b** — Verdikt in `_server_health` einspeisen, damit Kiosk und
       `internal.system_health` es mittragen. Der Alarmweg existiert bereits
       (`NotificationService.process_webhook` an `active_admin_ids`,
       `mcp_health_monitor.py:62-84`) — es fehlt nur der Anlass.
-- [ ] **A1c** — Eigenes Flag, zunächst dunkel; Sonden müssen lesend, billig und
+- [x] **A1c** — Eigenes Flag, zunächst dunkel; Sonden müssen lesend, billig und
       einzeln abschaltbar sein. Eine Sonde, die selbst Last erzeugt, ist
       schlimmer als keine.
+
+      **Abweichung, bewusst und auf Ihre Entscheidung hin:** der Schalter steht
+      auf **an**, nicht dunkel. Die Zurückhaltung liegt stattdessen in der YAML —
+      ein Server ohne `health_probe`-Stanza wird nie gesondet, und je Stanza gibt
+      es ein `enabled`. Die Forderung „lesend, billig, einzeln abschaltbar" ist
+      damit erfüllt; der Wirkungsbereich ist eine Konfigurationsdatei statt eines
+      Schalters.
 
 ## A2 — Alarm bei wiederholt scheiternden geplanten Aufgaben
 
@@ -214,11 +238,11 @@ alle fünf Minuten, über anderthalb Tage. Die Lauf-Historie hat jeden einzelnen
 Fehlschlag sauber protokolliert (`ScheduledTaskRun`,
 `models/database.py:1484`; `last_status`, Zeile 1471). Niemand hat es erfahren.
 
-- [ ] **A2a** — Nach N aufeinanderfolgenden `error`-Läufen genau **eine**
+- [x] **A2a** — Nach N aufeinanderfolgenden `error`-Läufen genau **eine**
       deduplizierte Benachrichtigung an den Eigentümer-Admin, nicht eine pro
       Lauf. Muster dafür steht im Fristen-Notifier (`obligation_acknowledgements`
       als Ledger gegen Wiederholung).
-- [ ] **A2b** — Dabei mitprüfen, ob ein Fünf-Minuten-Takt für einen
+- [x] **A2b** — Dabei mitprüfen, ob ein Fünf-Minuten-Takt für einen
       Archiv-Dedupe die richtige Frequenz ist. Er hat 50 Fehlläufe in
       anderthalb Tagen erzeugt — das ist auch Protokollrauschen.
 
@@ -229,15 +253,15 @@ Der 21,5-Stunden-Ausfall ist der unangenehme Fall: beide Backends lagen in
 Datenbank. **Ein System, das selbst steht, kann sich nicht selbst melden.**
 Dieser Punkt ist in Renfield allein nicht lösbar.
 
-- [ ] **A3a** — Naheliegender Weg, weil er nichts Neues braucht: die beiden
+- [x] **A3a** — Naheliegender Weg, weil er nichts Neues braucht: die beiden
       Instanzen sind vollständig unabhängige Deployments in getrennten
       Namespaces. Jede prüft periodisch den `/health` der anderen und meldet
       Ausbleiben über ihren eigenen, bereits vorhandenen Proaktiv-Kanal.
       Gegenseitige Beobachtung, kein zusätzlicher Dienst.
 - [ ] **A3b** — Alternative oder Ergänzung auf Clusterebene (Deployment nicht
       verfügbar, CNPG nicht `Ready`): gehört dann nach `private_k8s`, nicht
-      hierher.
-- [ ] **A3c** — Ehrlich bleiben, was A3a **nicht** kann: fallen beide
+      hierher. **Bleibt offen**, dort als Ü4 aufgenommen.
+- [x] **A3c** — Ehrlich bleiben, was A3a **nicht** kann: fallen beide
       gleichzeitig aus — wie am 11.09., als derselbe `iscsid`-Neustart beide
       Datenbanken erschlug — schweigt auch die gegenseitige Prüfung. Dagegen
       hilft nur ein Beobachter außerhalb des Clusters.
@@ -272,7 +296,7 @@ ein Gesundheitssignal. Das Verdikt bleibt getrennt von `recent_outcomes`.
 
 ## A1 — Funktionssonde je MCP-Server
 
-- [ ] **A1-1** `MCPServerConfig.health_probe: dict | None` +
+- [x] **A1-1** `MCPServerConfig.health_probe: dict | None` +
       `_parse_health_probe()` nach dem Muster von `_parse_notifications`
       (`mcp_client.py:933`), verdrahtet bei Zeile 1116.
       Gestalt in `mcp_servers.yaml`:
@@ -287,41 +311,56 @@ ein Gesundheitssignal. Das Verdikt bleibt getrennt von `recent_outcomes`.
           min_items: 0         # 0 = nur „kein isError"
           path: results        # optional: welches Feld gezählt wird
       ```
-- [ ] **A1-2** `MCPServerState` um `probe_consecutive_failures`,
+- [x] **A1-2** `MCPServerState` um `probe_consecutive_failures`,
       `last_probe_at`, `last_probe_ok`, `last_probe_detail` erweitern;
       beim (Neu-)Verbinden zurücksetzen, dort wo `recent_outcomes` geleert wird.
-- [ ] **A1-3** `MCPManager.run_health_probe(name)` — ruft das konfigurierte
+- [x] **A1-3** `MCPManager.run_health_probe(name)` — ruft das konfigurierte
       Werkzeug über `execute_tool(user_permissions=None, user_id=None,
       call_timeout=probe.timeout)` und wertet `expect` aus.
       **Übersprungen wird:** `per_user_auth`-Server (fail-closed, `user_id=None`
       würde immer verweigert), `federation`-Transport, nicht verbundene Server,
       Server ohne oder mit abgeschalteter Stanza.
-- [ ] **A1-4** Hysterese: erst ab `mcp_health_probe_fail_threshold`
+- [x] **A1-4** Hysterese: erst ab `mcp_health_probe_fail_threshold`
       aufeinanderfolgenden Fehlschlägen gilt der Server als beeinträchtigt —
       ein einzelner Ausrutscher alarmiert nicht.
-- [ ] **A1-5** `_server_health()` faltet das Verdikt als
+- [x] **A1-5** `_server_health()` faltet das Verdikt als
       `("degraded", "probe_failed")` ein, **vor** `calls_failing` (das
       spezifischere Signal gewinnt). Kiosk und `internal.system_health` tragen
       es damit ohne weiteres Zutun mit (A1b).
-- [ ] **A1-6** `_monitor_tick_body()` in dieser Reihenfolge:
+- [x] **A1-6** `_monitor_tick_body()` in dieser Reihenfolge:
       `get_status` → Selbstheilung → erneut `get_status` → **fällige Sonden**
       (gedeckelt, mit `asyncio.timeout`-Hängegarde wie `_self_heal`) → erneut
       `get_status` → bestehender Alarmdurchgang. So läuft die Sonde auf einer
       frisch wiederverbundenen Sitzung, und der ganze Alarmweg wird
       wiederverwendet statt neu gebaut.
-- [ ] **A1-7** Sonden-Stanzas in `config/mcp_servers.yaml` **und**
-      `k8s/xidra/mcp_servers.yaml`:
+- [x] **A1-7** Sonden-Stanzas in `config/mcp_servers.yaml` **und**
+      `k8s/xidra/mcp_servers.yaml` (letztere gitignored, geht über
+      `apply-mcp-config.sh` live):
       | Server | Sonde | Erwartung |
       |---|---|---|
-      | `paperless` | `list_correspondents` | kein isError |
-      | `search` | `web_search`, feste Anfrage | ≥ 1 Treffer |
-      | `homeassistant` | `get_states` | ≥ 1 Entität |
-      | `n8n` | `n8n_list_workflows` | kein isError |
-- [ ] **A1-8** Schalter: `mcp_health_probe_enabled` (an),
+      | `paperless` | `list_correspondents` | kein Fehlerumschlag |
+      | `homeassistant` | `GetLiveContext` | kein Fehlerumschlag |
+      | `n8n` | `n8n_list_workflows` | kein Fehlerumschlag |
+
+      **Korrigiert gegenüber dem Plan:** `search` bekommt KEINE Stanza. Die
+      geplante „≥ 1 Treffer"-Erwartung wäre genau das Falsch-Grün, das
+      `services/search_health.py` (#1162) seit Langem dokumentiert — Wikipedia
+      beantwortet fast jede Anfrage, eine nicht-leere Trefferliste verdeckt also
+      einen vollständigen Scraper-Ausfall. Diese Sonde existiert bereits und ist
+      besser; sie mündete nur nirgendwo hin. Statt sie schlechter nachzubauen,
+      ist sie über `_BESPOKE_PROBES` in denselben Verdikt-Kanal verdrahtet
+      (neuer Punkt A1-10).
+
+- [x] **A1-10** Sonderfall-Sonden anbinden: `_BESPOKE_PROBES` im Monitor +
+      `MCPManager.record_external_probe`, damit ein purpose-built Verdikt
+      (heute: `search`) Kiosk und Alarm erreicht statt nur
+      `internal.system_health`. Ein `unknown` schreibt nichts — fehlende
+      Evidenz ist keine Evidenz für einen Fehler.
+- [x] **A1-8** Schalter: `mcp_health_probe_enabled` (an),
       `_interval` (600 s), `_timeout` (15 s), `_fail_threshold` (2),
       `_max_per_tick` (4). Die eigentliche Zurückhaltung liegt in der YAML:
       ohne Stanza wird nichts gesondet.
-- [ ] **A1-9** i18n `kiosk.impaired.probe_failed` **und** das bisher fehlende
+- [x] **A1-9** i18n `kiosk.impaired.probe_failed` **und** das bisher fehlende
       `calls_failing`, je in `de.json` und `en.json`.
 
 Nicht vergessen: eine Sonde verbraucht ein Token des serverseitigen
@@ -372,7 +411,7 @@ Zugleich löst das die Mehr-Replikat-Frage: die Engine serialisiert jede Aufgabe
       einer laufenden Fehlerserie aus, gibt es keinen zweiten Alarm. Falls je
       Ziel alarmiert werden soll, bräuchte es Zähler in Redis — dann als eigener
       Schritt, nicht hier.
-- [ ] **A3-5** Voraussetzung im Betrieb: Egress-Regel Namespace `renfield` →
+- [x] **A3-5** Voraussetzung im Betrieb: Egress-Regel Namespace `renfield` →
       `renfield-xidra` (und zurück). Gehört nach `private_k8s`.
 - [x] **A3-6** (A3c) Die Grenze in `docs/ENVIRONMENT_VARIABLES.md` **und** im
       Entwurfsdokument ehrlich benennen: fallen beide Instanzen gleichzeitig

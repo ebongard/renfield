@@ -764,6 +764,91 @@ Ohne gesetzte Webhook-URL bleibt die MCP-eigene `OPERATOR-NOTIFY` (wie bisher) i
 den Container-Logs stecken. Design + Fehlermodus-Katalog + Phasen 2/3:
 `docs/design/mcp-self-detection.md`.
 
+#### Funktionssonden je MCP-Server (A1)
+
+Die Lücke, die Phase 2 offen ließ. `MCP_HEALTH_CALL_*` oben zählt **ausschließlich
+Timeouts**, weil ein App-Fehler („Gerät aus", „Paket nicht gefunden") nichts über
+die Gesundheit des Servers aussagt — eine Korrektheitsentscheidung, die man nicht
+umkehren darf. Sie ließ aber zwei blinde Flecken:
+
+- Ein Ziel, das **jeden** Aufruf mit HTTP 500 beantwortet, sieht aus wie eine
+  Folge von App-Fehlern. Paperless war so 3 Tage 10 Stunden tot, bei 13 von 13
+  Servern grün.
+- Ein Server, den **niemand aufruft**, erzeugt gar keine Stichprobe. n8n war aus
+  dem Cluster nicht erreichbar und meldete trotzdem „verbunden".
+
+Die Sonde entkommt der Zwickmühle: **wir** wählen einen billigen, lesenden
+Aufruf, der gelingen *muss* — deshalb **ist** sein Scheitern ein
+Gesundheitssignal. Das Verdikt bleibt vom Timeout-Fenster getrennt und fließt als
+`probe_failed` in `_server_health`, womit Kiosk, `internal.system_health` und der
+bestehende Alarmweg es ohne weiteres Zutun mittragen.
+
+```bash
+MCP_HEALTH_PROBE_ENABLED=true
+MCP_HEALTH_PROBE_INTERVAL=600      # Sekunden je Server (Stanza kann überschreiben)
+MCP_HEALTH_PROBE_TIMEOUT=15        # je Sondenaufruf
+MCP_HEALTH_PROBE_FAIL_THRESHOLD=2  # >1: ein einzelner Aussetzer ist kein Urteil
+MCP_HEALTH_PROBE_MAX_PER_TICK=4    # Deckel, falls alle gleichzeitig fällig werden
+MCP_HEALTH_PROBE_GUARD_TIMEOUT=60  # Hang-Guard je Sonde (wie bei der Selbstheilung, #1107)
+```
+
+**Der Schalter steht auf an — die eigentliche Drosselung ist die YAML.** Ein
+Server ohne `health_probe`-Stanza in `mcp_servers.yaml` wird nie gesondet. Eine
+Sonde, die selbst Last erzeugt, wäre schlimmer als keine:
+
+```yaml
+    health_probe:
+      enabled: true          # je Server abschaltbar
+      tool: list_correspondents
+      args: {}
+      interval: 600
+      timeout: 15
+      expect:
+        min_items: 0         # 0 = nur "keine Fehlerantwort"
+        path: results        # optional: welches Feld gezählt wird
+```
+
+Gesondet werden heute `paperless` (`list_correspondents`), `n8n`
+(`n8n_list_workflows`) und `homeassistant` (`GetLiveContext`), jeweils mit
+`min_items: 0` — schon die Fehlerantwort ist das Signal, und eine leere Liste ist
+bei einem frischen Archiv legitim.
+
+`min_items > 0` zählt im **JSON der Antwort** (nicht in den rohen MCP-Inhaltsteilen
+— dort stünde immer 1). Antwortet ein Server Fließtext oder etwas Unzählbares, ist
+das Ergebnis **unentschieden**: es wird kein Verdikt geschrieben und eine Warnung
+geloggt. Eine Fehlkonfiguration darf keinen kritischen Alarm über einen gesunden
+Server auslösen.
+
+Das Werkzeug wird **exakt** aufgelöst. `execute_tool` hat für den Agenten eine
+gewollte unscharfe Ersetzung — hier wäre sie Gift: die Sonde riefe stillschweigend
+ein anderes Werkzeug auf und meldete entweder Grün, obwohl die gemeinte Prüfung nie
+lief, oder dauerhaft Rot wegen Schema-Verletzung. Ein fehlendes Werkzeug ist eine
+Fehlkonfiguration, keine Krankheit, und wird als solche gemeldet.
+
+Eine kaputte Stanza (`interval: 10m`) kostet **nur die Sonde**, nicht den Server —
+die Zahlwerte fallen einzeln auf ihre Vorgaben zurück.
+
+**`min_items > 0` ist kein Qualitätsmaß.** Für `search` wäre eine Trefferzahl ein
+dokumentiertes Falsch-Grün: Wikipedia beantwortet fast jede Anfrage, eine
+nicht-leere Trefferliste verdeckt also einen vollständigen Scraper-Ausfall. Dieser
+Server behält deshalb seine eigene, ältere Sonde
+(`services/search_health.py`, `SEARCH_FUNCTIONAL_PROBE_ENABLED`), die stattdessen
+die Zahl der beitragenden allgemeinen Engines zählt. Ihr Verdikt mündete bisher
+nur in `internal.system_health` — wurde also nur gesehen, wenn ein Mensch danach
+fragte — und ist jetzt über `_BESPOKE_PROBES` in denselben Kanal verdrahtet.
+
+Bewusst **nicht** gesondet, jeweils aus einem Grund: `per_user_auth`-Server (ein
+Aufruf mit `user_id=None` wird fail-closed verweigert, die Sonde meldete dauerhaft
+Falsches), Federation-Transport, nicht verbundene Server.
+
+Zwei Entscheidungen, die man leicht falsch herum trifft:
+
+1. **Ein Reconnect löscht das Sondenverdikt nicht.** Er beweist, dass der
+   Transport steht, und nichts über den Dienst dahinter — Paperless lieferte drei
+   Tage lang über viele gesunde Reconnects hinweg HTTP 500.
+2. Die Sonde läuft **nach** der Selbstheilung, damit sie den Dienst auf frischem
+   Transport beurteilt statt ein bereits geheiltes Transportproblem zu wiederholen.
+
 #### Alarm bei scheiternden geplanten Aufgaben (A2)
 
 Eine geplante Aufgabe, die bei **jedem** Lauf scheitert, war bis 2026-09 sauber
