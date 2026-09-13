@@ -444,3 +444,35 @@ Zugleich löst das die Mehr-Replikat-Frage: die Engine serialisiert jede Aufgabe
 
 Erst danach ausrollen, mit der bekannten Reihenfolge: Migration als Job vor dem
 rollenden Neustart, anschließend Browser-Prüfung auf beiden Instanzen.
+
+---
+
+# ABGESCHLOSSEN + AUSGEROLLT (Stand 2026-09-13)
+
+Alles aus A1–A3 ist gebaut, gemergt, auf **beiden** Instanzen ausgerollt und live
+nachgewiesen. Tags `2026-09-13-alerting` (A1/A2/A3) + `2026-09-13-n8n-chips`
+(Folgefixes). Migration `pc20260912_taskalert` vor dem Rollout als Job.
+
+- **PR #1231** (Q1 `ops_alert` + A2 Fehlserien-Alarm + A3 Wächter) — gemergt.
+- **PR #1232** (A1 Funktionssonden, gestapelt) — gemergt; 6 `/review`-Befunde behoben.
+- **PR #1233** (Wächter-Ziel Haushalt→xidra) — gemergt; xidra→Haushalt in `x-ren`.
+- **PR #1234** (xidra-Manifeste nach `x-ren`, 6 Verweise nachgezogen) — gemergt.
+- **PR #1235** (n8n LAN-only) + **#1236** (Folgefragen-Chips JSON) — gemergt + ausgerollt.
+- **private_k8s** MR !1/!2/!3 — `cluster-health-watch` LIVE (ns `cluster-ops`,
+  CronJob 10 min), gegenseitige Netpol vorbereitet aber NICHT angewendet.
+- **x-ren** MR !5/!6/!7 — Konfiguration + alle Manifeste versioniert.
+
+Live abgenommen: 13/13 MCP-Server gesund; A1-Sonde fing n8n am ersten Tag
+(`degraded/probe_failed` → nach LAN-Fix + neuem Schlüssel `healthy`); der Wächter
+erwischte einen echten kurzen xidra-Ausfall (ein Fehlschlag, korrekt KEIN Alarm
+unter Schwelle 3); Cluster-Wächter stellt an beide Instanzen zu (je HTTP 200).
+
+**A2b erledigt:** Paperless-Dedupe-Intervall auf beiden Instanzen 300 → 3600 s.
+**Alte CNPG-Cluster gelöscht** (60 GiB frei); IGNORE_CLUSTERS geleert.
+
+## Offen geblieben (nicht Teil dieser Sitzung)
+- **A3b Netpol**: nur bei Einführung eines `default-deny` im Namespace anwenden
+  (`private_k8s/docs/renfield-watchdog-netpol.md`).
+- **A3c**: fallen beide Instanzen gleichzeitig aus, schweigt auch die
+  gegenseitige Prüfung — nur ein Beobachter außerhalb des Clusters hilft.
+- **Ph3 MCP-Self-Detection** (429/Retry-After, k8s-Probes) — designed, nicht gebaut.
