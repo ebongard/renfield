@@ -1,7 +1,7 @@
 # Bi-temporale KG-Kanten — Gültigkeitsintervalle auf `kg_relations`
 
 **Issue:** [#875](https://github.com/ebongard/renfield/issues/875)
-**Status:** Entwurf zur Review — **kein Go zum Bauen**
+**Status:** Review-Entscheidungen getroffen 2026-09-13 (§12) — **kein Go zum Bauen**; Stufe 1 braucht ein ausdrückliches Go
 **Datum:** 2026-09-04
 **Autor:** Claude Opus 5
 **Plan-Bezug:** `tasks/structured-memory-plan.md` §Phase 5 (zurückgestellt)
@@ -127,14 +127,14 @@ invalidated_by_relation_id  INTEGER NULL REFERENCES kg_relations(id) ON DELETE S
 
 **Warum `valid_from`/`valid_to` und nicht die Issue-Namen `valid_at`/`invalid_at`:** Ein
 Intervall hat zwei Enden; `valid_at` klingt nach einem Zeitpunkt und lädt zu der Fehllesart ein,
-die Spalte sei der Beobachtungszeitpunkt (das ist `created_at`). Der Namensvorschlag im Issue
-sollte in der Review bewusst bestätigt oder verworfen werden.
+die Spalte sei der Beobachtungszeitpunkt (das ist `created_at`). **Entschieden in der Review
+(2026-09-13): `valid_from`/`valid_to`.**
 
 **Kein zweites Zeitachsenpaar.** „Bi-temporal" im Lehrbuchsinn hätte zusätzlich eine
 Transaktionszeitachse (`tx_from`/`tx_to`). Die haben wir faktisch schon in `created_at`, und ein
-volles Vier-Spalten-Modell verdoppelt jede Abfrage. **Empfehlung: nur die Gültigkeitsachse.** Der
-Issue-Titel „bi-temporal" ist insofern zu groß gegriffen — das sollte die Review entscheiden,
-nicht ich allein.
+volles Vier-Spalten-Modell verdoppelt jede Abfrage. **Entschieden in der Review (2026-09-13): nur
+die Gültigkeitsachse.** Der Titel „bi-temporal" bleibt als Name des Vorhabens stehen, beschreibt
+den Umfang aber nicht: gebaut wird eine Achse.
 
 **Kein `NOT NULL`, kein Default `now()`.** Bestandskanten bekommen `valid_from = NULL`, was
 „gilt, Anfang unbekannt" heißt. Ein Backfill mit `created_at` wäre eine **Erfindung**: Der
@@ -219,25 +219,53 @@ Prädikat **funktional** ist (höchstens ein gültiger Wert), und die Objekte ve
 | `ist_kind_von` | nein — zwei Elternteile |
 | `note_link` | nein, und nie widersprechbar (§6.1) |
 
-### 7.1 Vorschlag: deklarative Allowlist, kein LLM-Urteil über Funktionalität
+### 7.1 Deklarative Allowlist, kein LLM-Urteil über Funktionalität
 
-```yaml
-# config/kg_predicates.yaml
-functional:
-  - wohnt_in
-  - arbeitet_bei
-  - hat_telefonnummer
-```
-
-Nur Prädikate auf dieser Liste können überhaupt ein Expire auslösen. Das LLM entscheidet dann
+Nur Prädikate auf der Allowlist können überhaupt ein Expire auslösen. Das LLM entscheidet dann
 lediglich noch, **ob** die neue Aussage die alte ersetzt (siehe 7.2) — nicht, ob das Prädikat
 funktional ist. Diese Trennung ist wichtig: Die Funktionalität eines Prädikats ist eine
 Eigenschaft des Schemas und über die Zeit stabil; ob eine konkrete Aussage eine andere ablöst,
 ist eine Einzelfallfrage.
 
-Die Liste startet **kurz**. Ein fehlendes Prädikat bedeutet: Verhalten wie heute (beide Kanten
-bleiben). Ein falsch aufgenommenes bedeutet: Datenverlust aus Sicht des Nutzers. Die
-Asymmetrie diktiert die Richtung — im Zweifel nicht aufnehmen.
+**Das Vokabular ist offen und zweisprachig — die Allowlist braucht deshalb Gruppen, keine
+Einzelnamen.** Der Extraktions-Prompt (`prompts/knowledge_graph.yaml`) gibt Beispiele vor, schließt
+aber kein Prädikat aus; je nach Sprache entstehen `wohnt_in` *oder* `lives_in`, dazu Synonyme wie
+`lebt_in`/`resides_in`. Eine Liste einzelner Namen hätte zwei stille Fehler: Eine
+`lives_in`-Kante liefe nie ab, und „wohnt_in Bonn" gegen „lives_in Berlin" würde nicht als
+Widerspruch erkannt. Deshalb definiert jede Gruppe einen **Schlüssel** und ein Muster; Kandidaten
+für einen Widerspruch sind Kanten mit demselben Subjekt und demselben **Gruppenschlüssel**, nicht
+demselben Prädikat-String. Vorbild ist `predicate_object_type` im selben Prompt-File, das
+`kg_validator.py` bereits als Regex-Tabelle über das offene Vokabular auswertet.
+
+**Start-Allowlist, entschieden in der Review (2026-09-13):**
+
+```yaml
+# config/kg_predicates.yaml
+functional:
+  - key: residence
+    pattern: "^(wohnt_in|lebt_in|lives_in|resides_in)$"
+  - key: employer
+    pattern: "^(arbeitet_bei|works_at|works_for)$"
+```
+
+Zwei Abweichungen gegenüber dem ursprünglichen Entwurf, beide aus dem Code begründet:
+
+- **Keine Telefonnummer.** Alle vier Prompt-Varianten führen Telefonnummern unter
+  „IGNORIERE / NEVER extract" — eine `hat_telefonnummer`-Kante kann nicht entstehen. Ein
+  Allowlist-Eintrag dafür wäre toter Code.
+- **Nicht die Ortsgruppe aus `predicate_object_type` übernehmen.** Die dortige Gruppe enthält
+  `liegt_in`/`befindet_sich_in`/`located_in` — **nicht funktional**: „Bonn liegt in NRW" und „Bonn
+  liegt in Deutschland" gelten gleichzeitig. Nur Wohnsitz-Prädikate gehören in `residence`.
+
+**Bewusst akzeptiertes Risiko: `employer`.** `arbeitet_bei` ist nur *meistens* funktional — ein
+Zweitjob oder eine Nebentätigkeit würde die erste Kante ablaufen lassen. Die Review hat das für
+den Start akzeptiert; begrenzt wird es durch R1 (kein Expire ohne ablösende Kante, Konfidenzschwelle,
+`invalidated_by_relation_id` macht jedes Expire rücknehmbar). Tritt der Fall in der Messung nach
+Stufe 1 auf, fliegt `employer` wieder heraus.
+
+Ein fehlendes Prädikat bedeutet: Verhalten wie heute (beide Kanten bleiben). Ein falsch
+aufgenommenes bedeutet: Datenverlust aus Sicht des Nutzers. Die Asymmetrie diktiert die Richtung
+jeder späteren Erweiterung — im Zweifel nicht aufnehmen.
 
 ### 7.2 Wo die Erkennung läuft
 
@@ -326,8 +354,9 @@ niemand behaupten kann.
 
 Für Stufe 3 gibt es im Projekt drei Vorbilder mit derselben Form (Vorschlag → Prüfung → Undo):
 KG-Merge-Vorschläge, PDF-Split-Vorschläge, Dokument-Duplikate. Es wäre die vierte Warteschlange
-auf `/brain/review` — der Reviewer sollte prüfen, ob das eine Konsolidierung verlangt, statt
-einen vierten Sonderfall danebenzustellen.
+auf `/brain/review`. **Review (2026-09-13): bewusst zurückgestellt** — Stufe 3 hängt an Stufe 2,
+die ohnehin ein eigenes Go braucht. Ob vierte Warteschlange oder Konsolidierung der drei
+bestehenden, wird entschieden, wenn Stufe 2 ansteht.
 
 ## 11. Test-Strategie
 
@@ -349,18 +378,17 @@ Nach `CLAUDE.md`: TDD, Läufe auf `.159`, echtes Postgres wo Migrationen berühr
 - Nebenläufigkeit: zwei gleichzeitige Ablösungen ⇒ genau ein Expire (R3).
 - Ein Eval-Fall mit dem Umzugsbeispiel, in der Form von `bin/run_kg_extraction_eval.py`.
 
-## 12. Offene Fragen für die Review
+## 12. Entscheidungen der Review (2026-09-13)
 
-1. **Spaltennamen** — `valid_from`/`valid_to` (mein Vorschlag) oder `valid_at`/`invalid_at` (Issue)?
-2. **Wirklich bi-temporal?** Ich empfehle nur die Gültigkeitsachse (§5). Braucht jemand eine
-   getrennte Transaktionszeit, verdoppelt sich der Abfrageaufwand.
-3. **Welche Prädikate starten auf der Allowlist?** Meine Neigung: `wohnt_in` allein, alles
-   Weitere nach Beobachtung.
-4. **Stufe 3 eigenständig oder mit `/brain/review` konsolidieren?**
-5. **Reihenfolge gegen #874.** Der Follow-up „`get_relevant_context` auf den fused Pfad" ist
-   inzwischen gemergt (PR #1196) — der Agent-String-Pfad läuft über `expand_fused`. Damit hängt
-   an Stufe 1 ein Pfad mehr als zum Zeitpunkt der Issue-Formulierung. Kein Blocker, aber die
-   Fundstellenzählung in §6 gilt für den heutigen Stand, nicht den von Juli.
+| # | Frage | Entscheidung |
+|---|---|---|
+| 1 | Spaltennamen | **`valid_from` / `valid_to`** (nicht `valid_at`/`invalid_at` aus dem Issue) — §5 |
+| 2 | Wirklich bi-temporal? | **Nur die Gültigkeitsachse.** Keine Transaktionszeit-Spalten; `created_at` bleibt die de-facto Transaktionsachse — §5 |
+| 3 | Start-Allowlist | **`residence` + `employer`** als Prädikatgruppen. Telefonnummer entfällt, weil sie von der Extraktion ausgeschlossen ist; das `employer`-Risiko ist bewusst akzeptiert — §7.1 |
+| 4 | Stufe 3: eigene Queue oder Konsolidierung? | **Zurückgestellt** bis Stufe 2 ansteht — §10 |
+| 5 | Reihenfolge gegen #874 | Keine Entscheidung nötig: #874 ist gemergt (PR #1196), die Zählung in §6 gilt für den heutigen Stand (am 2026-09-13 erneut gegen `main` geprüft) |
+
+Offen bleibt allein das **Go für Stufe 1**.
 
 ## 13. Empfehlung
 
@@ -370,6 +398,7 @@ Löschentscheidungen auf Basis eines LLM-Urteils und verdient eine eigene Betrac
 Stufe 1 steht und man an echten Daten sehen kann, wie oft Widersprüche überhaupt auftreten.
 
 Diese Zahl kennt heute niemand. Sie wäre vor Stufe 2 wissenswert und ist mit einer read-only
-Abfrage nach Stufe 1 zu bekommen: Subjekt+Prädikat mit mehr als einer gültigen Kante, gruppiert.
+Abfrage nach Stufe 1 zu bekommen: Subjekt + Prädikatgruppe (§7.1) mit mehr als einer gültigen
+Kante, gruppiert.
 Fällt sie klein aus, ist Stufe 2 womöglich gar nicht die Mühe wert — und diese Antwort wäre
 ebenfalls ein Ergebnis.
