@@ -78,7 +78,7 @@ Cluster-wide Traefik changes (entrypoints, TLS, CRDs) are tracked in `../private
 
 Harbor is the registry. A `harbor-pull-secret` of type `kubernetes.io/dockerconfigjson` lives in the renfield namespace and is referenced by every pod that pulls from there.
 
-**SearXNG is per-instance.** Each Renfield instance runs its **own** dedicated SearXNG in its own namespace so web search is isolated (independent lifecycle, no shared engine-suspension state): the household in `renfield` (`k8s/searxng.yaml`), and the **xidra business instance** in `renfield-xidra` (its manifest lives in the private, gitignored `k8s/xidra/searxng.yaml`). Each backend points at its local instance via `SEARXNG_API_URL`/`SEARXNG_INSTANCES` (household → `searxng.renfield.svc`; xidra → `searxng.renfield-xidra.svc`). An engine-config change must be mirrored to **both** manifests. The public `searxng/searxng` image needs no `harbor-pull-secret`.
+**SearXNG is per-instance.** Each Renfield instance runs its **own** dedicated SearXNG in its own namespace so web search is isolated (independent lifecycle, no shared engine-suspension state): the household in `renfield` (`k8s/searxng.yaml`), and the **xidra business instance** in `renfield-xidra` (its manifest lives in the private **`x-ren`** repo, `x-ren/k8s/searxng.yaml` (moved there 2026-09-13 — it used to sit in the gitignored `k8s/xidra/`, i.e. versioned nowhere)). Each backend points at its local instance via `SEARXNG_API_URL`/`SEARXNG_INSTANCES` (household → `searxng.renfield.svc`; xidra → `searxng.renfield-xidra.svc`). An engine-config change must be mirrored to **both** manifests. The public `searxng/searxng` image needs no `harbor-pull-secret`.
 
 ### Why torch+cpu via constraints
 

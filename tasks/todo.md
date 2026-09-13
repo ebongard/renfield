@@ -334,7 +334,7 @@ ein Gesundheitssignal. Das Verdikt bleibt getrennt von `recent_outcomes`.
       frisch wiederverbundenen Sitzung, und der ganze Alarmweg wird
       wiederverwendet statt neu gebaut.
 - [x] **A1-7** Sonden-Stanzas in `config/mcp_servers.yaml` **und**
-      `k8s/xidra/mcp_servers.yaml` (letztere gitignored, geht über
+      `x-ren/config/mcp_servers.yaml` (dorthin verschoben, geht über
       `apply-mcp-config.sh` live):
       | Server | Sonde | Erwartung |
       |---|---|---|
