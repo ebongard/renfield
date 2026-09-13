@@ -53,6 +53,22 @@ spec:
       number: 1
       dataDurability: required
 
+    parameters:
+      # HARD CAP on how much WAL a replication slot may pin (incident 2026-09-11).
+      # `replicationSlots.highAvailability` creates a slot per standby. An offline
+      # standby's slot holds WAL FOREVER by default — and with `archive_timeout:
+      # 5min` forcing a segment switch every 5 minutes, this cluster generates
+      # ~4.6 GB WAL/day even while idle. A single dead standby therefore filled the
+      # 2Gi WAL volume in ~10 hours and PANICked the primary
+      # ("No space left on device"), taking the whole cluster down.
+      #
+      # With this cap a lagging slot is INVALIDATED instead: that standby must
+      # re-bootstrap from a base backup (cheap here — data volumes are ~500 MB),
+      # but the primary survives. Losing one standby is always preferable to
+      # losing the cluster. Tolerance at the current WAL rate: ~10 h of standby
+      # downtime before invalidation.
+      max_slot_wal_keep_size: 2GB
+
   # --- One instance per node --------------------------------------------------
   affinity:
     enablePodAntiAffinity: true
@@ -64,13 +80,28 @@ spec:
     storageClass: longhorn-pg
     size: 10Gi
   # Separate WAL volume: if S3 WAL archiving stalls (Garage/NAS down) unarchived
-  # WAL accumulates — isolating it here means that pressure fills a dedicated 2Gi
+  # WAL accumulates — isolating it here means that pressure fills a dedicated
   # volume instead of PGDATA, and each is resizable independently
   # (allowVolumeExpansion). Monitor free space on both; a full WAL volume still
   # halts the primary (by design — never silently drop WAL).
+  #
+  # Sized 8Gi after the 2026-09-11 incident: at ~4.6 GB WAL/day (forced by
+  # `archive_timeout: 5min`) the old 2Gi absorbed barely 10 hours of an
+  # archiving stall — far too little to be the safety buffer this volume is
+  # meant to be. 8Gi buys ~40 hours, well clear of the steady state
+  # (max_slot_wal_keep_size 2GB + wal_keep_size 512MB + in-flight).
+  #
+  # NOTE for anyone resizing this again: Longhorn counts the REQUESTED size
+  # against a disk's free space — thin provisioning does not help its
+  # scheduler — and gpu-1/gpu-2 each host TWO of these WAL volumes (household
+  # + xidra). At the old 80G node disks there was no room for this at all; the
+  # worker VM disks were grown to 140G/160G on 2026-09-12 to make it fit.
+  # Check `kubectl -n longhorn-system get nodes.longhorn.io` headroom BEFORE
+  # raising this further. See also `max_slot_wal_keep_size` above, which closes
+  # the OTHER way this volume fills (a pinning replication slot).
   walStorage:
     storageClass: longhorn-pg
-    size: 2Gi
+    size: 8Gi
 
   # --- Bootstrap: MIGRATE from the live single-node DB via pg_dump/restore -----
   # `microservice` import copies exactly the `renfield` database and re-owns it

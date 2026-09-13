@@ -97,10 +97,17 @@ coverage/
 data/wakeword-models/*.tflite
 data/wakeword-models/*.onnx
 
-# Room-ambient captures for wakeword hard-negative training.
-# Private household audio — never committed. See
-# docs/SATELLITE_ACOUSTIC_COMMISSIONING.md (delete after training).
+# Private household room audio — wakeword commissioning captures.
+# CLAUDE.md and docs/SATELLITE_ACOUSTIC_COMMISSIONING.md both state these are
+# gitignored; they were NOT, so a `git add -A` would have committed raw
+# recordings of the house to a public repo. Captures are training material and
+# are meant to be deleted after use.
 data/wakeword-ambient/
+
+# Private business-instance screenshots — NEVER public git, same rule as the
+# Simba docs. These land in the repo root from browser verification runs.
+*xidra*.png
+*simba*.png
 
 # Test screenshots (ephemeral browser test artifacts)
 test-screenshots/

@@ -135,12 +135,15 @@ Handgeschriebene atomare **Notizen** (Markdown) als **erstklassiger Atom** (`ato
 
 DB-definierte wiederkehrende Jobs (Intervall ODER Cron, Start-/Enddatum, Aktiv-Schalter) statt der ~25 handkodierten `api/lifecycle.py::_schedule_*`. Eine **Engine-Schleife** (`services/scheduled_tasks/engine.py`) wählt pro Tick die fälligen Aufgaben und **startet jede als eigene `asyncio.Task`** (kein Inline-`await` → ein langsamer Job blockiert die anderen nicht). Design: [`design/scheduled-tasks.md`](design/scheduled-tasks.md).
 
-- **Modell/Migration**: `ScheduledTask` / `scheduled_tasks` (Migration `pc20260827_scheduled_tasks`) — `handler_key`, `schedule_kind` (interval|cron), `interval_seconds`/`cron_expr`, `params`, `enabled`, `run_at_boot`, `start_at`/`end_at`, `next_run_at`, `last_run_at`/`last_status`/`last_error`/`last_duration_ms`, `is_builtin`.
+- **Modell/Migration**: `ScheduledTask` / `scheduled_tasks` (Migration `pc20260827_scheduled_tasks`) — `handler_key`, `schedule_kind` (interval|cron), `interval_seconds`/`cron_expr`, `params`, `enabled`, `run_at_boot`, `start_at`/`end_at`, `next_run_at`, `last_run_at`/`last_status`/`last_error`/`last_duration_ms`, `consecutive_error_count`/`error_alerted_at` (Fehlserien-Alarm, s. u.), `is_builtin`.
 - **Engine-Kern**: Einzel-Flug per Advisory-Lock (NS `0x5354`, dedizierte Verbindung); Boot-Force von `next_run_at` für `run_at_boot`-Jobs (der #678-Fix); `INSERT … ON CONFLICT (name) DO NOTHING`-Seeding (klobbert nie Admin-Änderungen); Intervall-Untergrenze = Engine-Tick; unbekannter `handler_key` = überspringen + zurückstellen (kein Fehler-Spin); Cron in der lokalen TZ; Drain der laufenden Runs beim Shutdown. `services/scheduled_tasks/registry.py` = `handler_key`→Handler (neuer Handler = nur Registry, NICHT `agent_roles.yaml`).
 - **Built-ins**: **Paperless-Dedupe** (autonomes Aufräumen der Dubletten; self-gated auf `PAPERLESS_DEDUPE_RECONCILER_ENABLED`, ruft `mcp.paperless.dedupe_documents` — die Dedupe-Logik liegt im Paperless-MCP ≥1.12.0, das interaktive `internal.paperless_dedupe` ist ein Thin-Caller desselben Tools), `federation_audit_cleanup`, `upload_cleanup`.
 - **REST + UI**: ADMIN-getiertes `/api/scheduled-tasks` (list/get/create/patch/run-now/delete; Built-ins sind bearbeiten-nicht-löschen; Schreibvorgänge validieren Zeitplan + `params`, berechnen `next_run_at` neu; run-now = beim nächsten Tick, 409 außerhalb des `[start_at,end_at]`-Fensters). Die **„Geplante Aufgaben"**-Seite (`/admin/scheduled-tasks`, `pages/ScheduledTasksPage.tsx`) ist per `/api/config/features`-Flag `scheduled_tasks_enabled` sichtbar. Die Engine läuft immer, ist aber **dark/inert**, bis eine Aufgabe aktiviert wird.
 - **Lauf-Historie** (Tabelle `scheduled_task_runs`, Migration `pc20260828`): die Engine schreibt pro Lauf eine Zeile (Start/Ende, Status ok/error/skipped, Dauer, Handler-`detail` wie „deleted=200 remaining=1852", Fehler) und kappt auf die neuesten `scheduled_tasks_run_history_limit` (Default 50) pro Aufgabe. `GET /api/scheduled-tasks/{id}/runs`; die UI zeigt sie als aufklappbare Lauf-Historie je Aufgabe (Zeit · Status · Dauer · Ausgabe). Die Aufzeichnung ist vom Task-State-Commit isoliert — ein Log-Fehler stört die Planung nie.
-- **Status/Phasen**: Alle drei Phasen implementiert — Phase 1 (Engine + Built-ins), Phase 2 (REST + UI), Phase 3 (**16 von ~23 `_schedule_*` migriert**, 21 Seed-Rows). Jeder migrierte Handler wiederholt seine Runtime-Gate im Handler (H4 — z. B. Obligation-Notifier/-Digest trugen ihre `..._enabled AND proactive_enabled`-Gate nur im Wrapper, nicht in `scan_all_users`, das das Fristen-Ledger konsumiert). **Legacy geblieben:** Whisper-Preload (Einmal-Job), Notification-Poller (persistente Verbindung), Reminder-Checker (15 s) und die 3 Kiosk-WS-Push-Refresher.
+- **Funktionssonden je MCP-Server** (`MCP_HEALTH_PROBE_ENABLED`, Vorgabe **an**; die Drosselung ist die YAML, nicht der Schalter): Der Grund, warum der Monitor durch beide Ausfälle im September schwieg. Die vorhandene Funktionsprüfung zählt **ausschließlich Timeouts** — ein App-Fehler sagt nichts über die Gesundheit des Servers, und das darf man nicht umkehren. Zwei blinde Flecken blieben: ein Ziel, das **jeden** Aufruf mit HTTP 500 beantwortet, sieht aus wie eine Folge von App-Fehlern (Paperless, 3 d 10 h tot, 13 von 13 grün), und ein Server, den **niemand aufruft**, erzeugt gar keine Stichprobe (n8n, unerreichbar, grün). Die Sonde entkommt dem: **wir** wählen einen billigen lesenden Aufruf, der gelingen *muss*, deshalb **ist** sein Scheitern ein Signal. Optionale `health_probe:`-Stanza je Server in `mcp_servers.yaml`; das Verdikt fließt als `probe_failed` in `_server_health` und damit in Kiosk, `internal.system_health` und den bestehenden Alarmweg. Ein **Reconnect löscht das Verdikt nicht** — er beweist nur, dass der Transport steht. Gesondet werden paperless, n8n und homeassistant; **`search` bewusst nicht** — dort wäre eine Trefferzahl ein dokumentiertes Falsch-Grün (Wikipedia beantwortet fast alles), es behält seine eigene Sonde aus `services/search_health.py`, deren Verdikt bisher nur auf Nachfrage sichtbar war und jetzt in denselben Kanal mündet.
+- **Alarm bei Fehlserien** (Phase 4, `SCHEDULED_TASK_FAILURE_ALERT_ENABLED`, Vorgabe **an** als Not-Aus-Schalter; braucht `PROACTIVE_ENABLED`): Die Engine hat alles protokolliert und niemandem etwas gesagt — `last_status` hält nur den **jüngsten** Lauf, darin lesen sich 50 Fehlläufe in Folge wie einer. Genau so blieb ein anderthalb Tage scheiterndes Paperless-Dedupe unbemerkt. Zwei additive Spalten (`consecutive_error_count`, `error_alerted_at`, Migration `pc20260912_taskalert`) geben der Engine die **Serie**: ab drei Fehlläufen in Folge genau EINE Meldung an den Eigentümer-Admin über den geteilten `services/ops_alert.py`, Wiederholung erst nach sechs Stunden, dazu eine Erholungsmeldung beim nächsten Erfolg — aber nur, wenn überhaupt alarmiert worden war. Jeder Nicht-Fehler-Lauf (auch ein `skipped` bei unbekanntem `handler_key`) setzt die Serie zurück. Der Zähler läuft **unabhängig vom Schalter** und erscheint in der Admin-Liste als Kennzeichen; abgeschaltet wird nur die Zustellung.
+- **Externe Erreichbarkeitsprüfung** (Phase 4b, `WATCHDOG_ENABLED` + `WATCHDOG_TARGETS`, leer ⇒ wirkungslos): Ein System, das steht, kann sich nicht selbst melden — der Wächter prüft deshalb **andere** Endpunkte, die Nachbarinstanz prüft diese. Er hat **keine eigene Alarmmechanik**: er läuft als eingebaute Aufgabe `watchdog` (120 s, bewusst ohne `run_at_boot`) und wirft bei einem nicht erreichbaren Ziel, womit Phase 4 Schwelle, Ledger, TTL und Erholung stellt. Das löst nebenbei die Mehr-Replikat-Frage — die Vorschusssperre lässt je Takt genau ein Replikat prüfen. Geprüft wird `/health/ready`, **nie** `/health`: letzteres meldet auch mit toter Datenbank „ok" und hätte durch den 21,5-Stunden-Ausfall vom 2026-09-11 geschwiegen. Ehrlich benannte Grenzen: fallen beide Instanzen gleichzeitig aus (derselbe `iscsid`-Neustart), schweigt auch die gegenseitige Prüfung; und ein zweites Ziel, das mitten in einer laufenden Fehlserie ausfällt, löst keinen zweiten Alarm aus (der Fehlertext nennt aber alle betroffenen Ziele).
+- **Status/Phasen**: Alle drei Phasen implementiert — Phase 1 (Engine + Built-ins), Phase 2 (REST + UI), Phase 3 (**16 von ~23 `_schedule_*` migriert**, 25 Seed-Rows). Jeder migrierte Handler wiederholt seine Runtime-Gate im Handler (H4 — z. B. Obligation-Notifier/-Digest trugen ihre `..._enabled AND proactive_enabled`-Gate nur im Wrapper, nicht in `scan_all_users`, das das Fristen-Ledger konsumiert). **Legacy geblieben:** Whisper-Preload (Einmal-Job), Notification-Poller (persistente Verbindung), Reminder-Checker (15 s) und die 3 Kiosk-WS-Push-Refresher.
 
 ## Meeting-Transkription + Diarisierung (§2, `MEETING_TRANSCRIPTION_ENABLED` / voice-server `MEETING_ENABLED`, dark by default)
 
@@ -541,6 +544,38 @@ geschützt (flag-unabhängiger Worker-Guard, Reindex-409, Dedup als DUPLICATE).
   (`split_from_document_id`-Lineage) und durchlaufen OCR/Schicht-A/KG/Paperless
   wie jeder normale Upload; `internal.ingest_status` weist archivierte
   Originale separat aus. Design: `docs/design/pdf-split.md`.
+
+### Dokumentenscan (Papier → Wissensspeicher)
+
+Ein USB-Dokumentenscanner speist Papier über den bestehenden Ingest-Pfad ein —
+Dedup, Eigentümer/Tier, PDF-Split, Docling/OCR, Schicht-A-Fakten und die
+Paperless-Ablage gelten unverändert; der Scanner ist lediglich ein weiterer
+Produzent davor.
+
+**Stand:** Phase 0 (`bin/scan.sh`) ist einsatzbereit — Duplex, A4, Farb- und
+Durchschein-Korrektur, durchsuchbares PDF. Die Ablage in den Watch-Folder bleibt
+vorerst ein Handgriff. Der MCP-Server (`renfield-mcp-scanner`) mit
+sprachgesteuertem Scan und inhaltsbasiertem Routing auf **1..n Ziel-Instanzen**
+ist entworfen, aber noch nicht gebaut: `docs/design/scanner-ingest.md`.
+
+Betriebshinweise, jeweils an echten Scans gemessen — sie gelten unverändert für
+den späteren MCP-Server, der dieselbe PDF-Assemblierung vornimmt:
+
+- SANE scannt voreingestellt **US Letter** (279,364 mm), 17,7 mm kürzer als A4.
+  Ohne `--page-height 297` wird der Fuß jeder A4-Seite stillschweigend
+  abgeschnitten — Bankverbindung, Steuernummer, Summen, Unterschriftszeile, also
+  genau das Schicht-A-Material.
+- `ocrmypdf` transkodiert Scans in der Voreinstellung (`--optimize 1`)
+  verlustbehaftet nach JPEG. Ein Archiv-Master verlangt `--optimize 0`.
+- Zweifaches Entzerren (Scanner **und** `ocrmypdf`) resampelt zweimal ohne
+  Gewinn. Einmal genügt, und zwar auf den Rohdaten des Geräts.
+- Ein **einseitiger** Schräglauf stammt immer aus der Software: ein schiefer
+  Einzug verkantet stets **beide** Seiten eines Blattes.
+- Duplex-Durchschein und der ausgeprägte Blaustich der Rohaufnahme werden über
+  eine Kanal-LUT entfernt, die am Papier-Histogrammgipfel verankert ist.
+- Ein Gerätefehler mitten im Stapel erzeugt **kein** Teil-Dokument: der Lauf
+  bricht hörbar ab und bewahrt die bereits erfassten Seiten, statt einen zu
+  kurzen Scan klaglos abzulegen.
 
 ## Multi-Room Device System
 

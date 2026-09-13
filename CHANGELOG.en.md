@@ -10,6 +10,9 @@ For earlier history (v1.2.0 - v2.5.0), see [CHANGELOG.md](CHANGELOG.md) (German 
 
 ## [Unreleased]
 
+### Added
+- **Alerting + functional probes (A1–A3, #1230/#1231/#1232)** — closes the gap from the 2026-09-11 21.5h outage: alerting was *on* yet silent because only the MCP process connection was checked. **A1 functional probes** (`MCP_HEALTH_PROBE_ENABLED`): a cheap read-only per-server probe that MUST succeed — its failure IS a health signal (`health_probe:` stanza, verdict `probe_failed`; paperless/n8n/homeassistant; `search` keeps its own). **A2 failure-streak alerts** (`SCHEDULED_TASK_FAILURE_ALERT_ENABLED`, migration `pc20260912_taskalert`): one alert after 3 consecutive failures plus a recovery notice. **A3 mutual watchdog** (`WATCHDOG_ENABLED`/`WATCHDOG_TARGETS`): each instance probes the other's `/health/ready`, reusing A2. Shared path `services/ops_alert.py`. LIVE both instances.
+
 ### Security
 - **Pentest fixes (x-ren.local, authorized)** (#1037). Three Low findings fixed: **(F1)** `/api/notes`, `/api/meetings`, `/api/projects` now return **401** for unauthenticated requests when auth is enabled (previously `200 + []` — empirically NO data leak, owner-filter + owner-gated 404 hold, but missing auth enforcement; auth-off/single-user unchanged). **(F3)** **HSTS** (`Strict-Transport-Security`, `max-age=15768000`) in `nginx.conf`. **(F5)** prompt guard (DE+EN) against fabricated action confirmations in the `general.conversation` path. Confirmed hardened: login break-in, IDOR, circle isolation, mass-assignment, prompt injection. Report: `docs/private/security/pentest-report-x-ren-local-2026-07-23.md`.
 
@@ -17,9 +20,15 @@ For earlier history (v1.2.0 - v2.5.0), see [CHANGELOG.md](CHANGELOG.md) (German 
 - **Default OCR engine → Tesseract** (#1033). The `force_full_page_ocr` re-run converter (which re-OCRs garbled/scanned documents) now uses **Tesseract** (deu+eng) by default instead of docling-EasyOcr. A 148-document eval over the flagged corpus (`bin/run_ocr_engine_eval.py --all-flagged`) showed Tesseract clearly better: **111/148 improved, only 8 regressed**, quality-gate drop 0.68→0.30, no speed penalty. Switchable via `RAG_OCR_ENGINE` (`Literal["tesseract","easyocr"]`); **fail-safe** — it verifies the tesseract runtime (CLI + deu/eng, or the tesserocr binding) and falls back to EasyOcr if absent, so ingest never crashes. `tesseract-ocr`+deu/eng ship in the backend image. Design/outcome: `docs/design/ocr-engine-eval.md`.
 
 ### Infrastructure
+- **Cluster health watch (A3b, `private_k8s/cluster-health-watch/`)** — there was no cluster monitoring; a 10-min CronJob (stdlib only, read-only RBAC) reports unhealthy CNPG clusters via both instances.
+- **Old `renfield-pg` CNPG clusters deleted** — superseded by `renfield-pg-r1`; freed 60 GiB.
+- **xidra deployment config moved into the `x-ren` repo (#1234)** — was in the gitignored `k8s/xidra/`; the renfield repo keeps only a signpost.
+- **Paperless dedupe interval 300 → 3600 s** on both instances.
 - **Harbor push/pull from the home LAN: WAN-hairpin fixed.** Root cause was NOT MTU (0-retransmit re-measurement) but that LAN hosts resolved the registry to the public IP and hairpinned through the WAN upload cap (~72 Mbit/s). Fix: per-node `/etc/hosts` pin to the internal HAProxy path (`192.168.1.1`) → ~200 Mbit/s (100 MB push 11 s → 3 s); idempotent Ansible playbook (`private_k8s/ansible/`). Analysis: `docs/TECHNICAL_DEBT.md` I1 + `public_k8s/docs/harbor-slow-from-home-lan.md`.
 
 ### Fixed
+- **n8n pointed at the public internet instead of the LAN (#1235)** — `N8N_API_URL` had pointed at `n8n.home.bongard.dev` (a hoster wildcard-A-record leftover) since the first cluster deploy; the TLS handshake failed while MCP status read green. Repointed to the LAN address. Surfaced by the A1 probe on day one.
+- **Follow-up chips rendered raw JSON (#1236)** — a JSON object instead of an array became one clickable chip; `_parse_followups` now handles objects and refuses JSON blobs as labels.
 
 Three latent bugs that silently disabled the self-learning system in production — found during end-to-end validation, each fixed, deployed, and verified live:
 

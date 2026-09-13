@@ -764,6 +764,158 @@ Ohne gesetzte Webhook-URL bleibt die MCP-eigene `OPERATOR-NOTIFY` (wie bisher) i
 den Container-Logs stecken. Design + Fehlermodus-Katalog + Phasen 2/3:
 `docs/design/mcp-self-detection.md`.
 
+#### Funktionssonden je MCP-Server (A1)
+
+Die Lücke, die Phase 2 offen ließ. `MCP_HEALTH_CALL_*` oben zählt **ausschließlich
+Timeouts**, weil ein App-Fehler („Gerät aus", „Paket nicht gefunden") nichts über
+die Gesundheit des Servers aussagt — eine Korrektheitsentscheidung, die man nicht
+umkehren darf. Sie ließ aber zwei blinde Flecken:
+
+- Ein Ziel, das **jeden** Aufruf mit HTTP 500 beantwortet, sieht aus wie eine
+  Folge von App-Fehlern. Paperless war so 3 Tage 10 Stunden tot, bei 13 von 13
+  Servern grün.
+- Ein Server, den **niemand aufruft**, erzeugt gar keine Stichprobe. n8n war aus
+  dem Cluster nicht erreichbar und meldete trotzdem „verbunden".
+
+Die Sonde entkommt der Zwickmühle: **wir** wählen einen billigen, lesenden
+Aufruf, der gelingen *muss* — deshalb **ist** sein Scheitern ein
+Gesundheitssignal. Das Verdikt bleibt vom Timeout-Fenster getrennt und fließt als
+`probe_failed` in `_server_health`, womit Kiosk, `internal.system_health` und der
+bestehende Alarmweg es ohne weiteres Zutun mittragen.
+
+```bash
+MCP_HEALTH_PROBE_ENABLED=true
+MCP_HEALTH_PROBE_INTERVAL=600      # Sekunden je Server (Stanza kann überschreiben)
+MCP_HEALTH_PROBE_TIMEOUT=15        # je Sondenaufruf
+MCP_HEALTH_PROBE_FAIL_THRESHOLD=2  # >1: ein einzelner Aussetzer ist kein Urteil
+MCP_HEALTH_PROBE_MAX_PER_TICK=4    # Deckel, falls alle gleichzeitig fällig werden
+MCP_HEALTH_PROBE_GUARD_TIMEOUT=60  # Hang-Guard je Sonde (wie bei der Selbstheilung, #1107)
+```
+
+**Der Schalter steht auf an — die eigentliche Drosselung ist die YAML.** Ein
+Server ohne `health_probe`-Stanza in `mcp_servers.yaml` wird nie gesondet. Eine
+Sonde, die selbst Last erzeugt, wäre schlimmer als keine:
+
+```yaml
+    health_probe:
+      enabled: true          # je Server abschaltbar
+      tool: list_correspondents
+      args: {}
+      interval: 600
+      timeout: 15
+      expect:
+        min_items: 0         # 0 = nur "keine Fehlerantwort"
+        path: results        # optional: welches Feld gezählt wird
+```
+
+Gesondet werden heute `paperless` (`list_correspondents`), `n8n`
+(`n8n_list_workflows`) und `homeassistant` (`GetLiveContext`), jeweils mit
+`min_items: 0` — schon die Fehlerantwort ist das Signal, und eine leere Liste ist
+bei einem frischen Archiv legitim.
+
+`min_items > 0` zählt im **JSON der Antwort** (nicht in den rohen MCP-Inhaltsteilen
+— dort stünde immer 1). Antwortet ein Server Fließtext oder etwas Unzählbares, ist
+das Ergebnis **unentschieden**: es wird kein Verdikt geschrieben und eine Warnung
+geloggt. Eine Fehlkonfiguration darf keinen kritischen Alarm über einen gesunden
+Server auslösen.
+
+Das Werkzeug wird **exakt** aufgelöst. `execute_tool` hat für den Agenten eine
+gewollte unscharfe Ersetzung — hier wäre sie Gift: die Sonde riefe stillschweigend
+ein anderes Werkzeug auf und meldete entweder Grün, obwohl die gemeinte Prüfung nie
+lief, oder dauerhaft Rot wegen Schema-Verletzung. Ein fehlendes Werkzeug ist eine
+Fehlkonfiguration, keine Krankheit, und wird als solche gemeldet.
+
+Eine kaputte Stanza (`interval: 10m`) kostet **nur die Sonde**, nicht den Server —
+die Zahlwerte fallen einzeln auf ihre Vorgaben zurück.
+
+**`min_items > 0` ist kein Qualitätsmaß.** Für `search` wäre eine Trefferzahl ein
+dokumentiertes Falsch-Grün: Wikipedia beantwortet fast jede Anfrage, eine
+nicht-leere Trefferliste verdeckt also einen vollständigen Scraper-Ausfall. Dieser
+Server behält deshalb seine eigene, ältere Sonde
+(`services/search_health.py`, `SEARCH_FUNCTIONAL_PROBE_ENABLED`), die stattdessen
+die Zahl der beitragenden allgemeinen Engines zählt. Ihr Verdikt mündete bisher
+nur in `internal.system_health` — wurde also nur gesehen, wenn ein Mensch danach
+fragte — und ist jetzt über `_BESPOKE_PROBES` in denselben Kanal verdrahtet.
+
+Bewusst **nicht** gesondet, jeweils aus einem Grund: `per_user_auth`-Server (ein
+Aufruf mit `user_id=None` wird fail-closed verweigert, die Sonde meldete dauerhaft
+Falsches), Federation-Transport, nicht verbundene Server.
+
+Zwei Entscheidungen, die man leicht falsch herum trifft:
+
+1. **Ein Reconnect löscht das Sondenverdikt nicht.** Er beweist, dass der
+   Transport steht, und nichts über den Dienst dahinter — Paperless lieferte drei
+   Tage lang über viele gesunde Reconnects hinweg HTTP 500.
+2. Die Sonde läuft **nach** der Selbstheilung, damit sie den Dienst auf frischem
+   Transport beurteilt statt ein bereits geheiltes Transportproblem zu wiederholen.
+
+#### Alarm bei scheiternden geplanten Aufgaben (A2)
+
+Eine geplante Aufgabe, die bei **jedem** Lauf scheitert, war bis 2026-09 sauber
+protokolliert und vollkommen stumm: `last_status` zeigt nur den jüngsten Lauf,
+darin lesen sich 50 Fehlläufe in Folge wie einer. Genau das geschah dem
+Paperless-Dedupe über anderthalb Tage gegen ein totes Paperless.
+
+```bash
+# Nach N Fehlläufen in Folge genau EINE Meldung an den Eigentümer-Admin (nicht
+# eine je Lauf), plus eine Erholungsmeldung, sobald die Aufgabe wieder gelingt —
+# aber nur, wenn überhaupt alarmiert worden war. Kostet nichts, solange alles
+# läuft, deshalb Not-Aus-Schalter statt opt-in: die behobene Fehlfunktion IST
+# das Schweigen. Benötigt PROACTIVE_ENABLED für die Zustellung.
+SCHEDULED_TASK_FAILURE_ALERT_ENABLED=true
+SCHEDULED_TASK_FAILURE_ALERT_THRESHOLD=3       # >1, damit ein einzelner Aussetzer still bleibt
+SCHEDULED_TASK_FAILURE_REALERT_SECONDS=21600   # laufende Fehlserie erst nach 6h erneut melden
+```
+
+Der Zähler (`scheduled_tasks.consecutive_error_count`, Migration
+`pc20260912_taskalert`) läuft **unabhängig vom Schalter** mit und erscheint in
+der Admin-Liste als Kennzeichen — abgeschaltet wird nur die Zustellung, nicht die
+Sichtbarkeit. `error_alerted_at` liegt bewusst in der Datenbank: das
+In-Prozess-Ledger wird von einem Neustart neu scharfgestellt, was bei einem Pod
+in `CrashLoopBackOff` einen Alarm pro Start bedeutet hätte.
+
+#### Externe Erreichbarkeitsprüfung — der Wächter (A3)
+
+„Wer merkt, dass Renfield selbst weg ist?" Ein System, das steht, kann sich nicht
+selbst melden. Der Wächter prüft deshalb **andere** Endpunkte; die jeweils andere
+Instanz prüft diese. Beide Deployments sind vollständig unabhängig (getrennte
+Namespaces, getrennte Datenbanken), gegenseitige Beobachtung braucht also keinen
+zusätzlichen Dienst.
+
+```bash
+# Kommagetrennte "name=url"-Ziele. LEER (Vorgabe) = vollständig wirkungslos.
+# IMMER /health/ready prüfen, NIE /health: letzteres ist ein Lastverteiler-Ping,
+# der auch mit toter Datenbank "ok" meldet — es hätte durch den 21,5-Stunden-
+# Ausfall vom 2026-09-11 hindurch geschwiegen.
+WATCHDOG_ENABLED=true
+WATCHDOG_TARGETS=xidra=http://renfield-backend.renfield-xidra.svc.cluster.local:8000/health/ready
+WATCHDOG_TIMEOUT=10
+WATCHDOG_INTERVAL=120                          # Seed-Intervall der eingebauten Aufgabe
+```
+
+Als „nicht erreichbar" gilt jede Antwort außerhalb 2xx — **auch eine Umleitung**.
+Weiterleitungen werden bewusst nicht verfolgt: eine 302 auf eine Anmeldeseite
+würde sonst als grünes 200 zurückkommen, also genau die Art Lüge, die dieser
+Wächter beseitigen soll. Ein Ziel muss deshalb eine URL sein, die unmittelbar
+2xx liefert.
+
+Der Wächter hat **keine eigene Alarmmechanik**: er läuft als geplante Aufgabe und
+wirft bei einem nicht erreichbaren Ziel, womit A2 oben Schwelle, Ledger, TTL und
+Erholungsmeldung stellt. Das löst nebenbei die Mehr-Replikat-Frage — die
+Vorschusssperre der Engine lässt je Takt genau ein Replikat prüfen.
+
+Zwei Dinge, die der Wächter **nicht** kann, hier ausdrücklich benannt:
+
+1. Fallen **beide** Instanzen gleichzeitig aus — wie am 2026-09-11, als derselbe
+   `iscsid`-Neustart beide Datenbanken erschlug — schweigt auch die gegenseitige
+   Prüfung. Dagegen hilft nur ein Beobachter außerhalb des Clusters.
+2. Fällt während einer **laufenden** Fehlserie ein zweites Ziel aus, gibt es
+   keinen zweiten Alarm; der Fehlertext der Aufgabe nennt aber alle gerade
+   ausgefallenen Ziele.
+
+Voraussetzung im Betrieb: eine Egress-Regel zwischen den Namespaces (gehört nach
+`private_k8s`, nicht in dieses Repository).
+
 #### Externe Scheduling-Templates
 
 Cron-basiertes Scheduling (z.B. Morgenbriefing) wird extern via **n8n-Workflows** oder **Home Assistant-Automationen** gelöst. Diese senden per Webhook an `POST /api/notifications/webhook`.
@@ -2072,6 +2224,10 @@ N8N_MCP_ENABLED=true
 
 **Erforderlich:** Optional
 **Hinweis:** n8n wird über einen MCP stdio-Server angebunden (`npx @anthropic/n8n-mcp`). `N8N_BASE_URL` und `N8N_API_KEY` werden als Umgebungsvariablen an den Subprocess übergeben.
+
+> ⚠️ **n8n läuft LAN-only — NIE ein öffentlicher Name.** Bis 2026-09-13 stand hier `n8n.home.bongard.dev`: ein Wildcard-A-Record-Rest beim Hoster, der auf eine Hostpoint-IP (`*.web.hostpoint.ch`) zeigte. Der TLS-Handschlag scheiterte, der API-Schlüssel wurde nie übertragen — und der MCP-Status meldete trotzdem grün (bis die A1-Funktionssonde es aufdeckte). Immer die LAN-IP verwenden: `http://192.168.1.78:5678`. Die n8n-Instanz ist **LXC-Container 102 auf Proxmox `192.168.1.7`**; Zugriff über `ssh root@192.168.1.7` → `pct exec 102 -- …`.
+>
+> **Der Schlüssel im Haushalt liegt NICHT in `renfield-env`/`renfield-env-private`**, sondern im Secret `renfield-secrets` unter `n8n-api-key` (expliziter `secretKeyRef` am Backend-Deploy). Neuer Schlüssel: `kubectl -n renfield patch secret renfield-secrets` + `rollout restart deploy/backend`.
 
 ---
 

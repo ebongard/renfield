@@ -850,6 +850,18 @@ class MCPServerConfig:
     # byte-identical legacy shared-session path.
     per_user_auth: bool = False
 
+    # Functional health probe (A1). Optional per-server stanza naming ONE cheap,
+    # read-only tool call that must succeed. Shape:
+    #   {enabled: bool, tool: str, args: dict, interval: int, timeout: float,
+    #    expect: {min_items: int, path: str|None}}
+    # Why this exists alongside the Phase-2 `calls_failing` signal: that one counts
+    # only TIMEOUTS, because an app-level error (device off, parcel not found) says
+    # nothing about the SERVER's health. A probe escapes that bind — WE choose a call
+    # that must succeed, so its failure IS a health signal. And it works on a server
+    # nobody has called, which produces no samples at all.
+    # None => not probed (the default; the honest limit is in the YAML, not the flag).
+    health_probe: dict | None = None
+
     # Federation-transport only (F3c): the local PeerUser.id this virtual
     # server represents. execute_tool_streaming looks up the peer row at
     # request time (so revocation is picked up without needing a registry
@@ -895,6 +907,33 @@ class MCPServerState:
     recent_outcomes: deque = field(
         default_factory=lambda: deque(maxlen=max(1, settings.mcp_health_call_window))
     )
+
+    # Functional-probe verdict (A1). Kept SEPARATE from recent_outcomes on purpose:
+    # that window records only timeouts from whatever the agent happened to call,
+    # while this records a call WE chose that must succeed. Folding them would
+    # re-import the app-error ambiguity the Phase-2 review deliberately excluded.
+    probe_consecutive_failures: int = 0
+    last_probe_at: float = 0.0           # monotonic; 0 = never probed
+    last_probe_ok: bool | None = None    # None = no verdict yet
+    last_probe_detail: str | None = None
+
+    def probe_failing(self) -> bool:
+        """True once the probe has failed enough times in a row to be believed.
+
+        A single failure is not a verdict — an upstream hiccup, a rate-limit, a
+        restart window. The threshold is what keeps this from being noisier than
+        the silence it replaces.
+        """
+        return self.probe_consecutive_failures >= max(
+            1, settings.mcp_health_probe_fail_threshold
+        )
+
+    def record_probe_outcome(self, ok: bool, detail: str | None = None) -> None:
+        """Record one functional-probe result."""
+        self.last_probe_at = time.monotonic()
+        self.last_probe_ok = ok
+        self.last_probe_detail = None if ok else detail
+        self.probe_consecutive_failures = 0 if ok else self.probe_consecutive_failures + 1
 
     def record_call_outcome(self, ok: bool) -> None:
         """Record one real tool-call outcome for functional-health folding."""
@@ -942,6 +981,61 @@ def _parse_notifications(raw: dict | None) -> dict | None:
         "poll_interval": int(raw.get("poll_interval", 900)),
         "tool": raw.get("tool", "get_pending_notifications"),
         "lookahead_minutes": int(raw.get("lookahead_minutes", 45)),
+    }
+
+
+def _parse_health_probe(raw: dict | None) -> dict | None:
+    """Parse + validate the per-server ``health_probe`` stanza (A1).
+
+    A malformed or disabled stanza yields ``None`` (= not probed) rather than
+    raising: a typo in one server's probe config must never stop the whole MCP
+    fleet from loading.
+    """
+    if not raw or not isinstance(raw, dict):
+        return None
+    if not _resolve_value(raw.get("enabled", True)):
+        return None
+    tool = raw.get("tool")
+    if not tool or not isinstance(tool, str):
+        logger.warning("health_probe stanza without a 'tool' name — ignored")
+        return None
+    expect_raw = raw.get("expect") or {}
+    if not isinstance(expect_raw, dict):
+        expect_raw = {}
+    def _num(value, default, cast):
+        """Coerce a numeric option, falling back on anything unparseable.
+
+        These three coercions used to raise on a value like ``interval: 10m``, and
+        the exception escaped into the per-entry config try/except — which drops
+        the WHOLE server. A typo in a probe's interval would have silently removed
+        Paperless from the fleet: no tools, no health entry, nothing. The docstring
+        promised otherwise; now the code keeps the promise.
+        """
+        try:
+            return cast(_resolve_value(value)) if value not in (None, "") else default
+        except (TypeError, ValueError):
+            logger.warning(
+                f"health_probe: ignoring unparseable value {value!r}, using {default}"
+            )
+            return default
+
+    interval = _num(raw.get("interval"), settings.mcp_health_probe_interval, int)
+    timeout = _num(raw.get("timeout"), settings.mcp_health_probe_timeout, float)
+    min_items = _num(expect_raw.get("min_items"), 0, int)
+    return {
+        "enabled": True,
+        "tool": tool,
+        "args": raw.get("args") if isinstance(raw.get("args"), dict) else {},
+        # Floor the interval: a probe every few seconds against a real upstream is
+        # a load generator, not a check.
+        "interval": max(30, interval or settings.mcp_health_probe_interval),
+        "timeout": timeout or settings.mcp_health_probe_timeout,
+        "expect": {
+            # 0 = only "the call came back without an error envelope".
+            "min_items": max(0, min_items),
+            # Which field to count; None = count the payload itself if it is a list.
+            "path": expect_raw.get("path") or None,
+        },
     }
 
 
@@ -1121,6 +1215,7 @@ class MCPManager:
                     ),
                     streaming=bool(_resolve_value(entry.get("streaming", False))),
                     per_user_auth=bool(_resolve_value(entry.get("per_user_auth", False))),
+                    health_probe=_parse_health_probe(entry.get("health_probe")),
                 )
 
                 if not config.enabled:
@@ -1293,6 +1388,12 @@ class MCPManager:
             # Fresh session → drop the old session's failure history so a reconnect
             # that fixed the upstream isn't left falsely flagged calls_failing.
             state.recent_outcomes.clear()
+            # The probe verdict is NOT cleared here. A reconnect proves the
+            # transport works; it proves nothing about the service behind it, and
+            # Paperless answering HTTP 500 for three days did so across many
+            # healthy reconnects. Only a successful probe clears a probe verdict.
+            # last_probe_at is left alone too, so a reconnect loop cannot starve
+            # the probe by continually resetting its due-time.
 
             # Filter to active tools only (DB override > YAML prompt_tools > all)
             active_tools_list = self._get_active_tools(config)
@@ -1464,6 +1565,155 @@ class MCPManager:
             self._set_connected(state, False)
             state.last_error = detail
         return {"ok": ok, "latency_ms": latency, "detail": detail}
+
+    def health_probe_due(self, now: float | None = None) -> list[str]:
+        """Names of connected servers whose configured probe interval has elapsed.
+
+        A server with no stanza is never probed — the blast radius of this feature
+        is the YAML, not the flag.
+        """
+        now = time.monotonic() if now is None else now
+        due: list[str] = []
+        for name, state in self._servers.items():
+            probe = state.config.health_probe
+            if not probe or not state.connected:
+                continue
+            if state.config.transport == MCPTransportType.FEDERATION:
+                continue
+            # per_user_auth servers deny a user_id=None call FAIL-CLOSED, so a probe
+            # would report a permanent false failure. Deliberately unprobeable.
+            if state.config.per_user_auth:
+                continue
+            if state.last_probe_at and (now - state.last_probe_at) < probe["interval"]:
+                continue
+            due.append(name)
+        return due
+
+    @staticmethod
+    def _evaluate_probe_expectation(message: str | None, expect: dict) -> tuple[bool | None, str | None]:
+        """Check a probe result against its declared minimum.
+
+        Returns a TRI-STATE: ``True`` = met, ``False`` = not met, ``None`` = cannot
+        be judged (a misconfiguration). The third state matters — inventing a
+        failure out of "I could not tell" would fire a critical alert about a
+        healthy server, in a subsystem whose whole purpose is making green mean
+        green.
+
+        Note what is parsed: ``execute_tool`` returns ``data`` as the list of raw
+        MCP *content parts* (``[{"type": ..., "text": ...}]``), NOT the payload. The
+        payload lives in the joined ``message`` text, so that is what we parse. An
+        earlier version counted the content parts, which made every ``min_items``
+        above 1 fail permanently against a perfectly healthy server.
+
+        ``min_items`` of 0 (the default, and what all shipped stanzas use) means
+        "the call came back without an error envelope" and needs no payload at all.
+        """
+        min_items = expect.get("min_items", 0)
+        if min_items <= 0:
+            return True, None
+
+        if not message:
+            return None, "leere Antwort — Mindestanzahl nicht prüfbar"
+        try:
+            payload = json.loads(message)
+        except (ValueError, TypeError):
+            # A server answering prose rather than JSON cannot be counted. That is a
+            # configuration mistake (wrong tool, or min_items on a prose tool), not
+            # evidence of ill health.
+            return None, "Antwort ist kein JSON — Mindestanzahl nicht prüfbar"
+
+        container = payload
+        path = expect.get("path")
+        if path:
+            if not isinstance(payload, dict):
+                return False, f"erwartetes Feld '{path}' fehlt (Antwort ist kein Objekt)"
+            container = payload.get(path)
+            if container is None:
+                return False, f"erwartetes Feld '{path}' fehlt in der Antwort"
+        count = len(container) if isinstance(container, (list, dict, str)) else None
+        if count is None:
+            return None, "Antwort ist nicht zählbar — Mindestanzahl nicht prüfbar"
+        if count < min_items:
+            return False, f"nur {count} Einträge, erwartet mindestens {min_items}"
+        return True, None
+
+    async def run_health_probe(self, server_name: str) -> dict:
+        """Run one server's functional probe and record the verdict on its state.
+
+        Returns ``{"ok": bool, "detail": str | None, "skipped": bool}``. Never
+        raises — a probe that explodes must not break the monitor tick that ran it.
+
+        The call goes through ``execute_tool`` with ``user_permissions=None``
+        (system call, no user) and ``user_id=None``, which also keeps it out of the
+        per-user ``ToolOutcomeStat`` telemetry the kiosk reads — a probe must not
+        colour the tool-health numbers it exists to make honest.
+        """
+        state = self._servers.get(server_name)
+        if state is None or not state.config.health_probe:
+            return {"ok": True, "detail": None, "skipped": True}
+        probe = state.config.health_probe
+        namespaced = f"mcp.{server_name}.{probe['tool']}"
+
+        # Resolve EXACTLY. execute_tool has a deliberate fuzzy fallback that
+        # substitutes a similar tool when a name misses — helpful for the agent,
+        # poison here: a probe that quietly calls a DIFFERENT tool either answers
+        # fine while the intended check never ran (false green), or fails schema
+        # validation forever (false red). Both defeat the point. A missing tool is a
+        # misconfiguration, reported as such, never as ill health.
+        if state.all_discovered_tools and not any(
+            t.original_name == probe["tool"] for t in state.all_discovered_tools
+        ):
+            logger.warning(
+                f"mcp_health: probe tool '{probe['tool']}' does not exist on "
+                f"'{server_name}' — check the health_probe stanza"
+            )
+            return {"ok": True, "detail": "Sondenwerkzeug existiert nicht", "skipped": True}
+
+        try:
+            result = await self.execute_tool(
+                namespaced,
+                dict(probe.get("args") or {}),
+                user_permissions=None,
+                user_id=None,
+                call_timeout=probe["timeout"],
+            )
+        except Exception as e:  # noqa: BLE001 — a probe never breaks its caller
+            state.record_probe_outcome(False, f"{type(e).__name__}: {e}"[:200])
+            logger.warning(f"mcp_health: probe '{namespaced}' raised: {e}")
+            return {"ok": False, "detail": state.last_probe_detail, "skipped": False}
+
+        if not result.get("success"):
+            detail = str(result.get("message") or "Aufruf fehlgeschlagen")[:200]
+            state.record_probe_outcome(False, detail)
+            return {"ok": False, "detail": detail, "skipped": False}
+
+        verdict, reason = self._evaluate_probe_expectation(
+            result.get("message"), probe["expect"]
+        )
+        if verdict is None:
+            # Cannot judge → record NOTHING. Neither a false failure nor a false
+            # success; the warning is the signal, and the stanza needs fixing.
+            logger.warning(f"mcp_health: probe '{namespaced}' inconclusive: {reason}")
+            return {"ok": True, "detail": reason, "skipped": True}
+        state.record_probe_outcome(verdict, reason)
+        return {"ok": verdict, "detail": reason, "skipped": False}
+
+    def record_external_probe(self, server_name: str, ok: bool, detail: str | None) -> None:
+        """Record a verdict from a PURPOSE-BUILT probe that lives outside this class.
+
+        Some servers cannot be honestly probed by a generic tool call. ``search`` is
+        the worked example: a bare result count is a documented false-green because
+        Wikipedia answers almost anything, so ``services/search_health.py`` probes
+        SearXNG's JSON API directly and counts distinct contributing engines. That
+        verdict used to dead-end in ``internal.system_health``, i.e. it was only ever
+        seen if a human thought to ask. This funnels it into the SAME state the
+        generic probe writes, so one channel feeds the kiosk, the alert and the
+        health tool alike.
+        """
+        state = self._servers.get(server_name)
+        if state is None:
+            return
+        state.record_probe_outcome(ok, detail)
 
     def _check_tool_permission(
         self,
@@ -2454,6 +2704,14 @@ class MCPManager:
             return "degraded", "plugin_failed"
         if state.config.transport != MCPTransportType.FEDERATION and not state.all_discovered_tools:
             return "degraded", "no_tools"
+        # Functional probe (A1) — a call WE chose, that must succeed. Checked BEFORE
+        # calls_failing because it is the more trustworthy signal: calls_failing is
+        # inferred from whatever the agent happened to call and counts only timeouts,
+        # while a failed probe is direct evidence that the service behind a green
+        # transport is not working. This is the signal that would have caught
+        # Paperless answering HTTP 500 on its first day instead of its fourth.
+        if state.probe_failing():
+            return "degraded", "probe_failed"
         # Functional health (Phase 2): connected + list_tools present, but the recent
         # real tool calls are mostly failing → the transport is green but the upstream
         # is dead. Federation exempt (its single tool is managed out of band).
