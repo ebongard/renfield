@@ -1,7 +1,7 @@
 # Kontaktpunkte — Telefon, Mobil, Fax, Mail, Web an Personen und Firmen
 
 **Issue:** [#1240](https://github.com/ebongard/renfield/issues/1240)
-**Status:** Entwurf zur Review — **kein Go zum Bauen**
+**Status:** Review-Entscheidungen getroffen 2026-09-13 (§11) — **kein Go zum Bauen**; Stufe 1 braucht ein ausdrückliches Go
 **Datum:** 2026-09-13
 **Autor:** Claude Opus 5
 **Bezug:** #875 / PR #1213 (Gültigkeitsintervalle auf `kg_relations`)
@@ -42,7 +42,8 @@ dürfen.
   und findet. Versand ist ein eigenes Folgevorhaben.
 - **Keine Aufweichung von `_is_valid_entity`.**
 - **Keine Postanschriften in v1.** Strukturiert schwierig (Adressfelder, Mehrzeiligkeit) und für
-  „kontaktieren" nicht nötig. Eigene Erweiterung, falls gewünscht.
+  „kontaktieren" nicht nötig. **Entschieden:** später als `kind = postal` mit strukturiertem Wert in
+  **derselben Tabelle** — das Schema lässt dafür Platz.
 
 ## 3. Warum eine eigene Tabelle und keine Knoten
 
@@ -109,16 +110,21 @@ Kontaktdaten Dritter sind personenbezogene Daten und dürfen nicht weiter reiche
   `AtomService.update_tier` für `kg_node` muss die Kontaktpunkte mitnehmen.
 - **Lesefilter:** ein `contact_points_circles_filter` in `circle_sql.py`, nach dem Muster von
   `kg_relations_circles_filter`. Kein Lesepfad ohne ihn.
-- **Offene Frage (§11.1):** eigener `atom_type` pro Kontaktpunkt oder Zugriff nur über die Entität
-  plus eigenes Tier?
+- **Kein eigener `atom_type` (entschieden, §11.1).** Zugriff allein über das eigene `circle_tier`
+  und den Filter; explizite Freigaben wirken auf Entitätsebene. Kein neuer Typ im
+  `PolymorphicAtomStore`, keine Atom-Zeile je Wert.
 
 ## 6. Normalisierung
 
 | kind | normalisiert | Werkzeug |
 |---|---|---|
-| `phone` / `mobile` / `fax` | E.164 (`+491701234567`) | **`phonenumbers`** — neue Abhängigkeit, Standardregion konfigurierbar (DE) |
+| `phone` / `mobile` / `fax` | E.164 (`+491701234567`) | **`phonenumbers`** — neue Abhängigkeit (entschieden) |
 | `email` | kleingeschrieben, validiert | `email-validator` — **bereits** in `requirements.txt` |
 | `web` | Host + Pfad, ohne Schema und Tracking-Parameter | stdlib `urllib.parse` |
+
+**Standardregion** für Nummern ohne Ländervorwahl kommt aus der Instanz-Konfiguration
+(`CONTACT_POINTS_DEFAULT_REGION`, Standard `DE`) — eine Instanz mit Kunden in Österreich oder der
+Schweiz braucht keinen Code-Change.
 
 Ein Wert, der nicht normalisiert werden kann, wird **nicht** gespeichert. Das ist der Ersatz für den
 Schutz, den `_is_valid_entity` im Graphen leistet.
@@ -149,7 +155,8 @@ Strukturiert, deterministisch, kein LLM — deshalb die erste Quelle.
 
 - Upload einer `.vcf`-Datei; CardDAV-Abgleich ist eine spätere Erweiterung derselben Logik.
 - `FN`/`N` → Person, `ORG` → Firma, `TEL;TYPE=CELL|WORK|FAX` → `kind` + `label`, `EMAIL`, `URL`.
-- Parser: `vobject` oder gleichwertig — **neue Abhängigkeit**.
+- Parser: **`vobject`** — neue Abhängigkeit (entschieden). vCard hat genug Varianten (v2.1/3.0/4.0,
+  Line-Folding, Encodings), dass ein eigener Parser die schlechtere Wahl wäre.
 - **Legt fehlende Entitäten an**, auf einem beim Import gewählten Tier (Standard: `self`).
   Bestehende Personen werden exakt über den Namen gefunden; mehrdeutige Treffer gehen in eine
   Prüfliste statt geraten zu werden.
@@ -179,8 +186,10 @@ Strukturiert, deterministisch, kein LLM — deshalb die erste Quelle.
   zuverlässig einer Person zuzuordnen.
 - Tier der Quelle: das Tier des Dokuments. Ein privates Dokument erzeugt keinen öffentlichen
   Kontaktpunkt einer öffentlichen Firma.
-- **Offene Frage (§11.4):** Gehört das statt in den KG-Pfad als neue Kategorie in Schicht A
-  (`document_facts`)? Dort liegen Identifier schon mit `excerpt` als Vertrauensanker.
+- **Über den KG-Dokumentpfad, nicht über Schicht A (entschieden, §11.4).** Die Zuordnung zur Firma
+  oder Person entsteht dort ohnehin; in Schicht A müsste sie nachträglich gebaut werden. Den
+  Vertrauensanker, den `document_facts.excerpt` bietet, übernimmt hier das Grounding aus §7 plus
+  `source_ref` = `document_id`.
 
 ### 8.4 Mail-Absender
 
@@ -217,17 +226,17 @@ Strukturiert, deterministisch, kein LLM — deshalb die erste Quelle.
 Jede automatische Quelle (3, 4) hinter eigenem Flag, dunkel per Default. Stufe 1 und 2 sind
 deterministisch und ohne LLM testbar.
 
-## 11. Offene Fragen für die Review
+## 11. Entscheidungen der Review (2026-09-13)
 
-1. **Eigener `atom_type` pro Kontaktpunkt?** Pro: explizite Freigaben einzelner Werte
-   (`atom_explicit_grants`), eigener Treffer in `/brain`. Contra: ein weiterer Typ in
-   `PolymorphicAtomStore` und in der Atom-Tabelle je Wert. Neigung: **nein** — Zugriff über das
-   eigene `circle_tier`, Freigaben auf Entitätsebene.
-2. **Neue Abhängigkeiten** `phonenumbers` und `vobject` — beide rein Python, beide verbreitet.
-   Einverstanden?
-3. **Standardregion für Nummern ohne Ländervorwahl:** DE fest, oder aus der Instanz-Konfiguration?
-4. **Dokumente über den KG-Pfad oder über Schicht A** (§8.3)?
-5. **Postanschriften** später in dieselbe Tabelle (`kind = postal`, strukturierter Wert) oder nie?
+| # | Frage | Entscheidung |
+|---|---|---|
+| 1 | Eigener `atom_type` pro Kontaktpunkt? | **Nein.** Eigenes `circle_tier` + `contact_points_circles_filter`; Freigaben auf Entitätsebene — §5 |
+| 2 | Neue Abhängigkeiten | **`phonenumbers` und `vobject`** — §6, §8.1 |
+| 3 | Standardregion | **Instanz-Konfiguration** `CONTACT_POINTS_DEFAULT_REGION`, Standard `DE` — §6 |
+| 4 | Dokumente: KG-Pfad oder Schicht A? | **KG-Dokumentpfad** (`extract_from_text`) — §8.3 |
+| 5 | Postanschriften | **Später**, als `kind = postal` in derselben Tabelle — §2 |
+
+Offen bleibt allein das **Go für Stufe 1**.
 
 ## 12. Risiken
 
