@@ -5,6 +5,7 @@ from unittest.mock import MagicMock
 import pytest
 
 import services.mcp_health_monitor as m
+from services import ops_alert
 
 pytestmark = [pytest.mark.unit, pytest.mark.asyncio]
 
@@ -12,12 +13,12 @@ pytestmark = [pytest.mark.unit, pytest.mark.asyncio]
 @pytest.fixture(autouse=True)
 def _reset(monkeypatch):
     m._reports.clear()
-    m._alerted.clear()
+    ops_alert.reset_ledger()
     monkeypatch.setattr(m.settings, "mcp_health_monitor_enabled", True)
     monkeypatch.setattr(m.settings, "mcp_health_realert_seconds", 21600.0)
     yield
     m._reports.clear()
-    m._alerted.clear()
+    ops_alert.reset_ledger()
 
 
 def _capture_alerts(monkeypatch):
@@ -66,14 +67,14 @@ async def test_monitor_tick_alerts_degraded_then_clears_on_recovery(monkeypatch)
     )
     await m.monitor_tick(app)
     assert any("paperless" in a for a in alerts)
-    assert any(k.startswith("planea:paperless") for k in m._alerted)
+    assert any(k.startswith("planea:paperless") for k in ops_alert.alerted_keys())
 
     # recovery: server healthy again → the ledger key is cleared so a re-failure re-alerts
     mgr.get_status = MagicMock(
         return_value={"servers": [{"name": "paperless", "health": "healthy"}]}
     )
     await m.monitor_tick(app)
-    assert not any(k.startswith("planea:paperless") for k in m._alerted)
+    assert not any(k.startswith("planea:paperless") for k in ops_alert.alerted_keys())
 
 
 async def test_monitor_tick_noop_when_disabled(monkeypatch):
@@ -127,7 +128,7 @@ async def test_self_heal_recovers_down_server_no_alert(monkeypatch):
     await m.monitor_tick(_app_with(mgr))
     mgr.probe_server.assert_awaited_once_with("paperless")
     assert notes == []  # self-healed → no alert
-    assert not any(k.startswith("planea:paperless") for k in m._alerted)
+    assert not any(k.startswith("planea:paperless") for k in ops_alert.alerted_keys())
 
 
 async def test_self_heal_fails_then_alerts_with_marker(monkeypatch):

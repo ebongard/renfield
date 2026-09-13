@@ -52,6 +52,32 @@ def _parse_followups(raw: str, count: int) -> list[str]:
         except (ValueError, TypeError):
             candidates = []
 
+    # A JSON OBJECT instead of the requested array. Observed in production
+    # 2026-09-13 on xidra: the model answered
+    # {"Was ist eine Primzahl?": "Wie viele Primzahlen gibt es …"} — it put one
+    # question in the key and one in the value. Without this branch the blob fell
+    # through to the line-based fallback and became ONE tappable chip whose label
+    # was raw JSON.
+    if not candidates:
+        start, end = text.find("{"), text.rfind("}")
+        if start != -1 and end > start:
+            try:
+                obj = json.loads(text[start : end + 1])
+            except (ValueError, TypeError):
+                obj = None
+            if isinstance(obj, dict):
+                # A wrapper like {"followups": [...]} — take the list.
+                for value in obj.values():
+                    if isinstance(value, list):
+                        candidates = [x for x in value if isinstance(x, str)]
+                        break
+                else:
+                    # Otherwise the string VALUES. Keys are deliberately NOT used:
+                    # in a wrapper shape they are field names ("followups"), and
+                    # telling a field name from a question needs a guess we should
+                    # not make. One clean chip beats two with a stray label.
+                    candidates = [v for v in obj.values() if isinstance(v, str)]
+
     # Fallback: line-based (strip bullets / numbering / quotes).
     if not candidates:
         for line in text.splitlines():
@@ -67,6 +93,13 @@ def _parse_followups(raw: str, count: int) -> list[str]:
             continue
         # Drop pure-punctuation noise ("{}", "[]", "---") — a real chip has words.
         if not any(ch.isalnum() for ch in s):
+            continue
+        # Never let a JSON blob become a chip label. The branches above extract
+        # what is usable from JSON; anything still SHAPED like JSON down here came
+        # through the line-based fallback and is model output we failed to parse.
+        # Showing it raw is worse than showing nothing — it is unreadable, and it
+        # is tappable, so it would be sent back as the user's next message.
+        if (s.startswith("{") and s.endswith("}")) or (s.startswith("[") and s.endswith("]")):
             continue
         key = s.casefold()
         if key in seen:

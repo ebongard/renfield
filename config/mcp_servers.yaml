@@ -24,6 +24,32 @@
 #   Only listed tools are shown — all tools remain available for execution.
 #   Omit this field to show all tools of a server in the prompt.
 #   prompt_tools: [tool_name_1, tool_name_2]
+#
+# health_probe (Funktionssonde):
+#   Ein billiger, LESENDER Aufruf, der gelingen MUSS. Weil wir ihn auswählen,
+#   IST sein Scheitern ein Gesundheitssignal — anders als ein beliebiger
+#   Agenten-Aufruf, dessen Fehler auch schlicht "Gerät aus" heißen kann.
+#   Ohne diese Stanza wird ein Server NIE gesondet; das ist die eigentliche
+#   Drosselung, nicht der Schalter.
+#     health_probe:
+#       enabled: true          # je Server abschaltbar
+#       tool: <lesendes Tool>
+#       args: {}
+#       interval: 600          # Sekunden; Vorgabe aus MCP_HEALTH_PROBE_INTERVAL
+#       timeout: 15
+#       expect:
+#         min_items: 0         # 0 = nur "keine Fehlerantwort" (empfohlen)
+#         path: results        # optional: welches Feld gezählt wird
+#   min_items > 0 zählt im JSON der Antwort. Antwortet der Server Fließtext oder
+#   etwas Unzählbares, ist das Ergebnis UNENTSCHIEDEN: es wird kein Verdikt
+#   geschrieben und eine Warnung geloggt — eine Fehlkonfiguration darf keinen
+#   kritischen Alarm über einen gesunden Server auslösen.
+#   ACHTUNG: min_items > 0 ist kein Qualitätsmaß. Für `search` wäre eine
+#   Trefferzahl ein dokumentiertes Falsch-Grün (Wikipedia beantwortet fast
+#   alles) — dieser Server behält deshalb seine eigene Sonde in
+#   services/search_health.py und braucht hier keine Stanza.
+#   Das Werkzeug wird EXAKT aufgelöst: ein Tippfehler ruft nicht versehentlich
+#   ein ähnliches Werkzeug auf, sondern wird als Fehlkonfiguration gemeldet.
 
 servers:
   # --- Open-Meteo Weather MCP Server ---
@@ -284,6 +310,13 @@ servers:
       LOG_LEVEL: "error"
     refresh_interval: 300
     example_intent: mcp.n8n.n8n_list_workflows
+    # Funktionssonde (A1): fängt den Fall vom 12.09., dass der Hostname aus dem
+    # Cluster gar nicht auflöst — der Server meldete trotzdem "verbunden", weil
+    # ihn schlicht nie jemand aufgerufen hat und damit keine Stichprobe entstand.
+    health_probe:
+      tool: n8n_list_workflows
+      expect:
+        min_items: 0
     prompt_tools:
       # Workflow Management
       - n8n_list_workflows
@@ -324,6 +357,16 @@ servers:
     enabled: "${PAPERLESS_ENABLED:-false}"
     refresh_interval: 300
     example_intent: mcp.paperless.search_documents
+    # Funktionssonde (A1): der billigste lesende Aufruf, den dieser Server hat.
+    # Fängt genau den Fall vom 09.-12.09.: Paperless beantwortete jeden
+    # authentifizierten Aufruf mit HTTP 500, während get_status() grün meldete —
+    # der stdio-Prozess läuft ja im Backend-Image und ist immer "verbunden".
+    # min_items 0: schon eine Fehlerantwort ist das Signal, eine leere Liste ist
+    # bei einem frischen Archiv legitim.
+    health_probe:
+      tool: list_correspondents
+      expect:
+        min_items: 0
     env:
       PAPERLESS_API_URL: "${PAPERLESS_API_URL:-}"
       PAPERLESS_API_TOKEN: "${PAPERLESS_API_TOKEN:-}"
@@ -596,6 +639,12 @@ servers:
     enabled: "${HA_MCP_ENABLED:-false}"
     refresh_interval: 600
     example_intent: mcp.homeassistant.GetLiveContext
+    # Funktionssonde (A1): ein toter oder abgelaufener HA-Token beantwortet jeden
+    # Aufruf mit einem Fehler, ohne die Verbindung zu verlieren.
+    health_probe:
+      tool: GetLiveContext
+      expect:
+        min_items: 0
     prompt_tools:
       - HassTurnOn
       - HassTurnOff

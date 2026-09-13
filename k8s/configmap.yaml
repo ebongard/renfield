@@ -43,7 +43,7 @@ data:
   # ────────────────────────────────────────────────────────────────────────────
 
   # Infra endpoints (cluster-internal DNS)
-  DATABASE_URL: "postgresql+asyncpg://renfield:__PG_PASSWORD__@renfield-pg-rw:5432/renfield"
+  DATABASE_URL: "postgresql+asyncpg://renfield:__PG_PASSWORD__@renfield-pg-r1-rw:5432/renfield"
   REDIS_URL: "redis://redis:6379"
   OLLAMA_URL: "http://ollama:11434"
   OLLAMA_EMBED_URL: "http://ollama:11434"
@@ -71,7 +71,15 @@ data:
   JELLYFIN_URL: "http://192.168.1.123:8096"
   SEARXNG_API_URL: "http://searxng:8080"            # in-cluster SearXNG pod
   SEARXNG_INSTANCES: "http://searxng:8080"          # consumed by @kevinwatt/mcp-server-searxng
-  N8N_API_URL: "https://n8n.home.bongard.dev/api/v1"
+  # LAN-direkt, und das ist Absicht: n8n soll NUR im LAN laufen, nicht im
+  # Internet. Bis 2026-09-13 stand hier `https://n8n.home.bongard.dev/api/v1` —
+  # derselbe Wildcard-A-Record-Rest beim Hoster wie bei Paperless unten: der Name
+  # löst auf eine Hostpoint-IP auf (217.26.54.181) und liefert ein
+  # *.web.hostpoint.ch-Zertifikat. Aus dem Cluster scheiterte deshalb jeder
+  # Aufruf im TLS-Handschlag (der API-Schlüssel wurde nie übertragen), und der
+  # MCP-Status meldete trotzdem "healthy" — n8n war monatelang stumm kaputt.
+  # Aufgedeckt hat es die Funktionssonde aus #1230 am ersten Tag.
+  N8N_API_URL: "http://192.168.1.78:5678/api/v1"
   # LAN-direct. The DNS name `paperless.home.bongard.dev` points at a
   # Hostpoint shared-hosting IP (Wildcard A-record leftover) and presents
   # a *.web.hostpoint.ch cert — unusable. Paperless is reachable directly
@@ -275,6 +283,15 @@ data:
   # as ONE deduped proactive admin alert + an internal.system_health entry, instead
   # of dead-ending in logs. Needs PROACTIVE_ENABLED (on here) for the push.
   MCP_HEALTH_MONITOR_ENABLED: "true"
+
+  # Gegenseitige Erreichbarkeitsprüfung (#1230 A3). Ein System, das selbst steht,
+  # kann sich nicht selbst melden — der Haushalt beobachtet deshalb xidra, und
+  # xidra beobachtet den Haushalt. Geprüft wird /health/ready, NIE /health:
+  # letzteres meldet auch mit toter Datenbank "ok" und hätte durch den
+  # 21,5-Stunden-Ausfall vom 2026-09-11 hindurch geschwiegen.
+  # Leer = wirkungslos. Alarmiert über die Fehlserien-Logik der geplanten
+  # Aufgaben (drei Fehlläufe in Folge → EINE Meldung).
+  WATCHDOG_TARGETS: "xidra=http://backend.renfield-xidra.svc.cluster.local:8000/health/ready"
   MEMORY_ENABLED: "true"
   MEMORY_EPISODIC_ENABLED: "true"
   MEMORY_EXTRACTION_ENABLED: "true"

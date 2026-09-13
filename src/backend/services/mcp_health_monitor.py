@@ -27,77 +27,36 @@ from typing import Any
 
 from loguru import logger
 
+from services import ops_alert
 from utils.config import settings
 
 # Plane-B reports keyed by "source" (the reporting MCP), latest event only.
 _reports: dict[str, dict[str, Any]] = {}
-# Alert ledger: issue-key → last-alert monotonic time. Re-alert only after the TTL,
-# so an ongoing problem doesn't spam but a recurrence (or a new problem) does.
-_alerted: dict[str, float] = {}
 
 
+# The alert ledger + admin resolution + delivery now live in services/ops_alert.py
+# (shared with the scheduled-task failure alerts and the HTTP watchdog — ONE alert
+# path, ONE admin resolution). These thin delegates keep the call sites here
+# readable and remain the seam tests monkeypatch.
 def _should_alert(key: str) -> bool:
     """True if this issue-key hasn't been alerted, or the re-alert TTL has elapsed."""
-    now = time.monotonic()
-    last = _alerted.get(key)
-    if last is None or (now - last) >= settings.mcp_health_realert_seconds:
-        _alerted[key] = now
-        return True
-    return False
+    return ops_alert.should_alert(key)
 
 
 def _clear_alert(key: str) -> None:
-    _alerted.pop(key, None)
-
-
-async def _resolve_admin_user_id(db) -> int | None:
-    """The ops target for a health alert = the owner admin (lowest-id active user
-    whose role grants ADMIN), falling back to the first user by id. Returns None on
-    an empty users table (auth-off single-user install — the notification then isn't
-    per-user-scoped, which is correct for that mode)."""
-    try:
-        from sqlalchemy import select
-
-        from models.database import User
-        from services.auth_service import active_admin_ids
-
-        admin_ids = await active_admin_ids(db)
-        if admin_ids:
-            return min(admin_ids)
-        # No admin-granting role (auth-off / dev): fall back to the first user.
-        return (
-            await db.execute(select(User.id).order_by(User.id).limit(1))
-        ).scalar_one_or_none()
-    except Exception:  # noqa: BLE001
-        return None
+    ops_alert.clear_alert(key)
 
 
 async def _notify(title: str, message: str, dedup_key: str, data: dict) -> None:
-    """Fire ONE privacy-aware proactive notification to the admin/owner. Best-effort:
-    a dedup/suppression ValueError or any failure is swallowed (never breaks a tick)."""
-    if not settings.proactive_enabled:
-        return
-    try:
-        from services.database import AsyncSessionLocal
-        from services.notification_service import NotificationService
-
-        # Dedicated session — process_webhook commits its own db.
-        async with AsyncSessionLocal() as db:
-            target = await _resolve_admin_user_id(db)
-            await NotificationService(db).process_webhook(
-                event_type="mcp_health",
-                title=title,
-                message=message,
-                urgency="critical",
-                source="mcp_health_monitor",
-                privacy="personal",
-                target_user_id=target,
-                data={"dedup_key": dedup_key, **data},
-            )
-    except ValueError:
-        pass  # deduped / suppressed by the notification pipeline
-    except Exception as e:  # noqa: BLE001
-        logger.warning(f"mcp_health: notify failed for {dedup_key}: {e}")
+    """Fire ONE privacy-aware proactive notification to the admin/owner."""
+    await ops_alert.notify_admin(
+        title=title,
+        message=message,
+        dedup_key=dedup_key,
+        data=data,
+        event_type="mcp_health",
+        source="mcp_health_monitor",
+    )
 
 
 # --- Plane-B: ingest MCPs push their own failures here -----------------------
@@ -200,6 +159,145 @@ async def _self_heal(mcp_manager, problem_names: list[str]) -> set[str]:
     return attempted
 
 
+async def _bespoke_probe_search() -> tuple[bool | None, str | None]:
+    """The `search` server's purpose-built probe (services/search_health.py, #1162).
+
+    A generic "did the tool return rows" probe is a DOCUMENTED false-green here:
+    Wikipedia answers almost any query, so a non-empty result set hides a total
+    scraper outage. That module counts distinct contributing general engines
+    instead — the right signal, already written, already tested. It just had no way
+    to reach anyone: its verdict surfaced only in `internal.system_health`, i.e.
+    only if a human thought to ask. This is the wire.
+
+    Returns an explicit TRI-STATE ``(verdict, detail)``: ``None`` = no evidence
+    either way (probe disabled, no URL, HTTP failure), which must record nothing —
+    absence of evidence is not evidence of failure. This used to be inferred from
+    "ok and no detail", which would silently swallow a healthy verdict that
+    happened to carry no reason string, leaving a degraded server degraded forever.
+    """
+    from services.search_health import probe_search_functional
+
+    result = await probe_search_functional()
+    verdict = result.get("verdict")
+    if verdict == "unknown":
+        return None, result.get("reason")
+    return verdict == "healthy", result.get("reason")
+
+
+# Servers whose health cannot be judged by a generic tool call. Name → coroutine
+# returning (ok, detail). Checked BEFORE the YAML stanza, so a bespoke probe always
+# wins; a server listed here needs no `health_probe` in mcp_servers.yaml.
+_BESPOKE_PROBES = {
+    "search": _bespoke_probe_search,
+}
+
+
+def _probe_detail(mcp_manager, name: str) -> str | None:
+    """The last probe's failure reason for a server, if we still have it."""
+    try:
+        state = getattr(mcp_manager, "_servers", {}).get(name)
+        return getattr(state, "last_probe_detail", None) if state else None
+    except Exception:  # noqa: BLE001
+        return None
+
+
+async def _run_probes(mcp_manager) -> list[str]:
+    """Run the due functional probes. Returns the names actually probed.
+
+    Runs AFTER the self-heal pass on purpose: a wedged session is reconnected
+    first, so the probe judges the SERVICE on a fresh transport rather than
+    re-reporting a transport problem the heal already fixed.
+    """
+    if not settings.mcp_health_probe_enabled:
+        return []
+    # Duck-type the manager the same way _self_heal does with probe_server: a
+    # manager that does not support probing is skipped, not assumed. Without this
+    # the pass would crash on any stand-in that answers every attribute.
+    due_fn = getattr(mcp_manager, "health_probe_due", None)
+    record_fn = getattr(mcp_manager, "record_external_probe", None)
+    if not callable(due_fn):
+        return []
+    try:
+        due = due_fn()
+    except Exception as e:  # noqa: BLE001
+        logger.warning(f"mcp_health: probe due-check failed: {e}")
+        return []
+    if not isinstance(due, list):
+        return []
+
+    # Bespoke-probe servers are due on the same cadence but have no YAML stanza, so
+    # health_probe_due() does not list them. Fold them in, respecting the interval.
+    if callable(record_fn):
+        servers = getattr(mcp_manager, "_servers", None)
+        for name in _BESPOKE_PROBES:
+            state = servers.get(name) if isinstance(servers, dict) else None
+            if state is None or not getattr(state, "connected", False) or name in due:
+                continue
+            last = getattr(state, "last_probe_at", 0.0)
+            if not isinstance(last, (int, float)):
+                continue
+            if last and (time.monotonic() - last) < settings.mcp_health_probe_interval:
+                continue
+            due.append(name)
+
+    # Fairness before the per-tick cap. Both `health_probe_due()` (dict insertion
+    # order) and the bespoke append produce a STABLE order, so the same prefix would
+    # win `due[:max_per_tick]` every tick and later servers — bespoke ones in
+    # particular, since they are appended last — would starve indefinitely. Sorting
+    # by "longest unprobed first" makes the cap a throttle instead of a blacklist.
+    def _last_probe(name: str) -> float:
+        servers = getattr(mcp_manager, "_servers", None)
+        state = servers.get(name) if isinstance(servers, dict) else None
+        value = getattr(state, "last_probe_at", 0.0)
+        return value if isinstance(value, (int, float)) else 0.0
+
+    due.sort(key=_last_probe)
+
+    probed: list[str] = []
+    for name in due[: settings.mcp_health_probe_max_per_tick]:
+        try:
+            # Same hang-guard discipline as the self-heal pass (#1107): the call has
+            # its own timeout, but a wedged transport can hang elsewhere and a frozen
+            # monitor loop is the failure mode we already paid for once.
+            async with asyncio.timeout(settings.mcp_health_probe_guard_timeout):
+                bespoke = _BESPOKE_PROBES.get(name)
+                if bespoke is not None:
+                    verdict, detail = await bespoke()
+                    if verdict is None:
+                        # No evidence either way — record nothing, and do NOT count
+                        # this as probed (so the due-time is not advanced on a
+                        # non-observation).
+                        continue
+                    record_fn(name, verdict, detail)
+                else:
+                    await mcp_manager.run_health_probe(name)
+            probed.append(name)
+        except TimeoutError:
+            # A probe that blew the hang-guard IS a failed probe — recording it is
+            # both the honest verdict and what keeps the cadence: without a recorded
+            # outcome `last_probe_at` never advances, so a wedged server would be
+            # re-probed every 120s tick instead of every interval, each attempt
+            # costing the full guard.
+            if callable(record_fn):
+                record_fn(name, False, "Zeitüberschreitung der Funktionssonde")
+            probed.append(name)
+            logger.warning(
+                f"mcp_health: probe for '{name}' exceeded "
+                f"{settings.mcp_health_probe_guard_timeout:.0f}s hang-guard — aborted"
+            )
+            continue
+        except Exception as e:  # noqa: BLE001 — a probe must never break the tick
+            # Same cadence argument as the timeout branch: no recorded outcome means
+            # no advanced due-time, so this would retry every tick.
+            if callable(record_fn):
+                record_fn(name, False, f"{type(e).__name__}: {e}"[:200])
+            probed.append(name)
+            logger.warning(f"mcp_health: probe failed for '{name}': {e}")
+    if probed:
+        logger.debug(f"mcp_health: probed {len(probed)} server(s): {', '.join(probed)}")
+    return probed
+
+
 async def monitor_tick(app) -> None:
     """One poll of the MCP client fleet: self-heal (probe+reconnect) degraded/down
     servers, then alert on those STILL broken (NEW problems only), and clear the
@@ -252,6 +350,16 @@ async def _monitor_tick_body(mcp_manager) -> None:
             except Exception as e:  # noqa: BLE001
                 logger.warning(f"mcp_health: post-heal get_status failed: {e}")
 
+    # Functional probes (A1) run AFTER the self-heal so they judge the SERVICE on a
+    # freshly reconnected transport, then the health is re-read so the verdicts they
+    # just wrote reach the SAME alert pass everything else uses. No second alert path.
+    probed = await _run_probes(mcp_manager)
+    if probed:
+        try:
+            status = mcp_manager.get_status()  # post-probe health
+        except Exception as e:  # noqa: BLE001
+            logger.warning(f"mcp_health: post-probe get_status failed: {e}")
+
     current_problems: set[str] = set()
     for srv in status.get("servers", []):
         name = srv.get("name")
@@ -261,6 +369,12 @@ async def _monitor_tick_body(mcp_manager) -> None:
             current_problems.add(key)
             if _should_alert(key):
                 reason = srv.get("impaired_code") or srv.get("last_error") or health
+                if srv.get("impaired_code") == "probe_failed":
+                    # Say WHAT failed, not just that something did — "Funktionstest
+                    # fehlgeschlagen" alone would send the reader back to the logs,
+                    # which is the dead end this whole feature exists to close.
+                    detail = _probe_detail(mcp_manager, name)
+                    reason = f"Funktionstest fehlgeschlagen{f': {detail}' if detail else ''}"
                 verb = "ist nicht erreichbar" if health == "down" else "ist eingeschränkt"
                 tried = " (Selbstheilung versucht, ohne Erfolg)" if name in healed_attempted else ""
                 await _notify(
@@ -276,7 +390,7 @@ async def _monitor_tick_body(mcp_manager) -> None:
                     },
                 )
     # Recovery: any Plane-A ledger key no longer a current problem → clear it.
-    for key in [k for k in _alerted if k.startswith("planea:")]:
+    for key in ops_alert.alerted_keys("planea:"):
         if key not in current_problems:
             _clear_alert(key)
 

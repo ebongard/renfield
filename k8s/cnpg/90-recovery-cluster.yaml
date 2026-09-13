@@ -1,0 +1,140 @@
+# DISASTER RECOVERY — rebuild the renfield app DB from the Garage S3 backup.
+#
+# "A backup you have not restored is not a backup." This file is the restore,
+# written down. It was first rehearsed in Phase 5 (2026-08-25, scratch cluster
+# `renfield-pg-restore`, verified identical to live) and first used in anger on
+# 2026-09-12.
+#
+# ── WHEN TO USE ──────────────────────────────────────────────────────────────
+# The `renfield-pg` cluster is unrecoverable in place: PGDATA lost, both
+# instances down with no healthy volume, or the storage layer is wedged. If the
+# cluster merely lost ONE instance, do NOT come here — let CNPG rebuild that
+# instance (delete its PVCs + pod).
+#
+# ── WHAT IT DOES ─────────────────────────────────────────────────────────────
+# Bootstraps a SEPARATE cluster (`renfield-pg-r1`) from the ObjectStore, reading
+# the base backup of `serverName: renfield-pg` plus every archived WAL segment
+# after it. No `recoveryTarget` = recover to the LATEST archived WAL, i.e. as
+# close to the moment the old primary died as the archive reaches.
+#
+# A separate NAME is deliberate: the broken cluster and its volumes stay
+# untouched as a second fallback until the restore is verified. The cost is that
+# the app must be repointed (`renfield-pg-rw` -> `renfield-pg-r1-rw`).
+#
+# ── RUNBOOK ──────────────────────────────────────────────────────────────────
+#  1. sed the registry placeholder and apply (household):
+#       sed 's|your-registry.example|<real-registry>|' k8s/cnpg/90-recovery-cluster.yaml \
+#         | kubectl apply -f -
+#       kubectl apply -f k8s/cnpg/91-netpol-recovery.yaml
+#  2. Watch: kubectl -n renfield get cluster renfield-pg-r1 -w
+#     Instance 1 restores from S3, then 2 and 3 pg_basebackup from it.
+#  3. VERIFY before repointing — alembic head, pgvector extension, row counts
+#     against what you expect, and that the recovery actually ended
+#     (`SELECT pg_is_in_recovery()` = false on the primary).
+#  4. Repoint the app with `kubectl set env`, NOT `apply` — the live deployments
+#     run pinned image tags the committed yamls do not carry:
+#       for d in backend document-worker meeting-worker pdf-split-worker; do
+#         kubectl -n renfield set env deploy/$d \
+#           'DATABASE_URL=postgresql+asyncpg://renfield:$(POSTGRES_PASSWORD)@renfield-pg-r1-rw:5432/renfield'
+#       done
+#  5. Update the COMMITTED manifests to the new cluster name — `set env` only
+#     changes the live object, and the files on disk still point at a service
+#     that now has ZERO endpoints. Missing this was the one real defect /review
+#     caught in the 2026-09-12 recovery; `bin/deploy-production.sh` applies
+#     `k8s/alembic-upgrade-job.yaml` on EVERY deploy, so a stale host there
+#     breaks the next migration run:
+#       grep -rln 'renfield-pg-rw' k8s/
+#     Covers alembic-upgrade-job, backend, document-worker, meeting-worker,
+#     pdf-split-worker, configmap, and the `cnpg.io/cluster` selector in
+#     redis-postgres-netpol.yaml.
+#  6. Only AFTER the app is healthy: re-add the synchronous block below and
+#     apply again (see the NOTE on synchronous replication).
+#  7. Only after a soak: delete the old cluster + its orphaned Longhorn volumes.
+#
+# ── NOTE ON SYNCHRONOUS REPLICATION — READ BEFORE RE-USING THIS FILE ─────────
+# The production guarantee is `synchronous: {method: any, number: 1,
+# dataDurability: required}` — at least one standby must confirm every commit,
+# so a primary loss never drops an acked write.
+#
+# During BOOTSTRAP only instance 1 exists, so that requirement has nobody to
+# confirm and risks stalling the restore itself. The block below is therefore
+# left COMMENTED OUT while recovering, and uncommented once the cluster reports
+# 3/3 healthy (runbook step 5).
+#
+# The block is currently UNCOMMENTED because this file also describes the live
+# `renfield-pg-r1` cluster created on 2026-09-12. If you are starting a NEW
+# restore from this template: COMMENT IT OUT AGAIN for the bootstrap, then
+# uncomment and re-apply at 3/3. Do not skip that — without it the cluster can
+# lose the last commits on a failover.
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: renfield-pg-r1
+  namespace: renfield
+  labels:
+    app.kubernetes.io/part-of: renfield
+spec:
+  instances: 3
+
+  imageName: your-registry.example/renfield/cnpg-pg16-pgvector:16.9-pgvector0.8.6
+  imagePullPolicy: Always
+  imagePullSecrets:
+    - name: harbor-pull-secret
+
+  # See the NOTE above before re-using this file for a fresh restore.
+  postgresql:
+    synchronous:
+      method: any
+      number: 1
+      dataDurability: required
+
+    parameters:
+      # Same hard cap as the production cluster. An offline standby's slot must
+      # never be able to fill the WAL volume again (incident 2026-09-11).
+      max_slot_wal_keep_size: 2GB
+
+  affinity:
+    enablePodAntiAffinity: true
+    topologyKey: kubernetes.io/hostname
+    podAntiAffinityType: required
+
+  storage:
+    storageClass: longhorn-pg
+    size: 10Gi
+  walStorage:
+    storageClass: longhorn-pg
+    size: 8Gi
+
+  # --- The restore itself ------------------------------------------------------
+  # No `recoveryTarget` => replay every archived WAL segment, i.e. latest.
+  # To restore to a point in time instead, add e.g.:
+  #   recoveryTarget: {targetTime: "2026-09-11 16:00:00.000000+00"}
+  bootstrap:
+    recovery:
+      source: renfield-pg-backup-source
+
+  externalClusters:
+    - name: renfield-pg-backup-source
+      plugin:
+        name: barman-cloud.cloudnative-pg.io
+        parameters:
+          barmanObjectName: renfield-pg-backup
+          # The SOURCE server's name in the bucket — the cluster that WROTE the
+          # backup, not this one. Getting this wrong yields an empty restore.
+          serverName: renfield-pg
+
+  # This cluster archives its OWN WAL under serverName `renfield-pg-r1`, so it
+  # cannot overwrite the source cluster's backup history in the same bucket.
+  plugins:
+    - name: barman-cloud.cloudnative-pg.io
+      isWALArchiver: true
+      parameters:
+        barmanObjectName: renfield-pg-backup
+
+  resources:
+    requests:
+      cpu: 250m
+      memory: 512Mi
+    limits:
+      cpu: "2"
+      memory: 2Gi
