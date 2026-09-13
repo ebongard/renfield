@@ -73,6 +73,14 @@ and how to add a language: `src/satellite/wakeword-training/README.md`.
 - **Medium values (0.4-0.6)**: Balanced sensitivity (recommended)
 - **Higher values (0.7-1.0)**: Less sensitive, fewer false positives
 
+> **The threshold is not the false-positive fix.** A model that scores 0.90-0.99
+> on a room's noise cannot be thresholded out without destroying recall —
+> `renfield_de` v1 measured ~16 FP/hr on synthetic speech and fired ~500/hr in
+> real rooms. Mic-gain and filter levers reduce false positives; only
+> room-specific hard negatives eliminate them. Every new installation must pass
+> [`SATELLITE_ACOUSTIC_COMMISSIONING.md`](SATELLITE_ACOUSTIC_COMMISSIONING.md)
+> before it counts as live.
+
 ## API Endpoints
 
 ### Get Current Settings

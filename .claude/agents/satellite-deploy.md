@@ -62,3 +62,21 @@ ansible-playbook -i inventory.yml playbook.yml --limit <hostname> --tags app
 2. Prefer `--tags app` unless driver/service changes are needed
 3. Test connection first: `ssh <hostname> 'uptime'`
 4. Check disk space: `ssh <hostname> 'df -h /'`
+
+## After Provisioning a NEW Satellite — mandatory acoustic gate
+
+Provisioning a new satellite is NOT complete when the service connects. The room
+must also be recorded and folded into the wakeword model's hard-negative set:
+`docs/SATELLITE_ACOUSTIC_COMMISSIONING.md`.
+
+Skipping it produces false-positive storms (`renfield_de` v1: ~16 FP/hr measured
+on synthetic speech, **~500/hr** in real rooms). Mic-gain levers reduce false
+positives; only room-specific hard-negatives eliminate them.
+
+```bash
+bin/capture-room-ambient.sh satellite-<room> --minutes 45 --label commissioning
+```
+
+When reporting a new satellite as deployed, state explicitly whether the acoustic
+gate has been passed or is still open. Never report a satellite as "done" on
+provisioning alone.

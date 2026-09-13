@@ -265,7 +265,7 @@ Heartbeat messages now include optional metrics:
 
 | Metric | Type | Description |
 |--------|------|-------------|
-| `audio_rms` | float | Audio RMS level (0-32768 for 16-bit) |
+| `audio_rms` | float | Audio RMS level (0-32768 for 16-bit). An implausibly high value in a quiet room means a **capture DC offset**, not a loud room — on TLV320AIC3104 HATs the ADC high-pass filter defaults to `Disabled` (Kinderbad read 1812 while the room sat at -55 dBFS). See `SATELLITE_ACOUSTIC_COMMISSIONING.md`. |
 | `audio_db` | float | Audio level in dB (relative to full scale) |
 | `is_speech` | bool | Voice activity detection state |
 | `cpu_percent` | float | CPU usage percentage |

@@ -688,6 +688,8 @@ upstream sichtbar bleiben).
 # mit einer Kalender-Präferenz (GET/PUT /api/atoms/obligations/calendar-pref)
 # bekommen ihre offenen Fristen als Kalendereinträge gespiegelt (create/update/
 # delete-Reconciler). Benötigt das Calendar MCP (CALENDAR_ENABLED) erreichbar.
+# Prod-Enablement-Runbook (Pod-Anbindung des Calendar MCP, Google-OAuth-
+# Bootstrap, Rollback, Caveats): docs/OBLIGATION_CALENDAR_SYNC.md
 OBLIGATION_CALENDAR_SYNC_ENABLED=false
 OBLIGATION_CALENDAR_SYNC_INTERVAL=86400        # täglich (Sekunden)
 OBLIGATION_CALENDAR_EVENT_HOUR=9               # Uhrzeit des (terminierten) Events; all-day vom MCP nicht unterstützt

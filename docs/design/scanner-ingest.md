@@ -1,6 +1,9 @@
 # Scanner ingest — one scanner, three instances, content-routed
 
-**Status:** DESIGN (investigated + decided 2026-09-08). Not implemented.
+**Status:** Phases 0–3 BUILT (2026-09-08) — Phase 0 as `bin/scan.sh`, Phases 1–3
+in the separate `ebongard/renfield-mcp-scanner` repository; not yet verified
+end-to-end against a live instance. Phases 4–5 open. Design investigated +
+decided 2026-09-08.
 **Flag:** `SCANNER_INGEST_ENABLED` (per instance, dark by default)
 **Related:** `docs/FOLDER_INGEST.md`, `docs/EMAIL_INGEST.md`, `docs/design/pdf-split.md`
 
@@ -371,20 +374,72 @@ practice:
 
 ## Phasing
 
-- **Phase 0 — restore scanning (no architecture commitment).** Disable the
+- **Phase 0 — restore scanning (no architecture commitment).** *Done.* Disable the
   ScanSnap Manager login item; a `bin/scan.sh` producing an OCR'd PDF into the
   current staging folder. The existing manual move workflow continues unchanged.
   Value today, independent of everything below.
-- **Phase 1 — MCP server + L1.** `renfield-mcp-scanner`, LaunchAgent packaging,
+- **Phase 1 — MCP server + L1.** *Built.* `renfield-mcp-scanner`, LaunchAgent packaging,
   declared-intent routing, push to one instance, `scanner_status`.
   Register in `renfield` first.
-- **Phase 2 — L2 separator sheets.** `zbar`, sheet templates, mixed-stack
+- **Phase 2 — L2 separator sheets.** *Built.* `zbar`, sheet templates, mixed-stack
   segment-and-route. Roll out to the second configured target.
-- **Phase 3 — L3 classification + review floor.** Classifier, confidence gate,
+- **Phase 3 — L3 classification + review floor.** *Built.* Classifier, confidence gate,
   staging queue, `list_pending_scans` / `route_scan`. Roll out to any remaining
   configured targets.
 - **Phase 4 (optional) — promote to k8s** if the scanner ever moves to a node.
   Packaging change only.
+- **Phase 5 (optional) — the physical Scan button.** Separated from Phase 4
+  because it is not a packaging change: it is the one place in this design that
+  has to break a project rule, and it raises a routing question the rest of the
+  design deliberately refuses to answer. See below.
+
+### Phase 5 — the physical Scan button
+
+Today, pressing the blue button does **nothing**. The button works and its state
+is readable (`--scan`), but nothing is watching: `read_sensors()` runs only on
+request, from `scanner_status` and the preflight. The former listener was the
+vendor software, and disabling that is precisely what freed the USB device for
+SANE — the button lost its consumer as a direct consequence of getting the
+scanner working at all.
+
+**Three questions gate it, and none is about code.** Phases 2 and 3 have since
+been built, which settles the second; the first and third remain open.
+
+**1. It requires polling, and that breaks a standing rule.** *Open.* SANE exposes
+no event or interrupt API for the sensor group — a button press can only be
+*discovered by asking*. So a trigger is necessarily a loop reading
+`--page-loaded` and `--scan` (roughly every second) and starting a scan when
+paper is present AND the button is down. The project rule is "no polling —
+event-driven watcher"; this is the single point in the design where the hardware
+offers nothing to subscribe to. It is a deliberate, documented exception, not an
+oversight — and it should stay the only one.
+
+**2. A button press carries no destination.** *Settled by Phases 2 and 3.* With
+`n = 1` it does not arise: the short-circuit routes everything to the only
+target. From the second target onward, a press is a scan with **no declared
+intent** — exactly the case the invariant forbids guessing at. It needs no new
+mechanism, because an unattended press takes the same path as a voice scan with
+no `target`:
+
+  * **A separator sheet on top determines it fully.** A sheet carries the intent
+    that a button press cannot; this is the intended way to use the button with
+    more than one target.
+  * **Without a sheet, L3 decides — or a human does.** The classifier routes only
+    at high confidence; everything else waits unrouted on the review floor
+    (`list_pending_scans` / `route_scan`). Safe, but a button press on a bare
+    stack is then a two-step action, so the convenience depends on using sheets.
+
+**3. The polling cost must be measured, not assumed.** *Open.* `read_sensors()`
+spawns a `scanimage` process per call. At one call a second that is a permanent
+process churn against a device that has only just become reliable, and against a
+USB stack that the vendor software already proved fragile. Measure the cost of
+the poll at the intended interval BEFORE committing to it, and be willing to
+lengthen the interval or drop the phase if it destabilises the device. A scan
+button that makes scanning less reliable is a bad trade.
+
+**Sequencing, therefore:** the routing prerequisite is in place; what remains is
+showing the poll to be free of side effects. It is genuinely optional — every
+scan is already reachable by voice, which is how the design intends it.
 
 ### A partial scan must never be filed
 
@@ -411,11 +466,11 @@ server must never push a batch that faulted mid-stack.
   staging, FileVault, and retention purge — reduced, not eliminated.
 - **Availability is tied to a logged-in user session.** Accepted per the host
   decision; the durable queue means scans are delayed, never lost.
-- **SANE exposes no event API for the Scan button.** If a
-  press-the-button-to-scan trigger is added, it must poll `--page-loaded` /
-  `--scan` (~1s). This is a **documented exception** to the repo's
-  "no polling — event-driven watcher" rule: the driver offers nothing to
-  subscribe to.
+- **SANE exposes no event API for the Scan button.** A press-the-button trigger
+  must poll `--page-loaded` / `--scan` (~1s) — a **documented exception** to the
+  "no polling — event-driven watcher" rule, because the driver offers nothing to
+  subscribe to. Scoped to Phase 5 and deliberately optional; see that section for
+  the routing and poll-cost questions that gate it.
 - **Blank-page dropping via `--swskip` is not reliably tunable.** Measured on
   the first real duplex scan: a content page read 7.62 % dark pixels and its
   reverse 3.97 % — too narrow a margin to threshold without also dropping

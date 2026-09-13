@@ -76,6 +76,8 @@ The blocker was Blackwell (sm_120) + CUDA versions. What works:
 | `renfield_de.yaml` | the German training config (layer 48, weight 700, fp-target 0.5/hr) |
 | `run_train_de.sh` | run `openwakeword.train` end-to-end + export ONNX |
 | `validate_de.py` / `diag_de.py` | overall + per-voice recall / false-accept validation |
+| `score_wav.py` | score any wav the way the satellite does (80 ms streaming chunks) — peak score + detection events with timestamps. Use it to prove a room capture is provocative BEFORE training on it (see the commissioning doc) and to A/B two models on identical material. |
+| `derive_detector_mono.py` | collapse a raw multi-channel room capture to the mono the detector actually scores, replaying the satellite's own beamform/select/downmix |
 
 ### Lessons baked into the config / generator
 - **Concentrate the voices.** A 236-speaker `de_DE-mls` model sat at ~13 % recall
@@ -93,6 +95,15 @@ The blocker was Blackwell (sm_120) + CUDA versions. What works:
 
 ## Real-ambient false-positive hardening (v2/v3 — REQUIRED before shipping)
 
+> **Per-room capture is a commissioning gate, not a training option.** Every
+> satellite must have its own room in this negative set before it counts as
+> live. The procedure, the acceptance thresholds, and the per-room event
+> checklist are in [`docs/SATELLITE_ACOUSTIC_COMMISSIONING.md`](../../../docs/SATELLITE_ACOUSTIC_COMMISSIONING.md).
+> Capture with `bin/capture-room-ambient.sh` (records raw multi-channel with a
+> sanity gate) and collapse it with `scripts/derive_detector_mono.py` (replays
+> the satellite's own beamform/select/downmix, so the negatives match what the
+> detector actually scores).
+
 **The synthetic FP metric lied by ~30×.** v1 measured ~16 fp/hr @0.9 on synthetic
 speech, but in the real house it false-fired **~500×/hr fleet-wide** — a constant
 wake→empty-transcription storm. Synthetic negatives do not represent your rooms.
@@ -100,9 +111,16 @@ wake→empty-transcription storm. Synthetic negatives do not represent your room
 The fix (scripts: `gen_hard_negs.py`, `validate_ambient.py`, `measure_wav.py`,
 `renfield_de_v2.yaml`, `renfield_de_v3.yaml`):
 
-1. **Record real room ambient** on each satellite (~10 min; `arecord -D default
-   -f S16_LE -r 16000 -c 1`). XVF3800/USB mics are exclusive → stop the service
-   to record; HAT mics allow concurrent capture via the shared `default` device.
+1. **Record real room ambient** on each satellite:
+   `bin/capture-room-ambient.sh satellite-<room> --minutes 45`. XVF3800/USB mics
+   are exclusive → stop the service to record; HAT mics allow concurrent capture
+   via the shared `dsnoop` PCM. Capture while the room is **in use** — a quiet
+   noise floor is not what false-fires the model — and at the **deployment mic
+   gain**. The script records RAW multi-channel (never a pre-downmixed mono: on a
+   beamforming satellite that is a different signal than the detector scores) and
+   rejects captures with a DC offset, clipping, or a dead channel.
+   `scripts/derive_detector_mono.py` then produces the detector-side mono for
+   `/work/ambient/`.
 2. **`gen_hard_negs.py`** embeds each wav (`AudioFeatures._get_embeddings` →
    `(frames,96)`) and splits each room **75/25 by time**: first 75% → windowed
    `(N,16,96)` training **hard-negatives**; last 25% → concatenated **held-out
@@ -161,6 +179,58 @@ mic with more training data — fix the gain (it's the dominant FP knob on XVF38
 sats), then let the model handle the rest. The gain lives in the gitignored
 `host_vars/satellite-<room>.yml` (`xvf3800_tuning.PP_AGCDESIREDLEVEL`), persisted
 on-device with `xvf_host SAVE_CONFIGURATION 1`.
+
+### v5 — Kinderbad in-use ambient (2026-09-05)
+
+`md5 = e11f769cd141c303b87d602acc39910a`. Config identical to v4
+(`renfield_de_v5.yaml` = `renfield_de_v4.yaml`); the only change is the ambient
+corpus, which gained 45 min of **in-use** Kinderbad audio (`ambient_kinderbad_inuse_{a,b}.wav`,
+split so part of it stays held out). Augmentation was skipped — the positive/negative
+clips from June are unchanged, only `--train_model` was re-run (~9 min).
+
+**The finding that motivated it:** Kinderbad was *already* in the v3 corpus, with a
+quiet 10-minute capture. Scored against v3 that capture peaks at **0.127 with zero
+detections** — the model never reacted to it, so it taught the model nothing, and
+the room kept false-firing (25 genuine wakes in 9 h). The new in-use capture peaks
+**0.969 with 8 detections**. Material the model ignores is not a hard negative.
+
+Per-room A/B via `score_wav.py` (streaming, 80 ms chunks — the faithful path):
+
+| Ambient | v3 | v4 | v5 |
+|---|---|---|---|
+| kinderbad in-use A (23 min) | peak 0.969, 6 ev | peak 0.964, 4 ev | **peak 0.609, 1 ev** |
+| kinderbad in-use B (22 min) | peak 0.909, 2 ev | peak 0.925, 1 ev | peak 0.970, 1 ev |
+| kinderbad (old, quiet) | peak 0.127, 0 | 0.003, 0 | 0.010, 0 |
+| arbeitszimmer | — | 0.049, 0 | 0.028, 0 |
+| fitnessraum | — | 0.150, 0 | 0.161, 0 |
+| wohnzimmer | — | 0.001, 0 | 0.001, 0 |
+| audiobook g4 / g7 | — | 0.191 / 0.002, 0 | 0.010 / 0.002, 0 |
+
+Recall (synthetic positives): **75 % @0.5, 71 % @0.9** — in line with v3/v4.
+
+Two honest caveats:
+
+- **`validate_ambient.py` disagrees** (v5 2.5 FP/h @0.9 vs v4 0.0). It scores the
+  *concatenated* held-out features of all 8 rooms, and each file boundary is a
+  discontinuity that spikes the score. v5 has a stronger cold-start transient than
+  v4 — visible as a lone 0.815 hit at **t=1 s** of the Arbeitszimmer file that
+  vanishes (peak 0.028) once the first 5 s are skipped. In production a satellite
+  warms up once per restart, so prefer the per-file streaming numbers above.
+- **Kinderbad B still peaks 0.970 at t=243 s.** That segment is in v5's own
+  *training* portion, and it is the one point in the whole corpus that lines up
+  exactly with a logged false positive (09:08:50 CEST). So the single verifiable
+  false positive in the material is precisely the one v5 did **not** learn to
+  reject. Worth attacking directly in a v6 (weight that window harder, or add
+  more captures containing whatever that sound is) rather than assuming more
+  ambient in general will cover it.
+
+**Live recall CONFIRMED 2026-09-05** after deploy: 7 wakes in the first 1.6 h,
+**4 of them `completed`** transcriptions from a human speaking in the room. Under
+v3 the same room produced 25 wakes and **zero** successful sessions in 9 h, so
+the decisive change is that real sessions exist at all. A clean false-positive
+rate still needs a long quiet window with nobody in the bathroom — the three
+`empty_transcription` turns cannot be attributed while someone is actively
+testing.
 
 ## Train a new language (e.g. EN-US, EN-UK, IT)
 

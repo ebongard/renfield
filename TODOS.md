@@ -189,13 +189,8 @@ moves to P2 with per-category sign/net handling.
 - **[P3] CSV/PDF dossier export + ELSTER/ERiC field mapping.** Export per-Anlage; optionally map to ELSTER fields. Filing stays out of scope.
 
 ### Enable obligation → calendar sync in PRODUCTION (code shipped; blocked on calendar-MCP config)
-The reconciler shipped + is deployed (v2.13.0-rc.21, 2026-06-07) but is **OFF in prod** — the Calendar MCP isn't configured there. The notifier + digest were enabled this deploy; calendar sync was held. Prerequisites to turn it on:
-1. **Add `calendar_accounts.yaml` to the `renfield-mcp-config` ConfigMap** — per-user accounts (`name`/`label`/`type` ews|google|caldav/`visibility` owner|shared/`owner_id`). Currently absent (ConfigMap has only agent_roles/kg_scopes/mail_accounts/mcp_servers).
-2. **Add the calendar backend credentials to `renfield-env`** — the `CALENDAR_WORK_*` / `CALENDAR_VEREIN_*` (or equivalent) username/password the `mcp_servers.yaml` calendar block reads; plus `CALENDAR_CONFIG=/config/calendar_accounts.yaml` (and mount the yaml into the pod). No `CALENDAR_*` keys exist in `renfield-env` today.
-3. **Flip `CALENDAR_ENABLED=true` + `OBLIGATION_CALENDAR_SYNC_ENABLED=true`** in `renfield-env`, restart backend (Recreate + cuda gate — pre-check `cuda.local:8081/health`).
-4. **Each user picks a calendar** in the agenda's "Kalender-Sync" selector (no pref → no sync; the selector is hidden until `list_calendars` returns writable calendars).
-- **Verify after:** the calendar MCP appears in `GET /api/mcp/servers` (empty today); a test obligation creates an event; clearing the pref tears the events down.
-- **Needs:** real calendar credentials (operator-provided). **Why P2, not done:** can't provision creds without the operator. See [[reference_deploy_set_image_pinned]] for the deploy mechanics.
+The reconciler shipped + is deployed (v2.13.0-rc.21, 2026-06-07) and now runs as the Scheduled Task „Fristen-Kalender-Sync", but is **OFF on every instance** — the Calendar MCP isn't wired into the pod. The full enablement checklist (ConfigMap key + `subPath` mount + `CALENDAR_CONFIG=/app/config/…`, credentials in a Secret, Google OAuth bootstrap with a PVC-backed token path, flag flip, verify, rollback) lives in **`docs/OBLIGATION_CALENDAR_SYNC.md`** — keep it there, not duplicated here.
+- **Needs:** real calendar credentials (operator-provided) and the decisions listed at the end of the runbook. **Why P2, not done:** can't provision creds without the operator.
 
 ### Paperless PR 4 inline follow-ups (documented in code, filed here)
 All three have clear triggers but were out of PR 4 scope. Inline `# ...` comments in the relevant files carry full context.
