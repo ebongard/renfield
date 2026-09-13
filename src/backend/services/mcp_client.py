@@ -1002,17 +1002,37 @@ def _parse_health_probe(raw: dict | None) -> dict | None:
     expect_raw = raw.get("expect") or {}
     if not isinstance(expect_raw, dict):
         expect_raw = {}
+    def _num(value, default, cast):
+        """Coerce a numeric option, falling back on anything unparseable.
+
+        These three coercions used to raise on a value like ``interval: 10m``, and
+        the exception escaped into the per-entry config try/except — which drops
+        the WHOLE server. A typo in a probe's interval would have silently removed
+        Paperless from the fleet: no tools, no health entry, nothing. The docstring
+        promised otherwise; now the code keeps the promise.
+        """
+        try:
+            return cast(_resolve_value(value)) if value not in (None, "") else default
+        except (TypeError, ValueError):
+            logger.warning(
+                f"health_probe: ignoring unparseable value {value!r}, using {default}"
+            )
+            return default
+
+    interval = _num(raw.get("interval"), settings.mcp_health_probe_interval, int)
+    timeout = _num(raw.get("timeout"), settings.mcp_health_probe_timeout, float)
+    min_items = _num(expect_raw.get("min_items"), 0, int)
     return {
         "enabled": True,
         "tool": tool,
         "args": raw.get("args") if isinstance(raw.get("args"), dict) else {},
-        "interval": max(30, int(_resolve_value(raw.get("interval", 0)) or 0)
-                        or settings.mcp_health_probe_interval),
-        "timeout": float(_resolve_value(raw.get("timeout", 0)) or 0)
-                   or settings.mcp_health_probe_timeout,
+        # Floor the interval: a probe every few seconds against a real upstream is
+        # a load generator, not a check.
+        "interval": max(30, interval or settings.mcp_health_probe_interval),
+        "timeout": timeout or settings.mcp_health_probe_timeout,
         "expect": {
             # 0 = only "the call came back without an error envelope".
-            "min_items": max(0, int(expect_raw.get("min_items", 0) or 0)),
+            "min_items": max(0, min_items),
             # Which field to count; None = count the payload itself if it is a list.
             "path": expect_raw.get("path") or None,
         },
@@ -1570,19 +1590,38 @@ class MCPManager:
         return due
 
     @staticmethod
-    def _evaluate_probe_expectation(payload: Any, expect: dict) -> tuple[bool, str | None]:
-        """Check a probe result against its declared minimum. Returns (ok, reason).
+    def _evaluate_probe_expectation(message: str | None, expect: dict) -> tuple[bool | None, str | None]:
+        """Check a probe result against its declared minimum.
 
-        ``min_items`` of 0 means "the call came back without an error envelope",
-        which is already the whole signal for a dead upstream. A higher value is for
-        a server where an EMPTY-but-successful answer is itself the failure — but
-        note the trap documented in ``services/search_health.py``: a bare
-        result-count is a false-green for search, which is why search keeps its own
-        purpose-built probe instead of a count here.
+        Returns a TRI-STATE: ``True`` = met, ``False`` = not met, ``None`` = cannot
+        be judged (a misconfiguration). The third state matters — inventing a
+        failure out of "I could not tell" would fire a critical alert about a
+        healthy server, in a subsystem whose whole purpose is making green mean
+        green.
+
+        Note what is parsed: ``execute_tool`` returns ``data`` as the list of raw
+        MCP *content parts* (``[{"type": ..., "text": ...}]``), NOT the payload. The
+        payload lives in the joined ``message`` text, so that is what we parse. An
+        earlier version counted the content parts, which made every ``min_items``
+        above 1 fail permanently against a perfectly healthy server.
+
+        ``min_items`` of 0 (the default, and what all shipped stanzas use) means
+        "the call came back without an error envelope" and needs no payload at all.
         """
         min_items = expect.get("min_items", 0)
         if min_items <= 0:
             return True, None
+
+        if not message:
+            return None, "leere Antwort — Mindestanzahl nicht prüfbar"
+        try:
+            payload = json.loads(message)
+        except (ValueError, TypeError):
+            # A server answering prose rather than JSON cannot be counted. That is a
+            # configuration mistake (wrong tool, or min_items on a prose tool), not
+            # evidence of ill health.
+            return None, "Antwort ist kein JSON — Mindestanzahl nicht prüfbar"
+
         container = payload
         path = expect.get("path")
         if path:
@@ -1593,7 +1632,7 @@ class MCPManager:
                 return False, f"erwartetes Feld '{path}' fehlt in der Antwort"
         count = len(container) if isinstance(container, (list, dict, str)) else None
         if count is None:
-            return False, "Antwort ist nicht zählbar"
+            return None, "Antwort ist nicht zählbar — Mindestanzahl nicht prüfbar"
         if count < min_items:
             return False, f"nur {count} Einträge, erwartet mindestens {min_items}"
         return True, None
@@ -1614,6 +1653,22 @@ class MCPManager:
             return {"ok": True, "detail": None, "skipped": True}
         probe = state.config.health_probe
         namespaced = f"mcp.{server_name}.{probe['tool']}"
+
+        # Resolve EXACTLY. execute_tool has a deliberate fuzzy fallback that
+        # substitutes a similar tool when a name misses — helpful for the agent,
+        # poison here: a probe that quietly calls a DIFFERENT tool either answers
+        # fine while the intended check never ran (false green), or fails schema
+        # validation forever (false red). Both defeat the point. A missing tool is a
+        # misconfiguration, reported as such, never as ill health.
+        if state.all_discovered_tools and not any(
+            t.original_name == probe["tool"] for t in state.all_discovered_tools
+        ):
+            logger.warning(
+                f"mcp_health: probe tool '{probe['tool']}' does not exist on "
+                f"'{server_name}' — check the health_probe stanza"
+            )
+            return {"ok": True, "detail": "Sondenwerkzeug existiert nicht", "skipped": True}
+
         try:
             result = await self.execute_tool(
                 namespaced,
@@ -1632,9 +1687,16 @@ class MCPManager:
             state.record_probe_outcome(False, detail)
             return {"ok": False, "detail": detail, "skipped": False}
 
-        ok, reason = self._evaluate_probe_expectation(result.get("data"), probe["expect"])
-        state.record_probe_outcome(ok, reason)
-        return {"ok": ok, "detail": reason, "skipped": False}
+        verdict, reason = self._evaluate_probe_expectation(
+            result.get("message"), probe["expect"]
+        )
+        if verdict is None:
+            # Cannot judge → record NOTHING. Neither a false failure nor a false
+            # success; the warning is the signal, and the stanza needs fixing.
+            logger.warning(f"mcp_health: probe '{namespaced}' inconclusive: {reason}")
+            return {"ok": True, "detail": reason, "skipped": True}
+        state.record_probe_outcome(verdict, reason)
+        return {"ok": verdict, "detail": reason, "skipped": False}
 
     def record_external_probe(self, server_name: str, ok: bool, detail: str | None) -> None:
         """Record a verdict from a PURPOSE-BUILT probe that lives outside this class.

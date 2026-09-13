@@ -10,6 +10,7 @@ flag a healthy server whose *target* failed. A probe escapes the bind: WE choose
 call that must succeed, so its failure IS a health signal. These tests pin that
 separation, the hysteresis, the deliberate skips, and the tick ordering.
 """
+import json
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -62,30 +63,54 @@ def test_parse_floors_a_silly_interval():
 # --- expectation evaluation ------------------------------------------------
 
 class TestExpectation:
-    def _eval(self, payload, expect):
+    """The evaluation runs against the JOINED MESSAGE TEXT, which is where the
+    payload actually is. `execute_tool` returns `data` as the list of raw MCP
+    content parts (`[{"type":..., "text":...}]`) — an earlier version counted THOSE,
+    which made every `min_items` above 1 fail permanently against a healthy server
+    while the unit tests fed a shape production never produces."""
+
+    def _eval(self, message, expect):
         from services.mcp_client import MCPManager
 
-        return MCPManager._evaluate_probe_expectation(payload, expect)
+        return MCPManager._evaluate_probe_expectation(message, expect)
 
     def test_min_items_zero_accepts_anything_that_came_back(self):
         """An empty list from a fresh archive is legitimate; the error envelope is
-        what the default probe is looking for."""
-        assert self._eval([], {"min_items": 0, "path": None}) == (True, None)
+        what the default probe is looking for — and it needs no payload at all."""
+        assert self._eval("[]", {"min_items": 0, "path": None}) == (True, None)
         assert self._eval(None, {"min_items": 0, "path": None}) == (True, None)
+        assert self._eval("irgendein Fließtext", {"min_items": 0, "path": None}) == (True, None)
 
-    def test_counts_a_list_payload(self):
-        assert self._eval([1, 2], {"min_items": 2, "path": None})[0] is True
-        ok, reason = self._eval([1], {"min_items": 2, "path": None})
+    def test_counts_a_json_list(self):
+        assert self._eval("[1, 2]", {"min_items": 2, "path": None})[0] is True
+        ok, reason = self._eval("[1]", {"min_items": 2, "path": None})
         assert ok is False and "nur 1" in reason
 
     def test_counts_a_named_field(self):
-        assert self._eval({"results": [1, 2]}, {"min_items": 2, "path": "results"})[0] is True
-        ok, reason = self._eval({"other": [1]}, {"min_items": 1, "path": "results"})
+        payload = json.dumps({"results": [1, 2]})
+        assert self._eval(payload, {"min_items": 2, "path": "results"})[0] is True
+        ok, reason = self._eval(json.dumps({"other": [1]}), {"min_items": 1, "path": "results"})
         assert ok is False and "results" in reason
 
-    def test_uncountable_payload_fails_loudly(self):
-        ok, reason = self._eval(42, {"min_items": 1, "path": None})
-        assert ok is False and "zählbar" in reason
+    def test_realistic_paperless_shape(self):
+        """What a real MCP answer looks like — a JSON envelope in the text."""
+        payload = json.dumps({"count": 2, "results": [{"id": 1}, {"id": 2}]})
+        assert self._eval(payload, {"min_items": 1, "path": "results"}) == (True, None)
+
+    def test_prose_answer_is_inconclusive_not_a_failure(self):
+        """A server that answers prose cannot be counted. That is a configuration
+        mistake, not evidence of ill health — inventing a failure here would fire a
+        critical alert about a healthy server."""
+        verdict, reason = self._eval("Alles in Ordnung.", {"min_items": 1, "path": None})
+        assert verdict is None and "kein JSON" in reason
+
+    def test_uncountable_payload_is_inconclusive(self):
+        verdict, reason = self._eval("42", {"min_items": 1, "path": None})
+        assert verdict is None and "nicht zählbar" in reason
+
+    def test_empty_message_is_inconclusive(self):
+        verdict, reason = self._eval("", {"min_items": 1, "path": None})
+        assert verdict is None and "nicht prüfbar" in reason
 
 
 # --- state + hysteresis ----------------------------------------------------
@@ -414,3 +439,158 @@ class TestMonitorProbePass:
         ops_alert.reset_ledger()
 
         assert sent and "HTTP 500" in sent[0]
+
+
+@pytest.mark.asyncio
+class TestProbeCadenceOnFailure:
+    """A probe that never records an outcome never advances its due-time, so a
+    wedged server would be re-probed every 120s tick instead of every interval —
+    each attempt costing the full hang-guard."""
+
+    async def test_hang_guard_records_a_failure(self, monkeypatch):
+        import asyncio
+
+        import services.mcp_health_monitor as m
+
+        monkeypatch.setattr(m.settings, "mcp_health_probe_enabled", True)
+        monkeypatch.setattr(m.settings, "mcp_health_probe_guard_timeout", 0.01)
+
+        async def _hang(_name):
+            await asyncio.sleep(5)
+
+        recorded: list[tuple] = []
+        mgr = SimpleNamespace(
+            health_probe_due=lambda: ["wedged"],
+            run_health_probe=_hang,
+            record_external_probe=lambda *a: recorded.append(a),
+            _servers={},
+        )
+        probed = await m._run_probes(mgr)
+
+        assert probed == ["wedged"]
+        assert recorded and recorded[0][0] == "wedged" and recorded[0][1] is False
+
+    async def test_raising_probe_records_a_failure(self, monkeypatch):
+        import services.mcp_health_monitor as m
+
+        monkeypatch.setattr(m.settings, "mcp_health_probe_enabled", True)
+
+        async def _boom(_name):
+            raise RuntimeError("transport gone")
+
+        recorded: list[tuple] = []
+        mgr = SimpleNamespace(
+            health_probe_due=lambda: ["broken"],
+            run_health_probe=_boom,
+            record_external_probe=lambda *a: recorded.append(a),
+            _servers={},
+        )
+        await m._run_probes(mgr)
+
+        assert recorded and recorded[0][1] is False
+        assert "transport gone" in recorded[0][2]
+
+
+class TestReviewFindings:
+    """Each of these pins a bug that got as far as a commit. They are the reason
+    the probe cannot quietly lie about a server being green."""
+
+    def test_malformed_stanza_costs_only_the_probe_not_the_server(self):
+        """`interval: 10m` used to raise, and the exception escaped into the
+        per-entry config try/except — which drops the WHOLE server. Paperless would
+        have vanished from the fleet: no tools, no health entry, nothing."""
+        from services.mcp_client import _parse_health_probe
+        from utils.config import settings
+
+        parsed = _parse_health_probe({"tool": "t", "interval": "10m", "timeout": "bald",
+                                      "expect": {"min_items": "viele"}})
+        assert parsed is not None
+        assert parsed["interval"] == settings.mcp_health_probe_interval
+        assert parsed["timeout"] == settings.mcp_health_probe_timeout
+        assert parsed["expect"]["min_items"] == 0
+
+
+@pytest.mark.asyncio
+class TestReviewFindingsAsync:
+    async def test_probe_tool_must_resolve_exactly(self):
+        """execute_tool has a deliberate fuzzy fallback that substitutes a similar
+        tool — helpful for the agent, poison here: the probe would either answer
+        fine while the intended check never ran, or fail schema validation forever."""
+        from services.mcp_client import MCPManager, MCPToolInfo
+
+        st = _state()
+        st.connected = True
+        st.all_discovered_tools = [MCPToolInfo("paperless", "list_tags", "x", "")]
+        st.config.health_probe["tool"] = "list_correspondents"  # renamed upstream
+
+        mgr = MCPManager.__new__(MCPManager)
+        mgr._servers = {"paperless": st}
+        mgr.execute_tool = AsyncMock()
+
+        res = await mgr.run_health_probe("paperless")
+        assert res["skipped"] is True
+        mgr.execute_tool.assert_not_awaited()
+        assert st.probe_consecutive_failures == 0, "a typo is not ill health"
+
+    async def test_inconclusive_expectation_records_nothing(self):
+        """Neither a false failure nor a false success — the warning is the signal."""
+        from services.mcp_client import MCPManager
+
+        st = _state()
+        st.config.health_probe["expect"] = {"min_items": 2, "path": None}
+        mgr = MCPManager.__new__(MCPManager)
+        mgr._servers = {"paperless": st}
+        mgr.execute_tool = AsyncMock(
+            return_value={"success": True, "message": "Alles gut.", "data": []}
+        )
+
+        res = await mgr.run_health_probe("paperless")
+        assert res["skipped"] is True
+        assert st.probe_consecutive_failures == 0
+        assert st.last_probe_ok is None, "no verdict may be recorded"
+
+    async def test_bespoke_unknown_is_a_real_tristate(self, monkeypatch):
+        """`(True, None)` used to mean 'unknown', colliding with a healthy verdict
+        that carried no reason string — such a server would stay degraded forever."""
+        import services.mcp_health_monitor as m
+        import services.search_health as sh
+
+        monkeypatch.setattr(m.settings, "mcp_health_probe_enabled", True)
+        monkeypatch.setattr(
+            sh, "probe_search_functional",
+            AsyncMock(return_value={"verdict": "healthy", "reason": None}),
+        )
+        recorded: list[tuple] = []
+        mgr = SimpleNamespace(
+            health_probe_due=lambda: [],
+            run_health_probe=AsyncMock(),
+            record_external_probe=lambda *a: recorded.append(a),
+            _servers={"search": SimpleNamespace(connected=True, last_probe_at=0.0)},
+        )
+        await m._run_probes(mgr)
+
+        assert recorded == [("search", True, None)], "a healthy verdict must be recorded"
+
+    async def test_per_tick_cap_does_not_starve_the_same_servers(self, monkeypatch):
+        """A stable due-order plus a cap is a blacklist, not a throttle: the same
+        prefix would win every tick and later servers — bespoke ones especially,
+        since they are appended last — would never be probed at all."""
+        import services.mcp_health_monitor as m
+
+        monkeypatch.setattr(m.settings, "mcp_health_probe_enabled", True)
+        monkeypatch.setattr(m.settings, "mcp_health_probe_max_per_tick", 2)
+
+        # c and d have waited longest (last_probe_at 0 = never probed).
+        servers = {
+            "a": SimpleNamespace(connected=True, last_probe_at=900.0),
+            "b": SimpleNamespace(connected=True, last_probe_at=800.0),
+            "c": SimpleNamespace(connected=True, last_probe_at=0.0),
+            "d": SimpleNamespace(connected=True, last_probe_at=100.0),
+        }
+        mgr = SimpleNamespace(
+            health_probe_due=lambda: ["a", "b", "c", "d"],
+            run_health_probe=AsyncMock(return_value={"ok": True}),
+            record_external_probe=lambda *a: None,
+            _servers=servers,
+        )
+        assert await m._run_probes(mgr) == ["c", "d"]

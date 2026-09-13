@@ -38,12 +38,18 @@
 #       interval: 600          # Sekunden; Vorgabe aus MCP_HEALTH_PROBE_INTERVAL
 #       timeout: 15
 #       expect:
-#         min_items: 0         # 0 = nur "keine Fehlerantwort"
+#         min_items: 0         # 0 = nur "keine Fehlerantwort" (empfohlen)
 #         path: results        # optional: welches Feld gezählt wird
+#   min_items > 0 zählt im JSON der Antwort. Antwortet der Server Fließtext oder
+#   etwas Unzählbares, ist das Ergebnis UNENTSCHIEDEN: es wird kein Verdikt
+#   geschrieben und eine Warnung geloggt — eine Fehlkonfiguration darf keinen
+#   kritischen Alarm über einen gesunden Server auslösen.
 #   ACHTUNG: min_items > 0 ist kein Qualitätsmaß. Für `search` wäre eine
 #   Trefferzahl ein dokumentiertes Falsch-Grün (Wikipedia beantwortet fast
 #   alles) — dieser Server behält deshalb seine eigene Sonde in
 #   services/search_health.py und braucht hier keine Stanza.
+#   Das Werkzeug wird EXAKT aufgelöst: ein Tippfehler ruft nicht versehentlich
+#   ein ähnliches Werkzeug auf, sondern wird als Fehlkonfiguration gemeldet.
 
 servers:
   # --- Open-Meteo Weather MCP Server ---

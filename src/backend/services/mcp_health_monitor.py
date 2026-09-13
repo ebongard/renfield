@@ -159,7 +159,7 @@ async def _self_heal(mcp_manager, problem_names: list[str]) -> set[str]:
     return attempted
 
 
-async def _bespoke_probe_search() -> tuple[bool, str | None]:
+async def _bespoke_probe_search() -> tuple[bool | None, str | None]:
     """The `search` server's purpose-built probe (services/search_health.py, #1162).
 
     A generic "did the tool return rows" probe is a DOCUMENTED false-green here:
@@ -169,15 +169,18 @@ async def _bespoke_probe_search() -> tuple[bool, str | None]:
     to reach anyone: its verdict surfaced only in `internal.system_health`, i.e.
     only if a human thought to ask. This is the wire.
 
-    `unknown` (probe disabled, no URL, HTTP failure) yields no verdict at all —
-    absence of evidence must not read as evidence of failure.
+    Returns an explicit TRI-STATE ``(verdict, detail)``: ``None`` = no evidence
+    either way (probe disabled, no URL, HTTP failure), which must record nothing —
+    absence of evidence is not evidence of failure. This used to be inferred from
+    "ok and no detail", which would silently swallow a healthy verdict that
+    happened to carry no reason string, leaving a degraded server degraded forever.
     """
     from services.search_health import probe_search_functional
 
     result = await probe_search_functional()
     verdict = result.get("verdict")
     if verdict == "unknown":
-        return True, None  # no signal; caller skips recording
+        return None, result.get("reason")
     return verdict == "healthy", result.get("reason")
 
 
@@ -237,6 +240,19 @@ async def _run_probes(mcp_manager) -> list[str]:
                 continue
             due.append(name)
 
+    # Fairness before the per-tick cap. Both `health_probe_due()` (dict insertion
+    # order) and the bespoke append produce a STABLE order, so the same prefix would
+    # win `due[:max_per_tick]` every tick and later servers — bespoke ones in
+    # particular, since they are appended last — would starve indefinitely. Sorting
+    # by "longest unprobed first" makes the cap a throttle instead of a blacklist.
+    def _last_probe(name: str) -> float:
+        servers = getattr(mcp_manager, "_servers", None)
+        state = servers.get(name) if isinstance(servers, dict) else None
+        value = getattr(state, "last_probe_at", 0.0)
+        return value if isinstance(value, (int, float)) else 0.0
+
+    due.sort(key=_last_probe)
+
     probed: list[str] = []
     for name in due[: settings.mcp_health_probe_max_per_tick]:
         try:
@@ -246,20 +262,36 @@ async def _run_probes(mcp_manager) -> list[str]:
             async with asyncio.timeout(settings.mcp_health_probe_guard_timeout):
                 bespoke = _BESPOKE_PROBES.get(name)
                 if bespoke is not None:
-                    ok, detail = await bespoke()
-                    if ok and detail is None:
-                        # "unknown" — no evidence either way, record nothing.
+                    verdict, detail = await bespoke()
+                    if verdict is None:
+                        # No evidence either way — record nothing, and do NOT count
+                        # this as probed (so the due-time is not advanced on a
+                        # non-observation).
                         continue
-                    record_fn(name, ok, detail)
+                    record_fn(name, verdict, detail)
                 else:
                     await mcp_manager.run_health_probe(name)
             probed.append(name)
         except TimeoutError:
+            # A probe that blew the hang-guard IS a failed probe — recording it is
+            # both the honest verdict and what keeps the cadence: without a recorded
+            # outcome `last_probe_at` never advances, so a wedged server would be
+            # re-probed every 120s tick instead of every interval, each attempt
+            # costing the full guard.
+            if callable(record_fn):
+                record_fn(name, False, "Zeitüberschreitung der Funktionssonde")
+            probed.append(name)
             logger.warning(
                 f"mcp_health: probe for '{name}' exceeded "
                 f"{settings.mcp_health_probe_guard_timeout:.0f}s hang-guard — aborted"
             )
+            continue
         except Exception as e:  # noqa: BLE001 — a probe must never break the tick
+            # Same cadence argument as the timeout branch: no recorded outcome means
+            # no advanced due-time, so this would retry every tick.
+            if callable(record_fn):
+                record_fn(name, False, f"{type(e).__name__}: {e}"[:200])
+            probed.append(name)
             logger.warning(f"mcp_health: probe failed for '{name}': {e}")
     if probed:
         logger.debug(f"mcp_health: probed {len(probed)} server(s): {', '.join(probed)}")
