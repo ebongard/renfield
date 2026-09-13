@@ -39,10 +39,16 @@ def test_paperless_stanza_maps_tools():
         Path("/app/config/mcp_servers.yaml"),
         Path(__file__).resolve().parents[2] / "config" / "mcp_servers.yaml",
     ]
-    path = next((p for p in candidates if p.exists()), None)
+    # An EMPTY file counts as unreachable: in the prod-style container a kubelet
+    # subPath bind-mount leaves a 0-byte /app/config/mcp_servers.yaml, and trusting
+    # it turned the test into an AttributeError crash (yaml.safe_load("") -> None)
+    # instead of an honest skip. Require non-empty content.
+    path = next((p for p in candidates if p.exists() and p.read_text().strip()), None)
     if path is None:
         pytest.skip("mcp_servers.yaml not reachable in this test env")
     cfg = yaml.safe_load(path.read_text())
+    if not cfg:
+        pytest.skip("mcp_servers.yaml empty/unparseable in this test env")
     servers = cfg.get("servers") or cfg.get("mcpServers") or []
     paperless = next(s for s in servers if s.get("name") == "paperless")
     tp = paperless.get("tool_permissions", {})

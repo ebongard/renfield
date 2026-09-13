@@ -95,3 +95,49 @@ async def test_generate_no_think_kwarg_for_non_thinking_model():
          patch("utils.llm_client.extract_response_content", return_value='["X?"]'):
         await generate_followups("q", "an answer long enough", model="llama3.1:8b", count=3)
     assert "think" not in mock_client.chat.await_args.kwargs
+
+
+class TestJsonObjectOutput:
+    """Das Modell soll ein JSON-Array liefern. Am 2026-09-13 lieferte es auf xidra
+    ein OBJEKT — und der Blob wurde zu genau einem tippbaren Chip, dessen Beschriftung
+    rohes JSON war. Ein Chip ist anklickbar: er wäre als nächste Nutzernachricht
+    zurückgeschickt worden."""
+
+    def _parse(self, raw, count=2):
+        from services.followup_service import _parse_followups
+
+        return _parse_followups(raw, count)
+
+    def test_the_observed_production_output(self):
+        raw = '{"Was ist eine Primzahl?":"Wie viele Primzahlen gibt es zwischen 1 und 100?"}'
+        out = self._parse(raw)
+        assert out == ["Wie viele Primzahlen gibt es zwischen 1 und 100?"]
+        assert not any(c.startswith("{") for c in out)
+
+    def test_wrapper_object_with_a_list(self):
+        """Die häufigste Fehlform: {"followups": [...]} — dann gilt die Liste,
+        und der Feldname darf NICHT als Chip auftauchen."""
+        out = self._parse('{"followups": ["Frage A", "Frage B"]}')
+        assert out == ["Frage A", "Frage B"]
+        assert "followups" not in out
+
+    def test_object_with_several_string_values(self):
+        out = self._parse('{"a": "Frage A", "b": "Frage B"}')
+        assert out == ["Frage A", "Frage B"]
+
+    def test_object_with_no_usable_strings_yields_nothing(self):
+        """Lieber keine Chips als unlesbare."""
+        assert self._parse('{"a": 1, "b": {"c": 2}}') == []
+
+    def test_unparseable_json_blob_is_dropped_not_shown(self):
+        """Kaputtes JSON faellt in den zeilenbasierten Notpfad — dort muss der
+        Blob-Schutz greifen, sonst wird er zur Chip-Beschriftung."""
+        assert self._parse('{"Frage A": "Frage B",,,}') == []
+
+    def test_a_normal_array_still_works(self):
+        out = self._parse('["Frage A", "Frage B"]')
+        assert out == ["Frage A", "Frage B"]
+
+    def test_plain_lines_still_work(self):
+        out = self._parse("- Frage A\n- Frage B")
+        assert out == ["Frage A", "Frage B"]

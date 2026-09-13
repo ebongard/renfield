@@ -421,26 +421,47 @@ async def verify_folder_ingest_token(db: AsyncSession, token: str) -> bool:
     return await verify_ingest_token(db, SETTING_FOLDER_INGEST_TOKEN, token)
 
 
+async def resolve_folder_ingest_client(db: AsyncSession, token: str):
+    """Resolve a Bearer token to the pushing client (or None).
+
+    Supersedes the boolean :func:`verify_folder_ingest_token`, which could only
+    say "valid", never "who". Knowing the client is what makes per-integration
+    revocation and server-authoritative sphere routing possible.
+
+    The legacy shared token still authenticates, reported as the synthetic
+    ``legacy`` client, for the whole transition.
+    """
+    from services.ingest_credentials import ROUTE_FOLDER, resolve_ingest_client
+
+    return await resolve_ingest_client(
+        db, ROUTE_FOLDER, token, legacy_verify=verify_folder_ingest_token
+    )
+
+
 # ---------------------------------------------------------------------------
 # Target KB + owner resolution (shared by the push route and the
 # internal.ingest_file agent tool). Both file into the single configured
 # (folder_ingest_kb_name, folder_ingest_target_user) destination.
 # ---------------------------------------------------------------------------
 
-async def resolve_target_kb(db: AsyncSession) -> KnowledgeBase:
-    """Get-or-create the configured folder-ingest target KB. Mirrors the
-    chat-upload default-KB pattern so a fresh install just works."""
+async def resolve_target_kb(db: AsyncSession, kb_name: str | None = None) -> KnowledgeBase:
+    """Get-or-create the target KB. Mirrors the chat-upload default-KB pattern
+    so a fresh install just works.
+
+    ``kb_name`` comes from the authenticated CLIENT's credential row when it has
+    one (Phase 4 sphere routing); None falls back to the global configuration,
+    which is what every client did before per-integration credentials existed.
+    """
+    target_name = (kb_name or "").strip() or settings.folder_ingest_kb_name
     kb = (
         await db.execute(
-            select(KnowledgeBase).where(
-                KnowledgeBase.name == settings.folder_ingest_kb_name
-            )
+            select(KnowledgeBase).where(KnowledgeBase.name == target_name)
         )
     ).scalar_one_or_none()
     if kb:
         return kb
     kb = KnowledgeBase(
-        name=settings.folder_ingest_kb_name,
+        name=target_name,
         description="Auto-ingested documents from watched folders",
     )
     db.add(kb)
@@ -463,8 +484,11 @@ async def target_kb_exists(db: AsyncSession) -> bool:
     return kb_id is not None
 
 
-async def resolve_owner_user_id(db: AsyncSession) -> int | None:
-    """Resolve ``folder_ingest_target_user`` (username or numeric id) to a user
-    id. Empty config → None (the bridge/worker handle an ownerless enqueue the
-    same way the upload route does for unauthenticated single-user mode)."""
-    return await resolve_user_id(db, settings.folder_ingest_target_user)
+async def resolve_owner_user_id(db: AsyncSession, owner: str | None = None) -> int | None:
+    """Resolve an owner (username or numeric id) to a user id.
+
+    ``owner`` comes from the authenticated CLIENT's credential row when it has
+    one; None falls back to ``folder_ingest_target_user``. Empty → None (the
+    bridge/worker handle an ownerless enqueue the same way the upload route does
+    for unauthenticated single-user mode)."""
+    return await resolve_user_id(db, (owner or "").strip() or settings.folder_ingest_target_user)

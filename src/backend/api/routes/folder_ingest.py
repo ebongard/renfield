@@ -44,7 +44,7 @@ from services.folder_ingest import (
     resolve_owner_user_id,
     resolve_target_kb,
     target_kb_exists,
-    verify_folder_ingest_token,
+    resolve_folder_ingest_client,
 )
 from utils.config import settings
 
@@ -132,7 +132,10 @@ async def ingest_pushed_document(
     if not authorization or not authorization.startswith("Bearer "):
         raise HTTPException(status_code=401, detail="Missing or invalid Authorization header")
     token = authorization.removeprefix("Bearer ").strip()
-    if not await verify_folder_ingest_token(db, token):
+    # Resolves to the PUSHING CLIENT, not just a boolean — per-integration
+    # credentials, with the legacy shared token still accepted as `legacy`.
+    ingest_client = await resolve_folder_ingest_client(db, token)
+    if ingest_client is None:
         raise HTTPException(status_code=403, detail="Invalid folder-ingest token")
 
     # 3. Worker-alive gate (reuse knowledge.py:_worker_is_alive). Enqueuing into
@@ -176,15 +179,26 @@ async def ingest_pushed_document(
     # bridge already maps its own known errors to FAILED/RETRY; this guards the
     # residual transient ones so the 4-state transport contract never breaks.
     try:
-        kb = await resolve_target_kb(db)
-        owner_user_id = await resolve_owner_user_id(db)
+        # Sphere routing is SERVER-AUTHORITATIVE: owner/tier/kb come from the
+        # credential row this push authenticated as, never from the request. A
+        # stolen token can file a document; it cannot choose whose it is, raise
+        # its tier, or put it in another knowledge base. A client with no
+        # override configured falls back to the global folder_ingest_* settings,
+        # which is exactly what every client did before Phase 4.
+        kb = await resolve_target_kb(db, ingest_client.kb_name)
+        owner_user_id = await resolve_owner_user_id(db, ingest_client.owner)
+        tier = (
+            ingest_client.tier
+            if ingest_client.tier is not None
+            else settings.folder_ingest_default_tier
+        )
         result = await ingest_document(
             file_bytes,
             meta,
             db=db,
             kb_id=kb.id,
             owner_user_id=owner_user_id,
-            default_tier=settings.folder_ingest_default_tier,
+            default_tier=tier,
             file_to_paperless=_should_file_paperless(),
             source=FOLDER_INGEST_SOURCE,  # provenance for the Simba review flow
         )
@@ -216,7 +230,10 @@ async def health(
     if not authorization or not authorization.startswith("Bearer "):
         raise HTTPException(status_code=401, detail="Missing or invalid Authorization header")
     token = authorization.removeprefix("Bearer ").strip()
-    if not await verify_folder_ingest_token(db, token):
+    # Resolves to the PUSHING CLIENT, not just a boolean — per-integration
+    # credentials, with the legacy shared token still accepted as `legacy`.
+    ingest_client = await resolve_folder_ingest_client(db, token)
+    if ingest_client is None:
         raise HTTPException(status_code=403, detail="Invalid folder-ingest token")
 
     return FolderIngestHealthResponse(

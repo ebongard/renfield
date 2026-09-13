@@ -1,6 +1,6 @@
 # MCP Self-Detection + Self-Healing
 
-Status: **Phase 1 + 2 SHIPPED** · Phase 3 designed, not built.
+Status: **Phase 1 + 2 + 4 SHIPPED** · Phase 3 designed, not built.
 Flags: `MCP_HEALTH_MONITOR_ENABLED` (default `false`) gates the whole monitor;
 `MCP_HEALTH_SELF_HEAL_ENABLED` (default `true`) gates the Phase-2 probe+reconnect.
 
@@ -65,6 +65,9 @@ Per-MCP failure modes and where each is (or isn't yet) caught:
 | any client (A) | transport disconnect | yes (`down`) | ✅ tick → alert | ✅ P2 active-probe reconnect (`probe_server()`) |
 | any client (A) | plugin bind failed / 0 tools | yes (`degraded`) | ✅ tick → alert | — (config problem, human-gated; probe can't fix → still alerts) |
 | any client (A) | **connected but calls time out** | ✅ P2 `calls_failing` (rolling timeout window; app errors excluded) | ✅ tick → alert | ✅ P2 probe reconnects a wedged session |
+| any client (A) | **upstream answers everything with an error** (HTTP 500) | ✅ P4 functional probe | ✅ tick → alert naming the probe reason | — (upstream problem; human-gated) |
+| any client (A) | **nobody calls it, so there are no samples** | ✅ P4 functional probe | ✅ tick → alert | — |
+| search (A) | reachable SearXNG, all scrapers CAPTCHA-blocked | ✅ purpose-built probe (#1162) | ✅ P4 wires its verdict into `_server_health` | — |
 | paperless / news / carrier (A) | 429 / Retry-After throttle | NO — treated as generic error | — | Phase 3 backoff + honor Retry-After |
 | dedicated MCP pods | pod crash-loop / not-ready | k8s only, not in renfield's model | — | Phase 3 liveness/readiness probes |
 
@@ -115,6 +118,109 @@ All three items shipped; the self-heal is gated `mcp_health_self_heal_enabled`
    backend down→up edge, and `MessageEngine.recover()` **un-parks `_exhausted`** mail
    (that exhausted its retries during the outage, still UNSEEN) and re-dispatches it —
    no manual restart, mirroring the filesystem MCP.
+
+## Phase 4 — functional probes (SHIPPED, 2026-09-13)
+
+**The reason the monitor was silent**, and it is more specific than "it only
+checks connectivity". Phase 2 already had a functional signal — but
+`record_call_outcome` counts **only timeouts**, because an app-level error says
+nothing about the *server's* health (a device is off, a parcel is not found). That
+decision is correct and must not be reversed. It left two blind spots:
+
+1. An upstream that answers **every** call with HTTP 500 looks exactly like a run
+   of app errors. Paperless was dead for 3 d 10 h with 13/13 servers green.
+2. A server **nobody calls** produces no samples at all. n8n was unreachable from
+   the cluster and still read "connected".
+
+A probe escapes the bind: **we** choose a cheap read-only call that *must*
+succeed, so its failure IS a health signal — without reclassifying anybody else's
+app errors.
+
+**Shape.** An optional per-server `health_probe` stanza in `mcp_servers.yaml`
+(`tool`, `args`, `interval`, `timeout`, `expect.{min_items,path}`), parsed by
+`_parse_health_probe` the way `notifications` already is. The verdict lives on
+`MCPServerState` (`probe_consecutive_failures`, `last_probe_*`) — deliberately
+**separate** from `recent_outcomes`, so the two signals cannot contaminate each
+other — and folds into `_server_health` as `degraded`/`probe_failed`, **ahead of**
+`calls_failing` (direct evidence beats an inference drawn from whatever the agent
+happened to call).
+
+**Ordering in the tick.** `get_status` → self-heal → re-read → **probe** →
+re-read → the existing alert pass. Probing after the heal means the probe judges
+the *service* on a freshly reconnected transport instead of re-reporting a
+transport fault the heal already fixed; re-reading after means the verdicts reach
+the same alert path as everything else. No second alert channel.
+
+**Two decisions that are easy to get backwards:**
+
+- **A reconnect does NOT clear a probe verdict**, even though it clears
+  `recent_outcomes`. A reconnect proves the transport works and nothing about the
+  service behind it — Paperless served HTTP 500 across many healthy reconnects.
+  Only a successful probe clears a probe verdict.
+- **Hysteresis before belief** (`mcp_health_probe_fail_threshold`, 2). A single
+  miss is an upstream hiccup, a rate-limit, a restart window. Alarming on it would
+  make the cure noisier than the silence.
+
+**Bespoke probes.** Some servers cannot be judged by a generic tool call.
+`search` is the worked example: a bare result count is a *documented* false-green
+because Wikipedia answers almost anything, so `services/search_health.py` (#1162)
+counts distinct contributing general engines instead. That probe already existed
+and was better than a generic one would be — but its verdict dead-ended in
+`internal.system_health`, i.e. it was only ever seen if a human thought to ask.
+`_BESPOKE_PROBES` in the monitor wires it into the same channel via
+`record_external_probe`. A `search` stanza in the YAML would be a regression, and
+the config header says so. An `unknown` verdict records nothing: absence of
+evidence must not read as evidence of failure.
+
+**Six things `/review` caught that had already reached a commit**, each of which
+would have made green mean less rather than more:
+
+1. `expect.min_items`/`path` were evaluated against `execute_tool`'s `data`, which
+   is the list of raw MCP **content parts**, never the payload — so the exact
+   example in the YAML header would have fired a *critical* alert about a healthy
+   server. The payload lives in the joined `message` text; that is now what is
+   parsed.
+2. The probe inherited `execute_tool`'s deliberate **fuzzy tool-name fallback**. A
+   renamed or mistyped tool would have silently called a *different* one: false
+   green if the substitute answers, false red if it fails validation. The probe now
+   resolves exactly and reports a missing tool as misconfiguration.
+3. A malformed stanza (`interval: 10m`) raised, and the exception escaped into the
+   per-entry config `try/except` — which drops the **whole server**. Paperless
+   would have vanished from the fleet. The coercions now fall back individually.
+4. A probe that tripped the hang-guard recorded **no verdict**, so a permanently
+   wedged server never reached the failure threshold and never alerted — while
+   being re-probed every tick, each attempt costing the full guard. The one failure
+   mode where the probe is most needed was the one it stayed silent on.
+5. `(ok=True, detail=None)` was overloaded as "unknown", colliding with a healthy
+   bespoke verdict that carried no reason string. Now an explicit tri-state
+   (`None`/`True`/`False`).
+6. A stable due-order plus a per-tick cap is a **blacklist, not a throttle** — the
+   same prefix would win every tick and later servers (bespoke ones especially,
+   appended last) would starve. The due list is now sorted longest-unprobed-first.
+
+**Deliberate skips**, each for a reason: `per_user_auth` servers (a `user_id=None`
+call is denied fail-closed, so a probe would report a permanent false failure),
+federation transport, disconnected servers, and every server with no stanza.
+
+**The flag is ON; the throttle is the YAML.** A server without a stanza is never
+probed — a probe that itself generates load is worse than none. Probes run as
+system calls (`user_permissions=None`, `user_id=None`), which also keeps them out
+of the per-user `ToolOutcomeStat` telemetry the kiosk reads: a probe must not
+colour the tool-health numbers it exists to make honest.
+
+## The alert path moved out (2026-09-12)
+
+`_notify`, `_should_alert`/`_clear_alert` and the admin resolution now live in
+**`services/ops_alert.py`**, because three subsystems need exactly the same three
+things (who to tell, how to tell them, how often) and none of them should grow its
+own version: this monitor, the scheduled-task failure alerts, and the HTTP
+watchdog. The names here remain as thin delegates, so the monitor's behaviour and
+its test seams are unchanged.
+
+The ledger stays **in-process on purpose**: it is a rate limiter, not a record. A
+pod restart re-arming an alert for a problem that is still broken is the safe
+direction to fail. A caller that needs restart-durable "already told them" state
+keeps its own column — see `ScheduledTask.error_alerted_at`.
 
 ## Phase 3 — rate-limit + orchestration (designed)
 

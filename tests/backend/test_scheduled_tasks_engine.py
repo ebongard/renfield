@@ -707,9 +707,12 @@ class TestBatchBCHandlers:
         builtins.register_builtin_handlers()
         seeds = builtins.builtin_task_seeds()
 
-        assert len(seeds) == 24  # +1: Placeholder-Atom-Reaper (#446)
+        assert len(seeds) == 25  # +1: Externe Erreichbarkeitsprüfung (watchdog, A3)
         names = [s.name for s in seeds]
-        assert len(set(names)) == 24  # unique names
+        # Names are the ON CONFLICT seed key — a duplicate would silently drop a
+        # built-in. Expressed against len(seeds) so adding a built-in updates ONE
+        # magic number, not two that can drift apart.
+        assert len(set(names)) == len(seeds), f"duplicate seed name in {names}"
         for seed in seeds:
             assert registry.get_handler(seed.handler_key) is not None, seed.handler_key
             if seed.interval_seconds is not None:

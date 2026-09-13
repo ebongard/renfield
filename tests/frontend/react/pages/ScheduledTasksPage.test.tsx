@@ -57,6 +57,7 @@ function mkTask(over: Partial<ScheduledTask>): ScheduledTask {
     last_status: 'ok',
     last_error: null,
     last_duration_ms: 42,
+    consecutive_error_count: 0,
     is_builtin: false,
     created_at: '2026-08-01T00:00:00',
     updated_at: '2026-08-01T00:00:00',
@@ -96,6 +97,22 @@ describe('ScheduledTasksPage', () => {
     // Interval humanized ("alle 5 Min") + the cron expression rendered verbatim.
     expect(screen.getByText('alle 5 Min')).toBeInTheDocument();
     expect(screen.getByText('0 3 * * 1')).toBeInTheDocument();
+  });
+
+  it('marks a task that is failing run after run (A2)', async () => {
+    // last_status alone reads identically for "failed once" and "has failed
+    // every run for a day and a half" — the streak badge is what separates them.
+    useTasks([
+      mkTask({ id: 1, name: 'Paperless-Duplikate', last_status: 'error', consecutive_error_count: 50 }),
+      mkTask({ id: 2, name: 'Einmal daneben', last_status: 'error', consecutive_error_count: 1 }),
+    ]);
+
+    renderWithProviders(<ScheduledTasksPage />);
+
+    await waitFor(() => expect(screen.getByText('Paperless-Duplikate')).toBeInTheDocument());
+    expect(screen.getByText('50× in Folge fehlgeschlagen')).toBeInTheDocument();
+    // A single failure stays unbadged — otherwise every transient blip shouts.
+    expect(screen.queryByText('1× in Folge fehlgeschlagen')).not.toBeInTheDocument();
   });
 
   it('shows the empty state when there are no tasks', async () => {

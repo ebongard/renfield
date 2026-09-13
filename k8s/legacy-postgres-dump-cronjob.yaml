@@ -1,7 +1,8 @@
 # Nightly logical backup of the databases that still live on the LEGACY single-node
 # `postgres` StatefulSet (i.e. everything NOT migrated to the CNPG renfield-pg
 # cluster). On the household that is the digital-twin DB; on xidra it is
-# paperlessdb + twin (see k8s/xidra/legacy-postgres-dump-cronjob.yaml).
+# paperlessdb + twin (see x-ren/k8s/legacy-postgres-dump-cronjob.yaml — the xidra
+# manifests moved to the private x-ren repo on 2026-09-13).
 #
 # WHY: the CNPG migration gave the renfield APP db real backups (Barman S3 + PITR),
 # but the legacy StatefulSet that keeps serving twin/paperless had NO backup at all

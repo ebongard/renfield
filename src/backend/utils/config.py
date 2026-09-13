@@ -999,6 +999,18 @@ class Settings(BaseSettings):
     folder_ingest_token: str = ""
     folder_ingest_notify_on_filed: bool = True
 
+    # Per-integration ingest credentials (docs/design/ingest-credentials.md).
+    # Replaces the single shared SystemSetting token with one credential per
+    # pushing client, so each can be rotated/revoked alone and the backend knows
+    # WHICH client pushed (what server-authoritative sphere routing needs).
+    # OFF ⇒ the legacy shared-token path only, byte-identical to before.
+    ingest_credentials_enabled: bool = False
+    # Upper bound on the old-token overlap after a rotation. The primary cutover
+    # is acknowledgement-based (the old token stays valid until the client
+    # authenticates with the new one, proving it persisted the value) — a timer
+    # alone would cut off a client that had not yet managed to write its file.
+    ingest_credential_rotation_grace_seconds: int = 300
+
     # PDF-split: ingest-time detection + splitting of multi-document PDFs
     # (docs/design/pdf-split.md). Runs as a document-worker pre-stage on EVERY
     # ingested PDF when enabled. Deliberately NO page-count settings: input is
@@ -1096,6 +1108,22 @@ class Settings(BaseSettings):
     # Frontend feature flag (Phase-2 admin UI "Geplante Aufgaben"); false-safe.
     scheduled_tasks_enabled: bool = False
 
+    # Failure-streak alerting (A2). A scheduled task that fails EVERY run was
+    # recorded perfectly and announced to nobody — the Paperless dedupe task
+    # failed 50 times in a row over a day and a half in silence. After N
+    # consecutive error runs the engine fires ONE proactive alert to the owner
+    # admin (and one recovery notice when it succeeds again), never one per run.
+    # Costs nothing while everything works, which is why it is a kill-switch
+    # (default ON) rather than an opt-in: the failure mode being fixed here IS
+    # silence. Needs proactive_enabled for delivery.
+    scheduled_task_failure_alert_enabled: bool = True
+    # Consecutive error runs before the first alert. >1 so a single transient
+    # failure (an upstream blip, a deploy window) stays quiet.
+    scheduled_task_failure_alert_threshold: int = Field(default=3, ge=1, le=100)
+    # Re-alert an ONGOING failure streak only this often (mirrors
+    # mcp_health_realert_seconds — 6h).
+    scheduled_task_failure_realert_seconds: float = Field(default=21600.0, ge=60.0)
+
     # Paperless dedupe reconciler — the first built-in scheduled task. Autonomously
     # drains the Paperless duplicate backlog by calling mcp.paperless.dedupe_documents
     # on a schedule (recoverable trash; keep-lowest-id). The built-in row is seeded
@@ -1103,7 +1131,12 @@ class Settings(BaseSettings):
     # env-flip activates it in Phase 1 before the UI toggle exists (Review M7).
     paperless_dedupe_reconciler_enabled: bool = False
     # Seed interval for the built-in row (admin-overridable in the UI once it ships).
-    paperless_dedupe_reconciler_interval: int = Field(default=300, ge=30, le=86400)
+    # 3600, not the original 300: a five-minute cadence for an ARCHIVE dedupe
+    # produced 50 failed runs in a day and a half against a dead Paperless — that
+    # is log noise as much as it is a missing alarm. NOTE this only affects rows
+    # created from here on (ensure_builtin_tasks seeds ON CONFLICT DO NOTHING);
+    # an existing row keeps its interval until it is changed in the admin UI.
+    paperless_dedupe_reconciler_interval: int = Field(default=3600, ge=30, le=86400)
     # Extras deleted per dedupe pass (→ dedupe_documents max_delete). Bounded so one
     # pass stays inside the MCP rate limit + the tool's wall-clock budget; the job
     # re-runs each interval until remaining reaches 0.
@@ -1609,6 +1642,58 @@ class Settings(BaseSettings):
     mcp_health_call_window: int = 10                   # rolling outcome window per server
     mcp_health_call_min_samples: int = 4               # need this many timeouts/successes before judging
     mcp_health_call_fail_ratio: float = 0.8            # >= this share timed out → calls_failing
+
+    # --- Functional health probes (A1) ---------------------------------------
+    # The gap Phase 2 left open: `calls_failing` counts only TIMEOUTS, because an
+    # app-level error (device off, parcel not found) says nothing about the SERVER's
+    # health — a correctness decision that must NOT be reversed. But it left two
+    # blind spots: an upstream that answers every call with HTTP 500 looks like a
+    # stream of app errors (Paperless, dead 3d 10h, 13/13 servers green), and a
+    # server nobody calls produces no samples at all (n8n, unreachable, green).
+    #
+    # A probe escapes the bind: WE choose a cheap read-only call that must succeed,
+    # so its failure IS a health signal. The verdict is kept separate from the
+    # timeout window and folded into _server_health as `probe_failed`.
+    #
+    # The flag is ON, but the blast radius is the YAML, not the flag: a server with
+    # no `health_probe` stanza in mcp_servers.yaml is never probed. That is the
+    # deliberate throttle — a probe that itself generates load is worse than none.
+    mcp_health_probe_enabled: bool = True
+    # Default seconds between probes per server (per-server `interval` overrides).
+    # Far longer than the monitor tick: this costs a real upstream request.
+    mcp_health_probe_interval: int = Field(default=600, ge=30, le=86400)
+    # Default per-probe call timeout (per-server `timeout` overrides).
+    mcp_health_probe_timeout: float = Field(default=15.0, ge=1.0, le=300.0)
+    # Consecutive failed probes before a server is judged degraded. >1 so a single
+    # hiccup, rate-limit or restart window stays quiet.
+    mcp_health_probe_fail_threshold: int = Field(default=2, ge=1, le=20)
+    # Cap probes per monitor tick so a fleet-wide due-time alignment can't burst.
+    mcp_health_probe_max_per_tick: int = Field(default=4, ge=1, le=50)
+    # Hard hang-guard per probe, mirroring the self-heal guard: the call itself is
+    # bounded by its own timeout, but a wedged transport can hang elsewhere and
+    # freezing the monitor loop is exactly the #1107 failure we already paid for.
+    mcp_health_probe_guard_timeout: float = Field(default=60.0, ge=5.0, le=600.0)
+
+    # --- External HTTP watchdog (A3) -----------------------------------------
+    # "Who notices that Renfield itself is gone?" A system that is down cannot
+    # report itself, so this watches OTHER endpoints and lets the peer instance
+    # watch this one. It runs as a scheduled task that RAISES on an unreachable
+    # target, which means the A2 failure-streak machinery above provides the
+    # threshold, the ledger, the re-alert TTL and the recovery notice — no second
+    # alerting mechanism, and the engine's per-task advisory lock guarantees a
+    # single replica probes per tick.
+    #
+    # HONEST LIMIT: mutual watching is silent when BOTH instances die together —
+    # exactly what the 2026-09-11 iscsid restart did. Only an observer outside
+    # the cluster covers that case.
+    watchdog_enabled: bool = True
+    # Comma-separated "name=url" targets. EMPTY (the default) → completely inert.
+    # Probe the peer's /health/ready, never /health: the latter answers "ok" with a
+    # dead database and would have stayed silent through the 21.5h outage.
+    watchdog_targets: str = ""
+    watchdog_timeout: float = Field(default=10.0, ge=1.0, le=120.0)
+    # Seed interval for the built-in watchdog row (seconds).
+    watchdog_interval: int = Field(default=120, ge=30, le=86400)
 
     # Weekly obligation digest — the safety floor under the per-milestone
     # notifier. One owner-targeted summary per ISO week of every OPEN obligation

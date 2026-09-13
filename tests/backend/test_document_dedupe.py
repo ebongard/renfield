@@ -49,13 +49,18 @@ def test_pairs_query_no_atom_join_when_auth_off():
     assert "atoms" not in sql
 
 
-def test_find_pairs_returns_empty_on_sqlite():
-    """A non-postgres bind short-circuits (the self-join is PG-shaped)."""
+@pytest.mark.asyncio
+async def test_find_pairs_returns_empty_on_sqlite():
+    """A non-postgres bind short-circuits (the self-join is PG-shaped).
+
+    Was flaky in the full suite: get_event_loop().run_until_complete breaks once an
+    earlier test closes/replaces the loop under asyncio_mode=auto. A native async
+    test has no such dependency.
+    """
     db = MagicMock()
     db.bind.dialect.name = "sqlite"
     svc = DocumentDedupeService(db)
-    import asyncio
-    assert asyncio.get_event_loop().run_until_complete(svc.find_duplicate_pairs(1)) == []
+    assert await svc.find_duplicate_pairs(1) == []
 
 
 # --------------------------------------------------------------------------

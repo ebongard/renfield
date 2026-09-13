@@ -137,7 +137,7 @@ the DB, then:
 
 ## Phase 6 — xidra (`ns renfield-xidra`)
 Repeat 4–5 in `renfield-xidra` after the household soak. Repoint targets:
-`k8s/xidra/meeting-worker.yaml:70`, `k8s/xidra/renfield-env.configmap.yaml:22`
+`x-ren/k8s/meeting-worker.yaml`, `x-ren/k8s/renfield-env.configmap.yaml`
 (+ the base files xidra reuses). The xidra Barman ObjectStore/secret + app
 secret need their own copies in that ns; Garage can hold a second bucket
 (`xidra-pg-backups`) with its own key.

@@ -1,191 +1,478 @@
-# Proper document search on /wissen/dokumente (+ /knowledge)
+# renfield-pg Ausfall — Befund & Wiederherstellungsplan (2026-09-12)
 
-**Goal:** typing a query (omnisearch on `/wissen/dokumente`, or the search box on
-`/knowledge`) returns **ranked document ROWS** — reusing the existing row + all
-its actions ("An Simba senden", reindex, tier, delete) — via a **server-side
-hybrid (RRF) search** over name + Schicht-A facts + chunk content. Fixes the
->100-newest reachability cap (search runs over the whole KB, not the 100-window).
-Keep the semantic chunk snippets as a **secondary "Textstellen" section**.
+## Befund (gemessen, nicht vermutet)
 
-Decisions (agreed): **full hybrid up front**; **keep chunk search as a secondary section**.
+**Fehlerkette, beide Instanzen identisch:**
+1. `2026-09-11 06:20 UTC` — die Longhorn-Replica von `renfield-pg-3` (Daten + WAL,
+   beide Namespaces) auf **k8s-gpu-1** fällt aus → Volumes `faulted`.
+   `longhorn-pg` hat `numberOfReplicas: 1` → kein Ersatz vorhanden.
+2. Longhorn kann keine neue Replica anlegen: die Disks auf gpu-1/gpu-2 stehen auf
+   `Schedulable: False` (25-%-Mindestfreiraum unterschritten; VGs zu 100 % belegt).
+   → `renfield-pg-3` bleibt tot, seither ~290 Restarts.
+3. Der HA-Replication-Slot `_cnpg_renfield_pg_3` auf dem Primary hält damit WAL
+   dauerhaft fest. `max_slot_wal_keep_size` ist **nicht gesetzt** = unbegrenzt.
+4. `archive_timeout: 5min` erzwingt einen WAL-Switch alle 5 min → ~4,6 GB WAL/Tag,
+   auch im Leerlauf. Das 2-GiB-WAL-Volume ist damit in ~10 h voll.
+5. `2026-09-11 16:16/16:17 UTC` — beide Primaries: 
+   `PANIC: could not write to file "pg_wal/xlogtemp": No space left on device`,
+   `restart_after_crash=off` → Cluster-Status `Not enough disk space`.
 
-## Backend
+**Zeitachse:** Vollausfall seit ~29 h (nicht 8 Tage). Die Pods sind 9 Tage alt —
+das ist das letzte Rollout, nicht der Ausfallbeginn.
 
-- [ ] **Migration `pcXXXX_documents_fts`** — add GENERATED STORED `search_vector`
-      tsvector on `documents` over `generated_title + title + filename`
-      (multilingual union across `FTS_LANGUAGES`, mirror `notes`/`messages`) + a
-      GIN index. Idempotent (`IF NOT EXISTS`); existing rows populate at ALTER.
-      Model: add the column to `Document` (create_all parity, guarded like notes).
-- [ ] **`services/document_search.py::search_documents(db, query, asker_id,
-      knowledge_base_id, status, limit, offset) -> list[Document]`** — hybrid RRF:
-  - Name list: `documents.search_vector @@ websearch_to_tsquery` (`ts_rank`) +
-    ILIKE fallback on the 3 name columns (partial tokens like "Arkad").
-  - Facts list: `DocumentFactRetrieval.search(query, asker_id)` → document_ids
-    (already circle-filtered).
-  - Chunk list: `RAGRetrieval` semantic (circle-filtered) aggregated to the best
-    chunk per document_id (reuse the existing chunk search path).
-  - Fuse the three ranked id-lists with **RRF** (`k = rag_hybrid_rrf_k`), sum
-    scores, sort desc, take `limit`/`offset`.
-  - **Circle-correct visibility for ALL signals** (apply `circle_sql` document
-    filter to the name signal too, so search can't widen beyond what the user may
-    see; auth-off short-circuits). Note: the browse list's non-circle-filtering is
-    a separate pre-existing concern — out of scope.
-  - Fetch `Document` rows for the fused ids in order; `_doc_to_response_kwargs` +
-    `_augment_with_progress` → `DocumentResponse`.
-- [ ] **Route** `GET /api/knowledge/documents`: add `q: str | None` (keep
-      `limit`/`offset`). `q` present → `search_documents` (ranked); else the
-      existing recency list. Same `DocumentResponse` output. Same KB-ACL gate.
-- [ ] Optional: expose a `matched` hint or `rank` if useful for the UI (else omit).
+**Datenlage:** Die Datenvolumes von pg-1 und pg-2 sind in beiden Namespaces
+`attached / healthy`. Letztes vollständiges Backup in Garage-S3: 2026-09-11 02:30,
+`completed`, WAL-Archivierung lief bis zum PANIC. Datenverlustrisiko: nahe null.
+Nur pg-3 ist verloren (Einzel-Replica, kein Ersatz) — wird neu aufgebaut.
 
-## Frontend
+**Betroffen:** Haushalt (ns `renfield`) und xidra (ns `renfield-xidra`) vollständig
+— beide Backends zeigen `ConnectionRefused` gegen `renfield-pg-rw`.
 
-- [ ] `api/resources/knowledge.ts`: `DocsFilter` gains `q`; `fetchDocuments`
-      passes `params.q`; list query key includes `q`.
-- [ ] `KnowledgePage.tsx`: debounce `searchQuery` (standalone) + `omniQ`
-      (embedded, scope=lens) → feed the **document-list** `q`. The list becomes
-      the ranked result set of document rows (all actions intact). Warm empty
-      state on no match. At `scope=everything` defer to the omni overlay (unchanged).
-- [ ] Keep the semantic chunk search as a **secondary collapsible "Textstellen"**
-      section (the current snippet cards), below the ranked document rows —
-      driven by the same query, best-effort.
-- [ ] i18n (de/en/it) for the new labels/empty state.
+## Plan
 
-## Tests
+### Phase 0 — Kapazität (Voraussetzung für alles Weitere)
+- [ ] Ungenutzte Container-Images auf gpu-1/gpu-2 entfernen (`crictl rmi --prune`),
+      verwaiste Longhorn-Replicas gelöschter Volumes aufräumen
+- [ ] Ziel: Longhorn-Disks gpu-1/gpu-2 wieder `Schedulable: True`
+- [ ] Vorsicht: Harbor-WAN ist auf ~41 Mbit/s gedeckelt — nur wirklich
+      unreferenzierte Images entfernen
 
-- [ ] Backend (real-PG): FTS migration applies; name match ranks a title-term doc
-      to the top; facts + chunk signals contribute; RRF ordering; circle/ACL
-      (a non-owner can't surface a restricted doc); >100-doc reachability (a doc
-      outside the 100-newest window is found by name). Empty query → recency list.
-- [ ] Frontend: list re-queries on `q`; renders document rows (not just chunks);
-      the row actions still work; the secondary Textstellen section renders.
+### Phase 1 — WAL-Luft schaffen + Ursache beheben (Git, nicht kubectl patch)
+- [ ] `k8s/cnpg/20-cluster-renfield-pg.yaml` + xidra-Pendant:
+      `walStorage.size: 2Gi → 8Gi`
+- [ ] `max_slot_wal_keep_size: 2GB` ergänzen — ein verwaister Slot wird künftig
+      invalidiert, statt den Primary zu töten
+- [ ] `kubectl apply` → CNPG vergrößert die PVCs
 
-## Deploy / rollout
-- [ ] Branch → build+tests on .159 → review → docs sweep → deploy xidra
-      (migration via the alembic job, namespace-stripped) + browser E2E ("Arkadon"
-      → doc #34 top of list, "An Simba senden" clickable).
+### Phase 2 — Cluster hochfahren (erst Haushalt, dann xidra)
+- [ ] Tote pg-Pods löschen → Neustart auf vergrößertem WAL-Volume
+- [ ] Crash-Recovery + Checkpoint beobachten
+- [ ] ACHTUNG `synchronous: {number: 1, dataDurability: required}`: solange nur
+      EINE Instanz läuft, blockieren Schreibzugriffe. Erst weitermachen, wenn
+      pg-1 UND pg-2 stehen.
+- [ ] Verifizieren: `pg_replication_slots`, WAL-Verzeichnisgröße, Archivierung
 
-## Federated search across document MCP sources (point 1)
+### Phase 3 — pg-3 neu aufbauen
+- [ ] Faulted PVCs von pg-3 löschen → CNPG bootstrappt die Instanz neu
+- [ ] Warten auf 3/3
 
-The document search should also span **searchable document MCP servers**, not just
-the local KB. Audit of connected MCPs:
-- **Paperless** — `mcp.paperless.search_documents` (full-text archive search). PRIMARY external source.
-- **Simba** — `list_transfers(contains=…)` now does **server-side** search (MCP v1.0.8). Include as a
-  federation source (user-confirmed) — surfaces "already transferred to the tax accountant" hits.
-- **Filesystem** — only `mcp.files.read_file` (NO content-search tool) → not federatable for search.
-- **SearXNG** — `mcp.search.web_search` = WEB metasearch only; it has no index of / connector to
-  the internal document sources, so it is NOT the federation layer (point 2 answer). Federation is
-  renfield-side (fan-out + RRF), mirroring `PolymorphicAtomStore`. SearXNG stays web-search.
+### Phase 4 — Anwendung
+- [ ] Backend + Worker in beiden Namespaces neu starten
+- [ ] Browser-E2E beide Instanzen (Pflicht), PWA-Service-Worker vorher entladen
 
-Architecture:
-- [ ] **`services/federated_document_search.py`**: (a) run the local hybrid `search_documents`;
-      (b) fan out **in parallel** to each registered searchable doc MCP (Paperless
-      `search_documents`) via `mcp_manager`, with a per-call timeout (best-effort — a slow/down
-      MCP never blocks local results); (c) normalize each source to a common `DocSearchHit`
-      {source, source_id, title, snippet, date, ref/url, dedup_key}; (d) **dedup** across sources
-      (folder-ingest files KB docs INTO Paperless, so most KB docs are ALSO in Paperless — dedup by
-      checksum/title+date, prefer the local KB hit which has full row actions); (e) merge/rank.
-- [ ] **Result model:** local KB hits = full `DocumentResponse` rows (all actions). External hits =
-      a distinct shape with source-appropriate actions (Paperless: "In Paperless öffnen" /
-      "In die Wissensbasis importieren"). Decision needed (see below): unified-ranked-with-source-
-      badges vs primary-local-rows + secondary-per-source-sections.
-- [ ] **Registry:** which MCP+tool is a "searchable document source" should be config/registry-driven
-      (a small mapping), so a new document MCP = config, not code — consistent with the platform ethos.
+### Phase 5 — Vorbeugung (eigener PR)
+- [ ] Alarmierung: CNPG-Cluster nicht `Ready` / WAL-Volume-Füllstand.
+      Der eigentliche Mangel ist, dass 29 h Ausfall unbemerkt blieben.
+- [ ] Knotenkapazität: alle drei VGs sind zu 100 % belegt — dauerhafte Lösung
+      liegt auf der Proxmox-Ebene (Disk vergrößern)
+- [ ] `archive_timeout: 5min` bewerten: erzeugt 4,6 GB WAL/Tag im Leerlauf
 
-### Access-control note (must resolve in review)
-The local KB search is **circle-filtered**. Paperless has **no circle/tier concept** — its
-`search_documents` returns the whole shared archive. Surfacing Paperless hits could expose documents
-a user shouldn't see under circles (esp. xidra multi-user). Options: (i) gate external-source federation
-behind a permission/flag; (ii) only federate for admins/owners; (iii) accept archive-wide visibility as
-intended for the business instance. MUST be decided before shipping external federation.
 
-### Open design questions (for the eng review)
-1. Unified ranked list (source badges, heterogeneous actions) **vs** primary local rows + secondary
-   per-source sections. The row-actions divergence argues for sections; a single ranked list is nicer UX.
-2. Dedup key across KB↔Paperless (checksum? title+date? Paperless doc id stored on our `documents`?).
-3. External-source access control (the circle vs archive-wide tension above).
-4. Phasing: ship **local hybrid first** (solves the immediate "Arkadon" need), then add Paperless
-   federation as a second PR — or build both together?
-5. Latency/UX: external fan-out is async — stream local rows first, append external hits as they arrive?
+---
 
-## Out of scope (follow-ups)
-- A paginated / "Mehr laden" BROWSE (no-query) beyond 100 newest — search fixes the
-  immediate reachability; browse pagination is separate.
-- Making the browse list itself circle-filtered (pre-existing over-broad behavior).
+# Abschluss 2026-09-12 14:05 UTC
 
-## Eng review outcome (plan-eng-review)
+## Ursache (korrigiert gegenüber der Erstannahme)
 
-**Decisions locked:**
-- **D1 Scope split:** ship **PR1 = local hybrid** (name+facts+chunks RRF → document rows +
-  >100 reachability + Wissen integration). **PR2 = MCP federation** (Paperless + Simba), after
-  resolving access-control + dedup deliberately. Keeps the safe fix off the risky federation's
-  critical path (incremental / low blast radius).
-- **D2 Search ACL:** **circle-filter ALL search signals** (name signal too, via `circle_sql`) —
-  search is circle-correct, never widens visibility. Browse-list's non-circle-filtering stays a
-  separate pre-existing concern (out of scope). For the owner it's identical (sees own docs).
+Nicht die zu kleinen Platten, sondern **`unattended-upgrades`**:
 
-**Bake-in recommendations (no separate decision needed):**
-- **DRY:** reuse a shared RRF-fuse helper (don't reimplement the atom-store's RRF); factor the
-  multilingual `to_tsvector` union into one helper reused by the new documents FTS + notes/messages
-  (they currently repeat it). Explicit > clever.
-- **Perf:** the ILIKE name-fallback is a seq scan (no trigram index). Fine at ≤ a few-thousand
-  docs/KB (xidra = 401); if a KB grows large, add a `pg_trgm` GIN index on
-  generated_title/title/filename. Note in code, don't build now.
-
-### Test coverage (target 100% of new paths)
 ```
-BACKEND
-[+] migration pcXXXX_documents_fts
-  └── [★★★] search_vector populates existing rows; GIN present  (real-PG)
-[+] services/document_search.py :: search_documents()
-  ├── [★★★] name FTS ranks a title-term doc (e.g. "Arkadon") to TOP
-  ├── [★★★] >100-doc reachability: doc at recency-rank 368/401 IS found by name  ← the bug
-  ├── [★★★] facts signal contributes (query matches a Schicht-A fact, not the title)
-  ├── [★★★] chunk signal contributes (term only in body)
-  ├── [★★★] RRF ordering: name match outranks content-only match
-  ├── [★★★] circle-filter: a non-owner/circle-restricted doc is NOT returned  ← D2
-  ├── [★★ ] ILIKE partial token ("Arkad") still matches
-  └── [★★ ] empty/blank q → falls back to recency list (no search)
-[+] route GET /api/knowledge/documents?q=
-  ├── [★★★] q present → ranked; q absent → recency list (byte-identical to today)
-  └── [★★ ] KB-ACL gate unchanged (403 without kb.own / KB access)
-FRONTEND
-[+] KnowledgePage
-  ├── [★★  →E2E] typing "Arkadon" → doc row appears (not just chunk cards), "An Simba senden" clickable
-  ├── [★★ ] list re-queries on debounced q (standalone box + omni ?q= on the lens)
-  ├── [★★ ] scope=everything → defers to omni overlay (list not hijacked)
-  └── [★  ] secondary "Textstellen" section still renders the chunk hits
+11.09. 06:17:44  k8s-gpu-2  systemd: Stopping/Starting iscsid.service
+11.09. 06:19:39  k8s-gpu-1  systemd: Stopping/Starting iscsid.service
+11.09. 06:20:15  Longhorn:  Replicas von renfield-pg-3 faulted (beide Namespaces)
+11.09. 16:16:19  Postgres:  PANIC "No space left on device" (Haushalt)
+11.09. 16:17:30  Postgres:  dito (xidra)
 ```
 
-### Failure modes (new codepaths)
-- `websearch_to_tsquery` on odd input (operators, empty) → wrap/guard so a malformed query returns
-  no rows, never a 500. Test + guard.
-- A retrieval signal (facts/chunks) MCP/DB slow or throwing → the fuse must degrade to the signals
-  that returned (best-effort), never fail the whole search. Local signals are DB-only (no MCP) so
-  low risk; still guard each branch.
-- Circle-filter mis-wire → **silent over-exposure** (a restricted doc appears). Highest-stakes;
-  the D2 circle test is the guard. Flag CRITICAL if untested.
+`apt-daily-upgrade` startet den iSCSI-Initiator neu, über den Longhorn JEDES
+Volume anbindet. Die Sessions reißen; `numberOfReplicas: 1` lässt keine zweite
+Kopie zu → pg-3 tot in beiden Instanzen → dessen HA-Replikationsslot hält WAL
+fest (`max_slot_wal_keep_size` war ungesetzt = unbegrenzt) → bei ~4,6 GB WAL/Tag
+(erzwungen durch `archive_timeout: 5min`) lief das 2-GiB-WAL-Volume in ~10 h voll
+→ Primary PANIC. Die kleinen WAL-Volumes waren der **Verstärker**, nicht die
+Ursache. Ein nächtlicher Paket-Job hat zwei Produktionsdatenbanken abgeschaltet.
 
-### NOT in scope (deferred)
-- **MCP federation (Paperless + Simba)** → PR2 (own access-control + dedup + heterogeneous-result design).
-- **Paginated / "Mehr laden" BROWSE** beyond 100 newest (no query) → search fixes the reachability need.
-- **Circle-filtering the BROWSE list** (pre-existing over-broad behavior) → separate concern.
-- SearXNG as a document-search backend → rejected (web metasearch, no internal index/connectors).
+Vollausfall: 11.09. 16:16 bis 12.09. 13:51 UTC, rund **21,5 Stunden** (nicht
+8 Tage — das war das Alter der Pods seit dem letzten Rollout).
 
-### What already exists (reuse, don't rebuild)
-- `DocumentResponse`/`DocumentRow` + the row render + all actions (An Simba senden, tier, reindex,
-  delete) — reused as-is; a search result must return this shape.
-- `DocumentFactRetrieval.search()` — query→document_ids, already circle-filtered (facts signal).
-- `RAGRetrieval` — circle-filtered chunk semantic search (chunk signal; aggregate to best-per-doc).
-- The GENERATED `search_vector` + GIN + multilingual-union FTS pattern (notes/messages/facts/chunks).
-- The Wissen lens `consumesQueryInline` wiring already reads `?q=`/`?scope=` on this lens.
-- `rag.list_documents` (rag_service.py:888) — the seam to add `q`.
+## Ergebnis
 
-## GSTACK REVIEW REPORT
+Beide Instanzen laufen wieder, wiederhergestellt aus den Garage-S3-Sicherungen:
 
-| Review | Trigger | Why | Runs | Status | Findings |
-|--------|---------|-----|------|--------|----------|
-| Eng Review | `/plan-eng-review` | Architecture & tests (required) | 1 | CLEAR | Scope split to PR1/PR2; D2 circle-filter locked; DRY+perf baked in; 0 critical gaps |
+| | Haushalt | xidra |
+|---|---|---|
+| Cluster | `renfield-pg-r1` 3/3 gesund | `renfield-pg-r1` 3/3 gesund |
+| Wiederherstellungspunkt | 11.09. 16:15:56 | 11.09. 16:17:07 |
+| Absturz war | 16:16:19 | 16:17:30 |
+| **Lücke** | **23 Sekunden** | **23 Sekunden** |
+| Umfang | 380 Dok. / 2847 Chunks / 2677 Nachr. | 546 Dok. / 4368 Chunks |
+| Alembic | `pc20260908b_cred_sphere` | `pc20260908b_cred_sphere` |
 
-- **UNRESOLVED:** none.
-- **VERDICT:** ENG CLEARED — PR1 (local hybrid) ready to implement. Federation (Paperless + Simba) is PR2, gated on an access-control + dedup design.
+Browser-E2E Haushalt: Seite lädt, Verlauf rehydriert, WebSocket verbunden,
+neuer Chat-Zug geschrieben (2 Nachrichten um 14:00:56) und auf dem Standby
+angekommen, null Anwendungsfehler in der Konsole. xidra: Anmeldeseite und
+Backend sauber — der angemeldete Durchlauf bleibt beim Benutzer (auth-on).
 
+## Erledigt
+
+- [x] Ursache gefunden und **abgestellt**: `k8s/node-iscsi-update-guard.sh` auf
+      allen drei Knoten — `open-iscsi` auf hold + aus unattended-upgrades
+      ausgenommen (gpu-3 hatte es am 12.09. 06:57 ebenfalls erwischt)
+- [x] `max_slot_wal_keep_size: 2GB` in beiden Cluster-Manifesten — ein verwaister
+      Slot wird künftig invalidiert, statt den Primary zu töten. Live verifiziert.
+- [x] WAL-Volumes 2 GiB → 8 GiB
+- [x] Knoten-Platten vergrößert: gpu-1 80→140 GB, gpu-2 80→140 GB,
+      gpu-3 100→160 GB. Longhorn-Spielraum von ~6 GiB auf 75-82 GiB je Knoten.
+- [x] Aufgeräumt: 4 defekte pg-3-Volumes, speaches-Cache (seit 130 Tagen auf 0/0),
+      alte Container-Images
+- [x] `k8s/cnpg/90-recovery-cluster.yaml` + `91-netpol-recovery.yaml` — das
+      Wiederherstellungsverfahren als Manifest mit Runbook, nicht als Handgriff
+- [x] Anwendung + pg-dump-CronJob + ScheduledBackups auf `renfield-pg-r1-rw`
+      umgestellt (`set env`, nicht `apply` — Live-Deployments tragen gepinnte Tags)
+- [x] Frische Basissicherung beider Cluster, ContinuousArchiving=True
+
+## Was schiefging (für die Lessons)
+
+Ich habe die Engine-Ressource des WAL-Volumes gelöscht, um die veraltete
+iscsid-PID loszuwerden. Das erzeugte eine Verklemmung in Longhorns Steuerebene,
+aus der ich mit sechs Versuchen nicht herauskam. Richtig wäre gewesen, das
+Volume erst vollständig abzulösen ODER direkt den geprobten
+Wiederherstellungspfad zu nehmen. Die Wiederherstellung dauerte am Ende
+vier Minuten.
+
+## Offen
+
+- [ ] **Alarmierung** — 21,5 Stunden Ausfall blieben unbemerkt. Das ist der
+      wichtigste offene Punkt, wichtiger als alles technisch Reparierte:
+      CNPG-Cluster nicht `Ready`, WAL-Füllstand, Backend down.
+
+      **Teilweise erledigt** (#1230, PR 1 + 2): „Backend down" deckt jetzt der
+      Wächter ab — die jeweils andere Instanz prüft `/health/ready` und meldet
+      über A2. **Weiterhin offen bleibt das Clusternahe** (CNPG nicht `Ready`,
+      WAL-Füllstand), das nach `private_k8s` gehört, sowie der Fall, in dem
+      beide Instanzen gleichzeitig ausfallen — dagegen hilft nur ein Beobachter
+      außerhalb des Clusters.
+- [ ] Alte `renfield-pg`-Cluster + verwaiste Longhorn-Volumes löschen (nach Soak)
+- [ ] `numberOfReplicas: 1` auf `longhorn-pg` überdenken — machte den
+      iscsid-Neustart überhaupt erst tödlich
+- [ ] `kubeadm`/`kubectl`/`kubelet` nur auf gpu-3 auf hold, nicht auf gpu-1/gpu-2
+- [ ] `archive_timeout: 5min` erzeugt 4,6 GB WAL/Tag im Leerlauf — prüfen
+- [ ] Paperless unter 192.168.1.162 antwortet mit HTTP 500 (separates Problem,
+      fiel beim Neustart des geplanten Dedupe-Tasks auf)
+- [ ] Clusternamen tragen jetzt das `-r1`-Suffix — irgendwann zurückbenennen
+
+---
+
+# Alarme und Funktionsprüfungen (Haushalt + xidra)
+
+Erhoben am 2026-09-12 aus zwei Ausfällen derselben Sitzung. Die
+infrastrukturnahen Punkte (Paperless-Container auf `192.168.1.162`, CNPG,
+Longhorn) liegen bewusst **nicht** hier, sondern in
+`private_k8s/tasks/todo-integrationen-2026-09-12.md`. Hier steht nur, was
+Renfield selbst betrifft — und das gilt für beide Instanzen gleichermaßen.
+
+## Der Befund
+
+Es fehlt keine Alarmierung. **Sie ist da, sie ist eingeschaltet, und sie hat
+geschwiegen.**
+
+| Ausfall | Dauer | `MCP_HEALTH_MONITOR_ENABLED` | `PROACTIVE_ENABLED` | Alarm |
+|---|---|---|---|---|
+| Paperless Haushalt tot | 3 d 10 h | `true` | `true` | **keiner** |
+| `renfield-pg` beide Instanzen tot | 21,5 h | `true` | `true` | **keiner** |
+
+Beide Male stand die Statusanzeige auf Grün. Bemerkt wurden beide Ausfälle von
+einem Menschen, der zufällig hinsah.
+
+## A1 — Funktionssonde statt Verbindungsprüfung
+
+**Die Ursache des Schweigens.** `mcp_health_monitor.monitor_tick`
+(`services/mcp_health_monitor.py:203`) wertet ausschließlich
+`MCPManager.get_status()` aus (Zeile 231). Das prüft, ob die Verbindung zum
+MCP-**Prozess** steht — nicht, ob der Dienst dahinter arbeitet. Bei
+`stdio`-Servern läuft dieser Prozess **im Backend-Image selbst**, meldet also
+zuverlässig „verbunden", ganz gleich wie es dem Ziel geht.
+
+Gemessen am 12.09.: `/api/mcp/status` meldete für den Haushalt 13 von 13
+Servern `healthy`. Paperless war seit drei Tagen tot, n8n aus dem Cluster gar
+nicht erreichbar. Beide grün.
+
+- [x] **A1a** — Pro Server eine billige, lesende Funktionssonde definieren,
+      konfigurierbar in `mcp_servers.yaml` (ein Werkzeugname plus erwartete
+      Mindestantwort). Kandidaten aus der Prüfung vom 12.09.:
+      | Server | Sonde | Was sie gefangen hätte |
+      |---|---|---|
+      | `paperless` | `/api/statistics/` bzw. ein lesendes Tool | den 3-Tage-Ausfall am ersten Tag |
+      | ~~`search`~~ | ~~eine Suche, Trefferzahl > 0~~ | **verworfen beim Bauen** — siehe unten |
+      | `homeassistant` | `get_states`, Entitätenzahl > 0 | einen toten HA-Token |
+      | `n8n` | Workflows auflisten | dass der Name auf eine öffentliche IP zeigt |
+
+      **Zur gestrichenen `search`-Zeile:** eine Trefferzahl ist dort ein
+      dokumentiertes Falsch-Grün — `services/search_health.py` (#1162) hält seit
+      Langem fest, dass Wikipedia fast jede Anfrage beantwortet und eine
+      nicht-leere Trefferliste deshalb einen vollständigen Scraper-Ausfall
+      verdeckt. Die richtige Sonde (Zahl der beitragenden allgemeinen Engines)
+      gab es also schon; sie mündete nur in `internal.system_health` und wurde
+      damit nur gesehen, wenn ein Mensch danach fragte. Sie ist jetzt über
+      `_BESPOKE_PROBES` an denselben Kanal angeschlossen, statt schlechter
+      nachgebaut zu werden.
+- [x] **A1b** — Verdikt in `_server_health` einspeisen, damit Kiosk und
+      `internal.system_health` es mittragen. Der Alarmweg existiert bereits
+      (`NotificationService.process_webhook` an `active_admin_ids`,
+      `mcp_health_monitor.py:62-84`) — es fehlt nur der Anlass.
+- [x] **A1c** — Eigenes Flag, zunächst dunkel; Sonden müssen lesend, billig und
+      einzeln abschaltbar sein. Eine Sonde, die selbst Last erzeugt, ist
+      schlimmer als keine.
+
+      **Abweichung, bewusst und auf Ihre Entscheidung hin:** der Schalter steht
+      auf **an**, nicht dunkel. Die Zurückhaltung liegt stattdessen in der YAML —
+      ein Server ohne `health_probe`-Stanza wird nie gesondet, und je Stanza gibt
+      es ein `enabled`. Die Forderung „lesend, billig, einzeln abschaltbar" ist
+      damit erfüllt; der Wirkungsbereich ist eine Konfigurationsdatei statt eines
+      Schalters.
+
+## A2 — Alarm bei wiederholt scheiternden geplanten Aufgaben
+
+Der Task „Paperless-Duplikate aufräumen" ist **50 Mal in Folge** gescheitert,
+alle fünf Minuten, über anderthalb Tage. Die Lauf-Historie hat jeden einzelnen
+Fehlschlag sauber protokolliert (`ScheduledTaskRun`,
+`models/database.py:1484`; `last_status`, Zeile 1471). Niemand hat es erfahren.
+
+- [x] **A2a** — Nach N aufeinanderfolgenden `error`-Läufen genau **eine**
+      deduplizierte Benachrichtigung an den Eigentümer-Admin, nicht eine pro
+      Lauf. Muster dafür steht im Fristen-Notifier (`obligation_acknowledgements`
+      als Ledger gegen Wiederholung).
+- [x] **A2b** — Dabei mitprüfen, ob ein Fünf-Minuten-Takt für einen
+      Archiv-Dedupe die richtige Frequenz ist. Er hat 50 Fehlläufe in
+      anderthalb Tagen erzeugt — das ist auch Protokollrauschen.
+
+## A3 — Wer merkt, dass Renfield selbst weg ist?
+
+Der 21,5-Stunden-Ausfall ist der unangenehme Fall: beide Backends lagen in
+`CrashLoopBackOff` beziehungsweise meldeten `ConnectionRefused` gegen die
+Datenbank. **Ein System, das selbst steht, kann sich nicht selbst melden.**
+Dieser Punkt ist in Renfield allein nicht lösbar.
+
+- [x] **A3a** — Naheliegender Weg, weil er nichts Neues braucht: die beiden
+      Instanzen sind vollständig unabhängige Deployments in getrennten
+      Namespaces. Jede prüft periodisch den `/health` der anderen und meldet
+      Ausbleiben über ihren eigenen, bereits vorhandenen Proaktiv-Kanal.
+      Gegenseitige Beobachtung, kein zusätzlicher Dienst.
+- [ ] **A3b** — Alternative oder Ergänzung auf Clusterebene (Deployment nicht
+      verfügbar, CNPG nicht `Ready`): gehört dann nach `private_k8s`, nicht
+      hierher. **Bleibt offen**, dort als Ü4 aufgenommen.
+- [x] **A3c** — Ehrlich bleiben, was A3a **nicht** kann: fallen beide
+      gleichzeitig aus — wie am 11.09., als derselbe `iscsid`-Neustart beide
+      Datenbanken erschlug — schweigt auch die gegenseitige Prüfung. Dagegen
+      hilft nur ein Beobachter außerhalb des Clusters.
+
+## Abgrenzung
+
+Nicht hier, sondern in `private_k8s`: der fehlende Healthcheck am
+Paperless-Container auf `192.168.1.162` (drei Tage `restart: unless-stopped`
+auf einem Container, der ausschließlich HTTP 500 auslieferte), Alarme auf
+CNPG-Cluster-Zustand und WAL-Füllstand, sowie Longhorn-Replica-Ausfälle.
+
+---
+
+# Umsetzungsplan zu A1–A3 (Stand 2026-09-12)
+
+Entschieden vor dem Schreiben dieses Plans: **A1** als synthetische Soll-Sonde,
+**A3** als generischer HTTP-Wächter, alle drei Schalter **eingeschaltet**
+vorbelegt.
+
+## Der Widerspruch, den A1 auflösen muss
+
+Phase 2 hat bereits eine Funktionsprüfung — sie zählt aber **ausschließlich
+Timeouts** (`MCPServerState.record_call_outcome`, `mcp_client.py:1857-1864`).
+App-Fehler (`isError`) wurden im damaligen `/review` bewusst ausgeschlossen,
+weil ein „Gerät aus" oder „Paket nicht gefunden" nichts über die Gesundheit des
+Servers aussagt. Paperless' HTTP 500 ist genau so ein App-Fehler. Dazu kommt:
+ein Server, den niemand aufruft, erzeugt überhaupt keine Stichproben.
+
+Die Sonde löst beides ohne die alte Entscheidung umzukehren: Weil **wir** den
+Aufruf auswählen und er per Konstruktion gelingen muss, **ist** sein Scheitern
+ein Gesundheitssignal. Das Verdikt bleibt getrennt von `recent_outcomes`.
+
+## A1 — Funktionssonde je MCP-Server
+
+- [x] **A1-1** `MCPServerConfig.health_probe: dict | None` +
+      `_parse_health_probe()` nach dem Muster von `_parse_notifications`
+      (`mcp_client.py:933`), verdrahtet bei Zeile 1116.
+      Gestalt in `mcp_servers.yaml`:
+      ```yaml
+      health_probe:
+        enabled: true          # je Server einzeln abschaltbar (A1c)
+        tool: list_correspondents
+        args: {}
+        interval: 600          # Vorgabe aus settings, hier überschreibbar
+        timeout: 15
+        expect:
+          min_items: 0         # 0 = nur „kein isError"
+          path: results        # optional: welches Feld gezählt wird
+      ```
+- [x] **A1-2** `MCPServerState` um `probe_consecutive_failures`,
+      `last_probe_at`, `last_probe_ok`, `last_probe_detail` erweitern;
+      beim (Neu-)Verbinden zurücksetzen, dort wo `recent_outcomes` geleert wird.
+- [x] **A1-3** `MCPManager.run_health_probe(name)` — ruft das konfigurierte
+      Werkzeug über `execute_tool(user_permissions=None, user_id=None,
+      call_timeout=probe.timeout)` und wertet `expect` aus.
+      **Übersprungen wird:** `per_user_auth`-Server (fail-closed, `user_id=None`
+      würde immer verweigert), `federation`-Transport, nicht verbundene Server,
+      Server ohne oder mit abgeschalteter Stanza.
+- [x] **A1-4** Hysterese: erst ab `mcp_health_probe_fail_threshold`
+      aufeinanderfolgenden Fehlschlägen gilt der Server als beeinträchtigt —
+      ein einzelner Ausrutscher alarmiert nicht.
+- [x] **A1-5** `_server_health()` faltet das Verdikt als
+      `("degraded", "probe_failed")` ein, **vor** `calls_failing` (das
+      spezifischere Signal gewinnt). Kiosk und `internal.system_health` tragen
+      es damit ohne weiteres Zutun mit (A1b).
+- [x] **A1-6** `_monitor_tick_body()` in dieser Reihenfolge:
+      `get_status` → Selbstheilung → erneut `get_status` → **fällige Sonden**
+      (gedeckelt, mit `asyncio.timeout`-Hängegarde wie `_self_heal`) → erneut
+      `get_status` → bestehender Alarmdurchgang. So läuft die Sonde auf einer
+      frisch wiederverbundenen Sitzung, und der ganze Alarmweg wird
+      wiederverwendet statt neu gebaut.
+- [x] **A1-7** Sonden-Stanzas in `config/mcp_servers.yaml` **und**
+      `x-ren/config/mcp_servers.yaml` (dorthin verschoben, geht über
+      `apply-mcp-config.sh` live):
+      | Server | Sonde | Erwartung |
+      |---|---|---|
+      | `paperless` | `list_correspondents` | kein Fehlerumschlag |
+      | `homeassistant` | `GetLiveContext` | kein Fehlerumschlag |
+      | `n8n` | `n8n_list_workflows` | kein Fehlerumschlag |
+
+      **Korrigiert gegenüber dem Plan:** `search` bekommt KEINE Stanza. Die
+      geplante „≥ 1 Treffer"-Erwartung wäre genau das Falsch-Grün, das
+      `services/search_health.py` (#1162) seit Langem dokumentiert — Wikipedia
+      beantwortet fast jede Anfrage, eine nicht-leere Trefferliste verdeckt also
+      einen vollständigen Scraper-Ausfall. Diese Sonde existiert bereits und ist
+      besser; sie mündete nur nirgendwo hin. Statt sie schlechter nachzubauen,
+      ist sie über `_BESPOKE_PROBES` in denselben Verdikt-Kanal verdrahtet
+      (neuer Punkt A1-10).
+
+- [x] **A1-10** Sonderfall-Sonden anbinden: `_BESPOKE_PROBES` im Monitor +
+      `MCPManager.record_external_probe`, damit ein purpose-built Verdikt
+      (heute: `search`) Kiosk und Alarm erreicht statt nur
+      `internal.system_health`. Ein `unknown` schreibt nichts — fehlende
+      Evidenz ist keine Evidenz für einen Fehler.
+- [x] **A1-8** Schalter: `mcp_health_probe_enabled` (an),
+      `_interval` (600 s), `_timeout` (15 s), `_fail_threshold` (2),
+      `_max_per_tick` (4). Die eigentliche Zurückhaltung liegt in der YAML:
+      ohne Stanza wird nichts gesondet.
+- [x] **A1-9** i18n `kiosk.impaired.probe_failed` **und** das bisher fehlende
+      `calls_failing`, je in `de.json` und `en.json`.
+
+Nicht vergessen: eine Sonde verbraucht ein Token des serverseitigen
+Ratenbegrenzers; bei 600 s Abstand vernachlässigbar, aber erwähnenswert.
+`ToolOutcomeStat` bleibt unberührt (wird nur in `agent_service` mit `user_id`
+geschrieben) — die Kiosk-Telemetrie verfälscht sich also nicht.
+
+## A2 — Alarm bei wiederholt scheiternden geplanten Aufgaben
+
+- [x] **A2-1** Migration `pc20260912_task_failure_alert` (auf
+      `pc20260908b_cred_sphere`): `scheduled_tasks.consecutive_error_count`
+      (NOT NULL DEFAULT 0) und `error_alerted_at` (nullable). Additiv, rein
+      transaktional.
+- [x] **A2-2** `engine._execute_task`: nach dem Statusbefund `error` hochzählen,
+      `ok`/`skipped` zurücksetzen. Ab `threshold` in Folge **genau eine**
+      deduplizierte Meldung, Wiederholung erst nach der TTL.
+- [x] **A2-3** Erholungsmeldung, wenn eine Aufgabe nach einem Alarm wieder
+      gelingt — sonst bleibt der Mensch im Ungewissen, ob es noch klemmt.
+- [x] **A2-4** Schalter: `scheduled_task_failure_alert_enabled` (an),
+      `_threshold` (3), `_realert_seconds` (21600, wie beim MCP-Monitor).
+- [x] **A2-5** `consecutive_error_count` in der Antwort von
+      `/api/scheduled-tasks` und als Kennzeichen in der Admin-Liste.
+- [x] **A2-6** (A2b) Vorgabe `paperless_dedupe_reconciler_interval`
+      300 → 3600 s. **Achtung:** `ensure_builtin_tasks` sät mit
+      `ON CONFLICT DO NOTHING` — bestehende Zeilen behalten ihre 300 s. Die
+      Umstellung auf beiden Instanzen geschieht über `/admin/scheduled-tasks`,
+      nicht durch einen Eingriff in die Datenbank.
+
+## A3 — Generischer HTTP-Wächter
+
+Der elegante Teil: der Wächter braucht **keine eigene Alarmmechanik**. Er läuft
+als geplante Aufgabe und **wirft** bei einem nicht erreichbaren Ziel — damit
+greift die Maschinerie aus A2 (Schwelle, Ledger, TTL, Erholung) unverändert.
+Zugleich löst das die Mehr-Replikat-Frage: die Engine serialisiert jede Aufgabe
+über ihre Vorschusssperre, es läuft also je Takt genau ein Replikat.
+
+- [x] **A3-1** `services/watchdog.py`: liest `WATCHDOG_TARGETS`
+      (`name=url,name=url`), prüft jedes Ziel per HTTP GET, erwartet 2xx.
+      Gegen `/health/ready` geprüft, nicht `/health` — letzteres antwortet
+      auch dann „ok", wenn die Datenbank tot ist, und hätte am 11.09.
+      geschwiegen.
+- [x] **A3-2** Eingebaute Aufgabe `watchdog` (Registry + Seed, 120 s,
+      **ohne** `run_at_boot` — sonst alarmiert der eigene Start).
+      Der Handler meldet die gerade ausgefallenen Ziele im Fehlertext.
+- [x] **A3-3** Schalter: `watchdog_enabled` (an), `watchdog_targets` (leer ⇒
+      wirkungslos), `watchdog_timeout` (10 s). Schwelle und TTL kommen aus A2.
+- [x] **A3-4** Bewusste Abwägung festhalten: fällt ein zweites Ziel während
+      einer laufenden Fehlerserie aus, gibt es keinen zweiten Alarm. Falls je
+      Ziel alarmiert werden soll, bräuchte es Zähler in Redis — dann als eigener
+      Schritt, nicht hier.
+- [x] **A3-5** Voraussetzung im Betrieb: Egress-Regel Namespace `renfield` →
+      `renfield-xidra` (und zurück). Gehört nach `private_k8s`.
+- [x] **A3-6** (A3c) Die Grenze in `docs/ENVIRONMENT_VARIABLES.md` **und** im
+      Entwurfsdokument ehrlich benennen: fallen beide Instanzen gleichzeitig
+      aus, schweigt auch die gegenseitige Prüfung.
+
+## Querschnitt
+
+- [x] **Q1** `services/ops_alert.py` herauslösen: `_notify`, `_should_alert`,
+      `_clear_alert`, `_resolve_admin_user_id` aus `mcp_health_monitor.py`
+      wandern dorthin; A2 und A3 benutzen dieselbe Fassung. Verhalten
+      unverändert — ein Alarmweg, eine Admin-Auflösung, ein Ledger.
+- [x] **Q2** `internal.system_health` um zwei Abschnitte erweitern: geplante
+      Aufgaben in einer Fehlerserie, sowie Wächterziele. Die Sondenverdikte
+      kommen über `_check_mcp` von selbst mit.
+- [x] **Q3** Tests: `test_mcp_health_probe.py` (Auswertung von `expect`,
+      Hysterese, `per_user_auth`-Auslassung, Faltung in `_server_health`,
+      Reihenfolge im Takt), `test_scheduled_task_failure_alerts.py` (Zähler,
+      Schwelle, genau ein Alarm, Erholung), `test_watchdog.py`. Ausführung auf
+      `.159`.
+- [x] **Q4** Dokumentations-Durchgang vor dem Merge: `CLAUDE.md`,
+      `docs/design/mcp-self-detection.md` (Phase 4 + Zeile in der
+      Fehlermodus-Tabelle), `docs/ENVIRONMENT_VARIABLES.md`, `docs/FEATURES.md`,
+      und die Haken hier oben.
+
+## Zuschnitt der Zweige
+
+1. **PR 1** — Q1 + A2 + A3. Klein, in sich geschlossen, legt die Mechanik, die
+   A1 danach mitbenutzt.
+2. **PR 2** — A1. Der größere Eingriff, eigene Prüfung.
+
+Erst danach ausrollen, mit der bekannten Reihenfolge: Migration als Job vor dem
+rollenden Neustart, anschließend Browser-Prüfung auf beiden Instanzen.
+
+---
+
+# ABGESCHLOSSEN + AUSGEROLLT (Stand 2026-09-13)
+
+Alles aus A1–A3 ist gebaut, gemergt, auf **beiden** Instanzen ausgerollt und live
+nachgewiesen. Tags `2026-09-13-alerting` (A1/A2/A3) + `2026-09-13-n8n-chips`
+(Folgefixes). Migration `pc20260912_taskalert` vor dem Rollout als Job.
+
+- **PR #1231** (Q1 `ops_alert` + A2 Fehlserien-Alarm + A3 Wächter) — gemergt.
+- **PR #1232** (A1 Funktionssonden, gestapelt) — gemergt; 6 `/review`-Befunde behoben.
+- **PR #1233** (Wächter-Ziel Haushalt→xidra) — gemergt; xidra→Haushalt in `x-ren`.
+- **PR #1234** (xidra-Manifeste nach `x-ren`, 6 Verweise nachgezogen) — gemergt.
+- **PR #1235** (n8n LAN-only) + **#1236** (Folgefragen-Chips JSON) — gemergt + ausgerollt.
+- **private_k8s** MR !1/!2/!3 — `cluster-health-watch` LIVE (ns `cluster-ops`,
+  CronJob 10 min), gegenseitige Netpol vorbereitet aber NICHT angewendet.
+- **x-ren** MR !5/!6/!7 — Konfiguration + alle Manifeste versioniert.
+
+Live abgenommen: 13/13 MCP-Server gesund; A1-Sonde fing n8n am ersten Tag
+(`degraded/probe_failed` → nach LAN-Fix + neuem Schlüssel `healthy`); der Wächter
+erwischte einen echten kurzen xidra-Ausfall (ein Fehlschlag, korrekt KEIN Alarm
+unter Schwelle 3); Cluster-Wächter stellt an beide Instanzen zu (je HTTP 200).
+
+**A2b erledigt:** Paperless-Dedupe-Intervall auf beiden Instanzen 300 → 3600 s.
+**Alte CNPG-Cluster gelöscht** (60 GiB frei); IGNORE_CLUSTERS geleert.
+
+## Offen geblieben (nicht Teil dieser Sitzung)
+- **A3b Netpol**: nur bei Einführung eines `default-deny` im Namespace anwenden
+  (`private_k8s/docs/renfield-watchdog-netpol.md`).
+- **A3c**: fallen beide Instanzen gleichzeitig aus, schweigt auch die
+  gegenseitige Prüfung — nur ein Beobachter außerhalb des Clusters hilft.
+- **Ph3 MCP-Self-Detection** (429/Retry-After, k8s-Probes) — designed, nicht gebaut.

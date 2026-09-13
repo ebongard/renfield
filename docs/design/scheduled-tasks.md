@@ -106,6 +106,7 @@ with the spawn-not-await and boot-force fixes below (see Review findings).
 | `start_at` / `end_at` | optional active window |
 | `next_run_at` | engine-computed |
 | `last_run_at` / `last_status` / `last_error` / `last_duration_ms` | run history (last only) |
+| `consecutive_error_count` / `error_alerted_at` | failure-streak alerting (Phase 4, migration `pc20260912_taskalert`) — see below |
 | `is_builtin` | built-ins are edit-not-delete; custom tasks are deletable |
 | `created_at` / `updated_at` | audit |
 
@@ -316,6 +317,51 @@ removed.
 - `_schedule_notification_poller` — holds a persistent connection.
 - The sub-`engine_tick` jobs (`reminder_checker`, kiosk internal-health) — see
   the interval floor.
+
+### Phase 4 — Failure-streak alerting (A2, 2026-09-12)
+
+The engine recorded everything and told nobody. `last_status` keeps only the
+**newest** run, so a task failing every five minutes for a day and a half reads
+exactly like one that failed once — which is how 50 consecutive Paperless-dedupe
+failures passed unnoticed while Paperless answered HTTP 500.
+
+Two additive columns give the engine a *streak*:
+
+* `consecutive_error_count` — incremented on an `error` run, **reset to 0 by any
+  non-error run** (including a `skipped` one: a task with an unresolvable
+  `handler_key` is not failing, it is not running at all, and a frozen stale
+  counter would be worse than none).
+* `error_alerted_at` — when the owner admin was told about THIS streak.
+
+At `scheduled_task_failure_alert_threshold` consecutive errors the engine fires
+**one** alert through `services/ops_alert.py` and, when the task succeeds again,
+one recovery notice — but only if an alert had actually been sent, so a task that
+fails twice below the threshold does not announce a recovery nobody was waiting
+for. An ongoing streak re-alerts at most every
+`scheduled_task_failure_realert_seconds`.
+
+**Why `error_alerted_at` is in the database** while the `ops_alert` ledger is
+in-process: the ledger is a *rate limiter* that a pod restart may legitimately
+re-arm, but "we already told them about this streak" must survive a restart —
+otherwise a crash-looping pod alerts on every boot.
+
+Alerting is best-effort and wrapped: a failing notification pipeline must never
+cost the run-state commit that keeps the task scheduled.
+
+### Phase 4b — The watchdog as a scheduled task (A3)
+
+The external HTTP watchdog (`services/watchdog.py`) deliberately has **no
+alerting of its own**. It runs as the built-in `watchdog` task and simply RAISES
+when a target is unreachable, so Phase 4 above supplies the threshold, the
+durable ledger, the re-alert TTL and the recovery notice.
+
+That reuse also settles multi-replica behaviour for free: the per-task advisory
+lock means exactly one replica probes per tick, so counters cannot fragment
+across pods — which an in-process per-target counter would have done.
+
+Seeded **without** `run_at_boot`: probing while we are still coming up would
+alert on our own startup, and on a peer restarting alongside us during a
+coordinated deploy.
 
 ## Deploy & activation
 

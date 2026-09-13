@@ -51,7 +51,7 @@ over plain HTTP the Secure cookie is dropped and login silently fails.
 Add the key to the committed xidra ConfigMap template so git stays authoritative.
 Insert into the `data` block (alphabetical, just before `"AUTH_ENABLED"`):
 
-`k8s/xidra/renfield-env.configmap.yaml`
+`x-ren/k8s/renfield-env.configmap.yaml`
 ```json
     "AUTH_COOKIE_ENABLED": "true",
     "AUTH_ENABLED": "true",
@@ -60,7 +60,7 @@ Insert into the `data` block (alphabetical, just before `"AUTH_ENABLED"`):
 Commit on a branch → PR → merge (normal git-workflow; this is a one-line ops
 change, no code review gate needed but keep the audit trail).
 
-> ⚠️ **Do NOT `kubectl apply -f k8s/xidra/renfield-env.configmap.yaml`.** That
+> ⚠️ **Do NOT `kubectl apply -f x-ren/k8s/renfield-env.configmap.yaml`.** That
 > committed file is a **template** — its `DATABASE_URL` carries the
 > `__PG_PASSWORD__` placeholder, and a raw apply would overwrite the live
 > ConfigMap's real DATABASE_URL with the placeholder. Apply the change with the

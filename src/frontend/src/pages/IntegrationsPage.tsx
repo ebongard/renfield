@@ -10,6 +10,7 @@ import Modal from '../components/Modal';
 import PageHeader from '../components/PageHeader';
 import Alert from '../components/Alert';
 import Badge from '../components/Badge';
+import IngestCredentials from '../components/integrations/IngestCredentials';
 import type { BadgeColor } from '../components/Badge';
 import {
   Server,
@@ -416,6 +417,7 @@ export default function IntegrationsPage() {
         )}
       </Modal>
 
+      <IngestCredentials />
     </div>
   );
 }
