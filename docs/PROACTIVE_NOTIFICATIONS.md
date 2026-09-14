@@ -136,6 +136,15 @@ Empfängt Benachrichtigungen von HA-Automationen.
 
 Mit `AUTH_ENABLED=true` sieht und bearbeitet ein Nutzer nur, was **an ihn adressiert** ist (`target_user_id` = er selbst) oder **öffentlich an niemanden** gerichtet ist (`target_user_id` leer und `privacy="public"`). Eine persönliche Benachrichtigung ohne Empfänger bleibt für normale Nutzer verborgen. Nutzer mit `notifications.manage` sehen alles. Die Benachrichtigung eines anderen verhält sich wie eine nicht existierende (`404`), und ohne Anmeldung gibt es `401`. Mit `AUTH_ENABLED=false` (ein Haushalt) ändert sich nichts.
 
+Dieselbe Regel gilt auf **allen** Wegen, nicht nur für REST:
+- **Bestätigen und Verwerfen über das Device-WebSocket** (`notification_ack`). Der Browser-Toast nutzt genau diesen Weg. Ein Login-Token gilt für seinen Nutzer, ein Geräte-Token ohne Nutzer darf nur öffentliche Benachrichtigungen ohne Empfänger bestätigen.
+- **Unterdrückungsregeln:** Ein Nutzer sieht seine eigenen und die globalen Regeln, löschen darf er nur seine eigenen.
+- **Erinnerungen:** Liste und Stornieren nur die eigenen. Eine fällige Erinnerung wird als `privacy="personal"` an ihren Besitzer ausgelöst, nicht mehr öffentlich.
+
+Admin heißt: `admin` oder `notifications.manage`.
+
+**Verhaltensänderung bei Login-Instanzen:** Persönliche Benachrichtigungen ohne Empfänger (z. B. eine HA-Automation mit `privacy="personal"` ohne `target_user_id`) und Erinnerungen ohne Besitzer (Sprachbefehl ohne erkannten Sprecher) sehen jetzt nur noch Admins.
+
 Hintergrund (2026-09-14): Vorher konnte jeder angemeldete Nutzer die persönlichen Benachrichtigungen aller anderen auflisten, bestätigen, verwerfen und daraus Unterdrückungsregeln bauen. Das Präsenz-Gate schützte nur den Live-Push, nicht die REST-Liste.
 
 ### GET /api/notifications
