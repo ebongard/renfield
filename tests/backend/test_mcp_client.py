@@ -147,11 +147,152 @@ servers:
         assert "disabled_server" not in manager._servers
 
     @pytest.mark.unit
-    def test_missing_config_file(self):
+    def test_missing_config_file(self, tmp_path):
         """Missing config file should log warning and continue."""
         manager = MCPManager()
-        manager.load_config("/nonexistent/path.yaml")
+        manager.load_config("/nonexistent/path.yaml", overlay_dir=str(tmp_path / "none"))
         assert len(manager._servers) == 0
+
+
+class TestLoadConfigOverlay:
+    """Instance-local overlay stanzas (config/mcp.d) survive a swap of the shared file."""
+
+    BASE = """
+servers:
+  - name: shared
+    url: "http://shared:8080/mcp"
+    transport: streamable_http
+"""
+
+    @staticmethod
+    def _write(path, text):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text)
+        return path
+
+    @pytest.mark.unit
+    def test_overlay_server_is_appended(self, tmp_path):
+        base = self._write(tmp_path / "mcp_servers.yaml", self.BASE)
+        self._write(tmp_path / "mcp.d" / "local.yaml", """
+servers:
+  - name: local
+    url: "http://local:8080/mcp"
+    transport: streamable_http
+""")
+        manager = MCPManager()
+        manager.load_config(str(base), overlay_dir=str(tmp_path / "mcp.d"))
+
+        assert set(manager._servers) == {"shared", "local"}
+        assert manager._servers["local"].config.url == "http://local:8080/mcp"
+
+    @pytest.mark.unit
+    def test_overlay_cannot_redefine_a_shared_server(self, tmp_path):
+        base = self._write(tmp_path / "mcp_servers.yaml", self.BASE)
+        self._write(tmp_path / "mcp.d" / "local.yaml", """
+servers:
+  - name: shared
+    url: "http://hijack:8080/mcp"
+    transport: streamable_http
+""")
+        manager = MCPManager()
+        manager.load_config(str(base), overlay_dir=str(tmp_path / "mcp.d"))
+
+        assert manager._servers["shared"].config.url == "http://shared:8080/mcp"
+
+    @pytest.mark.unit
+    def test_duplicate_across_overlay_files_first_wins(self, tmp_path):
+        base = self._write(tmp_path / "mcp_servers.yaml", self.BASE)
+        for fname, host in (("a.yaml", "first"), ("b.yaml", "second")):
+            self._write(tmp_path / "mcp.d" / fname, f"""
+servers:
+  - name: local
+    url: "http://{host}:8080/mcp"
+    transport: streamable_http
+""")
+        manager = MCPManager()
+        manager.load_config(str(base), overlay_dir=str(tmp_path / "mcp.d"))
+
+        assert manager._servers["local"].config.url == "http://first:8080/mcp"
+
+    @pytest.mark.unit
+    def test_broken_overlay_file_does_not_block_the_rest(self, tmp_path):
+        base = self._write(tmp_path / "mcp_servers.yaml", self.BASE)
+        self._write(tmp_path / "mcp.d" / "a-broken.yaml", "servers: [unclosed\n")
+        self._write(tmp_path / "mcp.d" / "b-nolist.yaml", "servers: notalist\n")
+        self._write(tmp_path / "mcp.d" / "c-good.yaml", """
+servers:
+  - name: local
+    url: "http://local:8080/mcp"
+""")
+        manager = MCPManager()
+        manager.load_config(str(base), overlay_dir=str(tmp_path / "mcp.d"))
+
+        assert set(manager._servers) == {"shared", "local"}
+
+    @pytest.mark.unit
+    def test_non_yaml_and_dotfiles_are_ignored(self, tmp_path):
+        """A mounted ConfigMap dir carries ..data bookkeeping entries next to the keys."""
+        base = self._write(tmp_path / "mcp_servers.yaml", self.BASE)
+        stanza = """
+servers:
+  - name: {name}
+    url: "http://{name}:8080/mcp"
+"""
+        self._write(tmp_path / "mcp.d" / "README.txt", stanza.format(name="txt"))
+        self._write(tmp_path / "mcp.d" / ".hidden.yaml", stanza.format(name="hidden"))
+        (tmp_path / "mcp.d" / "..data").mkdir()
+        self._write(tmp_path / "mcp.d" / "local.yml", stanza.format(name="local"))
+        manager = MCPManager()
+        manager.load_config(str(base), overlay_dir=str(tmp_path / "mcp.d"))
+
+        assert set(manager._servers) == {"shared", "local"}
+
+    @pytest.mark.unit
+    def test_missing_overlay_dir_is_a_noop(self, tmp_path):
+        base = self._write(tmp_path / "mcp_servers.yaml", self.BASE)
+        manager = MCPManager()
+        manager.load_config(str(base), overlay_dir=str(tmp_path / "absent"))
+
+        assert set(manager._servers) == {"shared"}
+
+    @pytest.mark.unit
+    def test_overlay_loads_when_base_file_missing(self, tmp_path):
+        self._write(tmp_path / "mcp.d" / "local.yaml", """
+servers:
+  - name: local
+    url: "http://local:8080/mcp"
+""")
+        manager = MCPManager()
+        manager.load_config(str(tmp_path / "missing.yaml"), overlay_dir=str(tmp_path / "mcp.d"))
+
+        assert set(manager._servers) == {"local"}
+
+    @pytest.mark.unit
+    def test_only_filter_applies_to_overlay(self, tmp_path):
+        base = self._write(tmp_path / "mcp_servers.yaml", self.BASE)
+        self._write(tmp_path / "mcp.d" / "local.yaml", """
+servers:
+  - name: local
+    url: "http://local:8080/mcp"
+""")
+        manager = MCPManager()
+        manager.load_config(str(base), only={"shared"}, overlay_dir=str(tmp_path / "mcp.d"))
+
+        assert set(manager._servers) == {"shared"}
+
+    @pytest.mark.unit
+    def test_disabled_overlay_server_is_skipped(self, tmp_path):
+        base = self._write(tmp_path / "mcp_servers.yaml", self.BASE)
+        self._write(tmp_path / "mcp.d" / "local.yaml", """
+servers:
+  - name: local
+    url: "http://local:8080/mcp"
+    enabled: "${TEST_OVERLAY_LOCAL_ENABLED:-false}"
+""")
+        manager = MCPManager()
+        manager.load_config(str(base), overlay_dir=str(tmp_path / "mcp.d"))
+
+        assert set(manager._servers) == {"shared"}
 
     @pytest.mark.unit
     def test_empty_servers_list(self, tmp_path):

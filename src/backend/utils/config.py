@@ -398,6 +398,14 @@ class Settings(BaseSettings):
     # MCP Client (Model Context Protocol)
     mcp_enabled: bool = False             # Opt-in, disabled by default
     mcp_config_path: str = "config/mcp_servers.yaml"
+    # Directory of instance-local MCP server stanzas (`*.yaml`, each with its own
+    # `servers:` list), loaded AFTER mcp_config_path and appended to it. For
+    # servers that belong to one installation but not to the shared repo file:
+    # the shared file is swapped wholesale on every deploy, so a stanza appended
+    # to it by hand is silently dropped by the next one. An overlay entry may
+    # not redefine a server already in mcp_config_path (skipped with an error).
+    # A missing directory is normal and means "no local servers".
+    mcp_config_overlay_dir: str = "config/mcp.d"
     mcp_refresh_interval: int = 60        # Background refresh interval (seconds)
     mcp_connect_timeout: float = 10.0     # Connection timeout per server (seconds)
     mcp_call_timeout: float = 30.0        # Tool call timeout (seconds)

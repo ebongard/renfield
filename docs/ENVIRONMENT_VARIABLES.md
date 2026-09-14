@@ -630,6 +630,22 @@ PROACTIVE_FEEDBACK_SIMILARITY_THRESHOLD=0.80
 - `GET /api/notifications/suppressions` — Aktive Suppression-Regeln
 - `DELETE /api/notifications/suppressions/{id}` — Suppression aufheben
 
+#### MCP-Konfiguration: instanzlokale Server (Overlay)
+
+```bash
+# Verzeichnis mit instanzlokalen MCP-Stanzas (*.yaml, jede mit eigener servers:-Liste),
+# geladen NACH MCP_CONFIG_PATH und angehängt.
+MCP_CONFIG_OVERLAY_DIR=config/mcp.d
+```
+
+Die geteilte `mcp_servers.yaml` wird bei jedem Deploy vollständig aus dem Repo
+ersetzt — eine von Hand angehängte Stanza verschwindet damit beim nächsten Mal
+still. Server, die nur zu einer Installation gehören, liegen deshalb in einer
+eigenen, optionalen ConfigMap `renfield-mcp-config-local`, die `k8s/backend.yaml`
+als Verzeichnis nach `/app/config/mcp.d` mountet (fehlt sie, ist das Verzeichnis
+leer). Ein Overlay-Eintrag darf keinen bereits definierten Server umdefinieren
+(wird mit Fehler übersprungen); eine kaputte Datei blockiert die übrigen nicht.
+
 #### MCP Notification Polling
 
 ```bash

@@ -14,6 +14,9 @@ config/agent_roles.yaml
 config/kg_scopes.yaml
 config/mail_accounts.yaml
 config/mail_accounts.default.yaml
+# Instance-local MCP stanzas — mounted from the optional
+# `renfield-mcp-config-local` ConfigMap as a directory; never baked in.
+config/mcp.d/
 
 # Python bytecode caches, test artefacts, editor scratch.
 __pycache__
