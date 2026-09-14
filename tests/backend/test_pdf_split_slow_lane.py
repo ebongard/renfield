@@ -186,6 +186,76 @@ class TestPageIsBlank:
     def test_undecodable_image_is_not_blank(self):
         assert det._page_is_blank("not-base64-png") is False
 
+    def test_dust_specks_under_threshold_stay_blank(self):
+        """A blank back with a few dark specks (dust, a staple shadow) is still
+        blank: 20 px of 880 000 is far below the ink fraction."""
+        def specks(d):
+            for x in range(20):
+                d.point((100 + x * 30, 500), fill="black")
+
+        assert det._page_is_blank(self._png_b64(specks)) is True
+
+    def test_light_show_through_stays_blank(self):
+        """Duplex show-through sits well above the ink level (200-224 measured)."""
+        def show_through(d):
+            d.rectangle([60, 80, 740, 1000], fill=(210, 210, 210))
+
+        assert det._page_is_blank(self._png_b64(show_through)) is True
+
+    def test_just_above_threshold_is_not_blank(self):
+        pixels = 800 * 1100
+        ink = int(pixels * det._BLANK_INK_FRACTION) + 50
+
+        def patch_of_ink(d):
+            d.rectangle([0, 0, ink // 10 - 1, 9], fill="black")
+
+        assert det._page_is_blank(self._png_b64(patch_of_ink)) is False
+
+
+@pytest.mark.asyncio
+async def test_slow_split_blank_backs_reach_boundary_detection(monkeypatch):
+    """REGRESSION (doc 613) at lane level, with the REAL vlm_fill_signals: every
+    garbage page is a blank back the VLM answers with "" — the lane must go on to
+    boundary detection instead of raising the outage SplitTransientError."""
+    signals = [_sig(1, ok=False), _sig(2), _sig(3), _sig(4, ok=False)]
+    db, act, execute, queue = _wire_lane(
+        monkeypatch, doc=_doc(), signals=signals, outcome="split"
+    )
+    monkeypatch.setattr(lane, "vlm_fill_signals", det.vlm_fill_signals)
+    monkeypatch.setattr(det.settings, "ollama_vision_model", "qwen-vl")
+    monkeypatch.setattr(det.settings, "pdf_split_vlm_page_timeout_s", 5)
+    monkeypatch.setattr(det, "_render_page_b64", MagicMock(return_value="b64"))
+    monkeypatch.setattr(det, "_page_is_blank", MagicMock(return_value=True))
+    svc = MagicMock()
+    svc.extract_text_from_image = AsyncMock(return_value="")
+    import services.ollama_service as osvc
+
+    monkeypatch.setattr(osvc, "OllamaService", MagicMock(return_value=svc))
+
+    assert await lane.process_slow_split(7, None) == "split"
+    lane.detect_boundaries.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_slow_split_real_outage_still_raises(monkeypatch):
+    """The other side of the same seam: a dead vision host (None on every page)
+    over blank backs must still read as an outage, not as resolved."""
+    signals = [_sig(1, ok=False), _sig(2), _sig(3, ok=False)]
+    _wire_lane(monkeypatch, doc=_doc(), signals=signals)
+    monkeypatch.setattr(lane, "vlm_fill_signals", det.vlm_fill_signals)
+    monkeypatch.setattr(det.settings, "ollama_vision_model", "qwen-vl")
+    monkeypatch.setattr(det.settings, "pdf_split_vlm_page_timeout_s", 5)
+    monkeypatch.setattr(det, "_render_page_b64", MagicMock(return_value="b64"))
+    monkeypatch.setattr(det, "_page_is_blank", MagicMock(return_value=True))
+    svc = MagicMock()
+    svc.extract_text_from_image = AsyncMock(return_value=None)
+    import services.ollama_service as osvc
+
+    monkeypatch.setattr(osvc, "OllamaService", MagicMock(return_value=svc))
+
+    with pytest.raises(SplitTransientError):
+        await lane.process_slow_split(7, None)
+
 
 class TestExtractTextFromImageContract:
     """The slow lane tells an outage from blank pages by None vs "" — pin it."""

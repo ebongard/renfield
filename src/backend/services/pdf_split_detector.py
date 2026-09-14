@@ -585,7 +585,7 @@ async def vlm_fill_signals(
 
     loop = asyncio.get_running_loop()
     out = list(signals)
-    filled = 0
+    resolved = 0
     for i, sig in enumerate(out):
         if sig.quality_ok:
             continue
@@ -613,19 +613,16 @@ async def vlm_fill_signals(
         if text is None:
             continue  # the call failed — keep the placeholder
         if text.strip():
-            out[i] = PageSignal(
-                page=sig.page,
-                text=_snippet(text),
-                quality_ok=True,
-                via_vlm=True,
-            )
-            filled += 1
+            resolved_text = _snippet(text)
         elif await loop.run_in_executor(None, _page_is_blank, b64):
-            out[i] = PageSignal(
-                page=sig.page,
-                text=_PLACEHOLDER_BLANK,
-                quality_ok=True,
-                via_vlm=True,
-            )
-            filled += 1
-    return out, filled
+            resolved_text = _PLACEHOLDER_BLANK
+        else:
+            continue  # empty answer but ink on the page — still unreadable
+        out[i] = PageSignal(
+            page=sig.page,
+            text=resolved_text,
+            quality_ok=True,
+            via_vlm=True,
+        )
+        resolved += 1
+    return out, resolved

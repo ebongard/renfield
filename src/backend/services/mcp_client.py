@@ -863,7 +863,7 @@ class MCPServerConfig:
     health_probe: dict | None = None
 
     # Per-server tool-call timeout (seconds). None => the global
-    # `mcp_call_timeout` (30s). For servers whose tools inherently run long —
+    # `settings.mcp_call_timeout`. For servers whose tools inherently run long —
     # the scanner feeds, corrects, OCRs and pushes a whole paper stack in one
     # call. At 30s the backend told the user a scan had FAILED while the scan
     # finished and was ingested 80ms later (2026-09-14).
@@ -999,6 +999,20 @@ def _server_call_timeout(state: Any) -> float:
 
 _CALL_TIMEOUT_MIN_S = 1.0
 _CALL_TIMEOUT_MAX_S = 3600.0
+
+# The MCP SDK's HTTP transports carry their OWN read timeout (streamable_http and
+# sse both default to 300s). A call_timeout above it would still die at the
+# transport, as an opaque transport error instead of our clean timeout. Keep the
+# transport strictly longer than the call, so the call timeout always fires first.
+_SDK_TRANSPORT_READ_TIMEOUT_S = 300.0
+_TRANSPORT_READ_MARGIN_S = 30.0
+
+
+def _transport_read_timeout(config: "MCPServerConfig") -> float:
+    """HTTP transport read timeout for a server — never shorter than its calls."""
+    if config.call_timeout is None:
+        return _SDK_TRANSPORT_READ_TIMEOUT_S
+    return max(_SDK_TRANSPORT_READ_TIMEOUT_S, config.call_timeout + _TRANSPORT_READ_MARGIN_S)
 
 
 def _parse_call_timeout(raw: Any) -> float | None:
@@ -1333,14 +1347,20 @@ class MCPManager:
                     raise ValueError("URL required for streamable_http transport")
                 async with asyncio.timeout(settings.mcp_connect_timeout):
                     transport = await exit_stack.enter_async_context(
-                        streamablehttp_client(url=config.url, headers=headers)
+                        streamablehttp_client(
+                        url=config.url, headers=headers,
+                        sse_read_timeout=_transport_read_timeout(config),
+                    )
                     )
             elif config.transport == MCPTransportType.SSE:
                 if not config.url:
                     raise ValueError("URL required for SSE transport")
                 async with asyncio.timeout(settings.mcp_connect_timeout):
                     transport = await exit_stack.enter_async_context(
-                        sse_client(url=config.url, headers=headers)
+                        sse_client(
+                        url=config.url, headers=headers,
+                        sse_read_timeout=_transport_read_timeout(config),
+                    )
                     )
             elif config.transport == MCPTransportType.STDIO:
                 if not config.command:
@@ -1856,13 +1876,19 @@ class MCPManager:
                 if not config.url:
                     raise ValueError("URL required for streamable_http transport")
                 transport = await stack.enter_async_context(
-                    streamablehttp_client(url=config.url, headers=headers)
+                    streamablehttp_client(
+                        url=config.url, headers=headers,
+                        sse_read_timeout=_transport_read_timeout(config),
+                    )
                 )
             elif config.transport == MCPTransportType.SSE:
                 if not config.url:
                     raise ValueError("URL required for SSE transport")
                 transport = await stack.enter_async_context(
-                    sse_client(url=config.url, headers=headers)
+                    sse_client(
+                        url=config.url, headers=headers,
+                        sse_read_timeout=_transport_read_timeout(config),
+                    )
                 )
             else:
                 raise ValueError(

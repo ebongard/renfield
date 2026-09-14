@@ -127,26 +127,25 @@ async def process_slow_split(document_id: int, user_id: int | None) -> str:
     verdict = None
     if signals:
         garbage_before = sum(1 for s in signals if not s.quality_ok)
-        signals, filled = await vlm_fill_signals(file_path, signals)
+        signals, resolved = await vlm_fill_signals(file_path, signals)
         garbage_left = sum(1 for s in signals if not s.quality_ok)
         logger.info(
-            f"pdf-split[slow]: doc {document_id} — VLM resolved {filled} "
+            f"pdf-split[slow]: doc {document_id} — VLM resolved {resolved} "
             f"page(s), {garbage_left} still unreadable"
         )
-        if garbage_before > 0 and filled == 0:
+        if garbage_before > 0 and resolved == 0:
             # A wholesale VLM outage is indistinguishable per page from
             # 'unreadable' (extract_text_from_image swallows transport errors
             # into None). Zero resolved pages across ALL garbage pages is the
-            # outage signature (a confirmed-blank page counts as resolved, so
-            # blank duplex backs no longer fake one) — deciding boundaries over
-            # pure placeholders
-            # would permanently ingest a multi-doc scan as ONE document, so
-            # retry instead (the worker's transient cap bounds this and its
-            # fail-safe is the single hand-back anyway).
+            # outage signature. A confirmed-blank page counts as resolved, so
+            # blank duplex backs no longer fake one. Deciding boundaries over
+            # pure placeholders would permanently ingest a multi-doc scan as
+            # ONE document, so retry instead (the worker's transient cap bounds
+            # this and its fail-safe is the single hand-back anyway).
             from services.pdf_split_errors import SplitTransientError
 
             raise SplitTransientError(
-                f"VLM transcribed 0 of {garbage_before} unreadable pages for "
+                f"VLM resolved 0 of {garbage_before} unreadable pages for "
                 f"doc {document_id} — vision host down or model missing"
             )
         verdict = await detect_boundaries(signals)

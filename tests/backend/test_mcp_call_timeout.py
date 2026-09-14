@@ -30,6 +30,26 @@ def test_numeric_and_string_values_parse():
 
     assert _parse_call_timeout(600) == 600.0
     assert _parse_call_timeout("120") == 120.0
+    assert _parse_call_timeout("2.5") == 2.5
+
+
+def test_range_bounds_are_inclusive():
+    from services.mcp_client import _parse_call_timeout
+
+    assert _parse_call_timeout(1) == 1.0
+    assert _parse_call_timeout(3600) == 3600.0
+
+
+def test_transport_read_timeout_outlasts_the_call():
+    """The SDK HTTP transports default to a 300s read timeout. A longer call
+    would die at the transport as an opaque error, so the transport must always
+    outlast the call — and never drop below the SDK default."""
+    from services.mcp_client import MCPServerConfig, _transport_read_timeout
+
+    assert _transport_read_timeout(MCPServerConfig(name="s")) == 300.0
+    assert _transport_read_timeout(MCPServerConfig(name="s", call_timeout=60.0)) == 300.0
+    long_call = MCPServerConfig(name="s", call_timeout=600.0)
+    assert _transport_read_timeout(long_call) > 600.0
 
 
 def test_env_substitution_default_applies(monkeypatch):
@@ -50,6 +70,57 @@ def test_server_override_wins_over_global(monkeypatch):
     assert _server_call_timeout(SimpleNamespace(config=SimpleNamespace(call_timeout=600.0))) == 600.0
     assert _server_call_timeout(SimpleNamespace(config=SimpleNamespace(call_timeout=None))) == 30.0
     assert _server_call_timeout(None) == 30.0
+
+
+def _slow_manager(server_call_timeout):
+    import asyncio
+    from unittest.mock import AsyncMock
+
+    from services.mcp_client import MCPManager, MCPServerConfig, MCPServerState, MCPToolInfo
+
+    manager = MCPManager()
+    manager._tool_index["mcp.srv.slow"] = MCPToolInfo("srv", "slow", "mcp.srv.slow", "Slow tool")
+
+    async def slow_call(*args, **kwargs):
+        await asyncio.sleep(0.2)
+
+    session = AsyncMock()
+    session.call_tool = slow_call
+    manager._servers["srv"] = MCPServerState(
+        config=MCPServerConfig(name="srv", call_timeout=server_call_timeout),
+        connected=True,
+        session=session,
+    )
+    return manager
+
+
+@pytest.mark.asyncio
+async def test_execute_tool_applies_the_server_override():
+    """The wiring, not just the helper: a short server override must cut a call
+    the (long) global timeout would have let run."""
+    from unittest.mock import patch
+
+    manager = _slow_manager(server_call_timeout=0.01)
+    with patch("services.mcp_client.settings") as mock_settings:
+        mock_settings.mcp_call_timeout = 30.0
+        result = await manager.execute_tool("mcp.srv.slow", {})
+
+    assert result["success"] is False
+    assert "Timeout" in result["message"]
+
+
+@pytest.mark.asyncio
+async def test_per_call_timeout_still_wins_over_the_server_override():
+    """Precedence: per-call > server > global. A deliberately-blocking poll tool
+    passing its own call_timeout must not be cut by a shorter server override."""
+    from unittest.mock import patch
+
+    manager = _slow_manager(server_call_timeout=0.01)
+    with patch("services.mcp_client.settings") as mock_settings:
+        mock_settings.mcp_call_timeout = 0.01
+        result = await manager.execute_tool("mcp.srv.slow", {}, call_timeout=5.0)
+
+    assert "Timeout" not in (result.get("message") or "")
 
 
 def test_scanner_stanza_carries_a_long_timeout(monkeypatch):
