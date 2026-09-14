@@ -349,6 +349,28 @@ kubectl -n renfield rollout status deploy/voice-server --timeout=600s
 > state first: `kubectl -n renfield get deploy -o
 > custom-columns=D:.metadata.name,IMG:.spec.template.spec.containers[0].image`.
 
+> **Manifests vs live — who owns what (reconciled 2026-09-14).** Images are owned by
+> `set image` (the deploy script); everything else in a workload (args, env, envFrom,
+> volumes, probes, init scripts, DB host) is owned by the manifest. So:
+> - **Household (`renfield/k8s/`, public):** images stay the `your-registry.example/...:latest`
+>   placeholder — never commit a real registry or a live tag here. **Never `kubectl apply -f`
+>   a placeholder manifest raw** (the pod gets `ImagePullBackOff`, and a `:latest` apply would
+>   also move a pinned deploy): render it first —
+>   `bin/k8s-drift-check.sh --render k8s/<file>.yaml | kubectl -n renfield apply -f -`
+>   (substitutes the registry + the tag the live Deployment runs now).
+> - **xidra (`x-ren/k8s/`, private):** concrete tags. **Every xidra `set image` is followed by a
+>   commit that bumps the same tag in x-ren** (backend, document-worker, meeting-worker,
+>   pdf-split-worker, frontend; MCP images when rolled).
+> - **A live change that is not in git is a bug.** `kubectl patch` / `set env` for a fix means
+>   the same change goes into the manifest in the same session. Note: `kubectl set env` without
+>   `-c <container>` also writes the variable into the init container.
+> - **Drift check (read-only):** `bin/k8s-drift-check.sh` (household) /
+>   `bin/k8s-drift-check.sh -n renfield-xidra --dir ../x-ren/k8s` (xidra) runs `kubectl diff` over
+>   every workload manifest; the deploy script runs it warn-only after the rollout
+>   (`RENFIELD_MANIFESTS_DIR` for non-household namespaces). Run it before ANY `kubectl apply`.
+>   Blind spot: fields that exist only live (added by patch, absent from the manifest) survive
+>   an apply and do not show up in the diff.
+
 > **Image-pull timing.** First pull of a 3.5 GB backend image takes 2-5 minutes per node.
 > Subsequent rollouts on the same node hit the local cache and start in seconds.
 > The pod sits in `PodInitializing` while the image transfers — that's not a stall.
