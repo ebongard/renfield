@@ -375,6 +375,9 @@ data:
   EMAIL_INGEST_ENABLED: "true"
   FILES_MCP_ENABLED: "true"
   FOLDER_INGEST_ENABLED: "true"
+  # Ingest client allowed to report scan-job outcomes (/api/scanner/job-event):
+  # the scanner's own folder-ingest credential. Fail-closed when empty.
+  SCANNER_INGEST_CLIENT_IDS: "scanner"
   # #881: rename the processed/ file to the generated title (best-effort, needs
   # filesystem-MCP >= v0.1.8 rename_processed tool).
   FOLDER_INGEST_RENAME_PROCESSED_ENABLED: "true"
