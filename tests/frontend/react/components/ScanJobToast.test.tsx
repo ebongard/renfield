@@ -8,19 +8,53 @@ import { act, fireEvent, render, screen } from '@testing-library/react';
 
 import ScanJobToast from '../../../../src/frontend/src/components/ScanJobToast';
 import { SCAN_JOB_FINISHED_EVENT } from '../../../../src/frontend/src/hooks/useUserEvents';
+import {
+  rememberTabConversation,
+  resetTabConversationsForTests,
+} from '../../../../src/frontend/src/utils/tabConversations';
 
 vi.mock('react-i18next', () => ({
   useTranslation: () => ({ t: (key: string) => key }),
 }));
 
-function announce(reason?: string): void {
+function announce(reason?: string, sessionId?: string): void {
   act(() => {
-    window.dispatchEvent(new CustomEvent(SCAN_JOB_FINISHED_EVENT, { detail: { reason } }));
+    window.dispatchEvent(
+      new CustomEvent(SCAN_JOB_FINISHED_EVENT, {
+        detail: { reason, ...(sessionId ? { sessionId } : {}) },
+      }),
+    );
   });
 }
 
 afterEach(() => {
   vi.useRealTimers();
+  window.sessionStorage.clear();
+  resetTabConversationsForTests();
+});
+
+describe('ScanJobToast — only in the tab that asked', () => {
+  it('shows in the tab that wrote into the scan’s conversation', () => {
+    rememberTabConversation('session-mine');
+    render(<ScanJobToast />);
+    announce('done', 'session-mine');
+    expect(screen.getByRole('status')).toHaveTextContent('notifications.scanJob.done');
+  });
+
+  it('stays quiet in every other tab (auth-off: all tabs get the event)', () => {
+    rememberTabConversation('session-mine');
+    render(<ScanJobToast />);
+    announce('done', 'session-of-another-tab');
+    expect(screen.queryByRole('status')).toBeNull();
+  });
+
+  it('survives a reload of the same tab (per-tab session storage)', () => {
+    rememberTabConversation('session-mine');
+    resetTabConversationsForTests(); // the in-memory copy is gone, storage is not
+    render(<ScanJobToast />);
+    announce('failed', 'session-mine');
+    expect(screen.getByRole('status')).toHaveTextContent('notifications.scanJob.failed');
+  });
 });
 
 describe('ScanJobToast', () => {

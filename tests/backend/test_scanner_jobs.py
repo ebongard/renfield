@@ -27,12 +27,14 @@ SCANNER_CLIENT = SimpleNamespace(client_id="scanner-hh", label="Scanner", route=
 class FakeRedis:
     def __init__(self):
         self.store: dict[str, str] = {}
+        self.ttl: dict[str, int | None] = {}
         self.published: list[tuple[str, str]] = []
 
     async def set(self, key, value, ex=None, nx=False):
         if nx and key in self.store:
             return None
         self.store[key] = value
+        self.ttl[key] = ex
         return True
 
     async def get(self, key):
@@ -114,7 +116,11 @@ def _event(status="done", **result):
 def conversation():
     service = MagicMock()
     service.save_message = AsyncMock(return_value=MagicMock(id=1))
-    with patch("services.conversation_service.ConversationService", return_value=service):
+    # The durable message check is exercised against a real DB below; here it
+    # reports "not written yet" unless a test says otherwise.
+    service.already_written = AsyncMock(return_value=False)
+    with patch("services.conversation_service.ConversationService", return_value=service), \
+         patch.object(sj, "_outcome_already_in_conversation", service.already_written):
         yield service
 
 
@@ -141,7 +147,8 @@ async def test_event_lands_in_the_requesting_conversation(conversation, monkeypa
     assert kwargs["role"] == "assistant" and kwargs["enforce_ownership"] is True
     assert "613" in kwargs["content"] and "Paperless" in kwargs["content"]
     channel, payload = redis.published[0]
-    assert json.loads(payload) == {"target": 7, "type": "scan_job_finished", "reason": "done"}
+    assert json.loads(payload) == {"target": 7, "type": "scan_job_finished", "reason": "done",
+                                   "session_id": "session-1"}
 
 
 async def test_title_comes_from_the_request_not_the_event(conversation, monkeypatch):
@@ -232,6 +239,74 @@ async def test_ownership_refusal_is_final_not_retried(conversation):
     assert redis.published == []
 
 
+async def test_a_pod_crash_between_claim_and_write_is_delivered_by_the_retry(conversation):
+    """Review finding: the claim used to BE the delivered marker, so a pod that died
+    after claiming and before writing turned every retry into a silent duplicate."""
+    redis = FakeRedis()
+    await sj.remember_scan_requester(
+        _tool_result({"ok": True, "job_id": JOB_ID}), user_id=7, session_id="s", redis=redis
+    )
+    redis.store[f"renfield:scanner:job:{JOB_ID}:claim"] = "1"  # left by the dead pod
+
+    assert await sj.handle_job_event(MagicMock(), _event(), redis=redis) == "in_progress"
+    conversation.save_message.assert_not_called()
+
+    del redis.store[f"renfield:scanner:job:{JOB_ID}:claim"]  # the lease lapsed
+    assert await sj.handle_job_event(MagicMock(), _event(), redis=redis) == "delivered"
+    assert conversation.save_message.await_count == 1
+
+
+async def test_the_claim_is_a_short_lease_and_the_marker_lasts_a_day(conversation):
+    redis = FakeRedis()
+    await sj.remember_scan_requester(
+        _tool_result({"ok": True, "job_id": JOB_ID}), user_id=7, session_id="s", redis=redis
+    )
+    await sj.handle_job_event(MagicMock(), _event(), redis=redis)
+
+    key = f"renfield:scanner:job:{JOB_ID}"
+    assert redis.ttl[f"{key}:claim"] == sj._CLAIM_TTL_SECONDS < 5 * 60
+    assert f"{key}:claim" not in redis.store, "the claim must be released after the write"
+    assert redis.store[f"{key}:reported"] == "delivered"
+    assert redis.ttl[f"{key}:reported"] == 24 * 3600
+
+
+async def test_an_outcome_already_in_the_conversation_is_not_written_again(conversation):
+    """A crash after the commit but before the marker, or a lost marker: the
+    message itself is the record, and the retry finds it."""
+    redis = FakeRedis()
+    await sj.remember_scan_requester(
+        _tool_result({"ok": True, "job_id": JOB_ID}), user_id=7, session_id="s", redis=redis
+    )
+    conversation.already_written.return_value = True
+    db = MagicMock()
+    db.rollback = AsyncMock()
+
+    assert await sj.handle_job_event(db, _event(), redis=redis) == "duplicate"
+
+    conversation.save_message.assert_not_called()
+    db.rollback.assert_awaited_once()  # the row lock is released
+    assert redis.published == [], "a found message must not re-announce"
+    assert redis.store[f"renfield:scanner:job:{JOB_ID}:reported"] == "delivered"
+
+
+async def test_a_lost_marker_write_still_delivers_and_notifies(conversation):
+    redis = FakeRedis()
+    await sj.remember_scan_requester(
+        _tool_result({"ok": True, "job_id": JOB_ID}), user_id=7, session_id="s", redis=redis
+    )
+    original_set = redis.set
+
+    async def set_failing_marker(key, value, ex=None, nx=False):
+        if key.endswith(":reported"):
+            raise ConnectionError("redis blip")
+        return await original_set(key, value, ex=ex, nx=nx)
+
+    redis.set = set_failing_marker
+
+    assert await sj.handle_job_event(MagicMock(), _event(), redis=redis) == "delivered"
+    assert len(redis.published) == 1
+
+
 async def test_unreadable_requester_record_is_ignored(conversation):
     redis = FakeRedis()
     redis.store[f"renfield:scanner:job:{JOB_ID}"] = "not json"
@@ -247,6 +322,105 @@ async def test_auth_off_pushes_to_the_household_bucket(conversation, monkeypatch
     )
     await sj.handle_job_event(MagicMock(), _event(), redis=redis)
     assert json.loads(redis.published[0][1])["target"] is None
+
+
+# --- delivery against a real database -------------------------------------------
+
+async def _seed_conversation(session_maker, session_id="s"):
+    from models.database import Conversation
+
+    async with session_maker() as db:
+        db.add(Conversation(session_id=session_id))
+        await db.commit()
+
+
+async def _scanner_messages(session_maker, session_id="s"):
+    from sqlalchemy import select
+
+    from models.database import Conversation, Message
+
+    async with session_maker() as db:
+        rows = await db.execute(
+            select(Message).join(Conversation, Message.conversation_id == Conversation.id)
+            .where(Conversation.session_id == session_id)
+        )
+        return [m for m in rows.scalars() if (m.message_metadata or {}).get("scanner_job")]
+
+
+@pytest.fixture
+def session_maker(async_engine):
+    from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+
+    return async_sessionmaker(async_engine, class_=AsyncSession, expire_on_commit=False)
+
+
+async def test_outcome_check_matches_only_this_jobs_message(session_maker):
+    from services.conversation_service import ConversationService
+
+    await _seed_conversation(session_maker)
+    async with session_maker() as db:
+        await ConversationService(db).save_message(
+            session_id="s", role="assistant", content="x",
+            metadata={"scanner_job": {"job_id": JOB_ID, "status": "done"}},
+        )
+    async with session_maker() as db:
+        assert await sj._outcome_already_in_conversation(db, "s", JOB_ID) is True
+        assert await sj._outcome_already_in_conversation(db, "s", "cd" * 16) is False
+        assert await sj._outcome_already_in_conversation(db, "other", JOB_ID) is False
+
+
+async def test_crash_after_commit_before_marker_writes_the_message_once(session_maker, monkeypatch):
+    monkeypatch.setattr(sj.settings, "ws_auth_enabled", False)
+    await _seed_conversation(session_maker)
+    redis = FakeRedis()
+    await sj.remember_scan_requester(
+        _tool_result({"ok": True, "job_id": JOB_ID}), user_id=None, session_id="s", redis=redis
+    )
+    async with session_maker() as db:
+        assert await sj.handle_job_event(db, _event(), redis=redis) == "delivered"
+    # The pod died before the marker reached Redis: only the message survived.
+    del redis.store[f"renfield:scanner:job:{JOB_ID}:reported"]
+
+    async with session_maker() as db:
+        assert await sj.handle_job_event(db, _event(), redis=redis) == "duplicate"
+    assert len(await _scanner_messages(session_maker)) == 1
+
+
+@pytest.mark.postgres
+async def test_overlapping_deliveries_write_one_message_on_postgres(pg_async_engine, monkeypatch):
+    """The claim lapsed while a slow write still ran, so two deliveries overlap.
+    The conversation row lock makes check-and-insert atomic: the second waits for
+    the first commit, then finds its message."""
+    import asyncio
+
+    from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+
+    from services.conversation_service import ConversationService
+
+    monkeypatch.setattr(sj.settings, "ws_auth_enabled", False)
+    maker = async_sessionmaker(pg_async_engine, class_=AsyncSession, expire_on_commit=False)
+    await _seed_conversation(maker)
+    real_save = ConversationService.save_message
+
+    async def slow_save(self, *args, **kwargs):
+        await asyncio.sleep(0.3)  # holds the row lock; the other delivery arrives now
+        return await real_save(self, *args, **kwargs)
+
+    monkeypatch.setattr(ConversationService, "save_message", slow_save)
+
+    async def deliver(delay):
+        await asyncio.sleep(delay)
+        redis = FakeRedis()  # a separate claim each: the lease overlap being tested
+        await sj.remember_scan_requester(
+            _tool_result({"ok": True, "job_id": JOB_ID}), user_id=None, session_id="s", redis=redis
+        )
+        async with maker() as db:
+            return await sj.handle_job_event(db, _event(), redis=redis)
+
+    outcomes = await asyncio.gather(deliver(0), deliver(0.05))
+
+    assert sorted(outcomes) == ["delivered", "duplicate"]
+    assert len(await _scanner_messages(maker)) == 1
 
 
 # --- the message ---------------------------------------------------------------
@@ -358,6 +532,16 @@ async def test_route_answers_an_unknown_job_retryably(client):
     exists."""
     with patch("api.routes.scanner_jobs.resolve_folder_ingest_client", AsyncMock(return_value=SCANNER_CLIENT)), \
          patch("api.routes.scanner_jobs.handle_job_event", AsyncMock(return_value="unknown_job")):
+        resp = await client.post("/api/scanner/job-event", json=_body(),
+                                 headers={"Authorization": "Bearer ok"})
+    assert resp.status_code == 409
+
+
+async def test_route_answers_a_delivery_in_progress_retryably(client):
+    """A claim held by a crashed pod must not end in a 2xx — the retry after it
+    lapses is what delivers the outcome."""
+    with patch("api.routes.scanner_jobs.resolve_folder_ingest_client", AsyncMock(return_value=SCANNER_CLIENT)), \
+         patch("api.routes.scanner_jobs.handle_job_event", AsyncMock(return_value="in_progress")):
         resp = await client.post("/api/scanner/job-event", json=_body(),
                                  headers={"Authorization": "Bearer ok"})
     assert resp.status_code == 409
