@@ -337,8 +337,44 @@ The shape now:
   and shows a small notice. Personal proactive notifications were rejected as the
   channel — they only toast when the person is BLE-present.
 - **Messages never claim more than is known**: `unrouted` says nothing was filed,
-  `interrupted` says not to assume anything was filed, `done` separates the
-  Renfield document id from the later, separate Paperless filing.
+  `interrupted` says not to assume anything was filed, `done` names the target
+  instance the document id belongs to and separates it from the later, separate
+  Paperless filing.
+
+Hardening from the pre-merge review (2026-09-14):
+
+- **Only the scanner may report.** The route accepts only the ingest client ids in
+  `SCANNER_INGEST_CLIENT_IDS` (fail-closed) — any other folder-ingest credential
+  plus a known job id could otherwise write into a conversation. Rate-limited like
+  the ingest routes; 404 (final) while folder ingest is off.
+- **No free text from the event reaches the chat.** The message is built from
+  fixed, localised templates: the title comes from the requester's own tool call,
+  a failure from its `error_code` (`no_pages`, `device_unavailable`, `scan_error`,
+  `scanner_fault`, `unknown_target`, `missing_token`, `ingest_rejected`,
+  `push_pending`, `crashed`). Conversation history is re-read by later agent
+  turns, so event text would be a prompt-injection channel.
+- **An unknown job is 409, not 2xx.** A scan that fails instantly can report back
+  before the requester is recorded; 409 makes the scanner retry until it is, and
+  an event sent to the wrong instance ends as a loud give-up.
+- **Retries run for 24 h**, matching the requester record, not a fixed count
+  (12 attempts gave up after ~28 min, shorter than an ordinary outage).
+- **Voice requests are answered by voice.** The satellite's room is recorded with
+  the requester (`utils/voice_context.origin_room_id`); on completion a short,
+  content-free sentence is spoken there via the `announce_in_room` hook
+  (`ha_glue/services/announce_hooks.py`, public, no title).
+- **Ordering.** `save_message` locks the conversation row (`FOR UPDATE`), so an
+  outcome arriving during a chat turn cannot fork the conversation onto a hidden
+  branch.
+- **Caller isolation on the scanner.** `scan_job_status` and the `busy` reply only
+  reveal a job to the caller that started it (three instances share one scanner).
+- `route_scan` / `retry_pending_scans` still work inside the tool call and keep a
+  600 s per-tool `call_timeout`.
+
+**Deploy order.** Backend + ConfigMap and scanner together: a new scanner against
+an old backend gets 404 (final) on the event route; an old scanner against the new
+ConfigMap loses nothing but still runs synchronously. Set
+`SCANNER_INGEST_CLIENT_IDS` (backend) and `SCANNER_CALLER_TARGET_<CALLER>`
+(scanner host) before the first scan.
 
 ## macOS host specifics
 
@@ -368,7 +404,8 @@ FileVault on, not a laptop. That materially de-risks the choice.
 |---|---|---|
 | `SCANNER_MCP_URL` | `http://<scanner-host>:9093/mcp` | Per-instance client URL |
 | `SCANNER_CALLER_TARGET_<CALLER>` | *(unset)* | Scanner side: which target a caller (per-caller token) IS — the return path for job completion events. Unmapped caller → the scan runs, nobody is told |
-| `SCANNER_JOB_EVENT_MAX_ATTEMPTS` | `12` | Scanner side: delivery attempts per completion event (capped exponential backoff) |
+| `SCANNER_JOB_EVENT_RETRY_HOURS` | `24` | Scanner side: how long one completion event is retried (capped exponential backoff) — matches Renfield's 24 h requester record; given-up events are re-sent on the next restart |
+| `SCANNER_INGEST_CLIENT_IDS` | *(empty = refuse all)* | Renfield side: ingest client id(s) allowed to post `/api/scanner/job-event` — the scanner's own folder-ingest credential. Fail-closed |
 | `SCANNER_TARGETS` | *(required, 1..n)* | The target registry — see below |
 | `SCANNER_INGEST_ENABLED` | `false` | Per-instance flag (dark) |
 | `scanner_route_auto_threshold` | `0.85` | Below → review floor |

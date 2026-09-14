@@ -87,6 +87,7 @@ def register() -> None:
             ha_deliver_notification,
             ha_get_connected_device_summary,
         )
+        from ha_glue.services.announce_hooks import ha_announce_in_room
         register_hook("intent_fallback_resolve", ha_intent_fallback)
         register_hook("build_entity_context", ha_build_entity_context)
         register_hook("validate_classified_intent", ha_validate_classified_intent)
@@ -99,6 +100,7 @@ def register() -> None:
         register_hook("fetch_tts_audio_cache", ha_fetch_tts_audio_cache)
         register_hook("get_connected_device_summary", ha_get_connected_device_summary)
         register_hook("deliver_notification", ha_deliver_notification)
+        register_hook("announce_in_room", ha_announce_in_room)
         # NOTE: the four "read-only smart-home overview" surfaces (status / sensors /
         # active_devices / devices_per_room) used to register as dispatch_sub_intent
         # hooks here — router short-circuits that answered BEFORE the LLM and misfired
@@ -112,7 +114,7 @@ def register() -> None:
         register_hook("shutdown_finalize", ha_glue_on_shutdown_finalize)
         register_hook("register_routes", ha_glue_register_routes)
         logger.info(
-            "ha_glue.bootstrap: registered 18 handlers across 18 events"
+            "ha_glue.bootstrap: registered 19 handlers across 19 events"
         )
     except Exception:  # noqa: BLE001 — startup must never break on plugin error
         logger.opt(exception=True).warning(

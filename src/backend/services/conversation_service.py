@@ -449,9 +449,16 @@ class ConversationService:
                 content = result.get("content", content)
                 metadata = result.get("metadata", metadata)
 
-            # Finde oder erstelle Conversation
+            # Finde oder erstelle Conversation. FOR UPDATE: the append below reads
+            # active_leaf_message_id and writes a new leaf. Two writers into one
+            # conversation (a chat turn + a background scan's outcome) otherwise
+            # both chain onto the SAME parent — one message then sits on a branch
+            # the active path never shows. The lock serializes them until commit.
+            # (A no-op on SQLite, which has no row locks.)
             result = await self.db.execute(
-                select(Conversation).where(Conversation.session_id == session_id)
+                select(Conversation)
+                .where(Conversation.session_id == session_id)
+                .with_for_update()
             )
             conversation = result.scalar_one_or_none()
 

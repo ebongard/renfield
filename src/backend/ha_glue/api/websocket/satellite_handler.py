@@ -755,6 +755,13 @@ async def satellite_websocket(
                         except Exception as e:
                             logger.warning(f"⚠️ Voice presence update failed: {e}")
 
+                    # Which room this voice turn came from — lets work that finishes
+                    # later (a scan) speak its outcome back here. Reset after the
+                    # loop so it never leaks into the next turn on this socket.
+                    from utils.voice_context import origin_room_id
+                    _origin_room_token = origin_room_id.set(
+                        satellite.room_id if satellite else None
+                    )
                     for intent_candidate in ranked_intents:
                         intent_name = intent_candidate.get("intent", "general.conversation")
                         logger.info(f"🎯 Satellite versucht Intent: {intent_name} (confidence: {intent_candidate.get('confidence', 0):.2f})")
@@ -763,7 +770,12 @@ async def satellite_websocket(
                             intent = intent_candidate
                             break
 
-                        executor = ActionExecutor(mcp_manager=mcp_mgr)
+                        # The satellite's conversation session lets session-scoped
+                        # tools reach it later — a scan started by voice reports its
+                        # outcome into this conversation.
+                        executor = ActionExecutor(
+                            mcp_manager=mcp_mgr, session_id=satellite_db_session_id
+                        )
                         candidate_result = await executor.execute(
                             intent_candidate, user_permissions=sat_user_permissions,
                             user_id=sat_user_id,
@@ -779,6 +791,7 @@ async def satellite_websocket(
                             break
 
                         logger.info(f"⏭️ Intent {intent_name} leer, versuche nächsten...")
+                    origin_room_id.reset(_origin_room_token)
 
                     # Fallback to conversation if no intent worked
                     if intent is None:

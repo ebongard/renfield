@@ -48,3 +48,10 @@ from contextvars import ContextVar
 voice_originated: ContextVar[bool] = ContextVar(
     "voice_originated", default=False,
 )
+
+# The room a voice turn came from (a satellite's room), or None. Lets work that
+# finishes LATER speak its outcome back where it was asked for — e.g. a scan
+# started by voice announces "scan finished" in that room.
+origin_room_id: ContextVar[int | None] = ContextVar(
+    "origin_room_id", default=None,
+)

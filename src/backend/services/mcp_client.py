@@ -907,11 +907,23 @@ class MCPServerState:
     # (which would race exit_stack teardown against re-entry).
     reconnect_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     last_successful_call: float = 0.0  # monotonic timestamp; 0 = never
-    # Tool calls currently running on this session. While > 0 the background
-    # refresh and the self-heal probe leave the session alone: a server busy
-    # answering a long call can be slow to answer list_tools, and treating that
-    # as death used to tear the running call down (review 2026-09-14).
-    inflight_calls: int = 0
+    # Deadline (monotonic start + that call's own timeout) of every tool call
+    # running on this session. While one is still WITHIN its deadline, the
+    # background refresh and the self-heal probe leave the session alone: a server
+    # busy answering a long call can be slow to answer list_tools, and treating
+    # that as death used to tear the running call down (review 2026-09-14). A call
+    # past its deadline shields nothing — otherwise steady traffic of hung calls
+    # would keep a dead server looking busy, and never healed, indefinitely.
+    inflight_deadlines: list = field(default_factory=list)
+
+    @property
+    def inflight_calls(self) -> int:
+        return len(self.inflight_deadlines)
+
+    def shielded_by_inflight_call(self, now: float | None = None) -> bool:
+        """True while at least one running call is still inside its timeout."""
+        now = time.monotonic() if now is None else now
+        return any(deadline > now for deadline in self.inflight_deadlines)
     # Functional-health signal (Phase 2): rolling window of recent tool-call
     # outcomes that are HEALTH-CORRELATED — True on a clean result, False on a
     # timeout (server/upstream didn't respond). Deliberately NOT recorded:
@@ -1624,11 +1636,11 @@ class MCPManager:
         state = self._servers.get(server_name)
         if state is None:
             return {"ok": False, "latency_ms": None, "detail": "unknown server"}
-        if state.inflight_calls:
-            # The session is answering a call right now, which is itself proof of
-            # life — and a probe failure here would reconnect it underneath that
-            # call. Report it alive without touching it.
-            return {"ok": True, "latency_ms": None, "detail": "busy: call in flight"}
+        if state.shielded_by_inflight_call():
+            # A call is running inside its timeout, and a probe failure here would
+            # reconnect the session underneath it. Leave it alone — but report
+            # "skipped", not healthy: a running call is no proof the server works.
+            return {"ok": None, "latency_ms": None, "detail": "skipped: call in flight"}
 
         async def _probe_once() -> tuple[bool, float | None, str | None]:
             if state.session is None:
@@ -2159,7 +2171,8 @@ class MCPManager:
         async def _do_call() -> Any:
             # Counted in flight so refresh_tools / probe_server do not reconnect
             # this session underneath the call; released on every exit path.
-            state.inflight_calls += 1
+            deadline = time.monotonic() + effective_timeout
+            state.inflight_deadlines.append(deadline)
             try:
                 if per_user_headers:
                     return await asyncio.wait_for(
@@ -2173,7 +2186,7 @@ class MCPManager:
                     timeout=effective_timeout,
                 )
             finally:
-                state.inflight_calls -= 1
+                state.inflight_deadlines.remove(deadline)
 
         # Try once; on a session-death signal (transport exception OR the
         # streamable_http "Session terminated" McpError after a server bounce —
@@ -2876,8 +2889,8 @@ class MCPManager:
             # refactors don't accidentally include them.
             if state.config.transport == MCPTransportType.FEDERATION:
                 continue
-            if state.inflight_calls:
-                # A call is running on this session. A server busy answering it
+            if state.shielded_by_inflight_call():
+                # A call is running on this session, still inside its timeout. A server busy answering it
                 # may be slow to answer list_tools too; reading that as a dead
                 # session would disconnect it and tear the call down. The next
                 # tick checks it again.

@@ -55,11 +55,11 @@ def test_transport_read_timeout_outlasts_the_call():
 def test_env_substitution_default_applies(monkeypatch):
     from services.mcp_client import _parse_call_timeout
 
-    monkeypatch.delenv("SCANNER_MCP_CALL_TIMEOUT", raising=False)
-    assert _parse_call_timeout("${SCANNER_MCP_CALL_TIMEOUT:-600}") == 600.0
+    monkeypatch.delenv("EXAMPLE_MCP_CALL_TIMEOUT", raising=False)
+    assert _parse_call_timeout("${EXAMPLE_MCP_CALL_TIMEOUT:-600}") == 600.0
 
-    monkeypatch.setenv("SCANNER_MCP_CALL_TIMEOUT", "900")
-    assert _parse_call_timeout("${SCANNER_MCP_CALL_TIMEOUT:-600}") == 900.0
+    monkeypatch.setenv("EXAMPLE_MCP_CALL_TIMEOUT", "900")
+    assert _parse_call_timeout("${EXAMPLE_MCP_CALL_TIMEOUT:-600}") == 900.0
 
 
 def test_server_override_wins_over_global(monkeypatch):
@@ -154,16 +154,25 @@ async def test_per_call_timeout_still_wins_over_the_server_override():
     assert "Timeout" not in (result.get("message") or "")
 
 
-def test_scanner_stanza_needs_no_long_timeout():
-    """Under the scan-job model `scan_document` only STARTS a scan and returns at
-    once; the outcome arrives as POST /api/scanner/job-event. A long override here
-    would be the old shape creeping back — a tool call holding a chat turn for the
-    length of a paper stack, where a refresh can tear it down mid-scan."""
+def test_scanner_timeouts_follow_which_tools_still_work_inside_the_call():
+    """`scan_document` only starts a job — a long timeout there would be the old
+    shape creeping back. `route_scan` and `retry_pending_scans` still OCR and push
+    inside the call and must not fall back to 30s (review finding: they would
+    report FAILED for documents that were filed)."""
     from pathlib import Path
 
     import yaml
 
+    from services.mcp_client import _parse_call_timeout, _server_call_timeout
+    from utils.config import settings
+
     root = Path(__file__).resolve().parents[2]
     entries = yaml.safe_load((root / "config" / "mcp_servers.yaml").read_text())["servers"]
     scanner = next(e for e in entries if e["name"] == "scanner")
-    assert "call_timeout" not in scanner
+    state = SimpleNamespace(config=SimpleNamespace(
+        call_timeout=_parse_call_timeout(scanner.get("call_timeout"))))
+
+    assert _server_call_timeout(state, "scan_document") == settings.mcp_call_timeout
+    assert _server_call_timeout(state, "scanner_status") == settings.mcp_call_timeout
+    assert _server_call_timeout(state, "route_scan") >= 300
+    assert _server_call_timeout(state, "retry_pending_scans") >= 300

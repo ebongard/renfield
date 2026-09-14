@@ -946,6 +946,10 @@ class Settings(BaseSettings):
     # (D4) and the Paperless leg toggle are consumed in later tasks (T5/T6);
     # the push route (T3) uses enabled + kb_name + target_user.
     folder_ingest_enabled: bool = False
+    # Ingest client ids (comma-separated) allowed to post scan-job completion
+    # events to /api/scanner/job-event — the scanner's own folder-ingest
+    # credential(s), e.g. "rfi-scanner" or "legacy". Fail-closed: empty = none.
+    scanner_ingest_client_ids: str = ""
     folder_ingest_kb_name: str = "Eingang"  # target KB; auto-created on first push
     folder_ingest_target_user: str = ""  # owner username/id; empty → admin/first user
     folder_ingest_default_tier: int = Field(default=0, ge=0, le=4)  # circle tier at create

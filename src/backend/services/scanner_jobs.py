@@ -28,15 +28,16 @@ from loguru import logger
 from services.user_events import EVENT_SCAN_JOB_FINISHED, publish_user_event
 from utils.config import settings
 
-SCAN_DOCUMENT_INTENT = "mcp.scanner.scan_document"
 SCAN_JOB_EVENT_CONTRACT_VERSION = "1"
 
 _KEY = "renfield:scanner:job:{job_id}"
 # A scan finishes in minutes; a day covers a sleeping scanner host catching up on
 # its event retries after wake without keeping requester records around forever.
 _TTL_SECONDS = 24 * 3600
-_JOB_ID = re.compile(r"[0-9a-f]{32}")
-_ERROR_MAX_CHARS = 300
+# Mirrors renfield-mcp-scanner's job id format (uuid4 hex).
+JOB_ID_PATTERN = r"[0-9a-f]{32}"
+_JOB_ID = re.compile(JOB_ID_PATTERN)
+_TITLE_MAX_CHARS = 200
 
 TERMINAL_STATUSES = frozenset({"done", "unrouted", "failed", "interrupted"})
 
@@ -64,12 +65,16 @@ async def remember_scan_requester(
     *,
     user_id: int | None,
     session_id: str | None,
+    title: str = "",
+    room_id: int | None = None,
     redis: Any = None,
 ) -> bool:
     """Record who started a scan job. Best-effort: never breaks the tool result.
 
-    Without a session there is no conversation to report into (e.g. a turn that
-    carries no chat session), so nothing is recorded — the scan still runs."""
+    Everything the completion message later shows about the request comes from
+    HERE — the authenticated turn — not from the event: the title the requester
+    asked for, and the room a voice request came from. Without a session there is
+    no conversation to report into, so nothing is recorded; the scan still runs."""
     job_id = extract_job_id(result)
     if job_id is None or not session_id:
         return False
@@ -80,7 +85,8 @@ async def remember_scan_requester(
             redis = get_redis()
         await redis.set(
             _KEY.format(job_id=job_id),
-            json.dumps({"user_id": user_id, "session_id": session_id}),
+            json.dumps({"user_id": user_id, "session_id": session_id,
+                        "title": title[:_TITLE_MAX_CHARS], "room_id": room_id}),
             ex=_TTL_SECONDS,
         )
         return True
@@ -101,8 +107,28 @@ _TEXT = {
         "interrupted": "Der Scan{title} wurde unterbrochen, weil der Scanner-Dienst neu gestartet "
                        "ist. Bitte nicht davon ausgehen, dass etwas abgelegt wurde; wartende "
                        "Scans lassen sich auf dem Scanner prüfen.",
-        "doc": " (Renfield-Dokument {id})",
+        "doc": " (dort Dokument {id})",
         "unknown_error": "unbekannter Fehler",
+        "title": " „{title}“",
+        "errors": {
+            "unknown_target": "das angegebene Ziel ist nicht konfiguriert",
+            "device_unavailable": "der Scanner ist nicht erreichbar",
+            "scan_error": "beim Einzug ist ein Fehler aufgetreten",
+            "scanner_fault": "der Scanner hat mitten im Stapel einen Fehler gemeldet; die "
+                             "bisherigen Seiten liegen auf dem Scanner-Rechner",
+            "no_pages": "es wurden keine Seiten eingezogen – liegt Papier im Einzug?",
+            "missing_token": "für das Ziel fehlt die Zugangskonfiguration",
+            "ingest_rejected": "die Zielinstanz hat das Dokument abgelehnt",
+            "push_pending": "das Dokument konnte noch nicht übergeben werden und wartet "
+                            "auf dem Scanner-Rechner",
+            "crashed": "der Scan-Dienst ist abgestürzt",
+        },
+        "spoken": {
+            "done": "Der Scan ist fertig.",
+            "unrouted": "Der Scan ist fertig, das Ziel ist aber noch offen.",
+            "failed": "Der Scan ist fehlgeschlagen.",
+            "interrupted": "Der Scan wurde unterbrochen.",
+        },
     },
     "en": {
         "done_one": "The scan{title} is done: {pages} page(s) were handed to “{target}”{doc}. "
@@ -115,16 +141,41 @@ _TEXT = {
         "interrupted": "The scan{title} was interrupted because the scanner service restarted. "
                        "Do not assume anything was filed; waiting scans can be checked on the "
                        "scanner.",
-        "doc": " (Renfield document {id})",
+        "doc": " (document {id} there)",
         "unknown_error": "unknown error",
+        "title": " “{title}”",
+        "errors": {
+            "unknown_target": "the requested destination is not configured",
+            "device_unavailable": "the scanner is not reachable",
+            "scan_error": "feeding the paper failed",
+            "scanner_fault": "the scanner reported a fault mid-stack; the pages so far "
+                             "are kept on the scanner host",
+            "no_pages": "no pages were fed — is there paper in the feeder?",
+            "missing_token": "the destination's access configuration is missing",
+            "ingest_rejected": "the destination instance rejected the document",
+            "push_pending": "the document could not be handed over yet and is waiting "
+                            "on the scanner host",
+            "crashed": "the scan service crashed",
+        },
+        "spoken": {
+            "done": "The scan is done.",
+            "unrouted": "The scan is done, but its destination is still open.",
+            "failed": "The scan failed.",
+            "interrupted": "The scan was interrupted.",
+        },
     },
 }
 
 
 def render_completion_message(status: str, title: str, result: dict, lang: str) -> str:
-    """The assistant message for a finished job. Plain text, rendered escaped."""
+    """The assistant message for a finished job. Plain text, rendered escaped.
+
+    Built ONLY from fixed, localised templates: the title comes from the
+    requester's own tool call, a failure is described by its `error_code`, and
+    no free-form text from the event reaches the chat — it is re-injected into
+    later agent turns, so it must not be a prompt-injection channel."""
     text = _TEXT.get(lang) or _TEXT["en"]
-    title_part = f" „{title}“" if title and lang == "de" else (f" “{title}”" if title else "")
+    title_part = text["title"].format(title=title) if title else ""
     if status == "done":
         documents = result.get("documents")
         if isinstance(documents, list) and documents:
@@ -140,8 +191,28 @@ def render_completion_message(status: str, title: str, result: dict, lang: str) 
         return text["unrouted"].format(title=title_part)
     if status == "interrupted":
         return text["interrupted"].format(title=title_part)
-    error = str(result.get("error") or text["unknown_error"])[:_ERROR_MAX_CHARS]
+    error = text["errors"].get(str(result.get("error_code") or ""), text["unknown_error"])
     return text["failed"].format(title=title_part, error=error)
+
+
+async def _announce_in_origin_room(requester: dict, status: str) -> None:
+    """Speak a short, fixed outcome sentence in the room a voice request came
+    from. Best-effort: the message is already in the conversation; this is the
+    channel for someone standing at the scanner who never opens that chat.
+
+    Deliberately no title or document detail — it is spoken into a shared room."""
+    room_id = requester.get("room_id")
+    if not isinstance(room_id, int):
+        return
+    text = (_TEXT.get(settings.default_language) or _TEXT["en"])["spoken"].get(status)
+    if not text:
+        return
+    try:
+        from utils.hooks import run_hooks
+
+        await run_hooks("announce_in_room", room_id=room_id, text=text)
+    except Exception as exc:  # noqa: BLE001 - a failed announcement never fails delivery
+        logger.warning(f"scanner: outcome announcement in room {room_id} failed: {exc}")
 
 
 async def handle_job_event(db: Any, event: dict, *, redis: Any = None) -> str:
@@ -150,6 +221,7 @@ async def handle_job_event(db: Any, event: dict, *, redis: Any = None) -> str:
     - ``unknown_job``: not recorded here (other instance, expired, or forged) — ignored.
     - ``duplicate``: already delivered; the scanner is retrying a lost reply.
     - ``delivered``: appended to the requesting conversation and pushed live.
+    - ``refused``: the conversation belongs to another user — final, not retried.
     """
     job_id = event["job_id"]
     status = event["status"]
@@ -163,7 +235,12 @@ async def handle_job_event(db: Any, event: dict, *, redis: Any = None) -> str:
     if raw is None:
         logger.info(f"scanner: event for unknown job {job_id} ({status}) ignored")
         return "unknown_job"
-    requester = json.loads(raw)
+    try:
+        requester = json.loads(raw)
+        session_id = requester["session_id"]
+    except (ValueError, KeyError, TypeError):
+        logger.warning(f"scanner: unreadable requester record for job {job_id} — ignored")
+        return "unknown_job"
 
     # At-most-once into the chat: the scanner retries until it hears a 2xx, so a
     # reply lost after the write would otherwise append the message twice.
@@ -171,14 +248,17 @@ async def handle_job_event(db: Any, event: dict, *, redis: Any = None) -> str:
     if not await redis.set(reported_key, "1", nx=True, ex=_TTL_SECONDS):
         return "duplicate"
 
+    # The title is the requester's own (recorded at request time), never the
+    # event's — the event is only trusted for WHICH outcome happened.
     content = render_completion_message(
-        status, event.get("title") or "", event.get("result") or {}, settings.default_language
+        status, str(requester.get("title") or ""), event.get("result") or {},
+        settings.default_language,
     )
     try:
         from services.conversation_service import ConversationService
 
         message = await ConversationService(db).save_message(
-            session_id=requester["session_id"],
+            session_id=session_id,
             role="assistant",
             content=content,
             metadata={"scanner_job": {"job_id": job_id, "status": status}},
@@ -187,6 +267,12 @@ async def handle_job_event(db: Any, event: dict, *, redis: Any = None) -> str:
         )
         if message is None:
             raise RuntimeError("message was not saved")
+    except PermissionError:
+        # The conversation belongs to someone else. That never changes on a
+        # retry, so this is final: keep the claim and answer 2xx — a 5xx would
+        # make the scanner hammer a write that can never succeed.
+        logger.warning(f"scanner: job {job_id} refused — conversation owned by another user")
+        return "refused"
     except Exception:
         # Release the claim so the scanner's next retry can deliver it.
         await redis.delete(reported_key)
@@ -195,5 +281,6 @@ async def handle_job_event(db: Any, event: dict, *, redis: Any = None) -> str:
     # In auth-off mode the household's sockets live in the broadcast bucket.
     target = requester.get("user_id") if settings.ws_auth_enabled else None
     await publish_user_event(redis, target, EVENT_SCAN_JOB_FINISHED, reason=status)
+    await _announce_in_origin_room(requester, status)
     logger.info(f"scanner: job {job_id} ({status}) reported to its conversation")
     return "delivered"

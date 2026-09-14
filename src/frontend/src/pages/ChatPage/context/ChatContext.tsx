@@ -6,7 +6,7 @@ import { debug } from '../../../utils/debug';
 import { useWakeWord } from '../../../hooks/useWakeWord';
 import { WAKEWORD_CONFIG } from '../../../config/wakeword';
 import { useChatSessions } from '../../../hooks/useChatSessions';
-import { SCAN_JOB_FINISHED_EVENT } from '../../../hooks/useUserEvents';
+import { useReloadOnScanJobFinished } from '../../../hooks/useReloadOnScanJobFinished';
 import {
   useChatWebSocket,
   useAudioRecording,
@@ -1885,28 +1885,9 @@ export function ChatProvider({ children }: ChatProviderProps) {
   // Expose to handleStreamDone (declared earlier) via the forward-ref.
   reloadHistoryRef.current = reloadHistory;
 
-  // A background scan finished: its outcome was appended server-side to the
-  // conversation that requested it. Reload the open thread so it appears without a
-  // manual refresh — but never underneath a streaming turn, which a reload would
-  // clobber; a reload that arrives mid-turn runs as soon as the turn ends.
-  const pendingScanReloadRef = useRef(false);
-  useEffect(() => {
-    const onScanFinished = () => {
-      if (loading) {
-        pendingScanReloadRef.current = true;
-        return;
-      }
-      void reloadHistory();
-    };
-    window.addEventListener(SCAN_JOB_FINISHED_EVENT, onScanFinished);
-    return () => window.removeEventListener(SCAN_JOB_FINISHED_EVENT, onScanFinished);
-  }, [loading, reloadHistory]);
-  useEffect(() => {
-    if (!loading && pendingScanReloadRef.current) {
-      pendingScanReloadRef.current = false;
-      void reloadHistory();
-    }
-  }, [loading, reloadHistory]);
+  // A background scan finished: pull its outcome message into the open thread
+  // (deferred while a turn streams).
+  useReloadOnScanJobFinished(loading, reloadHistory);
 
   // Switch the active branch to the sibling identified by `messageId` (the ◂/▸
   // switcher). The backend repoints the active leaf to that sibling's subtree

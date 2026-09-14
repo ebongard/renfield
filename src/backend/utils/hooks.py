@@ -27,6 +27,11 @@ HOOK_EVENTS: frozenset[str] = frozenset({
     "register_tools",
     "execute_tool",
     "post_message",
+    # Speak a short text in one room (kwargs: room_id: int, text: str). Lets core
+    # code report back by voice without importing the HA/room layer — first user:
+    # a scan started by voice announces its outcome where it was asked for.
+    # Handlers must apply their own privacy rules; callers pass public text only.
+    "announce_in_room",
     # Synchronous Adaptive-Card build — fired by the WebSocket chat
     # handler AFTER the agent loop produces its final answer but BEFORE
     # the `done` marker is sent. Unlike `post_message` (fire-and-forget,

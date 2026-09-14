@@ -367,9 +367,14 @@ class ActionExecutor:
                 # which conversation, from the authenticated turn — never from
                 # anything the LLM or the scanner could supply.
                 from services.scanner_jobs import remember_scan_requester
+                from utils.voice_context import origin_room_id
 
                 await remember_scan_requester(
-                    result, user_id=user_id, session_id=self.session_id
+                    result,
+                    user_id=user_id,
+                    session_id=self.session_id,
+                    title=str(parameters.get("title") or ""),
+                    room_id=origin_room_id.get(),
                 )
             return result
 

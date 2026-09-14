@@ -147,7 +147,9 @@ async def send_message(
                 mcp_manager = getattr(app.state, 'mcp_manager', None)
                 tool_registry = await AgentToolRegistry.create(mcp_manager=mcp_manager)
                 agent = AgentService(tool_registry)
-                executor = ActionExecutor(mcp_manager=mcp_manager)
+                # session_id lets session-scoped tools reach this conversation
+                # later (e.g. a background scan reporting its outcome back here).
+                executor = ActionExecutor(mcp_manager=mcp_manager, session_id=session_id)
 
                 async for step in agent.run(
                     message=chat_request.message,
@@ -197,7 +199,7 @@ async def send_message(
                 intent_used = intent_candidate
                 break
 
-            executor = ActionExecutor(mcp_manager=mcp_mgr)
+            executor = ActionExecutor(mcp_manager=mcp_mgr, session_id=session_id)
             candidate_result = await executor.execute(
                 intent_candidate,
                 user_permissions=user_permissions,

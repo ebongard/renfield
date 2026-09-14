@@ -35,10 +35,10 @@ describe('ScanJobToast', () => {
     expect(screen.getByRole('status')).toHaveTextContent(`notifications.scanJob.${reason}`);
   });
 
-  it('treats an unexpected reason as a plain "done", never as a failure it was not told', () => {
+  it('shows nothing for a reason it does not know, rather than claiming success', () => {
     render(<ScanJobToast />);
     announce('something-new');
-    expect(screen.getByRole('status')).toHaveTextContent('notifications.scanJob.done');
+    expect(screen.queryByRole('status')).toBeNull();
   });
 
   it('dismisses on click', () => {

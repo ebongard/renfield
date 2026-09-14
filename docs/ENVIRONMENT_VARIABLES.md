@@ -1221,6 +1221,7 @@ Das Backend mountet die Shares NICHT — die Bytes reisen im Multipart-Body. Sie
 
 ```bash
 FOLDER_INGEST_ENABLED=false           # Feature-Schalter (Push-Route + internal.ingest_file)
+SCANNER_INGEST_CLIENT_IDS=            # Ingest-Client-IDs (kommagetrennt), die Scan-Job-Ergebnisse an /api/scanner/job-event melden dürfen — das Folder-Ingest-Credential des Scanners; leer → keine (fail-closed)
 FOLDER_INGEST_KB_NAME=Eingang         # Ziel-Knowledge-Base (wird bei Bedarf angelegt)
 FOLDER_INGEST_TARGET_USER=            # Owner der auto-abgelegten Dokumente (Username/ID; leer → Admin/erster User)
 FOLDER_INGEST_DEFAULT_TIER=0          # Circle-Tier beim Anlegen (0=self … 4=public)

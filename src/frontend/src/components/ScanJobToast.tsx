@@ -20,8 +20,12 @@ const AUTO_DISMISS_MS = 10_000;
 
 type Outcome = 'done' | 'unrouted' | 'failed' | 'interrupted';
 
-function toOutcome(reason: unknown): Outcome {
-  return reason === 'unrouted' || reason === 'failed' || reason === 'interrupted' ? reason : 'done';
+const OUTCOMES: readonly Outcome[] = ['done', 'unrouted', 'failed', 'interrupted'];
+
+/** A reason this build does not know gets NO toast rather than a claim of
+ * success — the chat still reloads and shows the real outcome. */
+function toOutcome(reason: unknown): Outcome | null {
+  return OUTCOMES.find((o) => o === reason) ?? null;
 }
 
 export default function ScanJobToast() {
