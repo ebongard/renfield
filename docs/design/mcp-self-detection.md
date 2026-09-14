@@ -373,8 +373,36 @@ the upstream.
 ### 3.4 Still open
 
 **Kiosk verdict for the Plane-B ingest MCPs** (a real health colour; they are
-telemetry-excluded today) — not built. `execute_tool_streaming` records neither
-timeouts nor throttles (a Phase-2 gap that Phase 3 inherits).
+telemetry-excluded today) — not built.
+
+### 3.5 Follow-ups closed (2026-09-14)
+
+- **Streaming calls now count.** `execute_tool_streaming` had its own copy of the
+  call handling and recorded neither timeouts nor throttles. Worse than the ticket
+  said: it also shielded nothing from the refresh/self-heal reconnect
+  (`inflight_deadlines`), ignored the Retry-After gate, marked the server
+  *disconnected* on any app exception (a relayed 429 would read `down` and draw
+  self-heal reconnects), and ran a `per_user_auth` server on the shared operator
+  session. Fix: ONE accounting for both paths — `MCPServerState.track_call`
+  (in-flight shield), `_retry_after_refusal`, `_call_timed_out` (fail sample),
+  `_call_app_error` (throttle check, no disconnect), `_call_result` (ok sample,
+  lifts the horizon, throttle check on error results). Streaming specifics: a
+  timeout after partial progress is a fail sample; the caller's cancellation goes
+  through none of the helpers (the server did nothing wrong); a dead session still
+  disconnects but is not retried, because progress may already have reached the
+  consumer. `per_user_auth` servers are routed to `execute_tool` (per-user session
+  or fail-closed denial, no progress). Latent today: no configured server sets
+  `streaming: true` and nothing in the backend calls `execute_tool_streaming`.
+- **`refresh_tools` kept the configured tool shape.** Connect and refresh built the
+  tool list separately; refresh never appended `tool_hints`, so every hint was gone
+  after the first refresh (default 300 s). Both now go through
+  `_install_discovered_tools` (hint → `all_discovered_tools` → no-tools clock →
+  filter/index via `_apply_tool_filter`). That also fixed a second drift: a reconnect
+  never removed a tool the server stopped offering from `_tool_index`. Checked and
+  NOT lost on refresh: `prompt_tools` / DB override filter, `tool_permissions`,
+  `call_timeout`, `health_probe` — all read from `state.config` at use time
+  (pinned by tests against a real YAML-loaded `MCPManager`). Neither instance's
+  live `mcp_servers.yaml` sets `tool_hints` today, so no hint was lost in prod.
 
 ## Rollout
 
