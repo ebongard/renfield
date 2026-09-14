@@ -108,7 +108,7 @@ async def test_a_black_holed_database_answers_503_within_the_bound(hc, monkeypat
 async def test_an_unreachable_database_fails_fast_on_a_real_engine(hc, monkeypatch):
     """A real asyncpg NullPool engine against a closed port: refused → 503, bounded."""
     monkeypatch.setattr(
-        hc.settings, "database_url", "postgresql://u:p@127.0.0.1:1/none"
+        hc.settings, "database_url", "postgresql://probe@127.0.0.1:1/none"
     )
     monkeypatch.setattr(hc.settings, "health_ready_db_timeout_seconds", 2.0)
 
