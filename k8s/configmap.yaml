@@ -404,6 +404,14 @@ data:
   # trash, keeping the oldest. Self-gates on this flag; needs the scheduled
   # task row active. Rollback: "false".
   PAPERLESS_DEDUPE_RECONCILER_ENABLED: "true"
+  # Paperless search-index health (Fix B, #1247; scheduled task
+  # "Paperless-Suchindex prüfen"): probes one page of DB document ids against
+  # the full-text index per run and RAISES on a proven gap / index_error →
+  # failure-streak alert (needs PROACTIVE_ENABLED, on here). CHECK-ONLY: heal
+  # (an empty PATCH per missing document) stays off until the check has been
+  # observed and the heal flip is decided separately. Rollback: "false".
+  PAPERLESS_INDEX_CHECK_ENABLED: "true"
+  PAPERLESS_INDEX_HEAL_ENABLED: "false"
   # PDF-Split (docs/design/pdf-split.md): Multi-Dokument-Stapelscans beim
   # Ingest erkennen + trennen. VLM-Slow-Lane nutzt OLLAMA_VISION_MODEL (oben
   # gesetzt) und den pdf-split-worker (k8s/pdf-split-worker.yaml). Rollback:
