@@ -202,29 +202,53 @@ the role descriptions in `config/agent_roles.yaml`.
   `/api/status/` `index_status` only says whether the index can be *opened*. A document
   PATCH, however, re-indexes that one document. The built-in scheduled task
   **"Paperless-Suchindex prüfen"** (`paperless_index_health`, hourly) calls
-  `mcp.paperless.search_index_health` (renfield-mcp-paperless, new tool): one page of
-  document ids from the **database** (index-independent, newest first) is probed id by id
-  against the index (`query=id:<n>`), skipping docs added in the last
-  `PAPERLESS_INDEX_CHECK_MIN_AGE_SECONDS`. Verdicts:
-  - `degraded` — some missing **while others on the page were found**, which proves the
-    probe works. With healing on, each missing doc is re-saved with its **unchanged
-    title** (non-destructive: no field changes, no reprocess/re-OCR, never a delete) and
-    re-probed, at most `PAPERLESS_INDEX_HEAL_MAX_TOUCH` per run.
-  - `inconclusive` — nothing found at all, a probe Paperless rejects, or a sample cut
-    short. That is equally consistent with a wiped index and with an unsupported probe, so
-    it is only logged; with healing on, **one** canary doc is re-saved, and only if it then
-    appears is the verdict upgraded to `degraded`.
+  `mcp.paperless.search_index_health` (**requires renfield-mcp-paperless ≥ 1.13.0**; an
+  older MCP makes the task raise "nicht verfügbar"): one page of document ids from the
+  **database** (index-independent, newest first) is probed id by id against the index
+  (`query=id:<n>`), skipping docs added in the last `PAPERLESS_INDEX_CHECK_MIN_AGE_SECONDS`.
+  A miss only counts once the probe is **proven** to work on this Paperless — a document
+  on the same page was found, OR a **positive control** (a recent document from page 1)
+  was found in the same call, OR an earlier run proved it (remembered in Redis for 7
+  days). The control and the remembered proof are what make check mode see an index that
+  lost its OLD documents: there, every page below the boundary is entirely missing and
+  contains no same-page hit. Verdicts:
+  - `degraded` — proven misses. With healing on, each missing doc gets an **empty partial
+    update** and is re-probed, at most `PAPERLESS_INDEX_HEAL_MAX_TOUCH` per run.
+    paperless-ngx re-indexes on every document update, so no field is sent: nothing can be
+    overwritten (not even a title edited meanwhile), nothing is deleted or re-OCR'd.
+  - `inconclusive` — misses with an unproven probe, a probe Paperless rejects, or a sample
+    cut short. Only logged; with healing on, **one** canary doc is re-saved, and only if it
+    then appears is the verdict upgraded to `degraded`.
   - `index_error` — Paperless reports the index cannot be opened; a re-save cannot fix
     that, the operator must run `document_index reindex`.
 
-  The task has no alerting of its own (same pattern as the watchdog): it **raises** on a
-  proven degradation with healing off, on a heal that left docs missing, and on
-  `index_error`, and in those cases keeps its Redis page cursor on the same page — so the
-  next run re-checks it and the scheduled-task engine's failure streak turns it into one
-  `ops_alert` to the owner admin. A healed page, an `inconclusive` or `healthy` page
-  advance the cursor (wrapping at the end of the archive). Rollout: enable the check
-  first (detect + alert), heal later. Side effects of a heal re-save: Paperless bumps
-  `modified` and runs any "document updated" workflow.
+  **A heal is not free of side effects.** Every document update — including the empty one
+  — bumps `modified` and fires Paperless's `document_updated` signal, which runs **every
+  enabled workflow with a "Document Updated" trigger** once per healed document. Such a
+  workflow may assign tags, owner or permissions, send e-mail or call a webhook. So the
+  MCP reads `/api/workflows/` before touching anything and **refuses to heal** while such
+  workflows are enabled (or when the list cannot be read — fail closed); the task then
+  raises "Selbstheilung blockiert". Set `PAPERLESS_INDEX_HEAL_ALLOW_WORKFLOWS=true` only
+  after checking that those workflows are harmless when run for already-filed documents.
+
+  **Documents that cannot be healed.** A document that is still missing after its re-save
+  counts one failed attempt (Redis ledger, 30-day TTL). Below
+  `PAPERLESS_INDEX_HEAL_MAX_ATTEMPTS` the task raises "wirkungslos" and re-checks the page
+  next run. At the limit the document is **given up**: it is never re-saved again, it is
+  reported in a direct, rate-limited `ops_alert` ("nicht heilbar", listing the Paperless
+  ids), and the walk moves on — one unindexable document can no longer freeze the walk or
+  make its neighbours be re-saved every hour. A document that is later found in the index
+  leaves the ledger again. A document deleted between listing and re-save is **skipped**,
+  not counted as a failed heal.
+
+  Alerting otherwise follows the watchdog pattern: the task **raises** on a proven
+  degradation with healing off, on a blocked heal, on an ineffective heal with attempts
+  left, and on `index_error`, and in those cases keeps its Redis page cursor on the same
+  page — so the next run re-checks it and the scheduled-task engine's failure streak turns
+  it into one `ops_alert` to the owner admin. A handled page, an `inconclusive` or
+  `healthy` page advance the cursor (wrapping at the end of the archive); a page with
+  unfinished work (touch or time budget) is kept without raising. Rollout: enable the
+  check first (detect + alert), review Paperless workflows, then heal.
 - **Correspondent auto-create (Option A + guardrail).** Metadata extraction (`services/
   paperless_metadata_extractor.py`) only matches a correspondent against the *recency-
   pruned* taxonomy window, so a new sender would otherwise be filed blank. The leg now

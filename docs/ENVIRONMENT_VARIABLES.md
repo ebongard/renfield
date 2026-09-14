@@ -1295,14 +1295,25 @@ PAPERLESS_RECONCILER_REFILE_GRACE_SECONDS=360  # Karenz, bevor ein completed+pen
 PAPERLESS_RECONCILER_REFILE_LEASE_SECONDS=900  # Redis-Lease pro Doc: nur ein Refile-Versuch gleichzeitig; läuft ab → Retry (verhindert Re-Enqueue-Churn)
 
 # Paperless-Suchindex prüfen + selbst heilen (Fix B, Built-in "Paperless-Suchindex
-# prüfen"). Paperless bietet KEIN REST-Reindex (Vollaufbau nur per
-# `document_index reindex` auf dem Paperless-Host); ein Dokument-PATCH indexiert aber
-# genau dieses Dokument neu. mcp.paperless.search_index_health prüft eine Seite
-# Dokument-IDs aus der DATENBANK gegen den Index. Wirft (→ Fehlserien-Alarm über
-# ops_alert) bei nachgewiesener Lücke ohne Heilung, bei wirkungsloser Heilung und bei
-# index_error; "inconclusive" wirft nie. Erst CHECK einschalten, später HEAL.
+# prüfen"; benötigt renfield-mcp-paperless >= 1.13.0). Paperless bietet KEIN
+# REST-Reindex (Vollaufbau nur per `document_index reindex` auf dem Paperless-Host);
+# jedes Dokument-Update — auch ein leerer PATCH — indexiert aber genau dieses Dokument
+# neu. mcp.paperless.search_index_health prüft eine Seite Dokument-IDs aus der
+# DATENBANK gegen den Index; eine Positivkontrolle (neues Dokument von Seite 1) bzw. ein
+# gemerkter Nachweis macht auch komplett fehlende ALTE Seiten erkennbar. Wirft (→
+# Fehlserien-Alarm über ops_alert) bei nachgewiesener Lücke ohne Heilung, bei blockierter
+# und bei wirkungsloser Heilung und bei index_error; "inconclusive" wirft nie. Dokumente,
+# die nach MAX_ATTEMPTS Versuchen weiter fehlen, werden aufgegeben (direkter Alarm, der
+# Durchlauf geht weiter). Erst CHECK einschalten, Workflows prüfen, dann HEAL.
 PAPERLESS_INDEX_CHECK_ENABLED=false            # Prüfung + Alarm (dunkel)
-PAPERLESS_INDEX_HEAL_ENABLED=false             # zusätzlich fehlende Dokumente neu speichern (unveränderter Titel, nicht destruktiv)
+# ACHTUNG Nebenwirkung: jede Heilung ist ein Dokument-Update — Paperless setzt
+# `modified` neu und führt JEDEN aktiven Workflow mit Auslöser "Dokument aktualisiert"
+# einmal pro geheiltem Dokument aus (kann Tags/Eigentümer/Berechtigungen setzen, Mails
+# senden, Webhooks rufen). Das MCP verweigert die Heilung, solange solche Workflows aktiv
+# sind oder sich nicht prüfen lassen — außer mit PAPERLESS_INDEX_HEAL_ALLOW_WORKFLOWS.
+PAPERLESS_INDEX_HEAL_ENABLED=false             # zusätzlich fehlende Dokumente per leerem PATCH neu indexieren (setzt kein Feld)
+PAPERLESS_INDEX_HEAL_ALLOW_WORKFLOWS=false     # Heilung trotz aktiver "Dokument aktualisiert"-Workflows erlauben
+PAPERLESS_INDEX_HEAL_MAX_ATTEMPTS=3            # Heilversuche pro Dokument, danach aufgegeben (nicht mehr angefasst, im Alarm gelistet)
 PAPERLESS_INDEX_CHECK_INTERVAL=3600            # Sekunden (Seed-Intervall; eine MCP-Anfrage pro Lauf)
 PAPERLESS_INDEX_CHECK_SAMPLE_SIZE=50           # geprüfte Dokumente pro Lauf (eine Seite; der Cursor läuft über das Archiv)
 PAPERLESS_INDEX_HEAL_MAX_TOUCH=25              # max. neu gespeicherte Dokumente pro Lauf
@@ -1352,7 +1363,7 @@ FILES_HEALTH_POLL_SECONDS=30          # Backend-Health-Poll; bei down→up wird 
 - `FOLDER_INGEST_NOTIFY_ON_FILED`: `true`
 - `PAPERLESS_CONSUME_TIMEOUT_S`: `300` · `PAPERLESS_REFILE_POLL_TIMEOUT_S`: `30` · `PAPERLESS_RECONCILER_INTERVAL`: `120` · `PAPERLESS_RECONCILER_BATCH`: `25` · `PAPERLESS_RECONCILER_REFILE_GRACE_SECONDS`: `360` · `PAPERLESS_RECONCILER_REFILE_LEASE_SECONDS`: `900`
 - `PAPERLESS_FINALIZE_RECONCILER_INTERVAL`: `120` · `_BATCH`: `25` · `_GRACE_SECONDS`: `360` · `_POLL_SECONDS`: `30` · `_LEASE_SECONDS`: `120` · `_MAX_ATTEMPTS`: `5` · `_GIVEUP_HOURS`: `24`
-- `PAPERLESS_INDEX_CHECK_ENABLED`: `false` · `PAPERLESS_INDEX_HEAL_ENABLED`: `false` · `PAPERLESS_INDEX_CHECK_INTERVAL`: `3600` · `PAPERLESS_INDEX_CHECK_SAMPLE_SIZE`: `50` · `PAPERLESS_INDEX_HEAL_MAX_TOUCH`: `25` · `PAPERLESS_INDEX_CHECK_MIN_AGE_SECONDS`: `900` · `PAPERLESS_INDEX_CHECK_CALL_TIMEOUT_S`: `180`
+- `PAPERLESS_INDEX_CHECK_ENABLED`: `false` · `PAPERLESS_INDEX_HEAL_ENABLED`: `false` · `PAPERLESS_INDEX_HEAL_ALLOW_WORKFLOWS`: `false` · `PAPERLESS_INDEX_HEAL_MAX_ATTEMPTS`: `3` · `PAPERLESS_INDEX_CHECK_INTERVAL`: `3600` · `PAPERLESS_INDEX_CHECK_SAMPLE_SIZE`: `50` · `PAPERLESS_INDEX_HEAL_MAX_TOUCH`: `25` · `PAPERLESS_INDEX_CHECK_MIN_AGE_SECONDS`: `900` · `PAPERLESS_INDEX_CHECK_CALL_TIMEOUT_S`: `180`
 - `FILES_MAX_CONCURRENT_PUSHES`: `4` · `FILES_HEALTH_POLL_SECONDS`: `30`
 
 ---
