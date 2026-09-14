@@ -35,6 +35,9 @@ de:
     - Fortsetzungsseiten ohne eigenen Kopf gehoeren zum vorhergehenden Dokument.
     - Als unlesbar markierte Seiten gehoeren im Zweifel zum vorhergehenden
       Dokument.
+    - Als "[leere Seite]" markierte Seiten (z. B. leere Rueckseiten eines
+      Duplex-Scans) sind NIE eine Dokumentgrenze und NIE ein eigenes Dokument;
+      sie gehoeren zum vorhergehenden Dokument.
     - Im Zweifel WENIGER, groessere Dokumente.
     - "title": kurzer sprechender Titel (Absender + Dokumentart + ggf. Datum).
     - "doc_type": z.B. Rechnung, Brief, Vertrag, Bescheid, Kontoauszug.
@@ -75,6 +78,9 @@ en:
     - Continuation pages without their own header belong to the preceding
       document.
     - Pages marked unreadable belong to the preceding document when in doubt.
+    - Pages marked "[leere Seite]" (blank pages, e.g. empty duplex reverse
+      sides) are NEVER a document boundary and NEVER a document of their own;
+      they belong to the preceding document.
     - When unsure, prefer FEWER, larger documents.
     - "title": short human title (sender + document type + date if present).
     - "doc_type": e.g. invoice, letter, contract, notice, bank statement.
