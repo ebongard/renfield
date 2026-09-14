@@ -42,7 +42,7 @@ class TestVlmFillSignals:
     async def test_no_vision_model_returns_unchanged(self, monkeypatch):
         monkeypatch.setattr(det.settings, "ollama_vision_model", "")
         signals = [_sig(1), _sig(2, ok=False)]
-        out, filled = await det.vlm_fill_signals("/x.pdf", signals)
+        out, filled, *_ = await det.vlm_fill_signals("/x.pdf", signals)
         assert out == signals and filled == 0
 
     @pytest.mark.asyncio
@@ -58,7 +58,7 @@ class TestVlmFillSignals:
         )
         signals = [_sig(p, ok=(p % 2 == 0)) for p in range(1, 21)]  # 10 garbage
 
-        out, filled = await det.vlm_fill_signals(
+        out, filled, *_ = await det.vlm_fill_signals(
             "/x.pdf", signals, ollama_service=svc
         )
 
@@ -80,7 +80,7 @@ class TestVlmFillSignals:
         svc.extract_text_from_image = hang
         signals = [_sig(1, ok=False)]
 
-        out, filled = await det.vlm_fill_signals("/x.pdf", signals, ollama_service=svc)
+        out, filled, *_ = await det.vlm_fill_signals("/x.pdf", signals, ollama_service=svc)
 
         assert filled == 0
         assert out[0].quality_ok is False  # placeholder kept, job continues
@@ -92,7 +92,7 @@ class TestVlmFillSignals:
         svc = MagicMock()
         svc.extract_text_from_image = AsyncMock()
 
-        out, filled = await det.vlm_fill_signals(
+        out, filled, *_ = await det.vlm_fill_signals(
             "/x.pdf", [_sig(1, ok=False)], ollama_service=svc
         )
 
@@ -113,7 +113,7 @@ class TestVlmFillSignals:
         svc.extract_text_from_image = AsyncMock(return_value="")
         signals = [_sig(1, ok=False), _sig(2), _sig(3, ok=False)]
 
-        out, filled = await det.vlm_fill_signals("/x.pdf", signals, ollama_service=svc)
+        out, filled, *_ = await det.vlm_fill_signals("/x.pdf", signals, ollama_service=svc)
 
         assert filled == 2
         assert [s.quality_ok for s in out] == [True, True, True]
@@ -131,7 +131,7 @@ class TestVlmFillSignals:
         svc = MagicMock()
         svc.extract_text_from_image = AsyncMock(return_value="")
 
-        out, filled = await det.vlm_fill_signals(
+        out, filled, *_ = await det.vlm_fill_signals(
             "/x.pdf", [_sig(1, ok=False)], ollama_service=svc
         )
 
@@ -151,12 +151,28 @@ class TestVlmFillSignals:
         svc = MagicMock()
         svc.extract_text_from_image = AsyncMock(return_value=None)
 
-        out, filled = await det.vlm_fill_signals(
+        out, filled, *_ = await det.vlm_fill_signals(
             "/x.pdf", [_sig(1, ok=False)], ollama_service=svc
         )
 
         assert filled == 0
         blank.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_vlm_fill_counts_failures_apart_from_answers(monkeypatch):
+    """None / error / timeout = failed; "" on a white page = resolved but NOT read."""
+    monkeypatch.setattr(det.settings, "ollama_vision_model", "qwen-vl")
+    monkeypatch.setattr(det.settings, "pdf_split_vlm_page_timeout_s", 5)
+    monkeypatch.setattr(det, "_render_page_b64", MagicMock(return_value="b64"))
+    monkeypatch.setattr(det, "_page_is_blank", MagicMock(return_value=True))
+    svc = MagicMock()
+    svc.extract_text_from_image = AsyncMock(side_effect=[None, "", "Rechnung Nr. 1"])
+    signals = [_sig(1, ok=False), _sig(2, ok=False), _sig(3, ok=False)]
+
+    result = await det.vlm_fill_signals("/x.pdf", signals, ollama_service=svc)
+
+    assert (result.resolved, result.transcribed, result.failed) == (2, 1, 1)
 
 
 class TestPageIsBlank:
@@ -201,6 +217,22 @@ class TestPageIsBlank:
             d.rectangle([60, 80, 740, 1000], fill=(210, 210, 210))
 
         assert det._page_is_blank(self._png_b64(show_through)) is True
+
+    def test_faint_text_is_not_blank(self):
+        """Pale content (pencil, faded thermal print) sits above a FIXED grey
+        cutoff of 128; measured against the paper it is still ink."""
+        def faint_lines(d):
+            for y in range(100, 1000, 40):
+                d.rectangle([60, y, 740, y + 3], fill=(175, 175, 175))
+
+        assert det._page_is_blank(self._png_b64(faint_lines)) is False
+
+    def test_blank_tinted_paper_is_blank(self):
+        """Recycled or coloured paper: the tone is the paper, not ink."""
+        def tinted(d):
+            d.rectangle([0, 0, 799, 1099], fill=(205, 205, 205))
+
+        assert det._page_is_blank(self._png_b64(tinted)) is True
 
     def test_just_above_threshold_is_not_blank(self):
         pixels = 800 * 1100
@@ -357,7 +389,9 @@ def _wire_lane(
         lane, "extract_page_signals", MagicMock(return_value=signals or [])
     )
     monkeypatch.setattr(
-        lane, "vlm_fill_signals", AsyncMock(return_value=(signals or [], filled))
+        lane,
+        "vlm_fill_signals",
+        AsyncMock(return_value=det.VlmFillResult(signals or [], filled, filled, 0)),
     )
     monkeypatch.setattr(
         lane,
@@ -675,6 +709,42 @@ async def test_hand_back_single_reverts_on_enqueue_failure(monkeypatch):
         await lane._hand_back_single(db, doc, None)
 
     assert doc.status == DOC_STATUS_SPLIT_PENDING  # reverted
+
+
+def _real_fill(monkeypatch, answers, *, blank=True):
+    """Route the lane through the REAL vlm_fill_signals with scripted VLM answers."""
+    import services.ollama_service as osvc
+
+    monkeypatch.setattr(lane, "vlm_fill_signals", det.vlm_fill_signals)
+    monkeypatch.setattr(det.settings, "ollama_vision_model", "qwen-vl")
+    monkeypatch.setattr(det.settings, "pdf_split_vlm_page_timeout_s", 5)
+    monkeypatch.setattr(det, "_render_page_b64", MagicMock(return_value="b64"))
+    monkeypatch.setattr(det, "_page_is_blank", MagicMock(return_value=blank))
+    svc = MagicMock()
+    svc.extract_text_from_image = AsyncMock(side_effect=answers)
+    monkeypatch.setattr(osvc, "OllamaService", MagicMock(return_value=svc))
+
+
+@pytest.mark.asyncio
+async def test_slow_split_blank_backs_do_not_hide_a_partial_outage(monkeypatch):
+    """Review finding: the vision host answers the blank back ("", no ink) but
+    fails on the page with the content. One page counts as resolved, yet NOTHING
+    was read — that is an outage and must retry, not a verdict over a placeholder."""
+    _wire_lane(monkeypatch, doc=_doc(), signals=[_sig(1, ok=False), _sig(2, ok=False)])
+    _real_fill(monkeypatch, ["", None])
+
+    with pytest.raises(SplitTransientError):
+        await lane.process_slow_split(7, None)
+
+
+@pytest.mark.asyncio
+async def test_slow_split_proceeds_once_something_was_really_read(monkeypatch):
+    """One failed call is not an outage when another page was actually read."""
+    _wire_lane(monkeypatch, doc=_doc(), signals=[_sig(1, ok=False), _sig(2, ok=False), _sig(3)],
+               outcome="split")
+    _real_fill(monkeypatch, ["Rechnung Kopf", None])
+
+    assert await lane.process_slow_split(7, None) == "split"
 
 
 def test_pdfsplit_queue_uses_own_stream_and_group():

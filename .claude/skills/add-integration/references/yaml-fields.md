@@ -19,7 +19,7 @@ All fields for `config/mcp_servers.yaml` server entries.
 | `args` | list | Command arguments (for `stdio`) |
 | `env` | dict | Environment variables passed to stdio subprocess |
 | `refresh_interval` | int | Tool list refresh interval in seconds (default: 300) |
-| `call_timeout` | number | Per-server tool-call timeout in seconds (1..3600, env-substitutable, e.g. `"${SCANNER_MCP_CALL_TIMEOUT:-600}"`). Omit = global `MCP_CALL_TIMEOUT` (30 s). For tools that inherently run long (scanner). The HTTP transport read timeout follows it automatically. |
+| `call_timeout` | number or dict | Tool-call timeout override in seconds (1..3600, env-substitutable). A number applies to every tool of the server; a mapping `{tool_name: seconds, default: seconds}` lets ONE slow tool run long without stretching its siblings. Omit = global `MCP_CALL_TIMEOUT` (30 s). The HTTP transport read timeout follows the longest value automatically. Prefer a job model (tool returns at once, result reported later) over long timeouts for anything that takes minutes — see the scanner. |
 
 ## Prompt Fields
 

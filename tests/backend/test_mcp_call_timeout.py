@@ -72,6 +72,37 @@ def test_server_override_wins_over_global(monkeypatch):
     assert _server_call_timeout(None) == 30.0
 
 
+def test_mapping_parses_per_tool_and_drops_bad_entries():
+    from services.mcp_client import _parse_call_timeout
+
+    parsed = _parse_call_timeout({"scan_document": "600", "default": 20, "broken": "abc"})
+    assert parsed == {"scan_document": 600.0, "default": 20.0}
+    assert _parse_call_timeout({"broken": "abc"}) is None
+
+
+def test_per_tool_entry_beats_default_beats_global(monkeypatch):
+    """One long tool must not stretch its siblings: a status query keeps a short
+    timeout even when the scan tool on the same server gets minutes."""
+    from services.mcp_client import _server_call_timeout
+    from utils.config import settings
+
+    monkeypatch.setattr(settings, "mcp_call_timeout", 30.0)
+    state = SimpleNamespace(config=SimpleNamespace(
+        call_timeout={"scan_document": 600.0, "default": 15.0}))
+    assert _server_call_timeout(state, "scan_document") == 600.0
+    assert _server_call_timeout(state, "scanner_status") == 15.0
+
+    no_default = SimpleNamespace(config=SimpleNamespace(call_timeout={"scan_document": 600.0}))
+    assert _server_call_timeout(no_default, "scanner_status") == 30.0
+
+
+def test_transport_outlasts_the_longest_tool():
+    from services.mcp_client import MCPServerConfig, _transport_read_timeout
+
+    config = MCPServerConfig(name="s", call_timeout={"quick": 10.0, "slow": 900.0})
+    assert _transport_read_timeout(config) > 900.0
+
+
 def _slow_manager(server_call_timeout):
     import asyncio
     from unittest.mock import AsyncMock

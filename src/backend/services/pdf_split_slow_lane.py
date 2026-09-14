@@ -127,26 +127,32 @@ async def process_slow_split(document_id: int, user_id: int | None) -> str:
     verdict = None
     if signals:
         garbage_before = sum(1 for s in signals if not s.quality_ok)
-        signals, resolved = await vlm_fill_signals(file_path, signals)
+        fill = await vlm_fill_signals(file_path, signals)
+        signals = fill.signals
         garbage_left = sum(1 for s in signals if not s.quality_ok)
         logger.info(
-            f"pdf-split[slow]: doc {document_id} — VLM resolved {resolved} "
-            f"page(s), {garbage_left} still unreadable"
+            f"pdf-split[slow]: doc {document_id} — VLM resolved {fill.resolved} "
+            f"page(s) ({fill.transcribed} read, {fill.failed} call(s) failed), "
+            f"{garbage_left} still unreadable"
         )
-        if garbage_before > 0 and resolved == 0:
-            # A wholesale VLM outage is indistinguishable per page from
-            # 'unreadable' (extract_text_from_image swallows transport errors
-            # into None). Zero resolved pages across ALL garbage pages is the
-            # outage signature. A confirmed-blank page counts as resolved, so
-            # blank duplex backs no longer fake one. Deciding boundaries over
-            # pure placeholders would permanently ingest a multi-doc scan as
-            # ONE document, so retry instead (the worker's transient cap bounds
-            # this and its fail-safe is the single hand-back anyway).
+        # Outage signatures — retry instead of deciding boundaries over
+        # placeholders, which would permanently ingest a multi-doc scan as ONE
+        # document (the worker's transient cap bounds the retries and its
+        # fail-safe is the single hand-back anyway):
+        # - nothing resolved at all: a wholesale outage looks, per page, exactly
+        #   like "unreadable" (extract_text_from_image returns None for both);
+        # - calls failed and NOTHING was actually read: the vision host answered
+        #   the blank backs (cheap, confirmed by ink) but not the pages carrying
+        #   the content. Counting those blanks as success would hide the outage
+        #   on precisely the duplex stacks the blank-page rule exists for.
+        outage = fill.resolved == 0 or (fill.failed > 0 and fill.transcribed == 0)
+        if garbage_before > 0 and outage:
             from services.pdf_split_errors import SplitTransientError
 
             raise SplitTransientError(
-                f"VLM resolved 0 of {garbage_before} unreadable pages for "
-                f"doc {document_id} — vision host down or model missing"
+                f"VLM read 0 of {garbage_before} unreadable pages for doc "
+                f"{document_id} ({fill.resolved} resolved, {fill.failed} call(s) "
+                f"failed) — vision host down or model missing"
             )
         verdict = await detect_boundaries(signals)
 

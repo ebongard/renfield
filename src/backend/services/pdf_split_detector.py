@@ -64,12 +64,15 @@ SLOW_REASON_WINDOWS = "windows"
 _PLACEHOLDER_UNREADABLE = "[unlesbare Seite / Scan ohne Textebene]"
 _PLACEHOLDER_BLANK = "[leere Seite]"
 
-# Blank-page confirmation (see _page_is_blank). A grey level below _INK_LEVEL
-# counts as ink; a page is blank when at most _BLANK_INK_FRACTION of its pixels
-# are ink. Measured 2026-09-14 on a real duplex scan: the blank reverse sides
-# held 0.0000 ink, while one line of text is already ~0.3 % — so this only has
-# to separate "nothing" from "something", not tune anything finer.
-_INK_LEVEL = 128
+# Blank-page confirmation (see _page_is_blank). Ink is measured RELATIVE to the
+# page's own paper tone: a pixel counts as ink when it is more than _INK_DELTA
+# grey levels darker than the paper. A fixed cutoff (128) called pale content —
+# pencil, faded thermal print, a light stamp — blank. The delta sits above
+# duplex show-through (measured 200-224 on ~250 paper) and below pencil. A page
+# is blank when at most _BLANK_INK_FRACTION of its pixels are ink; measured
+# 2026-09-14, blank reverse sides held 0.0000, one line of text ~0.3 %.
+_PAPER_MIN_LEVEL = 128
+_INK_DELTA = 70
 _BLANK_INK_FRACTION = 0.0005
 
 
@@ -91,6 +94,25 @@ class PageSignal:
             "quality_ok": self.quality_ok,
             "via_vlm": self.via_vlm,
         }
+
+
+@dataclass(frozen=True)
+class VlmFillResult:
+    """What the slow-lane VLM pass achieved over the garbage pages.
+
+    ``resolved`` = pages now usable (transcribed OR confirmed blank);
+    ``transcribed`` = pages the VLM actually read text from; ``failed`` = pages
+    whose VLM call timed out or errored. Kept apart because a confirmed blank page
+    proves the vision host answered, not that it can read — so blank backs must
+    not mask failures on the pages that carry the content."""
+
+    signals: list[PageSignal]
+    resolved: int = 0
+    transcribed: int = 0
+    failed: int = 0
+
+    def __iter__(self):
+        return iter((self.signals, self.resolved, self.transcribed, self.failed))
 
 
 @dataclass(frozen=True)
@@ -551,7 +573,13 @@ def _page_is_blank(image_b64: str) -> bool:
         logger.warning(f"pdf-split: blank-page check failed: {e}")
         return False
     total = sum(histogram)
-    return total > 0 and sum(histogram[:_INK_LEVEL]) / total <= _BLANK_INK_FRACTION
+    if total == 0:
+        return False
+    # The paper is the dominant tone in the bright half. A page that is mostly
+    # dark has no real paper peak there, so nearly everything reads as ink.
+    paper = max(range(_PAPER_MIN_LEVEL, 256), key=histogram.__getitem__)
+    ink_level = max(0, paper - _INK_DELTA)
+    return sum(histogram[:ink_level]) / total <= _BLANK_INK_FRACTION
 
 
 async def vlm_fill_signals(
@@ -559,9 +587,9 @@ async def vlm_fill_signals(
     signals: list[PageSignal],
     *,
     ollama_service: Any = None,
-) -> tuple[list[PageSignal], int]:
-    """Replace garbage-page placeholders with VLM transcriptions. Returns the
-    (new signal list, number of pages resolved).
+) -> VlmFillResult:
+    """Replace garbage-page placeholders with VLM transcriptions. Returns the new
+    signal list with resolved / transcribed / failed page counts.
 
     A page is resolved when the VLM transcribed it, or when the VLM answered
     with nothing AND the page image carries no ink — a blank page (typically a
@@ -576,7 +604,7 @@ async def vlm_fill_signals(
     the boundary prompt treats unreadable pages as continuation pages. Never
     raises for per-page failures; a missing vision model returns unchanged."""
     if not settings.ollama_vision_model:
-        return signals, 0
+        return VlmFillResult(signals)
 
     if ollama_service is None:
         from services.ollama_service import OllamaService
@@ -585,7 +613,7 @@ async def vlm_fill_signals(
 
     loop = asyncio.get_running_loop()
     out = list(signals)
-    resolved = 0
+    resolved = transcribed = failed = 0
     for i, sig in enumerate(out):
         if sig.quality_ok:
             continue
@@ -604,16 +632,20 @@ async def vlm_fill_signals(
                 f"pdf-split: VLM transcription of page {sig.page} timed out "
                 f"({settings.pdf_split_vlm_page_timeout_s}s) — keeping placeholder"
             )
+            failed += 1
             continue
         except Exception as e:  # noqa: BLE001 - one bad page ≠ a dead job
             logger.warning(
                 f"pdf-split: VLM transcription of page {sig.page} failed: {e}"
             )
+            failed += 1
             continue
         if text is None:
-            continue  # the call failed — keep the placeholder
+            failed += 1  # the call failed — keep the placeholder
+            continue
         if text.strip():
             resolved_text = _snippet(text)
+            transcribed += 1
         elif await loop.run_in_executor(None, _page_is_blank, b64):
             resolved_text = _PLACEHOLDER_BLANK
         else:
@@ -625,4 +657,4 @@ async def vlm_fill_signals(
             via_vlm=True,
         )
         resolved += 1
-    return out, resolved
+    return VlmFillResult(out, resolved, transcribed, failed)
