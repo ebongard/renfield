@@ -43,6 +43,15 @@ class FakeRedis:
     async def delete(self, key):
         self.store.pop(key, None)
 
+    async def eval(self, script, numkeys, *keys_and_args):
+        # Only the compare-and-delete claim release is used.
+        assert "redis.call('del'" in script and numkeys == 1
+        key, token = keys_and_args
+        if self.store.get(key) == token:
+            self.store.pop(key)
+            return 1
+        return 0
+
     async def publish(self, channel, payload):
         self.published.append((channel, payload))
 
@@ -270,6 +279,46 @@ async def test_the_claim_is_a_short_lease_and_the_marker_lasts_a_day(conversatio
     assert redis.ttl[f"{key}:reported"] == 24 * 3600
 
 
+async def test_the_claim_holds_a_unique_token_per_delivery(conversation):
+    redis = FakeRedis()
+    await sj.remember_scan_requester(
+        _tool_result({"ok": True, "job_id": JOB_ID}), user_id=7, session_id="s", redis=redis
+    )
+    tokens = []
+
+    async def capture_token(**_kwargs):
+        tokens.append(redis.store[f"renfield:scanner:job:{JOB_ID}:claim"])
+        return MagicMock(id=1)
+
+    conversation.save_message.side_effect = capture_token
+    await sj.handle_job_event(MagicMock(), _event(), redis=redis)
+    del redis.store[f"renfield:scanner:job:{JOB_ID}:reported"]  # force a second delivery
+    await sj.handle_job_event(MagicMock(), _event(), redis=redis)
+
+    assert len(tokens) == 2 and tokens[0] != tokens[1]
+    assert all(len(t) == 32 and int(t, 16) >= 0 for t in tokens)
+
+
+async def test_a_late_delivery_cannot_release_a_newer_claim(conversation):
+    """Review finding: A's lease lapsed during a slow write and B took a new claim.
+    A's cleanup used to delete the key unconditionally — freeing B's lease and
+    letting a third delivery in."""
+    redis = FakeRedis()
+    await sj.remember_scan_requester(
+        _tool_result({"ok": True, "job_id": JOB_ID}), user_id=7, session_id="s", redis=redis
+    )
+    claim = f"renfield:scanner:job:{JOB_ID}:claim"
+
+    async def lease_lapses_mid_write(**_kwargs):
+        redis.store[claim] = "b" * 32  # B's claim, taken after A's expired
+        return MagicMock(id=1)
+
+    conversation.save_message.side_effect = lease_lapses_mid_write
+
+    assert await sj.handle_job_event(MagicMock(), _event(), redis=redis) == "delivered"
+    assert redis.store[claim] == "b" * 32, "A freed a lease it did not hold"
+
+
 async def test_an_outcome_already_in_the_conversation_is_not_written_again(conversation):
     """A crash after the commit but before the marker, or a lost marker: the
     message itself is the record, and the retry finds it."""
@@ -284,7 +333,7 @@ async def test_an_outcome_already_in_the_conversation_is_not_written_again(conve
     assert await sj.handle_job_event(db, _event(), redis=redis) == "duplicate"
 
     conversation.save_message.assert_not_called()
-    db.rollback.assert_awaited_once()  # the row lock is released
+    db.rollback.assert_awaited_once()  # the delivery lock is released
     assert redis.published == [], "a found message must not re-announce"
     assert redis.store[f"renfield:scanner:job:{JOB_ID}:reported"] == "delivered"
 
@@ -389,8 +438,8 @@ async def test_crash_after_commit_before_marker_writes_the_message_once(session_
 @pytest.mark.postgres
 async def test_overlapping_deliveries_write_one_message_on_postgres(pg_async_engine, monkeypatch):
     """The claim lapsed while a slow write still ran, so two deliveries overlap.
-    The conversation row lock makes check-and-insert atomic: the second waits for
-    the first commit, then finds its message."""
+    The per-conversation delivery lock makes check-and-insert atomic: the second
+    waits for the first commit, then finds its message."""
     import asyncio
 
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -403,7 +452,7 @@ async def test_overlapping_deliveries_write_one_message_on_postgres(pg_async_eng
     real_save = ConversationService.save_message
 
     async def slow_save(self, *args, **kwargs):
-        await asyncio.sleep(0.3)  # holds the row lock; the other delivery arrives now
+        await asyncio.sleep(0.3)  # holds the delivery lock; the other delivery arrives now
         return await real_save(self, *args, **kwargs)
 
     monkeypatch.setattr(ConversationService, "save_message", slow_save)
@@ -421,6 +470,53 @@ async def test_overlapping_deliveries_write_one_message_on_postgres(pg_async_eng
 
     assert sorted(outcomes) == ["delivered", "duplicate"]
     assert len(await _scanner_messages(maker)) == 1
+
+
+@pytest.mark.postgres
+async def test_overlapping_deliveries_into_a_new_conversation_write_one_message_on_postgres(
+    pg_async_engine, monkeypatch,
+):
+    """Review finding: the scan was requested in a brand-new conversation, whose row
+    chat_handler only writes when the turn ends. With a ROW lock there was nothing
+    to lock: A (slow write, lease lapsed) and B both saw no conversation, A committed
+    conversation + message, and B's save_message then appended a second message."""
+    import asyncio
+
+    from sqlalchemy import func, select
+    from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+
+    from models.database import Conversation
+    from services.conversation_service import ConversationService
+
+    monkeypatch.setattr(sj.settings, "ws_auth_enabled", False)
+    maker = async_sessionmaker(pg_async_engine, class_=AsyncSession, expire_on_commit=False)
+    # Deliberately NO _seed_conversation: the row does not exist yet.
+    real_save = ConversationService.save_message
+
+    async def slow_save(self, *args, **kwargs):
+        await asyncio.sleep(0.3)  # A is mid-write; B's check runs now
+        return await real_save(self, *args, **kwargs)
+
+    monkeypatch.setattr(ConversationService, "save_message", slow_save)
+
+    async def deliver(delay):
+        await asyncio.sleep(delay)
+        redis = FakeRedis()  # a separate claim each: the lapsed-lease overlap
+        await sj.remember_scan_requester(
+            _tool_result({"ok": True, "job_id": JOB_ID}), user_id=None, session_id="s", redis=redis
+        )
+        async with maker() as db:
+            return await sj.handle_job_event(db, _event(), redis=redis)
+
+    outcomes = await asyncio.gather(deliver(0), deliver(0.05))
+
+    assert sorted(outcomes) == ["delivered", "duplicate"]
+    assert len(await _scanner_messages(maker)) == 1
+    async with maker() as db:
+        conversations = await db.scalar(
+            select(func.count()).select_from(Conversation).where(Conversation.session_id == "s")
+        )
+    assert conversations == 1
 
 
 # --- the message ---------------------------------------------------------------

@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import json
 import re
+import uuid
 from typing import Any
 
 from loguru import logger
@@ -37,8 +38,20 @@ _TTL_SECONDS = 24 * 3600
 # The delivery claim is a LEASE, not the delivered state: long enough to cover one
 # message write, short enough that the scanner's retry (backoff 2, 4, 8 … s)
 # delivers soon after a pod died holding it. A write that outlives it is still
-# safe — the message check under the conversation row lock catches the overlap.
+# safe — the message check under the per-conversation delivery lock catches the
+# overlap.
 _CLAIM_TTL_SECONDS = 60
+# Advisory-lock namespace for scan-job deliveries ("SJ"); distinct from every
+# other two-key advisory lock in the backend (see the *_LOCK_NS constants).
+_DELIVERY_LOCK_NS = 0x534A
+# Compare-and-delete: only the delivery that took the claim may free it. A
+# delivery whose lease already lapsed must not delete the lease a newer one holds.
+_RELEASE_CLAIM_LUA = """
+if redis.call('get', KEYS[1]) == ARGV[1] then
+    return redis.call('del', KEYS[1])
+end
+return 0
+"""
 # Mirrors renfield-mcp-scanner's job id format (uuid4 hex).
 JOB_ID_PATTERN = r"[0-9a-f]{32}"
 _JOB_ID = re.compile(JOB_ID_PATTERN)
@@ -224,23 +237,35 @@ async def _outcome_already_in_conversation(db: Any, session_id: str, job_id: str
     """Whether this job's outcome message already exists — the DURABLE record of a
     delivery, which Redis markers are only a cache of.
 
-    Locks the conversation row (``FOR UPDATE``) before looking. When nothing is
-    found the lock stays held into ``save_message`` (same transaction, which
-    re-locks the row and commits), so check and insert are one atomic step: a
-    second delivery of the same job blocks here until the first commits, then
-    finds its message. The caller must end the transaction when this returns
-    True. A conversation that does not exist yet has no row to lock and no
-    message to find."""
-    from sqlalchemy import select
+    First takes the per-conversation delivery lock,
+    ``pg_advisory_xact_lock(_DELIVERY_LOCK_NS, hashtext(session_id))``, in the
+    caller's transaction. It is held until that transaction ends — the commit in
+    ``save_message``, or the caller's rollback when this returns True — so check
+    and insert are one atomic step: a second delivery of the same job waits here
+    until the first commits, then finds its message.
+
+    An ADVISORY lock rather than the conversation row lock, because the row may not
+    exist yet: ``chat_handler`` saves a turn only when it ends, so a scan requested
+    in a brand-new conversation can finish first. With a row lock, two overlapping
+    deliveries would then both see no conversation and both append. The advisory
+    lock needs no row and creates none, so ``chat_handler``'s own later save (owner,
+    title) is untouched. ``hashtext`` collisions only serialize two unrelated
+    deliveries; they never merge them.
+
+    Postgres only. SQLite (the unit-test harness) has no advisory locks; there the
+    check runs unlocked — deliberately, it serves one test connection, never
+    concurrent pods."""
+    from sqlalchemy import select, text
 
     from models.database import Conversation, Message
 
-    conversation_id = (
+    if db.get_bind().dialect.name == "postgresql":
         await db.execute(
-            select(Conversation.id)
-            .where(Conversation.session_id == session_id)
-            .with_for_update()
+            text("SELECT pg_advisory_xact_lock(:ns, hashtext(:session_id))"),
+            {"ns": _DELIVERY_LOCK_NS, "session_id": session_id},
         )
+    conversation_id = (
+        await db.execute(select(Conversation.id).where(Conversation.session_id == session_id))
     ).scalar_one_or_none()
     if conversation_id is None:
         return False
@@ -256,6 +281,14 @@ async def _outcome_already_in_conversation(db: Any, session_id: str, job_id: str
         )
     ).scalar_one_or_none()
     return found is not None
+
+
+async def _release_claim(redis: Any, claim_key: str, token: str) -> None:
+    """Free the claim only if it is still ours. Best-effort: the TTL frees it anyway."""
+    try:
+        await redis.eval(_RELEASE_CLAIM_LUA, 1, claim_key, token)
+    except Exception as exc:  # noqa: BLE001 - the TTL releases it
+        logger.warning(f"scanner: could not release claim {claim_key}: {exc}")
 
 
 async def _mark_reported(redis: Any, reported_key: str, outcome: str) -> None:
@@ -287,11 +320,14 @@ async def handle_job_event(db: Any, event: dict, *, redis: Any = None) -> str:
        deliveries. It is a LEASE, never the delivered state: a pod that dies
        between claiming and writing leaves only a claim that lapses, and the
        scanner's next retry delivers. (Before 2026-09-14 the claim WAS the
-       delivered marker, so that crash lost the outcome for good.)
+       delivered marker, so that crash lost the outcome for good.) Its value is a
+       per-delivery token released only by compare-and-delete, so a delivery whose
+       lease already lapsed cannot free the lease a newer delivery holds.
     3. The message itself, marked ``message_metadata.scanner_job.job_id`` and
-       checked under the conversation row lock right before the insert. It
-       covers a crash after the commit but before the marker, a lost Redis
-       marker, and a claim that lapsed while a slow write was still running.
+       checked under a per-conversation advisory lock right before the insert, in
+       the same transaction. It covers a crash after the commit but before the
+       marker, a lost Redis marker, and a claim that lapsed while a slow write was
+       still running — also for a conversation whose row does not exist yet.
 
     The live side effects — the ``/ws/user`` event and the room announcement —
     are at-most-once: they follow a successful write only, and a delivery found
@@ -320,7 +356,8 @@ async def handle_job_event(db: Any, event: dict, *, redis: Any = None) -> str:
     if await redis.get(reported_key) is not None:
         return "duplicate"
     claim_key = f"{key}:claim"
-    if not await redis.set(claim_key, "1", nx=True, ex=_CLAIM_TTL_SECONDS):
+    claim_token = uuid.uuid4().hex
+    if not await redis.set(claim_key, claim_token, nx=True, ex=_CLAIM_TTL_SECONDS):
         return "in_progress"
 
     try:
@@ -332,7 +369,7 @@ async def handle_job_event(db: Any, event: dict, *, redis: Any = None) -> str:
         )
         try:
             if await _outcome_already_in_conversation(db, session_id, job_id):
-                await db.rollback()  # release the row lock; nothing to write
+                await db.rollback()  # release the delivery lock; nothing to write
                 await _mark_reported(redis, reported_key, "delivered")
                 logger.info(f"scanner: job {job_id} was already in its conversation")
                 return "duplicate"
@@ -358,12 +395,9 @@ async def handle_job_event(db: Any, event: dict, *, redis: Any = None) -> str:
             return "refused"
         await _mark_reported(redis, reported_key, "delivered")
     finally:
-        # Free the claim on EVERY path, a failed write included, so the scanner's
+        # Free OUR claim on every path, a failed write included, so the scanner's
         # next retry can deliver at once. If Redis is gone too, the TTL frees it.
-        try:
-            await redis.delete(claim_key)
-        except Exception as exc:  # noqa: BLE001 - the TTL releases it
-            logger.warning(f"scanner: could not release claim for job {job_id}: {exc}")
+        await _release_claim(redis, claim_key, claim_token)
 
     # In auth-off mode the household's sockets live in the broadcast bucket. The
     # session id lets only the tab driving that conversation show the notice.
