@@ -1177,6 +1177,15 @@ class Settings(BaseSettings):
     paperless_index_check_min_age_seconds: int = Field(default=900, ge=0, le=86400)
     # Per-call MCP timeout (the tool has its own 120 s wall-clock budget).
     paperless_index_check_call_timeout_s: float = Field(default=180.0, ge=30.0, le=600.0)
+    # A heal re-save ALWAYS fires Paperless's "document updated" signal, so every
+    # enabled workflow with a Document-Updated trigger runs per healed document
+    # (it may assign tags/owner/permissions, send mail, call webhooks). The MCP
+    # therefore refuses to heal while such workflows are active (or cannot be
+    # verified) unless this override is set.
+    paperless_index_heal_allow_workflows: bool = False
+    # Re-save attempts per document before it is given up on: it is then no longer
+    # touched, reported to the admin via ops_alert, and the walk moves on.
+    paperless_index_heal_max_attempts: int = Field(default=3, ge=1, le=20)
 
     # Document-worker stale-task recovery. reclaim_stale() re-adopts entries a
     # dead consumer left un-ACKed in the Redis PEL. It used to run ONLY at worker
