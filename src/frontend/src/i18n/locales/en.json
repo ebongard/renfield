@@ -1585,7 +1585,13 @@
     "moreQueued": "+{{count}} more",
     "critical": "Critical",
     "info": "Information",
-    "low": "Low"
+    "low": "Low",
+    "scanJob": {
+      "done": "Scan finished – details in the chat.",
+      "unrouted": "Scan finished, destination still open – details in the chat.",
+      "failed": "Scan failed – details in the chat.",
+      "interrupted": "Scan interrupted – details in the chat."
+    }
   },
   "errors": {
     "generic": "An error occurred",

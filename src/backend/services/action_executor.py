@@ -357,10 +357,21 @@ class ActionExecutor:
             # cherry-picks it up. See the ws-auth and /api/auth/status PRs
             # (ebongard/renfield#364 + #365 + #366) for the sibling half-merged
             # fixes from the same branch.
-            return await self.mcp_manager.execute_tool(
+            result = await self.mcp_manager.execute_tool(
                 intent, parameters, user_permissions=user_permissions,
                 user_id=user_id, progress_sink=progress_sink,
             )
+            if intent == "mcp.scanner.scan_document":
+                # The scan runs in the background on the scanner host and reports
+                # back later over /api/scanner/job-event. Remember WHO asked, and in
+                # which conversation, from the authenticated turn — never from
+                # anything the LLM or the scanner could supply.
+                from services.scanner_jobs import remember_scan_requester
+
+                await remember_scan_requester(
+                    result, user_id=user_id, session_id=self.session_id
+                )
+            return result
 
         # Plugin tool dispatch — plugins can register custom tool handlers
         from utils.hooks import run_hooks

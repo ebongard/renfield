@@ -43,6 +43,9 @@ ALL: str = "__all__"
 
 # Event types (extend freely; the frontend maps each to a query invalidation).
 EVENT_DOCUMENTS_CHANGED = "documents_changed"
+# A scan the user requested has finished; the outcome is already a message in the
+# requesting conversation, so the browser only reloads it (still content-free).
+EVENT_SCAN_JOB_FINISHED = "scan_job_finished"
 
 # Per-socket send timeout — a backpressured/hung tab must never wedge fan-out.
 _SEND_TIMEOUT_SECONDS = 5.0

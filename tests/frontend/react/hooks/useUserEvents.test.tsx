@@ -9,7 +9,10 @@ import { renderHook } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import type { ReactElement, ReactNode } from 'react';
 
-import { useUserEvents } from '../../../../src/frontend/src/hooks/useUserEvents';
+import {
+  SCAN_JOB_FINISHED_EVENT,
+  useUserEvents,
+} from '../../../../src/frontend/src/hooks/useUserEvents';
 
 // The socket is built AFTER an awaited token fetch — mock it to resolve to null
 // (auth-off: open without a token), so construction happens on the next microtask.
@@ -128,6 +131,26 @@ describe('useUserEvents', () => {
     for (let i = 0; i < 25; i++) ws.fireMessage({ type: 'documents_changed', reason: 'ingested' });
     vi.advanceTimersByTime(1000);
     expect(spy).toHaveBeenCalledTimes(1); // 25 events → 1 refetch
+  });
+
+  it('announces scan_job_finished and refreshes the conversation list', async () => {
+    const client = makeClient();
+    const spy = vi.spyOn(client, 'invalidateQueries').mockResolvedValue(undefined);
+    const seen: unknown[] = [];
+    const listener = (event: Event) => seen.push((event as CustomEvent).detail);
+    window.addEventListener(SCAN_JOB_FINISHED_EVENT, listener);
+    renderHook(() => useUserEvents({ enabled: true }), { wrapper: wrapper(client) });
+    await flushConnect();
+    const ws = latest();
+    ws.fireOpen();
+
+    ws.fireMessage({ type: 'scan_job_finished', reason: 'done' });
+
+    window.removeEventListener(SCAN_JOB_FINISHED_EVENT, listener);
+    expect(seen).toEqual([{ reason: 'done' }]);
+    expect(spy).toHaveBeenCalledWith({ queryKey: ['chatSessions', 'list'] });
+    // Not a document change: the knowledge list is left alone.
+    expect(spy).not.toHaveBeenCalledWith({ queryKey: ['knowledge', 'list'] });
   });
 
   it('ignores unknown event types', async () => {

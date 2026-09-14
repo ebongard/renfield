@@ -24,6 +24,14 @@ const MAX_BACKOFF_MS = 30_000;
 const HEARTBEAT_MS = 25_000; // < the typical 60s ingress idle timeout
 const INVALIDATE_DEBOUNCE_MS = 1000; // collapse a burst of events into one refetch
 
+/**
+ * Window event fired when a background scan the user requested has finished.
+ * The outcome is already a message in the requesting conversation (written
+ * server-side), so listeners only reload / show a notice. `detail.reason` is the
+ * job status (done | unrouted | failed | interrupted) — never document identity.
+ */
+export const SCAN_JOB_FINISHED_EVENT = 'renfield-scan-job-finished';
+
 interface UseUserEventsOptions {
   /** Connect only when true (feature on AND auth-off-or-logged-in). */
   enabled: boolean;
@@ -64,9 +72,13 @@ export function useUserEvents({ enabled }: UseUserEventsOptions): void {
 
     const handleEvent = (payload: unknown) => {
       if (!payload || typeof payload !== 'object') return;
-      const type = (payload as { type?: string }).type;
+      const { type, reason } = payload as { type?: string; reason?: string };
       if (type === 'documents_changed') {
         invalidateDocumentsSoon();
+      } else if (type === 'scan_job_finished') {
+        window.dispatchEvent(new CustomEvent(SCAN_JOB_FINISHED_EVENT, { detail: { reason } }));
+        // The conversation list shows a preview + message count that just changed.
+        void queryClient.invalidateQueries({ queryKey: keys.chatSessions.list() });
       }
       // Future event types (obligations_changed, notes_changed, …) add a case
       // here that invalidates their own query key — no new socket needed.

@@ -47,6 +47,7 @@ from api.routes import (
     notes,
     projects,
     roles,
+    scanner_jobs,
     scheduled_tasks,
     skills,
     speakers,
@@ -255,6 +256,7 @@ app.include_router(pdf_split.router, prefix="/api/pdf-split", tags=["PDF Split"]
 app.include_router(simba_ingest.router, prefix="/api", tags=["Simba Ingest"])
 app.include_router(document_dedupe.router, prefix="/api", tags=["Document Dedupe"])
 app.include_router(mcp_health.router, prefix="/api/mcp-health", tags=["MCP Health"])
+app.include_router(scanner_jobs.router, prefix="/api/scanner", tags=["Scanner Jobs"])
 app.include_router(email_ingest.router, prefix="/api/email-ingest", tags=["Email Ingest"])
 app.include_router(memory.router, prefix="/api/memory", tags=["Memory"])
 app.include_router(preferences.router, prefix="/api/preferences", tags=["Preferences"])

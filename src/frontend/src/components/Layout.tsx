@@ -49,6 +49,7 @@ import DeviceStatus from './DeviceStatus';
 import ThemeToggle from './ThemeToggle';
 import LanguageSwitcher from './LanguageSwitcher';
 import NotificationToast from './NotificationToast';
+import ScanJobToast from './ScanJobToast';
 import NavBadge from './NavBadge';
 import { useWissensbasisAvailable } from '../api/resources/wissensbasis';
 import { useDraftCountQuery } from '../api/resources/skills';
@@ -616,6 +617,7 @@ export default function Layout({ children }: LayoutProps) {
 
       {/* Notification Toasts */}
       <NotificationToast />
+      <ScanJobToast />
 
       {/* Main Content */}
       <main

@@ -123,17 +123,16 @@ async def test_per_call_timeout_still_wins_over_the_server_override():
     assert "Timeout" not in (result.get("message") or "")
 
 
-def test_scanner_stanza_carries_a_long_timeout(monkeypatch):
-    """The shipped YAML must actually give the scanner its override — the parser
-    alone fixes nothing if the stanza never sets it."""
+def test_scanner_stanza_needs_no_long_timeout():
+    """Under the scan-job model `scan_document` only STARTS a scan and returns at
+    once; the outcome arrives as POST /api/scanner/job-event. A long override here
+    would be the old shape creeping back — a tool call holding a chat turn for the
+    length of a paper stack, where a refresh can tear it down mid-scan."""
     from pathlib import Path
 
     import yaml
 
-    from services.mcp_client import _parse_call_timeout
-
-    monkeypatch.delenv("SCANNER_MCP_CALL_TIMEOUT", raising=False)
     root = Path(__file__).resolve().parents[2]
     entries = yaml.safe_load((root / "config" / "mcp_servers.yaml").read_text())["servers"]
     scanner = next(e for e in entries if e["name"] == "scanner")
-    assert _parse_call_timeout(scanner.get("call_timeout")) >= 300
+    assert "call_timeout" not in scanner
