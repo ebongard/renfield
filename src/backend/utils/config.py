@@ -1703,6 +1703,14 @@ class Settings(BaseSettings):
     # /health/ready bounds its DB check to this. Must stay below the readiness
     # probe's timeoutSeconds (5 s in k8s/backend.yaml).
     health_ready_db_timeout_seconds: float = Field(default=3.0, ge=0.5, le=30.0)
+    # /health/ready bounds each OPTIONAL check (Redis ping, device-summary hook) to
+    # this. A timeout there reports "degraded"/"unknown" and never fails readiness.
+    # All checks run concurrently, so the probe's worst case is the DB bound above.
+    health_ready_aux_timeout_seconds: float = Field(default=1.0, ge=0.1, le=10.0)
+    # An MCP alert that did not reach the admin (no notification row) is retried
+    # only after this backoff — not on every 120 s tick (alert storm during a
+    # notification-pipeline outage) and not after the full re-alert TTL (silence).
+    mcp_health_alert_retry_seconds: float = Field(default=600.0, ge=60.0, le=21600.0)
 
     # --- External HTTP watchdog (A3) -----------------------------------------
     # "Who notices that Renfield itself is gone?" A system that is down cannot

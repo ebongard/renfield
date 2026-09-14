@@ -83,6 +83,70 @@ class TestDeliveryVerdict:
         await ops_alert.notify_admin(title="t", message="m", dedup_key="k")  # no raise
 
 
+@pytest.mark.unit
+class TestRetryBackoff:
+    def test_deferred_key_is_closed_until_the_backoff_passed(self, monkeypatch):
+        clock = [1000.0]
+        monkeypatch.setattr(ops_alert, "_now", lambda: clock[0])
+        monkeypatch.setattr(ops_alert.settings, "mcp_health_realert_seconds", 21600.0)
+
+        assert ops_alert.should_alert("k") is True
+        ops_alert.defer_alert("k", 600.0)
+        clock[0] += 120.0  # next monitor tick
+        assert ops_alert.should_alert("k") is False
+        clock[0] += 481.0  # backoff passed
+        assert ops_alert.should_alert("k") is True
+        # ...and a successful attempt is then held by the normal TTL again.
+        clock[0] += 700.0
+        assert ops_alert.should_alert("k") is False
+
+    def test_deferred_keys_are_visible_to_the_recovery_sweep_and_clearable(self):
+        ops_alert.should_alert("planea:x:down")
+        ops_alert.defer_alert("planea:x:down", 600.0)
+        assert ops_alert.alerted_keys("planea:") == ["planea:x:down"]
+        ops_alert.clear_alert("planea:x:down")
+        assert ops_alert.alerted_keys("planea:") == []
+        assert ops_alert.should_alert("planea:x:down") is True
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+class TestPersistedCountsAsTold:
+    async def test_failure_after_persist_is_told(self, monkeypatch):
+        """process_webhook commits the row, then delivery raises. The admin already
+        sees the notification — reporting 'not delivered' made the monitor store a
+        new row every tick."""
+        monkeypatch.setattr(ops_alert.settings, "proactive_enabled", True)
+        monkeypatch.setattr(ops_alert, "resolve_admin_user_id", _fake_admin)
+        _install_notification_service(monkeypatch, outcome=RuntimeError("push failed"))
+
+        async def _persisted(**_kw):
+            return True
+
+        monkeypatch.setattr(ops_alert, "_persisted_since", _persisted)
+        assert await ops_alert.notify_admin(title="t", message="m", dedup_key="k") is True
+
+    async def test_failure_before_persist_is_not_told(self, monkeypatch):
+        monkeypatch.setattr(ops_alert.settings, "proactive_enabled", True)
+        monkeypatch.setattr(ops_alert, "resolve_admin_user_id", _fake_admin)
+        _install_notification_service(monkeypatch, outcome=RuntimeError("db down"))
+
+        seen = {}
+
+        async def _persisted(**kw):
+            seen.update(kw)
+            return False
+
+        monkeypatch.setattr(ops_alert, "_persisted_since", _persisted)
+        assert await ops_alert.notify_admin(
+            title="t", message="m", dedup_key="k", source="mcp_health_monitor"
+        ) is False
+        # The persist check looks for exactly this notification, for this admin.
+        assert (seen["title"], seen["message"], seen["source"], seen["target_user_id"]) == (
+            "t", "m", "mcp_health_monitor", 1,
+        )
+
+
 async def _fake_admin(db):
     return 1
 

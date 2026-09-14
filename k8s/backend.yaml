@@ -323,10 +323,13 @@ spec:
             failureThreshold: 3
           # Readiness uses /health/ready, never /health (which answers "ok" with a
           # dead DB): an unreachable DB → 503 → the pod leaves the Service endpoints
-          # instead of accepting requests it cannot serve. Only the DB gates it —
-          # Ollama/Redis report "degraded" without failing. A DB blip shorter than
-          # periodSeconds x failureThreshold (30 s, e.g. a CNPG switchover) does not
-          # flip it; the DB check inside is bounded to 3 s (below timeoutSeconds).
+          # instead of accepting requests it cannot serve. Only DB REACHABILITY gates
+          # it, checked on the probe's OWN short-lived connection (NullPool) — an
+          # exhausted app pool must read as slow, not take every replica out at once.
+          # Ollama/Redis/device hook report "degraded"/"unknown" (each bounded to 1 s)
+          # without failing. A DB blip shorter than periodSeconds x failureThreshold
+          # (30 s, e.g. a CNPG switchover) does not flip it; the DB check is bounded to
+          # 3 s and all checks run concurrently, so the probe stays below timeoutSeconds.
           readinessProbe:
             httpGet:
               path: /health/ready

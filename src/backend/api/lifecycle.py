@@ -892,4 +892,11 @@ async def lifespan(app: "FastAPI"):
     except Exception as e:  # pragma: no cover — defensive cleanup
         logger.warning(f"redis close failed: {e}")
 
+    # Dispose the readiness probe's own NullPool engine + Redis client.
+    try:
+        from services import health_check
+        await health_check.dispose()
+    except Exception as e:  # pragma: no cover — defensive cleanup
+        logger.warning(f"health check dispose failed: {e}")
+
     logger.info("✅ Shutdown complete")

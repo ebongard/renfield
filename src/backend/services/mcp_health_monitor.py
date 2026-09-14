@@ -406,20 +406,24 @@ async def _monitor_tick_body(mcp_manager) -> None:
             logger.warning(f"mcp_health: post-probe get_status failed: {e}")
 
     current_problems: set[str] = set()
+    problem_servers: set[str] = set()
     for srv in status.get("servers", []):
         name = srv.get("name")
         health = srv.get("health")
         if health not in ("degraded", "down"):
             continue
+        problem_servers.add(name)
         code = srv.get("impaired_code")
         if code == "no_tools" and _in_no_tools_grace(srv):
             # Reported (kiosk, system_health) but not yet alerted: tools may still be
             # registering, and the refresh loop re-lists them.
             continue
-        # The key carries the REASON, not just the health. With name+health only, a
-        # server already alerted as e.g. probe_failed that then also turned tool-less
-        # never alerted again — the admin kept believing the stale reason.
-        key = f"planea:{name}:{health}:{code or ''}"
+        # The re-alert TTL applies per SERVER + HEALTH, not per reason. A reason
+        # change inside the TTL (rate_limited <-> calls_failing, probe_failed ->
+        # no_tools) is the same outage and must not re-alert on every switch; the
+        # next due alert simply names the CURRENT reason, because the message is
+        # built at alert time.
+        key = f"planea:{name}:{health}"
         current_problems.add(key)
         if not _should_alert(key):
             continue
@@ -439,13 +443,18 @@ async def _monitor_tick_body(mcp_manager) -> None:
             },
         )
         if delivered is False:
-            # should_alert stamped the ledger BEFORE delivery. Without this, a
-            # failed hand-off (pipeline error, proactive delivery still off) silenced
-            # the problem for the whole re-alert TTL. Retry on the next tick instead.
-            _clear_alert(key)
-    # Recovery: any Plane-A ledger key no longer a current problem → clear it.
+            # Nothing reached the admin (no notification row — a row that was stored
+            # but whose live push failed already counts as told, see ops_alert).
+            # should_alert stamped the ledger BEFORE delivery, so leaving it would be
+            # 6 h of silence; clearing it would retry — and store a row — every
+            # 120 s tick for the whole pipeline outage. Bounded backoff instead.
+            ops_alert.defer_alert(key, settings.mcp_health_alert_retry_seconds)
+    # Recovery: forget a server's ledger keys only once that SERVER has no problem at
+    # all. Clearing per key made a still-broken server whose reason or health changed
+    # lose its TTL and re-alert on every switch.
     for key in ops_alert.alerted_keys("planea:"):
-        if key not in current_problems:
+        server = key[len("planea:"):].rsplit(":", 1)[0]
+        if server not in problem_servers:
             _clear_alert(key)
 
     _last_tick_problem_count = len(current_problems)

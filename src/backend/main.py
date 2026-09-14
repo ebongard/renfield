@@ -401,47 +401,40 @@ async def health_check():
     return {"status": "ok", "prompt_hashes": prompt_hashes}
 
 
-_health_redis_client = None
-
-
-def _get_health_redis_client():
-    """Lazy shared Redis client for health checks."""
-    global _health_redis_client
-    if _health_redis_client is None:
-        import redis.asyncio as aioredis
-        _health_redis_client = aioredis.from_url(settings.redis_url)
-    return _health_redis_client
-
-
 @app.get("/health/ready")
 async def readiness_check():
     """Kubernetes readiness probe - checks all dependencies.
 
-    Only the DATABASE decides the status code. Ollama and Redis report
-    ``degraded`` but never 503: a readiness probe that drops every replica out of
-    the Service while the LLM is merely slow would turn a partial outage into a
-    total one. Liveness deliberately uses the dependency-free ``/health/live``
-    (see k8s/backend.yaml) so a DB outage never becomes a restart storm.
+    Only DB REACHABILITY decides the status code — checked on the probe's own
+    short-lived connection, never the app pool, so a saturated pool reads as slow,
+    not as down (services/health_check.py). Ollama, Redis and the device hook
+    report ``degraded``/``unknown`` but never 503, and every optional check is
+    time-bounded: a readiness probe that drops every replica while Redis hangs
+    would turn a partial outage into a total one. All checks run concurrently, so
+    the worst case is the DB bound. Liveness deliberately uses the dependency-free
+    ``/health/live`` (see k8s/backend.yaml) so a DB outage never becomes a restart
+    storm.
     """
     import asyncio
 
-    from sqlalchemy import text
+    from services import health_check
 
     checks = {}
     overall_healthy = True
 
-    # Database check — bounded. A black-holed DB would otherwise hold this request
-    # for the driver's pool/connect timeout (30-60 s), far past the kubelet's probe
-    # timeout, and probes arriving every 10 s would pile up behind it.
-    try:
-        async with asyncio.timeout(settings.health_ready_db_timeout_seconds):
-            async with AsyncSessionLocal() as db:
-                await db.execute(text("SELECT 1"))
-        checks["database"] = {"status": "healthy"}
-    except Exception as e:
-        logger.warning(f"Health check: database unhealthy: {e}")
+    db_result, redis_check, devices_check = await asyncio.gather(
+        health_check.check_database(),
+        health_check.check_redis(),
+        health_check.device_summary(),
+        return_exceptions=True,
+    )
+
+    if isinstance(db_result, BaseException):
+        logger.warning(f"Health check: database unhealthy: {type(db_result).__name__}: {db_result}")
         checks["database"] = {"status": "unhealthy", "error": "connection failed"}
         overall_healthy = False
+    else:
+        checks["database"] = {"status": "healthy"}
 
     # Ollama check
     try:
@@ -455,33 +448,13 @@ async def readiness_check():
         checks["ollama"] = {"status": "unhealthy", "error": "connection failed"}
         overall_healthy = False
 
-    # Redis check (optional)
-    try:
-        r = _get_health_redis_client()
-        await r.ping()
-        checks["redis"] = {"status": "healthy"}
-    except Exception as e:
-        logger.warning(f"Health check: redis degraded: {e}")
-        checks["redis"] = {"status": "degraded", "error": "connection failed"}
-        # Redis is optional, don't fail health check
-
-    # Connected devices count via hook — ha_glue's handler reports
-    # DeviceManager state. Platform-only deploys (no handler) report
-    # "unknown".
-    try:
-        from utils.hooks import run_hooks
-        results = await run_hooks("get_connected_device_summary")
-        device_summary = None
-        for result in results:
-            if isinstance(result, dict):
-                device_summary = result
-                break
-        if device_summary is not None:
-            checks["devices"] = {"status": "healthy", **device_summary}
-        else:
-            checks["devices"] = {"status": "unknown"}
-    except Exception:
-        checks["devices"] = {"status": "unknown"}
+    # Redis + connected-device summary (ha_glue hook): optional and bounded inside
+    # health_check — a hang or error reports degraded/unknown, never 503.
+    checks["redis"] = (
+        redis_check if isinstance(redis_check, dict)
+        else {"status": "degraded", "error": "connection failed"}
+    )
+    checks["devices"] = devices_check if isinstance(devices_check, dict) else {"status": "unknown"}
 
     status = "healthy" if overall_healthy else "unhealthy"
     status_code = 200 if overall_healthy else 503

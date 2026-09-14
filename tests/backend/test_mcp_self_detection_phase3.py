@@ -139,19 +139,82 @@ class TestZeroToolsAlerting:
         mgr.probe_server.assert_not_awaited()
         assert calls[0]["data"]["self_heal_attempted"] is False
 
-    async def test_undelivered_alert_is_retried_on_the_next_tick(self, monkeypatch):
-        """The measured defect: tick 1's hand-off failed, tick 2 stayed silent for the
-        whole re-alert TTL because the ledger had already been stamped."""
-        calls = _capture_delivery(monkeypatch, outcomes=[False, True])
+    def _pipeline(self, monkeypatch, *, raises, persisted):
+        """Drive the REAL ops_alert.notify_admin with a stubbed pipeline. Returns the
+        list of process_webhook calls (= notification rows attempted)."""
+        import sys
+        import types
+
+        rows: list[dict] = []
+
+        class _Svc:
+            def __init__(self, db):
+                pass
+
+            async def process_webhook(self, **kw):
+                rows.append(kw)
+                if raises is not None:
+                    raise raises
+
+        class _Session:
+            async def __aenter__(self):
+                return object()
+
+            async def __aexit__(self, *exc):
+                return False
+
+        ns_mod = types.ModuleType("services.notification_service")
+        ns_mod.NotificationService = _Svc
+        monkeypatch.setitem(sys.modules, "services.notification_service", ns_mod)
+        monkeypatch.setattr("services.database.AsyncSessionLocal", lambda: _Session())
+        monkeypatch.setattr(settings, "proactive_enabled", True)
+
+        async def _admin(db):
+            return 1
+
+        async def _persisted(**_kw):
+            return persisted
+
+        monkeypatch.setattr(ops_alert, "resolve_admin_user_id", _admin)
+        monkeypatch.setattr(ops_alert, "_persisted_since", _persisted)
+        return rows
+
+    async def test_failure_after_persist_stores_no_second_row(self, monkeypatch):
+        """Review finding: delivery raised AFTER the row was committed, the monitor
+        cleared the key, and every 120 s tick stored a new row + push."""
+        clock = [1000.0]
+        monkeypatch.setattr(ops_alert, "_now", lambda: clock[0])
+        rows = self._pipeline(monkeypatch, raises=RuntimeError("push failed"), persisted=True)
         state = _server(session=_Session())
         state.note_discovered_tools(now=0.0)
         mgr = _manager({"optional": state})
 
-        await monitor.monitor_tick(_app(mgr))
-        await monitor.monitor_tick(_app(mgr))
+        for _ in range(5):
+            await monitor.monitor_tick(_app(mgr))
+            clock[0] += 120.0
 
-        assert len(calls) == 2
-        assert any(k.startswith("planea:optional") for k in ops_alert.alerted_keys())
+        assert len(rows) == 1
+
+    async def test_unpersisted_alert_is_retried_only_after_the_backoff(self, monkeypatch):
+        """Nothing reached the admin: not silent for 6 h, but not every tick either."""
+        clock = [1000.0]
+        monkeypatch.setattr(ops_alert, "_now", lambda: clock[0])
+        monkeypatch.setattr(settings, "mcp_health_alert_retry_seconds", 600.0)
+        rows = self._pipeline(monkeypatch, raises=RuntimeError("db down"), persisted=False)
+        state = _server(session=_Session())
+        state.note_discovered_tools(now=0.0)
+        mgr = _manager({"optional": state})
+
+        await monitor.monitor_tick(_app(mgr))          # t=0: attempt, not persisted
+        clock[0] += 120.0
+        await monitor.monitor_tick(_app(mgr))          # t=120: inside the backoff
+        clock[0] += 360.0
+        await monitor.monitor_tick(_app(mgr))          # t=480: still inside
+        assert len(rows) == 1
+
+        clock[0] += 121.0
+        await monitor.monitor_tick(_app(mgr))          # t=601: retry
+        assert len(rows) == 2
 
     async def test_delivered_alert_is_not_repeated_within_the_ttl(self, monkeypatch):
         calls = _capture_delivery(monkeypatch)
@@ -164,25 +227,85 @@ class TestZeroToolsAlerting:
 
         assert len(calls) == 1
 
-    async def test_a_new_reason_on_an_already_degraded_server_alerts(self, monkeypatch):
-        """A server alerted as probe_failed that then ALSO turns tool-less stayed
-        silent: the ledger key was name+health only, so the admin kept believing the
-        stale reason."""
-        monkeypatch.setattr(settings, "mcp_health_probe_fail_threshold", 1)
+    class _FlapManager:
+        """A manager whose single server's verdict the test sets per tick."""
+
+        def __init__(self):
+            self.server = None
+
+        def get_status(self):
+            return {"servers": [self.server] if self.server else []}
+
+    async def test_reason_flapping_within_the_ttl_alerts_once(self, monkeypatch):
+        """Review finding: with the reason in the key, rate_limited <-> calls_failing
+        re-alerted on every switch and bypassed the 6 h limit."""
+        clock = [1000.0]
+        monkeypatch.setattr(ops_alert, "_now", lambda: clock[0])
         calls = _capture_delivery(monkeypatch)
-        state = _server(tools=1, session=_Session())
-        state.record_probe_outcome(False, "HTTP 500")
-        mgr = _manager({"optional": state})
+        mgr = self._FlapManager()
+        a = {"name": "tracking", "health": "degraded", "impaired_code": "rate_limited"}
+        b = {"name": "tracking", "health": "degraded", "impaired_code": "calls_failing"}
+
+        for verdict in (a, b, a, b, a):
+            mgr.server = verdict
+            await monitor.monitor_tick(_app(mgr))
+            clock[0] += 60.0
+
+        assert len(calls) == 1
+        assert ops_alert.alerted_keys("planea:") == ["planea:tracking:degraded"]
+
+    async def test_after_the_ttl_the_due_alert_names_the_current_reason(self, monkeypatch):
+        clock = [1000.0]
+        monkeypatch.setattr(ops_alert, "_now", lambda: clock[0])
+        monkeypatch.setattr(settings, "mcp_health_realert_seconds", 21600.0)
+        calls = _capture_delivery(monkeypatch)
+        mgr = self._FlapManager()
+        mgr.server = {"name": "optional", "health": "degraded", "impaired_code": "probe_failed"}
         await monitor.monitor_tick(_app(mgr))
 
-        state.all_discovered_tools = []
-        state.note_discovered_tools(now=0.0)
-        state.record_probe_outcome(True)
+        mgr.server = {"name": "optional", "health": "degraded", "impaired_code": "no_tools"}
+        clock[0] += 300.0
         await monitor.monitor_tick(_app(mgr))
+        assert len(calls) == 1
 
+        clock[0] += 21600.0
+        await monitor.monitor_tick(_app(mgr))
         assert len(calls) == 2
-        assert "Funktionstest" in calls[0]["message"]
         assert "keine Werkzeuge" in calls[1]["message"]
+
+    async def test_real_recovery_clears_the_keys_and_rearms(self, monkeypatch):
+        clock = [1000.0]
+        monkeypatch.setattr(ops_alert, "_now", lambda: clock[0])
+        calls = _capture_delivery(monkeypatch)
+        mgr = self._FlapManager()
+        broken = {"name": "paperless", "health": "down", "last_error": "gone"}
+        mgr.server = broken
+        await monitor.monitor_tick(_app(mgr))
+
+        mgr.server = {"name": "paperless", "health": "healthy"}
+        clock[0] += 120.0
+        await monitor.monitor_tick(_app(mgr))
+        assert ops_alert.alerted_keys("planea:") == []
+
+        mgr.server = broken
+        clock[0] += 120.0
+        await monitor.monitor_tick(_app(mgr))
+        assert len(calls) == 2  # a re-failure after a real recovery alerts at once
+
+    async def test_a_still_broken_server_keeps_its_keys(self, monkeypatch):
+        """The sweep must not forget an alert just because the server's health or
+        reason moved — only full recovery does."""
+        calls = _capture_delivery(monkeypatch)
+        mgr = self._FlapManager()
+        mgr.server = {"name": "paperless", "health": "down", "last_error": "gone"}
+        await monitor.monitor_tick(_app(mgr))
+        mgr.server = {"name": "paperless", "health": "degraded", "impaired_code": "probe_failed"}
+        await monitor.monitor_tick(_app(mgr))
+        mgr.server = {"name": "paperless", "health": "down", "last_error": "gone"}
+        await monitor.monitor_tick(_app(mgr))
+
+        # down alerted once, degraded once — the return to down is inside its TTL.
+        assert len(calls) == 2
 
     async def test_boot_grace_holds_the_alert_but_not_the_verdict(self, monkeypatch):
         """No alert storm on startup: a server whose tools have not registered yet
