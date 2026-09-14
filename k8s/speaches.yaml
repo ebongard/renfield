@@ -26,7 +26,23 @@ metadata:
     app.kubernetes.io/part-of: renfield
     spike: voice-buy-vs-build
 spec:
-  replicas: 1
+  # PARKED (reconciled with live 2026-09-14): the Speaches build-vs-buy spike ended
+  # with "build, not buy" (docs/VOICE_PIPELINE_DESIGN.md v1.4). Live runs 0 replicas
+  # and its model-cache PVC `speaches-hf-cache` was deleted, so it is no longer
+  # declared in this file.
+  #
+  # The pod template below still mounts that PVC. Scaling up as-is leaves the pod
+  # Pending on the missing claim (loud, nothing half-starts). To run the spike
+  # again, first recreate the PVC, then scale:
+  #   kubectl -n renfield apply -f - <<'PVC'
+  #   apiVersion: v1
+  #   kind: PersistentVolumeClaim
+  #   metadata: {name: speaches-hf-cache, namespace: renfield, labels: {spike: voice-buy-vs-build}}
+  #   spec: {accessModes: [ReadWriteOnce], storageClassName: longhorn, resources: {requests: {storage: 30Gi}}}
+  #   PVC
+  #   kubectl -n renfield scale deploy/speaches --replicas=1
+  # It requests `nvidia.com/gpu: 1` on the voice-llm node — check that GPU is free first.
+  replicas: 0
   strategy:
     type: Recreate
   selector:
@@ -92,19 +108,3 @@ spec:
         - name: hf-cache
           persistentVolumeClaim:
             claimName: speaches-hf-cache
-
----
-apiVersion: v1
-kind: PersistentVolumeClaim
-metadata:
-  name: speaches-hf-cache
-  namespace: renfield
-  labels:
-    spike: voice-buy-vs-build
-spec:
-  accessModes:
-    - ReadWriteOnce
-  storageClassName: longhorn
-  resources:
-    requests:
-      storage: 30Gi
