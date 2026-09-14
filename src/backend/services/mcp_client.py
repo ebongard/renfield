@@ -20,7 +20,7 @@ import re
 import time
 from collections import deque
 from collections.abc import AsyncIterator, Awaitable, Callable
-from contextlib import AsyncExitStack, suppress
+from contextlib import AsyncExitStack, contextmanager, suppress
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
@@ -990,6 +990,18 @@ class MCPServerState:
         """True while at least one running call is still inside its timeout."""
         now = time.monotonic() if now is None else now
         return any(deadline > now for deadline in self.inflight_deadlines)
+
+    @contextmanager
+    def track_call(self, timeout: float):
+        """Count one tool call in flight until it leaves, on every exit path —
+        success, timeout, error or cancellation. Each call removes only its own
+        entry, so overlapping calls never release each other's."""
+        deadline = time.monotonic() + timeout
+        self.inflight_deadlines.append(deadline)
+        try:
+            yield
+        finally:
+            self.inflight_deadlines.remove(deadline)
     # Functional-health signal (Phase 2): rolling window of recent tool-call
     # outcomes that are HEALTH-CORRELATED — True on a clean result, False on a
     # timeout (server/upstream didn't respond). Deliberately NOT recorded:
@@ -1666,24 +1678,6 @@ class MCPManager:
                 timeout=settings.mcp_connect_timeout,
             )
 
-            # Build full list of all discovered tools (for admin UI)
-            all_tools = []
-            for tool in tools_result.tools:
-                namespaced = f"mcp.{config.name}.{tool.name}"
-                # Apply tool hints from config (append to description)
-                description = tool.description or ""
-                if config.tool_hints and tool.name in config.tool_hints:
-                    hint = config.tool_hints[tool.name]
-                    description = f"{description} {hint}".strip()
-                info = MCPToolInfo(
-                    server_name=config.name,
-                    original_name=tool.name,
-                    namespaced_name=namespaced,
-                    description=description,
-                    input_schema=tool.inputSchema if hasattr(tool, "inputSchema") else {},
-                )
-                all_tools.append(info)
-
             # A STALE stack from a prior session can still be set here (direct
             # refresh_tools reconnects skip the teardown in _reconnect_server) —
             # close it bounded before overwriting, else its transport leaks.
@@ -1692,8 +1686,9 @@ class MCPManager:
             state.session = session
             state.exit_stack = exit_stack
             self._set_connected(state, True)
-            state.all_discovered_tools = all_tools
-            state.note_discovered_tools()
+            # The same function refresh_tools uses: hints, filter and index must not
+            # depend on which of the two happened to discover the tools.
+            self._install_discovered_tools(state, tools_result.tools)
             state.last_error = None
             # Fresh session → drop the old session's failure history so a reconnect
             # that fixed the upstream isn't left falsely flagged calls_failing.
@@ -1705,22 +1700,13 @@ class MCPManager:
             # last_probe_at is left alone too, so a reconnect loop cannot starve
             # the probe by continually resetting its due-time.
 
-            # Filter to active tools only (DB override > YAML prompt_tools > all)
-            active_tools_list = self._get_active_tools(config)
-            allowed = set(active_tools_list) if active_tools_list else None
-            state.tools = []
-            for tool_info in all_tools:
-                if allowed and tool_info.original_name not in allowed:
-                    continue
-                state.tools.append(tool_info)
-                self._tool_index[tool_info.namespaced_name] = tool_info
-
             # Reset backoff on successful connection
             if state.backoff:
                 state.backoff.record_success()
 
-            if allowed:
-                logger.info(f"MCP server '{config.name}' connected: {len(state.tools)}/{len(all_tools)} tools (filtered)")
+            total = len(state.all_discovered_tools)
+            if len(state.tools) != total:
+                logger.info(f"MCP server '{config.name}' connected: {len(state.tools)}/{total} tools (filtered)")
             else:
                 logger.info(f"MCP server '{config.name}' connected: {len(state.tools)} tools")
 
@@ -2061,6 +2047,113 @@ class MCPManager:
             + (f" (Retry-After {retry_after:.0f}s)" if retry_after else "")
         )
 
+    # --- Call accounting, shared by execute_tool and the streaming path ----------
+    # One implementation on purpose: the streaming path used to carry its own copy
+    # and recorded neither timeouts nor throttles, shielded nothing from the
+    # refresh reconnect, ignored Retry-After and marked the server down on any app
+    # error. Every exit of a real tool call goes through exactly one of the three
+    # outcome helpers below; a caller's cancellation goes through none of them.
+
+    @staticmethod
+    def _retry_after_refusal(state: "MCPServerState", tool_info: MCPToolInfo) -> dict | None:
+        """Our own fail-fast refusal while `tool` sits inside an upstream Retry-After
+        horizon (Phase 3, dark), else None. Not recorded as a new throttle event —
+        our refusal is not evidence from the upstream."""
+        if not settings.mcp_rate_limit_backoff_enabled:
+            return None
+        retry_in = state.rate_limit_retry_in(tool_info.original_name)
+        if retry_in is None:
+            return None
+        return {
+            "success": False,
+            "message": (
+                f"Upstream-Rate-Limit für {tool_info.namespaced_name}: "
+                f"erneut versuchen in {max(1, round(retry_in))} s"
+            ),
+            "data": None,
+        }
+
+    @staticmethod
+    def _call_timed_out(state: "MCPServerState", namespaced_name: str) -> dict:
+        """A timeout: the server/upstream did not answer — health-correlated, so it
+        is a failure sample (unlike an app-level error result)."""
+        logger.error(f"MCP tool call timeout: {namespaced_name}")
+        state.record_call_outcome(False)
+        return {
+            "success": False,
+            "message": f"Tool-Aufruf Timeout: {namespaced_name}",
+            "data": None,
+        }
+
+    def _call_app_error(
+        self, state: "MCPServerState", tool_info: MCPToolInfo, exc: BaseException
+    ) -> None:
+        """An application-level exception on a healthy session (McpError, an
+        upstream HTTP error relayed as an exception …). Not a health sample and not
+        a disconnect — but it may be an upstream throttle."""
+        logger.error(f"MCP tool call failed: {tool_info.namespaced_name}: {exc}")
+        state.last_error = str(exc)
+        self._note_rate_limit(state, tool_info.original_name, str(exc), exc=exc)
+
+    def _call_result(
+        self,
+        state: "MCPServerState",
+        tool_info: MCPToolInfo,
+        result: Any,
+        truncate: bool = True,
+    ) -> dict:
+        """Convert a CallToolResult to our FinalResult and record its outcome."""
+        state.last_successful_call = time.monotonic()
+
+        is_error = getattr(result, "isError", False)
+        content_parts = []
+        raw_data = []
+        for item in result.content:
+            text = getattr(item, "text", None)
+            if text:
+                # === Response Truncation ===
+                content_parts.append(_truncate_response(text) if truncate else text)
+            raw_data.append({"type": getattr(item, "type", "unknown"), "text": text})
+
+        message = "\n".join(content_parts) if content_parts else "Tool executed"
+        # Truncate final message if still too large
+        if truncate:
+            message = _truncate_response(message)
+
+        # NOTE: Credential sanitization is NOT done here — the agent loop
+        # needs real API keys in tool results (e.g. Jellyfin stream URLs
+        # passed to play_in_room). Sanitization happens in
+        # step_to_ws_message() before sending to the frontend.
+
+        # Some MCP servers (e.g. n8n-mcp) wrap responses in their own
+        # JSON envelope: {"success": false, "error": "..."}. The MCP-level
+        # isError flag stays False even on application errors, so we check
+        # the inner JSON to detect real failures.
+        if not is_error:
+            is_error = _detect_inner_error(message)
+
+        # Functional-health signal: record ONLY a clean result as a success. An
+        # isError result (protocol or inner-JSON) is an APPLICATION outcome — a
+        # device off, a parcel not found, a workflow that returned success:false —
+        # NOT a statement about the server's health, so it is deliberately not
+        # recorded (else a burst of legitimate app errors would falsely flag the
+        # server calls_failing). Only a timeout is counted as a health failure.
+        if not is_error:
+            state.record_call_outcome(True)
+            # The upstream accepts this tool again — lift any Retry-After horizon.
+            state.clear_rate_limit(tool_info.original_name)
+        else:
+            # Phase 3: an ERROR result may be an upstream throttle. Classified only
+            # here and on app exceptions, never on a success, whose payload may
+            # legitimately talk about rate limits.
+            self._note_rate_limit(state, tool_info.original_name, message)
+
+        return {
+            "success": not is_error,
+            "message": message,
+            "data": raw_data if raw_data else None,
+        }
+
     def record_external_probe(self, server_name: str, ok: bool, detail: str | None) -> None:
         """Record a verdict from a PURPOSE-BUILT probe that lives outside this class.
 
@@ -2345,17 +2438,9 @@ class MCPManager:
         # _is_session_dead is careful to avoid. Not recorded as a new throttle event
         # either — our own refusal is not evidence from the upstream, and counting it
         # would let the gate keep the server red by itself.
-        if settings.mcp_rate_limit_backoff_enabled:
-            retry_in = state.rate_limit_retry_in(tool_info.original_name)
-            if retry_in is not None:
-                return {
-                    "success": False,
-                    "message": (
-                        f"Upstream-Rate-Limit für {namespaced_name}: "
-                        f"erneut versuchen in {max(1, round(retry_in))} s"
-                    ),
-                    "data": None,
-                }
+        refusal = self._retry_after_refusal(state, tool_info)
+        if refusal is not None:
+            return refusal
 
         # === Rate Limiting ===
         if state.rate_limiter:
@@ -2443,9 +2528,7 @@ class MCPManager:
         async def _do_call() -> Any:
             # Counted in flight so refresh_tools / probe_server do not reconnect
             # this session underneath the call; released on every exit path.
-            deadline = time.monotonic() + effective_timeout
-            state.inflight_deadlines.append(deadline)
-            try:
+            with state.track_call(effective_timeout):
                 if per_user_headers:
                     return await asyncio.wait_for(
                         self._call_tool_per_user_session(
@@ -2457,8 +2540,6 @@ class MCPManager:
                     state.session.call_tool(tool_info.original_name, arguments),
                     timeout=effective_timeout,
                 )
-            finally:
-                state.inflight_deadlines.remove(deadline)
 
         # Try once; on a session-death signal (transport exception OR the
         # streamable_http "Session terminated" McpError after a server bounce —
@@ -2474,23 +2555,13 @@ class MCPManager:
                 last_exc = None
                 break
             except TimeoutError:
-                logger.error(f"MCP tool call timeout: {namespaced_name}")
-                # Functional-health signal: a timeout means the server/upstream did
-                # not respond — health-correlated (unlike an app-level error result).
-                state.record_call_outcome(False)
-                return {
-                    "success": False,
-                    "message": f"Tool-Aufruf Timeout: {namespaced_name}",
-                    "data": None,
-                }
+                return self._call_timed_out(state, namespaced_name)
             except Exception as e:  # noqa: BLE001 - bubble in last_exc
                 last_exc = e
                 if not _is_session_dead(e):
                     # Application-level error (McpError, schema, etc.). The
                     # session is fine; just surface the failure.
-                    logger.error(f"MCP tool call failed: {namespaced_name}: {e}")
-                    state.last_error = str(e)
-                    self._note_rate_limit(state, tool_info.original_name, str(e), exc=e)
+                    self._call_app_error(state, tool_info, e)
                     break
                 if attempt == 0:
                     logger.warning(
@@ -2521,61 +2592,7 @@ class MCPManager:
                 "data": None,
             }
 
-        state.last_successful_call = time.monotonic()
-
-        # Convert CallToolResult to our format
-        is_error = getattr(result, "isError", False)
-        content_parts = []
-        raw_data = []
-
-        for item in result.content:
-            text = getattr(item, "text", None)
-            if text:
-                # === Response Truncation ===
-                content_parts.append(_truncate_response(text) if truncate else text)
-            raw_data.append(
-                {"type": getattr(item, "type", "unknown"), "text": text}
-            )
-
-        message = "\n".join(content_parts) if content_parts else "Tool executed"
-
-        # Truncate final message if still too large
-        if truncate:
-            message = _truncate_response(message)
-
-        # NOTE: Credential sanitization is NOT done here — the agent loop
-        # needs real API keys in tool results (e.g. Jellyfin stream URLs
-        # passed to play_in_room). Sanitization happens in
-        # step_to_ws_message() before sending to the frontend.
-
-        # Some MCP servers (e.g. n8n-mcp) wrap responses in their own
-        # JSON envelope: {"success": false, "error": "..."}. The MCP-level
-        # isError flag stays False even on application errors, so we check
-        # the inner JSON to detect real failures.
-        if not is_error:
-            is_error = _detect_inner_error(message)
-
-        # Functional-health signal: record ONLY a clean result as a success. An
-        # isError result (protocol or inner-JSON) is an APPLICATION outcome — a
-        # device off, a parcel not found, a workflow that returned success:false —
-        # NOT a statement about the server's health, so it is deliberately not
-        # recorded (else a burst of legitimate app errors would falsely flag the
-        # server calls_failing). Only a timeout is counted as a health failure.
-        if not is_error:
-            state.record_call_outcome(True)
-            # The upstream accepts this tool again — lift any Retry-After horizon.
-            state.clear_rate_limit(tool_info.original_name)
-        else:
-            # Phase 3: an ERROR result may be an upstream throttle. Classified only
-            # here and on app exceptions, never on a success, whose payload may
-            # legitimately talk about rate limits.
-            self._note_rate_limit(state, tool_info.original_name, message)
-
-        return {
-            "success": not is_error,
-            "message": message,
-            "data": raw_data if raw_data else None,
-        }
+        return self._call_result(state, tool_info, result, truncate=truncate)
 
     async def execute_tool_streaming(
         self,
@@ -2652,7 +2669,11 @@ class MCPManager:
         # is registered but drops back through this branch (e.g., server
         # lost streaming mid-session) still has the sink available. Today
         # only the FEDERATION branch above actually invokes the sink.
-        if state is None or not state.config.streaming:
+        # per_user_auth servers take it too: the streaming wire calls the SHARED
+        # session, and a per-user call must run under that user's own credential or
+        # be denied (fail-closed) — execute_tool owns both. It yields no progress,
+        # which is the honest price until a per-user streaming session exists.
+        if state is None or not state.config.streaming or state.config.per_user_auth:
             result = await self.execute_tool(
                 namespaced_name=namespaced_name,
                 arguments=arguments,
@@ -2879,6 +2900,12 @@ class MCPManager:
             }
             return
 
+        # === Upstream Retry-After (Phase 3, dark) — same gate as execute_tool ===
+        refusal = self._retry_after_refusal(state, tool_info)
+        if refusal is not None:
+            yield refusal
+            return
+
         # === Rate limiting ===
         if state.rate_limiter and not await state.rate_limiter.acquire():
             logger.warning(f"MCP rate limit exceeded for server '{tool_info.server_name}'")
@@ -2940,11 +2967,17 @@ class MCPManager:
         user_info = f" (user_id={user_id})" if user_id is not None else ""
         logger.debug(f"MCP streaming call: {namespaced_name}{user_info}")
 
-        call_task = asyncio.create_task(
-            asyncio.wait_for(
-                call_coro, timeout=_server_call_timeout(state, tool_info.original_name)
-            )
-        )
+        effective_timeout = _server_call_timeout(state, tool_info.original_name)
+
+        async def _run() -> Any:
+            # In flight while the task runs — the same shield execute_tool's call
+            # gets, so refresh_tools / the self-heal probe don't reconnect the
+            # session under a long streaming call. Released on every exit path,
+            # the caller's cancellation included.
+            with state.track_call(effective_timeout):
+                return await asyncio.wait_for(call_coro, timeout=effective_timeout)
+
+        call_task = asyncio.create_task(_run())
 
         # === Drain progress chunks while task runs ===
         try:
@@ -2961,27 +2994,33 @@ class MCPManager:
             # Consumer closed the generator — cancel the tool call AND await
             # it (via suppress) so the task-destroyed-but-pending warning
             # doesn't fire and any transport-level cleanup runs before we
-            # re-raise.
+            # re-raise. Deliberately NOT recorded anywhere: the caller gave up,
+            # the server did nothing wrong.
             call_task.cancel()
             with suppress(BaseException):
                 await call_task
+            # A task cancelled before its first step never awaited the call.
+            close = getattr(call_coro, "close", None)
+            if close is not None:
+                close()
             raise
 
-        # === Yield the final result (same format as execute_tool) ===
+        # === Yield the final result (same format and accounting as execute_tool) ===
         try:
             result = await call_task
         except TimeoutError:
-            logger.error(f"MCP tool call timeout: {namespaced_name}")
-            yield {
-                "success": False,
-                "message": f"Tool-Aufruf Timeout: {namespaced_name}",
-                "data": None,
-            }
+            # Also after partial progress: the call never finished.
+            yield self._call_timed_out(state, namespaced_name)
             return
         except Exception as e:
-            logger.error(f"MCP tool call failed: {namespaced_name}: {e}")
-            self._set_connected(state, False)
-            state.last_error = str(e)
+            if _is_session_dead(e):
+                # Transport death → "down" via connectivity. No retry here: progress
+                # may already have reached the consumer.
+                logger.error(f"MCP streaming call lost its session: {namespaced_name}: {e}")
+                self._set_connected(state, False)
+                state.last_error = str(e)
+            else:
+                self._call_app_error(state, tool_info, e)
             yield {
                 "success": False,
                 "message": f"Tool-Aufruf fehlgeschlagen: {e}",
@@ -2989,27 +3028,7 @@ class MCPManager:
             }
             return
 
-        # Convert CallToolResult → FinalResult dict (same logic as execute_tool).
-        is_error = getattr(result, "isError", False)
-        content_parts = []
-        raw_data = []
-        for item in result.content:
-            text = getattr(item, "text", None)
-            if text:
-                content_parts.append(_truncate_response(text))
-            raw_data.append({"type": getattr(item, "type", "unknown"), "text": text})
-
-        message_text = "\n".join(content_parts) if content_parts else "Tool executed"
-        message_text = _truncate_response(message_text)
-
-        if not is_error:
-            is_error = _detect_inner_error(message_text)
-
-        yield {
-            "success": not is_error,
-            "message": message_text,
-            "data": raw_data if raw_data else None,
-        }
+        yield self._call_result(state, tool_info, result)
 
     def get_all_tools(self) -> list[MCPToolInfo]:
         """Return all discovered MCP tools."""
@@ -3201,33 +3220,7 @@ class MCPManager:
                         state.session.list_tools(),
                         timeout=settings.mcp_connect_timeout,
                     )
-                    # Remove old tools from index
-                    for old_name in [t.namespaced_name for t in state.tools]:
-                        self._tool_index.pop(old_name, None)
-
-                    # Store all discovered tools (unfiltered)
-                    state.all_discovered_tools = []
-                    for tool in tools_result.tools:
-                        namespaced = f"mcp.{state.config.name}.{tool.name}"
-                        info = MCPToolInfo(
-                            server_name=state.config.name,
-                            original_name=tool.name,
-                            namespaced_name=namespaced,
-                            description=tool.description or "",
-                            input_schema=tool.inputSchema if hasattr(tool, "inputSchema") else {},
-                        )
-                        state.all_discovered_tools.append(info)
-                    state.note_discovered_tools()
-
-                    # Re-register with active filter applied
-                    active = self._get_active_tools(state.config)
-                    allowed = set(active) if active else None
-                    state.tools = []
-                    for tool_info in state.all_discovered_tools:
-                        if allowed and tool_info.original_name not in allowed:
-                            continue
-                        state.tools.append(tool_info)
-                        self._tool_index[tool_info.namespaced_name] = tool_info
+                    self._install_discovered_tools(state, tools_result.tools)
 
                 except Exception as e:
                     logger.warning(f"MCP refresh failed for '{state.config.name}': {e}")
@@ -3253,20 +3246,50 @@ class MCPManager:
     def _refilter_server(self, server_name: str) -> None:
         """Re-build state.tools + _tool_index from all_discovered_tools using current filter."""
         state = self._servers.get(server_name)
-        if not state:
-            return
-        # Remove old entries from index
+        if state:
+            self._apply_tool_filter(state)
+
+    @staticmethod
+    def _tool_info_from_mcp(config: MCPServerConfig, tool: Any) -> MCPToolInfo:
+        """One discovered tool as the agent sees it: the upstream description plus
+        the ``tool_hints`` entry from mcp_servers.yaml, if any."""
+        description = tool.description or ""
+        hint = config.tool_hints.get(tool.name) if config.tool_hints else None
+        if hint:
+            description = f"{description} {hint}".strip()
+        return MCPToolInfo(
+            server_name=config.name,
+            original_name=tool.name,
+            namespaced_name=f"mcp.{config.name}.{tool.name}",
+            description=description,
+            input_schema=tool.inputSchema if hasattr(tool, "inputSchema") else {},
+        )
+
+    def _install_discovered_tools(self, state: MCPServerState, raw_tools: Any) -> None:
+        """The ONE place a discovered tool list becomes live state.
+
+        Connect and refresh used to build it separately, and they drifted: refresh
+        never applied ``tool_hints``, so every hint vanished at the first refresh
+        (default after 300 s), and a reconnect never dropped a tool the server no
+        longer offered from the index. Everything else a server's YAML configures
+        (permissions, call_timeout, health_probe) is read from ``state.config`` at
+        use time and never lived in the tool list.
+        """
+        state.all_discovered_tools = [self._tool_info_from_mcp(state.config, t) for t in raw_tools]
+        state.note_discovered_tools()
+        self._apply_tool_filter(state)
+
+    def _apply_tool_filter(self, state: MCPServerState) -> None:
+        """Rebuild state.tools + _tool_index: DB override > YAML prompt_tools > all."""
         for t in state.tools:
             self._tool_index.pop(t.namespaced_name, None)
-        # Re-filter
         active = self._get_active_tools(state.config)
         allowed = set(active) if active else None
-        state.tools = []
-        for tool in state.all_discovered_tools:
-            if allowed and tool.original_name not in allowed:
-                continue
-            state.tools.append(tool)
-            self._tool_index[tool.namespaced_name] = tool
+        state.tools = [
+            t for t in state.all_discovered_tools if not allowed or t.original_name in allowed
+        ]
+        for t in state.tools:
+            self._tool_index[t.namespaced_name] = t
 
     async def load_tool_overrides(self, db) -> None:
         """Load per-server tool activation overrides from SystemSetting."""
