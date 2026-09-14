@@ -864,10 +864,18 @@ liest sie neu ein. Ohne Frist gäbe es bei jedem Start einen Alarm.
 MCP_HEALTH_NO_TOOLS_GRACE_SECONDS=300   # > 2x MCP_REFRESH_INTERVAL; unbekanntes Alter alarmiert
 ```
 
-Außerdem behoben (kein Schalter): ein Alarm, dessen Zustellung scheiterte, wird im
-nächsten Tick erneut versucht statt 6 h zu schweigen; der Dedup-Schlüssel enthält
-den Grund, sodass ein bereits eingeschränkter Server bei einem **neuen** Grund erneut
-meldet; `no_tools` wird nicht mehr „selbstgeheilt".
+Außerdem behoben: Ein Alarm gilt als zugestellt, sobald die Benachrichtigung
+**gespeichert** ist (auch wenn der Live-Push danach scheitert) — sonst entstünde bei
+jedem 120-s-Tick eine neue. Wurde gar nichts gespeichert, folgt der nächste Versuch
+erst nach einem Backoff statt 6 h Schweigen oder einem Versuch je Tick. Die
+Re-Alarm-Sperre (6 h) gilt je **Server + Zustand**; wechselt nur der Grund
+(`rate_limited` ↔ `calls_failing`), gibt es keinen neuen Alarm — der nächste
+fällige nennt den aktuellen Grund. Freigegeben wird erst, wenn der Server wieder
+ganz gesund ist. `no_tools` wird nicht mehr „selbstgeheilt".
+
+```bash
+MCP_HEALTH_ALERT_RETRY_SECONDS=600   # nicht gespeicherter Alarm: nächster Versuch frühestens nach 10 min
+```
 
 **Upstream-Drosselung (HTTP 429) als eigenes Signal** — getrennt vom
 Timeout-Fenster und vom Sondenverdikt. Gelesen wird nur aus Ergebnissen, die schon
@@ -888,13 +896,23 @@ MCP_RATE_LIMIT_BACKOFF_ENABLED=false
 MCP_RATE_LIMIT_MAX_BACKOFF_SECONDS=300     # Deckel für ein Retry-After
 ```
 
-**Backend-Proben** (`k8s/backend.yaml`): Readiness auf `/health/ready` (nur die DB
-entscheidet; Ollama/Redis melden „degraded", ohne 503), Liveness auf `/health/live`
-(prozesslokal — eine Liveness mit DB-Abhängigkeit würde bei einem DB-Ausfall jedes
-Replikat neu starten).
+**Backend-Proben** (`k8s/backend.yaml`): Readiness auf `/health/ready`, Liveness auf
+`/health/live` (prozesslokal — eine Liveness mit DB-Abhängigkeit würde bei einem
+DB-Ausfall jedes Replikat neu starten).
+
+Readiness spiegelt die **Erreichbarkeit** der DB, nicht die Auslastung des
+App-Pools: geprüft wird über eine **eigene kurzlebige Verbindung** (eigene Engine
+mit `NullPool`, einmal erzeugt, beim Herunterfahren entsorgt; Connect- und
+Statement-Timeout begrenzt). Über den App-Pool hätte ein erschöpfter Pool (Fall
+2026-07-01) alle Replikate gleichzeitig aus dem Service genommen, obwohl die DB
+gesund war — aus „langsam" wäre „weg" geworden. Kosten: eine kurze DB-Verbindung je
+Probe je Replikat (alle 10 s). Redis und der Geräte-Hook sind optional, zeitlich
+begrenzt und melden bei Hänger oder Fehler nur „degraded"/„unknown", nie 503. Alle
+Prüfungen laufen parallel; der ungünstigste Fall ist die DB-Grenze.
 
 ```bash
-HEALTH_READY_DB_TIMEOUT_SECONDS=3   # DB-Prüfung in /health/ready begrenzt; < timeoutSeconds der Probe (5)
+HEALTH_READY_DB_TIMEOUT_SECONDS=3    # eigene DB-Verbindung: Connect + SELECT 1; < timeoutSeconds der Probe (5)
+HEALTH_READY_AUX_TIMEOUT_SECONDS=1   # Redis-Ping + Geräte-Hook; Überschreitung = degraded, kein 503
 ```
 
 Folge fürs Deployment: ein Rollout bei toter DB bleibt bei `0/1 Ready` stehen,

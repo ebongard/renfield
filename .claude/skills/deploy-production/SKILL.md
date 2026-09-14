@@ -377,7 +377,11 @@ kubectl -n renfield exec deploy/backend -c backend -- curl -sS -o /dev/null -w '
 ```
 
 **Probes (since MCP self-detection Phase 3):** backend readiness is `/health/ready`
-(the DB decides), liveness is `/health/live` (process only). Consequence for the
+(DB *reachability* decides, checked on the probe's own short-lived NullPool
+connection — an exhausted app pool does NOT make pods NotReady; Redis/device hook
+are bounded and never 503), liveness is `/health/live` (process only). Each probe
+opens one short DB connection per replica every 10 s — keep that in mind when
+reading `pg_stat_activity` (`application_name = renfield-readiness`). Consequence for the
 deploy: a rollout while the DB is down no longer "completes" — new pods stay
 `0/1 Ready` and `rollout status` waits, while the old pods keep serving. That is
 the intended behaviour; fix the DB, don't roll back the image. Liveness never

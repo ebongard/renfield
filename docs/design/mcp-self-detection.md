@@ -243,11 +243,22 @@ the verdict:
    off, silenced the problem for the whole re-alert TTL (6 h), and again at every
    TTL boundary that hit a bad moment. Measured: tick 1 undelivered, tick 2 silent.
    The scheduled-task alerts already honoured the bool; the monitor did not.
-   Fix: an explicit `False` clears the key, so the next tick retries.
-2. **The ledger key carried no reason.** `planea:{name}:{health}` — a server already
-   alerted as `probe_failed` (or `plugin_failed`, `calls_failing`) that then also
-   turned tool-less never alerted again; the admin kept believing the stale reason.
-   Measured: reason changed, zero new alerts. Fix: `planea:{name}:{health}:{code}`.
+   Fix (revised in review): "told" now means **a notification row exists** —
+   `notify_admin` returns `True` for a failure AFTER `process_webhook` committed the
+   row (the admin sees it in their list), checked on a fresh session. Only a missing
+   row is retried, and only after `MCP_HEALTH_ALERT_RETRY_SECONDS` (600 s,
+   `ops_alert.defer_alert`). The first cut cleared the key on `False`, which during a
+   post-persist delivery failure stored a new row + push on every 120 s tick
+   (~720/day per server — the 60 s pipeline dedup window is shorter than the tick).
+2. **Reason changes (decided in review).** The first cut put the reason into the
+   ledger key and cleared every key that was not a current problem, so a server
+   flapping `rate_limited` ↔ `calls_failing` re-alerted on every switch and
+   bypassed the 6 h limit. Decision: the re-alert TTL applies per **server + health**
+   (`planea:{name}:{health}`); a reason change inside the TTL is the same outage and
+   does not re-alert — the next due alert names the CURRENT reason, because the
+   message is built at alert time. The recovery sweep forgets a server's keys only
+   when that server has no problem at all. The MCP monitor sends no recovery notice;
+   a real recovery only re-arms the ledger, so a re-failure alerts at once.
 3. **The self-heal "recovered" a tool-less server.** `tools/list` answers fine with
    an empty list, so `probe_server` returned ok, the tick logged "1 recovered on
    reconnect", and the alert claimed "Selbstheilung versucht". A reconnect cannot
@@ -326,13 +337,23 @@ the upstream.
 ### 3.3 k8s probes
 
 - **Backend readiness → `/health/ready`**, never `/health` (which answers "ok" with a
-  dead DB). Only the DB decides the code; Ollama and Redis report `degraded` without
-  failing — a readiness probe that drops every replica while the LLM is slow turns a
-  partial outage into a total one. The DB check is bounded
-  (`HEALTH_READY_DB_TIMEOUT_SECONDS`, 3 s, below the probe's 5 s), so a black-holed DB
-  answers 503 promptly instead of piling probe requests up behind the driver's
-  30–60 s timeouts. A DB blip under 30 s (period × threshold, e.g. a CNPG switchover)
-  does not flip it.
+  dead DB). **Decided in review: readiness reflects DB REACHABILITY, not pool
+  saturation.** The first cut ran `SELECT 1` through the app pool; an exhausted pool
+  (the 2026-07-01 watch-folder backlog) would have made every replica's check wait,
+  time out, and take ALL replicas out of the Service at once while the DB was healthy
+  — slow turned into 503. The check now uses its own short-lived connection
+  (`services/health_check.py`: a lazily created `NullPool` engine, asyncpg connect
+  timeout + `command_timeout` + server `statement_timeout`, disposed at shutdown,
+  `application_name=renfield-readiness`), bounded by
+  `HEALTH_READY_DB_TIMEOUT_SECONDS` (3 s, below the probe's 5 s). Cost: one short DB
+  connection per probe per replica. A DB blip under 30 s (period × threshold, e.g. a
+  CNPG switchover) does not flip it.
+- **Optional checks are bounded and never fail readiness** (review finding): the
+  Redis ping (client with socket connect/read timeouts) and the device-summary hook
+  each run under `HEALTH_READY_AUX_TIMEOUT_SECONDS` (1 s) and report `degraded` /
+  `unknown` on a hang. Before, a Redis accepting TCP but never answering held the
+  probe past its timeout and failed readiness on every replica simultaneously. All
+  checks run concurrently, so the probe's worst case is the DB bound.
 - **Backend liveness → `/health/live`**, deliberately dependency-free. A liveness
   probe that checked the DB would restart every replica during a DB outage — a
   restart storm that tears down MCP sessions and satellite connections and fixes
