@@ -63,7 +63,8 @@ export interface KioskMcpServer {
   // degraded-health change; when absent the model falls back to deriving health
   // from connectivity + tool-call success rate.
   health?: NodeHealth;
-  // Stable machine code for WHY a node is degraded ('plugin_failed' | 'no_tools')
+  // Stable machine code for WHY a node is degraded ('plugin_failed' | 'no_tools' |
+  // 'probe_failed' | 'rate_limited' | 'calls_failing')
   // — the frontend localizes it (never a raw backend string, per the i18n rule).
   impaired_code?: string | null;
 }

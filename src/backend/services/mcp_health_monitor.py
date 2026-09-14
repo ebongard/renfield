@@ -47,9 +47,13 @@ def _clear_alert(key: str) -> None:
     ops_alert.clear_alert(key)
 
 
-async def _notify(title: str, message: str, dedup_key: str, data: dict) -> None:
-    """Fire ONE privacy-aware proactive notification to the admin/owner."""
-    await ops_alert.notify_admin(
+async def _notify(title: str, message: str, dedup_key: str, data: dict) -> bool:
+    """Fire ONE privacy-aware proactive notification to the admin/owner.
+
+    Returns whether it reached the pipeline. The caller MUST act on ``False``: the
+    ledger is stamped before delivery, so ignoring a failed hand-off silenced the
+    problem for the whole re-alert TTL (Phase 3 finding)."""
+    return await ops_alert.notify_admin(
         title=title,
         message=message,
         dedup_key=dedup_key,
@@ -298,6 +302,47 @@ async def _run_probes(mcp_manager) -> list[str]:
     return probed
 
 
+# Impairments a probe+reconnect provably cannot fix, so the self-heal skips them:
+# - plugin_failed: a reconnect cannot reload a failed startup plugin.
+# - no_tools: tools/list answers fine with an EMPTY list, so a probe used to report
+#   the server "recovered on reconnect" while nothing changed; the refresh loop
+#   re-lists tools every mcp_refresh_interval, which is what the grace waits for.
+# - rate_limited: a reconnect does not lift an upstream throttle.
+_UNHEALABLE_CODES = frozenset({"plugin_failed", "no_tools", "rate_limited"})
+
+
+def _in_no_tools_grace(srv: dict) -> bool:
+    """True while a tool-less server is younger than the grace. An UNKNOWN age
+    alerts — there is no evidence the server just came up."""
+    age = srv.get("no_tools_for_seconds")
+    return isinstance(age, (int, float)) and age < settings.mcp_health_no_tools_grace_seconds
+
+
+def _alert_reason(mcp_manager, srv: dict) -> str:
+    """A reason a human can act on — never the bare machine code."""
+    code = srv.get("impaired_code")
+    if code == "probe_failed":
+        # Say WHAT failed, not just that something did — "Funktionstest
+        # fehlgeschlagen" alone would send the reader back to the logs, which is the
+        # dead end this whole feature exists to close.
+        detail = _probe_detail(mcp_manager, srv.get("name"))
+        return f"Funktionstest fehlgeschlagen{f': {detail}' if detail else ''}"
+    if code == "no_tools":
+        return (
+            "stellt keine Werkzeuge bereit — meist eine Konfigurationsfrage, "
+            "eine Wiederverbindung behebt das nicht"
+        )
+    if code == "rate_limited":
+        count = srv.get("rate_limit_events")
+        minutes = round(settings.mcp_health_rate_limit_window_seconds / 60)
+        # Deliberately no upstream error text: throttle messages carry request URLs,
+        # and carrier/API URLs can carry keys in the query string.
+        return "der Upstream drosselt Anfragen" + (
+            f" ({count}x Rate-Limit in {minutes} min)" if count else ""
+        )
+    return code or srv.get("last_error") or str(srv.get("health"))
+
+
 async def monitor_tick(app) -> None:
     """One poll of the MCP client fleet: self-heal (probe+reconnect) degraded/down
     servers, then alert on those STILL broken (NEW problems only), and clear the
@@ -332,14 +377,14 @@ async def _monitor_tick_body(mcp_manager) -> None:
         return
 
     # Self-heal pass: probe+reconnect the problem servers, then re-read health so we
-    # only alert on the ones the self-heal could NOT fix. Skip `plugin_failed` — a
-    # reconnect provably can't reload a failed startup plugin, so probing it just
-    # wastes an RPC and would make the alert falsely claim "Selbstheilung versucht".
+    # only alert on the ones the self-heal could NOT fix. Impairments a reconnect
+    # provably cannot fix are skipped (_UNHEALABLE_CODES) — probing them wastes an
+    # RPC and makes the alert falsely claim "Selbstheilung versucht".
     problem_names = [
         s.get("name")
         for s in status.get("servers", [])
         if s.get("health") in ("degraded", "down")
-        and s.get("impaired_code") != "plugin_failed"
+        and s.get("impaired_code") not in _UNHEALABLE_CODES
     ]
     healed_attempted: set[str] = set()
     if problem_names:
@@ -364,31 +409,40 @@ async def _monitor_tick_body(mcp_manager) -> None:
     for srv in status.get("servers", []):
         name = srv.get("name")
         health = srv.get("health")
-        if health in ("degraded", "down"):
-            key = f"planea:{name}:{health}"
-            current_problems.add(key)
-            if _should_alert(key):
-                reason = srv.get("impaired_code") or srv.get("last_error") or health
-                if srv.get("impaired_code") == "probe_failed":
-                    # Say WHAT failed, not just that something did — "Funktionstest
-                    # fehlgeschlagen" alone would send the reader back to the logs,
-                    # which is the dead end this whole feature exists to close.
-                    detail = _probe_detail(mcp_manager, name)
-                    reason = f"Funktionstest fehlgeschlagen{f': {detail}' if detail else ''}"
-                verb = "ist nicht erreichbar" if health == "down" else "ist eingeschränkt"
-                tried = " (Selbstheilung versucht, ohne Erfolg)" if name in healed_attempted else ""
-                await _notify(
-                    title=f"MCP-Dienst {name} {verb}",
-                    message=(
-                        f"Der MCP-Dienst '{name}' {verb} ({reason}){tried}. "
-                        "Betroffene Funktionen können ausfallen."
-                    ),
-                    dedup_key=key,
-                    data={
-                        "plane": "A", "server": name, "health": health,
-                        "reason": reason, "self_heal_attempted": name in healed_attempted,
-                    },
-                )
+        if health not in ("degraded", "down"):
+            continue
+        code = srv.get("impaired_code")
+        if code == "no_tools" and _in_no_tools_grace(srv):
+            # Reported (kiosk, system_health) but not yet alerted: tools may still be
+            # registering, and the refresh loop re-lists them.
+            continue
+        # The key carries the REASON, not just the health. With name+health only, a
+        # server already alerted as e.g. probe_failed that then also turned tool-less
+        # never alerted again — the admin kept believing the stale reason.
+        key = f"planea:{name}:{health}:{code or ''}"
+        current_problems.add(key)
+        if not _should_alert(key):
+            continue
+        reason = _alert_reason(mcp_manager, srv)
+        verb = "ist nicht erreichbar" if health == "down" else "ist eingeschränkt"
+        tried = " (Selbstheilung versucht, ohne Erfolg)" if name in healed_attempted else ""
+        delivered = await _notify(
+            title=f"MCP-Dienst {name} {verb}",
+            message=(
+                f"Der MCP-Dienst '{name}' {verb} ({reason}){tried}. "
+                "Betroffene Funktionen können ausfallen."
+            ),
+            dedup_key=key,
+            data={
+                "plane": "A", "server": name, "health": health,
+                "reason": reason, "self_heal_attempted": name in healed_attempted,
+            },
+        )
+        if delivered is False:
+            # should_alert stamped the ledger BEFORE delivery. Without this, a
+            # failed hand-off (pipeline error, proactive delivery still off) silenced
+            # the problem for the whole re-alert TTL. Retry on the next tick instead.
+            _clear_alert(key)
     # Recovery: any Plane-A ledger key no longer a current problem → clear it.
     for key in ops_alert.alerted_keys("planea:"):
         if key not in current_problems:

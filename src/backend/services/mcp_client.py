@@ -697,6 +697,72 @@ def _detect_inner_error(message: str) -> bool:
     return False
 
 
+# Upstream-throttle recognition (Phase 3). Matched ONLY against results that are
+# already errors (isError / inner-error envelope) or app-level exceptions — never
+# against a successful result, whose payload may legitimately contain these words
+# (a document about rate limits is not a throttle). "429" alone is NOT enough: an
+# app error naming invoice or document 429 must not read as a throttle, so the bare
+# number only counts next to an HTTP/status marker; structured JSON is checked by key.
+_RATE_LIMIT_TEXT = re.compile(
+    r"too many requests|rate[\s_-]?limit|(?:http|status)\W{0,12}429\b",
+    re.IGNORECASE,
+)
+_RETRY_AFTER_TEXT = re.compile(r"retry[\s_-]?after\W{0,4}(\d{1,6}(?:\.\d+)?)", re.IGNORECASE)
+_RATE_LIMIT_STATUS_KEYS = ("status", "status_code", "statusCode", "code", "http_status")
+_RETRY_AFTER_KEYS = ("retry_after", "retry-after", "retryAfter")
+
+
+def _parse_retry_after(value: Any) -> float | None:
+    """Seconds from a Retry-After value. The HTTP-date form is not honoured — guessing
+    across clock skew would be worse than ignoring it."""
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        seconds = float(value)
+    except (TypeError, ValueError):
+        return None
+    return seconds if 0 < seconds < 1_000_000 else None
+
+
+def _classify_rate_limit(
+    message: str | None,
+    status_code: int | None = None,
+    retry_after_header: Any = None,
+) -> tuple[bool, float | None]:
+    """Is this ERROR an upstream throttle? Returns ``(limited, retry_after_seconds)``.
+
+    Real shapes this has to recognise: an MCP server relaying httpx's
+    ``Client error '429 Too Many Requests' for url …``, a JSON envelope carrying a
+    429 status, or plain "rate limit exceeded" prose. A transport-level 429 from the
+    MCP endpoint itself cannot be classified here: the SDK raises it inside a
+    background task, so it surfaces as a timeout or a dead session instead.
+    """
+    text = message or ""
+    limited = status_code == 429
+    retry_after = _parse_retry_after(retry_after_header)
+    try:
+        payload = json.loads(text)
+    except (ValueError, TypeError):
+        payload = None
+    if isinstance(payload, dict):
+        if any(payload.get(k) in (429, "429") for k in _RATE_LIMIT_STATUS_KEYS):
+            limited = True
+        if retry_after is None:
+            retry_after = next(
+                (v for v in (_parse_retry_after(payload.get(k)) for k in _RETRY_AFTER_KEYS) if v),
+                None,
+            )
+    if not limited and _RATE_LIMIT_TEXT.search(text):
+        limited = True
+    if not limited:
+        return False, None
+    if retry_after is None:
+        match = _RETRY_AFTER_TEXT.search(text)
+        if match:
+            retry_after = _parse_retry_after(match.group(1))
+    return True, retry_after
+
+
 # Exceptions that indicate the MCP transport itself is broken (session
 # died, stream closed, server bounced). These — and only these — trigger
 # a single auto-reconnect-and-retry inside execute_tool(). MCP application
@@ -943,6 +1009,81 @@ class MCPServerState:
     last_probe_at: float = 0.0           # monotonic; 0 = never probed
     last_probe_ok: bool | None = None    # None = no verdict yet
     last_probe_detail: str | None = None
+
+    # No-tools grace (Phase 3). Monotonic time this server was first seen exposing
+    # zero tools; None while it has tools, or before any discovery. The `no_tools`
+    # verdict is reported at once (the kiosk stays honest) but the ALERT waits out
+    # `mcp_health_no_tools_grace_seconds`, so a server whose tools register a moment
+    # after connect is not reported broken on every boot. Deliberately NOT reset by a
+    # reconnect that still finds nothing — a flapping server must still age into an
+    # alert.
+    no_tools_since: float | None = None
+
+    # Upstream rate-limit signal (Phase 3). Monotonic timestamps of ERROR results the
+    # upstream throttled (HTTP 429 / "too many requests"). SEPARATE from both
+    # recent_outcomes (timeouts) and the probe verdict: a throttle is neither a dead
+    # server nor a failed functional check. Windowed — events age out after
+    # mcp_health_rate_limit_window_seconds, so a burst can never pin a server red.
+    rate_limit_events: deque = field(default_factory=lambda: deque(maxlen=1000))
+    # Per-TOOL Retry-After horizon (monotonic). Per tool, not per server: one server
+    # can front several upstreams (tracking talks to one API per carrier), and one
+    # throttled upstream must not block the others.
+    rate_limited_until: dict = field(default_factory=dict)
+
+    def note_discovered_tools(self, now: float | None = None) -> None:
+        """Update the no-tools clock after (re)discovering the tool list."""
+        if self.all_discovered_tools:
+            self.no_tools_since = None
+        elif self.no_tools_since is None:
+            self.no_tools_since = time.monotonic() if now is None else now
+
+    def no_tools_age(self, now: float | None = None) -> float | None:
+        """Seconds this server has exposed zero tools, or None if unknown/has tools."""
+        if self.no_tools_since is None:
+            return None
+        now = time.monotonic() if now is None else now
+        return max(0.0, now - self.no_tools_since)
+
+    def _prune_rate_limit_events(self, now: float) -> None:
+        window = settings.mcp_health_rate_limit_window_seconds
+        while self.rate_limit_events and now - self.rate_limit_events[0] > window:
+            self.rate_limit_events.popleft()
+
+    def record_rate_limit(
+        self, tool: str, retry_after: float | None, now: float | None = None
+    ) -> None:
+        """Record one upstream throttle for `tool`, honouring a Retry-After if given."""
+        now = time.monotonic() if now is None else now
+        self.rate_limit_events.append(now)
+        self._prune_rate_limit_events(now)
+        if retry_after is not None and retry_after > 0:
+            horizon = now + min(retry_after, settings.mcp_rate_limit_max_backoff_seconds)
+            # Never shorten a horizon the upstream already gave us.
+            self.rate_limited_until[tool] = max(horizon, self.rate_limited_until.get(tool, 0.0))
+
+    def rate_limit_count(self, now: float | None = None) -> int:
+        """Throttle events still inside the window."""
+        self._prune_rate_limit_events(time.monotonic() if now is None else now)
+        return len(self.rate_limit_events)
+
+    def rate_limit_failing(self, now: float | None = None) -> bool:
+        """True once enough throttles fall inside the window to be believed."""
+        return self.rate_limit_count(now) >= max(1, settings.mcp_health_rate_limit_min_events)
+
+    def rate_limit_retry_in(self, tool: str, now: float | None = None) -> float | None:
+        """Seconds until `tool` may be called again, or None when not throttled."""
+        until = self.rate_limited_until.get(tool)
+        if until is None:
+            return None
+        remaining = until - (time.monotonic() if now is None else now)
+        if remaining <= 0:
+            self.rate_limited_until.pop(tool, None)
+            return None
+        return remaining
+
+    def clear_rate_limit(self, tool: str) -> None:
+        """A clean result: the upstream accepts this tool's calls again."""
+        self.rate_limited_until.pop(tool, None)
 
     def probe_failing(self) -> bool:
         """True once the probe has failed enough times in a row to be believed.
@@ -1490,6 +1631,7 @@ class MCPManager:
             state.exit_stack = exit_stack
             self._set_connected(state, True)
             state.all_discovered_tools = all_tools
+            state.note_discovered_tools()
             state.last_error = None
             # Fresh session → drop the old session's failure history so a reconnect
             # that fixed the upstream isn't left falsely flagged calls_failing.
@@ -1794,7 +1936,23 @@ class MCPManager:
             return {"ok": False, "detail": state.last_probe_detail, "skipped": False}
 
         if not result.get("success"):
-            detail = str(result.get("message") or "Aufruf fehlgeschlagen")[:200]
+            raw = str(result.get("message") or "")
+            if (
+                settings.mcp_health_rate_limit_signal_enabled
+                or settings.mcp_rate_limit_backoff_enabled
+            ) and _classify_rate_limit(raw)[0]:
+                # A throttled upstream is not a dead service. With either Phase-3 flag
+                # on, the throttle is owned by that machinery (execute_tool already
+                # recorded it), so the probe records no verdict — two failed probes
+                # would otherwise report probe_failed for a server that is merely busy.
+                # With the backoff gate on this is not optional: the "failure" may be
+                # our OWN Retry-After refusal, and counting it would be self-inflicted red.
+                # The cadence still advances: re-probing a throttled upstream every
+                # tick would only deepen the throttle.
+                state.last_probe_at = time.monotonic()
+                logger.info(f"mcp_health: probe '{namespaced}' throttled upstream — no verdict")
+                return {"ok": True, "detail": "Upstream drosselt — Sonde ohne Urteil", "skipped": True}
+            detail = (raw or "Aufruf fehlgeschlagen")[:200]
             state.record_probe_outcome(False, detail)
             return {"ok": False, "detail": detail, "skipped": False}
 
@@ -1808,6 +1966,38 @@ class MCPManager:
             return {"ok": True, "detail": reason, "skipped": True}
         state.record_probe_outcome(verdict, reason)
         return {"ok": verdict, "detail": reason, "skipped": False}
+
+    @staticmethod
+    def _note_rate_limit(
+        state: "MCPServerState", tool: str, text: str | None, exc: BaseException | None = None
+    ) -> None:
+        """Record an upstream throttle if this ERROR is one (Phase 3).
+
+        Both flags off → records nothing, so the default path stays byte-identical.
+        The signal flag needs the events for the health verdict; the backoff flag
+        needs the Retry-After horizon — either one is reason enough to record.
+        """
+        if not (
+            settings.mcp_health_rate_limit_signal_enabled
+            or settings.mcp_rate_limit_backoff_enabled
+        ):
+            return
+        response = getattr(exc, "response", None)
+        status = getattr(response, "status_code", None)
+        headers = getattr(response, "headers", None)
+        header = headers.get("retry-after") if hasattr(headers, "get") else None
+        limited, retry_after = _classify_rate_limit(
+            text,
+            status_code=status if isinstance(status, int) else None,
+            retry_after_header=header,
+        )
+        if not limited:
+            return
+        state.record_rate_limit(tool, retry_after)
+        logger.warning(
+            f"MCP upstream rate limit: mcp.{state.config.name}.{tool}"
+            + (f" (Retry-After {retry_after:.0f}s)" if retry_after else "")
+        )
 
     def record_external_probe(self, server_name: str, ok: bool, detail: str | None) -> None:
         """Record a verdict from a PURPOSE-BUILT probe that lives outside this class.
@@ -2085,6 +2275,26 @@ class MCPManager:
                 "data": None,
             }
 
+        # === Upstream Retry-After (Phase 3, dark) ===
+        # Honour a Retry-After the upstream gave for THIS tool: refuse at once rather
+        # than send a request we already know will be rejected. Deliberately NO
+        # transparent wait-and-retry: a 429 inside a tool can follow side effects of
+        # that same call, and re-running a mutating tool is the double execution
+        # _is_session_dead is careful to avoid. Not recorded as a new throttle event
+        # either — our own refusal is not evidence from the upstream, and counting it
+        # would let the gate keep the server red by itself.
+        if settings.mcp_rate_limit_backoff_enabled:
+            retry_in = state.rate_limit_retry_in(tool_info.original_name)
+            if retry_in is not None:
+                return {
+                    "success": False,
+                    "message": (
+                        f"Upstream-Rate-Limit für {namespaced_name}: "
+                        f"erneut versuchen in {max(1, round(retry_in))} s"
+                    ),
+                    "data": None,
+                }
+
         # === Rate Limiting ===
         if state.rate_limiter:
             if not await state.rate_limiter.acquire():
@@ -2218,6 +2428,7 @@ class MCPManager:
                     # session is fine; just surface the failure.
                     logger.error(f"MCP tool call failed: {namespaced_name}: {e}")
                     state.last_error = str(e)
+                    self._note_rate_limit(state, tool_info.original_name, str(e), exc=e)
                     break
                 if attempt == 0:
                     logger.warning(
@@ -2290,6 +2501,13 @@ class MCPManager:
         # server calls_failing). Only a timeout is counted as a health failure.
         if not is_error:
             state.record_call_outcome(True)
+            # The upstream accepts this tool again — lift any Retry-After horizon.
+            state.clear_rate_limit(tool_info.original_name)
+        else:
+            # Phase 3: an ERROR result may be an upstream throttle. Classified only
+            # here and on app exceptions, never on a success, whose payload may
+            # legitimately talk about rate limits.
+            self._note_rate_limit(state, tool_info.original_name, message)
 
         return {
             "success": not is_error,
@@ -2802,6 +3020,13 @@ class MCPManager:
             }
             if code is not None:
                 server_info["impaired_code"] = code
+            # Evidence the alert path needs to judge the verdict (additive fields).
+            if code == "no_tools":
+                age = state.no_tools_age()
+                if age is not None:
+                    server_info["no_tools_for_seconds"] = round(age, 1)
+            elif code == "rate_limited":
+                server_info["rate_limit_events"] = state.rate_limit_count()
             # Include backoff info for disconnected servers
             if not state.connected and state.backoff and state.backoff.attempt_count > 0:
                 server_info["reconnect_attempts"] = state.backoff.attempt_count
@@ -2843,6 +3068,15 @@ class MCPManager:
         # Paperless answering HTTP 500 on its first day instead of its fourth.
         if state.probe_failing():
             return "degraded", "probe_failed"
+        # Upstream rate-limit (Phase 3, dark) — direct evidence from the upstream, so
+        # it outranks the inferred calls_failing; below probe_failed, because a dead
+        # service is the worse news. Windowed, so it clears once throttling stops.
+        if (
+            settings.mcp_health_rate_limit_signal_enabled
+            and state.config.transport != MCPTransportType.FEDERATION
+            and state.rate_limit_failing()
+        ):
+            return "degraded", "rate_limited"
         # Functional health (Phase 2): connected + list_tools present, but the recent
         # real tool calls are mostly failing → the transport is green but the upstream
         # is dead. Federation exempt (its single tool is managed out of band).
@@ -2921,6 +3155,7 @@ class MCPManager:
                             input_schema=tool.inputSchema if hasattr(tool, "inputSchema") else {},
                         )
                         state.all_discovered_tools.append(info)
+                    state.note_discovered_tools()
 
                     # Re-register with active filter applied
                     active = self._get_active_tools(state.config)

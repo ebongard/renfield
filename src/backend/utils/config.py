@@ -1678,6 +1678,32 @@ class Settings(BaseSettings):
     # freezing the monitor loop is exactly the #1107 failure we already paid for.
     mcp_health_probe_guard_timeout: float = Field(default=60.0, ge=5.0, le=600.0)
 
+    # --- Phase 3: no-tools grace, upstream rate-limit signal, Retry-After -----
+    # A connected server exposing ZERO tools reads degraded/no_tools at once (the
+    # kiosk stays honest), but the ALERT waits this long: tools can register a
+    # moment after connect, and the refresh loop (mcp_refresh_interval) re-lists
+    # them. Keep it above ~2 refresh intervals or a lazy server alerts on every boot.
+    mcp_health_no_tools_grace_seconds: float = Field(default=300.0, ge=0.0, le=86400.0)
+    # Upstream throttling (HTTP 429 / "too many requests" inside an ERROR result) as
+    # its OWN signal → degraded/rate_limited. Kept apart from the timeout window and
+    # from the probe verdict. Dark: our own batch jobs (e.g. the Paperless dedupe
+    # against a 60/min MCP) throttle themselves by design, so an operator has to
+    # decide that a throttle is worth a kiosk colour and an alert.
+    mcp_health_rate_limit_signal_enabled: bool = False
+    # Windowed hysteresis: >= min_events throttles within window_seconds. Events age
+    # out, so a burst can never pin a server red after the throttling has stopped.
+    mcp_health_rate_limit_window_seconds: float = Field(default=900.0, ge=60.0, le=86400.0)
+    mcp_health_rate_limit_min_events: int = Field(default=5, ge=1, le=1000)
+    # Honour an upstream Retry-After per TOOL: refuse at once until it has passed
+    # instead of sending requests we already know will be rejected. Dark, because it
+    # changes call semantics.
+    mcp_rate_limit_backoff_enabled: bool = False
+    # Upper bound on an honoured Retry-After, so a bogus value cannot disable a tool.
+    mcp_rate_limit_max_backoff_seconds: float = Field(default=300.0, ge=1.0, le=3600.0)
+    # /health/ready bounds its DB check to this. Must stay below the readiness
+    # probe's timeoutSeconds (5 s in k8s/backend.yaml).
+    health_ready_db_timeout_seconds: float = Field(default=3.0, ge=0.5, le=30.0)
+
     # --- External HTTP watchdog (A3) -----------------------------------------
     # "Who notices that Renfield itself is gone?" A system that is down cannot
     # report itself, so this watches OTHER endpoints and lets the peer instance

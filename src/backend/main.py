@@ -415,16 +415,28 @@ def _get_health_redis_client():
 
 @app.get("/health/ready")
 async def readiness_check():
-    """Kubernetes readiness probe - checks all dependencies."""
+    """Kubernetes readiness probe - checks all dependencies.
+
+    Only the DATABASE decides the status code. Ollama and Redis report
+    ``degraded`` but never 503: a readiness probe that drops every replica out of
+    the Service while the LLM is merely slow would turn a partial outage into a
+    total one. Liveness deliberately uses the dependency-free ``/health/live``
+    (see k8s/backend.yaml) so a DB outage never becomes a restart storm.
+    """
+    import asyncio
+
     from sqlalchemy import text
 
     checks = {}
     overall_healthy = True
 
-    # Database check
+    # Database check — bounded. A black-holed DB would otherwise hold this request
+    # for the driver's pool/connect timeout (30-60 s), far past the kubelet's probe
+    # timeout, and probes arriving every 10 s would pile up behind it.
     try:
-        async with AsyncSessionLocal() as db:
-            await db.execute(text("SELECT 1"))
+        async with asyncio.timeout(settings.health_ready_db_timeout_seconds):
+            async with AsyncSessionLocal() as db:
+                await db.execute(text("SELECT 1"))
         checks["database"] = {"status": "healthy"}
     except Exception as e:
         logger.warning(f"Health check: database unhealthy: {e}")
