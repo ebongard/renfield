@@ -99,6 +99,133 @@ class TestVlmFillSignals:
         assert filled == 0
         svc.extract_text_from_image.assert_not_called()
 
+    @pytest.mark.asyncio
+    async def test_empty_answer_on_blank_page_resolves_it(self, monkeypatch):
+        """REGRESSION (doc 613, 2026-09-14): a 5-page scan whose only garbage
+        pages were blank duplex backs. The VLM answered correctly with nothing,
+        the lane read 0 resolved pages as a vision outage and retried until it
+        filed the stack as ONE document. A confirmed-blank page is resolved."""
+        monkeypatch.setattr(det.settings, "ollama_vision_model", "qwen-vl")
+        monkeypatch.setattr(det.settings, "pdf_split_vlm_page_timeout_s", 5)
+        monkeypatch.setattr(det, "_render_page_b64", MagicMock(return_value="b64"))
+        monkeypatch.setattr(det, "_page_is_blank", MagicMock(return_value=True))
+        svc = MagicMock()
+        svc.extract_text_from_image = AsyncMock(return_value="")
+        signals = [_sig(1, ok=False), _sig(2), _sig(3, ok=False)]
+
+        out, filled = await det.vlm_fill_signals("/x.pdf", signals, ollama_service=svc)
+
+        assert filled == 2
+        assert [s.quality_ok for s in out] == [True, True, True]
+        assert out[0].text == det._PLACEHOLDER_BLANK
+
+    @pytest.mark.asyncio
+    async def test_empty_answer_on_inked_page_stays_unreadable(self, monkeypatch):
+        """Empty content is NOT proof of a blank page — a thinking VLM can trap
+        the transcription in its think buffer. With ink on the page, the page
+        stays unreadable instead of being hidden from the boundary call."""
+        monkeypatch.setattr(det.settings, "ollama_vision_model", "qwen-vl")
+        monkeypatch.setattr(det.settings, "pdf_split_vlm_page_timeout_s", 5)
+        monkeypatch.setattr(det, "_render_page_b64", MagicMock(return_value="b64"))
+        monkeypatch.setattr(det, "_page_is_blank", MagicMock(return_value=False))
+        svc = MagicMock()
+        svc.extract_text_from_image = AsyncMock(return_value="")
+
+        out, filled = await det.vlm_fill_signals(
+            "/x.pdf", [_sig(1, ok=False)], ollama_service=svc
+        )
+
+        assert filled == 0
+        assert out[0].quality_ok is False
+
+    @pytest.mark.asyncio
+    async def test_failed_call_never_consults_blank_check(self, monkeypatch):
+        """None = the call failed. That must stay an outage signal even when the
+        page is white — otherwise a dead vision host on a stack of blank backs
+        would read as success."""
+        monkeypatch.setattr(det.settings, "ollama_vision_model", "qwen-vl")
+        monkeypatch.setattr(det.settings, "pdf_split_vlm_page_timeout_s", 5)
+        monkeypatch.setattr(det, "_render_page_b64", MagicMock(return_value="b64"))
+        blank = MagicMock(return_value=True)
+        monkeypatch.setattr(det, "_page_is_blank", blank)
+        svc = MagicMock()
+        svc.extract_text_from_image = AsyncMock(return_value=None)
+
+        out, filled = await det.vlm_fill_signals(
+            "/x.pdf", [_sig(1, ok=False)], ollama_service=svc
+        )
+
+        assert filled == 0
+        blank.assert_not_called()
+
+
+class TestPageIsBlank:
+    @staticmethod
+    def _png_b64(draw=None):
+        import base64
+        import io
+
+        from PIL import Image, ImageDraw
+
+        im = Image.new("RGB", (800, 1100), "white")
+        if draw:
+            draw(ImageDraw.Draw(im))
+        buf = io.BytesIO()
+        im.save(buf, format="PNG")
+        return base64.b64encode(buf.getvalue()).decode()
+
+    def test_white_page_is_blank(self):
+        assert det._page_is_blank(self._png_b64()) is True
+
+    def test_one_line_of_text_is_not_blank(self):
+        def line(d):
+            d.rectangle([60, 80, 740, 92], fill="black")  # ~1 % ink
+
+        assert det._page_is_blank(self._png_b64(line)) is False
+
+    def test_undecodable_image_is_not_blank(self):
+        assert det._page_is_blank("not-base64-png") is False
+
+
+class TestExtractTextFromImageContract:
+    """The slow lane tells an outage from blank pages by None vs "" — pin it."""
+
+    @staticmethod
+    def _wire(monkeypatch, *, content=None, raises=None):
+        import services.ollama_service as osvc
+        import utils.llm_client as llm
+
+        monkeypatch.setattr(osvc.settings, "ollama_vision_model", "qwen-vl")
+        breaker = MagicMock()
+        breaker.allow_request = AsyncMock(return_value=True)
+        breaker.record_success = AsyncMock()
+        breaker.record_failure = AsyncMock()
+        monkeypatch.setattr(osvc, "llm_circuit_breaker", breaker)
+        client = MagicMock()
+        if raises is not None:
+            client.chat = AsyncMock(side_effect=raises)
+        else:
+            client.chat = AsyncMock(
+                return_value=SimpleNamespace(message=SimpleNamespace(content=content))
+            )
+        monkeypatch.setattr(llm, "get_vision_client", MagicMock(return_value=(client,)))
+        return object.__new__(osvc.OllamaService)
+
+    @pytest.mark.asyncio
+    async def test_answered_but_empty_is_empty_string(self, monkeypatch):
+        svc = self._wire(monkeypatch, content="<think>blank page</think>  ")
+        assert await svc.extract_text_from_image("b64") == ""
+
+    @pytest.mark.asyncio
+    async def test_transport_failure_is_none(self, monkeypatch):
+        svc = self._wire(monkeypatch, raises=RuntimeError("connection refused"))
+        assert await svc.extract_text_from_image("b64") is None
+
+    @pytest.mark.asyncio
+    async def test_text_is_returned_stripped(self, monkeypatch):
+        svc = self._wire(monkeypatch, content="  Rechnung Nr. 1\n")
+        assert await svc.extract_text_from_image("b64") == "Rechnung Nr. 1"
+
 
 # ---------------------------------------------------------------------------
 # process_slow_split

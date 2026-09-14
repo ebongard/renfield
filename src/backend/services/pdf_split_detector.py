@@ -62,6 +62,15 @@ SLOW_REASON_VLM = "vlm"
 SLOW_REASON_WINDOWS = "windows"
 
 _PLACEHOLDER_UNREADABLE = "[unlesbare Seite / Scan ohne Textebene]"
+_PLACEHOLDER_BLANK = "[leere Seite]"
+
+# Blank-page confirmation (see _page_is_blank). A grey level below _INK_LEVEL
+# counts as ink; a page is blank when at most _BLANK_INK_FRACTION of its pixels
+# are ink. Measured 2026-09-14 on a real duplex scan: the blank reverse sides
+# held 0.0000 ink, while one line of text is already ~0.3 % — so this only has
+# to separate "nothing" from "something", not tune anything finer.
+_INK_LEVEL = 128
+_BLANK_INK_FRACTION = 0.0005
 
 
 @dataclass(frozen=True)
@@ -522,6 +531,29 @@ def _render_page_b64(file_path: str, page_number: int) -> str | None:
         return None
 
 
+def _page_is_blank(image_b64: str) -> bool:
+    """True when a rendered page carries no ink at all.
+
+    Only ever consulted AFTER the VLM answered with empty text — it confirms
+    that answer, it never decides on its own. The VLM alone is not enough: a
+    thinking model can trap its transcription in the think buffer and return
+    empty content for a page full of text, and calling that page blank would
+    hide it from the boundary call."""
+    import base64
+    import io
+
+    try:
+        from PIL import Image
+
+        with Image.open(io.BytesIO(base64.b64decode(image_b64))) as im:
+            histogram = im.convert("L").histogram()
+    except Exception as e:  # noqa: BLE001 - undecidable ≠ blank
+        logger.warning(f"pdf-split: blank-page check failed: {e}")
+        return False
+    total = sum(histogram)
+    return total > 0 and sum(histogram[:_INK_LEVEL]) / total <= _BLANK_INK_FRACTION
+
+
 async def vlm_fill_signals(
     file_path: str,
     signals: list[PageSignal],
@@ -529,7 +561,14 @@ async def vlm_fill_signals(
     ollama_service: Any = None,
 ) -> tuple[list[PageSignal], int]:
     """Replace garbage-page placeholders with VLM transcriptions. Returns the
-    (new signal list, number of pages successfully transcribed).
+    (new signal list, number of pages resolved).
+
+    A page is resolved when the VLM transcribed it, or when the VLM answered
+    with nothing AND the page image carries no ink — a blank page (typically a
+    duplex reverse side) is evidence, not an outage. Counting it as unresolved
+    made a stack whose only garbage pages were blank backs look exactly like a
+    dead vision host, so the slow lane retried it until it gave up and filed
+    the whole stack as ONE document.
 
     Deliberately NO page cap (user requirement — cost is bounded by the
     per-call timeout and the dedicated worker's isolation, not by skipping
@@ -571,10 +610,20 @@ async def vlm_fill_signals(
                 f"pdf-split: VLM transcription of page {sig.page} failed: {e}"
             )
             continue
-        if text and text.strip():
+        if text is None:
+            continue  # the call failed — keep the placeholder
+        if text.strip():
             out[i] = PageSignal(
                 page=sig.page,
                 text=_snippet(text),
+                quality_ok=True,
+                via_vlm=True,
+            )
+            filled += 1
+        elif await loop.run_in_executor(None, _page_is_blank, b64):
+            out[i] = PageSignal(
+                page=sig.page,
+                text=_PLACEHOLDER_BLANK,
                 quality_ok=True,
                 via_vlm=True,
             )

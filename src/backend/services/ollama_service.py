@@ -371,6 +371,10 @@ WICHTIGE REGELN FÜR ANTWORTEN:
         rotated or poor-quality scan, a vision model reads the page far better and
         is robust to orientation/noise. Returns the transcribed text, or None if
         there is no vision model / the breaker is open / the call fails.
+
+        An answered call with nothing to transcribe returns ``""``, NOT None: a
+        blank page is a real answer, and callers that tell an outage from
+        unreadable pages (the PDF-split slow lane) need the two apart.
         """
         import re as _re
 
@@ -406,7 +410,7 @@ WICHTIGE REGELN FÜR ANTWORTEN:
             await llm_circuit_breaker.record_success()
             content = (resp.message.content if resp and resp.message else "") or ""
             content = _re.sub(r"<think>.*?</think>", "", content, flags=_re.DOTALL | _re.IGNORECASE)
-            return content.strip() or None
+            return content.strip()
         except Exception as e:  # noqa: BLE001
             await llm_circuit_breaker.record_failure()
             logger.warning(f"VLM OCR extraction failed: {e}")

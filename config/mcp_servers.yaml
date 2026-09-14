@@ -496,6 +496,10 @@ servers:
     # endpoint on the LAN; it refuses to bind a non-loopback address without one.
     auth_token_env: SCANNER_MCP_TOKEN
     refresh_interval: 300
+    # One scan_document call feeds, corrects, OCRs and pushes the whole stack —
+    # a few pages already take ~30s, so the global 30s timeout reported scans as
+    # FAILED that had in fact been ingested. Grows with the stack; keep generous.
+    call_timeout: "${SCANNER_MCP_CALL_TIMEOUT:-600}"
     example_intent: mcp.scanner.scanner_status
     examples:
       de:

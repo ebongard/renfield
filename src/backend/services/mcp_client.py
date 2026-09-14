@@ -862,6 +862,13 @@ class MCPServerConfig:
     # None => not probed (the default; the honest limit is in the YAML, not the flag).
     health_probe: dict | None = None
 
+    # Per-server tool-call timeout (seconds). None => the global
+    # `mcp_call_timeout` (30s). For servers whose tools inherently run long —
+    # the scanner feeds, corrects, OCRs and pushes a whole paper stack in one
+    # call. At 30s the backend told the user a scan had FAILED while the scan
+    # finished and was ingested 80ms later (2026-09-14).
+    call_timeout: float | None = None
+
     # Federation-transport only (F3c): the local PeerUser.id this virtual
     # server represents. execute_tool_streaming looks up the peer row at
     # request time (so revocation is picked up without needing a registry
@@ -982,6 +989,44 @@ def _parse_notifications(raw: dict | None) -> dict | None:
         "tool": raw.get("tool", "get_pending_notifications"),
         "lookahead_minutes": int(raw.get("lookahead_minutes", 45)),
     }
+
+
+def _server_call_timeout(state: Any) -> float:
+    """The tool-call timeout for a server: its own override, else the global."""
+    override = getattr(getattr(state, "config", None), "call_timeout", None)
+    return override if override is not None else settings.mcp_call_timeout
+
+
+_CALL_TIMEOUT_MIN_S = 1.0
+_CALL_TIMEOUT_MAX_S = 3600.0
+
+
+def _parse_call_timeout(raw: Any) -> float | None:
+    """Parse a server's optional ``call_timeout`` (seconds; env-substituted).
+
+    Absent, unparseable or out-of-range => None (the global default). A typo
+    must cost only the override, never the server — same stance as
+    ``_parse_health_probe``."""
+    value = _resolve_value(raw)
+    if value is None or value == "":
+        return None
+    if isinstance(value, bool):
+        # _resolve_value turns "1"/"0" into booleans; float(True) would silently
+        # become a 1-second timeout.
+        logger.warning(f"call_timeout: ignoring boolean-like value {raw!r}")
+        return None
+    try:
+        seconds = float(value)
+    except (TypeError, ValueError):
+        logger.warning(f"call_timeout: ignoring unparseable value {value!r}")
+        return None
+    if not _CALL_TIMEOUT_MIN_S <= seconds <= _CALL_TIMEOUT_MAX_S:
+        logger.warning(
+            f"call_timeout: {seconds}s outside [{_CALL_TIMEOUT_MIN_S:.0f}, "
+            f"{_CALL_TIMEOUT_MAX_S:.0f}] — using the global default"
+        )
+        return None
+    return seconds
 
 
 def _parse_health_probe(raw: dict | None) -> dict | None:
@@ -1216,6 +1261,7 @@ class MCPManager:
                     streaming=bool(_resolve_value(entry.get("streaming", False))),
                     per_user_auth=bool(_resolve_value(entry.get("per_user_auth", False))),
                     health_probe=_parse_health_probe(entry.get("health_probe")),
+                    call_timeout=_parse_call_timeout(entry.get("call_timeout")),
                 )
 
                 if not config.enabled:
@@ -2001,8 +2047,11 @@ class MCPManager:
         # Per-call timeout override for deliberately-blocking poll tools (e.g.
         # paperless await_consume_result, which waits out a slow Paperless consume
         # that can exceed the default 30s — the timeout that drove the 2026-07
-        # duplicate-upload loop). Defaults to the global setting.
-        effective_timeout = call_timeout if call_timeout is not None else settings.mcp_call_timeout
+        # duplicate-upload loop). Then the server's own `call_timeout`, then the
+        # global setting.
+        effective_timeout = (
+            call_timeout if call_timeout is not None else _server_call_timeout(state)
+        )
 
         # Per-user auth (per-user data scoping). When the server opts in, the
         # call must run under THIS user's credential, not the shared operator
@@ -2532,7 +2581,7 @@ class MCPManager:
         logger.debug(f"MCP streaming call: {namespaced_name}{user_info}")
 
         call_task = asyncio.create_task(
-            asyncio.wait_for(call_coro, timeout=settings.mcp_call_timeout)
+            asyncio.wait_for(call_coro, timeout=_server_call_timeout(state))
         )
 
         # === Drain progress chunks while task runs ===
