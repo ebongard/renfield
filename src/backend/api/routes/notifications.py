@@ -52,6 +52,22 @@ from utils.config import settings
 router = APIRouter()
 
 
+def _viewer_scope(current_user: User | None) -> tuple[bool, int | None]:
+    """(restrict_to_viewer, viewer_id) for the notification and reminder routes.
+
+    Auth off (single household): no restriction, as before. Auth on: a user
+    with NOTIFICATIONS_MANAGE sees everything; everyone else only what is
+    addressed to them or public. Anonymous callers are refused — these lists
+    carry personal content."""
+    if not settings.auth_enabled:
+        return False, None
+    if current_user is None:
+        raise HTTPException(status_code=401, detail="Authentication required")
+    if current_user.has_permission(Permission.NOTIFICATIONS_MANAGE):
+        return False, current_user.id
+    return True, current_user.id
+
+
 def _notification_to_response(n) -> NotificationResponse:
     """Convert DB Notification to response schema."""
     return NotificationResponse(
@@ -141,7 +157,8 @@ async def list_notifications(
     db: AsyncSession = Depends(get_db),
     current_user: User | None = Depends(get_current_user),
 ):
-    """List notifications with optional filters."""
+    """List notifications with optional filters — scoped to the caller."""
+    restrict, viewer_id = _viewer_scope(current_user)
     service = NotificationService(db)
 
     since_dt = None
@@ -158,6 +175,8 @@ async def list_notifications(
         since=since_dt,
         limit=min(limit, 200),
         offset=offset,
+        viewer_id=viewer_id,
+        restrict_to_viewer=restrict,
     )
 
     return NotificationListResponse(
@@ -177,12 +196,14 @@ async def acknowledge_notification(
     current_user: User | None = Depends(get_current_user),
 ):
     """Mark a notification as acknowledged."""
-    if settings.auth_enabled and not current_user:
-        raise HTTPException(status_code=401, detail="Authentication required")
+    restrict, viewer_id = _viewer_scope(current_user)
     service = NotificationService(db)
     acknowledged_by = current_user.username if current_user else None
 
-    success = await service.acknowledge(notification_id, acknowledged_by=acknowledged_by)
+    success = await service.acknowledge(
+        notification_id, acknowledged_by=acknowledged_by,
+        viewer_id=viewer_id, restrict_to_viewer=restrict,
+    )
     if not success:
         raise HTTPException(status_code=404, detail="Notification not found")
 
@@ -198,11 +219,12 @@ async def dismiss_notification(
     current_user: User | None = Depends(get_current_user),
 ):
     """Dismiss (soft delete) a notification."""
-    if settings.auth_enabled and not current_user:
-        raise HTTPException(status_code=401, detail="Authentication required")
+    restrict, viewer_id = _viewer_scope(current_user)
     service = NotificationService(db)
 
-    success = await service.dismiss(notification_id)
+    success = await service.dismiss(
+        notification_id, viewer_id=viewer_id, restrict_to_viewer=restrict
+    )
     if not success:
         raise HTTPException(status_code=404, detail="Notification not found")
 
@@ -223,8 +245,7 @@ async def suppress_notification(
     current_user: User | None = Depends(get_current_user),
 ):
     """Create a suppression rule from a notification."""
-    if settings.auth_enabled and not current_user:
-        raise HTTPException(status_code=401, detail="Authentication required")
+    restrict, _viewer_id = _viewer_scope(current_user)
     service = NotificationService(db)
     user_id = current_user.id if current_user else None
     reason = body.reason if body else None
@@ -233,6 +254,7 @@ async def suppress_notification(
         notification_id=notification_id,
         reason=reason,
         user_id=user_id,
+        restrict_to_viewer=restrict,
     )
     if not suppression:
         raise HTTPException(status_code=404, detail="Notification not found")
@@ -336,11 +358,12 @@ async def list_reminders(
     db: AsyncSession = Depends(get_db),
     current_user: User | None = Depends(get_current_user),
 ):
-    """List pending reminders."""
+    """List pending reminders — the caller's own (admins: all)."""
     from services.reminder_service import ReminderService
 
+    restrict, viewer_id = _viewer_scope(current_user)
     service = ReminderService(db)
-    reminders = await service.list_pending()
+    reminders = await service.list_pending(user_id=viewer_id, restrict_to_user=restrict)
 
     return ReminderListResponse(
         reminders=[
@@ -366,11 +389,12 @@ async def cancel_reminder(
     db: AsyncSession = Depends(get_db),
     current_user: User | None = Depends(get_current_user),
 ):
-    """Cancel a pending reminder."""
+    """Cancel a pending reminder — only one's own (admins: any)."""
     from services.reminder_service import ReminderService
 
+    restrict, viewer_id = _viewer_scope(current_user)
     service = ReminderService(db)
-    success = await service.cancel(reminder_id)
+    success = await service.cancel(reminder_id, user_id=viewer_id, restrict_to_user=restrict)
     if not success:
         raise HTTPException(status_code=404, detail="Reminder not found or already fired")
 

@@ -422,17 +422,28 @@ Then set `FEDERATION_REQUIRE_PERSISTENT_IDENTITY=true` on any instance that pair
 
 ### ConfigMap changes
 
-When `config/mcp_servers.yaml` / `config/agent_roles.yaml` / `config/kg_scopes.yaml` / `config/mail_accounts.*.yaml` change in the repo, rewrite the `renfield-mcp-config` ConfigMap **before** the rolling restart — otherwise pods get stuck in `ContainerCreating` on a missing subPath:
+When `config/mcp_servers.yaml` or `config/agent_roles.yaml` change in the repo, update the household `renfield-mcp-config` ConfigMap **before** the rollout.
+
+**Do NOT rebuild the whole ConfigMap from files.** It carries four keys (`agent_roles.yaml`, `kg_scopes.yaml`, `mail_accounts.yaml`, `mcp_servers.yaml`), but `kg_scopes.yaml` is **not in the repo** and the live `mail_accounts.yaml` is not the committed default. A `create configmap --from-file=…` rebuild either fails (`error reading config/kg_scopes.yaml: no such file or directory` — hit on the 2026-09-14 deploy) or, with a key left out, silently drops it and pods then hang in `ContainerCreating` on the missing subPath. Swap ONLY the key(s) that changed, keeping every other key exactly as live:
 
 ```bash
-kubectl -n renfield create configmap renfield-mcp-config \
-  --from-file=config/mcp_servers.yaml \
-  --from-file=config/agent_roles.yaml \
-  --from-file=config/kg_scopes.yaml \
-  --from-file=mail_accounts.yaml=config/mail_accounts.default.yaml \
-  --dry-run=client -o yaml | kubectl apply -f -
-kubectl -n renfield rollout restart deploy/backend
+# 1. Check the live file differs from the repo only by the intended change (no live-only drift to revert):
+diff <(kubectl -n renfield get cm renfield-mcp-config -o jsonpath='{.data.mcp_servers\.yaml}') config/mcp_servers.yaml
+
+# 2. Replace just that key (repeat per changed file); other keys are carried over from live:
+kubectl -n renfield get cm renfield-mcp-config -o json | python3 -c "
+import json, sys
+cm = json.load(sys.stdin)
+cm['data']['mcp_servers.yaml'] = open('config/mcp_servers.yaml').read()
+for k in ('resourceVersion', 'uid', 'creationTimestamp', 'managedFields', 'annotations'):
+    cm['metadata'].pop(k, None)
+json.dump(cm, sys.stdout)" | kubectl -n renfield apply -f -
+
+# 3. Verify all four keys are still present:
+kubectl -n renfield get cm renfield-mcp-config -o json | python3 -c "import json,sys; print(sorted(json.load(sys.stdin)['data']))"
 ```
+
+Then roll the backend (the deploy script's `set image` does this). **xidra** keeps its own copies of all four files in the private `x-ren` repo — use `x-ren/config/apply-mcp-config.sh` there, never the household files.
 
 ### Smoke test
 

@@ -353,9 +353,16 @@ class NotificationService:
         notification_id: int,
         reason: str | None = None,
         user_id: int | None = None,
+        restrict_to_viewer: bool = False,
     ) -> NotificationSuppression | None:
-        """Create a suppression rule from an existing notification."""
-        notification = await self.get_notification(notification_id)
+        """Create a suppression rule from an existing notification.
+
+        With ``restrict_to_viewer``, only from a notification ``user_id`` may see —
+        otherwise a user could learn another person's notification text through
+        the rule it creates."""
+        notification = await self.get_notification(
+            notification_id, viewer_id=user_id, restrict_to_viewer=restrict_to_viewer
+        )
         if not notification:
             return None
 
@@ -607,6 +614,28 @@ class NotificationService:
     # CRUD
     # ------------------------------------------------------------------
 
+    @staticmethod
+    def is_visible_to(notification: Notification, viewer_id: int | None) -> bool:
+        """Whether a (non-admin) viewer may see this notification.
+
+        Addressed to someone → only that person. Addressed to nobody → only when
+        it is public. A `personal`/`confidential` notification without a target
+        has no rightful recipient among ordinary users, so it stays hidden from
+        them (an admin still sees it). Before this, every authenticated user could
+        list, acknowledge and dismiss everyone's personal notifications.
+        """
+        if notification.target_user_id is not None:
+            return notification.target_user_id == viewer_id
+        return (notification.privacy or "public") == "public"
+
+    @staticmethod
+    def _visible_to_clause(viewer_id: int | None):
+        """SQL form of :meth:`is_visible_to`."""
+        return (
+            (Notification.target_user_id.is_(None))
+            & ((Notification.privacy.is_(None)) | (Notification.privacy == "public"))
+        ) | (Notification.target_user_id == viewer_id)
+
     async def list_notifications(
         self,
         room_id: int | None = None,
@@ -615,9 +644,17 @@ class NotificationService:
         since: datetime | None = None,
         limit: int = 50,
         offset: int = 0,
+        viewer_id: int | None = None,
+        restrict_to_viewer: bool = False,
     ) -> list[Notification]:
-        """List notifications with optional filters."""
+        """List notifications with optional filters.
+
+        ``restrict_to_viewer`` limits the list to what ``viewer_id`` may see
+        (see :meth:`is_visible_to`). Callers set it for authenticated non-admins;
+        auth-off installs and admins see everything, as before."""
         query = select(Notification).order_by(Notification.created_at.desc())
+        if restrict_to_viewer:
+            query = query.where(self._visible_to_clause(viewer_id))
 
         if room_id is not None:
             query = query.where(Notification.room_id == room_id)
@@ -637,16 +674,39 @@ class NotificationService:
         result = await self.db.execute(query)
         return list(result.scalars().all())
 
-    async def get_notification(self, notification_id: int) -> Notification | None:
-        """Get a single notification by ID."""
+    async def get_notification(
+        self,
+        notification_id: int,
+        viewer_id: int | None = None,
+        restrict_to_viewer: bool = False,
+    ) -> Notification | None:
+        """Get a single notification by ID.
+
+        With ``restrict_to_viewer``, one the viewer may not see is reported as
+        missing — indistinguishable from an id that does not exist."""
         result = await self.db.execute(
             select(Notification).where(Notification.id == notification_id)
         )
-        return result.scalar_one_or_none()
+        notification = result.scalar_one_or_none()
+        if (
+            notification is not None
+            and restrict_to_viewer
+            and not self.is_visible_to(notification, viewer_id)
+        ):
+            return None
+        return notification
 
-    async def acknowledge(self, notification_id: int, acknowledged_by: str | None = None) -> bool:
+    async def acknowledge(
+        self,
+        notification_id: int,
+        acknowledged_by: str | None = None,
+        viewer_id: int | None = None,
+        restrict_to_viewer: bool = False,
+    ) -> bool:
         """Mark a notification as acknowledged."""
-        notification = await self.get_notification(notification_id)
+        notification = await self.get_notification(
+            notification_id, viewer_id=viewer_id, restrict_to_viewer=restrict_to_viewer
+        )
         if not notification:
             return False
 
@@ -656,9 +716,16 @@ class NotificationService:
         await self.db.commit()
         return True
 
-    async def dismiss(self, notification_id: int) -> bool:
+    async def dismiss(
+        self,
+        notification_id: int,
+        viewer_id: int | None = None,
+        restrict_to_viewer: bool = False,
+    ) -> bool:
         """Soft-delete (dismiss) a notification."""
-        notification = await self.get_notification(notification_id)
+        notification = await self.get_notification(
+            notification_id, viewer_id=viewer_id, restrict_to_viewer=restrict_to_viewer
+        )
         if not notification:
             return False
 
