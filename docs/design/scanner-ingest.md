@@ -284,7 +284,13 @@ for ingest — that is what the route was built for.
 Per `CLAUDE.md`, registering the tools is **two** steps, not one:
 
 1. A `scanner` stanza in `config/mcp_servers.yaml`
-   (`transport: streamable_http`, `url: ${SCANNER_MCP_URL:-http://<scanner-host>:9093/mcp}`).
+   (`transport: streamable_http`, `url: ${SCANNER_MCP_URL:-http://<scanner-host>:9093/mcp}`,
+   `call_timeout: ${SCANNER_MCP_CALL_TIMEOUT:-600}`). The per-server
+   `call_timeout` is load-bearing: one `scan_document` call feeds, corrects, OCRs
+   and pushes the whole stack, and under the global 30 s `MCP_CALL_TIMEOUT` the
+   agent reported scans as failed that had in fact been ingested (2026-09-14).
+   The HTTP transport's read timeout is derived from it (call + 30 s, never below
+   the SDK's 300 s), so a long scan is not cut at the transport either.
 2. The tool names in the relevant role's `internal_tools`/`prompt_tools` in
    **`config/agent_roles.yaml`** — this is **ConfigMap-served**, not baked into
    the image, so each cluster's live ConfigMap must be patched too.
@@ -329,6 +335,7 @@ FileVault on, not a laptop. That materially de-risks the choice.
 | Key | Default | Meaning |
 |---|---|---|
 | `SCANNER_MCP_URL` | `http://<scanner-host>:9093/mcp` | Per-instance client URL |
+| `SCANNER_MCP_CALL_TIMEOUT` | `600` | Per-server MCP tool-call timeout in seconds (1..3600); outside the range falls back to the global 30 s |
 | `SCANNER_TARGETS` | *(required, 1..n)* | The target registry — see below |
 | `SCANNER_INGEST_ENABLED` | `false` | Per-instance flag (dark) |
 | `scanner_route_auto_threshold` | `0.85` | Below → review floor |
