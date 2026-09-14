@@ -97,6 +97,19 @@ if [[ $SKIP_BACKEND == 0 ]]; then
   run "$RSYNC --exclude='__pycache__' --exclude='*.pyc' --exclude='.pytest_cache' \
     --exclude='provisioning' --exclude='tests' \
     $REPO_ROOT/src/satellite/ $BUILD_HOST:$STAGING/src/backend/satellite/"
+  # Extra top-level Python packages from OUTSIDE this repo (e.g. a private
+  # plugin named in PLUGIN_MODULES). Colon-separated package DIRECTORIES; each
+  # lands at src/backend/<basename> → /app/<basename>, importable. Staging from
+  # the canonical source here replaces a hand-copied, gitignored package in the
+  # working tree — which a worktree checkout does not have and which goes stale.
+  if [[ -n "${RENFIELD_BACKEND_EXTRA_PACKAGES:-}" ]]; then
+    IFS=':' read -r -a _extra_pkgs <<< "$RENFIELD_BACKEND_EXTRA_PACKAGES"
+    for pkg in "${_extra_pkgs[@]}"; do
+      [[ -d "$pkg" ]] || { echo "ERROR: RENFIELD_BACKEND_EXTRA_PACKAGES entry is not a directory: $pkg" >&2; exit 2; }
+      run "$RSYNC --exclude='__pycache__' --exclude='*.pyc' --exclude='*.egg-info' \
+        ${pkg%/}/ $BUILD_HOST:$STAGING/src/backend/$(basename "${pkg%/}")/"
+    done
+  fi
 fi
 if [[ $SKIP_FRONTEND == 0 ]]; then
   run "$RSYNC --exclude='node_modules' --exclude='dist' --exclude='.vite' \
@@ -106,10 +119,32 @@ fi
 
 # --- 2. build + push --------------------------------------------------------
 if [[ $SKIP_BACKEND == 0 ]]; then
-  log "build + push backend:$BACKEND_TAG"
+  log "build backend:$BACKEND_TAG"
   on_build "set -e; cd $STAGING/src/backend && \
-    docker build -q -t $REGISTRY/backend:latest -t $REGISTRY/backend:$BACKEND_TAG -f Dockerfile . && \
-    docker push -q $REGISTRY/backend:$BACKEND_TAG && docker push -q $REGISTRY/backend:latest"
+    docker build -q -t $REGISTRY/backend:latest -t $REGISTRY/backend:$BACKEND_TAG -f Dockerfile ."
+
+  # Plugin guard, BEFORE the push: every package the target instance loads via
+  # PLUGIN_MODULES (ConfigMap renfield-env + Secret renfield-env-private) must
+  # be importable in the image just built. A missing package does not stop the
+  # backend — the loader logs and carries on — so without this check the
+  # plugin is silently dead from the next rollout on. It happened four times.
+  if [[ $DRY_RUN == 1 ]]; then
+    printf '  [dry-run] verify PLUGIN_MODULES of %s importable in backend:%s\n' "$NS" "$BACKEND_TAG"
+  else
+    plugin_pkgs="$( { "${KUBECTL[@]}" get cm renfield-env -o jsonpath='{.data.PLUGIN_MODULES}' 2>/dev/null; echo; \
+      "${KUBECTL[@]}" get secret renfield-env-private -o jsonpath='{.data.PLUGIN_MODULES}' 2>/dev/null | base64 -d 2>/dev/null; echo; } \
+      | tr ',' '\n' | sed -E 's/[:.].*$//; s/^[[:space:]]+//; s/[[:space:]]+$//' | grep -v '^$' | sort -u | tr '\n' ' ')"
+    if [[ -n "${plugin_pkgs// /}" ]]; then
+      log "verify plugin packages importable: $plugin_pkgs"
+      on_build "docker run --rm $REGISTRY/backend:$BACKEND_TAG python3 -c \
+        'import importlib.util, sys; m = [p for p in sys.argv[1:] if importlib.util.find_spec(p) is None]; print(\"missing: \" + (\" \".join(m) or \"none\")); sys.exit(1 if m else 0)' \
+        $plugin_pkgs" \
+        || { echo "ERROR: $NS loads PLUGIN_MODULES packages the image lacks — NOT pushed. Stage them via RENFIELD_BACKEND_EXTRA_PACKAGES." >&2; exit 1; }
+    fi
+  fi
+
+  log "push backend:$BACKEND_TAG"
+  on_build "set -e; docker push -q $REGISTRY/backend:$BACKEND_TAG && docker push -q $REGISTRY/backend:latest"
 fi
 if [[ $SKIP_FRONTEND == 0 ]]; then
   log "build + push frontend:$FRONTEND_TAG"

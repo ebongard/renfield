@@ -398,6 +398,14 @@ class Settings(BaseSettings):
     # MCP Client (Model Context Protocol)
     mcp_enabled: bool = False             # Opt-in, disabled by default
     mcp_config_path: str = "config/mcp_servers.yaml"
+    # Directory of instance-local MCP server stanzas (`*.yaml`, each with its own
+    # `servers:` list), loaded AFTER mcp_config_path and appended to it. For
+    # servers that belong to one installation but not to the shared repo file:
+    # the shared file is swapped wholesale on every deploy, so a stanza appended
+    # to it by hand is silently dropped by the next one. An overlay entry may
+    # not redefine a server already in mcp_config_path (skipped with an error).
+    # A missing directory is normal and means "no local servers".
+    mcp_config_overlay_dir: str = "config/mcp.d"
     mcp_refresh_interval: int = 60        # Background refresh interval (seconds)
     mcp_connect_timeout: float = 10.0     # Connection timeout per server (seconds)
     mcp_call_timeout: float = 30.0        # Tool call timeout (seconds)
@@ -1152,6 +1160,40 @@ class Settings(BaseSettings):
     # drain never progresses. Both the scheduled paperless-dedupe job AND the
     # interactive internal.paperless_dedupe pass this as execute_tool(call_timeout=).
     paperless_dedupe_call_timeout_s: float = Field(default=180.0, ge=30.0, le=600.0)
+
+    # Paperless search-index health check + self-heal (Fix B of the 2026-08 re-ingest
+    # loop). A stale/partial Paperless full-text index hides documents from search
+    # while they still exist. Paperless offers NO REST reindex (only the
+    # `document_index reindex` management command on its host); a document PATCH
+    # re-indexes that one document. The built-in `paperless_index_health` task calls
+    # mcp.paperless.search_index_health, which compares a page of DB document ids
+    # against the index. Two separate dark flags so detection can run (and alert)
+    # before any write is allowed:
+    #   - check: probe + RAISE on a proven degradation → engine failure-streak alert
+    #   - heal:  additionally re-save (PATCH unchanged title) the missing documents
+    paperless_index_check_enabled: bool = False
+    paperless_index_heal_enabled: bool = False
+    # Seed interval (hourly). The check is ONE MCP call per run, far below the
+    # 60/min MCP rate limit; inside the MCP every Paperless request retries on 429.
+    paperless_index_check_interval: int = Field(default=3600, ge=60, le=86400)
+    # Documents probed per run (one page of the id-descending list; the task walks
+    # the archive page by page across runs and wraps at the end).
+    paperless_index_check_sample_size: int = Field(default=50, ge=1, le=200)
+    # Max documents re-saved per run when healing is on.
+    paperless_index_heal_max_touch: int = Field(default=25, ge=1, le=100)
+    # Skip documents added more recently than this — their indexing may still run.
+    paperless_index_check_min_age_seconds: int = Field(default=900, ge=0, le=86400)
+    # Per-call MCP timeout (the tool has its own 120 s wall-clock budget).
+    paperless_index_check_call_timeout_s: float = Field(default=180.0, ge=30.0, le=600.0)
+    # A heal re-save ALWAYS fires Paperless's "document updated" signal, so every
+    # enabled workflow with a Document-Updated trigger runs per healed document
+    # (it may assign tags/owner/permissions, send mail, call webhooks). The MCP
+    # therefore refuses to heal while such workflows are active (or cannot be
+    # verified) unless this override is set.
+    paperless_index_heal_allow_workflows: bool = False
+    # Re-save attempts per document before it is given up on: it is then no longer
+    # touched, reported to the admin via ops_alert, and the walk moves on.
+    paperless_index_heal_max_attempts: int = Field(default=3, ge=1, le=20)
 
     # Document-worker stale-task recovery. reclaim_stale() re-adopts entries a
     # dead consumer left un-ACKed in the Redis PEL. It used to run ONLY at worker

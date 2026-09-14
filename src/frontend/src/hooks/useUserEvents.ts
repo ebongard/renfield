@@ -29,8 +29,15 @@ const INVALIDATE_DEBOUNCE_MS = 1000; // collapse a burst of events into one refe
  * The outcome is already a message in the requesting conversation (written
  * server-side), so listeners only reload / show a notice. `detail.reason` is the
  * job status (done | unrouted | failed | interrupted) — never document identity.
+ * `detail.sessionId` names the conversation the outcome was written into, so only
+ * the tab driving it reacts visibly (absent from an older backend).
  */
 export const SCAN_JOB_FINISHED_EVENT = 'renfield-scan-job-finished';
+
+export interface ScanJobFinishedDetail {
+  reason?: string;
+  sessionId?: string;
+}
 
 interface UseUserEventsOptions {
   /** Connect only when true (feature on AND auth-off-or-logged-in). */
@@ -72,11 +79,19 @@ export function useUserEvents({ enabled }: UseUserEventsOptions): void {
 
     const handleEvent = (payload: unknown) => {
       if (!payload || typeof payload !== 'object') return;
-      const { type, reason } = payload as { type?: string; reason?: string };
+      const { type, reason, session_id: sessionId } = payload as {
+        type?: string;
+        reason?: string;
+        session_id?: unknown;
+      };
       if (type === 'documents_changed') {
         invalidateDocumentsSoon();
       } else if (type === 'scan_job_finished') {
-        window.dispatchEvent(new CustomEvent(SCAN_JOB_FINISHED_EVENT, { detail: { reason } }));
+        const detail: ScanJobFinishedDetail = {
+          reason,
+          ...(typeof sessionId === 'string' && sessionId ? { sessionId } : {}),
+        };
+        window.dispatchEvent(new CustomEvent(SCAN_JOB_FINISHED_EVENT, { detail }));
         // The conversation list shows a preview + message count that just changed.
         void queryClient.invalidateQueries({ queryKey: keys.chatSessions.list() });
       }

@@ -707,7 +707,7 @@ class TestBatchBCHandlers:
         builtins.register_builtin_handlers()
         seeds = builtins.builtin_task_seeds()
 
-        assert len(seeds) == 25  # +1: Externe Erreichbarkeitsprüfung (watchdog, A3)
+        assert len(seeds) == 26  # +1: Paperless-Suchindex prüfen (Fix B)
         names = [s.name for s in seeds]
         # Names are the ON CONFLICT seed key — a duplicate would silently drop a
         # built-in. Expressed against len(seeds) so adding a built-in updates ONE

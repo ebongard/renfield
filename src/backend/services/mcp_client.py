@@ -1364,13 +1364,22 @@ class MCPManager:
         except Exception as e:
             logger.debug(f"kiosk tool_health broadcast failed: {e}")
 
-    def load_config(self, path: str, only: set[str] | None = None) -> None:
+    def load_config(
+        self,
+        path: str,
+        only: set[str] | None = None,
+        overlay_dir: str | None = None,
+    ) -> None:
         """Load MCP server configuration from YAML file.
 
         ``only`` restricts loading to the named servers — used by the
         document-worker's minimal single-server Paperless client so it can spin
         up just that one stdio subprocess without the full 10-server lifecycle
-        (see services/paperless_worker_client.py)."""
+        (see services/paperless_worker_client.py).
+
+        ``overlay_dir`` (default ``settings.mcp_config_overlay_dir``) holds
+        instance-local stanzas appended after ``path`` — see
+        ``_read_overlay_entries``."""
         # Inject Docker secrets into os.environ so ${VAR} substitution
         # in YAML config can resolve API keys stored in /run/secrets/.
         # Only sets vars that are not already present in the environment.
@@ -1385,23 +1394,32 @@ class MCPManager:
                         except Exception:
                             pass
 
+        entries: list[dict] = []
         config_path = Path(path)
         if not config_path.exists():
             logger.warning(f"MCP config file not found: {path}")
-            return
+        else:
+            try:
+                with open(config_path) as f:
+                    raw = yaml.safe_load(f)
+            except Exception as e:
+                logger.error(f"Failed to parse MCP config: {e}")
+                return
+            if raw and raw.get("servers"):
+                entries.extend(raw["servers"])
 
-        try:
-            with open(config_path) as f:
-                raw = yaml.safe_load(f)
-        except Exception as e:
-            logger.error(f"Failed to parse MCP config: {e}")
-            return
+        entries.extend(
+            self._read_overlay_entries(
+                Path(overlay_dir if overlay_dir is not None else settings.mcp_config_overlay_dir),
+                base_names={e.get("name") for e in entries if isinstance(e, dict)},
+            )
+        )
 
-        if not raw or not raw.get("servers"):
+        if not entries:
             logger.info("MCP config loaded but no servers defined")
             return
 
-        for entry in raw["servers"]:
+        for entry in entries:
             try:
                 if only is not None and entry.get("name") not in only:
                     continue
@@ -1479,6 +1497,50 @@ class MCPManager:
                 logger.error(f"Failed to parse MCP server config entry: {e}")
 
         logger.info(f"MCP config loaded: {len(self._servers)} server(s) enabled")
+
+    @staticmethod
+    def _read_overlay_entries(overlay_dir: Path, base_names: set) -> list[dict]:
+        """Server entries from the instance-local overlay directory.
+
+        Each ``*.yaml``/``*.yml`` file (sorted, dotfiles ignored — a mounted
+        ConfigMap directory also holds ``..data`` bookkeeping entries) carries its
+        own ``servers:`` list. The overlay exists so a server that belongs to ONE
+        installation survives the wholesale swap of the shared mcp_servers.yaml on
+        every deploy. It must never silently change a shared server, so an entry
+        whose name is already defined (in the base file or an earlier overlay
+        file) is skipped with an error. A broken file is skipped on its own; the
+        other files still load."""
+        if not overlay_dir.is_dir():
+            return []
+        entries: list[dict] = []
+        seen = set(base_names)
+        files = sorted(
+            p for p in overlay_dir.iterdir()
+            if p.suffix in (".yaml", ".yml") and not p.name.startswith(".") and p.is_file()
+        )
+        for file in files:
+            try:
+                with open(file) as f:
+                    raw = yaml.safe_load(f)
+            except Exception as e:
+                logger.error(f"Failed to parse MCP overlay config {file.name}: {e}")
+                continue
+            servers = raw.get("servers") if isinstance(raw, dict) else None
+            if not isinstance(servers, list):
+                logger.error(f"MCP overlay config {file.name} has no 'servers' list, skipping")
+                continue
+            for entry in servers:
+                name = entry.get("name") if isinstance(entry, dict) else None
+                if name in seen:
+                    logger.error(
+                        f"MCP overlay config {file.name}: server '{name}' is already "
+                        f"defined, overlay entry skipped"
+                    )
+                    continue
+                seen.add(name)
+                entries.append(entry)
+            logger.info(f"MCP overlay config loaded: {file.name}")
+        return entries
 
     async def connect_all(self) -> None:
         """Connect to all configured servers in parallel."""

@@ -348,6 +348,20 @@ otherwise a crash-looping pod alerts on every boot.
 Alerting is best-effort and wrapped: a failing notification pipeline must never
 cost the run-state commit that keeps the task scheduled.
 
+### Paperless search-index health as a scheduled task (Fix B)
+
+Built-in `paperless_index_health` ("Paperless-Suchindex prüfen", hourly, not
+`run_at_boot`) follows the watchdog pattern below: **no alerting of its own**. It
+self-gates on `paperless_index_check_enabled` and re-reads
+`paperless_index_heal_enabled` inside the service every run (H4). Detection and the
+per-document heal live in the Paperless MCP (`search_index_health`), because
+Paperless has no REST reindex and a document PATCH is the only REST-reachable
+re-index. The handler raises on a proven degradation with healing off, on a heal
+that left documents missing, and on `index_error`. In those cases it keeps its Redis
+page cursor, so the next run re-checks the same page and the failure streak can
+build to an `ops_alert`. An `inconclusive` verdict never raises. See
+`docs/FOLDER_INGEST.md` for the verdicts.
+
 ### Phase 4b — The watchdog as a scheduled task (A3)
 
 The external HTTP watchdog (`services/watchdog.py`) deliberately has **no

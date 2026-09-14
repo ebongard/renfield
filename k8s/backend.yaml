@@ -293,6 +293,15 @@ spec:
               mountPath: /app/config/mail_accounts.yaml
               subPath: mail_accounts.yaml
               readOnly: true
+            # Instance-local MCP server stanzas (MCP_CONFIG_OVERLAY_DIR). The
+            # shared mcp_servers.yaml above is swapped wholesale from the repo
+            # on every deploy, so a server that belongs to one installation only
+            # lives in its own optional ConfigMap instead. Whole-directory mount,
+            # NOT subPath: an absent optional ConfigMap is then an empty dir,
+            # where a subPath would hang the pod in ContainerCreating.
+            - name: mcp-config-local
+              mountPath: /app/config/mcp.d
+              readOnly: true
             # Federation Ed25519 identity key — PERSISTED so the pubkey (and thus
             # every peer pairing) survives restarts. The writable default
             # /app/secrets is ephemeral, so without a persisted key it regenerates
@@ -369,6 +378,12 @@ spec:
         - name: mcp-config
           configMap:
             name: renfield-mcp-config
+        # Instance-local MCP stanzas (see the volumeMount above). optional: true
+        # → an installation without local servers needs no ConfigMap at all.
+        - name: mcp-config-local
+          configMap:
+            name: renfield-mcp-config-local
+            optional: true
         # Persisted federation identity key (see the volumeMount above).
         # optional: true → pods boot even before the secret is provisioned.
         - name: federation-identity

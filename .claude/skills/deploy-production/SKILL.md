@@ -459,6 +459,10 @@ kubectl -n renfield get cm renfield-mcp-config -o json | python3 -c "import json
 
 Then roll the backend (the deploy script's `set image` does this). **xidra** keeps its own copies of all four files in the private `x-ren` repo — use `x-ren/config/apply-mcp-config.sh` there, never the household files.
 
+**A live-only server in step 1's diff is not drift to overwrite — it is a server that lives in the wrong place.** Step 2 replaces the whole file, so anything present live but not in the repo is deleted by it; that is how a private MCP server vanished from the household on 2026-09-14 while its plugin kept loading and nothing alerted. Servers that belong to one installation (not to the public repo) go into the optional **`renfield-mcp-config-local`** ConfigMap instead — one key per server file, mounted by `k8s/backend.yaml` as the directory `/app/config/mcp.d` and appended by the loader (`MCP_CONFIG_OVERLAY_DIR`). The key swap never touches it. Its source stays in the private repo that owns the server, with that repo's apply script.
+
+**Private plugin packages** (named in `PLUGIN_MODULES`) are staged from their canonical source with `RENFIELD_BACKEND_EXTRA_PACKAGES=/path/to/pkg[:/path/to/pkg2]` on `bin/deploy-production.sh`. The script refuses to push a backend image in which a package the target namespace's `PLUGIN_MODULES` names is not importable.
+
 ### Smoke test
 
 ```bash

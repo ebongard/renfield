@@ -7,6 +7,7 @@ import { useWakeWord } from '../../../hooks/useWakeWord';
 import { WAKEWORD_CONFIG } from '../../../config/wakeword';
 import { useChatSessions } from '../../../hooks/useChatSessions';
 import { useReloadOnScanJobFinished } from '../../../hooks/useReloadOnScanJobFinished';
+import { rememberTabConversation } from '../../../utils/tabConversations';
 import {
   useChatWebSocket,
   useAudioRecording,
@@ -1732,6 +1733,9 @@ export function ChatProvider({ children }: ChatProviderProps) {
 
     const previewText = text.length > 50 ? text.substring(0, 50) + '...' : text;
     if (sessionId) {
+      // This tab now drives the conversation: a background job that later
+      // reports into it (a finished scan) shows its notice here, not in every tab.
+      rememberTabConversation(sessionId);
       addConversation({
         session_id: sessionId,
         preview: previewText,
@@ -1887,7 +1891,7 @@ export function ChatProvider({ children }: ChatProviderProps) {
 
   // A background scan finished: pull its outcome message into the open thread
   // (deferred while a turn streams).
-  useReloadOnScanJobFinished(loading, reloadHistory);
+  useReloadOnScanJobFinished(loading, reloadHistory, sessionId);
 
   // Switch the active branch to the sibling identified by `messageId` (the ◂/▸
   // switcher). The backend repoints the active leaf to that sibling's subtree
