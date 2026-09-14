@@ -132,21 +132,27 @@ Empfängt Benachrichtigungen von HA-Automationen.
 - `429` — Duplikat innerhalb des Suppressions-Fensters
 - `503` — Proaktive Benachrichtigungen deaktiviert
 
+### Sichtbarkeit (Liste, Bestätigen, Verwerfen, Unterdrücken)
+
+Mit `AUTH_ENABLED=true` sieht und bearbeitet ein Nutzer nur, was **an ihn adressiert** ist (`target_user_id` = er selbst) oder **öffentlich an niemanden** gerichtet ist (`target_user_id` leer und `privacy="public"`). Eine persönliche Benachrichtigung ohne Empfänger bleibt für normale Nutzer verborgen. Nutzer mit `notifications.manage` sehen alles. Die Benachrichtigung eines anderen verhält sich wie eine nicht existierende (`404`), und ohne Anmeldung gibt es `401`. Mit `AUTH_ENABLED=false` (ein Haushalt) ändert sich nichts.
+
+Hintergrund (2026-09-14): Vorher konnte jeder angemeldete Nutzer die persönlichen Benachrichtigungen aller anderen auflisten, bestätigen, verwerfen und daraus Unterdrückungsregeln bauen. Das Präsenz-Gate schützte nur den Live-Push, nicht die REST-Liste.
+
 ### GET /api/notifications
 
-Liste mit optionalen Filtern.
+Liste mit optionalen Filtern, auf die Sichtbarkeit des Aufrufers beschränkt.
 
 **Query-Parameter:** `room_id`, `urgency`, `status`, `since` (ISO 8601), `limit` (default: 50), `offset` (default: 0)
 
 ### PATCH /api/notifications/{id}/acknowledge
 
-Bestätigt eine Benachrichtigung.
+Bestätigt eine Benachrichtigung (nur eine sichtbare, sonst `404`).
 
 **Query-Parameter:** `acknowledged_by` (optional)
 
 ### DELETE /api/notifications/{id}
 
-Soft-Delete (setzt Status auf `dismissed`).
+Soft-Delete (setzt Status auf `dismissed`; nur eine sichtbare, sonst `404`).
 
 ### POST /api/notifications/token
 

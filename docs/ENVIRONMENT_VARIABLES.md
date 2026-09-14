@@ -602,6 +602,8 @@ PROACTIVE_NOTIFICATION_TTL=86400
 - `DELETE /api/notifications/{id}` — Verwerfen (Soft Delete)
 - `POST /api/notifications/token` — Token generieren/rotieren (Admin)
 
+Mit `AUTH_ENABLED=true` sind Liste, Bestätigen, Verwerfen und Unterdrücken auf den Aufrufer beschränkt: nur an ihn adressierte oder öffentliche Benachrichtigungen; `notifications.manage` sieht alles. Details: `docs/PROACTIVE_NOTIFICATIONS.md` → „Sichtbarkeit“.
+
 **Dokumentation:** Siehe `docs/PROACTIVE_NOTIFICATIONS.md` für Details und HA-Automations-Template.
 
 #### Phase 2: Notification Intelligence
@@ -647,8 +649,8 @@ PROACTIVE_REMINDER_CHECK_INTERVAL=15     # Prüfintervall in Sekunden
 
 **Reminder-Endpunkte:**
 - `POST /api/notifications/reminders` — Erinnerung erstellen
-- `GET /api/notifications/reminders` — Offene Erinnerungen
-- `DELETE /api/notifications/reminders/{id}` — Erinnerung stornieren
+- `GET /api/notifications/reminders` — Offene Erinnerungen (mit `AUTH_ENABLED=true` nur die eigenen; `notifications.manage`: alle)
+- `DELETE /api/notifications/reminders/{id}` — Erinnerung stornieren (nur eine eigene, sonst `404`)
 
 #### Obligation-Deadline Notifier (Schicht A)
 
