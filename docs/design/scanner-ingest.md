@@ -383,12 +383,22 @@ Hardening from the post-deploy review (2026-09-14):
   1. `…:reported` (24 h) — a settled job answers `duplicate` straight from Redis.
   2. `…:claim` (`SET NX`, 60 s) — serializes concurrent deliveries. It is a lease,
      never the delivered state; while it is held the route answers **409**, so a
-     crashed pod's claim lapses and the scanner's next retry delivers.
+     crashed pod's claim lapses and the scanner's next retry delivers. Its value is
+     a per-delivery token released only by compare-and-delete (Lua), so a delivery
+     whose lease lapsed during a slow write cannot free a newer delivery's lease.
   3. The message itself — marked `message_metadata.scanner_job.job_id` and checked
-     under the conversation row lock (`FOR UPDATE`) immediately before the insert,
-     in the same transaction. That covers a crash after the commit but before the
-     marker, a lost Redis marker, and a claim that lapsed during a slow write (the
-     second delivery waits for the first commit, then finds the message).
+     under a per-conversation advisory lock
+     (`pg_advisory_xact_lock(0x534A, hashtext(session_id))`) immediately before the
+     insert, in the same transaction; the commit in `save_message` releases it.
+     That covers a crash after the commit but before the marker, a lost Redis
+     marker, and a claim that lapsed during a slow write (the second delivery
+     waits for the first commit, then finds the message). An advisory lock, not
+     the conversation row lock: `chat_handler` saves a turn only when it ends, so a
+     scan requested in a brand-new conversation can finish before the row exists
+     — with nothing to lock, two overlapping deliveries both appended. The
+     advisory lock needs no row and creates none, so the chat turn's own save
+     (owner, title) is unaffected. On SQLite (unit tests only) the check runs
+     unlocked, deliberately.
 
   The live side effects — the `/ws/user` event and the room announcement — are
   at-most-once: they follow a successful write only, and a delivery that finds the
