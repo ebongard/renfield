@@ -653,6 +653,24 @@ PRD is unaffected (separate cluster, separate ConfigMap, `usu-mcp` actually runn
 
 ---
 
+### Mobile receipt capture — items deferred by the 2026-09-14 `/autoplan` review (P3)
+
+**WHAT:** Six follow-ups the review deliberately kept out of the MVP (M1–M3) of `docs/design/mobile-receipt-capture.md`:
+1. **E6 — Apple custom/private app distribution:** evaluate against TestFlight (no 90-day build expiry). Evaluation only; R2 (TestFlight on the org account) stands.
+2. **E7 — iOS share-sheet extension:** PDFs/images from Mail/Files into the same outbox. New app target, outside the M2 blast radius.
+3. **E8 — Zero-install fallback doc:** for users without the app (Files → watch folder, mail → mailbox).
+4. **E9 — Batch capture session:** N receipts → N captures, instead of relying on PDF-Split as the safety net.
+5. **Split ZIP export:** by category or period, for very large trips (Phase 1.5a exports one ZIP per report).
+6. **App icon and branding:** before the first M2 TestFlight build.
+
+**WHY:** None blocks M2 or changes a settled decision (R2–R7). Each is either a new target, an evaluation, or polish.
+
+**DEPENDS ON:** M2 shipped (E7, E9, branding); Phase 1.5a shipped (split ZIP).
+
+**SOURCE:** `tasks/mobile-receipt-capture-plan.md` (CEO expansions table + Decision Audit Trail), `/autoplan` 2026-09-14
+
+---
+
 ## Source index
 
 When updating an item, update these files (primary source first):
