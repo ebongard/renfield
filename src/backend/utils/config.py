@@ -1153,6 +1153,31 @@ class Settings(BaseSettings):
     # interactive internal.paperless_dedupe pass this as execute_tool(call_timeout=).
     paperless_dedupe_call_timeout_s: float = Field(default=180.0, ge=30.0, le=600.0)
 
+    # Paperless search-index health check + self-heal (Fix B of the 2026-08 re-ingest
+    # loop). A stale/partial Paperless full-text index hides documents from search
+    # while they still exist. Paperless offers NO REST reindex (only the
+    # `document_index reindex` management command on its host); a document PATCH
+    # re-indexes that one document. The built-in `paperless_index_health` task calls
+    # mcp.paperless.search_index_health, which compares a page of DB document ids
+    # against the index. Two separate dark flags so detection can run (and alert)
+    # before any write is allowed:
+    #   - check: probe + RAISE on a proven degradation → engine failure-streak alert
+    #   - heal:  additionally re-save (PATCH unchanged title) the missing documents
+    paperless_index_check_enabled: bool = False
+    paperless_index_heal_enabled: bool = False
+    # Seed interval (hourly). The check is ONE MCP call per run, far below the
+    # 60/min MCP rate limit; inside the MCP every Paperless request retries on 429.
+    paperless_index_check_interval: int = Field(default=3600, ge=60, le=86400)
+    # Documents probed per run (one page of the id-descending list; the task walks
+    # the archive page by page across runs and wraps at the end).
+    paperless_index_check_sample_size: int = Field(default=50, ge=1, le=200)
+    # Max documents re-saved per run when healing is on.
+    paperless_index_heal_max_touch: int = Field(default=25, ge=1, le=100)
+    # Skip documents added more recently than this — their indexing may still run.
+    paperless_index_check_min_age_seconds: int = Field(default=900, ge=0, le=86400)
+    # Per-call MCP timeout (the tool has its own 120 s wall-clock budget).
+    paperless_index_check_call_timeout_s: float = Field(default=180.0, ge=30.0, le=600.0)
+
     # Document-worker stale-task recovery. reclaim_stale() re-adopts entries a
     # dead consumer left un-ACKed in the Redis PEL. It used to run ONLY at worker
     # startup, so an entry orphaned WHILE the worker keeps running (an OOMKill

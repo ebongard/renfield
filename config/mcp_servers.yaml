@@ -406,6 +406,9 @@ servers:
       create_storage_path: mcp.paperless.write
       create_tag: mcp.paperless.write
       delete_document: mcp.paperless.write
+      # heal=true re-saves documents → write (the scheduled index check runs as a
+      # system call and bypasses user permissions).
+      search_index_health: mcp.paperless.write
     # Note: ``upload_document`` is intentionally NOT exposed to the agent
     # prompt. The agent has no access to raw file bytes, so when it saw this
     # tool it hallucinated placeholder base64 ("base64_encoded_content_of...")

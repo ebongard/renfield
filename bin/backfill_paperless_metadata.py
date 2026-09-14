@@ -1,39 +1,42 @@
 #!/usr/bin/env python3
 """
-Backfill the Paperless **correspondent** for folder-ingested documents that were
-filed without one.
+Backfill Paperless metadata for folder-ingested documents. Two modes, chosen
+explicitly with ``--mode``; every run is a DRY RUN unless ``--commit`` is given.
 
-Two cohorts are repaired:
-  - the "broken-window" docs uploaded while Docling was unavailable (the
-    transformers<5 / torch-2.6 outage) → metadata extraction had failed entirely,
-    so they were bare-uploaded (filename title, no correspondent);
-  - docs whose sender simply wasn't an existing Paperless correspondent, so the
-    autonomous folder-ingest leg left the field blank (pre-Option-A behaviour).
+``--mode created-date`` — the Paperless ``created`` date (Ausstellungsdatum)
+  Documents that settled via the idempotent task_id RE-POLL (or a checksum id
+  lookup) never received the post-consume ``update_document``, so Paperless kept
+  the consume-time date. Logic + guards live in
+  ``services/paperless_metadata_backfill.py``:
+    - source = ``documents.document_date`` (no LLM, no OCR);
+    - only ``paperless_state='done'`` docs with a linked ``paperless_document_id``;
+    - PATCHes ONLY when Paperless ``created`` still equals its ``added`` date (the
+      consume-date fallback) — anything else may be a human edit and is left alone;
+    - skips a Paperless doc linked from KB rows that disagree on the date;
+    - idempotent, paced below the 60/min MCP rate limit with backoff on rejection,
+      batch-capped (``--limit``, default 200, max 1000) and resumable
+      (``--after-pid``; the summary prints ``last_pid``);
+    - prints counts and Paperless ids only.
+  Renfield's OCR text is NOT re-transported: the full text is not stored outside
+  the chunk table, and re-deriving it needs Docling (worker-only).
 
-For each candidate it RE-RUNS the metadata extraction (Docling works now),
-resolves-or-creates the correspondent with the SAME full-taxonomy guardrail as
-the live leg (``services.folder_ingest_paperless.resolve_or_create_correspondent``),
-and PATCHes the Paperless document via ``mcp.paperless.update_document``.
-
-Idempotent + conservative:
-  - only touches docs with ``paperless_state='done'`` (folder-ingest filed);
-  - SKIPS any Paperless document that already has a correspondent (gap-fill only);
-  - sets ONLY the correspondent — never title/type/tags (so manual edits stand);
-  - locates the Paperless doc by the stored ``paperless_document_id`` when present
-    (filed after pc20260613), else by a created-date window + exact
-    ``original_file_name`` match (the historical gap), skipping on any ambiguity.
-
-ALWAYS --dry-run first.
+``--mode correspondent`` — the original correspondent gap-fill
+  Re-runs metadata extraction and resolves-or-creates the correspondent with the
+  same full-taxonomy guardrail as the live leg; sets ONLY the correspondent and
+  skips docs that already have one. (Unchanged behaviour; it lifts the MCP rate
+  limiter for its one-pass filename index.)
 
 Usage:
-    python bin/backfill_paperless_metadata.py --dry-run
-    python bin/backfill_paperless_metadata.py --commit
-    python bin/backfill_paperless_metadata.py --commit --limit 50
+    python bin/backfill_paperless_metadata.py --mode created-date            # dry run
+    python bin/backfill_paperless_metadata.py --mode created-date --commit
+    python bin/backfill_paperless_metadata.py --mode created-date --commit --after-pid 1234
+    python bin/backfill_paperless_metadata.py --mode correspondent --commit --limit 50
 """
 from __future__ import annotations
 
 import argparse
 import asyncio
+import json
 import logging
 import sys
 from pathlib import Path
@@ -41,40 +44,67 @@ from pathlib import Path
 _BACKEND = Path(__file__).resolve().parent.parent / "src" / "backend"
 sys.path.insert(0, str(_BACKEND))
 
-from sqlalchemy import select  # noqa: E402
-
-from models.database import PAPERLESS_STATE_DONE, Document  # noqa: E402
-from services.database import AsyncSessionLocal  # noqa: E402
-from services.folder_ingest_paperless import (  # noqa: E402
-    _fetch_correspondent_names,
-    _parse_paperless_result,
-    resolve_correspondent_from_metadata,
-)
-from services.paperless_metadata_extractor import PaperlessMetadataExtractor  # noqa: E402
-from utils.config import settings  # noqa: E402
-
 logging.basicConfig(level=logging.INFO, format="%(asctime)s | %(levelname)s | %(message)s")
 logger = logging.getLogger("backfill_paperless_metadata")
 
 
-async def _build_mcp_manager():
-    """A connected MCPManager, mirroring api.lifecycle's construction. Lifts the
-    paperless per-server rate limit: the default 60/min token bucket *rejects*
-    (doesn't wait) over the cap, and the one-pass filename index issues hundreds
-    of get_document calls in a burst. This is a one-off admin script driving a
-    single server, so an unthrottled paperless client is appropriate."""
+async def _build_mcp_manager(*, lift_rate_limit: bool):
+    """A connected MCPManager, mirroring api.lifecycle's construction.
+
+    ``lift_rate_limit`` is only for the correspondent mode, whose one-pass filename
+    index bursts hundreds of get_document calls (the 60/min bucket REJECTS over the
+    cap). The created-date mode keeps the limiter and paces itself below it."""
     from services.mcp_client import MCPManager
+    from utils.config import settings
 
     manager = MCPManager()
     manager.load_config(settings.mcp_config_path)
     await manager.connect_all()
-    state = getattr(manager, "_servers", {}).get("paperless")
-    limiter = getattr(state, "rate_limiter", None) if state else None
-    if limiter is not None:
-        limiter.rate = 100_000
-        limiter.max_tokens = 100_000.0
-        limiter.tokens = 100_000.0
+    if lift_rate_limit:
+        state = getattr(manager, "_servers", {}).get("paperless")
+        limiter = getattr(state, "rate_limiter", None) if state else None
+        if limiter is not None:
+            limiter.rate = 100_000
+            limiter.max_tokens = 100_000.0
+            limiter.tokens = 100_000.0
     return manager
+
+
+async def _shutdown(manager) -> None:
+    try:
+        await manager.shutdown()
+    except Exception:  # noqa: BLE001 - teardown is best-effort
+        pass
+
+
+async def _run_created_date(*, commit: bool, limit: int, after_pid: int, rate: int) -> None:
+    from services.database import AsyncSessionLocal
+    from services.paperless_metadata_backfill import RatePacer, backfill_created_dates
+
+    manager = await _build_mcp_manager(lift_rate_limit=False)
+    try:
+        report = await backfill_created_dates(
+            AsyncSessionLocal,
+            manager,
+            commit=commit,
+            limit=limit,
+            after_pid=after_pid,
+            pacer=RatePacer(rate),
+        )
+    finally:
+        await _shutdown(manager)
+    print(json.dumps(report.summary(), indent=2))
+    ids = {
+        "patched": report.patched,
+        "would_patch": report.would_patch,
+        "failed": report.failed,
+        "unreachable": report.unreachable,
+        "ambiguous": report.ambiguous,
+        "skipped_not_consume_date": report.skipped_not_consume_date,
+    }
+    print(json.dumps({"paperless_ids": {k: v for k, v in ids.items() if v}}, indent=2))
+    if not commit:
+        print("DRY-RUN — nothing was written. Re-run with --commit to apply.")
 
 
 async def _build_filename_index(manager) -> dict[str, int]:
@@ -84,6 +114,8 @@ async def _build_filename_index(manager) -> dict[str, int]:
     ingest-date mismatch a ``created`` window would suffer (Paperless's ``created``
     is the parsed *document* date, not when we filed it). Bounded by max_results,
     so the backfill targets recent ingests (older docs need the stored id)."""
+    from services.folder_ingest_paperless import _parse_paperless_result
+
     search = _parse_paperless_result(
         await manager.execute_tool(
             "mcp.paperless.search_documents", {"ordering": "-added", "max_results": 500}
@@ -103,8 +135,19 @@ async def _build_filename_index(manager) -> dict[str, int]:
     return index
 
 
-async def _run(*, commit: bool, limit: int | None) -> None:
-    manager = await _build_mcp_manager()
+async def _run_correspondent(*, commit: bool, limit: int | None) -> None:
+    from sqlalchemy import select
+
+    from models.database import PAPERLESS_STATE_DONE, Document
+    from services.database import AsyncSessionLocal
+    from services.folder_ingest_paperless import (
+        _fetch_correspondent_names,
+        _parse_paperless_result,
+        resolve_correspondent_from_metadata,
+    )
+    from services.paperless_metadata_extractor import PaperlessMetadataExtractor
+
+    manager = await _build_mcp_manager(lift_rate_limit=True)
     extractor = PaperlessMetadataExtractor(mcp_manager=manager)
     fixed = skipped = no_corr = unmatched = already = 0
     try:
@@ -158,7 +201,7 @@ async def _run(*, commit: bool, limit: int | None) -> None:
 
                 # Same resolve-or-create path as the live leg (shared helper);
                 # full taxonomy passed in so it isn't re-fetched per document.
-                # create=commit so a --dry-run previews new correspondents
+                # create=commit so a dry run previews new correspondents
                 # without actually creating them in Paperless.
                 corr = await resolve_correspondent_from_metadata(
                     manager, result.metadata, names=names, create=commit
@@ -189,20 +232,46 @@ async def _run(*, commit: bool, limit: int | None) -> None:
             fixed, already, no_corr, unmatched, skipped, "" if commit else "  (DRY-RUN — no writes)",
         )
     finally:
-        try:
-            await manager.shutdown()
-        except Exception:  # noqa: BLE001 - teardown is best-effort
-            pass
+        await _shutdown(manager)
 
 
-def main() -> int:
-    p = argparse.ArgumentParser(description="Backfill the Paperless correspondent for folder-ingested documents.")
-    mode = p.add_mutually_exclusive_group(required=True)
-    mode.add_argument("--dry-run", action="store_true", help="Preview correspondents to set; no writes.")
-    mode.add_argument("--commit", action="store_true", help="Resolve/create + PATCH the Paperless correspondent.")
-    p.add_argument("--limit", type=int, default=None, help="Cap the number of documents.")
-    args = p.parse_args()
-    asyncio.run(_run(commit=args.commit, limit=args.limit))
+def build_parser() -> argparse.ArgumentParser:
+    p = argparse.ArgumentParser(description="Backfill Paperless metadata for folder-ingested documents.")
+    p.add_argument(
+        "--mode", choices=["created-date", "correspondent"], required=True,
+        help="Which metadata to backfill.",
+    )
+    mode = p.add_mutually_exclusive_group()
+    mode.add_argument("--dry-run", action="store_true", help="Preview only (the default).")
+    mode.add_argument("--commit", action="store_true", help="Apply the changes to Paperless.")
+    p.add_argument(
+        "--limit", type=int, default=None,
+        help="Cap the batch (created-date: default 200, max 1000; correspondent: unlimited).",
+    )
+    p.add_argument(
+        "--after-pid", type=int, default=0,
+        help="created-date: resume after this Paperless id (the previous run's last_pid).",
+    )
+    p.add_argument(
+        "--rate", type=int, default=50,
+        help="created-date: max MCP calls per minute (keep below the 60/min limit).",
+    )
+    return p
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = build_parser().parse_args(argv)
+    if args.mode == "created-date":
+        from services.paperless_metadata_backfill import DEFAULT_LIMIT
+
+        asyncio.run(_run_created_date(
+            commit=args.commit,
+            limit=args.limit or DEFAULT_LIMIT,
+            after_pid=args.after_pid,
+            rate=args.rate,
+        ))
+    else:
+        asyncio.run(_run_correspondent(commit=args.commit, limit=args.limit))
     return 0
 
 

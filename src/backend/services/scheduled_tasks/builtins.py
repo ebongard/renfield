@@ -92,6 +92,24 @@ async def _paperless_dedupe_handler(app: "FastAPI", params: dict) -> str | None:
     return f"deleted={deleted} remaining={remaining} complete={complete}"
 
 
+async def _paperless_index_health_handler(app: "FastAPI", params: dict) -> str | None:
+    """Fix B: check the Paperless search index for documents it lacks and (with
+    ``paperless_index_heal_enabled``) re-index them by a non-destructive re-save.
+
+    Like the watchdog it has no alerting of its own — it RAISES on a proven,
+    unhealed degradation so the engine's failure-streak alerting tells the admin.
+    Self-gates on the runtime flag (M7); the heal flag is re-read inside the
+    service every run (H4)."""
+    if not settings.paperless_index_check_enabled:
+        return "skipped: paperless_index_check_enabled is off"
+    mcp_manager = getattr(app.state, "mcp_manager", None)
+    if mcp_manager is None:
+        return "skipped: no mcp_manager"
+    from services.paperless_index_health import run_index_health_check
+
+    return await run_index_health_check(mcp_manager)
+
+
 async def _federation_audit_cleanup_handler(app: "FastAPI", params: dict) -> str | None:
     """F4d — retention prune of the federation query audit log (no runtime gate;
     matches the legacy always-on scheduler)."""
@@ -479,6 +497,7 @@ async def _placeholder_atom_reaper_handler(app: "FastAPI", params: dict) -> str 
 def register_builtin_handlers() -> None:
     """Register every built-in handler. Idempotent — called once at lifespan."""
     register_handler("paperless_dedupe", _paperless_dedupe_handler)
+    register_handler("paperless_index_health", _paperless_index_health_handler)
     register_handler("federation_audit_cleanup", _federation_audit_cleanup_handler)
     register_handler("upload_cleanup", _upload_cleanup_handler)
     # Phase 3 Batch A
@@ -518,6 +537,15 @@ def builtin_task_seeds() -> list[TaskSeed]:
             handler_key="paperless_dedupe",
             interval_seconds=settings.paperless_dedupe_reconciler_interval,
             # Seeded enabled; the handler self-gates on the runtime flag (M7).
+            enabled=True,
+        ),
+        TaskSeed(
+            name="Paperless-Suchindex prüfen",
+            handler_key="paperless_index_health",
+            interval_seconds=settings.paperless_index_check_interval,
+            # Self-gates on paperless_index_check_enabled (M7). Not run_at_boot:
+            # probing Paperless while a coordinated deploy restarts it would
+            # measure the restart, not the index.
             enabled=True,
         ),
         TaskSeed(
