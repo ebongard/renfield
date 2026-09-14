@@ -46,10 +46,20 @@ spec:
             app.kubernetes.io/component: backend-job
         spec:
           restartPolicy: OnFailure
+          # Run pg_dump explicitly as uid/gid 26 (postgres). The dump directory on the
+          # NFS export is owned 26:26 (0755), and the export root-squashes: without a
+          # securityContext this pod ran as root, was mapped to nobody (65534) and got
+          # `could not open output file "/backup/…": Permission denied` on every run
+          # (found 2026-09-14). A root `chown` init container cannot fix that either —
+          # root_squash forbids it — so the container simply runs as the owner.
           containers:
             - name: pgdump
               image: your-registry.example/renfield/cnpg-pg16-pgvector:16.9-pgvector0.8.6
               imagePullPolicy: Always
+              securityContext:
+                runAsUser: 26
+                runAsGroup: 26
+                runAsNonRoot: true
               env:
                 - name: PGHOST
                   value: renfield-pg-r1-rw
