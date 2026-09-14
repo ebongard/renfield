@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import json
 import re
+import uuid
 from typing import Any
 
 from loguru import logger
@@ -34,6 +35,23 @@ _KEY = "renfield:scanner:job:{job_id}"
 # A scan finishes in minutes; a day covers a sleeping scanner host catching up on
 # its event retries after wake without keeping requester records around forever.
 _TTL_SECONDS = 24 * 3600
+# The delivery claim is a LEASE, not the delivered state: long enough to cover one
+# message write, short enough that the scanner's retry (backoff 2, 4, 8 … s)
+# delivers soon after a pod died holding it. A write that outlives it is still
+# safe — the message check under the per-conversation delivery lock catches the
+# overlap.
+_CLAIM_TTL_SECONDS = 60
+# Advisory-lock namespace for scan-job deliveries ("SJ"); distinct from every
+# other two-key advisory lock in the backend (see the *_LOCK_NS constants).
+_DELIVERY_LOCK_NS = 0x534A
+# Compare-and-delete: only the delivery that took the claim may free it. A
+# delivery whose lease already lapsed must not delete the lease a newer one holds.
+_RELEASE_CLAIM_LUA = """
+if redis.call('get', KEYS[1]) == ARGV[1] then
+    return redis.call('del', KEYS[1])
+end
+return 0
+"""
 # Mirrors renfield-mcp-scanner's job id format (uuid4 hex).
 JOB_ID_PATTERN = r"[0-9a-f]{32}"
 _JOB_ID = re.compile(JOB_ID_PATTERN)
@@ -215,13 +233,105 @@ async def _announce_in_origin_room(requester: dict, status: str) -> None:
         logger.warning(f"scanner: outcome announcement in room {room_id} failed: {exc}")
 
 
+async def _outcome_already_in_conversation(db: Any, session_id: str, job_id: str) -> bool:
+    """Whether this job's outcome message already exists — the DURABLE record of a
+    delivery, which Redis markers are only a cache of.
+
+    First takes the per-conversation delivery lock,
+    ``pg_advisory_xact_lock(_DELIVERY_LOCK_NS, hashtext(session_id))``, in the
+    caller's transaction. It is held until that transaction ends — the commit in
+    ``save_message``, or the caller's rollback when this returns True — so check
+    and insert are one atomic step: a second delivery of the same job waits here
+    until the first commits, then finds its message.
+
+    An ADVISORY lock rather than the conversation row lock, because the row may not
+    exist yet: ``chat_handler`` saves a turn only when it ends, so a scan requested
+    in a brand-new conversation can finish first. With a row lock, two overlapping
+    deliveries would then both see no conversation and both append. The advisory
+    lock needs no row and creates none, so ``chat_handler``'s own later save (owner,
+    title) is untouched. ``hashtext`` collisions only serialize two unrelated
+    deliveries; they never merge them.
+
+    Postgres only. SQLite (the unit-test harness) has no advisory locks; there the
+    check runs unlocked — deliberately, it serves one test connection, never
+    concurrent pods."""
+    from sqlalchemy import select, text
+
+    from models.database import Conversation, Message
+
+    if db.get_bind().dialect.name == "postgresql":
+        await db.execute(
+            text("SELECT pg_advisory_xact_lock(:ns, hashtext(:session_id))"),
+            {"ns": _DELIVERY_LOCK_NS, "session_id": session_id},
+        )
+    conversation_id = (
+        await db.execute(select(Conversation.id).where(Conversation.session_id == session_id))
+    ).scalar_one_or_none()
+    if conversation_id is None:
+        return False
+    found = (
+        await db.execute(
+            select(Message.id)
+            .where(
+                Message.conversation_id == conversation_id,
+                Message.role == "assistant",
+                Message.message_metadata[("scanner_job", "job_id")].as_string() == job_id,
+            )
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+    return found is not None
+
+
+async def _release_claim(redis: Any, claim_key: str, token: str) -> None:
+    """Free the claim only if it is still ours. Best-effort: the TTL frees it anyway."""
+    try:
+        await redis.eval(_RELEASE_CLAIM_LUA, 1, claim_key, token)
+    except Exception as exc:  # noqa: BLE001 - the TTL releases it
+        logger.warning(f"scanner: could not release claim {claim_key}: {exc}")
+
+
+async def _mark_reported(redis: Any, reported_key: str, outcome: str) -> None:
+    """Cache that this job is settled so a retry answers without touching the DB.
+    Best-effort: if it is lost, the next retry finds the message and settles then."""
+    try:
+        await redis.set(reported_key, outcome, ex=_TTL_SECONDS)
+    except Exception as exc:  # noqa: BLE001 - the message is already durable
+        logger.warning(f"scanner: could not cache the delivery marker {reported_key}: {exc}")
+
+
 async def handle_job_event(db: Any, event: dict, *, redis: Any = None) -> str:
     """Deliver one terminal job event. Returns the outcome for the route's reply.
 
     - ``unknown_job``: not recorded here (other instance, expired, or forged) — ignored.
-    - ``duplicate``: already delivered; the scanner is retrying a lost reply.
+    - ``in_progress``: another delivery holds the claim, or its pod died holding
+      it — retryable; the retry after the claim lapses delivers.
+    - ``duplicate``: already delivered (or refused); the scanner is retrying a lost reply.
     - ``delivered``: appended to the requesting conversation and pushed live.
     - ``refused``: the conversation belongs to another user — final, not retried.
+
+    Delivery guarantee. The scanner sends at-least-once (it retries anything but
+    a 2xx/401/403/404 for 24 h); this side makes the message idempotent on the
+    job_id, so the conversation gets it exactly once. Three layers, each covering
+    the gap the one above leaves:
+
+    1. ``…:reported`` (24 h) — a settled job answers ``duplicate`` from Redis.
+    2. ``…:claim`` (``SET NX``, ``_CLAIM_TTL_SECONDS``) — serializes concurrent
+       deliveries. It is a LEASE, never the delivered state: a pod that dies
+       between claiming and writing leaves only a claim that lapses, and the
+       scanner's next retry delivers. (Before 2026-09-14 the claim WAS the
+       delivered marker, so that crash lost the outcome for good.) Its value is a
+       per-delivery token released only by compare-and-delete, so a delivery whose
+       lease already lapsed cannot free the lease a newer delivery holds.
+    3. The message itself, marked ``message_metadata.scanner_job.job_id`` and
+       checked under a per-conversation advisory lock right before the insert, in
+       the same transaction. It covers a crash after the commit but before the
+       marker, a lost Redis marker, and a claim that lapsed while a slow write was
+       still running — also for a conversation whose row does not exist yet.
+
+    The live side effects — the ``/ws/user`` event and the room announcement —
+    are at-most-once: they follow a successful write only, and a delivery found
+    already written does not repeat them.
     """
     job_id = event["job_id"]
     status = event["status"]
@@ -242,45 +352,59 @@ async def handle_job_event(db: Any, event: dict, *, redis: Any = None) -> str:
         logger.warning(f"scanner: unreadable requester record for job {job_id} — ignored")
         return "unknown_job"
 
-    # At-most-once into the chat: the scanner retries until it hears a 2xx, so a
-    # reply lost after the write would otherwise append the message twice.
     reported_key = f"{key}:reported"
-    if not await redis.set(reported_key, "1", nx=True, ex=_TTL_SECONDS):
+    if await redis.get(reported_key) is not None:
         return "duplicate"
+    claim_key = f"{key}:claim"
+    claim_token = uuid.uuid4().hex
+    if not await redis.set(claim_key, claim_token, nx=True, ex=_CLAIM_TTL_SECONDS):
+        return "in_progress"
 
-    # The title is the requester's own (recorded at request time), never the
-    # event's — the event is only trusted for WHICH outcome happened.
-    content = render_completion_message(
-        status, str(requester.get("title") or ""), event.get("result") or {},
-        settings.default_language,
-    )
     try:
-        from services.conversation_service import ConversationService
-
-        message = await ConversationService(db).save_message(
-            session_id=session_id,
-            role="assistant",
-            content=content,
-            metadata={"scanner_job": {"job_id": job_id, "status": status}},
-            user_id=requester.get("user_id"),
-            enforce_ownership=True,
+        # The title is the requester's own (recorded at request time), never the
+        # event's — the event is only trusted for WHICH outcome happened.
+        content = render_completion_message(
+            status, str(requester.get("title") or ""), event.get("result") or {},
+            settings.default_language,
         )
-        if message is None:
-            raise RuntimeError("message was not saved")
-    except PermissionError:
-        # The conversation belongs to someone else. That never changes on a
-        # retry, so this is final: keep the claim and answer 2xx — a 5xx would
-        # make the scanner hammer a write that can never succeed.
-        logger.warning(f"scanner: job {job_id} refused — conversation owned by another user")
-        return "refused"
-    except Exception:
-        # Release the claim so the scanner's next retry can deliver it.
-        await redis.delete(reported_key)
-        raise
+        try:
+            if await _outcome_already_in_conversation(db, session_id, job_id):
+                await db.rollback()  # release the delivery lock; nothing to write
+                await _mark_reported(redis, reported_key, "delivered")
+                logger.info(f"scanner: job {job_id} was already in its conversation")
+                return "duplicate"
 
-    # In auth-off mode the household's sockets live in the broadcast bucket.
+            from services.conversation_service import ConversationService
+
+            message = await ConversationService(db).save_message(
+                session_id=session_id,
+                role="assistant",
+                content=content,
+                metadata={"scanner_job": {"job_id": job_id, "status": status}},
+                user_id=requester.get("user_id"),
+                enforce_ownership=True,
+            )
+            if message is None:
+                raise RuntimeError("message was not saved")
+        except PermissionError:
+            # The conversation belongs to someone else. That never changes on a
+            # retry, so this is final: settle it and answer 2xx — a 5xx would
+            # make the scanner hammer a write that can never succeed.
+            logger.warning(f"scanner: job {job_id} refused — conversation owned by another user")
+            await _mark_reported(redis, reported_key, "refused")
+            return "refused"
+        await _mark_reported(redis, reported_key, "delivered")
+    finally:
+        # Free OUR claim on every path, a failed write included, so the scanner's
+        # next retry can deliver at once. If Redis is gone too, the TTL frees it.
+        await _release_claim(redis, claim_key, claim_token)
+
+    # In auth-off mode the household's sockets live in the broadcast bucket. The
+    # session id lets only the tab driving that conversation show the notice.
     target = requester.get("user_id") if settings.ws_auth_enabled else None
-    await publish_user_event(redis, target, EVENT_SCAN_JOB_FINISHED, reason=status)
+    await publish_user_event(
+        redis, target, EVENT_SCAN_JOB_FINISHED, reason=status, session_id=session_id,
+    )
     await _announce_in_origin_room(requester, status)
     logger.info(f"scanner: job {job_id} ({status}) reported to its conversation")
     return "delivered"

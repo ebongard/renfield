@@ -9,24 +9,46 @@ import { act, renderHook } from '@testing-library/react';
 import { useReloadOnScanJobFinished } from '../../../../src/frontend/src/hooks/useReloadOnScanJobFinished';
 import { SCAN_JOB_FINISHED_EVENT } from '../../../../src/frontend/src/hooks/useUserEvents';
 
-function finish(): void {
+function finish(sessionId?: string): void {
   act(() => {
-    window.dispatchEvent(new CustomEvent(SCAN_JOB_FINISHED_EVENT, { detail: { reason: 'done' } }));
+    window.dispatchEvent(
+      new CustomEvent(SCAN_JOB_FINISHED_EVENT, {
+        detail: { reason: 'done', ...(sessionId ? { sessionId } : {}) },
+      }),
+    );
   });
 }
 
 describe('useReloadOnScanJobFinished', () => {
   it('reloads right away when no turn is streaming', () => {
     const reload = vi.fn().mockResolvedValue(undefined);
-    renderHook(() => useReloadOnScanJobFinished(false, reload));
+    renderHook(() => useReloadOnScanJobFinished(false, reload, 'open'));
     finish();
     expect(reload).toHaveBeenCalledTimes(1);
+  });
+
+  it('reloads when the scan finished into the open conversation', () => {
+    const reload = vi.fn().mockResolvedValue(undefined);
+    renderHook(() => useReloadOnScanJobFinished(false, reload, 'open'));
+    finish('open');
+    expect(reload).toHaveBeenCalledTimes(1);
+  });
+
+  it('leaves the open conversation alone when the scan belongs to another one', () => {
+    const reload = vi.fn().mockResolvedValue(undefined);
+    const { rerender } = renderHook(
+      ({ loading }) => useReloadOnScanJobFinished(loading, reload, 'open'),
+      { initialProps: { loading: true } },
+    );
+    finish('elsewhere');
+    rerender({ loading: false });
+    expect(reload).not.toHaveBeenCalled();
   });
 
   it('defers the reload until the streaming turn ends, then reloads once', () => {
     const reload = vi.fn().mockResolvedValue(undefined);
     const { rerender } = renderHook(
-      ({ loading }) => useReloadOnScanJobFinished(loading, reload),
+      ({ loading }) => useReloadOnScanJobFinished(loading, reload, 'open'),
       { initialProps: { loading: true } },
     );
 
@@ -44,7 +66,7 @@ describe('useReloadOnScanJobFinished', () => {
 
   it('stops listening on unmount', () => {
     const reload = vi.fn().mockResolvedValue(undefined);
-    const { unmount } = renderHook(() => useReloadOnScanJobFinished(false, reload));
+    const { unmount } = renderHook(() => useReloadOnScanJobFinished(false, reload, 'open'));
     unmount();
     finish();
     expect(reload).not.toHaveBeenCalled();

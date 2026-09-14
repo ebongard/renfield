@@ -201,6 +201,30 @@ async def test_coalescer_separate_keys_not_merged():
     assert sorted(flushed) == sorted([(7, "documents_changed"), (8, "documents_changed"), (7, "notes_changed")])
 
 
+async def test_coalescer_keeps_events_of_different_conversations_apart():
+    """Two scans finishing inside one window for the same household bucket are two
+    signals — each tab reacts to its own conversation; last-wins would drop one."""
+    flushed: list[tuple] = []
+
+    async def flush(target, event):
+        flushed.append((target, event.get("session_id")))
+
+    c = ue.EventCoalescer(0.05, flush)
+    c.submit(None, {"type": "scan_job_finished", "reason": "done", "session_id": "a"})
+    c.submit(None, {"type": "scan_job_finished", "reason": "done", "session_id": "b"})
+    c.submit(None, {"type": "scan_job_finished", "reason": "done", "session_id": "b"})
+    await asyncio.sleep(0.12)
+
+    assert sorted(flushed) == [(None, "a"), (None, "b")]
+
+
+async def test_build_event_carries_the_session_id_only_when_given():
+    assert ue.build_event("scan_job_finished", "done", "s1") == {
+        "type": "scan_job_finished", "reason": "done", "session_id": "s1",
+    }
+    assert "session_id" not in ue.build_event("scan_job_finished", "done")
+
+
 async def test_coalescer_zero_window_flushes_each():
     flushed: list = []
 

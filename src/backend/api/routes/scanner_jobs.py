@@ -110,4 +110,9 @@ async def scan_job_event(
         # to the wrong instance ends as a loud give-up instead of a silent
         # "delivered". Never 404, which the scanner treats as final.
         raise HTTPException(status_code=409, detail="unknown job")
+    if outcome == "in_progress":
+        # Another delivery of this job holds the short claim — or held it and its
+        # pod died mid-write. NOT a 2xx: the retry after the claim lapses is what
+        # delivers an event a crashed pod never wrote.
+        raise HTTPException(status_code=409, detail="delivery in progress")
     return {"status": outcome}

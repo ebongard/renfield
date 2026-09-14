@@ -144,10 +144,16 @@ describe('useUserEvents', () => {
     const ws = latest();
     ws.fireOpen();
 
-    ws.fireMessage({ type: 'scan_job_finished', reason: 'done' });
+    ws.fireMessage({ type: 'scan_job_finished', reason: 'done', session_id: 'session-1' });
+    ws.fireMessage({ type: 'scan_job_finished', reason: 'failed' }); // older backend
+    ws.fireMessage({ type: 'scan_job_finished', reason: 'done', session_id: 42 }); // malformed
 
     window.removeEventListener(SCAN_JOB_FINISHED_EVENT, listener);
-    expect(seen).toEqual([{ reason: 'done' }]);
+    expect(seen).toEqual([
+      { reason: 'done', sessionId: 'session-1' },
+      { reason: 'failed' },
+      { reason: 'done' },
+    ]);
     expect(spy).toHaveBeenCalledWith({ queryKey: ['chatSessions', 'list'] });
     // Not a document change: the knowledge list is left alone.
     expect(spy).not.toHaveBeenCalledWith({ queryKey: ['knowledge', 'list'] });

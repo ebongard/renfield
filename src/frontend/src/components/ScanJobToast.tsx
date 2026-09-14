@@ -2,7 +2,8 @@ import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { ScanLine, X } from 'lucide-react';
 
-import { SCAN_JOB_FINISHED_EVENT } from '../hooks/useUserEvents';
+import { SCAN_JOB_FINISHED_EVENT, type ScanJobFinishedDetail } from '../hooks/useUserEvents';
+import { isTabConversation } from '../utils/tabConversations';
 
 /**
  * Live notice that a background scan the user started has finished.
@@ -11,6 +12,13 @@ import { SCAN_JOB_FINISHED_EVENT } from '../hooks/useUserEvents';
  * written server-side as a message into the requesting conversation and announced
  * over the content-free /ws/user socket. This toast only says THAT it finished and
  * points at the chat — the event carries no document identity, by design.
+ *
+ * Only in the tab the scan was requested from: the event names its conversation,
+ * and a tab shows the notice only if it wrote into that conversation. In a
+ * household without login every tab receives the event, and a notice in all of
+ * them reads as a scan nobody there asked for; the other tabs still refresh the
+ * conversation list quietly. A voice request has no tab — it is answered in its
+ * room. An event without a conversation (older backend) shows, as before.
  *
  * Deliberately standalone, not NotificationToast: that one is the device-WS queue
  * with server acks, and it is presence-gated for personal notices, which would hide
@@ -34,7 +42,9 @@ export default function ScanJobToast() {
 
   useEffect(() => {
     const handler = (event: Event) => {
-      setOutcome(toOutcome((event as CustomEvent<{ reason?: string }>).detail?.reason));
+      const detail = (event as CustomEvent<ScanJobFinishedDetail>).detail;
+      if (detail?.sessionId && !isTabConversation(detail.sessionId)) return;
+      setOutcome(toOutcome(detail?.reason));
     };
     window.addEventListener(SCAN_JOB_FINISHED_EVENT, handler);
     return () => window.removeEventListener(SCAN_JOB_FINISHED_EVENT, handler);
