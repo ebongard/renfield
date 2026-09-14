@@ -153,29 +153,6 @@ spec:
             # the writable default when the secret isn't provisioned yet.
             - name: FEDERATION_IDENTITY_PERSISTED_KEY_PATH
               value: "/app/federation-identity/federation_identity_key"
-            # Digital-twin ingest token (private twin deployment). Declarative
-            # here — it used to be injected imperatively via `kubectl set env`,
-            # so EVERY re-apply of this manifest dropped it and silently
-            # disabled twin capture (the 2026-08-22 review's config-drift
-            # fail-open). optional: a cluster without the twin still boots.
-            - name: TWIN_INGEST_TOKEN
-              valueFrom:
-                secretKeyRef:
-                  name: twin-secrets
-                  key: TWIN_INGEST_TOKEN
-                  optional: true
-            # Shared secret gating POST /api/internal/auth/verify (login audit
-            # #1116). optional: unset → endpoint stays legacy-unauthenticated
-            # (byte-identical), so the pod boots dark on any instance without the
-            # key. TWO-SIDED: on an instance whose voice-server registry client
-            # calls verify (e.g. xidra), the SAME value must be set as that
-            # client's verify_secret in voice-registry-auth, else voice 401s.
-            - name: INTERNAL_AUTH_VERIFY_SECRET
-              valueFrom:
-                secretKeyRef:
-                  name: renfield-secrets
-                  key: internal-auth-verify-secret
-                  optional: true
             - name: POSTGRES_PASSWORD
               valueFrom:
                 secretKeyRef:
@@ -252,7 +229,39 @@ spec:
                 secretKeyRef:
                   name: renfield-secrets
                   key: mail-regfish-password
+            # Digital-twin ingest token (private twin deployment). Declarative
+            # here — it used to be injected imperatively via `kubectl set env`,
+            # so EVERY re-apply of this manifest dropped it and silently
+            # disabled twin capture (the 2026-08-22 review's config-drift
+            # fail-open). optional: a cluster without the twin still boots.
+            - name: TWIN_INGEST_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: twin-secrets
+                  key: TWIN_INGEST_TOKEN
+                  optional: true
+            # Shared secret gating POST /api/internal/auth/verify (login audit
+            # #1116). optional: unset → endpoint stays legacy-unauthenticated
+            # (byte-identical), so the pod boots dark on any instance without the
+            # key. TWO-SIDED: on an instance whose voice-server registry client
+            # calls verify (e.g. xidra), the SAME value must be set as that
+            # client's verify_secret in voice-registry-auth, else voice 401s.
+            - name: INTERNAL_AUTH_VERIFY_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: renfield-secrets
+                  key: internal-auth-verify-secret
+                  optional: true
           volumeMounts:
+            # Instance-local MCP server stanzas (MCP_CONFIG_OVERLAY_DIR). The
+            # shared mcp_servers.yaml above is swapped wholesale from the repo
+            # on every deploy, so a server that belongs to one installation only
+            # lives in its own optional ConfigMap instead. Whole-directory mount,
+            # NOT subPath: an absent optional ConfigMap is then an empty dir,
+            # where a subPath would hang the pod in ContainerCreating.
+            - name: mcp-config-local
+              mountPath: /app/config/mcp.d
+              readOnly: true
             # Shared with the document-worker pod (#388 cutover). The API
             # writes the uploaded file here, the worker reads it from the
             # same NFS-backed PVC. Must be mounted at the same path on
@@ -292,15 +301,6 @@ spec:
             - name: mcp-config
               mountPath: /app/config/mail_accounts.yaml
               subPath: mail_accounts.yaml
-              readOnly: true
-            # Instance-local MCP server stanzas (MCP_CONFIG_OVERLAY_DIR). The
-            # shared mcp_servers.yaml above is swapped wholesale from the repo
-            # on every deploy, so a server that belongs to one installation only
-            # lives in its own optional ConfigMap instead. Whole-directory mount,
-            # NOT subPath: an absent optional ConfigMap is then an empty dir,
-            # where a subPath would hang the pod in ContainerCreating.
-            - name: mcp-config-local
-              mountPath: /app/config/mcp.d
               readOnly: true
             # Federation Ed25519 identity key — PERSISTED so the pubkey (and thus
             # every peer pairing) survives restarts. The writable default
@@ -363,6 +363,12 @@ spec:
               # drop to 5 GiB once that endpoint also migrates.
               memory: 6Gi
       volumes:
+        # Instance-local MCP stanzas (see the volumeMount above). optional: true
+        # → an installation without local servers needs no ConfigMap at all.
+        - name: mcp-config-local
+          configMap:
+            name: renfield-mcp-config-local
+            optional: true
         # RWX NFS PVCs shared with document-worker — see k8s/shared-pvcs.yaml.
         - name: uploads
           persistentVolumeClaim:
@@ -378,12 +384,6 @@ spec:
         - name: mcp-config
           configMap:
             name: renfield-mcp-config
-        # Instance-local MCP stanzas (see the volumeMount above). optional: true
-        # → an installation without local servers needs no ConfigMap at all.
-        - name: mcp-config-local
-          configMap:
-            name: renfield-mcp-config-local
-            optional: true
         # Persisted federation identity key (see the volumeMount above).
         # optional: true → pods boot even before the secret is provisioned.
         - name: federation-identity

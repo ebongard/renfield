@@ -210,6 +210,22 @@ if [[ $DRY_RUN == 0 ]]; then
     -o 'custom-columns=D:.metadata.name,IMG:.spec.template.spec.containers[0].image'
 fi
 
+# --- 5b. manifest drift (read-only, warn-only) --------------------------------
+# After `set image` the live objects must still match the repo manifests (images
+# excepted for the placeholder manifests). If they don't, the next routine
+# `kubectl apply -f` regresses the instance — flag it now, never block the deploy.
+log "manifest drift check (read-only)"
+MANIFESTS_DIR="${RENFIELD_MANIFESTS_DIR:-}"
+[[ -z "$MANIFESTS_DIR" && "$NS" == "renfield" ]] && MANIFESTS_DIR="$REPO_ROOT/k8s"
+if [[ -z "$MANIFESTS_DIR" ]]; then
+  echo "  (skipped: set RENFIELD_MANIFESTS_DIR to the manifests of $NS, e.g. ../x-ren/k8s)"
+elif [[ $DRY_RUN == 1 ]]; then
+  printf '  [dry-run] %s --context %s -n %s --dir %s\n' "$REPO_ROOT/bin/k8s-drift-check.sh" "$KCTX" "$NS" "$MANIFESTS_DIR"
+else
+  RENFIELD_REGISTRY="$REGISTRY" "$REPO_ROOT/bin/k8s-drift-check.sh" --context "$KCTX" -n "$NS" --dir "$MANIFESTS_DIR" \
+    || echo "WARNING: manifests drift from live $NS (see above) — reconcile them (x-ren: commit the image-tag bump) before any kubectl apply" >&2
+fi
+
 # --- 6. cleanup + prune on the build box ------------------------------------
 log "cleanup + image prune on $BUILD_HOST"
 on_build "rm -rf $STAGING; \
