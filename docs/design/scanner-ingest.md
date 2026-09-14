@@ -373,6 +373,45 @@ Hardening from the pre-merge review (2026-09-14):
 - `route_scan` / `retry_pending_scans` still work inside the tool call and keep a
   600 s per-tool `call_timeout`.
 
+Hardening from the post-deploy review (2026-09-14):
+
+- **Delivery guarantee: exactly once into the conversation.** The scanner sends
+  at-least-once (retries for 24 h); Renfield is idempotent on the job id. Before,
+  the `SET NX` claim WAS the delivered marker: a pod that died between claiming
+  and writing turned every retry into a 2xx "duplicate" and the outcome was lost.
+  Now three layers, each covering the gap above it:
+  1. `…:reported` (24 h) — a settled job answers `duplicate` straight from Redis.
+  2. `…:claim` (`SET NX`, 60 s) — serializes concurrent deliveries. It is a lease,
+     never the delivered state; while it is held the route answers **409**, so a
+     crashed pod's claim lapses and the scanner's next retry delivers.
+  3. The message itself — marked `message_metadata.scanner_job.job_id` and checked
+     under the conversation row lock (`FOR UPDATE`) immediately before the insert,
+     in the same transaction. That covers a crash after the commit but before the
+     marker, a lost Redis marker, and a claim that lapsed during a slow write (the
+     second delivery waits for the first commit, then finds the message).
+
+  The live side effects — the `/ws/user` event and the room announcement — are
+  at-most-once: they follow a successful write only, and a delivery that finds the
+  message already written does not repeat them. Residual loss: a requester record
+  lost from Redis (flush, eviction) before the event arrives still ends in 409s
+  until the scanner gives up.
+- **The notice appears only in the tab that asked.** The `scan_job_finished`
+  event now carries the conversation's `session_id` — a routing key, not content,
+  sent only to sockets that could open that conversation anyway (the owner's; the
+  single household's in auth-off). A tab shows the toast only for a conversation
+  it wrote into (`utils/tabConversations.ts`, per-tab `sessionStorage`), and
+  reloads the open chat only when the outcome landed in it. Other tabs still
+  refresh the conversation list quietly. A voice request has no tab and is
+  answered in its room. The user-events coalescer keys on the session too, so two
+  conversations' events inside one window are not merged.
+- **Scanner side** (`renfield-mcp-scanner`, `fix/job-store-hardening`): job records
+  are read and written off the event loop, atomically (unique temp file, fsync,
+  rename) and in call order; settled records past `SCANNER_STAGING_RETENTION_DAYS`
+  are also purged whenever a job's event settles, not only at startup (no timer —
+  the directory only grows when a job finishes); and completion events are bounded
+  per target (`SCANNER_JOB_EVENT_CONCURRENCY`, default 2) with jittered backoff and
+  `Retry-After` honoured up to the backoff cap, keeping the 24 h horizon.
+
 **Deploy order.** Backend + ConfigMap and scanner together: a new scanner against
 an old backend gets 404 (final) on the event route; an old scanner against the new
 ConfigMap loses nothing but still runs synchronously. Set
