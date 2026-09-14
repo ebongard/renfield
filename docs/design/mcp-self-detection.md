@@ -1,8 +1,11 @@
 # MCP Self-Detection + Self-Healing
 
-Status: **Phase 1 + 2 + 4 SHIPPED** · Phase 3 designed, not built.
+Status: **Phase 1 + 2 + 3 + 4 SHIPPED** (Phase 3 item 3, the Plane-B kiosk verdict,
+is still open).
 Flags: `MCP_HEALTH_MONITOR_ENABLED` (default `false`) gates the whole monitor;
-`MCP_HEALTH_SELF_HEAL_ENABLED` (default `true`) gates the Phase-2 probe+reconnect.
+`MCP_HEALTH_SELF_HEAL_ENABLED` (default `true`) gates the Phase-2 probe+reconnect;
+`MCP_HEALTH_RATE_LIMIT_SIGNAL_ENABLED` + `MCP_RATE_LIMIT_BACKOFF_ENABLED` (both
+default `false`) gate the Phase-3 throttle handling.
 
 ## Why
 
@@ -63,13 +66,15 @@ Per-MCP failure modes and where each is (or isn't yet) caught:
 | filesystem (B) | SMB-auth / share down / retry-exhausted | yes (OPERATOR-NOTIFY) | ✅ report → alert | re-reconcile on recovery |
 | email-ingest (B) | IMAP drop / BYE-timeout / bad token | yes (OPERATOR-NOTIFY) | ✅ report → alert | backend-recovery re-reconcile (asymmetry: filesystem re-reconciles, email doesn't yet) |
 | any client (A) | transport disconnect | yes (`down`) | ✅ tick → alert | ✅ P2 active-probe reconnect (`probe_server()`) |
-| any client (A) | plugin bind failed / 0 tools | yes (`degraded`) | ✅ tick → alert | — (config problem, human-gated; probe can't fix → still alerts) |
+| any client (A) | plugin bind failed / 0 tools | yes (`degraded`) | ✅ tick → alert — P3 fixed three alert-path losses (§3.0) + a 0-tools boot grace | — (config problem, human-gated; not probed since P3) |
 | any client (A) | **connected but calls time out** | ✅ P2 `calls_failing` (rolling timeout window; app errors excluded) | ✅ tick → alert | ✅ P2 probe reconnects a wedged session |
 | any client (A) | **upstream answers everything with an error** (HTTP 500) | ✅ P4 functional probe | ✅ tick → alert naming the probe reason | — (upstream problem; human-gated) |
 | any client (A) | **nobody calls it, so there are no samples** | ✅ P4 functional probe | ✅ tick → alert | — |
 | search (A) | reachable SearXNG, all scrapers CAPTCHA-blocked | ✅ purpose-built probe (#1162) | ✅ P4 wires its verdict into `_server_health` | — |
-| paperless / news / carrier (A) | 429 / Retry-After throttle | NO — treated as generic error | — | Phase 3 backoff + honor Retry-After |
-| dedicated MCP pods | pod crash-loop / not-ready | k8s only, not in renfield's model | — | Phase 3 liveness/readiness probes |
+| paperless / news / carrier (A) | 429 / Retry-After throttle (upstream, in an error result) | ✅ P3 `rate_limited` (dark, windowed) | ✅ tick → alert naming the count | ✅ P3 per-tool Retry-After fail-fast (dark); no transparent retry (§3.2) |
+| any client (A) | 429 from the MCP endpoint itself | as timeout / `down` (SDK raises it in a background task) | ✅ via `calls_failing` / `down` | ✅ existing reconnect |
+| backend pod | DB unreachable / process wedged | ✅ P3 readiness `/health/ready`, liveness `/health/live` | k8s endpoints + peer watchdog | k8s (liveness never on a dependency) |
+| dedicated MCP pods | pod crash-loop / not-ready | `tcpSocket` probes (dlna, samsung) | ✅ via Plane-A `down` | k8s restart |
 
 ## Phase 2 — functional health + self-heal (SHIPPED, dark-safe)
 
@@ -222,14 +227,133 @@ pod restart re-arming an alert for a problem that is still broken is the safe
 direction to fail. A caller that needs restart-durable "already told them" state
 keeps its own column — see `ScheduledTask.error_alerted_at`.
 
-## Phase 3 — rate-limit + orchestration (designed)
+## Phase 3 — the 0-tools gap, rate-limit, probes (SHIPPED, 2026-09-14)
 
-1. **429 / Retry-After** — paperless, news, and carrier-tracking calls honor
-   `Retry-After` with backoff instead of surfacing a throttle as a hard error.
-2. **k8s probes** — liveness/readiness on the dedicated MCP pods so a crash-looping
-   pod is restarted by k8s and its state reflected in the kiosk verdict.
-3. **Kiosk verdict extension** — a real health color for the Plane-B ingest MCPs
-   on the kiosk (today they're telemetry-excluded).
+### 3.0 Why a tool-less server could go unreported
+
+The catalog above said "0 tools → ✅ tick → alert", and the single happy path does
+alert. Every monitor test faked `get_status()` with dicts, so nobody had run a REAL
+`MCPManager` with a 0-tool server through the real self-heal and alert path. Doing
+that (reproduction on .159, 2026-09-14) found three defects in the ALERT path, not in
+the verdict:
+
+1. **A failed hand-off was never retried.** `ops_alert.should_alert` stamps the
+   ledger *before* delivery, and `_notify` threw away `notify_admin`'s bool. An
+   attempt while the pipeline was failing, or while `PROACTIVE_ENABLED` was still
+   off, silenced the problem for the whole re-alert TTL (6 h), and again at every
+   TTL boundary that hit a bad moment. Measured: tick 1 undelivered, tick 2 silent.
+   The scheduled-task alerts already honoured the bool; the monitor did not.
+   Fix: an explicit `False` clears the key, so the next tick retries.
+2. **The ledger key carried no reason.** `planea:{name}:{health}` — a server already
+   alerted as `probe_failed` (or `plugin_failed`, `calls_failing`) that then also
+   turned tool-less never alerted again; the admin kept believing the stale reason.
+   Measured: reason changed, zero new alerts. Fix: `planea:{name}:{health}:{code}`.
+3. **The self-heal "recovered" a tool-less server.** `tools/list` answers fine with
+   an empty list, so `probe_server` returned ok, the tick logged "1 recovered on
+   reconnect", and the alert claimed "Selbstheilung versucht". A reconnect cannot
+   create tools. Fix: `no_tools` (like `plugin_failed`, and now `rate_limited`) is in
+   `_UNHEALABLE_CODES` and is not probed.
+
+Plus two things the alert needed to be trustworthy rather than noisy:
+
+- **No boot storm:** `MCPServerState.no_tools_since` starts when a discovery finds
+  nothing and clears when tools appear; a reconnect that still finds nothing does
+  NOT reset it (a flapping server must still age into an alert). `get_status()` adds
+  `no_tools_for_seconds`; the alert waits `MCP_HEALTH_NO_TOOLS_GRACE_SECONDS` (300 s,
+  above two refresh intervals) while the verdict shows at once. Unknown age alerts.
+- **A reason a human can act on** — "stellt keine Werkzeuge bereit" instead of the
+  raw `no_tools` code in the message.
+
+What was NOT the cause: the verdict itself (`_server_health` flags a connected
+server with an empty `all_discovered_tools` correctly), federation exemption, and the
+`prompt_tools` filter (a server whose tools are all filtered out stays healthy, pinned
+by a test). The optional external MCP server that once served 0 tools has no stanza
+in either instance's live `mcp_servers.yaml` today (checked 2026-09-14, boolean
+only), so this is a fix of the path, not of a currently-firing condition. Related
+gap left open: a `PLUGIN_MCP_BINDINGS` entry naming a server that is not configured
+can never surface `plugin_failed`, because `get_status()` only iterates configured
+servers.
+
+### 3.1 Upstream rate-limit as its own signal (dark)
+
+A throttle is neither a dead server nor a failed functional check, so it gets its own
+state and must not leak into the other two:
+
+- **Where it is read:** only from results that are already errors (`isError` or the
+  inner-error envelope) and from app-level exceptions (incl. an `httpx` response with
+  status 429 + `Retry-After` header) — never from a success, whose payload may talk
+  about rate limits. `_classify_rate_limit` recognises httpx's
+  `Client error '429 Too Many Requests'`, JSON `status`/`code` 429, and "rate limit"
+  prose; a bare "429" (an invoice or document number) does NOT count.
+- **What it cannot see:** a transport-level 429 from the MCP endpoint itself. The
+  SDK (mcp 1.27.1) raises it inside a task-group task, so it surfaces as a timeout or
+  a dead session — already covered by `calls_failing` and `down`.
+- **State:** `rate_limit_events` (timestamps) on `MCPServerState`, separate from
+  `recent_outcomes` and from the probe verdict. **Windowed hysteresis:**
+  `>= MCP_HEALTH_RATE_LIMIT_MIN_EVENTS` (5) within
+  `MCP_HEALTH_RATE_LIMIT_WINDOW_SECONDS` (900) → `degraded/rate_limited`, folded after
+  `probe_failed` (a dead service is worse news) and before `calls_failing` (direct
+  evidence beats inference). Events age out, so a burst cannot pin a server red.
+- **Probes:** with either Phase-3 flag on, a throttled probe records NO verdict (two
+  of them would otherwise read `probe_failed` for a server that is merely busy), but
+  its cadence advances — re-probing a throttled upstream every tick would deepen it.
+  With the backoff gate on this is mandatory, not a preference: the probe's
+  "failure" may be our OWN Retry-After refusal (caught in self-review). Both flags
+  off → a throttled probe fails exactly as before.
+- **Flag dark** (`MCP_HEALTH_RATE_LIMIT_SIGNAL_ENABLED=false`): our own batch jobs
+  throttle themselves by design (the Paperless dedupe against a 60/min MCP), so a
+  throttle becoming a kiosk colour and an alert is an operator decision. Flag off →
+  nothing is recorded, byte-identical.
+- The alert text names the count, never the upstream error text: throttle messages
+  carry request URLs, and API URLs can carry keys.
+
+### 3.2 Retry-After (dark) — a deliberate deviation from "backoff"
+
+The roadmap said "honor Retry-After with backoff instead of surfacing a throttle as a
+hard error". Built: with `MCP_RATE_LIMIT_BACKOFF_ENABLED`, a Retry-After the upstream
+sent for a TOOL makes further calls to that tool return at once
+("Upstream-Rate-Limit … erneut versuchen in N s") until it passes, capped by
+`MCP_RATE_LIMIT_MAX_BACKOFF_SECONDS` (300). **Not built: a transparent
+wait-and-retry.** A 429 inside a tool can follow side effects of that same call
+(one tool, several upstream requests), and re-running a mutating tool is exactly the
+double execution `_is_session_dead` is kept narrow to avoid. The gate is **per tool**,
+not per server — one server can front several upstreams (tracking: one API per
+carrier). Our own refusal is not recorded as a new throttle event, or the gate would
+keep the server red by itself; a clean result lifts the horizon. Callers that already
+back off (the dedupe tool) keep working — they just hit a fast refusal instead of
+the upstream.
+
+### 3.3 k8s probes
+
+- **Backend readiness → `/health/ready`**, never `/health` (which answers "ok" with a
+  dead DB). Only the DB decides the code; Ollama and Redis report `degraded` without
+  failing — a readiness probe that drops every replica while the LLM is slow turns a
+  partial outage into a total one. The DB check is bounded
+  (`HEALTH_READY_DB_TIMEOUT_SECONDS`, 3 s, below the probe's 5 s), so a black-holed DB
+  answers 503 promptly instead of piling probe requests up behind the driver's
+  30–60 s timeouts. A DB blip under 30 s (period × threshold, e.g. a CNPG switchover)
+  does not flip it.
+- **Backend liveness → `/health/live`**, deliberately dependency-free. A liveness
+  probe that checked the DB would restart every replica during a DB outage — a
+  restart storm that tears down MCP sessions and satellite connections and fixes
+  nothing (the 2026-09-11 outage lasted 21.5 h). Liveness only asks whether the
+  process is wedged.
+- **Deploy consequence:** a rollout while the DB is down no longer "completes"; new
+  pods stay NotReady while the old ones serve. Intended (deploy skill updated). The
+  peer watchdog still sees the outage — no endpoints is as unreachable as a 503.
+- **Dedicated MCP pods** (`k8s/dlna-mcp.yaml`, `k8s/samsung-mcp.yaml`): already had
+  `tcpSocket` readiness + liveness; unchanged. Neither server exposes an HTTP health
+  route (checked in both repos), and an `httpGet` on the MCP endpoint answers 4xx
+  without MCP headers, so TCP is the honest maximum today. They run `hostNetwork` and
+  the backend dials them directly, so readiness gates no traffic; "reflected in the
+  kiosk verdict" already happens through Plane-A (`down`). The filesystem,
+  email-ingest and xidra manifests live in their own repos / `x-ren`.
+
+### 3.4 Still open
+
+**Kiosk verdict for the Plane-B ingest MCPs** (a real health colour; they are
+telemetry-excluded today) — not built. `execute_tool_streaming` records neither
+timeouts nor throttles (a Phase-2 gap that Phase 3 inherits).
 
 ## Rollout
 

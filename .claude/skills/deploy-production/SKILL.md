@@ -372,7 +372,17 @@ kubectl -n renfield rollout status deploy/<name>
 ```bash
 kubectl -n renfield exec deploy/backend -c backend -- curl -sS http://localhost:8000/health
 # Expect: {"status":"ok"}
+kubectl -n renfield exec deploy/backend -c backend -- curl -sS -o /dev/null -w '%{http_code}\n' http://localhost:8000/health/ready
+# Expect: 200 (503 = the DB is unreachable from the pod)
 ```
+
+**Probes (since MCP self-detection Phase 3):** backend readiness is `/health/ready`
+(the DB decides), liveness is `/health/live` (process only). Consequence for the
+deploy: a rollout while the DB is down no longer "completes" — new pods stay
+`0/1 Ready` and `rollout status` waits, while the old pods keep serving. That is
+the intended behaviour; fix the DB, don't roll back the image. Liveness never
+depends on the DB, so a DB outage does not restart backend pods. xidra's
+`backend.yaml` lives in `x-ren` and needs the same probe change.
 
 ### Migrations
 
