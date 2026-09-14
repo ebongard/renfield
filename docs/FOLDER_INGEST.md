@@ -189,7 +189,42 @@ the role descriptions in `config/agent_roles.yaml`.
   the retry runs in the sequential document worker and uses a short
   `paperless_refile_poll_timeout_s` (30s) so it can't head-of-line-block ingest —
   relying on the cheap re-poll. Docs that settle via the re-poll skip the post-consume
-  `created_date`/OCR patch (fixable via `bin/backfill_paperless_metadata.py`).
+  `created_date`/OCR patch — the date is fixable via
+  `bin/backfill_paperless_metadata.py --mode created-date` (see *Backfill* below); the
+  OCR content transport is not backfilled (renfield keeps no full text outside the
+  chunks, and re-deriving it needs Docling in the worker).
+- **Search-index self-heal (Fix B, `PAPERLESS_INDEX_CHECK_ENABLED` /
+  `PAPERLESS_INDEX_HEAL_ENABLED`, both dark).** The re-ingest loop also left a Paperless
+  whose full-text index held far fewer documents than its database — documents existed
+  but full-text search could not find them. Paperless has **no REST reindex**: a full
+  rebuild is only the `document_index reindex` management command on the Paperless
+  host, `POST /api/tasks/run/` accepts only `train_classifier`/`sanity_check`, and
+  `/api/status/` `index_status` only says whether the index can be *opened*. A document
+  PATCH, however, re-indexes that one document. The built-in scheduled task
+  **"Paperless-Suchindex prüfen"** (`paperless_index_health`, hourly) calls
+  `mcp.paperless.search_index_health` (renfield-mcp-paperless, new tool): one page of
+  document ids from the **database** (index-independent, newest first) is probed id by id
+  against the index (`query=id:<n>`), skipping docs added in the last
+  `PAPERLESS_INDEX_CHECK_MIN_AGE_SECONDS`. Verdicts:
+  - `degraded` — some missing **while others on the page were found**, which proves the
+    probe works. With healing on, each missing doc is re-saved with its **unchanged
+    title** (non-destructive: no field changes, no reprocess/re-OCR, never a delete) and
+    re-probed, at most `PAPERLESS_INDEX_HEAL_MAX_TOUCH` per run.
+  - `inconclusive` — nothing found at all, a probe Paperless rejects, or a sample cut
+    short. That is equally consistent with a wiped index and with an unsupported probe, so
+    it is only logged; with healing on, **one** canary doc is re-saved, and only if it then
+    appears is the verdict upgraded to `degraded`.
+  - `index_error` — Paperless reports the index cannot be opened; a re-save cannot fix
+    that, the operator must run `document_index reindex`.
+
+  The task has no alerting of its own (same pattern as the watchdog): it **raises** on a
+  proven degradation with healing off, on a heal that left docs missing, and on
+  `index_error`, and in those cases keeps its Redis page cursor on the same page — so the
+  next run re-checks it and the scheduled-task engine's failure streak turns it into one
+  `ops_alert` to the owner admin. A healed page, an `inconclusive` or `healthy` page
+  advance the cursor (wrapping at the end of the archive). Rollout: enable the check
+  first (detect + alert), heal later. Side effects of a heal re-save: Paperless bumps
+  `modified` and runs any "document updated" workflow.
 - **Correspondent auto-create (Option A + guardrail).** Metadata extraction (`services/
   paperless_metadata_extractor.py`) only matches a correspondent against the *recency-
   pruned* taxonomy window, so a new sender would otherwise be filed blank. The leg now
@@ -211,12 +246,28 @@ the role descriptions in `config/agent_roles.yaml`.
   Paperless kept the consume-time date while the OCR-derived **title** showed the correct one
   (the pre-2026-07 Jet-receipt date drift, fixed). No extracted date → left unset (Paperless
   default).
-- **Backfill.** `bin/backfill_paperless_metadata.py` (`--dry-run`/`--commit`) gap-fills
-  the correspondent on already-filed folder-ingest docs that lack one (the Docling-outage
-  + new-sender cohorts): it re-extracts, runs the same resolve-or-create path, and
-  PATCHes via `update_document`. Correspondent-only (never touches title/type/tags),
-  locates the Paperless doc by the stored id else a filename match over recently-added
-  docs, and skips any doc that already has a correspondent.
+- **Backfill.** `bin/backfill_paperless_metadata.py --mode {created-date,correspondent}`
+  — every run is a dry run unless `--commit` is given; `--mode` is required.
+  - `--mode created-date` repairs the Paperless `created` date of filed docs whose
+    post-consume PATCH never ran (the task_id re-poll / checksum-resolved settles). No
+    column records which path settled a doc, so it targets the *symptom*: source is
+    `documents.document_date`; only `paperless_state='done'` docs with a linked
+    `paperless_document_id`; PATCHes **only** where Paperless `created` still equals its
+    `added` date (the consume-date fallback — any other value may be a human edit and is
+    left alone); a Paperless doc linked from KB rows that disagree on the date is skipped.
+    Idempotent, paced below the 60/min MCP limit with backoff on a rejection, capped
+    (`--limit`, default 200, max 1000) and resumable (`--after-pid` = the printed
+    `last_pid`); prints counts and Paperless ids only. Core:
+    `services/paperless_metadata_backfill.py`.
+  - `--mode correspondent` gap-fills the correspondent on already-filed folder-ingest
+    docs that lack one (the Docling-outage + new-sender cohorts): it re-extracts, runs
+    the same resolve-or-create path, and PATCHes via `update_document`.
+    Correspondent-only (never touches title/type/tags), locates the Paperless doc by the
+    stored id else a filename match over recently-added docs, and skips any doc that
+    already has a correspondent.
+
+  Neither is in the backend image (the build context is `src/backend`): copy the script
+  into the backend pod and run it there with cwd `/app`.
 
 ## Processed-file rename (#881, `FOLDER_INGEST_RENAME_PROCESSED_ENABLED`, dark)
 
@@ -251,6 +302,7 @@ file once the title is known.
 | File lands in `failed/` | bad extension / empty / oversize / malformed metadata | check `ALLOWED_EXTENSIONS` + `MAX_FILE_SIZE_MB`; inspect the file |
 | Document is in the KB but **not** in Paperless | a transient Paperless outage during the first ingest (known gap, P2) | the file already moved to `processed/`, so it is not auto-retried — re-push it, or it surfaces in Paperless's own failed-task log; a future reconciler will re-file `paperless_state != done` docs |
 | Paperless `created` (Ausstellungsdatum) is the ingest date, not the document's | pre-fix: the extracted date was submitted on upload but never reapplied post-consume | fixed 2026-07 (submit + post-consume `deferred_patch` reapply); correct already-filed docs via the ADMIN Paperless audit flow (`/api/admin/paperless-audit`, it PATCHes `created`) |
+| Document exists in Paperless but its full-text search does not find it | the Paperless search index is incomplete (re-ingest loop aftermath) | enable `PAPERLESS_INDEX_CHECK_ENABLED` (detect + alert), then `PAPERLESS_INDEX_HEAL_ENABLED` (per-document re-save); an `index_error` alert needs `document_index reindex` on the Paperless host |
 | Document re-fails on every worker restart | poison document (terminal pipeline error) | the worker marks it `status=failed` + acks (it stops looping); fix or remove the file, then re-push |
 
 ## Where it lives
@@ -261,5 +313,6 @@ file once the title is known.
 - Routes: `api/routes/folder_ingest.py` (`POST /document`, `GET /health`, `POST /token`)
 - Interactive tool: `services/folder_ingest_tool.py` (+ dispatch in `services/action_executor.py`)
 - Worker terminal-failure handling: `workers/document_processor_worker.py`
-- Correspondent backfill: `bin/backfill_paperless_metadata.py`
+- Metadata backfill (created-date / correspondent): `bin/backfill_paperless_metadata.py` + `services/paperless_metadata_backfill.py`
+- Search-index self-heal: `services/paperless_index_health.py` (built-in `paperless_index_health`) + `search_index_health` in `renfield-mcp-paperless`
 - Paperless MCP consume-poll: `renfield-mcp-paperless` `await_consume_result` (v1.8.0+)

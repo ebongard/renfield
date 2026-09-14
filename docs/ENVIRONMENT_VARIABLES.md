@@ -1294,6 +1294,21 @@ PAPERLESS_RECONCILER_BATCH=25                  # pending-Dokumente pro Tick re-e
 PAPERLESS_RECONCILER_REFILE_GRACE_SECONDS=360  # Karenz, bevor ein completed+pending-Doc als Nachzügler gilt (> CONSUME_TIMEOUT+Puffer, damit der Reconciler nicht mit dem initialen Filing-Hook rennt)
 PAPERLESS_RECONCILER_REFILE_LEASE_SECONDS=900  # Redis-Lease pro Doc: nur ein Refile-Versuch gleichzeitig; läuft ab → Retry (verhindert Re-Enqueue-Churn)
 
+# Paperless-Suchindex prüfen + selbst heilen (Fix B, Built-in "Paperless-Suchindex
+# prüfen"). Paperless bietet KEIN REST-Reindex (Vollaufbau nur per
+# `document_index reindex` auf dem Paperless-Host); ein Dokument-PATCH indexiert aber
+# genau dieses Dokument neu. mcp.paperless.search_index_health prüft eine Seite
+# Dokument-IDs aus der DATENBANK gegen den Index. Wirft (→ Fehlserien-Alarm über
+# ops_alert) bei nachgewiesener Lücke ohne Heilung, bei wirkungsloser Heilung und bei
+# index_error; "inconclusive" wirft nie. Erst CHECK einschalten, später HEAL.
+PAPERLESS_INDEX_CHECK_ENABLED=false            # Prüfung + Alarm (dunkel)
+PAPERLESS_INDEX_HEAL_ENABLED=false             # zusätzlich fehlende Dokumente neu speichern (unveränderter Titel, nicht destruktiv)
+PAPERLESS_INDEX_CHECK_INTERVAL=3600            # Sekunden (Seed-Intervall; eine MCP-Anfrage pro Lauf)
+PAPERLESS_INDEX_CHECK_SAMPLE_SIZE=50           # geprüfte Dokumente pro Lauf (eine Seite; der Cursor läuft über das Archiv)
+PAPERLESS_INDEX_HEAL_MAX_TOUCH=25              # max. neu gespeicherte Dokumente pro Lauf
+PAPERLESS_INDEX_CHECK_MIN_AGE_SECONDS=900      # jüngere Dokumente überspringen (Indexierung läuft evtl. noch)
+PAPERLESS_INDEX_CHECK_CALL_TIMEOUT_S=180       # MCP-Timeout pro Aufruf (das Tool hat ein eigenes 120-s-Budget)
+
 # Restart-sicherer Finalize-Reconciler (#658) für den INTERAKTIVEN Paperless-Commit
 # (Chat-Upload-Bestätigung, paperless_commit_tool). Der Commit lädt async hoch und
 # beendet in einem Fire-and-forget-Task: Consume pollen → deferred Metadaten-PATCH →
@@ -1337,6 +1352,7 @@ FILES_HEALTH_POLL_SECONDS=30          # Backend-Health-Poll; bei down→up wird 
 - `FOLDER_INGEST_NOTIFY_ON_FILED`: `true`
 - `PAPERLESS_CONSUME_TIMEOUT_S`: `300` · `PAPERLESS_REFILE_POLL_TIMEOUT_S`: `30` · `PAPERLESS_RECONCILER_INTERVAL`: `120` · `PAPERLESS_RECONCILER_BATCH`: `25` · `PAPERLESS_RECONCILER_REFILE_GRACE_SECONDS`: `360` · `PAPERLESS_RECONCILER_REFILE_LEASE_SECONDS`: `900`
 - `PAPERLESS_FINALIZE_RECONCILER_INTERVAL`: `120` · `_BATCH`: `25` · `_GRACE_SECONDS`: `360` · `_POLL_SECONDS`: `30` · `_LEASE_SECONDS`: `120` · `_MAX_ATTEMPTS`: `5` · `_GIVEUP_HOURS`: `24`
+- `PAPERLESS_INDEX_CHECK_ENABLED`: `false` · `PAPERLESS_INDEX_HEAL_ENABLED`: `false` · `PAPERLESS_INDEX_CHECK_INTERVAL`: `3600` · `PAPERLESS_INDEX_CHECK_SAMPLE_SIZE`: `50` · `PAPERLESS_INDEX_HEAL_MAX_TOUCH`: `25` · `PAPERLESS_INDEX_CHECK_MIN_AGE_SECONDS`: `900` · `PAPERLESS_INDEX_CHECK_CALL_TIMEOUT_S`: `180`
 - `FILES_MAX_CONCURRENT_PUSHES`: `4` · `FILES_HEALTH_POLL_SECONDS`: `30`
 
 ---
