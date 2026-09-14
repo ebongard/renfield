@@ -255,6 +255,11 @@ async def check_due_reminders():
             for reminder in due:
                 try:
                     notification_service = NotificationService(db)
+                    # A reminder that belongs to someone fires as THEIR personal
+                    # notification. Fired as public-without-recipient, its text was
+                    # listed to every user and spoken/pushed without the presence
+                    # gate — the reminder list hid it, the notification did not.
+                    owned = reminder.user_id is not None
                     result = await notification_service.process_webhook(
                         event_type="reminder.fired",
                         title="Erinnerung",
@@ -262,6 +267,8 @@ async def check_due_reminders():
                         urgency="info",
                         room=reminder.room_name,
                         tts=True,
+                        privacy="personal" if owned else "public",
+                        target_user_id=reminder.user_id,
                     )
                     await service.mark_fired(
                         reminder.id,

@@ -584,11 +584,27 @@ async def device_websocket(
                         async with AsyncSessionLocal() as db_session:
                             from services.notification_service import NotificationService
                             service = NotificationService(db_session)
+                            # Same visibility rule as the REST routes: the browser
+                            # toast acks over THIS socket, so an unscoped ack here
+                            # let any connected client dismiss anyone's notification.
+                            restrict, viewer_id = await service.resolve_ws_viewer_scope(auth_result)
                             if action == "dismissed":
-                                await service.dismiss(notification_id)
+                                done = await service.dismiss(
+                                    notification_id, viewer_id=viewer_id,
+                                    restrict_to_viewer=restrict,
+                                )
                             else:
-                                await service.acknowledge(notification_id, acknowledged_by=device_id)
-                        logger.info(f"✅ Notification #{notification_id} {action} by {device_id}")
+                                done = await service.acknowledge(
+                                    notification_id, acknowledged_by=device_id,
+                                    viewer_id=viewer_id, restrict_to_viewer=restrict,
+                                )
+                        if done:
+                            logger.info(f"✅ Notification #{notification_id} {action} by {device_id}")
+                        else:
+                            logger.info(
+                                f"Notification #{notification_id} {action} ignored for {device_id}: "
+                                "not found or not visible to this connection"
+                            )
                     except Exception as e:
                         logger.warning(f"⚠️ Notification ack failed: {e}")
 

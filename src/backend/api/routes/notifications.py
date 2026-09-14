@@ -55,15 +55,17 @@ router = APIRouter()
 def _viewer_scope(current_user: User | None) -> tuple[bool, int | None]:
     """(restrict_to_viewer, viewer_id) for the notification and reminder routes.
 
-    Auth off (single household): no restriction, as before. Auth on: a user
-    with NOTIFICATIONS_MANAGE sees everything; everyone else only what is
+    Auth off (single household): no restriction, as before. Auth on: an admin
+    (ADMIN or NOTIFICATIONS_MANAGE) sees everything; everyone else only what is
     addressed to them or public. Anonymous callers are refused — these lists
-    carry personal content."""
+    carry personal content. ADMIN implies no other permission in
+    PERMISSION_HIERARCHY, so it is checked explicitly: a custom admin-only role
+    must not be scoped like an ordinary member."""
     if not settings.auth_enabled:
         return False, None
     if current_user is None:
         raise HTTPException(status_code=401, detail="Authentication required")
-    if current_user.has_permission(Permission.NOTIFICATIONS_MANAGE):
+    if NotificationService.viewer_is_unrestricted(current_user):
         return False, current_user.id
     return True, current_user.id
 
@@ -275,9 +277,12 @@ async def list_suppressions(
     db: AsyncSession = Depends(get_db),
     current_user: User | None = Depends(get_current_user),
 ):
-    """List active suppression rules."""
+    """List active suppression rules — the caller's own plus global ones."""
+    restrict, viewer_id = _viewer_scope(current_user)
     service = NotificationService(db)
-    suppressions = await service.list_suppressions()
+    suppressions = await service.list_suppressions(
+        viewer_id=viewer_id, restrict_to_viewer=restrict
+    )
 
     return SuppressionListResponse(
         suppressions=[
@@ -301,12 +306,13 @@ async def delete_suppression(
     db: AsyncSession = Depends(get_db),
     current_user: User | None = Depends(get_current_user),
 ):
-    """Deactivate a suppression rule."""
-    if settings.auth_enabled and not current_user:
-        raise HTTPException(status_code=401, detail="Authentication required")
+    """Deactivate a suppression rule — only one's own (admins: any)."""
+    restrict, viewer_id = _viewer_scope(current_user)
     service = NotificationService(db)
 
-    success = await service.delete_suppression(suppression_id)
+    success = await service.delete_suppression(
+        suppression_id, viewer_id=viewer_id, restrict_to_viewer=restrict
+    )
     if not success:
         raise HTTPException(status_code=404, detail="Suppression not found")
 
