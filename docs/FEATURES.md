@@ -405,7 +405,7 @@ MCP_ENABLED=false                 # Master-Switch
 MCP_CONFIG_PATH=config/mcp_servers.yaml
 MCP_REFRESH_INTERVAL=60           # Background-Refresh (Sekunden)
 MCP_CONNECT_TIMEOUT=10.0          # Verbindungs-Timeout
-MCP_CALL_TIMEOUT=30.0             # Tool-Call-Timeout (global; pro Server überschreibbar via `call_timeout:` in mcp_servers.yaml, z. B. Scanner 600 s)
+MCP_CALL_TIMEOUT=30.0             # Tool-Call-Timeout (global; pro Server/Tool überschreibbar via `call_timeout:` in mcp_servers.yaml — Zahl oder {tool: s, default: s})
 MCP_MAX_RESPONSE_SIZE=10240       # Max Response-Größe (Bytes)
 ```
 

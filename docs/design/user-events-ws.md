@@ -76,6 +76,7 @@ The corrected design below fixes all of these **by construction**.
 | Ingest completion | `services/rag_service.py` (status→`COMPLETED`) | `{type:"documents_changed", reason:"ingested"}` → owner |
 | Paperless filing | `services/folder_ingest_paperless.py` (`_settle_from_outcome` + the 5 terminal `paperless_state` writes, via the shared `_emit_paperless_changed` helper) — NOT `paperless_reconciler.py`, which only re-enqueues and feeds this settle path | `reason:"paperless"` → owner |
 | Document delete/reindex | `services/rag_service.delete_document` / reindex enqueue | `reason:"deleted"`/`"reindex"` → owner (covers cross-tab/cross-device) |
+| Scan job finished (2026-09-14) | `services/scanner_jobs.handle_job_event` (after the outcome was written as an assistant message into the requesting conversation) | `{type:"scan_job_finished", reason:<done\|unrouted\|failed\|interrupted>}` → the requester (auth-off: `_ALL`). Frontend: `useUserEvents` dispatches a window event → `ChatContext` reloads the open thread (deferred while a turn streams) + `ScanJobToast`. Still content-free: the status only, no job or document identity. |
 
 The worker path (`rag_service`) publishes through the worker's `aioredis` client — the ONLY way its completion reaches browsers. Owner is resolved at the seam (§3.1).
 

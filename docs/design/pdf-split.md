@@ -84,15 +84,29 @@ re-enqueue can never re-enter detection.
    EVERY garbage page via `ollama_vision_model` (plain text, per-call
    `PDF_SPLIT_VLM_PAGE_TIMEOUT_S`, deliberately NO page cap — cost is bounded
    by isolation + timeouts, never by skipping pages; a failed page keeps its
-   placeholder) and the multi-window boundary call decides. Outcomes reuse the
+   placeholder) and the multi-window boundary call decides. **Blank pages**
+   (2026-09-14): `extract_text_from_image` returns `""` for an answered-but-empty
+   call and `None` only on failure. An empty answer resolves a page as
+   `[leere Seite]` ONLY when the rendered image also carries no ink — measured
+   relative to the page's own paper tone (brightest dominant histogram peak
+   minus 70), so pencil or faded thermal print is not called blank, while tinted
+   paper and duplex show-through are. An empty answer on an inked page stays
+   unreadable (qwen3-vl can trap its transcription in the think buffer). The
+   boundary prompt treats `[leere Seite]` as never a boundary and never a
+   document of its own. `vlm_fill_signals` returns `VlmFillResult`
+   (resolved / transcribed / failed). Outcomes reuse the
    shared `act_on_verdict`; a `single` outcome HANDS THE DOC BACK to normal
    ingest (`skip_split`, enqueue-failure reverts the park + retries).
    Poison/transient-cap fail-safe = the same hand-back — lifecycle-aware:
    split_review is dropped (the review owns it), existing children mark the
    doc failed instead (REINGEST recovery; single-ingest would duplicate),
    and only a terminal mid-execute error does likewise. Guard rails: a
-   wholesale VLM outage (0 of N garbage pages transcribed) retries as
-   transient instead of deciding over placeholders; sessions are NOT held
+   VLM outage retries as transient instead of deciding over placeholders — both
+   when NOTHING resolved, and when calls failed while no page was actually READ
+   (confirmed-blank backs prove the host answered, not that it can read; counting
+   them as success once hid an outage and, the other way round, a stack whose
+   only garbage pages were blank backs was retried until it was filed as ONE
+   document — xidra doc 613, 2026-09-14); sessions are NOT held
    across the unbounded VLM work (two short phases, re-guarded);
    `PDF_SPLIT_ENABLED=false` parks the worker's backlog in the PEL (real
    kill switch — flagpark leaves don't burn the retry budgets); a live row

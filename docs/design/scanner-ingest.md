@@ -284,13 +284,9 @@ for ingest — that is what the route was built for.
 Per `CLAUDE.md`, registering the tools is **two** steps, not one:
 
 1. A `scanner` stanza in `config/mcp_servers.yaml`
-   (`transport: streamable_http`, `url: ${SCANNER_MCP_URL:-http://<scanner-host>:9093/mcp}`,
-   `call_timeout: ${SCANNER_MCP_CALL_TIMEOUT:-600}`). The per-server
-   `call_timeout` is load-bearing: one `scan_document` call feeds, corrects, OCRs
-   and pushes the whole stack, and under the global 30 s `MCP_CALL_TIMEOUT` the
-   agent reported scans as failed that had in fact been ingested (2026-09-14).
-   The HTTP transport's read timeout is derived from it (call + 30 s, never below
-   the SDK's 300 s), so a long scan is not cut at the transport either.
+   (`transport: streamable_http`, `url: ${SCANNER_MCP_URL:-http://<scanner-host>:9093/mcp}`).
+   No `call_timeout` override: `scan_document` starts a job and returns at once
+   (see **Scan jobs** below).
 2. The tool names in the relevant role's `internal_tools`/`prompt_tools` in
    **`config/agent_roles.yaml`** — this is **ConfigMap-served**, not baked into
    the image, so each cluster's live ConfigMap must be patched too.
@@ -304,9 +300,45 @@ registered.
 |---|---|
 | `list_scanners()` | Devices + capabilities |
 | `scanner_status()` | Real hardware state from the SANE sensors — ready / power-save / cover-open / page-loaded / error code. Not a guess. |
-| `scan_document(target?, source, mode, resolution, deskew, skip_blank, title?)` | Scan, assemble, route, dispatch. `target` omitted → L2/L3 decide. |
+| `scan_document(target?, title?)` | STARTS a scan job and returns `{job_id, status: running}` at once; scan, assemble, route and dispatch run in the background. `target` omitted → L2/L3 decide. A second call while a scan runs returns `busy` with the running job's id. |
+| `scan_job_status(job_id)` | How a job stands or ended — for an explicit user question only, never polled |
 | `list_pending_scans()` | The review floor — unrouted batches with evidence |
 | `route_scan(scan_id, target)` | Resolve one, dispatch it, purge from staging |
+
+### Scan jobs (implemented 2026-09-14)
+
+The scan used to run inside the `scan_document` tool call. On 2026-09-14 that
+failed three ways at once: the backend's 30 s MCP call timeout reported a scan as
+FAILED that was filed 80 ms later; a longer timeout only let the background
+`list_tools` refresh — delayed because OCR blocked the scanner's event loop for
+12 s — tear the call down, so the automatic retry scanned an empty feeder; and a
+chat turn sat on a spinner for the length of a paper stack.
+
+The shape now:
+
+- **Scanner** (`renfield_mcp_scanner/jobs.py`): `scan_document` records a job
+  under `<staging>/jobs/<job_id>.json` (0700, path-safe ids) and runs the scan as
+  a background task. One feeder → single flight. OCR and PDF assembly run via
+  `asyncio.to_thread`, so the server keeps answering while it works.
+- **Completion is an event, never a poll.** The scanner knows which instance
+  asked — the per-caller Bearer token — and `SCANNER_CALLER_TARGET_<CALLER>` maps
+  that caller to its target, whose base URL and folder-ingest token carry
+  `POST /api/scanner/job-event` back. Delivery retries with capped backoff; 401,
+  403 and 404 are final. A restart closes cut-off jobs as `interrupted` and
+  re-sends events that never got through.
+- **Renfield** (`services/scanner_jobs.py`, `api/routes/scanner_jobs.py`): when
+  `mcp.scanner.scan_document` returns a job id, `action_executor` stores the
+  requester (user + chat session) from the AUTHENTICATED turn in Redis (24 h).
+  The event carries no user identity; a job this instance did not record is
+  ignored (2xx, never 404). Delivery is at-most-once into the chat (claim via
+  `SET NX`, released if the write fails so the scanner's retry lands): the
+  outcome becomes an assistant message in the requesting conversation, plus a
+  content-free `scan_job_finished` event on `/ws/user` that reloads the open chat
+  and shows a small notice. Personal proactive notifications were rejected as the
+  channel — they only toast when the person is BLE-present.
+- **Messages never claim more than is known**: `unrouted` says nothing was filed,
+  `interrupted` says not to assume anything was filed, `done` separates the
+  Renfield document id from the later, separate Paperless filing.
 
 ## macOS host specifics
 
@@ -335,7 +367,8 @@ FileVault on, not a laptop. That materially de-risks the choice.
 | Key | Default | Meaning |
 |---|---|---|
 | `SCANNER_MCP_URL` | `http://<scanner-host>:9093/mcp` | Per-instance client URL |
-| `SCANNER_MCP_CALL_TIMEOUT` | `600` | Per-server MCP tool-call timeout in seconds (1..3600); outside the range falls back to the global 30 s |
+| `SCANNER_CALLER_TARGET_<CALLER>` | *(unset)* | Scanner side: which target a caller (per-caller token) IS — the return path for job completion events. Unmapped caller → the scan runs, nobody is told |
+| `SCANNER_JOB_EVENT_MAX_ATTEMPTS` | `12` | Scanner side: delivery attempts per completion event (capped exponential backoff) |
 | `SCANNER_TARGETS` | *(required, 1..n)* | The target registry — see below |
 | `SCANNER_INGEST_ENABLED` | `false` | Per-instance flag (dark) |
 | `scanner_route_auto_threshold` | `0.85` | Below → review floor |
