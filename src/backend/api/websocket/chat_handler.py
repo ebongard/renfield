@@ -1226,7 +1226,7 @@ async def websocket_endpoint(
             injection_result = detect_injection(content)
             if injection_result.blocked:
                 logger.warning(
-                    f"Blocked injection attempt from user_id={user_id}: "
+                    f"Blocked injection attempt from user_id={_log_user_id}: "
                     f"score={injection_result.score:.2f}, "
                     f"patterns={injection_result.matched_patterns}"
                 )
