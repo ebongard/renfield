@@ -128,8 +128,9 @@ real xidra user, confirm end-to-end:
    device stays logged in (fresh cookies), other sessions are epoch-revoked.
 9. **Logout clears cookies:** after logout, all three cookies are gone and `/me` → 401.
 10. **No JWT in the URL/logs:** Traefik access logs show no `?token=<jwt>` on WS.
-11. **Voice still works** (regression check — it reads the localStorage access
-    token): a voice turn connects to the voice-server and responds.
+11. **Voice** (only where browser voice is enabled; xidra has `FEATURE_VOICE=false`):
+    since #1128 the voice WS uses a short-lived `scope:"voice"` faucet token
+    (`/api/ws/token?purpose=voice`), not the localStorage access token.
 12. **Reva (if OIDC ever enabled):** dark on xidra today; the `#access_token=`
     fragment path is untouched. No action.
 
@@ -158,9 +159,10 @@ $KX rollout restart deploy/backend deploy/document-worker
 $KX rollout status deploy/backend --timeout=600s
 ```
 Flag off → the reader falls back to Bearer, no cookies set, CSRF no-ops → exactly
-the pre-flip behavior. The frontend still holds the localStorage tokens (it kept
-writing the access token; on the next login it resumes writing the refresh token
-too), so users stay logged in across the revert. Also revert the git one-liner.
+the pre-flip behavior. Since #1128, cookie mode writes NEITHER token to
+localStorage and the reader ignores the cookie when the flag is off, so users
+logged in during cookie mode must **log in again** after the revert (the next login
+resumes writing localStorage tokens). Also revert the git one-liner.
 
 ---
 
@@ -169,11 +171,10 @@ too), so users stay logged in across the revert. Also revert the git one-liner.
 - **What this delivers:** the 30-day refresh token leaves `localStorage` → an XSS
   can no longer steal the long-lived credential. CSRF protects the new cookie-auth
   surface (double-submit + SameSite=Lax).
-- **What it does NOT yet deliver (deferred):** the 24h **access token still lives
-  in `localStorage`** because the voice WS authenticates to the external
-  voice-server (`internal_auth.verify`, needs a full access JWT, can't use the
-  cookie). Full XSS elimination = the voice-WS migration follow-up. Don't claim
-  "fully XSS-safe" until then.
+- **Access token:** since #1128 (deployed 2026-08-25) the voice WS uses a
+  short-lived `scope:"voice"` faucet token and cookie mode persists NEITHER token
+  to `localStorage`, so no long-lived JWT is JS-readable. Residual: live browser
+  voice on an auth-on instance has not been exercised yet (xidra has voice off).
 - **SSO cutover / fragment handler removal** stays deferred (needs Reva `?code=`).
 - **`SECRET_KEY` is untouched** (tri-purpose: JWT + Fernet-at-rest + BLE IRK —
   never rotate/split as part of this).
