@@ -26,6 +26,14 @@ explicitly with ``--mode``; every run is a DRY RUN unless ``--commit`` is given.
   skips docs that already have one. (Unchanged behaviour; it lifts the MCP rate
   limiter for its one-pass filename index.)
 
+Running it:
+  The backend is located by itself — ``$RENFIELD_BACKEND_DIR``, else the repo layout
+  (``bin/../src/backend``), else the image layout (``/app``) — so a copy of this file
+  anywhere in the backend pod runs without ``PYTHONPATH``. Only the ``paperless`` MCP
+  server is started. Exit code: 0 on success, 1 on an error (incl. Paperless MCP not
+  connected, or any failed PATCH in created-date mode), 2 if the backend is not found.
+  Every teardown step is time-bounded, so the process terminates after the summary.
+
 Usage:
     python bin/backfill_paperless_metadata.py --mode created-date            # dry run
     python bin/backfill_paperless_metadata.py --mode created-date --commit
@@ -38,18 +46,131 @@ import argparse
 import asyncio
 import json
 import logging
+import os
 import sys
+import threading
+from collections.abc import Coroutine, Mapping
 from pathlib import Path
+from typing import Any
 
-_BACKEND = Path(__file__).resolve().parent.parent / "src" / "backend"
-sys.path.insert(0, str(_BACKEND))
+# --- backend import path (identical block in every bin/backfill_*.py) ---------------
+# These scripts are copied into the backend pod on their own, so this cannot live in a
+# shared module: it is what makes the shared modules importable in the first place.
+
+
+def _find_backend_dir(
+    script: Path, env: Mapping[str, str] = os.environ, image_root: Path = Path("/app")
+) -> Path:
+    """The Renfield backend root: ``$RENFIELD_BACKEND_DIR`` (exclusive when set), else
+    the repo layout ``bin/../src/backend``, else the image layout ``/app``."""
+    override = env.get("RENFIELD_BACKEND_DIR")
+    candidates = (
+        [Path(override)] if override
+        else [script.resolve().parent.parent / "src" / "backend", image_root]
+    )
+    for candidate in candidates:
+        if (candidate / "services" / "__init__.py").is_file() and (candidate / "utils" / "config.py").is_file():
+            return candidate
+    print(
+        f"{script.name}: Renfield backend not found (tried: {', '.join(map(str, candidates))}). "
+        "Set RENFIELD_BACKEND_DIR to the directory holding services/ and utils/ "
+        "(repo: src/backend, image: /app).",
+        file=sys.stderr,
+    )
+    raise SystemExit(2)
+
+
+_BACKEND = _find_backend_dir(Path(__file__))
+if str(_BACKEND) not in sys.path:
+    sys.path.insert(0, str(_BACKEND))
+# --- end backend import path ---------------------------------------------------------
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s | %(levelname)s | %(message)s")
 logger = logging.getLogger("backfill_paperless_metadata")
 
+# Upper bound for MCPManager.shutdown(). Its per-stack teardown is already bounded
+# (5 s each), so this only fires on a wedge outside those bounds.
+MCP_SHUTDOWN_TIMEOUT_S = 20.0
+# Upper bound for each event-loop teardown step (leftover tasks, async generators,
+# default executor) after the work is done.
+LOOP_TEARDOWN_TIMEOUT_S = 5.0
+
+
+class BackfillError(RuntimeError):
+    """A run that cannot proceed (reported, exit code 1)."""
+
+
+def _backend_path(value: str) -> Path:
+    """Settings paths are relative to the backend root (the image's cwd ``/app``);
+    resolve them there when the script runs from another cwd."""
+    path = Path(value)
+    if path.is_absolute() or path.exists():
+        return path
+    return _BACKEND / path
+
+
+async def _await_bounded(awaitable: Any, timeout: float, what: str) -> bool:
+    """Await with a HARD upper bound. ``asyncio.wait_for`` is not one: on timeout it
+    cancels and then waits for the cancellation to be acknowledged, which a wedged
+    transport teardown never does. On timeout the task is cancelled and abandoned."""
+    task = asyncio.ensure_future(awaitable)
+    done, _ = await asyncio.wait({task}, timeout=timeout)
+    if not done:
+        task.cancel()
+        logger.warning("%s did not finish within %.0f s — abandoned", what, timeout)
+        return False
+    if not task.cancelled() and task.exception() is not None:
+        logger.warning("%s failed: %s", what, task.exception())
+        return False
+    return True
+
+
+async def _shutdown(manager, timeout: float | None = None) -> None:
+    await _await_bounded(
+        manager.shutdown(),
+        MCP_SHUTDOWN_TIMEOUT_S if timeout is None else timeout,
+        "MCP shutdown",
+    )
+
+
+def _run(coro: Coroutine[Any, Any, Any], teardown_timeout: float | None = None) -> Any:
+    """``asyncio.run`` with a bounded teardown. ``asyncio.run`` cancels every leftover
+    task and then waits for ALL of them without a limit (and joins the default
+    executor without one), so a single MCP transport task that does not honour its
+    cancellation keeps the process alive after the work is done."""
+    timeout = LOOP_TEARDOWN_TIMEOUT_S if teardown_timeout is None else teardown_timeout
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    try:
+        return loop.run_until_complete(coro)
+    finally:
+        try:
+            leftovers = [t for t in asyncio.all_tasks(loop) if not t.done()]
+            for task in leftovers:
+                task.cancel()
+            if leftovers:
+                _, pending = loop.run_until_complete(asyncio.wait(leftovers, timeout=timeout))
+                if pending:
+                    logger.warning(
+                        "%d background task(s) ignored cancellation for %.0f s — abandoned: %s",
+                        len(pending), timeout,
+                        ", ".join(sorted({getattr(t.get_coro(), "__qualname__", "?") for t in pending})),
+                    )
+            loop.run_until_complete(_await_bounded(loop.shutdown_asyncgens(), timeout, "async generator shutdown"))
+            loop.run_until_complete(_await_bounded(loop.shutdown_default_executor(), timeout, "executor shutdown"))
+        finally:
+            asyncio.set_event_loop(None)
+            loop.close()
+        stuck = [t.name for t in threading.enumerate() if t is not threading.main_thread() and not t.daemon and t.is_alive()]
+        if stuck:
+            logger.warning("non-daemon thread(s) still alive at exit: %s", ", ".join(stuck))
+
 
 async def _build_mcp_manager(*, lift_rate_limit: bool):
-    """A connected MCPManager, mirroring api.lifecycle's construction.
+    """A MCPManager connected to the ``paperless`` server ONLY — the one server these
+    backfills use (same as ``services/paperless_worker_client``). Raises
+    ``BackfillError`` when it is not configured or does not connect; without this a
+    missing server made every document look ``unreachable`` and the run exit 0.
 
     ``lift_rate_limit`` is only for the correspondent mode, whose one-pass filename
     index bursts hundreds of get_document calls (the 60/min bucket REJECTS over the
@@ -57,12 +178,24 @@ async def _build_mcp_manager(*, lift_rate_limit: bool):
     from services.mcp_client import MCPManager
     from utils.config import settings
 
+    config_path = _backend_path(settings.mcp_config_path)
     manager = MCPManager()
-    manager.load_config(settings.mcp_config_path)
+    manager.load_config(
+        str(config_path),
+        only={"paperless"},
+        overlay_dir=str(_backend_path(settings.mcp_config_overlay_dir)),
+    )
+    state = getattr(manager, "_servers", {}).get("paperless")
+    if state is None:
+        raise BackfillError(
+            f"paperless MCP server not configured/enabled in {config_path} (PAPERLESS_ENABLED?)"
+        )
     await manager.connect_all()
+    if not state.connected:
+        await _shutdown(manager)
+        raise BackfillError(f"paperless MCP server did not connect: {state.last_error}")
     if lift_rate_limit:
-        state = getattr(manager, "_servers", {}).get("paperless")
-        limiter = getattr(state, "rate_limiter", None) if state else None
+        limiter = getattr(state, "rate_limiter", None)
         if limiter is not None:
             limiter.rate = 100_000
             limiter.max_tokens = 100_000.0
@@ -70,14 +203,7 @@ async def _build_mcp_manager(*, lift_rate_limit: bool):
     return manager
 
 
-async def _shutdown(manager) -> None:
-    try:
-        await manager.shutdown()
-    except Exception:  # noqa: BLE001 - teardown is best-effort
-        pass
-
-
-async def _run_created_date(*, commit: bool, limit: int, after_pid: int, rate: int) -> None:
+async def _run_created_date(*, commit: bool, limit: int, after_pid: int, rate: int) -> bool:
     from services.database import AsyncSessionLocal
     from services.paperless_metadata_backfill import RatePacer, backfill_created_dates
 
@@ -102,9 +228,10 @@ async def _run_created_date(*, commit: bool, limit: int, after_pid: int, rate: i
         "ambiguous": report.ambiguous,
         "skipped_not_consume_date": report.skipped_not_consume_date,
     }
-    print(json.dumps({"paperless_ids": {k: v for k, v in ids.items() if v}}, indent=2))
+    print(json.dumps({"paperless_ids": {k: v for k, v in ids.items() if v}}, indent=2), flush=True)
     if not commit:
-        print("DRY-RUN — nothing was written. Re-run with --commit to apply.")
+        print("DRY-RUN — nothing was written. Re-run with --commit to apply.", flush=True)
+    return not report.failed
 
 
 async def _build_filename_index(manager) -> dict[str, int]:
@@ -135,7 +262,7 @@ async def _build_filename_index(manager) -> dict[str, int]:
     return index
 
 
-async def _run_correspondent(*, commit: bool, limit: int | None) -> None:
+async def _run_correspondent(*, commit: bool, limit: int | None) -> bool:
     from sqlalchemy import select
 
     from models.database import PAPERLESS_STATE_DONE, Document
@@ -233,6 +360,7 @@ async def _run_correspondent(*, commit: bool, limit: int | None) -> None:
         )
     finally:
         await _shutdown(manager)
+    return True
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -261,18 +389,25 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
-    if args.mode == "created-date":
-        from services.paperless_metadata_backfill import DEFAULT_LIMIT
+    try:
+        if args.mode == "created-date":
+            from services.paperless_metadata_backfill import DEFAULT_LIMIT
 
-        asyncio.run(_run_created_date(
-            commit=args.commit,
-            limit=args.limit or DEFAULT_LIMIT,
-            after_pid=args.after_pid,
-            rate=args.rate,
-        ))
-    else:
-        asyncio.run(_run_correspondent(commit=args.commit, limit=args.limit))
-    return 0
+            ok = _run(_run_created_date(
+                commit=args.commit,
+                limit=args.limit or DEFAULT_LIMIT,
+                after_pid=args.after_pid,
+                rate=args.rate,
+            ))
+        else:
+            ok = _run(_run_correspondent(commit=args.commit, limit=args.limit))
+    except BackfillError as exc:
+        logger.error("%s", exc)
+        return 1
+    except Exception:
+        logger.exception("backfill failed")
+        return 1
+    return 0 if ok else 1
 
 
 if __name__ == "__main__":
