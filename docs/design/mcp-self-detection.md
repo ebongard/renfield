@@ -296,6 +296,19 @@ state and must not leak into the other two:
   about rate limits. `_classify_rate_limit` recognises httpx's
   `Client error '429 Too Many Requests'`, JSON `status`/`code` 429, and "rate limit"
   prose; a bare "429" (an invoice or document number) does NOT count.
+- **An MCP server owns its throttle envelope — no per-server patterns here.** A server
+  whose throttle text is only a bare number is fixed at the SOURCE, not by loosening
+  the classifier: `renfield-mcp-weather` answered an Open-Meteo 429 with
+  `{"error": "Weather API error: 429"}` (invisible by design) and since **1.1.0** returns
+  `{"error": …, "status": 429, "retry_after": <s>}` (`retry_after` only for a numeric
+  `Retry-After`), which the existing JSON-key branch reads. No backend compatibility
+  shim for the old form: the weather MCP is a stdio server installed in the backend
+  image from the `requirements.txt` pin, so client and server always ship together.
+  Pinned by `TestWeatherThrottleEnvelope`. Audit of our other servers (2026-09-15):
+  paperless / jellyfin / tunein / tracking (DHL `error=str(exc)`) / qobuz (`HTTP 429`)
+  already surface httpx or `HTTP <n>` text the classifier recognises; `searxng` swallows
+  a 429 into "all instances failed" (covered by its bespoke probe, not by this signal);
+  `news` (`mcp-newsapi`, npm) is third-party.
 - **What it cannot see:** a transport-level 429 from the MCP endpoint itself. The
   SDK (mcp 1.27.1) raises it inside a task-group task, so it surfaces as a timeout or
   a dead session — already covered by `calls_failing` and `down`.
