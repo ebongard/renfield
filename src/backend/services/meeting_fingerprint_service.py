@@ -104,8 +104,12 @@ async def resolve_meeting_fingerprints(db, meeting, raw_segments: list[dict]) ->
     Scope: owner (``meeting.owner_user_id``) AND ``meeting.circle_tier`` — a
     person appearing in two different-tier meetings gets two fingerprints (a
     visibility-safe split; cross-tier unification is deferred to merge-on-enroll).
+
+    A fingerprint row persists a voiceprint centroid (biometric data, Art. 9
+    GDPR), so this also requires ``speaker_recognition_enabled`` — defense in
+    depth behind the same gate in ``meeting_pipeline.process_meeting``.
     """
-    if not settings.meeting_fingerprints_enabled:
+    if not (settings.meeting_fingerprints_enabled and settings.speaker_recognition_enabled):
         return {}
     centroids = _cluster_centroids(raw_segments)
     if not centroids:

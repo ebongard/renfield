@@ -374,10 +374,18 @@ async def get_segments(
     user: User | None = Depends(get_optional_user),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
-    """The attributed transcript segments (owner-gated 404)."""
+    """The attributed transcript segments (owner-gated 404). Voiceprint fields are
+    never returned — rows written before the pipeline stripped them may still
+    carry an ECAPA ``embedding`` until purged (bin/purge_meeting_segment_embeddings.py)."""
     _require_enabled()
     meeting = await _get_owned_meeting(meeting_id, user, db)
-    return {"id": meeting.id, "status": meeting.status, "segments": meeting.segments or []}
+    from services.meeting_pipeline import strip_biometric_fields
+
+    return {
+        "id": meeting.id,
+        "status": meeting.status,
+        "segments": strip_biometric_fields(meeting.segments),
+    }
 
 
 @router.post("/{meeting_id}/relabel", response_model=RelabelResponse)

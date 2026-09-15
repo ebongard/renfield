@@ -425,14 +425,17 @@ class TestPseudonyms:
         # first-appearance order: SPEAKER_01 -> Sprecher 1, SPEAKER_00 -> Sprecher 2
         assert [s["speaker"] for s in out] == ["Sprecher 1", "Sprecher 2", "Sprecher 1"]
 
-    def test_preserves_fields_and_retains_cluster_key(self):
+    def test_preserves_fields_drops_voiceprint_and_retains_cluster_key(self):
         from services.meeting_pipeline import apply_pseudonyms
 
         out = apply_pseudonyms([{"speaker": "SPEAKER_00", "text": "hi", "start_s": 1.0, "embedding": [0.1]}])
         assert out[0]["speaker"] == "Sprecher 1"
         assert out[0]["speaker_key"] == "SPEAKER_00"  # original cluster id retained
         assert out[0]["start_s"] == 1.0
-        assert out[0]["embedding"] == [0.1]
+        # The per-cluster ECAPA embedding is biometric data and these display
+        # segments are what gets persisted — it must not survive (fingerprint
+        # matching reads the raw voice-server segments instead).
+        assert "embedding" not in out[0]
 
     def test_render_markdown_skips_empty_turns(self, ):
         from datetime import date as _d

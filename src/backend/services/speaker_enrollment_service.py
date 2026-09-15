@@ -33,6 +33,14 @@ from services.speaker_service import get_speaker_service
 from utils.config import settings
 
 
+# Defense in depth behind the route gate: with speaker recognition off no
+# voiceprint (SpeakerEmbedding) is ever written, whoever calls these functions.
+_RECOGNITION_OFF_REASON = (
+    "speaker recognition is disabled on this instance "
+    "(SPEAKER_RECOGNITION_ENABLED=false) — no voiceprints are stored"
+)
+
+
 def _slugify(name: str) -> str:
     slug = re.sub(r"[^a-z0-9]+", "_", name.strip().lower()).strip("_")
     return slug or "speaker"
@@ -108,6 +116,8 @@ async def enroll_speaker_controlled(
     Returns a result dict (never raises for a gate failure):
         {ok, reason?, speaker_id?, name, cohesion, accepted, rejected, sample_reasons}
     """
+    if not settings.speaker_recognition_enabled:
+        return {"ok": False, "reason": _RECOGNITION_OFF_REASON, "accepted": 0}
     name = (name or "").strip()
     if not name:
         return {"ok": False, "reason": "name is required", "accepted": 0}
@@ -235,6 +245,8 @@ async def promote_candidates(
     candidates are consumed (deleted). Returns the same result shape as
     ``enroll_speaker_controlled`` (never raises for a gate failure).
     """
+    if not settings.speaker_recognition_enabled:
+        return {"ok": False, "reason": _RECOGNITION_OFF_REASON, "accepted": 0}
     name = (name or "").strip()
     if not name:
         return {"ok": False, "reason": "name is required", "accepted": 0}

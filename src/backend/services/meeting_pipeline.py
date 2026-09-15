@@ -43,24 +43,59 @@ def _service_token() -> str:
     return create_access_token({"sub": "service:meeting", "scope": "voice"})
 
 
+# Voiceprint fields a voice-server meeting response may carry per segment. The
+# /transcribe-meeting contract (voice-server ``MeetingSegmentOut``) sends one
+# per-cluster ECAPA ``embedding`` duplicated across that cluster's segments;
+# the other names are defensive against a future/older schema. An ECAPA vector
+# is biometric data (Art. 9 GDPR) — it is used transiently (fingerprint
+# matching reads the RAW response) and NEVER persisted on ``Meeting.segments``.
+_BIOMETRIC_SEGMENT_KEYS = frozenset({"embedding", "speaker_embedding", "centroid", "voiceprint"})
+
+
+def strip_biometric_fields(segments: list[dict] | None) -> list[dict]:
+    """Copies of ``segments`` without any voiceprint field (see
+    ``_BIOMETRIC_SEGMENT_KEYS``). Timing, text, speaker labels, ``speaker_key``
+    and the anonymous ``fingerprint_id``/``fingerprint_label`` stay — those are
+    not biometric vectors. Non-dict entries are dropped (malformed input)."""
+    return [
+        {k: v for k, v in seg.items() if k not in _BIOMETRIC_SEGMENT_KEYS}
+        for seg in (segments or [])
+        if isinstance(seg, dict)
+    ]
+
+
+def _set_segments(meeting: Meeting, segments: list[dict]) -> list[dict]:
+    """The ONLY way ``Meeting.segments`` is written: always voiceprint-free, so a
+    re-render / relabel of a row written before the strip existed also cleans
+    it. Returns the persisted list."""
+    from sqlalchemy.orm.attributes import flag_modified
+
+    clean = strip_biometric_fields(segments)
+    meeting.segments = clean
+    flag_modified(meeting, "segments")
+    return clean
+
+
 def apply_pseudonyms(raw_segments: list[dict]) -> list[dict]:
     """Map raw diarization cluster labels (e.g. ``SPEAKER_00``) to stable, human
     pseudonyms (``Sprecher 1``, ``Sprecher 2``, …) in first-appearance order.
 
-    Preserves any embedding/timing fields; only the ``speaker`` label is
-    rewritten and a ``speaker_key`` (the original cluster id) is retained so
-    human labeling can later remap a whole cluster deterministically.
+    Preserves timing/text fields but DROPS voiceprint fields (the per-cluster
+    ECAPA ``embedding``) — these display segments are what gets persisted.
+    Fingerprint matching must read the raw voice-server segments instead. Only
+    the ``speaker`` label is rewritten, and a ``speaker_key`` (the original
+    cluster id) is retained so human labeling can later remap a whole cluster
+    deterministically.
     """
     mapping: dict[str, str] = {}
     out: list[dict] = []
-    for seg in raw_segments:
+    for seg in strip_biometric_fields(raw_segments):
         cluster = str(seg.get("speaker", "SPEAKER_?"))
         if cluster not in mapping:
             mapping[cluster] = f"Sprecher {len(mapping) + 1}"
-        new_seg = dict(seg)
-        new_seg["speaker_key"] = cluster
-        new_seg["speaker"] = mapping[cluster]
-        out.append(new_seg)
+        seg["speaker_key"] = cluster
+        seg["speaker"] = mapping[cluster]
+        out.append(seg)
     return out
 
 
@@ -180,9 +215,7 @@ async def reattribute(db, meeting: Meeting, speaker_key: str, new_label: str) ->
     transcript in place + reindexes (stable ``transcript_document_id``).
     Returns False if no segment matched the cluster.
     """
-    from sqlalchemy.orm.attributes import flag_modified
-
-    segments = [dict(s) for s in (meeting.segments or [])]
+    segments = strip_biometric_fields(meeting.segments)
     changed = False
     for seg in segments:
         if seg.get("speaker_key") == speaker_key:
@@ -191,8 +224,7 @@ async def reattribute(db, meeting: Meeting, speaker_key: str, new_label: str) ->
     if not changed:
         return False
 
-    meeting.segments = segments
-    flag_modified(meeting, "segments")
+    segments = _set_segments(meeting, segments)
     if meeting.transcript_document_id:
         await _overwrite_transcript_and_reindex(db, meeting, segments)
     else:
@@ -211,17 +243,14 @@ def _fingerprint_id_for_cluster(meeting: Meeting, speaker_key: str) -> int | Non
 def _relabel_by_fingerprint(meeting: Meeting, fingerprint_id: int, label: str) -> bool:
     """Rewrite every segment carrying ``fingerprint_id`` to ``label`` (in place).
     Returns whether anything changed (skips a meeting already at that label)."""
-    from sqlalchemy.orm.attributes import flag_modified
-
-    segments = [dict(s) for s in (meeting.segments or [])]
+    segments = strip_biometric_fields(meeting.segments)
     changed = False
     for seg in segments:
         if seg.get("fingerprint_id") == fingerprint_id and seg.get("speaker") != label:
             seg["speaker"] = label
             changed = True
     if changed:
-        meeting.segments = segments
-        flag_modified(meeting, "segments")
+        _set_segments(meeting, segments)
     return changed
 
 
@@ -296,13 +325,18 @@ async def process_meeting(meeting_id: int, audio_path: str) -> None:
             whisper_model=(settings.meeting_whisper_model or None),
             language=(meeting.language or None),
         )
+        # ``raw_segments`` carries the per-cluster ECAPA ``embedding`` and lives
+        # only in this call; ``segments`` (what is persisted/rendered) never does.
         raw_segments = result.get("segments") or []
         segments = apply_pseudonyms(raw_segments)
         # §2 Track A: resolve each diarized cluster to a stable cross-meeting
         # anonymous fingerprint and ride it onto the segments (dark by default;
-        # display pseudonyms unchanged). Best-effort — a matcher failure must not
-        # fail the transcript.
-        if settings.meeting_fingerprints_enabled:
+        # display pseudonyms unchanged). A fingerprint PERSISTS a voiceprint
+        # centroid (meeting_speaker_fingerprints), so it needs speaker recognition
+        # on as well — an instance with SPEAKER_RECOGNITION_ENABLED=false stores no
+        # voiceprint on any path. Best-effort — a matcher failure must not fail
+        # the transcript.
+        if settings.meeting_fingerprints_enabled and settings.speaker_recognition_enabled:
             try:
                 from services.meeting_fingerprint_service import (
                     annotate_segments,
@@ -324,7 +358,8 @@ async def process_meeting(meeting_id: int, audio_path: str) -> None:
                         logger.info(f"meeting {meeting_id}: auto-named {n} known speaker(s)")
             except Exception as e:  # noqa: BLE001
                 logger.warning(f"meeting {meeting_id}: fingerprint matching failed: {e}")
-        meeting.segments = segments
+        segments = _set_segments(meeting, segments)
+        del raw_segments  # nothing below may read (or persist) the voiceprints
 
         if meeting.transcript_document_id:
             # Crash-redelivery reprocess: a prior attempt already ingested the

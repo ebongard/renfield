@@ -54,6 +54,25 @@ def _require_inprocess_embeddings(path: str) -> None:
     )
 
 
+def _require_speaker_recognition(path: str) -> None:
+    """Refuse every route that WRITES a voiceprint while speaker recognition is
+    off. An ECAPA embedding is biometric data (Art. 9 GDPR); an instance that set
+    ``SPEAKER_RECOGNITION_ENABLED=false`` must not store one through the admin
+    enrollment paths either (the chat/voice/satellite paths are gated already).
+    409: the request is valid, the instance configuration forbids it."""
+    if settings.speaker_recognition_enabled:
+        return
+    logger.warning(f"🚫 Refused voiceprint write on {path}: speaker_recognition_enabled is off")
+    raise HTTPException(
+        status_code=409,
+        detail=(
+            "Speaker recognition is disabled on this instance "
+            "(SPEAKER_RECOGNITION_ENABLED=false): no voiceprints are stored, so "
+            "speaker enrollment is unavailable."
+        ),
+    )
+
+
 # --- Pydantic Models ---
 
 class SpeakerCreate(BaseModel):
@@ -544,6 +563,7 @@ async def enroll_controlled(
     its embeddings). Returns the structured result (`ok` + reason on rejection —
     a rejection is a normal, actionable outcome of the guided flow, not a 500).
     """
+    _require_speaker_recognition("route_enroll_controlled")
     samples: list[tuple[bytes, str]] = [
         (await f.read(), f.filename or "sample.wav") for f in audio
     ]
@@ -562,6 +582,7 @@ async def promote_candidates_route(
     _user: User = Depends(require_permission(Permission.SPEAKERS_ALL)),
 ):
     """Promote selected review-bucket candidates to a named enrolled speaker."""
+    _require_speaker_recognition("route_promote_candidates")
     from services.speaker_enrollment_service import promote_candidates
 
     return await promote_candidates(
@@ -600,6 +621,7 @@ async def enroll_speaker(
 
     Recommended: Use samples of 3-10 seconds with clear speech.
     """
+    _require_speaker_recognition("route_enroll")
     _require_inprocess_embeddings("route_enroll")
 
     # Get speaker with embeddings eagerly loaded
