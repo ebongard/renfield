@@ -258,10 +258,27 @@ working while cookies are on. Fully reversible per flag.
   and sends it as `?token=` to the external voice-server, whose verify path
   (`/api/internal/auth/verify`) accepts any non-`ws` scope; REST and renfield's own
   `/ws/*` reject `scope:voice`. No voice-server change was needed. In cookie mode
-  `AuthContext.setTokens` persists NEITHER token to localStorage. Live browser
-  voice on an auth-on instance is still unexercised (xidra `FEATURE_VOICE=false`,
-  no `/ws/voice` ingress there; the shared frontend image sends no `?client=`, which
-  the registry voice-server requires on its primary port).
+  `AuthContext.setTokens` persists NEITHER token to localStorage. **Live browser
+  voice on an auth-on instance (xidra) — code + infra PREPARED, flag NOT flipped**
+  (`FEATURE_VOICE=false` until the rollout in
+  `docs/design/browser-voice-auth-on-instances.md`): the browser names its registry
+  row via `?client=` from the RUNTIME `voice_client_id` in `/api/config/features`
+  (`VOICE_BROWSER_CLIENT_ID`, validated `^[a-z0-9_-]{0,64}$`; deliberately distinct
+  from `VOICE_CLIENT_ID`, the backend→voice-server header id) → build-time
+  `VITE_VOICE_CLIENT_ID` → omitted (household byte-identical). `useVoiceStream`
+  awaits the id at CONNECT time (`fetchVoiceClientId` → `ensureQueryData`), so the
+  socket never opens before the features are known; pure `buildVoiceWsUrl` is
+  exported. The composer mic is now gated on `isFeatureEnabled('voice')` like the
+  wake-word controls. Route: a Traefik `IngressRoute` in ns `voice`
+  (`private_k8s/voice-server/41-xidra-browser-ingressroute.yaml`, Host + PathPrefix
+  + exact Origin pin, priority 1000, no middlewares — Traefik here can't route
+  cross-namespace). **Speaker-recognition privacy gate:** `chat_handler._resolve_wire_speaker`
+  resolves a wire speaker embedding ONLY when `speaker_recognition_enabled`
+  (`voice_originated` still derives from the embedding), and
+  `speaker_resolver.resolve_speaker_from_embedding` refuses before any DB access
+  when it is off — before this, every browser voice turn stored an ECAPA voiceprint
+  and an "Unbekannter Sprecher #N" row (Art. 9 GDPR) even with recognition off.
+  xidra pins all four `SPEAKER_*` knobs off.
 - **Frontend:** `utils/axios.ts` `withCredentials:true` + a CSRF header
   interceptor (Bearer interceptor kept for the Reva path); `context/AuthContext.tsx`
   learns cookie-mode from `/api/auth/status` (`auth_cookie_enabled`) and, when on,
@@ -272,7 +289,7 @@ working while cookies are on. Fully reversible per flag.
   `AUTH_ENABLED=false`, or with `COOKIE_SECURE=false` on a prod/staging env.
 - **Deferred** (own follow-ups): removing the SSO fragment handler / `?code=`
   emitter wiring (= SSO cutover, needs Reva); retiring `/api/ws/token` + the
-  Bearer interceptor; enabling browser voice on an auth-on instance. **Not touched:** `SECRET_KEY`
+  Bearer interceptor; flipping `FEATURE_VOICE` on xidra (runbook above). **Not touched:** `SECRET_KEY`
   (tri-purpose: JWT + Fernet-at-rest + BLE IRK — no split/rotation).
   Env: `AUTH_COOKIE_ENABLED`/`AUTH_COOKIE_NAME`/`REFRESH_COOKIE_NAME`/
   `CSRF_COOKIE_NAME`/`COOKIE_SECURE`/`COOKIE_SAMESITE`/`COOKIE_DOMAIN`

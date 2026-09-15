@@ -1152,6 +1152,20 @@ SATELLITE_OPUS_ENABLED=false
 # bis zum Voice-Server-Topologie-Redesign (echte Multi-Tenant-Auth).
 VOICE_SERVER_AUTH_ENABLED=true
 
+# Registry-Client-ID, die der BROWSER beim /ws/voice-Handshake als ?client= an den
+# geteilten Registry-Voice-Server schickt (Browser-Sprache auf auth-on-Instanzen).
+# NICHT dasselbe wie VOICE_CLIENT_ID (Backend→Voice-Server-Header; im Household die
+# anonyme Zeile): die Browser-ID wählt die Registry-Zeile, deren verify_url auf DIESE
+# Instanz zeigt, damit das scope:"voice"-Token vom ausstellenden Backend geprüft
+# wird. Wird zur LAUFZEIT über /api/config/features als `voice_client_id` an das
+# Frontend gegeben (ein Frontend-Image für alle Instanzen). Vorrang im Frontend:
+# diese ID → Build-Zeit VITE_VOICE_CLIENT_ID → Parameter weglassen (Household:
+# byte-identisch). Validiert ^[a-z0-9_-]{0,64}$ (landet in einem Query-String),
+# ungültig = Boot-Fehler. Leer bei FEATURE_VOICE=true + AUTH_ENABLED=true →
+# Warnung beim Start. xidra: "xidra". Runbook:
+# docs/design/browser-voice-auth-on-instances.md
+VOICE_BROWSER_CLIENT_ID=
+
 # P0 Fail-loud-Fallback: das In-Process-SpeechBrain-ECAPA und das
 # voice-server-ONNX-ECAPA teilen KEINEN Repräsentationsraum. Default aus =
 # das Backend verweigert SpeechBrain-Embeddings (Extraktion/Vergleich/
