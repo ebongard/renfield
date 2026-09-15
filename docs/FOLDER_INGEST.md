@@ -291,7 +291,16 @@ the role descriptions in `config/agent_roles.yaml`.
     already has a correspondent.
 
   Neither is in the backend image (the build context is `src/backend`): copy the script
-  into the backend pod and run it there with cwd `/app`.
+  into the backend pod (any path, e.g. `kubectl cp bin/backfill_paperless_metadata.py
+  <ns>/<backend-pod>:/tmp/`) and run `python /tmp/backfill_paperless_metadata.py --mode …`
+  — no `PYTHONPATH`, any cwd. Every `bin/backfill_*.py` finds the backend itself:
+  `$RENFIELD_BACKEND_DIR` if set (exclusive), else the repo layout `bin/../src/backend`,
+  else the image layout `/app`; if none holds the backend it exits 2 with the paths it
+  tried. The metadata backfill starts only the `paperless` MCP server, bounds every
+  teardown step (MCP shutdown, leftover transport tasks, executor) so the process ends
+  after the summary, and exits 0 on success / 1 on an error — including a Paperless MCP
+  that is not configured or does not connect (previously every document silently showed
+  as `unreachable`) and any failed PATCH in created-date mode.
 
 ## Processed-file rename (#881, `FOLDER_INGEST_RENAME_PROCESSED_ENABLED`, dark)
 
