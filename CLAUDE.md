@@ -278,6 +278,16 @@ working while cookies are on. Fully reversible per flag.
   `speaker_resolver.resolve_speaker_from_embedding` refuses before any DB access
   when it is off — before this, every browser voice turn stored an ECAPA voiceprint
   and an "Unbekannter Sprecher #N" row (Art. 9 GDPR) even with recognition off.
+  **With `SPEAKER_RECOGNITION_ENABLED=false` no voiceprint is persisted on ANY path:**
+  chat-WS/voice/satellite resolution (gated), admin enrollment
+  (`POST /api/speakers/enroll`, `/candidates/promote`, `/{id}/enroll` → 409; the
+  enrollment service refuses too), and meetings — the voice-server's per-cluster
+  ECAPA `embedding` is NEVER stored on `Meeting.segments` regardless of flags
+  (`meeting_pipeline.strip_biometric_fields` / `_set_segments`, the only segments
+  write path; re-render and relabel clean legacy rows; `GET …/segments` filters
+  them), and cross-meeting fingerprints (which persist a centroid) require
+  `meeting_fingerprints_enabled` AND `speaker_recognition_enabled`. Legacy rows:
+  `bin/purge_meeting_segment_embeddings.py` (`--dry-run`/`--commit`, counts only).
   xidra pins all four `SPEAKER_*` knobs off.
 - **Frontend:** `utils/axios.ts` `withCredentials:true` + a CSRF header
   interceptor (Bearer interceptor kept for the Reva path); `context/AuthContext.tsx`
