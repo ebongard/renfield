@@ -105,6 +105,46 @@ def test_explicit_document_date_kinds_are_recognised():
         assert derive_document_date(facts, reference_date=IMPORT) == date(2026, 2, 5), kind
 
 
+def test_spelling_variants_of_the_invoice_date_keep_their_rank():
+    """Free LLM labels spell the same kind many ways; each variant must still
+    win over a later explicit date and never fall to the title or NULL."""
+    for kind in ("rechnungs_datum", "rechnung_datum", "Rechnungs-Datum", "Rechnungs Datum",
+                 "datum_rechnung", "rechnung_vom", "invoice-date"):
+        facts = [_fact("dokumentdatum", "20.02.2026"), _fact(kind, "05.02.2026")]
+        assert derive_document_date(facts, ["Rechnung 2026-02-27"], reference_date=IMPORT) == date(2026, 2, 5), kind
+
+
+def test_other_document_date_variants_are_recognised():
+    for kind in ("ausgestellt_am", "bescheid_vom", "schreiben_vom", "datum_schreiben",
+                 "schreiben_datum", "kontoauszugsdatum", "bescheidsdatum", "ausgabedatum"):
+        assert derive_document_date([_fact(kind, "05.02.2026")], reference_date=IMPORT) == date(2026, 2, 5), kind
+
+
+def test_am_suffix_is_not_folded_into_a_date():
+    """"<Partizip> am" is as often a deadline — faellig_am must stay unranked."""
+    for kind in ("faellig_am", "zahlbar_am", "faellig_vom_bis"):
+        assert derive_document_date([_fact(kind, "20.02.2026")], reference_date=IMPORT) is None, kind
+
+
+def test_year_qualified_kind_is_a_different_fact():
+    """Only a 1-2 digit enumeration is stripped; a 4-digit year qualifier names a
+    different fact and must not borrow the trusted/event rank of its stem."""
+    ahead = (IMPORT + timedelta(days=90)).strftime("%d.%m.%Y")
+    assert derive_document_date([_fact("rechnungsdatum_2024", ahead)], reference_date=IMPORT) is None
+    assert derive_document_date([_fact("leistungszeitraum_2027", "20.02.2026")], reference_date=IMPORT) is None
+    assert derive_document_date([_fact("rechnungsdatum_12", "05.02.2026")], reference_date=IMPORT) == date(2026, 2, 5)
+
+
+def test_old_document_imported_late_with_only_a_payment_date():
+    """A 2024 letter imported in 2026 whose only date is a zahlungsdatum (the
+    direct-debit / due date) — the import-relative limit cannot catch it, so the
+    kind must not count at all."""
+    late_import = date(2026, 9, 1)
+    for kind in ("zahlungsdatum", "payment_date", "Zahlungs-Datum"):
+        facts = [_fact(kind, "15.05.2024")]
+        assert derive_document_date(facts, reference_date=late_import) is None, kind
+
+
 def test_explicit_document_date_is_trusted_even_when_ahead_of_import():
     """A pre-dated invoice carries its own date — an explicit document-date fact
     is accepted beyond the tolerance; only weaker sources are held to it."""
