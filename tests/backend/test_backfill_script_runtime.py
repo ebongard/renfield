@@ -7,6 +7,8 @@ from __future__ import annotations
 
 import asyncio
 import importlib.util
+import json
+import logging
 import os
 import re
 import shutil
@@ -172,11 +174,12 @@ async def _ignore_cancellation_forever():
 class _WedgedManager:
     """Stands in for an MCPManager whose transport teardown never completes."""
 
-    def __init__(self, *, configured=True, connects=True):
-        self.configured, self.connects = configured, connects
+    def __init__(self, *, configured=True, connects=True, update_fails=False):
+        self.configured, self.connects, self.update_fails = configured, connects, update_fails
         self._servers: dict = {}
         self.load_args: dict = {}
         self.shutdown_calls = 0
+        self.tool_calls: list[str] = []
 
     def load_config(self, path, only=None, overlay_dir=None):
         self.load_args = {"path": path, "only": only, "overlay_dir": overlay_dir}
@@ -187,6 +190,12 @@ class _WedgedManager:
         state = self._servers["paperless"]
         state.connected = self.connects
         state.last_error = None if self.connects else "connection refused"
+
+    async def execute_tool(self, name, arguments):
+        self.tool_calls.append(name)
+        if name.endswith("update_document") and self.update_fails:
+            return {"success": False, "message": "HTTP 500"}
+        return {"success": True, "message": json.dumps({"id": arguments.get("document_id"), "correspondent": ""})}
 
     async def shutdown(self):
         self.shutdown_calls += 1
@@ -215,16 +224,23 @@ class TestBoundedTeardown:
 
     def test_asyncio_run_is_what_hangs_on_such_a_task(self):
         """The mechanism the bounded runner replaces: asyncio.run() waits for every
-        cancelled leftover task without a limit."""
-
-        async def work():
-            asyncio.get_running_loop().create_task(_ignore_cancellation_forever())
-            await asyncio.sleep(0)
-
-        thread = threading.Thread(target=lambda: asyncio.run(work()), daemon=True)
-        thread.start()
-        thread.join(1.0)
-        assert thread.is_alive()
+        cancelled leftover task without a limit. In a subprocess, killed on timeout,
+        so nothing keeps running inside the test session."""
+        code = (
+            "import asyncio\n"
+            "async def stubborn():\n"
+            "    while True:\n"
+            "        try:\n"
+            "            await asyncio.sleep(3600)\n"
+            "        except asyncio.CancelledError:\n"
+            "            continue\n"
+            "async def work():\n"
+            "    asyncio.get_running_loop().create_task(stubborn())\n"
+            "    await asyncio.sleep(0)\n"
+            "asyncio.run(work())\n"
+        )
+        with pytest.raises(subprocess.TimeoutExpired):
+            subprocess.run([sys.executable, "-c", code], capture_output=True, timeout=3)
 
     def test_run_propagates_the_error_and_still_terminates(self):
         module = _load()
@@ -235,6 +251,60 @@ class TestBoundedTeardown:
 
         with pytest.raises(ValueError):
             _bounded_call(lambda: module._run(work(), teardown_timeout=0.2))
+
+
+_EXECUTOR_DRIVER = """
+import asyncio, atexit, importlib.util, sys, time
+spec = importlib.util.spec_from_file_location("bpm_exit", sys.argv[1])
+m = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(m)
+m.LOOP_TEARDOWN_TIMEOUT_S = 0.5
+m.THREAD_EXIT_GRACE_S = 0.2
+block_s, ok = float(sys.argv[2]), sys.argv[3] == "ok"
+
+async def fake_run_created_date(**kwargs):
+    if block_s:
+        # A blocking executor job, like Docling OCR on a stuck PDF.
+        asyncio.get_running_loop().run_in_executor(None, time.sleep, block_s)
+    await asyncio.sleep(0)
+    print("SUMMARY", flush=True)
+    return ok
+
+m._run_created_date = fake_run_created_date
+atexit.register(lambda: print("ATEXIT", flush=True))
+m._terminate(m.main(["--mode", "created-date"]))
+"""
+
+
+@pytest.mark.unit
+class TestProcessTermination:
+    def _run_driver(self, tmp_path, block_s: float, ok: bool):
+        driver = tmp_path / "driver.py"
+        driver.write_text(_EXECUTOR_DRIVER)
+        start = time.monotonic()
+        proc = subprocess.run(
+            [sys.executable, str(driver), str(_SCRIPT), str(block_s), "ok" if ok else "fail"],
+            cwd=tmp_path,
+            env=_env_without_paths(RENFIELD_BACKEND_DIR=str(_BACKEND)),
+            capture_output=True, text=True, timeout=120,
+        )
+        return proc, time.monotonic() - start
+
+    @pytest.mark.parametrize(("ok", "code"), [(True, 0), (False, 1)])
+    def test_blocked_executor_job_does_not_keep_the_process_alive(self, tmp_path, ok, code):
+        proc, elapsed = self._run_driver(tmp_path, block_s=60, ok=ok)
+        assert proc.returncode == code, proc.stderr[-2000:]
+        assert "SUMMARY" in proc.stdout
+        assert elapsed < 30, f"process lived {elapsed:.0f} s — it waited for the 60 s executor job"
+        assert "exiting without waiting" in proc.stderr
+        assert "ATEXIT" not in proc.stdout  # the os._exit path
+
+    @pytest.mark.parametrize(("ok", "code"), [(True, 0), (False, 1)])
+    def test_normal_exit_path_without_stuck_threads(self, tmp_path, ok, code):
+        proc, _ = self._run_driver(tmp_path, block_s=0, ok=ok)
+        assert proc.returncode == code, proc.stderr[-2000:]
+        assert "ATEXIT" in proc.stdout  # regular interpreter shutdown, no os._exit
+        assert "exiting without waiting" not in proc.stderr
 
 
 # --------------------------------------------------------------------------- exit codes
@@ -285,6 +355,32 @@ class TestExitCodes:
         _patch_backfill(monkeypatch, candidates=1, failed=[7], last_pid=7)
         assert _bounded_call(lambda: cli.main(["--mode", "created-date", "--commit"])) == 1
 
+    def test_no_candidates_exits_0(self, cli, monkeypatch):
+        _patch_manager(monkeypatch, _WedgedManager())
+        _patch_backfill(monkeypatch, candidates=0)
+        assert _bounded_call(lambda: cli.main(["--mode", "created-date", "--commit"])) == 0
+
+    def test_dry_run_with_every_candidate_unreachable_exits_1(self, cli, monkeypatch):
+        """MCP connected, but Paperless answers every call with an error."""
+        _patch_manager(monkeypatch, _WedgedManager())
+        _patch_backfill(monkeypatch, candidates=3, unreachable=[1, 2, 3], last_pid=3)
+        assert _bounded_call(lambda: cli.main(["--mode", "created-date"])) == 1
+
+    def test_dry_run_with_some_unreachable_exits_0_with_a_warning(self, cli, monkeypatch, caplog):
+        _patch_manager(monkeypatch, _WedgedManager())
+        _patch_backfill(monkeypatch, candidates=3, unreachable=[2], would_patch=[1], already_correct=1, last_pid=3)
+        with caplog.at_level(logging.WARNING, logger="backfill_paperless_metadata"):
+            assert _bounded_call(lambda: cli.main(["--mode", "created-date"])) == 0
+        assert "1 of 3 document(s) unreachable" in caplog.text
+        assert "--after-pid 3" in caplog.text
+
+    def test_commit_with_any_unreachable_exits_1(self, cli, monkeypatch, caplog):
+        _patch_manager(monkeypatch, _WedgedManager())
+        _patch_backfill(monkeypatch, candidates=3, unreachable=[2], patched=[1, 3], last_pid=3)
+        with caplog.at_level(logging.WARNING, logger="backfill_paperless_metadata"):
+            assert _bounded_call(lambda: cli.main(["--mode", "created-date", "--commit"])) == 1
+        assert "--after-pid 3" in caplog.text
+
     def test_paperless_not_connected_exits_1_without_running_the_backfill(self, cli, monkeypatch):
         manager = _WedgedManager(connects=False)
         _patch_manager(monkeypatch, manager)
@@ -304,3 +400,73 @@ class TestExitCodes:
 
         monkeypatch.setattr(cli, "_run_created_date", boom)
         assert _bounded_call(lambda: cli.main(["--mode", "created-date"])) == 1
+
+
+def _patch_correspondent_env(monkeypatch, tmp_path):
+    """One filed document without a correspondent; extraction resolves one."""
+    import services.database as database
+    import services.folder_ingest_paperless as fip
+    import services.paperless_metadata_extractor as pme
+
+    recovery = tmp_path / "doc.pdf"
+    recovery.write_bytes(b"%PDF-1.4")
+    doc = SimpleNamespace(id=1, paperless_document_id=7, filename="doc.pdf", file_path=str(recovery), user_id=None)
+
+    class _Result:
+        def scalars(self):
+            return SimpleNamespace(all=lambda: [doc])
+
+    class _Session:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *exc):
+            return False
+
+        async def execute(self, stmt):
+            return _Result()
+
+        async def commit(self):
+            return None
+
+    class _Extractor:
+        def __init__(self, mcp_manager):
+            pass
+
+        async def extract_from_file(self, path, user_id=None, lang="de"):
+            return SimpleNamespace(error=None, metadata={})
+
+    async def names(manager):
+        return ["ACME"]
+
+    async def resolve(manager, metadata, names=None, create=True):
+        return "ACME"
+
+    monkeypatch.setattr(database, "AsyncSessionLocal", lambda: _Session())
+    monkeypatch.setattr(fip, "_fetch_correspondent_names", names)
+    monkeypatch.setattr(fip, "resolve_correspondent_from_metadata", resolve)
+    monkeypatch.setattr(pme, "PaperlessMetadataExtractor", _Extractor)
+
+
+@pytest.mark.unit
+class TestCorrespondentExitCodes:
+    def test_failed_write_in_commit_exits_1(self, cli, monkeypatch, tmp_path):
+        manager = _WedgedManager(update_fails=True)
+        _patch_manager(monkeypatch, manager)
+        _patch_correspondent_env(monkeypatch, tmp_path)
+        assert _bounded_call(lambda: cli.main(["--mode", "correspondent", "--commit"])) == 1
+        assert "mcp.paperless.update_document" in manager.tool_calls
+
+    def test_successful_write_in_commit_exits_0(self, cli, monkeypatch, tmp_path):
+        manager = _WedgedManager()
+        _patch_manager(monkeypatch, manager)
+        _patch_correspondent_env(monkeypatch, tmp_path)
+        assert _bounded_call(lambda: cli.main(["--mode", "correspondent", "--commit"])) == 0
+        assert "mcp.paperless.update_document" in manager.tool_calls
+
+    def test_dry_run_writes_nothing_and_exits_0(self, cli, monkeypatch, tmp_path):
+        manager = _WedgedManager(update_fails=True)
+        _patch_manager(monkeypatch, manager)
+        _patch_correspondent_env(monkeypatch, tmp_path)
+        assert _bounded_call(lambda: cli.main(["--mode", "correspondent"])) == 0
+        assert "mcp.paperless.update_document" not in manager.tool_calls

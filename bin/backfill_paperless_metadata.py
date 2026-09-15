@@ -23,16 +23,36 @@ explicitly with ``--mode``; every run is a DRY RUN unless ``--commit`` is given.
 ``--mode correspondent`` — the original correspondent gap-fill
   Re-runs metadata extraction and resolves-or-creates the correspondent with the
   same full-taxonomy guardrail as the live leg; sets ONLY the correspondent and
-  skips docs that already have one. (Unchanged behaviour; it lifts the MCP rate
-  limiter for its one-pass filename index.)
+  skips docs that already have one. (It lifts the MCP rate limiter for its one-pass
+  filename index.)
 
 Running it:
   The backend is located by itself — ``$RENFIELD_BACKEND_DIR``, else the repo layout
   (``bin/../src/backend``), else the image layout (``/app``) — so a copy of this file
   anywhere in the backend pod runs without ``PYTHONPATH``. Only the ``paperless`` MCP
-  server is started. Exit code: 0 on success, 1 on an error (incl. Paperless MCP not
-  connected, or any failed PATCH in created-date mode), 2 if the backend is not found.
-  Every teardown step is time-bounded, so the process terminates after the summary.
+  server is started.
+
+Exit codes:
+  0  success.
+  1  error: the Paperless MCP server is not configured or does not connect; a write
+     failed in ``--commit`` (a created-date PATCH, a correspondent update_document);
+     created-date found candidates but ALL of them were unreachable (Paperless is
+     effectively down); or ``--commit`` could not reach ANY document (404, trash,
+     HTTP error) — re-run (idempotent: finished documents are skipped) or continue
+     past the batch with ``--after-pid <last_pid>``.
+     A DRY RUN with only SOME unreachable documents exits 0 with a warning: nothing is
+     written, and a document deleted or trashed in Paperless is a data condition that
+     would otherwise fail every preview and hide a real outage behind the same code.
+  2  the backend was not found.
+
+Termination:
+  The teardown is time-bounded: MCP shutdown, leftover transport tasks and async
+  generators each get a deadline, and the default executor is shut down without
+  waiting (queued jobs are cancelled). A job still RUNNING on it — e.g. Docling OCR
+  stuck on a PDF in correspondent mode — runs in a non-daemon thread the interpreter
+  would join without a limit; after a short grace the process then leaves via
+  ``os._exit`` with the same exit code (output flushed). Without such a thread it
+  exits normally.
 
 Usage:
     python bin/backfill_paperless_metadata.py --mode created-date            # dry run
@@ -49,9 +69,11 @@ import logging
 import os
 import sys
 import threading
+import time
 from collections.abc import Coroutine, Mapping
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-from typing import Any
+from typing import Any, NoReturn
 
 # --- backend import path (identical block in every bin/backfill_*.py) ---------------
 # These scripts are copied into the backend pod on their own, so this cannot live in a
@@ -91,9 +113,10 @@ logger = logging.getLogger("backfill_paperless_metadata")
 # Upper bound for MCPManager.shutdown(). Its per-stack teardown is already bounded
 # (5 s each), so this only fires on a wedge outside those bounds.
 MCP_SHUTDOWN_TIMEOUT_S = 20.0
-# Upper bound for each event-loop teardown step (leftover tasks, async generators,
-# default executor) after the work is done.
+# Upper bound for each event-loop teardown step (leftover tasks, async generators).
 LOOP_TEARDOWN_TIMEOUT_S = 5.0
+# How long _terminate lets still-running non-daemon threads (executor jobs) finish.
+THREAD_EXIT_GRACE_S = 5.0
 
 
 class BackfillError(RuntimeError):
@@ -135,11 +158,14 @@ async def _shutdown(manager, timeout: float | None = None) -> None:
 
 def _run(coro: Coroutine[Any, Any, Any], teardown_timeout: float | None = None) -> Any:
     """``asyncio.run`` with a bounded teardown. ``asyncio.run`` cancels every leftover
-    task and then waits for ALL of them without a limit (and joins the default
-    executor without one), so a single MCP transport task that does not honour its
-    cancellation keeps the process alive after the work is done."""
+    task and then waits for ALL of them without a limit, so a single MCP transport task
+    that does not honour its cancellation keeps the process alive after the work is
+    done. Threads that outlive this (a running executor job) are ``_terminate``'s."""
     timeout = LOOP_TEARDOWN_TIMEOUT_S if teardown_timeout is None else teardown_timeout
     loop = asyncio.new_event_loop()
+    # Our own default executor, so the teardown can shut it down without joining it.
+    executor = ThreadPoolExecutor(thread_name_prefix="backfill-executor")
+    loop.set_default_executor(executor)
     asyncio.set_event_loop(loop)
     try:
         return loop.run_until_complete(coro)
@@ -157,13 +183,47 @@ def _run(coro: Coroutine[Any, Any, Any], teardown_timeout: float | None = None) 
                         ", ".join(sorted({getattr(t.get_coro(), "__qualname__", "?") for t in pending})),
                     )
             loop.run_until_complete(_await_bounded(loop.shutdown_asyncgens(), timeout, "async generator shutdown"))
-            loop.run_until_complete(_await_bounded(loop.shutdown_default_executor(), timeout, "executor shutdown"))
         finally:
+            # NOT loop.shutdown_default_executor(): on Python 3.11 it ends in a plain
+            # ``finally: thread.join()`` that runs ON the loop, so even abandoning it
+            # after a timeout blocks until a stuck job returns. Shut down without
+            # waiting instead; queued jobs are cancelled, running ones are left to
+            # _terminate.
+            executor.shutdown(wait=False, cancel_futures=True)
             asyncio.set_event_loop(None)
             loop.close()
-        stuck = [t.name for t in threading.enumerate() if t is not threading.main_thread() and not t.daemon and t.is_alive()]
-        if stuck:
-            logger.warning("non-daemon thread(s) still alive at exit: %s", ", ".join(stuck))
+
+
+def _stuck_threads() -> list[threading.Thread]:
+    return [
+        t for t in threading.enumerate()
+        if t is not threading.main_thread() and not t.daemon and t.is_alive()
+    ]
+
+
+def _terminate(code: int) -> NoReturn:
+    """Leave the process with ``code``.
+
+    Normally a plain ``SystemExit``. ``os._exit`` ONLY when a non-daemon thread is still
+    alive after a grace period: the default executor's worker threads — e.g. Docling OCR
+    via ``run_in_executor`` in correspondent mode — are non-daemon, and the interpreter
+    joins them at exit WITHOUT a limit. Python cannot stop a running thread, so the only
+    way not to hang on a stuck job is to skip that join. By this point the event loop is
+    closed and the summary is printed; logging and stdio are flushed before leaving."""
+    deadline = time.monotonic() + THREAD_EXIT_GRACE_S
+    for thread in _stuck_threads():
+        thread.join(max(0.0, deadline - time.monotonic()))
+    stuck = _stuck_threads()
+    if not stuck:
+        raise SystemExit(code)
+    logger.warning(
+        "non-daemon thread(s) still running after teardown — exiting without waiting for them: %s",
+        ", ".join(t.name for t in stuck),
+    )
+    logging.shutdown()
+    sys.stdout.flush()
+    sys.stderr.flush()
+    os._exit(code)
 
 
 async def _build_mcp_manager(*, lift_rate_limit: bool):
@@ -203,6 +263,17 @@ async def _build_mcp_manager(*, lift_rate_limit: bool):
     return manager
 
 
+def _created_date_ok(report) -> bool:
+    """The created-date exit-code policy (see the module docstring)."""
+    if report.failed:
+        return False
+    if not report.unreachable:
+        return True
+    if report.commit:
+        return False
+    return len(report.unreachable) < report.candidates
+
+
 async def _run_created_date(*, commit: bool, limit: int, after_pid: int, rate: int) -> bool:
     from services.database import AsyncSessionLocal
     from services.paperless_metadata_backfill import RatePacer, backfill_created_dates
@@ -231,7 +302,13 @@ async def _run_created_date(*, commit: bool, limit: int, after_pid: int, rate: i
     print(json.dumps({"paperless_ids": {k: v for k, v in ids.items() if v}}, indent=2), flush=True)
     if not commit:
         print("DRY-RUN — nothing was written. Re-run with --commit to apply.", flush=True)
-    return not report.failed
+    if report.unreachable:
+        logger.warning(
+            "%d of %d document(s) unreachable in Paperless (404, trash or HTTP error — ids above). "
+            "Re-running is idempotent and retries them; to continue past this batch use --after-pid %d.",
+            len(report.unreachable), report.candidates, report.last_pid,
+        )
+    return _created_date_ok(report)
 
 
 async def _build_filename_index(manager) -> dict[str, int]:
@@ -276,7 +353,7 @@ async def _run_correspondent(*, commit: bool, limit: int | None) -> bool:
 
     manager = await _build_mcp_manager(lift_rate_limit=True)
     extractor = PaperlessMetadataExtractor(mcp_manager=manager)
-    fixed = skipped = no_corr = unmatched = already = 0
+    fixed = skipped = no_corr = unmatched = already = write_failed = 0
     try:
         names = await _fetch_correspondent_names(manager)  # full taxonomy, fetched once
         async with AsyncSessionLocal() as db:
@@ -347,6 +424,7 @@ async def _run_correspondent(*, commit: bool, limit: int | None) -> bool:
                         )
                     )
                     if patch.get("error"):
+                        write_failed += 1
                         logger.warning("    update_document(%s) failed: %s", pid, patch.get("error"))
                         continue
                     if doc.paperless_document_id != pid:
@@ -355,12 +433,13 @@ async def _run_correspondent(*, commit: bool, limit: int | None) -> bool:
                 fixed += 1
 
         logger.info(
-            "Done: %d set, %d already-had, %d no-correspondent, %d unmatched, %d skipped%s",
-            fixed, already, no_corr, unmatched, skipped, "" if commit else "  (DRY-RUN — no writes)",
+            "Done: %d set, %d write-failed, %d already-had, %d no-correspondent, %d unmatched, %d skipped%s",
+            fixed, write_failed, already, no_corr, unmatched, skipped,
+            "" if commit else "  (DRY-RUN — no writes)",
         )
     finally:
         await _shutdown(manager)
-    return True
+    return not write_failed
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -411,4 +490,4 @@ def main(argv: list[str] | None = None) -> int:
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    _terminate(main())
