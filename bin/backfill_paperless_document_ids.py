@@ -28,11 +28,42 @@ from __future__ import annotations
 import argparse
 import asyncio
 import logging
+import os
 import sys
+from collections.abc import Mapping
 from pathlib import Path
 
-_BACKEND = Path(__file__).resolve().parent.parent / "src" / "backend"
-sys.path.insert(0, str(_BACKEND))
+# --- backend import path (identical block in every bin/backfill_*.py) ---------------
+# These scripts are copied into the backend pod on their own, so this cannot live in a
+# shared module: it is what makes the shared modules importable in the first place.
+
+
+def _find_backend_dir(
+    script: Path, env: Mapping[str, str] = os.environ, image_root: Path = Path("/app")
+) -> Path:
+    """The Renfield backend root: ``$RENFIELD_BACKEND_DIR`` (exclusive when set), else
+    the repo layout ``bin/../src/backend``, else the image layout ``/app``."""
+    override = env.get("RENFIELD_BACKEND_DIR")
+    candidates = (
+        [Path(override)] if override
+        else [script.resolve().parent.parent / "src" / "backend", image_root]
+    )
+    for candidate in candidates:
+        if (candidate / "services" / "__init__.py").is_file() and (candidate / "utils" / "config.py").is_file():
+            return candidate
+    print(
+        f"{script.name}: Renfield backend not found (tried: {', '.join(map(str, candidates))}). "
+        "Set RENFIELD_BACKEND_DIR to the directory holding services/ and utils/ "
+        "(repo: src/backend, image: /app).",
+        file=sys.stderr,
+    )
+    raise SystemExit(2)
+
+
+_BACKEND = _find_backend_dir(Path(__file__))
+if str(_BACKEND) not in sys.path:
+    sys.path.insert(0, str(_BACKEND))
+# --- end backend import path ---------------------------------------------------------
 
 from sqlalchemy import select  # noqa: E402
 

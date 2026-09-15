@@ -291,7 +291,32 @@ the role descriptions in `config/agent_roles.yaml`.
     already has a correspondent.
 
   Neither is in the backend image (the build context is `src/backend`): copy the script
-  into the backend pod and run it there with cwd `/app`.
+  into the backend pod (any path, e.g. `kubectl cp bin/backfill_paperless_metadata.py
+  <ns>/<backend-pod>:/tmp/`) and run `python /tmp/backfill_paperless_metadata.py --mode …`
+  — no `PYTHONPATH`, any cwd. Every `bin/backfill_*.py` finds the backend itself:
+  `$RENFIELD_BACKEND_DIR` if set (exclusive), else the repo layout `bin/../src/backend`,
+  else the image layout `/app`; if none holds the backend it exits 2 with the paths it
+  tried. The metadata backfill starts only the `paperless` MCP server.
+
+  **Exit codes** (`backfill_paperless_metadata.py`): `0` success; `1` error — the
+  Paperless MCP is not configured or does not connect (previously every document
+  silently showed as `unreachable`), a write failed in `--commit` (created-date PATCH or
+  correspondent `update_document`), created-date found candidates but *all* were
+  unreachable (Paperless effectively down), or `--commit` could not reach *any*
+  document (404 / trash / HTTP error — re-run, it is idempotent, or continue with
+  `--after-pid <last_pid>`, which the warning prints); `2` backend not found. A **dry
+  run** with only *some* unreachable documents exits `0` with a warning: it writes
+  nothing, and a document deleted or trashed in Paperless is a data condition that would
+  otherwise fail every preview and hide a real outage behind the same code.
+
+  **Termination:** the teardown is time-bounded — MCP shutdown, leftover transport tasks
+  and async generators each get a deadline, and the default executor is shut down
+  without waiting (queued jobs cancelled; `loop.shutdown_default_executor()` is avoided
+  because on Python 3.11 it joins its helper thread on the loop without a limit). A job
+  still *running* there — e.g. Docling OCR stuck on a PDF in correspondent mode — lives
+  in a non-daemon thread the interpreter would join without a limit; after a short
+  grace the script flushes its output and leaves via `os._exit` with the same exit code.
+  Without such a thread it exits normally.
 
 ## Processed-file rename (#881, `FOLDER_INGEST_RENAME_PROCESSED_ENABLED`, dark)
 
