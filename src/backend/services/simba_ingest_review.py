@@ -93,67 +93,41 @@ def _bezeichnung(doc) -> str:
     return _sanitize_desc(raw)
 
 
-# Date parsing for the Simba booking period (Zeitraum). Handles ISO (2026-03-18)
-# and German DD.MM.YYYY (18.03.2026) — the two forms Schicht-A facts / titles use.
-_DATE_ISO = re.compile(r"\b(\d{4})-(\d{1,2})-(\d{1,2})\b")
-_DATE_DMY = re.compile(r"\b(\d{1,2})[.\-/](\d{1,2})[.\-/](\d{4})\b")
-
-
-def _parse_month_year(s: str | None) -> tuple[int, int] | None:
-    """(month, year) from a date string (ISO first, then DD.MM.YYYY), or None."""
-    if not s:
-        return None
-    m = _DATE_ISO.search(s)
-    if m:
-        yy, mm = int(m.group(1)), int(m.group(2))
-    else:
-        m = _DATE_DMY.search(s)
-        if not m:
-            return None
-        mm, yy = int(m.group(2)), int(m.group(3))
-    if 1 <= mm <= 12 and 2000 <= yy <= 2100:
-        return mm, yy
-    return None
-
-
 async def _document_period(db, document_id: int, doc=None) -> tuple[int | None, int | None]:
     """Booking period (month, year) for the Simba upload, derived from the
     document's OWN date so the review form does not default to the CURRENT month
-    (the #1167 bug — every upload was stamped with today's month). Prefers the
-    Schicht-A ``rechnungsdatum`` fact, then other date-bearing facts, then a date
-    parsed from the generated title (``… vom 18.03.2026``). (None, None) if no
-    date is derivable — the UI then falls back to now."""
-    def _rank(kind: str | None) -> int:
-        k = (kind or "").lower()
-        if "rechnungsdatum" in k:
-            return 0
-        if "leistung" in k or "datum" in k or "date" in k:
-            return 1
-        return 2
-
-    try:
-        rows = (
-            await db.execute(
-                select(DocumentFact.kind, DocumentFact.normalized_value, DocumentFact.value)
-                .where(DocumentFact.document_id == document_id)
-            )
-        ).all()
-        for kind, nv, v in sorted(rows, key=lambda r: _rank(r[0])):
-            got = _parse_month_year(nv) or _parse_month_year(v)
-            if got:
-                return got
-    except Exception as e:  # noqa: BLE001 — period is best-effort
-        logger.debug(f"simba period: fact-date lookup failed for doc {document_id}: {e}")
+    (the #1167 bug — every upload was stamped with today's month). Uses the
+    shared ``services.document_date.derive_document_date`` (the same derivation
+    as ``documents.document_date``): an explicit document-date fact, else an
+    event date or a title date not after the import — never an obligation or
+    deadline, whose month would stamp the booking into the wrong period.
+    (None, None) if no date is derivable — the UI then falls back to now."""
+    from services.document_date import derive_document_date
 
     try:
         if doc is None:
             doc = await db.get(Document, document_id)
-        title = (getattr(doc, "generated_title", None) or getattr(doc, "title", None) or "") if doc else ""
-        got = _parse_month_year(title)
-        if got:
-            return got
-    except Exception:  # noqa: BLE001
-        pass
+        rows = (
+            await db.execute(
+                select(
+                    DocumentFact.category,
+                    DocumentFact.kind,
+                    DocumentFact.normalized_value,
+                    DocumentFact.value,
+                ).where(DocumentFact.document_id == document_id)
+            )
+        ).all()
+        created = getattr(doc, "created_at", None) if doc else None
+        titles = [getattr(doc, "generated_title", None), getattr(doc, "title", None)] if doc else []
+        got = derive_document_date(
+            [tuple(r) for r in rows],
+            titles,
+            reference_date=created.date() if created else None,
+        )
+        if got is not None:
+            return got.month, got.year
+    except Exception as e:  # noqa: BLE001 — period is best-effort
+        logger.debug(f"simba period: date derivation failed for doc {document_id}: {e}")
     return None, None
 
 

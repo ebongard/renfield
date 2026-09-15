@@ -738,16 +738,6 @@ class TestSimbaIngestRoutes:
 
 # --- #1167: Simba booking period from the document date (not the current month) ---
 
-def test_parse_month_year_forms():
-    assert review._parse_month_year("18.03.2026") == (3, 2026)      # DD.MM.YYYY
-    assert review._parse_month_year("2026-03-18") == (3, 2026)      # ISO
-    assert review._parse_month_year("Rechnung vom 05.11.2024 faellig") == (11, 2024)
-    assert review._parse_month_year("no date here") is None
-    assert review._parse_month_year("99.99.2026") is None           # invalid month
-    assert review._parse_month_year("") is None
-    assert review._parse_month_year(None) is None
-
-
 async def test_document_period_prefers_rechnungsdatum_fact(db_session):
     """The booking period comes from the Schicht-A rechnungsdatum fact (not now,
     and preferred over other date facts)."""
@@ -785,6 +775,35 @@ async def test_document_period_falls_back_to_title(db_session):
     db_session.add(doc)
     await db_session.commit()
     await db_session.refresh(doc)
+
+    assert await review._document_period(db_session, doc.id, doc) == (3, 2026)
+
+
+async def test_document_period_ignores_obligation_and_deadline_dates(db_session):
+    """A payment deadline's month is not the booking period: obligation facts and
+    deadline kinds never count, so the period comes from the document date."""
+    from models.database import Atom, Document, DocumentFact
+
+    doc = Document(filename="scan.pdf", file_path="/x.pdf", status="completed",
+                   generated_title="Rechnung der TAXON GmbH")
+    db_session.add(doc)
+    await db_session.commit()
+    await db_session.refresh(doc)
+
+    atom = Atom(atom_id="fact-atom-docdate-deadline", atom_type="document_fact",
+                source_table="document_facts", source_id="1", owner_user_id=1,
+                policy={"tier": 0})
+    db_session.add(atom)
+    await db_session.flush()
+    db_session.add_all([
+        DocumentFact(document_id=doc.id, category="obligation", kind="zahlung",
+                     value="zahlbar bis 15.04.2026", atom_id=atom.atom_id),
+        DocumentFact(document_id=doc.id, category="universal", kind="faelligkeitsdatum",
+                     value="15.04.2026", atom_id=atom.atom_id),
+        DocumentFact(document_id=doc.id, category="universal", kind="belegdatum",
+                     value="18.03.2026", atom_id=atom.atom_id),
+    ])
+    await db_session.commit()
 
     assert await review._document_period(db_session, doc.id, doc) == (3, 2026)
 

@@ -611,8 +611,10 @@ class Document(Base):
     created_at = Column(DateTime, default=_utcnow)
     processed_at = Column(DateTime, nullable=True)
     # The document's OWN date (invoice/letter date), derived at Schicht-A
-    # extraction from the facts (rechnungsdatum → other date facts → the generated
-    # title's date) — distinct from created_at (the import timestamp). NULL when no
+    # extraction by services/document_date.derive_document_date (explicit
+    # document-date fact → event/period fact → the generated title's date; never an
+    # obligation/deadline; the latter two only up to created_at + a small
+    # tolerance) — distinct from created_at (the import timestamp). NULL when no
     # date is derivable. Lets /wissen/dokumente sort by document date. Migration
     # pc20260831; backfilled by bin/backfill_document_dates.py.
     document_date = Column(Date, nullable=True, index=True)
