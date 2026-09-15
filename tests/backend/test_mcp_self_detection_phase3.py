@@ -546,6 +546,76 @@ class TestExecuteToolRecording:
 
 
 @pytest.mark.asyncio
+class TestWeatherThrottleEnvelope:
+    """The weather MCP's throttle contract, fed through the real result path.
+
+    renfield-mcp-weather answers an upstream 429 with a plain dict (no ``isError``),
+    which FastMCP ships as pretty JSON text. Before its structured-429 fix that dict
+    was ``{"error": "Weather API error: 429"}`` — a bare number the classifier
+    deliberately ignores. Now it carries ``status`` + ``retry_after``, read by the
+    existing JSON-key branch: no weather special case in the backend.
+    """
+
+    @staticmethod
+    def _wire(payload: dict) -> str:
+        import json
+
+        return json.dumps(payload, indent=2)  # FastMCP's text serialisation of a dict
+
+    def _mgr(self, *results):
+        session = _Session(results=results)
+        state = _server(tools=1, session=session)
+        mgr = _manager({"optional": state})
+        mgr._tool_index["mcp.optional.t0"] = state.tools[0]
+        return mgr, state
+
+    async def test_structured_throttle_is_recorded_with_its_retry_after(self, monkeypatch):
+        monkeypatch.setattr(settings, "mcp_health_rate_limit_signal_enabled", True)
+        monkeypatch.setattr(settings, "mcp_rate_limit_backoff_enabled", True)
+        wire = self._wire(
+            {"error": "Weather API rate limit (HTTP 429)", "status": 429, "retry_after": 30}
+        )
+        assert _classify_rate_limit(wire) == (True, 30.0)
+
+        mgr, state = self._mgr(_result(wire))
+        res = await mgr.execute_tool("mcp.optional.t0", {})
+
+        assert res["success"] is False  # inner-error envelope, isError stays False
+        assert state.rate_limit_count() == 1
+        assert state.rate_limit_retry_in("t0") is not None
+
+    async def test_structured_throttle_without_retry_after_is_still_a_throttle(self, monkeypatch):
+        monkeypatch.setattr(settings, "mcp_health_rate_limit_signal_enabled", True)
+        wire = self._wire({"error": "Weather API rate limit (HTTP 429)", "status": 429})
+        assert _classify_rate_limit(wire) == (True, None)
+
+        mgr, state = self._mgr(_result(wire))
+        await mgr.execute_tool("mcp.optional.t0", {})
+        assert state.rate_limit_count() == 1
+
+    async def test_legacy_bare_number_envelope_stays_unrecognised(self, monkeypatch):
+        # Deliberate: "429" without an HTTP/status marker is not evidence. The fix
+        # belongs in the MCP's envelope, not in a looser backend pattern.
+        monkeypatch.setattr(settings, "mcp_health_rate_limit_signal_enabled", True)
+        wire = self._wire({"error": "Weather API error: 429"})
+        assert _classify_rate_limit(wire) == (False, None)
+
+        mgr, state = self._mgr(_result(wire))
+        await mgr.execute_tool("mcp.optional.t0", {})
+        assert state.rate_limit_count() == 0
+
+    async def test_weather_success_mentioning_429_is_not_a_throttle(self, monkeypatch):
+        monkeypatch.setattr(settings, "mcp_health_rate_limit_signal_enabled", True)
+        wire = self._wire(
+            {"location": {"name": "Ort 429", "postcode": "42900"}, "elevation_m": 429, "status": 429}
+        )
+        mgr, state = self._mgr(_result(wire))
+        res = await mgr.execute_tool("mcp.optional.t0", {})
+        assert res["success"] is True
+        assert state.rate_limit_count() == 0
+
+
+@pytest.mark.asyncio
 class TestRetryAfterGate:
     def _mgr(self, *results):
         session = _Session(results=results)
