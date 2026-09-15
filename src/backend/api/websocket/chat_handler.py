@@ -148,6 +148,50 @@ async def _lookup_user_id_for_speaker(speaker_id: int) -> int | None:
         return result.scalar_one_or_none()
 
 
+async def _resolve_wire_speaker(
+    embedding: list[float] | None,
+    audio_duration_s: float | None,
+) -> dict | None:
+    """Mark the turn voice-originated and resolve its wire speaker embedding.
+
+    ``voice_originated`` derives from the embedding's PRESENCE alone (truthy =
+    came from the voice path) and is set regardless of speaker recognition —
+    it drives voice-specific behavior (TTS routing, answer style), not identity.
+
+    Resolution (find-or-auto-enrol) is gated on ``speaker_recognition_enabled``:
+    the resolver persists an ECAPA voiceprint (biometric data, Art. 9 GDPR) and,
+    with the default ``speaker_auto_enroll``/``speaker_continuous_learning``,
+    would create an "Unbekannter Sprecher #N" row on EVERY voice turn. An
+    instance that turned recognition off must not store voiceprints just
+    because a browser mic is in use. The resolver re-checks the flag (defense
+    in depth). Best-effort: any failure returns None (speaker unknown).
+    """
+    voice_originated.set(bool(embedding))
+    if not embedding:
+        return None
+    if not settings.speaker_recognition_enabled:
+        return None
+    try:
+        from services.speaker_resolver import resolve_speaker_from_embedding
+        async with AsyncSessionLocal() as spk_session:
+            speaker_info = await resolve_speaker_from_embedding(
+                spk_session, embedding,
+                audio_duration_s=audio_duration_s,
+            )
+        if speaker_info and speaker_info.get("speaker_id"):
+            logger.info(
+                f"🎤 chat-WS speaker resolved: "
+                f"{speaker_info.get('speaker_name')} "
+                f"(id={speaker_info.get('speaker_id')}, "
+                f"conf={speaker_info.get('speaker_confidence', 0):.2f}, "
+                f"new={speaker_info.get('is_new_speaker')})"
+            )
+        return speaker_info
+    except Exception as e:
+        logger.warning(f"⚠️ Speaker resolution from wire-embedding failed: {e}")
+        return None
+
+
 async def _session_registerable_by(session_id: str, auth_user_id: int | None) -> bool:
     """#657: a client may only register a session for server-push delivery
     (`register_ws_connection` → `notify_session`) if it OWNS that conversation,
@@ -1164,38 +1208,16 @@ async def websocket_endpoint(
             if msg_request_id:
                 request_id_var.set(msg_request_id[:8])
 
-            # Truthy embedding = came from the voice path; null/empty = text.
-            voice_originated.set(bool(msg_speaker_embedding))
-
-            # Phase B (B.4.a): resolve voice-server-supplied speaker
-            # embedding. When present, this came in via the streaming
-            # voice path (voice-server /ws/voice → frontend → chat-WS).
-            # We log + run the same find-or-auto-enrol policy that the
-            # in-process Whisper path uses, then thread `speaker_info`
-            # through the chat_context_established hook so domain
-            # consumers (Reva tenancy, ha_glue presence) react to the
-            # right speaker. Best-effort: failures fall back to the
-            # authenticated user identity.
-            speaker_info: dict | None = None
-            if msg_speaker_embedding:
-                try:
-                    from services.speaker_resolver import resolve_speaker_from_embedding
-                    async with AsyncSessionLocal() as spk_session:
-                        speaker_info = await resolve_speaker_from_embedding(
-                            spk_session, msg_speaker_embedding,
-                            audio_duration_s=msg.speaker_audio_duration_s,
-                        )
-                    if speaker_info and speaker_info.get("speaker_id"):
-                        logger.info(
-                            f"🎤 chat-WS speaker resolved: "
-                            f"{speaker_info.get('speaker_name')} "
-                            f"(id={speaker_info.get('speaker_id')}, "
-                            f"conf={speaker_info.get('speaker_confidence', 0):.2f}, "
-                            f"new={speaker_info.get('is_new_speaker')})"
-                        )
-                except Exception as e:
-                    logger.warning(f"⚠️ Speaker resolution from wire-embedding failed: {e}")
-                    speaker_info = None
+            # Phase B (B.4.a): a truthy embedding = came from the voice path
+            # (voice-server /ws/voice → frontend → chat-WS); null/empty = text.
+            # _resolve_wire_speaker marks the turn voice-originated and — only
+            # when speaker_recognition_enabled — runs the same find-or-auto-enrol
+            # policy the in-process Whisper path uses, so `speaker_info` reaches
+            # the chat_context_established hook (Reva tenancy, ha_glue presence).
+            # Best-effort: failures fall back to the authenticated user identity.
+            speaker_info: dict | None = await _resolve_wire_speaker(
+                msg_speaker_embedding, msg.speaker_audio_duration_s,
+            )
 
             _log_user_id = auth_result.get("user_id") if isinstance(auth_result, dict) else None
             logger.info(f"📨 WebSocket Nachricht: {message_type} - '{content[:100]}' (RAG: {use_rag}, session: {msg_session_id}, user: {_log_user_id})")

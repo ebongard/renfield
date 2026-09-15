@@ -199,6 +199,62 @@ def test_verify_accepts_service_token(monkeypatch):
     assert "jti" not in body
 
 
+# --- Browser voice token scopes (xidra browser voice) ---------------------
+
+
+def test_verify_accepts_user_voice_scope_token(monkeypatch):
+    """The browser's ~90 s faucet token (`/api/ws/token?purpose=voice`,
+    scope "voice") is exactly what the registry voice-server forwards here —
+    it must verify for an active user."""
+    _install_service_stubs(
+        monkeypatch,
+        decode_return={
+            "sub": "42", "scope": "voice", "type": "access",
+            "jti": "v1", "exp": 9999999999,
+        },
+    )
+    resp = _client().post("/api/internal/auth/verify", json={"token": "x"})
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["user_id"] == "42"
+    assert body["scope"] == "voice"
+    assert "jti" not in body
+
+
+def test_verify_rejects_user_ws_scope_token(monkeypatch):
+    """A scope "ws" token is only valid on renfield's own /ws/* handshake —
+    never replayable as a voice session."""
+    _install_service_stubs(
+        monkeypatch,
+        decode_return={
+            "sub": "42", "scope": "ws", "type": "access",
+            "jti": "w1", "exp": 9999999999,
+        },
+    )
+    resp = _client().post("/api/internal/auth/verify", json={"token": "x"})
+    assert resp.status_code == 401
+    assert resp.json()["detail"] == "unauthorized"
+
+
+def test_verify_voice_scope_with_wrong_secret_rejected(monkeypatch):
+    """A valid voice token presented with the wrong shared secret is 401 — a
+    registry row whose verify_secret drifted from the backend's
+    INTERNAL_AUTH_VERIFY_SECRET fails every browser voice turn."""
+    _set_verify_secret(monkeypatch, "s3cr3t")
+    _install_service_stubs(
+        monkeypatch,
+        decode_return={
+            "sub": "42", "scope": "voice", "type": "access",
+            "jti": "v2", "exp": 9999999999,
+        },
+    )
+    resp = _client().post(
+        "/api/internal/auth/verify", json={"token": "x"},
+        headers={"X-Verify-Secret": "not-the-secret"},
+    )
+    assert resp.status_code == 401
+
+
 # --- Shared-secret gate (login-audit finding) ----------------------------
 
 

@@ -126,6 +126,12 @@ class FeatureFlags(BaseModel):
     # Per-user live event push (/ws/user). On => the frontend opens the socket and
     # invalidates KB queries on server-side changes. See utils/config.py.
     user_events_enabled: bool = True
+    # Registry client id the browser sends as ?client= on /ws/voice (runtime, so
+    # one shared frontend image serves every instance). Empty => the frontend
+    # falls back to the build-time VITE_VOICE_CLIENT_ID, else omits the param.
+    # Not a secret — it only names the registry row. See
+    # utils/config.py::voice_browser_client_id.
+    voice_client_id: str = ""
 
 
 @router.get("/features", response_model=FeatureFlags)
@@ -155,4 +161,5 @@ async def get_features(
         simba_ingest_review_enabled=settings.folder_ingest_simba_enabled,
         document_dedupe_enabled=settings.document_dedupe_enabled,
         user_events_enabled=settings.user_events_enabled,
+        voice_client_id=settings.voice_browser_client_id,
     )

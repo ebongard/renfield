@@ -1,4 +1,5 @@
 import { useQueryClient } from '@tanstack/react-query';
+import type { QueryClient } from '@tanstack/react-query';
 
 import apiClient from '../../utils/axios';
 import { useApiQuery, useApiMutation } from '../hooks';
@@ -140,6 +141,9 @@ export interface FeatureFlags {
   /** Per-user live event push (/ws/user): open the socket + invalidate KB queries
    * on server-side changes. On by default. See docs/design/user-events-ws.md. */
   user_events_enabled?: boolean;
+  /** Registry client id the browser sends as `?client=` on /ws/voice. Empty =>
+   *  build-time VITE_VOICE_CLIENT_ID, else the parameter is omitted. */
+  voice_client_id?: string;
 }
 
 async function fetchAtomSearch(query: string): Promise<AtomMatch[]> {
@@ -195,6 +199,21 @@ async function fetchObligations(filter: ObligationsFilter): Promise<DocumentFact
 async function fetchFeatureFlags(): Promise<FeatureFlags> {
   const response = await apiClient.get<FeatureFlags>('/api/config/features');
   return response.data;
+}
+
+/**
+ * The instance's runtime voice registry client id, read at voice-socket CONNECT
+ * time. Shares the `useFeatureFlags` cache entry: returns it when already
+ * loaded, otherwise waits for the fetch — so the socket never opens before the
+ * features are known. `null` when the backend has none configured.
+ */
+export async function fetchVoiceClientId(queryClient: QueryClient): Promise<string | null> {
+  const flags = await queryClient.ensureQueryData({
+    queryKey: keys.config.features(),
+    queryFn: fetchFeatureFlags,
+    staleTime: STALE.CONFIG,
+  });
+  return flags.voice_client_id || null;
 }
 
 interface PatchAtomTierArgs {

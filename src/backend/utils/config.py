@@ -136,6 +136,18 @@ class Settings(BaseSettings):
     # Each deployment sets its own: reva=reva, xidra=xidra, household=renfield.
     voice_client_id: str = ""
 
+    # Client id the BROWSER sends as ?client= on its /ws/voice handshake to the
+    # shared registry voice-server. NOT the same thing as voice_client_id above
+    # (that one is the backend→voice-server header, e.g. the household's
+    # anonymous row): the browser id selects the registry row whose verify_url
+    # points back at THIS instance, so a user's scope:"voice" token is verified
+    # by the backend that minted it. Exposed to the frontend as `voice_client_id`
+    # in /api/config/features (runtime, so one shared frontend image serves every
+    # instance). Empty = the frontend falls back to the build-time
+    # VITE_VOICE_CLIENT_ID, else omits the parameter (household: byte-identical).
+    # xidra=xidra. Restricted charset: it lands in a URL query string.
+    voice_browser_client_id: str = Field(default="", pattern=r"^[a-z0-9_-]{0,64}$")
+
     # Home Assistant / Frigate settings moved to ha_glue/utils/config.py
     # (see `HaGlueSettings`). Access via:
     #     from ha_glue.utils.config import ha_glue_settings
@@ -1795,6 +1807,28 @@ class Settings(BaseSettings):
     obligation_calendar_horizon_days: int = 90         # sync obligations due within N days
     obligation_calendar_retain_past_days: int = 30     # keep past-due events this long before cleanup
     obligation_calendar_max_ops_per_run: int = 100     # cap create/update MCP calls per user per pass
+
+    @model_validator(mode="after")
+    def warn_voice_browser_client_id_missing(self) -> "Settings":
+        """Soft misconfiguration: browser voice on an auth-on instance without a
+        registry client id. The shared registry voice-server rejects a /ws/voice
+        handshake without ``?client=`` on its primary port, so the mic would
+        silently fail for every user. Warn (not fail): a build-time
+        VITE_VOICE_CLIENT_ID may still cover it, and auth-off instances use the
+        anonymous path. Household (auth off) never trips this."""
+        if (
+            self.auth_enabled
+            and self.features.get("voice")
+            and not self.voice_browser_client_id
+        ):
+            logger.warning(
+                "⚠ FEATURE_VOICE and AUTH_ENABLED are on but VOICE_BROWSER_CLIENT_ID "
+                "is empty — the browser /ws/voice handshake carries no ?client= "
+                "unless the frontend was built with VITE_VOICE_CLIENT_ID, and the "
+                "shared registry voice-server rejects it. Set "
+                "VOICE_BROWSER_CLIENT_ID to this instance's registry row."
+            )
+        return self
 
     @property
     def features(self) -> dict[str, bool]:

@@ -1,7 +1,9 @@
 import { createContext, useContext, useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import type { Dispatch, ReactNode, SetStateAction } from 'react';
 import { useTranslation } from 'react-i18next';
+import { useQueryClient } from '@tanstack/react-query';
 import apiClient from '../../../utils/axios';
+import { fetchVoiceClientId } from '../../../api/resources/brain';
 import { debug } from '../../../utils/debug';
 import { useWakeWord } from '../../../hooks/useWakeWord';
 import { WAKEWORD_CONFIG } from '../../../config/wakeword';
@@ -1445,6 +1447,12 @@ export function ChatProvider({ children }: ChatProviderProps) {
     }
   }, [resumeWakeWord]);
 
+  const queryClient = useQueryClient();
+  const getVoiceClientId = useCallback(
+    () => fetchVoiceClientId(queryClient),
+    [queryClient],
+  );
+
   const voiceStream = useVoiceStream({
     onFinal: handleStreamFinal,
     onError: handleStreamError,
@@ -1456,6 +1464,8 @@ export function ChatProvider({ children }: ChatProviderProps) {
     // identically from the orchestration layer's view.
     onRecordingStart: handleRecordingStart,
     onRecordingStop: handleRecordingStop,
+    // Runtime registry client id (?client=), awaited at connect time.
+    getClientId: getVoiceClientId,
   });
 
   // Wire the streaming-TTS dispatcher used by handleStreamChunk now

@@ -68,6 +68,14 @@ async def resolve_speaker_from_embedding(
     existing one — short/noisy turns are what pollute profiles. See
     docs/design/speaker-enrollment-redesign.md.
     """
+    # Defense in depth behind the chat handler's gate: with speaker recognition
+    # off NOTHING is read or written — no match, no auto-enrol, no reinforcement,
+    # no review-bucket candidate. An ECAPA voiceprint is biometric data (Art. 9
+    # GDPR); an instance that disabled recognition must never persist one, even
+    # if a future caller forgets its own gate.
+    if not settings.speaker_recognition_enabled:
+        return _empty_speaker_info()
+
     gating = settings.speaker_quality_gating_enabled
     controlled = settings.speaker_controlled_enrollment_enabled
     # The duration quality gate is active under EITHER Phase-0 gating or Phase-3

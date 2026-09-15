@@ -6,6 +6,7 @@ import apiClient from '../../utils/axios';
 import AudioVisualizer from './AudioVisualizer';
 import { useChatContext } from './context/ChatContext';
 import { useFeatureFlags } from '../../api/resources/brain';
+import { useAuth } from '../../context/AuthContext';
 import { roleLabel } from '../../components/chat/AgentRoleBadge';
 
 interface KnowledgeBase {
@@ -23,6 +24,11 @@ export default function ChatInput() {
     openPalette, pendingRoleHint, clearRoleHint,
   } = useChatContext();
   const { data: features } = useFeatureFlags();
+  // Same gate as the wake-word controls in ChatHeader: an instance with the
+  // voice feature off (FEATURE_VOICE=false) must not offer a mic that opens a
+  // voice-server socket it has no route to.
+  const { isFeatureEnabled } = useAuth();
+  const voiceEnabled = isFeatureEnabled('voice');
   const paletteEnabled = features?.command_palette_enabled ?? false;
   // The pinned-role indicator is shared by the palette and the role badge (item 6),
   // so show it whenever either feature is on — otherwise pinning from the role
@@ -353,19 +359,21 @@ export default function ChatInput() {
           }
         </button>
 
-        <button
-          onClick={toggleRecording}
-          className={`p-3 rounded-lg transition-colors ${
-            recording
-              ? 'bg-red-600 hover:bg-red-700 text-white animate-pulse'
-              : 'bg-gray-200 hover:bg-gray-300 text-gray-600 dark:bg-gray-700 dark:hover:bg-gray-600 dark:text-gray-300'
-          } active:scale-95`}
-          disabled={loading}
-          aria-label={recording ? t('voice.stopRecording') : t('voice.startRecording')}
-          aria-pressed={recording}
-        >
-          {recording ? <MicOff className="w-5 h-5" aria-hidden="true" /> : <Mic className="w-5 h-5" aria-hidden="true" />}
-        </button>
+        {voiceEnabled && (
+          <button
+            onClick={toggleRecording}
+            className={`p-3 rounded-lg transition-colors ${
+              recording
+                ? 'bg-red-600 hover:bg-red-700 text-white animate-pulse'
+                : 'bg-gray-200 hover:bg-gray-300 text-gray-600 dark:bg-gray-700 dark:hover:bg-gray-600 dark:text-gray-300'
+            } active:scale-95`}
+            disabled={loading}
+            aria-label={recording ? t('voice.stopRecording') : t('voice.startRecording')}
+            aria-pressed={recording}
+          >
+            {recording ? <MicOff className="w-5 h-5" aria-hidden="true" /> : <Mic className="w-5 h-5" aria-hidden="true" />}
+          </button>
+        )}
 
         <button
           onClick={() => sendMessage?.(input, false)}

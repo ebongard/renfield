@@ -124,18 +124,33 @@ interface UseVoiceStreamOptions {
   onTtsSettled?: (requestId: string, outcome: TtsOutcome) => void;
   onRecordingStart?: () => void | Promise<void>;
   onRecordingStop?: () => void;
+  // Resolves the instance's RUNTIME registry client id (backend
+  // /api/config/features `voice_client_id`). Awaited at CONNECT time, so the
+  // socket waits for the features instead of connecting without ?client=
+  // before they loaded. A rejection counts as "no runtime id".
+  getClientId?: () => Promise<string | null>;
 }
 
-function buildVoiceWsUrl(token: string | null): string {
-  // VITE_WS_URL convention includes a trailing /ws — strip it and
-  // append /ws/voice. Mirror useDeviceConnection's pattern.
-  // Token is omitted entirely when null so voice-server's
-  // auth_required=False path works for AUTH_ENABLED=false deployments.
-  // VITE_VOICE_CLIENT_ID (when set) is sent as ?client= so a shared
-  // multi-tenant voice-server (AUTH_MODE=registry) routes verification to
-  // this product; omitted → legacy single-tenant voice-servers unaffected.
+/**
+ * Build the /ws/voice URL.
+ *
+ * VITE_WS_URL convention includes a trailing /ws — strip it and append
+ * /ws/voice (mirrors useDeviceConnection). The token is omitted when null so
+ * voice-server's auth_required=False path works on AUTH_ENABLED=false
+ * deployments.
+ *
+ * `?client=` selects the shared registry voice-server's row, which routes token
+ * verification back to this instance. Precedence: the runtime id from the
+ * backend → the build-time VITE_VOICE_CLIENT_ID → omit the parameter (legacy
+ * single-tenant voice-servers and the household are byte-identical).
+ */
+export function buildVoiceWsUrl(
+  token: string | null,
+  runtimeClientId: string | null | undefined,
+  buildTimeClientId: string | undefined = import.meta.env.VITE_VOICE_CLIENT_ID as string | undefined,
+): string {
   const base = getWebSocketUrl().replace(/\/ws$/, '');
-  const clientId = import.meta.env.VITE_VOICE_CLIENT_ID as string | undefined;
+  const clientId = runtimeClientId || buildTimeClientId;
   const params = new URLSearchParams();
   if (token) params.set('token', token);
   if (clientId) params.set('client', clientId);
@@ -188,7 +203,12 @@ export function useVoiceStream({
   onTtsSettled,
   onRecordingStart,
   onRecordingStop,
+  getClientId,
 }: UseVoiceStreamOptions) {
+  // Ref, not a dependency: ensureSocket must not be re-created (and the barge-in
+  // chain re-wired) just because the consumer passed a new closure.
+  const getClientIdRef = useRef(getClientId);
+  getClientIdRef.current = getClientId;
   const wsRef = useRef<WebSocket | null>(null);
   const pendingSocketRef = useRef<Promise<WebSocket> | null>(null);
   const recorderRef = useRef<MediaRecorder | null>(null);
@@ -462,8 +482,18 @@ export function useVoiceStream({
     // JS-readable long-lived-token exposure). fetchVoiceToken() returns null on
     // auth-off deployments → buildVoiceWsUrl omits the query param and the
     // voice-server treats the empty token as anonymous (auth_required=False).
-    const connect = fetchVoiceToken().then((wsToken) => {
-    const url = buildVoiceWsUrl(wsToken);
+    // The runtime client id is resolved in parallel and awaited too: the socket
+    // never opens before the features are known (else an auth-on instance would
+    // connect without ?client= and the registry voice-server rejects it).
+    const resolveClientId = getClientIdRef.current;
+    const clientIdPromise: Promise<string | null> = resolveClientId
+      ? resolveClientId().catch((e: unknown) => {
+        debug.log('voice: runtime client id unavailable — using build-time fallback', e);
+        return null;
+      })
+      : Promise.resolve(null);
+    const connect = Promise.all([fetchVoiceToken(), clientIdPromise]).then(([wsToken, clientId]) => {
+    const url = buildVoiceWsUrl(wsToken, clientId);
     const ws = new WebSocket(url);
     ws.binaryType = 'arraybuffer';
     wsRef.current = ws;
