@@ -90,7 +90,7 @@ jsonschema>=4.21.0            # JSON Schema validation for MCP tool inputs
 # (these run in-process). To update one: `git ls-remote https://github.com/
 # ebongard/<repo>.git HEAD` and swap the SHA below (reviewed, not automatic).
 # SHAs pinned 2026-07-10 (= each repo's then-current main; no code change).
-renfield-mcp-weather @ https://github.com/ebongard/renfield_mcp_weather/archive/e833caa77e3a13b5ca0a2095f56e3521d74ac1da.tar.gz
+renfield-mcp-weather @ https://github.com/ebongard/renfield_mcp_weather/archive/58e57f3b2b5d15032c3ae49450f39db8d7963039.tar.gz  # 1.1.0 (structured 429 envelope)
 renfield-mcp-paperless @ https://github.com/ebongard/renfield-mcp-paperless/archive/ad94239d5843c56a24ccec8c85b2e0c40fb8edc9.tar.gz  # 1.13.0 (search_index_health)
 renfield-mcp-mail @ https://github.com/ebongard/renfield-mcp-mail/archive/f3c6729330a406b7e7e654ef0538add2d5885db5.tar.gz
 aiosmtplib>=3.0                  # Required by renfield-mcp-mail (not auto-resolved from archive installs)
