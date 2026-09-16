@@ -28,10 +28,19 @@ ASCII data flow (retrieve_for_prompt — main agent-facing entry point):
        ▼
     Cap total at budget_chars; return dict[section_name -> list[memory]]
 
-Both retrieve() and retrieve_essential() are READ-WRITE: they update
-access_count + last_accessed_at on returned memories (used by the decay
-cleanup logic in ConversationMemoryService.cleanup). This is intentional —
-read frequency feeds memory importance.
+Both retrieve() and retrieve_essential() are READ-WRITE BY DEFAULT: they
+update access_count + last_accessed_at on returned memories (used by the
+decay cleanup logic in ConversationMemoryService.cleanup). This is
+intentional — read frequency feeds memory importance.
+
+``track_access=False`` turns either call into a PURE READ. It exists for
+callers that must not take row locks on the returned rows — specifically
+the v2 extract pipeline, whose Phase-1 access write held row locks across
+the LLM call and produced a production deadlock (see the lock-semantics
+comment in conversation_memory_service.extract_and_save_v2). Such callers
+own the access bump themselves so a candidate is still counted exactly once
+per extraction. Default True keeps every chat/agent recall caller
+byte-identical.
 
 Lane A3 of the second-brain-circles eng-review plan. Same pattern as
 Lane A1 (rag_retrieval) and Lane A2 (kg_retrieval).
@@ -112,6 +121,7 @@ class MemoryRetrieval:
         threshold: float | None = None,
         ranker: str = "default",
         enforce_circles: bool = False,
+        track_access: bool = True,
     ) -> list[dict]:
         """
         Retrieve relevant memories using cosine similarity search.
@@ -135,8 +145,15 @@ class MemoryRetrieval:
             the candidate window and surfacing recently-touched rows that
             the user is contradicting).
 
+        `track_access` (default True) controls the write side. False makes
+        this a PURE READ — no access_count/last_accessed_at UPDATE, hence no
+        row locks on the returned rows. Used by the v2 extract pipeline,
+        which must not hold row locks across its LLM call (deadlock) and
+        issues its own single access bump instead.
+
         Returns list of dicts with id, content, category, importance, similarity.
-        Side effect: updates access_count + last_accessed_at on returned rows.
+        Side effect (track_access=True only): updates access_count +
+        last_accessed_at on returned rows.
         """
         limit = limit or settings.memory_retrieval_limit
         threshold = threshold if threshold is not None else settings.memory_retrieval_threshold
@@ -259,7 +276,12 @@ class MemoryRetrieval:
         # the end of their own scope anyway, so this preserves access
         # tracking durability while letting shadow mode properly roll
         # back.
-        if memory_ids:
+        #
+        # `track_access=False` skips the write ENTIRELY (not just the
+        # flush): the UPDATE is what takes row locks, and those outlive
+        # any lock the caller released — the v2-extract deadlock. Such
+        # callers bump access themselves, once, at a safe point.
+        if memory_ids and track_access:
             await self.db.execute(
                 update(ConversationMemory)
                 .where(ConversationMemory.id.in_(memory_ids))
@@ -280,6 +302,7 @@ class MemoryRetrieval:
         self,
         user_id: int | None = None,
         limit: int | None = None,
+        track_access: bool = True,
     ) -> list[dict]:
         """
         Retrieve high-importance memories regardless of query similarity.
@@ -290,6 +313,9 @@ class MemoryRetrieval:
 
         Lane C: `user_id` is the asker — circle filter applies (own +
         public + explicit-grant + tier-membership).
+
+        `track_access` (default True) — see `retrieve`. False makes this a
+        pure read (no UPDATE, no commit, no row locks).
         """
         threshold = settings.memory_essential_threshold
         limit = limit or settings.memory_retrieval_limit
@@ -328,7 +354,17 @@ class MemoryRetrieval:
             })
             memory_ids.append(row.id)
 
-        if memory_ids:
+        # NOTE (inconsistency, deliberately left as-is): this site commits
+        # while `retrieve` only flushes. See the flush-vs-commit comment in
+        # `retrieve` — that one was changed to flush() because an
+        # unconditional commit broke the v2-shadow savepoint. This path is
+        # never called inside that savepoint (the extract pipeline uses
+        # `retrieve` only), so the commit is currently harmless, but it does
+        # commit the CALLER's in-flight transaction as a side effect of a
+        # read. Changing it is a separate, behaviour-visible fix with its own
+        # blast radius (chat_handler + retrieve_for_prompt) and is NOT part of
+        # the deadlock fix.
+        if memory_ids and track_access:
             await self.db.execute(
                 update(ConversationMemory)
                 .where(ConversationMemory.id.in_(memory_ids))
