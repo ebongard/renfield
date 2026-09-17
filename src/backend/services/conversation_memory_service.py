@@ -1081,6 +1081,62 @@ class ConversationMemoryService(AtomOwnerResolverMixin):
             logger.warning(f"v2 extract: MemoryOpsList schema reject: {e}")
             return None
 
+    # --- Ownership guard for extraction-driven writes ----------------------
+    #
+    # Both apply paths (v2 ops and v1 contradiction resolution) take the row
+    # to mutate from an LLM response. `validate_against_candidates` checks
+    # ONLY that the id was in the candidate set — never who owns it — and the
+    # candidate set is built with `user_id` exactly as it arrived from the
+    # chat handler, i.e. `int | None`:
+    #
+    #   auth OFF, user_id=None   household turn. The circle filter is a
+    #                            documented full bypass there and every row
+    #                            was attributed to the same fallback owner by
+    #                            `_resolve_owner_user_id` — one trust domain.
+    #   auth ON,  user_id=None   device / satellite / unidentified-voice turn.
+    #                            The circle filter degrades to public-tier, so
+    #                            the candidates are OTHER users' rows — and
+    #                            there is no owner to scope the write to.
+    #
+    # Only the second case is a boundary violation, and it is the one that
+    # carried no SQL predicate at all. It fails closed; the household path
+    # stays byte-identical.
+
+    def _identity_scoped_write_denied(
+        self, op: str, target_id: int, user_id: int | None
+    ) -> bool:
+        """True when an extraction op must NOT mutate an existing row.
+
+        Refuses only the unidentified turn on an auth-enabled instance (see
+        the block comment above). An identified turn is scoped by an
+        ownership predicate at the call site instead.
+        """
+        if user_id is not None or not settings.auth_enabled:
+            return False
+        logger.warning(
+            f"memory extract: refusing {op} on memory id={target_id} — "
+            "turn carries no user identity while auth is enabled"
+        )
+        return True
+
+    async def _extraction_target_owned(
+        self, target_id: int, user_id: int | None
+    ) -> bool:
+        """Ownership recheck for an LLM-supplied target row (v1 path).
+
+        The v2 path pushes the same rule into the statement's WHERE clause;
+        v1 mutates through the ORM, so the check is a separate read.
+        """
+        if user_id is None:
+            return not settings.auth_enabled
+        result = await self.db.execute(
+            select(ConversationMemory.user_id).where(
+                ConversationMemory.id == target_id
+            )
+        )
+        owner_id = result.scalar_one_or_none()
+        return owner_id is not None and int(owner_id) == int(user_id)
+
     async def _apply_add_v2(
         self,
         *,
@@ -1157,12 +1213,17 @@ class ConversationMemoryService(AtomOwnerResolverMixin):
         """Apply UPDATE op to an existing row. Re-embeds the new content.
         No internal commit.
 
-        Defense-in-depth: when user_id is provided, the WHERE clause
-        scopes the UPDATE to rows owned by that user. Even if the LLM
-        produces a target_id that escaped the candidate-set membership
-        check (poisoned retrieval, validator bug), this prevents
-        cross-user mutation at the SQL layer.
+        Ownership gate — NOT merely defense-in-depth: `target_id` comes
+        from the LLM and `validate_against_candidates` checks membership,
+        never ownership. An identified turn scopes the UPDATE to rows owned
+        by that user via the WHERE clause; an unidentified turn on an
+        auth-enabled instance is refused outright (see
+        `_identity_scoped_write_denied`). Auth off is a single trust domain
+        and keeps its unscoped behaviour.
         """
+        if self._identity_scoped_write_denied("UPDATE", target_id, user_id):
+            return False
+
         new_embedding = None
         try:
             new_embedding = await self._get_embedding(content)
@@ -1207,8 +1268,11 @@ class ConversationMemoryService(AtomOwnerResolverMixin):
         user retraction. No automated process flips is_active. The row
         stays recoverable via `/admin/recall?include_inactive=true`.
 
-        Defense-in-depth on user_id: same rationale as _apply_update_v2.
+        Ownership gate on user_id: same rationale as _apply_update_v2.
         """
+        if self._identity_scoped_write_denied("DELETE", target_id, user_id):
+            return False
+
         stmt = update(ConversationMemory).where(ConversationMemory.id == target_id)
         if user_id is not None:
             stmt = stmt.where(ConversationMemory.user_id == user_id)
@@ -1834,7 +1898,15 @@ class ConversationMemoryService(AtomOwnerResolverMixin):
         """Find memories in the contradiction similarity range (below dedup, above threshold).
 
         Returns memories with similarity in [contradiction_threshold, dedup_threshold).
+
+        Fails closed for an unidentified turn on an auth-enabled instance:
+        the user filter below is dropped for `user_id=None`, so the scan
+        would hand the resolver OTHER users' rows as UPDATE/DELETE targets.
+        Auth off is a single trust domain — unchanged there.
         """
+        if settings.auth_enabled and user_id is None:
+            return []
+
         lower = settings.memory_contradiction_threshold
         upper = settings.memory_dedup_threshold
         top_k = settings.memory_contradiction_top_k
@@ -2074,6 +2146,19 @@ class ConversationMemoryService(AtomOwnerResolverMixin):
             )
 
         if action == "UPDATE" and target_id is not None:
+            if not await self._extraction_target_owned(target_id, user_id):
+                logger.warning(
+                    f"Contradiction resolution: refusing UPDATE on memory "
+                    f"id={target_id} — not owned by this turn; saving as ADD"
+                )
+                return await self.save(
+                    content=content,
+                    category=category,
+                    user_id=user_id,
+                    importance=importance,
+                    source_session_id=session_id,
+                )
+
             new_content = updated_content or content
             logger.info(f"Contradiction resolution: UPDATE id={target_id} — {reason}")
 
@@ -2125,6 +2210,19 @@ class ConversationMemoryService(AtomOwnerResolverMixin):
             )
 
         if action == "DELETE" and target_id is not None:
+            if not await self._extraction_target_owned(target_id, user_id):
+                logger.warning(
+                    f"Contradiction resolution: refusing DELETE on memory "
+                    f"id={target_id} — not owned by this turn; saving as ADD"
+                )
+                return await self.save(
+                    content=content,
+                    category=category,
+                    user_id=user_id,
+                    importance=importance,
+                    source_session_id=session_id,
+                )
+
             logger.info(f"Contradiction resolution: DELETE id={target_id} — {reason}")
             await self.delete(target_id, changed_by=MEMORY_CHANGED_BY_RESOLUTION)
             # Save the new fact
@@ -2154,7 +2252,16 @@ class ConversationMemoryService(AtomOwnerResolverMixin):
         embedding: list[float],
         user_id: int | None,
     ) -> ConversationMemory | None:
-        """Find an existing memory that is semantically too similar (duplicate)."""
+        """Find an existing memory that is semantically too similar (duplicate).
+
+        Same fail-closed rule as `_find_similar_memories`: without an
+        identity the unfiltered scan would both touch and return another
+        user's row (the caller bumps its access counters and silently drops
+        the new fact as a "duplicate").
+        """
+        if settings.auth_enabled and user_id is None:
+            return None
+
         threshold = settings.memory_dedup_threshold
         embedding_str = f"[{','.join(map(str, embedding))}]"
 

@@ -235,13 +235,28 @@ def validate_against_candidates(
         another user's memory row through the v2 path. The schema
         offers no barrier against this.
 
-        Defense in depth is the caller's job at the service layer:
-        re-fetch each target_id immediately before commit and verify
-        `row.user_id == asker_id`. The integration test for v2 MUST
-        include a case where the candidate set deliberately spans two
-        users and assert that ownership-recheck rejects it; if that
-        test passes only because this function "would catch it," the
-        test is wrong — this function CANNOT catch it.
+        Ownership is enforced at the service layer instead, in
+        `ConversationMemoryService`:
+          * `_apply_update_v2` / `_apply_delete_v2` push
+            `user_id == asker_id` into the statement's WHERE clause for an
+            identified turn (a foreign target_id then matches no row and
+            the op reports False), and REFUSE the write outright when the
+            turn carries no identity while auth is enabled — the case that
+            had no predicate at all, because `user_id is None` reaches
+            them from every device / satellite / unidentified-voice turn.
+          * the v1 contradiction path rechecks via
+            `_extraction_target_owned` and falls back to ADD, and its
+            candidate builders (`_find_similar_memories` /
+            `_find_duplicate`) return nothing for such a turn.
+        With `AUTH_ENABLED=false` there is a single trust domain (the
+        circle filter is a documented full bypass and every row carries
+        the same fallback owner), so the unscoped behaviour is kept there.
+
+        The integration test lives in
+        `tests/backend/test_memory_ownership_guard.py`: the candidate set
+        deliberately spans two users, and it asserts BOTH that this
+        function returns None for the foreign target (it CANNOT catch it)
+        and that the service layer rejects the write anyway.
 
     Returns:
         None if every op's target_id is either None (ADD / NOOP) or
