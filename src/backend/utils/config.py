@@ -2085,10 +2085,12 @@ class Settings(BaseSettings):
                     f"{str(self.ws_auth_enabled_legacy).lower()} contradicts "
                     f"AUTH_ENABLED={str(self.auth_enabled).lower()}. "
                     "WS_AUTH_ENABLED is RETIRED — the WebSocket surface follows "
-                    "AUTH_ENABLED, and a mismatch between the two never booted "
-                    "anyway. Remove WS_AUTH_ENABLED from the environment/ConfigMap "
-                    "or set it to the same value as AUTH_ENABLED (refusing to "
-                    "start on an ambiguous auth posture)."
+                    "AUTH_ENABLED. (AUTH_ENABLED=true with WS_AUTH_ENABLED=false "
+                    "never booted; the reverse used to boot and left the REST "
+                    "surface open, which is exactly the ambiguity being removed.) "
+                    "Remove WS_AUTH_ENABLED from the environment/ConfigMap or set "
+                    "it to the same value as AUTH_ENABLED (refusing to start on an "
+                    "ambiguous auth posture)."
                 )
             logger.warning(
                 "⚠ WS_AUTH_ENABLED is deprecated and no longer read as a switch — "
