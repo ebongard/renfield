@@ -327,3 +327,4 @@ docker compose up -d backend
 - Keine Cloud-Verbindung für Sprechererkennung
 - Embeddings können nicht zurück zu Audio konvertiert werden
 - Sprecher können jederzeit gelöscht werden (inkl. aller Embeddings)
+- **Gedächtnis nur bei erkanntem Sprecher**: Ein über einen Satelliten gesprochener Turn wird nur dann in Memory/Knowledge-Graph extrahiert, wenn die Sprechererkennung ihn einem Nutzer zuordnen konnte (Speaker → User über `User.speaker_id`). Ohne Zuordnung läuft weder die Memory-Extraktion noch der `post_message`-Hook — eine unzugeordnete Stimme im Raum erzeugt keine Erinnerungen (`satellite_handler._spawn_satellite_extraction`, siehe `docs/FEATURES.md` → Konversations-Gedächtnis)

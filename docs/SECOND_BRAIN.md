@@ -108,7 +108,9 @@ Alle drei nutzen dieselbe `circle_sql.build_filter`-Klausel, sodass Circle-Reich
                                           └──────────────────────────┘
 ```
 
-**Chat-Memory** läuft analog, aber als Hintergrund-Task nach jeder Chat-Response (`_extract_memories_background` in `chat_handler.py`). Eine mehrstufige Gate-Kette (Stage 1–4) entscheidet, ob eine Konversation memorable Fakten enthielt; wenn ja, extrahiert ein LLM-Call die Fakten und legt sie als `conversation_memories` an — wieder mit Atom-Registrierung und Tier-Zuweisung.
+**Konversations-Memory** läuft analog, aber als Hintergrund-Task, nachdem die Antwort beim Nutzer ist (`extract_memories_background` in `services/turn_extraction.py`). Eine mehrstufige Gate-Kette (Stage 1–4) entscheidet, ob eine Konversation memorable Fakten enthielt; wenn ja, extrahiert ein LLM-Call die Fakten und legt sie als `conversation_memories` an — wieder mit Atom-Registrierung und Tier-Zuweisung.
+
+Dieser Seam gehört **nicht dem Browser allein**: sowohl der Chat-WebSocket (`chat_handler`, nach dem `done`-Frame) als auch der Satelliten-Sprachpfad (`satellite_handler._spawn_satellite_extraction`, nach dem Persistieren des Turns) planen dieselbe Extraktion ein — vorher wurde ein gesprochener Turn zwar beantwortet und gespeichert, aber nie extrahiert, also sofort wieder vergessen. Beide Pfade teilen sich auch die Skip-Regeln (Flags aus / leere Antwort / fehlgeschlagene Tool-Aktion). **Gesprochene Turns werden nur bei erkanntem Sprecher extrahiert**: ohne Speaker→User-Zuordnung (`User.speaker_id`) läuft weder Memory-Extraktion noch der `post_message`-Hook — eine unzugeordnete Stimme im Raum darf nicht zum Gedächtnis einer Person werden.
 
 **KG-Extraktion** läuft sowohl bei Dokument-Ingest (als Hook) als auch bei Chat-Memory-Ingest. Derselbe LLM-Prompt, unterschiedliche Quell-Kontexte. Entity-Deduplizierung per Cosine-Similarity (Embedding-basiert) verhindert das Anlegen von `Eduard van den Bongard` und `Eduard` als zwei Entitäten.
 
