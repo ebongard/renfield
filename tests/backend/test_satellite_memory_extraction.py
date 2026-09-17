@@ -102,6 +102,38 @@ class TestSatelliteExtractionGate:
         assert result is None
         assert spawned == [], "an unattributed voice turn must reach no extractor"
 
+    async def test_unpersisted_turn_extracts_nothing(self):
+        """A turn that was never persisted (no conversation session id) must
+        reach NO extractor: the memory rows would carry session_id=None and be
+        unattachable to any conversation. The positive counterpart — a turn WITH
+        a session id extracting exactly once — is
+        ``test_recognized_speaker_spawns_exactly_one_extraction`` above."""
+        from ha_glue.api.websocket import satellite_handler as sh
+
+        spawned: list[str] = []
+
+        def _fake_spawn_memory(**kwargs):
+            spawned.append("memory")
+            raise AssertionError("memory extraction must not be spawned")
+
+        def _fake_spawn_hooks(**kwargs):
+            spawned.append("hooks")
+            raise AssertionError("post_message hooks must not be spawned")
+
+        with patch.object(sh, "spawn_memory_extraction", _fake_spawn_memory), \
+             patch.object(sh, "spawn_post_message_hooks", _fake_spawn_hooks):
+            result = sh._spawn_satellite_extraction(
+                user_text="Ich mag Espresso",
+                response_text="Notiert.",
+                user_id=42,
+                session_id=None,
+                lang="de",
+                action_success=None,
+            )
+
+        assert result is None
+        assert spawned == [], "an unpersisted turn must reach no extractor"
+
     async def test_raising_extractor_does_not_break_the_turn(self):
         """A failing extraction is swallowed — the spoken turn (and its TTS)
         must survive it."""
@@ -291,3 +323,60 @@ class TestChatHandlerStillUsesTheSameCode:
 
         assert ch._extract_memories_background is te.extract_memories_background
         assert ch._extract_structured_background is te.extract_structured_background
+
+
+class TestExtractionSkipWarningIsTruthful:
+    """A log must state the truth about the condition it sits under.
+
+    The "Memory extraction skipped" WARNING was attached to the *follow-up
+    chips* branch, so it fired whenever the CHIPS were skipped while memory
+    extraction ran happily a moment later (observed in the 2026-09-17 post-deploy
+    smoke test: the warning and a successful background extraction for the same
+    turn). It must hang off the decision that actually governs memory extraction
+    — the `spawn_memory_extraction` outcome — not off an unrelated feature's
+    else-branch.
+    """
+
+    def _nearest_enclosing_if(self, tree, needle):
+        parents = {}
+        for node in ast.walk(tree):
+            for child in ast.iter_child_nodes(node):
+                parents[child] = node
+
+        call = next(
+            (n for n in ast.walk(tree)
+             if isinstance(n, ast.Call)
+             and isinstance(n.func, ast.Attribute)
+             and n.func.attr == "warning"
+             and needle in ast.unparse(n)),
+            None,
+        )
+        assert call is not None, f"the {needle!r} log disappeared"
+
+        child, parent = call, parents.get(call)
+        while parent is not None and not isinstance(parent, ast.If):
+            child, parent = parent, parents.get(parent)
+        assert parent is not None, f"the {needle!r} log is not inside any branch"
+        return parent, any(stmt is child for stmt in parent.body)
+
+    def test_skip_warning_hangs_off_the_memory_extraction_decision(self):
+        from api.websocket import chat_handler as ch
+
+        tree = ast.parse(Path(ch.__file__).read_text())
+        branch, in_body = self._nearest_enclosing_if(
+            tree, "Memory extraction skipped"
+        )
+        condition = ast.unparse(branch.test)
+
+        assert in_body, (
+            "the memory-skip warning sits in the ELSE of another branch — it "
+            f"reports on `{condition}`, which does not decide memory extraction"
+        )
+        assert "followup_chips" not in condition, (
+            "the memory-skip warning is governed by the follow-up-chips gate: "
+            "it fires when the CHIPS are skipped, while memory extraction runs"
+        )
+        assert "_spawn" in condition, (
+            "the memory-skip warning must key on the spawn outcome "
+            "(`_spawn.task is None`), the only thing that decides extraction here"
+        )

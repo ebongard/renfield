@@ -138,6 +138,13 @@ def _spawn_satellite_extraction(
     become somebody's memory (nor reach the KG/plugins via ``post_message``).
     So: no user, no extraction at all — deliberately, not as an oversight.
 
+    **Persistence boundary — only a turn that was actually WRITTEN.**
+    ``session_id`` is the satellite conversation's DB session (assigned right
+    after registration); the message-persistence block at the call site is gated
+    on exactly it. Extracting from a turn that was never persisted would produce
+    memories with ``session_id=None``, attached to no conversation — so an
+    unpersisted turn is skipped as well. Rare in practice, not impossible.
+
     Fire-and-forget: the work is scheduled, never awaited, so the turn's TTS is
     not delayed; every failure is swallowed so a broken extractor cannot break
     the spoken turn.
@@ -146,6 +153,12 @@ def _spawn_satellite_extraction(
         logger.debug(
             "📝 Satellite-Extraktion übersprungen: Sprecher nicht erkannt "
             f"(session={session_id})"
+        )
+        return None
+    if not session_id:
+        logger.debug(
+            "📝 Satellite-Extraktion übersprungen: Turn nicht persistiert "
+            f"(user_id={user_id})"
         )
         return None
     try:

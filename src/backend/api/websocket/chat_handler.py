@@ -2585,6 +2585,22 @@ WICHTIG: Nutze die ECHTEN Daten aus dem Ergebnis! Gib NUR die Antwort, KEIN JSON
                 lang=turn_lang,
                 action_success=_action_success,
             )
+            if _spawn.task is None:
+                # WARN-level so the ABSENCE of extraction is auditable: a silent
+                # skip is otherwise indistinguishable from an extractor that ran
+                # and found nothing memorable. The fields below ARE the skip
+                # policy of spawn_memory_extraction (flags off / empty answer /
+                # failed tool action) — this log reports that decision and
+                # nothing else. It used to hang off the follow-up-chips branch
+                # below, where it announced a memory skip while extraction was
+                # in fact running.
+                logger.warning(
+                    f"📝 Memory extraction skipped: memory_enabled="
+                    f"{settings.memory_enabled} extraction_enabled="
+                    f"{settings.memory_extraction_enabled} "
+                    f"has_response={bool(full_response)} "
+                    f"action_success={_action_success}"
+                )
 
             # Background: follow-up suggestion chips (opt-in/dark). Dispatched
             # AFTER `done` so it never delays the turn (see _followup_chips_background).
@@ -2610,19 +2626,6 @@ WICHTIG: Nutze die ECHTEN Daten aus dem Ergebnis! Gib NUR die Antwort, KEIN JSON
                 )
                 _background_tasks.add(fu_task)
                 fu_task.add_done_callback(_background_tasks.discard)
-            else:
-                # WARN-level so the absence of extraction is auditable.
-                # The conversation/knowledge route can silently bypass this
-                # block today (e.g. when full_response is empty after a RAG
-                # fallback), and silent skips were previously indistinguishable
-                # from extractor success on an unmemorable turn.
-                logger.warning(
-                    f"📝 Memory extraction skipped: memory_enabled="
-                    f"{settings.memory_enabled} extraction_enabled="
-                    f"{settings.memory_extraction_enabled} "
-                    f"has_response={bool(full_response)} "
-                    f"action_success={_action_success}"
-                )
 
             # Hook: post_message (fire-and-forget for plugins like renfield-twin).
             # Skipped ONLY when the subsume-coordination coroutine above already
