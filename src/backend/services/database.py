@@ -39,8 +39,21 @@ engine = create_async_engine(
 # and the KB document-dedupe detector 0x4444),
 # so this checkin sweep only ever fires as a backstop against a leaked lock —
 # never against a live one on the pooled work session. A future feature that
-# takes an advisory lock on a POOLED session (not a dedicated connection) would
-# have it dropped here mid-scope; keep using the dedicated-connection pattern.
+# takes a SESSION-level advisory lock on a POOLED session (not a dedicated
+# connection) would have it dropped here mid-scope; keep using the
+# dedicated-connection pattern for those.
+#
+# EXCEPTION, safe by construction — TRANSACTION-scoped locks on the pooled work
+# session: the v2 memory extract (0x4D454D30 "MEM0",
+# conversation_memory_service._acquire_user_lock_xact) and the scanner-job
+# delivery guard (0x534A) use pg_advisory_xact_lock. Those are released by
+# COMMIT/ROLLBACK — always before checkin — and pg_advisory_unlock_all()
+# releases only SESSION-level locks, so this sweep can neither drop nor leak
+# them. The memory path is also the feature the 2026-05-14 incident above was
+# about: it held a session-level lock on the pooled session, and in 2026-09 it
+# deadlocked outright (5-7/h) because that lock could be released while the row
+# locks it was meant to guard still stood. Converting it to a transaction-scoped
+# lock is what removed the cycle.
 @event.listens_for(engine.sync_engine, "checkin")
 def _release_leaked_advisory_locks_on_checkin(dbapi_connection, connection_record):
     """Release any held advisory locks when a connection returns to the pool.

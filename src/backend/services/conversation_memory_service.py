@@ -949,7 +949,7 @@ class ConversationMemoryService(AtomOwnerResolverMixin):
 
     @staticmethod
     def _user_lock_key(user_id: int) -> int:
-        """Build a 64-bit bigint key for pg_advisory_lock(bigint).
+        """Build a 64-bit bigint key for pg_advisory_xact_lock(bigint).
 
         High 32 bits namespace = "MEM0", low 32 bits = user_id (masked).
         Prevents collision with any future feature using advisory locks.
