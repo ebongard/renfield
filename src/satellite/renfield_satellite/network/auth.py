@@ -2,7 +2,7 @@
 Authentication helper for Renfield Satellite
 
 Handles WebSocket token retrieval from the Renfield backend server.
-Only needed when server has WS_AUTH_ENABLED=true.
+Only needed when the server runs with AUTH_ENABLED=true.
 """
 
 import asyncio

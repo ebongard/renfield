@@ -690,13 +690,11 @@ async def lifespan(app: "FastAPI"):
         logger.critical(f"Federation identity check failed: {e}")
         raise SystemExit(1) from e
 
-    # Warn about insecure defaults when auth is enabled
+    # Warn about insecure defaults when auth is enabled.
+    # (The former "WS_AUTH_ENABLED=false while auth is on" warning is gone with
+    # the flag: the WebSocket surface is now governed by AUTH_ENABLED itself, so
+    # the state it warned about can no longer exist.)
     if settings.auth_enabled:
-        if not settings.ws_auth_enabled:
-            logger.warning(
-                "⚠️  WS_AUTH_ENABLED=false — WebSocket connections are NOT authenticated. "
-                "Set WS_AUTH_ENABLED=true in production."
-            )
         if settings.cors_origins == "*":
             logger.warning(
                 "⚠️  CORS_ORIGINS='*' — all origins allowed. "

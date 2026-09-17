@@ -103,7 +103,7 @@ async def emit_documents_changed(
 ) -> None:
     """Convenience emitter for :data:`EVENT_DOCUMENTS_CHANGED`. Resolves the
     target (owner precedence: explicit ``owner_user_id`` → the document's atom
-    owner → ``None``) and publishes. In **auth-off** mode (``ws_auth_enabled``
+    owner → ``None``) and publishes. In **auth-off** mode (``auth_enabled``
     False) the target is forced to ``None`` so the single household's ``_ALL``
     sockets receive it. Fully best-effort — emitting an event is never on the
     critical path of the ingest/upload that triggered it."""
@@ -113,7 +113,7 @@ async def emit_documents_changed(
         owner = owner_user_id
         if owner is None and db is not None and document is not None:
             owner = await resolve_document_owner(db, document)
-        target = None if not settings.ws_auth_enabled else owner
+        target = None if not settings.auth_enabled else owner
         await publish_user_event(redis, target, EVENT_DOCUMENTS_CHANGED, reason)
     except Exception as exc:  # noqa: BLE001 — never let an event break the caller
         logger.warning(f"user-events: emit_documents_changed({reason}) failed: {exc}")

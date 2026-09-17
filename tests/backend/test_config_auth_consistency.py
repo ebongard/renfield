@@ -1,8 +1,12 @@
 """Tests for the auth-config consistency validator + RENFIELD_ENV field (#697).
 
-assert_auth_config_consistency hard-fails on AUTH_ENABLED without
-WS_AUTH_ENABLED (a phantom security control), warns on soft misconfigs, and is a
-no-op for the current auth-off posture. RENFIELD_ENV is now a tracked field.
+assert_auth_config_consistency warns on soft misconfigs and is a no-op for the
+current auth-off posture. RENFIELD_ENV is a tracked field.
+
+The former hard fail — AUTH_ENABLED without WS_AUTH_ENABLED, a phantom security
+control — is gone with the second flag itself: AUTH_ENABLED is now the single
+auth posture. What remains of that check (a leftover, contradicting
+WS_AUTH_ENABLED key) lives in test_config_single_auth_flag.py.
 """
 from pydantic import SecretStr
 
@@ -17,26 +21,21 @@ _STRONG = "x" * 48
 
 class TestAuthConfigConsistency:
     @pytest.mark.unit
-    def test_auth_on_without_ws_auth_raises(self):
-        with pytest.raises(ValueError, match="WS_AUTH_ENABLED"):
-            Settings(auth_enabled=True, ws_auth_enabled=False, secret_key=SecretStr(_STRONG))
+    def test_auth_on_constructs(self):
+        s = Settings(auth_enabled=True, secret_key=SecretStr(_STRONG))
+        assert s.auth_enabled is True
 
     @pytest.mark.unit
-    def test_auth_on_with_ws_auth_ok(self):
-        s = Settings(auth_enabled=True, ws_auth_enabled=True, secret_key=SecretStr(_STRONG))
-        assert s.auth_enabled is True and s.ws_auth_enabled is True
-
-    @pytest.mark.unit
-    def test_auth_off_is_noop_regardless_of_ws_auth(self):
+    def test_auth_off_is_noop(self):
         # The current single-user posture: everything off → never raises.
-        s = Settings(auth_enabled=False, ws_auth_enabled=False)
+        s = Settings(auth_enabled=False)
         assert s.auth_enabled is False
 
     @pytest.mark.unit
     def test_wildcard_cors_with_auth_warns_not_fatal(self, caplog):
         # WARN, not raise — construction still succeeds.
         s = Settings(
-            auth_enabled=True, ws_auth_enabled=True,
+            auth_enabled=True,
             cors_origins="*", secret_key=SecretStr(_STRONG),
         )
         assert s.cors_origins == "*"

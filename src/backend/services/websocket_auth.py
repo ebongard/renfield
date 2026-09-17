@@ -153,8 +153,8 @@ async def authenticate_websocket(
     # (cross-site WebSocket hijacking). A MISSING Origin = a non-browser client
     # (satellite/device/server-to-server) → allowed (an attacker's browser can't
     # omit Origin). cors_origins="*" (dev/permissive, e.g. the auth-off
-    # household) skips the check. Applied before the ws_auth_enabled short-
-    # circuit so it protects even ws-auth-off browser sockets.
+    # household) skips the check. Applied before the auth_enabled short-
+    # circuit so it protects even auth-off browser sockets.
     if not _ws_origin_allowed(websocket):
         logger.warning(
             "WS handshake rejected: disallowed Origin {!r}",
@@ -170,7 +170,7 @@ async def authenticate_websocket(
     token_from_url = token is not None
 
     # Skip authentication if disabled
-    if not settings.ws_auth_enabled:
+    if not settings.auth_enabled:
         return {"authenticated": True, "auth_skipped": True}
 
     # Strategy 0: the HttpOnly access cookie (JWT cookie migration). A browser

@@ -96,14 +96,14 @@ class TestEnrollmentRoutes:
 @pytest.mark.database
 class TestWsTokenHardening:
     async def test_ws_token_disabled_returns_null(self, async_client: AsyncClient, monkeypatch):
-        monkeypatch.setattr(settings, "ws_auth_enabled", False)
+        monkeypatch.setattr(settings, "auth_enabled", False)
         r = await async_client.post("/api/ws/token", params={"device_id": "x"})
         assert r.status_code == 200
         assert r.json()["token"] is None
 
     async def test_ws_token_requires_auth_when_enabled(self, async_client: AsyncClient, monkeypatch):
         # H1: with WS auth on and no authenticated user, the faucet is closed.
-        monkeypatch.setattr(settings, "ws_auth_enabled", True)
+        monkeypatch.setattr(settings, "auth_enabled", True)
         r = await async_client.post("/api/ws/token", params={"device_id": "x"})
         assert r.status_code == 401
 

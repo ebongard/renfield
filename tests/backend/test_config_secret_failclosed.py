@@ -23,12 +23,9 @@ class TestSecretKeyFailClosed:
             Settings(auth_enabled=True, secret_key=SecretStr(_PLACEHOLDER))
 
     def test_auth_on_with_strong_key_ok(self):
-        # ws_auth_enabled=True is now required alongside auth_enabled (#697
-        # assert_auth_config_consistency); a strong key + coherent auth config
-        # must still construct cleanly.
-        s = Settings(
-            auth_enabled=True, ws_auth_enabled=True, secret_key=SecretStr(_STRONG)
-        )
+        # AUTH_ENABLED is the single auth flag (the separate WS_AUTH_ENABLED is
+        # retired); a strong key + auth on must still construct cleanly.
+        s = Settings(auth_enabled=True, secret_key=SecretStr(_STRONG))
         assert s.secret_key.get_secret_value() == _STRONG
 
     def test_auth_off_with_placeholder_key_ok(self):

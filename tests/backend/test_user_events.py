@@ -282,7 +282,7 @@ async def test_resolve_document_owner_swallows_db_error():
 async def test_emit_prefers_explicit_owner(monkeypatch):
     from utils.config import settings
 
-    monkeypatch.setattr(settings, "ws_auth_enabled", True)
+    monkeypatch.setattr(settings, "auth_enabled", True)
     r = FakeRedis()
     await ue.emit_documents_changed(r, reason="ingested", owner_user_id=9)
     assert json.loads(r.published[0][1])["target"] == 9
@@ -291,7 +291,7 @@ async def test_emit_prefers_explicit_owner(monkeypatch):
 async def test_emit_resolves_owner_from_document(monkeypatch):
     from utils.config import settings
 
-    monkeypatch.setattr(settings, "ws_auth_enabled", True)
+    monkeypatch.setattr(settings, "auth_enabled", True)
 
     class Doc:
         atom_id = "abc"
@@ -304,7 +304,7 @@ async def test_emit_resolves_owner_from_document(monkeypatch):
 async def test_emit_auth_off_forces_none_target(monkeypatch):
     from utils.config import settings
 
-    monkeypatch.setattr(settings, "ws_auth_enabled", False)
+    monkeypatch.setattr(settings, "auth_enabled", False)
     r = FakeRedis()
     # Even with an explicit owner, auth-off routes to the household _ALL bucket.
     await ue.emit_documents_changed(r, reason="ingested", owner_user_id=9)

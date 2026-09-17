@@ -401,7 +401,7 @@ async def handle_job_event(db: Any, event: dict, *, redis: Any = None) -> str:
 
     # In auth-off mode the household's sockets live in the broadcast bucket. The
     # session id lets only the tab driving that conversation show the notice.
-    target = requester.get("user_id") if settings.ws_auth_enabled else None
+    target = requester.get("user_id") if settings.auth_enabled else None
     await publish_user_event(
         redis, target, EVENT_SCAN_JOB_FINISHED, reason=status, session_id=session_id,
     )

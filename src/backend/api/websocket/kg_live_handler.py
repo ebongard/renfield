@@ -35,7 +35,7 @@ async def broadcast_kg_update(
 ) -> None:
     """Broadcast new KG entities/relations to connected graph viewers.
 
-    Owner-scoped when WS auth is enabled: only viewers authenticated as
+    Owner-scoped when auth is enabled: only viewers authenticated as
     ``owner_user_id`` receive the update (fail-closed — an unknown owner or a
     None-user viewer gets nothing). Fire-and-forget: failures are logged but
     never propagate.
@@ -49,7 +49,7 @@ async def broadcast_kg_update(
         "relations": relations,
     }
 
-    auth_on = settings.ws_auth_enabled
+    auth_on = settings.auth_enabled
     broken: list[WebSocket] = []
     for ws, viewer_user_id in _viewers.items():
         # Auth on → only the owner of the extracted data sees it live.

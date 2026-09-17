@@ -21,7 +21,7 @@ async def test_wakeword_ws_rejects_unauthenticated(monkeypatch):
     ws.close = AsyncMock()
     ws.headers = {}  # no Authorization header either
 
-    monkeypatch.setattr(cfg, "ws_auth_enabled", True, raising=False)
+    monkeypatch.setattr(cfg, "auth_enabled", True, raising=False)
 
     # No token + WS auth on → authenticate_websocket returns None (no DB touched)
     # → the endpoint must close_unauthorized and NOT accept the socket.
@@ -46,7 +46,7 @@ async def test_wakeword_ws_skips_auth_when_disabled(monkeypatch):
     ws.receive_bytes = AsyncMock(side_effect=Exception("stop after accept"))
     ws.headers = {}
 
-    monkeypatch.setattr(cfg, "ws_auth_enabled", False, raising=False)
+    monkeypatch.setattr(cfg, "auth_enabled", False, raising=False)
 
     # Should not raise before accept(); we don't care how the service loop ends.
     try:

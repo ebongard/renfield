@@ -32,7 +32,7 @@ def _clear_viewers():
 @pytest.mark.backend
 @pytest.mark.asyncio
 async def test_auth_on_only_owner_receives(monkeypatch):
-    monkeypatch.setattr(settings, "ws_auth_enabled", True)
+    monkeypatch.setattr(settings, "auth_enabled", True)
     owner_ws, other_ws = _FakeWS(), _FakeWS()
     kg_live._viewers[owner_ws] = 1   # owner
     kg_live._viewers[other_ws] = 2   # different user
@@ -50,7 +50,7 @@ async def test_auth_on_only_owner_receives(monkeypatch):
 @pytest.mark.backend
 @pytest.mark.asyncio
 async def test_auth_on_none_user_viewer_gets_nothing(monkeypatch):
-    monkeypatch.setattr(settings, "ws_auth_enabled", True)
+    monkeypatch.setattr(settings, "auth_enabled", True)
     anon_ws = _FakeWS()
     kg_live._viewers[anon_ws] = None  # device-token / unidentified
 
@@ -65,7 +65,7 @@ async def test_auth_on_none_user_viewer_gets_nothing(monkeypatch):
 @pytest.mark.backend
 @pytest.mark.asyncio
 async def test_auth_on_unknown_owner_sends_to_no_one(monkeypatch):
-    monkeypatch.setattr(settings, "ws_auth_enabled", True)
+    monkeypatch.setattr(settings, "auth_enabled", True)
     ws = _FakeWS()
     kg_live._viewers[ws] = 1
 
@@ -81,7 +81,7 @@ async def test_auth_on_unknown_owner_sends_to_no_one(monkeypatch):
 @pytest.mark.asyncio
 async def test_auth_off_broadcasts_to_all(monkeypatch):
     """Single-user/household mode keeps the legacy fan-to-all behavior."""
-    monkeypatch.setattr(settings, "ws_auth_enabled", False)
+    monkeypatch.setattr(settings, "auth_enabled", False)
     a, b = _FakeWS(), _FakeWS()
     kg_live._viewers[a] = None
     kg_live._viewers[b] = None
@@ -97,7 +97,7 @@ async def test_auth_off_broadcasts_to_all(monkeypatch):
 @pytest.mark.backend
 @pytest.mark.asyncio
 async def test_broken_viewer_is_evicted(monkeypatch):
-    monkeypatch.setattr(settings, "ws_auth_enabled", False)
+    monkeypatch.setattr(settings, "auth_enabled", False)
 
     class _BrokenWS(_FakeWS):
         async def send_json(self, msg):

@@ -12,7 +12,7 @@ import apiClient from './axios';
  *
  * Returns `null` when WS auth is disabled (the household instance — the endpoint
  * returns `{token: null}`) or on any error; the caller then opens the socket
- * WITHOUT a token (the backend skips auth when `WS_AUTH_ENABLED` is off, or
+ * WITHOUT a token (the backend skips auth when `AUTH_ENABLED` is off, or
  * rejects and the caller retries on its normal reconnect path). We deliberately
  * do NOT fall back to the long-lived localStorage access token — that would
  * re-introduce the full-JWT-in-URL exposure this change closes.

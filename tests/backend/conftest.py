@@ -990,6 +990,5 @@ def mock_settings():
         home_assistant_token="test_token",
         speaker_recognition_enabled=True,
         speaker_auto_enroll=True,
-        ws_auth_enabled=False,
         ws_rate_limit_enabled=False
     )

@@ -27,7 +27,7 @@ class TestCookieValidator:
     def test_cookie_with_wildcard_cors_raises(self):
         with pytest.raises(ValueError, match="CORS_ORIGINS"):
             Settings(
-                auth_cookie_enabled=True, auth_enabled=True, ws_auth_enabled=True,
+                auth_cookie_enabled=True, auth_enabled=True,
                 cors_origins="*", secret_key=SecretStr(_STRONG),
             )
 
@@ -43,7 +43,7 @@ class TestCookieValidator:
     def test_cookie_insecure_on_prod_raises(self):
         with pytest.raises(ValueError, match="COOKIE_SECURE"):
             Settings(
-                auth_cookie_enabled=True, auth_enabled=True, ws_auth_enabled=True,
+                auth_cookie_enabled=True, auth_enabled=True,
                 cors_origins="https://x.local", cookie_secure=False,
                 renfield_env="production", secret_key=SecretStr(_STRONG),
             )
@@ -51,7 +51,7 @@ class TestCookieValidator:
     @pytest.mark.unit
     def test_cookie_happy_path_constructs(self):
         s = Settings(
-            auth_cookie_enabled=True, auth_enabled=True, ws_auth_enabled=True,
+            auth_cookie_enabled=True, auth_enabled=True,
             cors_origins="https://x.local", cookie_secure=True,
             secret_key=SecretStr(_STRONG),
         )
@@ -312,7 +312,7 @@ class TestVoiceFaucetToken:
         external voice-server's /ws/voice accepts it (via internal_auth.verify)."""
         from services import websocket_auth as wa
         from services.auth_service import create_ws_token_jwt
-        monkeypatch.setattr(wa.settings, "ws_auth_enabled", True)
+        monkeypatch.setattr(wa.settings, "auth_enabled", True)
         uid = await _mk_user(ws_session_factory, epoch=0)
         tok = create_ws_token_jwt(uid, 0, scope="voice")
         # via query token (chat WS reads ?token=) → rejected
@@ -329,7 +329,7 @@ class TestVoiceFaucetToken:
         from utils.config import settings
         user = MagicMock(id=7, token_epoch=0)
 
-        monkeypatch.setattr(a.settings, "ws_auth_enabled", True, raising=False)
+        monkeypatch.setattr(a.settings, "auth_enabled", True, raising=False)
         # bad purpose → 422 (before any minting)
         with pytest.raises(HTTPException) as exc:
             await create_ws_token(purpose="bogus", current_user=user)
@@ -342,7 +342,7 @@ class TestVoiceFaucetToken:
         assert p["scope"] == "voice" and p["sub"] == "7"
 
         # WS auth disabled (household) → no token regardless of purpose
-        monkeypatch.setattr(a.settings, "ws_auth_enabled", False, raising=False)
+        monkeypatch.setattr(a.settings, "auth_enabled", False, raising=False)
         res_off = await create_ws_token(purpose="voice", current_user=user)
         assert res_off["token"] is None
 
@@ -463,7 +463,7 @@ class TestWebSocketCookieAuth:
     async def test_cookie_authenticates_ws(self, ws_session_factory, monkeypatch):
         from services import websocket_auth as wa
         from services.auth_service import create_access_token
-        monkeypatch.setattr(wa.settings, "ws_auth_enabled", True)
+        monkeypatch.setattr(wa.settings, "auth_enabled", True)
         monkeypatch.setattr(wa.settings, "auth_cookie_enabled", True)
         monkeypatch.setattr(wa.settings, "auth_cookie_name", "renfield_access")
         uid = await _mk_user(ws_session_factory, epoch=0)
@@ -474,7 +474,7 @@ class TestWebSocketCookieAuth:
     async def test_epoch_stale_cookie_rejected(self, ws_session_factory, monkeypatch):
         from services import websocket_auth as wa
         from services.auth_service import create_access_token
-        monkeypatch.setattr(wa.settings, "ws_auth_enabled", True)
+        monkeypatch.setattr(wa.settings, "auth_enabled", True)
         monkeypatch.setattr(wa.settings, "auth_cookie_enabled", True)
         monkeypatch.setattr(wa.settings, "auth_cookie_name", "renfield_access")
         uid = await _mk_user(ws_session_factory, epoch=3)
@@ -484,7 +484,7 @@ class TestWebSocketCookieAuth:
     async def test_flag_off_ignores_cookie(self, ws_session_factory, monkeypatch):
         from services import websocket_auth as wa
         from services.auth_service import create_access_token
-        monkeypatch.setattr(wa.settings, "ws_auth_enabled", True)
+        monkeypatch.setattr(wa.settings, "auth_enabled", True)
         monkeypatch.setattr(wa.settings, "auth_cookie_enabled", False)
         uid = await _mk_user(ws_session_factory, epoch=0)
         cookie = create_access_token(data={"sub": str(uid)}, token_epoch=0)

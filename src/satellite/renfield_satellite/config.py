@@ -43,7 +43,7 @@ class ServerConfig:
     # If the satellite cannot reconnect for this long, exit so systemd restarts a
     # fresh process (clears any wedged in-process state). 0 disables.
     max_disconnected_seconds: int = 300
-    # Authentication (required when server has WS_AUTH_ENABLED=true)
+    # Authentication (required when the server runs with AUTH_ENABLED=true)
     auth_enabled: bool = False  # Whether to fetch and use auth token
     auth_token: Optional[str] = None  # Pre-configured token (optional)
     # Per-satellite enrollment PSK (security review H1). Provisioned out-of-band

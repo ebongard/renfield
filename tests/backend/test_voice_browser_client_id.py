@@ -60,7 +60,6 @@ def _capture_warnings():
 
 def test_warns_when_voice_and_auth_on_without_id(monkeypatch):
     monkeypatch.setenv("AUTH_ENABLED", "true")
-    monkeypatch.setenv("WS_AUTH_ENABLED", "true")
     monkeypatch.setenv("FEATURE_VOICE", "true")
     monkeypatch.delenv("VOICE_BROWSER_CLIENT_ID", raising=False)
     messages, sink_id = _capture_warnings()
@@ -77,7 +76,6 @@ def test_warns_when_voice_and_auth_on_without_id(monkeypatch):
 )
 def test_no_warning_otherwise(monkeypatch, auth, voice, client_id):
     monkeypatch.setenv("AUTH_ENABLED", auth)
-    monkeypatch.setenv("WS_AUTH_ENABLED", auth)
     monkeypatch.setenv("FEATURE_VOICE", voice)
     monkeypatch.setenv("VOICE_BROWSER_CLIENT_ID", client_id)
     messages, sink_id = _capture_warnings()

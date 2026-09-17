@@ -128,7 +128,7 @@ class TestWebSocketMustChangePassword:
         import services.auth_service as auth_svc
         import services.websocket_auth as ws_auth
 
-        monkeypatch.setattr(ws_auth.settings, "ws_auth_enabled", True, raising=False)
+        monkeypatch.setattr(ws_auth.settings, "auth_enabled", True, raising=False)
         monkeypatch.setattr(
             auth_svc, "decode_token",
             lambda _t: {"type": "access", "sub": "1"},
@@ -149,7 +149,7 @@ class TestWebSocketMustChangePassword:
         import services.auth_service as auth_svc
         import services.websocket_auth as ws_auth
 
-        monkeypatch.setattr(ws_auth.settings, "ws_auth_enabled", True, raising=False)
+        monkeypatch.setattr(ws_auth.settings, "auth_enabled", True, raising=False)
         monkeypatch.setattr(
             auth_svc, "decode_token",
             lambda _t: {"type": "access", "sub": "1"},

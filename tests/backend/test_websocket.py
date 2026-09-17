@@ -566,8 +566,8 @@ class TestWebSocketAuthentication:
         ws = MagicMock()
         ws.headers = {}
 
-        original = settings.ws_auth_enabled
-        settings.ws_auth_enabled = True
+        original = settings.auth_enabled
+        settings.auth_enabled = True
         try:
             with patch(
                 "services.auth_service.get_user_by_id",
@@ -578,7 +578,7 @@ class TestWebSocketAuthentication:
             ):
                 result = await authenticate_websocket(ws, token=jwt)
         finally:
-            settings.ws_auth_enabled = original
+            settings.auth_enabled = original
 
         assert result is not None, "JWT must authenticate the WS connection"
         assert result.get("auth_method") == "jwt"
@@ -603,15 +603,15 @@ class TestWebSocketAuthentication:
         tok = create_ws_token_jwt(7, token_epoch=0)
         fake_user = MagicMock(id=7, is_active=True, must_change_password=False, token_epoch=0)
         ws = MagicMock(); ws.headers = {}
-        original = settings.ws_auth_enabled
-        settings.ws_auth_enabled = True
+        original = settings.auth_enabled
+        settings.auth_enabled = True
         try:
             with patch("services.auth_service.get_user_by_id", new=AsyncMock(return_value=fake_user)), \
                  patch("services.database.AsyncSessionLocal", new=_fake_session_local()), \
                  patch("services.token_blacklist.token_blacklist.is_blacklisted", new=AsyncMock(return_value=False)):
                 result = await authenticate_websocket(ws, token=tok)
         finally:
-            settings.ws_auth_enabled = original
+            settings.auth_enabled = original
         assert result is not None and result.get("user_id") == 7
 
     @pytest.mark.unit
@@ -632,8 +632,8 @@ class TestWebSocketAuthentication:
         tok = create_access_token({"sub": "7"}, token_epoch=0)
         fake_user = MagicMock(id=7, is_active=True, must_change_password=False, token_epoch=0)
         ws = MagicMock(); ws.headers = {}; ws.cookies = {}
-        orig_auth, orig_scope = settings.ws_auth_enabled, settings.ws_require_scoped_query_token
-        settings.ws_auth_enabled = True
+        orig_auth, orig_scope = settings.auth_enabled, settings.ws_require_scoped_query_token
+        settings.auth_enabled = True
         settings.ws_require_scoped_query_token = True
         try:
             with patch("services.auth_service.get_user_by_id", new=AsyncMock(return_value=fake_user)), \
@@ -641,7 +641,7 @@ class TestWebSocketAuthentication:
                  patch("services.token_blacklist.token_blacklist.is_blacklisted", new=AsyncMock(return_value=False)):
                 result = await authenticate_websocket(ws, token=tok)
         finally:
-            settings.ws_auth_enabled = orig_auth
+            settings.auth_enabled = orig_auth
             settings.ws_require_scoped_query_token = orig_scope
         assert result is None
 
@@ -658,8 +658,8 @@ class TestWebSocketAuthentication:
         tok = create_access_token({"sub": "7"}, token_epoch=0)
         fake_user = MagicMock(id=7, is_active=True, must_change_password=False, token_epoch=0)
         ws = MagicMock(); ws.headers = {}; ws.cookies = {}
-        orig_auth, orig_scope = settings.ws_auth_enabled, settings.ws_require_scoped_query_token
-        settings.ws_auth_enabled = True
+        orig_auth, orig_scope = settings.auth_enabled, settings.ws_require_scoped_query_token
+        settings.auth_enabled = True
         settings.ws_require_scoped_query_token = False
         try:
             with patch("services.auth_service.get_user_by_id", new=AsyncMock(return_value=fake_user)), \
@@ -667,7 +667,7 @@ class TestWebSocketAuthentication:
                  patch("services.token_blacklist.token_blacklist.is_blacklisted", new=AsyncMock(return_value=False)):
                 result = await authenticate_websocket(ws, token=tok)
         finally:
-            settings.ws_auth_enabled = orig_auth
+            settings.auth_enabled = orig_auth
             settings.ws_require_scoped_query_token = orig_scope
         assert result is not None and result.get("user_id") == 7
 
@@ -684,8 +684,8 @@ class TestWebSocketAuthentication:
         tok = create_ws_token_jwt(7, token_epoch=0)
         fake_user = MagicMock(id=7, is_active=True, must_change_password=False, token_epoch=0)
         ws = MagicMock(); ws.headers = {}; ws.cookies = {}
-        orig_auth, orig_scope = settings.ws_auth_enabled, settings.ws_require_scoped_query_token
-        settings.ws_auth_enabled = True
+        orig_auth, orig_scope = settings.auth_enabled, settings.ws_require_scoped_query_token
+        settings.auth_enabled = True
         settings.ws_require_scoped_query_token = True
         try:
             with patch("services.auth_service.get_user_by_id", new=AsyncMock(return_value=fake_user)), \
@@ -693,7 +693,7 @@ class TestWebSocketAuthentication:
                  patch("services.token_blacklist.token_blacklist.is_blacklisted", new=AsyncMock(return_value=False)):
                 result = await authenticate_websocket(ws, token=tok)
         finally:
-            settings.ws_auth_enabled = orig_auth
+            settings.auth_enabled = orig_auth
             settings.ws_require_scoped_query_token = orig_scope
         assert result is not None and result.get("user_id") == 7
 
@@ -714,8 +714,8 @@ class TestWebSocketAuthentication:
         tok = create_access_token({"sub": "7"}, token_epoch=0)
         fake_user = MagicMock(id=7, is_active=True, must_change_password=False, token_epoch=0)
         ws = MagicMock(); ws.headers = {"authorization": f"Bearer {tok}"}; ws.cookies = {}
-        orig_auth, orig_scope = settings.ws_auth_enabled, settings.ws_require_scoped_query_token
-        settings.ws_auth_enabled = True
+        orig_auth, orig_scope = settings.auth_enabled, settings.ws_require_scoped_query_token
+        settings.auth_enabled = True
         settings.ws_require_scoped_query_token = True
         try:
             with patch("services.auth_service.get_user_by_id", new=AsyncMock(return_value=fake_user)), \
@@ -723,7 +723,7 @@ class TestWebSocketAuthentication:
                  patch("services.token_blacklist.token_blacklist.is_blacklisted", new=AsyncMock(return_value=False)):
                 result = await authenticate_websocket(ws, token=None)
         finally:
-            settings.ws_auth_enabled = orig_auth
+            settings.auth_enabled = orig_auth
             settings.ws_require_scoped_query_token = orig_scope
         assert result is not None and result.get("user_id") == 7
 
@@ -740,15 +740,15 @@ class TestWebSocketAuthentication:
         tok = create_access_token({"sub": "7"}, token_epoch=2)  # < user's 3
         fake_user = MagicMock(id=7, is_active=True, must_change_password=False, token_epoch=3)
         ws = MagicMock(); ws.headers = {}
-        original = settings.ws_auth_enabled
-        settings.ws_auth_enabled = True
+        original = settings.auth_enabled
+        settings.auth_enabled = True
         try:
             with patch("services.auth_service.get_user_by_id", new=AsyncMock(return_value=fake_user)), \
                  patch("services.database.AsyncSessionLocal", new=_fake_session_local()), \
                  patch("services.token_blacklist.token_blacklist.is_blacklisted", new=AsyncMock(return_value=False)):
                 result = await authenticate_websocket(ws, token=tok)
         finally:
-            settings.ws_auth_enabled = original
+            settings.auth_enabled = original
         assert result is None
 
     @pytest.mark.unit
@@ -764,15 +764,15 @@ class TestWebSocketAuthentication:
         tok = create_access_token({"sub": "7"}, token_epoch=0)
         fake_user = MagicMock(id=7, is_active=True, must_change_password=False, token_epoch=0)
         ws = MagicMock(); ws.headers = {}
-        original = settings.ws_auth_enabled
-        settings.ws_auth_enabled = True
+        original = settings.auth_enabled
+        settings.auth_enabled = True
         try:
             with patch("services.auth_service.get_user_by_id", new=AsyncMock(return_value=fake_user)), \
                  patch("services.database.AsyncSessionLocal", new=_fake_session_local()), \
                  patch("services.token_blacklist.token_blacklist.is_blacklisted", new=AsyncMock(return_value=True)):
                 result = await authenticate_websocket(ws, token=tok)
         finally:
-            settings.ws_auth_enabled = original
+            settings.auth_enabled = original
         assert result is None
 
     @pytest.mark.unit
@@ -795,8 +795,8 @@ class TestWebSocketAuthentication:
         ws = MagicMock()
         ws.headers = {}
 
-        original = settings.ws_auth_enabled
-        settings.ws_auth_enabled = True
+        original = settings.auth_enabled
+        settings.auth_enabled = True
         try:
             with patch(
                 "services.auth_service.get_user_by_id",
@@ -807,7 +807,7 @@ class TestWebSocketAuthentication:
             ):
                 result = await authenticate_websocket(ws, token=jwt)
         finally:
-            settings.ws_auth_enabled = original
+            settings.auth_enabled = original
 
         assert result is None, "deleted user's JWT must be rejected"
 
@@ -830,8 +830,8 @@ class TestWebSocketAuthentication:
         ws = MagicMock()
         ws.headers = {}
 
-        original = settings.ws_auth_enabled
-        settings.ws_auth_enabled = True
+        original = settings.auth_enabled
+        settings.auth_enabled = True
         try:
             with patch(
                 "services.auth_service.get_user_by_id",
@@ -842,7 +842,7 @@ class TestWebSocketAuthentication:
             ):
                 result = await authenticate_websocket(ws, token=jwt)
         finally:
-            settings.ws_auth_enabled = original
+            settings.auth_enabled = original
 
         assert result is None, "disabled user's JWT must be rejected"
 
@@ -874,12 +874,12 @@ class TestWebSocketAuthentication:
             ws = MagicMock()
             ws.headers = {}
 
-            original_enabled = settings.ws_auth_enabled
-            settings.ws_auth_enabled = True
+            original_enabled = settings.auth_enabled
+            settings.auth_enabled = True
             try:
                 result = await authenticate_websocket(ws, token=device_token)
             finally:
-                settings.ws_auth_enabled = original_enabled
+                settings.auth_enabled = original_enabled
 
             assert result is not None, "device token must still authenticate"
             assert result.get("device_id") == "sat-001"

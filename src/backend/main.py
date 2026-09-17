@@ -311,7 +311,7 @@ async def wakeword_websocket(websocket: WebSocket, token: str | None = Query(Non
     # Security audit: this endpoint used to accept() with NO authentication —
     # any client could open it and stream audio into the server-side
     # OpenWakeWord service (a compute-DoS vector). Gate it like every other WS
-    # endpoint; when WS_AUTH_ENABLED is off (single-user) auth is skipped, so
+    # endpoint; when AUTH_ENABLED is off (single-user) auth is skipped, so
     # this is a no-op there.
     from services.websocket_auth import authenticate_websocket, close_unauthorized
 
@@ -492,7 +492,7 @@ async def create_ws_token(
     external voice-server (whose verify path accepts a non-"ws" scope; this
     replaces the full 24h access JWT the voice path used to ship in ?token=).
 
-    Only relevant when WS_AUTH_ENABLED=true.
+    Only relevant when AUTH_ENABLED=true.
     In production, this endpoint should be protected by authentication.
     """
     from services.auth_service import WS_FAUCET_SCOPES
@@ -500,7 +500,7 @@ async def create_ws_token(
     if purpose not in WS_FAUCET_SCOPES:
         raise HTTPException(status_code=422, detail="Invalid token purpose")
 
-    if not settings.ws_auth_enabled:
+    if not settings.auth_enabled:
         return {
             "token": None,
             "message": "WebSocket authentication is disabled",

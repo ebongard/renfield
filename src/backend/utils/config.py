@@ -1391,8 +1391,31 @@ class Settings(BaseSettings):
     renfield_env: str = "development"
 
     # === Authentication ===
-    # Set to True to enable authentication (default: False for development)
+    # Set to True to enable authentication (default: False for development).
+    # This is THE auth posture — it governs the REST surface AND the WebSocket
+    # surface (see ws_auth_enabled_legacy right below for why there is no second
+    # flag any more).
     auth_enabled: bool = False
+
+    # Legacy alias of the retired WS_AUTH_ENABLED flag. VALIDATION ONLY — never a
+    # behaviour switch: `auth_enabled` is the single source of truth and nothing
+    # but assert_auth_config_consistency reads this field.
+    #
+    # The WebSocket surface carried its own flag for historical reasons (WS auth
+    # came later). But the consistency validator (#697) has long refused to boot
+    # on `auth_enabled and not ws_auth_enabled`, so only both-on and both-off
+    # were ever reachable — the second flag carried no information while looking
+    # like a security control an operator could set independently.
+    #
+    # Kept as a field (rather than dropped outright) for the transition: both live
+    # instances still set WS_AUTH_ENABLED, and their ConfigMaps live in two
+    # different repos. An AGREEING value must therefore keep booting (with one
+    # deprecation warning), and a CONTRADICTING one must fail loudly instead of
+    # being silently resolved in favour of either side. Delete the field once no
+    # deployment sets the key any more.
+    ws_auth_enabled_legacy: bool | None = Field(
+        default=None, validation_alias="WS_AUTH_ENABLED"
+    )
 
     # JWT Token settings
     access_token_expire_minutes: int = 60 * 24  # 24 hours
@@ -1491,7 +1514,9 @@ class Settings(BaseSettings):
     cors_origins: str = "*"  # Comma-separated list or "*" for development
 
     # WebSocket Security
-    ws_auth_enabled: bool = False  # Enable WebSocket authentication (set True in production)
+    # NOTE: WebSocket authentication is NOT a separate switch — it follows
+    # `auth_enabled` (the former WS_AUTH_ENABLED is retired; see the legacy alias
+    # in the Authentication block above).
     ws_token_expire_minutes: int = 60  # WebSocket token expiration (device token store)
     # Security audit #1116 finding A — server-side scope enforcement for tokens
     # that arrive in the URL query string.
@@ -2030,14 +2055,16 @@ class Settings(BaseSettings):
         misconfigurations. Prevents a deploy that *looks* authenticated but has a
         security control silently disabled.
 
-        HARD FAIL — ``AUTH_ENABLED=true`` with ``WS_AUTH_ENABLED=false``. HTTP
-        routes would authenticate, but the WebSocket surface (the primary chat
-        channel) would not: ``authenticate_websocket`` short-circuits to
+        HARD FAIL — a ``WS_AUTH_ENABLED`` that CONTRADICTS ``AUTH_ENABLED``. The
+        separate WebSocket flag is retired: the WS surface follows
+        ``auth_enabled``. This check used to guard the phantom-control case
+        (``AUTH_ENABLED=true`` + ``WS_AUTH_ENABLED=false``, where HTTP routes
+        authenticate but ``authenticate_websocket`` short-circuits to
         auth-skipped, so no ``user_id`` resolves and the WS chat-session
-        ownership check (#657) becomes a no-op — any LAN client could then
-        register against another user's conversation. Multi-user auth REQUIRES
-        both flags on together; refuse to boot on the mismatch rather than run
-        with a phantom control.
+        ownership check (#657) becomes a no-op). It now guards the transition
+        instead: a leftover key that agrees is a deprecation warning, a leftover
+        key that disagrees means the operator's intent is ambiguous — refuse to
+        boot rather than silently pick a side.
 
         WARN (not fatal — may be intentional in some deploys):
         - ``AUTH_ENABLED=true`` with wildcard ``CORS_ORIGINS='*'`` — with Bearer
@@ -2051,13 +2078,23 @@ class Settings(BaseSettings):
         gated on ``auth_enabled`` (or a production env), so an all-false config
         is byte-identical.
         """
-        if self.auth_enabled and not self.ws_auth_enabled:
-            raise ValueError(
-                "Inconsistent auth config: AUTH_ENABLED=true but "
-                "WS_AUTH_ENABLED=false — the WebSocket surface would be "
-                "unauthenticated and the WS chat-session ownership check (#657) "
-                "silently disabled. Set WS_AUTH_ENABLED=true when enabling auth "
-                "(refusing to start with a phantom security control)."
+        if self.ws_auth_enabled_legacy is not None:
+            if self.ws_auth_enabled_legacy != self.auth_enabled:
+                raise ValueError(
+                    "Inconsistent auth config: WS_AUTH_ENABLED="
+                    f"{str(self.ws_auth_enabled_legacy).lower()} contradicts "
+                    f"AUTH_ENABLED={str(self.auth_enabled).lower()}. "
+                    "WS_AUTH_ENABLED is RETIRED — the WebSocket surface follows "
+                    "AUTH_ENABLED, and a mismatch between the two never booted "
+                    "anyway. Remove WS_AUTH_ENABLED from the environment/ConfigMap "
+                    "or set it to the same value as AUTH_ENABLED (refusing to "
+                    "start on an ambiguous auth posture)."
+                )
+            logger.warning(
+                "⚠ WS_AUTH_ENABLED is deprecated and no longer read as a switch — "
+                "AUTH_ENABLED alone governs the WebSocket surface. The configured "
+                f"value agrees with AUTH_ENABLED={str(self.auth_enabled).lower()}, "
+                "so nothing changes; remove the key from the environment/ConfigMap."
             )
 
         env = self.renfield_env.lower()

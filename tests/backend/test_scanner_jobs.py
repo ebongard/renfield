@@ -142,7 +142,7 @@ async def test_event_for_an_unrecorded_job_is_ignored(conversation):
 
 
 async def test_event_lands_in_the_requesting_conversation(conversation, monkeypatch):
-    monkeypatch.setattr(sj.settings, "ws_auth_enabled", True)
+    monkeypatch.setattr(sj.settings, "auth_enabled", True)
     monkeypatch.setattr(sj.settings, "default_language", "de")
     redis = FakeRedis()
     await sj.remember_scan_requester(
@@ -364,7 +364,7 @@ async def test_unreadable_requester_record_is_ignored(conversation):
 
 
 async def test_auth_off_pushes_to_the_household_bucket(conversation, monkeypatch):
-    monkeypatch.setattr(sj.settings, "ws_auth_enabled", False)
+    monkeypatch.setattr(sj.settings, "auth_enabled", False)
     redis = FakeRedis()
     await sj.remember_scan_requester(
         _tool_result({"ok": True, "job_id": JOB_ID}), user_id=None, session_id="s", redis=redis
@@ -419,7 +419,7 @@ async def test_outcome_check_matches_only_this_jobs_message(session_maker):
 
 
 async def test_crash_after_commit_before_marker_writes_the_message_once(session_maker, monkeypatch):
-    monkeypatch.setattr(sj.settings, "ws_auth_enabled", False)
+    monkeypatch.setattr(sj.settings, "auth_enabled", False)
     await _seed_conversation(session_maker)
     redis = FakeRedis()
     await sj.remember_scan_requester(
@@ -446,7 +446,7 @@ async def test_overlapping_deliveries_write_one_message_on_postgres(pg_async_eng
 
     from services.conversation_service import ConversationService
 
-    monkeypatch.setattr(sj.settings, "ws_auth_enabled", False)
+    monkeypatch.setattr(sj.settings, "auth_enabled", False)
     maker = async_sessionmaker(pg_async_engine, class_=AsyncSession, expire_on_commit=False)
     await _seed_conversation(maker)
     real_save = ConversationService.save_message
@@ -488,7 +488,7 @@ async def test_overlapping_deliveries_into_a_new_conversation_write_one_message_
     from models.database import Conversation
     from services.conversation_service import ConversationService
 
-    monkeypatch.setattr(sj.settings, "ws_auth_enabled", False)
+    monkeypatch.setattr(sj.settings, "auth_enabled", False)
     maker = async_sessionmaker(pg_async_engine, class_=AsyncSession, expire_on_commit=False)
     # Deliberately NO _seed_conversation: the row does not exist yet.
     real_save = ConversationService.save_message

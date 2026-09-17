@@ -13,8 +13,11 @@ data:
   # here changes nothing today. The consistency validator in utils/config.py
   # (assert_auth_config_consistency) hard-fails on an incoherent combo.
   RENFIELD_ENV: "development"       # NOT "production" — that arms the insecure-JWT-key boot guard; flip only with a strong SECRET_KEY (see cutover below)
-  AUTH_ENABLED: "false"            # single-user LAN; the whole multi-user surface is gated on this
-  WS_AUTH_ENABLED: "false"        # MUST flip to "true" together with AUTH_ENABLED (validator enforces)
+  AUTH_ENABLED: "false"            # single-user LAN; the whole multi-user surface — REST *and* WebSocket — is gated on this
+  # WS_AUTH_ENABLED is RETIRED (was never an independent decision: the validator
+  # refused to boot on AUTH_ENABLED=true + WS_AUTH_ENABLED=false, so only
+  # both-on/both-off existed). A leftover key that AGREES with AUTH_ENABLED still
+  # boots with a deprecation warning; one that CONTRADICTS it fails the boot.
   # This instance federates → require the persisted identity key so a
   # mis-provisioned pod FAILS BOOT (enforce_persistent_identity) instead of
   # silently regenerating ephemerally and breaking pairings a deploy later. Only
@@ -34,8 +37,7 @@ data:
   # Provision a strong SECRET_KEY (>= 32 random chars) in the renfield-secrets
   # Secret FIRST, then set together:
   #   RENFIELD_ENV: "production"      (arms the SECRET_KEY boot guard — #692)
-  #   AUTH_ENABLED: "true"
-  #   WS_AUTH_ENABLED: "true"         (required with AUTH_ENABLED — validator hard-fails otherwise)
+  #   AUTH_ENABLED: "true"            (covers the WebSocket surface too — there is no second flag)
   #   ALLOW_REGISTRATION: "false"
   #   CORS_ORIGINS: "https://renfield.local"   (or the real origin)
   #   TRUSTED_PROXIES: "<Traefik pod CIDR>"    (verify live: kubectl get pod -n kube-system -l app.kubernetes.io/name=traefik -o wide)
