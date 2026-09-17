@@ -204,6 +204,8 @@ Die automatische Context Injection (Schritt 3) blendet nur die wenigen semantisc
 
 Opt-in Feature (`MEMORY_CONTRADICTION_RESOLUTION=true`): Beim Speichern neuer Memories werden bestehende auf semantische Ähnlichkeit geprüft. Memories im Threshold-Bereich (0.6–0.89) werden dem LLM zur Widerspruchsprüfung vorgelegt. Bei Widerspruch wird die alte Memory aktualisiert oder archiviert.
 
+**Eigentums-Gate am Schreibpfad.** Sowohl die Widerspruchsauflösung als auch der v2-Batch-Pfad (`_apply_update_v2` / `_apply_delete_v2`) nehmen die zu ändernde Memory-ID aus der LLM-Antwort. Die Schema-Prüfung `validate_against_candidates` prüft ausschließlich die **Mitgliedschaft** in der Kandidatenmenge, nie das **Eigentum**. Deshalb gilt am Schreibpfad: identifizierter Turn → `user_id == asker_id` als WHERE-Bedingung (v2) bzw. Re-Check vor dem ORM-Schreibzugriff (v1); Turn **ohne Identität** (Gerät, Satellit, nicht erkannte Stimme) bei aktivierter Auth → Schreibzugriff wird verweigert und die Kandidatensuche liefert nichts (fail closed), da der Circle-Filter für `user_id=None` auf Public-Tier degradiert und damit fremde Zeilen enthält. Bei `AUTH_ENABLED=false` (eine Vertrauensdomäne, alle Zeilen tragen denselben Fallback-Eigentümer) bleibt das Verhalten unverändert.
+
 ### Audit Trail
 
 Jede Änderung an Memories wird in der History dokumentiert:

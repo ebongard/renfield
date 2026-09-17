@@ -351,6 +351,8 @@ Frontend pages: `/brain` (search), `/brain/review` (owner review queue), `/brain
 
 For memory-retrieval callers: pass `user_id=asker_id`. For RAG search: pass `user_id=asker_id` in every `rag.search()` call — `None` reduces to public-tier-only in auth-enabled mode.
 
+**Extraction WRITES are ownership-gated separately from retrieval.** `_apply_update_v2` / `_apply_delete_v2` and the v1 contradiction path all take the row to mutate from an LLM-supplied `target_id`, and `services/memory_ops.validate_against_candidates` checks **membership in the candidate set only — never ownership**. So the apply layer enforces it: an identified turn is scoped by `user_id == asker_id` (WHERE clause in v2, `_extraction_target_owned` re-check in v1), and a turn with **no identity** is refused outright while auth is on (`_identity_scoped_write_denied`) — `user_id` arrives as `None` from every device / satellite / unidentified-voice turn, and the candidate filter then degrades to public-tier, i.e. other users' rows. `AUTH_ENABLED=false` is one trust domain (circle filter bypassed, every row carries the same `_resolve_owner_user_id` fallback owner) and keeps its unscoped behaviour. Test: `tests/backend/test_memory_ownership_guard.py`.
+
 ### Structured Memory (KG canonicalization + subject attribution)
 
 Lifts personal memory from flat text onto the typed KG substrate.

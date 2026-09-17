@@ -74,7 +74,7 @@ Rationale:
 
 1. **Clears the ship gate** (cross_session_stale ≥ 0.80) without regressing any of the four locked baselines.
 2. **Smallest change** consistent with "extract is not chat retrieval": one threshold-value override on two `retrieve()` call sites; nothing in the prompt; nothing about how the LLM is instructed.
-3. **Trusts the LLM as a semantic filter** rather than encoding a similarity floor. The drift check (`validate_against_candidates`) remains the safety net for invented target_ids.
+3. **Trusts the LLM as a semantic filter** rather than encoding a similarity floor. The drift check (`validate_against_candidates`) remains the safety net for invented target_ids — **membership only**; ownership is enforced separately at the apply layer (`_identity_scoped_write_denied` / `_extraction_target_owned`).
 4. **Score-aware data convinced us the principled-looking move is worse for real life.** Giving the LLM a numerical anchor produced more confident over-extraction, not better calibration. That's a useful negative result — keep it documented so the next person who reaches for "but more context!" sees this run first.
 
 ## Open follow-ups (NOT in this change)

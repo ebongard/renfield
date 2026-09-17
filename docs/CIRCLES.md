@@ -93,6 +93,8 @@ Jedes Subsystem, das Inhalte dem LLM präsentiert, wendet den Circle-Filter an:
 
 **Verhaltensänderung vor/nach Circles**: `ConversationMemoryService.retrieve()` respektiert nun Circle-Reichweite — Tier-2-Haushaltsmitglieder sehen die Memories der anderen auf Tier 2. Vorher war der Filter strikt `user_id == asker_id`. Aufrufer **müssen** `user_id=asker_id` übergeben; `None` reduziert im auth-enabled Modus auf `public` (Tier 4) allein.
 
+**Der Circle-Filter regelt Lesen, nicht Schreiben.** Die Memory-Extraktion ändert bestehende Zeilen anhand einer `target_id` aus der LLM-Antwort; die Kandidatenmenge stammt aus demselben (für `user_id=None` degradierten) Retrieval, und `services/memory_ops.validate_against_candidates` prüft nur die Mitgliedschaft in dieser Menge, nie das Eigentum. Der Schreibpfad hat deshalb ein eigenes Eigentums-Gate: identifizierter Turn → `user_id == asker_id` in der WHERE-Bedingung (`_apply_update_v2` / `_apply_delete_v2`) bzw. Re-Check `_extraction_target_owned` (v1-Widerspruchspfad); Turn ohne Identität bei aktivierter Auth → verweigert (`_identity_scoped_write_denied`), und `_find_similar_memories` / `_find_duplicate` liefern nichts. `AUTH_ENABLED=false` bleibt unverändert (eine Vertrauensdomäne). Test: `tests/backend/test_memory_ownership_guard.py`.
+
 ---
 
 ## Cache & Policy Resolution
