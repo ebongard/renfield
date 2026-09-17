@@ -112,6 +112,13 @@ spec:
             # SECRET_KEY at Settings() init — the worker imports config too, so it
             # crashes on any AUTH_ENABLED / RENFIELD_ENV=production instance without
             # this. optional:true = inject-if-present (auth-off installs unaffected).
+            #
+            # DRIFT IS EXPECTED HERE on the auth-off household: its live worker has
+            # NO SECRET_KEY env (verified 2026-09-17) and does not need one, while
+            # auth-on xidra does have it. `bin/k8s-drift-check.sh` therefore reports
+            # this block against ns renfield — that is the repo being deliberately
+            # ahead, NOT a regression. Do not "fix" it by deleting these lines:
+            # that would strip the guard from every auth-on instance.
             - name: SECRET_KEY
               valueFrom:
                 secretKeyRef: {name: renfield-secrets, key: secret-key, optional: true}
