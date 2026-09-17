@@ -910,53 +910,101 @@ class ConversationMemoryService(AtomOwnerResolverMixin):
     # extract call + N per-fact contradiction calls in v1). Schema enforced
     # by services/memory_ops.py. Prompt at prompts/memory.yaml:extraction_v2_*.
     #
-    # Lock semantics: session-level pg_advisory_lock held only around
-    # retrieve + apply, dropped for the LLM call. Optimistic concurrency:
-    # at apply time, re-retrieve and check whether the candidate-id set has
-    # drifted; if so, reject the batch and fall back to v1. Caller controls
-    # the outer transaction; this method does NOT call self.db.commit().
+    # Lock semantics (rewritten after a production deadlock — 655 deadlocks
+    # in 5 days, 5-7/h, on reva-prod):
+    #
+    # The ORIGINAL design took a SESSION-level pg_advisory_lock around
+    # retrieve (Phase 1) and around apply (Phase 3), dropping it for the LLM
+    # call. That is unsound, because Phase 1's retrieve also UPDATEd
+    # access_count/last_accessed_at: the advisory lock was released at the
+    # end of Phase 1, but the ROW locks of that UPDATE live until the CALLER
+    # commits — i.e. across the entire LLM call. Worker B could then take the
+    # free advisory lock and block on A's row locks while A blocked on B for
+    # the advisory lock. Cycle -> deadlock.
+    #
+    # The CURRENT design removes the cycle structurally rather than shrinking
+    # the window:
+    #   Phase 1  pure read (`track_access=False`) — no writes, no row locks,
+    #            and therefore nothing to lock.
+    #   Phase 2  LLM call, no lock held (unchanged).
+    #   Phase 3  pg_advisory_XACT_lock — transaction-scoped, so it can never
+    #            be released while row locks taken under it still stand.
+    #            No explicit release exists or is possible.
+    # Invariant: any transaction taking this lock acquires it BEFORE its
+    # first row lock. Do not re-introduce a write into Phase 1.
+    #
+    # Access accounting: because Phase 1 and the Phase-3 drift probe are pure
+    # reads, `_bump_candidate_access` is the SINGLE source of the access
+    # counter — retrieved candidates are counted exactly once per extraction
+    # on every terminal path (success, drift-reject, LLM/schema-reject).
+    # Previously they were counted 2-3x (Phase 1 + drift re-retrieve +
+    # explicit bump).
+    #
+    # Optimistic concurrency is unchanged: at apply time, re-retrieve and
+    # check whether the candidate-id set has drifted; if so, reject the batch
+    # and fall back to v1. Caller controls the outer transaction; this method
+    # does NOT call self.db.commit().
 
     _LOCK_KEY_NAMESPACE = 0x4D454D30  # ASCII "MEM0"
 
     @staticmethod
     def _user_lock_key(user_id: int) -> int:
-        """Build a 64-bit bigint key for pg_advisory_lock(bigint).
+        """Build a 64-bit bigint key for pg_advisory_xact_lock(bigint).
 
         High 32 bits namespace = "MEM0", low 32 bits = user_id (masked).
         Prevents collision with any future feature using advisory locks.
         """
         return (ConversationMemoryService._LOCK_KEY_NAMESPACE << 32) | (int(user_id) & 0xFFFFFFFF)
 
-    async def _acquire_user_lock(self, user_id: int | None) -> None:
-        """Session-level lock. Pair with `_release_user_lock` in try/finally."""
+    async def _acquire_user_lock_xact(self, user_id: int | None) -> None:
+        """Transaction-scoped per-user advisory lock (`pg_advisory_xact_lock`).
+
+        Released ONLY by COMMIT/ROLLBACK of the enclosing transaction, so it
+        can never be dropped while row locks taken under it still stand —
+        exactly the property the previous session-level `pg_advisory_lock`
+        lacked, and whose absence let two concurrent extractions for the same
+        user form a lock cycle (the production deadlock). There is no explicit
+        release, and none is possible: that is the point, not an omission.
+
+        Consequence to keep in mind: the lock is held until the CALLER ends
+        its transaction. On the drift-reject path that includes v1's LLM
+        latency, which serialises concurrent extractions for that one user in
+        that (rare, concurrency-triggered) case. That is the deliberate trade
+        against a lock that could be released early — releasing early is the
+        bug.
+        """
         if user_id is None:
             return
         await self.db.execute(
-            text("SELECT pg_advisory_lock(:k)"),
+            text("SELECT pg_advisory_xact_lock(:k)"),
             {"k": self._user_lock_key(user_id)},
         )
 
-    async def _release_user_lock(self, user_id: int | None) -> None:
-        if user_id is None:
+    async def _bump_candidate_access(self, memory_ids) -> None:
+        """Count retrieved-but-untouched candidates as accessed — once.
+
+        `last_accessed_at` is not cosmetic: it feeds BOTH the recency-aware
+        ranker and the context/confidence decay in `cleanup()`, so a candidate
+        the extractor actually read must never read back as "never used".
+        Phase 1 and the Phase-3 drift probe retrieve with `track_access=False`
+        (they must not take row locks), which makes this the single source of
+        the counter. Call it exactly once per extraction on every terminal
+        path.
+
+        One statement for the whole set (was: one UPDATE per id), so the rows
+        are also locked in a single consistent order.
+        """
+        ids = [int(i) for i in memory_ids]
+        if not ids:
             return
-        try:
-            await self.db.execute(
-                text("SELECT pg_advisory_unlock(:k)"),
-                {"k": self._user_lock_key(user_id)},
+        await self.db.execute(
+            update(ConversationMemory)
+            .where(ConversationMemory.id.in_(ids))
+            .values(
+                last_accessed_at=datetime.now(UTC).replace(tzinfo=None),
+                access_count=ConversationMemory.access_count + 1,
             )
-        except Exception as e:
-            # Don't propagate — the connection pool's `before_checkin`
-            # event handler in services/database.py runs
-            # pg_advisory_unlock_all() as a defensive sweep before the
-            # connection returns to the pool, so a release-here failure
-            # does NOT leak the lock to the next caller. The earlier
-            # comment claiming "the lock releases when the session
-            # disconnects anyway" was wrong: pg_advisory_lock is
-            # session-level (= per-connection), and a pool checkin does
-            # NOT disconnect the underlying connection. Without the
-            # before_checkin handler this release failure would block
-            # all subsequent v2 calls for the same user_id indefinitely.
-            logger.warning(f"v2 extract: pg_advisory_unlock failed: {e}")
+        )
 
     async def _call_extract_v2_llm(
         self,
@@ -1220,17 +1268,20 @@ class ConversationMemoryService(AtomOwnerResolverMixin):
         # locked the production default at 0.0.
         extract_threshold = float(settings.memory_extract_retrieval_threshold)
 
-        # ---- Phase 1: lock + retrieve (no LLM call inside the lock) ----
-        candidates: list[dict] = []
-        await self._acquire_user_lock(user_id)
-        try:
-            candidates = await MemoryRetrieval(self.db).retrieve(
-                message=user_message, user_id=user_id, limit=retrieve_k,
-                threshold=extract_threshold,
-                ranker="recency_aware",
-            )
-        finally:
-            await self._release_user_lock(user_id)
+        # ---- Phase 1: PURE READ — no lock, no writes, no row locks ----
+        # `track_access=False` is load-bearing, not an optimisation. The
+        # access-tracking UPDATE that used to run here took row locks which
+        # outlived the advisory lock (released immediately after) and lived on
+        # until the caller committed — across the whole LLM call. That was one
+        # half of the deadlock cycle. With no write here there is nothing to
+        # guard, so the lock is gone too. The candidates are counted as
+        # accessed exactly once, in Phase 3 / on the fallback paths.
+        candidates: list[dict] = await MemoryRetrieval(self.db).retrieve(
+            message=user_message, user_id=user_id, limit=retrieve_k,
+            threshold=extract_threshold,
+            ranker="recency_aware",
+            track_access=False,
+        )
 
         candidate_ids_initial: set[int] = {
             int(c["id"]) for c in candidates if c.get("id") is not None
@@ -1245,6 +1296,15 @@ class ConversationMemoryService(AtomOwnerResolverMixin):
         )
         if ops_list is None:
             logger.info("v2 extract: LLM/schema rejected → fallback to v1")
+            # The candidates WERE read this turn, so count them once — Phase 1
+            # no longer does. Issued BEFORE v1 because v1 commits internally
+            # and that commit is what persists this bump (the caller —
+            # chat_handler's `async with AsyncSessionLocal()` — does not
+            # commit). Taking these row locks without the advisory lock is
+            # safe here precisely because this transaction never reaches
+            # Phase 3 and so never requests that lock: it can wait for no one,
+            # hence it cannot be part of a cycle.
+            await self._bump_candidate_access(candidate_ids_initial)
             # Call v1 impl directly — going through the dispatcher would
             # recurse if v2_authoritative is on.
             return await self._extract_and_save_v1_impl(
@@ -1267,76 +1327,75 @@ class ConversationMemoryService(AtomOwnerResolverMixin):
                     type(e_dump).__name__,
                 )
 
-        # ---- Phase 3: re-lock + drift check + apply ops ----
+        # ---- Phase 3: transaction-scoped lock + drift check + apply ops ----
         saved: list[ConversationMemory] = []
         drift_reject = False
-        await self._acquire_user_lock(user_id)
-        try:
-            # Re-retrieve to detect candidate drift since the LLM was called.
-            # Use the same threshold strategy as Phase 1 so the drift check
-            # sees the same candidate ID set.
-            fresh = await MemoryRetrieval(self.db).retrieve(
-                message=user_message, user_id=user_id, limit=retrieve_k,
-                threshold=extract_threshold,
-                ranker="recency_aware",
-            )
-            fresh_ids = {int(c["id"]) for c in fresh if c.get("id") is not None}
+        # Acquired BEFORE any row lock in this transaction and released only
+        # by the caller's COMMIT/ROLLBACK — see the lock-semantics block above.
+        # There is deliberately no try/finally: a transaction-scoped lock has
+        # no explicit release, which is exactly what makes the old
+        # "released while its row locks still stand" cycle impossible.
+        await self._acquire_user_lock_xact(user_id)
 
-            rejection = validate_against_candidates(ops_list, fresh_ids)
-            if rejection is not None:
-                logger.info(f"v2 extract: drift rejected ({rejection}) → fallback to v1")
-                drift_reject = True
-                # Fall through to release the lock, then run v1 OUTSIDE it.
-                # Holding the advisory lock through v1's LLM latency would
-                # serialise concurrent turns for this user.
-            else:
-                touched: set[int] = set()
-                for op in ops_list.ops:
-                    if op.op == OpType.NOOP:
-                        continue
-                    elif op.op == OpType.ADD:
-                        memory = await self._apply_add_v2(
-                            content=op.content,
-                            category=op.category,
-                            importance=op.importance if op.importance is not None else 0.5,
-                            user_id=user_id,
-                            session_id=session_id,
-                        )
-                        if memory is not None:
-                            saved.append(memory)
-                    elif op.op == OpType.UPDATE:
-                        if op.target_id is not None and op.content and await self._apply_update_v2(
-                            target_id=op.target_id,
-                            content=op.content,
-                            category=op.category,
-                            importance=op.importance,
-                            user_id=user_id,
-                        ):
-                            touched.add(op.target_id)
-                    elif op.op == OpType.DELETE:
-                        if op.target_id is not None and await self._apply_delete_v2(
-                            target_id=op.target_id,
-                            user_id=user_id,
-                        ):
-                            touched.add(op.target_id)
+        # Re-retrieve to detect candidate drift since the LLM was called.
+        # Use the same threshold strategy as Phase 1 so the drift check
+        # sees the same candidate ID set. `track_access=False`: this is a
+        # drift PROBE, not a use — double-counting it is what inflated
+        # access_count to 2-3x per extraction.
+        fresh = await MemoryRetrieval(self.db).retrieve(
+            message=user_message, user_id=user_id, limit=retrieve_k,
+            threshold=extract_threshold,
+            ranker="recency_aware",
+            track_access=False,
+        )
+        fresh_ids = {int(c["id"]) for c in fresh if c.get("id") is not None}
 
-                # Bump last_accessed_at on retrieved-but-not-touched rows so the
-                # recency-decay ranking (Lane C) reflects this turn's relevance.
-                now = datetime.now(UTC).replace(tzinfo=None)
-                untouched = candidate_ids_initial - touched
-                for cid in untouched:
-                    await self.db.execute(
-                        update(ConversationMemory)
-                        .where(ConversationMemory.id == cid)
-                        .values(
-                            last_accessed_at=now,
-                            access_count=ConversationMemory.access_count + 1,
-                        )
+        rejection = validate_against_candidates(ops_list, fresh_ids)
+        if rejection is not None:
+            logger.info(f"v2 extract: drift rejected ({rejection}) → fallback to v1")
+            drift_reject = True
+            # Nothing was applied, so every retrieved candidate is
+            # "read but untouched" — count each exactly once. (Bumped before
+            # v1 runs: v1's internal commit is what persists it.)
+            await self._bump_candidate_access(candidate_ids_initial)
+        else:
+            touched: set[int] = set()
+            for op in ops_list.ops:
+                if op.op == OpType.NOOP:
+                    continue
+                elif op.op == OpType.ADD:
+                    memory = await self._apply_add_v2(
+                        content=op.content,
+                        category=op.category,
+                        importance=op.importance if op.importance is not None else 0.5,
+                        user_id=user_id,
+                        session_id=session_id,
                     )
+                    if memory is not None:
+                        saved.append(memory)
+                elif op.op == OpType.UPDATE:
+                    if op.target_id is not None and op.content and await self._apply_update_v2(
+                        target_id=op.target_id,
+                        content=op.content,
+                        category=op.category,
+                        importance=op.importance,
+                        user_id=user_id,
+                    ):
+                        touched.add(op.target_id)
+                elif op.op == OpType.DELETE:
+                    if op.target_id is not None and await self._apply_delete_v2(
+                        target_id=op.target_id,
+                        user_id=user_id,
+                    ):
+                        touched.add(op.target_id)
 
-                await self.db.flush()  # surface FK / constraint errors before exit
-        finally:
-            await self._release_user_lock(user_id)
+            # Count the retrieved-but-not-touched rows as accessed so the
+            # recency-decay ranking (Lane C) and cleanup()'s decay reflect
+            # this turn. Touched rows already carry their own +1 from
+            # _apply_update_v2, hence the set difference — no double count.
+            await self._bump_candidate_access(candidate_ids_initial - touched)
+
+            await self.db.flush()  # surface FK / constraint errors before exit
 
         if drift_reject:
             # Call v1 impl directly (see comment in the schema-reject branch above).

@@ -193,6 +193,16 @@ class TestExtractV2Gating:
             )
             assert result == ["v1_result"]
             service._extract_and_save_v1_impl.assert_called_once()
-            # Lock was acquired + released around retrieve (Phase 1) but NOT
-            # the apply phase, since we short-circuited to v1.
-            assert service.db.execute.call_count >= 2  # at least lock + unlock
+            # Phase 1 is now a PURE READ (no access write -> no row locks ->
+            # nothing to guard), and the LLM-reject path never reaches Phase 3,
+            # so no advisory lock is taken at all. The old session-level
+            # lock+unlock pair asserted here is precisely what deadlocked in
+            # production; see test_memory_extract_lock_deadlock.py.
+            executed = [
+                str(call.args[0]) if call.args else ""
+                for call in service.db.execute.call_args_list
+            ]
+            assert not [
+                sql for sql in executed
+                if "pg_advisory_lock" in sql or "pg_advisory_unlock" in sql
+            ]
