@@ -20,6 +20,15 @@ from pydantic import ValidationError
 from models.websocket_messages import WSChatMessage, WSErrorCode
 from services.database import AsyncSessionLocal
 from services.input_guard import detect_injection
+from services.turn_extraction import (
+    # Re-exported under their historical private names: these two coroutines
+    # used to live here, and moved to services/turn_extraction.py so the
+    # SATELLITE voice path runs the same extraction instead of a second copy.
+    extract_memories_background as _extract_memories_background,  # noqa: F401
+    extract_structured_background as _extract_structured_background,  # noqa: F401
+    spawn_memory_extraction,
+    spawn_post_message_hooks,
+)
 from services.websocket_auth import WSAuthError, authenticate_websocket
 from services.websocket_rate_limiter import get_rate_limiter
 from utils.config import settings
@@ -460,128 +469,6 @@ async def _followup_chips_background(
             await websocket.send_json({"type": "followups", "suggested_followups": chips})
     except Exception as e:  # noqa: BLE001 — best-effort; chips are optional
         logger.debug(f"follow-up chips skipped: {e}")
-
-
-async def _extract_memories_background(
-    user_message: str,
-    assistant_response: str,
-    user_id: int | None,
-    session_id: str | None,
-    lang: str,
-    captured_kg_subjects: set[str] | None = None,
-) -> None:
-    """Background task: extract and save memories from a conversation exchange.
-
-    Always logs the extraction outcome (including 0 memories) so silent
-    failures of the LLM extractor or guard short-circuits are visible in
-    production logs. Without this, missing memories look identical to a
-    bug-skipped trigger.
-
-    ``captured_kg_subjects`` (Phase 3-subsume per-fact fix): when the chat
-    handler runs the `post_message`/KG extraction FIRST in the same ordered
-    background coroutine, the subject names the KG actually captured a relation
-    for this turn are threaded here so the subsume gate is per-fact, not a
-    subject-level proxy. None = uncoordinated → service falls back to the proxy.
-    """
-    logger.info(
-        f"📝 Memory extraction starting (session={session_id}, user_id={user_id}, "
-        f"user_msg_len={len(user_message)}, assistant_msg_len={len(assistant_response)})"
-    )
-    try:
-        async with AsyncSessionLocal() as db:
-            from services.conversation_memory_service import ConversationMemoryService
-            service = ConversationMemoryService(db)
-            memories = await service.extract_and_save(
-                user_message=user_message,
-                assistant_response=assistant_response,
-                user_id=user_id,
-                session_id=session_id,
-                lang=lang,
-                captured_kg_subjects=captured_kg_subjects,
-            )
-            logger.info(
-                f"📝 Memory extraction done: extracted={len(memories)} "
-                f"(session={session_id})"
-            )
-            # Chat branching (Phase 2) race guard: a fork/switch may have landed
-            # WHILE this background extraction ran, so re-derive is_active from the
-            # conversation's CURRENT active leaf. Idempotent — whichever of
-            # extraction/fork commits last re-fixes truth, so a memory written for
-            # an abandoned turn can't linger active. Flag-gated → zero cost when
-            # branching is off (the prod default).
-            if session_id and settings.chat_branching_enabled:
-                try:
-                    from sqlalchemy import select
-
-                    from models.database import Conversation as _Conv
-                    from services.conversation_service import (
-                        ConversationService as _CS,
-                    )
-                    _conv = (
-                        await db.execute(
-                            select(_Conv).where(_Conv.session_id == session_id)
-                        )
-                    ).scalar_one_or_none()
-                    if _conv is not None:
-                        _changed = await _CS(db).recompute_memory_activation(_conv)
-                        if _changed:
-                            await db.commit()
-                except Exception as _ge:  # noqa: BLE001
-                    logger.warning(
-                        f"⚠️ Post-extraction branch recompute failed: {_ge}"
-                    )
-    except Exception as e:
-        logger.warning(f"Memory extraction failed: {e}", exc_info=True)
-
-
-async def _extract_structured_background(
-    user_message: str,
-    assistant_response: str,
-    user_id: int | None,
-    session_id: str | None,
-    lang: str,
-) -> None:
-    """Ordered background coroutine for the Phase 3-subsume coordination.
-
-    Runs the `post_message` hooks FIRST (KG extraction + plugins like the twin),
-    capturing the subject NAMES of the relations the KG actually saved this turn
-    into a shared set, then runs memory extraction with that set so the subsume
-    gate is per (subject, turn): a state/attribute fact about a subject for whom
-    no relation was captured this turn is kept flat. (NOT truly per-fact — the
-    set holds subject names, not (subject, object) pairs, so a same-turn same-
-    subject state fact alongside an entity-object fact is still subsumed; see
-    ConversationMemoryService._should_subsume_fact.) KG extraction runs exactly
-    ONCE (in the hook); the set is the only cross-task signal — no double-extract.
-
-    Stays entirely in the background (this coroutine is spawned AFTER the `done`
-    frame), so re-sequencing KG-before-memory never delays the user response /
-    TTS / wakeword. Used ONLY when subsume coordination is active; otherwise the
-    two tasks stay independent + concurrent (legacy behavior, byte-identical).
-    """
-    from utils.hooks import run_hooks
-
-    captured_kg_subjects: set[str] = set()
-    # 1) post_message hooks first — KG populates the set. The hook reads it under
-    #    the kwarg name `captured_subjects` (see kg_post_message_hook). Plugins
-    #    (twin) ignore the extra kwarg (**kwargs). run_hooks never raises.
-    await run_hooks(
-        "post_message",
-        user_msg=user_message,
-        assistant_msg=assistant_response,
-        user_id=user_id,
-        session_id=session_id,
-        lang=lang,
-        captured_subjects=captured_kg_subjects,
-    )
-    # 2) memory extraction with the per-turn captured set as the subsume signal.
-    await _extract_memories_background(
-        user_message=user_message,
-        assistant_response=assistant_response,
-        user_id=user_id,
-        session_id=session_id,
-        lang=lang,
-        captured_kg_subjects=captured_kg_subjects,
-    )
 
 
 def _format_file_size(size_bytes: int | None) -> str:
@@ -2686,49 +2573,18 @@ WICHTIG: Nutze die ECHTEN Daten aus dem Ergebnis! Gib NUR die Antwort, KEIN JSON
             # memories from error-response text would otherwise re-inject the
             # error string into long-term memory as if it were a stable fact.
             _action_success = assistant_metadata.get("action_success")
-            _mem_should_run = (
-                settings.memory_enabled
-                and settings.memory_extraction_enabled
-                and full_response
-                and _action_success is not False
+            # Shared with the SATELLITE voice path (services/turn_extraction):
+            # ONE skip policy + ONE spawn policy for every turn producer. With
+            # subsume active the spawned coroutine also OWNS the post_message
+            # dispatch (KG exactly once) — see `owns_post_message` below.
+            _spawn = spawn_memory_extraction(
+                user_message=content,
+                assistant_response=full_response,
+                user_id=user_id,
+                session_id=msg_session_id,
+                lang=turn_lang,
+                action_success=_action_success,
             )
-            # Phase 3-subsume per-fact fix: when subsume is active we COORDINATE
-            # the KG (`post_message`) and memory extractors so the subsume gate is
-            # per-fact. The ordered coroutine runs KG first (populating the
-            # captured-subject set) then memory extraction with that set, and OWNS
-            # the post_message hook dispatch (so KG runs exactly once — the
-            # separate post_message spawn below is skipped). Off (default) =>
-            # the two tasks stay independent + concurrent (legacy, byte-identical).
-            _subsume_coordinate = bool(
-                getattr(settings, "memory_subsume_to_kg", False)
-            )
-            if _mem_should_run:
-                logger.debug(
-                    f"📝 Scheduling memory extraction (session={msg_session_id}, "
-                    f"subsume_coordinate={_subsume_coordinate})"
-                )
-                if _subsume_coordinate:
-                    task = asyncio.create_task(
-                        _extract_structured_background(
-                            user_message=content,
-                            assistant_response=full_response,
-                            user_id=user_id,
-                            session_id=msg_session_id,
-                            lang=turn_lang,
-                        )
-                    )
-                else:
-                    task = asyncio.create_task(
-                        _extract_memories_background(
-                            user_message=content,
-                            assistant_response=full_response,
-                            user_id=user_id,
-                            session_id=msg_session_id,
-                            lang=turn_lang,
-                        )
-                    )
-                _background_tasks.add(task)
-                task.add_done_callback(_background_tasks.discard)
 
             # Background: follow-up suggestion chips (opt-in/dark). Dispatched
             # AFTER `done` so it never delays the turn (see _followup_chips_background).
@@ -2775,10 +2631,8 @@ WICHTIG: Nutze die ECHTEN Daten aus dem Ergebnis! Gib NUR die Antwort, KEIN JSON
             # exactly once. If memory extraction was skipped (failed action /
             # empty response), the coordinated coroutine never ran, so we still
             # fire post_message here so KG + plugins are not starved.
-            if not (_subsume_coordinate and _mem_should_run):
-                from utils.hooks import run_hooks
-                _pm_task = asyncio.create_task(run_hooks(
-                    "post_message",
+            if not _spawn.owns_post_message:
+                spawn_post_message_hooks(
                     user_msg=content,
                     assistant_msg=full_response,
                     user_id=user_id,
@@ -2787,9 +2641,7 @@ WICHTIG: Nutze die ECHTEN Daten aus dem Ergebnis! Gib NUR die Antwort, KEIN JSON
                     # stamps its events with it) — the subsume-coordinated
                     # path already passed it, this default path did not.
                     lang=turn_lang,
-                ))
-                _background_tasks.add(_pm_task)
-                _pm_task.add_done_callback(_background_tasks.discard)
+                )
 
             logger.info(f"✅ WebSocket Response gesendet (tts_handled={tts_handled_by_server})")
 

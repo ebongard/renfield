@@ -109,9 +109,14 @@ class TestStructuredBackgroundOrdering:
             order.append("mem")
             seen_captured["set"] = captured_kg_subjects
 
-        # run_hooks is imported INSIDE the coroutine (`from utils.hooks import run_hooks`)
+        # run_hooks is imported INSIDE the coroutine (`from utils.hooks import run_hooks`).
+        # The coroutine itself now lives in services/turn_extraction (shared with the
+        # satellite voice path); chat_handler re-exports it under the historical
+        # name, so the call below still exercises the chat handler's own attribute.
+        from services import turn_extraction as te
+
         with patch("utils.hooks.run_hooks", _fake_run_hooks), \
-             patch.object(ch, "_extract_memories_background", _fake_mem):
+             patch.object(te, "extract_memories_background", _fake_mem):
             await ch._extract_structured_background(
                 user_message="u", assistant_response="a",
                 user_id=7, session_id="s", lang="de",

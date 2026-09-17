@@ -23,6 +23,11 @@ from ha_glue.services.opus_transport import (
 )
 from models.websocket_messages import WSErrorCode
 from services.database import AsyncSessionLocal
+from services.turn_extraction import (
+    TurnExtractionSpawn,
+    spawn_memory_extraction,
+    spawn_post_message_hooks,
+)
 from services.wakeword_config_manager import get_wakeword_config_manager
 from services.websocket_auth import WSAuthError, authenticate_websocket
 from services.websocket_rate_limiter import get_connection_limiter, get_rate_limiter
@@ -109,6 +114,63 @@ def _build_assistant_metadata(
         "intent": intent.get("intent") if intent else None,
         "action_success": action_result.get("success") if action_result else None,
     }
+
+
+def _spawn_satellite_extraction(
+    *,
+    user_text: str,
+    response_text: str,
+    user_id: int | None,
+    session_id: str | None,
+    lang: str,
+    action_success: bool | None,
+) -> TurnExtractionSpawn | None:
+    """Feed a completed SPOKEN turn to the same extractors the browser chat uses.
+
+    Until this existed, a satellite turn was transcribed, answered and persisted
+    — and then forgotten: the handler ran neither the ``post_message`` hooks (KG
+    + plugins) nor memory extraction, so anything said out loud never became
+    knowledge, while the same sentence typed in the browser did.
+
+    **Privacy boundary — extraction only for a RECOGNIZED speaker.** ``user_id``
+    is the Speaker → User resolution (``User.speaker_id``); when it is None the
+    voice in the room is unattributed, and an unattributed utterance must not
+    become somebody's memory (nor reach the KG/plugins via ``post_message``).
+    So: no user, no extraction at all — deliberately, not as an oversight.
+
+    Fire-and-forget: the work is scheduled, never awaited, so the turn's TTS is
+    not delayed; every failure is swallowed so a broken extractor cannot break
+    the spoken turn.
+    """
+    if user_id is None:
+        logger.debug(
+            "📝 Satellite-Extraktion übersprungen: Sprecher nicht erkannt "
+            f"(session={session_id})"
+        )
+        return None
+    try:
+        spawn = spawn_memory_extraction(
+            user_message=user_text,
+            assistant_response=response_text,
+            user_id=user_id,
+            session_id=session_id,
+            lang=lang,
+            action_success=action_success,
+        )
+        # When subsume coordination is active the spawned coroutine dispatches
+        # post_message itself — firing it here too would run KG extraction twice.
+        if not spawn.owns_post_message:
+            spawn_post_message_hooks(
+                user_msg=user_text,
+                assistant_msg=response_text,
+                user_id=user_id,
+                session_id=session_id,
+                lang=lang,
+            )
+        return spawn
+    except Exception as e:  # noqa: BLE001 — extraction must never break the turn
+        logger.warning(f"⚠️ Satellite-Extraktion konnte nicht gestartet werden: {e}")
+        return None
 
 
 @router.websocket("/ws/satellite")
@@ -888,6 +950,19 @@ Gib eine kurze, natürliche Antwort. KEIN JSON, nur Text."""
                                 logger.debug(f"💾 Satellite messages saved to DB: {satellite_db_session_id}")
                         except Exception as e:
                             logger.warning(f"⚠️ Failed to save satellite messages to DB: {e}")
+
+                    # Background: memory + KG extraction for this spoken turn —
+                    # the same seam the browser chat path uses, scheduled (never
+                    # awaited) so the TTS below is not delayed. Runs ONLY when the
+                    # speaker was recognized; see _spawn_satellite_extraction.
+                    _spawn_satellite_extraction(
+                        user_text=text,
+                        response_text=response_text,
+                        user_id=sat_user_id,
+                        session_id=satellite_db_session_id,
+                        lang=satellite_language,
+                        action_success=assistant_metadata.get("action_success"),
+                    )
 
                     # Generate TTS with satellite's language
                     from services.piper_service import get_piper_service
