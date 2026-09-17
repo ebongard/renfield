@@ -199,7 +199,8 @@ than any of the above.
 > `renfield-secrets` (`optional: true` → inject-if-present, so auth-off installs are unaffected).
 > Any new backend-image Job/CronJob must do the same or it crashes with *"SECRET_KEY is insecure:
 > still the placeholder default"*. Provision a strong `secret-key` (≥32 random chars) **before**
-> arming `RENFIELD_ENV=production`, and flip `AUTH_ENABLED` + `WS_AUTH_ENABLED` together.
+> arming `RENFIELD_ENV=production`, and flip `AUTH_ENABLED` (it covers the WebSocket
+> surface too — the separate `WS_AUTH_ENABLED` is retired).
 
 ## Secrets
 

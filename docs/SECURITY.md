@@ -187,11 +187,11 @@ A dedicated adversarial audit of the login/user-management surface (the first au
 
 ## Auth Config Posture
 
-The deployment posture is set **explicitly** in the ConfigMap (`k8s/configmap.yaml`) rather than left to code defaults, so the running state is auditable (#697): `RENFIELD_ENV`, `AUTH_ENABLED`, `WS_AUTH_ENABLED`, `ALLOW_REGISTRATION`, `CORS_ORIGINS`, `TRUSTED_PROXIES`, `API_RATE_LIMIT_STORAGE_URI`. Current values are the deliberate single-user, auth-off LAN posture (byte-identical to the code defaults).
+The deployment posture is set **explicitly** in the ConfigMap (`k8s/configmap.yaml`) rather than left to code defaults, so the running state is auditable (#697): `RENFIELD_ENV`, `AUTH_ENABLED`, `ALLOW_REGISTRATION`, `CORS_ORIGINS`, `TRUSTED_PROXIES`, `API_RATE_LIMIT_STORAGE_URI`. Current values are the deliberate single-user, auth-off LAN posture (byte-identical to the code defaults).
 
 A startup validator (`assert_auth_config_consistency` in `utils/config.py`) **refuses to boot** on an incoherent combo:
 
-- **Hard fail:** `AUTH_ENABLED=true` with `WS_AUTH_ENABLED=false` — the WebSocket chat surface would be unauthenticated and the WS session-ownership check (#657) silently disabled. The two flags must be enabled together.
+- **Hard fail:** a leftover `WS_AUTH_ENABLED` that **contradicts** `AUTH_ENABLED`. The separate WebSocket flag is **retired** — `AUTH_ENABLED` governs the REST *and* the WebSocket surface. It was never an independent control: the validator already refused `AUTH_ENABLED=true` + `WS_AUTH_ENABLED=false` (the phantom-control case, where `authenticate_websocket` short-circuits and the WS session-ownership check (#657) becomes a no-op), so only both-on/both-off were reachable. A leftover key that agrees logs one deprecation warning; one that disagrees fails the boot rather than silently picking a side. Removal path in [ENVIRONMENT_VARIABLES.md](ENVIRONMENT_VARIABLES.md#entfallen-ws_auth_enabled-veraltet-übergangsfrist).
 - **Warn:** `AUTH_ENABLED=true` with wildcard `CORS_ORIGINS='*'`; a production `RENFIELD_ENV` with `ALLOW_REGISTRATION=true`.
 
 `RENFIELD_ENV` is a tracked setting; a real-deployment value (production/prod/staging) also arms the insecure-`SECRET_KEY` boot guard (#692), so a strong key must be provisioned before the auth-on cutover. The ConfigMap carries a commented **AUTH-ON CUTOVER** checklist of the values to flip together.

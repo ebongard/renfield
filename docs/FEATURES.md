@@ -922,7 +922,7 @@ Siehe [SECRETS_MANAGEMENT.md](SECRETS_MANAGEMENT.md) für Details.
 - **Auth-Observability**: `renfield_login_failure_total` / `renfield_authz_denied_total` + strukturierte Logs auf 401/403
 - **Forced Password Rotation**: `must_change_password` serverseitig erzwungen (Allowlist bis zur Rotation); Bootstrap-Admin startet immer damit (auch bei operator-gesetztem `DEFAULT_ADMIN_PASSWORD`) + Frontend-Redirect nach `/change-password`; Change-Password lehnt Wiederverwendung (aktuelles/Default-Passwort) ab
 - **Internal-Auth-Verify-Gate**: `POST /api/internal/auth/verify` (Voice-Server-Verify) optional per `INTERNAL_AUTH_VERIFY_SECRET` (`X-Verify-Secret` Header) abgeschottet — schließt das unauth. Token-Validity-Oracle (login audit 2026-08)
-- **WebSocket Auth**: Optional aktivierbar (`WS_AUTH_ENABLED`)
+- **WebSocket Auth**: Folgt `AUTH_ENABLED` (kein eigener Schalter — `WS_AUTH_ENABLED` ist entfallen)
 - **Passwort-Hashing**: bcrypt
 - **MCP Response Limits**: Max Response-Größe begrenzt (`MCP_MAX_RESPONSE_SIZE`)
 

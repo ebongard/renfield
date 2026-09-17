@@ -440,7 +440,7 @@ The household runs `AUTH_ENABLED=false`, so its deploy path never exercises the 
 
 2. **A fresh DB self-bootstraps — do NOT run the `alembic-upgrade` Job on an empty DB.** `init_db()` (backend startup) runs `Base.metadata.create_all` + stamps alembic HEAD; the 41-migration history is *skipped*. Running `alembic upgrade head` from empty instead fails on `room_output_devices` (FK → `rooms`, which no migration creates — it's `create_all`-only). Just deploy the backend; it builds the schema itself. The migration Job is for **existing** DBs applying **new** migrations only (see its header).
 
-3. **`AUTH_ENABLED` + `WS_AUTH_ENABLED` flip together, strong key first.** `assert_auth_config_consistency` rejects a partial combo; provision a `secret-key` ≥32 random chars **before** arming `RENFIELD_ENV=production`.
+3. **`AUTH_ENABLED` is the single auth flag, strong key first.** It governs the REST *and* the WebSocket surface (the separate `WS_AUTH_ENABLED` is retired; a leftover key that contradicts `AUTH_ENABLED` fails the boot, one that agrees logs a deprecation warning). Provision a `secret-key` ≥32 random chars **before** arming `RENFIELD_ENV=production`.
 
 (Cross-namespace: the shared GPU/model tier — ollama/searxng — must be FQDN-qualified in the ConfigMap AND in the `wait-for-deps` init container, which wgets a bare `ollama:11434` that would resolve to the wrong namespace.)
 

@@ -127,8 +127,7 @@ ALLOW_REGISTRATION=false
 DEFAULT_ADMIN_USERNAME=admin
 DEFAULT_ADMIN_PASSWORD=HIER_ADMIN_PASSWORT_EINSETZEN
 
-# WebSocket Security
-WS_AUTH_ENABLED=true
+# WebSocket Security (Authentifizierung folgt AUTH_ENABLED — kein eigener Schalter)
 WS_RATE_LIMIT_ENABLED=true
 
 # -----------------------------------------------------------------------------

@@ -28,16 +28,16 @@ wrong (`config.py::assert_auth_config_consistency`). Confirm before flipping:
 ```bash
 KX="kubectl --context renfield-private -n renfield-xidra"
 $KX get cm renfield-env -o jsonpath='{.data.CORS_ORIGINS}{"\n"}'      # MUST NOT be "*"  → expect https://x-ren.local
-$KX get cm renfield-env -o jsonpath='{.data.AUTH_ENABLED}{"\n"}'       # MUST be "true"
-$KX get cm renfield-env -o jsonpath='{.data.WS_AUTH_ENABLED}{"\n"}'    # MUST be "true"
+$KX get cm renfield-env -o jsonpath='{.data.AUTH_ENABLED}{"\n"}'       # MUST be "true" (deckt auch die WS-Oberfläche ab)
 $KX get cm renfield-env -o jsonpath='{.data.RENFIELD_ENV}{"\n"}'       # "production" → COOKIE_SECURE must stay true
 $KX get cm renfield-env -o jsonpath='{.data.COOKIE_SECURE}{"\n"}'      # empty(=default true) or "true" — NEVER "false" on prod
 $KX get cm renfield-env -o jsonpath='{.data.AUTH_COOKIE_ENABLED}{"\n"}' # empty (currently off) — this is what we flip
 ```
 
 Verified 2026-08-25: `CORS_ORIGINS=https://x-ren.local`, `AUTH_ENABLED=true`,
-`WS_AUTH_ENABLED=true`, `RENFIELD_ENV=production`, `COOKIE_SECURE` unset (default
-true). **No CORS pinning work is needed** — the origin is already pinned, which is
+`RENFIELD_ENV=production`, `COOKIE_SECURE` unset (default true). (`WS_AUTH_ENABLED`
+was checked here too until the flag was retired — it is now derived from
+`AUTH_ENABLED`; a leftover key must either match it or be removed.) **No CORS pinning work is needed** — the origin is already pinned, which is
 also what makes the WS CSWSH Origin allowlist real under cookie auth.
 
 Also sanity-check the served hostname is HTTPS (Secure cookies require it): the

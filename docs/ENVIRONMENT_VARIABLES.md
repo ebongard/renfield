@@ -2071,7 +2071,7 @@ RENFIELD_ENV=development
 Jetzt ein **getracktes Settings-Feld** (#697, vorher nur via `os.getenv` gelesen), damit es introspektierbar/dokumentiert ist und in der ConfigMap neben den übrigen Posture-Keys gesetzt werden kann. Ein Real-Deployment-Wert (`production`/`prod`/`staging`) **scharfschaltet die JWT-Key-Boot-Sperre** auch bei ausgeschalteter Auth (#692) — vorher einen starken `SECRET_KEY` (>= 32 Zeichen) bereitstellen, sonst bootet das Backend nicht.
 
 **Konsistenz-Assertion (#697, `assert_auth_config_consistency`):**
-- **HARTER Boot-Fehler:** `AUTH_ENABLED=true` mit `WS_AUTH_ENABLED=false` — der WebSocket-Chat wäre unauthentifiziert und der WS-Session-Ownership-Check (#657) still deaktiviert. Beide Flags müssen gemeinsam an.
+- **HARTER Boot-Fehler:** ein noch gesetztes `WS_AUTH_ENABLED`, das `AUTH_ENABLED` **widerspricht**. Das Flag ist entfallen (die WebSocket-Oberfläche folgt `AUTH_ENABLED`); ein übereinstimmender Rest-Schlüssel erzeugt nur eine Deprecation-Warnung. Siehe [Entfallen: `WS_AUTH_ENABLED`](#entfallen-ws_auth_enabled-veraltet-übergangsfrist).
 - **HARTER Boot-Fehler (Cookie-Session):** `AUTH_COOKIE_ENABLED=true` mit (a) `CORS_ORIGINS='*'` (credentialed CORS unmöglich → Cookies würden nicht gesendet, und die WS-CSWSH-Origin-Allowlist wäre umgangen), (b) `AUTH_ENABLED=false` (Cookie-Session ohne Auth sinnlos), oder (c) `COOKIE_SECURE=false` auf `RENFIELD_ENV=production/prod/staging` (Session-Cookie über Klartext-HTTP).
 - **WARN (nicht fatal):** `AUTH_ENABLED=true` mit `CORS_ORIGINS='*'` (nur wenn Cookie-Mode AUS — mit Cookies ist es ein harter Fehler); `RENFIELD_ENV=production` mit `ALLOW_REGISTRATION=true`.
 - Bei der aktuellen Auth-off-Posture (alles false) greift nichts — byte-identisch.
@@ -2219,8 +2219,8 @@ ALLOW_REGISTRATION=false  # Nur Admin erstellt Benutzer
 ### WebSocket Security
 
 ```bash
-# WebSocket Authentifizierung aktivieren (für Produktion empfohlen!)
-WS_AUTH_ENABLED=false
+# WebSocket-Authentifizierung hat KEINEN eigenen Schalter mehr — sie folgt
+# AUTH_ENABLED (siehe „Entfallen: WS_AUTH_ENABLED" weiter unten).
 
 # Token-Gültigkeitsdauer in Minuten (Geräte-Token-Store)
 WS_TOKEN_EXPIRE_MINUTES=60
@@ -2255,7 +2255,6 @@ WS_PROTOCOL_VERSION=1.0
 ```
 
 **Defaults:**
-- `WS_AUTH_ENABLED`: `false` (für Entwicklung)
 - `WS_TOKEN_EXPIRE_MINUTES`: `60`
 - `WS_JWT_EXPIRE_SECONDS`: `90`
 - `WS_RATE_LIMIT_ENABLED`: `true`
@@ -2269,11 +2268,11 @@ WS_PROTOCOL_VERSION=1.0
 **Produktion:**
 ```bash
 # EMPFOHLEN für Produktion:
-WS_AUTH_ENABLED=true
+AUTH_ENABLED=true                 # deckt REST *und* WebSocket ab
 CORS_ORIGINS=https://yourdomain.com
 ```
 
-**Token-Generierung (wenn WS_AUTH_ENABLED=true):**
+**Token-Generierung (wenn AUTH_ENABLED=true):**
 ```bash
 # Token für ein Gerät anfordern
 curl -X POST "http://localhost:8000/api/ws/token?device_id=my-device&device_type=web_browser"
@@ -2284,6 +2283,29 @@ curl -X POST "http://localhost:8000/api/ws/token?device_id=my-device&device_type
 // JavaScript
 const ws = new WebSocket(`ws://localhost:8000/ws?token=${token}`);
 ```
+
+### Entfallen: `WS_AUTH_ENABLED` (veraltet, Übergangsfrist)
+
+`WS_AUTH_ENABLED` war nie eine eigene Entscheidung: `assert_auth_config_consistency`
+verweigerte den Start bei `AUTH_ENABLED=true` + `WS_AUTH_ENABLED=false`, also waren
+nur beide-an und beide-aus erreichbar. Das zweite Flag trug damit keinerlei
+Information, sah aber wie ein separat setzbares Sicherheitsmerkmal aus. Die
+WebSocket-Oberfläche folgt jetzt `AUTH_ENABLED`; jede Lesestelle im Code liest
+`settings.auth_enabled`.
+
+**Übergangsverhalten** (beide Live-Instanzen setzen den Schlüssel noch, und ihre
+ConfigMaps liegen in zwei verschiedenen Repos):
+
+| `WS_AUTH_ENABLED` | Verhalten |
+|---|---|
+| nicht gesetzt | Normalfall — alles leitet sich aus `AUTH_ENABLED` ab |
+| gleicher Wert wie `AUTH_ENABLED` | EINE Deprecation-Warnung im Log, Start unverändert |
+| anderer Wert als `AUTH_ENABLED` | **HARTER Boot-Fehler** — die Absicht ist mehrdeutig; es wird nicht stillschweigend eine Seite gewählt |
+
+**Entfernungspfad:** Schlüssel aus `k8s/configmap.yaml` (erledigt), aus der
+xidra-ConfigMap im `x-ren`-Repo und aus allen `.env`-Dateien entfernen. Sobald keine
+Instanz die Deprecation-Warnung mehr loggt, das Feld `ws_auth_enabled_legacy` samt
+Validator-Zweig in `utils/config.py` streichen.
 
 ### `WS_REQUIRE_SCOPED_QUERY_TOKEN` (Security-Audit #1116, Befund A)
 
@@ -2880,7 +2902,6 @@ SECRET_KEY=changeme-in-production
 # Security (WebSocket & CORS)
 # -----------------------------------------------------------------------------
 CORS_ORIGINS=*
-WS_AUTH_ENABLED=false
 WS_RATE_LIMIT_ENABLED=true
 WS_MAX_CONNECTIONS_PER_IP=10
 
