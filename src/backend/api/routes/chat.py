@@ -117,7 +117,10 @@ async def send_message(
         user_permissions = None
         if user_id is not None:
             try:
-                from sqlalchemy import select
+                # NOTE: `select` comes from the module-level import. A local
+                # `from sqlalchemy import select` here made the name local to
+                # the WHOLE function, so the use at the top of send_message
+                # referenced it before assignment (ruff F823).
                 from sqlalchemy.orm import selectinload
 
                 from models.database import User as _RbacUser
