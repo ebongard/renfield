@@ -176,6 +176,65 @@ zusätzliche Tensor-Kern-Leistung**, sondern nur doppelten Speicherverkehr. Mehr
 Betrieb braucht dafür kein vLLM: llama.cpp bedient bereits mehrere Slots (auf `cuda.local`
 laufen vier).
 
+### 4.2 Gemessene Werte — und wo sie den Papierwerten widersprechen
+
+Recherchiert am 2026-09-18. Alle Zahlen sind **Fremdmessungen aus dem Netz**, nichts davon
+auf unserer Hardware gemessen.
+
+**`llama-bench`, gleiches Modell `llama 7B Q4_0`**, alle aus derselben Sammelstelle
+(llama.cpp-Diskussion #15013, **Community-Einreichungen**, keine offiziellen Zahlen):
+
+| GPU | pp512 (Prompt) | tg128 (Ausgabe) |
+|---|---:|---:|
+| **V100-SXM2 32 GB** | **3043** | **129–135** |
+| RTX 4060 Ti 8 GB | 3395 | 64 |
+| RTX 3090 | 5175 | 158 |
+| RTX 4090 | 14771 | 189 |
+| RTX 5090 | 14142–16195 | 277–287 |
+
+- **Token-Ausgabe: Papierwert bestätigt.** Die V100 liegt beim 2,0-fachen der 4060 Ti und
+  bei 47 % der 5090 — exakt das Verhältnis der Speicherbandbreiten (§4).
+- **Prompt-Verarbeitung: Papierwert WIDERLEGT.** Nach dichter fp16-Leistung müsste die
+  V100 klar vor der 4060 Ti liegen (112 gegen 44 TFLOPS). Gemessen liegt sie **darunter**
+  (3043 gegen 3395) und bei nur **rund einem Fünftel** der 5090. Wahrscheinliche Ursache
+  ist der nicht ausoptimierte Volta-Pfad in llama.cpp; belegt ist aber nur die Messung,
+  nicht die Ursache. **Für diese Phase sind die Papierwerte in §4 unbrauchbar.**
+
+**Unser eigenes Modell, Blogbeitrag mit Eigenmessung** (V100-SXM2 32 GB, selbst gebautes
+llama.cpp für `sm_70`, CUDA 12.9, **Treiber 580.159.03** — bestätigt das Treiberband aus
+§3 in der Praxis):
+
+| Modell | Ausgabe | Prompt-Verarbeitung |
+|---|---:|---:|
+| `qwen3.6` MoE 35B-A3B, 4 Bit, 16k Kontext | **98,8 Token/s** | **352 Token/s** |
+| dichtes 27B Q4_K_M | 32,9 Token/s | — |
+
+Das dichte 27B ist von einer zweiten, unabhängigen Quelle mit 32,17 Token/s bestätigt.
+Kleinmodelle auf 2× V100 (Community-Repo, Ollama Q4_K_M): `llama3.2:3b` 157 Token/s,
+`qwen3:1.7b` 166, `gemma3:4b` 119 — also die Modellklasse, die heute auf `k8s-gpu-1` läuft.
+
+**Was daraus für den Betrieb folgt.** Bei 352 Token/s Prompt-Verarbeitung dauert ein
+Prompt von 4000 Token rund **11 Sekunden**, einer von 16 000 Token rund **47 Sekunden**.
+`cuda.local` ist auf **262 144** Token Kontext konfiguriert. Eine V100-Instanz braucht
+daher ein **deutlich kleineres Kontextfenster** und Prompt-Zwischenspeicherung; lange
+Kontexte bleiben auf der 5090. Die Ausgabegeschwindigkeit ist dagegen unkritisch.
+
+**Beim Lesen zu beachten:** Alle V100-Werte stammen von der **SXM2-Variante**, die höher
+taktet als unsere PCIe-Karte (ein Blogautor beziffert den Abstand mit ~10 %). Die Builds
+unterscheiden sich zwischen den Einreichungen. Die MoE-Messung ist eine Einzelquelle mit
+selbst gebautem Programm.
+
+**Nicht gefunden, trotz gezielter Suche:** Durchsatz heutiger Einbettungsmodelle auf V100
+(es gibt nur SBERT-Zahlen von 2019, nicht übertragbar) und ein Vergleich
+`float16` gegen `int8_float16` für Whisper auf derselben V100. Beides müsste selbst
+gemessen werden.
+
+**Zwei Kernel-Sorten, die leicht verwechselt werden:** llama.cpp hat **eigene**
+Flash-Attention-Kernel, die Volta bedienen (`volta_mma_available` in `fattn.cu`) — daher
+sind die „FA an"-Zeilen oben gültig und sogar schneller. Die separate Bibliothek
+**FlashAttention-2** von Dao-AILab verlangt Ampere und ist das, woran vLLM und SGLang
+hängen. Kein Widerspruch, zwei verschiedene Dinge.
+
 ## 5. Der eigentliche Engpass: das geteilte LLM-Tier
 
 Nicht das VRAM der 16-GB-Karten ist knapp, sondern der KV-Cache auf `cuda.local`:
@@ -236,12 +295,21 @@ gleichauf mit der 5070 Ti und bei dichter fp16-Rechenleistung darüber (§4).
    initialisiert beim Durchreichen nicht (nur Community-Beleg, keine NVIDIA-Primärquelle;
    Resizable BAR selbst ist nicht nötig).
 6. IOMMU-Gruppen prüfen, damit V100 und 5070 Ti an getrennte VMs gehen können.
+7. **llama.cpp-Image auf einen CUDA-12-Tag pinnen.** Der CI-Workflow setzt keine
+   Architekturliste, deshalb greift der Standardzweig und dieser enthält `70-virtual` —
+   also **PTX statt Cubin**: Eine V100 läuft mit dem fertigen Image, der Treiber übersetzt
+   die Kernel beim ersten Start. Die **`cuda13`-Tags enthalten für Volta gar nichts**
+   (Versionsabfrage `< 13`), ein Wechsel dorthin legt die Karte ohne Build-Fehler still.
+   Ein Eigenbau ist nicht zwingend, verschafft aber ein echtes `70-real`-Cubin statt der
+   Übersetzung zur Laufzeit. *(Aus der Build-Definition abgeleitet; die publizierten
+   Image-Schichten wurden nicht auf enthaltene Cubins untersucht.)*
+8. **Kontextfenster klein halten** und Prompt-Zwischenspeicherung nutzen (§4.2).
 
 **Offen, nur physisch zu klären:** freier Dual-Slot-Platz und Netzteilreserve in `pve4`,
 Luftstrom für die passive Kühlung (die Tabelle im NVIDIA-Product-Brief ließ sich nicht
 extrahieren), IOMMU-Gruppierung.
 
-**Weiter offen:** ob llama.cpp auf `sm_70` mit Flash-Attention die erwartete Leistung
-bringt (lauffähig ja, ausoptimiert nein); das onnxruntime-Wheel ist aus der Build-Pipeline
-belegt, nicht per `cuobjdump`; sämtliche Leistungsangaben in §4 sind Papierwerte, auf
-dieser Hardware nicht gemessen.
+**Weiter offen:** das onnxruntime-Wheel ist aus der Build-Pipeline belegt, nicht per
+`cuobjdump` geprüft; Einbettungsdurchsatz und Whisper `float16` gegen `int8_float16` auf
+Volta sind nirgends gemessen (§4.2). **bf16 läuft auf Volta nur emuliert und liefert NaN**
+— jeder Pfad, der bf16 verlangt, muss auf fp16 gestellt werden.
