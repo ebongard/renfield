@@ -147,6 +147,35 @@ ist der fp16-Tensor-Pfad (112 TFLOPS) rechnerisch **schneller** als der INT8-Pfa
 je auf eine V100 legt, sollte `float16` gegen `int8_float16` **messen**, statt INT8
 reflexhaft für schneller zu halten.
 
+### 4.1 Welche Serving-Software auf `sm_70` überhaupt noch läuft
+
+Geprüft am 2026-09-18 gegen die Build-Konfigurationen der Projekte, nicht gegen Foren:
+
+| Software | Volta / `sm_70` | Beleg |
+|---|---|---|
+| **llama.cpp / Ollama** | **ja** | Ollamas Preset `llama_cuda_v12_linux` enthält `70`; Flash-Attention über `volta_mma_available` |
+| **ctranslate2** (Whisper) | ja | `CUDA_ARCH_LIST="Common"` enthält 7.0 ab CUDA ≥ 9 |
+| **onnxruntime-gpu** (ECAPA) | ja | Release-Pipeline baut mit `70-real` |
+| **vLLM** | **nein**, seit v0.11.1 | `CUDA_SUPPORTED_ARCHS` fiel von `7.0;7.2;7.5;…` auf `7.5;…`; Doku: „compute capability 7.5 or higher" |
+| **SGLang** | **nein**, nie | Alle `gencode`-Stufen beginnen bei `compute_80`; FlashInfer verlangt sm75+ |
+| **PyTorch cu128 / cu13** | **nein** | `#removing sm_50-sm_70`; CUDA 13 hat sm_50/60/70 gestrichen |
+
+**Beide modernen Serving-Stacks fallen also aus**, und zwar doppelt: über ihre eigenen
+Arch-Listen **und** über den Torch-Unterbau, den sie nicht selbst bauen, sondern vom
+offiziellen Wheel beziehen. Auch der frühere Notausgang ist zu — vLLM hat die V0-Engine
+samt `xformers`-Backend entfernt, FlashAttention-2 verlangt ohnehin Ampere, und ein
+geduldeter Alt-Pfad für Volta existiert nicht mehr. Die vLLM-Tabelle, die für Volta noch
+GPTQ und GGUF als unterstützt führt, beschreibt den Zustand von damals: Ohne `sm_70`-Kernel
+im Wheel ist sie gegenstandslos.
+
+**Folge für die Modellwahl:** Auf der V100 ist **llama.cpp der Weg**, und dort sind
+**quantisierte GGUF-Modelle richtig** — sie nutzen dieselben fp16-Tensor-Kerne (die
+Gewichte werden zur Laufzeit entpackt) und sparen zugleich Bandbreite, die bei der
+Token-Ausgabe der eigentliche Engpass ist. Gewichte in fp16 zu speichern brächte **keine
+zusätzliche Tensor-Kern-Leistung**, sondern nur doppelten Speicherverkehr. Mehrmandanten-
+Betrieb braucht dafür kein vLLM: llama.cpp bedient bereits mehrere Slots (auf `cuda.local`
+laufen vier).
+
 ## 5. Der eigentliche Engpass: das geteilte LLM-Tier
 
 Nicht das VRAM der 16-GB-Karten ist knapp, sondern der KV-Cache auf `cuda.local`:
