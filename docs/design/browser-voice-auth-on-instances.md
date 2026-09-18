@@ -128,5 +128,8 @@ composer shows **no** mic while `FEATURE_VOICE=false`.
 ## Follow-ups
 
 See `TODOS.md` → "Browser voice on xidra — follow-ups": D4 speaker opt-in (GDPR
-assessment first), D7 voice-server hardening, F7 household browser-voice route
-(Ingress `renfield/voice-server` targets a Service that no longer exists).
+assessment first), D7 voice-server hardening. **F7 (household browser-voice route) is FIXED 2026-09-18** — the
+orphaned `renfield/voice-server` Ingress from #1119 was removed and replaced by an
+`IngressRoute` in ns `voice` targeting `voice-server-anon:8081` (the household is auth-off,
+so the primary port cannot work); both browser routes are now versioned in
+`private_k8s/voice-server/41-browser-ingressroutes.yaml`.
