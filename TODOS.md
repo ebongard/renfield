@@ -27,6 +27,69 @@ Last reviewed: 2026-05-03 (post-release sweep). Voice pipeline Phase A (v2.3.0) 
 
 ---
 
+## Priorisierte Gesamtsicht (Stand 2026-09-18)
+
+Vollständige Erfassung aus **beiden** Quellen — 41 offene GitHub-Issues und die
+Dokumentation (dieser Index, `docs/design/*`, `CLAUDE.md`, Funktionsschalter,
+`TECHNICAL_DEBT.md`). Die Einzelposten stehen unverändert in den Tier-Abschnitten
+unten; diese Sicht ordnet sie nur. **Nicht erfasst:** `tasks/*.md` (33 Planungsdateien).
+
+**Lagebild:** 28 der 41 Issues sind seit über 90 Tagen unberührt. 33 fertig gebaute
+Funktionen sind auf **keiner** Instanz je eingeschaltet worden. Kein P0.
+
+### S1 — Kaputt oder blind, jetzt
+| Sache | Warum zuerst | Quelle |
+|---|---|---|
+| Browser-Mikrofon im Haushalt tot seit ~Juli | Ingress `renfield/voice-server` zeigt auf einen Service, den es nach dem Voice-Server-Umzug nicht mehr gibt | `:56`, `docs/design/browser-voice-auth-on-instances.md` |
+| `sat-wohnzimmer` ist taub (WM8960-Probe −110) | Gerät hört nichts **und** meldet sich gesund — der Überwachungs-Blindfleck wiegt schwerer | #1211 |
+| KV-Cache auf `cuda.local` gesättigt | 2267 Fehler, gemeinsamer Pool für 4 Slots, keine Mandantentrennung | `docs/GPU_TOPOLOGY.md` §5 |
+| OTA-Rollback terminiert nicht | Satellit bleibt dauerhaft `in_progress`/`rolling_back` | #1209 |
+| Sprecheridentität ungenutzt | 38 Profile „Unbekannt", 1 von 3 Nutzern verknüpft — hungert das Self-Learning aus; reine Betriebsarbeit | `:277` |
+
+### S2 — Beschlossen, aber blockiert
+| Sache | Stand | Quelle |
+|---|---|---|
+| Dritte Instanz `club`/`ssv` | Am 2026-09-08 beschlossen, Namespace offen — trifft auf die gesättigte Modellebene aus S1 | `docs/private/scanner-targets.md` |
+| SSO-Cutover | Einziger Posten mit ausdrücklich **blockierender** Frage (§10.1), nur vom Operator zu beantworten; hängt daran: Entfernung des Session-Fixation-Sinks + `/api/ws/token`-Faucet | `:92-93` |
+| Scanner Phasen 1–3 nie gegen eine Live-Instanz geprüft | Gebaut ≠ verifiziert | `docs/design/scanner-ingest.md:3` |
+| #1218 Phase 3 (Selbstrotation) | Phasen 1/2/4 sind live | #1218 |
+| #1116 Rest-Findings (CSP, Auth-on-Flip) | laut eigenem Kommentar offen | #1116 |
+
+### S3 — Fertig gebaut, nie eingeschaltet (bester Gegenwert)
+| Sache | Aufwand | Quelle |
+|---|---|---|
+| `meeting_whisper_model=large-v3-turbo` | **Reine Konfigänderung**, gemessen −3,5 bis −5,3 WER-Punkte | `:67` |
+| Fristen→Kalender-Sync | Kein Code offen; Zugangsdaten + Pod-Verdrahtung fehlen | `docs/OBLIGATION_CALENDAR_SYNC.md` |
+| Sprecher-Phase-3-Flip | Kein Code offen: einlernen, kalibrieren, Flag | `:285-288` |
+| 33 weitere dunkle Flags | Ganze Teilsysteme: Meeting-Fingerprints, Sprecher-Qualitätsgate, proaktive Anreicherung, Paperless-Index-Heilung | `config.py` ↔ `k8s/configmap.yaml` |
+| ⚠️ `REQUIRE_EMAIL_VERIFICATION` | Flag **ohne Funktion** (Code: „not implemented yet") — bauen oder entfernen | `config.py:1453` |
+
+### S4 — Stille Brüche, die beim nächsten Neustart zuschlagen
+`ollama/ollama:latest` ungepinnt und llama.cpp-Image ohne CUDA-12-Bindung (`docs/GPU_TOPOLOGY.md` §6) ·
+OTA-Signaturen nie scharfgeschaltet (Flotte nicht re-provisioniert) ·
+#1210 OTA-Henne-Ei **nicht** behoben (der September-PR beseitigte nur das Symptom) ·
+Letzter-Admin-Schutz TOCTOU-anfällig (`:82`) · Föderations-`remote_user_id`-Kollision ab dem 2. Peer (`:100`).
+
+### S5 — Entwürfe, die nur eine Freigabe brauchen
+#875 bi-temporale Kanten und #1240 Kontaktpunkte warten beide ausdrücklich auf ein Go für Stufe 1 ·
+#876 (vom Review umgeleitet) · Föderations-Identitätslinks (Vorbedingung: persönliche Instanz auth-on) ·
+Stimm-Identität · Mobile-Belegerfassung · GUI-Contribution-Modell.
+
+### S6 — Aufräumen
+#83 schließen (geliefert, nur anders gelöst als vorgeschlagen) · #12 als Dublette zu #80 schließen ·
+#1218 und #1215 auf den Rest zuschneiden · #270/#264 prüfen ·
+drei Design-Dokumente mit veralteter Statuszeile (`user-events-ws`, `sso-token-handoff-hardening`,
+`ingest-credentials`) · `:488` widerspricht `:14` (#874 ist ausgeliefert) ·
+Testzahl in `docs/TECHNICAL_DEBT.md` widerspricht `CLAUDE.md`.
+
+### Nie gemessen — blinde Flecken, keine Aufgaben
+Deutsche Meeting-Qualität ungemessen, obwohl xidra deutsche Kunden hat (`:70`) ·
+OCR-Evaluation nie gelaufen, obwohl das Werkzeug existiert (`:296`) ·
+Web-/chat-Anteil gegenüber Sprache nie erhoben — Prämisse der ganzen Chat-UI-Roadmap (`:149`) ·
+Einbettungsdurchsatz und Whisper-INT8 auf Volta (`docs/GPU_TOPOLOGY.md` §4.2).
+
+---
+
 ## P0 — Active / blocking
 
 _(no active blockers — all prior P0 items resolved and merged)_
