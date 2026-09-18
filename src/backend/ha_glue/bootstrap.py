@@ -224,6 +224,14 @@ async def ha_glue_on_startup(*, app: Any) -> None:
             "ha_glue.bootstrap: Zeroconf init failed"
         )
 
+    # --- Satellite stale sweep (heartbeat timeout + stuck OTA runs) ---
+    try:
+        _schedule_satellite_cleanup()
+    except Exception:  # noqa: BLE001
+        logger.opt(exception=True).warning(
+            "ha_glue.bootstrap: satellite cleanup scheduling failed"
+        )
+
     # --- Satellite LED night-dimming (backend-driven brightness push) ---
     # Seeds the current daypart brightness and registers the `daypart_changed`
     # hook so night transitions push a dimmed LED brightness to all satellites.
@@ -298,6 +306,41 @@ async def _init_presence(app: Any) -> None:
         rooms = (await db_session.execute(select(Room))).scalars().all()
         for room in rooms:
             presence_svc.set_room_name(room.id, room.name)
+
+
+def _schedule_satellite_cleanup() -> None:
+    """Give `SatelliteManager.cleanup_stale` a tick.
+
+    That sweep existed with NO production caller anywhere in the tree — only a
+    test invoked it. So the heartbeat timeout it implements never actually ran:
+    a satellite that vanished without closing its socket stayed in the roster,
+    and the kiosk kept showing it online, until the pod restarted. The stuck-OTA
+    timeout added for #1209 lives in the same sweep and would have inherited
+    exactly that fate. Scheduling it is therefore not a detail of the OTA fix —
+    it is what makes both timeouts real.
+    """
+    from ha_glue.utils.config import ha_glue_settings
+
+    interval = ha_glue_settings.satellite_cleanup_interval
+
+    async def cleanup_loop():
+        while True:
+            try:
+                await asyncio.sleep(interval)
+                from ha_glue.services.satellite_manager import get_satellite_manager
+
+                # The module-level singleton — the same instance the satellite
+                # WebSocket handler registers into. A second instance would
+                # sweep an empty roster and be silently useless.
+                await get_satellite_manager().cleanup_stale()
+            except asyncio.CancelledError:
+                break
+            except Exception as e:  # noqa: BLE001
+                logger.warning(f"Satellite cleanup failed: {e}")
+
+    task = asyncio.create_task(cleanup_loop())
+    _ha_glue_tasks.append(task)
+    logger.info(f"✅ Satellite Cleanup Scheduler gestartet (alle {interval}s)")
 
 
 def _schedule_presence_event_cleanup() -> None:

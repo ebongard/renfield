@@ -1049,16 +1049,13 @@ Gib eine kurze, natürliche Antwort. KEIN JSON, nur Text."""
             # Handle OTA update progress
             elif msg_type == "update_progress":
                 if satellite_id:
-                    from ha_glue.services.satellite_manager import UpdateStatus
                     stage = data.get("stage", "unknown")
                     progress = data.get("progress", 0)
                     message = data.get("message", "")
                     logger.info(f"📥 Update progress from {satellite_id}: {stage} ({progress}%) - {message}")
-                    satellite_manager.set_update_status(
-                        satellite_id,
-                        UpdateStatus.IN_PROGRESS,
-                        stage=stage,
-                        progress=progress
+
+                    satellite_manager.apply_update_progress(
+                        satellite_id, stage=stage, progress=progress, message=message
                     )
 
             # Handle OTA update complete

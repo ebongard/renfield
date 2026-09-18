@@ -105,6 +105,10 @@ class SatelliteInfo:
     update_stage: str | None = None  # downloading, verifying, backing_up, etc.
     update_progress: int = 0  # 0-100
     update_error: str | None = None
+    # When the current update run began. Set while a run is IN_PROGRESS and
+    # cleared the moment it reaches a terminal state, so `cleanup_stale` can
+    # tell a genuinely running update from one that never terminated (#1209).
+    update_started_at: float | None = None
 
 
 @dataclass
@@ -871,7 +875,64 @@ class SatelliteManager:
             sat.update_stage = stage
             sat.update_progress = progress
             sat.update_error = error
+            # Stamp the start of a run, and clear it on any terminal state. The
+            # first IN_PROGRESS write wins, so progress frames during a run do
+            # not keep pushing the deadline out — otherwise a satellite that
+            # reports progress forever would never time out.
+            if status == UpdateStatus.IN_PROGRESS:
+                if sat.update_started_at is None:
+                    sat.update_started_at = time.time()
+            else:
+                sat.update_started_at = None
             logger.info(f"📡 Satellite {satellite_id} update: {status.value} - {stage} ({progress}%)")
+
+    # Stages the satellite sends as ordinary progress frames but which END a
+    # run: `failed` is reported before the rollback starts, `rolling_back` is
+    # the last frame a rolled-back run emits.
+    _TERMINAL_UPDATE_STAGES = ("failed", "rolling_back")
+
+    def apply_update_progress(
+        self, satellite_id: str, stage: str, progress: int, message: str = ""
+    ) -> None:
+        """Fold a satellite `update_progress` frame into the run state.
+
+        Two rules the old unconditional IN_PROGRESS write got wrong (#1209):
+
+        1. A terminal stage ends the run here. The satellite may send nothing
+           after `rolling_back`, so waiting for an `update_failed` that never
+           comes left the status pinned at in_progress. The frame's message is
+           the real cause and is kept — the old write passed `error=None` and
+           so ERASED it, which is why the stuck rows showed a hanging update
+           with no reason attached.
+        2. A run that already ended is not dragged back. On the satellite the
+           progress sends are scheduled fire-and-forget while the terminal
+           message is awaited, so a frame arriving after the end is the normal
+           case, not an anomaly.
+        """
+        sat = self.satellites.get(satellite_id)
+        if sat is None:
+            return
+
+        if stage in self._TERMINAL_UPDATE_STAGES:
+            self.set_update_status(
+                satellite_id,
+                UpdateStatus.FAILED,
+                stage=stage,
+                progress=progress,
+                error=message or sat.update_error,
+            )
+            return
+
+        if sat.update_status in (UpdateStatus.COMPLETED, UpdateStatus.FAILED):
+            logger.debug(
+                f"Späte update_progress von {satellite_id} verworfen "
+                f"(Stufe: {stage}) — Lauf bereits {sat.update_status.value}"
+            )
+            return
+
+        self.set_update_status(
+            satellite_id, UpdateStatus.IN_PROGRESS, stage=stage, progress=progress
+        )
 
     def clear_update_status(self, satellite_id: str):
         """Clear the update status for a satellite after completion or reset"""
@@ -1031,6 +1092,37 @@ class SatelliteManager:
                 await self._broadcast_satellite_liveness(
                     sat_id, room, room_id, online=False
                 )
+
+            # Time-bound a stuck OTA run (#1209). The handler now terminates the
+            # stages the satellite actually reports, so this is the backstop
+            # beneath it, not a substitute: it catches the run whose final frame
+            # never arrived at all — the connection dropped mid-install, or the
+            # satellite died between the last progress and its terminal message.
+            # Without it such a run reads "wird aktualisiert" until the pod
+            # restarts, which is exactly the blind spot the issue describes.
+            from ha_glue.utils.config import ha_glue_settings
+
+            update_timeout = ha_glue_settings.satellite_update_timeout
+            for sat_id, sat in self.satellites.items():
+                if (
+                    sat.update_status == UpdateStatus.IN_PROGRESS
+                    and sat.update_started_at is not None
+                    and now - sat.update_started_at > update_timeout
+                ):
+                    logger.warning(
+                        f"⏰ Update ohne Endzustand: {sat_id} "
+                        f"(Stufe: {sat.update_stage or 'unbekannt'}, "
+                        f"{update_timeout:.0f}s ohne Abschluss)"
+                    )
+                    sat.update_status = UpdateStatus.FAILED
+                    # Keep a cause the satellite already gave us; only invent one
+                    # when there is none, and say plainly that it is our verdict
+                    # rather than the device's.
+                    sat.update_error = sat.update_error or (
+                        f"Update ohne Endzustand abgebrochen (letzte Stufe: "
+                        f"{sat.update_stage or 'unbekannt'})"
+                    )
+                    sat.update_started_at = None
 
 
 # Global singleton instance

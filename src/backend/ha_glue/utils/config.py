@@ -172,6 +172,17 @@ class HaGlueSettings(BaseSettings):
     # once the fleet has the release pubkeys.
     satellite_ota_require_signature: bool = False
 
+    # Tick for SatelliteManager.cleanup_stale. That sweep implements the
+    # heartbeat timeout AND (since #1209) the stuck-update timeout, but it had
+    # NO production caller — so neither ever ran. The scheduler in
+    # ha_glue.bootstrap is what gives both an effect.
+    satellite_cleanup_interval: int = Field(default=30, ge=5, le=3600)
+    # An OTA run that reports no terminal state within this window is failed by
+    # the sweep, so a satellite cannot read "wird aktualisiert" forever (#1209).
+    # Generous by design: a Pi Zero install over a slow link is legitimately
+    # slow, and a premature verdict would be a worse lie than a late one.
+    satellite_update_timeout: float = Field(default=900.0, ge=60.0, le=86400.0)
+
     # === Rooms ===
     rooms_auto_create_from_satellite: bool = True  # Auto-create rooms when satellites register
 
