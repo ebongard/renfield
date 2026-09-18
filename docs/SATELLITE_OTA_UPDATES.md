@@ -159,7 +159,33 @@ curl -X POST http://localhost:8000/api/satellites/sat-wohnzimmer/update
 | `installing` | 70-90% | Neue Version installieren |
 | `restarting` | 90-100% | Service neu starten |
 | `completed` | 100% | Update erfolgreich |
-| `failed` | - | Fehler aufgetreten, Rollback |
+| `failed` | - | Fehler aufgetreten — **beendet den Lauf** |
+| `rolling_back` | - | Sicherung wird zurückgespielt — **beendet den Lauf** |
+
+### Wann ein Lauf endet
+
+`failed` und `rolling_back` kommen als gewöhnliche `update_progress`-Meldungen
+herein, **beenden aber einen Lauf**. Das Backend setzt darauf `failed` und
+übernimmt den Meldungstext als Fehlergrund. Bis #1209 galt jede
+Fortschrittsmeldung als „läuft noch": ein zurückgerollter Lauf blieb dauerhaft
+auf `in_progress`/`rolling_back` stehen, und weil der Fortschrittszweig keinen
+Fehler mitgab, wurde ein bereits gesetzter Grund dabei auf `null` überschrieben
+— ein hängendes Update ohne erkennbare Ursache.
+
+Zwei Regeln sichern das ab:
+
+1. **Ein beendeter Lauf wird nicht zurückgeholt.** Der Satellit plant seine
+   Fortschrittsmeldungen abgesetzt ein, während er die Endmeldung abwartet —
+   eine nachlaufende Meldung ist also der Normalfall, keine Ausnahme. Sie darf
+   einen `completed`- oder `failed`-Lauf nicht wieder auf `in_progress` ziehen.
+   Ein **neuer** Lauf kann jederzeit starten; die Sperre gilt nur für
+   Fortschrittsmeldungen.
+2. **Zeitgrenze als Auffangnetz.** Meldet ein Lauf innerhalb von
+   `SATELLITE_UPDATE_TIMEOUT` (900 s) keinen Endzustand — etwa weil die
+   Verbindung mitten im Install abriss —, beendet ihn der Kehraus als
+   `failed`. Eine vom Satelliten bereits gelieferte Begründung bleibt dabei
+   erhalten; nur wenn keine vorliegt, wird kenntlich gemacht, dass das Urteil
+   vom Backend stammt.
 
 ## WebSocket-Protokoll
 

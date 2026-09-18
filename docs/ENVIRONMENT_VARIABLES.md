@@ -1219,6 +1219,28 @@ Satelliten-Quellcode-Änderung neu signieren (`--sign`).
 
 ---
 
+### Satelliten-Kehraus und hängende OTA-Läufe
+
+`SatelliteManager.cleanup_stale` setzt zwei Zeitgrenzen durch: den
+Heartbeat-Ablauf (ein Satellit, der ohne sauberen Abbau verschwindet, wird aus
+dem Verzeichnis genommen) und — seit #1209 — den Abbruch eines OTA-Laufs, der
+keinen Endzustand meldet. Die Funktion hatte bis dahin **keinen Aufrufer im
+Produktivcode**, beide Grenzen liefen also nie. Ein Takt aus
+`ha_glue.bootstrap` ruft sie jetzt auf; ohne ihn wären die Werte unten
+wirkungslos (siehe #1277 für den Geräte-Kehraus, der weiterhin keinen Takt hat).
+
+```bash
+# Takt des Kehraus in Sekunden.
+SATELLITE_CLEANUP_INTERVAL=30
+# Ein OTA-Lauf ohne Endzustand gilt nach dieser Spanne als gescheitert.
+# Großzügig gewählt: eine Installation auf einem Pi Zero über eine langsame
+# Strecke ist berechtigt langsam, und ein verfrühtes Urteil wäre die
+# schlechtere Lüge.
+SATELLITE_UPDATE_TIMEOUT=900
+```
+
+---
+
 ### Media Follow Me
 
 ```bash
