@@ -58,7 +58,7 @@ Funktionen sind auf **keiner** Instanz je eingeschaltet worden. Kein P0.
 ### S3 — Fertig gebaut, nie eingeschaltet (bester Gegenwert)
 | Sache | Aufwand | Quelle |
 |---|---|---|
-| `meeting_whisper_model=large-v3-turbo` | **Reine Konfigänderung**, gemessen −3,5 bis −5,3 WER-Punkte | `:67` |
+| `meeting_whisper_model=large-v3-turbo` | Reine Konfigänderung — aber **Vorbereitung, kein Gewinn im Bestand**: xidra fährt den Wert schon, und es gibt auf **beiden** Instanzen null Meetings. Korrigiert 2026-09-18, vorher hier zu hoch bewertet | `:67` |
 | Fristen→Kalender-Sync | Kein Code offen; Zugangsdaten + Pod-Verdrahtung fehlen | `docs/OBLIGATION_CALENDAR_SYNC.md` |
 | Sprecher-Phase-3-Flip | Kein Code offen: einlernen, kalibrieren, Flag | `:285-288` |
 | 33 weitere dunkle Flags | Ganze Teilsysteme: Meeting-Fingerprints, Sprecher-Qualitätsgate, proaktive Anreicherung, Paperless-Index-Heilung | `config.py` ↔ `k8s/configmap.yaml` |
@@ -128,6 +128,12 @@ Feature is shipped, enabled, and tuned on both instances (see the v2.24.0 umbrel
 ### 🎯 Meeting transcription QUALITY — push WER down (baseline measured 2026-07-22)
 Measured the meeting pipeline end-to-end against the public **AMI Meeting Corpus** (CC-BY, English) via `bin/run_transcription_wer_eval.py` + `bin/build_ami_manifest.py` (harnesses committed on `feat/meeting-fingerprints-phase1`). **Baselines:** isolated ASR (ground-truth segments, EN-forced) **27.5% WER**; full `/transcribe-meeting` pipeline (real diarization + EN ASR) **~34% WER / 34% cpWER** over a 6-min window; diarization found **4/4 speakers, 85.5% coverage**. AMI is a hard benchmark (spontaneous, overlapping, mixed-mic), so this is credible-but-improvable. **The language default bug that made English come back as 95.7%-WER German is FIXED** (`fix/meeting-transcription-language` — per-meeting `language`, default auto-detect). Now the actual quality levers:
 - **✅ MEASURED (2026-07-22) — bigger whisper model for meetings: `large-v3-turbo` wins.** On AMI (first 5 min of ES2002a + IS1000a, `/transcribe-meeting` language=en, full pipeline): resident model WER 0.342 / 0.438 → **large-v3-turbo 0.307 / 0.385** (−3.5 to −5.3 pts, ~10–12% relative) for ~1.2× wall time (steady-state; +one-time model download). Per-job off the resident slot = NO live-STT contention. **ACTIVATION IS CONFIG-ONLY: set `meeting_whisper_model=large-v3-turbo`** (per instance; recommend xidra first). Recommended — the quality gain is worth the modest per-meeting GPU cost.
+  **Stand 2026-09-18:** xidra hat den Wert gesetzt, der Haushalt jetzt auch
+  (`k8s/configmap.yaml`). Beide Instanzen haben allerdings **null Meetings** in
+  der Datenbank, die Messung ist also weiterhin nur der AMI-Benchmark, kein
+  Praxisbeleg. Der naechste sinnvolle Schritt ist deshalb nicht noch eine
+  Stellschraube, sondern **ein einziges echtes Meeting** — das beantwortet
+  Kettentauglichkeit, Sprecherzuordnung und reale Laufzeit auf einen Schlag.
 - **Reduce overlap deletions** — the error profile is deletion-dominated (words dropped under cross-talk on the mixed mic). Options: (a) real per-speaker audio when meetings come from the XVF3800 satellite (IHM-like, no mix), (b) diarization-guided per-turn ASR instead of whole-file, (c) whisper VAD/`no_speech`/`condition_on_previous_text` tuning.
 - **cpWER (speaker-attributed) as the product metric** — cpWER≈WER today means attribution is good; keep it a gate as diarization changes (Track A) land.
 - **German quality is UNMEASURED** — xidra has EN+DE customers; AMI only covers EN. Get a **German** ASR reference set (Tuda-De / Common-Voice-DE / a consented internal recording) and add a `de` WER baseline. Re-run the harness with `--language de`.

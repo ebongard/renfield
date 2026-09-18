@@ -457,3 +457,14 @@ data:
   # needs MEETING_ENABLED=true there. The former per-namespace voice-server
   # (k8s/voice-server.yaml) was retired 2026-08-24 (superseded, scaled to 0).
   MEETING_TRANSCRIPTION_ENABLED: "true"
+  # Batch-ASR fuer Meetings. Gilt PRO INSTANZ, obwohl der voice-server geteilt
+  # ist: meeting_pipeline liest diesen Wert und schickt ihn als Formularfeld
+  # `whisper_model` mit jedem /transcribe-meeting-Auftrag; die gleichnamige
+  # voice-server-Einstellung ist nur der Rueckfallwert. Das Modell wird PRO
+  # AUFTRAG geladen, nicht resident — kein Wettstreit mit der Live-Erkennung.
+  # Gemessen 2026-07-22 (AMI, EN): WER 0.342 -> 0.307 und 0.438 -> 0.385 bei
+  # ~1.2x Laufzeit. xidra faehrt den Wert bereits.
+  # EHRLICH: In beiden Instanzen existiert bislang KEIN einziges Meeting. Das
+  # hier ist Vorbereitung, damit das ERSTE Meeting nicht auf `medium` laeuft —
+  # keine Verbesserung eines Bestands.
+  MEETING_WHISPER_MODEL: "large-v3-turbo"
