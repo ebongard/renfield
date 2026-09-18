@@ -556,3 +556,76 @@ Nur Kandidaten, nichts geschlossen. Die Einschätzung stützt sich auf Titel/Rum
 
 Weiterhin klar offen und ausdrücklich **keine** Kandidaten: #82 (Metriken wurden erweitert, Dashboards nicht geliefert), #875/#876/#1240 (nur der Entwurf ist fertig), #1116 (Rest-Findings laut eigenem Kommentar offen), #1206 (Zwischenlösung aktiv, Zielbild ausstehend).
 
+
+
+---
+
+# Teil C — `tasks/`
+
+Erhebung 2026-09-18. **33 Dateien** (31 `.md`, 1 `.html`, 1 `.wav`). Gezählt wurden
+unerledigte Kästchen `- [ ]`.
+
+| | Anzahl |
+|---|---:|
+| Rohe unerledigte Kästchen | **493** |
+| davon **überholt** — Arbeit geliefert, Kästchen nie abgehakt | **145** |
+| **echter Rückstand** | **348** |
+| zusätzlich erzählerisch, ohne Kästchen | ca. **15** |
+| erledigte Kästchen | 118 |
+
+**Einschränkung:** Nur 5 der 31 `.md` sind versioniert. Die übrigen 26 liegen per
+`.gitignore` bewusst lokal; ihr Inhalt wird hier **nicht wiedergegeben**, nur gezählt.
+Dieser Teil ist deshalb eine Mengenangabe, kein Nachschlagewerk wie Teil A und B.
+
+## Verteilung des echten Rückstands
+
+| Datei | offen | Einordnung |
+|---|---:|---|
+| `mobile-receipt-capture-plan.md` | **227** | Status „PROPOSED", nichts umgesetzt — allein zwei Drittel des Rückstands |
+| `scanner-ingest-plan.md` | 36 | Phase 0 im Wesentlichen erledigt; Phasen 1–5 offen, teils extern bereits gebaut |
+| `camera-vision-expansion-plan.md` | 25 | nie begonnen (im Code gegengeprüft: keine Vision-Intents, kein Capture-Dienst) |
+| `reva-plan.md` | 23 | betrifft ein **fremdes** Repo — kein Renfield-Rückstand |
+| `audit-reocr-plan.md` | 12 | Schicht 1 geliefert (`utils/ocr_quality.py`), Schichten 2–4 offen |
+| `document-tier-control-plan.md` | 10 | Backend geliefert, Oberfläche offen |
+| `health-history-concept.md` | 8 | Gesundheits-Vertikale, nichts umgesetzt; die allgemeine Schicht A dagegen schon |
+| `ingest-credentials-plan.md` | 7 | nur noch Phase 3 (Selbstrotation) |
+| übrige | ~0 | siehe „überholt" |
+
+## Der eigentliche Befund: 14 Dateien sind lautlos veraltet
+
+145 der 493 Kästchen stehen in Dateien, deren Thema **geliefert** ist — die Datei wurde nur
+nie nachgezogen. Das verzerrt jede Zählung, die Kästchen für bare Münze nimmt.
+
+Deutlichstes Beispiel: `todo.md` mit 16 offenen Kästchen ist vollständig auf `main`,
+gelandet über **#1243** und **#1246**; der in der Datei genannte Commit fehlt nur, weil
+squash-gemergt wurde. Weitere: `email-ingest-plan.md` behauptet „nothing implemented",
+während der Watcher produktiv läuft · `orangepi-satellite-k8s-plan.md` behauptet
+„uncommitted", obwohl das Manifest eingecheckt ist · `kiosk-active-subsystem-plan.md` ist
+sogar über seine eigenen „Deferred"-Punkte hinaus geliefert.
+
+## Sechs Posten stehen NUR hier
+
+Diese fehlen in Issues **und** in `TODOS.md` — sie gehen bei jeder anderen Zählung verloren:
+
+1. Dokument-Tier-Steuerung, Scheibe 2 + 3 (Sichtbarkeit auf der Dokumentkarte, 10 Punkte)
+2. Audit-ReOCR, Schichten 2/3a/3b/4 (12)
+3. Kamera-/Vision-Erweiterung A/D/B1/B2 + Gate E (25)
+4. Gesundheits-Vertikale T1–T8 samt vier ungelösten Fragen (12)
+5. KG-Quellenspan-Provenienz, Neu-Extraktion, drei Politur-Punkte (~7)
+6. Barge-in §16: Software-AEC und LLM-Abbruch stromaufwärts (2, ausdrücklich nie übertragen)
+
+## Regelabweichung bei der Versionierung
+
+`.gitignore` ignoriert `tasks/*` und nimmt **drei** Dateien ausdrücklich wieder auf.
+Versioniert sind aber **fünf**. Einmal getrackt, greift `.gitignore` nicht mehr — die
+Abweichung bleibt deshalb unbemerkt, und Änderungen an diesen Dateien landen im Repo,
+obwohl die Regel das Gegenteil vorsieht. Vor dem nächsten Commit in `tasks/` prüfen,
+welche Dateien tatsächlich getrackt sind.
+
+## `lessons.md`
+
+Kein Rückstand, sondern gesammelte Lehren: vier Einträge, letzter 2026-09-12, jeweils mit
+ableitbarer Regel. Auffällig im Abgleich mit der Projekt-Regel „nach jeder Korrektur einen
+Eintrag": Vier Einträge über gut einen Monat stehen einem deutlich größeren Bestand an
+Korrektur-Notizen andernorts gegenüber. Die Datei ist ein Auszug, kein vollständiges
+Protokoll.
