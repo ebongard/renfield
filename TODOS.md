@@ -29,7 +29,9 @@ Last reviewed: 2026-05-03 (post-release sweep). Voice pipeline Phase A (v2.3.0) 
 
 ## Priorisierte Gesamtsicht (Stand 2026-09-18)
 
-Vollständige Erfassung aus **beiden** Quellen — 41 offene GitHub-Issues und die
+**Vollständige Auflistung: [`docs/BACKLOG_INVENTORY.md`](docs/BACKLOG_INVENTORY.md)** — diese
+Sicht hier nennt nur die Spitzenposten je Stufe, nicht den gesamten Bestand (über 150
+Posten). Erfasst aus **beiden** Quellen — 41 offene GitHub-Issues und die
 Dokumentation (dieser Index, `docs/design/*`, `CLAUDE.md`, Funktionsschalter,
 `TECHNICAL_DEBT.md`). Die Einzelposten stehen unverändert in den Tier-Abschnitten
 unten; diese Sicht ordnet sie nur. **Nicht erfasst:** `tasks/*.md` (33 Planungsdateien).
@@ -49,7 +51,7 @@ Funktionen sind auf **keiner** Instanz je eingeschaltet worden. Kein P0.
 ### S2 — Beschlossen, aber blockiert
 | Sache | Stand | Quelle |
 |---|---|---|
-| Dritte Instanz `club`/`ssv` | Am 2026-09-08 beschlossen, Namespace offen — trifft auf die gesättigte Modellebene aus S1 | `docs/private/scanner-targets.md` |
+| Dritte Instanz (Kennung in `docs/private/`) | Am 2026-09-08 als vollwertige Instanz beschlossen, Namespace offen — trifft auf die gesättigte Modellebene aus S1 | `docs/private/scanner-targets.md` |
 | SSO-Cutover | Einziger Posten mit ausdrücklich **blockierender** Frage (§10.1), nur vom Operator zu beantworten; hängt daran: Entfernung des Session-Fixation-Sinks + `/api/ws/token`-Faucet | `:92-93` |
 | Scanner Phasen 1–3 nie gegen eine Live-Instanz geprüft | Gebaut ≠ verifiziert | `docs/design/scanner-ingest.md:3` |
 | #1218 Phase 3 (Selbstrotation) | Phasen 1/2/4 sind live | #1218 |
