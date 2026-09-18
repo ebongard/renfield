@@ -1,6 +1,6 @@
 # User-Events WebSocket — per-user server→browser push substrate
 
-**Status:** Design (approval-gated, not yet built). 2026-08-31.
+**Status:** **AUSGELIEFERT** (2026-08-31 entworfen, seither gebaut und live). `USER_EVENTS_ENABLED` ist in `CLAUDE.md` als Standard-AN dokumentiert — ein Not-Aus, kein Opt-in. Die Statuszeile behauptete bis 2026-09-18 „not yet built"; v1 deckt Dokumente ab, `obligations_changed`/`notes_changed` bleiben zurückgestellt (§ unten).
 **Motivation:** `/wissen/dokumente` (and other corpus surfaces) do not reflect server-originated changes (folder/email ingest completion, Paperless status) without a manual reload — and **polling is explicitly rejected**. This introduces a **reusable per-user event channel** so any backend surface can push a content-free "something changed, refetch" signal to that user's open browsers.
 **Constraints (owner-set):** no shortcuts; robust long-term architecture; minimal tech debt; ≥80% test coverage.
 **Supersedes:** the naive "in-memory broadcast like the kiosk" proposal, which an adversarial review proved **broken** for the primary trigger (see §2).

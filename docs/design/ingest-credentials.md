@@ -1,6 +1,6 @@
 # Per-integration ingest credentials with self-rotation
 
-**Status:** DESIGN (2026-09-08). Not implemented.
+**Status:** **PHASEN 1, 2 UND 4 AUSGELIEFERT** und im Haushalt aktiv (`services/ingest_credentials.py`). Offen ist ausschließlich **Phase 3 — Selbstrotation** (Rotations-Endpunkt, Gnadenfenster, atomare Client-Datei, quittungsbasierte Umschaltung, dauerhaftes Volume, drei Geschwister-Repos, Tests). Die Statuszeile behauptete bis 2026-09-18 „Not implemented"; Zuschnitt siehe Issue #1218.
 **Flag:** `INGEST_CREDENTIALS_ENABLED` (dark by default; legacy path byte-identical when off)
 **Related:** `docs/FOLDER_INGEST.md`, `docs/EMAIL_INGEST.md`, `docs/design/scanner-ingest.md`
 

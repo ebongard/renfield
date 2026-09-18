@@ -1,6 +1,6 @@
 # SSO token hand-off hardening — replace URL-fragment tokens with a one-time code exchange
 
-Status: **DESIGN — not yet implemented.** Dark by default at rollout.
+Status: **EMPFÄNGERSEITE AUSGELIEFERT, dunkel geschaltet** (`SSO_HANDOFF_ENABLED`). Der Code liegt unter `services/sso_handoff_store.py` + `POST /api/auth/sso/exchange`; was fehlt, ist der **Cutover**: der Emitter (Reva) muss auf `?code=` umgestellt werden, erst danach kann der Fragment-Handler weg. Die Statuszeile behauptete bis 2026-09-18 „not yet implemented" — das galt für den Empfänger schon länger nicht mehr. Die blockierende offene Frage steht in §10.1.
 Owners: auth. Related: `auth/provider_contract.py`, `auth/registry.py`,
 `api/routes/auth.py`, `src/frontend/src/main.tsx`, the pluggable auth-provider
 registry (CLAUDE.md → "Pluggable auth provider registry").
