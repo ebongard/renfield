@@ -165,6 +165,15 @@ async def send_message(
                 if not response_text:
                     response_text = "Entschuldigung, ich konnte die Anfrage nicht bearbeiten."
 
+                # check_output gate (#1269). The REST path never fired it, so a
+                # plugin's redactor silently did not run here. No streaming on
+                # this path — the answer exists in one piece, so the gate is a
+                # plain call before persisting AND returning.
+                from services.output_gate import apply_check_output_gate
+                response_text = await apply_check_output_gate(
+                    response_text, user_id=user_id
+                )
+
                 # Save and return (skip single-intent path)
                 assistant_msg = Message(
                     conversation_id=conversation.id,
@@ -242,6 +251,10 @@ WICHTIG: Gib NUR die Antwort, KEIN JSON, KEINE technischen Details!"""
 
         else:
             response_text = await ollama.chat(chat_request.message, history=context)
+
+        # check_output gate (#1269) — same reasoning as the agent branch above.
+        from services.output_gate import apply_check_output_gate
+        response_text = await apply_check_output_gate(response_text, user_id=user_id)
 
         # Assistant Message speichern
         assistant_msg = Message(

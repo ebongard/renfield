@@ -685,6 +685,8 @@ async def _stream_rag_response(
     personality_prompt: str | None = None,
     user_id: int | None = None,
     time_context: str = "",
+    role_name: str | None = None,
+    lang: str = "de",
 ) -> str:
     """Stream a RAG-enhanced or plain conversation response.
 
@@ -736,18 +738,23 @@ async def _stream_rag_response(
                     "is_followup": is_followup
                 })
 
-                async for chunk in ollama.chat_stream_with_rag(
-                    content,
-                    rag_context,
-                    history=session_state.conversation_history if is_followup else None,
-                    memory_context=memory_context,
-                    document_context=document_context,
-                    personality_style=personality_style,
-                    personality_prompt=personality_prompt,
-                    time_context=time_context,
-                ):
-                    full_response += chunk
-                    await websocket.send_json({"type": "stream", "content": chunk})
+                from services.output_gate import stream_or_gate
+                full_response += await stream_or_gate(
+                    ollama.chat_stream_with_rag(
+                        content,
+                        rag_context,
+                        history=session_state.conversation_history if is_followup else None,
+                        memory_context=memory_context,
+                        document_context=document_context,
+                        personality_style=personality_style,
+                        personality_prompt=personality_prompt,
+                        time_context=time_context,
+                    ),
+                    websocket,
+                    role_name=role_name,
+                    user_id=user_id,
+                    lang=lang,
+                )
 
                 session_state.add_to_history("user", content)
                 session_state.add_to_history("assistant", full_response)
@@ -765,9 +772,14 @@ async def _stream_rag_response(
             logger.error(traceback.format_exc())
 
     # Fallback: plain conversation
-    async for chunk in ollama.chat_stream(content, history=session_state.conversation_history, memory_context=memory_context, document_context=document_context, personality_style=personality_style, personality_prompt=personality_prompt, time_context=time_context):
-        full_response += chunk
-        await websocket.send_json({"type": "stream", "content": chunk})
+    from services.output_gate import stream_or_gate
+    full_response += await stream_or_gate(
+        ollama.chat_stream(content, history=session_state.conversation_history, memory_context=memory_context, document_context=document_context, personality_style=personality_style, personality_prompt=personality_prompt, time_context=time_context),
+        websocket,
+        role_name=role_name,
+        user_id=user_id,
+        lang=lang,
+    )
 
     return full_response
 
@@ -1682,7 +1694,7 @@ async def websocket_endpoint(
                     and settings.agent_orchestrator_enabled
                     and mcp_manager is not None
                 ):
-                    from utils.hooks import run_hooks, run_hooks_with_errors
+                    from utils.hooks import run_hooks
 
                     sub_queries: list[dict] | None = None
 
@@ -1895,51 +1907,13 @@ async def websocket_endpoint(
                         # would defeat the gate.
                         full_response = deferred_final_answer or ""
                         if full_response:
-                            redaction_results, redaction_errors = await run_hooks_with_errors(
-                                "check_output",
-                                content=full_response,
-                                role=role.name if role else None,
+                            from services.output_gate import apply_check_output_gate
+                            full_response = await apply_check_output_gate(
+                                full_response,
+                                role_name=role.name if role else None,
                                 user_id=user_id,
+                                lang=turn_lang,
                             )
-                            if redaction_errors:
-                                logger.error(
-                                    f"check_output handlers crashed "
-                                    f"({len(redaction_errors)} failures) — refusing to send "
-                                    f"unredacted response. Failed: "
-                                    f"{[fn.__qualname__ for fn, _ in redaction_errors]}"
-                                )
-                                full_response = (
-                                    "Antwort konnte nicht vollständig geprüft werden. "
-                                    "Bitte versuche es erneut."
-                                    if turn_lang.startswith("de") else
-                                    "Response could not be fully validated. Please try again."
-                                )
-                            else:
-                                for rr in redaction_results:
-                                    if not (isinstance(rr, str) and rr and rr != full_response):
-                                        continue
-                                    # Sanity check: extreme reduction (>95%)
-                                    # is more likely a redactor bug than
-                                    # legitimate redaction. Fail-closed.
-                                    ratio = len(rr) / max(1, len(full_response))
-                                    if ratio < 0.05:
-                                        logger.error(
-                                            f"check_output extreme redaction: "
-                                            f"{len(full_response)} → {len(rr)} chars "
-                                            f"(ratio={ratio:.3f}) — treating as fail-closed"
-                                        )
-                                        full_response = (
-                                            "[Inhalt zur Datenschutzprüfung zurückgehalten]"
-                                            if turn_lang.startswith("de") else
-                                            "[content withheld for privacy review]"
-                                        )
-                                    else:
-                                        logger.info(
-                                            f"check_output redacted "
-                                            f"({len(full_response)} → {len(rr)} chars)"
-                                        )
-                                        full_response = rr
-                                    break
 
                             # Send the (possibly redacted/replaced) final
                             # answer first, then the card. type: "stream"
@@ -1997,11 +1971,18 @@ async def websocket_endpoint(
                             personality_prompt=user_personality_prompt,
                             user_id=user_id,
                             time_context=time_context,
+                            role_name=role.name if role else None,
+                            lang=turn_lang,
                         )
                     else:
-                        async for chunk in ollama.chat_stream(content, history=session_state.conversation_history, memory_context=memory_context, document_context=document_context, personality_style=user_personality_style, personality_prompt=user_personality_prompt, time_context=time_context):
-                            full_response += chunk
-                            await websocket.send_json({"type": "stream", "content": chunk})
+                        from services.output_gate import stream_or_gate
+                        full_response += await stream_or_gate(
+                            ollama.chat_stream(content, history=session_state.conversation_history, memory_context=memory_context, document_context=document_context, personality_style=user_personality_style, personality_prompt=user_personality_prompt, time_context=time_context),
+                            websocket,
+                            role_name=role.name if role else None,
+                            user_id=user_id,
+                            lang=turn_lang,
+                        )
 
                 elif role.name == "knowledge":
                     # RAG search → LLM response (dedicated knowledge base path)
@@ -2015,6 +1996,8 @@ async def websocket_endpoint(
                         personality_prompt=user_personality_prompt,
                         user_id=user_id,
                         time_context=time_context,
+                        role_name=role.name if role else None,
+                        lang=turn_lang,
                     )
 
                 else:
@@ -2203,12 +2186,23 @@ Die Aktion wurde ausgeführt:
 Gib eine kurze, natürliche Antwort basierend auf den Daten.
 WICHTIG: Nutze die ECHTEN Daten aus dem Ergebnis! Gib NUR die Antwort, KEIN JSON!"""
 
-                        async for chunk in ollama.chat_stream(enhanced_prompt, history=session_state.conversation_history, memory_context=memory_context, document_context=document_context, personality_style=user_personality_style, personality_prompt=user_personality_prompt):
-                            full_response += chunk
-                            await websocket.send_json({"type": "stream", "content": chunk})
+                        from services.output_gate import stream_or_gate
+                        full_response += await stream_or_gate(
+                            ollama.chat_stream(enhanced_prompt, history=session_state.conversation_history, memory_context=memory_context, document_context=document_context, personality_style=user_personality_style, personality_prompt=user_personality_prompt),
+                            websocket,
+                            role_name=role.name if role else None,
+                            user_id=user_id,
+                            lang=turn_lang,
+                        )
 
                     elif action_result and not action_result.get("success"):
-                        full_response = f"Entschuldigung, das konnte ich nicht ausführen: {action_result.get('message')}"
+                        from services.output_gate import apply_check_output_gate
+                        full_response = await apply_check_output_gate(
+                            f"Entschuldigung, das konnte ich nicht ausführen: {action_result.get('message')}",
+                            role_name=role.name if role else None,
+                            user_id=user_id,
+                            lang=turn_lang,
+                        )
                         await websocket.send_json({"type": "stream", "content": full_response})
 
                     else:
@@ -2221,11 +2215,18 @@ WICHTIG: Nutze die ECHTEN Daten aus dem Ergebnis! Gib NUR die Antwort, KEIN JSON
                                 personality_prompt=user_personality_prompt,
                                 user_id=user_id,
                                 time_context=time_context,
+                                role_name=role.name if role else None,
+                                lang=turn_lang,
                             )
                         else:
-                            async for chunk in ollama.chat_stream(content, history=session_state.conversation_history, memory_context=memory_context, document_context=document_context, personality_style=user_personality_style, personality_prompt=user_personality_prompt, time_context=time_context):
-                                full_response += chunk
-                                await websocket.send_json({"type": "stream", "content": chunk})
+                            from services.output_gate import stream_or_gate
+                            full_response += await stream_or_gate(
+                                ollama.chat_stream(content, history=session_state.conversation_history, memory_context=memory_context, document_context=document_context, personality_style=user_personality_style, personality_prompt=user_personality_prompt, time_context=time_context),
+                                websocket,
+                                role_name=role.name if role else None,
+                                user_id=user_id,
+                                lang=turn_lang,
+                            )
 
             # Update conversation history with this exchange (in-memory)
             # Enrich assistant message with action result context for follow-up resolution.
