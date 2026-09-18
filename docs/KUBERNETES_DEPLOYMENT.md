@@ -7,8 +7,14 @@ Renfield on the private K8s cluster (`renfield-private` context) with GPU-accele
 | Node | IP | Role | GPU |
 |------|-----|------|-----|
 | k8s-cp | 192.168.1.213 | Control plane | — |
-| k8s-gpu-1 | 192.168.1.180 | Worker | 1× NVIDIA |
-| k8s-gpu-2 | 192.168.1.148 | Worker | 1× NVIDIA |
+| k8s-gpu-1 | 192.168.1.180 | Worker | 1× RTX 5070 Ti (16 GB) |
+| k8s-gpu-2 | 192.168.1.148 | Worker | **none** — the name is historical, no passthrough |
+| k8s-gpu-3 | 192.168.1.254 | Worker | 1× RTX 4060 Ti (16 GB), voice-server |
+
+Re-measured 2026-09-18. The second card in k8s-gpu-1 (RTX 5060 Ti) died with **Xid 79**
+and is gone, so there is no free GPU slot. Full inventory, what runs where, and the two
+compatibility limits that decide which cards can be bought at all:
+[`GPU_TOPOLOGY.md`](GPU_TOPOLOGY.md).
 
 **Infrastructure:**
 
@@ -16,7 +22,7 @@ Renfield on the private K8s cluster (`renfield-private` context) with GPU-accele
 - Storage: Longhorn (default `longhorn` SC, 3 replicas on the two worker disks)
 - Load Balancer: MetalLB L2 mode, IP pool `192.168.1.230–240`; Traefik LB at `192.168.1.230` on ports 80 and 443
 - Ingress: Traefik v3.3 with both the `kubernetesingress` and `kubernetescrd` providers enabled (lives in the sibling `private_k8s/` repo)
-- GPU: NVIDIA device plugin DaemonSet, `nvidia.com/gpu: 1` per worker
+- GPU: NVIDIA device plugin DaemonSet on k8s-gpu-3 (`nvidia.com/gpu: 1`); k8s-gpu-1 allocates via a **DRA claim** (`ollama-gpu-5070ti`) because the plugin could no longer allocate after the Xid 79 failure; k8s-gpu-2 has none
 - LLM models: NFS `192.168.1.9:/mnt/data/llm` → `/mnt/llm` on both workers, hostPath-mounted into Ollama pods
 
 Cluster-wide Traefik changes (entrypoints, TLS, CRDs) are tracked in `../private_k8s/traefik.yaml` and `../private_k8s/traefik-crds.yaml`; this document only covers the renfield-namespace workload.
