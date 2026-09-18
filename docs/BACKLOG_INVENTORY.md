@@ -617,10 +617,15 @@ Diese fehlen in Issues **und** in `TODOS.md` — sie gehen bei jeder anderen Zä
 ## Regelabweichung bei der Versionierung
 
 `.gitignore` ignoriert `tasks/*` und nimmt **drei** Dateien ausdrücklich wieder auf.
-Versioniert sind aber **fünf**. Einmal getrackt, greift `.gitignore` nicht mehr — die
-Abweichung bleibt deshalb unbemerkt, und Änderungen an diesen Dateien landen im Repo,
-obwohl die Regel das Gegenteil vorsieht. Vor dem nächsten Commit in `tasks/` prüfen,
-welche Dateien tatsächlich getrackt sind.
+Zum Zeitpunkt der Erhebung waren aber **fünf** versioniert. Einmal getrackt, greift
+`.gitignore` nicht mehr — deshalb kann eine solche Abweichung beliebig lange unbemerkt
+bleiben.
+
+**Aufgelöst am 2026-09-18** (#1274 + Folge-PR): Die zwei überzähligen Dateien wurden mit
+`git rm --cached` aus dem Index genommen; sie bleiben auf der Platte und werden jetzt von
+der bestehenden Regel erfasst. Versioniert sind wieder genau die drei vorgesehenen.
+Merke für später: Vor einem Commit in `tasks/` prüfen, was tatsächlich getrackt ist —
+`.gitignore` allein beantwortet das nicht.
 
 ## `lessons.md`
 
