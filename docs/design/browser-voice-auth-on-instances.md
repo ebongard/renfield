@@ -131,5 +131,6 @@ See `TODOS.md` → "Browser voice on xidra — follow-ups": D4 speaker opt-in (G
 assessment first), D7 voice-server hardening. **F7 (household browser-voice route) is FIXED 2026-09-18** — the
 orphaned `renfield/voice-server` Ingress from #1119 was removed and replaced by an
 `IngressRoute` in ns `voice` targeting `voice-server-anon:8081` (the household is auth-off,
-so the primary port cannot work); both browser routes are now versioned in
-`private_k8s/voice-server/41-browser-ingressroutes.yaml`.
+so the primary port cannot work); the household route is versioned as
+`private_k8s/voice-server/42-household-browser-ingressroute.yaml`, sibling of this
+runbook's `41-xidra-browser-ingressroute.yaml`.
