@@ -338,6 +338,17 @@ data:
   # satellites keep the legacy base64-PCM path until re-provisioned.
   SATELLITE_OPUS_ENABLED: "true"
 
+  # === Satelliten-Zeitgrenzen (#1209) ===
+  # Explizit gesetzt, weil diese vier Werte erst mit #1209 überhaupt wirksam
+  # werden: `SatelliteManager.cleanup_stale` hatte bis dahin KEINEN Aufrufer im
+  # Produktivcode, und `DEVICE_SESSION_TIMEOUT` wurde zwar eingelesen, aber nie
+  # gelesen. Ohne Eintrag hier liefen sie auf den Code-Vorgaben, ohne jede
+  # Möglichkeit, im Betrieb nachzujustieren.
+  SATELLITE_CLEANUP_INTERVAL: "30"     # Takt des Kehraus in Sekunden
+  SATELLITE_UPDATE_TIMEOUT: "900"      # OTA-Lauf ohne Endzustand gilt danach als gescheitert
+  DEVICE_SESSION_TIMEOUT: "30.0"       # max. AUFNAHME-Dauer (nur im Zustand listening)
+  DEVICE_HEARTBEAT_TIMEOUT: "60.0"     # Räumung ohne Lebenszeichen; Sitzung + laufendes OTA sind ausgenommen
+
   # Persist ML model caches (EasyOCR ~/.EasyOCR, HuggingFace ~/.cache/huggingface,
   # Torch ~/.cache/torch, whisper ~/.cache/whisper) across pod restarts by
   # pointing HOME at the /app/data mount (Longhorn PVC today; NFS-CSI RWX

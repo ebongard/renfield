@@ -887,9 +887,39 @@ class SatelliteManager:
             logger.info(f"📡 Satellite {satellite_id} update: {status.value} - {stage} ({progress}%)")
 
     # Stages the satellite sends as ordinary progress frames but which END a
-    # run: `failed` is reported before the rollback starts, `rolling_back` is
-    # the last frame a rolled-back run emits.
-    _TERMINAL_UPDATE_STAGES = ("failed", "rolling_back")
+    # run — each mapped to the state it ends in:
+    #   * `failed`       — reported with the real cause before the rollback starts
+    #   * `rolling_back` — the last frame a rolled-back run emits
+    #   * `completed`    — reported at 100% BEFORE the restart, which usually kills
+    #                      the process before `update_complete` can be sent
+    #                      (update_manager.py:299 + satellite.py's own comment).
+    #                      Leaving it IN_PROGRESS would let the stuck-run timeout
+    #                      mark a SUCCESSFUL update as failed 15 minutes later.
+    _TERMINAL_UPDATE_STAGES = {
+        "failed": UpdateStatus.FAILED,
+        "rolling_back": UpdateStatus.FAILED,
+        "completed": UpdateStatus.COMPLETED,
+    }
+
+    # A device-supplied message becomes durable state served by the ADMIN API.
+    # Bound it: the WS frame limit is 1 MB, and a malfunctioning or hostile
+    # satellite must not be able to park that in the roster.
+    _MAX_UPDATE_ERROR_CHARS = 2000
+
+    @classmethod
+    def _bounded_error(cls, message: object) -> str | None:
+        """Coerce a device-supplied message into a bounded string, or None.
+
+        The frame is JSON from a LAN device, so `message` may be any type. The
+        REST response models type `update_error` as `str | None` and Pydantic v2
+        does not coerce — an int or dict here would raise at response-build time,
+        and `list_satellites` has no per-entry guard, so ONE bad entry 500s the
+        whole admin list.
+        """
+        if message is None or message == "":
+            return None
+        text = message if isinstance(message, str) else str(message)
+        return text[:cls._MAX_UPDATE_ERROR_CHARS]
 
     def apply_update_progress(
         self, satellite_id: str, stage: str, progress: int, message: str = ""
@@ -913,20 +943,34 @@ class SatelliteManager:
         if sat is None:
             return
 
-        if stage in self._TERMINAL_UPDATE_STAGES:
-            self.set_update_status(
-                satellite_id,
-                UpdateStatus.FAILED,
-                stage=stage,
-                progress=progress,
-                error=message or sat.update_error,
-            )
-            return
-
+        # ONE guard, ahead of BOTH branches. A finished run is never dragged
+        # back — not by an ordinary frame, and not by a duplicate terminal frame
+        # either. This ordering is also what PRESERVES the failure cause: the
+        # satellite reports `failed` carrying the real reason and only then
+        # `rolling_back` with the fixed text "Rolling back..."
+        # (update_manager.py:762), which would otherwise overwrite it on every
+        # single rollback.
         if sat.update_status in (UpdateStatus.COMPLETED, UpdateStatus.FAILED):
             logger.debug(
                 f"Späte update_progress von {satellite_id} verworfen "
                 f"(Stufe: {stage}) — Lauf bereits {sat.update_status.value}"
+            )
+            return
+
+        # The frame is JSON from a LAN device; neither field is trustworthy.
+        stage = stage if isinstance(stage, str) else str(stage)
+        progress = progress if isinstance(progress, int) and not isinstance(progress, bool) else 0
+
+        terminal = self._TERMINAL_UPDATE_STAGES.get(stage)
+        if terminal is not None:
+            self.set_update_status(
+                satellite_id,
+                terminal,
+                stage=stage,
+                progress=progress,
+                # A successful run carries no error; a failed one keeps the
+                # device's own words, bounded.
+                error=self._bounded_error(message) if terminal is UpdateStatus.FAILED else None,
             )
             return
 
@@ -942,6 +986,9 @@ class SatelliteManager:
             sat.update_stage = None
             sat.update_progress = 0
             sat.update_error = None
+            # Without this a LATER run inherits an already-expired deadline and
+            # is killed by the stuck-run sweep the moment it starts.
+            sat.update_started_at = None
 
     def get_satellite(self, satellite_id: str) -> SatelliteInfo | None:
         """Get satellite info by ID"""
@@ -1061,24 +1108,51 @@ class SatelliteManager:
             fut.set_result({"error": error} if error else (result or {}))
 
     async def cleanup_stale(self):
-        """Remove stale satellites and timed-out sessions"""
+        """Time out recordings, evict dead satellites, fail stuck OTA runs.
+
+        Three independent sweeps. Until #1209 this method had NO production
+        caller anywhere in the tree — only a test invoked it — so none of them
+        ever ran. The scheduler in `ha_glue.bootstrap` is what gives them
+        effect, which is also why each is guarded here rather than trusted:
+        they were written against assumptions no live system ever exercised.
+        """
         now = time.time()
 
         async with self._lock:
-            # Check for timed-out sessions
+            # 1. RECORDING timeout — not a turn timeout. `started_at` is stamped
+            # at the wake word, and the whole turn (STT + agent + LLM + TTS) is
+            # processed INLINE in the socket's receive loop, so timing the turn
+            # out would destroy the session mid-answer; `send_tts_audio` then
+            # drops the finished answer with `if session_id not in self.sessions:
+            # return` — silently, with the satellite already back at idle. Only a
+            # session still LISTENING can expire, bounded by the configurable
+            # `device_session_timeout` (assigned since 2026-01 and never read).
             timed_out_sessions = [
                 sid for sid, sess in self.sessions.items()
-                if now - sess.started_at > sess.max_duration_seconds
+                if sess.state == SatelliteState.LISTENING
+                and now - sess.started_at > self.session_timeout
             ]
 
             for session_id in timed_out_sessions:
-                logger.warning(f"⏰ Session timed out: {session_id}")
+                logger.warning(f"⏰ Recording timed out: {session_id}")
                 await self._end_session_internal(session_id, reason="timeout")
 
-            # Check for stale satellites
+            # 2. Heartbeat eviction, with two exemptions for devices that are
+            # demonstrably alive but legitimately unable to answer:
+            #   * a LIVE session — we are processing its audio right now, and its
+            #     heartbeats sit unread in the socket buffer because the turn
+            #     runs inline in the receive loop. (Keyed on the session really
+            #     existing, so a dangling id cannot grant permanent immunity.)
+            #   * a running OTA — the installer blocks the satellite's event loop
+            #     for up to ~150s (pip 120s + systemctl restart 30s,
+            #     update_manager.py:727/738) against a 60s deadline. Evicting
+            #     there would delete the row that OWNS `update_started_at` and
+            #     disarm the stuck-run timeout in exactly the case it exists for.
             stale_satellites = [
                 sat_id for sat_id, sat in self.satellites.items()
                 if now - sat.last_heartbeat > self.heartbeat_timeout
+                and not (sat.current_session_id and sat.current_session_id in self.sessions)
+                and sat.update_status != UpdateStatus.IN_PROGRESS
             ]
 
             for sat_id in stale_satellites:
@@ -1086,12 +1160,21 @@ class SatelliteManager:
                 sat = self.satellites[sat_id]
                 if sat.current_session_id:
                     await self._end_session_internal(sat.current_session_id, reason="disconnect")
-                room, room_id = sat.room, sat.room_id
+                room, room_id, websocket = sat.room, sat.room_id, sat.websocket
                 del self.satellites[sat_id]
                 # Push liveness so the kiosk drops a satellite that timed out.
                 await self._broadcast_satellite_liveness(
                     sat_id, room, room_id, online=False
                 )
+                # CLOSE the socket. Removing the roster entry alone leaves the
+                # receive loop running and still acking heartbeats, so the device
+                # sees a healthy link, never re-registers (it only registers on
+                # connect) and is mute FOREVER. Closing drops it into its own
+                # reconnect-with-backoff loop.
+                try:
+                    await websocket.close(code=1001, reason="heartbeat timeout")
+                except Exception:  # noqa: BLE001
+                    pass
 
             # Time-bound a stuck OTA run (#1209). The handler now terminates the
             # stages the satellite actually reports, so this is the backstop
@@ -1114,15 +1197,23 @@ class SatelliteManager:
                         f"(Stufe: {sat.update_stage or 'unbekannt'}, "
                         f"{update_timeout:.0f}s ohne Abschluss)"
                     )
-                    sat.update_status = UpdateStatus.FAILED
-                    # Keep a cause the satellite already gave us; only invent one
-                    # when there is none, and say plainly that it is our verdict
-                    # rather than the device's.
-                    sat.update_error = sat.update_error or (
-                        f"Update ohne Endzustand abgebrochen (letzte Stufe: "
-                        f"{sat.update_stage or 'unbekannt'})"
+                    # Go through the single writer rather than touching the
+                    # four fields by hand: it owns the start-mark bookkeeping,
+                    # and duplicating that here is what let `clear_update_status`
+                    # drift out of sync in the first place.
+                    self.set_update_status(
+                        sat_id,
+                        UpdateStatus.FAILED,
+                        stage=sat.update_stage,
+                        progress=sat.update_progress,
+                        # Keep a cause the satellite already gave us; only invent
+                        # one when there is none, and say plainly that the verdict
+                        # is ours, not the device's.
+                        error=sat.update_error or (
+                            f"Update ohne Endzustand abgebrochen (letzte Stufe: "
+                            f"{sat.update_stage or 'unbekannt'})"
+                        ),
                     )
-                    sat.update_started_at = None
 
 
 # Global singleton instance
