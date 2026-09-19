@@ -549,11 +549,16 @@ class XVF3800LEDController:
     """
 
     # Pattern → (LED_EFFECT, LED_COLOR or None)
+    # LED_EFFECT: 0 = off, 1 = breath, 2 = rainbow, 3 = single colour.
+    # The two WAITING states breathe (idle, processing). The APA102 controller
+    # animates the same two (dim pulse / chase); breath is the closest effect the
+    # XMOS renders in hardware. The map shipped as all-solid although its own
+    # tests specified breath from the first commit (3087dc74).
     _PATTERN_MAP = {
         LEDPattern.OFF: (0, None),
-        LEDPattern.IDLE: (3, 0x000033),       # Dim blue solid
+        LEDPattern.IDLE: (1, 0x000044),       # Dim blue breath
         LEDPattern.LISTENING: (3, 0x00ff00),  # Solid green
-        LEDPattern.PROCESSING: (3, 0xffff00), # Solid yellow
+        LEDPattern.PROCESSING: (1, 0xffff00), # Yellow breath
         LEDPattern.SPEAKING: (3, 0x00ffff),   # Solid cyan
         LEDPattern.ERROR: (3, 0xff0000),      # Solid red
         LEDPattern.SUCCESS: (3, 0x00ff00),    # Solid green
