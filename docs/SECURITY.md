@@ -150,8 +150,9 @@ flushes its queued chunks in one burst, while its sustained rate is physically b
 at ~12.5 chunks/s), and `audio_end` always passes (at most one per session; dropping it
 stranded the session in `listening` until the cleanup sweep discarded the recording
 unanswered). An unregistered sender, a foreign session and every other frame type are
-refused exactly as before — without being parsed. The byte cap above still bounds a
-session. On the satellite, `RATE_LIMITED` means one dropped frame, not a failed
+refused exactly as before — without being parsed. The second look itself runs against
+its own per-minute budget, so refused frames cannot be parsed without limit, and only a
+FINAL refusal counts as a violation. The byte cap above still bounds a session. On the satellite, `RATE_LIMITED` means one dropped frame, not a failed
 session: it no longer resets a running turn.
 
 ## Trusted Proxies
