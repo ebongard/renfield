@@ -45,12 +45,17 @@ class WSRateLimiter:
         # Track violations for logging
         self._violations: dict[str, int] = defaultdict(int)
 
-    def check(self, client_id: str) -> tuple[bool, str]:
+    def check(self, client_id: str, *, burst_ok: bool = False) -> tuple[bool, str]:
         """
         Check if a client is allowed to send a message.
 
         Args:
             client_id: Unique identifier for the client (device_id or IP)
+            burst_ok: Skip the per-second limit and enforce only the per-minute
+                budget. For frames whose sustained rate is bounded elsewhere but
+                which legitimately arrive in bursts — a satellite's audio chunks
+                after its event loop stalled (#1284). The minute budget still
+                caps a flood.
 
         Returns:
             Tuple of (allowed: bool, reason: str)
@@ -74,7 +79,7 @@ class WSRateLimiter:
         recent_minute = len(self._timestamps[client_id])
 
         # Check limits
-        if recent_second >= self.per_second:
+        if not burst_ok and recent_second >= self.per_second:
             self._violations[client_id] += 1
             if self._violations[client_id] <= 3:  # Log first 3 violations
                 logger.warning(f"Rate limit exceeded (per second) for {client_id}")

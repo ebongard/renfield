@@ -186,6 +186,64 @@ def _spawn_satellite_extraction(
         return None
 
 
+def _live_session_frame(raw: dict, satellite_id: str, manager) -> str | None:
+    """Classify a frame the rate limiter just refused (#1284).
+
+    Returns ``"audio"`` or ``"audio_end"`` when the frame belongs to a session
+    that is live AND owned by this satellite, else ``None``.
+
+    Only ever called on the refusal path of a REGISTERED satellite, so an
+    unregistered flooder is still turned away without its frames being parsed.
+    The frame is parsed a second time on the normal path — deliberate: that
+    costs one extra parse on a rare path instead of parsing every frame before
+    the limiter has seen it.
+    """
+    raw_bytes = raw.get("bytes")
+    if raw_bytes is not None:
+        try:
+            session_id, _, _ = parse_audio_frame(raw_bytes)
+        except BinaryFrameError:
+            return None
+        kind = "audio"
+    else:
+        try:
+            data = json.loads(raw.get("text") or "")
+        except json.JSONDecodeError:
+            return None
+        if not isinstance(data, dict) or data.get("type") not in ("audio", "audio_end"):
+            return None
+        session_id = data.get("session_id")
+        kind = data["type"]
+
+    # isinstance: a hostile frame may carry an unhashable session_id.
+    session = manager.sessions.get(session_id) if isinstance(session_id, str) else None
+    if session is None or session.satellite_id != satellite_id:
+        return None
+    return kind
+
+
+def _rate_verdict(raw: dict, rate_key: str, satellite_id: str | None, rate_limiter, manager) -> tuple[bool, str]:
+    """Rate-limit one inbound frame; a refused frame of a LIVE turn gets a second look.
+
+    A refused frame must not cost a running turn (#1284). Audio legitimately
+    arrives in bursts — a Pi whose event loop stalled flushes its queued chunks
+    at once — while its sustained rate is physically bounded (12.5 chunks/s), so
+    it answers to the minute budget only. `audio_end` always passes: it is at
+    most one per session, and dropping it strands the session in `listening`
+    until the cleanup sweep discards the recording unanswered.
+    """
+    allowed, reason = rate_limiter.check(rate_key)
+    if allowed or not satellite_id:
+        return allowed, reason
+
+    frame_kind = _live_session_frame(raw, satellite_id, manager)
+    if frame_kind == "audio_end":
+        return True, ""
+    if frame_kind == "audio":
+        return rate_limiter.check(rate_key, burst_ok=True)
+    return False, reason
+
+
 async def _reject_derostered_heartbeat(websocket, satellite_id: str, manager) -> bool:
     """Close a heartbeat connection whose satellite is no longer in the roster.
 
@@ -282,7 +340,9 @@ async def satellite_websocket(
 
             # Rate limiting (applies to text AND binary frames)
             rate_key = satellite_id if satellite_id else ip_address
-            allowed, rate_reason = rate_limiter.check(rate_key)
+            allowed, rate_reason = _rate_verdict(
+                raw, rate_key, satellite_id, rate_limiter, satellite_manager
+            )
             if not allowed:
                 await send_ws_error(websocket, WSErrorCode.RATE_LIMITED, rate_reason)
                 continue

@@ -598,8 +598,14 @@ class WebSocketClient:
 
             # Handle specific error codes
             if error_code == "RATE_LIMITED":
-                print("⚠️ Rate limited by server - slowing down")
-                await asyncio.sleep(1)
+                # ONE frame was dropped — the connection and any running turn
+                # are intact. Not forwarded to on_error: the satellite resets
+                # its session on every server error, so a single refused
+                # heartbeat or BLE report used to end a live voice turn (#1284).
+                # No sleep either: it ran inside the receive loop and only
+                # delayed incoming frames (TTS, acks) — it never slowed sending.
+                print("⚠️ Rate limited by server - frame dropped, session kept")
+                return
             elif error_code == "BUFFER_FULL":
                 print("⚠️ Audio buffer full - ending current session")
                 self._current_session_id = None
