@@ -907,6 +907,10 @@ class Satellite:
         self._set_state(SatelliteState.LISTENING)
         self._silence_chunks = 0
         self._recorded_chunks = 0
+        # The VAD is a streaming model; without gating it only runs while
+        # listening, so its state would otherwise carry over from the END of the
+        # previous turn, minutes ago.
+        self.vad.reset()
         self._listening_start = time.time()
 
         # Notify server
