@@ -44,12 +44,18 @@ class FakeXVF3800LEDs:
         self._run = MagicMock()
 
 
-def _call_update(leds, brightness):
-    """Invoke Satellite._on_led_config_update against a fake self holding leds."""
+def _call_update(leds, brightness, min_brightness=0):
+    """Invoke Satellite._on_led_config_update against a fake self holding leds.
+
+    ``min_brightness`` MUST be set explicitly: on a bare MagicMock config the
+    attribute is itself a MagicMock, and ``int(MagicMock())`` is 1 — every test
+    here silently ran with a floor of 1 once the per-device floor was added.
+    """
     from renfield_satellite.satellite import Satellite
 
     fake_self = MagicMock()
     fake_self.leds = leds
+    fake_self.config.led.min_brightness = min_brightness
     Satellite._on_led_config_update(fake_self, brightness)
 
 
@@ -72,6 +78,31 @@ class TestOnLedConfigUpdate:
         leds = FakeAPA102LEDs(brightness=20)
         _call_update(leds, -10)
         assert leds.brightness == 0
+
+    @pytest.mark.satellite
+    def test_floor_lifts_a_push_below_it(self):
+        """A device whose ring must stay readable ignores a dimmer fleet push."""
+        leds = FakeAPA102LEDs(brightness=20)
+        _call_update(leds, 5, min_brightness=12)
+        assert leds.brightness == 12
+
+    @pytest.mark.satellite
+    def test_floor_leaves_a_push_above_it_alone(self):
+        leds = FakeAPA102LEDs(brightness=20)
+        _call_update(leds, 25, min_brightness=12)
+        assert leds.brightness == 25
+
+    @pytest.mark.satellite
+    def test_floor_is_itself_clamped_to_the_hardware_range(self):
+        leds = FakeAPA102LEDs(brightness=20)
+        _call_update(leds, 5, min_brightness=99)
+        assert leds.brightness == 31
+
+    @pytest.mark.satellite
+    def test_xvf3800_pushes_the_floored_value_to_the_chip(self):
+        leds = FakeXVF3800LEDs(brightness=20)
+        _call_update(leds, 2, min_brightness=10)
+        leds._run.assert_called_once_with("LED_BRIGHTNESS", "10")
 
     @pytest.mark.satellite
     def test_does_not_change_pattern(self):
