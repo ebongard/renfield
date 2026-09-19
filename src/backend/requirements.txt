@@ -45,6 +45,7 @@ piper-tts>=1.2.0
 noisereduce>=3.0.0      # Spectral noise reduction
 librosa>=0.10.0         # Audio loading/resampling (handles WebM, MP3, etc.)
 soundfile>=0.12.0       # Audio file I/O
+scipy>=1.11.0           # TTS sound profiles (ha_glue/services/tts_equalizer.py); already pulled in by librosa — declared because we import it directly
 
 # Speaker Recognition (ECAPA-TDNN)
 speechbrain>=1.0.0      # Speaker embedding extraction

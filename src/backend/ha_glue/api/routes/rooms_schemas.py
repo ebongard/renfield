@@ -4,7 +4,23 @@ Pydantic schemas for Room Management API
 Extracted from rooms.py for better maintainability.
 """
 
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
+
+from ha_glue.services.tts_equalizer import TTS_EQ_PROFILES, is_known_profile
+
+
+def _validate_tts_eq_profile(value: str | None) -> str | None:
+    """Reject an unknown sound profile loudly instead of storing a dead name.
+
+    An empty string is what an HTML <select> sends for "none" — treat it as off.
+    """
+    if value == "":
+        return None
+    if not is_known_profile(value):
+        raise ValueError(
+            f"unknown tts_eq_profile {value!r} — known: {sorted(TTS_EQ_PROFILES)}"
+        )
+    return value
 
 # --- Room Models ---
 
@@ -153,15 +169,26 @@ class OutputDeviceCreate(BaseModel):
     allow_interruption: bool = False
     tts_volume: float | None = 0.5
     device_name: str | None = None
+    tts_eq_profile: str | None = None
+
+    _check_tts_eq_profile = field_validator("tts_eq_profile")(_validate_tts_eq_profile)
 
 
 class OutputDeviceUpdate(BaseModel):
-    """Request model for updating an output device"""
+    """Request model for updating an output device.
+
+    ``tts_eq_profile``: omit the key to leave it unchanged, send ``null`` to
+    switch the profile off — the route reads ``model_fields_set`` to tell the
+    two apart.
+    """
     priority: int | None = None
     allow_interruption: bool | None = None
     tts_volume: float | None = None
     is_enabled: bool | None = None
     device_name: str | None = None
+    tts_eq_profile: str | None = None
+
+    _check_tts_eq_profile = field_validator("tts_eq_profile")(_validate_tts_eq_profile)
 
 
 class OutputDeviceResponse(BaseModel):
@@ -182,6 +209,7 @@ class OutputDeviceResponse(BaseModel):
     priority: int
     allow_interruption: bool
     tts_volume: float | None
+    tts_eq_profile: str | None = None
     device_name: str | None
     is_enabled: bool
     created_at: str | None

@@ -356,6 +356,69 @@ class TestOutputDeviceEndpoints:
         assert data["priority"] == 5
         assert data["allow_interruption"] is True
         assert data["tts_volume"] == 0.8
+        assert data["tts_eq_profile"] is None, "ein nicht gesendetes Profil bleibt unberuehrt"
+
+    @pytest.mark.integration
+    async def test_tts_eq_profile_setzen_behalten_und_wieder_ausschalten(
+        self, async_client: AsyncClient, test_room: Room, db_session: AsyncSession
+    ):
+        """`null` schaltet das Profil AUS, ein fehlender Schluessel laesst es stehen."""
+        created = await async_client.post(
+            f"/api/rooms/{test_room.id}/output-devices",
+            json={
+                "output_type": "audio",
+                "output_provider": "dlna",
+                "output_target_id": "HiFiBerry Test",
+                "tts_eq_profile": "hifi_speech",
+            },
+        )
+        assert created.status_code in (200, 201), created.text
+        device_id = created.json()["id"]
+        assert created.json()["tts_eq_profile"] == "hifi_speech"
+
+        untouched = await async_client.patch(f"/api/rooms/output-devices/{device_id}", json={"priority": 3})
+        assert untouched.json()["tts_eq_profile"] == "hifi_speech"
+
+        switched_off = await async_client.patch(
+            f"/api/rooms/output-devices/{device_id}", json={"tts_eq_profile": None}
+        )
+        assert switched_off.status_code == 200
+        assert switched_off.json()["tts_eq_profile"] is None
+
+        listed = await async_client.get(f"/api/rooms/{test_room.id}/output-devices")
+        assert [d["tts_eq_profile"] for d in listed.json() if d["id"] == device_id] == [None]
+
+    @pytest.mark.integration
+    async def test_unbekanntes_tts_eq_profile_wird_abgelehnt(
+        self, async_client: AsyncClient, test_room: Room
+    ):
+        response = await async_client.post(
+            f"/api/rooms/{test_room.id}/output-devices",
+            json={
+                "output_type": "audio",
+                "output_provider": "dlna",
+                "output_target_id": "HiFiBerry Test",
+                "tts_eq_profile": "gibt_es_nicht",
+            },
+        )
+        assert response.status_code == 422
+
+    @pytest.mark.integration
+    async def test_leerer_string_gilt_als_aus(
+        self, async_client: AsyncClient, test_room: Room
+    ):
+        """Ein HTML-<select> sendet fuer "Keins" einen leeren String."""
+        response = await async_client.post(
+            f"/api/rooms/{test_room.id}/output-devices",
+            json={
+                "output_type": "audio",
+                "output_provider": "dlna",
+                "output_target_id": "HiFiBerry Test",
+                "tts_eq_profile": "",
+            },
+        )
+        assert response.status_code in (200, 201), response.text
+        assert response.json()["tts_eq_profile"] is None
 
     @pytest.mark.integration
     async def test_delete_output_device(

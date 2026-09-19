@@ -40,6 +40,7 @@ def _make_output_device(
     output_provider=None,
     output_target_id=None,
     tts_volume=0.5,
+    tts_eq_profile=None,
 ):
     """Create a mock RoomOutputDevice.
 
@@ -59,6 +60,9 @@ def _make_output_device(
     dev.output_target_id = output_target_id
     dev.target_id = output_target_id or ""
     dev.tts_volume = tts_volume
+    # Must be a real value: a bare MagicMock attribute is truthy and would read
+    # as "this device has a sound profile".
+    dev.tts_eq_profile = tts_eq_profile
     # play_audio dispatches on these three flags. They must be real bools —
     # a bare MagicMock attribute is truthy, which would route every device
     # down the renfield/DLNA branch regardless of intent.
@@ -276,6 +280,80 @@ class TestPlayAudioDispatch:
 
         assert result is True
         service._play_on_ha_media_player.assert_called_once()
+
+
+# ============================================================================
+# TTS sound profile
+# ============================================================================
+
+@pytest.mark.unit
+class TestSoundProfile:
+    """Das Klangprofil wirkt auf HiFi-Ausgaben — und nur dort."""
+
+    @staticmethod
+    def _wav() -> bytes:
+        import io
+        import wave
+
+        import numpy as np
+
+        t = np.arange(22050) / 22050
+        x = np.sin(2 * np.pi * 60 * t) + np.sin(2 * np.pi * 180 * t) + 0.05 * np.sin(2 * np.pi * 3500 * t)
+        buf = io.BytesIO()
+        with wave.open(buf, "wb") as w:
+            w.setnchannels(1)
+            w.setsampwidth(2)
+            w.setframerate(22050)
+            w.writeframes((x / abs(x).max() * 20000).astype("<i2").tobytes())
+        return buf.getvalue()
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("target, method", [
+        ({"dlna_renderer_name": "HiFi"}, "_play_on_dlna_renderer"),
+        ({"ha_entity_id": "media_player.hifi"}, "_play_on_ha_media_player"),
+    ])
+    async def test_profil_wird_vor_der_wiedergabe_angewendet(self, service, target, method):
+        player = AsyncMock(return_value=True)
+        setattr(service, method, player)
+        original = self._wav()
+
+        await service.play_audio(original, _make_output_device(tts_eq_profile="hifi_speech", **target), "sess-1")
+
+        played = player.call_args.kwargs["audio_bytes"]
+        assert played != original, "die entzerrte Datei geht an das Geraet, nicht das Original"
+        assert len(played) == len(original)
+
+    @pytest.mark.asyncio
+    async def test_ohne_profil_geht_das_original_durch(self, service):
+        service._play_on_dlna_renderer = AsyncMock(return_value=True)
+        original = self._wav()
+
+        await service.play_audio(original, _make_output_device(dlna_renderer_name="HiFi"), "sess-1")
+
+        assert service._play_on_dlna_renderer.call_args.kwargs["audio_bytes"] is original
+
+    @pytest.mark.asyncio
+    async def test_renfield_geraete_bleiben_unbearbeitet(self, service):
+        """Satellit/Browser: die Stimme ist auf deren kleinen Lautsprecher abgestimmt."""
+        service._play_on_renfield_device = AsyncMock(return_value=True)
+        original = self._wav()
+
+        await service.play_audio(
+            original, _make_output_device(renfield_device_id="sat-1", tts_eq_profile="hifi_speech"), "sess-1"
+        )
+
+        assert service._play_on_renfield_device.call_args.kwargs["audio_bytes"] is original
+
+    @pytest.mark.asyncio
+    async def test_kaputtes_audio_wird_trotzdem_gespielt(self, service):
+        service._play_on_dlna_renderer = AsyncMock(return_value=True)
+
+        ok = await service.play_audio(
+            b"kein wav", _make_output_device(dlna_renderer_name="HiFi", tts_eq_profile="hifi_speech"), "sess-1"
+        )
+
+        assert ok is True
+        assert service._play_on_dlna_renderer.call_args.kwargs["audio_bytes"] == b"kein wav"
 
 
 # ============================================================================

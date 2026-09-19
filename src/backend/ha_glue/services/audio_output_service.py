@@ -72,7 +72,12 @@ class AudioOutputService:
                 device_id=output_device.target_id,
                 session_id=session_id
             )
-        elif output_device.is_dlna_device:
+
+        # Hi-fi outputs only: a satellite / browser plays the answer unprocessed,
+        # its small speaker is what the voice is balanced for.
+        audio_bytes = await self._apply_sound_profile(audio_bytes, output_device)
+
+        if output_device.is_dlna_device:
             return await self._play_on_dlna_renderer(
                 audio_bytes=audio_bytes,
                 renderer_name=output_device.target_id,
@@ -86,6 +91,21 @@ class AudioOutputService:
                 tts_volume=output_device.tts_volume,
                 session_id=session_id
             )
+
+    async def _apply_sound_profile(self, audio_bytes: bytes, output_device: RoomOutputDevice) -> bytes:
+        """Equalize the answer with the device's TTS sound profile, if it has one.
+
+        Off the event loop (filtering is CPU work), and fail-safe: `apply_profile`
+        returns the input on any error, so a broken profile never costs the answer.
+        """
+        profile = getattr(output_device, "tts_eq_profile", None)
+        if not profile or not isinstance(profile, str):
+            return audio_bytes
+        import asyncio
+
+        from ha_glue.services.tts_equalizer import apply_profile
+
+        return await asyncio.to_thread(apply_profile, audio_bytes, profile)
 
     async def _play_on_renfield_device(
         self,

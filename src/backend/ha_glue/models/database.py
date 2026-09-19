@@ -321,6 +321,9 @@ class RoomOutputDevice(Base):
     allow_interruption = Column(Boolean, default=False)
 
     tts_volume = Column(Float, nullable=True, default=0.5)
+    # Named TTS sound profile (ha_glue/services/tts_equalizer.py); NULL = off.
+    # Applied to DLNA / HA media players only, never to Renfield devices.
+    tts_eq_profile = Column(String(32), nullable=True)
 
     device_name = Column(String(255), nullable=True)
 

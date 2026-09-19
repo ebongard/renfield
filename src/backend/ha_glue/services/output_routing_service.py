@@ -164,6 +164,10 @@ def _audio_quality_rank(device: RoomOutputDevice) -> int:
     return _AUDIO_QUALITY_RANK.get(device.target_type, _DEFAULT_QUALITY_RANK)
 
 
+# "Argument not passed", for fields where None is itself a meaningful value.
+_UNSET = object()
+
+
 class OutputRoutingService:
     """
     Service for routing TTS/visual output to the best available device.
@@ -417,7 +421,8 @@ class OutputRoutingService:
         priority: int = 1,
         allow_interruption: bool = False,
         tts_volume: float | None = 0.5,
-        device_name: str | None = None
+        device_name: str | None = None,
+        tts_eq_profile: str | None = None,
     ) -> RoomOutputDevice:
         """
         Add a new output device to a room.
@@ -491,6 +496,7 @@ class OutputRoutingService:
             priority=priority,
             allow_interruption=allow_interruption,
             tts_volume=tts_volume,
+            tts_eq_profile=tts_eq_profile,
             device_name=device_name,
             is_enabled=True
         )
@@ -509,9 +515,15 @@ class OutputRoutingService:
         allow_interruption: bool | None = None,
         tts_volume: float | None = None,
         is_enabled: bool | None = None,
-        device_name: str | None = None
+        device_name: str | None = None,
+        tts_eq_profile: object = _UNSET,
     ) -> RoomOutputDevice | None:
-        """Update an existing output device."""
+        """Update an existing output device.
+
+        For every other field ``None`` means "leave unchanged". The sound profile
+        is different: ``None`` is a real value (profile off), so "leave unchanged"
+        is the ``_UNSET`` sentinel instead.
+        """
         stmt = select(RoomOutputDevice).where(RoomOutputDevice.id == device_id)
         result = await self.db.execute(stmt)
         device = result.scalar_one_or_none()
@@ -529,6 +541,8 @@ class OutputRoutingService:
             device.is_enabled = is_enabled
         if device_name is not None:
             device.device_name = device_name
+        if tts_eq_profile is not _UNSET:
+            device.tts_eq_profile = tts_eq_profile
 
         await self.db.commit()
         await self.db.refresh(device)

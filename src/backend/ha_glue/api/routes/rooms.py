@@ -740,6 +740,7 @@ def _output_device_to_response(device) -> OutputDeviceResponse:
         priority=device.priority,
         allow_interruption=device.allow_interruption,
         tts_volume=device.tts_volume,
+        tts_eq_profile=device.tts_eq_profile,
         device_name=device.device_name,
         is_enabled=device.is_enabled,
         created_at=device.created_at.isoformat() if device.created_at else None,
@@ -810,7 +811,8 @@ async def add_output_device(
             priority=request.priority,
             allow_interruption=request.allow_interruption,
             tts_volume=request.tts_volume,
-            device_name=request.device_name
+            device_name=request.device_name,
+            tts_eq_profile=request.tts_eq_profile,
         )
         return _output_device_to_response(device)
     except ValueError as e:
@@ -829,13 +831,19 @@ async def update_output_device(
 
     routing_service = OutputRoutingService(db)
 
+    # `null` switches the sound profile OFF; an omitted key leaves it alone.
+    extra = {}
+    if "tts_eq_profile" in request.model_fields_set:
+        extra["tts_eq_profile"] = request.tts_eq_profile
+
     device = await routing_service.update_output_device(
         device_id=device_id,
         priority=request.priority,
         allow_interruption=request.allow_interruption,
         tts_volume=request.tts_volume,
         is_enabled=request.is_enabled,
-        device_name=request.device_name
+        device_name=request.device_name,
+        **extra,
     )
 
     if not device:
