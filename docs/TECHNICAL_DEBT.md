@@ -248,6 +248,16 @@ Session- und Heartbeat-Timeouts in `config.py` ausgelagert:
 
 `device_manager.py` und `satellite_manager.py` verwenden jetzt die Config-Werte.
 
+> **Nachtrag 2026-09-19 (#1209):** Diese Erledigt-Meldung war wörtlich richtig und
+> in der Sache irreführend. Herausgezogen wurde die Zahl, angeschlossen wurde sie
+> nicht: `device_session_timeout` landete in `self.session_timeout` und wurde
+> **nie gelesen** (die Auswertung nahm den fest verdrahteten Wert der Dataclass),
+> und `device_heartbeat_timeout` wurde ausschließlich in `cleanup_stale`
+> ausgewertet — einer Funktion **ohne jeden Aufrufer im Produktivcode**. Beide
+> Grenzen liefen also nie. Mit #1209 sind sie getaktet, kalibriert und in der
+> ConfigMap hinterlegt. Der Geräte-Kehraus (`device_manager.cleanup_stale`) hat
+> weiterhin keinen Takt — siehe #1277.
+
 ---
 
 ## Frontend

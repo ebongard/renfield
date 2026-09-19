@@ -407,7 +407,7 @@ Verteilung: **🟢 9 · 🟡 4 · 🔴 28**. Die große Mehrheit des Rückstands
 | 1113 | Voice satellite architecture — would love to exchange notes | – | 2026-08-22 | 2026-08-22 | 0 | 🟢 |
 | 1116 | Login/User-Mgmt-Security-Audit 2026-08-23: dokumentierte Rest-Findings | security, backend | 2026-08-23 | 2026-09-03 | 2 | 🟢 |
 | 1206 | Vision-Modell wird bei jeder Anfrage verdrängt — geteilte 16-GB-Karte überbucht | enhancement, backend | 2026-09-04 | 2026-09-04 | 2 | 🟢 |
-| 1209 | OTA-Rollback-Status terminiert nicht — Satellit bleibt auf in_progress/rolling_back | backend | 2026-09-04 | 2026-09-04 | 0 | 🟢 |
+| ~~1209~~ | ~~OTA-Rollback-Status terminiert nicht~~ **behoben 2026-09-19** | backend | 2026-09-04 | 2026-09-19 | 0 | ✅ |
 | 1210 | OTA kann keine neue Abhängigkeit ausliefern — Allowlist aus laufendem Code (Henne-Ei) | backend, satellite | 2026-09-04 | 2026-09-04 | 0 | 🟢 |
 | 1211 | sat-wohnzimmer ist taub: WM8960 probe schlägt fehl (-110), kein Aufnahmegerät | satellite | 2026-09-04 | 2026-09-04 | 0 | 🟢 |
 | 1215 | feat(scanner): USB document scanner ingest with configurable 1..n routing targets | – | 2026-09-08 | 2026-09-08 | 1 | 🟢 |
@@ -427,7 +427,7 @@ Die Gruppierung ist aus Titel, Rumpf und Labels abgeleitet; Issues mit zwei Heim
 | 21 | Time and situation dependent audio volume | 🔴 | Tageszeit-/Umgebungs-abhängige Lautstärke. Berührt das vorhandene Day/Night-Awareness-Subsystem (`daypart_service`) und die LED-Dimmung, die dieselbe Mechanik schon nutzen. |
 | 871 | Test renfield_en + renfield_it wake-word models | 🟡 | Reine Verifikationsaufgabe, braucht Muttersprachler EN/IT. Modelle sind offline validiert, DE live. |
 | 1113 | Voice satellite architecture — exchange notes | 🟢 | **Kein Arbeitsauftrag**, externe Community-Anfrage (Fragen zu Wakeword-Latenz, Sync, ReSpeaker). Bisher unbeantwortet. |
-| 1209 | OTA-Rollback-Status terminiert nicht | 🟢 | Backend bleibt nach fehlgeschlagenem Rollout dauerhaft auf `in_progress`/`rolling_back`. |
+| ~~1209~~ | ~~OTA-Rollback-Status terminiert nicht~~ | ✅ | **Behoben 2026-09-19.** Drei Lücken: Endstufen wurden nicht erkannt, die Ursache wurde überschrieben, und `cleanup_stale` hatte keinen Aufrufer. Der tote Geräte-Kehraus läuft als #1277 weiter. |
 | 1210 | OTA kann keine neue Abhängigkeit ausliefern (Henne-Ei) | 🟢 | `SAFE_PACKAGES` lebt im laufenden Code statt im Paket. Siehe „bereits erledigt?" — PR #1208 hat nur das Symptom (opuslib) behoben. |
 | 1211 | sat-wohnzimmer ist taub (WM8960 probe -110) | 🟢 | Hardware-/Treiberbefund; Gerät meldet sich im Dashboard trotzdem gesund — enthält damit auch einen Monitoring-Blindfleck. |
 | 127 | Satellite hardware assembly guide with photos | 🔴 | Doku, Label `satellite` + `good first issue`. Auch unter „Dokumentation" geführt. |

@@ -158,14 +158,18 @@ curl -X POST http://localhost:8000/api/satellites/sat-wohnzimmer/update
 | `extracting` | 55-70% | Paket entpacken |
 | `installing` | 70-90% | Neue Version installieren |
 | `restarting` | 90-100% | Service neu starten |
-| `completed` | 100% | Update erfolgreich |
+| `completed` | 100% | Update erfolgreich — **beendet den Lauf** |
 | `failed` | - | Fehler aufgetreten — **beendet den Lauf** |
 | `rolling_back` | - | Sicherung wird zurückgespielt — **beendet den Lauf** |
 
 ### Wann ein Lauf endet
 
-`failed` und `rolling_back` kommen als gewöhnliche `update_progress`-Meldungen
-herein, **beenden aber einen Lauf**. Das Backend setzt darauf `failed` und
+`failed`, `rolling_back` und `completed` kommen als gewöhnliche
+`update_progress`-Meldungen herein, **beenden aber einen Lauf**. `completed`
+wird ausdrücklich VOR dem Neustart gemeldet, der das eigentliche
+`update_complete` meist verschluckt — bliebe der Lauf deshalb auf
+`in_progress`, würde die Zeitgrenze ein **erfolgreiches** Update eine
+Viertelstunde später als gescheitert ausweisen. Das Backend setzt darauf `failed` und
 übernimmt den Meldungstext als Fehlergrund. Bis #1209 galt jede
 Fortschrittsmeldung als „läuft noch": ein zurückgerollter Lauf blieb dauerhaft
 auf `in_progress`/`rolling_back` stehen, und weil der Fortschrittszweig keinen
@@ -186,6 +190,25 @@ Zwei Regeln sichern das ab:
    `failed`. Eine vom Satelliten bereits gelieferte Begründung bleibt dabei
    erhalten; nur wenn keine vorliegt, wird kenntlich gemacht, dass das Urteil
    vom Backend stammt.
+
+### Was der Kehraus sonst noch tut
+
+`cleanup_stale` trägt drei Zeitgrenzen, und bis #1209 lief keine davon, weil die
+Funktion **keinen Aufrufer im Produktivcode** hatte. Sie zu takten schaltet alle
+drei scharf, deshalb sind die beiden älteren dabei kalibriert worden:
+
+* **Aufnahmegrenze** (`DEVICE_SESSION_TIMEOUT`, 30 s) gilt nur noch im Zustand
+  `listening`. Die Marke wird beim Weckwort gesetzt, und der ganze Zug —
+  Spracherkennung, Agent, Modell, Sprachausgabe — läuft inline in derselben
+  Empfangsschleife. Auf den ganzen Zug angewandt zerstörte die Frist die Sitzung
+  mitten in der Antwort, und die fertige Antwort würde stumm verworfen.
+* **Heartbeat-Räumung** (`DEVICE_HEARTBEAT_TIMEOUT`, 60 s) nimmt zwei Fälle aus:
+  einen Satelliten mit laufender Sitzung (seine Lebenszeichen liegen ungelesen
+  im Puffer) und einen mit laufendem OTA (der Installer blockiert die
+  Ereignisschleife des Geräts bis zu 150 s). Geräumt wird zudem **mit
+  Verbindungsschluss** — ohne ihn liefe die Empfangsschleife weiter und
+  bestätigte weiter Heartbeats, das Gerät sähe eine gesunde Leitung, meldete
+  sich nie neu an und bliebe dauerhaft stumm.
 
 ## WebSocket-Protokoll
 

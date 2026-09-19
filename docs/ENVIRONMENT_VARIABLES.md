@@ -1237,7 +1237,16 @@ SATELLITE_CLEANUP_INTERVAL=30
 # Strecke ist berechtigt langsam, und ein verfrühtes Urteil wäre die
 # schlechtere Lüge.
 SATELLITE_UPDATE_TIMEOUT=900
+# Maximale AUFNAHME-Dauer — greift NUR im Zustand `listening`, nicht auf den
+# ganzen Zug. Dieser Wert wurde seit 2026-01 eingelesen und nie gelesen; mit
+# #1209 wirkt er erstmals.
+DEVICE_SESSION_TIMEOUT=30.0
+# Räumung eines Satelliten ohne Lebenszeichen. Ausgenommen: laufende Sitzung
+# und laufendes OTA-Update.
+DEVICE_HEARTBEAT_TIMEOUT=60.0
 ```
+
+Alle vier stehen in `k8s/configmap.yaml`, damit sie im Betrieb verstellbar sind.
 
 ---
 

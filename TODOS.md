@@ -45,7 +45,7 @@ Funktionen sind auf **keiner** Instanz je eingeschaltet worden. Kein P0.
 | ~~Browser-Mikrofon im Haushalt tot seit ~Juli~~ **behoben 2026-09-18** | Verwaister Ingress aus #1119; ersetzt durch eine IngressRoute in ns `voice`. Browser-Test bestanden | `:56` |
 | `sat-wohnzimmer` ist taub (WM8960-Probe −110) | Gerät hört nichts **und** meldet sich gesund — der Überwachungs-Blindfleck wiegt schwerer | #1211 |
 | KV-Cache auf `cuda.local` gesättigt | 2267 Fehler, gemeinsamer Pool für 4 Slots, keine Mandantentrennung | `docs/GPU_TOPOLOGY.md` §5 |
-| OTA-Rollback terminiert nicht | Satellit bleibt dauerhaft `in_progress`/`rolling_back` | #1209 |
+| ~~OTA-Rollback terminiert nicht~~ **behoben 2026-09-19** | Endstufen terminieren jetzt und behalten die Ursache; der Kehraus hatte gar keinen Takt — nachgezogen und kalibriert. Der Geräte-Kehraus bleibt offen | #1209, #1277 |
 | Sprecheridentität ungenutzt | 38 Profile „Unbekannt", 1 von 3 Nutzern verknüpft — hungert das Self-Learning aus; reine Betriebsarbeit | `:277` |
 
 ### S2 — Beschlossen, aber blockiert
