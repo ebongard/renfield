@@ -25,7 +25,7 @@ from dataclasses import dataclass
 import numpy as np
 from loguru import logger
 
-PEAK_TARGET = 10 ** (-1.0 / 20)  # -1 dBFS: the shelf adds gain, so re-normalize
+PEAK_TARGET = 10 ** (-1.0 / 20)  # -1 dBFS ceiling: the shelf adds gain, so re-level
 
 
 @dataclass(frozen=True)
@@ -118,12 +118,16 @@ def apply_profile(wav_bytes: bytes, profile_name: str | None) -> bytes:
         # as its own stream.
         samples = samples.reshape(-1, params.nchannels)
 
+        input_peak = float(np.abs(samples).max())
         processed = _equalize(samples, params.framerate, profile)
 
         peak = float(np.abs(processed).max())
         if not np.isfinite(peak) or peak <= 0.0:
             return wav_bytes
-        processed = processed / peak * (32767.0 * PEAK_TARGET)
+        # Bring the result back to the INPUT's peak, capped at -1 dBFS. Scaling to
+        # a fixed target instead would turn a quiet utterance up to full scale and
+        # make the output level vary per answer, against the device's tts_volume.
+        processed = processed / peak * min(input_peak, 32767.0 * PEAK_TARGET)
 
         out = io.BytesIO()
         with wave.open(out, "wb") as writer:

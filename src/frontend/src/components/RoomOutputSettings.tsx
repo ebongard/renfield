@@ -336,7 +336,7 @@ export default function RoomOutputSettings({
 
                   {device.tts_eq_profile != null && (
                     <span
-                      className="text-xs text-gray-600 dark:text-gray-400"
+                      className="text-xs text-gray-400"
                       title={t('rooms.outputTtsEqProfileLabel')}
                     >
                       {ttsEqProfileLabel(device.tts_eq_profile)}
@@ -360,7 +360,7 @@ export default function RoomOutputSettings({
                   {!isVisual && (
                     <button
                       onClick={() => setEqEditDeviceId(eqEditDeviceId === device.id ? null : device.id)}
-                      className="p-1 rounded-sm text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200"
+                      className="p-1 rounded-sm text-gray-400 hover:text-gray-200"
                       title={t('rooms.outputTtsEqProfileEdit')}
                       aria-label={t('rooms.outputTtsEqProfileEdit')}
                       aria-expanded={eqEditDeviceId === device.id}
@@ -399,7 +399,7 @@ export default function RoomOutputSettings({
                   <div className="mt-2">
                     <label
                       htmlFor={`ttsEqProfile-${device.id}`}
-                      className="block text-xs text-gray-600 dark:text-gray-400 mb-1"
+                      className="block text-xs text-gray-400 mb-1"
                     >
                       {t('rooms.outputTtsEqProfileLabel')}
                     </label>

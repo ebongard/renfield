@@ -68,6 +68,47 @@ def test_hifi_speech_verschiebt_die_energie_messbar():
 
 
 @pytest.mark.unit
+def test_frequenzgang_des_shelfs_ist_festgenagelt():
+    """Der Bandanteil-Test oben sieht nicht jeden Koeffizientenfehler: ein
+    vorzeichenverkehrtes a1 besteht ihn (Review-Befund, per Mutante belegt).
+    Deshalb hier der Frequenzgang selbst."""
+    from scipy.signal import freqz
+
+    from ha_glue.services.tts_equalizer import _high_shelf
+
+    b, a = _high_shelf(SR, 2500.0, 7.0)
+    _, h = freqz(b, a, worN=[500, 2500, 5000, 10000], fs=SR)
+    gains_db = 20 * np.log10(np.abs(h))
+
+    assert gains_db == pytest.approx([0.0, 3.5, 6.7, 7.0], abs=0.3)
+    assert np.all(np.abs(np.roots(a)) < 1), "stabil: alle Pole im Einheitskreis"
+
+
+@pytest.mark.unit
+def test_hochpass_nimmt_den_bass_unter_dem_grundton_weg():
+    from scipy.signal import butter, sosfreqz
+
+    profile = TTS_EQ_PROFILES["hifi_speech"]
+    sos = butter(2, profile.highpass_hz, "highpass", fs=SR, output="sos")
+    _, h = sosfreqz(sos, worN=[50, 120, 1000], fs=SR)
+    gains_db = 20 * np.log10(np.abs(h))
+
+    assert gains_db[0] < -12
+    assert gains_db[1] == pytest.approx(-3.0, abs=0.3)
+    assert gains_db[2] == pytest.approx(0.0, abs=0.1)
+
+
+@pytest.mark.unit
+def test_leise_eingabe_bleibt_leise():
+    """Nicht auf Vollausschlag hochziehen — der Pegel gehoert `tts_volume`."""
+    quiet = (_voice_like().astype(np.float64) * 0.05).astype("<i2")
+    _, before = _read(_wav(quiet))
+    _, after = _read(apply_profile(_wav(quiet), "hifi_speech"))
+
+    assert np.abs(after).max() == pytest.approx(np.abs(before).max(), rel=0.02)
+
+
+@pytest.mark.unit
 def test_format_und_laenge_bleiben_erhalten():
     original = _wav(_voice_like())
     before, _ = _read(original)
@@ -79,12 +120,23 @@ def test_format_und_laenge_bleiben_erhalten():
 
 
 @pytest.mark.unit
-def test_ergebnis_uebersteuert_nicht():
-    """Der Shelf verstaerkt — danach wird auf -1 dBFS normalisiert."""
+def test_vollausgesteuerte_eingabe_wird_bei_minus_1_dbfs_gedeckelt():
+    """Der Shelf verstaerkt — ohne Deckel wuerde eine laute Antwort uebersteuern.
+    So kommt die echte Stimme an: Piper liefert Spitzen bei ~0 dBFS."""
+    loud = (_voice_like().astype(np.float64) / 20000 * 32767).astype("<i2")
+    _, after = _read(apply_profile(_wav(loud), "hifi_speech"))
+
+    ceiling = 32767 * 10 ** (-1 / 20)
+    assert np.abs(after).max() == pytest.approx(ceiling, rel=0.001)
+
+
+@pytest.mark.unit
+def test_pegel_der_eingabe_bleibt_erhalten():
+    """Unterhalb des Deckels behaelt das Ergebnis die Spitze der Eingabe."""
+    _, before = _read(_wav(_voice_like()))
     _, after = _read(apply_profile(_wav(_voice_like()), "hifi_speech"))
 
-    assert np.abs(after).max() <= 32767 * 10 ** (-1 / 20) + 1
-    assert np.abs(after).max() > 32767 * 0.8, "und nicht grundlos leise"
+    assert np.abs(after).max() == pytest.approx(np.abs(before).max(), rel=0.001)
 
 
 @pytest.mark.unit
