@@ -150,6 +150,7 @@ class WebSocketClient:
         self._on_connected: Optional[Callable[[ServerConfig], None]] = None
         self._on_disconnected: Optional[Callable[[], None]] = None
         self._on_error: Optional[Callable[[str], None]] = None
+        self._on_rate_limited: Optional[Callable[[], None]] = None
         self._on_config_update: Optional[Callable[[ServerConfig], None]] = None
         self._on_update_request: Optional[Callable[..., None]] = None  # version, url, checksum, size, manifest, signature
         self._on_ble_known_devices: Optional[Callable[[List[str]], None]] = None
@@ -238,6 +239,10 @@ class WebSocketClient:
     def on_error(self, callback: Callable[[str], None]):
         """Register callback for errors"""
         self._on_error = callback
+
+    def on_rate_limited(self, callback: Callable[[], None]):
+        """Register callback for a server-dropped frame (NOT a session error)"""
+        self._on_rate_limited = callback
 
     def on_config_update(self, callback: Callable[["ServerConfig"], None]):
         """Register callback for server config updates (wake word settings)"""
@@ -604,7 +609,10 @@ class WebSocketClient:
                 # heartbeat or BLE report used to end a live voice turn (#1284).
                 # No sleep either: it ran inside the receive loop and only
                 # delayed incoming frames (TTS, acks) — it never slowed sending.
+                # Own callback so the drop still shows up in the device metrics.
                 print("⚠️ Rate limited by server - frame dropped, session kept")
+                if self._on_rate_limited:
+                    self._on_rate_limited()
                 return
             elif error_code == "BUFFER_FULL":
                 print("⚠️ Audio buffer full - ending current session")

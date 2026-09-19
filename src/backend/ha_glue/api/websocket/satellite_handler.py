@@ -186,6 +186,11 @@ def _spawn_satellite_extraction(
         return None
 
 
+# Limiter key for the second-look budget. '#' cannot occur in an IP, and a
+# satellite_id colliding with it would only share a budget with itself.
+_SECOND_LOOK_SUFFIX = "#second-look"
+
+
 def _live_session_frame(raw: dict, satellite_id: str, manager) -> str | None:
     """Classify a frame the rate limiter just refused (#1284).
 
@@ -232,15 +237,26 @@ def _rate_verdict(raw: dict, rate_key: str, satellite_id: str | None, rate_limit
     most one per session, and dropping it strands the session in `listening`
     until the cleanup sweep discards the recording unanswered.
     """
-    allowed, reason = rate_limiter.check(rate_key)
-    if allowed or not satellite_id:
-        return allowed, reason
-
-    frame_kind = _live_session_frame(raw, satellite_id, manager)
-    if frame_kind == "audio_end":
+    allowed, reason = rate_limiter.check(rate_key, record_violation=False)
+    if allowed:
         return True, ""
-    if frame_kind == "audio":
-        return rate_limiter.check(rate_key, burst_ok=True)
+
+    # The second look parses the frame, so it has a budget of its own: without
+    # one, refused frames would be parsed without limit (a registered client
+    # could buy a JSON parse of a ~1 MB frame per message). A legitimate turn
+    # never gets near it — a satellite sends ~775 frames a minute in total.
+    if satellite_id and rate_limiter.check(
+        f"{rate_key}{_SECOND_LOOK_SUFFIX}", burst_ok=True, record_violation=False
+    )[0]:
+        frame_kind = _live_session_frame(raw, satellite_id, manager)
+        if frame_kind == "audio_end":
+            return True, ""
+        if frame_kind == "audio":
+            allowed, reason = rate_limiter.check(rate_key, burst_ok=True, record_violation=False)
+            if allowed:
+                return True, ""
+
+    rate_limiter.record_violation(rate_key, reason)
     return False, reason
 
 

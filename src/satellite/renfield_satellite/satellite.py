@@ -322,6 +322,7 @@ class Satellite:
         self.ws_client.on_connected(self._on_connected)
         self.ws_client.on_disconnected(self._on_disconnected)
         self.ws_client.on_error(self._on_error)
+        self.ws_client.on_rate_limited(self._on_rate_limited)
         self.ws_client.on_config_update(self._on_config_update)
         self.ws_client.on_update_request(self._on_update_request)
         self.ws_client.set_metrics_callback(self._get_metrics)
@@ -1096,6 +1097,15 @@ class Satellite:
         if not self._reconnecting:
             self._reconnecting = True
             self._schedule_async(self._reconnect_with_discovery_wrapper())
+
+    def _on_rate_limited(self):
+        """The server dropped ONE frame. Count it — and leave the turn alone.
+
+        Deliberately no LED and no session reset: connection and session are
+        intact (#1284). Counted into the error metric so throttling stays
+        visible in the heartbeat instead of vanishing.
+        """
+        self._error_counter.record()
 
     def _on_error(self, message: str):
         """Handle error from server"""

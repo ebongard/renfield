@@ -35,13 +35,60 @@ async def test_rate_limited_erreicht_den_fehler_callback_nicht():
 
 
 @pytest.mark.satellite
-async def test_rate_limited_laesst_die_sitzung_stehen():
+async def test_rate_limited_setzt_den_zug_des_satelliten_nicht_zurueck():
+    """Durch die ECHTE Verdrahtung: Client -> Satellite._on_error / _on_rate_limited.
+
+    Auf dem alten Code ruft der Client ``on_error``, und ``Satellite._on_error``
+    plant bei laufendem Zug ``_reset_session`` ein — genau das darf nicht mehr
+    geschehen.
+    """
+    from unittest.mock import MagicMock
+
+    from renfield_satellite.satellite import Satellite, SatelliteState
+
+    sat = object.__new__(Satellite)
+    sat._session_id = "sess-1"
+    sat._state = SatelliteState.LISTENING
+    sat._error_counter = MagicMock()
+    sat.leds = MagicMock()
+    sat._schedule_async = MagicMock()
+    sat._reset_session = MagicMock(return_value=None)
+
     client = _client()
-    client._current_session_id = "sess-1"
+    client.on_error(sat._on_error)
+    client.on_rate_limited(sat._on_rate_limited)
 
     await client._handle_message({"type": "error", "code": "RATE_LIMITED", "message": "x"})
 
-    assert client._current_session_id == "sess-1"
+    sat._schedule_async.assert_not_called()
+    sat.leds.set_pattern.assert_not_called()
+    assert sat._session_id == "sess-1"
+    # ... aber sichtbar bleibt es: die Drosselung zaehlt in die Fehlermetrik.
+    sat._error_counter.record.assert_called_once()
+
+
+@pytest.mark.satellite
+async def test_echter_fehler_setzt_den_zug_weiterhin_zurueck():
+    """Gegenprobe zur Verdrahtung oben — sonst bewiese der Test nichts."""
+    from unittest.mock import MagicMock
+
+    from renfield_satellite.satellite import Satellite, SatelliteState
+
+    sat = object.__new__(Satellite)
+    sat._session_id = "sess-1"
+    sat._state = SatelliteState.LISTENING
+    sat._error_counter = MagicMock()
+    sat.leds = MagicMock()
+    sat._schedule_async = MagicMock()
+    sat._reset_session = MagicMock(return_value=None)
+
+    client = _client()
+    client.on_error(sat._on_error)
+    client.on_rate_limited(sat._on_rate_limited)
+
+    await client._handle_message({"type": "error", "code": "SESSION_ERROR", "message": "x"})
+
+    sat._schedule_async.assert_called_once()
 
 
 @pytest.mark.satellite

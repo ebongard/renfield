@@ -45,7 +45,9 @@ class WSRateLimiter:
         # Track violations for logging
         self._violations: dict[str, int] = defaultdict(int)
 
-    def check(self, client_id: str, *, burst_ok: bool = False) -> tuple[bool, str]:
+    def check(
+        self, client_id: str, *, burst_ok: bool = False, record_violation: bool = True
+    ) -> tuple[bool, str]:
         """
         Check if a client is allowed to send a message.
 
@@ -56,6 +58,11 @@ class WSRateLimiter:
                 which legitimately arrive in bursts — a satellite's audio chunks
                 after its event loop stalled (#1284). The minute budget still
                 caps a flood.
+            record_violation: Count + log a refusal. Pass False when the caller
+                may still accept the frame on a second look, and report the
+                FINAL refusal via ``record_violation()`` — otherwise accepted
+                frames log "exceeded" and burn the three-warning quota that
+                real violations need.
 
         Returns:
             Tuple of (allowed: bool, reason: str)
@@ -79,21 +86,26 @@ class WSRateLimiter:
         recent_minute = len(self._timestamps[client_id])
 
         # Check limits
+        reason = ""
         if not burst_ok and recent_second >= self.per_second:
-            self._violations[client_id] += 1
-            if self._violations[client_id] <= 3:  # Log first 3 violations
-                logger.warning(f"Rate limit exceeded (per second) for {client_id}")
-            return False, f"Rate limit exceeded: max {self.per_second} messages per second"
+            reason = f"Rate limit exceeded: max {self.per_second} messages per second"
+        elif recent_minute >= self.per_minute:
+            reason = f"Rate limit exceeded: max {self.per_minute} messages per minute"
 
-        if recent_minute >= self.per_minute:
-            self._violations[client_id] += 1
-            if self._violations[client_id] <= 3:
-                logger.warning(f"Rate limit exceeded (per minute) for {client_id}")
-            return False, f"Rate limit exceeded: max {self.per_minute} messages per minute"
+        if reason:
+            if record_violation:
+                self.record_violation(client_id, reason)
+            return False, reason
 
         # Allow and record timestamp
         self._timestamps[client_id].append(now)
         return True, ""
+
+    def record_violation(self, client_id: str, reason: str) -> None:
+        """Count a refusal; log only the first three per client."""
+        self._violations[client_id] += 1
+        if self._violations[client_id] <= 3:
+            logger.warning(f"{reason} — client {client_id}")
 
     def reset(self, client_id: str):
         """Reset rate limit counters for a client."""

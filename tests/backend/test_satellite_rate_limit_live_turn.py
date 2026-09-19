@@ -15,12 +15,19 @@ auch ein ``audio_end``. Zwei Folgen:
 eine zweite Pruefung. Alles andere wird so billig abgewiesen wie zuvor.
 """
 
+import ast
+import inspect
 import json
 from types import SimpleNamespace
 
 import pytest
 
-from ha_glue.api.websocket.satellite_handler import _live_session_frame, _rate_verdict
+from ha_glue.api.websocket import satellite_handler
+from ha_glue.api.websocket.satellite_handler import (
+    _SECOND_LOOK_SUFFIX,
+    _live_session_frame,
+    _rate_verdict,
+)
 from ha_glue.services.opus_transport import build_audio_frame
 from services.websocket_rate_limiter import WSRateLimiter
 
@@ -195,3 +202,96 @@ def test_erlaubter_frame_wird_nicht_klassifiziert():
             raise AssertionError("ein erlaubter Frame braucht keinen zweiten Blick")
 
     assert _rate_verdict(_text("audio"), SAT, SAT, limiter, Explodes()) == (True, "")
+
+
+# ---------------------------------------------------------------------------
+# Review-Befunde: Parse-Budget, ehrliche Verstossmeldung, Verdrahtung
+# ---------------------------------------------------------------------------
+
+@pytest.mark.unit
+def test_zweiter_blick_hat_ein_eigenes_budget():
+    """Abgelehnte Frames duerfen nicht unbegrenzt geparst werden."""
+    limiter = WSRateLimiter(per_second=1, per_minute=3, enabled=True)
+    assert limiter.check(SAT)[0]
+
+    lookups = []
+
+    class Counting:
+        @property
+        def sessions(self):
+            lookups.append(1)
+            return {}
+
+    # Ein audio-Frame mit unbekannter Sitzung kommt bis zum Sitzungs-Nachschlagen —
+    # das Nachschlagen zaehlt damit die tatsaechlich geparsten Frames.
+    for _ in range(10):
+        assert not _rate_verdict(_text("audio", session_id="unbekannt"), SAT, SAT, limiter, Counting())[0]
+
+    assert len(lookups) == 3, "der zweite Blick ist auf das Minutenbudget gedeckelt"
+
+
+@pytest.mark.unit
+def test_budget_des_zweiten_blicks_belastet_das_frame_budget_nicht():
+    limiter = WSRateLimiter(per_second=1, per_minute=100, enabled=True)
+    assert limiter.check(SAT)[0]
+    _rate_verdict(_text("heartbeat"), SAT, SAT, limiter, _manager())
+
+    assert limiter.get_stats(SAT)["messages_last_minute"] == 1
+    assert limiter.get_stats(f"{SAT}{_SECOND_LOOK_SUFFIX}")["messages_last_minute"] == 1
+
+
+@pytest.mark.unit
+def test_durchgelassener_frame_zaehlt_nicht_als_verstoss():
+    """Sonst meldet das Log "exceeded" fuer angenommene Frames und verbraucht
+    das Drei-Warnungen-Kontingent, das echte Verstoesse brauchen."""
+    limiter = WSRateLimiter(per_second=3, per_minute=100, enabled=True)
+    for _ in range(3):
+        assert limiter.check(SAT, record_violation=False)[0]
+
+    for _ in range(5):
+        assert _rate_verdict(_text("audio"), SAT, SAT, limiter, _manager())[0]
+    assert _rate_verdict(_text("audio_end"), SAT, SAT, limiter, _manager())[0]
+
+    assert limiter.get_stats(SAT)["violations"] == 0
+
+
+@pytest.mark.unit
+def test_endgueltige_ablehnung_zaehlt_genau_einmal():
+    limiter = WSRateLimiter(per_second=3, per_minute=100, enabled=True)
+    for _ in range(3):
+        assert limiter.check(SAT, record_violation=False)[0]
+
+    assert not _rate_verdict(_text("heartbeat"), SAT, SAT, limiter, _manager())[0]
+
+    assert limiter.get_stats(SAT)["violations"] == 1
+
+
+@pytest.mark.unit
+def test_sitzung_in_verarbeitung_gilt_weiter_als_laufend():
+    """"Laufend" heisst: die Sitzung existiert. Ein spaetes audio_end (oder ein
+    Nachzuegler-Chunk) einer Sitzung in PROCESSING wird nicht anders behandelt —
+    die Sitzung wird erst am Zugende geloescht."""
+    sessions = {SESSION: SimpleNamespace(satellite_id=SAT, state="processing")}
+    assert _live_session_frame(_text("audio_end"), SAT, _manager(sessions)) == "audio_end"
+
+
+@pytest.mark.unit
+def test_empfangsschleife_nutzt_das_urteil_und_nie_den_limiter_direkt():
+    """Verdrahtung: es gibt keinen Test, der die echte WebSocket-Schleife faehrt.
+    Wer dort wieder ``rate_limiter.check`` direkt aufruft, hebt den Fix auf."""
+    tree = ast.parse(inspect.getsource(satellite_handler))
+    loop = next(
+        n for n in ast.walk(tree)
+        if isinstance(n, ast.AsyncFunctionDef) and n.name == "satellite_websocket"
+    )
+    called = set()
+    for node in ast.walk(loop):
+        if isinstance(node, ast.Call):
+            f = node.func
+            if isinstance(f, ast.Name):
+                called.add(f.id)
+            elif isinstance(f, ast.Attribute) and isinstance(f.value, ast.Name):
+                called.add(f"{f.value.id}.{f.attr}")
+
+    assert "_rate_verdict" in called
+    assert "rate_limiter.check" not in called
