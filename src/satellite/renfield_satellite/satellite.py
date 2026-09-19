@@ -79,6 +79,12 @@ class Satellite:
         self._session_id: Optional[str] = None
         self._audio_buffer: list = []
         self._silence_chunks: int = 0  # Consecutive non-speech chunks (for audio-time silence detection)
+        # Chunks recorded in THIS listening turn. Deliberately NOT len(self._audio_buffer):
+        # that buffer is capped at MAX_AUDIO_BUFFER_CHUNKS (~40s), so once the cap is
+        # reached its length stops growing and any check derived from it silently stops
+        # firing. The grace period and the max-recording cut-off must measure the turn,
+        # not the retained tail.
+        self._recorded_chunks: int = 0
         self._listening_start: Optional[float] = None  # When listening state began
         self._processing_start: Optional[float] = None  # Track when processing started
         self._processing_timeout: float = 60.0  # Max time to wait for server response (vision models need more time)
@@ -807,6 +813,7 @@ class Satellite:
             # Normalize audio for consistent volume (real-time, low latency)
             normalized_audio = self.preprocessor.normalize(audio_bytes)
             self._audio_buffer.append(normalized_audio)
+            self._recorded_chunks += 1
             if len(self._audio_buffer) > MAX_AUDIO_BUFFER_CHUNKS:
                 self._audio_buffer = self._audio_buffer[-MAX_AUDIO_BUFFER_CHUNKS:]
 
@@ -823,7 +830,7 @@ class Satellite:
             silence_chunks_needed = int(self.config.vad.silence_duration_ms / chunk_duration_ms)
 
             is_speech = self.vad.is_speech(audio_bytes)  # Use raw audio for VAD (normalizer would equalize levels)
-            if not is_speech and len(self._audio_buffer) >= grace_chunks:
+            if not is_speech and self._recorded_chunks >= grace_chunks:
                 self._silence_chunks += 1
                 if self._silence_chunks >= silence_chunks_needed:
                     self._schedule_async(self._end_listening("silence"))
@@ -831,7 +838,7 @@ class Satellite:
                 self._silence_chunks = 0
 
             # Check max recording length
-            if len(self._audio_buffer) * self.config.audio.chunk_size / self.config.audio.sample_rate > self.config.vad.max_recording_seconds:
+            if self._recorded_chunks * self.config.audio.chunk_size / self.config.audio.sample_rate > self.config.vad.max_recording_seconds:
                 self._schedule_async(self._end_listening("timeout"))
 
     def _process_wakeword_idle(self, audio_bytes: bytes):
@@ -907,6 +914,7 @@ class Satellite:
         self._set_state(SatelliteState.LISTENING)
         self._audio_buffer.clear()
         self._silence_chunks = 0
+        self._recorded_chunks = 0
         self._listening_start = time.time()
 
         # Notify server
@@ -960,6 +968,7 @@ class Satellite:
         self._session_id = None
         self._audio_buffer.clear()
         self._silence_chunks = 0
+        self._recorded_chunks = 0
         self._processing_start = None
         self._wakeword_pending = False  # Allow new wake word detection
 
@@ -1085,6 +1094,7 @@ class Satellite:
         self._session_id = None
         self._processing_start = None
         self._silence_chunks = 0
+        self._recorded_chunks = 0
 
         # Start reconnection (only if not already reconnecting)
         if not self._reconnecting:
