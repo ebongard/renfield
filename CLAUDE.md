@@ -118,6 +118,32 @@ satellite's own beamform/select/downmix so negatives match what the detector
 scores). Captures are private household audio — `data/wakeword-ambient/` is
 gitignored; delete after training.
 
+### Satellite VAD (Silero) — streaming calling convention
+
+The satellite ends a voice turn when the VAD reports silence after the grace period
+(`vad.min_listening_seconds` 2.0 s + `silence_duration_ms` 1.2 s). `audio/vad.py::SileroVADLite`
+drives the Silero ONNX model, and the v5+ model (combined `state` input) is a **streaming**
+model: every 512-sample frame must be preceded by the last 64 samples of the previous frame
+(576 per call), over a gap-free stream — the 1280-sample capture chunk is not a multiple of
+512, so the remainder is carried into the next call, never zero-padded. Fed bare 512-sample
+frames the model answers ~0.00 for clear speech **at any level** (measured: 0 of 118 chunks
+vs. 114 of 118). Until v1.4.11 that is what the wrapper did, so the VAD never reported
+speech and **every** turn in the fleet was cut at ~3.3 s (53 of 53 recordings on
+2026-09-19) — short commands fit into the grace period, which is why it went unnoticed.
+The signature in the logs: voice-server `Processing audio with duration 00:03.1–3.4` for
+every call, and `Ending listening: silence` ~3 s after the wake word. The model is pinned to
+a release tag + checksum (`silero_vad_version` / `silero_vad_sha256` in
+`provisioning/group_vars/satellites.yml`, same tag in `src/satellite/Dockerfile`); it used to
+track `master`. Before bumping it, run `tests/satellite/test_silero_vad_streaming.py` against
+the new file (`SILERO_VAD_MODEL` + `SILERO_VAD_SPEECH_WAV`). The wake word is unaffected
+because `wakeword.vad_gated` is off by default — turning it on makes the VAD a precondition
+for the wake word, so a broken VAD would then mute the device.
+
+**Never run `journalctl` scans or `journalctl -f` over SSH on a Pi Zero 2 W satellite.** Two
+such sessions on 2026-09-19 were each followed by the device dropping off the network and
+rebooting (the capture loop must not be starved — an I2S overflow can crash the kernel).
+Track a voice turn from the backend log and the voice-server log instead.
+
 ### Satellite enrollment credential (security review H1 — full fix)
 
 A satellite's trust *was* assertion-based: any LAN device could connect to `/ws/satellite`, **claim** any `satellite_id` in its register frame, evict the incumbent, and harvest the per-person IRK push (location-tracking keys). The full fix gives each satellite a **per-device enrollment PSK** (256-bit), stored server-side only as a bcrypt hash in the `satellites` table (migration `pc20260624`); the satellite presents the plaintext in its register frame's `token` field and the backend verifies it constant-time. Design + the 4 resolved decisions: `docs/private/security/satellite-trust-design.md`.

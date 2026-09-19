@@ -842,6 +842,7 @@
       ansible.builtin.get_url:
         url: "{{ silero_vad_url }}"
         dest: "{{ satellite_models_dir }}/silero_vad.onnx"
+        checksum: "sha256:{{ silero_vad_sha256 }}"
         mode: "0644"
 
     - name: Find openwakeword models directory in venv

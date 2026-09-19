@@ -81,7 +81,11 @@ RUN mkdir -p ${SATELLITE_HOME}/models \
     && curl -fsSL -o ${SATELLITE_HOME}/models/embedding_model.onnx  $OWW/embedding_model.onnx \
     && curl -fsSL -o ${SATELLITE_HOME}/models/alexa_v0.1.onnx       $OWW/alexa_v0.1.onnx \
     && curl -fsSL -o ${SATELLITE_HOME}/models/silero_vad.onnx \
-        https://github.com/snakers4/silero-vad/raw/master/src/silero_vad/data/silero_vad.onnx
+        https://github.com/snakers4/silero-vad/raw/v6.2/src/silero_vad/data/silero_vad.onnx \
+    && echo "1a153a22f4509e292a94e67d6f9b85e8deb25b4988682b7e174c65279d8788e3  ${SATELLITE_HOME}/models/silero_vad.onnx" | sha256sum -c -
+# ^ Silero pinned to a tag + checksum (keep in step with silero_vad_version in
+#   provisioning/group_vars/satellites.yml). It tracked `master` before, which let a
+#   rebuild silently swap the model under a wrapper that could not drive it.
 
 # Household custom wake word "hey_renfield" (not in the repo — fetched from an
 # existing satellite into the build context at models/hey_renfield.onnx).

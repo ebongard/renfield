@@ -220,7 +220,7 @@ wget https://github.com/dscripka/openWakeWord/releases/download/v0.5.1/embedding
 wget https://github.com/dscripka/openWakeWord/releases/download/v0.5.1/alexa_v0.1.onnx
 
 # Download Silero VAD model
-wget -O silero_vad.onnx https://github.com/snakers4/silero-vad/raw/master/src/silero_vad/data/silero_vad.onnx
+wget -O silero_vad.onnx https://github.com/snakers4/silero-vad/raw/v6.2/src/silero_vad/data/silero_vad.onnx
 
 # Copy models to openwakeword's expected location (use correct Python version)
 PYVER=$(python3 -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')")

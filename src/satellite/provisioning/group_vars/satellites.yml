@@ -255,5 +255,14 @@ oww_base_url: "https://github.com/dscripka/openWakeWord/releases/download/v0.5.1
 oww_models:
   - melspectrogram.onnx
   - embedding_model.onnx
-silero_vad_url: "https://github.com/snakers4/silero-vad/raw/master/src/silero_vad/data/silero_vad.onnx"
+# PINNED to a release tag + checksum. It used to track `master`: a re-provision
+# silently swapped the model, and the v5+ streaming model needs a calling
+# convention (64-sample context per 512-sample frame) the wrapper did not speak
+# — the VAD then reported "no speech" for everything and every voice turn was
+# cut at grace + silence (2026-09-19). Bump tag AND checksum together, and run
+# tests/satellite/test_silero_vad_streaming.py against the new file first
+# (SILERO_VAD_MODEL / SILERO_VAD_SPEECH_WAV).
+silero_vad_version: "v6.2"
+silero_vad_url: "https://github.com/snakers4/silero-vad/raw/{{ silero_vad_version }}/src/silero_vad/data/silero_vad.onnx"
+silero_vad_sha256: "1a153a22f4509e292a94e67d6f9b85e8deb25b4988682b7e174c65279d8788e3"
 alexa_model_url: "{{ oww_base_url }}/alexa_v0.1.onnx"

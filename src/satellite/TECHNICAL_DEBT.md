@@ -34,7 +34,7 @@ VAD-Modul unterstützt jetzt mehrere Backends:
 Model-Download:
 ```bash
 curl -L -o /opt/renfield-satellite/models/silero_vad.onnx \
-  'https://github.com/snakers4/silero-vad/raw/master/src/silero_vad/data/silero_vad.onnx'
+  'https://github.com/snakers4/silero-vad/raw/v6.2/src/silero_vad/data/silero_vad.onnx'
 ```
 
 ---
@@ -150,7 +150,7 @@ pip install -r requirements.txt
 # Silero VAD Model
 mkdir -p /opt/renfield-satellite/models
 curl -L -o /opt/renfield-satellite/models/silero_vad.onnx \
-  'https://github.com/snakers4/silero-vad/raw/master/src/silero_vad/data/silero_vad.onnx'
+  'https://github.com/snakers4/silero-vad/raw/v6.2/src/silero_vad/data/silero_vad.onnx'
 ```
 
 ---
