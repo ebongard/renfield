@@ -173,11 +173,12 @@ Convert as early as possible to minimize memory pressure on the 512MB Pi Zero 2 
 
 ### Memory Impact
 
-With `MAX_AUDIO_BUFFER_CHUNKS = 500`:
-- Raw buffer: 500 x 20,480 = **10 MB** (before conversion)
-- After conversion: 500 x 2,560 = **1.3 MB**
+The satellite retains no recording: each chunk is streamed to the backend as it
+arrives, so memory does not grow with the length of a turn. (Until v1.4.9 a
+write-only buffer of up to 500 chunks — 1.3 MB converted, 10 MB had it held raw
+frames — was kept and never read; it is removed.)
 
-Strategy: Convert in capture loop before buffering, so downstream only sees S16_LE/1ch.
+Strategy: Convert in the capture loop, so downstream only sees S16_LE/1ch.
 
 ---
 

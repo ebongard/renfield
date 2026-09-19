@@ -6,13 +6,14 @@ Deckt die beiden Abbruchgruende ab, die einen Sprachzug beenden:
 * ``silence``  — VAD meldet nach der Karenzzeit durchgehend Stille
 * ``timeout``  — die Aufnahme ueberschreitet ``vad.max_recording_seconds``
 
-Kernregression (2026-09-19): beide Pruefungen lasen ``len(self._audio_buffer)``,
-der bei ``MAX_AUDIO_BUFFER_CHUNKS`` (= 500 Chunks = 40.0 s) gedeckelt ist. Sobald
-``max_recording_seconds`` ueber 40 s angehoben wurde, konnte die Laengenpruefung
-NIE mehr ausloesen — der Satellit beendete den Zug nicht mehr selbst, und der Ton
-verfiel still im 120-s-Aufraeumlauf des Backends, ohne Antwort an den Sprecher.
-Der Zug wird deshalb ueber ``_recorded_chunks`` gemessen, nicht ueber den
-gedeckelten Puffer.
+Kernregression (2026-09-19): beide Pruefungen lasen die Laenge eines Puffers, der
+bei 500 Chunks (= 40.0 s) gedeckelt war. Sobald ``max_recording_seconds`` ueber
+40 s angehoben wurde, konnte die Laengenpruefung NIE mehr ausloesen — der Satellit
+beendete den Zug nicht mehr selbst, und der Ton verfiel still im
+120-s-Aufraeumlauf des Backends, ohne Antwort an den Sprecher. Der Zug wird
+deshalb ueber ``_recorded_chunks`` gemessen. Der Puffer selbst wurde nie gelesen
+und ist mit v1.4.9 entfernt — ``OLD_BUFFER_CAP_CHUNKS`` haelt die alte Grenze nur
+noch als Testmarke fest.
 """
 
 import ast
@@ -22,17 +23,15 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from renfield_satellite.satellite import (
-    MAX_AUDIO_BUFFER_CHUNKS,
-    Satellite,
-    SatelliteState,
-)
+from renfield_satellite.satellite import Satellite, SatelliteState
 
 CHUNK_SIZE = 1280
 SAMPLE_RATE = 16000
 CHUNK_SECONDS = CHUNK_SIZE / SAMPLE_RATE  # 0.08 s
 SILENCE_MS = 1200
 MIN_LISTENING_S = 1.0
+# Die Grenze des entfernten Puffers (40.0 s). Jenseits davon fror das alte Mass ein.
+OLD_BUFFER_CAP_CHUNKS = 500
 
 
 def _make_satellite(max_recording_seconds: float) -> Satellite:
@@ -47,7 +46,6 @@ def _make_satellite(max_recording_seconds: float) -> Satellite:
     sat.config.vad.max_recording_seconds = max_recording_seconds
 
     sat._state = SatelliteState.LISTENING
-    sat._audio_buffer = []
     sat._silence_chunks = 0
     sat._recorded_chunks = 0
     sat._session_id = None          # kein Streaming -> kein ws_client noetig
@@ -84,15 +82,13 @@ def _reasons(sat: Satellite) -> list:
 # ---------------------------------------------------------------------------
 
 @pytest.mark.satellite
-def test_laengenabbruch_feuert_jenseits_der_puffergrenze():
-    """60 s Limit > 40 s Puffergrenze: der Abbruch MUSS trotzdem kommen."""
+def test_laengenabbruch_feuert_jenseits_der_40s_grenze():
+    """60 s Limit > 40 s (alte Puffergrenze): der Abbruch MUSS trotzdem kommen."""
     sat = _make_satellite(max_recording_seconds=60.0)
     # 751 Chunks = 60.08 s — die erste Position echt oberhalb von 60 s.
     _feed(sat, 751, speech=True)
 
-    assert len(sat._audio_buffer) == MAX_AUDIO_BUFFER_CHUNKS, (
-        "Vorbedingung: der Puffer MUSS gedeckelt sein, sonst prueft der Test nichts"
-    )
+    assert 751 > OLD_BUFFER_CAP_CHUNKS, "der Test MUSS jenseits der alten Grenze liegen"
     assert sat._recorded_chunks == 751
     assert "timeout" in _reasons(sat)
 
@@ -108,17 +104,29 @@ def test_laengenabbruch_nicht_vor_dem_limit():
 
 
 @pytest.mark.satellite
-def test_zaehler_laeuft_unabhaengig_von_der_puffergrenze_weiter():
-    """Der gedeckelte Puffer darf den Zug-Zaehler nicht einfrieren."""
+def test_zaehler_laeuft_jenseits_der_alten_grenze_weiter():
+    """Der Zug-Zaehler hat keine Obergrenze — er friert nirgends ein."""
     sat = _make_satellite(max_recording_seconds=3600.0)
-    _feed(sat, MAX_AUDIO_BUFFER_CHUNKS + 120, speech=True)
+    _feed(sat, OLD_BUFFER_CAP_CHUNKS + 120, speech=True)
 
-    assert len(sat._audio_buffer) == MAX_AUDIO_BUFFER_CHUNKS
-    assert sat._recorded_chunks == MAX_AUDIO_BUFFER_CHUNKS + 120
+    assert sat._recorded_chunks == OLD_BUFFER_CAP_CHUNKS + 120
+    assert _reasons(sat) == []
 
 
 @pytest.mark.satellite
-def test_kurzes_limit_unterhalb_der_puffergrenze_feuert_weiterhin():
+def test_kein_gedeckelter_audiopuffer_mehr():
+    """Der Satellit haelt kein Audio zurueck — es wird je Chunk gestreamt.
+
+    Der entfernte Puffer war die Ursache der Regression: niemand las ihn, nur
+    seine Laenge diente als Uhr. Wer ihn wieder einfuehrt, soll hier stolpern.
+    """
+    src = pathlib.Path(inspect.getsourcefile(Satellite)).read_text()
+    assert "self._audio_buffer" not in src
+    assert "MAX_AUDIO_BUFFER_CHUNKS" not in src
+
+
+@pytest.mark.satellite
+def test_kurzes_limit_unterhalb_der_40s_grenze_feuert_weiterhin():
     """Das alte Verhalten (20 s < 40 s) bleibt unveraendert."""
     sat = _make_satellite(max_recording_seconds=20.0)
     _feed(sat, 251, speech=True)   # 251 * 0.08 = 20.08 s

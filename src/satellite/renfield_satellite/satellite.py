@@ -41,10 +41,6 @@ from .ble.discovery_scanner import BTDiscoveryScanner
 from .update import UpdateManager, UpdateStage
 
 
-# Maximum audio buffer chunks to prevent unbounded memory growth (~40s at 12.5 chunks/sec)
-MAX_AUDIO_BUFFER_CHUNKS = 500
-
-
 class SatelliteState(str, Enum):
     """Satellite operational states"""
     BOOT = "boot"
@@ -77,13 +73,12 @@ class Satellite:
 
         # Current session
         self._session_id: Optional[str] = None
-        self._audio_buffer: list = []
         self._silence_chunks: int = 0  # Consecutive non-speech chunks (for audio-time silence detection)
-        # Chunks recorded in THIS listening turn. Deliberately NOT len(self._audio_buffer):
-        # that buffer is capped at MAX_AUDIO_BUFFER_CHUNKS (~40s), so once the cap is
-        # reached its length stops growing and any check derived from it silently stops
-        # firing. The grace period and the max-recording cut-off must measure the turn,
-        # not the capped buffer (which nothing reads — audio is streamed per chunk).
+        # Chunks recorded in THIS listening turn — the clock for the grace period and
+        # the max-recording cut-off. Audio is streamed per chunk and never retained.
+        # Until v1.4.9 a write-only buffer capped at 500 chunks (40.0s) served as that
+        # clock: its length stopped growing at the cap, so any limit above 40s silently
+        # never fired. Do not derive a duration from a bounded container again.
         self._recorded_chunks: int = 0
         self._listening_start: Optional[float] = None  # When listening state began
         self._processing_start: Optional[float] = None  # Track when processing started
@@ -808,14 +803,11 @@ class Satellite:
                 self._schedule_async(self._cancel_interaction())
                 return
 
-        # Buffer and stream audio in LISTENING state
+        # Stream audio in LISTENING state
         if self._state == SatelliteState.LISTENING:
             # Normalize audio for consistent volume (real-time, low latency)
             normalized_audio = self.preprocessor.normalize(audio_bytes)
-            self._audio_buffer.append(normalized_audio)
             self._recorded_chunks += 1
-            if len(self._audio_buffer) > MAX_AUDIO_BUFFER_CHUNKS:
-                self._audio_buffer = self._audio_buffer[-MAX_AUDIO_BUFFER_CHUNKS:]
 
             # Stream normalized audio to server
             if self._session_id:
@@ -912,7 +904,6 @@ class Satellite:
 
         # Start listening - flag will be cleared in _reset_session when done
         self._set_state(SatelliteState.LISTENING)
-        self._audio_buffer.clear()
         self._silence_chunks = 0
         self._recorded_chunks = 0
         self._listening_start = time.time()
@@ -966,7 +957,6 @@ class Satellite:
 
         # Clear session data
         self._session_id = None
-        self._audio_buffer.clear()
         self._silence_chunks = 0
         self._recorded_chunks = 0
         self._processing_start = None
