@@ -1103,10 +1103,9 @@ Gib eine kurze, natürliche Antwort. KEIN JSON, nur Text."""
                             stage="completed",
                             progress=100
                         )
-                        # Update the stored version
-                        sat = satellite_manager.get_satellite(satellite_id)
-                        if sat:
-                            sat.version = new_version
+                        # Through the manager, so the value is bounded like
+                        # every other device-supplied field.
+                        satellite_manager.set_version(satellite_id, new_version)
                     else:
                         error = data.get("error", "Unknown error")
                         logger.error(f"❌ Satellite {satellite_id} update failed: {error}")

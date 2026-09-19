@@ -730,3 +730,95 @@ def test_a_terminal_frame_without_a_message_leaves_no_error():
     sat = mgr.get_satellite("sat-1")
     assert sat.update_status == US.FAILED
     assert sat.update_error is None
+
+
+# ==========================================================================
+# 9. Härtung am EINZIGEN Schreiber — nicht je Aufrufer
+# ==========================================================================
+
+
+@pytest.mark.backend
+@pytest.mark.unit
+def test_set_update_status_coerces_regardless_of_caller():
+    """Drei WS-Zweige speisen diesen Schreiber (update_progress,
+    update_complete, update_failed). Nur einer war gehärtet — die beiden
+    anderen reichten rohes Geräte-JSON bis in die Antwortmodelle durch, wo
+    Pydantic nicht wandelt und ``list_satellites`` ohne Absicherung je Eintrag
+    aus EINEM schlechten Eintrag einen 500 für die ganze Liste macht."""
+    from ha_glue.services.satellite_manager import UpdateStatus as US
+
+    mgr = _manager_with_satellite()
+    mgr.set_update_status("sat-1", US.FAILED, stage={"boom": 1},
+                          progress="viel", error={"auch": "boom"})
+
+    sat = mgr.get_satellite("sat-1")
+    assert isinstance(sat.update_stage, str)
+    assert isinstance(sat.update_progress, int)
+    assert isinstance(sat.update_error, str)
+
+
+@pytest.mark.backend
+@pytest.mark.unit
+def test_set_version_is_bounded_and_never_empty():
+    """``update_complete`` schrieb ``sat.version`` direkt am Schreiber vorbei —
+    und ``version`` ist auf den Antwortmodellen ein blankes ``str``."""
+    mgr = _manager_with_satellite()
+
+    mgr.set_version("sat-1", {"nicht": "ein string"})
+    assert isinstance(mgr.get_satellite("sat-1").version, str)
+
+    mgr.set_version("sat-1", "x" * 10_000)
+    assert len(mgr.get_satellite("sat-1").version) <= 64
+
+    mgr.set_version("sat-1", None)
+    assert mgr.get_satellite("sat-1").version == "unknown"
+
+
+# ==========================================================================
+# 10. Verwaiste Sitzungen — die Kehrseite der Aufnahme-Einschränkung
+# ==========================================================================
+
+
+@pytest.mark.backend
+@pytest.mark.asyncio
+async def test_orphaned_session_is_swept_when_the_satellite_is_gone():
+    mgr = _manager_with_satellite()
+    _session(mgr, state=None, age=1.0)
+    del mgr.satellites["sat-1"]
+
+    await mgr.cleanup_stale()
+
+    assert "sess-1" not in mgr.sessions
+
+
+@pytest.mark.backend
+@pytest.mark.asyncio
+async def test_orphaned_session_is_swept_after_a_fast_reconnect():
+    """``unregister`` steigt bei schneller Wiederverbindung VOR dem
+    Sitzungsabbau aus — die Sitzung des sterbenden Sockets bleibt liegen.
+    Vorher fegte der unbedingte Durchlauf sie weg; seit der Einschränkung auf
+    ``listening`` täte das niemand mehr, und sie hält ihr gepuffertes Audio."""
+    from ha_glue.services.satellite_manager import SatelliteState
+
+    mgr = _manager_with_satellite()
+    _session(mgr, state=SatelliteState.PROCESSING, age=1.0)
+    # Neuer Socket hat sich registriert und eine neue Sitzung begonnen.
+    mgr.satellites["sat-1"].current_session_id = "sess-2"
+
+    await mgr.cleanup_stale()
+
+    assert "sess-1" not in mgr.sessions
+
+
+@pytest.mark.backend
+@pytest.mark.asyncio
+async def test_a_live_session_is_not_swept_as_orphaned():
+    """Gegenprobe: der Aufräumer darf keine lebende Sitzung mitnehmen."""
+    from ha_glue.services.satellite_manager import SatelliteState
+
+    mgr = _manager_with_satellite()
+    _session(mgr, state=SatelliteState.PROCESSING, age=1.0)
+
+    await mgr.cleanup_stale()
+
+    assert "sess-1" in mgr.sessions

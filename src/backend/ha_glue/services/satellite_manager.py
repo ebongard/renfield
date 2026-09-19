@@ -871,10 +871,18 @@ class SatelliteManager:
         """
         if satellite_id in self.satellites:
             sat = self.satellites[satellite_id]
+            # Coerce HERE, in the single writer, not at each call site. Three
+            # WS branches feed this (update_progress, update_complete,
+            # update_failed) and only one of them was hardened — so a raw dict
+            # or int from a LAN device still reached the response models, where
+            # Pydantic refuses to coerce and `list_satellites` (no per-entry
+            # guard) turns ONE bad entry into a 500 for the whole admin list.
             sat.update_status = status
-            sat.update_stage = stage
-            sat.update_progress = progress
-            sat.update_error = error
+            sat.update_stage = self._bounded_text(stage, self._MAX_UPDATE_STAGE_CHARS)
+            sat.update_progress = (
+                progress if isinstance(progress, int) and not isinstance(progress, bool) else 0
+            )
+            sat.update_error = self._bounded_error(error)
             # Stamp the start of a run, and clear it on any terminal state. The
             # first IN_PROGRESS write wins, so progress frames during a run do
             # not keep pushing the deadline out — otherwise a satellite that
@@ -905,6 +913,16 @@ class SatelliteManager:
     # Bound it: the WS frame limit is 1 MB, and a malfunctioning or hostile
     # satellite must not be able to park that in the roster.
     _MAX_UPDATE_ERROR_CHARS = 2000
+    _MAX_UPDATE_STAGE_CHARS = 64
+    _MAX_VERSION_CHARS = 64
+
+    @staticmethod
+    def _bounded_text(value: object, cap: int) -> str | None:
+        """Coerce any device-supplied value into a bounded string, or None."""
+        if value is None or value == "":
+            return None
+        text = value if isinstance(value, str) else str(value)
+        return text[:cap]
 
     @classmethod
     def _bounded_error(cls, message: object) -> str | None:
@@ -977,6 +995,17 @@ class SatelliteManager:
         self.set_update_status(
             satellite_id, UpdateStatus.IN_PROGRESS, stage=stage, progress=progress
         )
+
+    def set_version(self, satellite_id: str, version: object) -> None:
+        """Store a device-reported version, bounded.
+
+        `update_complete` assigned `sat.version` directly from the frame, which
+        bypassed every guard — and `version` is a plain `str` on the response
+        models, so the same one-bad-entry-500s-the-list path applied.
+        """
+        sat = self.satellites.get(satellite_id)
+        if sat is not None:
+            sat.version = self._bounded_text(version, self._MAX_VERSION_CHARS) or "unknown"
 
     def clear_update_status(self, satellite_id: str):
         """Clear the update status for a satellite after completion or reset"""
@@ -1136,6 +1165,24 @@ class SatelliteManager:
             for session_id in timed_out_sessions:
                 logger.warning(f"⏰ Recording timed out: {session_id}")
                 await self._end_session_internal(session_id, reason="timeout")
+
+            # 1b. ORPHANED sessions — state-independent, so the LISTENING rule
+            # above cannot strand them. `unregister` returns early on a FAST
+            # RECONNECT (its identity guard) BEFORE tearing the session down, so
+            # the dying socket's session is left behind; the unconditional sweep
+            # used to collect it, and after the calibration nothing would. Each
+            # orphan holds its buffered audio, so this leaks memory, not just
+            # bookkeeping. Keyed on the satellite really owning THIS session —
+            # ending it inside `unregister` would kill the LIVE satellite's
+            # session instead, since by then the entry belongs to the new socket.
+            orphaned = [
+                sid for sid, sess in self.sessions.items()
+                if (owner := self.satellites.get(sess.satellite_id)) is None
+                or owner.current_session_id != sid
+            ]
+            for session_id in orphaned:
+                logger.warning(f"🧹 Verwaiste Sitzung aufgeräumt: {session_id}")
+                await self._end_session_internal(session_id, reason="orphaned")
 
             # 2. Heartbeat eviction, with two exemptions for devices that are
             # demonstrably alive but legitimately unable to answer:
