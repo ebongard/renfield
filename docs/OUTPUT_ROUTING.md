@@ -8,6 +8,7 @@ Renfield unterstützt intelligentes Routing von TTS-Ausgaben an das beste verfü
 - **Verfügbarkeitsprüfung** (eingeschaltet, nicht beschäftigt)
 - **Unterbrechungs-Präferenzen** pro Gerät
 - **TTS-Lautstärke** pro Gerät konfigurierbar
+- **TTS-Klangprofil** pro Gerät (`tts_eq_profile`) — entzerrt Sprachantworten für HiFi-Ausgaben, siehe [Klangprofil](#tts-klangprofil)
 - **Automatischer Fallback** auf Eingabegerät bei Nichtverfügbarkeit
 - **Unterstützt Renfield-Geräte** (Satellites, Web Panels), **Home Assistant Media Player** und **DLNA Renderer**
 - **DLNA Renderer Discovery** via SSDP-Multicast (automatische Erkennung im Netzwerk)
@@ -155,6 +156,7 @@ CREATE TABLE room_output_devices (
     priority INTEGER NOT NULL DEFAULT 1,
     allow_interruption BOOLEAN DEFAULT FALSE,
     tts_volume FLOAT DEFAULT 0.5,
+    tts_eq_profile VARCHAR(32),     -- Name eines Klangprofils, NULL = aus
     device_name VARCHAR(255),
     is_enabled BOOLEAN DEFAULT TRUE,
     created_at TIMESTAMP,
@@ -350,3 +352,34 @@ Das `done` Message enthält jetzt ein `tts_handled` Flag:
 
 - `tts_handled: true` → TTS wurde an externes Gerät gesendet, Frontend überspringt lokale Wiedergabe
 - `tts_handled: false` → Frontend spielt TTS lokal ab (wie bisher)
+
+## TTS-Klangprofil
+
+Eine Sprachantwort wird einmal synthetisiert und auf sehr verschiedenen Lautsprechern
+gespielt. Die Haushaltsstimme (Piper `de_DE-thorsten-high`, 22,05 kHz mono) trägt rund
+**80 % ihrer Energie zwischen 80 und 300 Hz und etwa 2 % über 1 kHz** (gemessen an einer
+echten Antwort im TTS-Cache, 2026-09-20). Der kleine Lautsprecher eines Satelliten gibt den
+Bass nicht wieder — dort klingt die Stimme ausgewogen. Eine Anlage spielt ihn voll aus, und
+dieselbe Datei klingt flach und dumpf.
+
+`tts_eq_profile` am Ausgabegerät benennt ein Profil aus
+`ha_glue/services/tts_equalizer.py`. `NULL` = aus (Verhalten wie zuvor).
+
+| Profil | Kette |
+|---|---|
+| `hifi_speech` | Hochpass 120 Hz (Butterworth 2. Ordnung) → High-Shelf +7 dB ab 2,5 kHz → Normalisierung auf −1 dBFS |
+
+- **Ein Name, keine Regler.** Die Werte sind im Hörvergleich über die echte Anlage gewählt
+  und gemessen. Ein zweites Profil ist ein Eintrag im Code plus ein i18n-String, keine Migration.
+- **Wirkt nur auf DLNA-Renderer und Home-Assistant-Player.** Renfield-Geräte (Satelliten,
+  Browser) bekommen die Antwort unbearbeitet.
+- **Fail-safe:** scheitert die Entzerrung (kein 16-bit-PCM, kaputte Datei, irgendein Fehler),
+  wird die unbearbeitete Datei gespielt — eine Entzerrung darf nie die Antwort kosten.
+- **API:** `tts_eq_profile` in `POST …/output-devices` und `PATCH …/output-devices/{id}`.
+  Beim PATCH gilt: Schlüssel weglassen = unverändert, `null` = Profil **aus**. Ein
+  unbekannter Name → 422. Musik über dasselbe Gerät bleibt unberührt — das Profil greift nur
+  im TTS-Pfad, deshalb auch keine Entzerrung am Gerät selbst.
+- **Grenze:** das Profil gewichtet nur um, was da ist. Das Signal endet bei 11 kHz (halbe
+  Abtastrate des Modells); „Luft" darüber kann keine Entzerrung erzeugen — dafür bräuchte es
+  ein mit 44,1/48 kHz trainiertes Modell.
+

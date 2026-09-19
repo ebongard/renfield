@@ -50,7 +50,7 @@ These are pure Renfield-side engineering work that the Reva doc proposes putting
 | **P1-1** | in-process Piper | `piper_service.py` shells out via subprocess per request. ~150-300 ms cold-start is felt most in the kitchen-tablet web-chat path. |
 | **P3-1** | worker pool around WhisperService | More important for Renfield than Reva: a household with 4 satellites genuinely produces concurrent voice requests. |
 | **P3-2** | TTS LRU cache | **Bigger win for Renfield than Reva.** Household interactions repeat heavily — "OK", "Erledigt", "Erinnerung gesetzt", "Licht ist an", confirmations on actions. |
-| **P3-4** | Kokoro-82M swap | Better German prosody is a daily-driver win for the household. Apache 2.0, ~80 ms latency, multilingual, runs on CPU. Drop-in at the synth layer. |
+| **P3-4** | ~~Kokoro-82M swap~~ | **Not an option for German (checked 2026-09-20 against the running instance):** 67 voices, none German (prefixes a/b/e/f/h/i/j/p/z), `lang_code` `d`/`de` is rejected, German text through an English/French voice is read with that language's phonemes. The "better German prosody" premise was wrong. Kokoro stays for English narration only. |
 
 ### Translate with Renfield framing
 
@@ -114,7 +114,7 @@ These have clear scope but no firing trigger today. Pull forward only when the s
 
 - **Streaming TTS** (P1-2 from Reva) for kitchen-tablet web chat — only if family complains about TTS lag in the kitchen.
 - **Server-side VAD** (P1-3 from Reva) for web-chat path — only if browser-side endpointing causes missed inputs.
-- **Kokoro-82M side-by-side German MOS test** — if family feels Thorsten sounds robotic in daily use. Apache 2.0 + 80 ms + multilingual + CPU-fine make it a strong candidate.
+- ~~Kokoro-82M side-by-side German MOS test~~ — moot, Kokoro has no German voice (see P3-4). The open question is now a full-bandwidth (44.1/48 kHz) German model or a cloned voice; the dull sound over hi-fi outputs is handled by the per-device TTS sound profile (`docs/OUTPUT_ROUTING.md`).
 - **Prometheus metrics** (P3-3 from Reva, renamed) — defer until there's a Renfield Grafana dashboard to consume them.
 - **Per-user TTS voice** — defer until a family member actually asks for it.
 
