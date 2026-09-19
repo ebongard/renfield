@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import {
   Volume2, Plus, Trash2, Loader, ChevronDown, ChevronUp,
-  Power, PowerOff, Speaker, Radio, Monitor, Wifi,
+  Power, PowerOff, Speaker, Radio, Monitor, Wifi, SlidersHorizontal,
 } from 'lucide-react';
 import { extractApiError } from '../utils/axios';
 import { useConfirmDialog } from './ConfirmDialog';
@@ -14,6 +14,11 @@ import {
   useUpdateOutputDevice,
   useDeleteOutputDevice,
   useReorderOutputDevices,
+  TTS_EQ_PROFILES,
+  isTtsEqProfile,
+  type AddOutputPayload,
+  type UpdateOutputPayload,
+  type TtsEqProfile,
   type OutputType,
   type OutputDevice,
   type OutputTarget,
@@ -32,6 +37,17 @@ function devicePairKey(d: OutputDevice): string {
     ?? (d.renfield_device_id ? 'renfield' : d.ha_entity_id ? 'homeassistant' : d.dlna_renderer_name ? 'dlna' : '');
   const targetId = d.output_target_id ?? d.renfield_device_id ?? d.ha_entity_id ?? d.dlna_renderer_name ?? '';
   return `${provider}::${targetId}`;
+}
+
+// i18n key per known sound profile. A Record over the union, so adding a
+// profile to TTS_EQ_PROFILES without a label is a compile error.
+const TTS_EQ_PROFILE_LABEL_KEYS: Record<TtsEqProfile, string> = {
+  hifi_speech: 'rooms.outputTtsEqProfileHifiSpeech',
+};
+
+// '' is the <select> value for "no profile" (sent as null).
+function toTtsEqProfile(value: string): TtsEqProfile | null {
+  return isTtsEqProfile(value) ? value : null;
 }
 
 export interface RoomOutputSettingsProps {
@@ -81,6 +97,24 @@ export default function RoomOutputSettings({
   const [selectedDevice, setSelectedDevice] = useState('');
   const [allowInterruption, setAllowInterruption] = useState(false);
   const [ttsVolume, setTtsVolume] = useState(50);
+  const [ttsEqProfile, setTtsEqProfile] = useState<TtsEqProfile | null>(null);
+  // Device whose inline sound-profile editor is open (one at a time).
+  const [eqEditDeviceId, setEqEditDeviceId] = useState<number | null>(null);
+
+  // A profile this build does not know (newer backend) is shown verbatim.
+  const ttsEqProfileLabel = (profile: string): string =>
+    isTtsEqProfile(profile) ? t(TTS_EQ_PROFILE_LABEL_KEYS[profile]) : profile;
+
+  const ttsEqProfileOptions = (
+    <>
+      <option value="">{t('rooms.outputTtsEqProfileNone')}</option>
+      {TTS_EQ_PROFILES.map((profile) => (
+        <option key={profile} value={profile}>
+          {t(TTS_EQ_PROFILE_LABEL_KEYS[profile])}
+        </option>
+      ))}
+    </>
+  );
 
   const adding = addMutation.isPending;
 
@@ -91,6 +125,7 @@ export default function RoomOutputSettings({
     setSelectedDevice('');
     setAllowInterruption(false);
     setTtsVolume(50);
+    setTtsEqProfile(null);
     setShowAddModal(true);
   };
 
@@ -100,10 +135,12 @@ export default function RoomOutputSettings({
       return;
     }
     try {
-      const payload: Record<string, unknown> = {
+      const payload: AddOutputPayload = {
         output_type: outputType,
         allow_interruption: allowInterruption,
         tts_volume: ttsVolume / 100,
+        // Speech-only profile — never set on a visual output.
+        tts_eq_profile: isVisual ? null : ttsEqProfile,
         priority: outputDevices.length + 1,
       };
 
@@ -127,11 +164,11 @@ export default function RoomOutputSettings({
     }
   };
 
-  const updateOutputDevice = async (deviceId: number, updates: Partial<OutputDevice>) => {
+  const updateOutputDevice = async (deviceId: number, updates: UpdateOutputPayload) => {
     try {
       await updateMutation.mutateAsync({ deviceId, updates });
-    } catch {
-      setError(t('rooms.outputErrorUpdateFailed'));
+    } catch (err) {
+      setError(extractApiError(err, t('rooms.outputErrorUpdateFailed')));
     }
   };
 
@@ -275,10 +312,11 @@ export default function RoomOutputSettings({
               {outputDevices.map((device, index) => (
                 <div
                   key={device.id}
-                  className={`flex items-center space-x-2 p-2 rounded-lg ${
+                  className={`p-2 rounded-lg ${
                     device.is_enabled ? 'bg-gray-800' : 'bg-gray-800/50 opacity-50'
                   }`}
                 >
+                <div className="flex items-center space-x-2">
                   <span className="w-5 h-5 bg-gray-700 rounded-sm text-xs flex items-center justify-center text-gray-400">
                     {index + 1}
                   </span>
@@ -296,6 +334,15 @@ export default function RoomOutputSettings({
                     </span>
                   )}
 
+                  {device.tts_eq_profile != null && (
+                    <span
+                      className="text-xs text-gray-600 dark:text-gray-400"
+                      title={t('rooms.outputTtsEqProfileLabel')}
+                    >
+                      {ttsEqProfileLabel(device.tts_eq_profile)}
+                    </span>
+                  )}
+
                   {device.allow_interruption && (
                     <span className="text-xs text-yellow-400" title={t('rooms.outputDeviceInterruptHint')}>
                       INT
@@ -309,6 +356,18 @@ export default function RoomOutputSettings({
                   >
                     {device.is_enabled ? <Power className="w-3 h-3" /> : <PowerOff className="w-3 h-3" />}
                   </button>
+
+                  {!isVisual && (
+                    <button
+                      onClick={() => setEqEditDeviceId(eqEditDeviceId === device.id ? null : device.id)}
+                      className="p-1 rounded-sm text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200"
+                      title={t('rooms.outputTtsEqProfileEdit')}
+                      aria-label={t('rooms.outputTtsEqProfileEdit')}
+                      aria-expanded={eqEditDeviceId === device.id}
+                    >
+                      <SlidersHorizontal className="w-3 h-3" />
+                    </button>
+                  )}
 
                   <div className="flex flex-col">
                     <button
@@ -334,6 +393,35 @@ export default function RoomOutputSettings({
                   >
                     <Trash2 className="w-3 h-3" />
                   </button>
+                </div>
+
+                {!isVisual && eqEditDeviceId === device.id && (
+                  <div className="mt-2">
+                    <label
+                      htmlFor={`ttsEqProfile-${device.id}`}
+                      className="block text-xs text-gray-600 dark:text-gray-400 mb-1"
+                    >
+                      {t('rooms.outputTtsEqProfileLabel')}
+                    </label>
+                    <select
+                      id={`ttsEqProfile-${device.id}`}
+                      value={device.tts_eq_profile ?? ''}
+                      disabled={updateMutation.isPending}
+                      onChange={(e) =>
+                        updateOutputDevice(device.id, { tts_eq_profile: toTtsEqProfile(e.target.value) })
+                      }
+                      className="input w-full text-sm"
+                    >
+                      {ttsEqProfileOptions}
+                      {device.tts_eq_profile != null && !isTtsEqProfile(device.tts_eq_profile) && (
+                        <option value={device.tts_eq_profile}>{device.tts_eq_profile}</option>
+                      )}
+                    </select>
+                    <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                      {t('rooms.outputTtsEqProfileHelp')}
+                    </p>
+                  </div>
+                )}
                 </div>
               ))}
             </div>
@@ -420,13 +508,14 @@ export default function RoomOutputSettings({
 
               {genericMode ? (
                 <div>
-                  <label className="block text-sm text-gray-400 mb-2">{t('rooms.outputDeviceLabel')}</label>
+                  <label htmlFor="outputDeviceSelect" className="block text-sm text-gray-400 mb-2">{t('rooms.outputDeviceLabel')}</label>
                   {loadingAvailable ? (
                     <div className="text-center py-4">
                       <Loader className="w-5 h-5 animate-spin mx-auto text-gray-400" />
                     </div>
                   ) : (
                     <select
+                      id="outputDeviceSelect"
                       value={selectedDevice}
                       onChange={(e) => setSelectedDevice(e.target.value)}
                       className="input w-full"
@@ -471,13 +560,14 @@ export default function RoomOutputSettings({
                 </div>
               ) : (
               <div>
-                <label className="block text-sm text-gray-400 mb-2">{t('rooms.outputDeviceLabel')}</label>
+                <label htmlFor="outputDeviceSelect" className="block text-sm text-gray-400 mb-2">{t('rooms.outputDeviceLabel')}</label>
                 {loadingAvailable ? (
                   <div className="text-center py-4">
                     <Loader className="w-5 h-5 animate-spin mx-auto text-gray-400" />
                   </div>
                 ) : (
                   <select
+                    id="outputDeviceSelect"
                     value={selectedDevice}
                     onChange={(e) => setSelectedDevice(e.target.value)}
                     className="input w-full"
@@ -521,6 +611,28 @@ export default function RoomOutputSettings({
                   />
                   <p className="text-xs text-gray-500 mt-1">
                     {t('rooms.outputTtsVolumeHint')}
+                  </p>
+                </div>
+              )}
+
+              {!isVisual && (
+                <div>
+                  <label
+                    htmlFor="ttsEqProfile"
+                    className="block text-sm text-gray-600 dark:text-gray-400 mb-2"
+                  >
+                    {t('rooms.outputTtsEqProfileLabel')}
+                  </label>
+                  <select
+                    id="ttsEqProfile"
+                    value={ttsEqProfile ?? ''}
+                    onChange={(e) => setTtsEqProfile(toTtsEqProfile(e.target.value))}
+                    className="input w-full"
+                  >
+                    {ttsEqProfileOptions}
+                  </select>
+                  <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                    {t('rooms.outputTtsEqProfileHelp')}
                   </p>
                 </div>
               )}

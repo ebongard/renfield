@@ -6,12 +6,27 @@ import { keys, STALE } from '../keys';
 
 export type OutputType = 'audio' | 'visual';
 
+/**
+ * Named TTS sound profiles the backend knows. `null` on a device = off.
+ * An unknown name is rejected by the backend with HTTP 422, so this list is
+ * the single frontend source for the picker.
+ */
+export const TTS_EQ_PROFILES = ['hifi_speech'] as const;
+export type TtsEqProfile = (typeof TTS_EQ_PROFILES)[number];
+
+export function isTtsEqProfile(value: string): value is TtsEqProfile {
+  return (TTS_EQ_PROFILES as readonly string[]).includes(value);
+}
+
 export interface OutputDevice {
   id: number;
   output_type: OutputType;
   is_enabled: boolean;
   allow_interruption: boolean;
   tts_volume: number | null;
+  // Named sound profile for spoken answers; null = off. Typed as string because
+  // the server may know a profile this build does not (rendered verbatim then).
+  tts_eq_profile: string | null;
   priority: number;
   device_name?: string | null;
   dlna_renderer_name?: string | null;
@@ -73,18 +88,37 @@ async function fetchAvailableOutputs(roomId: number): Promise<AvailableOutputs> 
   return response.data ?? EMPTY_AVAILABLE;
 }
 
+/** Create body for POST /api/rooms/{id}/output-devices. */
+export interface AddOutputPayload {
+  output_type: OutputType;
+  allow_interruption: boolean;
+  tts_volume: number;
+  tts_eq_profile: TtsEqProfile | null;
+  priority: number;
+  output_provider?: string;
+  output_target_id?: string;
+  renfield_device_id?: string;
+  ha_entity_id?: string;
+  dlna_renderer_name?: string;
+}
+
 interface AddOutputArgs {
   roomId: number;
-  payload: Record<string, unknown>;
+  payload: AddOutputPayload;
 }
 
 async function addOutputDeviceRequest({ roomId, payload }: AddOutputArgs): Promise<void> {
   await apiClient.post(`/api/rooms/${roomId}/output-devices`, payload);
 }
 
+/** Update body for PATCH /api/rooms/output-devices/{id}. */
+export type UpdateOutputPayload = Partial<
+  Pick<OutputDevice, 'is_enabled' | 'allow_interruption' | 'tts_volume' | 'priority'>
+> & { tts_eq_profile?: TtsEqProfile | null };
+
 interface UpdateOutputArgs {
   deviceId: number;
-  updates: Partial<OutputDevice>;
+  updates: UpdateOutputPayload;
 }
 
 async function updateOutputDeviceRequest({ deviceId, updates }: UpdateOutputArgs): Promise<void> {

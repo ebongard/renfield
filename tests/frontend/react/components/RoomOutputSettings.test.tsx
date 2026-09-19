@@ -34,6 +34,7 @@ vi.mock('../../../../src/frontend/src/api/resources/roomOutputs', async (orig) =
 }));
 
 const addSpy = vi.fn().mockResolvedValue(undefined);
+const updateSpy = vi.fn().mockResolvedValue(undefined);
 const noopMut = { mutateAsync: vi.fn(), isPending: false };
 
 function setAvailable(output_targets: unknown) {
@@ -45,6 +46,7 @@ function setAvailable(output_targets: unknown) {
 
 beforeEach(() => {
   addSpy.mockClear();
+  updateSpy.mockClear();
   vi.mocked(useOutputDevicesQuery).mockReturnValue(
     { data: [], isLoading: false } as unknown as ReturnType<typeof useOutputDevicesQuery>,
   );
@@ -91,7 +93,7 @@ describe('RoomOutputSettings generic mode', () => {
   it('submits the (output_provider, output_target_id) pair', async () => {
     setAvailable(TARGETS);
     const user = await openModal();
-    await user.selectOptions(screen.getByRole('combobox'), 'samsung::192.168.1.47');
+    await user.selectOptions(screen.getByLabelText('Gerät:'), 'samsung::192.168.1.47');
     // capability badges render for the selection
     expect(screen.getByText('power')).toBeTruthy();
     await user.click(screen.getByText('Hinzufügen'));
@@ -106,5 +108,112 @@ describe('RoomOutputSettings generic mode', () => {
     setAvailable(undefined);  // flag off → legacy shape
     await openModal();
     expect(screen.getByText('Gerätetyp:')).toBeTruthy();
+  });
+});
+
+// TTS sound profile (tts_eq_profile): a NAMED equaliser profile for spoken
+// answers on hi-fi outputs. null = off; the only known profile is hifi_speech.
+describe('RoomOutputSettings TTS sound profile', () => {
+  const DEVICE = {
+    id: 7,
+    output_type: 'audio' as const,
+    is_enabled: true,
+    allow_interruption: false,
+    tts_volume: 0.5,
+    tts_eq_profile: null as string | null,
+    priority: 1,
+    device_name: 'Anlage',
+    output_provider: 'dlna',
+    output_target_id: 'Wohnzimmer',
+  };
+
+  function setDevices(devices: Array<typeof DEVICE>) {
+    vi.mocked(useOutputDevicesQuery).mockReturnValue(
+      { data: devices, isLoading: false } as unknown as ReturnType<typeof useOutputDevicesQuery>,
+    );
+  }
+
+  async function expand() {
+    const user = userEvent.setup();
+    renderWithProviders(<RoomOutputSettings roomId={1} roomName="Wohnzimmer" outputType="audio" />);
+    await user.click(screen.getByText('Audio-Ausgabe'));
+    return user;
+  }
+
+  it('renders the profile select with both options and the helper text', async () => {
+    setAvailable(TARGETS);
+    await openModal();
+    const select = screen.getByLabelText('Klangprofil') as HTMLSelectElement;
+    expect(select.value).toBe('');
+    const options = Array.from(select.options).map((o) => [o.value, o.textContent]);
+    expect(options).toEqual([['', 'Keins'], ['hifi_speech', 'HiFi-Sprache']]);
+    expect(screen.getByText(/Entzerrt Sprachantworten/)).toBeTruthy();
+  });
+
+  it('sends tts_eq_profile "hifi_speech" when the profile is chosen', async () => {
+    setAvailable(TARGETS);
+    const user = await openModal();
+    await user.selectOptions(screen.getByLabelText('Gerät:'), 'dlna::Wohnzimmer');
+    await user.selectOptions(screen.getByLabelText('Klangprofil'), 'hifi_speech');
+    await user.click(screen.getByText('Hinzufügen'));
+    expect(addSpy).toHaveBeenCalledTimes(1);
+    expect(addSpy.mock.calls[0][0].payload.tts_eq_profile).toBe('hifi_speech');
+  });
+
+  it('sends tts_eq_profile null when left on "Keins"', async () => {
+    setAvailable(TARGETS);
+    const user = await openModal();
+    await user.selectOptions(screen.getByLabelText('Gerät:'), 'dlna::Wohnzimmer');
+    await user.click(screen.getByText('Hinzufügen'));
+    expect(addSpy).toHaveBeenCalledTimes(1);
+    const payload = addSpy.mock.calls[0][0].payload;
+    expect('tts_eq_profile' in payload).toBe(true);
+    expect(payload.tts_eq_profile).toBeNull();
+  });
+
+  it('offers no profile select for a visual output and sends null', async () => {
+    setAvailable(TARGETS);
+    const user = userEvent.setup();
+    renderWithProviders(<RoomOutputSettings roomId={1} roomName="Wohnzimmer" outputType="visual" />);
+    await user.click(screen.getByText('Visuelle Ausgabe'));
+    await user.click(screen.getByText('Visuelles Ausgabegerät hinzufügen'));
+    expect(screen.queryByLabelText('Klangprofil')).toBeNull();
+    await user.selectOptions(screen.getByLabelText('Gerät:'), 'samsung::192.168.1.47');
+    await user.click(screen.getByText('Hinzufügen'));
+    expect(addSpy.mock.calls[0][0].payload.tts_eq_profile).toBeNull();
+  });
+
+  it('shows the profile label on a device that has one', async () => {
+    setDevices([{ ...DEVICE, tts_eq_profile: 'hifi_speech' }]);
+    await expand();
+    expect(screen.getByText('HiFi-Sprache')).toBeTruthy();
+  });
+
+  it('shows no profile label on a device without one', async () => {
+    setDevices([DEVICE]);
+    await expand();
+    expect(screen.queryByText('HiFi-Sprache')).toBeNull();
+  });
+
+  it('shows an unknown profile name verbatim', async () => {
+    setDevices([{ ...DEVICE, tts_eq_profile: 'studio_monitor' }]);
+    await expand();
+    expect(screen.getByText('studio_monitor')).toBeTruthy();
+  });
+
+  it('updates an existing device through the inline editor (set and clear)', async () => {
+    vi.mocked(useUpdateOutputDevice).mockReturnValue(
+      { mutateAsync: updateSpy, isPending: false } as unknown as ReturnType<typeof useUpdateOutputDevice>,
+    );
+    setDevices([{ ...DEVICE, tts_eq_profile: 'hifi_speech' }]);
+    const user = await expand();
+    expect(screen.queryByLabelText('Klangprofil')).toBeNull();     // closed by default
+    await user.click(screen.getByRole('button', { name: 'Klangprofil ändern' }));
+    const select = screen.getByLabelText('Klangprofil') as HTMLSelectElement;
+    expect(select.value).toBe('hifi_speech');
+    await user.selectOptions(select, '');
+    expect(updateSpy).toHaveBeenLastCalledWith({ deviceId: 7, updates: { tts_eq_profile: null } });
+    await user.selectOptions(select, 'hifi_speech');
+    expect(updateSpy).toHaveBeenLastCalledWith({ deviceId: 7, updates: { tts_eq_profile: 'hifi_speech' } });
   });
 });
