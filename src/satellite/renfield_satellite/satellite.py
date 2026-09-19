@@ -83,7 +83,7 @@ class Satellite:
         # that buffer is capped at MAX_AUDIO_BUFFER_CHUNKS (~40s), so once the cap is
         # reached its length stops growing and any check derived from it silently stops
         # firing. The grace period and the max-recording cut-off must measure the turn,
-        # not the retained tail.
+        # not the capped buffer (which nothing reads — audio is streamed per chunk).
         self._recorded_chunks: int = 0
         self._listening_start: Optional[float] = None  # When listening state began
         self._processing_start: Optional[float] = None  # Track when processing started
@@ -1026,6 +1026,12 @@ class Satellite:
 
         if state in state_map:
             new_state = state_map[state]
+            if new_state == SatelliteState.LISTENING:
+                # A server-commanded turn starts from zero like a wake-word turn.
+                # _end_listening does not reset, so without this a turn entered
+                # here would inherit the previous count and be cut off at once.
+                self._silence_chunks = 0
+                self._recorded_chunks = 0
             self._set_state(new_state)
 
             # If server tells us to go idle, do a full session reset

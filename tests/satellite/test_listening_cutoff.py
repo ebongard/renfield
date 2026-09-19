@@ -16,8 +16,9 @@ gedeckelten Puffer.
 """
 
 import ast
+import inspect
 import pathlib
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -179,9 +180,9 @@ def test_zaehler_wird_an_jeder_ruecksetzstelle_genullt():
     abgeschnitten — diese Invariante ist der Grund, warum der Zaehler
     ueberhaupt gefahrlos den Puffer ersetzen kann.
     """
-    src = pathlib.Path(
-        "src/satellite/renfield_satellite/satellite.py"
-    ).read_text()
+    # Ueber das Modul aufloesen, nicht ueber einen cwd-relativen Pfad: die Suite
+    # laeuft auch im Container aus einem anderen Arbeitsverzeichnis.
+    src = pathlib.Path(inspect.getsourcefile(Satellite)).read_text()
     tree = ast.parse(src)
 
     def zeroed_names(node) -> set:
@@ -207,6 +208,7 @@ def test_zaehler_wird_an_jeder_ruecksetzstelle_genullt():
         )
 
     offenders = []
+    checked = []
     for func in ast.walk(tree):
         if not isinstance(func, (ast.FunctionDef, ast.AsyncFunctionDef)):
             continue
@@ -216,9 +218,71 @@ def test_zaehler_wird_an_jeder_ruecksetzstelle_genullt():
             # Aufnahmelaenge muss dort gerade weiterlaufen.
             continue
         names = zeroed_names(func)
-        if "_silence_chunks" in names and "_recorded_chunks" not in names:
-            offenders.append(func.name)
+        if "_silence_chunks" in names:
+            checked.append(func.name)
+            if "_recorded_chunks" not in names:
+                offenders.append(func.name)
 
+    # Ohne diese Untergrenze bestuende der Test nach einer Umbenennung leer.
+    assert len(checked) >= 4, (
+        f"Erwartet: __init__, Weckwort, Reset, Trennung, Server-Zustand — gefunden: {checked}"
+    )
     assert offenders == [], (
         f"Diese Methoden nullen _silence_chunks, aber nicht _recorded_chunks: {offenders}"
     )
+
+
+
+# ---------------------------------------------------------------------------
+# Zug zu Zug: ein neuer Zug erbt nichts vom vorherigen
+# ---------------------------------------------------------------------------
+
+def _end_turn_like_production(sat: Satellite) -> None:
+    """``_end_listening`` setzt NICHT zurueck — der Zaehler bleibt stehen."""
+    sat._state = SatelliteState.PROCESSING
+
+
+@pytest.mark.satellite
+async def test_neuer_weckwort_zug_beginnt_bei_null():
+    """Nach einem 60-s-Zug darf der naechste nicht beim ersten Chunk enden."""
+    sat = _make_satellite(max_recording_seconds=60.0)
+    _feed(sat, 751, speech=True)
+    assert "timeout" in _reasons(sat)
+    sat._end_listening.reset_mock()
+
+    # Zurueck nach IDLE, OHNE den Zaehler von Hand zu nullen — genau das soll
+    # der echte Weckwort-Pfad leisten.
+    sat._state = SatelliteState.IDLE
+    sat._session_counter = MagicMock()
+    sat._wakeword_pending = True
+    sat._pending_snapshot = None
+    sat.camera = None
+    sat.leds = MagicMock()
+    sat._set_state = lambda st: setattr(sat, "_state", st)
+    sat.ws_client.is_connected = True
+    sat.ws_client.send_wakeword_detected = AsyncMock(return_value=None)
+
+    await Satellite._on_wakeword_detected(sat, "renfield", 0.9)
+
+    assert sat._state == SatelliteState.LISTENING
+    assert sat._recorded_chunks == 0
+    _feed(sat, 1, speech=True)
+    assert _reasons(sat) == []
+
+
+@pytest.mark.satellite
+def test_server_befohlener_zug_beginnt_bei_null():
+    """``state: listening`` vom Server ist ein Zugbeginn wie das Weckwort."""
+    sat = _make_satellite(max_recording_seconds=60.0)
+    _feed(sat, 751, speech=True)
+    sat._end_listening.reset_mock()
+    _end_turn_like_production(sat)
+    sat._set_state = lambda st: setattr(sat, "_state", st)
+
+    Satellite._on_server_state_change(sat, "listening")
+
+    assert sat._state == SatelliteState.LISTENING
+    assert sat._recorded_chunks == 0
+    assert sat._silence_chunks == 0
+    _feed(sat, 1, speech=True)
+    assert _reasons(sat) == []
