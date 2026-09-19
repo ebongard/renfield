@@ -346,7 +346,12 @@ data:
   # Möglichkeit, im Betrieb nachzujustieren.
   SATELLITE_CLEANUP_INTERVAL: "30"     # Takt des Kehraus in Sekunden
   SATELLITE_UPDATE_TIMEOUT: "900"      # OTA-Lauf ohne Endzustand gilt danach als gescheitert
-  DEVICE_SESSION_TIMEOUT: "30.0"       # max. AUFNAHME-Dauer (nur im Zustand listening)
+  # Sicherungsnetz für ein HÄNGENDES Gerät, KEIN zweiter Aufnahme-Deckel.
+  # Bindend ist die Gerätegrenze `vad_max_recording_seconds` (Flotte: 20s,
+  # src/satellite/provisioning/group_vars/satellites.yml). Dieser Wert MUSS
+  # deutlich darüber liegen — sonst gewinnt das Backend und verwirft die
+  # laufende Aufnahme samt Puffer.
+  DEVICE_SESSION_TIMEOUT: "120.0"
   DEVICE_HEARTBEAT_TIMEOUT: "60.0"     # Räumung ohne Lebenszeichen; Sitzung + laufendes OTA sind ausgenommen
 
   # Persist ML model caches (EasyOCR ~/.EasyOCR, HuggingFace ~/.cache/huggingface,

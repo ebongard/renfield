@@ -1163,7 +1163,20 @@ class SatelliteManager:
             ]
 
             for session_id in timed_out_sessions:
-                logger.warning(f"⏰ Recording timed out: {session_id}")
+                # Say WHAT is being thrown away. Ending the session deletes its
+                # buffered audio with it, and from the outside that is
+                # indistinguishable from a satellite that simply never answered
+                # — the failure mode would be invisible in exactly the case
+                # where the cap turns out to be mis-set.
+                sess = self.sessions[session_id]
+                buffered = len(sess.audio_chunks) + len(sess.opus_packets)
+                logger.warning(
+                    f"⏰ Aufnahme-Zeitgrenze erreicht: {session_id} nach "
+                    f"{self.session_timeout:.0f}s — {buffered} gepufferte "
+                    f"Audioblöcke werden VERWORFEN. Liegt die Gerätegrenze "
+                    f"(vad.max_recording_seconds) über diesem Wert, gewinnt "
+                    f"hier das Backend und die Aufnahme geht verloren."
+                )
                 await self._end_session_internal(session_id, reason="timeout")
 
             # 1b. ORPHANED sessions — state-independent, so the LISTENING rule

@@ -197,8 +197,12 @@ Zwei Regeln sichern das ab:
 Funktion **keinen Aufrufer im Produktivcode** hatte. Sie zu takten schaltet alle
 drei scharf, deshalb sind die beiden älteren dabei kalibriert worden:
 
-* **Aufnahmegrenze** (`DEVICE_SESSION_TIMEOUT`, 30 s) gilt nur noch im Zustand
-  `listening`. Die Marke wird beim Weckwort gesetzt, und der ganze Zug —
+* **Sicherungsnetz für ein hängendes Gerät** (`DEVICE_SESSION_TIMEOUT`, 120 s)
+  gilt nur noch im Zustand `listening`. Es ist KEINE Aufnahmegrenze: die sitzt
+  auf dem Satelliten (`vad_max_recording_seconds`, Flotte 20 s) und beendet die
+  Aufnahme über `audio_end`, womit die Sitzung `listening` verlässt. Dieser Wert
+  greift nur, wenn gar kein `audio_end` kommt, und muss deutlich über jeder
+  Gerätegrenze liegen — sonst gewinnt er und verwirft die Aufnahme samt Puffer. Die Marke wird beim Weckwort gesetzt, und der ganze Zug —
   Spracherkennung, Agent, Modell, Sprachausgabe — läuft inline in derselben
   Empfangsschleife. Auf den ganzen Zug angewandt zerstörte die Frist die Sitzung
   mitten in der Antwort, und die fertige Antwort würde stumm verworfen.

@@ -1237,10 +1237,22 @@ SATELLITE_CLEANUP_INTERVAL=30
 # Strecke ist berechtigt langsam, und ein verfrühtes Urteil wäre die
 # schlechtere Lüge.
 SATELLITE_UPDATE_TIMEOUT=900
-# Maximale AUFNAHME-Dauer — greift NUR im Zustand `listening`, nicht auf den
-# ganzen Zug. Dieser Wert wurde seit 2026-01 eingelesen und nie gelesen; mit
-# #1209 wirkt er erstmals.
-DEVICE_SESSION_TIMEOUT=30.0
+# Sicherungsnetz für ein HÄNGENDES Gerät — greift nur im Zustand `listening`
+# und nur, wenn gar kein `audio_end` eintrifft. Seit 2026-01 eingelesen und nie
+# gelesen; mit #1209 wirkt er erstmals.
+#
+# MUSS deutlich über der Aufnahmegrenze des Geräts liegen. Bindend ist
+# `vad_max_recording_seconds` in
+# `src/satellite/provisioning/group_vars/satellites.yml` (Flotte: 20 s;
+# Code-Vorgabe des Satelliten: 15 s). Der Satellit beendet die Aufnahme selbst
+# und schickt `audio_end`, womit die Sitzung `listening` verlässt — deshalb
+# greift dieser Wert im Normalbetrieb nie. Wird die Gerätegrenze ÜBER diesen
+# Wert gehoben (etwa für einen Diktatraum), gewinnt das Backend: es beendet die
+# Sitzung samt gepuffertem Audio, das Gerät geht auf Leerlauf, und das
+# Gesprochene ist verloren. Erzwingbar ist die Beziehung nicht — der Satellit
+# meldet seine Grenze nicht ans Backend —, deshalb steht sie hier und wird beim
+# Greifen laut protokolliert.
+DEVICE_SESSION_TIMEOUT=120.0
 # Räumung eines Satelliten ohne Lebenszeichen. Ausgenommen: laufende Sitzung
 # und laufendes OTA-Update.
 DEVICE_HEARTBEAT_TIMEOUT=60.0

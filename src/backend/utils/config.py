@@ -1635,7 +1635,16 @@ class Settings(BaseSettings):
     ws_protocol_version: str = "1.0"
 
     # Device/Session Timeouts
-    device_session_timeout: float = 30.0  # Max voice session duration in seconds
+    # Sicherungsnetz für ein HÄNGENDES Gerät, kein zweiter Aufnahme-Deckel.
+    # Die bindende Aufnahmegrenze sitzt auf dem Satelliten
+    # (vad.max_recording_seconds: Flotte 20s, Code-Vorgabe 15s) und beendet die
+    # Aufnahme über `audio_end`, womit die Sitzung LISTENING verlässt. Dieser
+    # Wert greift nur, wenn gar kein `audio_end` kommt. Er MUSS deutlich über
+    # jeder Gerätegrenze liegen: liegt er darunter, gewinnt das Backend, und die
+    # Sitzung wird samt gepuffertem Audio verworfen — die Aufnahme ist weg.
+    # Bis #1209 wurde dieser Wert nie gelesen, der Abstand war also folgenlos;
+    # seit er wirkt, sind 30s zu knapp (nur 10s über der Flotte).
+    device_session_timeout: float = 120.0  # Backstop, siehe oben
     device_heartbeat_timeout: float = 60.0  # Disconnect after no heartbeat for this duration
 
     # HA / Frigate integration timeouts moved to ha_glue/utils/config.py.
