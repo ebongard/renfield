@@ -90,7 +90,11 @@ wakeword_threshold: 0.5
 # VAD
 vad_backend: "silero"
 vad_silence_duration_ms: 1200
-vad_max_recording_seconds: 20
+# 2026-09-19: 20 s schnitten ein Diktat mitten im Satz ab (gemessener Zug:
+# 28,5 s Sitzung, davon ~20 s Aufnahme). MUSS deutlich unter dem Backend-Netz
+# DEVICE_SESSION_TIMEOUT (120 s) bleiben — sonst gewinnt das Backend und
+# verwirft die Aufnahme samt Puffer. 60 s lässt Faktor 2 Luft.
+vad_max_recording_seconds: 60
 vad_silero_threshold: 0.5
 
 # WM8960 codec ALC (Automatic Level Control) — hardware AGC applied INSIDE the
