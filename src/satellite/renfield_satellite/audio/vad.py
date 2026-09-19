@@ -207,7 +207,13 @@ class VoiceActivityDetector:
         """Silero VAD speech detection"""
         # Use ONNX backend if available
         if self._use_onnx and self._silero_onnx is not None:
-            return self._silero_onnx.is_speech(audio_bytes)
+            prob = self._silero_onnx.get_speech_probability(audio_bytes)
+            if self._silero_onnx.last_call_failed:
+                # Same fallback as the PyTorch path below. The wrapper's neutral
+                # 0.5 must never be judged: at the default threshold it reads as
+                # SPEECH and would hold every turn open to the recording limit.
+                return self._rms_detect(audio_bytes)
+            return prob >= self.silero_threshold
 
         # Use PyTorch backend
         if self._silero_model is None:
@@ -329,6 +335,7 @@ class SileroVADLite:
         self._residual = np.zeros(0, dtype=np.float32)
         self._last_prob = 0.0
         self._error_logged = False
+        self.last_call_failed = False  # callers fall back to RMS instead of judging 0.5
 
         # Pre-allocate sample rate input arrays (avoids per-frame allocation)
         self._sr_input_scalar = np.array(sample_rate, dtype=np.int64)
@@ -422,10 +429,13 @@ class SileroVADLite:
             Speech probability (0-1)
         """
         if self._session is None:
+            self.last_call_failed = True
             return 0.5  # Neutral if model not loaded
 
         try:
-            # Convert to float32 array
+            self.last_call_failed = False
+            # Convert to float32 array (a stray odd byte would make frombuffer raise)
+            audio_bytes = audio_bytes[:len(audio_bytes) - (len(audio_bytes) % 2)]
             audio = np.frombuffer(audio_bytes, dtype=np.int16).astype(np.float32)
             audio = audio / 32768.0  # Normalize to [-1, 1]
 
@@ -468,11 +478,12 @@ class SileroVADLite:
             return self._last_prob
 
         except Exception as e:
-            # Neutral on error — but say so once: at the default threshold 0.5
-            # "neutral" reads as SPEECH, so a broken model would otherwise keep
-            # every turn open until the max-recording limit, silently.
+            # Neutral on error, flagged so VoiceActivityDetector falls back to RMS:
+            # at the default threshold 0.5 "neutral" would read as SPEECH and hold
+            # every turn open until the max-recording limit. Logged once.
+            self.last_call_failed = True
             if not self._error_logged:
-                print(f"Silero VAD inference failed (returning neutral 0.5): {e}")
+                print(f"Silero VAD inference failed (falling back to RMS): {e}")
                 self._error_logged = True
             return 0.5
 

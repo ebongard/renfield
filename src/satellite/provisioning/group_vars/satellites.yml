@@ -255,8 +255,11 @@ oww_base_url: "https://github.com/dscripka/openWakeWord/releases/download/v0.5.1
 oww_models:
   - melspectrogram.onnx
   - embedding_model.onnx
-# PINNED to a release tag + checksum. It used to track `master`: a re-provision
-# silently swapped the model, and the v5+ streaming model needs a calling
+# PINNED to a release tag + checksum. It used to track `master`: every FRESH
+# provision or image rebuild pulled whatever `master` was that day (get_url never
+# replaced an existing file, so the fleet also ran mixed versions). The checksum
+# now makes a `--tags models` run replace a differing file.
+# The v5+ streaming model needs a calling
 # convention (64-sample context per 512-sample frame) the wrapper did not speak
 # — the VAD then reported "no speech" for everything and every voice turn was
 # cut at grace + silence (2026-09-19). Bump tag AND checksum together, and run

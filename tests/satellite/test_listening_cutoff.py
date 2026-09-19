@@ -274,6 +274,9 @@ async def test_neuer_weckwort_zug_beginnt_bei_null():
 
     assert sat._state == SatelliteState.LISTENING
     assert sat._recorded_chunks == 0
+    # Die VAD ist ein Streaming-Modell: ihr Zustand stammt sonst vom ENDE des
+    # vorherigen Zuges.
+    sat.vad.reset.assert_called_once()
     _feed(sat, 1, speech=True)
     assert _reasons(sat) == []
 
@@ -292,5 +295,6 @@ def test_server_befohlener_zug_beginnt_bei_null():
     assert sat._state == SatelliteState.LISTENING
     assert sat._recorded_chunks == 0
     assert sat._silence_chunks == 0
+    sat.vad.reset.assert_called_once()
     _feed(sat, 1, speech=True)
     assert _reasons(sat) == []

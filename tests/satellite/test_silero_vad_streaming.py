@@ -121,7 +121,49 @@ def test_inferenzfehler_wird_einmal_gemeldet(capsys):
 
     assert vad.get_speech_probability(_ramp(CHUNK)) == 0.5
     assert vad.get_speech_probability(_ramp(CHUNK)) == 0.5
+    assert vad.last_call_failed is True
     assert capsys.readouterr().out.count("Silero VAD inference failed") == 1
+
+
+@pytest.mark.satellite
+def test_inferenzfehler_faellt_auf_rms_zurueck_statt_sprache_zu_melden():
+    """Das neutrale 0,5 darf nie beurteilt werden: bei Schwelle 0,5 hielte es
+    jeden Zug bis zur Aufnahmegrenze offen."""
+    from renfield_satellite.audio.vad import VADBackend, VoiceActivityDetector
+
+    detector = VoiceActivityDetector(backend=VADBackend.RMS, rms_threshold=350.0)
+    lite, session = _vad()
+    session.run = lambda *_: (_ for _ in ()).throw(RuntimeError("kaputt"))
+    detector.backend = VADBackend.SILERO
+    detector._use_onnx = True
+    detector._silero_onnx = lite
+
+    silence = np.zeros(CHUNK, dtype=np.int16).tobytes()
+    loud = (np.ones(CHUNK) * 8000).astype(np.int16).tobytes()
+
+    assert not detector.is_speech(silence), "Stille bleibt Stille, trotz kaputtem Modell"
+    assert detector.is_speech(loud)
+
+
+@pytest.mark.satellite
+def test_gesunder_aufruf_loescht_das_fehlerkennzeichen():
+    vad, session = _vad()
+    good_run = session.run
+    session.run = lambda *_: (_ for _ in ()).throw(RuntimeError("kaputt"))
+    vad.get_speech_probability(_ramp(CHUNK))
+    session.run = good_run
+
+    vad.get_speech_probability(_ramp(CHUNK))
+    assert vad.last_call_failed is False
+
+
+@pytest.mark.satellite
+def test_ungerade_bytezahl_ist_kein_fehler():
+    vad, session = _vad()
+    vad.get_speech_probability(_ramp(CHUNK) + b"\x01")
+
+    assert vad.last_call_failed is False
+    assert len(session.calls) == 2
 
 
 # ---------------------------------------------------------------------------

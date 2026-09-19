@@ -1027,6 +1027,7 @@ class Satellite:
                 # here would inherit the previous count and be cut off at once.
                 self._silence_chunks = 0
                 self._recorded_chunks = 0
+                self.vad.reset()
             self._set_state(new_state)
 
             # If server tells us to go idle, do a full session reset
