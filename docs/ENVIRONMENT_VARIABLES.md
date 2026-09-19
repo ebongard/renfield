@@ -2301,7 +2301,7 @@ WS_PROTOCOL_VERSION=1.0
 - `WS_TOKEN_EXPIRE_MINUTES`: `60`
 - `WS_JWT_EXPIRE_SECONDS`: `90`
 - `WS_RATE_LIMIT_ENABLED`: `true`
-- `WS_RATE_LIMIT_PER_SECOND`: `50` (Audio-Streaming benötigt ~12.5/Sek.)
+- `WS_RATE_LIMIT_PER_SECOND`: `50` (Audio-Streaming benötigt ~12.5/Sek.; Audio-Frames eines laufenden Satelliten-Zuges unterliegen nur dem Minutenbudget, `audio_end` kommt immer durch — #1284, siehe `docs/SECURITY.md`)
 - `WS_RATE_LIMIT_PER_MINUTE`: `1000`
 - `WS_MAX_CONNECTIONS_PER_IP`: `10`
 - `WS_MAX_MESSAGE_SIZE`: `1000000` (1MB)

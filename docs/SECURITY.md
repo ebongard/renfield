@@ -143,6 +143,17 @@ WebSocket rate limiting uses a sliding window algorithm (`WS_RATE_LIMIT_ENABLED=
 | Max message size | 1 MB | `WS_MAX_MESSAGE_SIZE` |
 | Max audio buffer | 10 MB | `WS_MAX_AUDIO_BUFFER_SIZE` |
 
+**Satellite voice turns (#1284).** On `/ws/satellite` a frame the limiter refuses gets a
+second look when it belongs to a session that is live AND owned by the sending
+satellite: audio answers to the per-minute budget only (a Pi whose event loop stalled
+flushes its queued chunks in one burst, while its sustained rate is physically bounded
+at ~12.5 chunks/s), and `audio_end` always passes (at most one per session; dropping it
+stranded the session in `listening` until the cleanup sweep discarded the recording
+unanswered). An unregistered sender, a foreign session and every other frame type are
+refused exactly as before — without being parsed. The byte cap above still bounds a
+session. On the satellite, `RATE_LIMITED` means one dropped frame, not a failed
+session: it no longer resets a running turn.
+
 ## Trusted Proxies
 
 When behind a reverse proxy (nginx, Traefik), configure `TRUSTED_PROXIES` so rate limiting uses the real client IP instead of the proxy IP:
