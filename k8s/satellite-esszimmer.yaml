@@ -57,6 +57,12 @@ data:
       backend: "silero"
       silero_threshold: 0.5
       silero_model_path: "/opt/renfield-satellite/models/silero_vad.onnx"
+      # Same values as the Ansible fleet (group_vars vad_*). Unset, the code
+      # defaults apply — 15 s max recording — and #1282 raised the limit to 60 s
+      # only in group_vars, which this pod never reads: a 37 s dictation that the
+      # Arbeitszimmer Pi recorded in full was cut here at 15.0 s (2026-09-19).
+      silence_duration_ms: 1200
+      max_recording_seconds: 60
     led:
       type: "xvf3800"             # LED ring driven via xvf_host over USB
       brightness: 28              # ~90% of the 0-31 scale — the milled (gefräste)
