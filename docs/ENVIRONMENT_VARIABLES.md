@@ -1243,7 +1243,7 @@ SATELLITE_UPDATE_TIMEOUT=900
 #
 # MUSS deutlich über der Aufnahmegrenze des Geräts liegen. Bindend ist
 # `vad_max_recording_seconds` in
-# `src/satellite/provisioning/group_vars/satellites.yml` (Flotte: 20 s;
+# `src/satellite/provisioning/group_vars/satellites.yml` (Flotte: 60 s;
 # Code-Vorgabe des Satelliten: 15 s). Der Satellit beendet die Aufnahme selbst
 # und schickt `audio_end`, womit die Sitzung `listening` verlässt — deshalb
 # greift dieser Wert im Normalbetrieb nie. Wird die Gerätegrenze ÜBER diesen

@@ -347,7 +347,7 @@ data:
   SATELLITE_CLEANUP_INTERVAL: "30"     # Takt des Kehraus in Sekunden
   SATELLITE_UPDATE_TIMEOUT: "900"      # OTA-Lauf ohne Endzustand gilt danach als gescheitert
   # Sicherungsnetz für ein HÄNGENDES Gerät, KEIN zweiter Aufnahme-Deckel.
-  # Bindend ist die Gerätegrenze `vad_max_recording_seconds` (Flotte: 20s,
+  # Bindend ist die Gerätegrenze `vad_max_recording_seconds` (Flotte: 60s,
   # src/satellite/provisioning/group_vars/satellites.yml). Dieser Wert MUSS
   # deutlich darüber liegen — sonst gewinnt das Backend und verwirft die
   # laufende Aufnahme samt Puffer.

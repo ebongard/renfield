@@ -199,7 +199,7 @@ drei scharf, deshalb sind die beiden älteren dabei kalibriert worden:
 
 * **Sicherungsnetz für ein hängendes Gerät** (`DEVICE_SESSION_TIMEOUT`, 120 s)
   gilt nur noch im Zustand `listening`. Es ist KEINE Aufnahmegrenze: die sitzt
-  auf dem Satelliten (`vad_max_recording_seconds`, Flotte 20 s) und beendet die
+  auf dem Satelliten (`vad_max_recording_seconds`, Flotte 60 s) und beendet die
   Aufnahme über `audio_end`, womit die Sitzung `listening` verlässt. Dieser Wert
   greift nur, wenn gar kein `audio_end` kommt, und muss deutlich über jeder
   Gerätegrenze liegen — sonst gewinnt er und verwirft die Aufnahme samt Puffer. Die Marke wird beim Weckwort gesetzt, und der ganze Zug —
