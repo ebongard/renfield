@@ -26,6 +26,11 @@ _CHANGEME_FIELDS: tuple[str, ...] = (
 )
 
 
+# RENFIELD_ENV values that mean "a real deployment": they arm the boot guards
+# (insecure SECRET_KEY, cookie posture, self-registration). One place to extend.
+_REAL_DEPLOY_ENVS = frozenset({"production", "prod", "staging"})
+
+
 class Settings(BaseSettings):
     """Anwendungs-Einstellungen"""
 
@@ -2022,7 +2027,7 @@ class Settings(BaseSettings):
         SECRET_KEY must already be provisioned.
         """
         env = self.renfield_env.lower()
-        is_real_env = env in {"production", "prod", "staging"}
+        is_real_env = env in _REAL_DEPLOY_ENVS
         if not (self.auth_enabled or is_real_env):
             return self
 
@@ -2076,6 +2081,11 @@ class Settings(BaseSettings):
           ``ALLOW_REGISTRATION=true`` — open self-registration in a multi-user
           deployment lets anyone mint a Gast account.
 
+        HARD FAIL (2026-09-20) — a real ``RENFIELD_ENV`` with ``AUTH_ENABLED=true``
+        and ``ALLOW_REGISTRATION`` NOT set at all (inherited default): an
+        authenticated production instance must decide on signup explicitly;
+        a value from any settings source (env, .env) counts as set.
+
         The current single-user posture (auth off) trips nothing: every check is
         gated on ``auth_enabled`` (or a production env), so an all-false config
         is byte-identical.
@@ -2123,7 +2133,7 @@ class Settings(BaseSettings):
                     "AUTH_ENABLED=false — a cookie session is meaningless without "
                     "authentication. Enable AUTH_ENABLED or disable cookie auth."
                 )
-            if not self.cookie_secure and env in {"production", "prod", "staging"}:
+            if not self.cookie_secure and env in _REAL_DEPLOY_ENVS:
                 raise ValueError(
                     "Inconsistent auth config: AUTH_COOKIE_ENABLED=true with "
                     f"COOKIE_SECURE=false on RENFIELD_ENV={self.renfield_env!r} — "
@@ -2142,20 +2152,20 @@ class Settings(BaseSettings):
                 "deployment should pin CORS_ORIGINS to the frontend origin(s)."
             )
 
-        if env in {"production", "prod", "staging"} and self.allow_registration:
-            # Open self-registration on a real, authenticated instance is only
-            # acceptable as a deliberate choice. The code default is True (dev +
-            # the auth-off household), so an instance that merely FORGOT the key
-            # would silently expose signup to the internet: refuse to boot when
-            # the value is inherited, warn when the operator set it on purpose.
-            # A settings source (env / .env) counts as "set" in model_fields_set.
-            if self.auth_enabled and "allow_registration" not in self.model_fields_set:
-                raise ValueError(
-                    f"RENFIELD_ENV={self.renfield_env!r} with AUTH_ENABLED=true and "
-                    "ALLOW_REGISTRATION unset — the default (true) would open "
-                    "self-registration to anyone. Set ALLOW_REGISTRATION=false, or "
-                    "=true explicitly if public signup is intended."
-                )
+        is_real_env = env in _REAL_DEPLOY_ENVS
+        # Self-registration on a real, AUTHENTICATED instance must be a decision,
+        # not an inheritance: the code default is True (dev + the auth-off
+        # household), so an instance that merely forgot the key would expose
+        # signup to the internet. Checked on model_fields_set, independent of the
+        # default's value — a settings source (env / .env) counts as "set".
+        if is_real_env and self.auth_enabled and "allow_registration" not in self.model_fields_set:
+            raise ValueError(
+                f"RENFIELD_ENV={self.renfield_env!r} with AUTH_ENABLED=true and "
+                "ALLOW_REGISTRATION unset — the default (true) would open "
+                "self-registration to anyone. Set ALLOW_REGISTRATION=false, or "
+                "=true explicitly if public signup is intended."
+            )
+        if is_real_env and self.allow_registration:
             logger.warning(
                 f"⚠ RENFIELD_ENV={self.renfield_env!r} with ALLOW_REGISTRATION=true "
                 "— open self-registration lets anyone create an account. Set "
