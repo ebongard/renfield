@@ -105,6 +105,22 @@ class TestPreviousKeys:
         assert decrypt_secret(_token_under(OLD)) == IRK          # stripped match
 
     @pytest.mark.unit
+    @pytest.mark.parametrize("prev", ["", "   ", ",", " , ,", "\n"])
+    def test_blank_previous_means_no_previous_keys(self, keys, prev):
+        from services.secret_encryption import previous_key_count
+        keys(NEW, previous=prev)
+        assert se._previous_secrets() == []
+        assert previous_key_count() == 0
+        with pytest.raises(InvalidToken):
+            decrypt_secret(_token_under(OLD))
+
+    @pytest.mark.unit
+    def test_previous_key_count_dedups_variants(self, keys):
+        from services.secret_encryption import previous_key_count
+        keys(NEW, previous=f" {OLD} , {OLD}, older-key-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb")
+        assert previous_key_count() == 2
+
+    @pytest.mark.unit
     def test_current_key_listed_as_previous_is_harmless(self, keys):
         keys(NEW, previous=NEW)
         tok = encrypt_secret(IRK)

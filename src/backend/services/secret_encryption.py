@@ -31,6 +31,7 @@ __all__ = [
     "decrypt_secret",
     "rotate_secret",
     "is_current_key",
+    "previous_key_count",
     "reset_key_cache",
     "InvalidToken",
 ]
@@ -59,10 +60,19 @@ def _previous_secrets() -> list[str]:
     raw = _secret_str(settings.secret_key_previous)
     out: list[str] = []
     for entry in raw.split(","):
-        for variant in (entry.strip(), entry):
-            if variant and variant not in out:
+        stripped = entry.strip()
+        if not stripped:
+            continue  # blank / whitespace-only entry is not a key
+        for variant in (stripped, entry):
+            if variant not in out:
                 out.append(variant)
     return out
+
+
+def previous_key_count() -> int:
+    """How many distinct former keys are configured (0 = no rotation in progress).
+    Blank or comma-only SECRET_KEY_PREVIOUS values count as none."""
+    return len({v.strip() for v in _previous_secrets()})
 
 
 @lru_cache(maxsize=1)

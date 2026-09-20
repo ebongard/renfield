@@ -25,7 +25,9 @@ _REPO = Path(__file__).resolve().parents[2]
 _BIN = _REPO / "bin"
 _BACKEND = _REPO / "src" / "backend"
 _SCRIPT = _BIN / "backfill_paperless_metadata.py"
-_BACKFILL_SCRIPTS = sorted(_BIN.glob("backfill_*.py"))
+# Every operator script that carries the bootstrap block — the backfills plus the
+# SECRET_KEY rotation walker (BL-0357); the drift + copied-alone tests cover all.
+_BACKFILL_SCRIPTS = sorted([*_BIN.glob("backfill_*.py"), _BIN / "rotate_secret_encryption.py"])
 _BLOCK_RE = re.compile(r"# --- backend import path .*?# --- end backend import path -+\n", re.S)
 
 

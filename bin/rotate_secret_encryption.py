@@ -59,12 +59,14 @@ if str(_BACKEND) not in sys.path:
 
 from ha_glue.services.secret_rotation import rotate_irks  # noqa: E402
 from services.database import AsyncSessionLocal  # noqa: E402
-from utils.config import settings  # noqa: E402
+from services.secret_encryption import previous_key_count  # noqa: E402
 
 
 async def main(commit: bool) -> int:
-    previous = settings.secret_key_previous.get_secret_value().strip()
-    if not previous:
+    # Same parsing as the decryptor: a blank or comma-only value is NO previous
+    # key — otherwise every old row would read as "undecryptable" with the wrong
+    # advice (re-enter) instead of the right one (set the former key first).
+    if previous_key_count() == 0:
         print(
             "SECRET_KEY_PREVIOUS is empty — nothing to rotate FROM. Set it to the "
             "former key (step 1 of the runbook) before running this script.",
