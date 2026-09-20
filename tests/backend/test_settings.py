@@ -25,7 +25,6 @@ class TestWakeWordSettings:
 
         assert response.status_code == 200
         data = response.json()
-        assert "enabled" in data
         assert "keyword" in data
         assert "threshold" in data
         assert "cooldown_ms" in data
@@ -34,14 +33,8 @@ class TestWakeWordSettings:
     @pytest.mark.integration
     async def test_wakeword_settings_has_keywords(self, async_client: AsyncClient):
         """Testet, dass verfügbare Keywords zurückgegeben werden"""
-        with patch('api.routes.settings.settings') as mock_settings:
-            mock_settings.wake_word_enabled = True
-            mock_settings.wake_word_default = "alexa"
-            mock_settings.wake_word_threshold = 0.5
-            mock_settings.wake_word_cooldown_ms = 2000
-
-            with patch('api.routes.settings._check_server_fallback', return_value=False):
-                response = await async_client.get("/api/settings/wakeword")
+        with patch('api.routes.settings._check_server_fallback', return_value=False):
+            response = await async_client.get("/api/settings/wakeword")
 
         assert response.status_code == 200
         data = response.json()
@@ -123,14 +116,8 @@ class TestServerFallback:
     @pytest.mark.integration
     async def test_server_fallback_available(self, async_client: AsyncClient):
         """Testet Server-side Fallback verfügbar"""
-        with patch('api.routes.settings.settings') as mock_settings:
-            mock_settings.wake_word_enabled = True
-            mock_settings.wake_word_default = "alexa"
-            mock_settings.wake_word_threshold = 0.5
-            mock_settings.wake_word_cooldown_ms = 2000
-
-            with patch('api.routes.settings._check_server_fallback', return_value=True):
-                response = await async_client.get("/api/settings/wakeword")
+        with patch('api.routes.settings._check_server_fallback', return_value=True):
+            response = await async_client.get("/api/settings/wakeword")
 
         assert response.status_code == 200
         data = response.json()
@@ -139,14 +126,8 @@ class TestServerFallback:
     @pytest.mark.integration
     async def test_server_fallback_unavailable(self, async_client: AsyncClient):
         """Testet Server-side Fallback nicht verfügbar"""
-        with patch('api.routes.settings.settings') as mock_settings:
-            mock_settings.wake_word_enabled = True
-            mock_settings.wake_word_default = "alexa"
-            mock_settings.wake_word_threshold = 0.5
-            mock_settings.wake_word_cooldown_ms = 2000
-
-            with patch('api.routes.settings._check_server_fallback', return_value=False):
-                response = await async_client.get("/api/settings/wakeword")
+        with patch('api.routes.settings._check_server_fallback', return_value=False):
+            response = await async_client.get("/api/settings/wakeword")
 
         assert response.status_code == 200
         data = response.json()
@@ -197,12 +178,12 @@ class TestConfigurationValues:
         assert 500 <= data["cooldown_ms"] <= 10000
 
     @pytest.mark.integration
-    async def test_wakeword_enabled_field_exists(self, async_client: AsyncClient):
-        """Testet dass enabled-Feld zurückgegeben wird"""
+    async def test_wakeword_settings_carry_no_server_side_enabled(self, async_client: AsyncClient):
+        """Der Ein/Aus-Schalter ist eine Geräteentscheidung (Satellit lokal, Browser
+        in localStorage) — der Server führt kein `enabled`-Feld mehr (WAKE_WORD_ENABLED
+        wurde 2026-09-20 als Flag ohne Leser entfernt)."""
         response = await async_client.get("/api/settings/wakeword")
 
         assert response.status_code == 200
         data = response.json()
-        # enabled should be a boolean
-        assert "enabled" in data
-        assert isinstance(data["enabled"], bool)
+        assert "enabled" not in data

@@ -252,8 +252,8 @@ class Settings(BaseSettings):
     advertise_scheme: Literal["http", "https"] = "http"  # URL scheme for advertise_host-built media URLs. https requires renderers to resolve+trust advertise_host's cert. Pair https with ADVERTISE_PORT=443.
     backend_internal_url: str = "http://backend:8000"  # Internal URL for Docker networking (fallback when advertise_host not set)
 
-    # Wake Word Detection
-    wake_word_enabled: bool = False  # Disabled by default (opt-in)
+    # Wake Word Detection (the on/off switch is per device: satellites decide
+    # locally, the browser stores it in localStorage — there is no server flag)
     wake_word_default: str = "hey_renfield"  # Default wake word
     wake_word_threshold: float = 0.5
     wake_word_cooldown_ms: int = 2000
@@ -709,16 +709,15 @@ class Settings(BaseSettings):
     # Hard duration ceiling (hours) enforced at upload; also derives the worker's
     # stream visibility window. >4h is a documented escalation (chunked path).
     meeting_max_duration_h: int = Field(default=4, ge=1, le=12)
-    # Auto-match diarized clusters to enrolled speakers. DEFERRED/dark: the spike
-    # separation gate was insufficient-data on synthetic audio, so the matcher is
-    # NOT built yet — pseudonyms ("Sprecher N") + human labeling is the product.
-    meeting_auto_match_enabled: bool = False
+    # Auto-matching diarized clusters to ENROLLED speakers is not built (decision
+    # 2026-09-20: pseudonyms + human labeling + anonymous fingerprints are the
+    # product); the former placeholder flag meeting_auto_match_enabled was removed.
     # §2 Track A: cross-meeting ANONYMOUS speaker fingerprints. On a completed
     # meeting, resolve each diarized cluster's ECAPA centroid to a stable
     # owner+tier-scoped fingerprint ("Speaker A1B2") — the SAME anonymous person
     # across meetings, WITHOUT claiming who they are (that's merge-on-enroll,
-    # separate). Distinct from meeting_auto_match_enabled (which binds to real
-    # enrolled Speakers). Dark by default; the calibration go/no-go PASSED on
+    # separate). Distinct from binding clusters to real enrolled Speakers (the
+    # unbuilt auto-match). Dark by default; the calibration go/no-go PASSED on
     # public AMI (margin 0.33, EER 0.0018). The threshold errs CONSERVATIVE —
     # prefer a split (two fingerprints for one person, a human can merge later)
     # over a false merge (silently conflating two people). Calibration reference:
@@ -747,11 +746,9 @@ class Settings(BaseSettings):
     # 0 = retain forever (retention_until left NULL). Consent-gated DE workplace
     # recordings should NOT be 0.
     meeting_retention_days: int = Field(default=365, ge=0, le=3650)
-    # Chat artifacts Lane B (free-form HTML/SVG in a sandboxed iframe). DEFERRED —
-    # NOT wired to anything in this delivery. Placeholder so the per-lane flag
-    # split (§8 Q5) exists; defaults off and requires its own security review
-    # before it is ever built/enabled. Do NOT enable.
-    artifacts_html_sandbox_enabled: bool = False
+    # Chat artifacts Lane B (free-form HTML/SVG in a sandboxed iframe) is NOT
+    # built (decision 2026-09-20); its placeholder flag artifacts_html_sandbox_enabled
+    # was removed. A build needs its own flag AND its own security review first.
     # Generic output-provider registry for room media/control routing. When on,
     # room output discovery + dispatch route through the pluggable OutputProvider
     # registry (built-in renfield/HA + MCP-declared dlna/samsung/sonos via the
@@ -859,7 +856,9 @@ class Settings(BaseSettings):
     # every Nth save (probabilistic) — drift up to N rows over the cap is
     # harmless because the cleanup scheduler also prunes by retention.
     trajectory_cap_check_every: int = Field(default=50, ge=1, le=1000)
-    trajectory_redact_pii: bool = False                                       # Phase 4: scrub PII into redacted_payload
+    # The export privacy gate is the `require_redacted` query parameter of
+    # /api/trajectories/export.jsonl (default true), not a setting; the unread
+    # placeholder trajectory_redact_pii was removed 2026-09-20.
 
     # Tool outcome tracking (self-learning Phase 3)
     # Counts every tool_result step in the agent loop; surfaces warnings
@@ -1450,7 +1449,6 @@ class Settings(BaseSettings):
 
     # Registration settings
     allow_registration: bool = True  # Allow self-registration
-    require_email_verification: bool = False  # Not implemented yet
 
     # === Pluggable auth provider registry (ebongard/renfield#591) ===
     # Per-provider credential walk timeout. A provider exceeding this is

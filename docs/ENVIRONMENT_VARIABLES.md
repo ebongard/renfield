@@ -531,10 +531,9 @@ Routing-Präferenz für den nächsten Turn (keine Rechte-Eskalation).
 
 ```bash
 ARTIFACTS_TYPED_ENABLED=false        # Lane A: typed table/list/keyvalue/chart inline
-ARTIFACTS_HTML_SANDBOX_ENABLED=false # Lane B: free-form HTML/SVG — NICHT verdrahtet, NICHT aktivieren
 ```
 
-**Default:** beide `false` (Opt-in/dark). `ARTIFACTS_TYPED_ENABLED` schaltet die
+**Default:** `false` (Opt-in/dark). `ARTIFACTS_TYPED_ENABLED` schaltet die
 **Lane-A**-Artefakte frei: generierte Tabellen/Listen/Key-Value/Charts werden inline
 im Chat-Turn als **typisierte JSON-Daten → echte React-Komponenten** gerendert (kein
 Modell-HTML, kein Modell-SVG — React's Escape-Boundary ist die gesamte
@@ -544,10 +543,10 @@ Orchestrierungs-Pfad, nie aus Agent-Freitext) **und** der Frontend-Renderer
 (`/api/config/features`). Ungültige/zu große Payloads fallen auf einen escapten
 Code-Block zurück (fail-closed). Umschalten braucht **kein** Backend-Redeploy.
 
-`ARTIFACTS_HTML_SANDBOX_ENABLED` ist ein **Platzhalter** für die zurückgestellte
-**Lane B** (free-form HTML/SVG in einer sandboxed iframe) — in dieser Auslieferung an
-nichts verdrahtet, erfordert ein eigenes Security-Review vor dem Bau. **Nicht
-aktivieren.**
+**Lane B** (free-form HTML/SVG in einer sandboxed iframe) wird nicht gebaut
+(Entscheidung 2026-09-20); der frühere Platzhalter `ARTIFACTS_HTML_SANDBOX_ENABLED`
+wurde entfernt. Ein späterer Bau braucht ein eigenes Flag und ein eigenes
+Security-Review.
 
 **Voraussetzung (Lane A):** Die baseline-CSP in `nginx.conf` ist enforcing (Frontend
 ≥ v2.15.16) — gute Hygiene für Lane A, Pflicht für ein späteres Lane B.
@@ -1614,8 +1613,8 @@ MEETING_MINUTES_ENABLED=false
 MEETING_WHISPER_MODEL=
 # Harte Obergrenze (Stunden), am Upload erzwungen; >4h ist die chunked-Eskalation
 MEETING_MAX_DURATION_H=4              # 1-12
-# Auto-Match diarisierter Cluster an enrollte Sprecher — DEFERRED/dark (noch nicht gebaut)
-MEETING_AUTO_MATCH_ENABLED=false
+# Auto-Match diarisierter Cluster an enrollte Sprecher wird nicht gebaut (Entscheidung
+# 2026-09-20); der frühere Platzhalter MEETING_AUTO_MATCH_ENABLED wurde entfernt.
 # §2 Track A: cross-meeting ANONYME Sprecher-Fingerprints (dark). Ordnet jeden
 # diarisierten Cluster einem stabilen owner+tier-scoped Fingerprint zu (dieselbe
 # anonyme Person über Meetings hinweg, OHNE zu behaupten WER sie ist). Ein
@@ -1642,7 +1641,7 @@ MEETING_RETENTION_DAYS=365           # 0-3650
 
 **Defaults:**
 - `PROJECTS_ENABLED`: `false` · `NOTES_ENABLED`: `false` · `NOTES_SEMANTIC_SEARCH_ENABLED`: `true`
-- `MEETING_TRANSCRIPTION_ENABLED`: `false` · `MEETING_MINUTES_ENABLED`: `false` · `MEETING_AUTO_MATCH_ENABLED`: `false`
+- `MEETING_TRANSCRIPTION_ENABLED`: `false` · `MEETING_MINUTES_ENABLED`: `false`
 - `MEETING_FINGERPRINTS_ENABLED`: `false` · `MEETING_FINGERPRINT_MATCH_THRESHOLD`: `0.60` · `MEETING_FINGERPRINT_MATCH_MARGIN`: `0.05` · `MEETING_FINGERPRINT_AUTONAME`: `false`
 - `MEETING_WHISPER_MODEL`: `""` · `MEETING_MAX_DURATION_H`: `4`
 - `MEETING_KEEP_AUDIO`: `false` · `MEETING_AUDIO_GRACE_DAYS`: `7` · `MEETING_RETENTION_DAYS`: `365`
@@ -1763,10 +1762,11 @@ TRAJECTORY_RETENTION_DAYS=30                  # nicht-flagged Rows werden aelter
 TRAJECTORY_CLEANUP_INTERVAL=86400             # Sekunden zwischen Cleanup-Laeufen (default 1d)
 TRAJECTORY_MAX_PER_USER=10000                 # Soft-Cap; aelteste nicht-flagged Rows werden gedroppt
 
-# Phase-4-Vorbereitung — wenn true, exportiert /export.jsonl nur Rows
-# mit gesetztem redacted_payload. v1 schreibt nie redacted_payload, dh
-# bei =true bleibt der Export leer (kontrollierter Privacy-Gate).
-TRAJECTORY_REDACT_PII=false
+# Privacy-Gate des Exports: der Query-Parameter `require_redacted` von
+# GET /api/trajectories/export.jsonl (Default true) liefert nur Rows mit
+# gesetztem redacted_payload — v1 schreibt nie redacted_payload, der Export
+# ist also leer, bis ein Scrubber existiert. Ein Setting dafür gibt es nicht
+# (der ungelesene Platzhalter TRAJECTORY_REDACT_PII wurde 2026-09-20 entfernt).
 ```
 
 **Verhalten:**

@@ -1,6 +1,6 @@
 # Design — Meetings: one confirmed extraction → minutes + KG + commitments
 
-**Status:** APPROVED v2 (external re-review verdict "v2 sound" — all four v1 findings verified closed; five under-costed edges C1–C5 folded in below before Track B/C build). **Shipped:** Phase 0, Track D, Track A Increments 1+2 (dark, `meeting_fingerprints_enabled` / `meeting_fingerprint_autoname`). **Open:** Track A step 1 (enrolled-speaker auto-match, `meeting_auto_match_enabled`), Track B, Track C.
+**Status:** APPROVED v2 (external re-review verdict "v2 sound" — all four v1 findings verified closed; five under-costed edges C1–C5 folded in below before Track B/C build). **Shipped:** Phase 0, Track D, Track A Increments 1+2 (dark, `meeting_fingerprints_enabled` / `meeting_fingerprint_autoname`). **Open:** Track B, Track C. Track A step 1 (enrolled-speaker auto-match) is not planned (2026-09-20; its placeholder flag was removed).
 **Author:** 2026-07-21.
 **Scope:** primarily the auth-on business instance (`renfield-xidra`), where meetings + KG + projects are live. Household ships the same code, lower value.
 
@@ -47,7 +47,7 @@ Two consequences that make the reviewer's hard problems **not exist**:
 | Piece | Reality (verified) | Implication |
 |---|---|---|
 | Meeting segments | **No DB table** — a JSON blob on `Meeting.segments` (JSONB). The per-cluster **ECAPA embedding is persisted inside that JSON** (raw `list[float]`, duplicated per segment), not queryable, not keyed to a speaker. | Track A needs a **new fingerprint table** (halfvec-indexed centroids). This is the hard half, not "wiring". |
-| Auto-match | **Unbuilt** — `meeting_auto_match_enabled` is a config flag + a docstring with **zero code references**. `resolve_speaker_from_embedding` is never called from the meeting path. | Track A builds the match path from scratch. |
+| Auto-match | **Unbuilt, not planned** (decision 2026-09-20; the placeholder flag `meeting_auto_match_enabled` was removed — it had **zero code references**). `resolve_speaker_from_embedding` is never called from the meeting path. | Track A builds the match path from scratch. |
 | `resolve_speaker_from_embedding` | A **live-STT policy wrapper** — enrolled-only under `controlled`, auto-enrolls "Unbekannter Sprecher #N" into the live pool, appends embeddings to profiles (continuous learning), tuned for short utterances. | **Do NOT reuse as-is** (it would pollute the household speaker pool with meeting participants). Reuse the low-level cosine/margin math behind a meeting-specific gate that never auto-enrolls into the live pool. |
 | KG relation provenance | `save_relation` dedups **globally** on `(subject, predicate, object)`, keeps a single `source_session_id` = *first* creator. | A per-document delete is unsafe (over- and under-deletes). Meeting relations need their **own** M:N `meeting ↔ relation` provenance so a re-confirm can diff/update only the meeting's contribution. |
 | Obligations | Entirely `DocumentFact`-shaped: `document_id` **NOT NULL + CASCADE**, `obligation_date` "AS PRINTED, never computed", agenda requires `obligation_date IS NOT NULL`; facts leak into `internal.knowledge_search` + `/api/atoms`. | 3b: a source-flexible obligation that survives transcript purge, doesn't leak into fact-search, and takes a human-set date. |

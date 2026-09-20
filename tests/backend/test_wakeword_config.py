@@ -133,7 +133,6 @@ class TestWakeWordConfig:
             keyword="alexa",
             threshold=0.5,
             cooldown_ms=2000,
-            enabled=True
         )
 
         result = config.to_dict()
@@ -141,7 +140,8 @@ class TestWakeWordConfig:
         assert result["keyword"] == "alexa"
         assert result["threshold"] == 0.5
         assert result["cooldown_ms"] == 2000
-        assert result["enabled"] is True
+        # on/off is a per-device decision; the server never carried it
+        assert "enabled" not in result
         assert result["wake_words"] == ["alexa"]
 
     def test_to_satellite_config(self):
@@ -570,7 +570,7 @@ class TestWakeWordSettingsAPI:
         assert "threshold" in data
         assert "cooldown_ms" in data
         assert "available_keywords" in data
-        assert "enabled" in data
+        assert "enabled" not in data  # per-device switch, never a server field
 
     @pytest.mark.integration
     async def test_get_wakeword_settings_available_keywords(self, async_client: AsyncClient):

@@ -579,6 +579,7 @@ choices. The §1-§6 prose above is the exploration; this section is the contrac
   answer and **not** from the `conversation` role in v1.
 - **Q5 flags:** **per-lane** — `artifacts_typed_enabled` (Lane A, shippable dark→on)
   and `artifacts_html_sandbox_enabled` (Lane B, defaults off, gated on security review).
+  *(2026-09-20: Lane B is not planned; the unwired Lane-B placeholder flag was removed again.)*
 
 ### Test additions (mandatory, fold into §6)
 The §6 strategy is sound for the renderer/escape/fallback/CSP/a11y core. Add, from
@@ -754,4 +755,4 @@ Shipped state of Lane A (`ARTIFACTS_TYPED_ENABLED`, opt-in/dark — roadmap item
 - **Fail-closed:** invalid shape / throwing sub-renderer / unknown kind / stuck `partial` → escaped code-block fallback
   (never raw markup); valid-but-empty → warm per-kind empty state.
 - Persisted as `message_metadata.artifacts[]` (array keyed by `id`, multiple per turn, rehydrates via
-  `historyToUiMessage`); streaming patches append same-`id` idempotently. Lane B (free-form HTML/SVG sandboxed iframe) is **deferred** — own security review, `ARTIFACTS_HTML_SANDBOX_ENABLED` placeholder, not wired. Needs the enforcing baseline CSP in `nginx.conf`.
+  `historyToUiMessage`); streaming patches append same-`id` idempotently. Lane B (free-form HTML/SVG sandboxed iframe) is **not built and not planned** (decision 2026-09-20; the `ARTIFACTS_HTML_SANDBOX_ENABLED` placeholder was removed — a build needs its own flag and its own security review). Needs the enforcing baseline CSP in `nginx.conf`.

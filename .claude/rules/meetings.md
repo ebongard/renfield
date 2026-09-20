@@ -12,7 +12,8 @@ paths:
 Loaded only when a meeting file is read. Long form: `docs/design/meeting-transcription.md`,
 `docs/design/meeting-minutes.md`, `docs/design/meeting-kg-and-speaker-identity.md`.
 Flags (all dark by default): `MEETING_TRANSCRIPTION_ENABLED` (+ voice-server `MEETING_ENABLED`; pyannote loads only
-then), `MEETING_MINUTES_ENABLED`, `meeting_auto_match_enabled` (deferred). Frontend gates: `meeting_transcription_enabled`
+then), `MEETING_MINUTES_ENABLED`. Auto-match to enrolled speakers is not built and not planned (2026-09-20; its
+placeholder flag was removed). Frontend gates: `meeting_transcription_enabled`
 / `meeting_minutes_enabled` from `/api/config/features` — nav + route absent when off.
 
 ## Upload → worker → voice-server

@@ -21,7 +21,6 @@ from services.wakeword_config_manager import (
     VALID_KEYWORDS,
     get_wakeword_config_manager,
 )
-from utils.config import settings
 
 router = APIRouter()
 
@@ -51,8 +50,7 @@ class WakeWordUpdateRequest(BaseModel):
 
 
 class WakeWordSettingsResponse(BaseModel):
-    """Response for wake word settings"""
-    enabled: bool
+    """Response for wake word settings (on/off is per device, not a server field)"""
     keyword: str
     threshold: float
     cooldown_ms: int
@@ -110,7 +108,6 @@ async def get_wakeword_settings(
     config = await config_manager.get_config(db)
 
     return WakeWordSettingsResponse(
-        enabled=settings.wake_word_enabled,
         keyword=config.keyword,
         threshold=config.threshold,
         cooldown_ms=config.cooldown_ms,
@@ -158,7 +155,6 @@ async def update_wakeword_settings(
         )
 
     return WakeWordSettingsResponse(
-        enabled=settings.wake_word_enabled,
         keyword=config.keyword,
         threshold=config.threshold,
         cooldown_ms=config.cooldown_ms,

@@ -327,8 +327,7 @@ on its own, is never falsely interrupted.
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `WAKE_WORD_ENABLED` | Enable wake word detection | `true` |
-| `WAKE_WORD_DEFAULT` | Initial default keyword | `alexa` |
+| `WAKE_WORD_DEFAULT` | Initial default keyword | `hey_renfield` |
 | `WAKE_WORD_THRESHOLD` | Initial default threshold | `0.5` |
 | `WAKE_WORD_COOLDOWN_MS` | Initial default cooldown | `2000` |
 

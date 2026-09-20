@@ -100,7 +100,6 @@ class WakeWordConfig:
     keyword: str
     threshold: float
     cooldown_ms: int
-    enabled: bool = True
 
     @property
     def keyword_list(self) -> list[str]:
@@ -121,7 +120,6 @@ class WakeWordConfig:
             "keyword": self.keyword,
             "threshold": self.threshold,
             "cooldown_ms": self.cooldown_ms,
-            "enabled": self.enabled,
             "wake_words": self.keyword_list,  # satellites load every model in the list
         }
 
@@ -184,7 +182,6 @@ class WakeWordConfigManager:
             keyword=keyword,
             threshold=threshold,
             cooldown_ms=cooldown_ms,
-            enabled=settings.wake_word_enabled,
         )
 
     async def update_config(

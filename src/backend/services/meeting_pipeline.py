@@ -7,8 +7,9 @@ the transcript into the KB. Pure helpers (``apply_pseudonyms``,
 ``render_transcript_markdown``) are unit-tested without a GPU.
 
 Attribution DEFAULT = honest pseudonyms ("Sprecher N") + one-click human
-labeling. Auto-match is deferred (``meeting_auto_match_enabled`` dark) — the
-spike separation gate was insufficient-data on synthetic audio.
+labeling. Auto-matching clusters to enrolled speakers is not built (the spike
+separation gate was insufficient-data on synthetic audio; decision 2026-09-20:
+not planned, the former placeholder flag was removed).
 """
 from __future__ import annotations
 

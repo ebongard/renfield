@@ -14,8 +14,8 @@ Loaded only when the chat handler, artifact/widget/follow-up services or a chat 
 
 ## Flags (config default)
 `FOLLOWUP_CHIPS_ENABLED`, `COMMAND_PALETTE_ENABLED` (frontend-only gate), `ROLE_SURFACING_ENABLED`,
-`MESSAGE_SEARCH_ENABLED`, `ARTIFACTS_TYPED_ENABLED` — all dark. `ARTIFACTS_HTML_SANDBOX_ENABLED` = Lane B placeholder,
-**deferred and not wired** (needs its own security review). Provenance chips are always on. The weather widget also
+`MESSAGE_SEARCH_ENABLED`, `ARTIFACTS_TYPED_ENABLED` — all dark. Lane B (free-form HTML/SVG) is **not built and not
+planned** (2026-09-20; its placeholder flag was removed — a build needs its own flag + security review). Provenance chips are always on. The weather widget also
 needs `WEATHER_ENABLED`.
 
 ## Turn frames

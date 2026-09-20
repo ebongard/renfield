@@ -49,8 +49,8 @@ already work via existing paths; this adds the multi-speaker piece.
    │  human labeling. Auto-match is SPIKE-GATED (D12): built only if cluster
    │  separation on meeting audio ≥ 0.15 (same-speaker − diff-p95); if built, a NEW
    │  read-only matcher (pure function, margin-gated like speaker_resolver but NO
-   │  commits / NO review-bucket writes / NO reinforcement), behind
-   │  meeting_auto_match_enabled (default false — work instance keeps it off).
+   │  commits / NO review-bucket writes / NO reinforcement) — NOT built, not
+   │  planned (2026-09-20; the placeholder flag was removed).
    │  ▼
    │  segments JSONB on Meeting row (D7) + rendered markdown →
    │  folder_ingest.ingest_document() into the target KB (D6): dedup, chunking,
@@ -107,10 +107,10 @@ Measures, with HARD gates fixed BEFORE running:
 ## Config (all env, dark by default)
 
 `MEETING_TRANSCRIPTION_ENABLED=false`, `meeting_whisper_model`, `meeting_max_duration_h`
-(default 4), `meeting_auto_match_enabled=false`, `meeting_keep_audio=false`,
-`meeting_audio_grace_days`, retention defaults. Per-instance posture = env defaults
-only (household may enable auto-match if the gate passed; work instance: pseudonyms +
-consent UX, never-enrollable external participants are expected).
+(default 4), `meeting_keep_audio=false`, `meeting_audio_grace_days`, retention defaults.
+Per-instance posture = env defaults only (auto-match to enrolled speakers is not built
+and not planned as of 2026-09-20 — both instances: pseudonyms + consent UX,
+never-enrollable external participants are expected).
 
 ## Explicitly NOT in §2
 
@@ -162,8 +162,9 @@ in `.claude/rules/meetings.md`.
   the ONNX `/stt` space. pyannote loads only when `MEETING_ENABLED`; the image bakes GPU torch cu128 + the pyannote
   model via a BuildKit secret.
 - Attribution = honest pseudonyms ("Sprecher N") + one-click human labeling (`POST /api/meetings/{id}/relabel`,
-  re-render → reindex in place, stable `transcript_document_id`). Auto-match is DEFERRED
-  (`meeting_auto_match_enabled` dark) — the spike separation gate was insufficient-data on synthetic audio.
+  re-render → reindex in place, stable `transcript_document_id`). Auto-match to enrolled speakers is NOT
+  built and not planned (decision 2026-09-20; the placeholder flag `meeting_auto_match_enabled` was removed) —
+  the spike separation gate was insufficient-data on synthetic audio; anonymous cross-meeting fingerprints cover the need.
 - Ingest into a dedicated "Meetings" KB via `folder_ingest.ingest_document` with `source="meeting_transcript"` (new
   `documents.source` column, migration `pc20260714b`), which gates Schicht-A OFF (D14) and sets
   `file_to_paperless=False`.
