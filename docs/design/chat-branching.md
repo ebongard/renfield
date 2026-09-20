@@ -108,3 +108,16 @@ metadata; Postgres recursive CTEs, active-path order, fork sibling + leaf
 advance, memory deactivate, search filter+reindex, **cross-conversation IDOR
 isolation**, SET-NULL deletion) — 16 pass on real PG. Frontend:
 `ChatMessages.branching.test.tsx` + `historyToUiMessage` id carry.
+
+## Background moved from CLAUDE.md (2026-09-20)
+
+- Two defects were caught in `/review` and fixed before merge: the cross-conversation IDOR (see Security) **and a
+  conversation-delete FK violation** — deleting a conversation must not trip the new `parent_message_id` self-FK /
+  `active_leaf_message_id` FK (hence `ON DELETE CASCADE` / `ON DELETE SET NULL`, regression-tested as "SET-NULL
+  deletion").
+- Roadmap position: item 1 of the chat-UI modernization roadmap, "the heaviest". Frontend Phase 1 =
+  edit-latest-user / regenerate-latest-assistant; Phase 2 = fork-from-ANY + the per-message `‹ n/m ›` switcher +
+  delete-branch + the symmetric memory recompute.
+- The user-facing description lives in `docs/FEATURES.md`. The PWA cache-propagation rule that lets a new frontend
+  reach the browser is in the deploy-production skill ("Frontend PWA cache propagation").
+- Working rules for editing this code: `.claude/rules/chat-branching.md`.

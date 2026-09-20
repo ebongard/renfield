@@ -166,3 +166,108 @@ Alte URLs leiten (mit `?search`/`#hash`) in die Linsen um; ist das Flag aus, ble
 - [FEATURES.md](FEATURES.md) — Einzel-Feature-Beschreibungen (RAG, Memory, KG)
 - [ACCESS_CONTROL.md](ACCESS_CONTROL.md) — RPBAC-Schicht darunter (Authentifizierung + Rollen)
 - [FEDERATION_MULTI_PEER.md](FEDERATION_MULTI_PEER.md) — Cross-Instance-Queries über die Circle-Grenze
+
+---
+
+## Background moved from CLAUDE.md (2026-09-20)
+
+Developer-facing detail that used to live in the `CLAUDE.md` section "Circles v1 (access tiers)". The invariants for
+editing this code are in `.claude/rules/documents-facts.md` and `.claude/rules/obligations.md`; this section keeps the
+history, the tooling and the frontend wiring.
+
+### Generated document titles
+
+- `services/schicht_a_extractor.generate_document_title(facts)` synthesizes a short human title (issuer + type + date,
+  inferring the doc type from context) via one LLM call. It is stored in `documents.generated_title` (migration
+  `pc20260611`).
+- The Schicht A ingest hook sets it best-effort after the facts commit.
+- `GET /api/knowledge/documents` returns `display_name = generated_title → title → filename`; the `/wissen/dokumente`
+  (+ `/knowledge`) list renders it.
+- Existing documents are titled by `bin/backfill_document_titles.py` (`--dry-run` / `--commit`; works off stored
+  facts, no re-OCR). The hook is gated by `schicht_a_extraction_enabled`; the backfill only needs a chat model.
+
+### Document date — why the derivation is this strict
+
+- `documents.document_date` (Date, migration `pc20260831`) is the document's OWN date (invoice / letter date),
+  distinct from `created_at` (the import). It is derived at Schicht-A extraction by
+  `services/document_date.derive_document_date` and is always a full date.
+- Before 2026-09-15 the derivation took the first parsable date out of ANY fact. That dated household documents up
+  to a year ahead (an obligation's excerpt, a validity end, next year's instalment period) and silently mis-dated
+  others with a past deadline.
+- The kind sets come from the kinds the extractor actually emits, including the date kinds the first cut left
+  unranked (both instances measured, names/counts only).
+- The Simba booking period (`simba_ingest_review._document_period`) uses the same helper.
+
+### Document-date backfill tooling
+
+- `bin/backfill_document_dates.py` fills NULL dates.
+- `--rederive` (core: `services/document_date_backfill.py`) re-derives documents that already have a date:
+  - `--scope future` (default) — documents dated more than the tolerance after import;
+  - `--scope all` — every dated document; this also repairs a past deadline that was taken as the date.
+  - It writes only where the result differs (idempotent), is a dry run unless `--commit`, and prints ids plus
+    `unchanged` / `changed_earlier` / `changed_later` / `cleared`.
+- `--paperless-ids-out FILE` writes the Paperless ids of CHANGED documents for the follow-up
+  `bin/backfill_paperless_metadata.py --mode created-date`.
+  - **Cleared** documents (date now NULL) are listed separately and must not be handed to that follow-up: it sources
+    `created` from `document_date` and skips NULL, so Paperless keeps its current date.
+  - Caveat: the follow-up only PATCHes where Paperless `created` still equals `added`. A document whose `created` an
+    earlier run already set to the old wrong date is reported `skipped_not_consume_date`, not corrected.
+
+### List sort + integration icons
+
+- `GET /api/knowledge/documents` takes `sort` (`name`|`imported`|`document_date`) + `order`. The recency branch sorts
+  the full set in SQL (`rag_service.list_documents`, `NULLS LAST`); the `q`-search branch page-sorts the returned
+  relevance page.
+- The response also carries `document_date` and `in_paperless` (`paperless_document_id` present OR
+  `paperless_state='done'`).
+- Frontend `/wissen/dokumente` (`pages/KnowledgePage.tsx`): a sort-button bar (Name / Importdatum / Dokumentdatum; the
+  active arrow toggles asc/desc) plus per-row integration status icons (`Archive` = Paperless, green = present /
+  muted = absent).
+
+### Document search by name/content
+
+- `GET /api/knowledge/documents?q=` is a ranked hybrid document search — always-on, no flag, a bare `q` param on the
+  existing list route. A document is reachable by its NAME (incl. the synthesized `generated_title`), its Schicht-A
+  FACTS or its CONTENT, regardless of the 100-newest recency window the plain list shows.
+- The concrete gap it closed: a re-ingested document dedups against an old KB copy that sits far down the id order
+  and was otherwise unreachable in the UI.
+- `services/document_search.py::search_documents` runs three candidate signals — NAME (`documents.search_vector` FTS
+  via `ts_rank` + an ILIKE partial-token fallback), FACTS (`DocumentFactRetrieval`), CHUNKS (`RAGRetrieval`) —
+  RRF-fuses them (`rag_hybrid_rrf_k`) and applies ONE circle-visibility gate on the fused ids (D2 —
+  `document_chunks_circles_filter`). With `gate_available = not enforce_circles or postgres`, a leak is structurally
+  impossible even in an unsupported auth-on-against-sqlite config.
+- Migration `pc20260829_documents_fts` adds the GENERATED multilingual `documents.search_vector`
+  (`build_generated_tsvector_expression` over `generated_title || title || filename`) + a GIN index built
+  `CONCURRENTLY`.
+- Frontend: the `/knowledge` (+ `/wissen/dokumente`) search box drives it debounced
+  (`useKnowledgeDocumentsQuery({q})`), suppressed only under the unified workspace's `everything` omniscope.
+- **PR2 (deferred):** federated document search across Paperless.
+
+### Per-fact tier override — UI and scope
+
+- A `document_fact` can carry a tier independent of its parent document (e.g. a public issuer on an
+  otherwise-private document).
+- The Wissen detail drawer's TierPicker sets the override and surfaces a reset action
+  (`AtomService.reset_fact_tier`, `POST /api/atoms/documents/facts/{id}/reset-tier`, owner-only); `FaktenPanel` shows
+  a read-only override marker.
+- Carry-over across re-extraction needed no new column (it reuses `tier_overridden`); before it, a re-ingest /
+  re-OCR silently reset a deliberate override to the document tier.
+- The per-document advisory lock (`_reindex_lock`, NS `0x5341`) exists so two overlapping re-extractions of one
+  document cannot both leave their new set behind (duplicate facts).
+
+### Obligation notifier + weekly digest — background
+
+- Design follows the cross-model learning `schicht-a-obligations-source-of-truth`: obligations ARE the scheduling
+  source of truth — no `Reminder` rows, no reuse of the chat-reminder loop.
+- The notifier was originally scheduled by `_schedule_obligation_deadline_notifier`, the digest by
+  `_schedule_obligation_digest` and the calendar sync by `_schedule_obligation_calendar_sync`; all three have since
+  moved onto the Scheduled-Tasks engine (`docs/design/scheduled-tasks.md`), each re-asserting its gate in-handler.
+- Notifier (`OBLIGATION_NOTIFIER_ENABLED`, also needs `PROACTIVE_ENABLED`): one daily idempotent, owner-targeted scan,
+  `run_at_boot`, per-user advisory lock. `current_milestone(days_until)` returns the single current bucket
+  (`14d`/`7d`/`3d`/`1d`/`due`/`overdue`); each fires once via
+  `NotificationService.process_webhook(target_user_id, privacy="personal")`. Scan window
+  `[today − OBLIGATION_NOTIFIER_OVERDUE_GRACE_DAYS, today + 14d]`.
+- Digest (`OBLIGATION_DIGEST_ENABLED`, also needs `PROACTIVE_ENABLED`; `services/obligation_digest.py`, weekly,
+  `run_at_boot`, per-user advisory lock ns `0x4F44`): deduped by a `(user, period_key)` row in
+  `obligation_digest_log`.
+- Calendar auto-push: see `docs/OBLIGATION_CALENDAR_SYNC.md`.

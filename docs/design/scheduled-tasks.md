@@ -463,3 +463,63 @@ accurate against the code; verdict "sound to build with the fixes below"):
 - **B1/B2/B3** — pool ceiling is `10+20=30` not 10; update the stale
   "exactly one purpose" advisory-lock comment in `database.py`; re-verify the
   alembic head against `main` at build time.
+
+## Background moved from CLAUDE.md (2026-09-20)
+
+This section carries what the project `CLAUDE.md` said about this subsystem and the sections above did not. The
+invariants themselves now live in `.claude/rules/scheduled-tasks.md`.
+
+**Summary as `CLAUDE.md` stated it (#1137).** DB-defined recurring jobs (interval OR cron, start/end window, enable
+toggle), migration `pc20260827`, seeded with `INSERT … ON CONFLICT (name) DO NOTHING`. At the time of the move
+`CLAUDE.md` recorded Phase 3 as "16 of ~23 `_schedule_*` migrated onto the engine (**26 seed rows**)"; the status
+block at the top of this document still says 21. It also described the interactive `internal.paperless_dedupe` as
+already being a thin caller of `mcp.paperless.dedupe_documents`, while the "Phase-1 follow-up still open" note above
+lists that rewire as open. Registering a new built-in is engine-registry-only — NOT `agent_roles.yaml` (that file is
+for agent-advertised `internal.*` tools).
+
+**Why the H4 in-handler gate mattered for the obligation jobs.** The obligation notifier and digest gates were
+`settings.*_enabled AND proactive_enabled`, and they existed only in the old `_schedule_*` wrapper. Because
+`scan_all_users` consumes the reminder ledger, migrating the body without the gate would have silently dropped
+reminders.
+
+**Failure-streak alerting — environment names and defaults.** `SCHEDULED_TASK_FAILURE_ALERT_ENABLED` defaults ON and
+is meant as a kill-switch; delivery needs `PROACTIVE_ENABLED`. The columns are
+`scheduled_tasks.consecutive_error_count` + `error_alerted_at`. `_THRESHOLD` is 3 consecutive errors, `_REALERT_SECONDS`
+is 6h. The 50 consecutive Paperless-dedupe failures ran over 1.5 days. Counting is flag-INDEPENDENT: the streak is
+recorded even when delivery is off, so the admin-list badge stays honest.
+
+**The external HTTP watchdog — motivation and limits.** `WATCHDOG_ENABLED` + `WATCHDOG_TARGETS` (empty ⇒ inert),
+built-in task `watchdog`, every 120s. A system that is down cannot report itself, so the watchdog watches OTHER
+endpoints, and the peer instance watches this one.
+
+- It probes `/health/ready`, NEVER `/health`: the latter answers "ok" with a dead DB and would have stayed silent
+  through the 2026-09-11 21.5h outage.
+- Two honest limits: both instances dying together (the same `iscsid` restart) silences mutual watching; and a second
+  target failing mid-streak raises no second alert — the task's error text names all currently-failing targets.
+- Cross-namespace egress is a `private_k8s` prerequisite.
+
+**`paperless_index_health` — origin and the MCP contract.** It is Fix B of the 2026-08 re-ingest loop, implemented in
+`services/paperless_index_health.py`, gated by `PAPERLESS_INDEX_CHECK_ENABLED` and, separately,
+`PAPERLESS_INDEX_HEAL_ENABLED` (both dark). The verdicts are described in `docs/FOLDER_INGEST.md`; the points
+`CLAUDE.md` added:
+
+- Paperless has NO REST reindex: a full rebuild is the `document_index reindex` management command on the Paperless
+  host, `/api/tasks/run/` accepts only train_classifier/sanity_check, and `/api/status/` `index_status` means
+  "openable", not "complete".
+- `mcp.paperless.search_index_health` (renfield-mcp-paperless ≥1.13.0) probes one DB page of ids against the index via
+  `query=id:<n>`. Misses count as `degraded` only once the probe is proven; the positive control and the remembered
+  proof are what let check mode catch an index that lost its OLD documents (every old page 100 % missing).
+- The heal is an EMPTY partial PATCH because paperless-ngx `DocumentViewSet.update` re-indexes unconditionally. It
+  ALWAYS fires `document_updated`, so the MCP reports `heal_blocked` while enabled "Document Updated" workflows exist
+  or cannot be read, unless `PAPERLESS_INDEX_HEAL_ALLOW_WORKFLOWS` is set.
+- Per-document attempt ledger in Redis: after `PAPERLESS_INDEX_HEAL_MAX_ATTEMPTS` a document is given up (excluded,
+  a direct rate-limited `ops_alert`, the walk continues). A 404 counts as skipped and a document not probed by the
+  deadline as unverified; neither is a failed heal.
+
+**`low_coverage_reindex` — the self-healing sweep.** Gated by `LOW_COVERAGE_REINDEX_ENABLED` (self-gates in-handler).
+It finds `completed` documents whose LATEST processing run dropped most of their content (low coverage — the
+usable-but-garbled text-layer / DATEV letter-spacing case) and re-enqueues them with `force_ocr=False`, i.e. onto the
+text-layer→VLM path, so that the ingest-time VLM coverage trigger (`services/document_processor._vlm_ocr_fallback` +
+`OCR_VLM_COVERAGE_DROP_THRESHOLD`) recovers them from the page image. A document that was already re-derived and is
+still low-coverage is classified `attempted` and skipped, so there is no re-OCR loop. The sweep drains the backlog and
+then idles. Code: `kb_maintenance_tool.{_low_coverage_exists,sweep_low_coverage_reindex}`.

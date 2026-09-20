@@ -365,3 +365,19 @@ file once the title is known.
 - Metadata backfill (created-date / correspondent): `bin/backfill_paperless_metadata.py` + `services/paperless_metadata_backfill.py`
 - Search-index self-heal: `services/paperless_index_health.py` (built-in `paperless_index_health`) + `search_index_health` in `renfield-mcp-paperless`
 - Paperless MCP consume-poll: `renfield-mcp-paperless` `await_consume_result` (v1.8.0+)
+
+## Background moved from CLAUDE.md (2026-09-20)
+
+Everything else from the former CLAUDE.md "Folder Auto-Ingest" item (Design Z, the 2026-07-01 pool-exhaustion outage,
+the idempotent filing leg with `documents.paperless_task_id` / `pc20260825`, the two consume timeouts, the
+created-date backfill) is already described above. Only the push-side load controls were missing here:
+
+- The push route `POST /api/folder-ingest/document` runs under the higher `API_RATE_LIMIT_INGEST` instead of the
+  general API rate limit, so a watch-folder backlog is not throttled like interactive traffic.
+- The filesystem MCP bounds its own push fan-out with `FILES_MAX_CONCURRENT_PUSHES`.
+- The filesystem MCP re-reconciles its watch folders when the backend recovers (`FILES_HEALTH_POLL_SECONDS`) — files
+  that could not be pushed during a backend outage are picked up again without a restart.
+- Both controls came out of the 2026-07-01 outage, together with the push no longer awaiting the Paperless
+  round-trip: the push stamps `documents.paperless_state='pending'` and returns.
+
+The editing invariants now live in `.claude/rules/ingest.md` (loaded when an ingest/Paperless file is read).

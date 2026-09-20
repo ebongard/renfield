@@ -116,3 +116,20 @@ Track D ships early and in parallel; A/B/C are the dependency chain.
 - Consent gate, retention job, owner-scoping untouched (commitments deliberately *outlive* retention).
 - The generic document/RAG/KG pipeline for non-meeting documents is unchanged.
 - Meeting↔project linking (`feat/meeting-project-linking`) is complementary and already built.
+
+## Background moved from CLAUDE.md (2026-09-20)
+
+Phase 0 as shipped, as it was recorded in CLAUDE.md (the editing invariant now lives in `.claude/rules/meetings.md`):
+
+1. **Speaker-pseudonym strip.** `kg_post_document_ingest_hook` runs `_strip_speaker_pseudonyms` over
+   meeting-transcript chunks — gated on `source == MEETING_TRANSCRIPT_SOURCE`, with a narrow `Sprecher N:` /
+   `Speaker N:` line-prefix regex — BEFORE KG extraction, so a pseudonym never becomes a junk person entity that
+   collides across meetings. A human-relabelled real name is preserved, and the generic hook still runs (Track B
+   later replaces it with the confirmed pass).
+2. **Deliverable-first UX.** `MeetingResponse` carries `minutes_status`, so the list shows the "Protokoll: Entwurf
+   bereit" draft badge on the collapsed card; the expanded card rendered minutes above a collapsible transcript
+   (minutes-off → the transcript renders directly, the pre-Phase-0 behavior). This inline slice was later superseded
+   by the dedicated Track-D detail page described above.
+
+The heavy A/B/C tracks (fingerprint table + calibration spike gate, confirmed-pass KG with `stated_by`,
+source-flexible obligations re-keying the two `document_fact_id` ledger tables) are phased and dark.

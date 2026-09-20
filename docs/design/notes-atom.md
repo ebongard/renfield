@@ -186,3 +186,13 @@ or **note→any KG entity** (a note's `[[Bonn]]` links to the place entity — r
 values), `docs/SECOND_BRAIN.md` (the "vier Informationsarten" table is stale — add
 `note`, and while there, the missing `document_fact`/`procedural_skill` rows),
 `docs/FEATURES.md`, `CLAUDE.md`.
+
+## Background moved from CLAUDE.md (2026-09-20)
+
+The editing rules for this feature now live in `.claude/rules/notes-wissen.md`. Two points from the former
+`CLAUDE.md` paragraph that this design does not state elsewhere:
+
+- In `/brain`, notes are fused by `polymorphic_atom_store` as an **8th RRF source** (`services/note_retrieval.py`).
+- The title-uniqueness rule is service-enforced (`NoteTitleConflict` → 409) rather than index-enforced, because the
+  Postgres partial unique index treats a NULL auth-off owner as distinct. Link resolution passes
+  `match_entity_type=True` and `use_embedding=False`.

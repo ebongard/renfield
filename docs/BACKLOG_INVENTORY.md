@@ -239,6 +239,9 @@ Zusätzlich im Kopf vermerkt, **bewusst nicht implementiert** (Tracker-Einträge
 
 ## 3. CLAUDE.md — 12 Stellen mit „deferred / dark / nicht verdrahtet"
 
+> Die Zeilenangaben `CLAUDE.md:<n>` in diesem Dokument beziehen sich auf den Stand VOR der Aufteilung vom 2026-09-20
+> (`git show f8a33cc6:CLAUDE.md`). Die Inhalte liegen seither in `.claude/rules/*.md` und `docs/design/*.md`.
+
 | Punkt | Fundstelle |
 |---|---|
 | Lane B (Freiform-HTML/SVG im Sandbox-iframe) **deferred**, `ARTIFACTS_HTML_SANDBOX_ENABLED` Platzhalter, „not wired"; braucht die erzwingende Baseline-CSP in `nginx.conf` | `CLAUDE.md:75` |

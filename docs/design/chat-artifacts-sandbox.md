@@ -702,3 +702,56 @@ obvious fixes folded into §3-§5 above.
 - **SEQUENCING:** baseline CSP as its own PR first, then Lane A artifacts.
 - **UNRESOLVED:** none.
 - **VERDICT:** ENG + DESIGN CLEARED — design locked, ready to implement (PR 1 CSP → PR 2 Lane A artifacts). Outside voice not run (design already had an independent design-agent pass; offer stands if wanted).
+
+## Background moved from CLAUDE.md (2026-09-20)
+
+Shipped state of Lane A (`ARTIFACTS_TYPED_ENABLED`, opt-in/dark — roadmap item 5 of
+`docs/design/chat-ui-modernization.md`, the chat-artifacts trust boundary). Working rules for editing the code:
+`.claude/rules/chat-ui.md`.
+
+### Kinds and rendering
+- Generated `table`/`list`/`keyvalue`/`chart`/`weather`/`device_control`/`presence_map` render inline as **typed JSON →
+  real React components** — NO model HTML/SVG; React's escape boundary is the whole security story, the same model as
+  `AdaptiveCardRenderer`.
+- `chart` is hand-rolled bar/line SVG from typed series (no charting dep; multi-series are differentiated by color PLUS
+  a non-color channel for WCAG 1.4.1).
+- `weather` (**Gen-UI item 10**) is a purpose-built widget: WMO `code`→lucide icon, current conditions + a daily
+  forecast.
+- `device_control` (**Gen-UI item 10, INTERACTIVE**) renders clickable on/off toggles for lights/switches, a
+  **brightness slider** for on-lights, run-buttons for scenes, and a **thermostat setpoint stepper** for climate. It is
+  produced by `internal.device_controls`, which reads **fresh `get_states()`** (not the 60s entity-map cache, so
+  initial values match reality) and surfaces brightness (0-255→0-100) + climate temps.
+- `presence_map` (**Gen-UI, read-only**) shows rooms→present-users from `internal.presence_map` (the presence service;
+  the same data the existing `internal.get_all_presence` exposes).
+
+### The `device_action` write-back channel
+- A toggle click is the **first artifact→action write-back channel**: the widget sends a `device_action` WS frame
+  (mirrors the Paperless-confirm card — intercepted pre-`WSChatMessage`-validation).
+- `chat_handler` **fail-closed gates on `Permission.HA_CONTROL`**: a device/satellite token with `user_id=None` is
+  denied when auth is on; only auth-disabled single-user mode actuates without a permission list.
+- It then routes to `internal.device_action`, which **re-validates** domain + action + entity-existence (`get_state`
+  probe) before `call_service` — so a crafted frame can't drive an arbitrary service, and the widget grants nothing the
+  user lacks via the agent (same `HA_CONTROL` gate).
+- `internal.device_action` is in `_HANDLERS` only (NOT `TOOLS`) → frame-dispatched, never agent-advertised.
+- The frame carries an optional numeric `value` (bool-excluded, range-validated/clamped server-side: brightness 0-100,
+  temperature to the entity's `min_temp`/`max_temp`); the result frame echoes `brightness`/`targetTemp` so the
+  slider/stepper reconcile.
+
+### Producers
+- The new `artifact` WS frame mirrors `card`. It is produced from the hook/sub-intent/orchestration path
+  (`_emit_turn_artifacts` in `chat_handler`) AND — for **Gen-UI widgets** — from **agent-callable render tools**
+  (`internal.render_table`/`render_list`/`weather_widget`, `services/widget_tools.py`).
+- The agent passes the structured data as tool args (validated via `artifact_service`), so it is still **typed JSON
+  from the agent, NEVER parsed from its free-text**. `chat_handler._collect_tool_artifacts` gathers those off
+  `agent_tool_results`.
+- So "list/table on request" and "weather" come back as widgets, under a one-line lede; gated by
+  `ARTIFACTS_TYPED_ENABLED`, weather also needs `WEATHER_ENABLED`.
+
+### Validation, failure, persistence
+- Validation split by concern (§8 decision 3): backend `services/artifact_service.py` = kind-allowlist +
+  size/row/series/point caps (DoS gate); frontend `artifactSchema.ts` (zod discriminated-union) = authoritative shape →
+  render.
+- **Fail-closed:** invalid shape / throwing sub-renderer / unknown kind / stuck `partial` → escaped code-block fallback
+  (never raw markup); valid-but-empty → warm per-kind empty state.
+- Persisted as `message_metadata.artifacts[]` (array keyed by `id`, multiple per turn, rehydrates via
+  `historyToUiMessage`); streaming patches append same-`id` idempotently. Lane B (free-form HTML/SVG sandboxed iframe) is **deferred** — own security review, `ARTIFACTS_HTML_SANDBOX_ENABLED` placeholder, not wired. Needs the enforcing baseline CSP in `nginx.conf`.

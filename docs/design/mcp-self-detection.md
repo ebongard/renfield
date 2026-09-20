@@ -423,3 +423,36 @@ Dark everywhere. To enable on an instance: set `MCP_HEALTH_MONITOR_ENABLED=true`
 (needs `PROACTIVE_ENABLED=true` for delivery) and point each ingest MCP's
 `*_NOTIFY_WEBHOOK_URL`/`_TOKEN` at `POST /api/mcp-health/report`
 (see `docs/ENVIRONMENT_VARIABLES.md`).
+
+## Background moved from CLAUDE.md (2026-09-20)
+
+The sections above already carry the design narrative. This section keeps the few points and identifiers that the
+project `CLAUDE.md` stated and this document did not; the invariants now live in `.claude/rules/mcp-health.md`.
+
+**Environment names and defaults** (the sections above use the lowercase settings names):
+
+| Env var | Default |
+|---|---|
+| `MCP_HEALTH_MONITOR_ENABLED` | dark; delivery also needs `PROACTIVE_ENABLED` |
+| `MCP_HEALTH_SELF_HEAL_ENABLED` | on |
+| `MCP_HEALTH_PROBE_ENABLED` | on — the throttle is the YAML, not the flag |
+| `MCP_HEALTH_PROBE_FAIL_THRESHOLD` | 2 |
+| `MCP_HEALTH_ALERT_RETRY_SECONDS` | 600 |
+| `MCP_HEALTH_NO_TOOLS_GRACE_SECONDS` | 300 |
+| `MCP_HEALTH_RATE_LIMIT_SIGNAL_ENABLED` | dark (`…_MIN_EVENTS` 5 in `…_WINDOW_SECONDS` 900) |
+| `MCP_RATE_LIMIT_BACKOFF_ENABLED` | dark, capped by `MCP_RATE_LIMIT_MAX_BACKOFF_SECONDS` |
+| `HEALTH_READY_DB_TIMEOUT_SECONDS` / `HEALTH_READY_AUX_TIMEOUT_SECONDS` | 3 s / 1 s |
+
+**Points not stated above:**
+
+- Plane A is read through `MCPManager.get_status()`; the timeout window is folded into `_server_health` as
+  `degraded/calls_failing`.
+- The optional per-server `health_probe:` stanza in `mcp_servers.yaml` is parsed like `notifications:`. Servers probed
+  at the time of the move: paperless, n8n, homeassistant.
+- The probe work added the localized `impaired_code: probe_failed`; `calls_failing` gained its missing localized
+  string in the same change.
+- The "told = a notification row exists" check is the fresh-session helper `_persisted_since` in
+  `services/ops_alert.py`.
+- The rate-limit classifier never counts a bare "429". An MCP whose throttle is only a bare number is fixed at the
+  source — e.g. `renfield-mcp-weather` ≥1.1.0 returns `status: 429` + `retry_after` — never by loosening the classifier.
+- k8s probes: xidra's `backend.yaml` lives in `x-ren` and needs the same readiness/liveness change.

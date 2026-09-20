@@ -248,3 +248,10 @@ OIDC callback is the emitter today. Contract (versioned alongside
    build the authorize URL and hold the challenge itself? Server-stashed is
    slightly stronger (challenge bound before the IdP hop) at the cost of one more
    endpoint.
+
+## Background moved from CLAUDE.md (2026-09-20)
+
+The `CLAUDE.md` summary of this design moved to `.claude/rules/auth.md`; the provider-registry
+reference in the header now lives in `docs/design/auth-cookie-session.md`. The one point of that
+summary not stated above: `POST /api/auth/sso/exchange` is gated on `sso_handoff_enabled` and answers
+**404 when the flag is off** (dark by default).

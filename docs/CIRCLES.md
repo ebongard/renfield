@@ -170,4 +170,59 @@ Circle-Reach regelt *Lesen*. **Schreiben/Ändern eines Atoms ist strikt Owner-on
 
 - [SECOND_BRAIN.md](SECOND_BRAIN.md) — Überblick über die vier Wissenssysteme, die Circles als Filter verwenden
 - [ACCESS_CONTROL.md](ACCESS_CONTROL.md) — RPBAC (Authentifizierung + Rollen, orthogonal zu Circles)
-- `CLAUDE.md` — Developer-zentrische Zusammenfassung mit Code-Referenzen
+- `.claude/rules/circles.md` (+ `documents-facts.md`, `obligations.md`, `notes-wissen.md`) — Developer-zentrische Invarianten mit Code-Referenzen
+
+---
+
+## Background moved from CLAUDE.md (2026-09-20)
+
+Developer-facing detail that used to live in the `CLAUDE.md` section "Circles v1 (access tiers)". The rules that
+must not be broken when editing the code are in `.claude/rules/circles.md` (plus `documents-facts.md`,
+`obligations.md`, `notes-wissen.md`); this section keeps the reference inventory those rules point to.
+
+### Routes not listed in the table above
+
+- `/api/circles/me/*` — the whole settings / members / review-queue family (the table lists the individual routes).
+- `/api/atoms/obligations/export.ics` — circle-filtered iCalendar of dated obligations: one all-day VEVENT each,
+  RFC-5545-escaped, browser-native download from the agenda.
+- `/api/atoms/obligations/calendar-pref` (GET/PUT) — per-user opt-in calendar for the obligation→calendar auto-push;
+  clearing it tears down the user's synced events. Runbook: `docs/OBLIGATION_CALENDAR_SYNC.md`.
+- `/api/atoms/obligations/{id}/confirm` is the server home for the former localStorage "Bestätigt" state.
+- `/api/config/features` also carries the instance-dependent **`chat_starters`** (the empty-chat starter prompts).
+  Empty → the frontend uses its household i18n defaults (weather / light / music), so ONE shared frontend image shows
+  business-appropriate starters on a business instance and home ones on the household. Set via the `CHAT_STARTERS`
+  env / ConfigMap JSON array. This endpoint stays the one intentional settings→browser seam.
+- `/api/wissensbasis/{graph,focus,search}` — the native backend for the 3D Wissensgraph tab: corpus
+  connected-component clusters / entity hop1+hop2 neighbourhood / name-substring search over `kg_entities` +
+  `kg_relations`, all circle-filtered via `services/kg_graph_service.py`.
+  - Hubs and focus entities carry `circle_tier`; clusters carry their real intra-cluster `hub_edges`.
+  - The volumetric `GraphView.tsx` scene renders these as tier-token node colours + relation filaments
+    (Fibonacci-sphere layout, camera fit, reduced-motion-gated auto-orbit). The pre-2026-07 scene collapsed to a flat
+    XZ ring.
+  - Reva's richer `/trace` + `/me/mix` stay 404 in standalone Renfield; that 404 is what `useWissensbasisAvailable`
+    keys off to hide the Reva-only side panels.
+
+### Services not listed in the table above
+
+- `services/document_fact_retrieval.py` — Schicht A fact reads: keyword FTS + identifier-ILIKE + obligations,
+  circle-filtered.
+- `services/circle_sql.py` — the document owner-branch has an atom-owner fallback so null-KB / global-RAG docs reach
+  their owner.
+
+### Wissen workspace — code map
+
+- Shell: `pages/wissen/WissenLayout.tsx`; persistent left lens-rail `components/wissen/LensRail.tsx`, gated per lens by
+  the permission/feature metadata in `pages/wissen/lenses.ts`.
+- Omnisearch: `WissenSearchBar` (`?scope=lens|everything`). On Documents/Graph the query drives that lens's own inline
+  search, otherwise a cross-corpus RRF overlay.
+- Drawer: `WissenDetailDrawer`, opened from any result, per-type content + the two-id-space tier edit.
+- The shell persists across lens switches because `Layout.tsx` keys `/wissen/*` on a stable content key.
+- To support per-entity Graph results + the drawer, `PolymorphicAtomStore` emits per-entity `kg_node` + per-relation
+  `kg_edge` atoms (via `KGRetrieval.get_relevant_atoms`) instead of the old aggregated blob; the agent's string KG
+  context (`get_relevant_context`) is unchanged.
+
+### Behavioural change vs pre-circles (release-note item)
+
+`ConversationMemoryService.retrieve()` now respects circle reach — tier-2 household peers see each other's
+household-tier memories. Previously `user_id == asker_id` filtered strictly. Memory-retrieval callers pass
+`user_id=asker_id`; every `rag.search()` call passes `user_id=asker_id` too.

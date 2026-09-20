@@ -327,3 +327,58 @@ sudo systemctl start renfield-satellite
 | `src/satellite/renfield_satellite/update/update_manager.py` | Satellite Update-Manager |
 | `src/frontend/src/pages/SatellitesPage.jsx` | Frontend Update-UI |
 | `bin/deploy-satellite.sh` | Manuelles Deployment-Script |
+
+## Background moved from CLAUDE.md (2026-09-20)
+
+The hard rules for this code live in `.claude/rules/satellite-trust-ota.md`. This section keeps the
+"why" and the rollout history of the two satellite-trust fixes from the security review (H1 + H6).
+Design + the 4 resolved decisions: `docs/private/security/satellite-trust-design.md`.
+
+### Signed OTA packages (security review H6 — full fix)
+
+- The **surgical** H6 fix made the OTA download verify TLS. The **full** fix makes code authenticity
+  independent of transport/backend trust, so a compromised or spoofed backend cannot push code it did
+  not get signed offline.
+- Model: a **signed source manifest**. It was chosen because the backend builds the OTA tarball
+  *dynamically* — bytes built on demand cannot be pre-signed.
+- The manifest is signed offline with an **Ed25519** release key (consistent with the federation
+  Ed25519). `bin/sign_satellite_release.py` (`--gen-key` / `--sign` / `--verify`) runs on the operator
+  workstation and writes `src/satellite/RELEASE_MANIFEST.json` + `.sig`; both are committed and baked
+  into the backend image by the existing Dockerfile COPY.
+- As part of the same change the backend tarball started excluding `__pycache__`.
+- **Rollout status as recorded on 2026-08-22:** `RELEASE_MANIFEST.json` + `.sig` for v1.4.6 were
+  committed (key #1 generated; private key at `~/.renfield/ota_release_key` on the operator workstation
+  only) and the public key was added to group_vars `satellite_release_pubkeys`. Remaining at that time:
+  the fleet re-provision (pins the pubkey on each satellite), then flipping `require_signature`
+  (satellite side + backend `satellite_ota_require_signature`) to fail-closed.
+- Until a satellite is re-provisioned it has no pinned key and still installs on checksum-only
+  (legacy); a satellite that HAS the key verifies every signed release (verify-if-present).
+- **Later state (from the repo, not from CLAUDE.md):**
+  `src/satellite/provisioning/group_vars/satellites.yml` sets `satellite_ota_require_signature: true`
+  with the comment "FAIL-CLOSED since 2026-08-23", and `k8s/configmap.yaml` sets
+  `SATELLITE_OTA_REQUIRE_SIGNATURE: "true"`. Satellites that were offline at that rollout inherit
+  fail-closed on their next re-provision.
+- Why the version bump matters: the comment on `SAFE_PACKAGES` in `update_manager.py` records that the
+  satellite version was not bumped between 2026-08-22 and 2026-09-04, so no update was ever attempted —
+  which hid both a missing allowlist entry (`opuslib`; every OTA would have failed with "Unknown
+  packages in requirements") and the stale `RELEASE_MANIFEST` signature. The allowlist living in the
+  running code instead of in the package is tracked as #1210 (`docs/BACKLOG_INVENTORY.md`).
+
+### Satellite enrollment credential (security review H1 — full fix)
+
+- A satellite's trust *was* assertion-based: any LAN device could connect to `/ws/satellite`,
+  **claim** any `satellite_id` in its register frame, evict the incumbent, and harvest the per-person
+  IRK push (location-tracking keys).
+- The full fix gives each satellite a **per-device enrollment PSK** (256-bit), stored server-side only
+  as a bcrypt hash in the `satellites` table (migration `pc20260624`).
+- **Dark by default in code** (`SATELLITE_ENROLLMENT_ENABLED=false`): the register path is
+  byte-identical to legacy — no PSK check, eviction unchanged, IRK push on the legacy
+  `SATELLITE_IRK_ALLOWLIST`. PERMISSIVE is the soak phase; in it IRKs already go only to
+  verified-enrolled satellites.
+- The auto-flip latch exists because of one concrete scenario: a satellite enrolled later through the
+  UI but still offline must not silently re-open the fleet, so the latch never auto-clears.
+- `/api/ws/token` previously minted a token to anyone; it now answers 401 to an unauthenticated
+  caller when WS auth is on.
+- The staged rollout and the break-glass procedure are in `docs/ENVIRONMENT_VARIABLES.md`. The
+  committed `k8s/configmap.yaml` carries `SATELLITE_ENROLLMENT_ENABLED: "true"` and
+  `SATELLITE_ENROLLMENT_AUTOFLIP_ENABLED: "true"`.

@@ -145,3 +145,24 @@ The channel carries a typed `{type, reason}` — `documents_changed` is the firs
 1. **`_ALL` in auth-on multi-user = admins-only?** (recommended) vs. no `_ALL` fan-out at all (drop `owner=None` events). Recommendation: admins-only — content-free, harmless, and keeps admin dashboards live.
 2. **Server-side coalescing window** (default 1s) + **client debounce** (default 1s) — both, or client-only? Recommendation: both (cheap defense in depth), server window configurable.
 3. **Scope of v1 emit points:** documents only (ingest/paperless/delete) — obligations/notes deferred to a follow-up that only adds event types. Recommendation: documents-only v1.
+
+## Background moved from CLAUDE.md (2026-09-20)
+
+The must-not-break invariants live in `.claude/rules/user-events.md`. What CLAUDE.md recorded beyond this design:
+
+- **As shipped, the flag is default ON** (`USER_EVENTS_ENABLED`, a kill-switch, not dark) — §7 above still describes the
+  planned dark rollout. Flag-off ⇒ no router include, no subscriber, byte-identical to before. The flag reaches the
+  browser via `/api/config/features`.
+- **Implemented names** (the tables above use planning names): `services/user_events.py` holds `publish_user_event`,
+  `emit_documents_changed`, `UserEventRegistry.fan_out`, `EventCoalescer`, `run_user_events_subscriber` and
+  `resolve_document_owner`; the per-pod subscriber is started by `_schedule_user_events_subscriber` in
+  `api/lifecycle.py`; the endpoint is `api/websocket/user_events_handler.py`.
+- **Both open decisions in §9 were taken as recommended:** `_ALL` = auth-off household sockets + (auth-on) admin
+  sockets; coalescing runs on both sides — the server-side `EventCoalescer` window
+  (`USER_EVENTS_COALESCE_WINDOW_SECONDS`, 1s) against ingest-backlog storms **and** a client-side debounce.
+- **Targeting:** `fan_out(target=<int>)` reaches ONLY that user's sockets; `fan_out(target=None)` reaches ONLY the `_ALL`
+  bucket. In auth-off (`auth_enabled=false` — the single auth flag; the separate `WS_AUTH_ENABLED` is retired, see
+  `docs/ENVIRONMENT_VARIABLES.md`) sockets register under `_ALL` and `emit_documents_changed` forces `target=None`, so
+  the single household gets everything.
+- **Surfaces:** `/wissen/dokumente` and `/knowledge`. The hook is mounted app-wide in `App.tsx` `AppRoutes`, gated
+  `user_events_enabled && (!authEnabled || isAuthenticated)`.

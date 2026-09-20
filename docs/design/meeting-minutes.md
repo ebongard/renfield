@@ -148,3 +148,30 @@ Phase 2 design `docs/design/meeting-transcription.md` (the transcript this consu
 `services/schicht_a_extractor.py` (extraction pattern); the additive-migration discipline in
 `CLAUDE.md` (Alembic transaction model). Phase 4 (Notes + project timeline) builds on top:
 confirmed minutes are a natural timeline event + a note source.
+
+## Background moved from CLAUDE.md (2026-09-20)
+
+As-built details recorded in CLAUDE.md that the design above does not spell out. The editing invariants now live in
+`.claude/rules/meetings.md`.
+
+- **Extractor** (`services/meeting_minutes.py`): `MinutesExtractor` mirrors `schicht_a_extractor` —
+  `get_default_client` + the strict-JSON `prompts/meeting_minutes.yaml`, `_normalize_minutes` caps, `empty_minutes()`
+  on failure. The draft shape is `{summary, decisions[{text,made_by}], action_items[{text,owner,due_hint}]}`.
+- **Columns:** `minutes` / `minutes_status` / `minutes_generated_at` / `minutes_confirmed_at`, additive migration
+  `pc20260718_meeting_minutes`.
+- **Routes as built** (all owner-gated 404, flag-gated 404 via `_require_minutes_enabled`):
+  - `POST /api/meetings/{id}/minutes/generate` — 409 unless `completed`; a re-run overwrites the draft.
+  - `GET/PUT …/minutes` — PUT always reverts to `draft`.
+  - `POST …/minutes/confirm` — 409 unless `draft`; renders the minutes into the SAME transcript document via
+    `render_transcript_markdown` + `_overwrite_transcript_and_reindex`, the stable-`transcript_document_id` reindex
+    path shared with re-attribution — never a second ingest.
+  - `DELETE …/minutes`.
+- **Frontend:** `MinutesPanel` moved to `components/meetings/MinutesPanel.tsx` and is rendered by the Track-D detail
+  page. Hooks `useMinutes` / `useGenerateMinutes` / `useUpdateMinutes` / `useConfirmMinutes` / `useDeleteMinutes` in
+  `api/resources/meetings.ts`.
+  - `none` → Generate CTA; `draft` → editable summary + decisions[] + action-items[] with add/remove +
+    Save-draft / Confirm / Regenerate / Discard; `confirmed` → read-only + badge + Edit.
+  - Confirm auto-saves a dirty body first (PUT → draft → confirm) so it cannot silently drop unsaved edits.
+  - Typed JSON in/out (React escape boundary), no model HTML.
+- **Rollout status:** config-default dark; flipped on xidra (`meeting_minutes_enabled=true`), still `false` on the
+  household (the panel is absent there until flipped).

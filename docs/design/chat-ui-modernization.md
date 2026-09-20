@@ -314,3 +314,48 @@ boundary (5) exists, since 8/9/10 reuse it.
   `en.json`) on every new string and component, per `CLAUDE.md` / `DESIGN.md`.
 - `DESIGN.md` tokens only — new component classes follow the existing
   `.card` / `.btn-*` / `.tier-badge` conventions.
+
+## Background moved from CLAUDE.md (2026-09-20)
+
+What actually shipped from this roadmap (the first slice, "Chat UI affordances"). Working rules for editing the code:
+`.claude/rules/chat-ui.md` and `.claude/rules/chat-branching.md`. User-facing description: `docs/FEATURES.md`. The PWA
+cache-propagation rule that lets these reach the browser is in the deploy-production skill ("Frontend PWA cache
+propagation").
+
+### Provenance source chips (always on)
+- Knowledge-backed answers surface the retrieved documents as `TierBadge`-tagged chips linking to
+  `/knowledge?doc={id}`.
+- `knowledge_tool` emits `data.sources`; `chat_handler._extract_agent_sources` rides them on the `done` frame and
+  persists them as `message_metadata.sources`.
+- Circle-safe via `rag.search(user_id)` — the chips can only name documents the asker could retrieve.
+
+### Follow-up suggestion chips (`FOLLOWUP_CHIPS_ENABLED`, opt-in/dark)
+- `services/followup_service.py`: a best-effort small-model call **in the background AFTER the `done` frame**,
+  delivered via a separate `followups` frame, so it never delays the spinner/TTS/wakeword.
+- Skipped on TTS/error/very-short turns.
+
+### Command palette (`COMMAND_PALETTE_ENABLED`, opt-in/dark — frontend-only gate)
+- `/` on an empty composer, or a touch button, opens an action/nav palette.
+- Tool actions STAGE into the composer (no auto-send).
+- The optional next-turn `role_hint` is a **routing-only** preference, validated against `agent_roles.yaml` in
+  `agent_router` Layer-0 — every tool stays permission-gated at execute time, no escalation.
+
+### The routing-transparency loop
+- **Correct-and-regenerate:** the "Falsch erkannt?" intent correction also shows a **"Neu beantworten"** button that
+  re-runs the turn forcing the corrected route — `corrected_intent` on the WS frame →
+  `agent_router.role_for_intent` maps it to the most-specific role. It reuses `role_hint` (routing-only).
+- **Agent-role surfacing** (`ROLE_SURFACING_ENABLED`, opt-in/dark): a badge on each assistant turn shows the resolved
+  agent role, emitted on the `done` frame and persisted in `message_metadata.agent_role` so it rehydrates on history
+  reload. Tapping it pins that role for the next turn via the same `role_hint`/`pendingRoleHint`.
+
+### Message search (`MESSAGE_SEARCH_ENABLED`)
+- Postgres FTS over the `messages` table via a GENERATED `search_vector` column (migration `pc20260617`, multilingual
+  `tsvector` union); `GET /api/chat/messages/search` ranked by `ts_rank`; sidebar field + jump-to-message.
+- Scoped strictly by **conversation ownership** — messages are NOT atoms, so deliberately NOT routed through
+  `circle_sql`. XSS-safe sentinel→`<mark>` highlighting.
+
+### Typed artifacts (Lane A) and message branching
+- Typed artifacts (`ARTIFACTS_TYPED_ENABLED`, roadmap item 5): shipped status in
+  `docs/design/chat-artifacts-sandbox.md`.
+- Message branching / edit-and-fork (`CHAT_BRANCHING_ENABLED`, roadmap item 1, the heaviest): Phase 1 + Phase 2
+  shipped, see `docs/design/chat-branching.md`.

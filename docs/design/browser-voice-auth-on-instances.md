@@ -134,3 +134,41 @@ orphaned `renfield/voice-server` Ingress from #1119 was removed and replaced by 
 so the primary port cannot work); the household route is versioned as
 `private_k8s/voice-server/42-household-browser-ingressroute.yaml`, sibling of this
 runbook's `41-xidra-browser-ingressroute.yaml`.
+
+## Background moved from CLAUDE.md (2026-09-20)
+
+Details that lived in the `CLAUDE.md` cookie-session section and are not stated above. The
+must-not-break summary is in `.claude/rules/auth.md`; the cookie session itself is described in
+`docs/design/auth-cookie-session.md`.
+
+**Voice WS token (#1128, live since `2026-08-25-voice-ws`).**
+
+- With the HttpOnly-cookie session the browser holds no JS-readable JWT, so the browser voice WS
+  fetches a short-lived `scope:"voice"` faucet token (`/api/ws/token?purpose=voice`) and sends it as
+  `?token=` to the external voice-server.
+- The voice-server's verify path (`/api/internal/auth/verify`) accepts any non-`ws` scope; REST and
+  renfield's own `/ws/*` reject `scope:voice`.
+- No voice-server change was needed.
+
+**Client id on the wire.**
+
+- The browser names its registry row via `?client=`, from the RUNTIME `voice_client_id` in
+  `/api/config/features` (`VOICE_BROWSER_CLIENT_ID`, validated `^[a-z0-9_-]{0,64}$`) → build-time
+  `VITE_VOICE_CLIENT_ID` → omitted (household byte-identical).
+- `useVoiceStream` awaits the id at CONNECT time (`fetchVoiceClientId` → `ensureQueryData`), so the
+  socket never opens before the features are known. The pure `buildVoiceWsUrl` is exported.
+
+**Speaker-recognition privacy gate — what it closed and where it sits.**
+
+- Before the gate, every browser voice turn stored an ECAPA voiceprint and an
+  "Unbekannter Sprecher #N" row (Art. 9 GDPR) even with recognition off.
+- Voice turns: `chat_handler._resolve_wire_speaker` resolves a wire speaker embedding ONLY when
+  `speaker_recognition_enabled` (`voice_originated` still derives from the embedding), and
+  `speaker_resolver.resolve_speaker_from_embedding` refuses before any DB access when it is off.
+  This covers chat-WS, voice and satellite resolution.
+- Admin enrollment: `POST /api/speakers/enroll`, `/candidates/promote`, `/{id}/enroll` → 409; the
+  enrollment service refuses too.
+- Meetings: the voice-server's per-cluster ECAPA `embedding` is NEVER stored on `Meeting.segments`
+  regardless of flags (`meeting_pipeline.strip_biometric_fields` / `_set_segments`, the only segments
+  write path; re-render and relabel clean legacy rows; `GET …/segments` filters them).
+- Legacy rows: `bin/purge_meeting_segment_embeddings.py` (`--dry-run`/`--commit`, counts only).

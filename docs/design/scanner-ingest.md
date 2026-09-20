@@ -607,3 +607,30 @@ server must never push a batch that faulted mid-stack.
 - **`ocrmypdf` at ingest is partly redundant** with the backend's own
   Docling/OCR + VLM coverage fallback. Keeping a text layer still helps dedup
   and classification; revisit if it costs wall-clock.
+
+## Background moved from CLAUDE.md (2026-09-20)
+
+The former CLAUDE.md "Dokumentenscan" item is almost entirely covered by the sections above (scan jobs, the
+2026-09-14 hardening, the routing invariant, the six scan-quality traps). What it carried in addition:
+
+- **Status as recorded on 2026-09-14:** Phase 0 `bin/scan.sh` works; the `renfield-mcp-scanner` MCP server (separate
+  repo, macOS LaunchAgent on the operator host) with voice-driven scanning and routing to 1..n target instances
+  (declared intent + separator sheets + a confidence-gated classifier with a human review floor) is BUILT.
+- **Tool contract:** `scan_document` only starts a job and returns `{job_id}` at once. The scan used to run inside
+  the tool call, where the 30 s MCP timeout reported a scan as FAILED that was filed 80 ms later.
+- **Frontend notice:** the content-free `scan_job_finished` `/ws/user` event is rendered by `ScanJobToast`; the chat
+  reload is deferred while a turn streams. In auth-off every tab receives the event.
+- **Why not proactive notifications:** personal proactive notifications were rejected as the channel because they are
+  presence-gated.
+- **Related MCP-client hardening (backend, `MCPManager`):**
+  - `MCPServerState.inflight_deadlines` keeps `refresh_tools` / `probe_server` from reconnecting a session under a
+    running call. It is bounded: only a call still inside its own timeout shields the session, and a skipped probe
+    reports `ok: None`, never healthy.
+  - `call_timeout:` in `mcp_servers.yaml` takes a number or `{tool: s, default: s}`; the scanner uses 600 s for
+    `route_scan` / `retry_pending_scans`.
+- The scan-quality traps are recorded in this document (not only in the scanner repo) because the MCP server repeats
+  the same PDF assembly as `bin/scan.sh` — in CLAUDE.md the second one was phrased as "`ocrmypdf --optimize 1`
+  transcodes to lossy JPEG".
+
+The editing invariants now live in `.claude/rules/scanner.md` (loaded when `services/scanner_jobs.py` or the scanner
+route is read).

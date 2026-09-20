@@ -270,4 +270,71 @@ ships independently of the roadmap's open items.
    or is the value really the **Phase 3 kiosk**? If the kiosk is the goal, design
    the circle-aware projection first so Phase 1 doesn't bake in admin-only
    assumptions.
-```
+
+## Background moved from CLAUDE.md (2026-09-20)
+
+The must-not-break invariants for kiosk code live in `.claude/rules/kiosk.md`. This section keeps the history and
+rationale that used to sit in CLAUDE.md.
+
+### Decommission of the admin board
+
+- The admin Command Center `/admin/command-center` was DECOMMISSIONED 2026-07: its route, page, `AgentConstellation`,
+  `useCommandCenterModel`, the `command_center.py` router and the `/api/command-center/*` REST feeds are removed.
+- The kiosk is the surviving surface, reachable via the `nav.kiosk` sidebar entry.
+- The shared read logic (weather + content-free role activity) MOVED to the kiosk-owned `api/websocket/kiosk_data.py`.
+  The ambient tiles described above as `GET /api/command-center/weather` / `…/now-playing` are therefore no longer REST
+  endpoints; they arrive in the `/ws/kiosk` snapshot and as `weather_updated` / `now_playing_changed` deltas.
+- The plan for the active-subsystem pulse is `tasks/kiosk-active-subsystem-plan.md`.
+
+### What the kiosk shows
+
+A live radial constellation of the running system: the core shows the active agent role + voice state; the rings are
+agent roles / MCP tools by health (healthy/degraded/down) / rooms+satellites by presence / federation peers, plus the
+active-subsystem pulse. Files: `components/kiosk/KioskConstellation.tsx` + `useKioskModel.ts`, fed by `useKioskSocket.ts`.
+
+### Event-push data path (replaced the react-query poll chain)
+
+- `useKioskSocket.ts` → the ADMIN-gated `/ws/kiosk` hub (`api/websocket/kiosk_handler.py`): ONE content-free `snapshot`
+  on connect, then deltas — `satellite_state`, `satellite_online`/`satellite_offline`, `presence_changed`,
+  `now_playing_changed`, `tool_health_changed`, `internal_health_changed` (knowledge/presence/media health),
+  `weather_updated`, `turn_activity`.
+- `turn_activity` is the active-subsystem pulse: which MCP/`internal.*` node lit up this turn, `{subsystem_id, at}`
+  derived from `agent_tool_results`, never utterance/entity/user. `mcp.<server>.*` maps to the server node;
+  `internal.*` maps through `INTERNAL_SUBSYSTEM_LABELS` to {knowledge, presence, homeassistant, weather, media}.
+  (CLAUDE.md located that map in `chat_handler.py`; a comment there says the pulse helpers moved to
+  `api.websocket.kiosk_data` so the voice path can emit the same pulse.)
+- The kiosk renders synthetic pseudo-nodes for the three internal-only ids knowledge/presence/media
+  (`INTERNAL_SUBSYSTEM_NODES` in `useKioskModel.ts`); the other two are real MCP servers.
+
+### Health: why a node can be degraded, and why the success-rate signal is windowed
+
+- `get_status()` folds connectivity AND functionality, so **degraded** = connected but a bound startup plugin failed to
+  load [`PLUGIN_MCP_BINDINGS`] or the server exposes 0 tools — a green-reachable-but-functionally-dead node can no
+  longer read healthy.
+- The secondary per-tool success-rate signal (`tool_health[]` in `build_kiosk_snapshot`) is windowed by
+  `_TOOL_HEALTH_RECENT_HOURS` (24h) and `_TOOL_HEALTH_MIN_SAMPLES` (3). The `ToolOutcomeStat` counters are cumulative
+  over all time (no window/decay); without the guard a days-old cluster of failures pinned a node red indefinitely even
+  after full recovery. The 2026-08-31 xidra kiosk showed `search` stale-red from failures 2-3 days prior while
+  `/api/mcp/status` read healthy.
+- The pseudo-nodes used to carry pulses only. They now carry a real verdict from `compute_internal_subsystem_health()`
+  in `kiosk_data.py`. The presence `degraded` case — an enrolled satellite that is connected but unauthenticated gets no
+  IRK push, so presence goes silently blind — is the 2026-07-09 failure mode. The verdict ships in the snapshot plus a
+  diff-gated `internal_health_changed` delta from a `_kiosk_clients`-gated backend refresher (same no-poll model as the
+  weather tile). The new `'off'` `NodeHealth` renders muted.
+
+### Liveness is backend-authoritative — and until #1209 it was only a promise
+
+- The backend pushes `satellite_offline` on unregister/heartbeat-timeout. The heartbeat sweep
+  (`SatelliteManager.cleanup_stale`) is scheduled from `ha_glue.bootstrap._schedule_satellite_cleanup`. Until #1209 it
+  had NO caller at all, so a satellite that vanished without closing its socket stayed "online" until the pod restarted.
+- Scheduling the sweep armed two dormant timeouts at once, so both were calibrated in the same change (session timeout =
+  max RECORDING duration; eviction exemptions + socket close — see the rule file).
+- The session timeout is only a BACKSTOP for a hung device. The binding recording limit is the satellite's own
+  `vad_max_recording_seconds` (fleet 60 s), which ends the turn via `audio_end` and measures the turn with the
+  `_recorded_chunks` counter. Until v1.4.9 it read the length of a write-only audio buffer capped at 500 chunks = 40.0 s,
+  so after the 20 → 60 s raise the limit silently never fired and the recording died unanswered in this 120 s backstop
+  (the 2026-09-19 regression; the buffer is removed — never derive a duration from a bounded container).
+- All four knobs live in `k8s/configmap.yaml`. #1277 tracks the still-unscheduled `DeviceManager` sweep. A resumed
+  satellite is reinstated via `satellite_online`.
+- Consequence for the frontend: NO wall-clock decay of frozen snapshot values; a reconnect re-anchors from a fresh
+  snapshot. Federation peers keep a wall-clock freshness backstop until the deferred `peer_status_changed` delta ships.

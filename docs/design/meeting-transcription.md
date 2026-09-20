@@ -129,3 +129,82 @@ ownership), worker idempotency (redelivery on completed = ack+skip; in-flight gu
 retry-after-ingest-failure, poison-pill quarantine, margin/pseudonym matcher tests,
 alignment fixtures (overlap/gaps, no GPU), migration via real alembic upgrade,
 staging E2E incl. live-latency measurement during batch.
+
+## Background moved from CLAUDE.md (2026-09-20)
+
+As-built summary of what the design above became, as it was recorded in CLAUDE.md. The editing invariants now live
+in `.claude/rules/meetings.md`.
+
+**Flags and spike gate**
+
+- `MEETING_TRANSCRIPTION_ENABLED` (backend) / voice-server `MEETING_ENABLED`, dark by default in the config.
+- Spike-gated build: the `tests/eval/diarization/gates.yaml` gates PASSED on Blackwell on 2026-07-14; harness
+  `bin/run_diarization_eval.py`.
+
+**Flow as built**
+
+- `POST /api/meetings/transcribe` — consent REQUIRED (else 422); multi-hour audio streamed chunk-by-chunk to the
+  shared uploads PVC; 202 `{id}`.
+- Optional per-meeting `language` = `auto` / ISO code, stored on `Meeting.language` (migration `pc20260722c`) and
+  threaded worker → `/transcribe-meeting` → whisper. The meeting ASR path used to hardcode
+  `whisper_language_default=de`, so English meetings came back as hallucinated German. The UI defaults to
+  `auto`-detect for the mixed EN/DE customer base.
+- A `Meeting(status=pending)` row (`meetings` table, migration `pc20260714`) → `MeetingTaskQueue` (own Redis stream
+  `renfield:tasks:meeting`) → the meeting worker (`workers/meeting_worker.py`, `k8s/meeting-worker.yaml`, replicas:1).
+  The worker clones the document worker and adds a row-level `status` + `heartbeat_at` in-flight guard for the
+  multi-hour job, poison-pill quarantine, and a 4xx-terminal / 5xx-retryable `VoiceServerError` split so a corrupt
+  recording fails fast instead of re-burning the GPU.
+- Voice-server `POST /transcribe-meeting` (`voice-server/voice_server/services/meeting_service.py`): pyannote
+  diarization + faster-whisper word-timestamps + a PURE fixture-tested `align_words_to_segments` + per-cluster ECAPA in
+  the ONNX `/stt` space. pyannote loads only when `MEETING_ENABLED`; the image bakes GPU torch cu128 + the pyannote
+  model via a BuildKit secret.
+- Attribution = honest pseudonyms ("Sprecher N") + one-click human labeling (`POST /api/meetings/{id}/relabel`,
+  re-render → reindex in place, stable `transcript_document_id`). Auto-match is DEFERRED
+  (`meeting_auto_match_enabled` dark) — the spike separation gate was insufficient-data on synthetic audio.
+- Ingest into a dedicated "Meetings" KB via `folder_ingest.ingest_document` with `source="meeting_transcript"` (new
+  `documents.source` column, migration `pc20260714b`), which gates Schicht-A OFF (D14) and sets
+  `file_to_paperless=False`.
+- Biometrics: the voice-server's per-cluster ECAPA `embedding` is never stored on `Meeting.segments`
+  (`meeting_pipeline.strip_biometric_fields` / `_set_segments`, the only segments write path; re-render and relabel
+  clean legacy rows; `GET …/segments` filters them). Legacy rows: `bin/purge_meeting_segment_embeddings.py`
+  (`--dry-run` / `--commit`, counts only).
+
+**Retention**
+
+- `retention_until` is stamped at upload from `meeting_retention_days`.
+- A daily job (`services/meeting_retention.py`) purges expired transcripts (via the document-delete path) + segments
+  + audio, and grace-cleans completed/failed meetings' audio (`meeting_audio_grace_days`; `meeting_keep_audio` opt-in).
+
+**Routes**
+
+- `POST /transcribe`, `GET /{id}`, `GET /{id}/segments`, `POST /{id}/relabel`, `DELETE /{id}` under `/api/meetings`,
+  plus the added owner-scoped `GET /api/meetings` list.
+- `DELETE /{id}` is an owner-gated whole-meeting delete — transcript doc + audio + row — via the shared
+  `meeting_retention.purge_meeting` cascade the retention sweep also uses (UI: a trash button + inline confirm on
+  each card).
+
+**Frontend**
+
+- `pages/MeetingsPage.tsx` + the dedicated `pages/MeetingDetailPage.tsx` at `/meetings/{id}` (PR-3 / Track D),
+  flag-gated on `meeting_transcription_enabled` from `/api/config/features` → nav + route absent when off.
+- List page = upload form (mandatory consent checkbox) + a status list that polls only while a meeting is
+  pending/processing. A completed card is a LINK to its detail page (no inline expand).
+- Detail page = the deliverable-first surface: minutes (summary/decisions/action-items) as the default view up top,
+  the raw transcript secondary + collapsed below, a draft-confirm nudge banner, per-speaker relabel, project link,
+  delete, and a deep-link to `/knowledge?doc=`.
+- Shared building blocks in `components/meetings/` (`StatusBadge` / `TranscriptView` / `MinutesPanel` /
+  `ProjectSelect`), consumed by both pages; `useMeeting(id)` → `GET /api/meetings/{id}`.
+
+**Rollout status and the two post-launch fixes**
+
+- LIVE on both the household (`renfield`) and xidra — flag flipped + browser-E2E verified.
+- Two operational fixes shipped after the first production upload on xidra:
+  - The frontend upload call sets `timeout: 0`. The shared `apiClient` otherwise aborts a several-hundred-MB
+    recording client-side at its 30s default (#1009).
+  - The voice-server GPU-OOM root cause was ECAPA, not whisper: a meeting feeds a speaker's WHOLE concatenated audio
+    to the embedding, whose onnxruntime arena retains the peak. `speaker_service.cap_clip` bounds the ECAPA input to a
+    centered 30s window (`speaker_embed_max_seconds`, voice-server v0.3.6, #1012; verified on repeated 32-min
+    recordings). Chunked transcription (`meeting_chunk_seconds`, v0.3.5) stays as a backstop for pathologically long
+    recordings.
+- Related: the voice-identity design plans STREAMING diarization — this §2 batch integration is the shared
+  pyannote/cu128 image layer it must reuse, not duplicate.
