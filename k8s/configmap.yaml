@@ -28,7 +28,7 @@ data:
   # peer's transport_config gets a usable endpoint (without it a UI pairing yields
   # no endpoint → federation unusable). Same-cluster peers use the internal svc DNS.
   FEDERATION_ADVERTISED_URL: "http://backend.renfield.svc.cluster.local:8000"
-  ALLOW_REGISTRATION: "true"       # harmless while auth is off; set "false" at cutover unless self-signup is wanted
+  ALLOW_REGISTRATION: "false"      # meaningless while auth is off (register route 403s either way); already the safe cutover value — a "true" here would count as "decided" and disarm the auth-on boot gate
   CORS_ORIGINS: "*"               # pin to the frontend origin at cutover
   TRUSTED_PROXIES: ""             # empty = legacy XFF[0] (per-client keying behind Traefik); set to the Traefik pod CIDR for the spoof-resistant walk (#693)
   API_RATE_LIMIT_STORAGE_URI: "memory://"   # per-pod; set to "redis://redis:6379" for shared per-cluster limiting when >1 backend pod runs

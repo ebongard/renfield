@@ -1979,7 +1979,7 @@ class Settings(BaseSettings):
         `"staging"`, or `"prod"`). Tests can opt in to the warning path
         by setting RENFIELD_ENV explicitly.
         """
-        env = self.renfield_env.lower()
+        env = self.renfield_env.strip().lower()
         if env in {"development", "dev", "test"}:
             return self
 
@@ -2026,7 +2026,7 @@ class Settings(BaseSettings):
         arms once an operator declares production, at which point a strong
         SECRET_KEY must already be provisioned.
         """
-        env = self.renfield_env.lower()
+        env = self.renfield_env.strip().lower()
         is_real_env = env in _REAL_DEPLOY_ENVS
         if not (self.auth_enabled or is_real_env):
             return self
@@ -2111,7 +2111,7 @@ class Settings(BaseSettings):
                 "so nothing changes; remove the key from the environment/ConfigMap."
             )
 
-        env = self.renfield_env.lower()
+        env = self.renfield_env.strip().lower()
 
         # HARD FAIL — cookie session with a broken/unsafe posture. Cookies need
         # credentialed CORS (impossible with a wildcard origin) AND the WS Origin

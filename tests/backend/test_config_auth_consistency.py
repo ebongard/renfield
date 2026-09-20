@@ -8,6 +8,7 @@ control — is gone with the second flag itself: AUTH_ENABLED is now the single
 auth posture. What remains of that check (a leftover, contradicting
 WS_AUTH_ENABLED key) lives in test_config_single_auth_flag.py.
 """
+from loguru import logger as loguru_logger
 from pydantic import SecretStr
 
 import pytest
@@ -70,9 +71,16 @@ class TestAuthConfigConsistency:
     @pytest.mark.unit
     def test_production_auth_on_with_explicit_open_registration_warns_not_fatal(self, monkeypatch):
         monkeypatch.setenv("RENFIELD_ENV", "production")
-        # Explicit opt-in (constructor kwarg) — the operator decided; WARN only.
-        s = Settings(auth_enabled=True, allow_registration=True, secret_key=SecretStr(_STRONG))
+        # Explicit opt-in (constructor kwarg) — the operator decided; WARN only,
+        # and the WARN must actually be emitted (loguru sink, not stdlib caplog).
+        warnings: list[str] = []
+        sink = loguru_logger.add(lambda m: warnings.append(str(m)), level="WARNING")
+        try:
+            s = Settings(auth_enabled=True, allow_registration=True, secret_key=SecretStr(_STRONG))
+        finally:
+            loguru_logger.remove(sink)
         assert s.allow_registration is True
+        assert any("ALLOW_REGISTRATION=true" in w for w in warnings), warnings
 
     @pytest.mark.unit
     def test_production_auth_on_with_registration_set_via_env_counts_as_explicit(self, monkeypatch):
@@ -87,6 +95,32 @@ class TestAuthConfigConsistency:
     def test_production_auth_on_with_registration_off_is_silent(self, monkeypatch):
         monkeypatch.setenv("RENFIELD_ENV", "production")
         s = Settings(auth_enabled=True, allow_registration=False, secret_key=SecretStr(_STRONG))
+        assert s.allow_registration is False
+
+    @pytest.mark.unit
+    def test_production_auth_on_with_registration_off_via_env_is_silent(self, monkeypatch):
+        # The xidra path exactly: ConfigMap → env → "false".
+        monkeypatch.setenv("RENFIELD_ENV", "production")
+        monkeypatch.setenv("ALLOW_REGISTRATION", "false")
+        s = Settings(auth_enabled=True, secret_key=SecretStr(_STRONG))
+        assert s.allow_registration is False
+
+    @pytest.mark.unit
+    @pytest.mark.parametrize("env_value", ["prod", "PRODUCTION", " staging "])
+    def test_real_env_spellings_arm_the_gate(self, monkeypatch, env_value):
+        monkeypatch.setenv("RENFIELD_ENV", env_value)
+        monkeypatch.delenv("ALLOW_REGISTRATION", raising=False)
+        with pytest.raises(ValueError, match="ALLOW_REGISTRATION unset"):
+            Settings(auth_enabled=True, secret_key=SecretStr(_STRONG))
+
+    @pytest.mark.unit
+    def test_value_from_dotenv_file_counts_as_explicit(self, monkeypatch, tmp_path):
+        # The other real settings source: a .env file (build box / dev).
+        monkeypatch.setenv("RENFIELD_ENV", "production")
+        monkeypatch.delenv("ALLOW_REGISTRATION", raising=False)
+        env_file = tmp_path / ".env"
+        env_file.write_text("ALLOW_REGISTRATION=false\n")
+        s = Settings(_env_file=env_file, auth_enabled=True, secret_key=SecretStr(_STRONG))
         assert s.allow_registration is False
 
     @pytest.mark.unit

@@ -46,6 +46,7 @@ Das System ist für **vertrauenswürdige, offline Umgebungen** konzipiert:
 # .env
 AUTH_ENABLED=true
 SECRET_KEY=dein-starker-64-zeichen-key
+ALLOW_REGISTRATION=false   # Pflicht auf einer Produktions-/Staging-Instanz: ohne ausdrücklichen Wert startet sie nicht
 ```
 
 ### Vollständige Konfiguration
