@@ -132,7 +132,8 @@ Beyond the per-IP request cap, repeated failed logins lock the login target (`LO
 - **username-wide backstop** at the higher threshold still stops credential-stuffing that rotates source IPs against one account.
 - Redis-backed (`services/login_lockout.py`), **fails OPEN** on a Redis outage (a blip must not lock out the household; the per-IP limit remains the backstop). A successful login clears the username backstop and that address's counters — never another address's lock.
 - A locked login returns the **same opaque 401** as bad credentials (no username-enumeration oracle). The event is surfaced via logging + the `login_failure_total{reason="locked_out"}` metric.
-- **Admin unlock:** `POST /api/users/{id}/unlock` (`users.manage`) removes every lock and counter of a user; the user list (`GET /api/users`) carries `locked_out` and the Users page shows a badge + unlock button. The action is logged at WARNING with actor and target (audit).
+- Keys: the username segment is percent-encoded (a `|` or a glob character in a username can neither alias another user's per-IP scope nor widen the unlock SCAN); an IPv6 client is keyed by its /64 (one home connection holds a whole /64, so per-address rotation is not free).
+- **Admin unlock:** `POST /api/users/{id}/unlock` (`users.manage`) removes every lock and counter of a user; the user list (`GET /api/users`) carries `locked_out` and the Users page shows a badge + unlock button. The action is logged at WARNING with actor and target (audit). Unlike the login path, unlock does NOT fail open: with Redis unreachable it answers **503** rather than a false "cleared".
 - Residual trade-off: a hostile address can still lock itself out of an account for the duration, and 25 distributed failures still lock the account until the duration elapses or an admin unlocks it (bounded, env-disable-able).
 
 ### WebSocket

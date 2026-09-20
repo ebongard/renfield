@@ -266,6 +266,7 @@ Neue Benutzer erhalten automatisch die "Gast"-Rolle.
 | `/api/users/{id}` | PATCH | Benutzer bearbeiten |
 | `/api/users/{id}` | DELETE | Benutzer löschen |
 | `/api/users/{id}/reset-password` | POST | Passwort zurücksetzen |
+| `/api/users/{id}/unlock` | POST | Anmeldesperre aufheben (`users.manage`; `GET /api/users` liefert `locked_out`) |
 | `/api/users/{id}/link-speaker` | POST | Sprecher verknüpfen |
 | `/api/users/{id}/link-speaker` | DELETE | Sprecher-Verknüpfung lösen |
 

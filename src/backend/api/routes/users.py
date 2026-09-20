@@ -35,7 +35,7 @@ from services.auth_service import (
     validate_password,
 )
 from services.database import get_db
-from services.login_lockout import login_lockout
+from services.login_lockout import LockoutStoreUnavailable, login_lockout
 
 router = APIRouter()
 
@@ -617,7 +617,14 @@ async def unlock_user(
             detail="User not found"
         )
 
-    cleared = await login_lockout.unlock(user.username)
+    try:
+        cleared = await login_lockout.unlock(user.username)
+    except LockoutStoreUnavailable:
+        # Never a false "cleared": with Redis down the lock may still stand.
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Lockout store unreachable — nothing was cleared, retry later"
+        )
     logger.warning(
         f"🔓 Login lockout cleared for user {user.username!r} by "
         f"{current_user.username if current_user else 'system'} "

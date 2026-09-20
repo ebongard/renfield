@@ -251,7 +251,7 @@ async def login(
     if await login_lockout.is_locked(form_data.username, client_ip):
         record_login_failure("locked_out")
         logger.warning(
-            f"Login rejected: account locked out (username={form_data.username!r})"
+            f"Login rejected: account locked out (username={form_data.username!r}, ip={client_ip})"
         )
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -272,8 +272,8 @@ async def login(
         record_login_failure("bad_credentials")
         tripped = await login_lockout.record_failure(form_data.username, client_ip)
         logger.warning(
-            f"Login failed: bad credentials (username={form_data.username!r})"
-            + (" — account now locked out" if tripped else "")
+            f"Login failed: bad credentials (username={form_data.username!r}, ip={client_ip})"
+            + (" — lockout tripped" if tripped else "")
         )
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -296,7 +296,7 @@ async def login(
         record_login_failure("inactive")
         await login_lockout.record_failure(form_data.username, client_ip)
         logger.warning(
-            f"Login failed: account missing or inactive (username={form_data.username!r})"
+            f"Login failed: account missing or inactive (username={form_data.username!r}, ip={client_ip})"
         )
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,

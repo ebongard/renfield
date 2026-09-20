@@ -19,13 +19,19 @@ never on a secret:
   account regardless of source, so an attacker rotating IPs is still stopped;
   the higher threshold keeps a single hostile address from tripping it.
 
-Redis keys::
+Redis keys (``<user>`` is the normalized username, percent-encoded with
+``urllib.parse.quote(safe="")`` so neither the ``|`` separator nor a Redis glob
+metacharacter can come from a username — ``eve|10.0.0.5`` can't alias ``eve``'s
+per-IP scope and ``a*b`` can't widen a SCAN)::
 
     login_fail:<user>|<ip>   counter, rolling TTL   login_lock:<user>|<ip>   lock marker
     login_fail:<user>        counter, rolling TTL   login_lock:<user>        lock marker
 
-The username-only keys are the pre-2026-09-20 key format, so an existing lock
-survives the upgrade as a backstop lock.
+For the usual ``[A-Za-z0-9_.-]`` usernames the encoding is the identity, so the
+username-only keys ARE the pre-2026-09-20 key format and an existing lock
+survives the upgrade as a backstop lock. ``<ip>`` is the client address; an
+IPv6 client is collapsed to its /64 (one home connection holds a whole /64, so
+per-address rotation would be free there).
 
 Fail-OPEN by design: if Redis is unreachable, ``is_locked`` returns False and
 ``record_failure`` is a no-op. A revocation store (token blacklist) fails CLOSED
@@ -41,6 +47,9 @@ Admin recovery: ``unlock(username)`` removes every counter and lock of a user
 (``POST /api/users/{id}/unlock``, ``users.manage``); before it existed the only
 way out of a lock was waiting or deleting Redis keys by hand.
 """
+import ipaddress
+from urllib.parse import quote, unquote
+
 from loguru import logger
 
 from services.redis_client import get_redis
@@ -51,30 +60,43 @@ LOCK_PREFIX = "login_lock:"
 _IP_SEP = "|"
 
 
+class LockoutStoreUnavailable(Exception):
+    """Redis could not be reached for an operation whose OUTCOME the caller must
+    report truthfully (admin unlock). The login-path methods never raise it —
+    they fail open by design."""
+
+
 def _normalize(username: str) -> str:
     return (username or "").strip().lower()
 
 
+def _key_user(user: str) -> str:
+    """Normalized username → key segment: no ``|``, no glob metacharacters."""
+    return quote(user, safe="")
+
+
 def _normalize_ip(ip: str | None) -> str | None:
+    """Strip; collapse an IPv6 address to its /64 network; None when unknown."""
     ip = (ip or "").strip()
-    return ip or None
-
-
-def _glob_escape(value: str) -> str:
-    """Escape Redis glob metacharacters so a username can't widen a SCAN."""
-    out = []
-    for ch in value:
-        if ch in "*?[]\\":
-            out.append("\\" + ch)
-        else:
-            out.append(ch)
-    return "".join(out)
+    if not ip:
+        return None
+    try:
+        addr = ipaddress.ip_address(ip)
+    except ValueError:
+        return ip  # not an IP literal (tests, odd transports) — key it as given
+    if addr.version == 6:
+        return str(ipaddress.ip_network(f"{addr}/64", strict=False))
+    return str(addr)
 
 
 def _username_of_key(key: str, prefix: str) -> str:
-    """``login_lock:alice|1.2.3.4`` → ``alice`` (also handles the bare form)."""
+    """``login_lock:alice|1.2.3.4`` → ``alice`` (also handles the bare form).
+
+    The username segment is percent-encoded, so the FIRST ``|`` is always the
+    separator; an IPv6 ``/64`` after it carries no ``|`` either.
+    """
     rest = key[len(prefix):]
-    return rest.split(_IP_SEP, 1)[0]
+    return unquote(rest.split(_IP_SEP, 1)[0])
 
 
 class LoginLockout:
@@ -90,7 +112,8 @@ class LoginLockout:
     @staticmethod
     def _keys(user: str, ip: str | None) -> tuple[str, str]:
         """(fail_key, lock_key) for the scope: username-only when ``ip`` is None."""
-        suffix = f"{user}{_IP_SEP}{ip}" if ip else user
+        seg = _key_user(user)
+        suffix = f"{seg}{_IP_SEP}{ip}" if ip else seg
         return f"{FAIL_PREFIX}{suffix}", f"{LOCK_PREFIX}{suffix}"
 
     # --------------------------------------------------------------- queries
@@ -212,8 +235,9 @@ class LoginLockout:
     async def unlock(self, username: str) -> int:
         """Admin unlock: remove EVERY counter and lock of this username, all IPs.
 
-        Returns the number of keys removed (0 when disabled / nothing held /
-        Redis unreachable — the caller reports, never raises).
+        Returns the number of keys removed (0 when disabled / nothing held).
+        Unlike the login-path methods this RAISES ``LockoutStoreUnavailable`` on
+        a Redis error: an admin must not be told "cleared" while the lock stands.
         """
         if not settings.login_lockout_enabled:
             return 0
@@ -223,15 +247,15 @@ class LoginLockout:
         try:
             redis = self._get_redis()
             keys = list(self._keys(user, None))
-            pattern_user = _glob_escape(user)
+            seg = _key_user(user)  # percent-encoded → no glob metacharacters
             for prefix in (FAIL_PREFIX, LOCK_PREFIX):
-                async for key in redis.scan_iter(match=f"{prefix}{pattern_user}{_IP_SEP}*"):
+                async for key in redis.scan_iter(match=f"{prefix}{seg}{_IP_SEP}*"):
                     keys.append(str(key))
             removed = await redis.delete(*keys)
             return int(removed or 0)
         except Exception as e:
-            logger.error(f"Login lockout unlock failed (ignored): {e}")
-            return 0
+            logger.error(f"Login lockout unlock failed — store unreachable: {e}")
+            raise LockoutStoreUnavailable(str(e)) from e
 
 
 # Singleton instance

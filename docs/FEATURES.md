@@ -922,7 +922,7 @@ Siehe [SECRETS_MANAGEMENT.md](SECRETS_MANAGEMENT.md) für Details.
 - **CORS**: Konfigurierbare Origins (`CORS_ORIGINS`)
 - **Trusted Proxies**: CIDR-basiert (`TRUSTED_PROXIES`) — gesetzt: spoof-sicherer Rechts-nach-Links-XFF-Durchlauf; leer: legacy `X-Forwarded-For[0]` (rückwärtskompatibel, spoofbar)
 - **Rate-Limit-Storage**: per-Pod (`memory://`) oder per-Cluster (`API_RATE_LIMIT_STORAGE_URI=${REDIS_URL}`)
-- **Account Lockout**: Pro-Username-Sperre nach Fehl-Logins (`LOGIN_LOCKOUT_ENABLED`, Redis, fail-open)
+- **Account Lockout**: Sperre je (Username, Client-IP) nach Fehl-Logins mit Username-weitem Backstop (`LOGIN_LOCKOUT_ENABLED`, `LOGIN_LOCKOUT_USERNAME_MAX_ATTEMPTS`; IP-Bereich nur bei gesetztem `TRUSTED_PROXIES`, IPv6 als /64; Redis, fail-open) + Admin-Entsperrung `POST /api/users/{id}/unlock` mit `locked_out`-Abzeichen auf der Benutzerseite
 - **Auth-Observability**: `renfield_login_failure_total` / `renfield_authz_denied_total` + strukturierte Logs auf 401/403
 - **Forced Password Rotation**: `must_change_password` serverseitig erzwungen (Allowlist bis zur Rotation); Bootstrap-Admin startet immer damit (auch bei operator-gesetztem `DEFAULT_ADMIN_PASSWORD`) + Frontend-Redirect nach `/change-password`; Change-Password lehnt Wiederverwendung (aktuelles/Default-Passwort) ab
 - **Internal-Auth-Verify-Gate**: `POST /api/internal/auth/verify` (Voice-Server-Verify) optional per `INTERNAL_AUTH_VERIFY_SECRET` (`X-Verify-Secret` Header) abgeschottet — schließt das unauth. Token-Validity-Oracle (login audit 2026-08)

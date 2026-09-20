@@ -189,6 +189,23 @@ class TestAdminUnlock:
         assert test_user.username in body["message"]
 
     @pytest.mark.database
+    async def test_unlock_reports_503_when_store_unreachable(self, db_session: AsyncSession, test_user: User):
+        """Never a false 'cleared': with Redis down the lock may still stand."""
+        from fastapi import HTTPException
+
+        from api.routes import users as users_routes
+        from services.login_lockout import LockoutStoreUnavailable
+
+        with patch.object(
+            users_routes.login_lockout, "unlock", new=AsyncMock(side_effect=LockoutStoreUnavailable("down"))
+        ):
+            with pytest.raises(HTTPException) as exc:
+                await users_routes.unlock_user(
+                    user_id=test_user.id, db=db_session, current_user=MagicMock(username="admin")
+                )
+        assert exc.value.status_code == 503
+
+    @pytest.mark.database
     async def test_unlock_unknown_user_is_404(self, db_session: AsyncSession):
         from fastapi import HTTPException
 

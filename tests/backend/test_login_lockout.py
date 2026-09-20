@@ -49,8 +49,11 @@ class _FakeRedis:
         return removed
 
     async def scan_iter(self, match: str = "*"):
-        # Redis glob → fnmatch is close enough for the prefix/escape patterns
-        # this module emits (``\\[`` escapes are honoured by fnmatch too).
+        # Redis glob ≈ fnmatch for the patterns this module emits: the username
+        # segment is percent-encoded (no ``*?[]\\`` can occur in it), so the only
+        # metacharacter is the module's own trailing ``*``. fnmatch does NOT
+        # implement Redis' backslash escapes — which is exactly why the module
+        # encodes instead of escaping.
         import fnmatch
         for k in list(self.store):
             if fnmatch.fnmatchcase(k, match):
@@ -206,6 +209,36 @@ class TestPerIpScope:
             await lockout.record_failure("alice", " 10.0.0.1 ")
         assert await lockout.is_locked("alice", "10.0.0.1") is True
 
+    @pytest.mark.unit
+    async def test_ipv6_clients_share_their_64(self, lockout):
+        # One home connection holds a whole /64 — per-address rotation inside it
+        # must not be free, so the scope is the /64, not the host.
+        for _ in range(3):
+            await lockout.record_failure("alice", "2001:db8:1:2::10")
+        assert await lockout.is_locked("alice", "2001:db8:1:2:ffff::1") is True
+        assert await lockout.is_locked("alice", "2001:db8:1:3::10") is False
+
+    @pytest.mark.unit
+    async def test_pipe_in_username_cannot_alias_another_users_ip_scope(self, lockout):
+        # ``eve|10.0.0.5`` is a legal username; its keys must not read as eve's
+        # per-IP scope for 10.0.0.5 (the separator is not reachable from a name).
+        for _ in range(3):
+            await lockout.record_failure("eve|10.0.0.5")
+        assert await lockout.is_locked("eve|10.0.0.5") is True
+        assert await lockout.is_locked("eve", "10.0.0.5") is False
+        assert await lockout.locked_usernames() == {"eve|10.0.0.5"}
+        assert await lockout.unlock("eve") == 0
+        assert await lockout.is_locked("eve|10.0.0.5") is True
+
+    @pytest.mark.unit
+    async def test_plain_username_keys_keep_the_legacy_format(self, lockout):
+        # Compat: for ordinary names the encoding is the identity, so a lock
+        # written before the per-IP change (``login_lock:alice``) still applies.
+        lockout._fake.store["login_lock:alice"] = "1"
+        assert await lockout.is_locked("alice", "10.0.0.1") is True
+        await lockout.record_failure("bob.smith-1")
+        assert "login_fail:bob.smith-1" in lockout._fake.store
+
 
 class TestAdminUnlock:
     @pytest.mark.unit
@@ -243,11 +276,28 @@ class TestAdminUnlock:
         assert await lockout.is_locked("bob", "10.0.0.1") is True
 
     @pytest.mark.unit
-    async def test_unlock_fails_open_on_redis_error(self, lockout, monkeypatch):
+    async def test_unlock_user_with_glob_chars_removes_own_keys_only(self, lockout):
+        # The positive case: a legal username like ``a*b`` (only length is
+        # validated) is percent-encoded in the key, so its own SCAN finds its
+        # keys and nothing else.
+        for _ in range(3):
+            await lockout.record_failure("a*b", "10.0.0.1")
+            await lockout.record_failure("bob", "10.0.0.1")
+        assert await lockout.is_locked("a*b", "10.0.0.1") is True
+        assert await lockout.unlock("a*b") == 3  # ip fail + ip lock + username fail
+        assert await lockout.is_locked("a*b", "10.0.0.1") is False
+        assert await lockout.is_locked("bob", "10.0.0.1") is True
+
+    @pytest.mark.unit
+    async def test_unlock_raises_when_store_unreachable(self, lockout, monkeypatch):
+        # The admin must never be told "cleared" while the lock may still stand.
+        from services.login_lockout import LockoutStoreUnavailable
+
         def _boom():
             raise ConnectionError("redis down")
         monkeypatch.setattr(lockout, "_get_redis", _boom)
-        assert await lockout.unlock("alice") == 0
+        with pytest.raises(LockoutStoreUnavailable):
+            await lockout.unlock("alice")
 
     @pytest.mark.unit
     async def test_unlock_disabled_is_noop(self, lockout, monkeypatch):
