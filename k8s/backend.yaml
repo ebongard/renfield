@@ -165,6 +165,15 @@ spec:
                 secretKeyRef:
                   name: renfield-secrets
                   key: secret-key
+            # Former SECRET_KEY(s) during a rotation (BL-0357) — a Secret key, never a
+            # ConfigMap value (an old signing key in git would be plaintext). Absent =
+            # no rotation in progress; the pod boots without it.
+            - name: SECRET_KEY_PREVIOUS
+              valueFrom:
+                secretKeyRef:
+                  name: renfield-secrets
+                  key: secret-key-previous
+                  optional: true
             - name: DEFAULT_ADMIN_PASSWORD
               valueFrom:
                 secretKeyRef:

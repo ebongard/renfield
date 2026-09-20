@@ -2051,8 +2051,12 @@ damit die Handy-Präsenz. **Rotation (seit 2026-09-20, BL-0357):** Verschlüssel
 mit dem aktuellen Schlüssel, entschlüsselt mit dem aktuellen ODER einem in
 `SECRET_KEY_PREVIOUS` gelisteten (`MultiFernet`). Ablauf:
 
-1. `SECRET_KEY=<neu>`, `SECRET_KEY_PREVIOUS=<alt>` setzen und ausrollen (Backend + alle
-   Worker). Alle JWT-Sitzungen enden — das ist gewollt. Die gespeicherten IRKs bleiben lesbar.
+1. `SECRET_KEY=<neu>` und `SECRET_KEY_PREVIOUS=<alt>` setzen und ausrollen (Backend + alle
+   Worker). Beide sind **Secret-Schlüssel** (`renfield-secrets`: `secret-key` /
+   `secret-key-previous`, letzterer in `k8s/backend.yaml` als `optional: true` referenziert —
+   x-ren trägt dieselbe Zeile), nie ConfigMap-Werte: ein alter Signierschlüssel in der
+   ConfigMap stünde im Klartext in git. Alle JWT-Sitzungen enden — das ist gewollt. Die
+   gespeicherten IRKs bleiben lesbar.
 2. Im Backend-Pod `python bin/rotate_secret_encryption.py --dry-run`, dann `--commit`:
    schreibt jeden noch unter dem alten Schlüssel liegenden Wert neu (nur Zählwerte).
 3. `SECRET_KEY_PREVIOUS` leeren und erneut ausrollen.
