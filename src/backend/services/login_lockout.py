@@ -58,6 +58,9 @@ from utils.config import settings
 FAIL_PREFIX = "login_fail:"
 LOCK_PREFIX = "login_lock:"
 _IP_SEP = "|"
+# SCAN hint: the keyspace is shared with the rate limiter; the server default
+# COUNT=10 would mean N/10 round-trips per admin page load.
+_SCAN_COUNT = 1000
 
 
 class LockoutStoreUnavailable(Exception):
@@ -84,7 +87,10 @@ def _normalize_ip(ip: str | None) -> str | None:
         addr = ipaddress.ip_address(ip)
     except ValueError:
         return ip  # not an IP literal (tests, odd transports) — key it as given
-    if addr.version == 6:
+    if addr.version == 6 and addr.is_global:
+        # ISP-assigned prefix: one household holds the whole /64. NOT applied
+        # to ULA/link-local — there owner and attacker may share one LAN /64,
+        # and collapsing would turn the per-IP scope into a per-LAN one.
         return str(ipaddress.ip_network(f"{addr}/64", strict=False))
     return str(addr)
 
@@ -144,19 +150,44 @@ class LoginLockout:
     async def locked_usernames(self) -> set[str]:
         """Normalized usernames that currently hold ANY lock (per-IP or backstop).
 
-        One SCAN for the admin user list. Fails OPEN to an empty set.
+        One SCAN (large COUNT — the keyspace also holds rate-limit keys) for the
+        admin user list. Fails OPEN to an empty set.
         """
         if not settings.login_lockout_enabled:
             return set()
         try:
             redis = self._get_redis()
             found: set[str] = set()
-            async for key in redis.scan_iter(match=f"{LOCK_PREFIX}*"):
+            async for key in redis.scan_iter(match=f"{LOCK_PREFIX}*", count=_SCAN_COUNT):
                 found.add(_username_of_key(str(key), LOCK_PREFIX))
             return found
         except Exception as e:
             logger.error(f"Login lockout scan failed — failing OPEN: {e}")
             return set()
+
+    async def has_any_lock(self, username: str) -> bool:
+        """True if this username holds the backstop lock or any per-IP lock.
+
+        For a single user: one EXISTS plus one prefix-bounded SCAN — cheaper
+        than ``locked_usernames()`` when only one row is answered. Fails OPEN.
+        """
+        if not settings.login_lockout_enabled:
+            return False
+        user = _normalize(username)
+        if not user:
+            return False
+        try:
+            redis = self._get_redis()
+            _, user_lock = self._keys(user, None)
+            if await redis.exists(user_lock) > 0:
+                return True
+            seg = _key_user(user)
+            async for _ in redis.scan_iter(match=f"{LOCK_PREFIX}{seg}{_IP_SEP}*", count=_SCAN_COUNT):
+                return True
+            return False
+        except Exception as e:
+            logger.error(f"Login lockout check failed — failing OPEN: {e}")
+            return False
 
     # --------------------------------------------------------------- writes
     async def _count_failure(self, redis, fail_key: str, lock_key: str, threshold: int) -> bool:
@@ -249,7 +280,7 @@ class LoginLockout:
             keys = list(self._keys(user, None))
             seg = _key_user(user)  # percent-encoded → no glob metacharacters
             for prefix in (FAIL_PREFIX, LOCK_PREFIX):
-                async for key in redis.scan_iter(match=f"{prefix}{seg}{_IP_SEP}*"):
+                async for key in redis.scan_iter(match=f"{prefix}{seg}{_IP_SEP}*", count=_SCAN_COUNT):
                     keys.append(str(key))
             removed = await redis.delete(*keys)
             return int(removed or 0)

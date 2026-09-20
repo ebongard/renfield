@@ -48,7 +48,7 @@ class _FakeRedis:
             self.ttls.pop(k, None)
         return removed
 
-    async def scan_iter(self, match: str = "*"):
+    async def scan_iter(self, match: str = "*", count: int | None = None):
         # Redis glob ≈ fnmatch for the patterns this module emits: the username
         # segment is percent-encoded (no ``*?[]\\`` can occur in it), so the only
         # metacharacter is the module's own trailing ``*``. fnmatch does NOT
@@ -210,13 +210,33 @@ class TestPerIpScope:
         assert await lockout.is_locked("alice", "10.0.0.1") is True
 
     @pytest.mark.unit
-    async def test_ipv6_clients_share_their_64(self, lockout):
-        # One home connection holds a whole /64 — per-address rotation inside it
-        # must not be free, so the scope is the /64, not the host.
+    async def test_global_ipv6_clients_share_their_64(self, lockout):
+        # One ISP-assigned home prefix is a whole /64 — per-address rotation
+        # inside it must not be free, so the scope is the /64, not the host.
         for _ in range(3):
-            await lockout.record_failure("alice", "2001:db8:1:2::10")
-        assert await lockout.is_locked("alice", "2001:db8:1:2:ffff::1") is True
-        assert await lockout.is_locked("alice", "2001:db8:1:3::10") is False
+            await lockout.record_failure("alice", "2a02:8071:1:2::10")
+        assert await lockout.is_locked("alice", "2a02:8071:1:2:ffff::1") is True
+        assert await lockout.is_locked("alice", "2a02:8071:1:3::10") is False
+
+    @pytest.mark.unit
+    async def test_ula_ipv6_keeps_host_granularity(self, lockout):
+        # On a LAN (ULA fd00::/8) owner and attacker share one /64 — collapsing
+        # would make the per-IP scope a per-LAN one, so the host is kept.
+        for _ in range(3):
+            await lockout.record_failure("alice", "fd12:3456:789a:1::10")
+        assert await lockout.is_locked("alice", "fd12:3456:789a:1::10") is True
+        assert await lockout.is_locked("alice", "fd12:3456:789a:1::11") is False
+
+    @pytest.mark.unit
+    async def test_has_any_lock_covers_both_scopes(self, lockout):
+        assert await lockout.has_any_lock("alice") is False
+        for _ in range(3):
+            await lockout.record_failure("alice", "10.0.0.1")
+        assert await lockout.has_any_lock("alice") is True      # per-IP lock
+        assert await lockout.has_any_lock("bob") is False
+        for _ in range(3):
+            await lockout.record_failure("carol")
+        assert await lockout.has_any_lock("Carol") is True      # backstop lock
 
     @pytest.mark.unit
     async def test_pipe_in_username_cannot_alias_another_users_ip_scope(self, lockout):

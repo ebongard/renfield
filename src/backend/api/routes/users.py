@@ -261,7 +261,7 @@ async def get_user(
         created_at=user.created_at,
         updated_at=user.updated_at,
         last_login=user.last_login,
-        locked_out=user.username.strip().lower() in await login_lockout.locked_usernames(),
+        locked_out=await login_lockout.has_any_lock(user.username),
     )
 
 

@@ -92,7 +92,9 @@ export default function UsersPage() {
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
 
   const queryError = usersQuery.errorMessage ?? rolesQuery.errorMessage;
-  const displayError = error ?? queryError;
+  // Unlock is a one-click mutation without its own form; surface its failure
+  // (e.g. 503 while the lockout store is unreachable) like the query errors.
+  const displayError = error ?? queryError ?? unlockUser.errorMessage;
 
   useEffect(() => {
     if (error || success) {
