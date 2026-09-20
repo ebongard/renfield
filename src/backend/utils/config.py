@@ -1331,6 +1331,14 @@ class Settings(BaseSettings):
 
     # Security
     secret_key: SecretStr = "changeme-in-production-use-strong-random-key"
+    # Former SECRET_KEYs, comma-separated, newest first (BL-0357). Stored secrets
+    # (BLE IRKs) are Fernet-encrypted under SECRET_KEY; with the previous key(s)
+    # listed here they stay DECRYPTABLE after a rotation (MultiFernet: encrypt
+    # with the current key, decrypt with any). Rotation runbook:
+    # 1) SECRET_KEY=new, SECRET_KEY_PREVIOUS=old → deploy (JWT sessions end);
+    # 2) bin/rotate_secret_encryption.py --commit re-encrypts every stored value;
+    # 3) drop SECRET_KEY_PREVIOUS. Without this list a rotation is destructive.
+    secret_key_previous: SecretStr = ""
     trusted_proxies: str = ""  # Comma-separated CIDRs, e.g. "172.18.0.0/16,127.0.0.1"
 
     # Jellyfin / Paperless / Paperless Audit settings moved to

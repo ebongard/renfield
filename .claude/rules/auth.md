@@ -25,7 +25,10 @@ Loaded only when an auth file is read. Long form: `docs/design/auth-cookie-sessi
 - **`AUTH_ENABLED` is the SINGLE auth flag** (REST + WebSocket). `WS_AUTH_ENABLED` is retired; a leftover that
   CONTRADICTS `AUTH_ENABLED` fails boot (a matching leftover only warns).
 - `SSO_HANDOFF_ENABLED` dark · `AUTH_COOKIE_ENABLED` dark — flag off stays byte-identical to the localStorage-Bearer model.
-- **`SECRET_KEY` is tri-purpose (JWT + Fernet-at-rest + BLE IRKs). Rotation is DESTRUCTIVE — never split/rotate casually.**
+- **`SECRET_KEY` is tri-purpose (JWT + Fernet-at-rest + BLE IRKs).** A rotation is DESTRUCTIVE for the stored
+  secrets UNLESS the old key is listed in `SECRET_KEY_PREVIOUS` first (MultiFernet: encrypt current, decrypt any),
+  then `bin/rotate_secret_encryption.py --commit`, then drop the list — runbook in `docs/ENVIRONMENT_VARIABLES.md`.
+  JWT sessions always end on rotation. No key split yet.
 
 ## Login flow (`auth/login_flow.py::resolve_login`, called by `/auth/login`)
 1. The legacy `authenticate` hook first — a plugin returning a `User` is authoritative.
