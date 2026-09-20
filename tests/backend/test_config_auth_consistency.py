@@ -47,6 +47,64 @@ class TestAuthConfigConsistency:
         s = Settings(allow_registration=True, secret_key=SecretStr(_STRONG))
         assert s.allow_registration is True
 
+    # --- BL-0124: an authenticated production instance must DECIDE on signup ---
+    # The code default is True (dev + the auth-off household). An auth-on
+    # production/staging instance that merely forgot the key would open
+    # self-registration to the internet — that inherited default is a boot error,
+    # an explicit value (either way) is the operator's call.
+
+    @pytest.mark.unit
+    def test_production_auth_on_with_inherited_registration_default_refuses_to_boot(self, monkeypatch):
+        monkeypatch.setenv("RENFIELD_ENV", "production")
+        monkeypatch.delenv("ALLOW_REGISTRATION", raising=False)
+        with pytest.raises(ValueError, match="ALLOW_REGISTRATION unset"):
+            Settings(auth_enabled=True, secret_key=SecretStr(_STRONG))
+
+    @pytest.mark.unit
+    def test_staging_auth_on_with_inherited_registration_default_refuses_to_boot(self, monkeypatch):
+        monkeypatch.setenv("RENFIELD_ENV", "staging")
+        monkeypatch.delenv("ALLOW_REGISTRATION", raising=False)
+        with pytest.raises(ValueError, match="ALLOW_REGISTRATION unset"):
+            Settings(auth_enabled=True, secret_key=SecretStr(_STRONG))
+
+    @pytest.mark.unit
+    def test_production_auth_on_with_explicit_open_registration_warns_not_fatal(self, monkeypatch):
+        monkeypatch.setenv("RENFIELD_ENV", "production")
+        # Explicit opt-in (constructor kwarg) — the operator decided; WARN only.
+        s = Settings(auth_enabled=True, allow_registration=True, secret_key=SecretStr(_STRONG))
+        assert s.allow_registration is True
+
+    @pytest.mark.unit
+    def test_production_auth_on_with_registration_set_via_env_counts_as_explicit(self, monkeypatch):
+        monkeypatch.setenv("RENFIELD_ENV", "production")
+        # A settings source (env / .env) populates model_fields_set — the real
+        # deployment path (ConfigMap → env) must count as "decided".
+        monkeypatch.setenv("ALLOW_REGISTRATION", "true")
+        s = Settings(auth_enabled=True, secret_key=SecretStr(_STRONG))
+        assert s.allow_registration is True
+
+    @pytest.mark.unit
+    def test_production_auth_on_with_registration_off_is_silent(self, monkeypatch):
+        monkeypatch.setenv("RENFIELD_ENV", "production")
+        s = Settings(auth_enabled=True, allow_registration=False, secret_key=SecretStr(_STRONG))
+        assert s.allow_registration is False
+
+    @pytest.mark.unit
+    def test_production_auth_off_with_inherited_default_still_boots(self, monkeypatch):
+        # Auth off = single trust domain; open registration is meaningless there
+        # and must not block a boot (the household posture at a future env flip).
+        monkeypatch.setenv("RENFIELD_ENV", "production")
+        monkeypatch.delenv("ALLOW_REGISTRATION", raising=False)
+        s = Settings(auth_enabled=False, secret_key=SecretStr(_STRONG))
+        assert s.allow_registration is True
+
+    @pytest.mark.unit
+    def test_development_auth_on_with_inherited_default_still_boots(self, monkeypatch):
+        monkeypatch.setenv("RENFIELD_ENV", "development")
+        monkeypatch.delenv("ALLOW_REGISTRATION", raising=False)
+        s = Settings(auth_enabled=True, secret_key=SecretStr(_STRONG))
+        assert s.allow_registration is True
+
 
 class TestRenfieldEnvField:
     @pytest.mark.unit

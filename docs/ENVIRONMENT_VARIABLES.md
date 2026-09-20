@@ -2144,7 +2144,8 @@ Jetzt ein **getracktes Settings-Feld** (#697, vorher nur via `os.getenv` gelesen
 **Konsistenz-Assertion (#697, `assert_auth_config_consistency`):**
 - **HARTER Boot-Fehler:** ein noch gesetztes `WS_AUTH_ENABLED`, das `AUTH_ENABLED` **widerspricht**. Das Flag ist entfallen (die WebSocket-Oberfläche folgt `AUTH_ENABLED`); ein übereinstimmender Rest-Schlüssel erzeugt nur eine Deprecation-Warnung. Siehe [Entfallen: `WS_AUTH_ENABLED`](#entfallen-ws_auth_enabled-veraltet-übergangsfrist).
 - **HARTER Boot-Fehler (Cookie-Session):** `AUTH_COOKIE_ENABLED=true` mit (a) `CORS_ORIGINS='*'` (credentialed CORS unmöglich → Cookies würden nicht gesendet, und die WS-CSWSH-Origin-Allowlist wäre umgangen), (b) `AUTH_ENABLED=false` (Cookie-Session ohne Auth sinnlos), oder (c) `COOKIE_SECURE=false` auf `RENFIELD_ENV=production/prod/staging` (Session-Cookie über Klartext-HTTP).
-- **WARN (nicht fatal):** `AUTH_ENABLED=true` mit `CORS_ORIGINS='*'` (nur wenn Cookie-Mode AUS — mit Cookies ist es ein harter Fehler); `RENFIELD_ENV=production` mit `ALLOW_REGISTRATION=true`.
+- **HARTER Boot-Fehler (Selbstregistrierung, 2026-09-20):** `RENFIELD_ENV=production|prod|staging` mit `AUTH_ENABLED=true` und **nicht gesetztem** `ALLOW_REGISTRATION` — der Code-Default `true` würde die Anmeldung für jedermann öffnen; eine authentifizierte Produktionsinstanz muss den Wert ausdrücklich setzen (`false`, oder `true`, wenn öffentliche Registrierung gewollt ist). Ein per ConfigMap/`.env` gesetzter Wert zählt als gesetzt. Auth-off und Entwicklung sind nicht betroffen.
+- **WARN (nicht fatal):** `AUTH_ENABLED=true` mit `CORS_ORIGINS='*'` (nur wenn Cookie-Mode AUS — mit Cookies ist es ein harter Fehler); `RENFIELD_ENV=production` mit ausdrücklich gesetztem `ALLOW_REGISTRATION=true`.
 - Bei der aktuellen Auth-off-Posture (alles false) greift nichts — byte-identisch.
 
 ### Authentication (RPBAC)
@@ -2256,7 +2257,7 @@ VITE_SSO_LEGACY_FRAGMENT=true
 - `ACCESS_TOKEN_EXPIRE_MINUTES`: `1440` (24 Stunden)
 - `REFRESH_TOKEN_EXPIRE_DAYS`: `30`
 - `PASSWORD_MIN_LENGTH`: `8`
-- `ALLOW_REGISTRATION`: `true`
+- `ALLOW_REGISTRATION`: `true` (auf einer auth-on Produktions-/Staging-Instanz muss der Wert ausdrücklich gesetzt sein, sonst Boot-Fehler)
 - `DEFAULT_ADMIN_USERNAME`: `admin`
 - `DEFAULT_ADMIN_PASSWORD`: `changeme`
 - `VOICE_AUTH_ENABLED`: `false`

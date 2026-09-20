@@ -204,7 +204,8 @@ The deployment posture is set **explicitly** in the ConfigMap (`k8s/configmap.ya
 A startup validator (`assert_auth_config_consistency` in `utils/config.py`) **refuses to boot** on an incoherent combo:
 
 - **Hard fail:** a leftover `WS_AUTH_ENABLED` that **contradicts** `AUTH_ENABLED`. The separate WebSocket flag is **retired** — `AUTH_ENABLED` governs the REST *and* the WebSocket surface. It was never an independent control: the validator already refused `AUTH_ENABLED=true` + `WS_AUTH_ENABLED=false` (the phantom-control case, where `authenticate_websocket` short-circuits and the WS session-ownership check (#657) becomes a no-op), so only both-on/both-off were reachable. A leftover key that agrees logs one deprecation warning; one that disagrees fails the boot rather than silently picking a side. Removal path in [ENVIRONMENT_VARIABLES.md](ENVIRONMENT_VARIABLES.md#entfallen-ws_auth_enabled-veraltet-übergangsfrist).
-- **Warn:** `AUTH_ENABLED=true` with wildcard `CORS_ORIGINS='*'`; a production `RENFIELD_ENV` with `ALLOW_REGISTRATION=true`.
+- **Hard fail (2026-09-20):** a production/staging `RENFIELD_ENV` with `AUTH_ENABLED=true` and `ALLOW_REGISTRATION` **not set** — the code default (`true`) would open self-registration to anyone; an authenticated real deployment must decide explicitly (`false`, or `true` if public signup is intended; a value from the ConfigMap/`.env` counts as set).
+- **Warn:** `AUTH_ENABLED=true` with wildcard `CORS_ORIGINS='*'`; a production `RENFIELD_ENV` with an explicit `ALLOW_REGISTRATION=true`.
 
 `RENFIELD_ENV` is a tracked setting; a real-deployment value (production/prod/staging) also arms the insecure-`SECRET_KEY` boot guard (#692), so a strong key must be provisioned before the auth-on cutover. The ConfigMap carries a commented **AUTH-ON CUTOVER** checklist of the values to flip together.
 

@@ -2143,6 +2143,19 @@ class Settings(BaseSettings):
             )
 
         if env in {"production", "prod", "staging"} and self.allow_registration:
+            # Open self-registration on a real, authenticated instance is only
+            # acceptable as a deliberate choice. The code default is True (dev +
+            # the auth-off household), so an instance that merely FORGOT the key
+            # would silently expose signup to the internet: refuse to boot when
+            # the value is inherited, warn when the operator set it on purpose.
+            # A settings source (env / .env) counts as "set" in model_fields_set.
+            if self.auth_enabled and "allow_registration" not in self.model_fields_set:
+                raise ValueError(
+                    f"RENFIELD_ENV={self.renfield_env!r} with AUTH_ENABLED=true and "
+                    "ALLOW_REGISTRATION unset — the default (true) would open "
+                    "self-registration to anyone. Set ALLOW_REGISTRATION=false, or "
+                    "=true explicitly if public signup is intended."
+                )
             logger.warning(
                 f"⚠ RENFIELD_ENV={self.renfield_env!r} with ALLOW_REGISTRATION=true "
                 "— open self-registration lets anyone create an account. Set "
