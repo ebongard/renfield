@@ -153,7 +153,9 @@ class TestRotateStoredIrks:
 
         report = await rotate_irks(db_session, commit=False)
 
-        assert report.as_dict() == {"total": 2, "already_current": 1, "rotated": 1, "undecryptable": 0, "committed": False}
+        assert report.as_dict() == {
+            "total": 2, "already_current": 1, "rotated": 1, "undecryptable": 0, "vanished": 0, "committed": False,
+        }
         await db_session.refresh(rows[0])
         await db_session.refresh(rows[1])
         assert [r.irk_encrypted for r in rows] == before
@@ -163,7 +165,8 @@ class TestRotateStoredIrks:
         from ha_glue.services.secret_rotation import rotate_irks
         keys(NEW, previous=OLD)
         current_tok = encrypt_secret(IRK)
-        rows = await self._seed(db_session, test_user.id, [("phone-a", _token_under(OLD)), ("phone-b", current_tok)])
+        old_tok = _token_under(OLD)
+        rows = await self._seed(db_session, test_user.id, [("phone-a", old_tok), ("phone-b", current_tok)])
 
         report = await rotate_irks(db_session, commit=True)
 
@@ -171,7 +174,8 @@ class TestRotateStoredIrks:
         await db_session.refresh(rows[0])
         await db_session.refresh(rows[1])
         assert rows[1].irk_encrypted == current_tok            # untouched
-        assert rows[0].irk_encrypted != _token_under(OLD)      # rewritten
+        assert rows[0].irk_encrypted != old_tok                 # the SEEDED token was rewritten
+        assert is_current_key(rows[0].irk_encrypted) is True
         keys(NEW)                                              # previous key dropped
         assert decrypt_secret(rows[0].irk_encrypted) == IRK    # still readable
 

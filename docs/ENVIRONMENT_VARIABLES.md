@@ -2059,9 +2059,19 @@ mit dem aktuellen Schlüssel, entschlüsselt mit dem aktuellen ODER einem in
    genau** entsprechen (Secrets mit `--from-literal` anlegen; ein `--from-file`-Zeilenumbruch
    wäre Teil des Schlüssels — Einträge werden deshalb gestrippt UND wörtlich geprüft). Alle
    JWT-Sitzungen enden — das ist gewollt. Die gespeicherten IRKs bleiben lesbar.
+   Vor Schritt 2 prüfen, dass der Pod den Wert sieht:
+   `kubectl -n <ns> exec deploy/backend -c backend -- sh -c 'test -n "$SECRET_KEY_PREVIOUS" && echo ok'`
+   — fehlt er (auf xidra erst, wenn die x-ren-Zeile gelandet ist), arbeitet MultiFernet mit
+   einem Schlüssel und das Skript bricht in Schritt 2 mit Exit 2 ab (kein Datenverlust).
 2. Im Backend-Pod `python bin/rotate_secret_encryption.py --dry-run`, dann `--commit`:
-   schreibt jeden noch unter dem alten Schlüssel liegenden Wert neu (nur Zählwerte).
+   schreibt jeden noch unter dem alten Schlüssel liegenden Wert neu (nur Zählwerte, eine
+   Zeile je Commit; eine währenddessen gelöschte Zeile zählt als `vanished`).
 3. `SECRET_KEY_PREVIOUS` leeren und erneut ausrollen.
+
+Mitbetroffen: die Service-JWTs an den Voice-Server (STT/TTS/Meetings) sind mit `SECRET_KEY`
+signiert. Der Voice-Server prüft sie per Rückruf an `/api/internal/auth/verify`, hält also
+keine Kopie des Schlüssels; nur eine Registry-Zeile mit lokaler Prüfung (`_validate_local`)
+müsste denselben neuen Schlüssel erhalten — vor der Rotation die Registry prüfen.
 
 Ohne `SECRET_KEY_PREVIOUS` ist eine Rotation für die gespeicherten Geheimnisse weiterhin
 **destruktiv** (jeder Wert muss über den Pairing-Ablauf neu erfasst werden).

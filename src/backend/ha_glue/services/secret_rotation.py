@@ -15,6 +15,7 @@ from dataclasses import asdict, dataclass
 from loguru import logger
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm.exc import StaleDataError
 
 from ha_glue.models.database import UserBleIrk
 from services.secret_encryption import InvalidToken, is_current_key, rotate_secret
@@ -26,6 +27,7 @@ class RotationReport:
     already_current: int = 0
     rotated: int = 0
     undecryptable: int = 0
+    vanished: int = 0  # deleted by an admin between our SELECT and the write
     committed: bool = False
 
     def as_dict(self) -> dict[str, int | bool]:
@@ -53,10 +55,19 @@ async def rotate_irks(session: AsyncSession, *, commit: bool) -> RotationReport:
             logger.warning(f"secret rotation: IRK row id={row.id} decryptable by no configured key")
             continue
         if commit:
+            # One UPDATE per row, committed on its own: a row an admin deletes
+            # between our SELECT and this write (DELETE /api/presence/irks/{id})
+            # must not roll back the whole walk — it is simply gone.
             row.irk_encrypted = new_token
+            try:
+                await session.commit()
+            except StaleDataError:
+                await session.rollback()
+                report.vanished += 1
+                logger.info(f"secret rotation: IRK row id={row.id} vanished mid-walk (deleted concurrently)")
+                continue
         report.rotated += 1
     if commit:
-        await session.commit()
         report.committed = True
     logger.info(f"secret rotation (irks): {report.as_dict()}")
     return report
