@@ -105,7 +105,7 @@ All 14 WICHTIG items closed as of 2026-04-27. Re-verified 2026-04-30 against cur
 - `utils/config.py` has `Field(ge=…, le=…)` constraints on numeric thresholds (DB pool sizes, agent step counts, port range). `_CHANGEME_FIELDS` tuple drives a `warn_on_changeme_defaults()` validator that flags placeholder values in real environments.
 
 ### W14. Boolean naming consistency — RESOLVED
-- 35 fields in `utils/config.py` use the canonical `_enabled: bool` suffix. Only 2 use `allow_` / `require_` (`allow_registration`, `require_email_verification`) — those are semantic English-grammar exceptions, not naming inconsistencies. The mixed-prefix problem the audit flagged is no longer present.
+- 35 fields in `utils/config.py` use the canonical `_enabled: bool` suffix. Only `allow_registration` uses an `allow_` prefix (`require_email_verification` was removed 2026-09-20 as a flag without a reader) — a semantic English-grammar exception, not naming inconsistencies. The mixed-prefix problem the audit flagged is no longer present.
 
 ---
 

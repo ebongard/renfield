@@ -1763,10 +1763,12 @@ TRAJECTORY_CLEANUP_INTERVAL=86400             # Sekunden zwischen Cleanup-Laeufe
 TRAJECTORY_MAX_PER_USER=10000                 # Soft-Cap; aelteste nicht-flagged Rows werden gedroppt
 
 # Privacy-Gate des Exports: der Query-Parameter `require_redacted` von
-# GET /api/trajectories/export.jsonl (Default true) liefert nur Rows mit
-# gesetztem redacted_payload — v1 schreibt nie redacted_payload, der Export
-# ist also leer, bis ein Scrubber existiert. Ein Setting dafür gibt es nicht
-# (der ungelesene Platzhalter TRAJECTORY_REDACT_PII wurde 2026-09-20 entfernt).
+# GET /api/trajectories/export.jsonl (Default true, Route nur ADMIN) liefert
+# ausschließlich Rows mit gesetztem redacted_payload und antwortet mit 409,
+# solange keine einzige Row eines hat (v1 schreibt nie redacted_payload, es
+# gibt noch keinen Scrubber). `require_redacted=false` liefert Rohdaten und
+# schreibt eine WARNING-Audit-Zeile. Ein Setting dafür gibt es nicht (der
+# ungelesene Platzhalter TRAJECTORY_REDACT_PII wurde 2026-09-20 entfernt).
 ```
 
 **Verhalten:**
@@ -1933,7 +1935,7 @@ Review-Routen: `GET /api/knowledge-graph/merge-proposals`,
 
 ```bash
 # Wake Word Konfiguration
-WAKE_WORD_DEFAULT=alexa
+WAKE_WORD_DEFAULT=hey_renfield
 WAKE_WORD_THRESHOLD=0.5
 
 # Zeroconf Service Advertisement
@@ -1943,7 +1945,7 @@ ADVERTISE_IP=192.168.1.100
 ```
 
 **Defaults:**
-- `WAKE_WORD_DEFAULT`: `alexa`
+- `WAKE_WORD_DEFAULT`: `hey_renfield`
 - `WAKE_WORD_THRESHOLD`: `0.5`
 
 **Wake Word Optionen:**
@@ -3029,7 +3031,7 @@ AGENT_ENABLED=false
 # -----------------------------------------------------------------------------
 # Satellite System
 # -----------------------------------------------------------------------------
-WAKE_WORD_DEFAULT=alexa
+WAKE_WORD_DEFAULT=hey_renfield
 WAKE_WORD_THRESHOLD=0.5
 
 # -----------------------------------------------------------------------------

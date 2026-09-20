@@ -709,9 +709,7 @@ class Settings(BaseSettings):
     # Hard duration ceiling (hours) enforced at upload; also derives the worker's
     # stream visibility window. >4h is a documented escalation (chunked path).
     meeting_max_duration_h: int = Field(default=4, ge=1, le=12)
-    # Auto-matching diarized clusters to ENROLLED speakers is not built (decision
-    # 2026-09-20: pseudonyms + human labeling + anonymous fingerprints are the
-    # product); the former placeholder flag meeting_auto_match_enabled was removed.
+    # (Auto-match of clusters to ENROLLED speakers is not built and not planned.)
     # §2 Track A: cross-meeting ANONYMOUS speaker fingerprints. On a completed
     # meeting, resolve each diarized cluster's ECAPA centroid to a stable
     # owner+tier-scoped fingerprint ("Speaker A1B2") — the SAME anonymous person
@@ -746,9 +744,7 @@ class Settings(BaseSettings):
     # 0 = retain forever (retention_until left NULL). Consent-gated DE workplace
     # recordings should NOT be 0.
     meeting_retention_days: int = Field(default=365, ge=0, le=3650)
-    # Chat artifacts Lane B (free-form HTML/SVG in a sandboxed iframe) is NOT
-    # built (decision 2026-09-20); its placeholder flag artifacts_html_sandbox_enabled
-    # was removed. A build needs its own flag AND its own security review first.
+    # (Lane B — free-form HTML/SVG artifacts — is not built; needs its own flag + security review.)
     # Generic output-provider registry for room media/control routing. When on,
     # room output discovery + dispatch route through the pluggable OutputProvider
     # registry (built-in renfield/HA + MCP-declared dlna/samsung/sonos via the
@@ -856,9 +852,7 @@ class Settings(BaseSettings):
     # every Nth save (probabilistic) — drift up to N rows over the cap is
     # harmless because the cleanup scheduler also prunes by retention.
     trajectory_cap_check_every: int = Field(default=50, ge=1, le=1000)
-    # The export privacy gate is the `require_redacted` query parameter of
-    # /api/trajectories/export.jsonl (default true), not a setting; the unread
-    # placeholder trajectory_redact_pii was removed 2026-09-20.
+    # (The export privacy gate is the `require_redacted` query param of the export route, not a setting.)
 
     # Tool outcome tracking (self-learning Phase 3)
     # Counts every tool_result step in the agent loop; surfaces warnings

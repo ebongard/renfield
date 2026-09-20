@@ -39,7 +39,7 @@ Wake word settings are managed centrally in the backend and automatically pushed
 
 | Setting | Description | Range | Default |
 |---------|-------------|-------|---------|
-| **Keyword** | Active wake word(s) — comma-separated to load several at once | hey_renfield, renfield_de, renfield_en, renfield_it, alexa, hey_jarvis, hey_mycroft | alexa |
+| **Keyword** | Active wake word(s) — comma-separated to load several at once | hey_renfield, renfield_de, renfield_en, renfield_it, alexa, hey_jarvis, hey_mycroft | hey_renfield |
 | **Threshold** | Detection sensitivity | 0.1 - 1.0 | 0.5 |
 | **Cooldown** | Minimum time between detections | 500ms - 10000ms | 2000ms |
 
@@ -89,13 +89,15 @@ and how to add a language: `src/satellite/wakeword-training/README.md`.
 GET /api/settings/wakeword
 ```
 
+The payload carries no `enabled` field: the on/off switch is a per-device decision
+(a satellite decides locally, the browser keeps it in `localStorage`).
+
 **Response:**
 ```json
 {
   "keyword": "alexa",
   "threshold": 0.5,
   "cooldown_ms": 2000,
-  "enabled": true,
   "subscriber_count": 3,
   "available_keywords": [
     {"id": "alexa", "label": "Alexa", "description": "Pre-trained wake word (recommended)"},
@@ -125,7 +127,6 @@ Content-Type: application/json
   "keyword": "hey_jarvis",
   "threshold": 0.6,
   "cooldown_ms": 3000,
-  "enabled": true,
   "subscriber_count": 3,
   "available_keywords": [...]
 }
