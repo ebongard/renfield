@@ -8,6 +8,7 @@
 .claude/*
 !.claude/skills/
 !.claude/agents/
+!.claude/rules/
 # Backups
 backups
 
