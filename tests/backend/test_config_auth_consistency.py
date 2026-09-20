@@ -23,7 +23,7 @@ _STRONG = "x" * 48
 class TestAuthConfigConsistency:
     @pytest.mark.unit
     def test_auth_on_constructs(self):
-        s = Settings(auth_enabled=True, secret_key=SecretStr(_STRONG))
+        s = Settings(_env_file=None, auth_enabled=True, secret_key=SecretStr(_STRONG))
         assert s.auth_enabled is True
 
     @pytest.mark.unit
@@ -59,14 +59,14 @@ class TestAuthConfigConsistency:
         monkeypatch.setenv("RENFIELD_ENV", "production")
         monkeypatch.delenv("ALLOW_REGISTRATION", raising=False)
         with pytest.raises(ValueError, match="ALLOW_REGISTRATION unset"):
-            Settings(auth_enabled=True, secret_key=SecretStr(_STRONG))
+            Settings(_env_file=None, auth_enabled=True, secret_key=SecretStr(_STRONG))
 
     @pytest.mark.unit
     def test_staging_auth_on_with_inherited_registration_default_refuses_to_boot(self, monkeypatch):
         monkeypatch.setenv("RENFIELD_ENV", "staging")
         monkeypatch.delenv("ALLOW_REGISTRATION", raising=False)
         with pytest.raises(ValueError, match="ALLOW_REGISTRATION unset"):
-            Settings(auth_enabled=True, secret_key=SecretStr(_STRONG))
+            Settings(_env_file=None, auth_enabled=True, secret_key=SecretStr(_STRONG))
 
     @pytest.mark.unit
     def test_production_auth_on_with_explicit_open_registration_warns_not_fatal(self, monkeypatch):
@@ -88,21 +88,38 @@ class TestAuthConfigConsistency:
         # A settings source (env / .env) populates model_fields_set — the real
         # deployment path (ConfigMap → env) must count as "decided".
         monkeypatch.setenv("ALLOW_REGISTRATION", "true")
-        s = Settings(auth_enabled=True, secret_key=SecretStr(_STRONG))
+        s = Settings(_env_file=None, auth_enabled=True, secret_key=SecretStr(_STRONG))
         assert s.allow_registration is True
 
     @pytest.mark.unit
     def test_production_auth_on_with_registration_off_is_silent(self, monkeypatch):
         monkeypatch.setenv("RENFIELD_ENV", "production")
-        s = Settings(auth_enabled=True, allow_registration=False, secret_key=SecretStr(_STRONG))
+        warnings: list[str] = []
+        sink = loguru_logger.add(lambda m: warnings.append(str(m)), level="WARNING")
+        try:
+            s = Settings(_env_file=None, auth_enabled=True, allow_registration=False, secret_key=SecretStr(_STRONG))
+        finally:
+            loguru_logger.remove(sink)
         assert s.allow_registration is False
+        assert not any("ALLOW_REGISTRATION" in w for w in warnings), warnings
+
+    @pytest.mark.unit
+    def test_auth_on_via_env_with_inherited_default_refuses_to_boot(self, monkeypatch):
+        # The exact regression the gate exists for: the ConfigMap flips
+        # RENFIELD_ENV + AUTH_ENABLED and forgets ALLOW_REGISTRATION.
+        monkeypatch.setenv("RENFIELD_ENV", "production")
+        monkeypatch.setenv("AUTH_ENABLED", "true")
+        monkeypatch.setenv("SECRET_KEY", _STRONG)
+        monkeypatch.delenv("ALLOW_REGISTRATION", raising=False)
+        with pytest.raises(ValueError, match="ALLOW_REGISTRATION unset"):
+            Settings(_env_file=None)
 
     @pytest.mark.unit
     def test_production_auth_on_with_registration_off_via_env_is_silent(self, monkeypatch):
         # The xidra path exactly: ConfigMap → env → "false".
         monkeypatch.setenv("RENFIELD_ENV", "production")
         monkeypatch.setenv("ALLOW_REGISTRATION", "false")
-        s = Settings(auth_enabled=True, secret_key=SecretStr(_STRONG))
+        s = Settings(_env_file=None, auth_enabled=True, secret_key=SecretStr(_STRONG))
         assert s.allow_registration is False
 
     @pytest.mark.unit
@@ -111,7 +128,7 @@ class TestAuthConfigConsistency:
         monkeypatch.setenv("RENFIELD_ENV", env_value)
         monkeypatch.delenv("ALLOW_REGISTRATION", raising=False)
         with pytest.raises(ValueError, match="ALLOW_REGISTRATION unset"):
-            Settings(auth_enabled=True, secret_key=SecretStr(_STRONG))
+            Settings(_env_file=None, auth_enabled=True, secret_key=SecretStr(_STRONG))
 
     @pytest.mark.unit
     def test_value_from_dotenv_file_counts_as_explicit(self, monkeypatch, tmp_path):
@@ -129,14 +146,14 @@ class TestAuthConfigConsistency:
         # and must not block a boot (the household posture at a future env flip).
         monkeypatch.setenv("RENFIELD_ENV", "production")
         monkeypatch.delenv("ALLOW_REGISTRATION", raising=False)
-        s = Settings(auth_enabled=False, secret_key=SecretStr(_STRONG))
+        s = Settings(_env_file=None, auth_enabled=False, secret_key=SecretStr(_STRONG))
         assert s.allow_registration is True
 
     @pytest.mark.unit
     def test_development_auth_on_with_inherited_default_still_boots(self, monkeypatch):
         monkeypatch.setenv("RENFIELD_ENV", "development")
         monkeypatch.delenv("ALLOW_REGISTRATION", raising=False)
-        s = Settings(auth_enabled=True, secret_key=SecretStr(_STRONG))
+        s = Settings(_env_file=None, auth_enabled=True, secret_key=SecretStr(_STRONG))
         assert s.allow_registration is True
 
 
