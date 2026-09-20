@@ -57,6 +57,7 @@ A failing test is an issue, not noise: the backend suite is green, so investigat
 4. **A new `internal.*` tool is TWO steps:** `InternalToolService.TOOLS` + `_HANDLERS`, AND the tool name in the role's `internal_tools` list in `config/agent_roles.yaml` — which is ConfigMap-served (`renfield-mcp-config`), so the prod ConfigMap must be patched too. Skip step 2 and the agent reports "no tool available".
 5. Security seams: new routes/tools are permission-gated and fail-closed when auth is on; `user_id`/`session_id` are injected server-side, never taken from LLM params; new retrieval rows carry `circle_tier` + `atom_id` and go through `circle_sql`; every retrieval call passes `user_id=asker_id`.
 6. A live change that is not in git is a bug (manifests, ConfigMaps, image tags).
+7. A migration runs BEFORE the rollout (`bin/deploy-production.sh … --migrate`): the ORM selects every column, so a new pod before the migration fails every query on that table. Never SSH-tail logs on a Pi Zero satellite (it reboots) — follow a voice turn in the backend + voice-server logs.
 
 ## Development Commands
 
@@ -84,7 +85,7 @@ Tests live in `tests/` at the project root (backend 3,400+). Markers: `@pytest.m
 
 - **Backend tests run on the build box `192.168.1.159`** inside the `renfield-backend` container, from an ISOLATED copy (never overlay `/opt/renfield`): rsync `src/backend` + `tests` to `/tmp/<name>`, `docker cp` into the container, then `docker exec -w /<name>/backend -e PYTHONPATH=/<name>/backend renfield-backend python -m pytest /<name>/tests/backend/<file> -q -p no:cacheprovider -o asyncio_mode=auto`. `-o asyncio_mode=auto` is mandatory. Real-Postgres tests use the dedicated `renfield_test` DB, never a live one. Clean the copy up afterwards.
 - **Satellite tests** (`tests/satellite/`) need a throwaway venv (pytest, pytest-asyncio, pyyaml, numpy, websockets, cryptography, aiohttp); the suite runs in ~15 s.
-- **React tests:** Vitest + RTL + MSW in `tests/frontend/react/` (own `package.json` + `tsconfig.json`): `cd tests/frontend/react && npx vitest run <file>` (`npm test` runs all) and `npm run typecheck` there. `src/frontend` has NO `typecheck` script — use `npx tsc --noEmit -p .` and `npx eslint <files>`. Run single files; the whole vitest suite is flaky.
+- **React tests:** Vitest + RTL + MSW in `tests/frontend/react/` (own `package.json` + `tsconfig.json`): `cd tests/frontend/react && npx vitest run <file>` (`npm run test:run` runs all once; bare `npm test` starts vitest in watch mode) and `npm run typecheck` there. `src/frontend` has NO `typecheck` script — use `npx tsc --noEmit -p .` and `npx eslint <files>`. Run single files; the whole vitest suite is flaky.
 - After every deploy: a browser end-to-end check is mandatory (the `smoke-tester` agent).
 
 ## Skills & Agents

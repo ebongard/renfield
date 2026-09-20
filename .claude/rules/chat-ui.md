@@ -5,6 +5,7 @@ paths:
   - "src/backend/services/widget_tools.py"
   - "src/backend/services/followup_service.py"
   - "src/frontend/src/components/chat/**"
+  - "src/backend/services/agent_router.py"
 ---
 # Chat UI affordances & typed artifacts
 

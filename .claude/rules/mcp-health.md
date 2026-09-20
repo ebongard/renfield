@@ -4,6 +4,8 @@ paths:
   - "src/backend/services/mcp_client.py"
   - "src/backend/services/health_check.py"
   - "config/mcp_servers.yaml"
+  - "src/backend/api/routes/mcp_health.py"
+  - "src/backend/services/search_health.py"
 ---
 # MCP self-detection, functional probes, k8s health routes
 

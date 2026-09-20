@@ -5,6 +5,7 @@ paths:
   - "k8s/satellite-*.yaml"
   - "src/backend/ha_glue/services/satellite_*.py"
   - "src/backend/ha_glue/api/websocket/satellite_handler.py"
+  - "src/backend/ha_glue/api/routes/presence.py"
 ---
 # Satellites & voice capture
 

@@ -35,8 +35,12 @@ Source paths are relative to `src/backend/`.
 | `internal.paperless_dedupe` | Destructive: find + delete duplicate Paperless documents | `services/paperless_dedupe_tool.py` | `Permission.ADMIN` |
 | `internal.find_duplicate_documents` | KB near-duplicate detection, propose-only | `services/document_dedupe_tool.py` | `DOCUMENT_DEDUPE_ENABLED` (dark) |
 
-For every permission gate the same rule holds: auth-off / `user_permissions=None` is allowed; an authenticated
-low-privilege user is refused.
+`AUTH_ENABLED=false` skips every permission gate, and with auth on an authenticated low-privilege user is always
+refused. An UNIDENTIFIED turn (`user_permissions=None` — a device/satellite token or an unrecognized voice) is handled
+per tool: the `RAG_MANAGE` maintenance tools and the `HA_CONTROL` announce tools ALLOW it (so spoken commands keep
+working), while `internal.paperless_dedupe` (`ADMIN`, bulk archive delete) and the `device_action` frame DENY it.
+(The former CLAUDE.md claimed "`None` allowed" for `paperless_dedupe` too; the code — `paperless_dedupe_tool.py`,
+"an unidentified turn is DENIED" — says otherwise, and the code is right.)
 
 ## Tools
 
@@ -238,7 +242,7 @@ Deletion:
 - Deletion goes via `mcp.paperless.delete_document` (Paperless 2.x → recoverable **trash**).
 - `dry_run=true` reports the full duplicate scope without deleting.
 
-Gate: **`Permission.ADMIN`** when auth is on (auth-off / `user_permissions=None` allowed).
+Gate: **`Permission.ADMIN`**, fail-closed: with auth on an unidentified turn (`user_permissions=None`) is DENIED — a bulk archive delete has a larger blast radius than the reversible tools. Auth off (single-user household) skips the gate.
 
 Backs "finde und lösche die Duplikate in Paperless" / "räum die doppelten Dokumente auf".
 

@@ -4,6 +4,7 @@ paths:
   - "src/backend/services/paperless_index_health.py"
   - "src/backend/services/watchdog.py"
   - "src/backend/services/ops_alert.py"
+  - "src/backend/api/routes/scheduled_tasks.py"
 ---
 # Scheduled tasks, failure-streak alerting, watchdog
 

@@ -5,6 +5,13 @@ tools: Read, Grep, Glob, Bash, Write, Edit
 model: inherit
 ---
 
+> 🛑 **Never run `journalctl` scans or `journalctl -f` over SSH on a Pi Zero 2 W satellite.** Two such sessions on
+> 2026-09-19 were each followed by the device dropping off the network and rebooting (the audio capture loop must not
+> be starved). One short, cheap command (`systemctl is-active`, a `grep` in the config) is fine. To follow a voice
+> turn, read the BACKEND log and the voice-server log instead (`faster_whisper: Processing audio with duration …`
+> is the true recording length). Details: `.claude/rules/satellites.md`.
+
+
 # Satellite Deployment Agent
 
 You deploy and manage Renfield satellites on Raspberry Pi Zero 2 W devices.

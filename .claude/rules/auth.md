@@ -10,6 +10,10 @@ paths:
   - "src/frontend/src/utils/axios.ts"
   - "src/frontend/src/pages/AuthCallback.tsx"
   - "src/frontend/src/pages/ChatPage/hooks/useVoiceStream.ts"
+  - "src/backend/services/secret_encryption.py"
+  - "src/backend/services/speaker_resolver.py"
+  - "src/backend/services/speaker_enrollment_service.py"
+  - "src/backend/api/routes/speakers.py"
 ---
 # Auth: login flow, SSO hand-off, cookie session, voice token
 

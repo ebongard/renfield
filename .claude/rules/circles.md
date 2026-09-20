@@ -5,6 +5,9 @@ paths:
   - "src/backend/services/*_retrieval.py"
   - "src/backend/services/polymorphic_atom_store.py"
   - "src/backend/services/kb_shares_service.py"
+  - "src/backend/api/routes/atoms.py"
+  - "src/backend/api/routes/circles.py"
+  - "src/backend/services/rag_service.py"
 ---
 # Circles v1 — access tiers on every retrievable row
 

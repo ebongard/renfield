@@ -30,11 +30,14 @@ Full table (every tool, purpose, source, gate): `docs/INTERNAL_TOOLS.md`.
   emits and persists. Typed JSON from the agent via `artifact_service.validate_artifact`, NEVER free-text parsing.
 
 ## Permission gates (fail-closed)
-Rule for all: auth-off / `user_permissions=None` is allowed; an authenticated low-privilege user is refused.
-- `Permission.RAG_MANAGE`: `internal.reindex_documents`, `internal.refile_to_paperless`.
-- `Permission.ADMIN`: `internal.paperless_dedupe`.
-- `HA_CONTROL`: `internal.announce_in_room` + `internal.broadcast_announcement` (`_HA_CONTROL_GATED_TOOLS` in
-  `ha_glue_execute_tool`) and `internal.device_action`, which also re-validates domain, action and entity.
+`AUTH_ENABLED=false` skips every gate. With auth ON an authenticated low-privilege user is always refused — but an
+UNIDENTIFIED turn (`user_permissions=None`: device/satellite token, unrecognized voice) is NOT treated the same everywhere:
+- **`None` allowed** (so spoken commands keep working): `Permission.RAG_MANAGE` on `internal.reindex_documents` +
+  `internal.refile_to_paperless`; `HA_CONTROL` on `internal.announce_in_room` + `internal.broadcast_announcement`
+  (`_HA_CONTROL_GATED_TOOLS`, `ha_glue/bootstrap.py`).
+- **`None` DENIED** (larger blast radius): `Permission.ADMIN` on `internal.paperless_dedupe` (bulk archive delete) and
+  `HA_CONTROL` on the `device_action` frame (`chat_handler`: `auth_enabled and user_id is None` → refuse), which also
+  re-validates domain, action and entity. Check the code before assuming which group a new gate belongs to.
 - `internal.list_unfiled_documents` is owner-scoped: admin/single-user sees all, a non-admin only their OWN docs via
   the atom owner, INNER-joined fail-closed (its `query` mode is a corpus-wide name search); LIKE wildcards escaped.
 - `internal.list_my_memories` reads only the authenticated user's own memories.
@@ -47,13 +50,12 @@ A tool re-checks its feature flag in-handler and refuses rather than persist som
 `internal.find_duplicate_documents` → `DOCUMENT_DEDUPE_ENABLED` (dark).
 
 ## Destructive / write tools — safety properties
-- `internal.paperless_dedupe`: keeps the lowest-id (oldest) copy; deletes via `mcp.paperless.delete_document`
-  (recoverable trash); batched (`paperless_dedupe_delete_batch`, 50) with retry/backoff against the 60/min MCP limit;
-  NEVER claims clean while copies remain; never deletes on a weak signal (metadata match needs a non-empty title AND
-  a `page_count` on every member, else byte-identical only); an enumeration without `total_count` is never a full sweep.
+- `internal.paperless_dedupe`: a THIN CALLER of `mcp.paperless.dedupe_documents` (the logic lives in the Paperless MCP).
+  Keeps the lowest-id copy, deletes to recoverable trash, batched (`paperless_dedupe_delete_batch`, 50) against the
+  60/min limit; NEVER claims clean while copies remain; never deletes on a weak signal (metadata match needs a title
+  AND `page_count` on every member, else byte-identical only); no `total_count` = never a full sweep.
 - `internal.find_duplicate_documents`: propose-only, never deletes (`document_duplicate_proposals`, advisory lock
   `0x4444`); a pair proposed under ANY status is skipped (durable reject).
 - `internal.refile_to_paperless`: targets ONLY `failed` — clearing a live `pending` `paperless_task_id` risks the
   duplicate-upload loop; the backend never OCRs (enqueue a `paperless_refile` worker task).
-- `internal.reindex_documents`: skips unindexable docs unless `force=true`; the filter is in SQL so the cap
-  (200 / max 500) applies to repairable docs.
+- `internal.reindex_documents`: skips unindexable docs unless `force=true`; SQL filter, so the cap (200/500) hits repairable docs.

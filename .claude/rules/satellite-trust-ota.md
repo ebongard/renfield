@@ -5,6 +5,8 @@ paths:
   - "src/satellite/RELEASE_MANIFEST.json*"
   - "src/backend/ha_glue/services/satellite_enrollment*"
   - "src/backend/ha_glue/services/satellite_update_service.py"
+  - "src/backend/ha_glue/api/routes/satellite_enrollment.py"
+  - "bin/enroll_satellite.py"
 ---
 # Satellite trust: signed OTA (H6) + enrollment credential (H1)
 

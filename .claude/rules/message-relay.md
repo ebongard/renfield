@@ -1,6 +1,7 @@
 ---
 paths:
   - "src/backend/ha_glue/services/internal_tools.py"
+  - "src/backend/ha_glue/bootstrap.py"
 ---
 # Message relay & broadcast announcements
 
