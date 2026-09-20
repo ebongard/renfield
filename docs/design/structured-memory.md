@@ -111,8 +111,9 @@ cross-tier warning + 5s undo toast).
 
 ## Memory→KG bridge
 
-Phase 3, `MEMORY_KG_BRIDGE_ENABLED`, opt-in/dark by default. Closes "Was weiß ich über X" determinism by linking flat
-memories to canonical entities. Off = retrieval/extraction byte-identical.
+Phase 3, `MEMORY_KG_BRIDGE_ENABLED`, opt-in/dark by default (config); switched on in the household since 2026-07-17
+(#977, `k8s/configmap.yaml`, together with `MEMORY_SUBSUME_TO_KG`). Closes "Was weiß ich über X" determinism by linking
+flat memories to canonical entities. Off = retrieval/extraction byte-identical.
 
 ### 3a — `resolve_entity` made bridge-safe
 
@@ -199,7 +200,9 @@ It appends provenance-marked (`payload.expanded`+`hop`) neighbour atoms, re-sort
 It is a single seam (no double-work, decay survives). The rebuild after the per-module MVP was re-deferred by
 `/plan-eng-review`; the MVP is parked on `feature/structured-memory-phase4-subsume`.
 
-Follow-up (`TODOS.md`): route the agent string path `get_relevant_context` onto the fused path so
+~~Follow-up (`TODOS.md`)~~ **DONE (#874 via #1196):** `get_relevant_context` now runs through the same `expand_fused`
+seam (`kg_retrieval.py`, "Phase 4: graph expansion"), so `internal.knowledge_search` benefits too. Original wording:
+route the agent string path `get_relevant_context` onto the fused path so
 `internal.knowledge_search` benefits too.
 
 The pre-existing unfiltered `name_map` endpoint-name leak in `get_relevant_atoms`/`get_relevant_context` was fixed

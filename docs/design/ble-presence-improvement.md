@@ -57,16 +57,17 @@ Use BlueZ passive scanning (`scanning_mode="passive"` + `or_patterns`, kernel
 RSSI-threshold offload) rather than active continuous scan. Lower power/CPU;
 needs Experimental (now enabled). Follow-on to the continuous callback above.
 
-### Phase 1c — Backend RSSI smoothing + hysteresis  ⏳ DEFERRED (shared backend)
-Median/EWMA + hand-off hysteresis in the room-arbitration logic to kill
-flip-flop. Touches the production backend → its own reviewed change.
+### Phase 1c — Backend RSSI smoothing + hysteresis  ✅ SHIPPED (shared backend)
+Asymmetric EWMA (fast attack / slow release) per room + margin hysteresis in the
+room-arbitration logic (`ha_glue/services/presence_service.py`, "#10 asymmetric
+RSSI filter + margin hysteresis").
 
 > **STATUS 2026-06-19: SHIPPED + DEPLOYED.** Phase 1 (continuous scan + BlueZ
 > Experimental) and Phase 2 (IRK store + RPA resolution + UI pairing flow) are
 > merged (#825/#826/#828/#829) and live: backend IRK store deployed, the
 > Esszimmer Orange Pi satellite resolves an iPhone via BLE, and the BLE stack is
-> rolled out to the Pi fleet (multi-satellite room arbitration active). Phases
-> 1b/1c/3 remain deferred.
+> rolled out to the Pi fleet (multi-satellite room arbitration active). Phase 1c
+> shipped later in the backend; Phases 1b/3 remain deferred.
 
 ### Phase 2 — Defeat MAC randomization via IRK-based RPA resolution  ✅ SHIPPED + DEPLOYED (the real win)
 **Corrected mechanism** (the original "bond the phone to the satellite" is

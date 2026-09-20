@@ -1,9 +1,10 @@
 # OCR-Engine Evaluation — Design
 
-> Status: **HARNESS SHIPPED, evaluation not yet run.** Backs the TODOS.md item
-> "OCR engine evaluation / swap". This is a benchmark + methodology, NOT a swap
-> decision. No production behaviour changes here; `bin/run_ocr_engine_eval.py` is a
-> read-only harness against the prod corpus.
+> Status: **EVALUATION RUN 2026-07-23 (148 flagged docs) → DECIDED: Tesseract is the
+> default ingest OCR engine** (`RAG_OCR_ENGINE=tesseract`, config-switchable; #1029 bakes
+> Tesseract into the image, #1033 flips the default, #1034 release v2.22.0). See
+> "Outcome (2026-07-23)" below. Backs the TODOS.md item "OCR engine evaluation / swap".
+> `bin/run_ocr_engine_eval.py` remains a read-only harness against the prod corpus.
 
 ## Premise
 

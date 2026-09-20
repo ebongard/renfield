@@ -82,6 +82,19 @@ Three problems hide in that sentence, and only the first is about the camera:
 **N is configuration, not code.** Adding an instance to the app is pairing one
 more account, never a code change.
 
+### Capturing a receipt without the app — the two paths that exist today
+
+- **Photo → watched folder** (`docs/FOLDER_INGEST.md`): save the photo into a
+  share the `renfield-mcp-filesystem` server watches (local/SMB/NFS); `png`/`jpg`/`jpeg`
+  are in the default `ALLOWED_EXTENSIONS`, and the file is ingested into the KB and
+  filed to Paperless. Routing is per share, so the folder decides the instance.
+- **Photo → mail to the watched mailbox** (`docs/EMAIL_INGEST.md`): send the picture
+  as an *attachment* (inline images are skipped by design) to an IMAP mailbox the
+  email-ingest server watches; routing is per mailbox.
+
+Neither path knows the device, the project or the on-road context — that gap is
+what this design is for.
+
 ## Requirements [R2 edited]
 
 1. A **native iOS app**, receipts first, **built to grow** into further sections

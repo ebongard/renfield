@@ -8,13 +8,15 @@ Dieses Dokument enthält eine umfassende Analyse der technischen Schulden im ges
 
 ## Übersicht
 
-| Bereich | Kritisch | Mittel | Niedrig | Gesamt | Behoben |
-|---------|----------|--------|---------|--------|---------|
-| Backend | 0 | 3 | 4 | 9 | 11 |
-| Frontend | 0 | 0 | 2 | 4 | 7 |
-| Satellite | 0 | 3 | 2 | 5 | 5 |
-| Infrastruktur | 0 | 4 | 2 | 7 | 6 |
-| **Gesamt** | **0** | **10** | **10** | **25** | **29** |
+| Bereich | Kritisch | Mittel | Niedrig | Offen | Behoben |
+|---------|----------|--------|---------|-------|---------|
+| Backend | 0 | 2 | 0 | 2 | 13 |
+| Frontend | 0 | 0 | 2 | 2 | 6 |
+| Satellite | 0 | 0 | 0 | 0 | 6 |
+| Infrastruktur | 0 | 1 | 0 | 1 | 6 |
+| **Gesamt** | **0** | **3** | **2** | **5** | **31** |
+
+Stand 2026-09-20 — gezählt sind die nicht durchgestrichenen Posten (Backend #3, #12; Frontend #6, #7; Infrastruktur I1).
 
 **Offen (🟡):** Infrastruktur **I1** — Harbor push/pull vom Heim-Netz langsam (**WAN-Hairpin über die Public-IP**, upload-gedeckelt ~72 Mbit/s; KEIN MTU/Blackhole — sauberer Push 0 Retrans/0 frag-needed). Ursache: `.159` löst Harbor auf die Public-IP auf (einziger TLS-Endpoint ist öffentlich). Fix: LAN-direkter `ctr import` › interner TLS-Endpoint + Split-Horizon-DNS. Siehe §Infrastruktur + `../public_k8s/docs/harbor-slow-from-home-lan.md`.
 
@@ -80,11 +82,13 @@ api/
 
 #### 3. Große API-Route-Dateien (teilweise behoben)
 
-| Datei | Vorher | Nachher | Status |
-|-------|--------|---------|--------|
-| `routes/rooms.py` | 1024 | 875 | ✅ Schemas extrahiert |
-| `routes/knowledge.py` | 1019 | 1076 | ✅ Schemas extrahiert, gewachsen durch neue Features |
-| `routes/speakers.py` | 650 | 650 | OK, beobachten |
+| Datei | Vorher | 2026-01-25 | 2026-09-20 | Status |
+|-------|--------|------------|------------|--------|
+| `ha_glue/api/routes/rooms.py` (umgezogen aus `routes/rooms.py`) | 1024 | 875 | 964 | ✅ Schemas extrahiert; beobachten |
+| `routes/knowledge.py` | 1019 | 1076 | 1665 | ⬜ über der Schwelle — Split ist ein eigenes Arbeitspaket (M) |
+| `routes/speakers.py` | 650 | 650 | 865 | beobachten |
+
+**Schwelle:** ab ~1500 Zeilen wird ein Split zum Arbeitspaket (Sub-Router je Fachbereich, wie bei `rooms.py`).
 
 **Änderungen (2026-01-25):**
 - `rooms_schemas.py` (182 Zeilen) - Pydantic Models extrahiert
@@ -161,7 +165,7 @@ services/
 
 #### 12. `procedural_skills.status` — Partial Index nach Rollout
 
-**Status:** Offen — eingeführt mit v2.10 (#615), Review-Befund.
+**Status:** Geparkt (2026-09-20) — kein Arbeitspaket, solange kein Seq-Scan auf `procedural_skills` gemessen ist; `pc20260527` legt weiterhin nur die Plain-B-Trees an. Eingeführt mit v2.10 (#615), Review-Befund. (Nicht zu verwechseln mit GitHub-Issue #12, das ein anderes Thema ist.)
 
 **Problem:** Die Composite-Indexe `idx_procedural_skills_status_user` und `idx_procedural_skills_tier_status` (pc20260527) sind B-Trees über eine Text-Spalte mit nur vier Werten (`draft` / `approved` / `rejected` / `archived`). Sobald der Draft-Gate live ist, ist die Verteilung stark verzerrt: der weit überwiegende Anteil der Zeilen wird `approved` sein, mit einem schmalen Hot-Tail an `draft`. Plain B-Tree-Indexe haben in dieser Kardinalitätsverteilung schlechte Selektivität — der Planner fällt häufig auf einen Seq-Scan zurück.
 
@@ -176,9 +180,9 @@ services/
 
 ---
 
-#### 13. Alembic Backfill-UPDATEs ohne vorheriges Index-Drop
+#### 13. ~~Alembic Backfill-UPDATEs ohne vorheriges Index-Drop~~
 
-**Status:** Offen — eingeführt mit v2.10 (#615), Review-Befund.
+**Status:** ✅ Erledigt (2026-09-20) — Konvention dokumentiert in `.claude/rules/migrations.md` („Backfill ordering"); `pc20260527` bleibt wie committed. Ursprünglich: eingeführt mit v2.10 (#615), Review-Befund.
 
 **Problem:** `pc20260527_skill_approval_status.upgrade()` führt fünf `UPDATE`-Statements gegen `procedural_skills` aus, _bevor_ die alten Indexe (`idx_procedural_skills_active_user`, `idx_procedural_skills_tier_active`) gedroppt werden. Jeder UPDATE muss die alten Indexe pflegen, obwohl sie unmittelbar danach verworfen werden. Bei `procedural_skills` heute unkritisch (kleine Tabelle), aber als Migration-Pattern gefährlich — auf einer Multi-Millionen-Zeilen-Tabelle würde die Migration die zehn- bis hundertfache Zeit benötigen.
 
@@ -613,18 +617,20 @@ Bereits gepinnte Images:
 
 ## Test-Coverage
 
-| Bereich | Test Files | Tests | Source Files | Ratio |
-|---------|------------|-------|--------------|-------|
-| Backend | 62 | 1642 | ~80 | 78% |
-| Frontend | 18 | 289 | ~40 | 45% |
-| Satellite | 1 | - | 15 | 7% |
+| Bereich (Stand 2026-09-20) | Test Files | Tests | Source Files |
+|---------|------------|-------|--------------|
+| Backend (`tests/backend`) | 366 | 6777 `def test_` | 319 `.py` (ohne alembic) |
+| Frontend (`tests/frontend/react`, Vitest/TS — keine `.jsx` mehr) | 336 | 2746 `it()/test()` | 245 `.ts/.tsx` |
+| Satellite (`tests/satellite`) | 33 | – | 36 `.py` |
+
+Zählung: `find tests/backend -name 'test_*.py' | wc -l`, `grep -rc "def test_" tests/backend | awk -F: '{s+=$2} END{print s}'` (analog für Frontend/Satellite).
 
 ### Fehlende Tests
 
-- [ ] `services/audio_output_service.py` - kein Test
-- [ ] `services/output_routing_service.py` - kein Test
-- [ ] `integrations/frigate.py` - nur Mock-Tests
-- [x] Frontend Hooks - Tests vorhanden (`useChatSessions.test.jsx`, `useCapabilities.test.jsx`)
+- [x] `services/audio_output_service.py` - `tests/backend/test_audio_output_service.py`
+- [x] `services/output_routing_service.py` - `tests/backend/test_output_routing_service.py` (+ `test_output_routing_quality_tiebreak.py`, `test_output_providers_phase4.py`)
+- [x] `ha_glue/integrations/frigate.py` (umgezogen) - Mock-Tests in `test_camera.py` + `test_integrations.py`; mock-only ist akzeptiert (externer Dienst, kein Frigate im Testlauf)
+- [x] Frontend Hooks - Tests vorhanden (`tests/frontend/react/hooks/useChatSessions.test.tsx` u. a.)
 - [ ] Satellite Hardware - keine Tests möglich ohne Mocks
 
 ---
@@ -641,19 +647,19 @@ Bereits gepinnte Images:
 
 4. ✅ ~~main.py Refactoring~~ (2026-01-25)
 5. ✅ ~~ChatPage.jsx aufteilen~~ (2026-01-25)
-6. ⬜ Requirements pinnen
+6. 🔄 Requirements pinnen — entschieden: Voll-Lock + monatliche bewusste Aktualisierung mit Testlauf auf der Build-Box (BL-0447), in Arbeit
 7. ✅ ~~Type Hints hinzufügen (Backend)~~ (2026-01-25)
 8. ✅ ~~ollama_service.py Refactoring~~ (2026-01-25)
 
 ### Mittelfristig (1-3 Monate)
 
-9. 🔄 TypeScript Migration (Frontend) - Grundgerüst fertig (2026-01-26)
+9. ✅ ~~TypeScript Migration (Frontend)~~ — abgeschlossen (siehe Frontend #3; 0 `.jsx` in `src/frontend/src`)
 10. ✅ ~~Test-Coverage Enforcement~~ (2026-02-04: `--cov-fail-under=50` in CI)
-11. ⬜ Dependency Updates (Minor)
+11. ✅ ~~Dependency Updates (Minor)~~ — kein eigener Posten mehr: Minors laufen im monatlichen Lock-Zyklus (Punkt 6 / BL-0447)
 
 ### Langfristig (3-6 Monate)
 
-12. ⬜ Major Dependency Updates (React 19, etc.)
+12. ✅ ~~Major Dependency Updates (React 19, etc.)~~ — erledigt: Frontend auf React 19.2 / Vite 7 / Tailwind 4 / TypeScript 5.9 (`src/frontend/package.json`, Stand 2026-09-20)
 13. ✅ ~~Hardware-Abstraktionsschicht (Satellite)~~ - Bereits vorhanden (2026-01-26)
 14. ✅ ~~Multi-Stage Docker Builds~~ (2026-01-26)
 

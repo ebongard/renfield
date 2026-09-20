@@ -23,6 +23,12 @@ allows `op.get_context().autocommit_block()` for non-transactional DDL such as `
 Design every migration as EITHER fully transactional OR fully recoverable — e.g. `DROP INDEX IF EXISTS` before a
 `CONCURRENTLY` create (see `pc20260528`). A `CONCURRENTLY` build waits on any leaked idle-in-transaction session.
 
+## Backfill ordering
+A migration that backfills rows AND changes indexes does it in this order: (1) drop the indexes that are going away,
+(2) run the backfill `UPDATE`s, (3) create the new indexes and constraints last. Every `UPDATE` otherwise maintains
+indexes that are dropped a moment later — harmless on a small table, 10–100× slower on a large one
+(`pc20260527_skill_approval_status` did it the wrong way round; leave it, it is committed).
+
 ## Additive columns
 Prefer nullable, no backfill, no server default unless an older pod must be able to write valid rows during a rolling
 deploy (then give a server default). The ORM selects every column, so **a new pod before the migration fails every

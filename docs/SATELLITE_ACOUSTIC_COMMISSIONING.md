@@ -265,7 +265,7 @@ commissioned, whatever its provisioning status says.
 | Arbeitszimmer | WM8960 / Whisplay | yes (v3 + v4 audiobook) | `ALC Max Gain=4` |
 | Wohnzimmer | 2-mic HAT | yes (v3) | still on v3, v5 available |
 | Kinderbad | 2-mic HAT (AIC3104) | **yes (v5, 2026-09-05)** | ADC HPF enabled 2026-09-04; FPs persisted (25 genuine wakes in the following 9 h). Its 10-min June capture scored peak 0.127 (0 detections) — useless as a negative. The 45-min in-use capture scores 0.969 / 8 against v3; v5 brings that to 0.609 / 1. **v5 deployed + live-verified 2026-09-05** (backend `2026-09-05-renfield-de-v5`): 4 `completed` sessions in the first 1.6 h, versus 0 in 9 h under v3. |
-| Esszimmer | Orange Pi / XVF3800 | yes (v3) | parked, needs new hardware |
+| Esszimmer | Orange Pi / XVF3800 | yes (v3) | k8s pod, live on image `esszimmer-v12` (#1288/#1290; satellite v1.4.11, fleet 60 s limit); audio path aligned to Fitnessraum (ch0 select) 2026-07-10; still on v3, v5 available |
 
 ---
 

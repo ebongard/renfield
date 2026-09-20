@@ -160,7 +160,8 @@ Scope + status:
   phase by phase — the `k8s/cnpg/` files are deliberately **not** in
   `kustomization.yaml`.
 - **Cluster name carries an `-r1` suffix** on both instances since the
-  2026-09-12 recovery (below). Renaming back is deferred; a rename is a restore.
+  2026-09-12 recovery (below). Decided: no rename back — a rename is a restore,
+  and an outage for a cosmetic name is not worth it. `-r1` is the name.
 - **pgvector image:** the stock CNPG operand has no pgvector, so a thin custom
   image (`k8s/cnpg/Dockerfile.pgvector`) adds `postgresql-16-pgvector`.
 - **Backups:** base backups + WAL archiving go to the Garage S3 server on the NAS

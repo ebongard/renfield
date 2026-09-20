@@ -118,12 +118,14 @@ must never be treated as the local owner.
 > [!IMPORTANT]
 > **What is *not* yet reachable: the same person's full private brain across
 > instances.** Peer-scoped reach only exposes what the *owner shared to that
-> tier* — it does **not** let `evdb` logged into xidra read everything `evdb`
+> tier* — it does **not** let `<user>` logged into xidra read everything `<user>`
 > can read at home (their own private, owner-tier, explicitly-granted content).
 > That "act as the same person" escalation is the **person-link** (Piece 3 /
 > F-ID-2): the mapped path runs the query *as* the linked local user with
-> `enforce_circles=False`. It is designed but **not yet user-establishable** —
-> today a link can only be created by an admin DB write, so it's deferred. This
+> `enforce_circles=False`. Today an ADMIN can create/list/delete links via
+> `GET/POST/DELETE /api/federation/user-links` (`federation_user_links.py`); their
+> effect stays dark behind `FEDERATION_IDENTITY_LINKS_ENABLED`. The deferred part is
+> the **user-establishable consent handshake** (F-ID-2, both sides prove ownership). This
 > handshake therefore proves the transport and gives you public + granted-tier
 > reach; it is not yet a full personal-brain bridge.
 

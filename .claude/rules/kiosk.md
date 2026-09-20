@@ -20,8 +20,9 @@ is REMOVED — the kiosk (`/kiosk`, `<AdminRoute>` OUTSIDE the app Layout, sideb
 - **Do not "fix" the glow to match DESIGN.md.** The kiosk DELIBERATELY breaks it (sanctioned, TODOS.md line 315); the
   glow/bloom lives ONLY here. Motion (nebula/stars/radar sweep) stays reduced-motion-gated.
 - **No wall-clock decay in the frontend.** Liveness is backend-authoritative: a satellite in the roster IS online; the
-  backend pushes `satellite_offline`, a reconnect re-anchors from a fresh snapshot. (Only federation peers keep a
-  wall-clock backstop until the `peer_status_changed` delta ships.)
+  backend pushes `satellite_offline`, a reconnect re-anchors from a fresh snapshot. Federation peers get the
+  `peer_status_changed` delta (#969) and additionally keep a wall-clock freshness backstop (`PEER_OFFLINE_MS`) in
+  `useKioskModel.ts` — a second guard behind the delta, not a substitute for it.
 
 ## Health verdicts
 - Primary = `get_status()`, which folds connectivity AND functionality: **degraded** = connected but a bound startup

@@ -1,10 +1,12 @@
 # Scanner ingest — one scanner, three instances, content-routed
 
 **Status:** Phases 0–3 BUILT (2026-09-08) — Phase 0 as `bin/scan.sh`, Phases 1–3
-in the separate `ebongard/renfield-mcp-scanner` repository; not yet verified
-end-to-end against a live instance. Phases 4–5 open. Design investigated +
-decided 2026-09-08.
-**Flag:** `SCANNER_INGEST_ENABLED` (per instance, dark by default)
+in the separate `ebongard/renfield-mcp-scanner` repository; scan-job model with
+return channel + exactly-once delivery shipped in #1243/#1246 (`.claude/rules/scanner.md`).
+Not yet verified end-to-end with real paper against a live instance. Phases 4–5 open.
+Design investigated + decided 2026-09-08.
+**Switches:** `SCANNER_MCP_ENABLED` (the MCP server, per instance) + `SCANNER_INGEST_CLIENT_IDS`
+(which ingest credentials may file scans; empty = none) — there is no `SCANNER_INGEST_ENABLED` flag.
 **Related:** `docs/FOLDER_INGEST.md`, `docs/EMAIL_INGEST.md`, `docs/design/pdf-split.md`
 
 ## Problem
@@ -459,7 +461,7 @@ FileVault on, not a laptop. That materially de-risks the choice.
 | `SCANNER_JOB_EVENT_RETRY_HOURS` | `24` | Scanner side: how long one completion event is retried (capped exponential backoff) — matches Renfield's 24 h requester record; given-up events are re-sent on the next restart |
 | `SCANNER_INGEST_CLIENT_IDS` | *(empty = refuse all)* | Renfield side: ingest client id(s) allowed to post `/api/scanner/job-event` — the scanner's own folder-ingest credential. Fail-closed |
 | `SCANNER_TARGETS` | *(required, 1..n)* | The target registry — see below |
-| `SCANNER_INGEST_ENABLED` | `false` | Per-instance flag (dark) |
+| `SCANNER_MCP_ENABLED` | `false` | Renfield side: the per-instance switch for the scanner MCP server (the design's "`SCANNER_INGEST_ENABLED`" never existed) |
 | `scanner_route_auto_threshold` | `0.85` | Below → review floor |
 | `scanner_default_target` | *(unset)* | Deliberately unset — no silent default |
 | `scanner_staging_retention_days` | `30` | Purge unrouted scans (cf. `meeting_retention`) |

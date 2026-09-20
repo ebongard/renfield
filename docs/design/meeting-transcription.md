@@ -1,9 +1,10 @@
 # Meeting Transcription & Diarization — Design (§2 of the meeting/project workflow)
 
-> Status: **REVIEWED, spike-gated** (/plan-eng-review 2026-07-06, 9 review findings + 12
+> Status: **SHIPPED — LIVE on both instances** (`MEETING_TRANSCRIPTION_ENABLED=true` in
+> `k8s/configmap.yaml`; as-built summary at the end of this doc, invariants in
+> `.claude/rules/meetings.md`). Reviewed 2026-07-06 (/plan-eng-review, 9 review findings + 12
 > outside-voice findings resolved). Generic feature for BOTH instances (household +
-> work); flag-gated dark. Business-instance phasing lives in the private instance plan.
-> Build order: **Spike first** — no product code before the spike gates pass.
+> work). Business-instance phasing lives in the private instance plan.
 
 ## Goal
 
@@ -117,8 +118,10 @@ consent UX, never-enrollable external participants are expected).
   recording indicator/§6 UX, Pi storage/streaming, new WS messages).
 - Minutes pipeline (summary/decisions/action-items with human confirm) — later phase;
   Schicht-A stays gated off for transcripts until then.
-- Chunked processing with per-chunk checkpoints — documented ESCALATION path if
-  reality routinely brings >2h meetings; not built for a weekly workload.
+- Chunked processing: **chunking is built** (#1011, voice-server `meeting_chunk_seconds`,
+  `meeting_service.py` — bounded GPU peak, multi-hour recordings); **per-chunk
+  checkpoints (resume after a crash mid-meeting) are not built** — escalation path if
+  that ever bites.
 - Project model/timeline (phase 1 of the instance plan), Notes feature.
 
 ## Test plan

@@ -1,6 +1,8 @@
 # E11 React Query — handover for the next session
 
-**Status:** Foundation + 5 reference pages landed in **#504** on `e11-react-query` (2026-04-30). This doc is everything a fresh session needs to finish the remaining 19 pages + 7 components + 25 spec migrations + `useChatSessions` rewrite without re-reading the original plan.
+**Status: DONE — #504 (foundation + 22 of 23 surfaces) and #505 (PaperlessAuditPage, final) merged 2026-04-30.** `tasks/audit-findings-plan.md` §E11 records it as RESOLVED. Checklist below ticked 2026-09-20 (backlog triage); the only surface still on raw `apiClient` is the mutation-only pair-modal pair, see its line.
+
+Original handover text follows. Foundation + 5 reference pages landed in **#504** on `e11-react-query` (2026-04-30). This doc is everything a fresh session needs to finish the remaining 19 pages + 7 components + 25 spec migrations + `useChatSessions` rewrite without re-reading the original plan.
 
 **Authoritative plan (don't re-derive decisions, use these as locked):** `~/.claude/plans/pure-questing-blanket.md` — 6 decisions (D1–D6) + 5 outside-voice fixes recorded inline.
 
@@ -111,29 +113,29 @@ Tackle in this order. Smaller first to keep momentum, biggest last when the patt
 ## Per-page checklist (copy into PR description)
 
 ```
-- [ ] TasksPage
-- [ ] BrainPage
-- [ ] BrainReviewPage
-- [ ] CirclesPeersPage
-- [ ] CirclesSettingsPage
-- [ ] IntegrationsPage
-- [ ] FederationAuditPage
-- [ ] RoutingDashboardPage
-- [ ] PresencePage
-- [ ] SatellitesPage
-- [ ] CameraPage
-- [ ] HomeAssistantPage
-- [ ] UsersPage
-- [ ] RoomsPage + RoomOutputSettings + DeviceSetup
-- [ ] KnowledgePage
-- [ ] SpeakersPage
-- [ ] KnowledgeGraphPage + knowledge-graph/GraphView
-- [ ] PaperlessAuditPage
-- [ ] LanguageSwitcher
-- [ ] presence/AnalyticsTab
-- [ ] PairResponderModal + PairInitiatorModal
-- [ ] useChatSessions move to src/api/resources/chatSessions.ts
-- [ ] All 25 existing specs green under renderWithProviders
+- [x] TasksPage
+- [x] BrainPage
+- [x] BrainReviewPage
+- [x] CirclesPeersPage
+- [x] CirclesSettingsPage
+- [x] IntegrationsPage
+- [x] FederationAuditPage
+- [x] RoutingDashboardPage
+- [x] PresencePage
+- [x] SatellitesPage
+- [x] CameraPage
+- [x] HomeAssistantPage
+- [x] UsersPage
+- [x] RoomsPage + RoomOutputSettings + DeviceSetup
+- [x] KnowledgePage
+- [x] SpeakersPage
+- [x] KnowledgeGraphPage + knowledge-graph/GraphView
+- [x] PaperlessAuditPage
+- [x] LanguageSwitcher
+- [x] presence/AnalyticsTab
+- [ ] PairResponderModal + PairInitiatorModal — NOT migrated: both still import `apiClient` from `utils/axios` (mutation-only, not one of the 23 list-fetching surfaces #504/#505 closed)
+- [x] useChatSessions move to src/api/resources/chatSessions.ts (`hooks/useChatSessions.ts` is now a re-export shim)
+- [x] All 25 existing specs green under renderWithProviders
 ```
 
 ## Verification before opening the next PR

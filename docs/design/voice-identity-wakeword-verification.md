@@ -1,6 +1,6 @@
 # Voice Identity — text-dependent wakeword verification + streaming sessions with diarization gating
 
-**Status:** DESIGN, REVIEWED (2026-07-06, `/plan-eng-review` + outside voice — 13 decisions locked, see §5a/§7). Nothing built. Successor/companion to `speaker-enrollment-redesign.md` (Phases 0–3b built, 3 dark) — this doc addresses what controlled enrollment structurally cannot fix.
+**Status:** DESIGN, REVIEWED (2026-07-06, `/plan-eng-review` + outside voice — 13 decisions locked, see §5a/§7). **PR 1 built:** P0 fail-loud (`speaker_service.py` refuses in-process embeddings) + C1 binary Opus transport (`network/websocket_client.py`, `audio/opus_codec.py`), C1 active in the household (`SATELLITE_OPUS_ENABLED=true`). A0/A1/C2/C3/A2 not built. Successor/companion to `speaker-enrollment-redesign.md` (Phases 0–3b built, 3 dark) — this doc addresses what controlled enrollment structurally cannot fix.
 **Trigger:** full pipeline review + devil's-advocate session 2026-07-06. Controlled enrollment fixes *profile pollution* (the disease found 2026-07-05), but the identity signal itself — one text-independent ECAPA embedding from 1–2 s of far-field command audio — remains near its information floor, and the multi-user room case (wakeword speaker ≠ command speaker) is unrepresentable in the current design.
 **Delivery shape (locked):** **PR 1 = P0 + C1** (premise-independent). **A1 builds only after the A0 offline experiment confirms its premise** (PR 2). C2/C3/A2 are roadmap.
 
@@ -110,8 +110,8 @@ This is the structural fix for wakeword-speaker ≠ command-speaker, and it upgr
 
 | Phase | Contents | Flag | Depends on |
 |---|---|---|---|
-| **P0 (prereq, immediate)** | Make the backend SpeechBrain embedding fallback **fail loudly** (refuse to emit cross-space embeddings when the voice-server is down — log + skip speaker resolution, never store). A/B the XVF3800 ASR-tap vs far-field wakeword recall (A1 makes the wakeword segment load-bearing). Enroll a 2nd household member. | — | — |
-| **C1 (PR 1, with P0)** | Binary WS frames + Opus, capability-negotiated. Resolves the TODOS.md Opus P2. Decode: ✅ moved to the voice-server (`/api/voice/stt-opus`, C2 Phase 1, 2026-07-07) — D6 debt cleared. Still dark. | `SATELLITE_OPUS_ENABLED` | — |
+| **P0 (prereq, immediate)** | ✅ Fail-loud built: the backend SpeechBrain embedding fallback **refuses** cross-space embeddings when the voice-server is down (`speaker_service.py`, log + skip speaker resolution, never store). Open: A/B the XVF3800 ASR-tap vs far-field wakeword recall (A1 makes the wakeword segment load-bearing); enroll a 2nd household member. | — | — |
+| **C1 (PR 1, with P0)** | ✅ Built: binary WS frames + Opus, capability-negotiated. Resolves the TODOS.md Opus P2. Decode: ✅ moved to the voice-server (`/api/voice/stt-opus`, C2 Phase 1, 2026-07-07) — D6 debt cleared. **Active in the household** (`k8s/configmap.yaml` `SATELLITE_OPUS_ENABLED=true`). | `SATELLITE_OPUS_ENABLED` | — |
 | **A0 (experiment, ~1 day)** | Household wakeword-recording session + `calibrate_speaker_threshold.py --wakeword`; measures fixed-phrase vs command-audio separation on clean profiles. **Go/no-go for A1.** | — | P0 (same recording session) |
 | **A1 (PR 2, only if A0 passes)** | Ring buffer + segment transport; voice-server scoring; satellite-mic enrollment (IRK-gated); concurrence fusion; suggest-only bucket labels; shadow mode → enforcing. | `WAKEWORD_SPEAKER_VERIFY_ENABLED` (log-only first) | P0, C1, A0 |
 | **C2 (roadmap)** | Streaming session extending `/ws/voice`, server-side endpointing, follow-up window, active barge-in, session LED + hard cap. | `STREAMING_SESSION_ENABLED` | C1 |

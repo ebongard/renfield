@@ -55,8 +55,10 @@ curl -L -o /opt/renfield-satellite/models/silero_vad.onnx \
   - Config: `device: "hw:0,0"`, `channels: 4`, `use_arecord: true`
   - `OMP_NUM_THREADS=1` in systemd service limits onnxruntime CPU usage
   - `os._exit(0)` in shutdown handler prevents `pa.terminate()` kernel crash
-  - **VAD:** RMS backend recommended — Silero VAD unreliable under CPU load (two ONNX
-    models per chunk saturates Pi Zero 2 W). Silence detection uses audio-chunk counting
+  - **VAD:** the fleet runs Silero (`vad_backend: "silero"` in `provisioning/group_vars/satellites.yml`;
+    the code default is still `rms`). The earlier "Silero unreliable under CPU load" finding was the
+    streaming-wrapper bug fixed in v1.4.11 (#1289, `audio/vad.py`: 64-sample context + gap-free
+    stream) — bare frames scored ~0.00 at any load. Silence detection uses audio-chunk counting
     instead of wall-clock time to be immune to CPU processing lag.
 
 - [ ] **Audio Preprocessing auf Backend verschieben**: Für ressourcenschwache Satellites
@@ -68,6 +70,7 @@ curl -L -o /opt/renfield-satellite/models/silero_vad.onnx \
 ### Medium Priority
 
 - [ ] **Boot-Window WS-Handshake-Timeout (rotes LED-Blink beim Hochfahren)**
+  - **Stand 2026-09-20:** zwei spätere Fixes berühren genau diesen Pfad — #755 (v1.4.0: begrenzter Register/Handshake, schneller Reconnect, Exit-Watchdog bei nicht erreichbarem Backend) und #781 (Boot-Reconnect-Task wurde vom GC eingesammelt; kalter mDNS in den ersten Sekunden). Ob das ~11-Min-Rotblinken noch auftritt, ist ungemessen: beim nächsten Reboot eines Satelliten die Zeit von network-online bis zum ersten erfolgreichen Register **aus dem Backend-Log** ablesen (kein `journalctl` per SSH auf dem Pi Zero); <60 s → abhaken, sonst gilt der Diagnoseplan unten.
   - **Symptom:** Nach Pi-Reboot blinken die LEDs ~11 Min rot, dann wechselt der Satellite auf grünen IDLE-Pulse und funktioniert. Pro fehlgeschlagenem Versuch: `Server error: timed out during opening handshake`.
   - **Verifizierter Beobachtungsfall (2026-05-03, sat-wohnzimmer):** WLAN/DHCP fertig 20:22:27 → 9 fehlgeschlagene WS-Connects 20:23:06 bis 20:29:44 (Backoff 5→10→20→40→60s cap) → NTP `Initial clock synchronization` 20:33:18 → 1. erfolgreicher Connect 20:34:09 (51 s nach NTP-Sync).
   - **Hard facts:** Backend-Pod hatte 30 h Uptime (kein k8s-seitiges Problem). Backend-Logs zeigen **keinen einzigen** der 9 Versuche → Failure passiert vor dem FastAPI-Handler (TCP, TLS oder Traefik-Stage). WLAN war stabil, kein flap.
@@ -88,7 +91,7 @@ curl -L -o /opt/renfield-satellite/models/silero_vad.onnx \
   - Speaker Enrollment via Web-UI
   - Personalisierte Antworten pro Benutzer
 
-- [ ] **Opus Audio Compression**
+- [x] **Opus Audio Compression** ✅ built as C1 of `docs/design/voice-identity-wakeword-verification.md` (`audio/opus_codec.py`, binary WS frames in `network/websocket_client.py`, decode on the voice-server = C2 Phase 1); live fleet-wide (`SATELLITE_OPUS_ENABLED=true`)
   - Statt Base64-PCM → Opus-kodiert
   - ~50% weniger Bandbreite
   - Minimal Qualitätsverlust bei 16kHz Voice
@@ -113,7 +116,7 @@ curl -L -o /opt/renfield-satellite/models/silero_vad.onnx \
   - Expected: 6-10 dB SNR gain, multi-axis noise rejection
   - ~10-15% CPU on Pi Zero 2 W (estimated)
 
-- [ ] **Wake Word Training**
+- [x] **Wake Word Training** ✅ geliefert — `src/satellite/wakeword-training/` (README + Scripts; Trainingsrezept und Modellhistorie dort, Abnahme je Raum in `docs/SATELLITE_ACOUSTIC_COMMISSIONING.md`)
   - Custom Wake Words trainieren
   - OpenWakeWord Training Pipeline
 

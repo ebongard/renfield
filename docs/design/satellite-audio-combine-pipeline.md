@@ -1,6 +1,6 @@
 # Satellite Audio Capture — hardware-appropriate stereo→mono combine
 
-**Status:** DESIGN (2026-07-07). Nothing built. Triggered by a live Fitnessraum (XVF3800) incident where the wakeword stopped firing.
+**Status:** DESIGN (2026-07-07) → **BUILT** (`b0ef9001`, `capture.py` `combine`/`select_channel` with auto-derived legacy defaults; §9 Q2 resolved). Triggered by a live Fitnessraum (XVF3800) incident where the wakeword stopped firing.
 **Scope:** the satellite capture pipeline (`src/satellite/renfield_satellite/audio/capture.py`) — how multi-channel hardware audio is reduced to the single mono stream the wakeword/STT require. Not the transport (C1) or the backend.
 
 ---
@@ -149,6 +149,6 @@ Each hat: capture with the `bin/` RMS harness (§6) while someone speaks, confir
 
 1. **Exact `AUDIO_MGR_OP_L` category/source for "processed beam"** — to pin deterministically (§3a). Verify empirically during rollout; today ch0 already carries it.
 2. ~~Unify the arecord path~~ **RESOLVED (implemented):** both the S16 PyAudio path and the S32 arecord path share `_select_mono` (dtype-preserving channel select); the AC108 stays byte-identical because `select_channel` and `combine` **auto-derive** the legacy defaults when unset (`combine`: beamforming→beamform / channels>1→select / else passthrough; `select_channel`: 4-mic→ch1, else ch0). Un-reprovisioned sats need no config change.
-3. **Deprecation of `beamforming:`** — keep the alias indefinitely, or migrate host_vars to `combine: beamform` and drop it? Proposal: keep the alias (cheap; `beamforming.enabled: true` auto-derives `combine: beamform`), migrate templates opportunistically.
+3. ~~**Deprecation of `beamforming:`**~~ **RESOLVED: the alias stays** (cheap; `beamforming.enabled: true` auto-derives `combine: beamform`, `capture.py`); templates migrate opportunistically, no work item.
 
 **Source:** Fitnessraum XVF3800 wakeword incident 2026-07-07 (live capture measurements above; root-caused to the ALSA mono downmix of the processed-beam + AEC-residual). Related: `docs/design/voice-identity-wakeword-verification.md` (C1 transport, adjacent in the same audio path), `docs/XVF3800_SATELLITE.md`, `src/satellite/renfield_satellite/audio/{capture,beamformer}.py`, ReSpeaker XVF3800 host_control docs (`AUDIO_MGR_OP_L/R`, `CLEAR_CONFIGURATION`, `REBOOT`, `SAVE_CONFIGURATION`).

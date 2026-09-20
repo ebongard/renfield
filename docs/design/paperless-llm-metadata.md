@@ -1,6 +1,6 @@
 # LLM-driven Paperless Metadata Extraction
 
-**Status:** Design proposal, revision 3.2 (2026-04-22, implementation in progress)
+**Status:** SHIPPED — PR 1 (`renfield-mcp-paperless` #5), PR 2 (`paperless_metadata_extractor.py`, `PaperlessExtractionExample`), PR 3 (`paperless_example_retriever.py`), PR 4 (`paperless_ui_edit_sweeper.py` incl. the abandoned-confirm sweep + `superseded` flag), PR 5 (#662, interactive confirm card). Vision-first extraction ("PR 2b") not built — text-only via Docling. kNN tier + Redis-pubsub taxonomy cache stay deferred by design (see Open questions 4, Appendix). Revision 3.2 (2026-04-22).
 **Owner:** evdb
 **Related:** [`services/chat_upload_tool.py`](../../src/backend/services/chat_upload_tool.py),
 [`renfield-mcp-paperless/server.py`](https://github.com/ebongard/renfield-mcp-paperless/blob/main/renfield_mcp_paperless/server.py),
@@ -987,11 +987,15 @@ PR 2 merge score, the PR blocks until investigated.
 1. **Vision model availability detection.** Renfield's `llm_client` already
    has per-model routing — can we cleanly ask "does the configured agent
    client have a vision model available" without spawning probe calls?
+   **Open (moot for now):** the shipped extractor is text-only (Docling);
+   the vision path is the unbuilt "PR 2b".
 2. **Multilingual docs.** Most archival docs will be German. What about the
    rare English-language invoice from an international service? Current
    design uses `lang` from the ChatUpload record — works if lang is set.
    If not, default to German and let the LLM handle mixed-language text
    (LLMs are fine at this).
+   **Resolved as designed:** `extract(..., user_lang)` → prompt variant by
+   `lang`, default `de`.
 3. **Multi-document files.** A PDF with two unrelated invoices stapled
    together. Out of scope for v1 — treat the whole file as one document.
    Flag as a known limitation in the release entry.
@@ -1004,11 +1008,15 @@ PR 2 merge score, the PR blocks until investigated.
    cache for up to 10 minutes) accepted as v1 limitation. Redis-backed
    cache with pubsub invalidation is the clean fix; note as a deferred
    option if the inconsistency bites.
+   **Decided: deferred by design, no work item** — trigger is an observed
+   cross-pod taxonomy inconsistency; none reported so far.
 5. **Abandoned-confirm cleanup** during the N = 10 cold-start window.
    If the user walks away mid-confirm within the first 10 uploads, the
    ChatUpload row sits around. Sweeper deletes pending-confirm uploads
    older than 24 h. PR 4 item — bounded impact because cold-start is at
    most 10 uploads per user.
+   **Done:** `run_abandoned_confirm_sweep` (`paperless_ui_edit_sweeper.py`),
+   scheduled via the built-in task `_paperless_abandoned_confirm_sweep_handler`.
 6. **Concurrent new-entry proposals.** Two extractions in parallel both
    propose "Stadtwerke Köln" independently. Mitigation: re-validate the
    proposal against the live taxonomy at confirm-time (after the first

@@ -1,6 +1,6 @@
 # Notes as a 5th atom_type — design (Phase 4B)
 
-> Status: **DESIGN LOCKED, build not started.** Decisions: Notes are a **first-class
+> Status: **SHIPPED** (4B.1–4B.3 + dense embedding; migrations `pc20260720_notes`, `pc20260721_notes_embedding`; see Phasing below and `.claude/rules/notes-wissen.md`). Decisions: Notes are a **first-class
 > atom** (circles + polymorphic RRF + `/brain`/`/wissen`), not a parallel model; and
 > `[[links]]` use the **KG substrate** (§9 Option A) — note ↔ `kg_entities(entity_type="note")`,
 > link ↔ `kg_relations(predicate="note_link")`, **note→note for the 4B.2 MVP**, note→any-KG-entity

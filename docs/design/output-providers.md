@@ -1,6 +1,6 @@
 # Design: Generic Output Providers (room media/control routing)
 
-**Status:** Reviewed (eng-review 2026-06-07) — decisions locked, ready to implement
+**Status:** SHIPPED — live in the household (`OUTPUT_PROVIDERS_ENABLED=true`; `ha_glue/services/output_providers.py`, per-device TTS sound profile #1291). Remaining: brand-shim + discovery-method removal (destructive cleanup, tracked in `TODOS.md` "Output providers — destructive cleanup"; legacy columns already dropped in `pc20260617b`). Reviewed 2026-06-07 (eng-review) — decisions locked.
 **Author:** project owner + Claude
 **Motivates:** Samsung TV MCP integration (`renfield-mcp-samsung`); incoming Sonos / other-brand TV integrations.
 

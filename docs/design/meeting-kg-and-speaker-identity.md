@@ -1,6 +1,6 @@
 # Design — Meetings: one confirmed extraction → minutes + KG + commitments
 
-**Status:** APPROVED v2 (external re-review verdict "v2 sound" — all four v1 findings verified closed; five under-costed edges C1–C5 folded in below before Track B/C build). Phase 0 in progress.
+**Status:** APPROVED v2 (external re-review verdict "v2 sound" — all four v1 findings verified closed; five under-costed edges C1–C5 folded in below before Track B/C build). **Shipped:** Phase 0, Track D, Track A Increments 1+2 (dark, `meeting_fingerprints_enabled` / `meeting_fingerprint_autoname`). **Open:** Track A step 1 (enrolled-speaker auto-match, `meeting_auto_match_enabled`), Track B, Track C.
 **Author:** 2026-07-21.
 **Scope:** primarily the auth-on business instance (`renfield-xidra`), where meetings + KG + projects are live. Household ships the same code, lower value.
 

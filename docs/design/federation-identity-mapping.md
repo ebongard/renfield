@@ -1,6 +1,6 @@
 # Design — Person-scoped federation (cross-instance identity mapping)
 
-**Status:** DESIGN — not implemented. Spike/design only, no product code yet.
+**Status:** F-ID-1 SHIPPED dark (#959 2026-07-12: migration `pc20260712_federation_user_links`, `services/federation_identity_link.py`, admin route `api/routes/federation_user_links.py`, flag `FEDERATION_IDENTITY_LINKS_ENABLED=false`; #960 durable instance identity). **Open:** F-ID-2 (user-establishable link handshake — decision: double-login consent, §4.2 A; build plan §9) and the activation.
 **Motivating case:** linking a personal (household) Renfield instance to a business instance so that a *person* who has an account on both sees, from either side, exactly what that person is entitled to see on the other — while everyone else sees only public.
 **Depends on:** the peer-scoped federation fix (`services/circle_sql.py::peer_scoped` + `enforce_circles`, shipped in PR #957) is the FALLBACK path this builds on. Read that first.
 

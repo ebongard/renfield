@@ -1,6 +1,6 @@
 # Self-Learning Admin Console — Implementation Plan
 
-**Status:** scoped, not started
+**Status:** SHIPPED (v2.10, #615/#616 — migration `pc20260527_skill_approval_status`, `SkillCuratorRun`, `AdminCuratorPage.tsx` / `AdminSkillsPage.tsx` / `BrainSkillsPage.tsx`); deferred P2/P3 items live in `TODOS.md` (table below)
 **Target release:** v2.10
 **Source:** `/plan-eng-review` session 2026-05-26 (post-v2.9.1 deploy)
 **Outside voice:** Claude subagent (Codex not installed) — 5 tensions surfaced, 2 incorporated, 3 reaffirmed

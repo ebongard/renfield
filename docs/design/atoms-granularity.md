@@ -1,6 +1,6 @@
 # Atoms-Granularität — Chunk-Level vs Document-Level
 
-**Status:** Entwurf, pending Entscheidung
+**Status:** entschieden — Document-Level, umgesetzt in Migration `pc20260423_atoms_per_document` (`atom_service.py`: ein `kb_document`-Atom je Dokument, Tier kaskadiert auf die Chunks)
 **Kontext:** Lane B/C (v2.0.0) setzte `atoms` als polymorphen Access-Control-Layer über vier Quell-Tabellen. Für `document_chunks` wurde **pro Chunk** ein Atom angelegt — diese Entscheidung steht zur Debatte.
 
 ---
@@ -354,7 +354,7 @@ Postgres wählt Hash Join; die documents-Seite ist 1-Digit-Count in Prod (6 Docs
 
 2. **Legacy-Uploads ohne KB** — geklärt: `documents.knowledge_base_id` ist NOT NULL, gibt es also nicht.
 
-3. **Vector-Index in Produktion** — **separates Issue**: aktuell kein HNSW/IVFFlat auf `document_chunks.embedding`. Seq-Scan ok bei 123 Chunks, nicht bei 10M. Sollte vor der nächsten Größenordnung passieren, aber unabhängig von der Atoms-Granularität.
+3. **Vector-Index in Produktion** — erledigt: `idx_document_chunks_embedding_hnsw` (`hnsw` über `embedding::halfvec(2560)`) wird in `p1q2r3s4t5u6_fix_kb_performance_indexes` angelegt und in `cce1984705df_resize_embedding_vectors_768_to_2560` nach dem Typwechsel neu gebaut.
 
 4. **`chat_uploads` → RAG-Indexierung** — Frontend-Paperclip-Upload → `/api/chat_upload/{id}/index` → RAGService.ingest_document. Funktioniert weiterhin; Atom wird einmal für das entstehende Document angelegt.
 

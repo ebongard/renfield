@@ -337,4 +337,5 @@ active-subsystem pulse. Files: `components/kiosk/KioskConstellation.tsx` + `useK
 - All four knobs live in `k8s/configmap.yaml`. #1277 tracks the still-unscheduled `DeviceManager` sweep. A resumed
   satellite is reinstated via `satellite_online`.
 - Consequence for the frontend: NO wall-clock decay of frozen snapshot values; a reconnect re-anchors from a fresh
-  snapshot. Federation peers keep a wall-clock freshness backstop until the deferred `peer_status_changed` delta ships.
+  snapshot. Federation peers get the live `peer_status_changed` delta (#969, `kiosk_data.py` → `useKioskSocket.ts`);
+  the wall-clock freshness backstop (`PEER_OFFLINE_MS` in `useKioskModel.ts`) is kept as a deliberate second guard.

@@ -1409,6 +1409,21 @@ PAPERLESS_DEDUPE_METADATA_MATCH_ENABLED=true
 # unter dem Rate-Limit halten, damit eine Portion ohne starke Drosselung durchläuft.
 PAPERLESS_DEDUPE_DELETE_BATCH=50
 
+# Dokument-Dedupe im eigenen Bestand (Vorschlag zur Prüfung, löscht nie): ein
+# Self-Join über document_facts auf eine dokument-eindeutige Kennung (z. B. gleiche
+# Rechnungsnummer) findet zwei verschiedene Dateien desselben Dokuments.
+DOCUMENT_DEDUPE_ENABLED=false                        # Hauptschalter (dunkel; Haushalt: true)
+DOCUMENT_DEDUPE_INTERVAL=86400                       # Sekunden zwischen den Läufen (300–604800)
+DOCUMENT_DEDUPE_MAX_PER_RUN=200                      # Obergrenze Vorschläge je Nutzer und Lauf
+# Frequenzkappe für wiederkehrende Kennungen: ein Kennungswert auf MEHR als N
+# Dokumenten gilt als Steuernummer/IBAN/Kundennummer und wird übersprungen (sonst
+# N² Paare). Default 3; der Haushalt setzt 2. Blindstelle: bei genau drei Kopien
+# mit derselben Rechnungsnummer wird bei Wert 2 KEIN Paar vorgeschlagen.
+DOCUMENT_DEDUPE_RECURRING_IDENTIFIER_MAX_DOCS=3
+DOCUMENT_DEDUPE_MIN_IDENTIFIER_LENGTH=4              # kürzere Kennungswerte ignorieren (schwaches Signal)
+DOCUMENT_DEDUPE_TEXT_SIMILARITY_ENABLED=false        # Opt-in Textpass über content_embedding (Backfill nötig)
+DOCUMENT_DEDUPE_TEXT_THRESHOLD=0.97                  # Cosine ≥ Schwelle ⇒ Near-Duplicate-Kandidat
+
 # Async Paperless-Reconciler (Design Z): der Push legt paperless_state='pending' an
 # und gibt sofort zurück; das eigentliche Ablegen läuft im document-worker
 # (post_document_ingest-Hook, der dessen Docling-OCR wiederverwendet). Dieser
@@ -1976,6 +1991,17 @@ Die `backend-tts-cache-http` IngressRoute (eigener `web`-Entrypoint-Route ohne
 `http→https`-Redirect) bedient diesen Pfad plain. **Bewusst http, nicht https:**
 Samsung-TVs akzeptieren das self-signed Zertifikat nicht; http funktioniert auf
 allen Renderern.
+
+**Bewusster Security/Privacy-Downgrade (kein Versehen, nicht „zurückfixen"):** TTS-Audio
+und die `tts-cache`-URLs gehen im Klartext an alle Renderer, und die Renderer
+authentifizieren das Backend nicht. Für ein vertrauenswürdiges Einzelhaushalt-LAN
+akzeptabel. **Auslöser zur Neubewertung:** das LAN ist nicht mehr voll vertrauenswürdig
+(shared/untrusted) oder die TTS-Auslieferung verlässt das lokale Netz. **Abhilfen dann:**
+eine interne CA auf allen Renderern vorinstalliert, ODER per-Renderer-Erkennung (https
+für Linn/openHome, die es nativ akzeptieren; http nur für Samsung), ODER ein
+ACME/Let's-Encrypt-Zertifikat auf einer internen Domain. Kosten: CA-Verteilung/-Rotation
+auf Buildroot-Renderern (HiFiBerryOS) ist genau der Aufwand, den der frühere CA-Schritt
+verursachte; eine Verzweigung je Renderer verkompliziert den Auslieferungspfad.
 
 **Pro-Renderer-Status (gemessen über http://renfield.local):**
 - **Linn / openHome + Samsung TV (Q60CA / 8 Series):** funktionieren nativ — lösen

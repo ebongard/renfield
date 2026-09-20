@@ -31,9 +31,10 @@ const STATE_PRIORITY: Record<string, number> = {
 // ---- ring-assembly constants (mirrored from useCommandCenterModel) ---------
 // NOTE: SATELLITE liveness is no longer wall-clock derived — the backend pushes
 // `satellite_online`/`satellite_offline` (a satellite in the roster IS online).
-// FEDERATION PEERS have no such delta yet (peer_status_changed is deferred), so
-// they keep the wall-clock staleness backstop below: the snapshot's `reachable`
-// alone would freeze a since-gone-down peer green for the whole session.
+// FEDERATION PEERS get the `peer_status_changed` delta (#969, consumed in
+// useKioskSocket) and ADDITIONALLY keep the wall-clock staleness backstop
+// below: a delta lost on a dropped socket would otherwise freeze a
+// since-gone-down peer green until the next reconnect.
 /** An activation older than this no longer lights the core (the turn is over). */
 const ACTIVE_WINDOW_MS = 90_000;
 /** Trail entries older than this are fully decayed and dropped from the board. */
@@ -42,7 +43,7 @@ const TRAIL_WINDOW_MS = 15 * 60_000;
  *  staleness must advance by the PASSAGE OF TIME, not only on new data. */
 const CLOCK_TICK_MS = 15_000;
 /** A federation peer unseen for longer than this renders unreachable (the
- *  freshness backstop while there is no peer_status_changed delta). */
+ *  freshness backstop behind the peer_status_changed delta). */
 const PEER_OFFLINE_MS = 10 * 60_000;
 /** Aggregated per-server success rate below this (with enough calls) = degraded. */
 const DEGRADED_SUCCESS_RATE = 0.8;
@@ -288,10 +289,10 @@ function buildCommandCenterModel(
   }
 
   // ---- peers arc --------------------------------------------------------
-  // No peer_status_changed delta yet (deferred), so back the snapshot's
-  // `reachable` flag with a wall-clock staleness decay: a peer we haven't seen
-  // for PEER_OFFLINE_MS reads offline even on a long-lived socket, so a
-  // since-gone-down peer can't stay green until the next reconnect.
+  // The peer_status_changed delta (#969) updates `reachable` live; the
+  // wall-clock staleness decay stays as a second guard: a peer we haven't seen
+  // for PEER_OFFLINE_MS reads offline even if a delta was lost on the socket,
+  // so a since-gone-down peer can't stay green until the next reconnect.
   const peers = live.peers.map((peer) => {
     const lastSeen = peer.last_seen_at ? parseNaiveUtcMs(peer.last_seen_at) : NaN;
     const fresh = Number.isFinite(lastSeen) && now - lastSeen < PEER_OFFLINE_MS;
