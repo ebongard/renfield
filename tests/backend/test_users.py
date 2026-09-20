@@ -8,7 +8,7 @@ Testet:
 - Permission-basierte Zugriffskontrolle
 """
 
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from httpx import AsyncClient
@@ -168,6 +168,55 @@ class TestUserCRUDAPI:
 
         # Expect 404 or 401/403 if auth required
         assert response.status_code in [404, 401, 403]
+
+
+class TestAdminUnlock:
+    """POST /api/users/{id}/unlock (BL-0125) — the route functions are exercised
+    directly (the permission dependency is resolved by FastAPI at request time
+    and is covered by the auth-service tests); what matters here is the wiring
+    to the lockout store, the 404 and the audit log."""
+
+    @pytest.mark.database
+    async def test_unlock_clears_lockout_and_reports_count(self, db_session: AsyncSession, test_user: User):
+        from api.routes import users as users_routes
+
+        with patch.object(users_routes.login_lockout, "unlock", new=AsyncMock(return_value=3)) as unlock:
+            body = await users_routes.unlock_user(
+                user_id=test_user.id, db=db_session, current_user=MagicMock(username="admin")
+            )
+        unlock.assert_awaited_once_with(test_user.username)
+        assert body["cleared_keys"] == 3
+        assert test_user.username in body["message"]
+
+    @pytest.mark.database
+    async def test_unlock_unknown_user_is_404(self, db_session: AsyncSession):
+        from fastapi import HTTPException
+
+        from api.routes import users as users_routes
+
+        with patch.object(users_routes.login_lockout, "unlock", new=AsyncMock(return_value=0)) as unlock:
+            with pytest.raises(HTTPException) as exc:
+                await users_routes.unlock_user(
+                    user_id=99999, db=db_session, current_user=MagicMock(username="admin")
+                )
+        assert exc.value.status_code == 404
+        unlock.assert_not_awaited()
+
+    @pytest.mark.database
+    async def test_list_marks_locked_users(self, db_session: AsyncSession, test_user: User):
+        """`locked_out` comes from ONE scan of the lockout store, matched on the
+        normalized username, and is False for everyone when nothing is held."""
+        from api.routes import users as users_routes
+
+        locked = {test_user.username.strip().lower()}
+        with patch.object(users_routes.login_lockout, "locked_usernames", new=AsyncMock(return_value=locked)):
+            page = await users_routes.list_users(db=db_session, current_user=MagicMock())
+        by_name = {u.username: u for u in page.users}
+        assert by_name[test_user.username].locked_out is True
+
+        with patch.object(users_routes.login_lockout, "locked_usernames", new=AsyncMock(return_value=set())):
+            page = await users_routes.list_users(db=db_session, current_user=MagicMock())
+        assert all(u.locked_out is False for u in page.users)
 
 
 # ============================================================================

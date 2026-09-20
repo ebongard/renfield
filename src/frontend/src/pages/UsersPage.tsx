@@ -16,7 +16,7 @@ import Badge from '../components/Badge';
 import { useConfirmDialog } from '../components/ConfirmDialog';
 import {
   Users, UserPlus, UserCog, Pencil, Trash2, Loader,
-  Shield, User, Mic, Link2, Unlink, Eye, EyeOff, RefreshCw,
+  Shield, User, Mic, Link2, Unlink, Eye, EyeOff, RefreshCw, Lock, LockOpen,
 } from 'lucide-react';
 import {
   useUsersQuery,
@@ -28,6 +28,7 @@ import {
   useDeleteUser,
   useLinkSpeaker,
   useUnlinkSpeaker,
+  useUnlockUser,
   type AdminUser,
   type PersonalityStyle,
   type SpeakerSummary,
@@ -65,6 +66,7 @@ export default function UsersPage() {
   const deleteUser = useDeleteUser();
   const linkSpeaker = useLinkSpeaker();
   const unlinkSpeaker = useUnlinkSpeaker();
+  const unlockUser = useUnlockUser();
 
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
@@ -367,11 +369,27 @@ export default function UsersPage() {
                           <span>{t('users.voiceLinked')}</span>
                         </span>
                       )}
+                      {user.locked_out && (
+                        <span className="flex items-center space-x-1 text-red-600 dark:text-red-400">
+                          <Lock className="w-3 h-3" />
+                          <span>{t('users.lockedOut')}</span>
+                        </span>
+                      )}
                     </div>
                   </div>
                 </div>
 
                 <div className="flex items-center space-x-2">
+                  {user.locked_out && (
+                    <button
+                      onClick={() => unlockUser.mutate(user.id)}
+                      className="btn-icon btn-icon-ghost"
+                      title={t('users.unlock')}
+                      disabled={unlockUser.isPending}
+                    >
+                      <LockOpen className="w-5 h-5" />
+                    </button>
+                  )}
                   {user.speaker_id ? (
                     <button
                       onClick={() => handleUnlinkSpeaker(user.id)}

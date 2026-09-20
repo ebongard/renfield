@@ -118,18 +118,22 @@ Rate limiting is enabled by default (`API_RATE_LIMIT_ENABLED=true`) using slowap
 
 ### Account Lockout
 
-Beyond the per-IP request cap, a **username** is locked after repeated failed logins (`LOGIN_LOCKOUT_ENABLED=true`), which stops credential-stuffing that rotates source IPs against one account.
+Beyond the per-IP request cap, repeated failed logins lock the login target (`LOGIN_LOCKOUT_ENABLED=true`). Since 2026-09-20 (BL-0125) the lock has **two scopes**:
 
 | Setting | Default | Description |
 |---------|---------|-------------|
-| `LOGIN_LOCKOUT_ENABLED` | true | Enable per-username lockout |
-| `LOGIN_LOCKOUT_MAX_ATTEMPTS` | 5 | Failures within the window before locking |
+| `LOGIN_LOCKOUT_ENABLED` | true | Enable the lockout |
+| `LOGIN_LOCKOUT_MAX_ATTEMPTS` | 5 | Failures from **one client IP** within the window → that (username, IP) pair is locked |
+| `LOGIN_LOCKOUT_USERNAME_MAX_ATTEMPTS` | 25 | Failures from **any** IPs within the window → the username is locked outright (backstop) |
 | `LOGIN_LOCKOUT_WINDOW_SECONDS` | 900 | Rolling failure window |
 | `LOGIN_LOCKOUT_DURATION_SECONDS` | 900 | Lock duration once tripped |
 
-- Keyed on the normalized username, Redis-backed (`services/login_lockout.py`), **fails OPEN** on a Redis outage (a blip must not lock out the household; the per-IP limit remains the backstop).
+- **(username, IP)** is the primary scope: a stranger who knows a username can lock out only their own address; the owner logging in from another address is unaffected. The client IP is the `TRUSTED_PROXIES`-aware one the rate limiter uses (`get_client_ip`), so a forged `X-Forwarded-For` cannot dodge or target a lock any better than it can the rate limit.
+- **username-wide backstop** at the higher threshold still stops credential-stuffing that rotates source IPs against one account.
+- Redis-backed (`services/login_lockout.py`), **fails OPEN** on a Redis outage (a blip must not lock out the household; the per-IP limit remains the backstop). A successful login clears the username backstop and that address's counters — never another address's lock.
 - A locked login returns the **same opaque 401** as bad credentials (no username-enumeration oracle). The event is surfaced via logging + the `login_failure_total{reason="locked_out"}` metric.
-- Trade-off: an attacker who knows a username can lock that user out for at most the duration (bounded, env-disable-able). This is the standard lockout trade-off, accepted over unbounded credential-stuffing.
+- **Admin unlock:** `POST /api/users/{id}/unlock` (`users.manage`) removes every lock and counter of a user; the user list (`GET /api/users`) carries `locked_out` and the Users page shows a badge + unlock button. The action is logged at WARNING with actor and target (audit).
+- Residual trade-off: a hostile address can still lock itself out of an account for the duration, and 25 distributed failures still lock the account until the duration elapses or an admin unlocks it (bounded, env-disable-able).
 
 ### WebSocket
 

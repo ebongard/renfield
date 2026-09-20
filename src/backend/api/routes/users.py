@@ -35,6 +35,7 @@ from services.auth_service import (
     validate_password,
 )
 from services.database import get_db
+from services.login_lockout import login_lockout
 
 router = APIRouter()
 
@@ -90,6 +91,9 @@ class UserResponse(BaseModel):
     created_at: datetime
     updated_at: datetime
     last_login: datetime | None
+    # True while a login lockout (per-IP or username-wide) is held in Redis for
+    # this username — read-only admin signal; cleared via POST /{id}/unlock.
+    locked_out: bool = False
 
     class Config:
         from_attributes = True
@@ -184,6 +188,9 @@ async def list_users(
     result = await db.execute(query)
     users = result.scalars().all()
 
+    # One Redis SCAN for the whole page (fail-open → nobody shows as locked).
+    locked = await login_lockout.locked_usernames()
+
     return UserListResponse(
         users=[
             UserResponse(
@@ -202,7 +209,8 @@ async def list_users(
                 speaker_name=user.speaker.name if user.speaker else None,
                 created_at=user.created_at,
                 updated_at=user.updated_at,
-                last_login=user.last_login
+                last_login=user.last_login,
+                locked_out=user.username.strip().lower() in locked,
             )
             for user in users
         ],
@@ -252,7 +260,8 @@ async def get_user(
         speaker_name=user.speaker.name if user.speaker else None,
         created_at=user.created_at,
         updated_at=user.updated_at,
-        last_login=user.last_login
+        last_login=user.last_login,
+        locked_out=user.username.strip().lower() in await login_lockout.locked_usernames(),
     )
 
 
@@ -581,6 +590,43 @@ async def reset_password(
     logger.info(f"Password reset for user: {user.username} by {current_user.username if current_user else 'system'} (sessions revoked)")
 
     return {"message": f"Password reset for user '{user.username}'"}
+
+
+@router.post("/{user_id}/unlock")
+async def unlock_user(
+    user_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_permission(Permission.USERS_MANAGE))
+):
+    """
+    Clear every login lockout (per-IP and username-wide) held for a user.
+
+    Before this route the only way out of a lock was to wait it out or delete
+    Redis keys by hand (BL-0125). Idempotent: unlocking an unlocked user is a
+    200 with ``cleared_keys=0``. The action is an audit-relevant admin lever, so
+    it is logged at WARNING with actor and target.
+
+    Requires: users.manage permission
+    """
+    result = await db.execute(select(User).where(User.id == user_id))
+    user = result.scalar_one_or_none()
+
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="User not found"
+        )
+
+    cleared = await login_lockout.unlock(user.username)
+    logger.warning(
+        f"🔓 Login lockout cleared for user {user.username!r} by "
+        f"{current_user.username if current_user else 'system'} "
+        f"(audit: admin unlock, {cleared} Redis keys removed)"
+    )
+    return {
+        "message": f"Login lockout cleared for user '{user.username}'",
+        "cleared_keys": cleared,
+    }
 
 
 @router.post("/{user_id}/link-speaker", response_model=UserResponse)

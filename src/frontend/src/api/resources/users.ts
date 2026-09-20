@@ -19,6 +19,8 @@ export interface AdminUser {
   personality_prompt?: string | null;
   speaker_id?: number | null;
   last_login?: string | null;
+  /** A login lockout (per-IP or username-wide) is currently held for this user. */
+  locked_out?: boolean;
 }
 
 export interface RoleSummary {
@@ -174,6 +176,23 @@ export function useResetUserPassword() {
       mutationFn: resetPasswordRequest,
     },
     'users.failedToSave',
+  );
+}
+
+async function unlockUserRequest(id: number): Promise<void> {
+  await apiClient.post(`/api/users/${id}/unlock`);
+}
+
+export function useUnlockUser() {
+  const queryClient = useQueryClient();
+  return useApiMutation(
+    {
+      mutationFn: unlockUserRequest,
+      onSuccess: () => {
+        queryClient.invalidateQueries({ queryKey: keys.users.all });
+      },
+    },
+    'users.failedToUnlock',
   );
 }
 

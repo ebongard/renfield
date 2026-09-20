@@ -25,6 +25,7 @@ interface MockAdminUser {
   speaker_id: number | null;
   last_login: string | null;
   created_at: string;
+  locked_out?: boolean;
 }
 
 interface MockSpeaker {

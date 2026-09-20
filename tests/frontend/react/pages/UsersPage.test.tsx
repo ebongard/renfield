@@ -262,6 +262,44 @@ describe('UsersPage', () => {
       });
     });
 
+    it('shows the lockout badge and clears the lockout via POST /api/users/:id/unlock', async () => {
+      // BL-0125: a locked-out user carries `locked_out`; the admin sees a badge
+      // and an unlock button that hits the new route. Unlocked users show neither.
+      const user = userEvent.setup();
+      let unlockUrl: string | null = null;
+
+      server.use(
+        http.get(`${BASE_URL}/api/users`, () =>
+          HttpResponse.json({
+            users: mockUsers.map((u) => (u.id === 2 ? { ...u, locked_out: true } : u)),
+            total: mockUsers.length,
+            page: 1,
+            page_size: 50,
+          }),
+        ),
+        http.post(`${BASE_URL}/api/users/:id/unlock`, ({ request }) => {
+          unlockUrl = new URL(request.url).pathname;
+          return HttpResponse.json({ message: 'ok', cleared_keys: 2 });
+        }),
+      );
+
+      renderWithProviders(<UsersPage />);
+
+      await waitFor(() => {
+        expect(screen.getByText('user1')).toBeInTheDocument();
+      });
+
+      expect(screen.getAllByText('Anmeldung gesperrt')).toHaveLength(1);
+      const unlockButtons = screen.getAllByTitle('Anmeldesperre aufheben');
+      expect(unlockButtons).toHaveLength(1);
+
+      await user.click(unlockButtons[0]);
+
+      await waitFor(() => {
+        expect(unlockUrl).toBe('/api/users/2/unlock');
+      });
+    });
+
     it('unlinks speaker via DELETE /api/users/:id/link-speaker', async () => {
       // Regression: previous code called DELETE /unlink-speaker (typo); the
       // backend route is DELETE /link-speaker (REST verb-on-noun).

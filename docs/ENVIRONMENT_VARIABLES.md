@@ -2086,18 +2086,26 @@ geteiltes **per-Cluster**-Limiting, sobald mehr als ein Backend-Pod läuft.
 ### Account Lockout (Login)
 
 ```bash
-LOGIN_LOCKOUT_ENABLED=true            # Pro-Username-Sperre nach wiederholten Fehlversuchen
-LOGIN_LOCKOUT_MAX_ATTEMPTS=5          # Fehlversuche im Fenster bis zur Sperre
-LOGIN_LOCKOUT_WINDOW_SECONDS=900      # rollierendes Fehler-Fenster
-LOGIN_LOCKOUT_DURATION_SECONDS=900    # Sperrdauer nach Auslösung
+LOGIN_LOCKOUT_ENABLED=true                 # Anmeldesperre nach wiederholten Fehlversuchen
+LOGIN_LOCKOUT_MAX_ATTEMPTS=5               # Fehlversuche von EINER Client-IP im Fenster → Sperre für (Username, IP)
+LOGIN_LOCKOUT_USERNAME_MAX_ATTEMPTS=25     # Fehlversuche von BELIEBIGEN IPs im Fenster → Username-Sperre (Backstop)
+LOGIN_LOCKOUT_WINDOW_SECONDS=900           # rollierendes Fehler-Fenster
+LOGIN_LOCKOUT_DURATION_SECONDS=900         # Sperrdauer nach Auslösung
 ```
 
-Ergänzt das per-IP-Rate-Limit: sperrt einen **Username** nach wiederholten
-Fehl-Logins (stoppt Credential-Stuffing über wechselnde Quell-IPs). Redis-basiert
+Ergänzt das per-IP-Rate-Limit. Seit 2026-09-20 (BL-0125) zwei Sperrbereiche:
+**(Username, Client-IP)** als primäre Sperre — wer einen Benutzernamen kennt,
+sperrt damit nur die eigene Adresse aus, nicht den Eigentümer an einer anderen —
+und ein **Username-weiter Backstop** mit höherer Schwelle, der verteiltes
+Durchprobieren über wechselnde IPs weiter stoppt. Die Client-IP ist dieselbe
+`TRUSTED_PROXIES`-bewusste wie beim Rate-Limit. Redis-basiert
 (`services/login_lockout.py`), **fail-OPEN** bei Redis-Ausfall (ein Ausfall darf
 nicht den ganzen Haushalt aussperren). Eine gesperrte Anmeldung liefert dasselbe
 opake 401 wie falsche Zugangsdaten (kein Enumerations-Oracle); sichtbar nur über
-Log + `renfield_login_failure_total{reason="locked_out"}`.
+Log + `renfield_login_failure_total{reason="locked_out"}`. **Entsperren:**
+`POST /api/users/{id}/unlock` (`users.manage`) löscht alle Sperren und Zähler
+einer Person; `GET /api/users` liefert `locked_out`, die Benutzerseite zeigt
+Abzeichen + Knopf. Die Aktion wird mit Akteur und Ziel auf WARNING geloggt.
 
 `API_RATE_LIMIT_INGEST` gilt für die `/document`-Push-Routen von folder- und
 email-ingest. Diese werden vom vertrauenswürdigen, Bearer-authentifizierten MCP

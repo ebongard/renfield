@@ -40,9 +40,21 @@ class _FakeRedis:
         return 1 if key in self.store else 0
 
     async def delete(self, *keys):
+        removed = 0
         for k in keys:
+            if k in self.store:
+                removed += 1
             self.store.pop(k, None)
             self.ttls.pop(k, None)
+        return removed
+
+    async def scan_iter(self, match: str = "*"):
+        # Redis glob → fnmatch is close enough for the prefix/escape patterns
+        # this module emits (``\\[`` escapes are honoured by fnmatch too).
+        import fnmatch
+        for k in list(self.store):
+            if fnmatch.fnmatchcase(k, match):
+                yield k
 
 
 @pytest.fixture
@@ -52,6 +64,8 @@ def lockout(monkeypatch):
     monkeypatch.setattr(ll_mod.settings, "login_lockout_max_attempts", 3, raising=False)
     monkeypatch.setattr(ll_mod.settings, "login_lockout_window_seconds", 900, raising=False)
     monkeypatch.setattr(ll_mod.settings, "login_lockout_duration_seconds", 900, raising=False)
+    # Backstop = 3× the per-IP threshold (production default is 5× = 25).
+    monkeypatch.setattr(ll_mod.settings, "login_lockout_username_max_attempts", 9, raising=False)
     lo = LoginLockout()
     fake = _FakeRedis()
     monkeypatch.setattr(lo, "_get_redis", lambda: fake)
@@ -136,3 +150,124 @@ class TestLoginLockout:
         # Next failure (count becomes 2) must detect the missing TTL and re-arm.
         await lockout.record_failure("alice")
         assert fake.ttls.get(fail_key) == 900
+
+
+class TestPerIpScope:
+    """BL-0125 (2026-09-20): the lock is scoped per (username, client IP) with a
+    username-wide backstop, so a stranger who knows a username locks out only
+    their own address — the owner at another address still gets in."""
+
+    @pytest.mark.unit
+    async def test_failures_from_one_ip_lock_only_that_ip(self, lockout):
+        for _ in range(3):
+            await lockout.record_failure("alice", "10.0.0.1")
+        assert await lockout.is_locked("alice", "10.0.0.1") is True
+        assert await lockout.is_locked("alice", "10.0.0.2") is False
+        # Username-only view (no IP known) is not locked either: 3 < backstop 9.
+        assert await lockout.is_locked("alice") is False
+
+    @pytest.mark.unit
+    async def test_third_failure_from_ip_reports_tripped(self, lockout):
+        assert await lockout.record_failure("alice", "10.0.0.1") is False
+        assert await lockout.record_failure("alice", "10.0.0.1") is False
+        assert await lockout.record_failure("alice", "10.0.0.1") is True
+
+    @pytest.mark.unit
+    async def test_username_backstop_trips_across_ips(self, lockout):
+        # 9 failures spread over 9 addresses: no single IP reaches 3, but the
+        # username-wide counter does → locked for EVERY address.
+        for i in range(8):
+            assert await lockout.record_failure("alice", f"10.0.0.{i}") is False
+        assert await lockout.record_failure("alice", "10.0.0.99") is True
+        assert await lockout.is_locked("alice", "192.168.7.7") is True
+        assert await lockout.is_locked("alice") is True
+
+    @pytest.mark.unit
+    async def test_success_clears_own_ip_and_backstop_but_not_other_ip(self, lockout):
+        for _ in range(3):
+            await lockout.record_failure("alice", "10.0.0.1")  # attacker
+        await lockout.record_failure("alice", "10.0.0.2")      # owner typo
+        await lockout.clear("alice", "10.0.0.2")               # owner logs in
+        assert await lockout.is_locked("alice", "10.0.0.1") is True   # attacker stays locked
+        assert await lockout.is_locked("alice", "10.0.0.2") is False
+        assert "login_fail:alice" not in lockout._fake.store          # backstop reset
+        assert "login_fail:alice|10.0.0.2" not in lockout._fake.store
+
+    @pytest.mark.unit
+    async def test_no_ip_keeps_strict_username_threshold(self, lockout):
+        # Legacy / unknown-transport path: username scope trips at max_attempts.
+        for _ in range(2):
+            assert await lockout.record_failure("alice") is False
+        assert await lockout.record_failure("alice") is True
+
+    @pytest.mark.unit
+    async def test_ip_whitespace_normalized(self, lockout):
+        for _ in range(3):
+            await lockout.record_failure("alice", " 10.0.0.1 ")
+        assert await lockout.is_locked("alice", "10.0.0.1") is True
+
+
+class TestAdminUnlock:
+    @pytest.mark.unit
+    async def test_unlock_removes_every_scope(self, lockout):
+        for _ in range(3):
+            await lockout.record_failure("alice", "10.0.0.1")
+        for _ in range(3):
+            await lockout.record_failure("alice", "10.0.0.2")
+        assert await lockout.is_locked("alice", "10.0.0.1") is True
+        removed = await lockout.unlock("Alice")
+        # fail+lock for two IPs + the username fail counter = 5 keys
+        assert removed == 5
+        assert await lockout.is_locked("alice", "10.0.0.1") is False
+        assert await lockout.is_locked("alice", "10.0.0.2") is False
+        assert not [k for k in lockout._fake.store if "alice" in k]
+
+    @pytest.mark.unit
+    async def test_unlock_leaves_other_users_alone(self, lockout):
+        for _ in range(3):
+            await lockout.record_failure("alice", "10.0.0.1")
+            await lockout.record_failure("bob", "10.0.0.1")
+        await lockout.unlock("alice")
+        assert await lockout.is_locked("bob", "10.0.0.1") is True
+
+    @pytest.mark.unit
+    async def test_unlock_is_idempotent(self, lockout):
+        assert await lockout.unlock("alice") == 0
+
+    @pytest.mark.unit
+    async def test_unlock_username_with_glob_chars_does_not_widen_scan(self, lockout):
+        for _ in range(3):
+            await lockout.record_failure("bob", "10.0.0.1")
+        # A username made of glob metacharacters must not match bob's keys.
+        assert await lockout.unlock("*") == 0
+        assert await lockout.is_locked("bob", "10.0.0.1") is True
+
+    @pytest.mark.unit
+    async def test_unlock_fails_open_on_redis_error(self, lockout, monkeypatch):
+        def _boom():
+            raise ConnectionError("redis down")
+        monkeypatch.setattr(lockout, "_get_redis", _boom)
+        assert await lockout.unlock("alice") == 0
+
+    @pytest.mark.unit
+    async def test_unlock_disabled_is_noop(self, lockout, monkeypatch):
+        monkeypatch.setattr(ll_mod.settings, "login_lockout_enabled", False, raising=False)
+        assert await lockout.unlock("alice") == 0
+
+
+class TestLockedUsernames:
+    @pytest.mark.unit
+    async def test_lists_users_with_any_lock(self, lockout):
+        for _ in range(3):
+            await lockout.record_failure("alice", "10.0.0.1")   # per-IP lock
+        for _ in range(3):
+            await lockout.record_failure("carol")               # username lock
+        await lockout.record_failure("bob", "10.0.0.1")         # counter only
+        assert await lockout.locked_usernames() == {"alice", "carol"}
+
+    @pytest.mark.unit
+    async def test_fails_open_to_empty(self, lockout, monkeypatch):
+        def _boom():
+            raise ConnectionError("redis down")
+        monkeypatch.setattr(lockout, "_get_redis", _boom)
+        assert await lockout.locked_usernames() == set()

@@ -1619,9 +1619,14 @@ class Settings(BaseSettings):
     # the auth-off posture (nobody logs in), so it is not additionally gated on
     # auth_enabled.
     login_lockout_enabled: bool = True
-    login_lockout_max_attempts: int = 5        # failures within the window → lock
+    login_lockout_max_attempts: int = 5        # failures from ONE client IP within the window → lock (username, IP)
     login_lockout_window_seconds: int = 900    # 15 min rolling failure window
     login_lockout_duration_seconds: int = 900  # 15 min lock once tripped
+    # Backstop across ALL source IPs (2026-09-20): the per-IP scope means a
+    # stranger who knows a username can lock out only their own address, not
+    # the owner; this higher username-wide threshold still stops an attacker
+    # rotating IPs. Keep it well above max_attempts or the per-IP scope is moot.
+    login_lockout_username_max_attempts: int = Field(default=25, ge=1, le=1000)
 
     # WebSocket Connection Limits
     ws_max_connections_per_ip: int = 10
