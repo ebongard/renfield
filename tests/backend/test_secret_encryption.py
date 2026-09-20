@@ -96,6 +96,15 @@ class TestPreviousKeys:
         assert decrypt_secret(_token_under(older)) == IRK
 
     @pytest.mark.unit
+    def test_previous_key_with_trailing_newline_still_matches(self, keys):
+        # A former SECRET_KEY provisioned --from-file carried its newline INTO the
+        # derived key; listing it must match byte-exactly, and the stripped form
+        # must match too when the operator pastes it cleanly.
+        keys(NEW, previous=f"{OLD}\n")
+        assert decrypt_secret(_token_under(f"{OLD}\n")) == IRK   # verbatim match
+        assert decrypt_secret(_token_under(OLD)) == IRK          # stripped match
+
+    @pytest.mark.unit
     def test_current_key_listed_as_previous_is_harmless(self, keys):
         keys(NEW, previous=NEW)
         tok = encrypt_secret(IRK)

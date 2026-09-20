@@ -51,8 +51,18 @@ def _fernet_for(secret: str) -> Fernet:
 
 
 def _previous_secrets() -> list[str]:
+    """Comma-separated former keys. Each entry is offered BOTH stripped and
+    verbatim: the current key is hashed exactly as provisioned, so a former key
+    that carried a trailing newline (a Secret made ``--from-file``) must still
+    be matchable once it is listed here — otherwise the rotation would look
+    destructive in exactly the recovery case this list exists for."""
     raw = _secret_str(settings.secret_key_previous)
-    return [s.strip() for s in raw.split(",") if s.strip()]
+    out: list[str] = []
+    for entry in raw.split(","):
+        for variant in (entry.strip(), entry):
+            if variant and variant not in out:
+                out.append(variant)
+    return out
 
 
 @lru_cache(maxsize=1)

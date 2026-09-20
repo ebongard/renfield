@@ -2055,8 +2055,10 @@ mit dem aktuellen Schlüssel, entschlüsselt mit dem aktuellen ODER einem in
    Worker). Beide sind **Secret-Schlüssel** (`renfield-secrets`: `secret-key` /
    `secret-key-previous`, letzterer in `k8s/backend.yaml` als `optional: true` referenziert —
    x-ren trägt dieselbe Zeile), nie ConfigMap-Werte: ein alter Signierschlüssel in der
-   ConfigMap stünde im Klartext in git. Alle JWT-Sitzungen enden — das ist gewollt. Die
-   gespeicherten IRKs bleiben lesbar.
+   ConfigMap stünde im Klartext in git. Der Eintrag muss dem früheren `SECRET_KEY` **byte-
+   genau** entsprechen (Secrets mit `--from-literal` anlegen; ein `--from-file`-Zeilenumbruch
+   wäre Teil des Schlüssels — Einträge werden deshalb gestrippt UND wörtlich geprüft). Alle
+   JWT-Sitzungen enden — das ist gewollt. Die gespeicherten IRKs bleiben lesbar.
 2. Im Backend-Pod `python bin/rotate_secret_encryption.py --dry-run`, dann `--commit`:
    schreibt jeden noch unter dem alten Schlüssel liegenden Wert neu (nur Zählwerte).
 3. `SECRET_KEY_PREVIOUS` leeren und erneut ausrollen.
