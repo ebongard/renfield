@@ -94,6 +94,10 @@ Important env vars: `MCP_ENABLED`, `AGENT_ENABLED`, `AUTH_ENABLED`, `PRESENCE_EN
 
 ## Documentation Index
 
+- **`.claude/rules/*.md` — START HERE.** One short file per subsystem with its invariants and traps (index at the
+  end of `CLAUDE.md`). They load by themselves when you read a matching source file; for a question that touches no
+  file, open the rule directly. Each rule links its long form.
+- `docs/design/*.md` — design docs incl. history and rationale; `docs/INTERNAL_TOOLS.md` — every `internal.*` tool
 - `docs/ENVIRONMENT_VARIABLES.md` — All env vars
 - `docs/ACCESS_CONTROL.md` — Auth & permissions
 - `docs/SECRETS_MANAGEMENT.md` — Production secrets
