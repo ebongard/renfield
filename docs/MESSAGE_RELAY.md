@@ -1,6 +1,6 @@
 # Relaying a Spoken Message to a Person
 
-"Sag ihm/ihr, das Essen ist fertig" / "Tell Eduard dinner is ready" → Renfield
+"Sag ihm/ihr, das Essen ist fertig" / "Tell Max dinner is ready" → Renfield
 finds where the person is and speaks the message on that room's speaker, with a
 **privacy gate** so confidential content isn't overheard.
 
@@ -10,10 +10,10 @@ The agent chains existing primitives; the sequence lives in the LLM, not in code
 
 ```
 "Sag ihm, das Essen ist fertig"
-  1. resolve "ihm" → Eduard (from conversation history)
-  2. internal.get_user_location("Eduard")        → room = "Arbeitszimmer"
+  1. resolve "ihm" → Max (from conversation history)
+  2. internal.get_user_location("Max")        → room = "Arbeitszimmer"
   3. internal.announce_in_room(text=..., room_name="Arbeitszimmer",
-                               for_users=["Eduard"], privacy=...)
+                               for_users=["Max"], privacy=...)
         → Piper TTS → OutputRoutingService (room → device) → AudioOutputService
           (satellite tts_audio / DLNA / HA media_player)
 ```

@@ -1,6 +1,6 @@
 # Strategy — Renfield
 
-> **Status:** Draft skeleton (2026-04-30). Sections marked **[FOUNDER FILL-IN]** can only be answered by Eduard. Everything else is factual and verifiable from code or sibling docs. Update this doc when the strategic bet shifts; archive it (don't delete) when it's superseded.
+> **Status:** Draft skeleton (2026-04-30). Sections marked **[FOUNDER FILL-IN]** can only be answered by the founder. Everything else is factual and verifiable from code or sibling docs. Update this doc when the strategic bet shifts; archive it (don't delete) when it's superseded.
 
 ---
 

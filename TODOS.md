@@ -434,7 +434,7 @@ The hybrid extractor (deterministic Steuernummer/IBAN with whitespace normalizat
 
 ### Write `docs/STRATEGY.md` — North-Star "WHY circles" doc — IN PROGRESS (skeleton landed 2026-04-30)
 
-**Status (2026-04-30):** Draft skeleton committed in `docs/STRATEGY.md`. 9 `[FOUNDER FILL-IN]` placeholders remain — sections that only Eduard can answer (specific strategic conviction, 5-year ideal, invalidation thresholds). Skeleton is honest about "I want it" being a sufficient solo-founder rationale rather than papering over with rationalization.
+**Status (2026-04-30):** Draft skeleton committed in `docs/STRATEGY.md`. 9 `[FOUNDER FILL-IN]` placeholders remain — sections that only Max can answer (specific strategic conviction, 5-year ideal, invalidation thresholds). Skeleton is honest about "I want it" being a sufficient solo-founder rationale rather than papering over with rationalization.
 
 **WHAT:** A strategic intent document that captures WHY the Second Brain Circles plan exists, distinct from the HOW captured in the design doc and DESIGN.md. Documents the Reva unification thesis, the federation moonshot rationale, the household-product positioning, and the strategic context that motivated the 9-12 month foundation investment over alternative paths (small household features, Reva commercial pursuit, public Renfield launch, 6-week MVP).
 
@@ -570,7 +570,7 @@ Shipped dark (`MEMORY_SUBSUME_TO_KG`, off). When enabled, `fact`-category memori
 
 **Granularity — per-(subject, turn), NOT truly per-fact.** The captured signal is subject NAMES, not (subject, object) pairs. This closes the **cross-turn** residual the proxy missed (proxy keyed on PRIOR relations; this keys on THIS turn's capture). **A narrower residual remains:** a single turn yielding TWO facts about the SAME subject — one with a named-entity object (relation saved → subject in the set) and one a state/attribute fact (no relation) — still subsumes the state fact, because the subject is in the set. The truly-per-fact fix would need a per-(subject, object) captured signal matched to each fact's object (not built; would also need the memory extractor to emit the fact's object).
 
-**Eval (prod models, `bin/run_subsume_recall_loss_eval.py`):** unguarded surface = 3/6 single-fact subsumed lost (50% capture: jutta/tim/tom state-attribute facts, `kg_rels=0`); **`--perfact` single-fact cases = LOST 0** — the 3 danger-zone facts KEPT FLAT, named-entity-object facts still subsumed. The added `mixed-same-subject-de` case ("Anna wohnt in Berlin und ist müde") **documents + measures the remaining same-turn residual**: under `--perfact` the state fact is the loss (`loss_expected: true` for the mixed shape). Tests: `tests/backend/test_memory_subsume_pg.py::TestSubsumePerFactGate` (headline: state-fact about an already-related person kept flat; + same-turn-same-subject mixed case STILL subsumes the state fact) + `tests/backend/test_subsume_coordination.py` (KG-hook capture seam + ordered-coroutine sequencing) + `tests/eval/test_subsume_recall_loss_runner.py::TestClassifyCasePerFact` (incl. the mixed-same-subject residual assertion).
+**Eval (prod models, `bin/run_subsume_recall_loss_eval.py`):** unguarded surface = 3/6 single-fact subsumed lost (50% capture: erika/tim/tom state-attribute facts, `kg_rels=0`); **`--perfact` single-fact cases = LOST 0** — the 3 danger-zone facts KEPT FLAT, named-entity-object facts still subsumed. The added `mixed-same-subject-de` case ("Anna wohnt in Berlin und ist müde") **documents + measures the remaining same-turn residual**: under `--perfact` the state fact is the loss (`loss_expected: true` for the mixed shape). Tests: `tests/backend/test_memory_subsume_pg.py::TestSubsumePerFactGate` (headline: state-fact about an already-related person kept flat; + same-turn-same-subject mixed case STILL subsumes the state fact) + `tests/backend/test_subsume_coordination.py` (KG-hook capture seam + ordered-coroutine sequencing) + `tests/eval/test_subsume_recall_loss_runner.py::TestClassifyCasePerFact` (incl. the mixed-same-subject residual assertion).
 
 **Still single-user only (caveat UNCHANGED):** does NOT make `MEMORY_SUBSUME_TO_KG` safe for multi-user. The captured set is name-based and the subject comes verbatim from the memory extractor; cross-user subject resolution + tier reach are unaddressed (a fact may be subsumed against a relation the KG captured for a *different* user's same-named entity, and the subject-proxy fallback resolves own-or-unowned entities only). Keep subsume single-user only.
 
@@ -588,7 +588,7 @@ chosen option = disable-embedding-for-person + prompt + de-magnetize backfill):
 - Conflation tripwire (`KG_CONFLATION_MONITOR_ENABLED`, read-only) scoped to NON-person types
   (persons skip embedding-match, names cluster ≥0.85 → flagging is noise). 8/8 PG. Done 2026-06-05.
 - `kg_demagnetize --apply` RUN on prod (#9 + #11 NULLed + re-embedded); migration backfill RUN
-  (Jutta → own entity #234, not Anna). Done 2026-06-05 (rc.9).
+  (Erika → own entity #234, not Anna). Done 2026-06-05 (rc.9).
 - Reconciler **person-guard** added + `KG_RECONCILER_ENABLED=true` in prod. Done 2026-06-05 (rc.11).
   Person-involving pairs with unrelated names are dropped (no merge/proposal); auto-merge gate
   re-requires name-relatedness for persons (defense in depth). 19/19 PG. See

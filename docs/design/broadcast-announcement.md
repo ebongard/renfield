@@ -10,7 +10,7 @@ Scope: backend internal tool + agent routing only — no frontend.
 A user states an announcement in a room (e.g. *"Ansage an alle: Mittagessen"*)
 and it is played (TTS) in **every room where any user is currently present**.
 
-The **targeted** relay (*"sag Eduard, das Essen ist fertig"* → find his room →
+The **targeted** relay (*"sag Max, das Essen ist fertig"* → find his room →
 speak there, with a fail-closed privacy gate) **already exists** in production as
 `internal.announce_in_room` (see `docs/MESSAGE_RELAY.md`). This feature adds
 **only** the broadcast variant.
@@ -123,7 +123,7 @@ Routing eval (~6–10 cases, negatives weighted):
 - `+` "Ansage an alle: Mittagessen" → broadcast
 - `+` "sag allen Bescheid, Essen ist fertig" → broadcast
 - `+` "ruf alle zum Essen" → broadcast
-- `-` "sag Eduard, das Essen ist fertig" → targeted relay, NOT broadcast
+- `-` "sag Max, das Essen ist fertig" → targeted relay, NOT broadcast
 - `-` "ruf alle an" → phone call, NOT broadcast
 - `-` "Mittagessen?" (question) → NOT broadcast
 

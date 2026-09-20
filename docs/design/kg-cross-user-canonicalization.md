@@ -6,7 +6,7 @@
 > Structured-Memory **Phase 5** deferred item. Today entity resolution + every merge
 > path are strictly **per-user** (`resolve_entity` filters `user_id == asker OR NULL`;
 > `merge_entities` refuses a cross-user pair). This doc designs how a **household** can
-> share canonical entities (one "Jutta" across family members) so that household-tier
+> share canonical entities (one "Erika" across family members) so that household-tier
 > knowledge resolves to shared nodes — **without ever letting a merge raise visibility**,
 > the single hardest correctness point (`tasks/structured-memory-plan.md` §Phase 1
 > "Circle-Invariante", `docs/CIRCLES.md` "Merge-Invariante").
@@ -49,15 +49,15 @@ Three facts pin the current behaviour (all confirmed on `main`):
 **A "household" today is not an object.** It is only the emergent set of pairwise
 tier-2 `circle_memberships` rows (Alice is in Bob's tier-2 ring, Bob is in Alice's). There
 is **no shared owner** any atom can point at. That absence is precisely why #876 is blocked:
-you cannot canonicalize "one Jutta for the household" until the model can name the household
+you cannot canonicalize "one Erika for the household" until the model can name the household
 as an owner.
 
 ---
 
 ## 2. Why named-circles v2 is a hard prerequisite (not a nicety)
 
-Suppose we naively lifted the per-user filter and let Alice's household-tier "Jutta" and
-Bob's household-tier "Jutta" merge into one node. That node needs a single `owner_user_id`.
+Suppose we naively lifted the per-user filter and let Alice's household-tier "Erika" and
+Bob's household-tier "Erika" merge into one node. That node needs a single `owner_user_id`.
 Say the survivor keeps Alice's ownership. Now look at the filter:
 
 - **Alice** reaches the node via the **OWNER branch** — unconditionally, at *any* tier,
@@ -65,7 +65,7 @@ Say the survivor keeps Alice's ownership. Now look at the filter:
 - **Bob** reaches it only via **tier-reach** — tier ≤ node tier.
 
 The two contributors have **asymmetric** access to a node they both built. Worse, the
-OWNER branch is tier-blind: if Alice later drops a tier-0 (self) fact onto the shared Jutta
+OWNER branch is tier-blind: if Alice later drops a tier-0 (self) fact onto the shared Erika
 node, Alice sees it (owner) but so does the denormalization/merge machinery treat it as
 "on a household node" — and any code path that reasons "this node is tier 2, therefore Bob
 may see it" now leaks Alice's tier-0 fact to Bob. **The single-owner model cannot express a
@@ -74,7 +74,7 @@ node whose access is governed symmetrically by tier for all members.**
 The missing primitive is a **named circle that can OWN atoms**, plus a filter branch that,
 for a circle-owned atom, drops the raw owner-equality shortcut and governs access purely by
 **circle membership + tier**. Only once an atom can be owned by *the household* (not by a
-member) is "shared Jutta" expressible without an asymmetry to leak through.
+member) is "shared Erika" expressible without an asymmetry to leak through.
 
 This is the same gap the codebase already flagged: `models/database.py:1590` — *"team_id
 remains on the row (parked for v2 named-circles per Finding 1.2C)."*
@@ -94,7 +94,7 @@ shared notes later).
 ```
 named_circles
   id             INTEGER PK
-  name           VARCHAR(120) NOT NULL          # "Familie van den Bongard"
+  name           VARCHAR(120) NOT NULL          # "Familie van den Muster"
   kind           VARCHAR(32) NOT NULL           # 'household' (only kind for v2)
   created_by     INTEGER FK→users.id NOT NULL
   created_at     TIMESTAMP
@@ -213,7 +213,7 @@ per-user entity cap) is unchanged.
 
 **Where it must NOT loosen (the sharp edge):** a **self-tier (0)** or **trusted-tier (1)**
 fact **never** enters the shared lane and **never** resolves to a shared node. `T >=
-TIER_HOUSEHOLD` is the gate. A private "Jutta is stressed at work" stays a per-user node,
+TIER_HOUSEHOLD` is the gate. A private "Erika is stressed at work" stays a per-user node,
 full stop. The tier of the *fact* — carried today as `create_tier`, already threaded from
 `memory.circle_tier` by the Phase-3 bridge — is the single source of truth for the
 ownership target. This is the same design the plan already uses for the bridge
@@ -253,15 +253,15 @@ for **both** inputs simultaneously, because a merge fuses two histories into one
 
 ### 5.2 Why "tier = MIN" is not sufficient once owners can differ
 
-Consider folding Alice's private "Jutta" (`owner=Alice`, tier 0, `audience = {Alice}`) into
-the household "Jutta" (`owner=circle C={Alice,Bob}`, tier 2, `audience = {Alice, Bob}`).
+Consider folding Alice's private "Erika" (`owner=Alice`, tier 0, `audience = {Alice}`) into
+the household "Erika" (`owner=circle C={Alice,Bob}`, tier 2, `audience = {Alice, Bob}`).
 Tier = MIN(0, 2) = 0 keeps the survivor at tier 0. But if the **survivor is circle-owned**,
 its audience at tier 0 is still governed by the membership branch, and *nothing* about tier
 = MIN removes Bob's Alice-authored facts problem: the survivor now carries Alice's formerly
 private facts on a **circle-owned** node, and any later widening of that node re-exposes
 them. The intersection here is `{Alice}` — so the *only* leak-safe survivor is one visible to
 Alice alone, i.e. **owned by Alice at tier 0**, which defeats the purpose (the household
-Jutta would lose Bob). **Folding private-into-shared is inherently visibility-raising in one
+Erika would lose Bob). **Folding private-into-shared is inherently visibility-raising in one
 direction and cannot be a merge.**
 
 ### 5.3 The design consequence — what a cross-user merge is *allowed* to be
@@ -271,7 +271,7 @@ sides already have the **same audience**, i.e. **same owner AND same tier**. The
 
 - **Auto-merge (reconciler) is `same-owner AND same-tier` only.** For shared nodes this means
   *both nodes owned by the same circle C at the same tier* — deduping the household's own
-  "Jutta" / "Jutta M." spellings. Audience is identical before and after ⇒ the invariant
+  "Erika" / "Erika M." spellings. Audience is identical before and after ⇒ the invariant
   holds with zero visibility change. This is the natural extension of the existing
   same-tier-only rule; the owner equality is the new conjunct.
 
@@ -310,7 +310,7 @@ sides already have the **same audience**, i.e. **same owner AND same tier**. The
 ### 5.5 Approval cannot launder a visibility raise
 
 The review queue (Phase D) may surface a **same-circle, cross-tier** shared pair (e.g. the
-household minted "Jutta" at tier 2 and, via a different code path, "Jutta" at tier 3). Here
+household minted "Erika" at tier 2 and, via a different code path, "Erika" at tier 3). Here
 owner is equal but tier differs, so `audience` differs. Approval routes through
 `merge_entities`, which sets tier = MIN — the survivor lands at the **narrower** tier, so
 `audience(survivor) = audience(tier-2 side) ⊆ audience(tier-3 side)`. The invariant holds:
@@ -395,21 +395,21 @@ because the whole feature is `halfvec` + `jsonb @>` + the SQL filter — the sql
 exercise it.
 
 **The mandatory leak-guard (the crux test).** Construct: circle `C = {Alice, Bob}`; a
-household "Jutta" owned by `C` at tier 2; Alice's private "Jutta" owned by Alice at tier 0
-with a tier-0 fact `"Jutta is stressed"`. Then, for **every** mutation path:
+household "Erika" owned by `C` at tier 2; Alice's private "Erika" owned by Alice at tier 0
+with a tier-0 fact `"Erika is stressed"`. Then, for **every** mutation path:
 
-1. `resolve_entity` for Bob's tier-0 fact about "Jutta" ⇒ creates a **Bob-private** node,
+1. `resolve_entity` for Bob's tier-0 fact about "Erika" ⇒ creates a **Bob-private** node,
    never folds into `C`'s shared node (self-tier never enters the shared lane).
-2. The reconciler **refuses** to auto-merge Alice-private-Jutta with shared-Jutta
+2. The reconciler **refuses** to auto-merge Alice-private-Erika with shared-Erika
    (owner differs) — no merge, and (per §6) **no proposal** either.
 3. `merge_entities(alice_private, shared)` called directly ⇒ **refused** by the
    owner-equality assertion (returns None, logs), byte-for-byte like the current cross-user
    refusal.
 4. **Property assertion (the leak):** Bob's `memory_retrieval` / `kg_retrieval` /
-   `polymorphic_atom_store` query for "Jutta" **never** returns `"Jutta is stressed"`, under
+   `polymorphic_atom_store` query for "Erika" **never** returns `"Erika is stressed"`, under
    flag-on, before and after every path above. Assert `audience(survivor) ⊆
    audience(loser) ∩ audience(winner)` for every merge actually applied.
-5. **Same-owner same-tier dedup IS applied** (two `C`-owned tier-2 "Jutta" spellings merge;
+5. **Same-owner same-tier dedup IS applied** (two `C`-owned tier-2 "Erika" spellings merge;
    surface_forms union; audience unchanged).
 6. **Cross-tier same-circle approval narrows** (tier-2 ∪ tier-3 shared ⇒ survivor tier 2;
    the tier-3-only facts re-tier down; no member gains reach).
@@ -429,7 +429,7 @@ list.
 - **#875 (bi-temporal `valid_at`/`invalid_at`).** A shared node accumulates relations
   asserted by *different members at different times*; `stated_by_user_id` (already on
   `kg_relations`) plus #875's validity interval together answer "who in the household believed
-  X about Jutta, and when." **Constraint:** a same-owner-same-tier merge must **preserve every
+  X about Erika, and when." **Constraint:** a same-owner-same-tier merge must **preserve every
   relation's validity interval** — it dedups identical *triples* but must not collapse two
   edges with different `[valid_at, invalid_at)` into one. Keep **identity (merge) ≠ validity
   (expire)** exactly as #875 insists; the merge SQL already dedups on
@@ -466,7 +466,7 @@ list.
 - **R4 — federation collision.** The new branch must be `peer_scoped`-dropped, and
   `named_circle_members` must never receive a `PeerUser.remote_user_id`. Mitigation: explicit
   `peer_scoped` suppression + a test that a peer can't reach a shared-tier atom.
-- **R5 — promote-to-household UX gap.** If the only channel for "bring my private Jutta into
+- **R5 — promote-to-household UX gap.** If the only channel for "bring my private Erika into
   the household" is a raw tier bump, users may not discover it, and shared nodes stay sparse.
   Not a *safety* risk (fail-safe: knowledge stays private), but a value risk — flag to the
   operator whether a dedicated "share with household" affordance is worth Phase D.
@@ -577,7 +577,7 @@ shared-ownership** comparison design and let it decide whether Phase A is built 
 
 ### 14.1 The redirect (the load-bearing decision)
 
-`#876`'s real goal is: *Alice and Bob resolve/retrieve the SAME "Jutta".* The outside
+`#876`'s real goal is: *Alice and Bob resolve/retrieve the SAME "Erika".* The outside
 voice argues that a **`sameAs` co-reference edge** achieves this with **zero** ownership
 change, **zero** new SQL branch, **zero** rollback hazard, and **zero** new leak surface —
 each per-user node stays user-owned and independently filtered by the EXISTING
@@ -593,7 +593,7 @@ Two facts make the redirect urgent (do not skip the spike):
   spent on shared ownership when co-reference likely satisfies the issue.
 
 **The spike deliverable:** a data-driven `sameAs`-link vs. shared-ownership comparison
-covering retrieval quality (does link-expansion answer "was weiß ich über Jutta" as well
+covering retrieval quality (does link-expansion answer "was weiß ich über Erika" as well
 as a merged node?), leak surface, rollback, and the `#875/#877` interaction — a `≤1`
 design cycle that can eliminate Phase A/B/C/D entirely.
 
@@ -649,8 +649,8 @@ building the fix if shared-ownership wins)
   and the `CHECK` blocks nulling the circle id. Real rollback = a documented **un-share data
   migration** (re-home circle-owned atoms to a member owner) BEFORE flag-off, not
   `alembic downgrade`. **HIGH.**
-- **OV-6 — read-time coherence private↔shared is undesigned.** Household holds shared-Jutta +
-  Alice-private-Jutta + Bob-private-Jutta at once; "was weiß ich über Jutta" must union shared
+- **OV-6 — read-time coherence private↔shared is undesigned.** Household holds shared-Erika +
+  Alice-private-Erika + Bob-private-Erika at once; "was weiß ich über Erika" must union shared
   ∪ asker-private and `graph_expansion` treat them as one person. Co-reference solves this by
   construction; shared-ownership needs a new union step. **MEDIUM.**
 - **OV-3 — `member_tier` (§3.1) contradicts the "symmetric across all members" claim (§3.3).**

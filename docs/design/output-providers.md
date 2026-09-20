@@ -1,7 +1,7 @@
 # Design: Generic Output Providers (room media/control routing)
 
 **Status:** Reviewed (eng-review 2026-06-07) — decisions locked, ready to implement
-**Author:** Eduard + Claude
+**Author:** project owner + Claude
 **Motivates:** Samsung TV MCP integration (`renfield-mcp-samsung`); incoming Sonos / other-brand TV integrations.
 
 ## Locked decisions (eng-review 2026-06-07)

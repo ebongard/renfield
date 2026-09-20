@@ -27,7 +27,7 @@ For earlier history (v1.2.0 - v2.5.0), see [CHANGELOG.md](CHANGELOG.md) (German 
 - **Harbor push/pull from the home LAN: WAN-hairpin fixed.** Root cause was NOT MTU (0-retransmit re-measurement) but that LAN hosts resolved the registry to the public IP and hairpinned through the WAN upload cap (~72 Mbit/s). Fix: per-node `/etc/hosts` pin to the internal HAProxy path (`192.168.1.1`) → ~200 Mbit/s (100 MB push 11 s → 3 s); idempotent Ansible playbook (`private_k8s/ansible/`). Analysis: `docs/TECHNICAL_DEBT.md` I1 + `public_k8s/docs/harbor-slow-from-home-lan.md`.
 
 ### Fixed
-- **n8n pointed at the public internet instead of the LAN (#1235)** — `N8N_API_URL` had pointed at `n8n.home.bongard.dev` (a hoster wildcard-A-record leftover) since the first cluster deploy; the TLS handshake failed while MCP status read green. Repointed to the LAN address. Surfaced by the A1 probe on day one.
+- **n8n pointed at the public internet instead of the LAN (#1235)** — `N8N_API_URL` had pointed at `n8n.home.example.dev` (a hoster wildcard-A-record leftover) since the first cluster deploy; the TLS handshake failed while MCP status read green. Repointed to the LAN address. Surfaced by the A1 probe on day one.
 - **Follow-up chips rendered raw JSON (#1236)** — a JSON object instead of an array became one clickable chip; `_parse_followups` now handles objects and refuses JSON blobs as labels.
 
 Three latent bugs that silently disabled the self-learning system in production — found during end-to-end validation, each fixed, deployed, and verified live:

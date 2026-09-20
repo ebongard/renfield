@@ -1873,7 +1873,7 @@ same-type, same-tier NICHT-Personen**-Paare, deren Cosine >=
 `KG_CONFLATION_MONITOR_THRESHOLD` ist — eine entstehende Generischer-Centroid-
 Magnet-/Fehl-Embedding-Situation in einem Typ, in dem `resolve_entity` noch
 embedding-matched. **Personen sind ausgeschlossen** (primaer ODER Multi-Typ):
-Personennamen clustern intrinsisch ≥ Schwelle (gemessen Jutta~Anna 0.894), und
+Personennamen clustern intrinsisch ≥ Schwelle (gemessen Erika~Anna 0.894), und
 `resolve_entity` matched Personen ohnehin nicht per Embedding — ein nahes
 Personen-Paar kann nicht falten, ein Treffer waere Dauer-Rauschen. Der Scan
 **mutiert nie** (echte Dubletten sind Sache des Reconcilers); erwarteter Wert
@@ -2418,7 +2418,7 @@ N8N_MCP_ENABLED=true
 **Erforderlich:** Optional
 **Hinweis:** n8n wird über einen MCP stdio-Server angebunden (`npx @anthropic/n8n-mcp`). `N8N_BASE_URL` und `N8N_API_KEY` werden als Umgebungsvariablen an den Subprocess übergeben.
 
-> ⚠️ **n8n läuft LAN-only — NIE ein öffentlicher Name.** Bis 2026-09-13 stand hier `n8n.home.bongard.dev`: ein Wildcard-A-Record-Rest beim Hoster, der auf eine Hostpoint-IP (`*.web.hostpoint.ch`) zeigte. Der TLS-Handschlag scheiterte, der API-Schlüssel wurde nie übertragen — und der MCP-Status meldete trotzdem grün (bis die A1-Funktionssonde es aufdeckte). Immer die LAN-IP verwenden: `http://192.168.1.78:5678`. Die n8n-Instanz ist **LXC-Container 102 auf Proxmox `192.168.1.7`**; Zugriff über `ssh root@192.168.1.7` → `pct exec 102 -- …`.
+> ⚠️ **n8n läuft LAN-only — NIE ein öffentlicher Name.** Bis 2026-09-13 stand hier `n8n.home.example.dev`: ein Wildcard-A-Record-Rest beim Hoster, der auf eine Hostpoint-IP (`*.web.hostpoint.ch`) zeigte. Der TLS-Handschlag scheiterte, der API-Schlüssel wurde nie übertragen — und der MCP-Status meldete trotzdem grün (bis die A1-Funktionssonde es aufdeckte). Immer die LAN-IP verwenden: `http://192.168.1.78:5678`. Die n8n-Instanz ist **LXC-Container 102 auf Proxmox `192.168.1.7`**; Zugriff über `ssh root@192.168.1.7` → `pct exec 102 -- …`.
 >
 > **Der Schlüssel im Haushalt liegt NICHT in `renfield-env`/`renfield-env-private`**, sondern im Secret `renfield-secrets` unter `n8n-api-key` (expliziter `secretKeyRef` am Backend-Deploy). Neuer Schlüssel: `kubectl -n renfield patch secret renfield-secrets` + `rollout restart deploy/backend`.
 

@@ -33,10 +33,10 @@ Source: `presence_events` table, live DB (namespace `renfield`, context
 | user_id | username | name | BLE devices (enabled) | IRKs (enabled) | presence_events |
 |---|---|---|---|---|---|
 | 1 | admin | — | 0 | 0 | 0 |
-| 2 | evdb | Eduard | **1** | **1** | **2070** |
-| 3 | Jvdb | Jutta | 0 | 0 | 0 |
+| 2 | user_a | Person A | **1** | **1** | **2070** |
+| 3 | user_b | Person B | 0 | 0 | 0 |
 
-Three users exist; **only `evdb` has any registered BLE device or IRK.** The other two
+Three users exist; **only `user_a` has any registered BLE device or IRK.** The other two
 are **structurally invisible** to presence — no MAC, no IRK, so a satellite scan can
 never resolve them to an identity. 100% of presence history (every one of the 2070
 events) belongs to the single tracked user.
@@ -77,8 +77,8 @@ not the absolute hours.
   occupied time** — trivially, because no second person is ever identified.
 - **As a measure of "fraction of real household room-occupancy that is single-occupant":
   the dataset cannot answer it.** The other two residents (and any guests) are BLE-dark.
-  A room that is physically shared by Eduard + Jutta presents to the system as
-  *single-occupant Eduard* — the presence layer literally cannot see the second person.
+  A room that is physically shared by Person A + Person B presents to the system as
+  *single-occupant Person A* — the presence layer literally cannot see the second person.
 
 **This is the load-bearing caveat for the whole decision (see §2).**
 
@@ -134,7 +134,7 @@ Confirmed from `src/backend/ha_glue/services/presence_service.py` and
 ### Caveats that bound the decision
 
 1. **Single-occupant ≠ alone.** `is_user_alone_in_room` returns True whenever exactly one
-   *tracked* user is present. If an **untracked** second person (Jutta, a child, a guest)
+   *tracked* user is present. If an **untracked** second person (Person B, a child, a guest)
    is physically in the room, the system still reports single-occupant and **would
    actuate on Option A** — attributing the gesture to the one tracked user. That is the
    exact failure D4 is trying to prevent (actuate-for-the-wrong-person), and BLE cannot

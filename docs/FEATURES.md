@@ -1088,7 +1088,7 @@ PRESENCE_WEBHOOK_SECRET=""
 
 Jeder Raumwechsel (`enter`/`leave`) wird dauerhaft in `presence_events` protokolliert (inkl. `satellite_id`). Abfragbar als Zeitleiste — die In-Memory-Live-Präsenz bleibt davon unberührt.
 
-- **Chat-Tool** `internal.presence_history`: "Wo war Eduard heute?", "Wer war um 20 Uhr im Wohnzimmer?", "Wann war ich zuletzt in der Küche?".
+- **Chat-Tool** `internal.presence_history`: "Wo war Max heute?", "Wer war um 20 Uhr im Wohnzimmer?", "Wann war ich zuletzt in der Küche?".
 - **Routen** `GET /api/presence/analytics/{timeline,last-seen-by-room,room-window}`. Fremduser-Abfragen erfordern `ROOMS_MANAGE` (IDOR-Schutz); Selbst-Abfragen frei.
 - Flag `PRESENCE_HISTORY_ENABLED` (Default an, rein additiv).
 

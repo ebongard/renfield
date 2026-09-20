@@ -30,7 +30,7 @@ if existing:
     return existing
 ```
 
-„Jutta wohnt in Bonn" und „Jutta wohnt in Berlin" haben **verschiedene `object_id`**. Der
+„Erika wohnt in Bonn" und „Erika wohnt in Berlin" haben **verschiedene `object_id`**. Der
 zweite Satz trifft den Dedup-Zweig nicht, sondern legt eine zweite Kante an. Beide bleiben
 `is_active = true`.
 
@@ -61,7 +61,7 @@ erste Aussage dieses Dokuments, und sie weitet den Umfang gegenüber der Issue-B
 Der Nutzen ist nicht „Historie sammeln" — das klingt nach Archiv und wäre schwach. Er ist
 **Korrektheit der Gegenwart**:
 
-- Heute kann der Agent auf „Wo wohnt Jutta?" beide Antworten im Kontext haben und würfelt
+- Heute kann der Agent auf „Wo wohnt Erika?" beide Antworten im Kontext haben und würfelt
   faktisch. Mit Gültigkeit gewinnt die aktuelle Kante deterministisch.
 - „Was wusste ich im März über X" wird beantwortbar — das ist der Zusatznutzen, nicht der
   Hauptzweck.
@@ -326,7 +326,7 @@ an der schon heute der Zirkelfilter pro Hop steht.
 
 ### R5 — Der Detektor sieht nur, was extrahiert wurde **(NIEDRIG, aber ehrlich zu benennen)**
 
-Sagt jemand „Jutta ist umgezogen", ohne dass ein neues `wohnt_in` extrahiert wird, läuft nichts
+Sagt jemand „Erika ist umgezogen", ohne dass ein neues `wohnt_in` extrahiert wird, läuft nichts
 ab. Das Vorhaben behebt Widersprüche zwischen **extrahierten** Fakten, nicht die Lücken der
 Extraktion. Das sollte in der Erwartungshaltung stehen.
 
