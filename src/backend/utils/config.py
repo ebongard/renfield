@@ -1619,7 +1619,7 @@ class Settings(BaseSettings):
     # the auth-off posture (nobody logs in), so it is not additionally gated on
     # auth_enabled.
     login_lockout_enabled: bool = True
-    login_lockout_max_attempts: int = 5        # failures from ONE client IP within the window → lock (username, IP)
+    login_lockout_max_attempts: int = Field(default=5, ge=1, le=1000)  # failures from ONE client IP within the window → lock (username, IP); 0 would lock on every failure
     login_lockout_window_seconds: int = 900    # 15 min rolling failure window
     login_lockout_duration_seconds: int = 900  # 15 min lock once tripped
     # Backstop across ALL source IPs (2026-09-20): the per-IP scope means a
@@ -2175,6 +2175,19 @@ class Settings(BaseSettings):
                 f"⚠ RENFIELD_ENV={self.renfield_env!r} with ALLOW_REGISTRATION=true "
                 "— open self-registration lets anyone create an account. Set "
                 "ALLOW_REGISTRATION=false unless self-signup is intended."
+            )
+        return self
+
+    @model_validator(mode="after")
+    def assert_login_lockout_thresholds(self) -> "Settings":
+        """The username-wide backstop must sit ABOVE the per-IP threshold, or the
+        per-IP scope is moot (every lock would be a username-wide lock again —
+        the DoS BL-0125 removed). A misordering is a config error, not a posture."""
+        if self.login_lockout_username_max_attempts < self.login_lockout_max_attempts:
+            raise ValueError(
+                f"LOGIN_LOCKOUT_USERNAME_MAX_ATTEMPTS={self.login_lockout_username_max_attempts} "
+                f"must be >= LOGIN_LOCKOUT_MAX_ATTEMPTS={self.login_lockout_max_attempts} "
+                "— the username-wide backstop is meant to trip AFTER the per-IP scope."
             )
         return self
 

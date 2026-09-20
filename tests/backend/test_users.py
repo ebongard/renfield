@@ -220,6 +220,28 @@ class TestAdminUnlock:
         unlock.assert_not_awaited()
 
     @pytest.mark.database
+    async def test_unlock_gate_denies_a_viewer_and_admits_a_manager(self, db_session: AsyncSession, monkeypatch):
+        """The route's dependency is require_permission(USERS_MANAGE): with auth
+        on, a users.view-only principal is refused (403), a users.manage one
+        passes. Exercised on the very checker the route declares."""
+        from fastapi import HTTPException
+
+        from models.permissions import Permission
+        from services import auth_service
+        from services.auth_service import require_permission
+
+        monkeypatch.setattr(auth_service.settings, "auth_enabled", True)
+        checker = require_permission(Permission.USERS_MANAGE)
+
+        viewer = MagicMock(id=41, has_permission=lambda p: p == Permission.USERS_VIEW.value)
+        with pytest.raises(HTTPException) as exc:
+            await checker(user=viewer, db=db_session)
+        assert exc.value.status_code == 403
+
+        manager = MagicMock(id=42, has_permission=lambda p: p == Permission.USERS_MANAGE.value)
+        assert await checker(user=manager, db=db_session) is manager
+
+    @pytest.mark.database
     async def test_list_marks_locked_users(self, db_session: AsyncSession, test_user: User):
         """`locked_out` comes from ONE scan of the lockout store, matched on the
         normalized username, and is False for everyone when nothing is held."""

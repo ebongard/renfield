@@ -2088,7 +2088,7 @@ geteiltes **per-Cluster**-Limiting, sobald mehr als ein Backend-Pod läuft.
 ```bash
 LOGIN_LOCKOUT_ENABLED=true                 # Anmeldesperre nach wiederholten Fehlversuchen
 LOGIN_LOCKOUT_MAX_ATTEMPTS=5               # Fehlversuche von EINER Client-IP im Fenster → Sperre für (Username, IP)
-LOGIN_LOCKOUT_USERNAME_MAX_ATTEMPTS=25     # Fehlversuche von BELIEBIGEN IPs im Fenster → Username-Sperre (Backstop)
+LOGIN_LOCKOUT_USERNAME_MAX_ATTEMPTS=25     # Fehlversuche von BELIEBIGEN IPs im Fenster → Username-Sperre (Backstop; muss >= MAX_ATTEMPTS sein, sonst Boot-Fehler)
 LOGIN_LOCKOUT_WINDOW_SECONDS=900           # rollierendes Fehler-Fenster
 LOGIN_LOCKOUT_DURATION_SECONDS=900         # Sperrdauer nach Auslösung
 ```

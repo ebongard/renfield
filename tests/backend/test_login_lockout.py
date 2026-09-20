@@ -325,6 +325,36 @@ class TestAdminUnlock:
         assert await lockout.unlock("alice") == 0
 
 
+class TestLockoutConfigBounds:
+    """A zero threshold would lock on EVERY failure; a backstop below the per-IP
+    threshold would make the per-IP scope moot. Both are boot errors."""
+
+    @pytest.mark.unit
+    def test_zero_max_attempts_is_rejected(self):
+        from pydantic import ValidationError
+
+        from utils.config import Settings
+
+        with pytest.raises(ValidationError):
+            Settings(_env_file=None, login_lockout_max_attempts=0)
+
+    @pytest.mark.unit
+    def test_backstop_below_per_ip_threshold_is_rejected(self):
+        from pydantic import ValidationError
+
+        from utils.config import Settings
+
+        with pytest.raises(ValidationError, match="must be >= LOGIN_LOCKOUT_MAX_ATTEMPTS"):
+            Settings(_env_file=None, login_lockout_max_attempts=5, login_lockout_username_max_attempts=4)
+
+    @pytest.mark.unit
+    def test_backstop_equal_or_above_is_accepted(self):
+        from utils.config import Settings
+
+        assert Settings(_env_file=None, login_lockout_max_attempts=5, login_lockout_username_max_attempts=5)
+        assert Settings(_env_file=None).login_lockout_username_max_attempts >= Settings(_env_file=None).login_lockout_max_attempts
+
+
 class TestLockedUsernames:
     @pytest.mark.unit
     async def test_lists_users_with_any_lock(self, lockout):
