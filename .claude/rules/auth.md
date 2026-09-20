@@ -36,7 +36,8 @@ Loaded only when an auth file is read. Long form: `docs/design/auth-cookie-sessi
 - 0 handlers → JWT from the `db` provider's subject. ≥1 handler but none resolves → login **DENIED** (no half-bound token).
 - **Lockout** (`services/login_lockout.py`) runs BEFORE the walk and answers the same opaque 401. Scoped per
   **(username, client IP)** at `LOGIN_LOCKOUT_MAX_ATTEMPTS`, plus a username-wide backstop at
-  `LOGIN_LOCKOUT_USERNAME_MAX_ATTEMPTS`; the IP is `get_client_ip()` (TRUSTED_PROXIES-aware). A success clears the
+  `LOGIN_LOCKOUT_USERNAME_MAX_ATTEMPTS`; the IP scope is used ONLY when `client_ip_is_spoof_resistant()`
+  (TRUSTED_PROXIES set) — else username-only at the strict threshold. A success clears the
   backstop + that address only — never another address's lock. Admin unlock = `POST /api/users/{id}/unlock`
   (`users.manage`, logged WARNING with actor). Fail-OPEN on Redis errors, always.
 - Cross-repo contract = `auth/provider_contract.py` (`ProviderResult`, `AuthProvider`, `PROVIDER_RESULT_CONTRACT_VERSION`).

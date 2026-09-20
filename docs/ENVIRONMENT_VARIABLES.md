@@ -2097,8 +2097,12 @@ Ergänzt das per-IP-Rate-Limit. Seit 2026-09-20 (BL-0125) zwei Sperrbereiche:
 **(Username, Client-IP)** als primäre Sperre — wer einen Benutzernamen kennt,
 sperrt damit nur die eigene Adresse aus, nicht den Eigentümer an einer anderen —
 und ein **Username-weiter Backstop** mit höherer Schwelle, der verteiltes
-Durchprobieren über wechselnde IPs weiter stoppt. Die Client-IP ist dieselbe
-`TRUSTED_PROXIES`-bewusste wie beim Rate-Limit. Redis-basiert
+Durchprobieren über wechselnde IPs weiter stoppt. **Der IP-Bereich ist nur aktiv,
+wenn `TRUSTED_PROXIES` gesetzt ist** (die fälschungssichere XFF-Auswertung von
+`get_client_ip`); ohne vertrauenswürdige Proxys bleibt die Sperre Username-weit
+bei `LOGIN_LOCKOUT_MAX_ATTEMPTS`, weil ein Client sonst per gefälschtem
+`X-Forwarded-For` die IP-Sperre umgehen oder den Eigentümer aussperren könnte.
+Redis-basiert
 (`services/login_lockout.py`), **fail-OPEN** bei Redis-Ausfall (ein Ausfall darf
 nicht den ganzen Haushalt aussperren). Eine gesperrte Anmeldung liefert dasselbe
 opake 401 wie falsche Zugangsdaten (kein Enumerations-Oracle); sichtbar nur über

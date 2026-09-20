@@ -128,7 +128,7 @@ Beyond the per-IP request cap, repeated failed logins lock the login target (`LO
 | `LOGIN_LOCKOUT_WINDOW_SECONDS` | 900 | Rolling failure window |
 | `LOGIN_LOCKOUT_DURATION_SECONDS` | 900 | Lock duration once tripped |
 
-- **(username, IP)** is the primary scope: a stranger who knows a username can lock out only their own address; the owner logging in from another address is unaffected. The client IP is the `TRUSTED_PROXIES`-aware one the rate limiter uses (`get_client_ip`), so a forged `X-Forwarded-For` cannot dodge or target a lock any better than it can the rate limit.
+- **(username, IP)** is the primary scope: a stranger who knows a username can lock out only their own address; the owner logging in from another address is unaffected. **The per-IP scope is active only when `TRUSTED_PROXIES` is set** (the spoof-resistant XFF walk of `get_client_ip`); on the legacy empty setting a client could rotate a forged `X-Forwarded-For` to dodge the per-IP lock or forge the owner's address, so the lockout then stays username-only at the strict `LOGIN_LOCKOUT_MAX_ATTEMPTS`. xidra sets `TRUSTED_PROXIES`; the auth-off household does not need it.
 - **username-wide backstop** at the higher threshold still stops credential-stuffing that rotates source IPs against one account.
 - Redis-backed (`services/login_lockout.py`), **fails OPEN** on a Redis outage (a blip must not lock out the household; the per-IP limit remains the backstop). A successful login clears the username backstop and that address's counters — never another address's lock.
 - A locked login returns the **same opaque 401** as bad credentials (no username-enumeration oracle). The event is surfaced via logging + the `login_failure_total{reason="locked_out"}` metric.

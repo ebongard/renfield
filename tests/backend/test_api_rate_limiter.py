@@ -100,6 +100,31 @@ def _trusted(monkeypatch):
     arl._trusted_networks = None  # restore lazy re-read for other tests
 
 
+class TestClientIpIsSpoofResistant:
+    """BL-0125: the login lockout scopes per client IP ONLY when the address is
+    spoof-resistant, i.e. TRUSTED_PROXIES is configured. On the legacy empty
+    setting XFF[0] is client-chosen, so a per-IP security decision would let an
+    attacker dodge (rotate the header) or target (forge the owner's address)."""
+
+    @pytest.mark.unit
+    def test_false_without_trusted_proxies(self, _trusted):
+        from services.api_rate_limiter import client_ip_is_spoof_resistant
+        _trusted("")
+        assert client_ip_is_spoof_resistant() is False
+
+    @pytest.mark.unit
+    def test_false_when_only_garbage_configured(self, _trusted):
+        from services.api_rate_limiter import client_ip_is_spoof_resistant
+        _trusted("not-a-cidr, ,")
+        assert client_ip_is_spoof_resistant() is False
+
+    @pytest.mark.unit
+    def test_true_with_trusted_proxies(self, _trusted):
+        from services.api_rate_limiter import client_ip_is_spoof_resistant
+        _trusted("172.16.0.0/16")
+        assert client_ip_is_spoof_resistant() is True
+
+
 class TestGetClientIp:
     """Tests for the get_client_ip function (#693 right-most-untrusted walk)."""
 

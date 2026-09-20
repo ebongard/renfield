@@ -47,6 +47,18 @@ def _is_trusted_proxy(ip: str) -> bool:
         return False
 
 
+def client_ip_is_spoof_resistant() -> bool:
+    """True when ``TRUSTED_PROXIES`` is configured, i.e. ``get_client_ip`` walks
+    the XFF chain from our own proxy hop and a client cannot choose its address.
+
+    Callers that would make a SECURITY decision per address (the login lockout's
+    per-IP scope) must not do so on the legacy, spoofable XFF[0] value — and
+    behind a reverse proxy without XFF the socket address is the proxy itself,
+    which would fold every client into one bucket.
+    """
+    return bool(_get_trusted_networks())
+
+
 def get_client_ip(request: Request) -> str:
     """
     Resolve the client IP used as the rate-limit key.

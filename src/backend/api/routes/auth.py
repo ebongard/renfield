@@ -233,7 +233,7 @@ async def login(
     # contract.
     from auth.login_flow import resolve_login
 
-    from services.api_rate_limiter import get_client_ip
+    from services.api_rate_limiter import client_ip_is_spoof_resistant, get_client_ip
     from services.login_lockout import login_lockout
     from utils.metrics import record_login_failure
 
@@ -242,10 +242,12 @@ async def login(
     # correct). Response is the SAME opaque 401 as bad credentials — never a
     # distinct status — so it is not a username-enumeration oracle. The event is
     # observable via the log + metric, not the response. Scoped per (username,
-    # client IP) with a username-wide backstop — the IP is the TRUSTED_PROXIES-
-    # aware one the rate limiter uses, so a forged X-Forwarded-For cannot dodge
-    # or target a lock any better than it can the rate limit.
-    client_ip = get_client_ip(request)
+    # client IP) with a username-wide backstop — but ONLY when the IP is
+    # spoof-resistant (TRUSTED_PROXIES set): on the legacy XFF[0] path a client
+    # could rotate a forged header to dodge the per-IP lock and face only the
+    # higher backstop, or forge the owner's address to lock them out. Without
+    # trusted proxies the lockout stays username-only at the strict threshold.
+    client_ip = get_client_ip(request) if client_ip_is_spoof_resistant() else None
     if await login_lockout.is_locked(form_data.username, client_ip):
         record_login_failure("locked_out")
         logger.warning(
