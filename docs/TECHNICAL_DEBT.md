@@ -620,10 +620,10 @@ Bereits gepinnte Images:
 | Bereich (Stand 2026-09-20) | Test Files | Tests | Source Files |
 |---------|------------|-------|--------------|
 | Backend (`tests/backend`) | 366 | 6777 `def test_` | 319 `.py` (ohne alembic) |
-| Frontend (`tests/frontend/react`, Vitest/TS — keine `.jsx` mehr) | 336 | 2746 `it()/test()` | 245 `.ts/.tsx` |
-| Satellite (`tests/satellite`) | 33 | – | 36 `.py` |
+| Frontend (`tests/frontend/react`, Vitest/TS — keine `.jsx` mehr) | 113 | 920 `it()/test()` | 245 `.ts/.tsx` |
+| Satellite (`tests/satellite`) | 33 | – | 36 `.py` (Paket `renfield_satellite/`) |
 
-Zählung: `find tests/backend -name 'test_*.py' | wc -l`, `grep -rc "def test_" tests/backend | awk -F: '{s+=$2} END{print s}'` (analog für Frontend/Satellite).
+Zählung: `find tests/backend -name 'test_*.py' | wc -l`, `grep -rc "def test_" tests/backend | awk -F: '{s+=$2} END{print s}'`; Frontend mit `-not -path '*/node_modules/*'` bzw. `--exclude-dir=node_modules` (ohne den Ausschluss zählt man die Tests der Abhängigkeiten mit: 336 / 2746).
 
 ### Fehlende Tests
 

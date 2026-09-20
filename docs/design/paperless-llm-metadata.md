@@ -1,6 +1,6 @@
 # LLM-driven Paperless Metadata Extraction
 
-**Status:** SHIPPED — PR 1 (`renfield-mcp-paperless` #5), PR 2 (`paperless_metadata_extractor.py`, `PaperlessExtractionExample`), PR 3 (`paperless_example_retriever.py`), PR 4 (`paperless_ui_edit_sweeper.py` incl. the abandoned-confirm sweep + `superseded` flag), PR 5 (#662, interactive confirm card). Vision-first extraction ("PR 2b") not built — text-only via Docling. kNN tier + Redis-pubsub taxonomy cache stay deferred by design (see Open questions 4, Appendix). Revision 3.2 (2026-04-22).
+**Status:** SHIPPED — PR 1 (`renfield-mcp-paperless` #5), PR 2 (`paperless_metadata_extractor.py`, `PaperlessExtractionExample`), PR 3 (`paperless_example_retriever.py`), PR 4 (`paperless_ui_edit_sweeper.py` incl. the abandoned-confirm sweep; the `superseded` re-edit filter is still deferred, see the module docstring), PR 5 (#662, interactive confirm card). Vision-first extraction ("PR 2b") not built — text-only via Docling. kNN tier + Redis-pubsub taxonomy cache stay deferred by design (see Open questions 4, Appendix). Revision 3.2 (2026-04-22).
 **Owner:** evdb
 **Related:** [`services/chat_upload_tool.py`](../../src/backend/services/chat_upload_tool.py),
 [`renfield-mcp-paperless/server.py`](https://github.com/ebongard/renfield-mcp-paperless/blob/main/renfield_mcp_paperless/server.py),
@@ -994,7 +994,7 @@ PR 2 merge score, the PR blocks until investigated.
    design uses `lang` from the ChatUpload record — works if lang is set.
    If not, default to German and let the LLM handle mixed-language text
    (LLMs are fine at this).
-   **Resolved as designed:** `extract(..., user_lang)` → prompt variant by
+   **Resolved as designed:** `extract(..., lang)` → prompt variant by
    `lang`, default `de`.
 3. **Multi-document files.** A PDF with two unrelated invoices stapled
    together. Out of scope for v1 — treat the whole file as one document.

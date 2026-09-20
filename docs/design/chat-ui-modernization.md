@@ -1,6 +1,6 @@
 # Chat UI Modernization
 
-Status: **largely shipped** — items 1–8 and 10 are live (see "What actually shipped" below, `.claude/rules/chat-ui.md`,
+Status: **largely shipped** — items 1–8 and 10 are live (see the as-built section "Background moved from CLAUDE.md" at the end, `.claude/rules/chat-ui.md`,
 `.claude/rules/chat-branching.md`); open: item 9 (household-shared vs private surfacing) and the two prerequisites
 (interaction-share instrumentation, a11y/mobile baseline). Remaining progress is tracked in the `TODOS.md` ledger.
 Scope: the `/chat` surface (`src/frontend/src/pages/ChatPage/`). Does not touch

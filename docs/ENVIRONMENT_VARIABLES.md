@@ -1421,8 +1421,8 @@ DOCUMENT_DEDUPE_MAX_PER_RUN=200                      # Obergrenze Vorschläge je
 # mit derselben Rechnungsnummer wird bei Wert 2 KEIN Paar vorgeschlagen.
 DOCUMENT_DEDUPE_RECURRING_IDENTIFIER_MAX_DOCS=3
 DOCUMENT_DEDUPE_MIN_IDENTIFIER_LENGTH=4              # kürzere Kennungswerte ignorieren (schwaches Signal)
-DOCUMENT_DEDUPE_TEXT_SIMILARITY_ENABLED=false        # Opt-in Textpass über content_embedding (Backfill nötig)
-DOCUMENT_DEDUPE_TEXT_THRESHOLD=0.97                  # Cosine ≥ Schwelle ⇒ Near-Duplicate-Kandidat
+DOCUMENT_DEDUPE_TEXT_SIMILARITY_ENABLED=false        # Opt-in Textpass über content_embedding (Backfill nötig; Haushalt: true)
+DOCUMENT_DEDUPE_TEXT_THRESHOLD=0.97                  # Cosine ≥ Schwelle ⇒ Near-Duplicate-Kandidat (Haushalt: 0.995)
 
 # Async Paperless-Reconciler (Design Z): der Push legt paperless_state='pending' an
 # und gibt sofort zurück; das eigentliche Ablegen läuft im document-worker

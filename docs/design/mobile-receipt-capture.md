@@ -86,7 +86,7 @@ more account, never a code change.
 
 - **Photo → watched folder** (`docs/FOLDER_INGEST.md`): save the photo into a
   share the `renfield-mcp-filesystem` server watches (local/SMB/NFS); `png`/`jpg`/`jpeg`
-  are in the default `ALLOWED_EXTENSIONS`, and the file is ingested into the KB and
+  are in the backend's default `allowed_extensions` (`utils/config.py`), and the file is ingested into the KB and
   filed to Paperless. Routing is per share, so the folder decides the instance.
 - **Photo → mail to the watched mailbox** (`docs/EMAIL_INGEST.md`): send the picture
   as an *attachment* (inline images are skipped by design) to an IMAP mailbox the
