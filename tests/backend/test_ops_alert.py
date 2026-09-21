@@ -165,6 +165,10 @@ class TestLlmHandoff:
         assert seen["urgency"] == "critical"
         assert seen["enrich"] is True
         assert seen["event_type"] == "ops_health"
+        # The ONE server-side voucher for the LLM steps, and the fallback that
+        # keeps an alert critical when the classifier itself is what is down.
+        assert seen["llm_eligible"] is True
+        assert seen["urgency_fallback"] == "critical"
 
     async def test_flag_on_defers_urgency_to_the_classifier(self, monkeypatch):
         monkeypatch.setattr(ops_alert.settings, "proactive_enabled", True)

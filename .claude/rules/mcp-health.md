@@ -42,6 +42,8 @@ Flags: `MCP_HEALTH_MONITOR_ENABLED` dark (delivery needs `PROACTIVE_ENABLED`) ·
 - "Told" = **a notification row exists.** `notify_admin` returns `True` for a failure AFTER `process_webhook`
   committed the row (fresh-session check `_persisted_since`); only a MISSING row is retried, after
   `MCP_HEALTH_ALERT_RETRY_SECONDS` (600, `ops_alert.defer_alert`). Never discard `notify_admin`'s bool.
+- Alerts go through `notify_admin`, which vouches them as technical for the LLM steps (`llm_eligible`; type gate
+  `PROACTIVE_LLM_EVENT_TYPES` must list `mcp_health`). Plane-B `reason`/`root` are relayed text — keep them short.
 - Re-alert key = server+health: `planea:{name}:{health}`. A reason flap inside the TTL does not re-alert. The recovery
   sweep forgets a server's keys only when it has no problem at all (re-arm only, no MCP recovery notice).
 - No boot storm: `MCPServerState.no_tools_since` (NOT reset by a reconnect that still finds nothing) →

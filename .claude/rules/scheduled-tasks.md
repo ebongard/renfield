@@ -35,6 +35,10 @@ Long form: `docs/design/scheduled-tasks.md` (#1137); index-health verdicts in `d
   re-arm; a crash-looping pod would otherwise alert on every boot.
 - Alerting is wrapped: a broken notification pipeline must never cost the run-state commit.
 - `ops_alert.py` is the ONE alert path (tasks, watchdog, MCP health). No second channel.
+- `notify_admin` is also the ONE place that vouches a notification as technical (`llm_eligible=True`, `enrich=True`,
+  `urgency=None → "auto"` with fallback `critical`): only its alerts may pass the LLM steps, and only for an
+  `event_type` in `PROACTIVE_LLM_EVENT_TYPES`. Never route personal text through `notify_admin`; keep free-text
+  error fields bounded (the engine caps `last_error` at 300 chars) because that text can reach the model.
 
 ## Watchdog pattern: raise, never alert
 - `services/watchdog.py` (task `watchdog`, 120s, `WATCHDOG_ENABLED` + `WATCHDOG_TARGETS`, empty ⇒ inert) has NO

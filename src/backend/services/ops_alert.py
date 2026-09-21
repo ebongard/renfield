@@ -221,7 +221,13 @@ async def notify_admin(
                 privacy="personal",
                 target_user_id=target,
                 data={"dedup_key": dedup_key, **(data or {})},
+                # The ONE place that vouches for a technical sender: this is what
+                # lets the LLM steps run at all (route/poller never set it), and
+                # "auto" falls back to critical — the classifier fails exactly
+                # when the LLM host it would rank is the thing that is down.
+                llm_eligible=True,
                 enrich=True,
+                urgency_fallback="critical",
             )
     except ValueError:
         return True  # deduped / suppressed by the pipeline — they already know

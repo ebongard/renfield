@@ -386,12 +386,17 @@ async def _handle_failure_streak(task: ScheduledTask, status: str) -> None:
             return
         unrunnable = status == SCHEDULED_TASK_STATUS_SKIPPED
         verb = "kann nicht ausgeführt werden" if unrunnable else "scheitert"
+        # last_error is a raw exception string from the handler (may echo a
+        # file name, mail subject or HTTP body) and can pass through the LLM
+        # steps of the alert pipeline — bounded here so the alert stays an
+        # alert. The full text remains on the task row.
+        last_error = (task.last_error or "unbekannt")[:300]
         delivered = await ops_alert.notify_admin(
             title=f"Geplante Aufgabe {verb}: {task.name}",
             message=(
                 f"Die Aufgabe '{task.name}' ist {task.consecutive_error_count} Mal "
                 f"in Folge {'übersprungen worden' if unrunnable else 'gescheitert'}. "
-                f"Letzter Fehler: {task.last_error or 'unbekannt'}"
+                f"Letzter Fehler: {last_error}"
             ),
             dedup_key=f"schedtask:{task.id}:error",
             data={
@@ -400,7 +405,7 @@ async def _handle_failure_streak(task: ScheduledTask, status: str) -> None:
                 "handler_key": task.handler_key,
                 "consecutive_errors": task.consecutive_error_count,
                 "last_status": status,
-                "last_error": task.last_error,
+                "last_error": last_error,
             },
             event_type="scheduled_task_health",
             source="scheduled_tasks",
