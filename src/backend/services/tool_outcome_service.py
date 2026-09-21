@@ -77,22 +77,21 @@ class ToolOutcomeService:
     ) -> None:
         """Increment the counter for (user_id, tool_name).
 
-        Per-user accounting requires an identifiable user; calls with
-        ``user_id is None`` are a no-op rather than inserting an
-        unbounded set of NULL-keyed rows. PostgreSQL's UNIQUE constraint
-        treats NULL values as distinct, so a NULL-keyed ON CONFLICT
-        clause would never match — every anonymous call would create a
-        fresh row instead of upserting. Single-user/AUTH_ENABLED=false
-        deployments resolve a default admin user at the route layer
-        (see services.auth_service.get_user_or_default); paths that
-        reach this method without a user_id are legitimately anonymous
-        and have no business polluting the per-user counter table.
+        ``user_id is None`` is the SYSTEM bucket (BL-0233): anonymous
+        satellite/device turns share one row per tool. PostgreSQL's
+        UNIQUE constraint treats NULLs as distinct, so the bucket is
+        addressed through the partial unique index
+        ``uq_tool_outcome_system_tool (tool_name) WHERE user_id IS NULL``
+        (migration pc20260921) rather than the (user_id, tool_name)
+        constraint — without that index every anonymous call would
+        insert a fresh row instead of upserting.
 
         Uses an UPSERT pattern to avoid races between two parallel
         record() calls for the same (user, tool) pair. On postgres this
-        is ``INSERT ... ON CONFLICT (user_id, tool_name) DO UPDATE``;
-        on sqlite (test harness) we fall back to a SELECT-then-INSERT-
-        or-UPDATE that works around sqlite's stricter handling.
+        is ``INSERT ... ON CONFLICT … DO UPDATE`` with the arbiter chosen
+        by ``user_id``; on sqlite (test harness) we fall back to a
+        SELECT-then-INSERT-or-UPDATE that works around sqlite's stricter
+        handling.
         """
         if not tool_name:
             return
