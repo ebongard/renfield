@@ -10,8 +10,8 @@ differences from ``kg_live_handler`` are:
   * the registry is a plain ``set`` — kiosk content is **household-wide** by
     design (like the Command Center it replaces), so there is no per-owner
     scoping to carry; and
-  * the connect gate requires ``Permission.ADMIN`` (mirroring ``<AdminRoute>``
-    on the page), not merely authentication; and
+  * the connect gate requires ``Permission.KIOSK_VIEW`` (mirroring the page's
+    own guard), not merely authentication; and
   * on connect the server sends one ``snapshot`` message (hydrate) before the
     idle receive-loop (subscribe) — the standard hydrate-then-subscribe pattern
     so a fresh / reconnecting tab has all current state immediately.
@@ -402,13 +402,18 @@ async def kiosk_live(
     websocket: WebSocket,
     token: str = Query(None, description="Authentication token"),
 ):
-    """WebSocket endpoint for the live kiosk projection (ADMIN-gated).
+    """WebSocket endpoint for the live kiosk projection (``kiosk.view``-gated).
 
-    Gate: authenticate, then require ``Permission.ADMIN`` (mirroring
-    ``<AdminRoute>``) UNLESS auth is disabled (single-user/household mode, where
-    ``authenticate_websocket`` returns ``auth_skipped`` and the household is
-    trusted). An unauthenticated or non-admin client must not open this socket
-    and harvest the household-wide snapshot.
+    Gate: authenticate, then require ``Permission.KIOSK_VIEW`` UNLESS auth is
+    disabled (single-user/household mode, where ``authenticate_websocket``
+    returns ``auth_skipped`` and the household is trusted). An unauthenticated
+    client without that permission must not open this socket and harvest the
+    household-wide snapshot.
+
+    Was ADMIN until the auth-on cutover (D-5): a wall display in the hallway
+    must not hold admin rights to show a content-free projection. The Admin
+    role carries ``kiosk.view`` explicitly — the backend does not read `admin`
+    as a wildcard — so admins keep access.
     """
     auth_result = await authenticate_websocket(websocket, token)
     if not auth_result:
@@ -420,18 +425,18 @@ async def kiosk_live(
     # Auth disabled → single-user/household mode, no per-user permission model.
     if not auth_result.get("auth_skipped"):
         user_id = auth_result.get("user_id") if isinstance(auth_result, dict) else None
-        is_admin = False
+        may_view = False
         if user_id is not None:
             try:
                 async with AsyncSessionLocal() as db:
                     user = await get_user_by_id(db, user_id)
-                is_admin = bool(user and user.has_permission(Permission.ADMIN))
+                may_view = bool(user and user.has_permission(Permission.KIOSK_VIEW))
             except Exception as e:
-                logger.warning(f"kiosk WS admin check failed: {e}")
-                is_admin = False
-        if not is_admin:
+                logger.warning(f"kiosk WS permission check failed: {e}")
+                may_view = False
+        if not may_view:
             await websocket.close(
-                code=WSAuthError.UNAUTHORIZED, reason="Admin permission required"
+                code=WSAuthError.UNAUTHORIZED, reason="kiosk.view permission required"
             )
             return
 

@@ -542,3 +542,158 @@ async def test_tool_health_all_stale_yields_empty(monkeypatch):
 
     snap = await build_kiosk_snapshot(_FakeApp())
     assert snap["tool_health"] == []
+
+
+# --------------------------------------------------------------------------
+# The connect gate: kiosk.view, not admin (auth-on cutover D-5)
+# --------------------------------------------------------------------------
+
+
+class _GateWS:
+    """A socket that records how the gate ended."""
+
+    def __init__(self):
+        self.app = _FakeApp()
+        self.sent: list[dict] = []
+        self.closed_with: dict | None = None
+        self.accepted = False
+
+    async def accept(self):
+        self.accepted = True
+
+    async def send_json(self, msg):
+        self.sent.append(msg)
+
+    async def receive_text(self):
+        from fastapi import WebSocketDisconnect
+
+        raise WebSocketDisconnect()
+
+    async def close(self, **kwargs):
+        self.closed_with = kwargs
+
+
+def _user_with(permissions: list[str]):
+    """A real User+Role pair — the gate resolves through Role.has_permission,
+    so a mock would prove nothing about the permission semantics."""
+    from models.database import Role, User
+
+    usr = User(username="wand", password_hash="x", role_id=1)
+    usr.role = Role(name="Rolle", permissions=permissions, is_system=False)
+    return usr
+
+
+async def _run_gate(monkeypatch, *, auth_result, user):
+    from unittest.mock import AsyncMock
+
+    monkeypatch.setattr(
+        kiosk, "authenticate_websocket", AsyncMock(return_value=auth_result)
+    )
+    monkeypatch.setattr(kiosk, "get_user_by_id", AsyncMock(return_value=user))
+    monkeypatch.setattr(
+        kiosk, "build_kiosk_snapshot", AsyncMock(return_value={"type": "snapshot"})
+    )
+    ws = _GateWS()
+    await kiosk.kiosk_live(ws, token="t")
+    return ws
+
+
+@pytest.mark.backend
+@pytest.mark.asyncio
+class TestKioskViewGate:
+    async def test_kiosk_role_gets_in(self, monkeypatch):
+        """The whole point of D-5: a wall display holds the smallest role in
+        the house — kiosk.view + rooms.read — and no admin rights."""
+        ws = await _run_gate(
+            monkeypatch,
+            auth_result={"authenticated": True, "user_id": 7},
+            user=_user_with(["kiosk.view", "rooms.read"]),
+        )
+        assert ws.accepted is True
+        assert ws.sent == [{"type": "snapshot"}]
+
+    async def test_an_admin_still_gets_in(self, monkeypatch):
+        """Regression guard: the backend does NOT read `admin` as a wildcard,
+        so admins only keep the kiosk because the Admin ROLE carries
+        kiosk.view. Drop it there and this test goes red."""
+        from models.permissions import DEFAULT_ROLES
+
+        admin_perms = next(
+            r["permissions"] for r in DEFAULT_ROLES if r["name"] == "Admin"
+        )
+        ws = await _run_gate(
+            monkeypatch,
+            auth_result={"authenticated": True, "user_id": 1},
+            user=_user_with(list(admin_perms)),
+        )
+        assert ws.accepted is True
+
+    async def test_a_family_member_is_refused(self, monkeypatch):
+        from models.permissions import DEFAULT_ROLES
+
+        family_perms = next(
+            r["permissions"] for r in DEFAULT_ROLES if r["name"] == "Familie"
+        )
+        ws = await _run_gate(
+            monkeypatch,
+            auth_result={"authenticated": True, "user_id": 2},
+            user=_user_with(list(family_perms)),
+        )
+        assert ws.accepted is False
+        assert "kiosk.view" in (ws.closed_with or {}).get("reason", "")
+
+    async def test_bare_admin_permission_alone_is_not_enough(self, monkeypatch):
+        """States the asymmetry outright: `admin` on its own does not open the
+        socket. The frontend treats it as a wildcard, the backend never has."""
+        ws = await _run_gate(
+            monkeypatch,
+            auth_result={"authenticated": True, "user_id": 3},
+            user=_user_with(["admin"]),
+        )
+        assert ws.accepted is False
+
+    async def test_auth_off_is_unchanged(self, monkeypatch):
+        ws = await _run_gate(
+            monkeypatch,
+            auth_result={"authenticated": True, "auth_skipped": True},
+            user=None,
+        )
+        assert ws.accepted is True
+
+    async def test_unauthenticated_is_refused(self, monkeypatch):
+        ws = await _run_gate(monkeypatch, auth_result=None, user=None)
+        assert ws.accepted is False
+
+    async def test_a_lookup_failure_denies(self, monkeypatch):
+        """Fail closed: a DB hiccup must not hand out the household snapshot."""
+        from unittest.mock import AsyncMock
+
+        monkeypatch.setattr(
+            kiosk, "authenticate_websocket",
+            AsyncMock(return_value={"authenticated": True, "user_id": 7}),
+        )
+        monkeypatch.setattr(
+            kiosk, "get_user_by_id", AsyncMock(side_effect=RuntimeError("db weg"))
+        )
+        ws = _GateWS()
+        await kiosk.kiosk_live(ws, token="t")
+        assert ws.accepted is False
+
+
+@pytest.mark.backend
+class TestKioskRole:
+    def test_the_role_is_the_smallest_one_in_the_house(self):
+        from models.permissions import DEFAULT_ROLES
+
+        kiosk_role = next(r for r in DEFAULT_ROLES if r["name"] == "Kiosk")
+        assert set(kiosk_role["permissions"]) == {"kiosk.view", "rooms.read"}
+        assert kiosk_role["is_system"] is True
+        # No chat, no KB, no HA, no MCP — a display reads a projection.
+        assert not any(p.startswith("mcp.") for p in kiosk_role["permissions"])
+
+    def test_kiosk_view_implies_nothing_and_nothing_implies_it(self):
+        from models.permissions import PERMISSION_HIERARCHY, Permission
+
+        assert PERMISSION_HIERARCHY[Permission.KIOSK_VIEW] == set()
+        for implied in PERMISSION_HIERARCHY.values():
+            assert Permission.KIOSK_VIEW not in implied

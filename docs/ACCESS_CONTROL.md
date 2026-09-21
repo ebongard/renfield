@@ -81,7 +81,7 @@ VOICE_AUTH_MIN_CONFIDENCE=0.7
 
 Beim ersten Start mit `AUTH_ENABLED=true`:
 
-1. Standard-Rollen werden automatisch erstellt (Admin, Familie, Gast)
+1. Standard-Rollen werden automatisch erstellt (Admin, Familie, Gast, Kiosk)
 2. Ein Admin-Benutzer wird erstellt mit den konfigurierten Zugangsdaten
 3. **Erzwungen:** Der Bootstrap-Admin startet immer mit `must_change_password=true` (auch bei operator-gesetztem `DEFAULT_ADMIN_PASSWORD`). Nach dem ersten Login leitet die App serverseitig-erzwungen nach `/change-password` — jede andere Route gibt bis zur Rotation `403 password_change_required`. Das neue Passwort darf nicht dem aktuellen oder dem `DEFAULT_ADMIN_PASSWORD` entsprechen.
 
@@ -111,6 +111,7 @@ Beim ersten Start mit `AUTH_ENABLED=true`:
 | **Benachrichtigungen** | `notifications.view`, `notifications.manage` | Proaktive Benachrichtigungen |
 | **Plugins** | `plugins.none`, `plugins.use`, `plugins.manage` | Plugin-Zugriff |
 | **MCP Tools** | `mcp.*`, `mcp.<server>.*`, `mcp.<server>.<tool>` | MCP-Server Tool-Zugriff |
+| **Kiosk** | `kiosk.view` | Wanddisplay: `/kiosk` und `/ws/kiosk` |
 | **Admin** | `admin` | Admin-Endpoints |
 
 ### Permission-Hierarchie
@@ -186,6 +187,7 @@ MCP Tools:
 | **Admin** | Vollzugriff | Alle Berechtigungen + `mcp.*` |
 | **Familie** | Familienmitglieder | `kb.shared`, `ha.full`, `cam.view`, `chat.own`, `rooms.read`, `speakers.own`, `tasks.view`, `rag.use`, `plugins.use`, `notifications.view`, `mcp.*` |
 | **Gast** | Eingeschränkter Zugriff | `kb.none`, `ha.read`, `cam.none`, `chat.own`, `rooms.read`, `plugins.none` (kein MCP-Zugriff) |
+| **Kiosk** | Wanddisplay (Gerätekonto) | `kiosk.view`, `rooms.read` — sonst nichts: kein Chat, keine KB, keine HA-Steuerung, kein MCP |
 
 ### System-Rollen
 

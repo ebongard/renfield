@@ -3,14 +3,23 @@ paths:
   - "src/frontend/src/components/kiosk/**"
   - "src/backend/api/websocket/kiosk_*.py"
 ---
-# Kiosk (ADMIN wall display)
+# Kiosk (`kiosk.view` wall display)
 
 Loaded only when a kiosk file is read. Long form: `docs/design/command-center.md` (history, "why not poll"),
 `tasks/kiosk-active-subsystem-plan.md`. The admin Command Center (`/admin/command-center`, `/api/command-center/*`)
-is REMOVED — the kiosk (`/kiosk`, `<AdminRoute>` OUTSIDE the app Layout, sidebar entry `nav.kiosk`) is the only surface.
+is REMOVED — the kiosk (`/kiosk`, `<ProtectedRoute permission="kiosk.view">` OUTSIDE the app Layout, sidebar entry
+`nav.kiosk`) is the only surface.
+
+## The gate is `kiosk.view`, and `admin` is NOT a wildcard on the backend
+A display in the hallway must not hold admin rights (auth-on cutover D-5): the page, the sidebar entry and
+`/ws/kiosk` all ask for `kiosk.view`; the Kiosk role (`kiosk.view` + `rooms.read`, nothing else) is held by a DEVICE
+account. **The frontend treats `admin` as a wildcard (`AuthContext.hasPermission`), the backend does not**
+(`PERMISSION_HIERARCHY[ADMIN] == set()`) — so any route admins must keep needs the permission written into the Admin
+ROLE, which is why `kiosk.view` is in `DEFAULT_ROLES["Admin"]`. `ensure_default_roles` merges it into existing system
+roles at startup. The gate fails closed: a lookup error denies.
 
 ## Never
-- **Never poll.** Data path = event-push: `useKioskSocket.ts` → ADMIN-gated `/ws/kiosk` (`api/websocket/kiosk_handler.py`):
+- **Never poll.** Data path = event-push: `useKioskSocket.ts` → `kiosk.view`-gated `/ws/kiosk` (`api/websocket/kiosk_handler.py`):
   ONE `snapshot` on connect, then deltas (`satellite_state`, `satellite_online`/`satellite_offline`, `presence_changed`,
   `now_playing_changed`, `tool_health_changed`, `internal_health_changed`, `weather_updated`, `turn_activity`). Backend
   refreshers (weather, internal health) are `_kiosk_clients`-gated and diff-gated; the gate resets on kiosk-connect and

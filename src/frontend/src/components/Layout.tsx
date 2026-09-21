@@ -98,7 +98,7 @@ const mainNavigationConfig: NavItemConfig[] = [
 ];
 
 const adminNavigationConfig: NavItemConfig[] = [
-  { nameKey: 'nav.kiosk', href: '/kiosk', icon: Radar, permission: ['admin'], feature: 'satellites' },
+  { nameKey: 'nav.kiosk', href: '/kiosk', icon: Radar, permission: ['kiosk.view'], feature: 'satellites' },
   { nameKey: 'nav.rooms', href: '/rooms', icon: DoorOpen, permission: ['rooms.read', 'rooms.manage'], feature: 'smart_home' },
   { nameKey: 'nav.speakers', href: '/speakers', icon: Users, permission: ['speakers.own', 'speakers.all'], feature: 'voice' },
   { nameKey: 'nav.smarthome', href: '/homeassistant', icon: Lightbulb, permission: ['ha.read', 'ha.control', 'ha.full'], feature: 'smart_home' },

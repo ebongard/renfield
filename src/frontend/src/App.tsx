@@ -107,11 +107,13 @@ function AppRoutes() {
       } />
 
       {/* Fullscreen wall-display kiosk — deliberately OUTSIDE the app Layout
-          (no sidebar/header). Admin-gated (auth-off = open, like the board). */}
+          (no sidebar/header). Gated on kiosk.view, not admin: a display in the
+          hallway must not hold admin rights (auth-off = open, like the board).
+          Admins keep access — the Admin role carries kiosk.view. */}
       <Route path="/kiosk" element={
-        <AdminRoute>
+        <ProtectedRoute permission="kiosk.view">
           <KioskPage />
-        </AdminRoute>
+        </ProtectedRoute>
       } />
 
       {/* Routes with layout */}

@@ -59,6 +59,13 @@ class Permission(str, Enum):
     KG_VIEW = "kg.view"            # View KG entities and relations
     KG_MANAGE = "kg.manage"        # Create/edit/delete/merge KG data
 
+    # === Kiosk (wall display) ===
+    # The kiosk projection is household-wide but content-free (counts, room and
+    # role names — never an utterance, entity or user id; see the kiosk rule).
+    # It needs its own permission because a wall display must not be an admin:
+    # under auth-on the display runs as a device account with the Kiosk role.
+    KIOSK_VIEW = "kiosk.view"     # Open /ws/kiosk and see the wall display
+
     # === Admin ===
     ADMIN = "admin"               # Access to /admin/* and /debug/* endpoints
 
@@ -141,7 +148,14 @@ PERMISSION_HIERARCHY = {
     Permission.NOTIFICATIONS_MANAGE: {Permission.NOTIFICATIONS_VIEW},
     Permission.NOTIFICATIONS_VIEW: set(),
 
+    # Kiosk (standalone — nothing implies it, it implies nothing)
+    Permission.KIOSK_VIEW: set(),
+
     # Admin (no hierarchy, standalone)
+    # NOTE: `admin` implies NOTHING here. The FRONTEND does treat it as a
+    # wildcard (`AuthContext.hasPermission`), so a route that admins must keep
+    # needs the permission written into the Admin ROLE as well — not just a
+    # frontend check. That is why kiosk.view is in DEFAULT_ROLES["Admin"].
     Permission.ADMIN: set(),
 }
 
@@ -418,6 +432,10 @@ DEFAULT_ROLES = [
             Permission.ROLES_MANAGE.value,
             Permission.SETTINGS_MANAGE.value,
             Permission.NOTIFICATIONS_MANAGE.value,
+            # Not redundant: the backend does NOT read `admin` as a wildcard
+            # (PERMISSION_HIERARCHY), so without this line an admin would lose
+            # /ws/kiosk the moment that gate stopped asking for ADMIN.
+            Permission.KIOSK_VIEW.value,
             "mcp.*",
         ],
         "is_system": True
@@ -448,6 +466,21 @@ DEFAULT_ROLES = [
             Permission.HA_READ.value,
             Permission.CAM_NONE.value,
             Permission.CHAT_OWN.value,
+            Permission.ROOMS_READ.value,
+        ],
+        "is_system": True
+    },
+    {
+        # The wall display (auth-on cutover D-5). Deliberately the smallest
+        # role in the house: it may open the kiosk socket and read the room
+        # topology the projection is drawn from — nothing else. No chat, no
+        # KB, no HA control, no MCP. Held by a DEVICE account
+        # (`users.is_device_account`), so the display collects no memories
+        # and books no presence either.
+        "name": "Kiosk",
+        "description": "Wanddisplay: nur die Kiosk-Projektion",
+        "permissions": [
+            Permission.KIOSK_VIEW.value,
             Permission.ROOMS_READ.value,
         ],
         "is_system": True
