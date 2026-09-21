@@ -13,7 +13,7 @@
 A single bundled PR delivering all four admin surfaces for the self-learning feedback loop that shipped in v2.9.1:
 
 1. **Skills Inbox** — owner approves auto-extracted procedural skills before they're injected into agent prompts
-2. **Tool-Health dashboard** — per-user/per-tool success/failure stats
+2. **Tool-Health dashboard** — per-user/per-tool success/failure stats, plus one **system bucket** row per tool for anonymous turns (`user_id IS NULL`, BL-0233 — on auth-off every typed chat turn)
 3. **Trajectories inspector** — agent turn capture with JSONL export
 4. **Curator runbook** — manual curator trigger + run-history audit
 
