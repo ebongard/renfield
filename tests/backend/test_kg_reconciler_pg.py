@@ -333,10 +333,19 @@ class TestApproveReject:
         assert (await list_merge_proposals(db=pg_db_session, user=None)).total == 0
 
         # run: user=None aggregates over all active users (here: just `owner`).
-        # The cross-tier (a,b) pair is found again (rejection doesn't suppress
-        # re-discovery) and proposed — proving the aggregation path executed.
+        # The REJECTED (a,b) pair stays out (a rejection is the owner's verdict
+        # and is not re-litigated); a fresh cross-tier pair proves the
+        # aggregation path executed.
+        await _entity(pg_db_session, owner, "Carla", tier=0, mention=2, emb=_unit(5))
+        await _entity(pg_db_session, owner, "Carla D.", tier=2, mention=9, emb=_unit(5))
         report = await run_reconciler(db=pg_db_session, user=None)
         assert report.candidates == 1 and report.proposed == 1
+        pending = (await pg_db_session.execute(
+            select(KgMergeProposal).where(
+                KgMergeProposal.user_id == owner.id, KgMergeProposal.status == "pending",
+            )
+        )).scalars().all()
+        assert {pending[0].loser_entity_id, pending[0].winner_entity_id} != {a.id, b.id}
 
     async def test_approve_override_winner(self, pg_db_session, monkeypatch):
         # D2 survivor toggle: owner keeps the LESS-mentioned entity instead of
@@ -420,17 +429,19 @@ class TestPersonGuard:
         assert pairs == []
 
     async def test_typo_pair_is_proposed_never_auto_merged(self, pg_db_session, monkeypatch):
-        # #876 field data: the same person under "…Lastname" and "…Lastnrame"
-        # (two characters transposed INSIDE the final token). Not a token subset,
-        # so the guard used to drop the pair with no path at all. Now: a REVIEW
-        # proposal with reason name_typo — never an auto-merge, even at cosine
-        # 1.0 and same tier.
+        # #876 field data: the same person under two spellings that differ by ONE
+        # in-token edit (the real case: two characters transposed inside the
+        # final token; the anonymised stand-in is an insertion). Not a token
+        # subset, so the guard used to drop the pair with no path at all. Now: a
+        # REVIEW proposal with reason name_typo — never an auto-merge, even at
+        # cosine 1.0, same tier, and DISTINCT non-empty descriptions (the
+        # low-signal name-collision rule is not what blocks it).
         from models.database import KG_MERGE_REASON_NAME_TYPO
         owner = await _make_user(pg_db_session, "rec_pg_typo")
         await _entity(pg_db_session, owner, "Firstname von der Lastname", tier=0,
-                      mention=3085, emb=_unit(6))
+                      mention=3085, emb=_unit(6), desc="Kollegin aus dem Vertrieb")
         await _entity(pg_db_session, owner, "Firstname von der Lastnrame", tier=0,
-                      mention=134, emb=_unit(6))
+                      mention=134, emb=_unit(6), desc="Ansprechpartnerin Projekt X")
         rec = _recon(pg_db_session, monkeypatch)
 
         pairs = await rec.find_duplicate_pairs(owner.id)
@@ -444,6 +455,28 @@ class TestPersonGuard:
             select(KgMergeProposal).where(KgMergeProposal.user_id == owner.id)
         )).scalar_one()
         assert proposal.reason == KG_MERGE_REASON_NAME_TYPO
+
+    async def test_rejected_pair_is_not_proposed_again(self, pg_db_session, monkeypatch):
+        # A rejection is the owner's verdict: "two people". Before, only PENDING
+        # proposals excluded a pair from the self-join, so a rejected pair came
+        # back on the next daily run — for a class defined as "maybe two people"
+        # that is structural queue noise. Now rejected pairs stay out.
+        owner = await _make_user(pg_db_session, "rec_pg_rejected")
+        await _entity(pg_db_session, owner, "Anna Schmidt", tier=0, mention=5, emb=_unit(6))
+        await _entity(pg_db_session, owner, "Anna Schmitt", tier=0, mention=4, emb=_unit(6))
+        rec = _recon(pg_db_session, monkeypatch)
+
+        first = await rec.run_for_user(owner.id)
+        assert first.proposed == 1
+        pid = (await pg_db_session.execute(
+            select(KgMergeProposal.id).where(KgMergeProposal.user_id == owner.id)
+        )).scalar_one()
+        assert await rec.reject_proposal(pid, resolved_by=owner.id) is True
+
+        assert await rec.find_duplicate_pairs(owner.id) == []
+        second = await rec.run_for_user(owner.id)
+        assert second.proposed == 0 and second.auto_merged == 0
+        assert await _count_pending(pg_db_session, owner.id) == 0
 
     async def test_numbered_test_accounts_are_still_dropped(self, pg_db_session, monkeypatch):
         # The other six measured pairs: distinct identities whose names differ

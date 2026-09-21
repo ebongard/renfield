@@ -34,6 +34,7 @@ from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine, AsyncSession
 from models.database import (
     EMBEDDING_DIMENSION,
     KG_MERGE_PROPOSAL_PENDING,
+    KG_MERGE_PROPOSAL_REJECTED,
     KG_MERGE_REASON_CROSS_TIER,
     KG_MERGE_REASON_GRAY_ZONE,
     KG_MERGE_REASON_NAME_TYPO,
@@ -168,13 +169,15 @@ def _names_near_typo(name_a: str | None, name_b: str | None) -> bool:
     except for exactly one token, and that token differs by a single in-token
     edit (OSA distance 1) with both spellings at least ``_TYPO_MIN_TOKEN_LEN``.
 
-    This is the gap the token-subset test leaves (#876 field data, 2026-09-21):
-    "Firstname von der Lastname" vs "Firstname von der Lastnrame" — two characters
-    transposed INSIDE the final token — is a subset in neither direction, so the
-    person-guard dropped the single most common duplicate cause with no merge
-    and no proposal. A typo pair is a REVIEW candidate only ("Anna Schmidt" vs
-    "Anna Schmitt" may be two people); the caller must never auto-merge it.
-    Names that are already related (equal / subset) are not typo pairs.
+    This is the gap the token-subset test leaves (#876 field data, 2026-09-21:
+    the real case had two characters transposed INSIDE the final token of a
+    four-token name; the anonymised stand-in "…Lastname" / "…Lastnrame" is a
+    one-character insertion — both are OSA distance 1). Such a pair is a subset
+    in neither direction, so the person-guard dropped the single most common
+    duplicate cause with no merge and no proposal. A typo pair is a REVIEW
+    candidate only ("Anna Schmidt" vs "Anna Schmitt" may be two people); the
+    caller must never auto-merge it. Names that are already related (equal /
+    subset) are not typo pairs.
     """
     ta, tb = _norm(name_a).split(), _norm(name_b).split()
     if not ta or not tb or len(ta) != len(tb):
@@ -272,9 +275,13 @@ class KgReconcilerService:
               -- never auto-merge/propose. Exclude note-typed entities from candidacy.
               AND a.entity_type <> 'note' AND b.entity_type <> 'note'
               AND (1 - (a.embedding::halfvec({dim}) <=> b.embedding::halfvec({dim}))) >= :cand
+              -- A pair with an open proposal is not re-proposed; neither is a pair
+              -- the owner already REJECTED — a rejection is a verdict, re-asking it
+              -- every run is queue noise (name_typo pairs are "maybe two people"
+              -- by definition, so their rejection rate is structurally high).
               AND NOT EXISTS (
                   SELECT 1 FROM kg_merge_proposals p
-                  WHERE p.status = :pending
+                  WHERE p.status IN (:pending, :rejected)
                     AND ((p.loser_entity_id = a.id AND p.winner_entity_id = b.id)
                       OR (p.loser_entity_id = b.id AND p.winner_entity_id = a.id)))
             ORDER BY similarity DESC
@@ -284,6 +291,7 @@ class KgReconcilerService:
             "uid": user_id,
             "cand": settings.kg_reconciler_candidate_threshold,
             "pending": KG_MERGE_PROPOSAL_PENDING,
+            "rejected": KG_MERGE_PROPOSAL_REJECTED,
             "cap": cap,
         })).fetchall()
 
@@ -325,10 +333,13 @@ class KgReconcilerService:
         return out
 
     async def _propose(self, user_id: int, c: MergeCandidate) -> bool:
-        """Create a PENDING proposal unless one already exists for the pair."""
+        """Create a PENDING proposal unless the pair is already open or was
+        REJECTED by the owner (a verdict the reconciler does not re-litigate)."""
         existing = (await self.db.execute(
             select(KgMergeProposal.id).where(
-                KgMergeProposal.status == KG_MERGE_PROPOSAL_PENDING,
+                KgMergeProposal.status.in_(
+                    [KG_MERGE_PROPOSAL_PENDING, KG_MERGE_PROPOSAL_REJECTED]
+                ),
                 KgMergeProposal.loser_entity_id.in_([c.loser_id, c.winner_id]),
                 KgMergeProposal.winner_entity_id.in_([c.loser_id, c.winner_id]),
             )
