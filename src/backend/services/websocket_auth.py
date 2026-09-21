@@ -136,7 +136,9 @@ def _ws_origin_allowed(websocket: WebSocket) -> bool:
 
 async def authenticate_websocket(
     websocket: WebSocket,
-    token: str | None = None
+    token: str | None = None,
+    *,
+    allow_satellite_psk: bool = False,
 ) -> dict[str, Any] | None:
     """
     Authenticate a WebSocket connection.
@@ -144,6 +146,10 @@ async def authenticate_websocket(
     Args:
         websocket: WebSocket connection
         token: Optional token (from query param or first message)
+        allow_satellite_psk: ONLY the satellite endpoint passes True. A
+            ``sat.<id>.<secret>`` credential authenticates a satellite, not a
+            user or a browser device; at every other endpoint it is refused
+            outright (never falls through to JWT / device token).
 
     Returns:
         Token data if authenticated, None otherwise
@@ -200,7 +206,13 @@ async def authenticate_websocket(
     # one is a rejection, not "try something else". No user_id is bound — the
     # device account is a separate step (P0 Nr. 3); the handler binds the
     # register frame's satellite_id to this identity.
-    if settings.satellite_psk_handshake_enabled and token.startswith("sat."):
+    if token.startswith("sat."):
+        if not (settings.satellite_psk_handshake_enabled and allow_satellite_psk):
+            # Flag off, or a non-satellite endpoint: a satellite credential is
+            # never a user or device credential. Refuse — do not try JWT /
+            # device-token decoding on it (behaviour-identical to before for
+            # the flag-off case, where it failed both anyway).
+            return None
         from ha_glue.services.satellite_enrollment_service import authorize_handshake
         from services.database import AsyncSessionLocal
 

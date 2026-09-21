@@ -1108,6 +1108,8 @@ SATELLITE_ENROLLMENT_AUTOFLIP_ENABLED=false
 # Enrollment-Gate oben: prüft immer, fällt nie auf ein Nutzer-JWT zurück, bindet
 # die Verbindung nur an die satellite_id (der register-Frame muss dieselbe nennen).
 # Sperre je (satellite_id, IP) VOR dem bcrypt-Vergleich über die Anmeldesperre.
+# NUR /ws/satellite akzeptiert das Token — Chat-, Geräte-, Kiosk-, KG-Live- und
+# Wakeword-WS lehnen ein `sat.`-Token ab (kein Nutzer, kein Gerät).
 # Ein `sat.`-Token in der URL wird abgelehnt (nur Header). Mit AUTH_ENABLED=false
 # wird der Header gar nicht gelesen (byte-identisch). Satelliten-Seite:
 # `server.auth_enabled: true` + `server.auth_token: sat.<id>.<enrollment_token>`

@@ -147,11 +147,45 @@ class TestWebsocketStrategy:
     ):
         secret = await svc.enroll_satellite(session_from, "sat-kueche")
         ws = _ws(svc.format_handshake_token("sat-kueche", secret))
-        result = await websocket_auth.authenticate_websocket(ws, None)
+        result = await websocket_auth.authenticate_websocket(ws, None, allow_satellite_psk=True)
         assert result == {
             "authenticated": True, "auth_method": "satellite_psk", "satellite_id": "sat-kueche",
         }
         assert "user_id" not in result  # device-account binding is P0 Nr. 3
+
+    async def test_only_the_satellite_endpoint_accepts_the_psk(
+        self, psk_on, session_from, quiet_lockout, monkeypatch,
+    ):
+        """A valid satellite credential must not open /ws, /ws/kiosk, /ws/user,
+        the wakeword or KG-live sockets: every other endpoint calls
+        authenticate_websocket WITHOUT allow_satellite_psk and gets None — and
+        the token is never handed to the JWT / device-token strategies."""
+        secret = await svc.enroll_satellite(session_from, "sat-kueche")
+        store = MagicMock()
+        store.validate_token.return_value = {"authenticated": True, "device_id": "x"}
+        monkeypatch.setattr(websocket_auth, "get_token_store", lambda: store)
+        verify = AsyncMock(return_value="sat-kueche")
+        monkeypatch.setattr(svc, "authorize_handshake", verify)
+
+        ws = _ws(svc.format_handshake_token("sat-kueche", secret))
+        assert await websocket_auth.authenticate_websocket(ws, None) is None
+        verify.assert_not_awaited()
+        store.validate_token.assert_not_called()
+
+    async def test_every_other_ws_endpoint_calls_without_the_satellite_flag(self):
+        # Pin the call sites: only satellite_handler passes allow_satellite_psk=True.
+        import inspect
+
+        from api.websocket import chat_handler, kg_live_handler, kiosk_handler, user_events_handler
+        from ha_glue.api.websocket import device_handler, satellite_handler
+        import main
+
+        for mod in (chat_handler, kg_live_handler, kiosk_handler, user_events_handler, device_handler, main):
+            src = inspect.getsource(mod)
+            assert "allow_satellite_psk=True" not in src, mod.__name__
+        assert "authenticate_websocket(websocket, token, allow_satellite_psk=True)" in inspect.getsource(
+            satellite_handler.satellite_websocket
+        )
 
     async def test_flag_off_leaves_the_token_to_the_other_strategies(
         self, session_from, quiet_lockout, monkeypatch,
@@ -162,8 +196,9 @@ class TestWebsocketStrategy:
         monkeypatch.setattr(websocket_auth.settings, "cors_origins", "*")
         secret = await svc.enroll_satellite(session_from, "sat-kueche")
         ws = _ws(svc.format_handshake_token("sat-kueche", secret))
-        # Not a JWT, not a device token → None; the PSK strategy never ran.
-        assert await websocket_auth.authenticate_websocket(ws, None) is None
+        # Flag off: a `sat.` token is refused outright (before: it fell through
+        # to JWT + device-token decoding and failed both — same outcome).
+        assert await websocket_auth.authenticate_websocket(ws, None, allow_satellite_psk=True) is None
         quiet_lockout["clear"].assert_not_awaited()
 
     async def test_auth_off_never_reads_the_header(self, session_from, monkeypatch):
@@ -183,14 +218,14 @@ class TestWebsocketStrategy:
         store.validate_token.return_value = {"authenticated": True, "device_id": "x"}
         monkeypatch.setattr(websocket_auth, "get_token_store", lambda: store)
         ws = _ws("sat.sat-kueche.wrong")
-        assert await websocket_auth.authenticate_websocket(ws, None) is None
+        assert await websocket_auth.authenticate_websocket(ws, None, allow_satellite_psk=True) is None
         store.validate_token.assert_not_called()
 
     async def test_psk_in_the_url_is_refused(self, psk_on, session_from, quiet_lockout):
         secret = await svc.enroll_satellite(session_from, "sat-kueche")
         ws = _ws(None)
         tok = svc.format_handshake_token("sat-kueche", secret)
-        assert await websocket_auth.authenticate_websocket(ws, tok) is None
+        assert await websocket_auth.authenticate_websocket(ws, tok, allow_satellite_psk=True) is None
         quiet_lockout["record_failure"].assert_not_awaited()  # refused before any verify
 
     async def test_handshake_identity_is_bound_to_the_register_frame(self):
@@ -219,4 +254,6 @@ class TestWebsocketStrategy:
             yield  # pragma: no cover
 
         monkeypatch.setattr(db_mod, "AsyncSessionLocal", _boom)
-        assert await websocket_auth.authenticate_websocket(_ws("sat.sat-x.s"), None) is None
+        assert await websocket_auth.authenticate_websocket(
+            _ws("sat.sat-x.s"), None, allow_satellite_psk=True,
+        ) is None

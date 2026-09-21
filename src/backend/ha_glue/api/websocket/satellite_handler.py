@@ -323,7 +323,9 @@ async def satellite_websocket(
     ip_address = websocket.client.host if websocket.client else "unknown"
 
     # Check authentication if enabled
-    auth_result = await authenticate_websocket(websocket, token)
+    # The ONLY endpoint that accepts the per-satellite enrollment PSK as the
+    # handshake credential (D-4c) — every other WS endpoint refuses `sat.` tokens.
+    auth_result = await authenticate_websocket(websocket, token, allow_satellite_psk=True)
     if not auth_result:
         await websocket.close(code=WSAuthError.UNAUTHORIZED, reason="Authentication required")
         return
