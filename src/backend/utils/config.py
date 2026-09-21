@@ -1694,6 +1694,12 @@ class Settings(BaseSettings):
     proactive_urgency_auto_enabled: bool = False
     proactive_enrichment_enabled: bool = False
     proactive_enrichment_model: str | None = None
+    # Gate je Meldungsart (BL-0424): NUR Meldungen dieser event_types dürfen
+    # durch das LLM (Auto-Dringlichkeit, Anreicherung). Vorgabe = die
+    # technischen Absender (ops_alert & Co.); persönliche Meldungen
+    # (Erinnerungen, Fristen, HA-Ereignisse) bleiben wörtlich und ohne
+    # LLM-Kontakt. Kommaliste, leer = keine Meldungsart.
+    proactive_llm_event_types: str = "ops_health,mcp_health,scheduled_task_health"
     proactive_feedback_learning_enabled: bool = False
     proactive_feedback_similarity_threshold: float = 0.80
 

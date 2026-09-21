@@ -147,13 +147,90 @@ class TestPersistedCountsAsTold:
         )
 
 
+@pytest.mark.unit
+class TestLlmHandoff:
+    """BL-0424: technical alerts are the one class that may go through the LLM.
+    notify_admin offers every alert for enrichment and, when the caller has no
+    opinion on urgency, lets the classifier rank it — but only once the global
+    flag is on, so the flag-off path is byte-identical (``critical``)."""
+
+    async def test_flag_off_keeps_critical_and_offers_enrichment(self, monkeypatch):
+        monkeypatch.setattr(ops_alert.settings, "proactive_enabled", True)
+        monkeypatch.setattr(ops_alert.settings, "proactive_urgency_auto_enabled", False)
+        monkeypatch.setattr(ops_alert, "resolve_admin_user_id", _fake_admin)
+        seen: dict = {}
+        _install_notification_service(monkeypatch, outcome=None, captured=seen)
+
+        await ops_alert.notify_admin(title="t", message="m", dedup_key="k")
+        assert seen["urgency"] == "critical"
+        assert seen["enrich"] is True
+        assert seen["event_type"] == "ops_health"
+
+    async def test_flag_on_defers_urgency_to_the_classifier(self, monkeypatch):
+        monkeypatch.setattr(ops_alert.settings, "proactive_enabled", True)
+        monkeypatch.setattr(ops_alert.settings, "proactive_urgency_auto_enabled", True)
+        monkeypatch.setattr(ops_alert, "resolve_admin_user_id", _fake_admin)
+        seen: dict = {}
+        _install_notification_service(monkeypatch, outcome=None, captured=seen)
+
+        await ops_alert.notify_admin(title="t", message="m", dedup_key="k")
+        assert seen["urgency"] == "auto"
+
+    async def test_explicit_urgency_is_kept_even_with_the_flag_on(self, monkeypatch):
+        monkeypatch.setattr(ops_alert.settings, "proactive_enabled", True)
+        monkeypatch.setattr(ops_alert.settings, "proactive_urgency_auto_enabled", True)
+        monkeypatch.setattr(ops_alert, "resolve_admin_user_id", _fake_admin)
+        seen: dict = {}
+        _install_notification_service(monkeypatch, outcome=None, captured=seen)
+
+        await ops_alert.notify_admin(title="t", message="m", dedup_key="k", urgency="normal")
+        assert seen["urgency"] == "normal"
+
+
+@pytest.mark.database
+class TestPersistedSinceMatchesEnrichedRows:
+    """An enriched alert stores the LLM wording in ``message`` and ours in
+    ``original_message``; the persist check must find it by either, or every
+    enriched alert would be re-stored on each tick after a delivery hiccup."""
+
+    async def test_original_message_counts_as_persisted(self, db_session, monkeypatch):
+        from contextlib import asynccontextmanager
+        from datetime import datetime, timedelta, UTC
+
+        from models.database import Notification
+        import services.database as db_mod
+
+        @asynccontextmanager
+        async def _session():
+            yield db_session
+
+        monkeypatch.setattr(db_mod, "AsyncSessionLocal", _session)
+        now = datetime.now(UTC).replace(tzinfo=None)
+        db_session.add(Notification(
+            event_type="ops_health", title="t", source="ops_alert",
+            message="Der Server antwortet nicht mehr.", original_message="m",
+            enriched=True, urgency="critical", target_user_id=None, created_at=now,
+        ))
+        await db_session.commit()
+
+        assert await ops_alert._persisted_since(
+            title="t", message="m", source="ops_alert", target_user_id=None,
+            since=now - timedelta(minutes=1),
+        ) is True
+        assert await ops_alert._persisted_since(
+            title="t", message="something else", source="ops_alert", target_user_id=None,
+            since=now - timedelta(minutes=1),
+        ) is False
+
+
 async def _fake_admin(db):
     return 1
 
 
-def _install_notification_service(monkeypatch, *, outcome):
+def _install_notification_service(monkeypatch, *, outcome, captured: dict | None = None):
     """Stub services.notification_service + services.database so notify_admin's
-    lazy imports resolve without a real DB."""
+    lazy imports resolve without a real DB. ``captured`` receives the kwargs
+    handed to ``process_webhook``."""
     import sys
     import types
 
@@ -162,6 +239,8 @@ def _install_notification_service(monkeypatch, *, outcome):
             pass
 
         async def process_webhook(self, **kw):
+            if captured is not None:
+                captured.update(kw)
             if isinstance(outcome, Exception):
                 raise outcome
             return outcome

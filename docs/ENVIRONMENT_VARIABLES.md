@@ -619,6 +619,16 @@ PROACTIVE_URGENCY_AUTO_ENABLED=false
 PROACTIVE_ENRICHMENT_ENABLED=false
 PROACTIVE_ENRICHMENT_MODEL=              # Optional: separates Modell (Default: OLLAMA_MODEL)
 
+# Gate je Meldungsart (BL-0424): NUR diese event_types dürfen durch das LLM
+# (Auto-Dringlichkeit UND Anreicherung). Vorgabe = die technischen Absender
+# (`ops_alert`, MCP-Health, geplante Aufgaben). Persönliche Meldungen —
+# Erinnerungen, Fristen, HA-Ereignisse — bleiben wörtlich und erreichen kein
+# Modell, auch wenn beide Schalter oben an sind. Kommaliste; leer = keine.
+# Technische Absender (`ops_alert.notify_admin`) bieten jede Meldung zur
+# Anreicherung an und überlassen bei aktivem Auto-Schalter die Dringlichkeit
+# dem Klassifikator; bei ausgeschaltetem Schalter bleibt es bei `critical`.
+PROACTIVE_LLM_EVENT_TYPES=ops_health,mcp_health,scheduled_task_health
+
 # Feedback-Learning — "Nicht mehr melden"-Button erstellt Suppression-Regeln
 PROACTIVE_FEEDBACK_LEARNING_ENABLED=false
 PROACTIVE_FEEDBACK_SIMILARITY_THRESHOLD=0.80

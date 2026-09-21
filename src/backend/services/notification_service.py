@@ -199,6 +199,26 @@ class NotificationService:
         task.add_done_callback(self._background_tasks.discard)
 
     # ------------------------------------------------------------------
+    # LLM gate per event type (BL-0424)
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def llm_allowed_for(event_type: str) -> bool:
+        """Whether this event type's text may be handed to the LLM at all.
+
+        The two LLM steps (auto-urgency, enrichment) are opt-in per event
+        type via ``PROACTIVE_LLM_EVENT_TYPES``: technical alerts (ops_alert,
+        MCP health, scheduled tasks) may be ranked and rephrased; personal
+        notifications — reminders, deadlines, HA events about people — are
+        delivered verbatim and never reach a model. An empty list allows
+        nothing. Both step flags stay global on/off switches on top.
+        """
+        allowed = {
+            part.strip() for part in settings.proactive_llm_event_types.split(",")
+        } - {""}
+        return event_type in allowed
+
+    # ------------------------------------------------------------------
     # Urgency Auto-Classification (Phase 2d)
     # ------------------------------------------------------------------
 
@@ -207,6 +227,9 @@ class NotificationService:
     ) -> str:
         """Use LLM to classify urgency into critical/info/low."""
         if not settings.proactive_urgency_auto_enabled:
+            return "info"
+        if not self.llm_allowed_for(event_type):
+            logger.debug(f"Urgency auto-classification skipped: {event_type!r} not LLM-eligible")
             return "info"
 
         try:
@@ -247,6 +270,9 @@ class NotificationService:
     ) -> str:
         """Enrich notification message with natural language context via LLM."""
         if not settings.proactive_enrichment_enabled:
+            return message
+        if not self.llm_allowed_for(event_type):
+            logger.debug(f"Enrichment skipped: {event_type!r} not LLM-eligible")
             return message
 
         try:

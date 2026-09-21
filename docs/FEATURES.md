@@ -460,6 +460,7 @@ PROACTIVE_NOTIFICATION_TTL=86400            # Ablauf (24h)
 PROACTIVE_SEMANTIC_DEDUP_ENABLED=false      # Semantische Deduplizierung
 PROACTIVE_URGENCY_AUTO_ENABLED=false        # Auto-Urgency
 PROACTIVE_ENRICHMENT_ENABLED=false          # LLM-Enrichment
+PROACTIVE_LLM_EVENT_TYPES=ops_health,mcp_health,scheduled_task_health  # nur diese Meldungsarten durchs LLM
 PROACTIVE_REMINDERS_ENABLED=false           # Erinnerungen
 PROACTIVE_REMINDER_CHECK_INTERVAL=15        # Prüf-Intervall (Sekunden)
 ```

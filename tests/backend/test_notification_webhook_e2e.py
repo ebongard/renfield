@@ -266,6 +266,7 @@ class TestWebhookE2E:
             mock_svc_settings.proactive_enrichment_enabled = True
             mock_svc_settings.proactive_enrichment_model = None
             mock_svc_settings.proactive_urgency_auto_enabled = False
+            mock_svc_settings.proactive_llm_event_types = "scheduled.morning_briefing"
             mock_svc_settings.ollama_model = "test-model"
 
             response = await async_client.post(
@@ -324,6 +325,7 @@ class TestWebhookE2E:
             mock_svc_settings.proactive_feedback_learning_enabled = False
             mock_svc_settings.proactive_enrichment_enabled = False
             mock_svc_settings.proactive_urgency_auto_enabled = True
+            mock_svc_settings.proactive_llm_event_types = "security.motion_detected"
             mock_svc_settings.proactive_enrichment_model = None
             mock_svc_settings.ollama_model = "test-model"
 

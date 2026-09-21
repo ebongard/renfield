@@ -115,7 +115,7 @@ Empfängt Benachrichtigungen von HA-Automationen.
 | `urgency` | string | Nein | `critical`, `info` (default), `low` |
 | `room` | string | Nein | Ziel-Raum (null = alle Räume) |
 | `tts` | boolean | Nein | TTS-Ausgabe (default: `PROACTIVE_TTS_DEFAULT`) |
-| `enrich` | boolean | Nein | LLM-Aufbereitung der Nachricht (default: `false`, erfordert `PROACTIVE_ENRICHMENT_ENABLED`) |
+| `enrich` | boolean | Nein | LLM-Aufbereitung der Nachricht (default: `false`, erfordert `PROACTIVE_ENRICHMENT_ENABLED` **und** einen `event_type` aus `PROACTIVE_LLM_EVENT_TYPES` — siehe „LLM-Gate je Meldungsart") |
 | `data` | object | Nein | Zusätzliche Metadaten |
 
 **Response:** `201 Created`
@@ -198,6 +198,26 @@ Generiert einen neuen Webhook-Token. Der vorherige Token wird ungültig.
 ```
 
 `action`: `"acknowledged"` oder `"dismissed"`
+
+---
+
+## LLM-Gate je Meldungsart (BL-0424)
+
+Die beiden LLM-Schritte der Pipeline — Auto-Dringlichkeit (`urgency: "auto"`,
+`PROACTIVE_URGENCY_AUTO_ENABLED`) und Anreicherung (`enrich: true`,
+`PROACTIVE_ENRICHMENT_ENABLED`) — laufen **nur** für Meldungsarten aus
+`PROACTIVE_LLM_EVENT_TYPES` (Vorgabe: `ops_health,mcp_health,scheduled_task_health`,
+also die technischen Absender). Für jede andere Meldungsart gilt, auch bei
+eingeschalteten Schaltern: `urgency: "auto"` wird zu `info`, `enrich` wird
+ignoriert, der Text bleibt wörtlich. Damit erreicht kein persönlicher Inhalt
+(Erinnerung, Frist, HA-Ereignis über Personen) ein Modell.
+
+Technische Absender gehen über `ops_alert.notify_admin`: jede Meldung wird zur
+Anreicherung angeboten; ohne ausdrückliche Dringlichkeit überlässt der Absender
+sie dem Klassifikator, sobald der Auto-Schalter an ist — aus bleibt es bei
+`critical`. Eine ausdrücklich gesetzte Dringlichkeit (etwa `normal` für
+„läuft wieder") bleibt unangetastet. Angereicherte Meldungen behalten den
+Originaltext in `original_message`.
 
 ---
 

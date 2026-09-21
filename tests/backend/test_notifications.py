@@ -497,6 +497,7 @@ class TestUrgencyClassification:
         mock_settings.proactive_urgency_auto_enabled = True
         mock_settings.proactive_enrichment_model = None
         mock_settings.ollama_model = "test-model"
+        mock_settings.proactive_llm_event_types = "test"
 
         with patch("utils.llm_client.get_default_client", side_effect=Exception("LLM unavailable")):
             result = await notification_service._auto_classify_urgency("test", "Title", "Message")
@@ -524,6 +525,98 @@ class TestUrgencyClassification:
 # Phase 2a: LLM Enrichment Tests
 # ============================================================================
 
+class TestLlmEventTypeGate:
+    """BL-0424: only technical event types may pass through the LLM.
+
+    Personal notifications (reminders, deadlines, HA events about people) are
+    delivered verbatim even with both LLM flags on; the allow-list decides."""
+
+    @pytest.mark.unit
+    @patch("services.notification_service.settings")
+    async def test_default_list_admits_only_the_technical_senders(self, mock_settings):
+        from services.notification_service import NotificationService
+        from utils.config import Settings
+
+        mock_settings.proactive_llm_event_types = Settings.model_fields[
+            "proactive_llm_event_types"
+        ].default
+        for allowed in ("ops_health", "mcp_health", "scheduled_task_health"):
+            assert NotificationService.llm_allowed_for(allowed) is True
+        for personal in ("reminder", "obligation_deadline", "ha_automation", "doorbell"):
+            assert NotificationService.llm_allowed_for(personal) is False
+
+    @pytest.mark.unit
+    @patch("services.notification_service.settings")
+    async def test_list_is_trimmed_and_empty_allows_nothing(self, mock_settings):
+        from services.notification_service import NotificationService
+
+        mock_settings.proactive_llm_event_types = " ops_health , mcp_health,, "
+        assert NotificationService.llm_allowed_for("mcp_health") is True
+        assert NotificationService.llm_allowed_for("") is False
+        mock_settings.proactive_llm_event_types = ""
+        assert NotificationService.llm_allowed_for("ops_health") is False
+
+    @pytest.mark.unit
+    @patch("services.notification_service.settings")
+    async def test_personal_event_is_never_enriched(self, mock_settings, notification_service):
+        mock_settings.proactive_enrichment_enabled = True
+        mock_settings.proactive_enrichment_model = None
+        mock_settings.ollama_model = "test-model"
+        mock_settings.proactive_llm_event_types = "ops_health"
+        mock_client = AsyncMock()
+
+        with patch("utils.llm_client.get_default_client", return_value=mock_client):
+            result = await notification_service._enrich_message(
+                "reminder", "Arzttermin", "Morgen 9 Uhr Dr. Beispiel",
+            )
+        assert result == "Morgen 9 Uhr Dr. Beispiel"
+        mock_client.generate.assert_not_called()
+
+    @pytest.mark.unit
+    @patch("services.notification_service.settings")
+    async def test_personal_event_urgency_auto_falls_back_without_llm(
+        self, mock_settings, notification_service,
+    ):
+        mock_settings.proactive_urgency_auto_enabled = True
+        mock_settings.proactive_enrichment_model = None
+        mock_settings.ollama_model = "test-model"
+        mock_settings.proactive_llm_event_types = "ops_health"
+        mock_client = AsyncMock()
+
+        with patch("utils.llm_client.get_default_client", return_value=mock_client):
+            result = await notification_service._auto_classify_urgency(
+                "ha_automation", "Haustür", "Die Haustür ist offen",
+            )
+        assert result == "info"
+        mock_client.generate.assert_not_called()
+
+    @pytest.mark.unit
+    @patch("services.notification_service.settings")
+    async def test_technical_event_reaches_the_llm(self, mock_settings, notification_service):
+        mock_settings.proactive_enrichment_enabled = True
+        mock_settings.proactive_urgency_auto_enabled = True
+        mock_settings.proactive_enrichment_model = None
+        mock_settings.ollama_model = "test-model"
+        mock_settings.proactive_llm_event_types = "ops_health,mcp_health"
+
+        urgency_resp, enrich_resp = MagicMock(), MagicMock()
+        urgency_resp.response = "critical"
+        enrich_resp.response = "Der Paperless-Server antwortet seit 10 Minuten nicht."
+        mock_client = AsyncMock()
+        mock_client.generate = AsyncMock(side_effect=[urgency_resp, enrich_resp])
+
+        with patch("utils.llm_client.get_default_client", return_value=mock_client):
+            urgency = await notification_service._auto_classify_urgency(
+                "mcp_health", "MCP paperless", "3 timeouts",
+            )
+            message = await notification_service._enrich_message(
+                "mcp_health", "MCP paperless", "3 timeouts",
+            )
+        assert urgency == "critical"
+        assert message == "Der Paperless-Server antwortet seit 10 Minuten nicht."
+        assert mock_client.generate.await_count == 2
+
+
 class TestEnrichment:
     """LLM content enrichment tests."""
 
@@ -540,6 +633,7 @@ class TestEnrichment:
         mock_settings.proactive_enrichment_enabled = True
         mock_settings.proactive_enrichment_model = None
         mock_settings.ollama_model = "test-model"
+        mock_settings.proactive_llm_event_types = "ha_automation"
 
         mock_response = MagicMock()
         mock_response.response = "Die Waschmaschine im Keller ist fertig. Du kannst die Wäsche aufhängen."
@@ -572,6 +666,7 @@ class TestEnrichment:
             mock_settings.proactive_enrichment_enabled = True
             mock_settings.proactive_enrichment_model = None
             mock_settings.proactive_urgency_auto_enabled = False
+            mock_settings.proactive_llm_event_types = "test"
             mock_settings.ollama_model = "test-model"
 
             result = await notification_service.process_webhook(
@@ -594,6 +689,7 @@ class TestEnrichment:
         mock_settings.proactive_enrichment_enabled = True
         mock_settings.proactive_enrichment_model = None
         mock_settings.ollama_model = "test-model"
+        mock_settings.proactive_llm_event_types = "test"
 
         with patch("utils.llm_client.get_default_client", side_effect=Exception("LLM down")):
             result = await notification_service._enrich_message(
@@ -729,6 +825,7 @@ class TestSuppressionLearning:
             ms.proactive_enrichment_enabled = True
             ms.proactive_enrichment_model = ""
             ms.ollama_model = "m"
+            ms.proactive_llm_event_types = "evt"
             await notification_service._enrich_message("evt", "Titel", "Nachricht")
 
         assert "Smart-Home" not in captured["prompt"]

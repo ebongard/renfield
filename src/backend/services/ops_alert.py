@@ -126,9 +126,13 @@ async def _persisted_since(
     notification in their list. Checked on a fresh session (the failed one may be
     unusable). Any doubt reads as "not persisted": the cost is one bounded retry,
     never a silent loss.
+
+    An enriched row stores the LLM's wording in ``message`` and ours in
+    ``original_message`` — match either, or every enriched alert would read as
+    "not persisted" and be re-stored on each tick.
     """
     try:
-        from sqlalchemy import select
+        from sqlalchemy import or_, select
 
         from models.database import Notification
         from services.database import AsyncSessionLocal
@@ -145,7 +149,10 @@ async def _persisted_since(
                     .where(
                         Notification.source == source,
                         Notification.title == title,
-                        Notification.message == message,
+                        or_(
+                            Notification.message == message,
+                            Notification.original_message == message,
+                        ),
                         Notification.created_at >= since,
                         target_clause,
                     )
@@ -165,9 +172,17 @@ async def notify_admin(
     data: dict[str, Any] | None = None,
     event_type: str = "ops_health",
     source: str = "ops_alert",
-    urgency: str = "critical",
+    urgency: str | None = None,
 ) -> bool:
     """Fire ONE privacy-aware proactive notification to the admin/owner.
+
+    Technical alerts are the ONE class of notification that may pass through the
+    LLM (BL-0424): a caller that has no opinion on ``urgency`` (``None``) lets the
+    classifier rank it when ``PROACTIVE_URGENCY_AUTO_ENABLED`` is on — off, it is
+    ``critical`` exactly as before — and the message is offered for enrichment,
+    which ``PROACTIVE_ENRICHMENT_ENABLED`` plus the per-type gate
+    (``PROACTIVE_LLM_EVENT_TYPES``) decide. A caller that passes an explicit
+    urgency keeps it.
 
     Returns **whether the admin has been told** — i.e. whether a notification row
     exists for them — so a caller keeping a durable "already told them" marker only
@@ -186,6 +201,8 @@ async def notify_admin(
     """
     if not settings.proactive_enabled:
         return False
+    if urgency is None:
+        urgency = "auto" if settings.proactive_urgency_auto_enabled else "critical"
     started = datetime.now(UTC).replace(tzinfo=None)
     target: int | None = None
     try:
@@ -204,6 +221,7 @@ async def notify_admin(
                 privacy="personal",
                 target_user_id=target,
                 data={"dedup_key": dedup_key, **(data or {})},
+                enrich=True,
             )
     except ValueError:
         return True  # deduped / suppressed by the pipeline — they already know
