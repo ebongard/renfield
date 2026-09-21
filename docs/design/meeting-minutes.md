@@ -175,5 +175,5 @@ As-built details recorded in CLAUDE.md that the design above does not spell out.
     Save-draft / Confirm / Regenerate / Discard; `confirmed` → read-only + badge + Edit.
   - Confirm auto-saves a dirty body first (PUT → draft → confirm) so it cannot silently drop unsaved edits.
   - Typed JSON in/out (React escape boundary), no model HTML.
-- **Rollout status:** config-default dark; flipped on xidra (`meeting_minutes_enabled=true`), still `false` on the
-  household (the panel is absent there until flipped).
+- **Rollout status:** config-default dark; **on on both instances** — the auth-on instance first, the household since
+  2026-09-21 (BL-0402, `k8s/configmap.yaml`).

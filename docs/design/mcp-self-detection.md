@@ -331,7 +331,7 @@ state and must not leak into the other two:
 - The alert text names the count, never the upstream error text: throttle messages
   carry request URLs, and API URLs can carry keys.
 
-### 3.2 Retry-After (dark) — a deliberate deviation from "backoff"
+### 3.2 Retry-After (default dark; on in the household since 2026-09-21) — a deliberate deviation from "backoff"
 
 The roadmap said "honor Retry-After with backoff instead of surfacing a throttle as a
 hard error". Built: with `MCP_RATE_LIMIT_BACKOFF_ENABLED`, a Retry-After the upstream

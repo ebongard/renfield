@@ -917,7 +917,7 @@ MCP_HEALTH_RATE_LIMIT_WINDOW_SECONDS=900   # Ereignisse altern heraus → nie da
 MCP_HEALTH_RATE_LIMIT_MIN_EVENTS=5         # so viele Drosselungen im Fenster → rate_limited
 # Retry-After je WERKZEUG respektieren: bis zum Ablauf sofort ablehnen statt
 # Anfragen zu schicken, die sicher abgewiesen werden. Bewusst KEIN automatisches
-# Wiederholen (ein 429 mitten in einem Werkzeug kann Nebenwirkungen folgen). Dunkel.
+# Wiederholen (ein 429 mitten in einem Werkzeug kann Nebenwirkungen folgen). Vorgabe aus.
 MCP_RATE_LIMIT_BACKOFF_ENABLED=false
 MCP_RATE_LIMIT_MAX_BACKOFF_SECONDS=300     # Deckel für ein Retry-After
 ```
