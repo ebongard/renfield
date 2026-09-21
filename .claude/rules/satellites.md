@@ -25,8 +25,13 @@ Long form: `docs/design/ble-presence-improvement.md`, `docs/SATELLITE_ACOUSTIC_C
 
 ## Permissions on a voice turn
 - Recognised speaker → that user's permissions; unrecognised → `None`, which every gate reads as "no permission model"
-  (#690 fail-open). `SATELLITE_ANONYMOUS_PERMISSIONS` (dark, empty = unchanged, never applied while auth is off)
-  replaces it with a POSITIVE list over ALL MCP servers — an unnamed server is denied, read-only ones too.
+  (#690 fail-open). `resolve_anonymous_identity()` replaces that None under auth-on, and **exactly one** of two
+  mechanisms owns the turn: `SATELLITE_DEVICE_ACCOUNT` (dark) names a user — then its ROLE is the grant set and the
+  list below is not read; otherwise `SATELLITE_ANONYMOUS_PERMISSIONS` (dark) supplies a POSITIVE list over ALL MCP
+  servers — an unnamed server is denied, read-only ones too. Both empty = unchanged; neither applies while auth is off.
+- A device account is an identity, not a person: `users.is_device_account` (the flag is the contract, never the name)
+  blocks memory extraction and presence booking, and a recognised speaker replaces it inside the turn. A configured
+  but unresolvable device account denies the turn — widening silently would be worse than a spoken refusal.
 - A denial is marked `permission_denied` and SPOKEN; swallowing it would let the model answer the refused question.
 
 ## Voice turn

@@ -1605,6 +1605,17 @@ class Settings(BaseSettings):
     # announce/broadcast gate — both inert on the intent path today, kept for
     # the paths that will read them).
     satellite_anonymous_permissions: str = ""
+    # Username of the DEVICE account an unrecognised satellite voice runs as
+    # (auth-on; §6.1 Nr. 3, D-4b). With it the turn HAS an identity: it reads as
+    # far as that account's circle memberships reach (the design gives it tier 2
+    # at the admin only) and acts within its role — which then IS the grant set,
+    # so SATELLITE_ANONYMOUS_PERMISSIONS above is only for the no-device-account
+    # variant. What a device must never do is accumulate a person's traces:
+    # `users.is_device_account` blocks memory extraction and presence booking,
+    # and a recognised speaker replaces it inside the turn. Empty = no device
+    # account (today's behaviour). The named user must carry the flag, else the
+    # turn stays anonymous — a person's account is never borrowed by a device.
+    satellite_device_account: str = ""
 
     # C1 binary Opus transport for satellite audio (docs/design/
     # voice-identity-wakeword-verification.md §4, decision D6). Dark by

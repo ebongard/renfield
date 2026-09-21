@@ -1172,6 +1172,13 @@ class User(Base):
     # Account status
     is_active = Column(Boolean, default=True, nullable=False)
     must_change_password = Column(Boolean, default=False, nullable=False, server_default="false")
+    # A DEVICE account, not a person (household auth-on cutover, D-4b): the
+    # identity an unrecognised satellite voice or the kiosk display runs as.
+    # It may READ (its memberships decide how far) and act within its role, but
+    # it must never accumulate a person's traces: no memory extraction, no
+    # presence booking, and a recognised speaker replaces it inside the turn.
+    # Nothing keys on the username — the flag is the contract.
+    is_device_account = Column(Boolean, default=False, nullable=False, server_default="false")
 
     # Session-revocation epoch (security audit H3/H4). Access + refresh JWTs carry
     # the user's token_epoch as an `epoch` claim; get_current_user / the refresh

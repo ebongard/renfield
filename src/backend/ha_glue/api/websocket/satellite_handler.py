@@ -13,6 +13,7 @@ This module handles:
 import asyncio
 import json
 from datetime import date
+from typing import NamedTuple
 
 from fastapi import APIRouter, Query, WebSocket, WebSocketDisconnect
 from loguru import logger
@@ -124,6 +125,7 @@ def _spawn_satellite_extraction(
     session_id: str | None,
     lang: str,
     action_success: bool | None,
+    is_device_account: bool = False,
 ) -> TurnExtractionSpawn | None:
     """Feed a completed SPOKEN turn to the same extractors the browser chat uses.
 
@@ -137,6 +139,12 @@ def _spawn_satellite_extraction(
     voice in the room is unattributed, and an unattributed utterance must not
     become somebody's memory (nor reach the KG/plugins via ``post_message``).
     So: no user, no extraction at all — deliberately, not as an oversight.
+
+    **The device account is not a person either.** Once an unrecognised turn
+    runs as ``SATELLITE_DEVICE_ACCOUNT`` it HAS a ``user_id``, and that user_id
+    alone would re-open exactly the door the paragraph above closes: every voice
+    in the room writing into one account's memory. ``is_device_account`` keeps
+    it shut — a device reads and acts, it never remembers (D-4b).
 
     **Persistence boundary — only a turn that was actually WRITTEN.**
     ``session_id`` is the satellite conversation's DB session (assigned right
@@ -153,6 +161,12 @@ def _spawn_satellite_extraction(
         logger.debug(
             "📝 Satellite-Extraktion übersprungen: Sprecher nicht erkannt "
             f"(session={session_id})"
+        )
+        return None
+    if is_device_account:
+        logger.debug(
+            "📝 Satellite-Extraktion übersprungen: Gerätekonto sammelt keine "
+            f"Erinnerungen (session={session_id})"
         )
         return None
     if not session_id:
@@ -333,6 +347,83 @@ def anonymous_permissions() -> list[str] | None:
         return None
     _warn_once_on_unknown_grants(grants)
     return grants
+
+
+class AnonymousIdentity(NamedTuple):
+    """Who an unrecognised satellite voice IS for one turn, and what it may do."""
+
+    user_id: int | None
+    permissions: list[str] | None
+    is_device_account: bool
+
+
+_device_account_warned = False
+
+
+def _warn_once_about_device_account(reason: str) -> None:
+    global _device_account_warned
+    if _device_account_warned:
+        return
+    _device_account_warned = True
+    logger.warning(
+        f"⚠️ SATELLITE_DEVICE_ACCOUNT={settings.satellite_device_account!r}: {reason} — "
+        f"unerkannte Stimmen werden bis zur Korrektur abgelehnt"
+    )
+
+
+async def _load_device_account() -> tuple[int, list[str]] | None:
+    """The configured device account as (user_id, permissions), or None."""
+    from sqlalchemy import select
+
+    from models.database import User
+
+    username = settings.satellite_device_account.strip()
+    try:
+        async with AsyncSessionLocal() as db:
+            result = await db.execute(select(User).where(User.username == username))
+            usr = result.scalar_one_or_none()
+        if usr is None:
+            _warn_once_about_device_account("kein Nutzer mit diesem Namen")
+            return None
+        if not usr.is_device_account:
+            # A person's account is never borrowed by a device: without the flag
+            # the room would write into that person's memory and presence.
+            _warn_once_about_device_account("der Nutzer ist kein Gerätekonto")
+            return None
+        return usr.id, usr.get_permissions()
+    except Exception as e:  # noqa: BLE001 — a DB hiccup must not fail open
+        logger.warning(f"⚠️ Gerätekonto konnte nicht geladen werden: {e}")
+        return None
+
+
+async def resolve_anonymous_identity() -> AnonymousIdentity:
+    """Identity and grants for a turn whose speaker was not recognised (D-4a/D-4b).
+
+    Three outcomes, in order:
+
+    * **auth off** → ``(None, None, False)``: today's behaviour, byte-identical.
+    * **a device account is configured** → that account's id and its role's
+      permissions. The turn now HAS an identity: it reads as far as the device's
+      circle memberships reach and acts within its role — which is why the role
+      IS the grant set here and ``SATELLITE_ANONYMOUS_PERMISSIONS`` is only
+      consulted on the no-device-account path. What the flag buys is the other
+      half: a device must never accumulate a person's traces (no extraction, no
+      presence — the gates read ``is_device_account``).
+    * **no device account** → the anonymous grant list (or None when unset).
+
+    A CONFIGURED but unresolvable device account denies (`[]`) instead of
+    falling back: naming an account is an explicit statement about who an
+    anonymous turn is, and a typo in it must be loud (a spoken refusal plus a
+    warning), never a quiet widening.
+    """
+    if not settings.auth_enabled:
+        return AnonymousIdentity(None, None, False)
+    if not settings.satellite_device_account.strip():
+        return AnonymousIdentity(None, anonymous_permissions(), False)
+    account = await _load_device_account()
+    if account is None:
+        return AnonymousIdentity(None, [], False)
+    return AnonymousIdentity(account[0], account[1], True)
 
 
 def _handshake_identity_mismatch(auth_result: dict | None, satellite_id: str) -> bool:
@@ -1014,19 +1105,34 @@ async def satellite_websocket(
                                 # back to the anonymous set (mirrors chat.py:137).
                                 sat_user_permissions = []
 
-                    # No recognised speaker (or none linked to an account): run
-                    # the turn with the configured anonymous grant list instead
-                    # of the fail-open None. Nothing changes while auth is off
-                    # or the list is unset — see anonymous_permissions().
+                    # No recognised speaker (or none linked to an account): the
+                    # turn runs as the device account if one is configured, else
+                    # with the anonymous grant list — instead of the fail-open
+                    # None. Nothing changes while auth is off; see
+                    # resolve_anonymous_identity().
+                    sat_is_device_account = False
                     if sat_user_permissions is None:
-                        sat_user_permissions = anonymous_permissions()
-                        if sat_user_permissions is not None:
+                        anon = await resolve_anonymous_identity()
+                        sat_user_id = anon.user_id
+                        sat_user_permissions = anon.permissions
+                        sat_is_device_account = anon.is_device_account
+                        if sat_is_device_account:
+                            logger.info(
+                                f"🔐 Satelliten-Zug als Gerätekonto "
+                                f"(user_id={sat_user_id}, "
+                                f"{len(sat_user_permissions or [])} Rechte)"
+                            )
+                        elif sat_user_permissions is not None:
                             logger.info(
                                 f"🔐 Anonymer Satelliten-Zug mit "
                                 f"{len(sat_user_permissions)} Rechten"
                             )
 
-                    # Associate conversation with speaker (for handoff lookup)
+                    # Associate conversation with speaker (for handoff lookup).
+                    # When the turn runs as the device account, the room's
+                    # conversation becomes the device's — intended (§8.1: room
+                    # histories belong to the device account), and strictly
+                    # narrower than the ownerless row it would be otherwise.
                     if spk and satellite_db_session_id:
                         try:
                             from services.conversation_service import ConversationService
@@ -1038,8 +1144,18 @@ async def satellite_websocket(
                         except Exception as e:
                             logger.warning(f"⚠️ Failed to associate speaker with conversation: {e}")
 
-                    # Register voice presence if speaker was recognized
-                    if sat_user_id and ha_glue_settings.presence_enabled and satellite and satellite.room_id:
+                    # Register voice presence if speaker was recognized. NEVER
+                    # for a device account: presence says "this person is in
+                    # this room", and a device is in its room by construction —
+                    # booking it would put a person-shaped trace on an account
+                    # that stands for every voice in the house (D-4b).
+                    if (
+                        sat_user_id
+                        and not sat_is_device_account
+                        and ha_glue_settings.presence_enabled
+                        and satellite
+                        and satellite.room_id
+                    ):
                         try:
                             from ha_glue.services.presence_service import get_presence_service
                             presence_svc = get_presence_service()
@@ -1209,7 +1325,8 @@ Gib eine kurze, natürliche Antwort. KEIN JSON, nur Text."""
                     # Background: memory + KG extraction for this spoken turn —
                     # the same seam the browser chat path uses, scheduled (never
                     # awaited) so the TTS below is not delayed. Runs ONLY when the
-                    # speaker was recognized; see _spawn_satellite_extraction.
+                    # speaker was recognized and never for the device account;
+                    # see _spawn_satellite_extraction.
                     _spawn_satellite_extraction(
                         user_text=text,
                         response_text=response_text,
@@ -1217,6 +1334,7 @@ Gib eine kurze, natürliche Antwort. KEIN JSON, nur Text."""
                         session_id=satellite_db_session_id,
                         lang=satellite_language,
                         action_success=assistant_metadata.get("action_success"),
+                        is_device_account=sat_is_device_account,
                     )
 
                     # Generate TTS with satellite's language

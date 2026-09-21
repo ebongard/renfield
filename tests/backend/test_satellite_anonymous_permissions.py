@@ -171,14 +171,20 @@ class TestTheGateItself:
 @pytest.mark.unit
 class TestWiring:
     def test_handler_substitutes_only_when_no_user_was_resolved(self):
+        # The handler asks `resolve_anonymous_identity()`, which returns this
+        # grant list on the no-device-account path (P0 Nr. 3 put the device
+        # account in front of it — see test_satellite_device_account.py).
         src = inspect.getsource(sh.satellite_websocket)
         assert "if sat_user_permissions is None:" in src
-        assert "sat_user_permissions = anonymous_permissions()" in src
+        assert "anon = await resolve_anonymous_identity()" in src
+        assert "anonymous_permissions()" in inspect.getsource(sh.resolve_anonymous_identity)
         # A recognised speaker's own permissions must win: the substitution sits
         # AFTER the speaker lookup and only fills a still-None value.
-        assert src.index("usr.get_permissions()") < src.index("anonymous_permissions()")
+        assert src.index("usr.get_permissions()") < src.index("resolve_anonymous_identity()")
         # And it reaches the executor that gates MCP + internal tools.
-        assert src.index("anonymous_permissions()") < src.index("user_permissions=sat_user_permissions")
+        assert src.index("resolve_anonymous_identity()") < src.index(
+            "user_permissions=sat_user_permissions"
+        )
 
     def test_permission_load_failure_denies_instead_of_falling_back(self):
         # A recognised speaker whose permissions cannot be loaded must not be

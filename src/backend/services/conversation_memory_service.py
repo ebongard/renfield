@@ -33,6 +33,7 @@ from models.database import (
     MEMORY_SOURCE_LLM_INFERRED,
     ConversationMemory,
     MemoryHistory,
+    User,
 )
 from services.atom_owner import AtomOwnerResolverMixin
 from utils.config import settings
@@ -1119,16 +1120,46 @@ class ConversationMemoryService(AtomOwnerResolverMixin):
         )
         return True
 
+    async def _device_account_write_denied(
+        self, op: str, target_id: int, user_id: int | None
+    ) -> bool:
+        """True when the turn's identity is a DEVICE account (D-4b).
+
+        A device account (`SATELLITE_DEVICE_ACCOUNT`, later the kiosk) gives an
+        unrecognised voice an identity so it can read and act — deliberately
+        NOT so it can remember. The satellite path already skips extraction for
+        it, so this is the second lock on the same door: any other caller that
+        ever routes a device identity into an extraction op must not be able to
+        rewrite existing rows with it. Creating a row is not blocked here — a
+        row the device owns is household stock, not somebody's memory.
+        """
+        if user_id is None or not settings.auth_enabled:
+            return False
+        result = await self.db.execute(
+            select(User.is_device_account).where(User.id == user_id)
+        )
+        if not result.scalar_one_or_none():
+            return False
+        logger.warning(
+            f"memory extract: refusing {op} on memory id={target_id} — "
+            f"turn runs as device account user_id={user_id}"
+        )
+        return True
+
     async def _extraction_target_owned(
         self, target_id: int, user_id: int | None
     ) -> bool:
         """Ownership recheck for an LLM-supplied target row (v1 path).
 
         The v2 path pushes the same rule into the statement's WHERE clause;
-        v1 mutates through the ORM, so the check is a separate read.
+        v1 mutates through the ORM, so the check is a separate read. A device
+        account never counts as an owner here either (D-4b) — v1 then falls
+        back to ADD, which is exactly the tolerated outcome.
         """
         if user_id is None:
             return not settings.auth_enabled
+        if await self._device_account_write_denied("v1 op", target_id, user_id):
+            return False
         result = await self.db.execute(
             select(ConversationMemory.user_id).where(
                 ConversationMemory.id == target_id
@@ -1223,6 +1254,8 @@ class ConversationMemoryService(AtomOwnerResolverMixin):
         """
         if self._identity_scoped_write_denied("UPDATE", target_id, user_id):
             return False
+        if await self._device_account_write_denied("UPDATE", target_id, user_id):
+            return False
 
         new_embedding = None
         try:
@@ -1271,6 +1304,8 @@ class ConversationMemoryService(AtomOwnerResolverMixin):
         Ownership gate on user_id: same rationale as _apply_update_v2.
         """
         if self._identity_scoped_write_denied("DELETE", target_id, user_id):
+            return False
+        if await self._device_account_write_denied("DELETE", target_id, user_id):
             return False
 
         stmt = update(ConversationMemory).where(ConversationMemory.id == target_id)
