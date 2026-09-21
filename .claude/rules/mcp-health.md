@@ -15,7 +15,8 @@ Long form + failure-mode catalog: `docs/design/mcp-self-detection.md`. The alert
 
 Flags: `MCP_HEALTH_MONITOR_ENABLED` dark (delivery needs `PROACTIVE_ENABLED`) · `MCP_HEALTH_SELF_HEAL_ENABLED` on ·
 `MCP_HEALTH_PROBE_ENABLED` on (the throttle is the YAML, not the flag) · `MCP_HEALTH_RATE_LIMIT_SIGNAL_ENABLED` dark ·
-`MCP_RATE_LIMIT_BACKOFF_ENABLED` dark.
+`MCP_RATE_LIMIT_BACKOFF_ENABLED` **on in the household since 2026-09-21** (BL-0416: only the backoff — a tool's
+Retry-After is honoured, no automatic retry; signal + alert stay dark).
 
 ## Verdict (`_server_health`, fed by `MCPManager.get_status()`)
 - **`degraded/calls_failing` counts ONLY timeouts** (rolling window on `MCPServerState`: clean result = ok, timeout =

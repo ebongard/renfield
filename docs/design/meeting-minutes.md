@@ -1,7 +1,9 @@
 # §2 Phase 3 — Meeting Minutes Pipeline
 
 > Status: **SHIPPED, dark by default** (`MEETING_MINUTES_ENABLED` / frontend
-> `meeting_minutes_enabled`). Backend in PR #984 (routes + `MinutesExtractor` +
+> `meeting_minutes_enabled` — served by `/api/config`, no frontend build needed);
+> **on in the household since 2026-09-21** (BL-0402, `k8s/configmap.yaml`), on the
+> auth-on instance earlier. Backend in PR #984 (routes + `MinutesExtractor` +
 > migration `pc20260718_meeting_minutes` + `meeting_minutes.yaml` prompts); frontend
 > in PR-B #986 (`MinutesPanel` in `pages/MeetingsPage.tsx` + `useMinutes`/generate/
 > update/confirm/delete hooks + i18n + RTL). Builds on Phase 2 (meeting transcription +

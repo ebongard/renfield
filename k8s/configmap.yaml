@@ -285,6 +285,12 @@ data:
   # as ONE deduped proactive admin alert + an internal.system_health entry, instead
   # of dead-ending in logs. Needs PROACTIVE_ENABLED (on here) for the push.
   MCP_HEALTH_MONITOR_ENABLED: "true"
+  # Retry-After je Werkzeug respektieren: bis zum Ablauf sofort ablehnen statt
+  # Anfragen zu schicken, die sicher abgewiesen werden (Deckel
+  # MCP_RATE_LIMIT_MAX_BACKOFF_SECONDS, Vorgabe 300). Kein automatisches
+  # Wiederholen. Triage-Entscheidung BL-0416 (2026-09-20): nur der Backoff an,
+  # Rate-Limit-Signal und -Alarm bleiben aus.
+  MCP_RATE_LIMIT_BACKOFF_ENABLED: "true"
 
   # Gegenseitige Erreichbarkeitsprüfung (#1230 A3). Ein System, das selbst steht,
   # kann sich nicht selbst melden — der Haushalt beobachtet deshalb xidra, und
@@ -473,6 +479,10 @@ data:
   # needs MEETING_ENABLED=true there. The former per-namespace voice-server
   # (k8s/voice-server.yaml) was retired 2026-08-24 (superseded, scaled to 0).
   MEETING_TRANSCRIPTION_ENABLED: "true"
+  # §2 Phase 3 Protokoll (Zusammenfassung/Entscheidungen/Aufgaben, Human-Confirm)
+  # im Haushalt an — Triage-Entscheidung BL-0402 (2026-09-20); xidra faehrt es
+  # bereits. Rein additiv: Endpunkt + Panel; nichts laeuft ohne Nutzeraktion.
+  MEETING_MINUTES_ENABLED: "true"
   # Batch-ASR fuer Meetings. Gilt PRO INSTANZ, obwohl der voice-server geteilt
   # ist: meeting_pipeline liest diesen Wert und schickt ihn als Formularfeld
   # `whisper_model` mit jedem /transcribe-meeting-Auftrag; die gleichnamige
