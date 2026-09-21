@@ -33,7 +33,7 @@ curl -X POST http://localhost:8000/api/notifications/token \
 | `room` | string | no | Target room name (e.g. `Wohnzimmer`) |
 | `tts` | bool | no | Override TTS setting (default from `PROACTIVE_TTS_DEFAULT`) |
 | `data` | object | no | Arbitrary metadata |
-| `enrich` | bool | no | Let the LLM rephrase the message naturally (default: `false`) |
+| `enrich` | bool | no | Accepted but **inert for webhook notifications** since BL-0424: LLM rephrasing runs only for server-vouched technical alerts (`ops_alert`), never for caller-supplied text. Compose the final wording in your workflow. |
 
 ---
 
@@ -60,7 +60,7 @@ A Cron-triggered n8n workflow that aggregates data from multiple sources and del
                      └── [Fetch Weather]  ────┘
 ```
 
-HA States and Weather run in parallel, then merge before the Code node composes the briefing. The final POST uses `enrich: true` so Renfield's LLM rephrases the raw data into natural language.
+HA States and Weather run in parallel, then merge before the Code node composes the briefing. The Code node already produces the final German wording — the `enrich: true` in the POST is a leftover from before BL-0424 and has no effect for webhook notifications (LLM rephrasing is reserved for server-vouched technical alerts).
 
 ### n8n Environment Variables
 
@@ -103,7 +103,7 @@ curl -s -H "Authorization: Bearer $HA_TOKEN" \
 3. **Fetch Weather** — `GET openweathermap.org/data/2.5/weather` (parallel)
 4. **Merge Data** — Combine both HTTP responses
 5. **Build Briefing** (Code node) — Extract temps, energy, windows, weather → compose German-language message
-6. **POST to Renfield** — `POST /api/notifications/webhook` with `enrich: true`
+6. **POST to Renfield** — `POST /api/notifications/webhook` (the message is delivered verbatim; `enrich` is inert for webhooks)
 
 ### Advantages over built-in scheduler
 
@@ -216,7 +216,7 @@ automation:
           enrich: true
 ```
 
-**Tip:** Set `enrich: true` to let Renfield's LLM rephrase the raw HA template output into natural language.
+**Note:** `enrich: true` in these examples is inert since BL-0424 — webhook text is never rephrased by the LLM (that step is reserved for server-vouched technical alerts). Write the natural-language wording in the HA template itself.
 
 ---
 

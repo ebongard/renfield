@@ -433,7 +433,7 @@ Home Assistant Automation → POST /api/notifications/webhook
 - **Webhook-Empfang**: `POST /api/notifications/webhook` mit Bearer Token Authentifizierung
 - **Semantische Deduplizierung**: Ähnliche Benachrichtigungen innerhalb eines Zeitfensters werden zusammengefasst (pgvector, opt-in)
 - **Urgency-Klassifikation**: Automatische Dringlichkeitseinstufung (opt-in)
-- **LLM-Enrichment**: Benachrichtigungen werden durch LLM-Kontext angereichert (opt-in)
+- **LLM-Enrichment**: technische Meldungen (`ops_alert`: MCP-Health, geplante Aufgaben, Paperless-Index) werden durch LLM-Kontext angereichert (opt-in; serverseitig verbürgt + `PROACTIVE_LLM_EVENT_TYPES` — persönliche und Webhook-Meldungen bleiben wörtlich, BL-0424)
 - **Suppressions**: Nutzer können bestimmte Benachrichtigungs-Typen unterdrücken (semantisch)
 - **Feedback Learning**: System lernt aus Nutzer-Interaktionen mit Benachrichtigungen (opt-in)
 - **Privacy-aware TTS / Multi-Room-Auslieferung**: Benachrichtigungen werden präsenzabhängig im aktiven Raum vorgelesen; das `privacy`-Feld (public/personal/confidential) steuert, wer sie hört (Presence Detection + Audio Output Routing).
