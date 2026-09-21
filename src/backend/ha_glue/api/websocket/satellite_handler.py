@@ -374,23 +374,37 @@ def _warn_once_about_device_account(reason: str) -> None:
 async def _load_device_account() -> tuple[int, list[str]] | None:
     """The configured device account as (user_id, permissions), or None."""
     from sqlalchemy import select
+    from sqlalchemy.orm import selectinload
 
     from models.database import User
 
     username = settings.satellite_device_account.strip()
     try:
+        # `role` EAGER and everything inside the session: get_permissions()
+        # reads that relationship, and an async session raises MissingGreenlet
+        # on a lazy load — which the except below would turn into a silent
+        # total denial of every anonymous turn.
         async with AsyncSessionLocal() as db:
-            result = await db.execute(select(User).where(User.username == username))
+            result = await db.execute(
+                select(User)
+                .options(selectinload(User.role))
+                .where(User.username == username)
+            )
             usr = result.scalar_one_or_none()
-        if usr is None:
-            _warn_once_about_device_account("kein Nutzer mit diesem Namen")
-            return None
-        if not usr.is_device_account:
-            # A person's account is never borrowed by a device: without the flag
-            # the room would write into that person's memory and presence.
-            _warn_once_about_device_account("der Nutzer ist kein Gerätekonto")
-            return None
-        return usr.id, usr.get_permissions()
+            if usr is None:
+                _warn_once_about_device_account("kein Nutzer mit diesem Namen")
+                return None
+            if not usr.is_device_account:
+                # A person's account is never borrowed by a device: without the
+                # flag the room would write into that person's memory and
+                # presence.
+                _warn_once_about_device_account("der Nutzer ist kein Gerätekonto")
+                return None
+            # Re-arm the warning: a corrected setting (or a restored account)
+            # must be able to warn again if it breaks a second time.
+            global _device_account_warned
+            _device_account_warned = False
+            return usr.id, usr.get_permissions()
     except Exception as e:  # noqa: BLE001 — a DB hiccup must not fail open
         logger.warning(f"⚠️ Gerätekonto konnte nicht geladen werden: {e}")
         return None
@@ -1079,9 +1093,11 @@ async def satellite_websocket(
                     # Load user permissions from speaker recognition
                     sat_user_permissions = None
                     sat_user_id = None
+                    sat_is_device_account = False
                     if speaker_name and (settings.auth_enabled or ha_glue_settings.presence_enabled):
                         try:
                             from sqlalchemy import select
+                            from sqlalchemy.orm import selectinload
 
                             from models.database import Speaker, User
                             async with AsyncSessionLocal() as perm_db:
@@ -1090,14 +1106,29 @@ async def satellite_websocket(
                                 )
                                 spk = spk_result.scalar_one_or_none()
                                 if spk:
-                                    # Speaker → User via User.speaker_id FK
+                                    # Speaker → User via User.speaker_id FK.
+                                    # `role` EAGER: get_permissions() reads that
+                                    # relationship, and an async session raises
+                                    # MissingGreenlet on a lazy load — the
+                                    # except below would swallow it and leave
+                                    # the recognised speaker without id or
+                                    # permissions (no presence, no extraction).
                                     usr_result = await perm_db.execute(
-                                        select(User).where(User.speaker_id == spk.id)
+                                        select(User)
+                                        .options(selectinload(User.role))
+                                        .where(User.speaker_id == spk.id)
                                     )
                                     usr = usr_result.scalar_one_or_none()
                                     if usr:
                                         sat_user_permissions = usr.get_permissions()
                                         sat_user_id = usr.id
+                                        # The flag is the contract wherever the
+                                        # identity comes from: linking a speaker
+                                        # to a device account must not smuggle
+                                        # extraction and presence back in.
+                                        sat_is_device_account = bool(
+                                            usr.is_device_account
+                                        )
                         except Exception as e:
                             logger.warning(f"⚠️ Failed to load satellite user permissions: {e}")
                             if settings.auth_enabled:
@@ -1110,7 +1141,6 @@ async def satellite_websocket(
                     # with the anonymous grant list — instead of the fail-open
                     # None. Nothing changes while auth is off; see
                     # resolve_anonymous_identity().
-                    sat_is_device_account = False
                     if sat_user_permissions is None:
                         anon = await resolve_anonymous_identity()
                         sat_user_id = anon.user_id

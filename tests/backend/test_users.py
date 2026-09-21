@@ -407,3 +407,116 @@ class TestSpeakerLinking:
         from sqlalchemy.exc import IntegrityError
         with pytest.raises(IntegrityError):
             await db_session.commit()
+
+
+class TestDeviceAccountFlag:
+    """`users.is_device_account` (auth-on cutover D-4b) must be settable through
+    the admin API — the satellite gates read the flag, and without a route the
+    only way to arm the feature would be a hand-written UPDATE against the
+    production database. Route functions are called directly, like the unlock
+    tests above."""
+
+    @pytest.mark.database
+    async def test_create_can_mint_a_device_account(
+        self, db_session: AsyncSession, test_role: Role
+    ):
+        from api.routes import users as users_routes
+
+        body = await users_routes.create_user(
+            request=users_routes.CreateUserRequest(
+                username="geraet-haushalt",
+                password="SecurePass123!",
+                role_id=test_role.id,
+                is_device_account=True,
+            ),
+            db=db_session,
+            current_user=MagicMock(
+                username="admin", id=1, role=test_role,
+                get_permissions=lambda: test_role.permissions,
+            ),
+        )
+        assert body.is_device_account is True
+        row = (
+            await db_session.execute(
+                select(User).where(User.username == "geraet-haushalt")
+            )
+        ).scalar_one()
+        assert row.is_device_account is True
+
+    @pytest.mark.database
+    async def test_create_defaults_to_a_person(
+        self, db_session: AsyncSession, test_role: Role
+    ):
+        from api.routes import users as users_routes
+
+        body = await users_routes.create_user(
+            request=users_routes.CreateUserRequest(
+                username="mensch", password="SecurePass123!", role_id=test_role.id
+            ),
+            db=db_session,
+            current_user=MagicMock(
+                username="admin", id=1, role=test_role,
+                get_permissions=lambda: test_role.permissions,
+            ),
+        )
+        assert body.is_device_account is False
+
+    @pytest.mark.database
+    async def test_update_can_flag_and_unflag(
+        self, db_session: AsyncSession, test_user: User
+    ):
+        from api.routes import users as users_routes
+
+        admin = MagicMock(username="admin", id=test_user.id + 1000)
+        body = await users_routes.update_user(
+            user_id=test_user.id,
+            request=users_routes.UpdateUserRequest(is_device_account=True),
+            db=db_session,
+            current_user=admin,
+        )
+        assert body.is_device_account is True
+        body = await users_routes.update_user(
+            user_id=test_user.id,
+            request=users_routes.UpdateUserRequest(is_device_account=False),
+            db=db_session,
+            current_user=admin,
+        )
+        assert body.is_device_account is False
+
+    @pytest.mark.database
+    async def test_update_without_the_field_leaves_it_alone(
+        self, db_session: AsyncSession, test_user: User
+    ):
+        from api.routes import users as users_routes
+
+        test_user.is_device_account = True
+        await db_session.commit()
+        body = await users_routes.update_user(
+            user_id=test_user.id,
+            request=users_routes.UpdateUserRequest(first_name="Neu"),
+            db=db_session,
+            current_user=MagicMock(username="admin", id=test_user.id + 1000),
+        )
+        assert body.is_device_account is True
+
+    @pytest.mark.database
+    async def test_you_cannot_turn_your_own_account_into_a_device(
+        self, db_session: AsyncSession, test_user: User
+    ):
+        """A device account collects no memories and books no presence —
+        flagging the account you are logged in with would silently stop your
+        own traces."""
+        from fastapi import HTTPException
+
+        from api.routes import users as users_routes
+
+        with pytest.raises(HTTPException) as exc:
+            await users_routes.update_user(
+                user_id=test_user.id,
+                request=users_routes.UpdateUserRequest(is_device_account=True),
+                db=db_session,
+                current_user=MagicMock(username=test_user.username, id=test_user.id),
+            )
+        assert exc.value.status_code == 400
+        await db_session.refresh(test_user)
+        assert test_user.is_device_account is False

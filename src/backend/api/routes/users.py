@@ -84,6 +84,12 @@ class UserResponse(BaseModel):
     role_name: str
     permissions: list[str]
     is_active: bool
+    # A DEVICE account, not a person (auth-on cutover D-4b): the identity an
+    # unrecognised satellite voice runs as. Gates on the satellite path read
+    # this flag, never a username — so it has to be settable somewhere, and an
+    # admin route is that somewhere (the alternative was a hand-written UPDATE
+    # against the production DB).
+    is_device_account: bool = False
     personality_style: str = "freundlich"
     personality_prompt: str | None = None
     speaker_id: int | None
@@ -116,6 +122,7 @@ class CreateUserRequest(BaseModel):
     last_name: str | None = Field(None, max_length=100)
     role_id: int
     is_active: bool = True
+    is_device_account: bool = False
     personality_style: str = Field("freundlich", max_length=20)
     personality_prompt: str | None = None
 
@@ -128,6 +135,7 @@ class UpdateUserRequest(BaseModel):
     last_name: str | None = None
     role_id: int | None = None
     is_active: bool | None = None
+    is_device_account: bool | None = None
     personality_style: str | None = Field(None, max_length=20)
     personality_prompt: str | None = None
 
@@ -203,6 +211,7 @@ async def list_users(
                 role_name=user.role.name if user.role else "Unknown",
                 permissions=user.get_permissions(),
                 is_active=user.is_active,
+                is_device_account=bool(user.is_device_account),
                 personality_style=user.personality_style,
                 personality_prompt=user.personality_prompt,
                 speaker_id=user.speaker_id,
@@ -254,6 +263,7 @@ async def get_user(
         role_name=user.role.name if user.role else "Unknown",
         permissions=user.get_permissions(),
         is_active=user.is_active,
+        is_device_account=bool(user.is_device_account),
         personality_style=user.personality_style,
         personality_prompt=user.personality_prompt,
         speaker_id=user.speaker_id,
@@ -323,6 +333,7 @@ async def create_user(
         password_hash=get_password_hash(request.password),
         role_id=request.role_id,
         is_active=request.is_active,
+        is_device_account=request.is_device_account,
         personality_style=request.personality_style,
         personality_prompt=request.personality_prompt,
     )
@@ -344,6 +355,7 @@ async def create_user(
         role_name=role.name,
         permissions=user.get_permissions(),
         is_active=user.is_active,
+        is_device_account=bool(user.is_device_account),
         personality_style=user.personality_style,
         personality_prompt=user.personality_prompt,
         speaker_id=user.speaker_id,
@@ -466,6 +478,17 @@ async def update_user(
                     )
         user.is_active = request.is_active
 
+    # Mark (or unmark) the account as a device identity. Never your own: a
+    # device account collects no memories and books no presence, so flagging
+    # the account you are logged in with would silently stop your own traces.
+    if request.is_device_account is not None:
+        if current_user and user.id == current_user.id:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Cannot mark your own account as a device account",
+            )
+        user.is_device_account = request.is_device_account
+
     # Update personality fields
     if request.personality_style is not None:
         user.personality_style = request.personality_style
@@ -488,6 +511,7 @@ async def update_user(
         role_name=user.role.name if user.role else "Unknown",
         permissions=user.get_permissions(),
         is_active=user.is_active,
+        is_device_account=bool(user.is_device_account),
         personality_style=user.personality_style,
         personality_prompt=user.personality_prompt,
         speaker_id=user.speaker_id,
@@ -700,6 +724,7 @@ async def link_speaker(
         role_name=user.role.name if user.role else "Unknown",
         permissions=user.get_permissions(),
         is_active=user.is_active,
+        is_device_account=bool(user.is_device_account),
         personality_style=user.personality_style,
         personality_prompt=user.personality_prompt,
         speaker_id=user.speaker_id,
@@ -755,6 +780,7 @@ async def unlink_speaker(
         role_name=user.role.name if user.role else "Unknown",
         permissions=user.get_permissions(),
         is_active=user.is_active,
+        is_device_account=bool(user.is_device_account),
         personality_style=user.personality_style,
         personality_prompt=user.personality_prompt,
         speaker_id=None,

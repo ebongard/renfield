@@ -138,6 +138,85 @@ def _session_yielding(scalar_result):
     return lambda: _Session()
 
 
+@pytest.mark.postgres
+@pytest.mark.asyncio
+class TestAgainstARealSession:
+    """The stubs above cannot see the trap this class exists for:
+    `get_permissions()` reads the `role` RELATIONSHIP, so touching it after the
+    session closed raises MissingGreenlet — which the `except` in
+    `_load_device_account` would turn into a silent total denial of every
+    anonymous turn. Only a real async session proves the load happens inside."""
+
+    @staticmethod
+    async def _seed(engine, *, is_device: bool):
+        from sqlalchemy.ext.asyncio import async_sessionmaker
+
+        from models.database import Role, User
+
+        maker = async_sessionmaker(engine, expire_on_commit=False)
+        async with maker() as db:
+            role = Role(name="geraetekonto", permissions=["mcp.homeassistant"], is_system=False)
+            db.add(role)
+            await db.flush()
+            usr = User(
+                username="haushalt",
+                password_hash="x",
+                role_id=role.id,
+                is_device_account=is_device,
+            )
+            db.add(usr)
+            await db.commit()
+            return maker, usr.id
+
+    async def test_permissions_are_loaded_before_the_session_closes(
+        self, pg_async_engine, monkeypatch, cfg
+    ):
+        maker, uid = await self._seed(pg_async_engine, is_device=True)
+        monkeypatch.setattr(sh, "AsyncSessionLocal", maker)
+        cfg(auth=True, device="haushalt", perms="mcp.dlna")
+        assert await sh._load_device_account() == (uid, ["mcp.homeassistant"])
+        # …and through the whole resolution, so the role — not the anonymous
+        # list — is what the turn runs with.
+        assert await sh.resolve_anonymous_identity() == (uid, ["mcp.homeassistant"], True)
+
+    async def test_an_unflagged_person_is_refused_against_the_real_row(
+        self, pg_async_engine, monkeypatch, cfg
+    ):
+        maker, _ = await self._seed(pg_async_engine, is_device=False)
+        monkeypatch.setattr(sh, "_device_account_warned", False)
+        monkeypatch.setattr(sh, "AsyncSessionLocal", maker)
+        cfg(auth=True, device="haushalt", perms="mcp.dlna")
+        assert await sh.resolve_anonymous_identity() == (None, [], False)
+
+    async def test_why_the_role_must_be_eager_everywhere(self, pg_async_engine):
+        """`get_permissions()` reads `User.role`. An async session cannot lazy-
+        load, so a plain `select(User)` makes it raise — inside the session too.
+        Both permission lookups in this handler (device account AND recognised
+        speaker) swallow exceptions, so the failure mode is not a stack trace:
+        it is a speaker who silently gets no id and no permissions — no
+        presence, no extraction, and under auth-on no rights at all."""
+        from sqlalchemy import select
+        from sqlalchemy.orm import selectinload
+
+        from models.database import User
+
+        maker, _ = await self._seed(pg_async_engine, is_device=True)
+        async with maker() as db:
+            usr = (
+                await db.execute(select(User).where(User.username == "haushalt"))
+            ).scalar_one_or_none()
+            with pytest.raises(Exception, match="greenlet"):
+                usr.get_permissions()
+            usr = (
+                await db.execute(
+                    select(User)
+                    .options(selectinload(User.role))
+                    .where(User.username == "haushalt")
+                )
+            ).scalar_one_or_none()
+            assert usr.get_permissions() == ["mcp.homeassistant"]
+
+
 @pytest.mark.unit
 class TestExtractionGate:
     def test_a_device_account_never_extracts(self, monkeypatch):
@@ -198,22 +277,99 @@ class TestWiring:
         # … and the flag reaches the extraction gate.
         assert "is_device_account=sat_is_device_account" in src
 
+    def test_both_permission_lookups_load_the_role_eagerly(self):
+        # The lazy load raises inside the session too (see the Postgres test
+        # above) and both call sites swallow it — a recognised speaker would
+        # silently lose id and permissions. Pin the eager load in both.
+        assert "selectinload(User.role)" in inspect.getsource(sh._load_device_account)
+        assert "selectinload(User.role)" in inspect.getsource(sh.satellite_websocket)
+
     def test_presence_is_never_booked_for_a_device(self):
         src = inspect.getsource(sh.satellite_websocket)
         head = src.index("register_voice_presence")
         gate = src.rindex("not sat_is_device_account", 0, head)
         assert "presence_enabled" in src[gate:head]
 
-    def test_a_denied_device_turn_is_spoken_not_swallowed(self):
-        # `[]` denies every tool; the refusal path from P0 Nr. 2 is what makes
-        # that audible instead of a silently wrong answer.
+    def test_a_recognised_speaker_on_a_device_account_stays_a_device(self):
+        # The flag is the contract wherever the identity came from: linking a
+        # speaker to the device account must not smuggle extraction and
+        # presence back in through the speaker branch.
         src = inspect.getsource(sh.satellite_websocket)
-        assert 'action_result.get("permission_denied")' in src
+        assert "sat_is_device_account = bool(" in src
+        assert src.index("sat_is_device_account = bool(") < src.index(
+            "anon = await resolve_anonymous_identity()"
+        )
+
+
+def _service_with_device_flag(flag):
+    """ConversationMemoryService whose only DB answer is `flag` (the
+    is_device_account scalar, or None for "no such user")."""
+    from services.conversation_memory_service import ConversationMemoryService
+
+    class _Result:
+        @staticmethod
+        def scalar_one_or_none():
+            return flag
+
+    class _DB:
+        async def execute(self, *_a, **_kw):
+            return _Result()
+
+    svc = ConversationMemoryService.__new__(ConversationMemoryService)
+    svc.db = _DB()
+    return svc
 
 
 @pytest.mark.unit
+@pytest.mark.asyncio
 class TestMemoryServiceGate:
-    def test_both_extraction_write_paths_check_the_flag(self):
+    async def test_a_device_identity_may_not_rewrite_an_existing_memory(self, monkeypatch):
+        from services import conversation_memory_service as cms
+
+        monkeypatch.setattr(cms.settings, "auth_enabled", True)
+        svc = _service_with_device_flag(True)
+        assert await svc._device_account_write_denied("UPDATE", 7, 42) is True
+        # …and the v1 path therefore stops seeing it as an owner, which makes
+        # the contradiction resolver fall back to ADD instead of mutating.
+        assert await svc._extraction_target_owned(7, 42) is False
+
+    async def test_a_person_is_untouched(self, monkeypatch):
+        from services import conversation_memory_service as cms
+
+        monkeypatch.setattr(cms.settings, "auth_enabled", True)
+        svc = _service_with_device_flag(False)
+        assert await svc._device_account_write_denied("DELETE", 7, 42) is False
+
+    async def test_a_user_id_pointing_at_no_row_is_not_a_device(self, monkeypatch):
+        # Deleted account, stale id: "unknown" must not read as "device".
+        from services import conversation_memory_service as cms
+
+        monkeypatch.setattr(cms.settings, "auth_enabled", True)
+        svc = _service_with_device_flag(None)
+        assert await svc._device_account_write_denied("UPDATE", 7, 999) is False
+
+    async def test_auth_off_asks_the_database_nothing(self, monkeypatch):
+        # Single trust domain: no gate, and no extra query per write either.
+        from services import conversation_memory_service as cms
+
+        monkeypatch.setattr(cms.settings, "auth_enabled", False)
+
+        class _Boom:
+            async def execute(self, *_a, **_kw):
+                raise AssertionError("must not query while auth is off")
+
+        svc = _service_with_device_flag(True)
+        svc.db = _Boom()
+        assert await svc._device_account_write_denied("UPDATE", 7, 42) is False
+
+    async def test_an_unidentified_turn_is_left_to_the_other_gate(self, monkeypatch):
+        from services import conversation_memory_service as cms
+
+        monkeypatch.setattr(cms.settings, "auth_enabled", True)
+        svc = _service_with_device_flag(True)
+        assert await svc._device_account_write_denied("UPDATE", 7, None) is False
+
+    async def test_all_three_write_paths_consult_the_gate(self):
         from services import conversation_memory_service as cms
 
         for fn in (
@@ -222,14 +378,3 @@ class TestMemoryServiceGate:
             cms.ConversationMemoryService._extraction_target_owned,
         ):
             assert "_device_account_write_denied" in inspect.getsource(fn), fn.__name__
-
-    def test_the_gate_reads_the_column_not_a_name(self):
-        from services import conversation_memory_service as cms
-
-        src = inspect.getsource(
-            cms.ConversationMemoryService._device_account_write_denied
-        )
-        assert "User.is_device_account" in src
-        assert "username" not in src
-        # Auth off is a single trust domain — unchanged there.
-        assert "not settings.auth_enabled" in src

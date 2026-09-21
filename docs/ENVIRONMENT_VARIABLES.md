@@ -1165,11 +1165,16 @@ SATELLITE_ANONYMOUS_PERMISSIONS=""
 # `users.is_device_account` sperrt Gedächtnis-Extraktion und Präsenzbuchung,
 # und ein erkannter Sprecher ersetzt das Gerätekonto im Zug.
 # LEER (Vorgabe) = kein Gerätekonto, heutiges Verhalten. Greift nur mit
-# AUTH_ENABLED=true. Der genannte Nutzer MUSS das Kennzeichen tragen — sonst
-# bleibt der Zug anonym (das Konto einer Person wird nie von einem Gerät
-# geliehen). Ein gesetzter, aber nicht auflösbarer Name (Tippfehler, Konto
-# gelöscht, DB-Aussetzer) VERWEIGERT den Zug hörbar statt still zu verbreitern;
-# das Backend warnt einmalig.
+# AUTH_ENABLED=true. Der genannte Nutzer MUSS das Kennzeichen tragen — das Konto
+# einer Person wird nie von einem Gerät geliehen. JEDER nicht auflösbare Fall
+# (Name unbekannt, Nutzer ohne Kennzeichen, DB-Aussetzer) VERWEIGERT den Zug
+# hörbar, statt still auf die Liste oben zurückzufallen; das Backend warnt
+# dabei einmalig. Ein falsch geschriebener Kontoname legt den unerkannten
+# Sprachbetrieb also still — gewollt: eine laute Absage ist besser als eine
+# stille Verbreiterung der Rechte.
+# Das Kennzeichen setzt der Admin bei der Kontoanlage
+# (`POST /api/users` mit `is_device_account: true`) oder später
+# (`PUT /api/users/{id}`); es steht auch in der Antwort jedes Nutzer-Endpunkts.
 SATELLITE_DEVICE_ACCOUNT=""
 
 # Stop-gap aus der chirurgischen H1-Mitigation (greift nur wenn ENROLLMENT aus):

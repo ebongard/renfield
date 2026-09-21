@@ -1613,8 +1613,12 @@ class Settings(BaseSettings):
     # variant. What a device must never do is accumulate a person's traces:
     # `users.is_device_account` blocks memory extraction and presence booking,
     # and a recognised speaker replaces it inside the turn. Empty = no device
-    # account (today's behaviour). The named user must carry the flag, else the
-    # turn stays anonymous — a person's account is never borrowed by a device.
+    # account (today's behaviour). The named user must carry the flag — a
+    # person's account is never borrowed by a device. Every unresolvable case
+    # (unknown name, user without the flag, DB hiccup) REFUSES the turn audibly
+    # instead of quietly falling back to the list above, with one warning. So a
+    # misspelled account name silences unrecognised voices: deliberate, because
+    # a loud refusal beats a silent widening of what any voice may do.
     satellite_device_account: str = ""
 
     # C1 binary Opus transport for satellite audio (docs/design/

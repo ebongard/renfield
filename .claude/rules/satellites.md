@@ -30,8 +30,12 @@ Long form: `docs/design/ble-presence-improvement.md`, `docs/SATELLITE_ACOUSTIC_C
   list below is not read; otherwise `SATELLITE_ANONYMOUS_PERMISSIONS` (dark) supplies a POSITIVE list over ALL MCP
   servers — an unnamed server is denied, read-only ones too. Both empty = unchanged; neither applies while auth is off.
 - A device account is an identity, not a person: `users.is_device_account` (the flag is the contract, never the name)
-  blocks memory extraction and presence booking, and a recognised speaker replaces it inside the turn. A configured
-  but unresolvable device account denies the turn — widening silently would be worse than a spoken refusal.
+  blocks memory extraction and presence booking wherever the identity came from — the speaker lookup reads it too, so
+  linking a speaker to a device account cannot smuggle them back in. A configured device account that does not resolve
+  (unknown name, user without the flag, DB hiccup) DENIES the turn; widening silently would be worse than a refusal.
+- **`get_permissions()` needs `selectinload(User.role)`.** It reads the `role` relationship, and an async session
+  raises `MissingGreenlet` on a lazy load — inside the session too. Both permission lookups swallow exceptions, so the
+  failure mode is not a traceback but a recognised speaker with no id and no rights: no presence, no extraction.
 - A denial is marked `permission_denied` and SPOKEN; swallowing it would let the model answer the refused question.
 
 ## Voice turn

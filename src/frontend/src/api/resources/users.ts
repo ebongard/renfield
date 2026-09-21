@@ -21,6 +21,12 @@ export interface AdminUser {
   last_login?: string | null;
   /** A login lockout (per-IP or username-wide) is currently held for this user. */
   locked_out?: boolean;
+  /**
+   * A DEVICE account, not a person (auth-on cutover D-4b): the identity an
+   * unrecognised satellite voice runs as. It reads and acts, but collects no
+   * memories and books no presence. Set through create/update; no UI yet.
+   */
+  is_device_account?: boolean;
 }
 
 export interface RoleSummary {
