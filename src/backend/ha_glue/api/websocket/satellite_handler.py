@@ -285,6 +285,26 @@ async def _reject_derostered_heartbeat(websocket, satellite_id: str, manager) ->
     return True
 
 
+def anonymous_permissions() -> list[str] | None:
+    """The grant list an UNRECOGNISED satellite voice runs with, or None.
+
+    None means "no permission model in effect" — the #690 fail-open every MCP
+    and internal-tool gate honours so spoken commands work. That is right for a
+    single-trust-domain household (`AUTH_ENABLED=false`) and wrong once auth is
+    on, where it would hand any voice in the house every tool the agent has.
+
+    Returns None (today's behaviour, byte-identical) when auth is off or the
+    setting is empty; otherwise the parsed list. An empty LIST would deny
+    everything, so a whitespace-only setting is treated as unset rather than as
+    a lockout of the house.
+    """
+    if not settings.auth_enabled:
+        return None
+    grants = [p.strip() for p in settings.satellite_anonymous_permissions.split(",")]
+    grants = [p for p in grants if p]
+    return grants or None
+
+
 def _handshake_identity_mismatch(auth_result: dict | None, satellite_id: str) -> bool:
     """True when the WS handshake authenticated a specific satellite (PSK
     strategy, ``auth_result["satellite_id"]``) and the register frame names a
@@ -959,6 +979,13 @@ async def satellite_websocket(
                                         sat_user_id = usr.id
                         except Exception as e:
                             logger.warning(f"⚠️ Failed to load satellite user permissions: {e}")
+
+                    # No recognised speaker (or none linked to an account): run
+                    # the turn with the configured anonymous grant list instead
+                    # of the fail-open None. Nothing changes while auth is off
+                    # or the list is unset — see anonymous_permissions().
+                    if sat_user_permissions is None:
+                        sat_user_permissions = anonymous_permissions()
 
                     # Associate conversation with speaker (for handoff lookup)
                     if spk and satellite_db_session_id:

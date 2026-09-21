@@ -1127,6 +1127,23 @@ SATELLITE_ENROLLMENT_AUTOFLIP_ENABLED=false
 # und ein geprüfter Verbindungsaufbau VOR AUTH_ENABLED=true — `auth_enabled`
 # ohne Token läuft in 401 → 4001 → Neustart-Schleife.
 SATELLITE_PSK_HANDSHAKE_ENABLED=false
+# Rechte eines Satelliten-Zuges OHNE erkannten Sprecher (auth-on; Entwurf
+# docs/design/household-auth-on-cutover.md §6.1 Nr. 2, D-4a). Heute trägt ein
+# solcher Zug `user_permissions=None` — jedes MCP- und internal.*-Tor liest das
+# als „kein Rechtemodell in Kraft" (bewusstes #690-Fail-Open, damit gesprochene
+# Befehle funktionieren). Unter auth-on hätte damit jede unerkannte Stimme JEDES
+# Werkzeug. Diese Kommaliste ersetzt das None durch eine konkrete Menge:
+# Haussteuerung bleibt, Admin- und Schreibwerkzeuge fallen weg.
+# LEER (Vorgabe) = unverändert None; die Ersetzung greift NUR mit
+# AUTH_ENABLED=true — auth-off ist so oder so byte-identisch. Eine Liste, die nur
+# aus Trennzeichen besteht, gilt als leer (eine Aussperrung des Hauses braucht
+# eine ausdrückliche Entscheidung, kein verirrtes Komma).
+# Empfehlung (D-4a): HA-MCP bietet ausschließlich Assist-Intents (Licht, Rollos,
+# Medien, Lautstärke, Timer; KEIN Service-Aufruf), daher genügt der
+# Konventions-Grant je Server. `ha.control` hält Ansagen/Durchsagen offen.
+SATELLITE_ANONYMOUS_PERMISSIONS=""
+#   Empfohlener Wert beim Cutover:
+#   mcp.homeassistant,mcp.dlna,mcp.radio,mcp.jellyfin,mcp.weather,rooms.read,ha.control
 
 # Stop-gap aus der chirurgischen H1-Mitigation (greift nur wenn ENROLLMENT aus):
 # Komma-Liste der satellite_ids, die per-Person-IRKs empfangen dürfen. Leer =

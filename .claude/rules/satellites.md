@@ -23,6 +23,15 @@ Long form: `docs/design/ble-presence-improvement.md`, `docs/SATELLITE_ACOUSTIC_C
   a buffer capped at 500 chunks (40.0 s) was used, so a limit above 40 s silently never fired.
 - Never commit wake-word models, device MACs/IRKs, enrollment tokens or ambient captures (`data/wakeword-ambient/`).
 
+## Permissions on a voice turn
+- A turn with a RECOGNISED speaker runs with that user's permissions (`speaker → users.speaker_id`); one without
+  carries `user_permissions=None`, which every MCP / `internal.*` gate reads as "no permission model in effect"
+  (the deliberate #690 fail-open so spoken commands work). Under `AUTH_ENABLED=true` that would hand any voice every
+  tool — `SATELLITE_ANONYMOUS_PERMISSIONS` (dark, empty = unchanged) replaces the None with a grant list
+  (`satellite_handler.anonymous_permissions()`); the substitution never happens while auth is off.
+- HA device control goes through the **MCP** path (`mcp.homeassistant`, Assist intents only — no service call), so
+  `ha.control` alone actuates nothing there; it gates `internal.announce_in_room` / `broadcast_announcement`.
+
 ## Voice turn
 - A turn ends on VAD silence after the grace period: `vad.min_listening_seconds` 2.0 s + `silence_duration_ms` 1.2 s,
   capped by `vad.max_recording_seconds` (fleet 60 s). `_recorded_chunks` and `vad.reset()` are zeroed at EVERY
