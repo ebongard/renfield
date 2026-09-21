@@ -640,4 +640,4 @@ async def device_websocket(
             wakeword_config_manager = get_wakeword_config_manager()
             wakeword_config_manager.unsubscribe(websocket)
 
-            await device_manager.unregister(device_id)
+            await device_manager.unregister(device_id, websocket=websocket)

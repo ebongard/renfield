@@ -1644,8 +1644,10 @@ class Settings(BaseSettings):
     # WebSocket Protocol
     ws_protocol_version: str = "1.0"
 
-    # Device/Session Timeouts
-    # Sicherungsnetz für ein HÄNGENDES Gerät, kein zweiter Aufnahme-Deckel.
+    # Satellite Session Timeouts — gelesen NUR vom SatelliteManager (#1209).
+    # Browser-/Web-Geräte (DeviceManager) haben KEINEN Kehraus mehr: sie
+    # verlassen die Liste allein mit dem Socket-Schluss (BL-0502, #1277).
+    # Sicherungsnetz für einen HÄNGENDEN Satelliten, kein zweiter Aufnahme-Deckel.
     # Die bindende Aufnahmegrenze sitzt auf dem Satelliten
     # (vad.max_recording_seconds: Flotte 60s, Code-Vorgabe 15s) und beendet die
     # Aufnahme über `audio_end`, womit die Sitzung LISTENING verlässt. Dieser
@@ -1656,7 +1658,7 @@ class Settings(BaseSettings):
     # seit er wirkt, waren die früheren 30s zu knapp — sie lägen inzwischen sogar
     # UNTER der Flottengrenze von 60s.
     device_session_timeout: float = 120.0  # Backstop, siehe oben
-    device_heartbeat_timeout: float = 60.0  # Disconnect after no heartbeat for this duration
+    device_heartbeat_timeout: float = 60.0  # Satellit ohne Heartbeat so lange → getrennt (nur SatelliteManager)
 
     # HA / Frigate integration timeouts moved to ha_glue/utils/config.py.
     n8n_timeout: float = Field(default=30.0, ge=1.0, le=300.0)

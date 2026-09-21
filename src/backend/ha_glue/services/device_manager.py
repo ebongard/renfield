@@ -240,18 +240,32 @@ class DeviceManager:
 
             return True
 
-    async def unregister(self, device_id: str):
-        """Remove a device from the registry"""
+    async def unregister(self, device_id: str, websocket: WebSocket | None = None):
+        """Remove a device from the registry.
+
+        Socket close is the ONLY way a device leaves the roster (no clock-based
+        sweep), so this must be safe under a FAST RECONNECT: a browser that
+        re-opens with its persisted device id can run ``register`` BEFORE the
+        dying socket's ``finally`` reaches this call. The stored entry then
+        belongs to the NEW socket — deleting it would evict a live device. Pass
+        the caller's ``websocket`` and the identity guard leaves it alone;
+        ``websocket=None`` keeps the unconditional behaviour for callers
+        without one. Mirrors ``SatelliteManager.unregister``.
+        """
         async with self._lock:
-            if device_id in self.devices:
-                device = self.devices[device_id]
+            device = self.devices.get(device_id)
+            if device is None:
+                return
+            if websocket is not None and device.websocket is not websocket:
+                # A newer connection already replaced this entry — leave it.
+                return
 
-                # End any active session
-                if device.current_session_id:
-                    await self._end_session_internal(device.current_session_id)
+            # End any active session
+            if device.current_session_id:
+                await self._end_session_internal(device.current_session_id)
 
-                del self.devices[device_id]
-                logger.info(f"👋 Device unregistered: {device_id}")
+            del self.devices[device_id]
+            logger.info(f"👋 Device unregistered: {device_id}")
 
     def set_room_id(self, device_id: str, room_id: int):
         """Set the database room ID for a device after DB sync"""
