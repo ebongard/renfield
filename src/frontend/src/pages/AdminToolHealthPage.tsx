@@ -79,7 +79,7 @@ export default function AdminToolHealthPage() {
                   {row.tool_name}
                 </td>
                 <td className="px-3 py-2 text-right text-gray-700 dark:text-gray-300">
-                  {row.user_id ?? '—'}
+                  {row.user_id ?? t('selfLearning.toolHealth.systemBucket')}
                 </td>
                 <td className="px-3 py-2 text-right text-emerald-700 dark:text-emerald-300 font-medium">
                   {row.success_count}

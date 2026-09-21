@@ -1942,6 +1942,18 @@ class ToolOutcomeStat(Base):
     __table_args__ = (
         UniqueConstraint("user_id", "tool_name", name="uq_tool_outcome_user_tool"),
         Index("idx_tool_outcome_user_tool", "user_id", "tool_name"),
+        # The SYSTEM bucket (BL-0233): rows with user_id NULL hold the counters of
+        # anonymous turns (satellite/device turns with no identified speaker — most
+        # household voice turns). Postgres treats NULLs as distinct in the UNIQUE
+        # constraint above, so a NULL-keyed upsert could never match; this partial
+        # unique index makes (tool_name) unique WITHIN the bucket and is the
+        # conflict target the service upserts against.
+        Index(
+            "uq_tool_outcome_system_tool", "tool_name",
+            unique=True,
+            postgresql_where=sa_text("user_id IS NULL"),
+            sqlite_where=sa_text("user_id IS NULL"),
+        ),
     )
 
     user = relationship("User", foreign_keys=[user_id])

@@ -1805,9 +1805,16 @@ Beim Prompt-Build wird fuer den aktuellen User die Liste der Tools geladen, die 
 
 Counter sind **pro User**, nicht global — ein Tool das fuer Alice gut funktioniert aber bei Bob immer scheitert (Permission-Gate fehlt) verschmutzt nicht Alices Prompt.
 
+**System-Eimer (seit 2026-09-21, BL-0233):** anonyme Züge (`user_id=None` — Satelliten-/Geräte-Züge
+ohne erkannten Sprecher, im Haushalt die Mehrzahl) zählen in **eine** Zeile je Tool mit `user_id IS NULL`
+(partieller Unique-Index `uq_tool_outcome_system_tool`, Migration `pc20260921`). Vorher waren sie ein
+No-op, und Kiosk wie Admin-Konsole blieben auf einer auth-off-Instanz leer. Ein anonymer Zug bekommt
+seine Warnungen aus demselben Eimer; Nutzerzeilen und Eimer mischen sich nicht.
+
 Admin-only Endpunkte:
-- `GET /api/tool-health` — Listing der jüngsten (user, tool) Stats
+- `GET /api/tool-health` — Listing der jüngsten (user, tool) Stats (Eimer-Zeilen mit `user_id: null`)
 - `GET /api/tool-health/warnings/{user_id}` — Vorschau auf den Warnungs-Block den der User aktuell sehen wuerde
+- `GET /api/tool-health/warnings/system` — dieselbe Vorschau für anonyme Züge (System-Eimer)
 
 ---
 

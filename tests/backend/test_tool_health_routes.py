@@ -139,6 +139,52 @@ class TestAuthGate:
         )
         assert resp.status_code in (401, 403)
 
+    async def test_system_warnings_require_admin(
+        self, async_client: AsyncClient, auth_as_regular,
+    ):
+        resp = await async_client.get("/api/tool-health/warnings/system")
+        assert resp.status_code in (401, 403)
+
+
+# ================================================== SYSTEM BUCKET (BL-0233)
+@pytest.mark.asyncio
+class TestSystemBucket:
+    async def test_admin_previews_anonymous_warnings(
+        self, async_client: AsyncClient, auth_as_admin,
+        db_session: AsyncSession, monkeypatch,
+    ):
+        """/warnings/system is the literal route in front of /warnings/{user_id}
+        and answers from the user_id-NULL rows."""
+        for key, val in (
+            ("tool_health_tracking_enabled", True),
+            ("tool_health_warn_enabled", True),
+            ("tool_health_warn_min_uses", 2),
+            ("tool_health_warn_success_rate", 0.5),
+            ("tool_health_warn_top_k", 10),
+        ):
+            monkeypatch.setattr(f"services.tool_outcome_service.settings.{key}", val)
+        db_session.add(ToolOutcomeStat(
+            user_id=None, tool_name="mcp.sat.broken", success_count=0, failure_count=4,
+            last_used_at=datetime.now(UTC).replace(tzinfo=None),
+        ))
+        await db_session.commit()
+        resp = await async_client.get("/api/tool-health/warnings/system")
+        assert resp.status_code == 200, resp.text
+        assert [w["tool_name"] for w in resp.json()] == ["mcp.sat.broken"]
+
+    async def test_list_shows_the_bucket_with_null_user(
+        self, async_client: AsyncClient, auth_as_admin, db_session: AsyncSession,
+    ):
+        db_session.add(ToolOutcomeStat(
+            user_id=None, tool_name="mcp.sat.ok", success_count=5, failure_count=0,
+            last_used_at=datetime.now(UTC).replace(tzinfo=None),
+        ))
+        await db_session.commit()
+        resp = await async_client.get("/api/tool-health")
+        assert resp.status_code == 200
+        row = next(r for r in resp.json() if r["tool_name"] == "mcp.sat.ok")
+        assert row["user_id"] is None
+
 
 # ============================================================ LIST
 @pytest.mark.asyncio

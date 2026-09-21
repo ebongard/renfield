@@ -1382,9 +1382,10 @@ class AgentService:
             tool_health_warnings = context._tool_health_cache
         else:
             tool_health_warnings = ""
+            # user_id None is fine: the service answers from the system bucket
+            # of anonymous turns (BL-0233), so a satellite turn is warned too.
             if (settings.tool_health_tracking_enabled
-                    and settings.tool_health_warn_enabled
-                    and user_id is not None):
+                    and settings.tool_health_warn_enabled):
                 try:
                     from services.database import AsyncSessionLocal
                     from services.tool_outcome_service import ToolOutcomeService
@@ -2703,8 +2704,8 @@ async def _post_turn_skill_bookkeeping(
             logger.warning(f"⚠️ Skill outcome session failed: {e}")
 
     # Tool-outcome tracking — independently gated. Best-effort per-tool
-    # counters keyed by (user_id, tool_name). The service's own user_id
-    # is None guard kicks in for anonymous turns; the feature flag check
+    # counters keyed by (user_id, tool_name); an anonymous turn (user_id
+    # None) lands in the system bucket (BL-0233). The feature flag check
     # here is the master switch.
     if settings.tool_health_tracking_enabled:
         try:

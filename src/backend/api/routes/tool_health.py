@@ -78,6 +78,21 @@ async def list_tool_stats(
     return out
 
 
+@router.get("/warnings/system", response_model=list[WarningResponse])
+@limiter.limit(settings.api_rate_limit_admin)
+async def preview_system_warnings(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(require_permission(Permission.ADMIN)),
+):
+    """What warnings would an ANONYMOUS turn (satellite/device, no identified
+    speaker) see — the system bucket (BL-0233). Declared before the
+    ``{user_id}`` route so the literal path wins."""
+    svc = ToolOutcomeService(db)
+    warnings = await svc.get_health_warnings(user_id=None)
+    return [WarningResponse(**w) for w in warnings]
+
+
 @router.get("/warnings/{user_id}", response_model=list[WarningResponse])
 @limiter.limit(settings.api_rate_limit_admin)
 async def preview_warnings_for_user(

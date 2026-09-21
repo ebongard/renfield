@@ -133,17 +133,73 @@ class TestRecord:
         rows = (await db_session.execute(select(ToolOutcomeStat))).scalars().all()
         assert rows == []
 
-    async def test_anonymous_user_skipped(self, db_session):
-        """Postgres UNIQUE(user_id, tool_name) treats NULL as distinct,
-        so a NULL-user upsert would silently insert a new row instead of
-        incrementing. The service explicitly no-ops on user_id=None to
-        avoid polluting the per-user counter table."""
+    async def test_anonymous_turns_share_one_system_bucket_per_tool(self, db_session):
+        """BL-0233: an anonymous turn (user_id=None — most household voice
+        turns) counts into ONE row per tool with user_id NULL, keyed by the
+        partial unique index uq_tool_outcome_system_tool. Before, the service
+        no-op'd (the plain UNIQUE treats NULLs as distinct) and the household
+        telemetry stayed empty."""
         from services.tool_outcome_service import ToolOutcomeService
         svc = ToolOutcomeService(db_session)
         await svc.record(user_id=None, tool_name="mcp.x", success=True)
-        await svc.record(user_id=None, tool_name="mcp.x", success=False)
+        await svc.record(user_id=None, tool_name="mcp.x", success=False, failure_summary="boom")
+        await svc.record(user_id=None, tool_name="mcp.y", success=True)
+        rows = (await db_session.execute(
+            select(ToolOutcomeStat).order_by(ToolOutcomeStat.tool_name)
+        )).scalars().all()
+        assert [(r.user_id, r.tool_name, r.success_count, r.failure_count) for r in rows] == [
+            (None, "mcp.x", 1, 1),
+            (None, "mcp.y", 1, 0),
+        ]
+        assert rows[0].last_failure_summary == "boom"
+
+    async def test_system_bucket_is_separate_from_user_rows(self, db_session, th_user):
+        from services.tool_outcome_service import ToolOutcomeService
+        svc = ToolOutcomeService(db_session)
+        await svc.record(user_id=th_user.id, tool_name="mcp.x", success=False)
+        await svc.record(user_id=None, tool_name="mcp.x", success=True)
         rows = (await db_session.execute(select(ToolOutcomeStat))).scalars().all()
-        assert rows == []
+        by_user = {r.user_id: (r.success_count, r.failure_count) for r in rows}
+        assert by_user == {th_user.id: (0, 1), None: (1, 0)}
+
+
+@pytest.mark.postgres
+@pytest.mark.asyncio
+class TestSystemBucketOnPostgres:
+    """The sqlite harness never runs the INSERT … ON CONFLICT path. On real
+    Postgres the bucket upsert must target the PARTIAL unique index
+    (index_elements + index_where) — the plain UNIQUE (user_id, tool_name)
+    never fires for NULL, so without the index a second anonymous call would
+    insert a second row instead of incrementing."""
+
+    async def test_anonymous_upsert_increments_one_row(self, pg_db_session, monkeypatch):
+        import uuid
+
+        from sqlalchemy import delete
+
+        from services.tool_outcome_service import ToolOutcomeService
+        monkeypatch.setattr(
+            "services.tool_outcome_service.settings.tool_health_tracking_enabled", True,
+        )
+        svc = ToolOutcomeService(pg_db_session)
+        # record() commits (it is the production write path), which commits the
+        # fixture's outer transaction — so use a unique name and clean up.
+        tool = f"mcp.pgbucket.{uuid.uuid4().hex[:8]}"
+        try:
+            await svc.record(user_id=None, tool_name=tool, success=True)
+            await svc.record(user_id=None, tool_name=tool, success=False, failure_summary="pg")
+            await svc.record(user_id=None, tool_name=tool, success=True)
+            rows = (await pg_db_session.execute(
+                select(ToolOutcomeStat).where(
+                    ToolOutcomeStat.tool_name == tool, ToolOutcomeStat.user_id.is_(None),
+                )
+            )).scalars().all()
+            assert len(rows) == 1
+            assert (rows[0].success_count, rows[0].failure_count) == (2, 1)
+            assert rows[0].last_failure_summary == "pg"
+        finally:
+            await pg_db_session.execute(delete(ToolOutcomeStat).where(ToolOutcomeStat.tool_name == tool))
+            await pg_db_session.commit()
 
 
 # ============================================== record_from_steps pairing
@@ -244,6 +300,29 @@ class TestGetHealthWarnings:
         for _ in range(total - fails):
             await svc.record(user_id=th_user.id, tool_name=tool, success=True)
         return svc
+
+    async def test_anonymous_turn_is_warned_from_the_system_bucket(
+        self, db_session, th_user, monkeypatch
+    ):
+        """user_id=None reads the bucket — symmetric with record(); a user's
+        own failures do not leak into the anonymous warnings and vice versa."""
+        from services.tool_outcome_service import ToolOutcomeService
+        monkeypatch.setattr(
+            "services.tool_outcome_service.settings.tool_health_warn_min_uses", 3,
+        )
+        monkeypatch.setattr(
+            "services.tool_outcome_service.settings.tool_health_warn_success_rate", 0.5,
+        )
+        svc = ToolOutcomeService(db_session)
+        for _ in range(3):
+            await svc.record(user_id=None, tool_name="mcp.sat", success=False, failure_summary="x")
+        for _ in range(3):
+            await svc.record(user_id=th_user.id, tool_name="mcp.web", success=False, failure_summary="y")
+
+        anon = await svc.get_health_warnings(user_id=None)
+        assert [w["tool_name"] for w in anon] == ["mcp.sat"]
+        mine = await svc.get_health_warnings(user_id=th_user.id)
+        assert [w["tool_name"] for w in mine] == ["mcp.web"]
 
     async def test_below_min_uses_no_warning(
         self, db_session, th_user, monkeypatch

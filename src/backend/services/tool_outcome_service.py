@@ -13,6 +13,15 @@ state differ across users — a perfectly-fine tool for Alice might
 always fail for Bob if Bob lacks the grant, and that asymmetry is
 real information for the agent.
 
+Anonymous turns (``user_id=None`` — satellite/device turns with no
+identified speaker, i.e. most household voice turns) go into ONE
+**system bucket** per tool (rows with ``user_id IS NULL``, BL-0233):
+the question "does this tool work?" does not depend on who asked, and
+without the bucket the kiosk/admin telemetry stayed empty on an
+auth-off instance. The bucket is keyed by the partial unique index
+``uq_tool_outcome_system_tool`` — the plain ``UNIQUE (user_id, tool_name)``
+treats NULLs as distinct and could never serve as an upsert target.
+
 Concurrency: :meth:`record` uses INSERT … ON CONFLICT DO UPDATE
 (postgres) / INSERT OR IGNORE + UPDATE (sqlite) so two concurrent
 ``record`` calls on the same (user, tool) serialize at the unique
@@ -48,6 +57,15 @@ class ToolOutcomeService:
     def __init__(self, db: AsyncSession):
         self.db = db
 
+    @staticmethod
+    def _user_clause(user_id: int | None):
+        """WHERE clause for a scope: the user's rows, or the system bucket
+        (``user_id IS NULL``) for anonymous turns — ``== None`` would match
+        nothing in SQL."""
+        if user_id is None:
+            return ToolOutcomeStat.user_id.is_(None)
+        return ToolOutcomeStat.user_id == user_id
+
     # ============================================================= record
     async def record(
         self,
@@ -80,9 +98,7 @@ class ToolOutcomeService:
             return
         if not settings.tool_health_tracking_enabled:
             return
-        # See docstring — anonymous calls are a deliberate no-op.
-        if user_id is None:
-            return
+        # user_id None → the system bucket (see module docstring), never a no-op.
 
         now = datetime.now(UTC).replace(tzinfo=None)
         dialect = self.db.bind.dialect.name if self.db.bind is not None else ""
@@ -106,10 +122,18 @@ class ToolOutcomeService:
             if not success:
                 update_values["last_failure_at"] = now
                 update_values["last_failure_summary"] = (failure_summary or "")[:self._FAILURE_SUMMARY_MAX_CHARS]
-            do_upsert = insert_stmt.on_conflict_do_update(
-                constraint="uq_tool_outcome_user_tool",
-                set_=update_values,
-            )
+            if user_id is None:
+                # Conflict target = the partial unique index of the bucket.
+                do_upsert = insert_stmt.on_conflict_do_update(
+                    index_elements=[ToolOutcomeStat.tool_name],
+                    index_where=ToolOutcomeStat.user_id.is_(None),
+                    set_=update_values,
+                )
+            else:
+                do_upsert = insert_stmt.on_conflict_do_update(
+                    constraint="uq_tool_outcome_user_tool",
+                    set_=update_values,
+                )
             await self.db.execute(do_upsert)
             await self.db.commit()
             return
@@ -117,7 +141,7 @@ class ToolOutcomeService:
         # sqlite fallback (test harness) — SELECT then INSERT or UPDATE.
         existing = (await self.db.execute(
             select(ToolOutcomeStat).where(
-                ToolOutcomeStat.user_id == user_id,
+                self._user_clause(user_id),
                 ToolOutcomeStat.tool_name == tool_name,
             )
         )).scalar_one_or_none()
@@ -239,11 +263,12 @@ class ToolOutcomeService:
         *,
         candidate_tools: list[str] | None = None,
     ) -> list[dict]:
-        """Return tools the agent should be warned about for THIS user.
+        """Return tools the agent should be warned about for THIS user
+        (``user_id=None`` = the system bucket of anonymous turns).
 
         A tool earns a warning when:
           - it has been called at least ``tool_health_warn_min_uses`` times
-            by this user, AND
+            by this user (or anonymously, for the bucket), AND
           - its rolling success rate is below ``tool_health_warn_success_rate``.
 
         Limited to ``tool_health_warn_top_k`` entries, ordered by failure
@@ -258,11 +283,8 @@ class ToolOutcomeService:
             return []
         if not settings.tool_health_tracking_enabled:
             return []
-        # Per record(): per-user accounting requires an identifiable user.
-        # Anonymous reads also short-circuit — symmetric with the write
-        # path so the stats are never half-readable.
-        if user_id is None:
-            return []
+        # user_id None → the system bucket's warnings (symmetric with record():
+        # an anonymous turn is warned about what anonymous turns experienced).
 
         # candidate_tools semantics:
         #   None  → no filter (consider every tool the user has stats on)
@@ -272,9 +294,7 @@ class ToolOutcomeService:
         if candidate_tools is not None and len(candidate_tools) == 0:
             return []
 
-        stmt = select(ToolOutcomeStat).where(
-            ToolOutcomeStat.user_id == user_id,
-        )
+        stmt = select(ToolOutcomeStat).where(self._user_clause(user_id))
         if candidate_tools:
             stmt = stmt.where(ToolOutcomeStat.tool_name.in_(candidate_tools))
         rows = (await self.db.execute(stmt)).scalars().all()
