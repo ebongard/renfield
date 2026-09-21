@@ -1149,6 +1149,10 @@ SATELLITE_PSK_HANDSHAKE_ENABLED=false
 #   jeder dieser Dienste ist dann nur noch für erkannte Stimmen erreichbar.
 #   ACHTUNG: ein nicht genannter, aktiver Server wird abgelehnt — die Liste ist
 #   eine Positivliste über ALLE MCP-Server, nicht nur über Schreibwerkzeuge.
+#   Granularität: `mcp.<server>` deckt ALLE Werkzeuge dieses Servers ab, auch
+#   schreibende. Wo der Server eine `tool_permissions`-Karte hat (paperless:
+#   read/write, calendar: read/manage), gibt der engere Grant nur das Lesen —
+#   also `mcp.paperless.read` bzw. `mcp.calendar.read`, nie `mcp.paperless`.
 SATELLITE_ANONYMOUS_PERMISSIONS=""
 
 # Stop-gap aus der chirurgischen H1-Mitigation (greift nur wenn ENROLLMENT aus):
