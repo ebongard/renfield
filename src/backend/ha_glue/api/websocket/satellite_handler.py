@@ -285,7 +285,6 @@ async def _reject_derostered_heartbeat(websocket, satellite_id: str, manager) ->
     return True
 
 
-@router.websocket("/ws/satellite")
 def _handshake_identity_mismatch(auth_result: dict | None, satellite_id: str) -> bool:
     """True when the WS handshake authenticated a specific satellite (PSK
     strategy, ``auth_result["satellite_id"]``) and the register frame names a
@@ -296,6 +295,20 @@ def _handshake_identity_mismatch(auth_result: dict | None, satellite_id: str) ->
     return handshake_sat is not None and satellite_id != handshake_sat
 
 
+def _handshake_satisfies_enrollment(auth_result: dict | None, register_token: str | None) -> bool:
+    """A PSK-authenticated handshake already proved THIS satellite's enrollment
+    secret on THIS connection (identity bound by `_handshake_identity_mismatch`),
+    so a register frame that carries NO token is accepted as enrolled — the
+    operator provisions the secret once, not twice. A token that IS presented is
+    still verified by the register gate (a wrong one rejects; divergence between
+    the two config fields must stay loud, never tolerated)."""
+    return (
+        (auth_result or {}).get("auth_method") == "satellite_psk"
+        and not register_token
+    )
+
+
+@router.websocket("/ws/satellite")
 async def satellite_websocket(
     websocket: WebSocket,
     token: str = Query(None, description="Authentication token")
@@ -323,18 +336,20 @@ async def satellite_websocket(
     ip_address = websocket.client.host if websocket.client else "unknown"
 
     # Check authentication if enabled
+    # Connection limits FIRST: the PSK handshake below costs one bcrypt per
+    # attempt (off the loop, but still CPU), so a flood must be refused before
+    # any hashing — can_connect is a pure check, nothing is registered yet.
+    connection_limiter = get_connection_limiter()
+    can_connect, reason = connection_limiter.can_connect(ip_address, f"sat-pending-{ip_address}")
+    if not can_connect:
+        await websocket.close(code=4003, reason=reason)
+        return
+
     # The ONLY endpoint that accepts the per-satellite enrollment PSK as the
     # handshake credential (D-4c) — every other WS endpoint refuses `sat.` tokens.
     auth_result = await authenticate_websocket(websocket, token, allow_satellite_psk=True)
     if not auth_result:
         await websocket.close(code=WSAuthError.UNAUTHORIZED, reason="Authentication required")
-        return
-
-    # Check connection limits
-    connection_limiter = get_connection_limiter()
-    can_connect, reason = connection_limiter.can_connect(ip_address, f"sat-pending-{ip_address}")
-    if not can_connect:
-        await websocket.close(code=4003, reason=reason)
         return
 
     await websocket.accept()
@@ -454,17 +469,45 @@ async def satellite_websocket(
                 # satellite. A fail-open here would let an attacker bypass
                 # ENFORCING by inducing a DB error (review finding). Transient
                 # blips are recoverable: the satellite's reconnect loop retries.
+                # Handshake identity binding (household auth-on cutover, D-4c):
+                # a connection authenticated with the per-satellite PSK at the
+                # WS handshake carries that satellite_id; the register frame
+                # must name the SAME id, else a device could authenticate as
+                # itself and then register as another satellite. Checked BEFORE
+                # the enrollment bcrypt below — cheap check first.
+                if _handshake_identity_mismatch(auth_result, satellite_id):
+                    logger.warning(
+                        f"🚫 Satellite register rejected: handshake identity "
+                        f"'{auth_result.get('satellite_id')}' but register frame claims '{satellite_id}'"
+                    )
+                    await send_ws_error(websocket, WSErrorCode.UNAUTHORIZED, "identity-mismatch")
+                    await websocket.close(
+                        code=WSAuthError.UNAUTHORIZED, reason="identity-mismatch"
+                    )
+                    return
+
                 satellite_authenticated = False
                 if settings.satellite_enrollment_enabled:
                     reject_reason: str | None = None
                     try:
-                        from ha_glue.services.satellite_enrollment_service import authorize_register
+                        from ha_glue.services.satellite_enrollment_service import (
+                            authorize_register,
+                            maybe_autoflip,
+                        )
 
-                        async with AsyncSessionLocal() as enroll_db:
-                            authz = await authorize_register(enroll_db, satellite_id, enrollment_psk)
-                        satellite_authenticated = authz.authenticated
-                        if authz.reject:
-                            reject_reason = authz.reason
+                        if _handshake_satisfies_enrollment(auth_result, enrollment_psk):
+                            # Proven at the handshake on this very connection;
+                            # last_authenticated_at was stamped there, so the
+                            # auto-flip latch stays coherent.
+                            async with AsyncSessionLocal() as enroll_db:
+                                await maybe_autoflip(enroll_db)
+                            satellite_authenticated = True
+                        else:
+                            async with AsyncSessionLocal() as enroll_db:
+                                authz = await authorize_register(enroll_db, satellite_id, enrollment_psk)
+                            satellite_authenticated = authz.authenticated
+                            if authz.reject:
+                                reject_reason = authz.reason
                     except Exception as e:
                         logger.error(f"⚠️ Satellite enrollment check errored (fail-closed): {e}")
                         satellite_authenticated = False
@@ -478,22 +521,6 @@ async def satellite_websocket(
                             code=WSAuthError.UNAUTHORIZED, reason=reject_reason
                         )
                         return
-
-                # Handshake identity binding (household auth-on cutover, D-4c):
-                # a connection authenticated with the per-satellite PSK at the
-                # WS handshake carries that satellite_id; the register frame
-                # must name the SAME id, else a device could authenticate as
-                # itself and then register as another satellite.
-                if _handshake_identity_mismatch(auth_result, satellite_id):
-                    logger.warning(
-                        f"🚫 Satellite register rejected: handshake identity "
-                        f"'{auth_result.get('satellite_id')}' but register frame claims '{satellite_id}'"
-                    )
-                    await send_ws_error(websocket, WSErrorCode.UNAUTHORIZED, "identity-mismatch")
-                    await websocket.close(
-                        code=WSAuthError.UNAUTHORIZED, reason="identity-mismatch"
-                    )
-                    return
 
                 # C1 codec negotiation: the satellite advertises audio_codec
                 # in its capabilities; the backend accepts opus only when the

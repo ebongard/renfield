@@ -12,6 +12,7 @@ wildcard would otherwise shadow these GET endpoints.
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException
+from loguru import logger
 from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -133,6 +134,32 @@ async def enroll_satellite(
             detail="Satellite already enrolled; pass rotate=true to re-issue its token.",
         )
     return SatelliteEnrollResponse(satellite_id=body.satellite_id, token=token, rotated=was_active)
+
+
+@router.post("/{satellite_id}/unlock", status_code=200)
+async def unlock_satellite_handshake(
+    satellite_id: str,
+    current_user: User = Depends(require_permission(Permission.ADMIN)),
+):
+    """Clear the handshake lockout of one satellite (`SATELLITE_PSK_HANDSHAKE_ENABLED`).
+
+    A satellite whose provisioned PSK is wrong locks its `sat:<id>` scope after
+    the login-lockout threshold; that scope is not a user, so the users
+    admin page can neither list nor unlock it. The operator fixes the
+    provisioning, then clears the lock here instead of waiting for the TTL.
+    Logged WARNING with the actor, like the user unlock.
+    """
+    from services.login_lockout import LockoutStoreUnavailable, login_lockout
+
+    try:
+        cleared = await login_lockout.unlock(f"sat:{satellite_id}")
+    except LockoutStoreUnavailable:
+        raise HTTPException(status_code=503, detail="lockout store unavailable")
+    logger.warning(
+        f"satellite handshake lockout cleared for '{satellite_id}' by user "
+        f"{getattr(current_user, 'id', None)} ({cleared} key(s))"
+    )
+    return {"satellite_id": satellite_id, "cleared": cleared}
 
 
 @router.delete("/{satellite_id}", status_code=204)

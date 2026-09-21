@@ -9,10 +9,7 @@ from __future__ import annotations
 
 import pytest
 from httpx import AsyncClient
-from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
 
-from models.database import Satellite
 from utils.config import settings
 
 
@@ -71,6 +68,33 @@ class TestEnrollmentRoutes:
         # A never-enrolled id → 404.
         r2 = await async_client.delete("/api/satellite-enrollment/never-existed")
         assert r2.status_code == 404
+
+    async def test_unlock_clears_the_handshake_lockout_scope(
+        self, async_client: AsyncClient, monkeypatch,
+    ):
+        # The `sat:<id>` lockout scope is not a user — the users admin page can
+        # neither list nor unlock it. This lever is the operator's way out after
+        # fixing a mistyped PSK, instead of waiting for the TTL.
+        from unittest.mock import AsyncMock
+
+        from services.login_lockout import login_lockout
+        unlock = AsyncMock(return_value=2)
+        monkeypatch.setattr(login_lockout, "unlock", unlock)
+
+        r = await async_client.post("/api/satellite-enrollment/sat-x/unlock")
+        assert r.status_code == 200, r.text
+        assert r.json() == {"satellite_id": "sat-x", "cleared": 2}
+        unlock.assert_awaited_once_with("sat:sat-x")
+
+    async def test_unlock_reports_503_when_the_store_is_down(
+        self, async_client: AsyncClient, monkeypatch,
+    ):
+        from unittest.mock import AsyncMock
+
+        from services.login_lockout import LockoutStoreUnavailable, login_lockout
+        monkeypatch.setattr(login_lockout, "unlock", AsyncMock(side_effect=LockoutStoreUnavailable()))
+        r = await async_client.post("/api/satellite-enrollment/sat-x/unlock")
+        assert r.status_code == 503
 
     async def test_invalid_satellite_id_rejected(self, async_client: AsyncClient):
         r = await async_client.post(

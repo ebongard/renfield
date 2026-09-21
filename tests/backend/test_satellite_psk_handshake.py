@@ -103,8 +103,27 @@ class TestAuthorizeHandshake:
         assert args == ("sat:sat-x", "10.0.0.7")  # its own namespace, never a user
 
     async def test_unknown_id_is_refused(self, db_session, quiet_lockout):
-        assert await svc.authorize_handshake(db_session, "sat.ghost.secret", None) is None
+        assert await svc.authorize_handshake(db_session, "sat.ghost.secret", "10.0.0.7") is None
         quiet_lockout["record_failure"].assert_awaited_once()
+
+    async def test_no_spoof_resistant_address_means_no_lockout_at_all(self, db_session, quiet_lockout):
+        """client_ip None (no TRUSTED_PROXIES): keying a lock on the satellite id
+        alone would let any LAN host lock a real device out with five guesses
+        against a room slug — so nothing is counted and nothing is checked."""
+        await svc.enroll_satellite(db_session, "sat-x")
+        assert await svc.authorize_handshake(db_session, "sat.sat-x.nope", None) is None
+        quiet_lockout["is_locked"].assert_not_awaited()
+        quiet_lockout["record_failure"].assert_not_awaited()
+        quiet_lockout["clear"].assert_not_awaited()
+
+    async def test_oversized_secret_is_malformed_not_an_error(self, db_session, quiet_lockout, monkeypatch):
+        # passlib would raise PasswordSizeError above 4096 bytes — an error path
+        # that bypassed the failure counter. Cap it as malformed instead.
+        spy = AsyncMock(return_value=svc.VERDICT_BAD)
+        monkeypatch.setattr(svc, "evaluate_credential", spy)
+        assert svc.parse_handshake_token("sat.sat-x." + "a" * 257) is None
+        assert await svc.authorize_handshake(db_session, "sat.sat-x." + "a" * 5000, "10.0.0.7") is None
+        spy.assert_not_awaited()
 
     async def test_revoked_satellite_is_refused(self, db_session, quiet_lockout):
         secret = await svc.enroll_satellite(db_session, "sat-x")
@@ -221,12 +240,85 @@ class TestWebsocketStrategy:
         assert await websocket_auth.authenticate_websocket(ws, None, allow_satellite_psk=True) is None
         store.validate_token.assert_not_called()
 
+    async def test_lockout_scope_is_per_address_only_when_spoof_resistant(
+        self, psk_on, session_from, quiet_lockout, monkeypatch,
+    ):
+        """Mirrors the login route: behind Traefik the socket peer is the proxy
+        pod for every client, so the address joins the lockout key only when
+        TRUSTED_PROXIES makes it spoof-resistant; otherwise the scope is
+        satellite-wide (None)."""
+        import services.api_rate_limiter as rl
+
+        secret = await svc.enroll_satellite(session_from, "sat-kueche")
+        tok = svc.format_handshake_token("sat-kueche", secret)
+        spy = AsyncMock(return_value="sat-kueche")
+        monkeypatch.setattr(svc, "authorize_handshake", spy)
+
+        monkeypatch.setattr(rl, "client_ip_is_spoof_resistant", lambda: False)
+        await websocket_auth.authenticate_websocket(_ws(tok), None, allow_satellite_psk=True)
+        assert spy.await_args.args[2] is None
+
+        monkeypatch.setattr(rl, "client_ip_is_spoof_resistant", lambda: True)
+        monkeypatch.setattr(rl, "get_client_ip", lambda ws: "192.0.2.10")
+        await websocket_auth.authenticate_websocket(_ws(tok), None, allow_satellite_psk=True)
+        assert spy.await_args.args[2] == "192.0.2.10"
+
+    async def test_empty_query_token_does_not_poison_the_header_path(
+        self, psk_on, session_from, quiet_lockout,
+    ):
+        # `?token=` (empty) used to mark the token as URL-borne even though the
+        # credential then came from the Authorization header.
+        secret = await svc.enroll_satellite(session_from, "sat-kueche")
+        ws = _ws(svc.format_handshake_token("sat-kueche", secret))
+        result = await websocket_auth.authenticate_websocket(ws, "", allow_satellite_psk=True)
+        assert result and result["satellite_id"] == "sat-kueche"
+
     async def test_psk_in_the_url_is_refused(self, psk_on, session_from, quiet_lockout):
         secret = await svc.enroll_satellite(session_from, "sat-kueche")
         ws = _ws(None)
         tok = svc.format_handshake_token("sat-kueche", secret)
         assert await websocket_auth.authenticate_websocket(ws, tok, allow_satellite_psk=True) is None
         quiet_lockout["record_failure"].assert_not_awaited()  # refused before any verify
+
+    async def test_satellite_route_is_still_registered_on_the_endpoint(self):
+        """Regression guard: a helper inserted between `@router.websocket` and
+        the endpoint silently re-targets the decorator (review catch on this
+        very branch). Pin the route → endpoint binding."""
+        from fastapi.routing import APIWebSocketRoute
+
+        from ha_glue.api.websocket import satellite_handler as sh
+
+        ws_routes = {
+            r.path: r.endpoint for r in sh.router.routes if isinstance(r, APIWebSocketRoute)
+        }
+        assert ws_routes.get("/ws/satellite") is sh.satellite_websocket
+        assert sh._handshake_identity_mismatch not in ws_routes.values()
+
+    async def test_psk_handshake_satisfies_the_register_gate_only_without_a_token(self):
+        """One secret, provisioned once: a handshake-authenticated satellite whose
+        register frame carries no token counts as enrolled; a presented token is
+        still verified (a wrong one must stay loud)."""
+        import inspect
+
+        from ha_glue.api.websocket import satellite_handler as sh
+
+        psk = {"authenticated": True, "auth_method": "satellite_psk", "satellite_id": "sat-a"}
+        assert sh._handshake_satisfies_enrollment(psk, None) is True
+        assert sh._handshake_satisfies_enrollment(psk, "") is True
+        assert sh._handshake_satisfies_enrollment(psk, "some-token") is False
+        assert sh._handshake_satisfies_enrollment({"authenticated": True, "user_id": 1}, None) is False
+        assert sh._handshake_satisfies_enrollment({"authenticated": True, "auth_skipped": True}, None) is False
+        src = inspect.getsource(sh.satellite_websocket)
+        assert "_handshake_satisfies_enrollment(auth_result, enrollment_psk)" in src
+        # Connection limiter runs BEFORE the (bcrypt-costing) handshake auth.
+        assert src.index("connection_limiter.can_connect(") < src.index("authenticate_websocket(")
+
+    async def test_bcrypt_runs_off_the_event_loop(self):
+        import inspect
+
+        src = inspect.getsource(svc.evaluate_credential)
+        assert "asyncio.to_thread(pwd_context.verify" in src
+        assert "asyncio.to_thread(pwd_context.dummy_verify" in src
 
     async def test_handshake_identity_is_bound_to_the_register_frame(self):
         import inspect

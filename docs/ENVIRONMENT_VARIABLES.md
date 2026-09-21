@@ -1107,13 +1107,25 @@ SATELLITE_ENROLLMENT_AUTOFLIP_ENABLED=false
 # → genau EINE Zeile wird geprüft, kein N×bcrypt je Reconnect). Unabhängig vom
 # Enrollment-Gate oben: prüft immer, fällt nie auf ein Nutzer-JWT zurück, bindet
 # die Verbindung nur an die satellite_id (der register-Frame muss dieselbe nennen).
-# Sperre je (satellite_id, IP) VOR dem bcrypt-Vergleich über die Anmeldesperre.
+# Sperre je (satellite_id, Adresse) VOR dem bcrypt-Vergleich — NUR wenn
+# TRUSTED_PROXIES die Adresse fälschungssicher macht; ohne TRUSTED_PROXIES keine
+# Sperre (eine Sperre allein auf die satellite_id wäre ein 5-Versuche-DoS aus dem
+# LAN gegen einen erratbaren Raum-Slug). Schutz der CPU: Verbindungs-Limiter vor
+# der Prüfung, bcrypt außerhalb der Event-Loop. Entsperren (Admin):
+# POST /api/satellite-enrollment/{satellite_id}/unlock. Ein per PSK
+# authentifizierter Handshake erfüllt das register-Enrollment-Tor, wenn der
+# register-Frame KEIN Token trägt (ein Geheimnis, einmal provisioniert); ein
+# mitgeschicktes Token wird weiterhin geprüft.
 # NUR /ws/satellite akzeptiert das Token — Chat-, Geräte-, Kiosk-, KG-Live- und
 # Wakeword-WS lehnen ein `sat.`-Token ab (kein Nutzer, kein Gerät).
 # Ein `sat.`-Token in der URL wird abgelehnt (nur Header). Mit AUTH_ENABLED=false
-# wird der Header gar nicht gelesen (byte-identisch). Satelliten-Seite:
-# `server.auth_enabled: true` + `server.auth_token: sat.<id>.<enrollment_token>`
-# über die Provisionierung (Flotteneinstellung mit zwei Quellen).
+# wird der Header gar nicht gelesen (byte-identisch). Satelliten-Seite: die
+# Ansible-Vorlage setzt `server.auth_token: sat.<id>.<enrollment_token>` aus dem
+# host_var, sobald `server_auth_enabled` — der register-Frame trägt weiterhin die
+# rohe PSK. Pod-Satellit: RENFIELD_AUTH_ENABLED + RENFIELD_AUTH_TOKEN (Secret mit
+# dem zusammengesetzten Wert). ACHTUNG Reihenfolge: Token auf JEDEM Satelliten
+# und ein geprüfter Verbindungsaufbau VOR AUTH_ENABLED=true — `auth_enabled`
+# ohne Token läuft in 401 → 4001 → Neustart-Schleife.
 SATELLITE_PSK_HANDSHAKE_ENABLED=false
 
 # Stop-gap aus der chirurgischen H1-Mitigation (greift nur wenn ENROLLMENT aus):

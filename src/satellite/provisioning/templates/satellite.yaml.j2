@@ -17,6 +17,14 @@ server:
   register_timeout: {{ server_register_timeout | default(15) }}
   max_disconnected_seconds: {{ server_max_disconnected_seconds | default(300) }}
   auth_enabled: {{ server_auth_enabled | lower }}
+{% if server_auth_enabled and (satellite_enrollment_token | default('')) %}
+  # Handshake credential for an auth-on backend (SATELLITE_PSK_HANDSHAKE_ENABLED):
+  # the SAME enrollment PSK, self-identifying, sent as Authorization: Bearer.
+  # Composed here so one secret lives in host_vars; the register frame still
+  # carries the raw PSK below. Without it, auth_enabled=true makes the client
+  # ask /api/ws/token unauthenticated → 401 → reconnect loop.
+  auth_token: "sat.{{ satellite_id }}.{{ satellite_enrollment_token }}"
+{% endif %}
   verify_tls: {{ server_verify_tls | lower }}
   # Per-satellite enrollment PSK (security H1). Set per host in the gitignored
   # host_vars/satellite-<name>.yml; empty = not enrolled (legacy behavior).

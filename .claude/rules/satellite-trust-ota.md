@@ -46,9 +46,13 @@ Loaded only when OTA-signing / update / enrollment code is read. Long form: `doc
   (`RENFIELD_ENROLLMENT_TOKEN`, mounted `optional: true` so the pod still boots dark).
 - **Handshake credential (`SATELLITE_PSK_HANDSHAKE_ENABLED`, dark; auth-on cutover D-4c):** the same PSK is also
   accepted at the WS handshake as `Authorization: Bearer sat.<satellite_id>.<secret>` — self-identifying, so exactly
-  one row is bcrypt-verified; lockout per (satellite_id, IP) runs BEFORE the compare; a `sat.` token in the URL is
-  refused; a failing `sat.` token never falls through to JWT/device-token; independent of the enrollment GATE (always
-  verifies); binds only the satellite_id — the register frame must name the same id (`identity-mismatch` → 4001).
+  one row is bcrypt-verified (off the event loop, behind the connection limiter). Lockout per (satellite_id, IP) runs
+  BEFORE the compare **only when `TRUSTED_PROXIES` makes the address spoof-resistant** — never keyed on the id alone
+  (that would be a 5-guess LAN DoS against a guessable room slug); admin unlock `POST /api/satellite-enrollment/{id}/unlock`.
+  A `sat.` token in the URL is refused (header, or cookie, only); a failing `sat.` token never falls through to
+  JWT/device-token; independent of the enrollment GATE (always verifies); binds only the satellite_id — the register
+  frame must name the same id (`identity-mismatch` → 4001). A PSK-authenticated handshake **satisfies the register
+  gate when the frame carries no token** (one secret, provisioned once); a presented token is still verified.
   **Only `/ws/satellite` accepts it** (`authenticate_websocket(..., allow_satellite_psk=True)` — every other WS
   endpoint refuses a `sat.` token outright; never pass the flag elsewhere).
   No user is bound (device account = P0 Nr. 3). Under `AUTH_ENABLED=false` the header is never read.

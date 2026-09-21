@@ -173,7 +173,7 @@ async def authenticate_websocket(
     # here means "came from the URL" — the cookie and Authorization-header
     # fallbacks below only ever run when this is None. Captured BEFORE those
     # fallbacks, because afterwards the two sources are indistinguishable.
-    token_from_url = token is not None
+    token_from_url = bool(token)
 
     # Skip authentication if disabled
     if not settings.auth_enabled:
@@ -217,12 +217,21 @@ async def authenticate_websocket(
         from services.database import AsyncSessionLocal
 
         # The PSK is a long-lived device secret: it travels in the Authorization
-        # header only (the satellite client already does that). In the URL it
-        # would land in proxy/access logs — refuse rather than accept.
+        # header (the satellite client already does that; a cookie would be
+        # accepted too, but no satellite sends one). In the URL it would land in
+        # proxy/access logs — refuse rather than accept.
         if token_from_url:
             logger.warning("Satellite handshake token presented in the URL — refused")
             return None
-        client_ip = websocket.client.host if websocket.client else None
+        # Lockout keying mirrors the login route: the per-address scope only when
+        # TRUSTED_PROXIES makes the address spoof-resistant. Behind Traefik the
+        # raw socket peer is the proxy pod for EVERY client — keying on it would
+        # let any LAN client lock a satellite out with five bad guesses. Until
+        # TRUSTED_PROXIES is set the lock is satellite-wide at the strict
+        # threshold (the same posture BL-0125 accepted for usernames).
+        from services.api_rate_limiter import client_ip_is_spoof_resistant, get_client_ip
+
+        client_ip = get_client_ip(websocket) if client_ip_is_spoof_resistant() else None
         try:
             async with AsyncSessionLocal() as db:
                 satellite_id = await authorize_handshake(db, token, client_ip)
