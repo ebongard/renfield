@@ -49,7 +49,7 @@ Key insight: **the fix already shipped is exactly the unmapped fallback path.** 
 
 ## 3. Prerequisites
 
-**P0 — the personal instance must run auth-on.** Person-scoped federation is meaningless without per-person identity on both ends. This is the "big UX change" (logins, voice identity, per-user circles) and is a project in itself. Standing up an auth-on instance has known traps — see the deploy-production skill, "Standing up a NEW instance (auth-on)" (SECRET_KEY in every backend-image workload, no alembic-upgrade on a fresh DB, `AUTH_ENABLED` as the single auth flag — it covers the WebSocket surface too). The business instance is already auth-on and can be the responder before the personal side flips; but the *exception* (personal→business person-mapping) only works once the personal side has real accounts.
+**P0 — the personal instance must run auth-on.** *(Design for that cutover: `household-auth-on-cutover.md`, decided 2026-09-21; F-ID-2 follows it with link-honouring on in both directions, D-9.)* Person-scoped federation is meaningless without per-person identity on both ends. This is the "big UX change" (logins, voice identity, per-user circles) and is a project in itself. Standing up an auth-on instance has known traps — see the deploy-production skill, "Standing up a NEW instance (auth-on)" (SECRET_KEY in every backend-image workload, no alembic-upgrade on a fresh DB, `AUTH_ENABLED` as the single auth flag — it covers the WebSocket surface too). The business instance is already auth-on and can be the responder before the personal side flips; but the *exception* (personal→business person-mapping) only works once the personal side has real accounts.
 
 ## 4. Architecture
 
