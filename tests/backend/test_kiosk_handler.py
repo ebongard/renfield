@@ -642,15 +642,20 @@ class TestKioskViewGate:
         assert ws.accepted is False
         assert "kiosk.view" in (ws.closed_with or {}).get("reason", "")
 
-    async def test_bare_admin_permission_alone_is_not_enough(self, monkeypatch):
-        """States the asymmetry outright: `admin` on its own does not open the
-        socket. The frontend treats it as a wildcard, the backend never has."""
+    async def test_a_hand_made_admin_role_gets_in_too(self, monkeypatch):
+        """A role an operator built in the UI is `is_system=False`, so
+        `ensure_default_roles` never merges kiosk.view into it. Without the
+        ADMIN fallback in the gate such an admin would pass the PAGE guard
+        (the frontend reads `admin` as a wildcard) and then hang on a socket
+        that refuses them — a black wall reconnecting forever instead of an
+        honest refusal. D-5 keeps admin rights off the DISPLAY; it does not
+        keep admins away from it."""
         ws = await _run_gate(
             monkeypatch,
             auth_result={"authenticated": True, "user_id": 3},
-            user=_user_with(["admin"]),
+            user=_user_with(["admin", "chat.all"]),
         )
-        assert ws.accepted is False
+        assert ws.accepted is True
 
     async def test_auth_off_is_unchanged(self, monkeypatch):
         ws = await _run_gate(

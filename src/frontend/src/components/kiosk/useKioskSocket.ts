@@ -1,6 +1,6 @@
 // useKioskSocket — the PUSH data source for the /kiosk wall display.
 //
-// Opens the ADMIN-gated `/ws/kiosk` hub (backend api/websocket/kiosk_handler.py),
+// Opens the `kiosk.view`-gated `/ws/kiosk` hub (backend api/websocket/kiosk_handler.py),
 // hydrates from the one `snapshot` message it sends on connect, then folds each
 // delta event into a single reducer-held `KioskLiveModel`. This replaces the
 // kiosk's former react-query POLLING chain (useCommandCenterModel +
@@ -508,7 +508,8 @@ async function kioskWsUrl(): Promise<string> {
   let url = getWebSocketUrl().replace(/\/ws$/, '') + '/ws/kiosk';
   // Security audit M2: authenticate with a SHORT-LIVED, WS-scoped token
   // (~90s, REST-rejected), NOT the full 24h JWT that would leak into proxy
-  // access logs. The hub verifies it + requires Permission.ADMIN at connect.
+  // access logs. The hub verifies it + requires Permission.KIOSK_VIEW at connect
+  // (an admin passes too — see the kiosk rule on the wildcard asymmetry).
   // null → open without a token (WS auth off / error), same as chat + KG-live.
   const token = await fetchWsToken();
   if (token) url += `?token=${token}`;

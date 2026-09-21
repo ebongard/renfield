@@ -361,6 +361,8 @@ def get_all_permissions() -> list[dict]:
 
         Permission.NOTIFICATIONS_VIEW: "Benachrichtigungen ansehen",
         Permission.NOTIFICATIONS_MANAGE: "Benachrichtigungen senden und Webhook-Token verwalten",
+
+        Permission.KIOSK_VIEW: "Wanddisplay (Kiosk) ansehen",
     }
 
     return [

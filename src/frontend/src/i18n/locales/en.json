@@ -1179,6 +1179,10 @@
         "name": "Speakers",
         "description": "Voice profile management"
       },
+      "kiosk": {
+        "name": "Kiosk",
+        "description": "Wall display projection"
+      },
       "administration": {
         "name": "Administration",
         "description": "System administration"
@@ -1202,6 +1206,7 @@
       "rooms_manage": "Manage rooms and devices",
       "speakers_own": "Manage own speaker profile",
       "speakers_all": "Manage all speaker profiles",
+      "kiosk_view": "Open the wall display",
       "admin": "Full system administration"
     }
   },

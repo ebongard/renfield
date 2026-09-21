@@ -837,6 +837,10 @@
         "name": "Speaker",
         "description": "Gestione dei profili vocali"
       },
+      "kiosk": {
+        "name": "Kiosk",
+        "description": "Proiezione del display a parete"
+      },
       "administration": {
         "name": "Amministrazione",
         "description": "Amministrazione del sistema"
@@ -860,6 +864,7 @@
       "rooms_manage": "Gestisci stanze e dispositivi",
       "speakers_own": "Gestisci il proprio profilo vocale",
       "speakers_all": "Gestisci tutti i profili vocali",
+      "kiosk_view": "Aprire il display a parete",
       "admin": "Amministrazione completa del sistema"
     }
   },

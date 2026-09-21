@@ -1179,6 +1179,10 @@
         "name": "Sprecher",
         "description": "Verwaltung von Sprachprofilen"
       },
+      "kiosk": {
+        "name": "Kiosk",
+        "description": "Wanddisplay-Projektion"
+      },
       "administration": {
         "name": "Administration",
         "description": "Systemadministration"
@@ -1202,6 +1206,7 @@
       "rooms_manage": "Räume und Geräte verwalten",
       "speakers_own": "Eigenes Sprachprofil verwalten",
       "speakers_all": "Alle Sprachprofile verwalten",
+      "kiosk_view": "Wanddisplay (Kiosk) ansehen",
       "admin": "Vollständige Systemadministration"
     }
   },

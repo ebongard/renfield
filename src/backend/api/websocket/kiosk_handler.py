@@ -430,7 +430,21 @@ async def kiosk_live(
             try:
                 async with AsyncSessionLocal() as db:
                     user = await get_user_by_id(db, user_id)
-                may_view = bool(user and user.has_permission(Permission.KIOSK_VIEW))
+                # ADMIN as a fallback, deliberately: the frontend reads `admin`
+                # as a wildcard, the backend does not, and `ensure_default_roles`
+                # only merges kiosk.view into SYSTEM roles. A hand-made admin
+                # role would otherwise pass the page guard and then hang on a
+                # socket that refuses it — a black wall reconnecting forever
+                # instead of an honest "access denied". D-5 says the DISPLAY
+                # must not need admin rights; it never said an admin may not
+                # look at the display.
+                may_view = bool(
+                    user
+                    and (
+                        user.has_permission(Permission.KIOSK_VIEW)
+                        or user.has_permission(Permission.ADMIN)
+                    )
+                )
             except Exception as e:
                 logger.warning(f"kiosk WS permission check failed: {e}")
                 may_view = False

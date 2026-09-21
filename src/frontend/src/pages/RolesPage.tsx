@@ -75,6 +75,12 @@ const PERMISSION_CATEGORIES: Record<string, PermissionCategoryDef> = {
     description: 'Voice profile management',
     permissions: ['speakers.own', 'speakers.all']
   },
+  'Kiosk': {
+    slug: 'kiosk',
+    description: 'Wall display projection',
+    permissions: ['kiosk.view'],
+    feature: 'satellites'
+  },
   'Administration': {
     slug: 'administration',
     description: 'System administration',
@@ -111,6 +117,7 @@ const PERMISSION_DESCRIPTIONS: Record<string, string> = {
   'rooms.manage': 'Manage rooms and devices',
   'speakers.own': 'Manage own speaker profile',
   'speakers.all': 'Manage all speaker profiles',
+  'kiosk.view': 'Open the wall display (content-free projection)',
   'admin': 'Full system administration'
 };
 

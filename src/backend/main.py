@@ -284,7 +284,7 @@ app.include_router(chat_router, tags=["WebSocket Chat"])
 # satellite_router + device_router mounted via ha_glue register_routes hook.
 if settings.knowledge_graph_enabled:
     app.include_router(kg_live_router, tags=["WebSocket Knowledge Graph"])
-# Kiosk push hub (/ws/kiosk) — ADMIN-gated live wall-display projection.
+# Kiosk push hub (/ws/kiosk) — `kiosk.view`-gated live wall-display projection.
 app.include_router(kiosk_router, tags=["WebSocket Kiosk"])
 # Per-user event hub (/ws/user) — content-free "refetch" push to a user's tabs.
 if settings.user_events_enabled:

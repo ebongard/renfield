@@ -527,11 +527,43 @@ class TestRoleManagement:
 
         roles = await ensure_default_roles(db_session)
 
-        assert len(roles) >= 3
+        assert len(roles) >= 4
         role_names = [r.name for r in roles]
         assert "Admin" in role_names
         assert "Familie" in role_names
         assert "Gast" in role_names
+        assert "Kiosk" in role_names  # wall display (auth-on cutover D-5)
+
+    @pytest.mark.asyncio
+    async def test_kiosk_view_is_merged_into_an_existing_admin_role(self, db_session):
+        """The promise "admins keep the kiosk" rests on THIS mechanism, not on
+        the literal in DEFAULT_ROLES: an instance that has been running since
+        before kiosk.view existed carries an Admin row without it, and the
+        additive merge has to repair that at startup."""
+        from sqlalchemy import select
+
+        from models.database import Role
+        from services.auth_service import ensure_default_roles
+
+        db_session.add(Role(
+            name="Admin",
+            description="alt",
+            permissions=["admin", "kb.all"],   # pre-kiosk.view instance
+            is_system=True,
+        ))
+        await db_session.commit()
+
+        await ensure_default_roles(db_session)
+
+        admin = (await db_session.execute(
+            select(Role).where(Role.name == "Admin")
+        )).scalar_one()
+        assert "kiosk.view" in admin.permissions
+        assert "admin" in admin.permissions          # nothing lost in the merge
+        kiosk = (await db_session.execute(
+            select(Role).where(Role.name == "Kiosk")
+        )).scalar_one()
+        assert set(kiosk.permissions) == {"kiosk.view", "rooms.read"}
 
     @pytest.mark.asyncio
     async def test_ensure_default_roles_idempotent(self, db_session):

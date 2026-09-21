@@ -350,4 +350,51 @@ describe('AdminRoute', () => {
 
     expect(screen.getByText('Access Denied')).toBeInTheDocument();
   });
+
+  // The kiosk gate (auth-on cutover D-5): the wall display is guarded by
+  // kiosk.view, not admin. Both halves matter — the holder of the small Kiosk
+  // role gets in, and someone without it gets an honest refusal rather than a
+  // page that renders and then hangs on a socket the backend closes.
+  describe('kiosk.view route gate', () => {
+    const permsOf = (granted: string[]) => ({
+      hasPermission: (p: string) => granted.includes(p),
+      hasAnyPermission: (ps: string[]) => ps.some((p) => granted.includes(p)),
+    });
+
+    it('admits a Kiosk-role display', () => {
+      mockedUseAuth.mockReturnValue(
+        buildAuth({
+          isAuthenticated: true,
+          authEnabled: true,
+          ...permsOf(['kiosk.view', 'rooms.read']),
+        }),
+      );
+
+      renderWithProviders(
+        <ProtectedRoute permission="kiosk.view">
+          <TestChild />
+        </ProtectedRoute>,
+      );
+
+      expect(screen.getByTestId('protected-content')).toBeInTheDocument();
+    });
+
+    it('refuses a family member outright', () => {
+      mockedUseAuth.mockReturnValue(
+        buildAuth({
+          isAuthenticated: true,
+          authEnabled: true,
+          ...permsOf(['chat.own', 'ha.full', 'rooms.read']),
+        }),
+      );
+
+      renderWithProviders(
+        <ProtectedRoute permission="kiosk.view">
+          <TestChild />
+        </ProtectedRoute>,
+      );
+
+      expect(screen.getByText('Access Denied')).toBeInTheDocument();
+    });
+  });
 });
