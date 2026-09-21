@@ -12,7 +12,7 @@
 > the single hardest correctness point (`tasks/structured-memory-plan.md` §Phase 1
 > "Circle-Invariante", `docs/CIRCLES.md` "Merge-Invariante").
 >
-> **Two operator decisions gate the build** (§10): (D-A) the shape of the shared-owner
+> *(Historical — the build was not started; see §14.5.)* **Two operator decisions gate the build** (§11): (D-A) the shape of the shared-owner
 > primitive, and (D-C) the scope of what "cross-user canonicalization" is allowed to do —
 > dedup-shared-only vs. fold-private-into-shared. This doc **recommends** an answer to each
 > and is explicit about why the aggressive reading is unsafe.
@@ -564,7 +564,8 @@ The one invariant that carries the whole design is `audience(survivor) ⊆ audie
 audience(winner)`, enforced by the **same-owner-AND-same-tier** auto-merge gate, backstopped
 by the `merge_entities` owner-equality assertion, and guarded by a mandatory `.159` leak-property
 test. Two operator decisions (the primitive's shape, the scope of "canonicalization") must be
-confirmed before Phase A starts.
+confirmed before Phase A starts. *(Historical: the §14 spike chose co-reference on 2026-09-21;
+Phase A is not being built — see §14.5.)*
 
 ---
 
@@ -669,8 +670,9 @@ fixes and §14.3's risk register folded in from the first commit.
 
 **Done — co-reference wins.** See
 [`spikes/kg-coreference-vs-shared-ownership.md`](spikes/kg-coreference-vs-shared-ownership.md).
-Field data from the live auth-on instance (one person = 13 `kg_entities` rows across 7 owners
-and 3 spellings; `surface_forms`/`canonical_id` never populated) supplied the missing input,
+Field data from the live auth-on instance (one person = 13 `kg_entities` rows across eight owner
+letters — the comment says seven; to be clarified — and 3 spellings; `surface_forms`/`canonical_id`
+never populated) supplied the missing input,
 and added a fifth dimension §14.1 did not weigh: a merged node turns `mention_count` into an
 org-wide per-person tally (a monitoring-capable aggregate under BetrVG § 87 (1) Nr. 6) while a
 `sameAs` edge keeps every count with its owner; the actual need is data-subject findability
