@@ -1133,7 +1133,8 @@ SATELLITE_PSK_HANDSHAKE_ENABLED=false
 # als „kein Rechtemodell in Kraft" (bewusstes #690-Fail-Open, damit gesprochene
 # Befehle funktionieren). Unter auth-on hätte damit jede unerkannte Stimme JEDES
 # Werkzeug. Diese Kommaliste ersetzt das None durch eine konkrete Menge:
-# Haussteuerung bleibt, Admin- und Schreibwerkzeuge fallen weg.
+# genannt wird, ist erreichbar; JEDER nicht genannte MCP-Server fällt weg (auch
+# lesende wie Dokumente oder Kalender) — die Liste ist eine Positivliste.
 # LEER (Vorgabe) = unverändert None; die Ersetzung greift NUR mit
 # AUTH_ENABLED=true — auth-off ist so oder so byte-identisch. Eine Liste, die nur
 # aus Trennzeichen besteht, gilt als leer (eine Aussperrung des Hauses braucht
@@ -1141,9 +1142,14 @@ SATELLITE_PSK_HANDSHAKE_ENABLED=false
 # Empfehlung (D-4a): HA-MCP bietet ausschließlich Assist-Intents (Licht, Rollos,
 # Medien, Lautstärke, Timer; KEIN Service-Aufruf), daher genügt der
 # Konventions-Grant je Server. `ha.control` hält Ansagen/Durchsagen offen.
+#   Empfohlener Wert beim Cutover (Alltagsstimme im Haus; entscheidet D-4a-2):
+#   mcp.homeassistant,mcp.dlna,mcp.radio,mcp.jellyfin,mcp.weather,mcp.search,mcp.news,rooms.read,ha.control
+#   Bewusst NICHT darin: mcp.paperless / mcp.files / mcp.email / mcp.calendar
+#   (Haushaltsinhalte), mcp.scanner / mcp.n8n (Schreibwege), mcp.samsung (TV) —
+#   jeder dieser Dienste ist dann nur noch für erkannte Stimmen erreichbar.
+#   ACHTUNG: ein nicht genannter, aktiver Server wird abgelehnt — die Liste ist
+#   eine Positivliste über ALLE MCP-Server, nicht nur über Schreibwerkzeuge.
 SATELLITE_ANONYMOUS_PERMISSIONS=""
-#   Empfohlener Wert beim Cutover:
-#   mcp.homeassistant,mcp.dlna,mcp.radio,mcp.jellyfin,mcp.weather,rooms.read,ha.control
 
 # Stop-gap aus der chirurgischen H1-Mitigation (greift nur wenn ENROLLMENT aus):
 # Komma-Liste der satellite_ids, die per-Person-IRKs empfangen dürfen. Leer =

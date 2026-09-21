@@ -285,6 +285,33 @@ async def _reject_derostered_heartbeat(websocket, satellite_id: str, manager) ->
     return True
 
 
+_anon_perms_warned = False
+
+
+def _warn_once_on_unknown_grants(grants: list[str]) -> None:
+    """Log unknown grant names ONCE. A typo (`ha.controll`, `mcp.homeasistant`)
+    is otherwise a silent house-wide denial: the gate just says "permission
+    denied" for a grant nobody ever had. Non-``mcp.`` entries must be real
+    ``Permission`` values; ``mcp.<server>`` is a convention grant whose server
+    name only exists once MCP is up, so it is checked for shape only."""
+    global _anon_perms_warned
+    if _anon_perms_warned:
+        return
+    _anon_perms_warned = True
+    from models.permissions import Permission
+
+    known = {p.value for p in Permission}
+    unknown = [
+        g for g in grants
+        if not (g in known or (g.startswith("mcp.") and len(g) > 4))
+    ]
+    if unknown:
+        logger.warning(
+            f"⚠️ SATELLITE_ANONYMOUS_PERMISSIONS nennt unbekannte Rechte {unknown} — "
+            f"sie greifen nie und wirken wie eine stille Verweigerung"
+        )
+
+
 def anonymous_permissions() -> list[str] | None:
     """The grant list an UNRECOGNISED satellite voice runs with, or None.
 
@@ -302,7 +329,10 @@ def anonymous_permissions() -> list[str] | None:
         return None
     grants = [p.strip() for p in settings.satellite_anonymous_permissions.split(",")]
     grants = [p for p in grants if p]
-    return grants or None
+    if not grants:
+        return None
+    _warn_once_on_unknown_grants(grants)
+    return grants
 
 
 def _handshake_identity_mismatch(auth_result: dict | None, satellite_id: str) -> bool:
@@ -979,6 +1009,10 @@ async def satellite_websocket(
                                         sat_user_id = usr.id
                         except Exception as e:
                             logger.warning(f"⚠️ Failed to load satellite user permissions: {e}")
+                            if settings.auth_enabled:
+                                # Recognised but unresolvable → deny, never fall
+                                # back to the anonymous set (mirrors chat.py:137).
+                                sat_user_permissions = []
 
                     # No recognised speaker (or none linked to an account): run
                     # the turn with the configured anonymous grant list instead
@@ -986,6 +1020,11 @@ async def satellite_websocket(
                     # or the list is unset — see anonymous_permissions().
                     if sat_user_permissions is None:
                         sat_user_permissions = anonymous_permissions()
+                        if sat_user_permissions is not None:
+                            logger.info(
+                                f"🔐 Anonymer Satelliten-Zug mit "
+                                f"{len(sat_user_permissions)} Rechten"
+                            )
 
                     # Associate conversation with speaker (for handoff lookup)
                     if spk and satellite_db_session_id:
@@ -1048,6 +1087,17 @@ async def satellite_websocket(
                             )
                             break
 
+                        # A REFUSAL is not an empty result: trying the next intent
+                        # would end in plain chat, and the model would answer the
+                        # very question the permission gate just declined. Say so
+                        # instead (the failure branch below renders the message).
+                        if candidate_result.get("permission_denied"):
+                            intent = intent_candidate
+                            action_result = candidate_result
+                            logger.info(f"🔒 Intent {intent_name} abgelehnt (Berechtigung)")
+                            await satellite_manager.send_action_result(session_id, intent, False)
+                            break
+
                         logger.info(f"⏭️ Intent {intent_name} leer, versuche nächsten...")
                     origin_room_id.reset(_origin_room_token)
 
@@ -1070,6 +1120,15 @@ Gib eine kurze, natürliche Antwort. KEIN JSON, nur Text."""
 
                         async for chunk in ollama.chat_stream(enhanced_prompt, history=satellite_conversation_history):
                             response_text += chunk
+                    elif action_result and action_result.get("permission_denied"):
+                        # Spoken refusal — never the gate's technical message.
+                        response_text = (
+                            "Das darf ich nur für eine erkannte Stimme tun. "
+                            "Sag es mir bitte noch einmal, wenn ich dich erkannt habe."
+                            if satellite_language == "de" else
+                            "I can only do that for a recognised voice. "
+                            "Please ask again once I know who you are."
+                        )
                     elif action_result and not action_result.get("success"):
                         response_text = f"Entschuldigung, das konnte ich nicht ausführen: {action_result.get('message')}"
                     elif use_vision:

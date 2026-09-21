@@ -1592,14 +1592,18 @@ class Settings(BaseSettings):
     # and internal-tool gate reads as "no permission model in effect" — the
     # deliberate #690 fail-open so spoken commands keep working. Under auth-on
     # that leaves an unrecognised voice with EVERY tool. This list replaces the
-    # None with a concrete grant set: house control stays, admin/write tools go.
+    # None with a concrete grant set — a POSITIVE list over every MCP server:
+    # what is named is reachable, everything else (including read-only servers
+    # like documents or calendar) is denied for an unrecognised voice.
     # Comma list; EMPTY (the default) keeps today's `None` exactly, and the
     # substitution only ever happens with AUTH_ENABLED=true, so an auth-off
     # household is byte-identical either way.
-    # Recommended set (D-4a): mcp.homeassistant (HA's MCP server exposes Assist
-    # intents only — lights, blinds, media, volume, timers; no service-call
-    # escape hatch), mcp.dlna, mcp.radio, mcp.jellyfin, mcp.weather, rooms.read
-    # and ha.control (the announce/broadcast gate in ha_glue.bootstrap).
+    # Recommended set (D-4a, widened by review): mcp.homeassistant (HA's MCP
+    # server exposes Assist intents only — lights, blinds, media, volume,
+    # timers; no service-call escape hatch), mcp.dlna, mcp.radio, mcp.jellyfin,
+    # mcp.weather, mcp.search, mcp.news, plus rooms.read and ha.control (the
+    # announce/broadcast gate — both inert on the intent path today, kept for
+    # the paths that will read them).
     satellite_anonymous_permissions: str = ""
 
     # C1 binary Opus transport for satellite audio (docs/design/

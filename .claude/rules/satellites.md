@@ -24,13 +24,10 @@ Long form: `docs/design/ble-presence-improvement.md`, `docs/SATELLITE_ACOUSTIC_C
 - Never commit wake-word models, device MACs/IRKs, enrollment tokens or ambient captures (`data/wakeword-ambient/`).
 
 ## Permissions on a voice turn
-- A turn with a RECOGNISED speaker runs with that user's permissions (`speaker → users.speaker_id`); one without
-  carries `user_permissions=None`, which every MCP / `internal.*` gate reads as "no permission model in effect"
-  (the deliberate #690 fail-open so spoken commands work). Under `AUTH_ENABLED=true` that would hand any voice every
-  tool — `SATELLITE_ANONYMOUS_PERMISSIONS` (dark, empty = unchanged) replaces the None with a grant list
-  (`satellite_handler.anonymous_permissions()`); the substitution never happens while auth is off.
-- HA device control goes through the **MCP** path (`mcp.homeassistant`, Assist intents only — no service call), so
-  `ha.control` alone actuates nothing there; it gates `internal.announce_in_room` / `broadcast_announcement`.
+- Recognised speaker → that user's permissions; unrecognised → `None`, which every gate reads as "no permission model"
+  (#690 fail-open). `SATELLITE_ANONYMOUS_PERMISSIONS` (dark, empty = unchanged, never applied while auth is off)
+  replaces it with a POSITIVE list over ALL MCP servers — an unnamed server is denied, read-only ones too.
+- A denial is marked `permission_denied` and SPOKEN; swallowing it would let the model answer the refused question.
 
 ## Voice turn
 - A turn ends on VAD silence after the grace period: `vad.min_listening_seconds` 2.0 s + `silence_duration_ms` 1.2 s,

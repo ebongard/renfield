@@ -2389,6 +2389,11 @@ class MCPManager:
                 "success": False,
                 "message": perm_error,
                 "data": None,
+                # Marked so a caller can tell "you may not" from "that returned
+                # nothing". The satellite's intent loop would otherwise treat a
+                # denial like an empty result, fall through to plain chat and let
+                # the model answer the question it was just refused (silent fail).
+                "permission_denied": True,
             }
 
         state = self._servers.get(tool_info.server_name)
