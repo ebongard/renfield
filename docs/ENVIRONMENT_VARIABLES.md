@@ -1101,6 +1101,18 @@ SATELLITE_ENROLLMENT_ENABLED=false
 # einmal authentifiziert hat (nicht nur die aktuell verbundenen) — dann persistent
 # verriegelt. Default aus, bis die Flotte vollständig eingeschrieben ist.
 SATELLITE_ENROLLMENT_AUTOFLIP_ENABLED=false
+# PSK als HANDSHAKE-Zugangsberechtigung (auth-on-Instanzen; Entwurf
+# docs/design/household-auth-on-cutover.md §6.1 Nr. 1, D-4c). Der Satellit
+# sendet `Authorization: Bearer sat.<satellite_id>.<secret>` (selbstidentifizierend
+# → genau EINE Zeile wird geprüft, kein N×bcrypt je Reconnect). Unabhängig vom
+# Enrollment-Gate oben: prüft immer, fällt nie auf ein Nutzer-JWT zurück, bindet
+# die Verbindung nur an die satellite_id (der register-Frame muss dieselbe nennen).
+# Sperre je (satellite_id, IP) VOR dem bcrypt-Vergleich über die Anmeldesperre.
+# Ein `sat.`-Token in der URL wird abgelehnt (nur Header). Mit AUTH_ENABLED=false
+# wird der Header gar nicht gelesen (byte-identisch). Satelliten-Seite:
+# `server.auth_enabled: true` + `server.auth_token: sat.<id>.<enrollment_token>`
+# über die Provisionierung (Flotteneinstellung mit zwei Quellen).
+SATELLITE_PSK_HANDSHAKE_ENABLED=false
 
 # Stop-gap aus der chirurgischen H1-Mitigation (greift nur wenn ENROLLMENT aus):
 # Komma-Liste der satellite_ids, die per-Person-IRKs empfangen dürfen. Leer =

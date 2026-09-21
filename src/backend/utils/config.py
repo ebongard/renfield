@@ -1576,6 +1576,16 @@ class Settings(BaseSettings):
     # authenticated at least once (not just currently-connected ones), then
     # latch it persistently. Default off until the fleet is fully enrolled.
     satellite_enrollment_autoflip_enabled: bool = False
+    # Accept the per-satellite enrollment PSK as the WebSocket HANDSHAKE
+    # credential (auth-on instances; docs/design/household-auth-on-cutover.md
+    # §6.1 Nr. 1, D-4c). Token format is self-identifying —
+    # ``sat.<satellite_id>.<secret>`` — so the handshake verifies exactly ONE
+    # row (no N×bcrypt per reconnect). Independent of the enrollment GATE above
+    # (the register-frame soak/enforce state machine): this path always
+    # verifies, never falls back to a user JWT, and binds the connection to the
+    # satellite_id only. Dark by default; with AUTH_ENABLED=false the handshake
+    # token is never read at all (byte-identical).
+    satellite_psk_handshake_enabled: bool = False
 
     # C1 binary Opus transport for satellite audio (docs/design/
     # voice-identity-wakeword-verification.md §4, decision D6). Dark by

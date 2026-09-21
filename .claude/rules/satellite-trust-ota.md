@@ -44,6 +44,12 @@ Loaded only when OTA-signing / update / enrollment code is read. Long form: `doc
   constant-time. Mint: `bin/enroll_satellite.py <satellite_id>` or the ADMIN-gated `/api/satellite-enrollment` UI
   (token shown ONCE). Provision via the gitignored host_var `satellite_enrollment_token` or a per-pod k8s Secret
   (`RENFIELD_ENROLLMENT_TOKEN`, mounted `optional: true` so the pod still boots dark).
+- **Handshake credential (`SATELLITE_PSK_HANDSHAKE_ENABLED`, dark; auth-on cutover D-4c):** the same PSK is also
+  accepted at the WS handshake as `Authorization: Bearer sat.<satellite_id>.<secret>` — self-identifying, so exactly
+  one row is bcrypt-verified; lockout per (satellite_id, IP) runs BEFORE the compare; a `sat.` token in the URL is
+  refused; a failing `sat.` token never falls through to JWT/device-token; independent of the enrollment GATE (always
+  verifies); binds only the satellite_id — the register frame must name the same id (`identity-mismatch` → 4001).
+  No user is bound (device account = P0 Nr. 3). Under `AUTH_ENABLED=false` the header is never read.
 - Modes: OFF (`SATELLITE_ENROLLMENT_ENABLED=false`, the code default: register path byte-identical to legacy, IRK push
   on `SATELLITE_IRK_ALLOWLIST`) → **PERMISSIVE** (a presented PSK is verified; wrong/unknown/revoked rejected; no token
   allowed-but-logged) → **ENFORCING** (no valid PSK → reject).

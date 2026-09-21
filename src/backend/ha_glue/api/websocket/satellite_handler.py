@@ -286,6 +286,16 @@ async def _reject_derostered_heartbeat(websocket, satellite_id: str, manager) ->
 
 
 @router.websocket("/ws/satellite")
+def _handshake_identity_mismatch(auth_result: dict | None, satellite_id: str) -> bool:
+    """True when the WS handshake authenticated a specific satellite (PSK
+    strategy, ``auth_result["satellite_id"]``) and the register frame names a
+    DIFFERENT one. A connection without a handshake identity (JWT, device
+    token, auth-off) is never a mismatch — binding only applies where the
+    handshake established an identity to bind to."""
+    handshake_sat = (auth_result or {}).get("satellite_id")
+    return handshake_sat is not None and satellite_id != handshake_sat
+
+
 async def satellite_websocket(
     websocket: WebSocket,
     token: str = Query(None, description="Authentication token")
@@ -466,6 +476,22 @@ async def satellite_websocket(
                             code=WSAuthError.UNAUTHORIZED, reason=reject_reason
                         )
                         return
+
+                # Handshake identity binding (household auth-on cutover, D-4c):
+                # a connection authenticated with the per-satellite PSK at the
+                # WS handshake carries that satellite_id; the register frame
+                # must name the SAME id, else a device could authenticate as
+                # itself and then register as another satellite.
+                if _handshake_identity_mismatch(auth_result, satellite_id):
+                    logger.warning(
+                        f"🚫 Satellite register rejected: handshake identity "
+                        f"'{auth_result.get('satellite_id')}' but register frame claims '{satellite_id}'"
+                    )
+                    await send_ws_error(websocket, WSErrorCode.UNAUTHORIZED, "identity-mismatch")
+                    await websocket.close(
+                        code=WSAuthError.UNAUTHORIZED, reason="identity-mismatch"
+                    )
+                    return
 
                 # C1 codec negotiation: the satellite advertises audio_codec
                 # in its capabilities; the backend accepts opus only when the

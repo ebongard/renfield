@@ -191,6 +191,41 @@ async def authenticate_websocket(
     if not token:
         return None
 
+    # Strategy S: the per-satellite enrollment PSK as the handshake credential
+    # (``sat.<satellite_id>.<secret>``, SATELLITE_PSK_HANDSHAKE_ENABLED —
+    # docs/design/household-auth-on-cutover.md §6.1 Nr. 1). Checked BEFORE the
+    # JWT decode because the prefix makes it unambiguous and cheap to detect.
+    # A ``sat.`` token that fails NEVER falls through to the JWT / device-token
+    # strategies: it identifies itself as a satellite credential, so a wrong
+    # one is a rejection, not "try something else". No user_id is bound — the
+    # device account is a separate step (P0 Nr. 3); the handler binds the
+    # register frame's satellite_id to this identity.
+    if settings.satellite_psk_handshake_enabled and token.startswith("sat."):
+        from ha_glue.services.satellite_enrollment_service import authorize_handshake
+        from services.database import AsyncSessionLocal
+
+        # The PSK is a long-lived device secret: it travels in the Authorization
+        # header only (the satellite client already does that). In the URL it
+        # would land in proxy/access logs — refuse rather than accept.
+        if token_from_url:
+            logger.warning("Satellite handshake token presented in the URL — refused")
+            return None
+        client_ip = websocket.client.host if websocket.client else None
+        try:
+            async with AsyncSessionLocal() as db:
+                satellite_id = await authorize_handshake(db, token, client_ip)
+        except Exception as e:  # noqa: BLE001 — fail CLOSED, never admit on a DB error
+            logger.error(f"Satellite handshake auth errored (fail-closed): {e}")
+            return None
+        if satellite_id is None:
+            return None
+        logger.debug(f"WebSocket authenticated via satellite PSK: satellite_id={satellite_id}")
+        return {
+            "authenticated": True,
+            "auth_method": "satellite_psk",
+            "satellite_id": satellite_id,
+        }
+
     # Strategy 1: Try JWT validation (web chat users authenticated via
     # /api/auth/login). The React frontend reads `renfield_access_token`
     # from localStorage and appends it directly to the WS URL as
