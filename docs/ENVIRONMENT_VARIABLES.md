@@ -1943,12 +1943,19 @@ aelteres `first_seen_at`. Dann:
 1. **Same-Tier + Cosine >= `KG_RECONCILER_AUTO_MERGE_THRESHOLD`** → automatischer
    Merge via `merge_entities` (absorbiert surface_forms/Multi-Typ, reparentiert
    Relationen, Tier = MIN, tombstoned den Loser mit `canonical_id`).
-2. **Cross-Tier ODER Grauzone** (aehnlich, aber unter der Auto-Schwelle) →
-   ein `kg_merge_proposals`-Eintrag fuer die Owner-Review (`/brain/review`).
-   Wird NIE still gemergt — eine Verschmelzung darf Sichtbarkeit nie erhoehen.
+2. **Cross-Tier ODER Grauzone** (aehnlich, aber unter der Auto-Schwelle) **ODER
+   Schreibvariante eines Personennamens** (`name_typo`: gleiche Tokens bis auf
+   eines, das sich um einen Edit unterscheidet, beide ≥ 4 Zeichen — die einzige
+   Ausnahme vom Person-Guard, der Personenpaare mit unverwandten Namen sonst ganz
+   verwirft) → ein `kg_merge_proposals`-Eintrag fuer die Owner-Review
+   (`/brain/review`). Wird NIE still gemergt — eine Verschmelzung darf
+   Sichtbarkeit nie erhoehen. Cross-Tier hat als Label Vorrang.
 
 Idempotent: Paare mit bereits offenem Proposal werden ausgeschlossen
-(Partial-Unique auf `(loser, winner) WHERE status='pending'`). Wird ein
+(Partial-Unique auf `(loser, winner) WHERE status='pending'`), ebenso Paare,
+deren Proposal der Owner **abgelehnt** hat — eine Ablehnung ist endgueltig fuer
+den Reconciler (`NOT EXISTS` ueber `pending` und `rejected`); der einzige Weg
+zurueck ist ein ausdruecklicher Admin-Merge (`POST /entities/merge`). Wird ein
 Proposal genehmigt, dessen Gegenseite ein paralleles Approve schon verschmolzen
 hat, ist der Merge ein No-op und das Proposal schliesst als `superseded` (statt
 irrefuehrend `approved`).

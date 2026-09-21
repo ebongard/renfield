@@ -43,6 +43,10 @@ exact name → surface-form (jsonb `@>`) → embedding (**SAME-TIER only** + hig
 - Per-user non-blocking advisory lock `_RECONCILER_LOCK_NS`; an overlapping run is a no-op. Each pass first re-embeds
   up to `KG_RECONCILER_EMBED_BACKFILL_PER_RUN` null-embedding entities (else invisible to the self-join).
 - Approving a proposal whose counterpart was already merged closes it as `superseded`, not `approved`.
+- **A rejection is final for the reconciler.** The self-join AND `_propose` exclude pairs with a `pending` OR
+  `rejected` proposal; a rejected pair never comes back on its own. The only way back is an explicit admin merge
+  (`POST /entities/merge`, `KG_MANAGE`). Label precedence when a pair qualifies twice: `cross_tier` > `name_typo` >
+  `gray_zone` (the card keys its warning and button de-emphasis on `cross_tier`).
 - Routes are `KG_VIEW`, own graph only, per-proposal ownership 404. Scheduler `_schedule_kg_reconciler`.
 
 ## Conflation tripwire (`KG_CONFLATION_MONITOR_ENABLED`, dark, read-only)

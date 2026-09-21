@@ -12,15 +12,21 @@ Policy (the safety core):
     >= the candidate threshold by themselves, so embedding can't tell two people
     apart — persons only reconcile when names are related (equal or token-subset:
     "Alice" ⊆ "Alice B."). Mirrors resolve's person embedding-match skip. This is
-    what makes the reconciler safe to enable; see _person_pair_names_unrelated.
+    what makes the reconciler safe to enable; see _names_related. ONE exception
+    (#876 field data): a TYPO pair — same tokens except one, that one differing
+    by a single in-token edit, both spellings >= 4 chars (_names_near_typo) —
+    survives as a REVIEW proposal (reason name_typo), never an auto-merge.
   - SAME tier AND similarity >= auto-merge threshold -> auto-merge via
     KnowledgeGraphService.merge_entities (which enforces tier=MIN etc.).
   - CROSS tier (could change visibility, D3) OR gray-zone (similar but below
-    the auto bar, D10) -> a KgMergeProposal for owner review on /brain/review.
-    Never silently merged.
+    the auto bar, D10) OR name_typo -> a KgMergeProposal for owner review on
+    /brain/review. Never silently merged. cross_tier takes precedence as the
+    label (the visibility change is the invariant-bearing fact).
 
 Idempotent: candidate pairs that already have a PENDING proposal are excluded
-by the find query (and the proposals table carries a partial-unique guard).
+by the find query (and the proposals table carries a partial-unique guard), and
+so are pairs the owner REJECTED — a rejection is a verdict the reconciler does
+not re-litigate (the only way back is an explicit admin merge).
 """
 from __future__ import annotations
 
@@ -102,30 +108,13 @@ def _is_person(etype: str | None, etypes_text: str | None) -> bool:
     return etype == "person" or (etypes_text is not None and '"person"' in etypes_text)
 
 
-def _person_pair_names_unrelated(
-    etype_a: str | None, etypes_a: str | None, name_a: str | None,
-    etype_b: str | None, etypes_b: str | None, name_b: str | None,
-) -> bool:
-    """The person-guard: True for a PERSON-involving pair whose names are unrelated.
-
-    Distinct person names embed >= the candidate threshold by themselves
-    (measured: Jutta~Anna 0.894, Jutta~Gaby 0.863), so embedding similarity alone
-    cannot tell two different people apart. A person pair is only a real dedup
-    candidate when the names are RELATED — equal, or one's whitespace tokens are a
-    subset of the other's ("Alice" ⊆ "Alice B.", "Jutta" ⊆ "Jutta van den
-    Bongard"). Unrelated-name person pairs (Jutta vs Anna) are dropped entirely —
-    no auto-merge, no proposal — which is what makes the reconciler safe to enable
-    (resolve already skips embedding-match for persons for the same reason). Pairs
-    with no person on either side are unaffected (return False).
-    """
-    if not (_is_person(etype_a, etypes_a) or _is_person(etype_b, etypes_b)):
-        return False
-    return not _names_related(name_a, name_b)
-
-
 def _names_related(name_a: str | None, name_b: str | None) -> bool:
     """Two names are related iff equal or one's whitespace tokens subset the other.
 
+    The person-guard's evidence (find_duplicate_pairs applies it to any pair with
+    a person on either side): distinct person names embed >= the candidate
+    threshold by themselves (measured: Jutta~Anna 0.894, Jutta~Gaby 0.863), so
+    embedding similarity alone cannot tell two different people apart.
     "Alice" ⊆ "Alice B.", "Jutta" ⊆ "Jutta van den Bongard" -> related (likely the
     same entity, a surface-form variant). "Jutta" vs "Anna", "Anna Schmidt" vs
     "Anna Müller" -> unrelated. Empty on either side -> not related (can't tell).

@@ -52,6 +52,23 @@ describe('MergeProposalCard', () => {
     expect(screen.getByRole('button', { name: 'Zusammenführen' }).className).toContain('btn-primary');
   });
 
+  it('name_typo: renders the spelling-variant label, no visibility warning, cautious button', () => {
+    // A same-tier pair one in-token edit apart is "maybe two people" by
+    // definition — it gets the label and the no-nudge button, but not the
+    // visibility warning (that one is keyed on the tiers).
+    const p = proposal({
+      reason: 'name_typo',
+      loser: brief({ id: 10, name: 'Anna Schmitt', circle_tier: 0, mention_count: 4 }),
+      winner: brief({ id: 20, name: 'Anna Schmidt', circle_tier: 0, mention_count: 5 }),
+    });
+    renderWithRouter(<MergeProposalCard proposal={p} onApprove={vi.fn()} onReject={vi.fn()} />);
+    expect(screen.getByText('Schreibvariante eines Personennamens')).toBeInTheDocument();
+    expect(screen.queryByText(/Sichtbarkeit/)).not.toBeInTheDocument();
+    const merge = screen.getByRole('button', { name: 'Zusammenführen' });
+    expect(merge.className).toContain('btn-secondary');
+    expect(merge.className).not.toContain('btn-primary');
+  });
+
   it('cross_tier merge button is de-emphasised (secondary, no primary nudge)', () => {
     renderWithRouter(<MergeProposalCard proposal={proposal({ reason: 'cross_tier' })} onApprove={vi.fn()} onReject={vi.fn()} />);
     const merge = screen.getByRole('button', { name: 'Zusammenführen' });

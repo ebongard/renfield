@@ -31,6 +31,10 @@ export default function MergeProposalCard({ proposal, onApprove, onReject, busy 
   const [winnerId, setWinnerId] = useState<number>(proposal.winner.id);
 
   const crossTier = proposal.loser.circle_tier !== proposal.winner.circle_tier;
+  // No merge nudge when the stakes are high: a visibility change (cross_tier) or
+  // a pair that is "maybe two people" by definition (name_typo — one in-token
+  // edit apart). The visibility warning itself stays keyed on the tiers.
+  const cautious = crossTier || proposal.reason === 'name_typo';
   const pct = Math.round((proposal.similarity ?? 0) * 100);
   const radioName = `merge-${proposal.id}-survivor`;
 
@@ -116,8 +120,8 @@ export default function MergeProposalCard({ proposal, onApprove, onReject, busy 
         </p>
       )}
 
-      <div className={`flex gap-2 ${crossTier ? 'flex-row' : 'flex-row-reverse'} justify-end`}>
-        {/* cross_tier: Ablehnen first in DOM (focus-first, no merge nudge);
+      <div className={`flex gap-2 ${cautious ? 'flex-row' : 'flex-row-reverse'} justify-end`}>
+        {/* cross_tier / name_typo: Ablehnen first in DOM (focus-first, no merge nudge);
             gray_zone: Zusammenführen primary, rendered last via flex-row-reverse. */}
         <button
           type="button"
@@ -125,13 +129,13 @@ export default function MergeProposalCard({ proposal, onApprove, onReject, busy 
           onClick={onReject}
           disabled={busy}
           // eslint-disable-next-line jsx-a11y/no-autofocus
-          autoFocus={crossTier}
+          autoFocus={cautious}
         >
           {t('circles.mergeProposals.reject')}
         </button>
         <button
           type="button"
-          className={crossTier ? 'btn btn-secondary' : 'btn btn-primary'}
+          className={cautious ? 'btn btn-secondary' : 'btn btn-primary'}
           onClick={() => onApprove(winnerId)}
           disabled={busy}
         >

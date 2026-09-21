@@ -17,6 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from models.database import (
     EMBEDDING_DIMENSION,
     KG_MERGE_PROPOSAL_APPROVED,
+    KG_MERGE_PROPOSAL_PENDING,
     KG_MERGE_PROPOSAL_REJECTED,
     KG_MERGE_PROPOSAL_SUPERSEDED,
     KG_MERGE_REASON_CROSS_TIER,
@@ -336,16 +337,20 @@ class TestApproveReject:
         # The REJECTED (a,b) pair stays out (a rejection is the owner's verdict
         # and is not re-litigated); a fresh cross-tier pair proves the
         # aggregation path executed.
-        await _entity(pg_db_session, owner, "Carla", tier=0, mention=2, emb=_unit(5))
-        await _entity(pg_db_session, owner, "Carla D.", tier=2, mention=9, emb=_unit(5))
+        c = await _entity(pg_db_session, owner, "Carla", tier=0, mention=2, emb=_unit(5))
+        d = await _entity(pg_db_session, owner, "Carla D.", tier=2, mention=9, emb=_unit(5))
         report = await run_reconciler(db=pg_db_session, user=None)
         assert report.candidates == 1 and report.proposed == 1
         pending = (await pg_db_session.execute(
             select(KgMergeProposal).where(
-                KgMergeProposal.user_id == owner.id, KgMergeProposal.status == "pending",
+                KgMergeProposal.user_id == owner.id,
+                KgMergeProposal.status == KG_MERGE_PROPOSAL_PENDING,
             )
         )).scalars().all()
-        assert {pending[0].loser_entity_id, pending[0].winner_entity_id} != {a.id, b.id}
+        assert len(pending) == 1
+        assert {pending[0].loser_entity_id, pending[0].winner_entity_id} == {c.id, d.id}
+        await pg_db_session.refresh(p)
+        assert p.status == KG_MERGE_PROPOSAL_REJECTED  # the verdict stands
 
     async def test_approve_override_winner(self, pg_db_session, monkeypatch):
         # D2 survivor toggle: owner keeps the LESS-mentioned entity instead of
@@ -473,10 +478,70 @@ class TestPersonGuard:
         )).scalar_one()
         assert await rec.reject_proposal(pid, resolved_by=owner.id) is True
 
+        # (Here "Anna Schmidt" — inserted first, more mentions — is the winner,
+        # i.e. the stored proposal is (loser=b, winner=a): this exercises the
+        # REVERSED orientation of the NOT EXISTS; the single-user route test
+        # covers the other one.)
         assert await rec.find_duplicate_pairs(owner.id) == []
         second = await rec.run_for_user(owner.id)
         assert second.proposed == 0 and second.auto_merged == 0
         assert await _count_pending(pg_db_session, owner.id) == 0
+
+    async def test_propose_refuses_rejected_pair_if_find_bypassed(
+        self, pg_db_session, monkeypatch
+    ):
+        # Second layer, tested on its own: even if the self-join handed a
+        # rejected pair back (future refactor of the SQL), _propose must not
+        # re-open it.
+        owner = await _make_user(pg_db_session, "rec_pg_rejected_bypass")
+        a = await _entity(pg_db_session, owner, "Anna Schmidt", tier=0, mention=5, emb=_unit(6))
+        b = await _entity(pg_db_session, owner, "Anna Schmitt", tier=0, mention=4, emb=_unit(6))
+        rec = _recon(pg_db_session, monkeypatch)
+        assert (await rec.run_for_user(owner.id)).proposed == 1
+        pid = (await pg_db_session.execute(
+            select(KgMergeProposal.id).where(KgMergeProposal.user_id == owner.id)
+        )).scalar_one()
+        assert await rec.reject_proposal(pid, resolved_by=owner.id) is True
+
+        from services.kg_reconciler_service import MergeCandidate
+        cand = MergeCandidate(loser_id=b.id, winner_id=a.id, similarity=1.0,
+                              loser_tier=0, winner_tier=0, block_auto_merge=True,
+                              is_person_pair=True, names_related=False, name_typo=True)
+        monkeypatch.setattr(rec, "find_duplicate_pairs", AsyncMock(return_value=[cand]))
+        monkeypatch.setattr(rec, "backfill_missing_embeddings", AsyncMock(return_value=0))
+        report = await rec.run_for_user(owner.id)
+        assert report.proposed == 0 and report.auto_merged == 0
+        assert await _count_pending(pg_db_session, owner.id) == 0
+
+    async def test_org_typo_pair_still_auto_merges(self, pg_db_session, monkeypatch):
+        # The typo exception is person-scoped. Two organisations one edit apart
+        # at cosine 1.0, same tier, auto-merge exactly as before (embedding IS
+        # meaningful for non-persons).
+        owner = await _make_user(pg_db_session, "rec_pg_org_typo")
+        await _entity(pg_db_session, owner, "Acme GmbH", etype="organization",
+                      tier=0, mention=2, emb=_unit(6))
+        await _entity(pg_db_session, owner, "Acme GmbG", etype="organization",
+                      tier=0, mention=9, emb=_unit(6))
+        rec = _recon(pg_db_session, monkeypatch)
+        pairs = await rec.find_duplicate_pairs(owner.id)
+        assert len(pairs) == 1 and pairs[0].name_typo is False
+        assert (await rec.run_for_user(owner.id)).auto_merged == 1
+
+    async def test_cross_tier_typo_pair_keeps_cross_tier_reason(self, pg_db_session, monkeypatch):
+        # Label precedence: the visibility change is the invariant-bearing fact,
+        # and the card keys its warning + button de-emphasis on cross_tier.
+        owner = await _make_user(pg_db_session, "rec_pg_typo_xtier")
+        await _entity(pg_db_session, owner, "Firstname von der Lastname", tier=0,
+                      mention=5, emb=_unit(6))
+        await _entity(pg_db_session, owner, "Firstname von der Lastnrame", tier=2,
+                      mention=4, emb=_unit(6))
+        rec = _recon(pg_db_session, monkeypatch)
+        report = await rec.run_for_user(owner.id)
+        assert report.auto_merged == 0 and report.proposed == 1
+        proposal = (await pg_db_session.execute(
+            select(KgMergeProposal).where(KgMergeProposal.user_id == owner.id)
+        )).scalar_one()
+        assert proposal.reason == KG_MERGE_REASON_CROSS_TIER
 
     async def test_numbered_test_accounts_are_still_dropped(self, pg_db_session, monkeypatch):
         # The other six measured pairs: distinct identities whose names differ

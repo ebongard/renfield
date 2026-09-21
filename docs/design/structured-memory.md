@@ -96,7 +96,10 @@ except one, that one differing by a single in-token edit (`_names_near_typo`, OS
 characters) — survives the find-time drop as a **review proposal** with `reason=name_typo`. It is never auto-merged:
 `names_related` stays False, so the gate refuses it, and `block_auto_merge` is set. The token minimum is deliberate:
 the same data set held six pairs of numbered test accounts differing only in a trailing two-character ordinal —
-distinct identities that must stay apart.
+distinct identities that must stay apart. A cross-tier typo pair is labelled `cross_tier` (the visibility change is
+the invariant-bearing fact and drives the card's warning). Since the same change, a proposal the owner **rejected**
+is final for the reconciler — the self-join and `_propose` exclude `pending` and `rejected` pairs alike, so a
+"maybe two people" verdict is not re-asked every run; the only way back is an explicit admin merge.
 
 Operational details:
 

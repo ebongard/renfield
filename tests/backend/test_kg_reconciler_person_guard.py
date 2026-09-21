@@ -13,10 +13,10 @@ apart.
 import pytest
 
 from services.kg_reconciler_service import (
+    _TYPO_MIN_TOKEN_LEN,
     _names_near_typo,
     _names_related,
     _osa_distance_is_one,
-    _person_pair_names_unrelated,
 )
 
 
@@ -80,6 +80,23 @@ class TestNamesNearTypo:
     def test_short_token_edit_is_not_a_typo(self):
         assert _names_near_typo("Jan Berg", "Jen Berg") is False
 
+    @pytest.mark.parametrize("a,b,expected", [
+        ("Anna Schmidt", "Anne Schmidt", True),    # both exactly at the minimum (4/4)
+        ("Ann Schmidt", "Anna Schmidt", False),    # OSA 1, but the shorter side is 3
+        ("Jan Berg", "Jen Berg", False),           # 3/3
+    ])
+    def test_min_token_length_boundary(self, a, b, expected):
+        assert _TYPO_MIN_TOKEN_LEN == 4
+        assert _names_near_typo(a, b) is expected
+
+    @pytest.mark.parametrize("a,b,expected", [
+        ("Müller", "Möller", True),      # one substitution, umlaut is one code point
+        ("Müller", "Mueller", False),    # two edits — a transliteration, not a slip
+        ("Straße", "Strasse", False),    # two edits; _norm lowercases, no casefold
+    ])
+    def test_unicode_is_per_code_point(self, a, b, expected):
+        assert _names_near_typo(a, b) is expected
+
     def test_case_and_whitespace_insensitive(self):
         assert _names_near_typo("  anna  SCHMIDT ", "Anna schmitt") is True
 
@@ -89,15 +106,10 @@ class TestNamesNearTypo:
 
 
 @pytest.mark.unit
-class TestGuardStillDropsUnrelated:
-    def test_person_pair_unrelated_is_unchanged_by_typo_logic(self):
-        # The drop decision in find_duplicate_pairs is: unrelated AND not typo.
-        # _person_pair_names_unrelated itself keeps its contract (typo pairs are
-        # still "unrelated" — that is what keeps them out of auto-merge).
-        assert _person_pair_names_unrelated(
-            "person", None, TestNamesNearTypo.FIELD_A,
-            "person", None, TestNamesNearTypo.FIELD_B,
-        ) is True
-        assert _person_pair_names_unrelated(
-            "organization", None, "Acme", "organization", None, "Globex",
-        ) is False
+class TestTypoPairIsUnrelatedButNear:
+    def test_the_two_predicates_the_drop_decision_combines(self):
+        # find_duplicate_pairs drops a person pair iff NOT related AND NOT typo.
+        # A typo pair is unrelated (so the auto-merge gate keeps refusing it) yet
+        # near (so find keeps it for review). Both halves pinned here.
+        assert _names_related(TestNamesNearTypo.FIELD_A, TestNamesNearTypo.FIELD_B) is False
+        assert _names_near_typo(TestNamesNearTypo.FIELD_A, TestNamesNearTypo.FIELD_B) is True
