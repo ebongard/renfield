@@ -269,7 +269,7 @@ liegen außerhalb dieses Repos.
 
 ### 4a. Dunkel im Haushalt, aber auf xidra AN (5)
 `AUTH_ENABLED`, `AUTH_COOKIE_ENABLED`, `FOLDER_INGEST_SIMBA_ENABLED`, `MEETING_MINUTES_ENABLED`, `PROJECTS_ENABLED`
-— d. h. Haushalt läuft auth-off, ohne Cookie-Session, ohne Simba, ohne Protokoll-Panel, ohne Projekte.
+— d. h. Haushalt läuft auth-off, ohne Cookie-Session, ohne Simba, ohne Projekte (Protokoll-Panel seit 2026-09-21 an). `AUTH_ENABLED` Haushalt: Entwurf `docs/design/household-auth-on-cutover.md`, entschieden 2026-09-21, P0-Posten im Bau.
 
 ### 4b. Nie eingeschaltet — auf KEINER Instanz (33)
 Das ist die Liste fertiger, aber nie aktivierter Funktionen.
