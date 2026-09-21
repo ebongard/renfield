@@ -163,14 +163,18 @@ class TestSystemBucket:
             ("tool_health_warn_top_k", 10),
         ):
             monkeypatch.setattr(f"services.tool_outcome_service.settings.{key}", val)
+        now = datetime.now(UTC).replace(tzinfo=None)
         db_session.add(ToolOutcomeStat(
             user_id=None, tool_name="mcp.sat.broken", success_count=0, failure_count=4,
-            last_used_at=datetime.now(UTC).replace(tzinfo=None),
+            last_used_at=now, last_failure_at=now,
+            last_failure_summary="calendar lookup 'Zahnarzt' failed",
         ))
         await db_session.commit()
         resp = await async_client.get("/api/tool-health/warnings/system")
         assert resp.status_code == 200, resp.text
         assert [w["tool_name"] for w in resp.json()] == ["mcp.sat.broken"]
+        # The shared bucket never hands failure text on — counts only.
+        assert resp.json()[0]["last_failure_summary"] is None
 
     async def test_list_shows_the_bucket_with_null_user(
         self, async_client: AsyncClient, auth_as_admin, db_session: AsyncSession,

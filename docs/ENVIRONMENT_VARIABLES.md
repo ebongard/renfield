@@ -1796,6 +1796,7 @@ TOOL_HEALTH_WARN_ENABLED=true                # {tool_health_warnings}-Block einf
 TOOL_HEALTH_WARN_MIN_USES=5                  # Min Tool-Calls vor Warnung
 TOOL_HEALTH_WARN_SUCCESS_RATE=0.5            # Warnung wenn rate < dieser Wert
 TOOL_HEALTH_WARN_TOP_K=3                     # Max gleichzeitige Warnungen
+TOOL_HEALTH_WARN_RECENT_HOURS=24             # Nur warnen, wenn der letzte Fehlschlag so jung ist (Kiosk-Parität)
 ```
 
 **Verhalten:**
@@ -1805,11 +1806,20 @@ Beim Prompt-Build wird fuer den aktuellen User die Liste der Tools geladen, die 
 
 Counter sind **pro User**, nicht global — ein Tool das fuer Alice gut funktioniert aber bei Bob immer scheitert (Permission-Gate fehlt) verschmutzt nicht Alices Prompt.
 
-**System-Eimer (seit 2026-09-21, BL-0233):** anonyme Züge (`user_id=None` — Satelliten-/Geräte-Züge
-ohne erkannten Sprecher, im Haushalt die Mehrzahl) zählen in **eine** Zeile je Tool mit `user_id IS NULL`
-(partieller Unique-Index `uq_tool_outcome_system_tool`, Migration `pc20260921`). Vorher waren sie ein
-No-op, und Kiosk wie Admin-Konsole blieben auf einer auth-off-Instanz leer. Ein anonymer Zug bekommt
-seine Warnungen aus demselben Eimer; Nutzerzeilen und Eimer mischen sich nicht.
+**System-Eimer (seit 2026-09-21, BL-0233):** anonyme Züge (`user_id=None`) zählen in **eine** Zeile je
+Tool mit `user_id IS NULL` (partieller Unique-Index `uq_tool_outcome_system_tool`, Migration `pc20260921`).
+Anonym ist auf einer `AUTH_ENABLED=false`-Instanz **jeder getippte Chat-Zug** (die WS-Auth wird übersprungen,
+keine Nutzer-ID) sowie Browser-Sprache ohne erkannten Sprecher — im Haushalt ist der Eimer also die
+gemeinsame Summe aller Mitglieder; Satelliten-Züge laufen nicht durch die Agentenschleife und landen gar
+nicht hier. Vorher waren anonyme Züge ein No-op, und Kiosk wie Admin-Konsole blieben leer. Ein anonymer
+Zug bekommt seine Warnungen aus demselben Eimer, **aber nur Zähler**: der Fehlertext des Eimers (rohe
+Tool-Ausgabe, kann die Anfrage eines Mitglieds widerspiegeln) bleibt in der Admin-Konsole und wandert nie
+in den Prompt eines anderen Zuges. Nutzerzeilen und Eimer mischen sich nicht.
+
+**Zeitfenster (`TOOL_HEALTH_WARN_RECENT_HOURS`, Vorgabe 24):** gewarnt wird nur, wenn der letzte Fehlschlag
+innerhalb des Fensters liegt — dieselbe Regel wie beim Kiosk, denn die Zähler klingen nie ab; ohne Fenster
+würde ein Ausfall-Abend im gemeinsamen Eimer „nutze Alternativen“ in jeden späteren Prompt heften, bis die
+Erfolge die Fehlschläge überwiegen.
 
 Admin-only Endpunkte:
 - `GET /api/tool-health` — Listing der jüngsten (user, tool) Stats (Eimer-Zeilen mit `user_id: null`)

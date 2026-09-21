@@ -8,6 +8,7 @@ Covers:
 """
 
 from dataclasses import dataclass
+from datetime import datetime, UTC
 
 import pytest
 from sqlalchemy import select
@@ -182,8 +183,10 @@ class TestSystemBucketOnPostgres:
             "services.tool_outcome_service.settings.tool_health_tracking_enabled", True,
         )
         svc = ToolOutcomeService(pg_db_session)
-        # record() commits (it is the production write path), which commits the
-        # fixture's outer transaction — so use a unique name and clean up.
+        # record() commits (it is the production write path). The fixture's
+        # outer transaction still rolls the rows back on teardown (savepoint
+        # join mode) — the unique name + explicit delete keep renfield_test
+        # clean even if that fixture behaviour ever changes.
         tool = f"mcp.pgbucket.{uuid.uuid4().hex[:8]}"
         try:
             await svc.record(user_id=None, tool_name=tool, success=True)
@@ -323,6 +326,88 @@ class TestGetHealthWarnings:
         assert [w["tool_name"] for w in anon] == ["mcp.sat"]
         mine = await svc.get_health_warnings(user_id=th_user.id)
         assert [w["tool_name"] for w in mine] == ["mcp.web"]
+
+    async def test_bucket_warning_carries_counts_but_no_failure_text(
+        self, db_session, monkeypatch
+    ):
+        """The bucket is shared by everyone who is anonymous (on auth-off:
+        every typed chat turn). Its failure text may echo one member's query,
+        so it is stored for the admin console but never rendered into another
+        turn's prompt."""
+        from services.tool_outcome_service import ToolOutcomeService
+        monkeypatch.setattr(
+            "services.tool_outcome_service.settings.tool_health_warn_min_uses", 3,
+        )
+        monkeypatch.setattr(
+            "services.tool_outcome_service.settings.tool_health_warn_success_rate", 0.5,
+        )
+        svc = ToolOutcomeService(db_session)
+        for _ in range(3):
+            await svc.record(
+                user_id=None, tool_name="mcp.cal", success=False,
+                failure_summary="no event named 'Zahnarzt Müller' found",
+            )
+        row = (await db_session.execute(
+            select(ToolOutcomeStat).where(ToolOutcomeStat.user_id.is_(None))
+        )).scalar_one()
+        assert "Zahnarzt" in row.last_failure_summary  # stored for the admin
+
+        [warning] = await svc.get_health_warnings(user_id=None)
+        assert warning["failure_count"] == 3
+        assert warning["last_failure_summary"] is None
+        rendered = ToolOutcomeService.format_for_prompt([warning], lang="de")
+        assert "Zahnarzt" not in rendered
+        assert "mcp.cal" in rendered
+
+    async def test_user_warning_keeps_its_own_failure_text(
+        self, db_session, th_user, monkeypatch
+    ):
+        from services.tool_outcome_service import ToolOutcomeService
+        monkeypatch.setattr(
+            "services.tool_outcome_service.settings.tool_health_warn_min_uses", 3,
+        )
+        monkeypatch.setattr(
+            "services.tool_outcome_service.settings.tool_health_warn_success_rate", 0.5,
+        )
+        svc = ToolOutcomeService(db_session)
+        for _ in range(3):
+            await svc.record(
+                user_id=th_user.id, tool_name="mcp.cal", success=False, failure_summary="mine",
+            )
+        [warning] = await svc.get_health_warnings(user_id=th_user.id)
+        assert warning["last_failure_summary"] == "mine"
+
+    async def test_stale_failures_are_not_warned_about(
+        self, db_session, th_user, monkeypatch
+    ):
+        """Counters never decay; a failure older than the window (kiosk
+        parity) must not keep 'prefer alternatives' in every later prompt."""
+        from datetime import timedelta
+
+        from services.tool_outcome_service import ToolOutcomeService
+        monkeypatch.setattr(
+            "services.tool_outcome_service.settings.tool_health_warn_min_uses", 3,
+        )
+        monkeypatch.setattr(
+            "services.tool_outcome_service.settings.tool_health_warn_success_rate", 0.5,
+        )
+        monkeypatch.setattr(
+            "services.tool_outcome_service.settings.tool_health_warn_recent_hours", 24,
+        )
+        svc = ToolOutcomeService(db_session)
+        for scope in (None, th_user.id):
+            for _ in range(3):
+                await svc.record(user_id=scope, tool_name="mcp.old", success=False, failure_summary="x")
+        assert len(await svc.get_health_warnings(user_id=None)) == 1
+        assert len(await svc.get_health_warnings(user_id=th_user.id)) == 1
+
+        stale = datetime.now(UTC).replace(tzinfo=None) - timedelta(hours=25)
+        for row in (await db_session.execute(select(ToolOutcomeStat))).scalars():
+            row.last_failure_at = stale
+        await db_session.commit()
+
+        assert await svc.get_health_warnings(user_id=None) == []
+        assert await svc.get_health_warnings(user_id=th_user.id) == []
 
     async def test_below_min_uses_no_warning(
         self, db_session, th_user, monkeypatch

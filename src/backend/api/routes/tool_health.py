@@ -85,9 +85,11 @@ async def preview_system_warnings(
     db: AsyncSession = Depends(get_db),
     _: User = Depends(require_permission(Permission.ADMIN)),
 ):
-    """What warnings would an ANONYMOUS turn (satellite/device, no identified
-    speaker) see — the system bucket (BL-0233). Declared before the
-    ``{user_id}`` route so the literal path wins."""
+    """What warnings would an ANONYMOUS turn see — the system bucket (BL-0233):
+    on an auth-off instance every typed chat turn, plus browser voice without a
+    matched speaker. Counts only; the bucket's failure text is never rendered
+    into a prompt (the listing route shows it, admin-only). Declared before
+    the ``{user_id}`` route so the literal path wins."""
     svc = ToolOutcomeService(db)
     warnings = await svc.get_health_warnings(user_id=None)
     return [WarningResponse(**w) for w in warnings]

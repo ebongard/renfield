@@ -1383,7 +1383,9 @@ class AgentService:
         else:
             tool_health_warnings = ""
             # user_id None is fine: the service answers from the system bucket
-            # of anonymous turns (BL-0233), so a satellite turn is warned too.
+            # of anonymous turns (BL-0233) — on an auth-off instance that is
+            # every typed chat turn, plus browser voice without a matched
+            # speaker. Bucket warnings carry counts only, never failure text.
             if (settings.tool_health_tracking_enabled
                     and settings.tool_health_warn_enabled):
                 try:

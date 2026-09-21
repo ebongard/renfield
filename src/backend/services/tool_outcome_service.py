@@ -13,14 +13,26 @@ state differ across users — a perfectly-fine tool for Alice might
 always fail for Bob if Bob lacks the grant, and that asymmetry is
 real information for the agent.
 
-Anonymous turns (``user_id=None`` — satellite/device turns with no
-identified speaker, i.e. most household voice turns) go into ONE
-**system bucket** per tool (rows with ``user_id IS NULL``, BL-0233):
-the question "does this tool work?" does not depend on who asked, and
-without the bucket the kiosk/admin telemetry stayed empty on an
-auth-off instance. The bucket is keyed by the partial unique index
-``uq_tool_outcome_system_tool`` — the plain ``UNIQUE (user_id, tool_name)``
-treats NULLs as distinct and could never serve as an upsert target.
+Anonymous turns (``user_id=None``) go into ONE **system bucket** per
+tool (rows with ``user_id IS NULL``, BL-0233): the question "does this
+tool work?" does not depend on who asked, and without the bucket the
+kiosk/admin telemetry stayed empty on an auth-off instance. Who is
+anonymous: on an ``AUTH_ENABLED=false`` instance EVERY typed chat turn
+(the WS auth is skipped, no user id is resolved) plus browser-voice
+turns without a matched speaker — so on the household the bucket is
+the shared aggregate of all members. Satellite turns do not run the
+agent loop and never reach this service. Because the bucket is shared,
+its ``last_failure_summary`` (raw tool output, may echo one member's
+query) is stored for the admin console but NEVER rendered into another
+turn's prompt (see :meth:`get_health_warnings`). The bucket is keyed by
+the partial unique index ``uq_tool_outcome_system_tool`` — the plain
+``UNIQUE (user_id, tool_name)`` treats NULLs as distinct and could never
+serve as an upsert target.
+
+Warnings are windowed like the kiosk (``tool_health_warn_recent_hours``):
+the counters are cumulative with no decay, so without the window one
+evening of outage in the shared bucket would pin "prefer alternatives"
+into every prompt until successes outnumber the failures.
 
 Concurrency: :meth:`record` uses INSERT … ON CONFLICT DO UPDATE
 (postgres) / INSERT OR IGNORE + UPDATE (sqlite) so two concurrent
@@ -33,7 +45,7 @@ territory (services.intent_feedback_service.IntentFeedbackService).
 """
 from __future__ import annotations
 
-from datetime import datetime, UTC
+from datetime import datetime, timedelta, UTC
 
 from loguru import logger
 from sqlalchemy import desc, select
@@ -60,8 +72,9 @@ class ToolOutcomeService:
     @staticmethod
     def _user_clause(user_id: int | None):
         """WHERE clause for a scope: the user's rows, or the system bucket
-        (``user_id IS NULL``) for anonymous turns — ``== None`` would match
-        nothing in SQL."""
+        (``user_id IS NULL``) for anonymous turns. SQLAlchemy would coerce
+        ``== None`` to ``IS NULL`` as well; spelled out so the bucket scope
+        is visible at every call site."""
         if user_id is None:
             return ToolOutcomeStat.user_id.is_(None)
         return ToolOutcomeStat.user_id == user_id
@@ -78,7 +91,8 @@ class ToolOutcomeService:
         """Increment the counter for (user_id, tool_name).
 
         ``user_id is None`` is the SYSTEM bucket (BL-0233): anonymous
-        satellite/device turns share one row per tool. PostgreSQL's
+        turns (auth-off chat, unmatched browser voice) share one row per
+        tool. PostgreSQL's
         UNIQUE constraint treats NULLs as distinct, so the bucket is
         addressed through the partial unique index
         ``uq_tool_outcome_system_tool (tool_name) WHERE user_id IS NULL``
@@ -298,6 +312,14 @@ class ToolOutcomeService:
             stmt = stmt.where(ToolOutcomeStat.tool_name.in_(candidate_tools))
         rows = (await self.db.execute(stmt)).scalars().all()
 
+        # Windowed like the kiosk: the counters never decay, so a tool whose
+        # last failure is older than the window is not warned about — one bad
+        # evening must not pin "prefer alternatives" into every later prompt.
+        # last_failure_at is naive UTC (see record()).
+        recent_cutoff = datetime.now(UTC).replace(tzinfo=None) - timedelta(
+            hours=settings.tool_health_warn_recent_hours,
+        )
+
         warnings: list[dict] = []
         for r in rows:
             total = r.success_count + r.failure_count
@@ -306,6 +328,8 @@ class ToolOutcomeService:
             rate = r.success_count / total if total else 1.0
             if rate >= settings.tool_health_warn_success_rate:
                 continue
+            if r.last_failure_at is None or r.last_failure_at < recent_cutoff:
+                continue
             warnings.append({
                 "tool_name": r.tool_name,
                 "success_count": r.success_count,
@@ -313,7 +337,12 @@ class ToolOutcomeService:
                 "total": total,
                 "success_rate": round(rate, 3),
                 "last_failure_at": r.last_failure_at,
-                "last_failure_summary": r.last_failure_summary,
+                # The bucket is shared between everyone who is anonymous; its
+                # failure text may echo one member's query, so it stays in the
+                # admin console and never travels into another turn's prompt.
+                "last_failure_summary": (
+                    None if user_id is None else r.last_failure_summary
+                ),
             })
 
         warnings.sort(key=lambda w: w["failure_count"], reverse=True)

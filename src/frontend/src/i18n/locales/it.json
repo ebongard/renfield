@@ -1764,7 +1764,7 @@
       "description": "Contatori di successi e fallimenti (per utente, strumento) dal tracciatore di risultati della Fase-3.",
       "empty": "Nessun risultato di strumento registrato ancora.",
       "loadFailed": "Impossibile caricare le statistiche degli strumenti.",
-      "systemBucket": "Sistema (turni vocali anonimi)",
+      "systemBucket": "Sistema (turni anonimi)",
       "cols": {
         "tool": "Strumento",
         "user": "Utente",

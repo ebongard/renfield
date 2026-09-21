@@ -869,6 +869,7 @@ class Settings(BaseSettings):
     tool_health_warn_min_uses: int = Field(default=5, ge=1, le=100)           # Min total calls before warning
     tool_health_warn_success_rate: float = Field(default=0.5, ge=0.0, le=1.0) # Warn if below
     tool_health_warn_top_k: int = Field(default=3, ge=1, le=10)               # Max warnings per prompt
+    tool_health_warn_recent_hours: int = Field(default=24, ge=1, le=720)      # Warn only if the last failure is this recent (kiosk parity; counters never decay)
 
     # Skill curator (self-learning Phase 4)
     # Periodically dedupes and archives skills the agent has accumulated.

@@ -2167,7 +2167,7 @@
       "description": "Erfolgs- und Fehlerquoten je Benutzer und Werkzeug aus den Phase-3-Statistiken.",
       "empty": "Noch keine Werkzeug-Ergebnisse erfasst.",
       "loadFailed": "Werkzeug-Statistiken konnten nicht geladen werden.",
-      "systemBucket": "System (anonyme Sprachzüge)",
+      "systemBucket": "System (anonyme Züge)",
       "cols": {
         "tool": "Werkzeug",
         "user": "Benutzer",
