@@ -16,9 +16,12 @@ import pytest
 from ha_glue.api.websocket import satellite_handler as sh
 from models.permissions import Permission, has_mcp_permission, has_permission
 
-# The set D-4a recommends (widened by review): a POSITIVE list over every MCP
+# The set decided in D-4a + D-4a-2 (2026-09-21): a POSITIVE list over every MCP
 # server — house control and the harmless reads yes, household content and
 # write paths no. Anything not named is denied, read-only servers included.
+# D-4a-2 refused scanner, calendar READ and the TV for an unrecognised voice,
+# so `calendar`, `scanner` and `samsung` sit in DENIED_SERVERS by decision,
+# not by oversight — and `mcp.calendar.read` is not in the set either.
 RECOMMENDED = (
     "mcp.homeassistant,mcp.dlna,mcp.radio,mcp.jellyfin,mcp.weather,"
     "mcp.search,mcp.news,rooms.read,ha.control"
@@ -73,6 +76,10 @@ class TestAnonymousPermissions:
         assert not has_mcp_permission(grants, "mcp.*")          # no admin wildcard
         for server in DENIED_SERVERS:
             assert not has_mcp_permission(grants, f"mcp.{server}"), server
+        # D-4a-2 said no to calendar READ as well, so not even the narrow grant
+        # is reachable — a refusal that is easy to erode by accident later.
+        for narrow in ("mcp.calendar.read", "mcp.paperless.read", "mcp.scanner.scan"):
+            assert not has_mcp_permission(grants, narrow), narrow
         for perm in (Permission.ADMIN, Permission.RAG_MANAGE, Permission.USERS_MANAGE,
                      Permission.SETTINGS_MANAGE, Permission.CAM_FULL, Permission.HA_FULL):
             assert not has_permission(grants, perm), perm

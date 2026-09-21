@@ -1142,17 +1142,20 @@ SATELLITE_PSK_HANDSHAKE_ENABLED=false
 # Empfehlung (D-4a): HA-MCP bietet ausschließlich Assist-Intents (Licht, Rollos,
 # Medien, Lautstärke, Timer; KEIN Service-Aufruf), daher genügt der
 # Konventions-Grant je Server. `ha.control` hält Ansagen/Durchsagen offen.
-#   Empfohlener Wert beim Cutover (Alltagsstimme im Haus; entscheidet D-4a-2):
+#   Wert beim Cutover (entschieden D-4a/D-4a-2, 2026-09-21):
 #   mcp.homeassistant,mcp.dlna,mcp.radio,mcp.jellyfin,mcp.weather,mcp.search,mcp.news,rooms.read,ha.control
 #   Bewusst NICHT darin: mcp.paperless / mcp.files / mcp.email / mcp.calendar
-#   (Haushaltsinhalte), mcp.scanner / mcp.n8n (Schreibwege), mcp.samsung (TV) —
-#   jeder dieser Dienste ist dann nur noch für erkannte Stimmen erreichbar.
+#   (Haushaltsinhalte), mcp.scanner / mcp.n8n (Schreibwege), mcp.samsung (TV).
+#   D-4a-2 hat Scanner, Kalender-LESEN und TV ausdrücklich verneint — auch der
+#   enge Grant mcp.calendar.read gehört NICHT hinein. Jeder dieser Dienste ist
+#   damit nur für erkannte Stimmen erreichbar.
 #   ACHTUNG: ein nicht genannter, aktiver Server wird abgelehnt — die Liste ist
 #   eine Positivliste über ALLE MCP-Server, nicht nur über Schreibwerkzeuge.
 #   Granularität: `mcp.<server>` deckt ALLE Werkzeuge dieses Servers ab, auch
 #   schreibende. Wo der Server eine `tool_permissions`-Karte hat (paperless:
-#   read/write, calendar: read/manage), gibt der engere Grant nur das Lesen —
-#   also `mcp.paperless.read` bzw. `mcp.calendar.read`, nie `mcp.paperless`.
+#   read/write, calendar: read/manage), gäbe der engere Grant nur das Lesen —
+#   also `mcp.paperless.read` statt `mcp.paperless`, falls je eines dieser
+#   Haushaltsinhalte-Server geöffnet wird.
 SATELLITE_ANONYMOUS_PERMISSIONS=""
 # Nutzername des GERÄTEKONTOS, als das ein Satelliten-Zug OHNE erkannten
 # Sprecher läuft (auth-on; §6.1 Nr. 3, D-4b). Damit hat der Zug eine Identität:

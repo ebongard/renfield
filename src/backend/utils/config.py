@@ -1598,12 +1598,14 @@ class Settings(BaseSettings):
     # Comma list; EMPTY (the default) keeps today's `None` exactly, and the
     # substitution only ever happens with AUTH_ENABLED=true, so an auth-off
     # household is byte-identical either way.
-    # Recommended set (D-4a, widened by review): mcp.homeassistant (HA's MCP
+    # Decided set (D-4a + D-4a-2, 2026-09-21): mcp.homeassistant (HA's MCP
     # server exposes Assist intents only — lights, blinds, media, volume,
     # timers; no service-call escape hatch), mcp.dlna, mcp.radio, mcp.jellyfin,
     # mcp.weather, mcp.search, mcp.news, plus rooms.read and ha.control (the
     # announce/broadcast gate — both inert on the intent path today, kept for
-    # the paths that will read them).
+    # the paths that will read them). Scanner, calendar READ and the TV were
+    # explicitly refused for unrecognised voices — mcp.calendar.read is not in
+    # the set either; those stay for recognised speakers.
     satellite_anonymous_permissions: str = ""
     # Username of the DEVICE account an unrecognised satellite voice runs as
     # (auth-on; §6.1 Nr. 3, D-4b). With it the turn HAS an identity: it reads as
