@@ -154,7 +154,7 @@ class MergeProposalEntityBrief(BaseModel):
 class MergeProposalResponse(BaseModel):
     id: int
     similarity: float
-    reason: str            # cross_tier | gray_zone
+    reason: str            # cross_tier | gray_zone | name_typo
     status: str            # pending | approved | rejected
     created_at: str = ""
     loser: MergeProposalEntityBrief

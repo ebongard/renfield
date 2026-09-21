@@ -2192,6 +2192,7 @@ KG_MERGE_PROPOSAL_SUPERSEDED = "superseded"
 # Why a proposal exists instead of an auto-merge:
 KG_MERGE_REASON_CROSS_TIER = "cross_tier"  # endpoints at different tiers — needs owner sign-off (D3)
 KG_MERGE_REASON_GRAY_ZONE = "gray_zone"    # similar but below the auto-merge threshold (D10)
+KG_MERGE_REASON_NAME_TYPO = "name_typo"    # person names that differ by ONE in-token edit — review, never auto-merge (#876 field data)
 
 
 class KgMergeProposal(Base):

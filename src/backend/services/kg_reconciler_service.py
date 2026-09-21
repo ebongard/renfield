@@ -36,6 +36,7 @@ from models.database import (
     KG_MERGE_PROPOSAL_PENDING,
     KG_MERGE_REASON_CROSS_TIER,
     KG_MERGE_REASON_GRAY_ZONE,
+    KG_MERGE_REASON_NAME_TYPO,
     KGEntity,
     KgMergeProposal,
 )
@@ -134,6 +135,59 @@ def _names_related(name_a: str | None, name_b: str | None) -> bool:
     return ta == tb or ta <= tb or tb <= ta
 
 
+# Minimum token length for the typo test. A one-character difference in a short
+# token is a different word, not a slip: "01" vs "02" (test accounts numbered by
+# a trailing ordinal), "Jan" vs "Jen". Measured on the #876 field data: the six
+# false pairs all differ in a 2-character ordinal, the one true pair in a
+# 12-character surname.
+_TYPO_MIN_TOKEN_LEN = 4
+
+
+def _osa_distance_is_one(a: str, b: str) -> bool:
+    """Optimal-string-alignment distance == 1: one substitution, insertion,
+    deletion, or ADJACENT transposition. Names are short; a full DP is cheap."""
+    if a == b or abs(len(a) - len(b)) > 1:
+        return False
+    la, lb = len(a), len(b)
+    prev2: list[int] | None = None
+    prev = list(range(lb + 1))
+    for i in range(1, la + 1):
+        cur = [i] + [0] * lb
+        for j in range(1, lb + 1):
+            cost = 0 if a[i - 1] == b[j - 1] else 1
+            cur[j] = min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + cost)
+            if (i > 1 and j > 1 and a[i - 1] == b[j - 2] and a[i - 2] == b[j - 1]
+                    and prev2 is not None):
+                cur[j] = min(cur[j], prev2[j - 2] + 1)
+        prev2, prev = prev, cur
+    return prev[lb] == 1
+
+
+def _names_near_typo(name_a: str | None, name_b: str | None) -> bool:
+    """Two names are a TYPO pair iff they have the same tokens in the same order
+    except for exactly one token, and that token differs by a single in-token
+    edit (OSA distance 1) with both spellings at least ``_TYPO_MIN_TOKEN_LEN``.
+
+    This is the gap the token-subset test leaves (#876 field data, 2026-09-21):
+    "Firstname von der Lastname" vs "Firstname von der Lastnrame" — two characters
+    transposed INSIDE the final token — is a subset in neither direction, so the
+    person-guard dropped the single most common duplicate cause with no merge
+    and no proposal. A typo pair is a REVIEW candidate only ("Anna Schmidt" vs
+    "Anna Schmitt" may be two people); the caller must never auto-merge it.
+    Names that are already related (equal / subset) are not typo pairs.
+    """
+    ta, tb = _norm(name_a).split(), _norm(name_b).split()
+    if not ta or not tb or len(ta) != len(tb):
+        return False
+    diffs = [(x, y) for x, y in zip(ta, tb, strict=True) if x != y]
+    if len(diffs) != 1:
+        return False
+    x, y = diffs[0]
+    if min(len(x), len(y)) < _TYPO_MIN_TOKEN_LEN:
+        return False
+    return _osa_distance_is_one(x, y)
+
+
 @dataclass
 class MergeCandidate:
     loser_id: int
@@ -155,6 +209,10 @@ class MergeCandidate:
     # refactor or a person-detection miss can't silently merge two distinct people.
     is_person_pair: bool = False
     names_related: bool = True
+    # Person pair whose names differ by one in-token edit (see _names_near_typo):
+    # kept as a REVIEW candidate (reason name_typo), never auto-merged — the
+    # gate above already refuses it via names_related=False; this is the label.
+    name_typo: bool = False
 
 
 @dataclass
@@ -236,8 +294,12 @@ class KgReconcilerService:
             related = _names_related(r.name_a, r.name_b)
             # Person-guard: drop person-involving pairs whose names are unrelated
             # (distinct people whose names merely cluster in embedding space). No
-            # auto-merge, no proposal.
-            if is_person and not related:
+            # auto-merge, no proposal. The one exception is a TYPO pair (one
+            # in-token edit, see _names_near_typo): it survives as a review
+            # proposal only — names_related stays False, so the auto-merge gate
+            # refuses it, and block_auto_merge says so explicitly.
+            typo = bool(is_person and not related and _names_near_typo(r.name_a, r.name_b))
+            if is_person and not related and not typo:
                 continue
             # Winner = the more-established row: higher mention_count, tie-break
             # on the OLDER first_seen_at (smaller timestamp).
@@ -253,11 +315,12 @@ class KgReconcilerService:
                 loser_id=loser_id, winner_id=winner_id,
                 similarity=float(r.similarity),
                 loser_tier=loser_tier, winner_tier=winner_tier,
-                block_auto_merge=_name_collision_low_signal(
+                block_auto_merge=typo or _name_collision_low_signal(
                     r.name_a, r.name_b, r.desc_a, r.desc_b,
                 ),
                 is_person_pair=is_person,
                 names_related=related,
+                name_typo=typo,
             ))
         return out
 
@@ -272,10 +335,12 @@ class KgReconcilerService:
         )).first()
         if existing:
             return False
-        reason = (
-            KG_MERGE_REASON_CROSS_TIER if c.loser_tier != c.winner_tier
-            else KG_MERGE_REASON_GRAY_ZONE
-        )
+        if c.loser_tier != c.winner_tier:
+            reason = KG_MERGE_REASON_CROSS_TIER
+        elif c.name_typo:
+            reason = KG_MERGE_REASON_NAME_TYPO
+        else:
+            reason = KG_MERGE_REASON_GRAY_ZONE
         self.db.add(KgMergeProposal(
             user_id=user_id,
             loser_entity_id=c.loser_id,

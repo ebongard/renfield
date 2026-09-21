@@ -289,7 +289,7 @@ export interface MergeProposalEntityBrief {
 export interface MergeProposal {
   id: number;
   similarity: number;
-  reason: string; // 'cross_tier' | 'gray_zone'
+  reason: string; // 'cross_tier' | 'gray_zone' | 'name_typo'
   status: string;
   created_at: string;
   loser: MergeProposalEntityBrief;

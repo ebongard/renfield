@@ -1909,7 +1909,8 @@
       "whySuggested": "Mögliches Duplikat · {{pct}}% Ähnlichkeit",
       "reason": {
         "cross_tier": "unterschiedliche Sichtbarkeit",
-        "gray_zone": "ähnlich, aber unsicher"
+        "gray_zone": "ähnlich, aber unsicher",
+        "name_typo": "Schreibvariante eines Personennamens"
       },
       "survivorLegend": "Welche Entität soll bleiben?",
       "keepThis": "{{name}} behalten",

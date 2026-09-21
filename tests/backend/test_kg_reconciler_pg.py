@@ -17,7 +17,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from models.database import (
     EMBEDDING_DIMENSION,
     KG_MERGE_PROPOSAL_APPROVED,
-    KG_MERGE_PROPOSAL_PENDING,
     KG_MERGE_PROPOSAL_REJECTED,
     KG_MERGE_PROPOSAL_SUPERSEDED,
     KG_MERGE_REASON_CROSS_TIER,
@@ -419,6 +418,45 @@ class TestPersonGuard:
 
         pairs = await rec.find_duplicate_pairs(owner.id)
         assert pairs == []
+
+    async def test_typo_pair_is_proposed_never_auto_merged(self, pg_db_session, monkeypatch):
+        # #876 field data: the same person under "…Lastname" and "…Lastnrame"
+        # (two characters transposed INSIDE the final token). Not a token subset,
+        # so the guard used to drop the pair with no path at all. Now: a REVIEW
+        # proposal with reason name_typo — never an auto-merge, even at cosine
+        # 1.0 and same tier.
+        from models.database import KG_MERGE_REASON_NAME_TYPO
+        owner = await _make_user(pg_db_session, "rec_pg_typo")
+        await _entity(pg_db_session, owner, "Firstname von der Lastname", tier=0,
+                      mention=3085, emb=_unit(6))
+        await _entity(pg_db_session, owner, "Firstname von der Lastnrame", tier=0,
+                      mention=134, emb=_unit(6))
+        rec = _recon(pg_db_session, monkeypatch)
+
+        pairs = await rec.find_duplicate_pairs(owner.id)
+        assert len(pairs) == 1
+        assert pairs[0].name_typo is True and pairs[0].block_auto_merge is True
+        assert pairs[0].names_related is False  # the auto-merge gate refuses it
+
+        report = await rec.run_for_user(owner.id)
+        assert report.auto_merged == 0 and report.proposed == 1
+        proposal = (await pg_db_session.execute(
+            select(KgMergeProposal).where(KgMergeProposal.user_id == owner.id)
+        )).scalar_one()
+        assert proposal.reason == KG_MERGE_REASON_NAME_TYPO
+
+    async def test_numbered_test_accounts_are_still_dropped(self, pg_db_session, monkeypatch):
+        # The other six measured pairs: distinct identities whose names differ
+        # only in a trailing two-character ordinal. Below the token minimum →
+        # not a typo pair → dropped as before (no proposal noise).
+        owner = await _make_user(pg_db_session, "rec_pg_ordinal")
+        await _entity(pg_db_session, owner, "Testkonto Alpha 01", tier=0, mention=2, emb=_unit(6))
+        await _entity(pg_db_session, owner, "Testkonto Alpha 02", tier=0, mention=2, emb=_unit(6))
+        rec = _recon(pg_db_session, monkeypatch)
+
+        assert await rec.find_duplicate_pairs(owner.id) == []
+        report = await rec.run_for_user(owner.id)
+        assert report.auto_merged == 0 and report.proposed == 0
 
     async def test_auto_merge_gate_blocks_unrelated_person_if_find_bypassed(
         self, pg_db_session, monkeypatch
