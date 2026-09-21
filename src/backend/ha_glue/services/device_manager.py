@@ -144,9 +144,9 @@ class DeviceSession:
     response_text: str | None = None
     speaker_name: str | None = None
     speaker_alias: str | None = None
-
-    # Timeout settings
-    max_duration_seconds: float = 30.0
+    # No wall-clock cut-off: the only reader of a session max-duration was the
+    # never-scheduled sweep removed in 2026-09 (BL-0502) — a device session ends
+    # with the device (socket close → unregister) or explicitly via end_session.
 
 
 class DeviceManager:
@@ -170,8 +170,10 @@ class DeviceManager:
         from utils.config import settings
         self.default_wake_words = [settings.wake_word_default]
         self.default_threshold = settings.wake_word_threshold
-        self.session_timeout = settings.device_session_timeout
-        self.heartbeat_timeout = settings.device_heartbeat_timeout
+        # Liveness of a web/browser device is its socket: device_handler calls
+        # unregister() on disconnect. There is deliberately NO heartbeat eviction
+        # here (the dead `cleanup_stale` sweep was removed 2026-09-21, #1277);
+        # the device_*_timeout settings apply to satellites only.
 
         logger.info("📱 DeviceManager initialized")
 
@@ -664,33 +666,6 @@ class DeviceManager:
             })
         return result
 
-    async def cleanup_stale(self):
-        """Remove stale devices and timed-out sessions"""
-        now = time.time()
-
-        async with self._lock:
-            # Check for timed-out sessions
-            timed_out_sessions = [
-                sid for sid, sess in self.sessions.items()
-                if now - sess.started_at > sess.max_duration_seconds
-            ]
-
-            for session_id in timed_out_sessions:
-                logger.warning(f"⏰ Session timed out: {session_id}")
-                await self._end_session_internal(session_id, reason="timeout")
-
-            # Check for stale devices
-            stale_devices = [
-                dev_id for dev_id, dev in self.devices.items()
-                if now - dev.last_heartbeat > self.heartbeat_timeout
-            ]
-
-            for device_id in stale_devices:
-                logger.warning(f"💀 Device heartbeat timeout: {device_id}")
-                device = self.devices[device_id]
-                if device.current_session_id:
-                    await self._end_session_internal(device.current_session_id, reason="disconnect")
-                del self.devices[device_id]
 
 
 # Global singleton instance

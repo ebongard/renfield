@@ -259,8 +259,11 @@ Session- und Heartbeat-Timeouts in `config.py` ausgelagert:
 > und `device_heartbeat_timeout` wurde ausschließlich in `cleanup_stale`
 > ausgewertet — einer Funktion **ohne jeden Aufrufer im Produktivcode**. Beide
 > Grenzen liefen also nie. Mit #1209 sind sie getaktet, kalibriert und in der
-> ConfigMap hinterlegt. Der Geräte-Kehraus (`device_manager.cleanup_stale`) hat
-> weiterhin keinen Takt — siehe #1277.
+> ConfigMap hinterlegt. Der Geräte-Kehraus (`device_manager.cleanup_stale`) wurde
+> am 2026-09-21 ersatzlos entfernt (BL-0502, #1277): Browser-/Web-Geräte werden
+> beim Schließen des Sockets abgemeldet (`device_handler` → `unregister`), einen
+> nie gelaufenen Mechanismus ungemessen scharf zu schalten hätte tolerierte
+> Geräte plötzlich hinausgeworfen.
 
 ---
 

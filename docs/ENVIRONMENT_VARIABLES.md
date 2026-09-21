@@ -1226,7 +1226,9 @@ dem Verzeichnis genommen) und — seit #1209 — den Abbruch eines OTA-Laufs, de
 keinen Endzustand meldet. Die Funktion hatte bis dahin **keinen Aufrufer im
 Produktivcode**, beide Grenzen liefen also nie. Ein Takt aus
 `ha_glue.bootstrap` ruft sie jetzt auf; ohne ihn wären die Werte unten
-wirkungslos (siehe #1277 für den Geräte-Kehraus, der weiterhin keinen Takt hat).
+wirkungslos. (Der frühere Geräte-Kehraus `DeviceManager.cleanup_stale` wurde
+2026-09-21 entfernt — Web-Geräte werden beim Schließen ihres Sockets abgemeldet,
+die Zeitgrenzen unten gelten nur für Satelliten.)
 
 ```bash
 # Takt des Kehraus in Sekunden.

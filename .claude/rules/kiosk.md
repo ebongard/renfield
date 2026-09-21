@@ -48,6 +48,9 @@ is REMOVED — the kiosk (`/kiosk`, `<AdminRoute>` OUTSIDE the app Layout, sideb
 - Eviction EXEMPTS a satellite with a live session or a running OTA (installer blocks its event loop ~150 s vs a 60 s
   deadline) and must CLOSE the socket — otherwise the receive loop keeps acking heartbeats and the device never
   re-registers (mute forever). All four knobs live in `k8s/configmap.yaml`.
+- **Web/browser devices have NO sweep** (the dead `DeviceManager.cleanup_stale` was removed 2026-09-21): a device
+  leaves the roster when its socket closes (`device_handler` → `unregister`). Do not re-add a heartbeat eviction
+  there without first measuring which devices it would evict.
 
 ## Colours
 Status colours mirror the satellite LED ring (`src/satellite/renfield_satellite/hardware/led.py`): idle=blue,
