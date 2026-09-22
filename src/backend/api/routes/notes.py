@@ -13,6 +13,7 @@ when auth is on; auth-disabled single-user mode sees all (mirrors projects.py).
 from __future__ import annotations
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
+from loguru import logger
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
@@ -22,6 +23,7 @@ from models.database import Note, User
 from services.auth_service import get_optional_user
 from services.database import get_db
 from services.note_service import (
+    NoteOwnerUnresolved,
     NoteTitleConflict,
     create_note,
     delete_note,
@@ -114,9 +116,21 @@ async def create_note_route(
     except NoteTitleConflict:
         await db.rollback()
         raise HTTPException(status_code=409, detail="A note with this title already exists")
-    except IntegrityError:
-        # Backstop for the concurrent-insert race the service check can't see.
+    except NoteOwnerUnresolved as e:
+        # Not a title clash: there is no user to own the note. Said plainly,
+        # because this used to arrive here as an IntegrityError and was reported
+        # as a duplicate title — a message pointing at the wrong cause entirely.
         await db.rollback()
+        logger.error(f"Notiz konnte nicht angelegt werden: {e}")
+        raise HTTPException(
+            status_code=503, detail="No user exists to own a note"
+        )
+    except IntegrityError as e:
+        # Backstop for the concurrent-insert race the service check can't see.
+        # LOGGED: every other constraint violation lands here too and would
+        # otherwise be reported to the user as a duplicate title.
+        await db.rollback()
+        logger.warning(f"Notiz-Anlage: IntegrityError als Titelkonflikt gedeutet: {e}")
         raise HTTPException(status_code=409, detail="A note with this title already exists")
     await db.refresh(note)
     # Dense embedding runs AFTER the response (own session) — never on the request tx.

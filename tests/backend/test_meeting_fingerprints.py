@@ -33,7 +33,37 @@ def _raw_seg(cluster, emb, text="hi"):
             "embedding": np.asarray(emb, dtype=np.float32).tolist()}
 
 
+async def _ensure_user(db, uid: int):
+    """The owner a meeting or fingerprint names has to exist.
+
+    Postgres enforces `owner_user_id → users.id`; the sqlite harness did not,
+    so these tests asserted circle reach between owners that were never there.
+    Idempotent — the helpers below call it for every owner they use.
+    """
+    from sqlalchemy import select as _select
+
+    from models.database import Role, User
+
+    if uid is None:
+        return None   # auth-off: the owner column stays NULL, nothing to create
+    existing = (await db.execute(_select(User).where(User.id == uid))).scalar_one_or_none()
+    if existing is not None:
+        return existing
+    role = (await db.execute(
+        _select(Role).where(Role.name == "fp-testrolle")
+    )).scalar_one_or_none()
+    if role is None:
+        role = Role(name="fp-testrolle", permissions=[], is_system=False)
+        db.add(role)
+        await db.flush()
+    user = User(id=uid, username=f"fp-nutzer{uid}", password_hash="x", role_id=role.id)
+    db.add(user)
+    await db.flush()
+    return user
+
+
 async def _meeting(db, owner_user_id=1, tier=2):
+    await _ensure_user(db, owner_user_id)
     m = Meeting(owner_user_id=owner_user_id, circle_tier=tier, status="completed",
                 consent_confirmed=True)
     db.add(m)
@@ -42,6 +72,7 @@ async def _meeting(db, owner_user_id=1, tier=2):
 
 
 async def _add_fp(db, unit_vec, owner_user_id=1, tier=2, label="Speaker SEED", person_name=None):
+    await _ensure_user(db, owner_user_id)
     fp = MeetingSpeakerFingerprint(
         owner_user_id=owner_user_id, label=label, circle_tier=tier, sample_count=1,
         centroid_b64=SpeakerService.embedding_to_base64(unit_vec), person_name=person_name,
@@ -164,6 +195,7 @@ class TestFingerprintMatching:
 
 
 async def _meeting_with_segs(db, segs, owner_user_id=1, tier=2):
+    await _ensure_user(db, owner_user_id)
     m = Meeting(owner_user_id=owner_user_id, circle_tier=tier, status="completed",
                 consent_confirmed=True, transcript_document_id=None, segments=segs)
     db.add(m)

@@ -15,6 +15,30 @@ from utils.config import settings
 pytestmark = [pytest.mark.asyncio]
 
 
+async def _persist_user(db, uid: int, name: str) -> User:
+    """A real user row (with a real role behind it).
+
+    Postgres enforces both `notes.owner_user_id → users.id` and
+    `users.role_id → roles.id`; the sqlite harness enforced neither, so these
+    tests scoped ownership between users that did not exist.
+    """
+    from sqlalchemy import select as _select
+
+    from models.database import Role
+
+    role = (await db.execute(
+        _select(Role).where(Role.name == "notes-testrolle")
+    )).scalar_one_or_none()
+    if role is None:
+        role = Role(name="notes-testrolle", permissions=[], is_system=False)
+        db.add(role)
+        await db.flush()
+    user = User(id=uid, username=name, password_hash="x", is_active=True, role_id=role.id)
+    db.add(user)
+    await db.commit()
+    return user
+
+
 def _override_user(user: User | None) -> None:
     from main import app
     from services.auth_service import get_optional_user
@@ -37,6 +61,9 @@ async def test_all_routes_404_when_flag_off(async_client, monkeypatch):
 
 
 async def test_create_note_creates_atom(async_client, db_session, monkeypatch):
+    # Production is never an empty users table — the bootstrap admin owns
+    # what an auth-off request creates.
+    await _persist_user(db_session, 1, "bootstrap-admin")
     _enable(monkeypatch, auth=False)
     resp = await async_client.post(
         "/api/notes", json={"title": "Kickoff", "body": "agenda quarterly review", "circle_tier": 2},
@@ -56,6 +83,9 @@ async def test_create_note_creates_atom(async_client, db_session, monkeypatch):
 
 
 async def test_crud_lifecycle_auth_off(async_client, db_session, monkeypatch):
+    # Production is never an empty users table — the bootstrap admin owns
+    # what an auth-off request creates.
+    await _persist_user(db_session, 1, "bootstrap-admin")
     _enable(monkeypatch, auth=False)
     created = (await async_client.post("/api/notes", json={"title": "Alpha", "body": "one"})).json()
     nid, atom_id = created["id"], created["atom_id"]
@@ -76,10 +106,10 @@ async def test_crud_lifecycle_auth_off(async_client, db_session, monkeypatch):
     assert await db_session.get(Atom, atom_id) is None
 
 
-async def test_owner_scoping_under_auth(async_client, monkeypatch):
+async def test_owner_scoping_under_auth(async_client, monkeypatch, db_session):
     _enable(monkeypatch, auth=True)
-    user_a = User(id=1, username="a", password_hash="x", is_active=True, role_id=1)
-    user_b = User(id=2, username="b", password_hash="x", is_active=True, role_id=1)
+    user_a = await _persist_user(db_session, 1, "a")
+    user_b = await _persist_user(db_session, 2, "b")
 
     _override_user(user_a)
     created = await async_client.post("/api/notes", json={"title": "Secret", "body": "mine"})
@@ -91,9 +121,12 @@ async def test_owner_scoping_under_auth(async_client, monkeypatch):
     assert all(n["id"] != nid for n in (await async_client.get("/api/notes")).json())
 
 
-async def test_note_links_backlinks_and_stale_removal(async_client, monkeypatch):
+async def test_note_links_backlinks_and_stale_removal(async_client, monkeypatch, db_session):
     """[[links]] (4B.2): outgoing links resolve to notes, the target sees a
     backlink, and removing the [[link]] on edit clears both sides."""
+    # Production is never an empty users table — the bootstrap admin owns
+    # what an auth-off request creates.
+    await _persist_user(db_session, 1, "bootstrap-admin")
     _enable(monkeypatch, auth=False)
     beta = (await async_client.post("/api/notes", json={"title": "Beta", "body": "b"})).json()
     alpha = (await async_client.post(
@@ -112,8 +145,11 @@ async def test_note_links_backlinks_and_stale_removal(async_client, monkeypatch)
     assert (await async_client.get(f"/api/notes/{beta['id']}/links")).json()["backlinks"] == []
 
 
-async def test_dangling_link_has_null_note_id(async_client, monkeypatch):
+async def test_dangling_link_has_null_note_id(async_client, monkeypatch, db_session):
     """A [[Target]] with no existing note is a dangling link (note_id=None)."""
+    # Production is never an empty users table — the bootstrap admin owns
+    # what an auth-off request creates.
+    await _persist_user(db_session, 1, "bootstrap-admin")
     _enable(monkeypatch, auth=False)
     a = (await async_client.post(
         "/api/notes", json={"title": "Solo", "body": "points at [[Nowhere]]"},
@@ -141,8 +177,7 @@ async def test_resave_does_not_duplicate_link_entities_with_seeded_user(
     from models.database import KGEntity
 
     _enable(monkeypatch, auth=False)
-    db_session.add(User(id=1, username="owner", password_hash="x", is_active=True, role_id=1))
-    await db_session.commit()
+    await _persist_user(db_session, 1, "owner")
 
     def _note_entity_count() -> "object":
         return select(func.count()).select_from(KGEntity).where(KGEntity.entity_type == "note")
@@ -164,11 +199,14 @@ async def test_resave_does_not_duplicate_link_entities_with_seeded_user(
     assert b_links["backlinks"] == [{"title": "Alpha", "note_id": alpha["id"]}]
 
 
-async def test_duplicate_title_conflicts_409(async_client, monkeypatch):
+async def test_duplicate_title_conflicts_409(async_client, monkeypatch, db_session):
     """P2b: a second note with the same (case-insensitive) title is a 409 — the
     title is the [[link]] key, so it must be unique per owner. Enforced in the
     service (works in auth-off / NULL-owner, which the Postgres partial index and
     the SQLite harness both miss)."""
+    # Production is never an empty users table — the bootstrap admin owns
+    # what an auth-off request creates.
+    await _persist_user(db_session, 1, "bootstrap-admin")
     _enable(monkeypatch, auth=False)
     first = await async_client.post("/api/notes", json={"title": "Roadmap", "body": "one"})
     assert first.status_code == 200
@@ -230,18 +268,25 @@ async def test_dense_and_fts_branches_apply_identical_circle_filter(monkeypatch)
     assert "circle_tier" in fts_sql and "circle_tier" in dense_sql
 
 
-async def test_create_skips_embedding_on_sqlite_but_stays_fts_searchable(
+async def test_create_under_auth_off_finds_an_owner_and_stays_fts_searchable(
     async_client, db_session, monkeypatch
 ):
-    """Semantic search ON but the sqlite harness has no pgvector → the background
-    embed task skips gracefully (embedding stays NULL, no crash) and the note is
-    still found via FTS. Postgres dense retrieval is verified on deploy."""
+    """Auth off: the request carries no user, and the note still has to be
+    created — the atom's owner is RESOLVED (bootstrap admin), not the literal 0.
+
+    This is the case that used to fail: `atoms.owner_user_id` is NOT NULL with a
+    foreign key, user 0 does not exist, and the resulting IntegrityError was
+    reported to the caller as "a note with this title already exists". The
+    sqlite harness enforced no foreign key, so the bug was invisible."""
+    await _persist_user(db_session, 1, "bootstrap-admin")
     _enable(monkeypatch, auth=False)
     monkeypatch.setattr(settings, "notes_semantic_search_enabled", True)
     resp = await async_client.post("/api/notes", json={"title": "Emb", "body": "hallo welt"})
-    assert resp.status_code == 200
+    assert resp.status_code == 200, resp.text
     note = await db_session.get(Note, resp.json()["id"])
-    assert note is not None and note.embedding is None  # skipped on sqlite
+    assert note is not None
+    atom = await db_session.get(Atom, note.atom_id)
+    assert atom is not None and atom.owner_user_id == 1
 
     from services.note_retrieval import NoteRetrieval
     hits = await NoteRetrieval(db_session).search("hallo", asker_id=None, top_k=5)
@@ -249,6 +294,9 @@ async def test_create_skips_embedding_on_sqlite_but_stays_fts_searchable(
 
 
 async def test_note_retrieval_finds_and_circle_filters(async_client, db_session, monkeypatch):
+    # Production is never an empty users table — the bootstrap admin owns
+    # what an auth-off request creates.
+    await _persist_user(db_session, 1, "bootstrap-admin")
     from services.note_retrieval import NoteRetrieval
 
     _enable(monkeypatch, auth=False)

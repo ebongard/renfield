@@ -16,6 +16,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.database import ATOM_TYPE_NOTE, Note
+from services.atom_owner import AtomOwnerResolverMixin
 from services.atom_service import AtomService
 from utils.config import settings
 
@@ -25,6 +26,11 @@ class NoteTitleConflict(Exception):
     title is the [[link]] key, so it must resolve to ONE note per owner — the
     Postgres unique index treats a NULL owner (auth-off) as distinct and the
     sqlite harness builds no index at all, so uniqueness is enforced HERE too."""
+
+
+
+class NoteOwnerUnresolved(RuntimeError):
+    """No user exists that could own the note (and therefore its atom)."""
 
 
 async def _title_taken(
@@ -84,6 +90,20 @@ async def embed_note_by_id(note_id: int) -> None:
         logger.warning(f"note {note_id}: background embedding failed (FTS still covers it): {e}")
 
 
+class _NoteOwnerResolver(AtomOwnerResolverMixin):
+    """The shared owner-resolution policy, as a small host for the mixin.
+
+    `create_note` is a module-level function, so it has no `self.db` for the
+    mixin to use; this wraps the session for one call.
+    """
+
+    def __init__(self, db: AsyncSession):
+        self.db = db
+
+    async def resolve(self, user_id: int | None) -> int | None:
+        return await self._resolve_owner_user_id(user_id)
+
+
 async def create_note(
     db: AsyncSession,
     *,
@@ -95,16 +115,32 @@ async def create_note(
 ) -> Note:
     """Create a note + its atom in one transaction. Caller commits.
 
-    ``owner_id`` may be None only in auth-disabled single-user mode; the atom
-    requires an owner, so we fall back to 0 there (mirrors how other single-user
-    atom writers seed ownership).
+    ``owner_id`` may be None only in auth-disabled single-user mode. The atom
+    needs a REAL owner: `atoms.owner_user_id` is NOT NULL with a foreign key to
+    `users.id`, and the literal 0 this used to pass is not a user — under
+    auth-off every note creation therefore died on that constraint, and the
+    route read the resulting IntegrityError as a title clash and answered 409
+    "a note with this title already exists". Resolve the owner the way every
+    other atom writer does instead (`AtomOwnerResolverMixin`: the explicit id,
+    else the bootstrap admin). A database with no users at all leaves the atom
+    unregistered rather than inventing an owner — the note itself still gets
+    written, exactly as when the resolver returns None elsewhere.
     """
     if await _title_taken(db, title=title, owner_id=owner_id):
         raise NoteTitleConflict(title)
+    resolved_owner_id = await _NoteOwnerResolver(db).resolve(owner_id)
+    if resolved_owner_id is None:
+        # `notes.atom_id` is NOT NULL, so a note cannot exist without an atom,
+        # and an atom cannot exist without an owner. Only an empty users table
+        # gets here (fresh dev DB) — say so instead of failing later with an
+        # unrelated-looking constraint error.
+        raise NoteOwnerUnresolved(
+            "no user exists to own this note (empty users table)"
+        )
     atom_svc = AtomService(db)
     atom_id = await atom_svc.create_with_source(
         atom_type=ATOM_TYPE_NOTE,
-        owner_user_id=owner_id if owner_id is not None else 0,
+        owner_user_id=resolved_owner_id,
         tier=circle_tier,
     )
     note = Note(

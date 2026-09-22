@@ -674,6 +674,32 @@ async def test_role(db_session: AsyncSession, sample_role_data) -> Role:
 
 
 @pytest.fixture
+async def baseline_rows(db_session: AsyncSession):
+    """The rows a running instance always has: a role, an admin user, a speaker.
+
+    Production is never an empty database — `ensure_default_roles` and
+    `ensure_admin_user` run at every start, and speaker recognition creates its
+    first speaker early. Many tests were written against that assumption and
+    simply named `user_id=1` / `speaker_id=1`; under sqlite the missing rows
+    went unnoticed because no foreign key was enforced.
+
+    Deliberately OPT-IN (`pytestmark = pytest.mark.usefixtures("baseline_rows")`
+    at the top of a file), not autouse: a test that counts users or speakers
+    must be able to start from an empty database.
+    """
+    from models.database import Role, Speaker, User
+
+    role = Role(id=1, name="Admin-Test", permissions=["admin"], is_system=True)
+    db_session.add(role)
+    await db_session.flush()
+    db_session.add(User(
+        id=1, username="admin", password_hash="x", is_active=True, role_id=role.id,
+    ))
+    db_session.add(Speaker(id=1, name="Sprecher 1"))
+    await db_session.commit()
+
+
+@pytest.fixture
 async def make_user(db_session: AsyncSession):
     """Create real users with the ids a test wants to talk about.
 

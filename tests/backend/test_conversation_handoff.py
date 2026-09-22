@@ -22,6 +22,35 @@ def clear_debounce():
     _last_handoff.clear()
 
 
+async def _seed_identities(db):
+    """The speakers and users these conversations point at.
+
+    `conversations.speaker_id → speakers.id` and `.user_id → users.id` are
+    enforced by Postgres; the tests name speaker 1 (and 999 for the
+    "no such speaker" case) and user 10. Only the rows that must EXIST are
+    created — 999 stays absent on purpose.
+    """
+    from sqlalchemy import select as _select
+
+    from models.database import Role, Speaker, User
+
+    for sid in (1, 5):
+        if (await db.execute(
+            _select(Speaker).where(Speaker.id == sid)
+        )).scalar_one_or_none() is None:
+            db.add(Speaker(id=sid, name=f"Sprecher {sid}"))
+    role = (await db.execute(
+        _select(Role).where(Role.name == "handoff-rolle")
+    )).scalar_one_or_none()
+    if role is None:
+        role = Role(name="handoff-rolle", permissions=[], is_system=False)
+        db.add(role)
+        await db.flush()
+    if (await db.execute(_select(User).where(User.id == 10))).scalar_one_or_none() is None:
+        db.add(User(id=10, username="handoff-nutzer", password_hash="x", role_id=role.id))
+    await db.commit()
+
+
 def _make_conversation(session_id, speaker_id, user_id=None, context_vars=None, summary=None, minutes_ago=5):
     """Create a Conversation-like mock for testing."""
     conv = MagicMock(spec=Conversation)
@@ -39,6 +68,7 @@ def _make_conversation(session_id, speaker_id, user_id=None, context_vars=None, 
 @pytest.mark.asyncio
 async def test_handoff_happy_path(db_session):
     """Speaker has recent conversation at another satellite — context copied."""
+    await _seed_identities(db_session)
     # Create source conversation at satellite-A
     source = Conversation(
         session_id="satellite-sat-a-2026-03-30",
@@ -83,6 +113,7 @@ async def test_handoff_happy_path(db_session):
 @pytest.mark.asyncio
 async def test_handoff_no_source(db_session):
     """Speaker has no prior satellite conversation — returns False."""
+    await _seed_identities(db_session)
     result = await try_handoff_context(
         speaker_id=999,
         target_session_id="satellite-sat-b-2026-03-30",
@@ -95,6 +126,7 @@ async def test_handoff_no_source(db_session):
 @pytest.mark.asyncio
 async def test_handoff_idempotent(db_session):
     """Target already has more recent data — skip."""
+    await _seed_identities(db_session)
     # Create source (older)
     source = Conversation(
         session_id="satellite-sat-a-2026-03-30",
@@ -134,6 +166,7 @@ async def test_handoff_idempotent(db_session):
 @pytest.mark.asyncio
 async def test_handoff_debounce(db_session):
     """Second call within 10s for same speaker — no-op."""
+    await _seed_identities(db_session)
     # Create source conversation
     source = Conversation(
         session_id="satellite-sat-a-2026-03-30",
@@ -164,6 +197,7 @@ async def test_handoff_debounce(db_session):
 @pytest.mark.asyncio
 async def test_handoff_null_summary_copies_messages(db_session):
     """Source has NULL summary — copies last 5 messages as seed."""
+    await _seed_identities(db_session)
     source = Conversation(
         session_id="satellite-sat-a-2026-03-30",
         speaker_id=1,
@@ -208,6 +242,7 @@ async def test_handoff_null_summary_copies_messages(db_session):
 @pytest.mark.asyncio
 async def test_handoff_filters_web_conversations(db_session):
     """Web conversation (non-satellite session) is ignored."""
+    await _seed_identities(db_session)
     # Create web conversation (more recent)
     web = Conversation(
         session_id="chat-web-device-abc",
@@ -229,6 +264,7 @@ async def test_handoff_filters_web_conversations(db_session):
 @pytest.mark.asyncio
 async def test_handoff_expired_source(db_session):
     """Source conversation older than window — no handoff."""
+    await _seed_identities(db_session)
     source = Conversation(
         session_id="satellite-sat-a-2026-03-29",
         speaker_id=1,
@@ -251,6 +287,7 @@ async def test_handoff_expired_source(db_session):
 @pytest.mark.asyncio
 async def test_handoff_auth_disabled_speaker_only(db_session):
     """Works with speaker_id alone, no user_id (auth disabled)."""
+    await _seed_identities(db_session)
     source = Conversation(
         session_id="satellite-sat-a-2026-03-30",
         speaker_id=5,
