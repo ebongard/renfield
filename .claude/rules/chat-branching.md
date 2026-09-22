@@ -29,6 +29,21 @@ read. Long form: `docs/design/chat-branching.md`. UI affordances/artifacts live 
    commit (flag-gated) so whichever of fork/extraction commits last wins. Do not reintroduce a one-way deactivate.
 4. Message search: filtered to the active path, `message_index` recomputed within the branch (jump-to-message).
 
+## A conversation is a SHARED artifact (auth-on §8.1)
+`conversations` carry `circle_tier` + `atom_id` and read through
+`conversations_circles_filter` — the same four-branch filter as every other atom. A room history (satellite) belongs
+to the DEVICE account at tier 2, so every member whose tier reaches it reads and CONTINUES the one thread; browser
+chats stay at tier 0. `ConversationService.reaches()` runs that filter for one row (never a second ownership rule in
+Python), `may_alter()` keeps deleting, re-leafing and branching with the owner plus `chat.all` — reach is for reading,
+not for wiping the kitchen's thread. The message search follows conversation reach (decided): whoever may read the
+thread finds the line in it.
+`Meeting` follows the same rule now; its tier said "shared" from the start while its routes filtered on owner
+equality. Writing routes pass `for_write=True` and stay owner-bound.
+An atom needs an owner (`atoms.owner_user_id` NOT NULL), so an OWNERLESS conversation gets none — `atom_id` is
+nullable here, unlike on notes, and the P2 backfill fills it in when the row gets an owner.
+**The migration's downgrade drops the COLUMNS before deleting the atoms**: `atom_id` carries ON DELETE CASCADE, so
+the other order deletes every conversation and meeting.
+
 ## Ownership of a conversation (`enforce_ownership`, auth-on only)
 ONE rule on both sides: a conversation that is not the caller's is refused — foreign AND **ownerless**. The session id
 is minted by the CLIENT and never validated, so an ownerless row is reachable by anyone holding such an id. Reads
