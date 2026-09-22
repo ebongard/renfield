@@ -827,6 +827,12 @@ class TestDeleteBranch:
             user_id=u.id, parent_message_id=m_a.parent_message_id,
         )
         assert await svc.set_active_leaf("delbr", m_b.id, user_id=u.id) is True
+        # Switching branches already deactivates the memory (activation follows
+        # the active path), so pin the state BEFORE the delete — otherwise the
+        # `is_active is False` below would prove nothing about delete_branch.
+        await db_session.refresh(mem)
+        mem.is_active = True
+        await db_session.flush()
 
         status = await svc.delete_branch("delbr", m_a.id, user_id=u.id)
         assert status == "ok"

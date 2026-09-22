@@ -45,7 +45,7 @@ PATTERNS = [
 
 
 def _docstring_and_comment_lines(source: str) -> set[int]:
-    """Line numbers that only DOCUMENT the rule, rather than break it.
+    """Line numbers of DOCSTRINGS — text that documents the rule, not code.
 
     The lint hunts `DELETE FROM atoms` in raw SQL, so plain strings must stay
     in scope — but a docstring explaining the rule (models/database.py does,
@@ -53,8 +53,6 @@ def _docstring_and_comment_lines(source: str) -> set[int]:
     trains people to ignore it. Comments likewise.
     """
     import ast
-    import io
-    import tokenize
 
     skip: set[int] = set()
     try:
@@ -71,13 +69,28 @@ def _docstring_and_comment_lines(source: str) -> set[int]:
         if isinstance(first, ast.Expr) and isinstance(first.value, ast.Constant) \
                 and isinstance(first.value.value, str):
             skip.update(range(first.lineno, (first.end_lineno or first.lineno) + 1))
+    return skip
+
+
+def _comment_starts(source: str) -> dict[int, int]:
+    """line → column where a trailing comment begins.
+
+    Skipping the whole LINE would let a real deletion escape by carrying a
+    comment: `await db.execute(text("DELETE FROM atoms ..."))  # cleanup`.
+    Only the comment itself is cut away.
+    """
+    import io
+    import tokenize
+
+    starts: dict[int, int] = {}
     try:
         for tok in tokenize.generate_tokens(io.StringIO(source).readline):
             if tok.type == tokenize.COMMENT:
-                skip.add(tok.start[0])
+                line, col = tok.start
+                starts[line] = min(col, starts.get(line, col))
     except (tokenize.TokenError, IndentationError):
         pass
-    return skip
+    return starts
 
 
 @pytest.mark.unit
@@ -96,11 +109,13 @@ def test_no_direct_atom_delete_outside_purge_service():
         except (OSError, UnicodeDecodeError):
             continue
         skip = _docstring_and_comment_lines(text)
+        comment_at = _comment_starts(text)
         for lineno, line in enumerate(text.splitlines(), 1):
             if lineno in skip:
                 continue
+            code = line[: comment_at[lineno]] if lineno in comment_at else line
             for pat in PATTERNS:
-                if pat.search(line):
+                if pat.search(code):
                     offenders.append((rel, lineno, line.strip()))
 
     if offenders:

@@ -122,9 +122,9 @@ async def create_note(
     route read the resulting IntegrityError as a title clash and answered 409
     "a note with this title already exists". Resolve the owner the way every
     other atom writer does instead (`AtomOwnerResolverMixin`: the explicit id,
-    else the bootstrap admin). A database with no users at all leaves the atom
-    unregistered rather than inventing an owner — the note itself still gets
-    written, exactly as when the resolver returns None elsewhere.
+    else the bootstrap admin). A database with no users at all raises
+    ``NoteOwnerUnresolved``, which the route answers with 503: `notes.atom_id`
+    is NOT NULL, so a note without an owner cannot be written at all.
     """
     if await _title_taken(db, title=title, owner_id=owner_id):
         raise NoteTitleConflict(title)

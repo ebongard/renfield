@@ -2,9 +2,9 @@
 circle-visibility gate (D2). The sqlite suite (test_document_search.py) covers
 the ILIKE path/route/reachability; FTS and circles are Postgres-only.
 
-create_all gives `documents.search_vector` a PLAIN tsvector (not the migration's
-GENERATED column), so these tests populate it manually with the same multilingual
-expression the migration uses.
+The harness builds `documents.search_vector` as the GENERATED column the
+migration defines, so the vector fills itself on insert — these tests used to
+write it by hand because `create_all` left a plain, never-populated column.
 """
 import pytest
 from sqlalchemy import text
@@ -12,16 +12,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.database import Atom, Document, KnowledgeBase, Role, User
 from services.document_search import search_documents
-from services.fts_languages import build_generated_tsvector_expression
 
 pytestmark = pytest.mark.postgres
 
 _seq = 0
-
-_TSV_EXPR = build_generated_tsvector_expression(
-    "(coalesce(generated_title, '') || ' ' || coalesce(title, '') || ' ' || coalesce(filename, ''))"
-)
-
 
 async def _user(db: AsyncSession, name: str) -> User:
     role = Role(name=f"{name}_role")
@@ -59,20 +53,11 @@ async def _doc(db: AsyncSession, kb, owner, *, generated_title: str, tier: int =
     return doc
 
 
-async def _populate_fts(db: AsyncSession, ids: list[int]) -> None:
-    await db.execute(
-        text(f"UPDATE documents SET search_vector = {_TSV_EXPR} WHERE id = ANY(:ids)"),
-        {"ids": ids},
-    )
-    await db.flush()
-
-
 async def test_fts_name_search_ranks_the_matching_doc(pg_db_session: AsyncSession):
     owner = await _user(pg_db_session, "ds_owner")
     kb = await _kb(pg_db_session, owner)
     hit = await _doc(pg_db_session, kb, owner, generated_title="Invoice Arkadon 2026")
-    miss = await _doc(pg_db_session, kb, owner, generated_title="Rechnung Telekom")
-    await _populate_fts(pg_db_session, [hit.id, miss.id])
+    await _doc(pg_db_session, kb, owner, generated_title="Rechnung Telekom")
 
     res = await search_documents(pg_db_session, "Arkadon", asker_id=owner.id, enforce_circles=True)
     assert [d.id for d in res] == [hit.id]
@@ -87,7 +72,6 @@ async def test_circle_gate_excludes_another_users_private_doc(pg_db_session: Asy
     kb_b = await _kb(pg_db_session, b)
     doc_a = await _doc(pg_db_session, kb_a, a, generated_title="Arkadon Invoice A", tier=0)  # A's private
     doc_b = await _doc(pg_db_session, kb_b, b, generated_title="Arkadon Contract B", tier=0)  # B's private
-    await _populate_fts(pg_db_session, [doc_a.id, doc_b.id])
 
     # A searches "Arkadon" → only A's doc (B's tier-0 private doc is filtered out).
     as_a = await search_documents(pg_db_session, "Arkadon", asker_id=a.id, enforce_circles=True)
@@ -107,7 +91,6 @@ async def test_reachability_pg_beyond_recency(pg_db_session: AsyncSession):
         ids.append(d.id)
     target = await _doc(pg_db_session, kb, owner, generated_title="Uniquetoken Vertrag")
     ids.append(target.id)
-    await _populate_fts(pg_db_session, ids)
 
     res = await search_documents(pg_db_session, "Uniquetoken", asker_id=owner.id, enforce_circles=True)
     assert [d.id for d in res] == [target.id]
