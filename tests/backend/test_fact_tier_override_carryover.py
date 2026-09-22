@@ -7,9 +7,9 @@ content identity and re-applies ``tier_overridden`` + the override tier to a
 matching freshly-extracted fact, so a deliberate per-fact override survives a
 re-extraction instead of silently reverting to the document tier.
 
-These tests drive the real hook against an in-memory sqlite engine (the
+These tests drive the real hook against the shared Postgres test database (the
 carry-over path uses only ORM inserts + AtomService.create_with_source /
-finalize_source_id + AtomPurgeService.purge — all sqlite-safe; it never touches
+finalize_source_id + AtomPurgeService.purge; it never touches
 the Postgres-specific update_tier cascade). The hook opens its own
 ``AsyncSessionLocal()``, so we point that sessionmaker at the same StaticPool
 engine (one shared connection) and stub the LLM extractor + title synthesis.
@@ -21,8 +21,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
-from sqlalchemy.pool import StaticPool
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 _missing_stubs = [
     "asyncpg", "whisper", "piper", "piper.voice", "speechbrain",
@@ -42,7 +41,6 @@ for _mod in _missing_stubs:
 from models.database import (  # noqa: E402
     ATOM_TYPE_KB_DOCUMENT,
     Atom,
-    Base,
     Document,
     DocumentFact,
     Role,
@@ -85,34 +83,18 @@ class TestFactIdentityKey:
 # End-to-end: the hook
 # ---------------------------------------------------------------------------
 @pytest.fixture
-async def carryover_engine(monkeypatch):
-    """In-memory sqlite engine shared with the hook's own AsyncSessionLocal."""
-    from sqlalchemy import event
+async def carryover_engine(monkeypatch, db_session):
+    """The shared Postgres test database, wired into the hook's own sessions.
 
-    engine = create_async_engine(
-        "sqlite+aiosqlite:///:memory:",
-        connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
-        echo=False,
-    )
-
-    # The carry-over correctness depends on the OLD fact rows being removed when
-    # AtomPurgeService.purge deletes their atoms — that's an ON DELETE CASCADE FK
-    # (document_facts.atom_id → atoms.atom_id). sqlite ignores FK constraints
-    # unless PRAGMA foreign_keys=ON is set per connection.
-    @event.listens_for(engine.sync_engine, "connect")
-    def _fk_on(dbapi_conn, _rec):  # noqa: ANN001
-        cur = dbapi_conn.cursor()
-        cur.execute("PRAGMA foreign_keys=ON")
-        cur.close()
-
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
-
+    This used to build a private sqlite engine and switch foreign keys on with
+    a PRAGMA — the carry-over correctness depends on `document_facts.atom_id →
+    atoms.atom_id` cascading, which sqlite ignores unless asked. Postgres
+    enforces it always, which is the property under test.
+    """
+    engine = db_session.bind
     maker = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
 
-    # With FK enforcement ON, atoms.owner_user_id → users.id → roles.id must
-    # resolve. Seed the minimal Role + User (id=1) the hook's atoms reference.
+    # atoms.owner_user_id → users.id → roles.id must resolve.
     async with maker() as db:
         db.add(Role(id=1, name="member", permissions=[]))
         await db.flush()
@@ -123,8 +105,6 @@ async def carryover_engine(monkeypatch):
     monkeypatch.setattr("services.database.AsyncSessionLocal", maker, raising=False)
 
     yield engine, maker
-
-    await engine.dispose()
 
 
 async def _seed_doc_with_fact(

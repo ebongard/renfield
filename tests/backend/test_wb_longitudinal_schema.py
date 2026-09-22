@@ -7,18 +7,16 @@ Four tables introduced by migration `pc20260511_wb_long`:
   - wb_retrospective_annotation
 
 Legal_hold discrimination is enforced by ``services/atom_purge_service.py``
-in pure Python (portable across postgres / MySQL / MSSQL / sqlite). The
+in pure Python (portable across postgres / MySQL / MSSQL). The
 ``test_atom_purge_archives_legal_hold_rows`` test below exercises the
-full flow against an in-memory sqlite engine — no postgres required.
+full flow against the shared Postgres test database.
 """
 from __future__ import annotations
 
 from datetime import UTC, datetime
 
 import pytest
-from sqlalchemy import create_engine, event, select
-from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
-from sqlalchemy.orm import Session
+from sqlalchemy import select
 
 from models.database import (
     Atom,
@@ -109,7 +107,7 @@ def test_wb_tables_registered_on_metadata():
 
 @pytest.mark.asyncio
 @pytest.mark.unit
-async def test_atom_purge_archives_legal_hold_rows():
+async def test_atom_purge_archives_legal_hold_rows(db_session):
     """End-to-end: purge an atom with one legal_hold=TRUE and one =FALSE row.
 
     After purge:
@@ -120,52 +118,49 @@ async def test_atom_purge_archives_legal_hold_rows():
     """
     from services.atom_purge_service import AtomPurgeService, ARCHIVE_REASON_GDPR_PURGE
 
-    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+    # The shared Postgres test database, not a private sqlite engine: the
+    # models declare Postgres-only column types (TSVECTOR), and the PRAGMA
+    # that used to switch foreign keys on here is something Postgres never
+    # needed — it enforces them always, which is the point of this test.
+    s = db_session
+    now = datetime.now(UTC).replace(tzinfo=None)
+    # Need a user for atom FK.
+    s.add(Role(id=1, name="member"))
+    await s.flush()
+    s.add(User(id=1, username="t", email="t@t", password_hash="x", role_id=1))
+    await s.flush()
+    s.add(Atom(
+        atom_id="atom-1", atom_type="test", source_table="tests",
+        source_id="t1", owner_user_id=1, policy={"tier": 0},
+        created_at=now, updated_at=now,
+    ))
+    await s.flush()
+    s.add_all([
+        WBFieldProvenance(
+            atom_id="atom-1", source_type="release", source_id="REL-100",
+            field_path="status", snapshot_value_json={"v": "ACTIVE"},
+            fetched_at=now, legal_hold=True,
+        ),
+        WBFieldProvenance(
+            atom_id="atom-1", source_type="release", source_id="REL-100",
+            field_path="owner", snapshot_value_json={"v": "alice"},
+            fetched_at=now, legal_hold=False,
+        ),
+    ])
+    await s.commit()
 
-    @event.listens_for(engine.sync_engine, "connect")
-    def _fk_on(dbapi_conn, _):
-        dbapi_conn.execute("PRAGMA foreign_keys=ON")
-
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
-
-    async with AsyncSession(engine) as s:
-        now = datetime.now(UTC).replace(tzinfo=None)
-        # Need a user for atom FK.
-        s.add(Role(id=1, name="member"))
-        await s.flush()
-        s.add(User(id=1, username="t", email="t@t", password_hash="x", role_id=1))
-        await s.flush()
-        s.add(Atom(
-            atom_id="atom-1", atom_type="test", source_table="tests",
-            source_id="t1", owner_user_id=1, policy={"tier": 0},
-            created_at=now, updated_at=now,
-        ))
-        await s.flush()
-        s.add_all([
-            WBFieldProvenance(
-                atom_id="atom-1", source_type="release", source_id="REL-100",
-                field_path="status", snapshot_value_json={"v": "ACTIVE"},
-                fetched_at=now, legal_hold=True,
-            ),
-            WBFieldProvenance(
-                atom_id="atom-1", source_type="release", source_id="REL-100",
-                field_path="owner", snapshot_value_json={"v": "alice"},
-                fetched_at=now, legal_hold=False,
-            ),
-        ])
-        await s.commit()
-
-        archived_count = await AtomPurgeService.purge(
-            s, atom_id="atom-1", reason=ARCHIVE_REASON_GDPR_PURGE,
-        )
+    archived_count = await AtomPurgeService.purge(
+        s, atom_id="atom-1", reason=ARCHIVE_REASON_GDPR_PURGE,
+    )
 
     assert archived_count == 1
 
-    async with AsyncSession(engine) as s:
-        live = (await s.execute(select(WBFieldProvenance))).scalars().all()
-        archive = (await s.execute(select(WBFieldProvenanceArchive))).scalars().all()
-        atoms = (await s.execute(select(Atom))).scalars().all()
+    # Same session: the purge commits, so a second one would see the same
+    # rows — and on Postgres a second session cannot see this one's
+    # uncommitted work at all.
+    live = (await s.execute(select(WBFieldProvenance))).scalars().all()
+    archive = (await s.execute(select(WBFieldProvenanceArchive))).scalars().all()
+    atoms = (await s.execute(select(Atom))).scalars().all()
 
     assert live == []
     assert len(archive) == 1
@@ -177,41 +172,38 @@ async def test_atom_purge_archives_legal_hold_rows():
 
 @pytest.mark.asyncio
 @pytest.mark.unit
-async def test_atom_purge_with_no_legal_hold_rows():
+async def test_atom_purge_with_no_legal_hold_rows(db_session):
     """Purge an atom whose provenance is all legal_hold=FALSE → archive stays empty."""
     from services.atom_purge_service import AtomPurgeService
 
-    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+    # The shared Postgres test database, not a private sqlite engine: the
+    # models declare Postgres-only column types (TSVECTOR), and the PRAGMA
+    # that used to switch foreign keys on here is something Postgres never
+    # needed — it enforces them always, which is the point of this test.
+    s = db_session
+    now = datetime.now(UTC).replace(tzinfo=None)
+    s.add(Role(id=1, name="member"))
+    await s.flush()
+    s.add(User(id=1, username="t", email="t@t", password_hash="x", role_id=1))
+    await s.flush()
+    s.add(Atom(
+        atom_id="atom-2", atom_type="test", source_table="tests",
+        source_id="t2", owner_user_id=1, policy={"tier": 0},
+        created_at=now, updated_at=now,
+    ))
+    await s.flush()
+    s.add(WBFieldProvenance(
+        atom_id="atom-2", source_type="release", source_id="REL-200",
+        field_path="status", snapshot_value_json={"v": "DONE"},
+        fetched_at=now, legal_hold=False,
+    ))
+    await s.commit()
 
-    @event.listens_for(engine.sync_engine, "connect")
-    def _fk_on(dbapi_conn, _):
-        dbapi_conn.execute("PRAGMA foreign_keys=ON")
-
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
-
-    async with AsyncSession(engine) as s:
-        now = datetime.now(UTC).replace(tzinfo=None)
-        s.add(Role(id=1, name="member"))
-        await s.flush()
-        s.add(User(id=1, username="t", email="t@t", password_hash="x", role_id=1))
-        await s.flush()
-        s.add(Atom(
-            atom_id="atom-2", atom_type="test", source_table="tests",
-            source_id="t2", owner_user_id=1, policy={"tier": 0},
-            created_at=now, updated_at=now,
-        ))
-        await s.flush()
-        s.add(WBFieldProvenance(
-            atom_id="atom-2", source_type="release", source_id="REL-200",
-            field_path="status", snapshot_value_json={"v": "DONE"},
-            fetched_at=now, legal_hold=False,
-        ))
-        await s.commit()
-
-        archived = await AtomPurgeService.purge(s, atom_id="atom-2", reason="cleanup")
+    archived = await AtomPurgeService.purge(s, atom_id="atom-2", reason="cleanup")
 
     assert archived == 0
 
-    async with AsyncSession(engine) as s:
-        assert (await s.execute(select(WBFieldProvenanceArchive))).scalars().all() == []
+    # Same session: the purge commits, so a second one would see the same
+    # rows — and on Postgres a second session cannot see this one's
+    # uncommitted work at all.
+    assert (await s.execute(select(WBFieldProvenanceArchive))).scalars().all() == []

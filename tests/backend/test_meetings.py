@@ -959,27 +959,23 @@ class TestMeetingRetention:
         await mr.cleanup_meetings()
         assert not audio.exists()
 
-    async def test_one_bad_purge_does_not_abort_sweep(self, monkeypatch, tmp_path):
+    async def test_one_bad_purge_does_not_abort_sweep(
+        self, monkeypatch, tmp_path, db_session
+    ):
         """A delete_document failure on one expired meeting rolls back + continues;
-        a second expired meeting still gets purged. Uses an ISOLATED engine so
+        a second expired meeting still gets purged. Uses the shared engine so
         the per-meeting commit/rollback are real (the shared session can't model
         a rollback without breaking the outer test transaction)."""
         from datetime import datetime, timedelta
 
-        from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
-        from sqlalchemy.pool import StaticPool
+        from sqlalchemy.ext.asyncio import async_sessionmaker
 
-        from models.database import Base
         from services import meeting_retention as mr
 
-        engine = create_async_engine(
-            "sqlite+aiosqlite:///:memory:",
-            connect_args={"check_same_thread": False},
-            poolclass=StaticPool,
-        )
-        async with engine.begin() as conn:
-            await conn.run_sync(Base.metadata.create_all)
-        maker = async_sessionmaker(engine, expire_on_commit=False)
+        # The shared Postgres test database, not a private sqlite engine: the
+        # models declare Postgres-only column types, and the sweep under test
+        # runs against real constraints in production.
+        maker = async_sessionmaker(db_session.bind, expire_on_commit=False)
 
         monkeypatch.setattr(mr, "AsyncSessionLocal", maker)
         monkeypatch.setattr(mr.settings, "upload_dir", str(tmp_path))
@@ -1021,7 +1017,6 @@ class TestMeetingRetention:
             assert await s.get(Meeting, good_id) is None     # purged
             assert await s.get(Meeting, bad_id) is not None  # rolled back, retried next sweep
         assert purged == 1
-        await engine.dispose()
 
 
 # ---------------------------------------------------------------------------
