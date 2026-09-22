@@ -106,13 +106,12 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    # The atoms rows go with the columns; leaving them would orphan a registry
-    # entry pointing at a source row that no longer knows about it.
-    op.execute(
-        sa.text(
-            "DELETE FROM atoms WHERE atom_type IN ('conversation', 'meeting')"
-        )
-    )
+    # ORDER MATTERS, and getting it wrong destroys user data: the `atom_id`
+    # columns carry ON DELETE CASCADE, so deleting the atoms while those
+    # columns still reference them takes every conversation and meeting with
+    # them. Drop the columns FIRST, then remove the now-unreferenced registry
+    # rows. (Found by running the round trip: the first cut deleted the atoms
+    # up front and the conversation count went from 2 to 1.)
     op.drop_constraint("fk_meetings_atom_id", "meetings", type_="foreignkey")
     op.drop_index("ix_meetings_atom_id", table_name="meetings")
     op.drop_column("meetings", "atom_id")
@@ -121,3 +120,9 @@ def downgrade() -> None:
     op.drop_index("ix_conversations_atom_id", table_name="conversations")
     op.drop_column("conversations", "atom_id")
     op.drop_column("conversations", "circle_tier")
+
+    # Now nothing references them: remove the registry rows this migration
+    # created, so a re-upgrade rebuilds them instead of finding stale ones.
+    op.execute(
+        sa.text("DELETE FROM atoms WHERE atom_type IN ('conversation', 'meeting')")
+    )
