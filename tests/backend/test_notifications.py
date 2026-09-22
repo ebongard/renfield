@@ -1172,7 +1172,7 @@ class TestReminderCRUD:
         r = result.scalar_one()
         assert r.status == REMINDER_FIRED
         assert r.fired_at is not None
-        assert r.notification_id == 42
+        assert r.notification_id == notification.id
 
     @pytest.mark.database
     async def test_create_reminder_invalid_time(self, db_session):
