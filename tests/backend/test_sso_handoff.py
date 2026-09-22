@@ -12,6 +12,7 @@ from __future__ import annotations
 import pytest
 
 from models.database import User
+from tests.backend.dbrows import ensure_user
 from utils.config import settings
 
 pytestmark = [pytest.mark.asyncio]
@@ -49,8 +50,7 @@ def _challenge_for(verifier: str) -> str:
 
 
 async def _seed_user(db) -> User:
-    user = User(id=1, username="ssouser", password_hash="x", is_active=True, role_id=1)
-    db.add(user)
+    user = await ensure_user(db, 1, username="ssouser")
     await db.commit()
     return user
 
@@ -121,7 +121,8 @@ async def test_exchange_inactive_user_is_rejected(async_client, db_session, fake
     """Re-validation at exchange time: a user deactivated after the code was
     issued cannot exchange it (opaque 400)."""
     monkeypatch.setattr(settings, "sso_handoff_enabled", True)
-    db_session.add(User(id=1, username="off", password_hash="x", is_active=False, role_id=1))
+    user = await ensure_user(db_session, 1, username="off")
+    user.is_active = False
     await db_session.commit()
     code = await _issue(db_session)
     assert (await async_client.post("/api/auth/sso/exchange", json={

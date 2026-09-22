@@ -48,6 +48,9 @@ async def _seed_memory(
     content: str,
     importance: float = 0.5,
 ) -> int:
+    from tests.backend.dbrows import ensure_user
+
+    await ensure_user(db, user_id)
     mem = ConversationMemory(
         user_id=user_id,
         content=content,

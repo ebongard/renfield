@@ -36,13 +36,33 @@ class _FakeRedis:
 @pytest.fixture
 def session_factory(monkeypatch, db_session):
     """Bind AsyncSessionLocal to the test engine (db_session.bind) so the
-    reconciler's own sessions hit the same fresh per-test in-memory DB
-    (function-scoped → no cross-test contamination; sqlite FKs off → no
-    ChatUpload row needed for chat_upload_id)."""
+    reconciler's own sessions hit the same per-test database.
+
+    The rows the pending-finalize row points at are created here: Postgres
+    enforces `user_id → users.id` and `chat_upload_id → chat_uploads.id`. The
+    old note ("sqlite FKs off → no ChatUpload row needed") was true of the
+    harness, not of production — the reconciler always runs against real
+    constraints."""
     import services.database as db_mod
     smk = async_sessionmaker(db_session.bind, class_=AsyncSession, expire_on_commit=False)
     monkeypatch.setattr(db_mod, "AsyncSessionLocal", smk)
     return smk
+
+
+@pytest.fixture(autouse=True)
+async def _referenced_rows(db_session):
+    """User 1 and chat upload 1 — what every `_mk` row below points at."""
+    from models.database import ChatUpload
+
+    from tests.backend.dbrows import ensure_user
+
+    await ensure_user(db_session, 1)
+    existing = await db_session.get(ChatUpload, 1)
+    if existing is None:
+        db_session.add(ChatUpload(
+            id=1, session_id="s", filename="doc.pdf", status="completed",
+        ))
+    await db_session.commit()
 
 
 async def _mk(smk, **kw) -> int:

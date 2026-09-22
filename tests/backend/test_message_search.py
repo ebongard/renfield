@@ -58,9 +58,13 @@ class TestSignificantMessageTokens:
 # ===========================================================================
 @pytest.mark.backend
 @pytest.mark.database
-class TestSearchMessagesSqlite:
+class TestSearchMessages:
     async def _seed(self, db: AsyncSession):
         """Two conversations, each owned by a different user, plus one orphan."""
+        from tests.backend.dbrows import ensure_user
+
+        await ensure_user(db, 1)
+        await ensure_user(db, 2)
         svc = ConversationService(db)
         # user 1
         await svc.save_message("u1-conv", "user", "Schalte das Licht im Wohnzimmer ein", user_id=1)
@@ -111,6 +115,9 @@ class TestSearchMessagesSqlite:
         assert sessions == {"u1-conv", "u2-conv", "orphan-conv"}
 
     async def test_message_index_is_zero_based_position(self, db_session: AsyncSession):
+        from tests.backend.dbrows import ensure_user
+
+        await ensure_user(db_session, 1)
         svc = ConversationService(db_session)
         await svc.save_message("idx-conv", "user", "erste nachricht alpha", user_id=1)
         await svc.save_message("idx-conv", "assistant", "zweite nachricht", user_id=1)
