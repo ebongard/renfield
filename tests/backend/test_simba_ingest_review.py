@@ -231,11 +231,22 @@ def test_owns_auth_on_null_owner_admin_only():
 # Review routes (real DB via fixtures)
 # --------------------------------------------------------------------------
 
+async def _real_doc(db, filename: str) -> int:
+    """A real Document row — `simba_ingest_proposals.document_id` is a foreign key."""
+    from models.database import Document as _Doc
+
+    doc = _Doc(filename=filename, file_path=f"/tmp/{filename}", status="completed")
+    db.add(doc)
+    await db.flush()
+    return doc.id
+
+
 class TestSimbaIngestRoutes:
     @pytest.mark.backend
     async def test_list_and_reject(self, async_client: AsyncClient, db_session: AsyncSession):
+        doc_id = await _real_doc(db_session, "a.pdf")
         p = SimbaIngestProposal(
-            document_id=123, user_id=None, filename="a.pdf",
+            document_id=doc_id, user_id=None, filename="a.pdf",
             suggested_category="Belege", suggested_type="Ausgangsrechnung",
             status=SIMBA_PROPOSAL_PENDING,
         )
@@ -428,6 +439,9 @@ class TestSimbaIngestRoutes:
             return u
 
         # Doc owned (via atom) by user 1.
+        from tests.backend.dbrows import ensure_user
+
+        await ensure_user(db_session, 1)
         aid = str(uuid.uuid4())
         db_session.add(Atom(atom_id=aid, atom_type="kb_document", source_table="documents",
                             source_id="1", owner_user_id=1, policy={"tier": 0}))
@@ -655,8 +669,9 @@ class TestSimbaIngestRoutes:
     ):
         """The conditional UPDATE makes a double-resolve safe: the second reject
         finds no PENDING row → 404."""
+        doc_id = await _real_doc(db_session, "f.pdf")
         p = SimbaIngestProposal(
-            document_id=456, filename="f.pdf", status=SIMBA_PROPOSAL_PENDING,
+            document_id=doc_id, filename="f.pdf", status=SIMBA_PROPOSAL_PENDING,
         )
         db_session.add(p)
         await db_session.commit()
@@ -743,6 +758,9 @@ async def test_document_period_prefers_rechnungsdatum_fact(db_session):
     and preferred over other date facts)."""
     from models.database import Atom, Document, DocumentFact
 
+    from tests.backend.dbrows import ensure_user
+
+    await ensure_user(db_session, 1)   # the fact atom below needs a real owner
     doc = Document(filename="scan.pdf", file_path="/x.pdf", status="completed",
                    generated_title="Rechnung vom 01.01.2099")  # title date must LOSE to the fact
     db_session.add(doc)
@@ -770,6 +788,9 @@ async def test_document_period_falls_back_to_title(db_session):
     """No date facts → parse the date out of the generated title."""
     from models.database import Document
 
+    from tests.backend.dbrows import ensure_user
+
+    await ensure_user(db_session, 1)   # the fact atom below needs a real owner
     doc = Document(filename="scan.pdf", file_path="/x.pdf", status="completed",
                    generated_title="Rechnung der TAXON GmbH vom 18.03.2026")
     db_session.add(doc)
@@ -784,6 +805,9 @@ async def test_document_period_ignores_obligation_and_deadline_dates(db_session)
     deadline kinds never count, so the period comes from the document date."""
     from models.database import Atom, Document, DocumentFact
 
+    from tests.backend.dbrows import ensure_user
+
+    await ensure_user(db_session, 1)   # the fact atom below needs a real owner
     doc = Document(filename="scan.pdf", file_path="/x.pdf", status="completed",
                    generated_title="Rechnung der TAXON GmbH")
     db_session.add(doc)
@@ -812,6 +836,9 @@ async def test_document_period_none_when_no_date(db_session):
     """No derivable date → (None, None) so the UI falls back to the current month."""
     from models.database import Document
 
+    from tests.backend.dbrows import ensure_user
+
+    await ensure_user(db_session, 1)   # the fact atom below needs a real owner
     doc = Document(filename="scan.pdf", file_path="/x.pdf", status="completed",
                    generated_title="Ein Dokument ohne Datum")
     db_session.add(doc)

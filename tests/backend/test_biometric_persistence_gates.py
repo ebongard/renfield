@@ -111,8 +111,17 @@ class TestStripBiometricFields:
 @pytest.mark.database
 @pytest.mark.asyncio
 class TestMeetingPipelinePersistence:
-    async def _run(self, db_session, monkeypatch, *, doc_id=77):
+    async def _run(self, db_session, monkeypatch, *, doc_id=None):
+        from models.database import Document
         from services import meeting_pipeline as mp
+
+        if doc_id is None:
+            # A real transcript Document: `meetings.transcript_document_id` is a
+            # foreign key, so the id the fake ingest returns has to exist.
+            doc = Document(filename="t.md", file_path="/tmp/t.md", status="completed")
+            db_session.add(doc)
+            await db_session.flush()
+            doc_id = doc.id
 
         monkeypatch.setattr(mp, "AsyncSessionLocal", lambda: _SessionCtx(db_session))
 
@@ -125,6 +134,9 @@ class TestMeetingPipelinePersistence:
 
         monkeypatch.setattr(mp, "transcribe_meeting", _fake_transcribe)
         monkeypatch.setattr(mp, "_ingest_transcript", _fake_ingest)
+        from tests.backend.dbrows import ensure_user
+
+        await ensure_user(db_session, 1)
         m = Meeting(status="processing", title="Sync", owner_user_id=1, circle_tier=2,
                     consent_confirmed=True)
         db_session.add(m)
@@ -166,6 +178,9 @@ class TestMeetingPipelinePersistence:
 
         monkeypatch.setattr(settings, "meeting_fingerprints_enabled", True)
         monkeypatch.setattr(settings, "speaker_recognition_enabled", False)
+        from tests.backend.dbrows import ensure_user
+
+        await ensure_user(db_session, 1)
         m = Meeting(status="completed", owner_user_id=1, circle_tier=2, consent_confirmed=True)
         db_session.add(m)
         await db_session.flush()

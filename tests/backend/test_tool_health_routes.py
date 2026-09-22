@@ -106,6 +106,9 @@ async def _make_stat(
     db_session: AsyncSession, user_id: int, tool: str,
     *, succ: int = 0, fail: int = 0, summary: str | None = None,
 ) -> ToolOutcomeStat:
+    from tests.backend.dbrows import ensure_user
+
+    await ensure_user(db_session, user_id)   # `tool_outcome_stats.user_id` is a FK
     now = datetime.now(UTC).replace(tzinfo=None)
     row = ToolOutcomeStat(
         user_id=user_id,

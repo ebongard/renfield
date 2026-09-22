@@ -32,6 +32,9 @@ def _factory(session):
 
 
 async def _doc(session, *, stored, facts, pid=None, title=None):
+    from tests.backend.dbrows import ensure_user
+
+    await ensure_user(session, 1)   # the atom below needs a real owner
     doc = Document(
         filename="scan.pdf", file_path="/tmp/scan.pdf", status="completed",
         document_date=stored, created_at=IMPORTED, paperless_document_id=pid,
