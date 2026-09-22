@@ -1336,17 +1336,27 @@ Gib eine kurze, natürliche Antwort. KEIN JSON, nur Text."""
                     if satellite_db_session_id and response_text:
                         try:
                             async with AsyncSessionLocal() as db_session:
+                                # A ROOM history, not a person's chat (§8.1):
+                                # tier 2 so every member the device account
+                                # reaches shares the one thread instead of each
+                                # starting a context-less new one. Only used
+                                # when this turn CREATES the conversation; an
+                                # existing row keeps the tier it has.
                                 await ollama.save_message(
                                     satellite_db_session_id, "user", text, db_session,
                                     metadata={
                                         "satellite_id": satellite_id,
                                         "room": satellite.room if satellite else None,
                                         "speaker": speaker_name
-                                    }
+                                    },
+                                    user_id=sat_user_id,
+                                    circle_tier=2,
                                 )
                                 await ollama.save_message(
                                     satellite_db_session_id, "assistant", response_text, db_session,
                                     metadata=assistant_metadata,
+                                    user_id=sat_user_id,
+                                    circle_tier=2,
                                 )
                                 logger.debug(f"💾 Satellite messages saved to DB: {satellite_db_session_id}")
                         except Exception as e:

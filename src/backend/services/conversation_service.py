@@ -13,8 +13,10 @@ from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 
-from models.database import Conversation, Message
+from models.database import ATOM_TYPE_CONVERSATION, Conversation, Message
+from services.circle_sql import conversations_circles_filter
 from services.fts_languages import build_tsquery_union_sql
+from utils.config import settings
 
 # Drop short tokens (≤2 chars) so single-letter / punctuation noise never
 # reaches the tsquery. Word characters only (German alphabet + digits), so the
@@ -58,6 +60,7 @@ class ConversationService:
     """
     Service für Konversations-Persistenz.
 
+
     Bietet:
     - Konversations-Kontext laden
     - Nachrichten speichern
@@ -72,6 +75,86 @@ class ConversationService:
             db: AsyncSession für Datenbankoperationen
         """
         self.db = db
+
+    async def reaches(self, conversation_id: int, user_id: int | None) -> bool:
+        """May this caller read and continue this conversation? (auth-on §8.1)
+
+        A conversation is a shared artifact: a room history belongs to the
+        device account at tier 2, and every member whose tier reaches it shares
+        the SAME thread — that is the whole point, so reach decides here, not
+        owner equality. Destructive acts are not reach-based; see
+        ``may_alter``.
+
+        Deliberately the SAME four-branch SQL the retrieval paths use, run for
+        one row, rather than a second ownership rule written in Python: two
+        implementations of one boundary drift apart, and the SQL one is the
+        audited one.
+
+        Does NOT consult ``settings.auth_enabled``: the caller already decided
+        by passing ``enforce_ownership`` (which it derives from the flag).
+        Gating twice would make an explicit "enforce this" silently not enforce.
+        """
+        if user_id is None:
+            # Auth on and no identity (device token, unrecognised voice): the
+            # reach branches all key on the asker, so there is nothing to reach
+            # with. Fail closed.
+            return False
+        clause, params = conversations_circles_filter(user_id, alias="c")
+        row = await self.db.execute(
+            text(f"SELECT 1 FROM conversations c WHERE c.id = :cid AND {clause}"),
+            {"cid": conversation_id, **params},
+        )
+        return row.scalar() is not None
+
+    @staticmethod
+    def may_alter(
+        conversation: Conversation, user_id: int | None, *, caller_has_chat_all: bool = False
+    ) -> bool:
+        """May this caller DELETE, branch or re-leaf this conversation? (D-3)
+
+        Reading a shared room history is for everyone it reaches; deleting one
+        is not. A member holding `chat.own` could otherwise wipe the kitchen's
+        thread for the whole household — so altering stays with the OWNER (the
+        device account for a room history, hence in practice nobody) plus
+        `chat.all`, which is the admin. Like ``reaches``, this does not consult
+        the auth flag — the caller passes ``user_id=None`` when there is no
+        identity to check against (auth off, device path), which keeps the
+        legacy "everyone may" behaviour exactly where it was.
+        """
+        if user_id is None:
+            return True
+        if caller_has_chat_all:
+            return True
+        return conversation.user_id == user_id
+
+    async def _register_atom(self, conversation: Conversation) -> None:
+        """Give an owned conversation its atoms row (circles rule: never a bare
+        INSERT — the denormalized columns and ``atoms.policy`` drift apart).
+
+        Ownerless conversations get none: an atom's owner is NOT NULL, and a row
+        nobody owns is refused under auth-on anyway. It gets one when it gets an
+        owner — here, or in the P2 backfill.
+
+        Best-effort by design: the atom is what makes a conversation SHAREABLE,
+        not what makes the turn work. Losing it must never cost the user their
+        message, so a failure is logged and the conversation stays at the reach
+        its own ``circle_tier`` column gives it.
+        """
+        if conversation.user_id is None or conversation.atom_id is not None:
+            return
+        try:
+            from services.atom_service import AtomService
+
+            atom_id = await AtomService(self.db).create_with_source(
+                atom_type=ATOM_TYPE_CONVERSATION,
+                owner_user_id=conversation.user_id,
+                tier=int(conversation.circle_tier or 0),
+                source_id=conversation.id,
+            )
+            conversation.atom_id = atom_id
+            await self.db.flush()
+        except Exception as e:  # noqa: BLE001 — a turn must not die over an atom
+            logger.warning(f"⚠️ Konversation ohne Atom angelegt (id={conversation.id}): {e}")
 
     async def active_path_message_ids(self, conversation: Conversation) -> list[int]:
         """Return the ids of the messages on the conversation's ACTIVE branch,
@@ -361,7 +444,7 @@ class ConversationService:
             # id — and the household has 206 of them from the auth-off era. Under
             # auth-off (`enforce_ownership=False`) nothing changes; the satellite
             # path does not enforce either.
-            if enforce_ownership and conversation.user_id != user_id:
+            if enforce_ownership and not await self.reaches(conversation.id, user_id):
                 logger.warning(
                     f"🚫 Refused conversation load: session={session_id} "
                     f"owner={conversation.user_id} caller={user_id}"
@@ -429,6 +512,7 @@ class ConversationService:
         user_id: int | None = None,
         parent_message_id: int | None = None,
         enforce_ownership: bool = False,
+        circle_tier: int | None = None,
     ) -> Message:
         """
         Speichere eine einzelne Nachricht.
@@ -477,7 +561,10 @@ class ConversationService:
             conversation = result.scalar_one_or_none()
 
             if not conversation:
-                conversation = Conversation(session_id=session_id, user_id=user_id)
+                conversation = Conversation(
+                    session_id=session_id, user_id=user_id,
+                    circle_tier=(circle_tier if circle_tier is not None else 0),
+                )
                 self.db.add(conversation)
                 # Flush so ``conversation.id`` is populated before it's
                 # used as ``Message.conversation_id`` below — otherwise
@@ -486,7 +573,8 @@ class ConversationService:
                 # orphaned (invisible to any JOIN-based history or
                 # message-count query).
                 await self.db.flush()
-            elif enforce_ownership and conversation.user_id != user_id:
+                await self._register_atom(conversation)
+            elif enforce_ownership and not await self.reaches(conversation.id, user_id):
                 # Ownership guard (write side): never append into a conversation
                 # that is not the caller's. ONE rule for two cases that used to
                 # be handled differently (auth-on cutover, P0 Nr. 5):
@@ -605,7 +693,8 @@ class ConversationService:
         return count
 
     async def set_active_leaf(
-        self, session_id: str, message_id: int, *, user_id: int | None = None
+        self, session_id: str, message_id: int, *, user_id: int | None = None,
+        caller_has_chat_all: bool = False,
     ) -> bool:
         """Switch a conversation's active branch to the one passing through
         ``message_id`` (chat branching active-leaf endpoint; the Phase-2 `‹n/m›`
@@ -630,7 +719,12 @@ class ConversationService:
         conversation = result.scalar_one_or_none()
         if not conversation:
             return False
-        if user_id is not None and conversation.user_id != user_id:
+        # Re-leafing rewrites which branch everyone else sees. Reach is for
+        # reading a shared thread; altering it stays with the owner plus
+        # `chat.all` (D-3).
+        if not self.may_alter(
+            conversation, user_id, caller_has_chat_all=caller_has_chat_all
+        ):
             return False
 
         msg_result = await self.db.execute(
@@ -651,7 +745,8 @@ class ConversationService:
         return True
 
     async def delete_branch(
-        self, session_id: str, message_id: int, *, user_id: int | None = None
+        self, session_id: str, message_id: int, *, user_id: int | None = None,
+        caller_has_chat_all: bool = False,
     ) -> str:
         """Delete a branch — ``message_id`` plus its whole subtree (chat
         branching Phase 2, delete-branch).
@@ -687,7 +782,11 @@ class ConversationService:
         conversation = result.scalar_one_or_none()
         if not conversation:
             return "not_found"
-        if user_id is not None and conversation.user_id != user_id:
+        # Deleting a branch of a SHARED room history would remove it for every
+        # member; owner or `chat.all` only (D-3).
+        if not self.may_alter(
+            conversation, user_id, caller_has_chat_all=caller_has_chat_all
+        ):
             return "not_found"
 
         msg_result = await self.db.execute(
@@ -1058,7 +1157,17 @@ class ConversationService:
                 .offset(offset)
             )
             if user_id is not None:
-                stmt = stmt.where(Conversation.user_id == user_id)
+                if settings.auth_enabled:
+                    # Reach, not equality (§8.1): the kitchen's room history
+                    # belongs to the device account, and a member who can
+                    # continue it must also SEE it in their list — otherwise
+                    # the shared thread exists but nobody finds it.
+                    clause, params = conversations_circles_filter(
+                        user_id, alias="conversations"
+                    )
+                    stmt = stmt.where(text(clause).bindparams(**params))
+                else:
+                    stmt = stmt.where(Conversation.user_id == user_id)
 
             result = await self.db.execute(stmt)
             rows = result.all()
@@ -1202,10 +1311,23 @@ class ConversationService:
                 "offset": offset,
             }
 
+            # Scope by conversation REACH, not owner equality (§8.1, decided):
+            # whoever may read the kitchen's room history also finds what was
+            # said in it — a search that hides a line the same person sees on
+            # opening the thread would be a break in the logic. Messages are
+            # not atoms, so the filter rides on the CONVERSATION row (alias c),
+            # which is exactly the artifact that carries the tier.
             owner_clause = ""
             if user_id is not None:
-                owner_clause = "AND c.user_id = :user_id"
-                params["user_id"] = user_id
+                if settings.auth_enabled:
+                    clause, circle_params = conversations_circles_filter(
+                        user_id, alias="c"
+                    )
+                    owner_clause = f"AND ({clause})"
+                    params.update(circle_params)
+                else:
+                    owner_clause = "AND c.user_id = :user_id"
+                    params["user_id"] = user_id
 
             session_clause = ""
             if session_id is not None:

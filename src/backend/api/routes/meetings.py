@@ -21,10 +21,11 @@ import aiofiles
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Response, UploadFile
 from loguru import logger
 from pydantic import BaseModel, Field
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.database import Meeting, User
+from services.circle_sql import meetings_circles_filter
 from services.auth_service import get_optional_user
 from services.database import get_db
 from services.redis_client import get_redis
@@ -271,25 +272,44 @@ async def list_meetings(
     if settings.auth_enabled:
         if not user:
             raise HTTPException(status_code=401, detail="Authentication required")
-        stmt = stmt.where(Meeting.owner_user_id == user.id)
+        # Tier REACH, not owner equality: `Meeting.circle_tier` has defaulted to
+        # 2 ("a meeting is a shared artifact") since meetings were introduced,
+        # while this query said "mine only" — the declared tier was never true.
+        # Same rule as conversations now use (auth-on cutover §8.1).
+        clause, params = meetings_circles_filter(user.id, alias="meetings")
+        stmt = stmt.where(text(clause).bindparams(**params))
 
     result = await db.execute(stmt)
     return [_to_response(m) for m in result.scalars().all()]
 
 
 async def _get_owned_meeting(
-    meeting_id: int, user: User | None, db: AsyncSession
+    meeting_id: int, user: User | None, db: AsyncSession, *, for_write: bool = False
 ) -> Meeting:
-    """Fetch a meeting, enforcing owner scoping. 404 when missing OR not the
-    caller's (owner-gated 404 — never leak existence). Auth off => any meeting."""
+    """Fetch a meeting the caller may READ, or (``for_write``) may CHANGE.
+
+    Reading follows tier reach — a meeting declares itself a shared artifact at
+    tier 2, so a member the owner's circles reach sees it; 404 when missing or
+    out of reach (never leak existence). Writing and deleting stay with the
+    OWNER: reach is not a licence to delete somebody else's recording.
+    Auth off => any meeting, as before."""
     meeting = await db.get(Meeting, meeting_id)
     if meeting is None:
         raise HTTPException(status_code=404, detail="Meeting not found")
     if settings.auth_enabled:
         if not user:
             raise HTTPException(status_code=401, detail="Authentication required")
-        if meeting.owner_user_id != user.id:
-            raise HTTPException(status_code=404, detail="Meeting not found")
+        if for_write:
+            if meeting.owner_user_id != user.id:
+                raise HTTPException(status_code=404, detail="Meeting not found")
+        else:
+            clause, params = meetings_circles_filter(user.id, alias="meetings")
+            reachable = (await db.execute(
+                text(f"SELECT 1 FROM meetings WHERE id = :mid AND {clause}"),
+                {"mid": meeting_id, **params},
+            )).scalar()
+            if reachable is None:
+                raise HTTPException(status_code=404, detail="Meeting not found")
     return meeting
 
 
@@ -323,7 +343,7 @@ async def update_meeting(
     validated exactly like the upload path, so a meeting can't be attached to
     someone else's project. Idempotent — sets the link to the value provided."""
     _require_enabled()
-    meeting = await _get_owned_meeting(meeting_id, user, db)
+    meeting = await _get_owned_meeting(meeting_id, user, db, for_write=True)
 
     if request.project_id is not None:
         from models.database import Project
@@ -348,7 +368,7 @@ async def delete_meeting(
     and the row. Owner-gated 404. Any status (a queued/failed meeting has no
     transcript yet; purge_meeting handles a null document id)."""
     _require_enabled()
-    meeting = await _get_owned_meeting(meeting_id, user, db)
+    meeting = await _get_owned_meeting(meeting_id, user, db, for_write=True)
     from services.meeting_retention import purge_meeting
 
     await purge_meeting(db, meeting.id, meeting.transcript_document_id)
@@ -398,7 +418,7 @@ async def relabel_speaker(
     """Relabel one speaker cluster (pseudonym → person). Re-renders + reindexes
     the transcript in place (stable transcript_document_id). Owner-gated 404."""
     _require_enabled()
-    meeting = await _get_owned_meeting(meeting_id, user, db)
+    meeting = await _get_owned_meeting(meeting_id, user, db, for_write=True)
     if meeting.status != "completed":
         raise HTTPException(status_code=409, detail="meeting not completed")
     from services.meeting_pipeline import reattribute
@@ -472,7 +492,7 @@ async def generate_minutes(
     """Extract DRAFT minutes from a completed meeting's transcript (owner-gated).
     409 if the meeting isn't completed. Re-running overwrites the draft."""
     _require_minutes_enabled()
-    meeting = await _get_owned_meeting(meeting_id, user, db)
+    meeting = await _get_owned_meeting(meeting_id, user, db, for_write=True)
     if meeting.status != "completed":
         raise HTTPException(status_code=409, detail="meeting not completed")
 
@@ -509,7 +529,7 @@ async def update_minutes(
     """Owner edits the draft. 409 unless status is draft (confirmed minutes are
     re-opened by editing → back to draft, so a re-confirm re-renders)."""
     _require_minutes_enabled()
-    meeting = await _get_owned_meeting(meeting_id, user, db)
+    meeting = await _get_owned_meeting(meeting_id, user, db, for_write=True)
     if meeting.minutes_status not in ("draft", "confirmed"):
         raise HTTPException(status_code=409, detail="no minutes to edit — generate first")
     meeting.minutes = body.model_dump()
@@ -528,7 +548,7 @@ async def confirm_minutes(
     """Confirm the draft → renders the minutes into the transcript document (same
     stable-doc reindex path as re-attribution). 409 unless status is draft."""
     _require_minutes_enabled()
-    meeting = await _get_owned_meeting(meeting_id, user, db)
+    meeting = await _get_owned_meeting(meeting_id, user, db, for_write=True)
     if meeting.minutes_status != "draft":
         raise HTTPException(status_code=409, detail="minutes not in draft state")
 

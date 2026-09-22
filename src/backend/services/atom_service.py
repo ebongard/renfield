@@ -503,6 +503,8 @@ def _table_for_atom_type(atom_type: str) -> str:
         "procedural_skill": "procedural_skills",
         "document_fact": "document_facts",
         "note": "notes",
+        "conversation": "conversations",
+        "meeting": "meetings",
     }
     if atom_type not in table_map:
         raise ValueError(f"Unknown atom_type: {atom_type}")

@@ -7,13 +7,14 @@ from datetime import UTC, datetime
 from fastapi import APIRouter, Depends, HTTPException, Request
 from loguru import logger
 from pydantic import BaseModel
-from sqlalchemy import func, select
+from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.database import ChatUpload, Conversation, Message, User
 from models.permissions import Permission
 from services.api_rate_limiter import limiter
 from services.auth_service import get_current_user, require_permission
+from services.circle_sql import conversations_circles_filter
 from services.database import get_db
 from services.input_guard import detect_injection
 from services.ollama_service import OllamaService
@@ -34,6 +35,36 @@ class ChatResponse(BaseModel):
 class ActiveLeafRequest(BaseModel):
     """Body for PUT /api/chat/{session_id}/active-leaf — switch active branch."""
     message_id: int
+
+def _has_chat_all(current_user) -> bool:
+    """Does this caller hold `chat.all`? (the admin, by role)
+
+    A tier-2 room history is owned by the DEVICE account, so no person is its
+    owner — without this escape nobody could ever delete or re-branch one
+    (D-3: "Löschen, Umbenennen, Verzweigen nur durch den Admin").
+    """
+    if current_user is None:
+        return False
+    try:
+        from models.permissions import has_permission
+
+        return has_permission(current_user.get_permissions(), Permission.CHAT_ALL)
+    except Exception:  # noqa: BLE001 — a permission read must not 500 a delete
+        return False
+
+
+def _reach_clause(current_user) -> tuple[str, dict] | None:
+    """The four-branch circle filter for `conversations`, or None when it does
+    not apply (auth off, or no caller identity).
+
+    A conversation is a shared artifact (§8.1): the room history belongs to the
+    device account, and every member whose tier reaches it reads the SAME
+    thread. Owner equality would hide it from all of them.
+    """
+    if not settings.auth_enabled or current_user is None:
+        return None
+    return conversations_circles_filter(current_user.id, alias="conversations")
+
 
 def conversation_is_callers(conversation, current_user) -> bool:
     """May this caller continue this conversation? (auth-on cutover §4.2)
@@ -324,7 +355,10 @@ async def get_history(
     """Chat-Historie abrufen"""
     try:
         query = select(Conversation).where(Conversation.session_id == session_id)
-        if current_user is not None:
+        reach = _reach_clause(current_user)
+        if reach is not None:
+            query = query.where(text(reach[0]).bindparams(**reach[1]))
+        elif current_user is not None:
             query = query.where(Conversation.user_id == current_user.id)
         result = await db.execute(query)
         conversation = result.scalar_one_or_none()
@@ -416,7 +450,10 @@ async def delete_session(
     """Chat-Session löschen"""
     try:
         query = select(Conversation).where(Conversation.session_id == session_id)
-        if current_user is not None:
+        # Destructive: reach is NOT enough. A shared room history would
+        # otherwise be deletable by every member it reaches — owner or
+        # `chat.all` only (D-3).
+        if current_user is not None and not _has_chat_all(current_user):
             query = query.where(Conversation.user_id == current_user.id)
         result = await db.execute(query)
         conversation = result.scalar_one_or_none()
@@ -472,13 +509,14 @@ async def get_conversation_summary(
 ):
     """Zusammenfassung einer Konversation"""
     try:
+        reach = _reach_clause(current_user)
         if current_user is not None:
-            result = await db.execute(
-                select(Conversation).where(
-                    Conversation.session_id == session_id,
-                    Conversation.user_id == current_user.id,
-                )
+            stmt = select(Conversation).where(Conversation.session_id == session_id)
+            stmt = (
+                stmt.where(text(reach[0]).bindparams(**reach[1])) if reach is not None
+                else stmt.where(Conversation.user_id == current_user.id)
             )
+            result = await db.execute(stmt)
             if not result.scalar_one_or_none():
                 raise HTTPException(status_code=404, detail="Konversation nicht gefunden")
 
@@ -515,10 +553,13 @@ async def search_conversations(
         results = await ollama.search_conversations(q, db, limit)
 
         if current_user is not None:
-            user_session_ids = set()
-            res = await db.execute(
-                select(Conversation.session_id).where(Conversation.user_id == current_user.id)
+            reach = _reach_clause(current_user)
+            stmt = select(Conversation.session_id)
+            stmt = (
+                stmt.where(text(reach[0]).bindparams(**reach[1])) if reach is not None
+                else stmt.where(Conversation.user_id == current_user.id)
             )
+            res = await db.execute(stmt)
             user_session_ids = {row[0] for row in res.all()}
             results = [r for r in results if r.get("session_id") in user_session_ids]
 
@@ -609,6 +650,7 @@ async def set_active_leaf(
             session_id,
             body.message_id,
             user_id=current_user.id if current_user is not None else None,
+            caller_has_chat_all=_has_chat_all(current_user),
         )
         if not ok:
             raise HTTPException(status_code=404, detail="Konversation oder Nachricht nicht gefunden")
@@ -643,6 +685,7 @@ async def delete_branch(
             session_id,
             message_id,
             user_id=current_user.id if current_user is not None else None,
+            caller_has_chat_all=_has_chat_all(current_user),
         )
         if status == "not_found":
             raise HTTPException(status_code=404, detail="Konversation oder Nachricht nicht gefunden")

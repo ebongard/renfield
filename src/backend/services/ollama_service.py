@@ -986,6 +986,7 @@ WICHTIGE REGELN FÜR ANTWORTEN:
         user_id: int | None = None,
         parent_message_id: int | None = None,
         enforce_ownership: bool = False,
+        circle_tier: int | None = None,
     ) -> "Message":
         """Speichere eine einzelne Nachricht (delegiert an ConversationService).
 
@@ -1001,7 +1002,7 @@ WICHTIGE REGELN FÜR ANTWORTEN:
         return await service.save_message(
             session_id, role, content, metadata,
             user_id=user_id, parent_message_id=parent_message_id,
-            enforce_ownership=enforce_ownership,
+            enforce_ownership=enforce_ownership, circle_tier=circle_tier,
         )
 
     async def get_conversation_summary(

@@ -403,3 +403,48 @@ def document_facts_circles_filter(
     return clause, circles_filter_params(
         asker_id, source_table_value=("" if peer_scoped else src)
     )
+
+
+def conversations_circles_filter(
+    asker_id: int, alias: str = "c", *, peer_scoped: bool = False
+) -> tuple[str, dict[str, Any]]:
+    """Returns (clause, params) for circle-filtering the ``conversations`` table.
+
+    A conversation is a shared artifact (auth-on cutover §8.1): a room history
+    on a satellite belongs to the DEVICE account at tier 2, so every member
+    whose tier reaches it can read and continue the same thread instead of each
+    one starting a context-less new conversation. Browser chats stay at tier 0
+    and the owner raises individual ones.
+
+    The owner column is the legacy ``user_id`` (not ``owner_user_id`` as on
+    notes/meetings) — renaming it would touch every read path twice for no
+    behavioural gain.
+    """
+    src = "conversations"
+    clause = circles_filter_clause(
+        table_alias=alias, owner_col="user_id",
+        source_table_value=src, peer_scoped=peer_scoped,
+    )
+    return clause, circles_filter_params(
+        asker_id, source_table_value=("" if peer_scoped else src)
+    )
+
+
+def meetings_circles_filter(
+    asker_id: int, alias: str = "mt", *, peer_scoped: bool = False
+) -> tuple[str, dict[str, Any]]:
+    """Returns (clause, params) for circle-filtering the ``meetings`` table.
+
+    A meeting has carried ``circle_tier`` default 2 ("a meeting is a shared
+    artifact") since it was introduced, while its read paths kept filtering on
+    owner EQUALITY — so the tier said shared and the query said private. This
+    wrapper is what makes the declared tier true.
+    """
+    src = "meetings"
+    clause = circles_filter_clause(
+        table_alias=alias, owner_col="owner_user_id",
+        source_table_value=src, peer_scoped=peer_scoped,
+    )
+    return clause, circles_filter_params(
+        asker_id, source_table_value=("" if peer_scoped else src)
+    )

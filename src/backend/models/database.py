@@ -39,6 +39,23 @@ class Conversation(Base):
     user_id = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
     speaker_id = Column(Integer, ForeignKey("speakers.id", ondelete="SET NULL"), nullable=True, index=True)
 
+    # Circles: a conversation is a SHARED artifact (auth-on cutover §8.1).
+    # A kitchen is a multi-person room — A asks at the satellite, B follows up,
+    # and that is ONE thread; owner equality would have left B with a
+    # context-less new conversation and hidden the room history from everyone.
+    # Room histories (satellite) belong to the DEVICE account at tier 2, browser
+    # chats to their user at tier 0, raised per conversation by the owner.
+    #
+    # `atom_id` is NULLABLE, unlike notes: 207 of 210 rows here predate any
+    # owner, and an atom needs one. A row gets its atom when it gets an owner —
+    # at creation, or in the P2 backfill. An ownerless row is refused under
+    # auth-on anyway, so it never needs the grant branch.
+    atom_id = Column(
+        String(36), ForeignKey("atoms.atom_id", ondelete="CASCADE"),
+        nullable=True, index=True,
+    )
+    circle_tier = Column(Integer, nullable=False, default=0, server_default="0")
+
     # Optional business-instance Project scope (Phase 4A). SET NULL so deleting a
     # project de-scopes the chat rather than cascading it away. Lets a
     # conversation surface on the project's /projects/{id} timeline.
@@ -378,7 +395,15 @@ class Meeting(Base):
     )
 
     # Circles v1 tier. Default 2 = household/team — a meeting is a shared artifact.
+    # The tier said "shared" from the start while the read paths filtered on
+    # owner EQUALITY; the atom below is what lets `circle_sql` make the declared
+    # tier true. Nullable for the same reason as on Conversation: a meeting
+    # without an owner has no atom to hang a grant on.
     circle_tier = Column(Integer, nullable=False, default=2)
+    atom_id = Column(
+        String(36), ForeignKey("atoms.atom_id", ondelete="CASCADE"),
+        nullable=True, index=True,
+    )
 
     title = Column(String(255), nullable=True)
     date = Column(Date, nullable=True)  # meeting date (distinct from created_at)
@@ -2554,6 +2579,10 @@ ATOM_TYPE_CONVERSATION_MEMORY = "conversation_memory"
 ATOM_TYPE_PROCEDURAL_SKILL = "procedural_skill"
 ATOM_TYPE_DOCUMENT_FACT = "document_fact"
 ATOM_TYPE_NOTE = "note"
+# A conversation and a meeting are SHARED artifacts (auth-on cutover §8.1): both
+# carry a tier and reach their members through circle_sql, not owner equality.
+ATOM_TYPE_CONVERSATION = "conversation"
+ATOM_TYPE_MEETING = "meeting"
 
 # DocumentFact.category discriminators (Schicht A). 'identifier' = a deterministic
 # regex hit (Steuernummer, IBAN, Rechnungsnummer); 'obligation' = an LLM-extracted
