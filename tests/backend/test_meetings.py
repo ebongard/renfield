@@ -149,6 +149,23 @@ def _wav() -> tuple:
 
 
 @pytest.mark.asyncio
+async def _doc(db_session, name: str = "transkript.md") -> int:
+    """A real transcript Document, returning its id.
+
+    Postgres enforces `meetings.transcript_document_id → documents.id`. These
+    tests used to name ids like 4242 or 77 that existed nowhere; the sqlite
+    harness accepted them, so the link the test claimed to verify was never a
+    link at all.
+    """
+    from models.database import Document as _Doc
+
+    doc = _Doc(filename=name, file_path=f"/tmp/{name}", status="completed")
+    db_session.add(doc)
+    await db_session.commit()
+    await db_session.refresh(doc)
+    return doc.id
+
+
 async def _persist_users(db_session, *users):
     """Write the users a route will reference into the database.
 
@@ -786,8 +803,10 @@ class TestPipelineIngestAndReattribution:
                 {"speaker": "SPEAKER_01", "text": "hello", "start_s": 1.0, "end_s": 2.0},
             ]}
 
+        doc_id = await _doc(db_session, "sync-transkript.md")
+
         async def _fake_ingest(db, meeting, markdown):
-            return 4242  # pretend the transcript Document got this id
+            return doc_id  # the transcript Document the ingest would have created
 
         monkeypatch.setattr(mp, "transcribe_meeting", _fake_transcribe)
         monkeypatch.setattr(mp, "_ingest_transcript", _fake_ingest)
@@ -799,7 +818,7 @@ class TestPipelineIngestAndReattribution:
         await mp.process_meeting(m.id, "/x/meeting.wav")
         await db_session.refresh(m)
         assert m.status == "completed"
-        assert m.transcript_document_id == 4242
+        assert m.transcript_document_id == doc_id
         assert [s["speaker"] for s in m.segments] == ["Sprecher 1", "Sprecher 2"]
         assert m.segments[0]["speaker_key"] == "SPEAKER_00"
 
@@ -899,8 +918,9 @@ class TestMeetingRetention:
             return True
 
         monkeypatch.setattr("services.rag_service.RAGService.delete_document", _fake_delete)
+        expired_doc_id = await _doc(db_session, "abgelaufen.md")
         expired = Meeting(
-            status="completed", transcript_document_id=77,
+            status="completed", transcript_document_id=expired_doc_id,
             retention_until=datetime.utcnow() - timedelta(days=1),
         )
         db_session.add(expired)
@@ -914,7 +934,7 @@ class TestMeetingRetention:
         assert recent_audio.exists()         # recent audio kept
         assert audio_deleted >= 1
         assert meetings_purged == 1
-        assert purged == [77]                # transcript doc deleted via RAGService
+        assert purged == [expired_doc_id]    # transcript doc deleted via RAGService
         assert await db_session.get(Meeting, expired_id) is None  # row purged
 
     async def test_failed_meeting_audio_is_freed(self, db_session, monkeypatch, tmp_path):
@@ -966,16 +986,31 @@ class TestMeetingRetention:
         monkeypatch.setattr(mr.settings, "meeting_keep_audio", True)  # isolate mechanism 2
         (tmp_path / "meetings").mkdir()
 
+        # Real transcript Documents: the FK from meetings is enforced, and the
+        # sweep's "one failure must not abort the rest" only means something if
+        # both rows are real.
+        async with maker() as s:
+            bad_doc_id = await _doc(s, "schlecht.md")
+            good_doc_id = await _doc(s, "gut.md")
+
         async def _delete(self, doc_id):
-            if doc_id == 111:
+            if doc_id == bad_doc_id:
                 raise RuntimeError("boom")
             return True
 
         monkeypatch.setattr("services.rag_service.RAGService.delete_document", _delete)
         past = datetime.utcnow() - timedelta(days=1)
         async with maker() as s:
-            bad = Meeting(status="completed", transcript_document_id=111, retention_until=past)
-            good = Meeting(status="completed", transcript_document_id=222, retention_until=past)
+            bad = Meeting(
+                status="completed",
+                transcript_document_id=bad_doc_id,
+                retention_until=past,
+            )
+            good = Meeting(
+                status="completed",
+                transcript_document_id=good_doc_id,
+                retention_until=past,
+            )
             s.add_all([bad, good])
             await s.commit()
             bad_id, good_id = bad.id, good.id
@@ -1077,7 +1112,10 @@ class TestReviewFixes:
         monkeypatch.setattr(mp, "_overwrite_transcript_and_reindex", _fake_overwrite)
         monkeypatch.setattr(mp, "_ingest_transcript", _fake_ingest)
 
-        m = Meeting(status="processing", transcript_document_id=55)  # already ingested
+        m = Meeting(
+            status="processing",
+            transcript_document_id=await _doc(db_session, "vorhanden.md"),
+        )  # already ingested
         db_session.add(m)
         await db_session.commit()
 

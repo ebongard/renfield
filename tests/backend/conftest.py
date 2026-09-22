@@ -255,6 +255,45 @@ def _truncate_sql(names: list[str]) -> str:
     return f"TRUNCATE {joined} RESTART IDENTITY CASCADE"
 
 
+# `create_all` renders `search_vector` as a plain tsvector column: SQLAlchemy
+# does not know it is GENERATED — the migrations add it with an ALTER. A plain
+# column is never filled, so every full-text search finds nothing and the test
+# that "passes" proves only that the sqlite fallback ran. Rebuild the columns
+# the way production has them, from the very same expression builder the
+# migrations use.
+# table → the content EXPRESSION the migration feeds to the tsvector builder
+# (copied from the migrations so the harness and production agree).
+_FTS_GENERATED_COLUMNS = {
+    "messages": "content",
+    "conversation_memories": "content",
+    "document_chunks": "content",
+    "document_facts": (
+        "value || ' ' || coalesce(normalized_value, '') || ' ' || "
+        "coalesce(excerpt, '') || ' ' || kind"
+    ),
+    "notes": "title || ' ' || coalesce(body, '')",
+}
+
+
+async def _add_generated_search_vectors(conn) -> None:
+    from services.fts_languages import build_generated_tsvector_expression
+
+    for table, content_expr in _FTS_GENERATED_COLUMNS.items():
+        exists = (await conn.execute(_sa_text(
+            "SELECT 1 FROM information_schema.tables WHERE table_name = :t"
+        ), {"t": table})).scalar()
+        if exists is None:
+            continue  # table gone — the migration owns the truth, not this list
+        expr = build_generated_tsvector_expression(content_expr)
+        await conn.execute(_sa_text(
+            f"ALTER TABLE {table} DROP COLUMN IF EXISTS search_vector"
+        ))
+        await conn.execute(_sa_text(
+            f"ALTER TABLE {table} ADD COLUMN search_vector tsvector "
+            f"GENERATED ALWAYS AS ({expr}) STORED"
+        ))
+
+
 async def _ensure_schema() -> None:
     """Create the schema ONCE per pytest run (the first database test pays for
     it). Its engine is NullPool'd and disposed immediately, so no connection is
@@ -275,6 +314,7 @@ async def _ensure_schema() -> None:
             await conn.execute(_sa_text("CREATE EXTENSION IF NOT EXISTS vector"))
             await conn.run_sync(Base.metadata.drop_all)
             await conn.run_sync(Base.metadata.create_all)
+            await _add_generated_search_vectors(conn)
     finally:
         await engine.dispose()
     _SCHEMA_READY = True

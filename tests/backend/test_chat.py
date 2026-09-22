@@ -39,16 +39,28 @@ async def conversation_with_messages(db_session: AsyncSession) -> Conversation:
     await db_session.commit()
     await db_session.refresh(conv)
 
-    # Add messages
-    messages = [
-        Message(conversation_id=conv.id, role="user", content="Hallo"),
-        Message(conversation_id=conv.id, role="assistant", content="Hallo! Wie kann ich helfen?"),
-        Message(conversation_id=conv.id, role="user", content="Schalte das Licht ein"),
-        Message(conversation_id=conv.id, role="assistant", content="Ich habe das Licht eingeschaltet."),
+    # Add messages, CHAINED into the branch tree and with the conversation's
+    # active leaf pointed at the last one — exactly the shape production rows
+    # have had since the branching migration backfilled them. Without it the
+    # message search (which walks the active path) finds nothing: the flat
+    # fallback it used to hit only exists off Postgres.
+    contents = [
+        ("user", "Hallo"),
+        ("assistant", "Hallo! Wie kann ich helfen?"),
+        ("user", "Schalte das Licht ein"),
+        ("assistant", "Ich habe das Licht eingeschaltet."),
     ]
-    for msg in messages:
+    parent_id = None
+    for role, content in contents:
+        msg = Message(
+            conversation_id=conv.id, role=role, content=content,
+            parent_message_id=parent_id,
+        )
         db_session.add(msg)
+        await db_session.flush()
+        parent_id = msg.id
 
+    conv.active_leaf_message_id = parent_id
     await db_session.commit()
     return conv
 

@@ -74,12 +74,36 @@ async def _fork_tree(db: AsyncSession, session_id: str, user_id: int):
 
 
 # ===========================================================================
-# sqlite — tree maintenance on the write path + set_active_leaf gate
+# Tree maintenance on the write path + set_active_leaf gate
 # ===========================================================================
+async def _user(db_session, uid: int):
+    """A real user row with this id.
+
+    Postgres enforces `conversations.user_id → users.id`. These tests used to
+    name users that existed nowhere — the ownership gate they assert was a
+    comparison between two phantoms.
+    """
+    from models.database import Role, User as _U
+
+    role = (await db_session.execute(
+        select(Role).where(Role.name == "branching-role")
+    )).scalar_one_or_none()
+    if role is None:
+        role = Role(name="branching-role", description="r")
+        db_session.add(role)
+        await db_session.flush()
+    usr = _U(id=uid, username=f"branch-u{uid}", password_hash="x",
+             is_active=True, role_id=role.id)
+    db_session.add(usr)
+    await db_session.flush()
+    return usr
+
+
 @pytest.mark.backend
 @pytest.mark.database
-class TestTreeMaintenanceSqlite:
+class TestTreeMaintenance:
     async def test_save_message_chains_parent_and_advances_leaf(self, db_session: AsyncSession):
+        await _user(db_session, 1)
         svc = ConversationService(db_session)
         m1 = await svc.save_message("c", "user", "hallo", user_id=1)
         m2 = await svc.save_message("c", "assistant", "hi", user_id=1)
@@ -99,6 +123,7 @@ class TestTreeMaintenanceSqlite:
         assert conv.active_leaf_message_id == m3.id
 
     async def test_explicit_parent_forks_a_sibling(self, db_session: AsyncSession):
+        await _user(db_session, 1)
         svc = ConversationService(db_session)
         m1 = await svc.save_message("c", "user", "frage A", user_id=1)
         m2 = await svc.save_message("c", "assistant", "antwort A", user_id=1)
@@ -122,9 +147,11 @@ class TestTreeMaintenanceSqlite:
         assert still is not None
 
     async def test_set_active_leaf_ownership_gate(self, db_session: AsyncSession):
+        await _user(db_session, 7)
+        await _user(db_session, 1)
         svc = ConversationService(db_session)
         m1 = await svc.save_message("c", "user", "x", user_id=7)
-        await svc.save_message("c", "assistant", "y", user_id=7)
+        m2 = await svc.save_message("c", "assistant", "y", user_id=7)
 
         # Wrong owner → False (the route maps this to 404).
         assert await svc.set_active_leaf("c", m1.id, user_id=999) is False
@@ -137,7 +164,13 @@ class TestTreeMaintenanceSqlite:
                 select(Conversation).where(Conversation.session_id == "c")
             )
         ).scalar_one()
-        assert conv.active_leaf_message_id == m1.id
+        # The DEEPEST leaf of the chosen branch, not the message named: picking
+        # a fork point means "show me this branch", and its continuation is the
+        # rest of the branch (`_deepest_leaf_message_id`). This used to assert
+        # `m1.id` and passed only because the recursive CTE returns nothing on
+        # sqlite, so the resolution silently fell back to the target itself —
+        # the test pinned the FALLBACK, never the behaviour.
+        assert conv.active_leaf_message_id == m2.id
 
     async def test_missing_conversation_returns_false(self, db_session: AsyncSession):
         svc = ConversationService(db_session)
@@ -504,12 +537,12 @@ class TestCrossConversationIsolationPostgres:
 # ===========================================================================
 @pytest.mark.backend
 @pytest.mark.database
-class TestDeletionFkSqlite:
+class TestDeletionFk:
     def test_active_leaf_fk_carries_set_null(self):
         """The model FK must declare ondelete='SET NULL' so a conversation
         delete (which cascade-deletes its messages first) doesn't dangle the
-        leaf pointer. Sqlite skips FK enforcement by default, so assert the
-        declaration directly (robust regardless of PRAGMA)."""
+        leaf pointer. Asserted on the declaration so the intent is pinned even
+        where no row exercises it."""
         fk = next(
             iter(Conversation.__table__.c.active_leaf_message_id.foreign_keys)
         )
@@ -521,7 +554,6 @@ class TestDeletionFkSqlite:
         """Deleting a conversation whose active_leaf_message_id is set must not
         raise. Enable sqlite FK enforcement for this test so the SET NULL action
         is actually exercised (sqlite ignores FKs by default)."""
-        await db_session.execute(text("PRAGMA foreign_keys=ON"))
         # With FK enforcement ON, the conversation's user_id FK is also checked,
         # so seed a real user (else the conversation INSERT fails on the users
         # FK, masking what this test is actually about).
@@ -745,15 +777,16 @@ class TestDeleteBranchGuardsPostgres:
 # ===========================================================================
 @pytest.mark.backend
 @pytest.mark.database
-class TestDeleteBranchSqlite:
+class TestDeleteBranch:
     async def test_delete_branch_softdeletes_memory_and_detaches_kg_no_fk_block(
         self, db_session: AsyncSession
     ):
-        # PRAGMA FK ON so an un-handled memory/relation ref to the deleted message
-        # would FK-block. The memory also carries a memory_history row (RESTRICT
-        # FK) — a HARD delete of the memory would FK-block on that; the soft-delete
-        # + detach must succeed. This is the P1 the first cut missed.
-        await db_session.execute(text("PRAGMA foreign_keys=ON"))
+        # An un-handled memory/relation reference to the deleted message would
+        # FK-block; the memory also carries a memory_history row (RESTRICT FK),
+        # so a HARD delete of the memory would block on that — the soft-delete +
+        # detach must succeed. Postgres enforces these constraints always; the
+        # sqlite harness needed a PRAGMA to enforce them at all, which is why
+        # this kind of test proved so little there.
         role = Role(name="delbr-role", description="r")
         db_session.add(role)
         await db_session.flush()
@@ -784,6 +817,17 @@ class TestDeleteBranchSqlite:
         db_session.add_all([hist, rel])
         await db_session.flush()
 
+        # Fork a sibling and make IT the active branch first. `delete_branch`
+        # refuses a message on the active path with 409 — deliberately, so the
+        # branch you are looking at cannot be pulled out from under you. On
+        # sqlite the active-path CTE returns nothing, so this refusal never
+        # fired and the test deleted an active message without noticing.
+        m_b = await svc.save_message(
+            "delbr", "assistant", "andere antwort",
+            user_id=u.id, parent_message_id=m_a.parent_message_id,
+        )
+        assert await svc.set_active_leaf("delbr", m_b.id, user_id=u.id) is True
+
         status = await svc.delete_branch("delbr", m_a.id, user_id=u.id)
         assert status == "ok"
         # Message gone; memory SOFT-deleted (kept, is_active=False, detached) so
@@ -806,6 +850,7 @@ class TestDeleteBranchSqlite:
         )).scalar_one() is None
 
     async def test_delete_branch_ownership_and_missing(self, db_session: AsyncSession):
+        await _user(db_session, 5)
         svc = ConversationService(db_session)
         m = await svc.save_message("delbr2", "user", "x", user_id=5)
         assert await svc.delete_branch("delbr2", m.id, user_id=999) == "not_found"
