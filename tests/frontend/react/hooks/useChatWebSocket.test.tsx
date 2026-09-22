@@ -172,4 +172,42 @@ describe('useChatWebSocket', () => {
       expect(ws.sent).toHaveLength(0);
     });
   });
+
+  // P0 Nr. 5: the server refuses a session id that is not the caller's
+  // (foreign, or ownerless now that adoption is gone), saves the turn into a
+  // fresh conversation and pushes its id.
+  describe('session_replaced', () => {
+    function fireMessage(ws: ControllableWebSocket, payload: unknown): void {
+      act(() => {
+        ws.onmessage?.({ data: JSON.stringify(payload) } as MessageEvent);
+      });
+    }
+
+    it('forwards the new session id to the caller', async () => {
+      const onSessionReplaced = vi.fn();
+      const { result } = renderHook(() => useChatWebSocket({ onSessionReplaced }));
+      await flushConnect();
+      const ws = ControllableWebSocket.instances[0];
+      act(() => ws.fireOpen());
+      expect(result.current.wsConnected).toBe(true);
+
+      fireMessage(ws, { type: 'session_replaced', session_id: 'neue-id' });
+
+      expect(onSessionReplaced).toHaveBeenCalledTimes(1);
+      expect(onSessionReplaced).toHaveBeenCalledWith(
+        expect.objectContaining({ type: 'session_replaced', session_id: 'neue-id' }),
+      );
+    });
+
+    it('ignores the frame when no handler is wired', async () => {
+      renderHook(() => useChatWebSocket());
+      await flushConnect();
+      const ws = ControllableWebSocket.instances[0];
+      act(() => ws.fireOpen());
+
+      expect(() =>
+        fireMessage(ws, { type: 'session_replaced', session_id: 'neue-id' }),
+      ).not.toThrow();
+    });
+  });
 });

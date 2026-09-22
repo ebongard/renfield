@@ -29,6 +29,14 @@ read. Long form: `docs/design/chat-branching.md`. UI affordances/artifacts live 
    commit (flag-gated) so whichever of fork/extraction commits last wins. Do not reintroduce a one-way deactivate.
 4. Message search: filtered to the active path, `message_index` recomputed within the branch (jump-to-message).
 
+## Ownership of a conversation (`enforce_ownership`, auth-on only)
+ONE rule on both sides: a conversation that is not the caller's is refused — foreign AND **ownerless**. The session id
+is minted by the CLIENT and never validated, so an ownerless row is reachable by anyone holding such an id. Reads
+return `[]`, writes raise `PermissionError`, push-registration (`_session_registerable_by`) says no; only a session
+with **no row at all** is free to take. Adoption ("first writer becomes the owner") exists only under auth-off.
+A refusal is not silent: `chat_handler` catches it, opens a FRESH conversation, saves the turn there and pushes
+`{"type": "session_replaced", "session_id": …}` — the id and nothing else, or the frame becomes an oracle.
+
 ## Fork / switch / delete
 - `ConversationService.save_message` ALWAYS maintains the tree (`ollama_service.save_message` only delegates): normal
   turn chains onto the leaf and advances it; `parent_message_id` inserts a sibling.

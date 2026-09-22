@@ -187,6 +187,16 @@ export interface DeviceActionResultMessage extends BaseWsMessage {
   message?: string;
 }
 
+// The server refused the session id this client sent — it belongs to someone
+// else, or to nobody (auth-on cutover, P0 Nr. 5: an ownerless conversation is
+// no longer adopted by whoever opens it first). The turn was saved into a fresh
+// conversation instead; this frame carries its id and deliberately nothing else
+// — no reason, no owner, so it cannot be used to probe foreign session ids.
+export interface SessionReplacedMessage extends BaseWsMessage {
+  type: 'session_replaced';
+  session_id: string;
+}
+
 interface UseChatWebSocketOptions {
   onStreamChunk?: (content: string) => void;
   onStreamDone?: (data: DoneMessage) => void;
@@ -207,6 +217,7 @@ interface UseChatWebSocketOptions {
   onArtifact?: (data: ArtifactWsMessage) => void;
   onFollowups?: (data: FollowupsMessage) => void;
   onDeviceActionResult?: (data: DeviceActionResultMessage) => void;
+  onSessionReplaced?: (data: SessionReplacedMessage) => void;
 }
 
 /**
@@ -233,6 +244,7 @@ export function useChatWebSocket({
   onArtifact,
   onFollowups,
   onDeviceActionResult,
+  onSessionReplaced,
 }: UseChatWebSocketOptions = {}) {
   const [wsConnected, setWsConnected] = useState(false);
   const wsRef = useRef<WebSocket | null>(null);
@@ -344,6 +356,10 @@ export function useChatWebSocket({
         onPaperlessConfirmRequest?.(msg);
       } else if (data.type === 'device_action_result') {
         onDeviceActionResult?.(data as DeviceActionResultMessage);
+      } else if (data.type === 'session_replaced') {
+        const msg = data as SessionReplacedMessage;
+        debug.log('Session replaced by the server');
+        onSessionReplaced?.(msg);
       }
     };
 
@@ -368,7 +384,7 @@ export function useChatWebSocket({
     };
 
     wsRef.current = ws;
-  }, [onStreamChunk, onStreamDone, onAction, onRagContext, onIntentFeedbackRequest, onDocumentProcessing, onDocumentReady, onDocumentError, onUploadProcessed, onPaperlessCommitted, onPaperlessConfirmRequest, onAgentThinking, onAgentToolCall, onAgentToolResult, onAgentFederationProgress, onCard, onArtifact, onFollowups, onDeviceActionResult]);
+  }, [onStreamChunk, onStreamDone, onAction, onRagContext, onIntentFeedbackRequest, onDocumentProcessing, onDocumentReady, onDocumentError, onUploadProcessed, onPaperlessCommitted, onPaperlessConfirmRequest, onAgentThinking, onAgentToolCall, onAgentToolResult, onAgentFederationProgress, onCard, onArtifact, onFollowups, onDeviceActionResult, onSessionReplaced]);
 
   useEffect(() => {
     connectWebSocket();

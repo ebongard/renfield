@@ -509,18 +509,56 @@ class TestConversationOwnershipGuard:
         ctx = await service.load_context("idor-write-ok")
         assert [m["content"] for m in ctx] == ["one", "two"]
 
-    async def test_save_message_adopts_ownerless_under_enforcement(self, db_session: AsyncSession):
-        """An ownerless conversation (single-user/household) is still adoptable
-        even with enforcement on — the guard only fires on a DIFFERENT owner."""
+    async def test_save_message_refuses_to_adopt_an_ownerless_conversation(
+        self, db_session: AsyncSession
+    ):
+        """INTENT CHANGED with the auth-on cutover (P0 Nr. 5). This used to
+        assert adoption: an ownerless conversation was handed to whoever wrote
+        into it first, with enforcement on. Ownership by arrival order is not
+        ownership — the session id is minted by the client and never validated,
+        and the household carries 206 ownerless rows from the auth-off era. Now
+        it is refused like any other conversation that is not the caller's; the
+        WS handler answers the refusal with a fresh conversation."""
         service = ConversationService(db_session)
-        # Create an ownerless conversation first (user_id=None)
-        await service.save_message("idor-adopt", "user", "hi")
-        # Now a real user writes with enforcement — should adopt, not raise
-        msg = await service.save_message(
-            "idor-adopt", "assistant", "claimed", user_id=5, enforce_ownership=True
-        )
-        assert msg.id is not None
+        await service.save_message("idor-adopt", "user", "hi")   # ownerless
+
+        with pytest.raises(PermissionError):
+            await service.save_message(
+                "idor-adopt", "assistant", "claimed",
+                user_id=5, enforce_ownership=True,
+            )
+
         result = await db_session.execute(
             select(Conversation).where(Conversation.session_id == "idor-adopt")
         )
+        assert result.scalar_one().user_id is None   # still nobody's
+        ctx = await service.load_context("idor-adopt")
+        assert [m["content"] for m in ctx] == ["hi"]  # nothing appended
+
+    async def test_save_message_still_adopts_with_auth_off(self, db_session: AsyncSession):
+        """The household path is untouched: without enforcement the first writer
+        still becomes the owner, exactly as before."""
+        service = ConversationService(db_session)
+        await service.save_message("idor-adopt-off", "user", "hi")
+        msg = await service.save_message(
+            "idor-adopt-off", "assistant", "claimed", user_id=5,
+        )
+        assert msg.id is not None
+        result = await db_session.execute(
+            select(Conversation).where(Conversation.session_id == "idor-adopt-off")
+        )
         assert result.scalar_one().user_id == 5
+
+    async def test_load_context_refuses_an_ownerless_conversation(
+        self, db_session: AsyncSession
+    ):
+        """Read side of the same rule: an ownerless conversation used to be
+        readable by any authenticated caller who knew the id."""
+        service = ConversationService(db_session)
+        await service.save_message("idor-load-ownerless", "user", "geheim")
+        assert await service.load_context(
+            "idor-load-ownerless", user_id=7, enforce_ownership=True
+        ) == []
+        # auth-off (the default) still reads it
+        ctx = await service.load_context("idor-load-ownerless", user_id=7)
+        assert [m["content"] for m in ctx] == ["geheim"]

@@ -221,9 +221,11 @@ async def _session_registerable_by(session_id: str, auth_user_id: int | None) ->
     try:
         async with AsyncSessionLocal() as session:
             result = await session.execute(
-                select(Conversation.user_id).where(Conversation.session_id == session_id)
+                select(Conversation.id, Conversation.user_id).where(
+                    Conversation.session_id == session_id
+                )
             )
-            owner = result.scalar_one_or_none()
+            row = result.first()
     except Exception as e:
         # The call sites run inside the receive loop, whose only `except` is
         # OUTSIDE the loop — a raised DB error here would tear down the whole
@@ -234,9 +236,62 @@ async def _session_registerable_by(session_id: str, auth_user_id: int | None) ->
             f"refusing push-register (connection kept alive): {e}"
         )
         return False
-    # No row yet → new/unowned session (created for this caller). Otherwise the
-    # owner must match the authenticated caller.
-    return owner is None or owner == auth_user_id
+    # No ROW yet → brand-new session, created for this caller: allowed.
+    # A row that exists must be the caller's. An EXISTING ownerless row is not
+    # (auth-on cutover, P0 Nr. 5): with adoption gone it stays ownerless, and
+    # anyone holding the client-minted id could otherwise register for its
+    # pushes. The two used to be indistinguishable — both read as `None`.
+    if row is None:
+        return True
+    return row.user_id == auth_user_id
+
+
+async def _restart_conversation_for_caller(
+    websocket: WebSocket,
+    db_session,
+    ollama,
+    *,
+    user_id: int | None,
+    content: str,
+    response: str,
+    user_metadata: dict | None,
+    assistant_metadata: dict | None,
+) -> tuple[str, int | None, int | None]:
+    """The named session is not the caller's → give them a fresh one (P0 Nr. 5).
+
+    The session id is minted by the CLIENT and never validated, so it can point
+    at a conversation that belongs to someone else or to nobody. Refusing the
+    write alone would be silent data loss: the turn is answered, the history
+    quietly is not there, and nobody can tell "not saved" from "saved
+    elsewhere". So the server opens a conversation of its own, saves the turn
+    into it, and tells the client which id to use from now on.
+
+    The frame carries the new id and NOTHING else — no reason, no owner. A
+    "that one is taken" would turn this into an oracle for probing session ids.
+
+    Returns ``(session_id, user_message_id, assistant_message_id)``.
+    """
+    new_session_id = str(uuid.uuid4())
+    user_msg = await ollama.save_message(
+        new_session_id, "user", content, db_session,
+        metadata=user_metadata if user_metadata else None,
+        user_id=user_id,
+        enforce_ownership=settings.auth_enabled,
+    )
+    assistant_msg = await ollama.save_message(
+        new_session_id, "assistant", response, db_session,
+        metadata=assistant_metadata,
+        user_id=user_id,
+        enforce_ownership=settings.auth_enabled,
+    )
+    await websocket.send_json(
+        {"type": "session_replaced", "session_id": new_session_id}
+    )
+    logger.info(
+        f"🔁 Session ersetzt: der Zug wurde in einer neuen Unterhaltung "
+        f"gespeichert (user={user_id})"
+    )
+    return new_session_id, user_msg.id, assistant_msg.id
 
 
 def _parse_mcp_raw_data(data: list) -> any:
@@ -2307,6 +2362,10 @@ WICHTIG: Nutze die ECHTEN Daten aus dem Ergebnis! Gib NUR die Antwort, KEIN JSON
             # Persist messages to DB if session_id is provided
             saved_user_message_id: int | None = None
             saved_assistant_message_id: int | None = None
+            # Hoisted: the PermissionError handler below re-saves the turn into a
+            # fresh conversation and needs this even if the failure happened on
+            # the very first save.
+            user_metadata: dict = {}
             if msg_session_id and full_response:
                 try:
                     async with AsyncSessionLocal() as db_session:
@@ -2372,8 +2431,8 @@ WICHTIG: Nutze die ECHTEN Daten aus dem Ergebnis! Gib NUR die Antwort, KEIN JSON
                                 # See the recompute_memory_activation call below.
                                 regenerate_mode = _fork_msg == "user"
 
-                        # Save user message
-                        user_metadata = {}
+                        # Save user message (user_metadata is hoisted above the
+                        # try so the replacement path can reuse it)
                         if room_context:
                             user_metadata["room_context"] = room_context
                         if attachment_ids:
@@ -2446,6 +2505,29 @@ WICHTIG: Nutze die ECHTEN Daten aus dem Ergebnis! Gib NUR die Antwort, KEIN JSON
                                 model=settings.ollama_chat_model or settings.ollama_model,
                                 threshold=settings.conversation_summary_threshold,
                             )
+                except PermissionError:
+                    # The named session is not this caller's — foreign, or
+                    # ownerless and therefore nobody's (adoption is gone, P0
+                    # Nr. 5). Don't drop the turn: open a fresh conversation,
+                    # save it there, hand the client the new id.
+                    try:
+                        async with AsyncSessionLocal() as db_session:
+                            (
+                                msg_session_id,
+                                saved_user_message_id,
+                                saved_assistant_message_id,
+                            ) = await _restart_conversation_for_caller(
+                                websocket, db_session, ollama,
+                                user_id=user_id,
+                                content=content,
+                                response=full_response,
+                                user_metadata=user_metadata,
+                                assistant_metadata=assistant_metadata,
+                            )
+                    except Exception as e:  # noqa: BLE001 — never break the turn
+                        logger.warning(
+                            f"⚠️ Failed to open a replacement conversation: {e}"
+                        )
                 except Exception as e:
                     logger.warning(f"⚠️ Failed to save messages to DB: {e}")
 

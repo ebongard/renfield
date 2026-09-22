@@ -340,16 +340,18 @@ class ConversationService:
                 return []
 
             # Cross-user IDOR guard: REST endpoints already scope by owner; the WS
-            # path must too. A foreign-owned conversation reads as empty (no history
-            # leak). Ownerless conversations (user_id is None — single-user/household
-            # mode) are not gated here.
-            if (
-                enforce_ownership
-                and conversation.user_id is not None
-                and conversation.user_id != user_id
-            ):
+            # path must too. A conversation that is not the caller's reads as empty
+            # (no history leak).
+            #
+            # OWNERLESS counts as "not the caller's" (auth-on cutover, P0 Nr. 5):
+            # the session id is minted by the CLIENT and never validated, so an
+            # ownerless row is reachable by anyone who has, guesses or kept such an
+            # id — and the household has 206 of them from the auth-off era. Under
+            # auth-off (`enforce_ownership=False`) nothing changes; the satellite
+            # path does not enforce either.
+            if enforce_ownership and conversation.user_id != user_id:
                 logger.warning(
-                    f"🚫 Refused cross-user conversation load: session={session_id} "
+                    f"🚫 Refused conversation load: session={session_id} "
                     f"owner={conversation.user_id} caller={user_id}"
                 )
                 return []
@@ -472,19 +474,30 @@ class ConversationService:
                 # orphaned (invisible to any JOIN-based history or
                 # message-count query).
                 await self.db.flush()
-            elif (
-                enforce_ownership
-                and conversation.user_id is not None
-                and conversation.user_id != user_id
-            ):
-                # Cross-user IDOR guard (write side): never append into a
-                # conversation owned by another user. Raised so the WS handler
-                # can skip persistence without corrupting the victim's thread.
+            elif enforce_ownership and conversation.user_id != user_id:
+                # Ownership guard (write side): never append into a conversation
+                # that is not the caller's. ONE rule for two cases that used to
+                # be handled differently (auth-on cutover, P0 Nr. 5):
+                #
+                #   * foreign-owned — refused before, refused now;
+                #   * OWNERLESS — silently ADOPTED before (`conversation.user_id
+                #     = user_id`), which handed the row to whoever opened it
+                #     first. Ownership by arrival order is not ownership; the
+                #     household carries 206 such rows from the auth-off era, and
+                #     every browser restores its last session id from
+                #     localStorage unvalidated.
+                #
+                # Raised, not swallowed: the WS handler answers a refusal by
+                # opening a FRESH conversation for the caller and telling the
+                # client its new id — the turn lands in the caller's own thread
+                # instead of vanishing. Under auth-off (`enforce_ownership=
+                # False`) adoption still happens, byte-identical.
                 logger.warning(
-                    f"🚫 Refused cross-user message write: session={session_id} "
-                    f"owner={conversation.user_id} caller={user_id}"
+                    f"🚫 Refused message write into a foreign conversation: "
+                    f"session={session_id} owner={conversation.user_id} "
+                    f"caller={user_id}"
                 )
-                raise PermissionError("conversation owned by another user")
+                raise PermissionError("conversation not owned by caller")
             elif user_id and conversation.user_id is None:
                 conversation.user_id = user_id
                 await self.db.flush()

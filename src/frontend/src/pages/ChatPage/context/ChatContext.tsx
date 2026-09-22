@@ -47,6 +47,7 @@ import type {
   PaperlessConfirmField,
   PaperlessConfirmRequestMessage,
   RagContextMessage,
+  SessionReplacedMessage,
   UploadProcessedMessage,
 } from '../hooks/useChatWebSocket';
 import type { UploadStates, UploadedDocument } from '../hooks/useDocumentUpload';
@@ -467,6 +468,7 @@ export function ChatProvider({ children }: ChatProviderProps) {
     deleteConversation,
     loadConversationHistory,
     addConversation,
+    refreshConversations,
   } = useChatSessions();
 
   const getAudioContext = useCallback((): AudioContext | null => {
@@ -1243,6 +1245,24 @@ export function ChatProvider({ children }: ChatProviderProps) {
   }, []);
 
   // WebSocket hook
+  // The server refused the session id this tab sent — it belongs to someone
+  // else, or to nobody (an ownerless conversation is no longer adopted by
+  // whoever opens it first). The turn was saved into a fresh conversation;
+  // adopt its id so everything after this lands there. The transcript on screen
+  // is this turn's — a refused conversation never loads its history — so there
+  // is nothing to clear. The optimistic sidebar entry under the old id is
+  // local-only and disappears with the next refresh, which we ask for here.
+  const handleSessionReplaced = useCallback((data: SessionReplacedMessage) => {
+    setSessionId(data.session_id);
+    try {
+      localStorage.setItem(SESSION_STORAGE_KEY, data.session_id);
+    } catch {
+      // private mode / blocked storage: the id still holds for this tab
+    }
+    rememberTabConversation(data.session_id);
+    void refreshConversations();
+  }, [refreshConversations]);
+
   const { wsConnected, sendMessage: wsSendMessage, isReady, whenReady } = useChatWebSocket({
     onStreamChunk: handleStreamChunk,
     onStreamDone: handleStreamDone,
@@ -1263,6 +1283,7 @@ export function ChatProvider({ children }: ChatProviderProps) {
     onFollowups: handleFollowups,
     onPaperlessConfirmRequest: handlePaperlessConfirmRequest,
     onDeviceActionResult: handleDeviceActionResult,
+    onSessionReplaced: handleSessionReplaced,
   });
 
   // Interactive device widget: send a toggle/run action over the WS and resolve
