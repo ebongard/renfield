@@ -164,14 +164,98 @@ class TestReplacementConversation:
         assert ws.sent == [{"type": "session_replaced", "session_id": session_id}]
 
     @pytest.mark.unit
-    async def test_the_handler_answers_a_refusal_with_a_replacement(self):
-        import inspect
+    async def test_no_identity_means_no_replacement(self, monkeypatch):
+        """Without a user there is nobody to own the replacement — minting one
+        anyway would create a NEW ownerless conversation per turn, exactly the
+        row class this change removes, and the client would be pushed onto a
+        fresh session every single turn."""
+        monkeypatch.setattr("utils.config.settings.auth_enabled", True)
+        ws, ollama = self._WS(), self._Ollama()
 
-        src = inspect.getsource(ch.websocket_endpoint)
-        # The refusal is caught SEPARATELY from the generic save failure …
-        assert "except PermissionError:" in src
-        assert src.index("except PermissionError:") < src.index(
-            "Failed to save messages to DB"
+        result = await ch._restart_conversation_for_caller(
+            ws, object(), ollama,
+            user_id=None, content="x", response="y",
+            user_metadata=None, assistant_metadata=None,
         )
-        # … and answered with a replacement conversation.
-        assert "_restart_conversation_for_caller(" in src
+
+        assert result == (None, None, None)
+        assert ollama.saves == []   # nothing written
+        assert ws.sent == []        # and nothing promised to the client
+
+
+class TestBoundaryReplacement:
+    """The decision is taken at the BOUNDARY (`register` frame / first message),
+    not at persistence: everything a turn starts — the scan return path, the
+    paperless-confirm lookup, the push registration — keys on the session id the
+    turn began with."""
+
+    class _WS:
+        def __init__(self):
+            self.sent: list[dict] = []
+
+        async def send_json(self, msg):
+            self.sent.append(msg)
+
+    @pytest.mark.unit
+    async def test_an_owned_session_is_kept(self, monkeypatch):
+        _patch(monkeypatch, auth_enabled=True, owner=7)
+        ws = self._WS()
+        assert await ch._replacement_session_for(ws, "meine", 7) is None
+        assert ws.sent == []
+
+    @pytest.mark.unit
+    async def test_a_brand_new_session_is_kept(self, monkeypatch):
+        _patch(monkeypatch, auth_enabled=True, owner=NO_ROW)
+        ws = self._WS()
+        assert await ch._replacement_session_for(ws, "neu", 7) is None
+        assert ws.sent == []
+
+    @pytest.mark.unit
+    async def test_a_foreign_session_is_replaced_and_announced(self, monkeypatch):
+        _patch(monkeypatch, auth_enabled=True, owner=1)
+        ws = self._WS()
+        new_id = await ch._replacement_session_for(ws, "fremde", 7)
+        assert new_id and new_id != "fremde"
+        assert ws.sent == [{"type": "session_replaced", "session_id": new_id}]
+
+    @pytest.mark.unit
+    async def test_an_ownerless_session_is_replaced(self, monkeypatch):
+        _patch(monkeypatch, auth_enabled=True, owner=None)
+        ws = self._WS()
+        new_id = await ch._replacement_session_for(ws, "niemandes", 7)
+        assert new_id is not None
+
+    @pytest.mark.unit
+    async def test_auth_off_never_replaces(self, monkeypatch):
+        _patch(monkeypatch, auth_enabled=False, owner=1)
+        ws = self._WS()
+        assert await ch._replacement_session_for(ws, "fremde", 7) is None
+        assert ws.sent == []
+
+    @pytest.mark.unit
+    async def test_a_turn_without_identity_never_replaces(self, monkeypatch):
+        # Device/satellite token: no user to own a replacement.
+        _patch(monkeypatch, auth_enabled=True, owner=1)
+        ws = self._WS()
+        assert await ch._replacement_session_for(ws, "fremde", None) is None
+        assert ws.sent == []
+
+    @pytest.mark.unit
+    async def test_every_replacement_id_is_unique(self, monkeypatch):
+        _patch(monkeypatch, auth_enabled=True, owner=1)
+        ws = self._WS()
+        ids = {await ch._replacement_session_for(ws, "fremde", 7) for _ in range(5)}
+        assert len(ids) == 5   # uuid4, not a counter and not the client's format
+
+
+class TestTheRefusalIsItsOwnError:
+    @pytest.mark.unit
+    def test_it_is_a_permission_error_but_not_just_any(self):
+        """A bare PermissionError is a builtin OSError descendant: a plugin
+        hitting a file-permission problem inside the same try-block must not be
+        read as "that conversation is not yours". Existing callers that catch
+        the broad type (the scanner's delivery) still work."""
+        from services.conversation_service import ConversationNotOwnedError
+
+        assert issubclass(ConversationNotOwnedError, PermissionError)
+        assert ConversationNotOwnedError is not PermissionError

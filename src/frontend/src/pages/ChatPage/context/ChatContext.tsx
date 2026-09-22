@@ -1836,10 +1836,22 @@ export function ChatProvider({ children }: ChatProviderProps) {
       setRagSources([]);
     } else {
       try {
-        const response = await apiClient.post<{ message: string }>('/api/chat/send', {
-          message: text,
-          session_id: sessionId,
-        });
+        const response = await apiClient.post<{ message: string; session_id?: string }>(
+          '/api/chat/send',
+          {
+            message: text,
+            session_id: sessionId,
+          },
+        );
+
+        // The REST path applies the same ownership rule as the socket: a
+        // conversation that is not ours is not continued, we get a fresh one.
+        // The answer carries the id that was actually used — adopt it, or the
+        // next turn would name the refused one again.
+        const usedSessionId = response.data.session_id;
+        if (usedSessionId && usedSessionId !== sessionId) {
+          handleSessionReplaced({ type: 'session_replaced', session_id: usedSessionId });
+        }
 
         setMessages((prev) => [...prev, { role: 'assistant', content: response.data.message }]);
       } catch (error) {
@@ -1849,7 +1861,7 @@ export function ChatProvider({ children }: ChatProviderProps) {
         setLoading(false);
       }
     }
-  }, [sessionId, messages.length, useRag, selectedKnowledgeBase, isReady, whenReady, wsSendMessage, addConversation, attachments, t, pendingRoleHint]);
+  }, [sessionId, messages.length, useRag, selectedKnowledgeBase, isReady, whenReady, wsSendMessage, addConversation, attachments, t, pendingRoleHint, handleSessionReplaced]);
 
   // Wire ref so handleTranscription (declared above) can call sendMessageInternal
   useEffect(() => {

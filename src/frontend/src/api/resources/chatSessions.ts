@@ -110,9 +110,15 @@ export function useChatSessions(): ChatSessionsResult {
   const loading = conversationsQuery.isLoading;
   const error = conversationsQuery.error;
 
+  // Depend on `refetch`, NOT on the query object: `useApiQuery` builds a fresh
+  // object literal every render, so `[conversationsQuery]` made this callback
+  // unstable — and any effect keyed on it re-ran on every render. That is how a
+  // consumer passing this into `useChatWebSocket` tore the chat socket down and
+  // reopened it on every keystroke (`react-query`'s own `refetch` is stable).
+  const refetchConversations = conversationsQuery.refetch;
   const refreshConversations = useCallback(async () => {
-    await conversationsQuery.refetch();
-  }, [conversationsQuery]);
+    await refetchConversations();
+  }, [refetchConversations]);
 
   const deleteConversation = useCallback(
     async (sessionId: string): Promise<boolean> => {

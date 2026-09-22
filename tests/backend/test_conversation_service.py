@@ -522,7 +522,9 @@ class TestConversationOwnershipGuard:
         service = ConversationService(db_session)
         await service.save_message("idor-adopt", "user", "hi")   # ownerless
 
-        with pytest.raises(PermissionError):
+        from services.conversation_service import ConversationNotOwnedError
+
+        with pytest.raises(ConversationNotOwnedError):
             await service.save_message(
                 "idor-adopt", "assistant", "claimed",
                 user_id=5, enforce_ownership=True,

@@ -42,6 +42,18 @@ def _significant_message_tokens(query: str) -> list[str]:
     return _TOKEN_RE.findall(query or "")
 
 
+class ConversationNotOwnedError(PermissionError):
+    """The caller may not write into this conversation (auth-on cutover, §4.2).
+
+    A subclass of ``PermissionError`` so existing callers that catch the broad
+    type keep working (the scanner's delivery path does). New code catches THIS
+    one: a bare ``PermissionError`` is a builtin ``OSError`` descendant, so a
+    plugin hitting a file-permission problem inside the same try-block would
+    otherwise read as "that conversation is not yours" and push the client onto
+    a new session for no reason.
+    """
+
+
 class ConversationService:
     """
     Service für Konversations-Persistenz.
@@ -497,7 +509,7 @@ class ConversationService:
                     f"session={session_id} owner={conversation.user_id} "
                     f"caller={user_id}"
                 )
-                raise PermissionError("conversation not owned by caller")
+                raise ConversationNotOwnedError("conversation not owned by caller")
             elif user_id and conversation.user_id is None:
                 conversation.user_id = user_id
                 await self.db.flush()

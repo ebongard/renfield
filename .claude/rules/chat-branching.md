@@ -34,8 +34,15 @@ ONE rule on both sides: a conversation that is not the caller's is refused — f
 is minted by the CLIENT and never validated, so an ownerless row is reachable by anyone holding such an id. Reads
 return `[]`, writes raise `PermissionError`, push-registration (`_session_registerable_by`) says no; only a session
 with **no row at all** is free to take. Adoption ("first writer becomes the owner") exists only under auth-off.
-A refusal is not silent: `chat_handler` catches it, opens a FRESH conversation, saves the turn there and pushes
-`{"type": "session_replaced", "session_id": …}` — the id and nothing else, or the frame becomes an oracle.
+The decision is taken at the BOUNDARY — the `register` frame and the first message of a session
+(`_replacement_session_for`) — not at persistence: the scan return path, the paperless-confirm lookup and the push
+registration all key on the id the turn STARTED with. A refused id is swapped there and announced as
+`{"type": "session_replaced", "session_id": …}` — the id and nothing else, or the frame becomes an oracle. The late
+`ConversationNotOwnedError` catch in the save block is a backstop for clients that send no register frame; it rebinds
+`session_state.db_session_id` too. Never catch a bare `PermissionError` there — it is a builtin `OSError` descendant.
+No identity (device token) → no replacement: it would mint a new ownerless row per turn.
+The same rule holds outside the socket: `api/routes/chat.py::conversation_is_callers` for the REST fallback, and the
+Paperless finalize announcement writes ownership-gated.
 
 ## Fork / switch / delete
 - `ConversationService.save_message` ALWAYS maintains the tree (`ollama_service.save_message` only delegates): normal

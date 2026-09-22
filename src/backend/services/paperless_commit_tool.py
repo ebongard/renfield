@@ -816,9 +816,25 @@ async def _finalize_paperless_commit(
             if status == "completed" and not already_tracked:
                 await _bump_confirms_used(db, user_id)
             if session_id and not already_tracked and not suppress_announce:
-                await ConversationService(db).save_message(
-                    session_id, "assistant", message, user_id=user_id,
-                )
+                # Ownership-gated like every other write (auth-on cutover §4.2):
+                # the session id comes from the client, and without the gate this
+                # background write would land in the one remaining adoption
+                # branch — a document confirmation with a stale session id would
+                # hand its whole conversation to whoever confirmed. A refusal
+                # costs the announcement, not the filing.
+                from services.conversation_service import ConversationNotOwnedError
+                from utils.config import settings
+
+                try:
+                    await ConversationService(db).save_message(
+                        session_id, "assistant", message, user_id=user_id,
+                        enforce_ownership=settings.auth_enabled,
+                    )
+                except ConversationNotOwnedError:
+                    logger.warning(
+                        "paperless finalize: refused to announce into a "
+                        "conversation the caller does not own"
+                    )
             await db.commit()
     except Exception as exc:  # noqa: BLE001
         logger.warning("paperless finalize: outcome persist failed: %s", exc)

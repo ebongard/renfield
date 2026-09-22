@@ -35,6 +35,21 @@ class ActiveLeafRequest(BaseModel):
     """Body for PUT /api/chat/{session_id}/active-leaf — switch active branch."""
     message_id: int
 
+def conversation_is_callers(conversation, current_user) -> bool:
+    """May this caller continue this conversation? (auth-on cutover §4.2)
+
+    The session id comes from the CLIENT and is never validated, so this route —
+    the fallback the browser uses while the socket is not ready yet — would
+    otherwise read the last 10 messages of any conversation it merely named and
+    append to it. Same rule as the WS path: foreign AND ownerless are both "not
+    the caller's". A conversation that does not exist yet is free to take, and
+    auth-off (single trust domain) is unchanged.
+    """
+    if conversation is None or not settings.auth_enabled or current_user is None:
+        return True
+    return conversation.user_id == current_user.id
+
+
 @router.post("/send", response_model=ChatResponse)
 @limiter.limit(settings.api_rate_limit_chat)
 async def send_message(
@@ -64,6 +79,16 @@ async def send_message(
             select(Conversation).where(Conversation.session_id == session_id)
         )
         conversation = result.scalar_one_or_none()
+
+        # Same ownership rule as the WS path: a conversation that is not the
+        # caller's is not continued — the request gets a fresh one instead.
+        if not conversation_is_callers(conversation, current_user):
+            logger.warning(
+                f"🚫 Refused REST chat into a conversation the caller does not "
+                f"own: owner={conversation.user_id} caller={current_user.id}"
+            )
+            conversation = None
+            session_id = str(uuid.uuid4())
 
         if not conversation:
             conversation = Conversation(session_id=session_id)

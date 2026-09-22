@@ -385,3 +385,68 @@ class TestChatQueries:
         count = result.scalar()
 
         assert count == 4
+
+
+class TestRestChatOwnership:
+    """`/api/chat/send` is the fallback the browser uses while the socket is not
+    ready. It finds the conversation by the CLIENT-supplied session id, so
+    without a boundary it would read the last 10 messages of any conversation it
+    merely named and append to it — the same rule as the WS path has to hold
+    here (auth-on cutover §4.2)."""
+
+    @staticmethod
+    def _conv(owner_id):
+        from models.database import Conversation
+
+        return Conversation(session_id="s", user_id=owner_id)
+
+    @staticmethod
+    def _user(uid):
+        from models.database import User
+
+        return User(id=uid, username=f"u{uid}", password_hash="x", role_id=1)
+
+    @pytest.mark.unit
+    def test_own_conversation_continues(self, monkeypatch):
+        from api.routes import chat as chat_routes
+
+        monkeypatch.setattr(chat_routes.settings, "auth_enabled", True)
+        assert chat_routes.conversation_is_callers(self._conv(7), self._user(7)) is True
+
+    @pytest.mark.unit
+    def test_foreign_conversation_is_refused(self, monkeypatch):
+        from api.routes import chat as chat_routes
+
+        monkeypatch.setattr(chat_routes.settings, "auth_enabled", True)
+        assert chat_routes.conversation_is_callers(self._conv(1), self._user(7)) is False
+
+    @pytest.mark.unit
+    def test_ownerless_conversation_is_refused(self, monkeypatch):
+        """The case this change is about: with adoption gone an ownerless row
+        stays ownerless, and anyone holding the id could otherwise continue it."""
+        from api.routes import chat as chat_routes
+
+        monkeypatch.setattr(chat_routes.settings, "auth_enabled", True)
+        assert chat_routes.conversation_is_callers(self._conv(None), self._user(7)) is False
+
+    @pytest.mark.unit
+    def test_a_session_with_no_conversation_is_free(self, monkeypatch):
+        from api.routes import chat as chat_routes
+
+        monkeypatch.setattr(chat_routes.settings, "auth_enabled", True)
+        assert chat_routes.conversation_is_callers(None, self._user(7)) is True
+
+    @pytest.mark.unit
+    def test_auth_off_is_unchanged(self, monkeypatch):
+        from api.routes import chat as chat_routes
+
+        monkeypatch.setattr(chat_routes.settings, "auth_enabled", False)
+        assert chat_routes.conversation_is_callers(self._conv(1), self._user(7)) is True
+
+    @pytest.mark.unit
+    def test_no_caller_identity_is_unchanged(self, monkeypatch):
+        # Device/satellite path: no JWT user, legacy behaviour.
+        from api.routes import chat as chat_routes
+
+        monkeypatch.setattr(chat_routes.settings, "auth_enabled", True)
+        assert chat_routes.conversation_is_callers(self._conv(1), None) is True
