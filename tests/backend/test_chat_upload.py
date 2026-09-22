@@ -28,6 +28,16 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from models.database import ChatUpload, Conversation, KnowledgeBase, Message
 from models.websocket_messages import WSChatMessage
 
+async def _real_document(db, filename: str = "d.txt") -> int:
+    """`chat_uploads.document_id` is a foreign key — the document has to exist."""
+    from models.database import Document as _Doc
+
+    doc = _Doc(filename=filename, file_path=f"/tmp/{filename}", status="completed")
+    db.add(doc)
+    await db.flush()
+    return doc.id
+
+
 # ============================================================================
 # API Tests
 # ============================================================================
@@ -644,8 +654,12 @@ class TestChatUploadIndex:
             await db_session.commit()
             await db_session.refresh(upload)
 
+            # A REAL document: the route writes its id into
+            # `chat_uploads.document_id`, which is a foreign key. A mock id
+            # that exists nowhere passed only because sqlite enforced nothing.
+            real_doc_id = await _real_document(db_session, "indexed.txt")
             mock_doc = MagicMock()
-            mock_doc.id = 42
+            mock_doc.id = real_doc_id
             mock_doc.chunk_count = 5
 
             # RAGService is imported lazily inside the route handler
@@ -664,7 +678,7 @@ class TestChatUploadIndex:
             assert response.status_code == 200
             body = response.json()
             assert body["success"] is True
-            assert body["document_id"] == 42
+            assert body["document_id"] == real_doc_id
             assert body["knowledge_base_id"] == kb.id
             assert body["chunk_count"] == 5
         finally:
@@ -694,7 +708,7 @@ class TestChatUploadIndex:
                 file_size=100,
                 status="completed",
                 file_path=tmp_path,
-                document_id=99,
+                document_id=await _real_document(db_session, "indexed99.txt"),
             )
             db_session.add(upload)
             await db_session.commit()
@@ -1345,7 +1359,7 @@ class TestChatUploadCleanup:
             file_type="txt",
             file_size=100,
             status="completed",
-            document_id=42,
+            document_id=await _real_document(db_session, "indexed42.txt"),
         )
         db_session.add(indexed_upload)
         await db_session.commit()

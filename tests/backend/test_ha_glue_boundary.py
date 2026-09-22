@@ -85,6 +85,14 @@ ALLOWED_IMPORTERS = frozenset({
     # degrades to an empty section when ha_glue is absent). Never reached on a
     # platform-only deploy. Same lazy-pattern rule as the shims above.
     "api/websocket/kiosk_handler.py",
+    # (2) Lazy, flag-guarded — authenticate_websocket() resolves a satellite PSK
+    # (`sat.<id>.<secret>`) against the enrollment store through a function-body
+    # `from ha_glue.services.satellite_enrollment_service import authorize_handshake`.
+    # The import sits BEHIND two gates (`satellite_psk_handshake_enabled` and the
+    # caller's `allow_satellite_psk`), so a platform-only deploy never reaches it.
+    # A hook seam would be the wrong shape here: hooks return lists and degrade
+    # to "no handler" — an authentication decision must not fail open.
+    "services/websocket_auth.py",
     # (2) Lazy, guarded — the kiosk's internal-subsystem health probes
     # (_presence_health / _media_health) read `ha_glue_settings` and the satellite
     # roster through function-body imports. compute_internal_subsystem_health()

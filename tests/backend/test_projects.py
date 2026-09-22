@@ -176,10 +176,13 @@ async def test_timeline_owner_gated_and_flag_gated(async_client, monkeypatch):
 # Owner scoping under auth
 # ---------------------------------------------------------------------------
 
-async def test_owner_scoping_under_auth(async_client, monkeypatch):
+async def test_owner_scoping_under_auth(async_client, monkeypatch, db_session):
     _enable(monkeypatch, auth=True)
-    user_a = User(id=1, username="a", password_hash="x", is_active=True, role_id=1)
-    user_b = User(id=2, username="b", password_hash="x", is_active=True, role_id=1)
+    from tests.backend.dbrows import ensure_user
+
+    user_a = await ensure_user(db_session, 1, username="a")
+    user_b = await ensure_user(db_session, 2, username="b")
+    await db_session.commit()
 
     _override_user(user_a)
     created = await async_client.post("/api/projects", json={"name": "Gamma"})
@@ -204,10 +207,13 @@ async def test_create_requires_auth_when_enabled(async_client, monkeypatch):
     assert (await async_client.post("/api/projects", json={"name": "X"})).status_code == 401
 
 
-async def test_delete_owner_gated_under_auth(async_client, monkeypatch):
+async def test_delete_owner_gated_under_auth(async_client, monkeypatch, db_session):
     _enable(monkeypatch, auth=True)
-    user_a = User(id=1, username="a", password_hash="x", is_active=True, role_id=1)
-    user_b = User(id=2, username="b", password_hash="x", is_active=True, role_id=1)
+    from tests.backend.dbrows import ensure_user
+
+    user_a = await ensure_user(db_session, 1, username="a")
+    user_b = await ensure_user(db_session, 2, username="b")
+    await db_session.commit()
 
     _override_user(user_a)
     pid = (await async_client.post("/api/projects", json={"name": "Delta"})).json()["id"]

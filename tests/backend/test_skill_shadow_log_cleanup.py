@@ -20,9 +20,30 @@ def _utcnow_naive() -> datetime:
     return datetime.now(UTC).replace(tzinfo=None)
 
 
+async def _skill_id(db: AsyncSession) -> int:
+    """A real procedural skill — the log row's `skill_id` is a foreign key.
+
+    The old comment said "FK relaxed for unit-test"; nothing was relaxed, the
+    sqlite harness simply did not enforce it.
+    """
+    from sqlalchemy import select as _select
+
+    from models.database import ProceduralSkill
+
+    existing = (await db.execute(
+        _select(ProceduralSkill).where(ProceduralSkill.title == "shadow-test-skill")
+    )).scalar_one_or_none()
+    if existing is not None:
+        return existing.id
+    skill = ProceduralSkill(title="shadow-test-skill", body_md="x")
+    db.add(skill)
+    await db.flush()
+    return skill.id
+
+
 async def _seed_row(db: AsyncSession, *, days_ago: float) -> int:
     row = SkillWouldHaveInjectedLog(
-        skill_id=1,                              # FK relaxed for unit-test
+        skill_id=await _skill_id(db),
         user_id=None,
         similarity_score=0.91,
         status_at_query="draft",

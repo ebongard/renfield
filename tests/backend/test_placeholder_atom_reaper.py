@@ -16,6 +16,14 @@ from sqlalchemy import select
 from models.database import Atom as AtomModel
 from services.atom_service import reap_orphan_placeholder_atoms
 
+async def _seed_owner(db):
+    """`atoms.owner_user_id` is a foreign key — the owner has to exist."""
+    from tests.backend.dbrows import ensure_user
+
+    await ensure_user(db, 1)
+    await db.commit()
+
+
 
 def _atom(atom_id: str, source_id: str, created_at: datetime) -> AtomModel:
     return AtomModel(
@@ -33,6 +41,7 @@ def _atom(atom_id: str, source_id: str, created_at: datetime) -> AtomModel:
 @pytest.mark.asyncio
 class TestReapOrphanPlaceholderAtoms:
     async def test_reaps_only_old_placeholders(self, db_session):
+        await _seed_owner(db_session)
         now = datetime.now(UTC).replace(tzinfo=None)
         old = now - timedelta(hours=2)
         db_session.add_all([
@@ -52,6 +61,7 @@ class TestReapOrphanPlaceholderAtoms:
         assert remaining == {"inflight-fresh", "real-old"}
 
     async def test_no_placeholders_returns_zero(self, db_session):
+        await _seed_owner(db_session)
         db_session.add(_atom("real-1", "42", datetime.now(UTC).replace(tzinfo=None)))
         await db_session.commit()
 
@@ -60,6 +70,7 @@ class TestReapOrphanPlaceholderAtoms:
     async def test_fresh_placeholder_not_reaped(self, db_session):
         """A placeholder younger than the floor (a legitimately in-flight create)
         is left untouched even though its source_id matches the pattern."""
+        await _seed_owner(db_session)
         now = datetime.now(UTC).replace(tzinfo=None)
         db_session.add(_atom("inflight", "__pending__inflight", now))
         await db_session.commit()

@@ -207,7 +207,9 @@ class TestNotifierScan:
         await _mk_obligation(pg_db_session, owner, ob_date=TODAY + dt.timedelta(days=1))
         # Hold the user's notifier advisory lock on a separate connection.
         from services.obligation_deadline_notifier import _NOTIFIER_LOCK_NS
-        engine = pg_db_session.bind.engine
+        # The session's bind IS the async engine; `.engine` would hand back the
+        # SYNC one underneath it, and `async with` on that raises MissingGreenlet.
+        engine = pg_db_session.bind
         async with engine.connect() as held:
             got = (await held.execute(text("SELECT pg_try_advisory_lock(:ns, :uid)"),
                                       {"ns": _NOTIFIER_LOCK_NS, "uid": owner.id})).scalar()

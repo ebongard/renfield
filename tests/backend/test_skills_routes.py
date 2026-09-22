@@ -496,12 +496,6 @@ class TestChangeTier:
         self, async_client: AsyncClient, auth_as_owner,
         db_session: AsyncSession, patched_embed,
     ):
-        # AtomService.update_tier uses Postgres-specific syntax (`::`
-        # cast in the cascade-update raw SQL) that aiosqlite rejects.
-        # Skip cleanly when the harness is on sqlite.
-        if (db_session.bind is None
-                or db_session.bind.dialect.name != "postgresql"):
-            pytest.skip("Tier-change cascade requires postgres syntax")
         svc = SkillService(db_session)
         skill = await svc.create_user_authored(
             user_id=auth_as_owner.id, title="T", body_md="b",
@@ -512,7 +506,12 @@ class TestChangeTier:
             f"/api/skills/{skill.id}/tier", json={"circle_tier": 2},
         )
         assert resp.status_code == 200
+        # Both the response AND the row: the cascade runs as raw SQL, so a
+        # stale identity-map object used to make the API report the old tier
+        # while the database already held the new one.
         assert resp.json()["circle_tier"] == 2
+        await db_session.refresh(skill)
+        assert skill.circle_tier == 2
 
     async def test_tier_out_of_range_422(
         self, async_client: AsyncClient, auth_as_owner,

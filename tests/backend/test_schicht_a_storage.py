@@ -40,12 +40,20 @@ class TestFactAtomRoundTrip:
     async def test_create_fact_as_atom_and_read_back(self, db_session):
         """create_with_source → DocumentFact insert → finalize_source_id yields a
         fact wrapped by an atom carrying the document's tier."""
+        from models.database import Document
+
+        from tests.backend.dbrows import ensure_user
+
+        await ensure_user(db_session, 1)   # the atom's owner is a foreign key
+        doc = Document(filename="f.pdf", file_path="/tmp/f.pdf", status="completed")
+        db_session.add(doc)
+        await db_session.flush()
         svc = AtomService(db_session)
         atom_id = await svc.create_with_source(
             atom_type=ATOM_TYPE_DOCUMENT_FACT, owner_user_id=1, tier=2,
         )
         fact = DocumentFact(
-            document_id=1, category="identifier", kind="steuernummer",
+            document_id=doc.id, category="identifier", kind="steuernummer",
             value="114/5876/5293", normalized_value="114/5876/5293",
             atom_id=atom_id, circle_tier=2, source="deterministic", legal_gate=False,
         )

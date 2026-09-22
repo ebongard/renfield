@@ -44,6 +44,42 @@ PATTERNS = [
 ]
 
 
+def _docstring_and_comment_lines(source: str) -> set[int]:
+    """Line numbers that only DOCUMENT the rule, rather than break it.
+
+    The lint hunts `DELETE FROM atoms` in raw SQL, so plain strings must stay
+    in scope — but a docstring explaining the rule (models/database.py does,
+    at length) is not a violation, and a lint that flags its own documentation
+    trains people to ignore it. Comments likewise.
+    """
+    import ast
+    import io
+    import tokenize
+
+    skip: set[int] = set()
+    try:
+        tree = ast.parse(source)
+    except SyntaxError:
+        return skip
+    for node in ast.walk(tree):
+        if not isinstance(node, (ast.Module, ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        body = getattr(node, "body", None)
+        if not body:
+            continue
+        first = body[0]
+        if isinstance(first, ast.Expr) and isinstance(first.value, ast.Constant) \
+                and isinstance(first.value.value, str):
+            skip.update(range(first.lineno, (first.end_lineno or first.lineno) + 1))
+    try:
+        for tok in tokenize.generate_tokens(io.StringIO(source).readline):
+            if tok.type == tokenize.COMMENT:
+                skip.add(tok.start[0])
+    except (tokenize.TokenError, IndentationError):
+        pass
+    return skip
+
+
 @pytest.mark.unit
 def test_no_direct_atom_delete_outside_purge_service():
     """Fail if any backend file (outside the allowlist) deletes atoms directly."""
@@ -59,7 +95,10 @@ def test_no_direct_atom_delete_outside_purge_service():
             text = py_file.read_text(encoding="utf-8")
         except (OSError, UnicodeDecodeError):
             continue
+        skip = _docstring_and_comment_lines(text)
         for lineno, line in enumerate(text.splitlines(), 1):
+            if lineno in skip:
+                continue
             for pat in PATTERNS:
                 if pat.search(line):
                     offenders.append((rel, lineno, line.strip()))

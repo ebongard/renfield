@@ -252,7 +252,9 @@ class TestReconciler:
         await _set_pref(pg_db_session, owner.id, "family")
         await _mk_obligation(pg_db_session, owner, ob_date=TODAY + dt.timedelta(days=10))
         from services.obligation_calendar_sync import _CAL_LOCK_NS
-        engine = pg_db_session.bind.engine
+        # The session's bind IS the async engine; `.engine` would hand back the
+        # SYNC one underneath it, and `async with` on that raises MissingGreenlet.
+        engine = pg_db_session.bind
         async with engine.connect() as held:
             assert (await held.execute(text("SELECT pg_try_advisory_lock(:ns, :uid)"),
                                        {"ns": _CAL_LOCK_NS, "uid": owner.id})).scalar()

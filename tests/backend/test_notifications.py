@@ -1153,8 +1153,17 @@ class TestReminderCRUD:
         await db_session.commit()
         await db_session.refresh(reminder)
 
+        # A real notification: `reminders.notification_id` is a foreign key.
+        from models.database import Notification
+
+        notification = Notification(
+            event_type="reminder", title="T", message="M",
+        )
+        db_session.add(notification)
+        await db_session.flush()
+
         service = ReminderService(db_session)
-        await service.mark_fired(reminder.id, notification_id=42)
+        await service.mark_fired(reminder.id, notification_id=notification.id)
 
         from sqlalchemy import select
         result = await db_session.execute(

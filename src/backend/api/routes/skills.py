@@ -550,11 +550,19 @@ async def change_skill_tier(
 
     svc = AtomService(db)
     await svc.update_tier(skill.atom_id, {"tier": int(body.circle_tier)})
+    # `populate_existing`: update_tier cascades through RAW SQL, which the ORM
+    # identity map knows nothing about. A plain re-select hands back the object
+    # already loaded in this session — still carrying the OLD tier — so the
+    # change landed in the database while the response reported the previous
+    # value. Only a Postgres run catches this: the sqlite harness skipped the
+    # test outright ("tier-change cascade requires postgres syntax").
     skill = (await db.execute(
-        select(ProceduralSkill).where(
+        select(ProceduralSkill)
+        .where(
             ProceduralSkill.id == skill_id,
             ProceduralSkill.user_id == user.id,
         )
+        .execution_options(populate_existing=True)
     )).scalar_one()
     return _to_response(skill, is_owner=True)
 
