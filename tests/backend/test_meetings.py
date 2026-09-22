@@ -149,6 +149,27 @@ def _wav() -> tuple:
 
 
 @pytest.mark.asyncio
+async def _persist_users(db_session, *users):
+    """Write the users a route will reference into the database.
+
+    Postgres enforces `meetings.owner_user_id → users.id`; these tests used to
+    hand the auth override an in-memory `User(id=1)` that existed nowhere, and
+    the sqlite harness let the insert through. The FK is the point of the test
+    (owner gating), so the owner has to be real.
+    """
+    from sqlalchemy import select as _select
+
+    from models.database import Role
+
+    exists = (await db_session.execute(_select(Role).where(Role.id == 1))).scalar_one_or_none()
+    if exists is None:
+        db_session.add(Role(id=1, name="testrolle", permissions=["chat.own"], is_system=False))
+        await db_session.flush()
+    for u in users:
+        db_session.add(u)
+    await db_session.commit()
+
+
 class TestMeetingRoutes:
     async def test_routes_404_when_flag_off(self, async_client, monkeypatch):
         monkeypatch.setattr(settings, "meeting_transcription_enabled", False)
@@ -264,12 +285,15 @@ class TestMeetingRoutes:
         )
         assert r.status_code == 422
 
-    async def test_status_poll_and_owner_gating(self, async_client, monkeypatch, tmp_path):
+    async def test_status_poll_and_owner_gating(
+        self, async_client, monkeypatch, tmp_path, db_session
+    ):
         from models.database import User
 
         _enable(monkeypatch, tmp_path, auth=True)
         user_a = User(id=1, username="a", password_hash="x", is_active=True, role_id=1)
         user_b = User(id=2, username="b", password_hash="x", is_active=True, role_id=1)
+        await _persist_users(db_session, user_a, user_b)
 
         _override_user(user_a)
         created = await async_client.post(
@@ -294,13 +318,14 @@ class TestMeetingRoutes:
         assert (await async_client.get("/api/meetings")).status_code == 404
 
     async def test_list_owner_scoped_newest_first(
-        self, async_client, monkeypatch, tmp_path
+        self, async_client, monkeypatch, tmp_path, db_session
     ):
         from models.database import User
 
         _enable(monkeypatch, tmp_path, auth=True)
         user_a = User(id=1, username="a", password_hash="x", is_active=True, role_id=1)
         user_b = User(id=2, username="b", password_hash="x", is_active=True, role_id=1)
+        await _persist_users(db_session, user_a, user_b)
 
         # A uploads two, B uploads one
         _override_user(user_a)
@@ -337,7 +362,7 @@ class TestMeetingRoutes:
         assert len(rows) >= 1
 
     async def test_delete_owner_gated_removes_row_and_audio(
-        self, async_client, monkeypatch, tmp_path
+        self, async_client, monkeypatch, tmp_path, db_session
     ):
         import os
         from models.database import User
@@ -345,6 +370,7 @@ class TestMeetingRoutes:
         _enable(monkeypatch, tmp_path, auth=True)
         user_a = User(id=1, username="a", password_hash="x", is_active=True, role_id=1)
         user_b = User(id=2, username="b", password_hash="x", is_active=True, role_id=1)
+        await _persist_users(db_session, user_a, user_b)
 
         _override_user(user_a)
         created = await async_client.post(

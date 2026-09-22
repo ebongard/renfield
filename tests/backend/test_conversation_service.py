@@ -279,7 +279,7 @@ class TestListAll:
         assert len(entry["preview"]) == 100
 
     async def test_user_id_filter_returns_only_user_conversations(
-        self, db_session: AsyncSession
+        self, db_session: AsyncSession, make_user
     ):
         """When user_id is given, list_all returns only that user's conversations.
 
@@ -288,6 +288,8 @@ class TestListAll:
         "New Conversation" for every entry. The fix unifies both paths
         through list_all with an optional user_id filter.
         """
+        await make_user(1)
+        await make_user(2)
         service = ConversationService(db_session)
         await service.save_message("user-1-conv", "user", "Hi from user 1")
         await service.save_message("user-2-conv", "user", "Hi from user 2")
@@ -458,7 +460,9 @@ class TestConversationOwnershipGuard:
     """A conversation owned by user A must not be read or written by user B
     when ``enforce_ownership=True`` (auth-enabled WS path)."""
 
-    async def test_load_context_blocks_cross_user(self, db_session: AsyncSession):
+    async def test_load_context_blocks_cross_user(self, db_session: AsyncSession, make_user):
+        await make_user(1)
+        await make_user(2)
         service = ConversationService(db_session)
         # User 1 owns the conversation
         await service.save_message("idor-load", "user", "private question", user_id=1)
@@ -470,7 +474,8 @@ class TestConversationOwnershipGuard:
         )
         assert ctx == []
 
-    async def test_load_context_allows_owner(self, db_session: AsyncSession):
+    async def test_load_context_allows_owner(self, db_session: AsyncSession, make_user):
+        await make_user(7)
         service = ConversationService(db_session)
         await service.save_message("idor-load-ok", "user", "mine", user_id=7)
         ctx = await service.load_context(
@@ -478,15 +483,18 @@ class TestConversationOwnershipGuard:
         )
         assert [m["content"] for m in ctx] == ["mine"]
 
-    async def test_load_context_default_is_unenforced(self, db_session: AsyncSession):
+    async def test_load_context_default_is_unenforced(self, db_session: AsyncSession, make_user):
         """Legacy callers (enforce_ownership defaults False) stay byte-identical."""
+        await make_user(1)
         service = ConversationService(db_session)
         await service.save_message("idor-load-legacy", "user", "mine", user_id=1)
         # Different/None caller, no enforcement → still returns history
         ctx = await service.load_context("idor-load-legacy", user_id=2)
         assert [m["content"] for m in ctx] == ["mine"]
 
-    async def test_save_message_blocks_cross_user_write(self, db_session: AsyncSession):
+    async def test_save_message_blocks_cross_user_write(self, db_session: AsyncSession, make_user):
+        await make_user(1)
+        await make_user(2)
         service = ConversationService(db_session)
         await service.save_message("idor-write", "user", "owner msg", user_id=1)
 
@@ -500,7 +508,8 @@ class TestConversationOwnershipGuard:
         ctx = await service.load_context("idor-write")
         assert [m["content"] for m in ctx] == ["owner msg"]
 
-    async def test_save_message_allows_owner_write(self, db_session: AsyncSession):
+    async def test_save_message_allows_owner_write(self, db_session: AsyncSession, make_user):
+        await make_user(3)
         service = ConversationService(db_session)
         await service.save_message("idor-write-ok", "user", "one", user_id=3)
         await service.save_message(
@@ -510,7 +519,7 @@ class TestConversationOwnershipGuard:
         assert [m["content"] for m in ctx] == ["one", "two"]
 
     async def test_save_message_refuses_to_adopt_an_ownerless_conversation(
-        self, db_session: AsyncSession
+        self, db_session: AsyncSession, make_user
     ):
         """INTENT CHANGED with the auth-on cutover (P0 Nr. 5). This used to
         assert adoption: an ownerless conversation was handed to whoever wrote
@@ -519,6 +528,7 @@ class TestConversationOwnershipGuard:
         and the household carries 206 ownerless rows from the auth-off era. Now
         it is refused like any other conversation that is not the caller's; the
         WS handler answers the refusal with a fresh conversation."""
+        await make_user(5)
         service = ConversationService(db_session)
         await service.save_message("idor-adopt", "user", "hi")   # ownerless
 
@@ -537,9 +547,10 @@ class TestConversationOwnershipGuard:
         ctx = await service.load_context("idor-adopt")
         assert [m["content"] for m in ctx] == ["hi"]  # nothing appended
 
-    async def test_save_message_still_adopts_with_auth_off(self, db_session: AsyncSession):
+    async def test_save_message_still_adopts_with_auth_off(self, db_session: AsyncSession, make_user):
         """The household path is untouched: without enforcement the first writer
         still becomes the owner, exactly as before."""
+        await make_user(5)
         service = ConversationService(db_session)
         await service.save_message("idor-adopt-off", "user", "hi")
         msg = await service.save_message(
@@ -552,10 +563,11 @@ class TestConversationOwnershipGuard:
         assert result.scalar_one().user_id == 5
 
     async def test_load_context_refuses_an_ownerless_conversation(
-        self, db_session: AsyncSession
+        self, db_session: AsyncSession, make_user
     ):
         """Read side of the same rule: an ownerless conversation used to be
         readable by any authenticated caller who knew the id."""
+        await make_user(7)
         service = ConversationService(db_session)
         await service.save_message("idor-load-ownerless", "user", "geheim")
         assert await service.load_context(

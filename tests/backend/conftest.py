@@ -14,7 +14,10 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from httpx import ASGITransport, AsyncClient
+import os as _os
+
 from sqlalchemy import BigInteger
+from sqlalchemy import text as _sa_text
 from sqlalchemy.dialects.postgresql import TSVECTOR
 from sqlalchemy.ext.compiler import compiles
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
@@ -189,34 +192,131 @@ def _reset_shared_redis_clients():
 # Database Fixtures
 # ============================================================================
 
-# SQLite async engine for testing
-TEST_DATABASE_URL = "sqlite+aiosqlite:///:memory:"
+# The test database is REAL POSTGRES, never sqlite.
+#
+# A sqlite harness forces dialect fallbacks into production code — the circle
+# filter is Postgres SQL (`::text` / `::int` casts), the branching walk is a
+# recursive CTE, `search_vector` is a GENERATED column — and a fallback is
+# untested branch code that hides the behaviour that actually ships. A green
+# run against sqlite proves the wrong system. A Postgres test database is cheap
+# and equals production.
+#
+# `RENFIELD_TEST_PG_URL` points at it (on the build box: the dedicated
+# `renfield_test` database, NEVER a live one). Without it the database fixtures
+# skip rather than quietly fall back to sqlite.
+TEST_DATABASE_URL = _os.environ.get("RENFIELD_TEST_PG_URL", "")
+
+
+def _pg_url_or_skip() -> str:
+    dsn = _os.environ.get("RENFIELD_TEST_PG_URL")
+    if not dsn:
+        pytest.skip(
+            "RENFIELD_TEST_PG_URL not set — the test database is real Postgres "
+            "(see the Testing section in CLAUDE.md); sqlite is not a fallback."
+        )
+    if dsn.startswith("postgresql://"):
+        dsn = dsn.replace("postgresql://", "postgresql+asyncpg://", 1)
+    return dsn
+
+
+
+_SCHEMA_READY = False
+
+
+# Which tables exist RIGHT NOW, asked of the catalogue — never of
+# `Base.metadata`: the metadata grows as modules import, so a list built at
+# first use names tables `create_all` had not seen yet ("relation camera_events
+# does not exist").
+_EXISTING_TABLES_SQL = """
+    SELECT tablename FROM pg_tables WHERE schemaname = 'public'
+"""
+
+
+def _non_empty_tables_sql(tables: list[str]) -> str:
+    """One query returning the tables that actually hold rows.
+
+    Truncating ALL ~120 tables costs 1.7 s per test (measured) — each takes an
+    ACCESS EXCLUSIVE lock and rewrites its files and sequences. A test touches a
+    handful, so ask first. EXISTS is exact (unlike `pg_class.reltuples`, an
+    estimate that only VACUUM refreshes — a stale 0 there would leave rows
+    standing and poison the next test), and against an empty table it is a scan
+    of zero pages.
+    """
+    parts = [
+        f"SELECT '{t}' AS t WHERE EXISTS (SELECT 1 FROM \"{t}\")" for t in tables
+    ]
+    return " UNION ALL ".join(parts)
+
+
+def _truncate_sql(names: list[str]) -> str:
+    """RESTART IDENTITY so a test that asserts on ids starts at 1; CASCADE
+    because the tables reference each other."""
+    joined = ", ".join(f'"{n}"' for n in names)
+    return f"TRUNCATE {joined} RESTART IDENTITY CASCADE"
+
+
+async def _ensure_schema() -> None:
+    """Create the schema ONCE per pytest run (the first database test pays for
+    it). Its engine is NullPool'd and disposed immediately, so no connection is
+    carried across the per-test event loops pytest-asyncio creates."""
+    global _SCHEMA_READY
+    if _SCHEMA_READY:
+        return
+    from sqlalchemy.pool import NullPool
+
+    # Import every model module BEFORE create_all: a table whose module has not
+    # been imported is simply absent from the metadata, and the first test that
+    # imports it then queries a table that was never created.
+    import ha_glue.models.database  # noqa: F401
+
+    engine = create_async_engine(_pg_url_or_skip(), poolclass=NullPool, echo=False)
+    try:
+        async with engine.begin() as conn:
+            await conn.execute(_sa_text("CREATE EXTENSION IF NOT EXISTS vector"))
+            await conn.run_sync(Base.metadata.drop_all)
+            await conn.run_sync(Base.metadata.create_all)
+    finally:
+        await engine.dispose()
+    _SCHEMA_READY = True
 
 
 @pytest.fixture
 async def async_engine():
-    """Create async SQLite engine for tests"""
-    from sqlalchemy import event
+    """Async engine on the real Postgres test database.
 
-    engine = create_async_engine(
-        TEST_DATABASE_URL,
-        connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
-        echo=False
-    )
+    NullPool: pytest-asyncio's auto mode gives every test its own event loop,
+    and a pooled asyncpg connection bound to a previous loop raises "got Future
+    attached to a different loop". Without a pool each test opens its own
+    connection, which costs a millisecond and removes the whole class of
+    cross-loop failures.
 
-    # Hook is attached to the sync-engine side of the async wrapper. It runs
-    # once per raw sqlite3 connection, registering the to_tsvector shim
-    # defined above.
-    event.listen(engine.sync_engine, "connect", _register_postgres_shim_udfs)
+    The schema is rebuilt per test (drop_all + create_all). It is the blunt
+    option, but it is also the only one that keeps tests independent when the
+    code under test opens its OWN session through `AsyncSessionLocal` and
+    therefore needs COMMITTED data — a transaction-rollback harness would hide
+    those rows from it.
+    """
+    from sqlalchemy.pool import NullPool
 
+    await _ensure_schema()
+    engine = create_async_engine(_pg_url_or_skip(), poolclass=NullPool, echo=False)
+
+    # Empty every table instead of rebuilding the schema: dropping and creating
+    # ~120 tables costs seconds PER TEST (measured: 2.5 s), one TRUNCATE costs
+    # milliseconds, and both give the same thing that matters — a test starts
+    # with an empty database and sees committed rows, including those written
+    # by code that opens its own `AsyncSessionLocal`.
     async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
+        tables = [r[0] for r in (await conn.execute(_sa_text(_EXISTING_TABLES_SQL))).all()]
+        if tables:
+            dirty = [
+                r[0] for r in
+                (await conn.execute(_sa_text(_non_empty_tables_sql(tables)))).all()
+            ]
+            if dirty:
+                await conn.execute(_sa_text(_truncate_sql(dirty)))
 
     yield engine
-
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.drop_all)
 
     await engine.dispose()
 
@@ -288,98 +388,28 @@ def _pg_test_dsn() -> str | None:
 def pytest_configure(config):
     config.addinivalue_line(
         "markers",
-        "postgres: Tests requiring real PostgreSQL + pgvector (skipped on sqlite test harness)",
+        "postgres: Tests requiring real PostgreSQL + pgvector (skipped on sqlite test harness)",  # noqa: E501 — kept verbatim to match pyproject.toml; the harness itself is Postgres now
     )
 
 
 @pytest.fixture
-async def pg_async_engine():
-    """Real-Postgres async engine, per-test scope.
+async def pg_async_engine(async_engine):
+    """Kept as a NAME, not as a second mechanism.
 
-    Creates the full schema via Base.metadata.create_all on each test.
-    Drops it on teardown. Skips the test if RENFIELD_TEST_PG_URL is unset.
-
-    Per-test scope (not session) because pytest-asyncio's "auto" mode
-    creates a new event loop per test function — a session-scoped async
-    engine binds to the FIRST test's loop and then asyncpg refuses
-    subsequent uses with "got Future attached to a different loop".
-    Per-test creation is ~200ms slower but eliminates the loop-binding
-    foot-gun.
-
-    Note: create_all on Postgres lays down the schema with the SAME
-    column definitions as the live alembic-managed DB for ORM-declared
-    columns. The GENERATED search_vector columns (which only exist post-
-    pc20260528 / pc20260529 in alembic) are NOT created by create_all —
-    they're explicitly ADDed by those migrations. Tests that need the
-    GENERATED columns must either run the migrations OR ADD them
-    explicitly in a fixture. See test_fts_multilingual_pg.py for the
-    explicit-ADD pattern.
+    There is only one kind of test database now: real Postgres. This used to
+    build and drop the whole schema per test alongside the sqlite default —
+    which, in one pytest process, pulled the tables out from under every other
+    test that had already seen the schema created ("relation conversations does
+    not exist"). Tests that ask for it get exactly the default engine.
     """
-    dsn = _pg_test_dsn()
-    if dsn is None:
-        pytest.skip("RENFIELD_TEST_PG_URL not set — Postgres tests disabled")
-    # Normalize the DSN: accept postgresql:// (sync) and rewrite to
-    # postgresql+asyncpg:// for the async engine.
-    if dsn.startswith("postgresql://"):
-        dsn = dsn.replace("postgresql://", "postgresql+asyncpg://", 1)
-
-    engine = create_async_engine(dsn, echo=False, future=True)
-
-    async with engine.begin() as conn:
-        # Drop first to recover from a prior crashed test run that left
-        # half-created tables behind. Idempotent on a fresh DB.
-        await conn.run_sync(Base.metadata.drop_all)
-        await conn.run_sync(Base.metadata.create_all)
-
-    yield engine
-
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.drop_all)
-    await engine.dispose()
+    return async_engine
 
 
 @pytest.fixture
-async def pg_db_session(pg_async_engine) -> AsyncGenerator[AsyncSession, None]:
-    """Per-test Postgres session, rolled back on teardown.
+async def pg_db_session(db_session):
+    """Alias of `db_session` — see `pg_async_engine`."""
+    return db_session
 
-    Opens an outer ``connection.begin()`` transaction and binds the
-    session to that connection. All test-side ``flush()`` calls happen
-    inside the outer transaction; on teardown the outer transaction
-    rolls back, undoing every change (including DDL inside fixtures
-    like ``fts_columns_installed`` that DROP+ADD generated columns).
-
-    IMPORTANT: tests using this fixture must NOT call
-    ``await session.commit()`` — that would commit the OUTER
-    transaction and break the rollback isolation, leaking rows / DDL
-    across tests. Use ``await session.flush()`` instead to push
-    pending ops to the DB without committing the outer txn.
-
-    The full SQLAlchemy-recommended pattern (begin_nested + an
-    after_transaction_end listener that re-issues SAVEPOINTs after
-    every session.commit() call) is documented at
-    https://docs.sqlalchemy.org/en/20/orm/session_transaction.html#joining-a-session-into-an-external-transaction-such-as-for-test-suites
-    — adopt that pattern if a future test genuinely needs to call
-    ``session.commit()``. The current 9 FTS tests only ``flush()``,
-    so the simpler outer-txn pattern is sufficient.
-    """
-    async_session_maker = async_sessionmaker(
-        pg_async_engine,
-        class_=AsyncSession,
-        expire_on_commit=False,
-    )
-    async with pg_async_engine.connect() as conn:
-        outer = await conn.begin()
-        try:
-            async with async_session_maker(bind=conn) as session:
-                yield session
-        finally:
-            if outer.is_active:
-                await outer.rollback()
-
-
-# ============================================================================
-# Sample Data Fixtures
-# ============================================================================
 
 @pytest.fixture
 def sample_room_data():
@@ -601,6 +631,38 @@ async def test_role(db_session: AsyncSession, sample_role_data) -> Role:
     await db_session.commit()
     await db_session.refresh(role)
     return role
+
+
+@pytest.fixture
+async def make_user(db_session: AsyncSession):
+    """Create real users with the ids a test wants to talk about.
+
+    Postgres enforces `conversations.user_id → users.id`; the old sqlite
+    harness did not, so ownership tests happily wrote `user_id=7` for a user
+    that never existed. Ask for the users you assert about:
+
+        u = await make_user(7)        # -> User with id 7
+    """
+    from models.database import Role, User as _User
+
+    role = Role(name="rolle-fixture", permissions=["chat.own"], is_system=False)
+    db_session.add(role)
+    await db_session.flush()
+
+    async def _make(user_id: int, **kw):
+        user = _User(
+            id=user_id,
+            username=kw.pop("username", f"nutzer{user_id}"),
+            password_hash="x",
+            role_id=role.id,
+            **kw,
+        )
+        db_session.add(user)
+        await db_session.commit()
+        await db_session.refresh(user)
+        return user
+
+    return _make
 
 
 @pytest.fixture
