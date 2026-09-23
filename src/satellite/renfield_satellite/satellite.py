@@ -680,8 +680,12 @@ class Satellite:
                     if server_url:
                         self.ws_client.set_server_url(server_url)
 
-                        # Fetch new auth token if authentication is enabled
-                        if self.config.server.auth_enabled:
+                        # Same gate as start() — NOT auth_enabled alone. A
+                        # satellite that reaches this loop because discovery
+                        # failed during start() has no credential set yet, and
+                        # skipping it here would reconnect forever without the
+                        # Authorization header (403 under auth-on).
+                        if self._needs_handshake_credential():
                             await self._fetch_and_set_token(server_url)
 
                 # Try to connect
@@ -691,6 +695,22 @@ class Satellite:
                 print(f"Reconnect attempt {attempts} errored: {e} - will retry")
 
         return False
+
+    def _model_downloader_token(self) -> str | None:
+        """The credential the wake-word model downloader may carry, if any.
+
+        NEVER the enrollment PSK. That secret is long-lived, has no expiry and
+        is the satellite's whole identity; the model route
+        (`GET /api/settings/wakeword/models/{id}`) requires no credential at
+        all, and the fleet downloads over TLS it does not verify
+        (`verify_tls: false`), so sending it there would put the device secret
+        on a channel that neither needs nor protects it. A short-lived faucet
+        token (the auth-off / JWT path) is still passed through.
+        """
+        token = getattr(self.ws_client, "_auth_token", None)
+        if not token or token.startswith("sat."):
+            return None
+        return token
 
     def _needs_handshake_credential(self) -> bool:
         """Whether a credential must be put on the WS handshake.
@@ -1098,8 +1118,9 @@ class Satellite:
         model_downloader = get_model_downloader()
         if self.ws_client.server_url:
             model_downloader.set_server_url(self.ws_client.server_url)
-        if hasattr(self.ws_client, '_auth_token') and self.ws_client._auth_token:
-            model_downloader.set_auth_token(self.ws_client._auth_token)
+        downloader_token = self._model_downloader_token()
+        if downloader_token:
+            model_downloader.set_auth_token(downloader_token)
         model_downloader.set_verify_tls(self.config.server.verify_tls)
 
         # Apply config and send acknowledgment asynchronously
@@ -1232,8 +1253,9 @@ class Satellite:
         model_downloader = get_model_downloader()
         if self.ws_client.server_url:
             model_downloader.set_server_url(self.ws_client.server_url)
-        if hasattr(self.ws_client, '_auth_token') and self.ws_client._auth_token:
-            model_downloader.set_auth_token(self.ws_client._auth_token)
+        downloader_token = self._model_downloader_token()
+        if downloader_token:
+            model_downloader.set_auth_token(downloader_token)
         model_downloader.set_verify_tls(self.config.server.verify_tls)
 
         keywords = config.wake_words or []

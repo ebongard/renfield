@@ -69,6 +69,11 @@ class TestAuthorizationHeaderReachesConnect:
 
         with patch.object(wsc.websockets, "connect", side_effect=fake_connect):
             await client.connect()
+        # connect() spawns the heartbeat/receive loops against the stub socket;
+        # stop them before asserting, or they raise into un-awaited tasks and
+        # leak into the next test.
+        client._running = False
+        await client._cancel_background_tasks()
 
         assert wsc._HEADERS_KWARG in captured
         assert captured[wsc._HEADERS_KWARG] == {
@@ -138,3 +143,56 @@ class TestDerivedCredential:
             await sat._fetch_and_set_token("wss://x/ws/satellite")
         faucet.assert_awaited_once()
         sat.ws_client.set_auth_token.assert_called_once_with("jwt-token")
+
+
+class TestReconnectGate:
+    @pytest.mark.satellite
+    @pytest.mark.asyncio
+    async def test_reconnect_sets_the_credential_after_a_failed_discovery(self):
+        """start() never set one (discovery failed, no URL); the loop must.
+
+        Without this the satellite reconnects forever with no Authorization
+        header — 403 under auth-on, which is the outage this module exists for.
+        """
+        from renfield_satellite.config import Config, SatelliteConfig, ServerConfig
+        from renfield_satellite.satellite import Satellite
+
+        sat = Satellite.__new__(Satellite)
+        sat.config = Config(
+            satellite=SatelliteConfig(id="sat-wohnzimmer"),
+            server=ServerConfig(
+                url=None, auto_discover=True, auth_enabled=False, enrollment_token="psk-abc"
+            ),
+        )
+        sat.ws_client = MagicMock()
+        sat.ws_client.connect = AsyncMock(return_value=True)
+        sat._discover_server = AsyncMock(return_value="wss://found/ws/satellite")
+        sat._running = True
+        sat._updating = False
+
+        with patch("renfield_satellite.satellite.asyncio.sleep", new=AsyncMock()):
+            assert await sat._reconnect_with_discovery() is True
+
+        sat.ws_client.set_auth_token.assert_called_once_with("sat.sat-wohnzimmer.psk-abc")
+
+
+class TestModelDownloaderToken:
+    """The PSK is the device's whole identity — it never leaves the handshake."""
+
+    @pytest.mark.satellite
+    def test_psk_is_not_handed_to_the_downloader(self):
+        sat = _satellite(ServerConfig(enrollment_token="psk-abc"))
+        sat.ws_client._auth_token = "sat.sat-wohnzimmer.psk-abc"
+        assert sat._model_downloader_token() is None
+
+    @pytest.mark.satellite
+    def test_faucet_token_still_passes_through(self):
+        sat = _satellite(ServerConfig(auth_enabled=True))
+        sat.ws_client._auth_token = "eyJhbGciOi.short.lived"
+        assert sat._model_downloader_token() == "eyJhbGciOi.short.lived"
+
+    @pytest.mark.satellite
+    def test_no_token_is_no_token(self):
+        sat = _satellite(ServerConfig())
+        sat.ws_client._auth_token = None
+        assert sat._model_downloader_token() is None

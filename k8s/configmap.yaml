@@ -8,11 +8,12 @@ metadata:
 data:
   # === Auth / deployment posture (#697) ===
   # These are set EXPLICITLY (not left to code defaults) so the running posture
-  # is auditable from the ConfigMap. Current values = the deliberate single-user,
-  # auth-off LAN posture — byte-identical to the code defaults, so setting them
-  # here changes nothing today. The consistency validator in utils/config.py
-  # (assert_auth_config_consistency) hard-fails on an incoherent combo.
-  RENFIELD_ENV: "production"        # auth-on cutover 2026-09-23 — NOT "production" — that arms the insecure-JWT-key boot guard; flip only with a strong SECRET_KEY (see cutover below)
+  # is auditable from the ConfigMap. Since the cutover of 2026-09-23 the posture
+  # is MULTI-USER, AUTH-ON — the old "single-user auth-off LAN" wording here was
+  # left standing through the flip and is gone. The consistency validator in
+  # utils/config.py (assert_auth_config_consistency) hard-fails on an incoherent
+  # combo.
+  RENFIELD_ENV: "production"        # auth-on cutover 2026-09-23; arms the insecure-JWT-key boot guard — requires a strong SECRET_KEY in EVERY pod that boots the app (see cutover below)
   AUTH_ENABLED: "true"             # auth-on cutover 2026-09-23 (war: false, single-user LAN); the whole multi-user surface — REST *and* WebSocket — is gated on this
   # WS_AUTH_ENABLED is RETIRED (was never an independent decision: the validator
   # refused to boot on AUTH_ENABLED=true + WS_AUTH_ENABLED=false, so only

@@ -40,7 +40,13 @@ def _headers_kwarg() -> str:
     try:
         import inspect
         params = inspect.signature(websockets.connect).parameters
-    except (TypeError, ValueError):  # pragma: no cover - exotic C wrapper
+    except Exception:
+        # Deliberately broad: this runs at MODULE IMPORT, and websockets >= 14
+        # resolves `connect` through a lazy package __getattr__, so an
+        # AttributeError/ImportError is reachable here. Letting anything escape
+        # would abort the import of this module and kill the satellite process,
+        # where the try/except ImportError above was written to degrade to
+        # "Network disabled" instead.
         return "additional_headers"
     if "additional_headers" in params:
         return "additional_headers"

@@ -54,37 +54,56 @@ alle laufenden Satelliten waren binnen Sekunden stumm — der Weg zu ihnen führ
 fragile Pi Zeros. Die Serverhälfte (`SATELLITE_PSK_HANDSHAKE_ENABLED`) nützt
 nichts, solange das Gerät keinen `Authorization`-Kopf sendet.
 
-Nachweis, nicht Annahme — auf JEDEM Satelliten, noch unter auth-off:
+Der Nachweis hat ZWEI Hälften, und keine genügt allein.
 
-```bash
-# Die Geräteseite muss den Satelliten-Code ab #1305-Gerätehälfte fahren:
-#   - leitet sat.<id>.<psk> aus dem Enrollment-Token ab
-#   - Tor = auth_enabled ODER enrollment_token
-#   - Kopf-Kwarg aus der websockets-Signatur (extra_headers -> additional_headers)
-ssh <sat> 'cd /opt/renfield-satellite && venv/bin/python -c "
-from renfield_satellite.network.websocket_client import _HEADERS_KWARG
-import inspect, websockets
-print(_HEADERS_KWARG in inspect.signature(websockets.connect).parameters)"'
-```
-
-Und der einzige Nachweis, der zählt: ein Satellit, der sich mit dem PSK-Kopf
-anmeldet, WÄHREND `AUTH_ENABLED` noch `false` ist (der Server liest den Kopf
-dann gar nicht — die Probe muss den Handschlag also selbst fahren):
+**Hälfte A — kann das Gerät den Kopf überhaupt senden?** Auf JEDEM Satelliten,
+noch unter auth-off:
 
 ```bash
 ssh <sat> 'cd /opt/renfield-satellite && venv/bin/python -c "
 import asyncio, ssl, websockets
 from renfield_satellite.config import load_config
+from renfield_satellite.network.websocket_client import _HEADERS_KWARG
 c = load_config(\"config/satellite.yaml\")
 ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT); ctx.check_hostname=False; ctx.verify_mode=ssl.CERT_NONE
 tok = c.server.auth_token or f\"sat.{c.satellite.id}.{c.server.enrollment_token}\"
 async def m():
-    async with websockets.connect(c.server.url, additional_headers={\"Authorization\": \"Bearer \"+tok}, ssl=ctx):
-        print(\"HANDSHAKE OK\")
+    kw = {_HEADERS_KWARG: {\"Authorization\": \"Bearer \"+tok}, \"ssl\": ctx}
+    async with websockets.connect(c.server.url, **kw):
+        print(\"HANDSHAKE OK\", _HEADERS_KWARG)
 asyncio.run(m())"'
 ```
 
-Ein Satellit, der hier nicht `HANDSHAKE OK` sagt, ist nach dem Umlegen stumm.
+Den Kwarg-Namen NIE hart hinschreiben — `_HEADERS_KWARG` wählt ihn aus der
+Signatur der installierten `websockets`, und genau die Annahme „der Name ist
+doch bekannt" war einer der drei Fehler vom 2026-09-23. Eine Probe mit festem
+Namen meldet auf einem Gerät mit websockets ≤ 13 einen `TypeError` und
+verurteilt ein Gerät, das mit dem ausgelieferten Code einwandfrei verbindet.
+
+**Hälfte B — ist der PSK auf dem Gerät auch der, den die Datenbank kennt?**
+Hälfte A beweist das NICHT: solange `AUTH_ENABLED=false` ist, liest der Server
+den Kopf gar nicht (`websocket_auth.py`, `auth_skipped` vor Strategie S). Ein
+Gerät mit rotiertem, widerrufenem oder gar keinem PSK sagt fröhlich
+`HANDSHAKE OK` und ist nach dem Umlegen trotzdem stumm.
+
+Der Beweis dafür liegt schon vor — wenn die Einschreibung ERZWINGEND ist,
+hat jede erfolgreiche Anmeldung genau diesen PSK gegen genau diesen
+bcrypt-Hash geprüft:
+
+```bash
+kubectl -n renfield get cm renfield-env -o jsonpath='{.data.SATELLITE_ENROLLMENT_ENABLED}'; echo   # muss "true" sein
+kubectl -n renfield exec renfield-pg-r1-1 -c postgres -- psql -U postgres -d renfield -c \
+  "SELECT satellite_id, is_enabled, revoked_at IS NULL AS aktiv, last_authenticated_at,
+          now() - last_authenticated_at AS alter FROM satellites ORDER BY last_authenticated_at DESC NULLS LAST;"
+```
+
+Erwartet je Satellit, der leben soll: `is_enabled`, `aktiv`, und ein `alter`
+von Minuten — nicht Tagen. **Ein alter Zeitstempel heißt nicht „ruhig", sondern
+„dieses Gerät ist schon jetzt offline".** Im Haushalt zeigte genau diese
+Abfrage, dass zwei der sechs Satelliten seit Tagen bzw. Wochen weg waren, lange
+vor dem Cutover — eine Ausfallliste ohne Zeitstempel ist eine Vermutung.
+
+Erst wenn A und B für JEDEN Satelliten stimmen, geht es weiter.
 
 ### 1.1 Die NEUN Schlüssel sind vorbereitet, aber noch nicht gesetzt
 
@@ -197,8 +216,14 @@ Manifest-Kommentar sagte die Bedingung ausdrücklich — „DRIFT IS EXPECTED HE
 DATUM erwartet: was nur gilt, solange das Flag aus ist, wird mit dem Umlegen
 fällig.
 
+Maßgeblich ist nicht „fährt das Backend-Image", sondern „importiert
+`config.py`". Der `ami-embedding-eval-job` etwa fährt dasselbe Image, startet
+aber ein eigenständiges Skript ohne `Settings()` — er braucht den Schlüssel
+nicht. Der `alembic-upgrade-job` dagegen löst ihn über `alembic/env.py` aus und
+trägt ihn zu Recht.
+
 ```bash
-# Für JEDES Deployment, das das Backend-Image fährt:
+# Für JEDES Deployment/Job, das die Anwendung hochfährt:
 for d in backend document-worker meeting-worker pdf-split-worker; do
   printf '%-20s ' "$d"
   kubectl -n renfield get deploy $d -o jsonpath='{.spec.template.spec.containers[0].env[?(@.name=="SECRET_KEY")].valueFrom.secretKeyRef.name}'; echo
