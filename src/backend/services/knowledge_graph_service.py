@@ -1911,14 +1911,19 @@ async def kg_post_message_hook(
     related person (the cross-turn residual the prior subject-level proxy guard
     missed).
 
-    NOT truly per-fact: the set holds subject NAMES, not (subject, object)
-    pairs, so a same-turn same-subject state fact alongside an entity-object
-    fact is still subsumed (narrower residual; see ``_should_subsume_fact``).
+    Each entry is ``(lowercased name, entity_id, owner_user_id)``. The ENTITY ID
+    is the part that carries the multi-user answer (auth-on cutover §8.2): a
+    name alone cannot say WHICH Anna a relation was saved about, and the memory
+    side resolves its own subject per asker through the circle filter and
+    compares ids. The name and owner ride along for logs and for the
+    single-user eval, which still classifies by name.
+
+    NOT truly per-fact: the set holds subjects, not (subject, object) pairs, so
+    a same-turn same-subject state fact alongside an entity-object fact is still
+    subsumed (narrower residual; see ``_should_subsume_fact``).
 
     KG extraction still runs exactly ONCE (here) — the captured set is the only
-    cross-task signal, never a second extraction. Names are matched
-    case-insensitively against the memory extractor's verbatim ``subject``
-    (mirrors ``classify_case`` in run_subsume_recall_loss_eval.py).
+    cross-task signal, never a second extraction.
     """
     captured_subjects = kwargs.get("captured_subjects")
     try:
@@ -1931,20 +1936,24 @@ async def kg_post_message_hook(
                 user_msg, assistant_msg, user_id, session_id, lang
             )
             if captured_subjects is not None and relations:
-                # Map each saved relation's subject_id back to its entity name
-                # via the resolved-entity list returned by the same call. A
-                # relation's subject_id is the canonical survivor id; the
-                # entity objects in `entities` are exactly those resolved this
-                # turn, so this covers every relation we just saved.
-                id_to_name = {
-                    e.id: (e.name or "").strip().lower()
-                    for e in entities
-                    if getattr(e, "id", None) is not None
+                # Map each saved relation's subject_id back to its entity via the
+                # resolved-entity list returned by the same call. A relation's
+                # subject_id is the canonical survivor id; the entity objects in
+                # `entities` are exactly those resolved this turn, so this covers
+                # every relation we just saved.
+                by_id = {
+                    e.id: e for e in entities if getattr(e, "id", None) is not None
                 }
                 for r in relations:
-                    name = id_to_name.get(getattr(r, "subject_id", None))
+                    subject_id = getattr(r, "subject_id", None)
+                    ent = by_id.get(subject_id)
+                    if ent is None:
+                        continue
+                    name = (ent.name or "").strip().lower()
                     if name:
-                        captured_subjects.add(name)
+                        captured_subjects.add(
+                            (name, subject_id, getattr(ent, "user_id", None))
+                        )
     except Exception as e:
         logger.warning(f"KG post_message hook failed: {e}")
 

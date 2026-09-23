@@ -2242,6 +2242,41 @@ class Settings(BaseSettings):
         return self
 
     @model_validator(mode="after")
+    def assert_subsume_is_single_user(self) -> "Settings":
+        """Subsume is single-user until the cutover says otherwise (§8.2, D-7).
+
+        ``MEMORY_SUBSUME_TO_KG`` DROPS a flat fact memory on the argument that
+        the knowledge graph already holds it. That argument is per-asker: with
+        several users the graph holds other people's entities too, and a fact
+        dropped against the wrong person's node is gone — memories are the one
+        corpus with no second copy.
+
+        P0 Nr. 7 makes the decision per-asker (subject resolution through
+        ``kg_entities_circles_filter``, the captured set keyed by entity id, the
+        relation proof owner-bound). This gate stays on anyway, by decision: the
+        household must turn subsume OFF when it turns auth ON, and turn it back
+        on deliberately once the multi-user path has been watched in the wild.
+        An automatic "it is fixed, carry on" is exactly the silent widening the
+        cutover is built to avoid.
+
+        Remove this validator when the cutover is done and subsume has been
+        re-enabled on purpose — it is a dated gate, not a permanent invariant.
+        The private instance never sets the key (default ``False``), so it is
+        untouched, and the auth-off household is untouched today.
+        """
+        if self.memory_subsume_to_kg and self.auth_enabled:
+            raise ValueError(
+                "MEMORY_SUBSUME_TO_KG=true with AUTH_ENABLED=true — subsume "
+                "DROPS a flat fact memory because the knowledge graph is said to "
+                "hold it, and a fact dropped against another user's same-named "
+                "entity is unrecoverable. The multi-user path is built (auth-on "
+                "cutover §8.2) but not yet released: set MEMORY_SUBSUME_TO_KG="
+                "false when switching AUTH_ENABLED on, and re-enable it "
+                "deliberately after the cutover."
+            )
+        return self
+
+    @model_validator(mode="after")
     def assert_login_lockout_thresholds(self) -> "Settings":
         """The username-wide backstop must sit ABOVE the per-IP threshold, or the
         per-IP scope is moot (every lock would be a username-wide lock again —

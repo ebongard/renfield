@@ -36,10 +36,25 @@ Decomposable `fact` memories with a subject are NOT stored flat; preferences/ins
 - `_should_subsume_fact`: the per-turn `captured_kg_subjects` set is the **PRIMARY** gate. `_subject_is_kg_representable`
   (`MEMORY_SUBSUME_REQUIRE_KG_RELATION`, default on) is ONLY a fallback for uncoordinated callers
   (`captured_kg_subjects is None`).
-- **NOT truly per-fact** — the signal is subject NAMES. Two facts about one subject in one turn (one relation saved,
-  one state/attribute) still lose the state fact: the documented residual (`mixed-same-subject-*` case in
-  `bin/run_subsume_recall_loss_eval.py --perfact`). Do not claim a per-fact guarantee.
-- **Still single-user only.** Subsume off → coordination off, two independent tasks (legacy).
+- **NOT truly per-fact** — the signal is the subject, not (subject, object). Two facts about one subject in one turn
+  (one relation saved, one state/attribute) still lose the state fact: the documented residual
+  (`mixed-same-subject-*` case in `bin/run_subsume_recall_loss_eval.py --perfact`). No per-fact guarantee.
+- **Per ASKER since auth-on §8.2 (P0 Nr. 7).** Subsume DROPS a memory, and memories have no second copy, so the
+  "the KG already holds it" claim must be about the ASKER's graph:
+  - the captured set is keyed `(name, entity_id, owner_user_id)` — a NAME cannot say which same-named person a
+    relation was about, so `_should_subsume_fact` resolves its own subject and compares **entity ids**;
+  - `_resolve_subject_entity_id` is the ONE resolver for both gates: per asker through `kg_entities_circles_filter`.
+    It replaced `user_id == asker OR user_id IS NULL`, whose ownerless half matched the auth-off era's legacy
+    entities for everyone — one user's relation dropped another user's fact;
+  - **resolution follows REACH, the relation proof stays OWNER-bound.** A housemate's tier-2 entity is the node the
+    asker means, but only the asker's own relation may retire their memory: otherwise the housemate narrowing their
+    tier becomes this user's data loss. Auth off keeps the legacy predicate exactly.
+  - the **v2 path has the same gate** (it had none, BL-0421): `MemoryOp.subject` is optional — no subject means keep
+    flat, so a model that omits it costs a duplicate, never a memory.
+- **A startup validator refuses `MEMORY_SUBSUME_TO_KG=true` together with `AUTH_ENABLED=true`** (`assert_subsume_is_single_user`).
+  Dated gate, not an invariant: the household turns subsume OFF at the cutover and back on deliberately afterwards.
+  Remove it then.
+- Subsume off → coordination off, two independent tasks (legacy).
 
 ## Spoken turns (`services/turn_extraction.py`) — deliberately UNFLAGGED, no kill-switch
 - Both producers (browser `chat_handler`, `satellite_handler._spawn_satellite_extraction`) go through the same seam:

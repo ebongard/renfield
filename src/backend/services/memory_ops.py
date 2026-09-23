@@ -68,6 +68,11 @@ MAX_REASON_CHARS = 500
 MAX_CONTENT_CHARS = 2000
 
 
+# Hard cap on the `subject` field — a person's name, matched against
+# `kg_entities.name` (String(255)). Anything longer is not a name.
+MAX_SUBJECT_CHARS = 255
+
+
 class OpType(str, enum.Enum):
     """The four legal operations on a memory row.
 
@@ -115,6 +120,14 @@ class MemoryOp(BaseModel):
     # Free-text rationale the LLM emits for the human reviewer.
     # Capped to keep prompts bounded.
     reason: Optional[str] = Field(default=None, max_length=MAX_REASON_CHARS)
+
+    # The person this memory is ABOUT, verbatim as named in the turn — the v1
+    # extractor's `subject`, brought to v2 so the subsume gate works on both
+    # paths (auth-on cutover §8.2; v2 used to bypass it entirely, BL-0421).
+    # OPTIONAL and deliberately never required: a model that omits it yields
+    # "no subject" → the fact is kept FLAT, which is the fail-safe direction.
+    # Omitting it can cost a duplicate, never a lost memory.
+    subject: Optional[str] = Field(default=None, max_length=MAX_SUBJECT_CHARS)
 
     @field_validator("category")
     @classmethod

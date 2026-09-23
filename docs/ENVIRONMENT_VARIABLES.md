@@ -1785,6 +1785,14 @@ dessen Objekt keine benannte Entitaet ist (z. B. „Anna ist müde"), wird ggf. 
 als KG-Relation erfasst und geht verloren. Erst aktivieren, wenn die Fakt-Erfassung
 der KG-Extraktion an echten Transkripten validiert ist. Aus (default) = unveraendert.
 
+**Der Start bricht ab, wenn `MEMORY_SUBSUME_TO_KG=true` mit `AUTH_ENABLED=true`
+zusammentrifft** (`assert_subsume_is_single_user`). Subsume verwirft eine Erinnerung,
+und Erinnerungen haben keine zweite Kopie — der mehrnutzerfaehige Weg ist gebaut
+(auth-on-Cutover §8.2: Subjekt-Aufloesung je Frager ueber `kg_entities_circles_filter`,
+erfasstes Set nach Entitaets-ID, Relations-Nachweis eigentuemergebunden), aber noch nicht
+freigegeben. Beim Umschalten auf auth-on also `MEMORY_SUBSUME_TO_KG=false` setzen und nach
+dem Cutover bewusst wieder einschalten. Das Tor ist datiert, keine Invariante.
+
 **Defaults:**
 - `MEMORY_ENABLED`: `false`
 - `MEMORY_RETRIEVAL_LIMIT`: `3`

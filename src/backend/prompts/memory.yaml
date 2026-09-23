@@ -118,6 +118,10 @@ de:
                   REQUIRED fuer ADD; optional fuer UPDATE
     - importance: float 0.1-1.0
     - reason:     kurzer string, optional, fuer menschliches Review
+    - subject:    string, optional; NUR bei category "fact": die Person, UEBER
+                  die der Fakt geht, genau so benannt wie im Gespraech
+                  ("Anna", "Papa"). Weglassen, wenn der Fakt ueber den
+                  Benutzer selbst geht oder ueber keine Person.
 
     BEISPIELE:
 
@@ -126,6 +130,11 @@ de:
     -> Klarer persoenlicher Fakt, kein Widerruf, nichts widerspricht.
     -> [{{"op": "ADD", "content": "Is Release Manager for Release 2.1",
           "category": "fact", "importance": 0.9}}]
+
+    User: "Anna arbeitet jetzt bei Arkadon."
+    -> Fakt UEBER eine andere Person -> subject setzen.
+    -> [{{"op": "ADD", "content": "Anna works at Arkadon",
+          "category": "fact", "subject": "Anna", "importance": 0.7}}]
 
     User: "Sprich mich bitte mit Du an."
     -> Stehende Anweisung. Auch wenn die Kandidatenliste leer ist:
@@ -296,6 +305,10 @@ en:
                   REQUIRED for ADD; optional for UPDATE
     - importance: float 0.1-1.0
     - reason:     short string, optional, for human review
+    - subject:    string, optional; ONLY for category "fact": the person the
+                  fact is ABOUT, named exactly as in the conversation
+                  ("Anna", "Dad"). Omit it when the fact is about the user
+                  themselves or about no person.
 
     EXAMPLES:
 
@@ -304,6 +317,11 @@ en:
     -> Clean personal fact. No retraction, nothing contradicting.
     -> [{{"op": "ADD", "content": "Is Release Manager for Release 2.1",
           "category": "fact", "importance": 0.9}}]
+
+    User: "Anna works at Arkadon now."
+    -> Fact ABOUT another person -> set subject.
+    -> [{{"op": "ADD", "content": "Anna works at Arkadon",
+          "category": "fact", "subject": "Anna", "importance": 0.7}}]
 
     User: "Always respond in English."
     -> Standing instruction. Empty candidates list is NOT a reason to NOOP —

@@ -66,6 +66,27 @@ def _svc(db, monkeypatch, *, subsume: bool, require_relation: bool = False) -> C
     return svc
 
 
+async def _seed_person(db: AsyncSession, user_id: int, name: str) -> KGEntity:
+    """A bare person entity — what the KG extractor creates while saving a
+    relation this turn. The captured set is keyed by entity ID since the
+    multi-user fix (§8.2), so a test that claims "the KG captured Anna" has to
+    have an Anna the asker can resolve."""
+    ent = KGEntity(user_id=user_id, name=name, entity_type="person")
+    db.add(ent)
+    await db.flush()
+    return ent
+
+
+async def _captured(db: AsyncSession, user_id: int, *names: str) -> set[tuple[str, int, int | None]]:
+    """The per-turn captured set for these subjects, as the hook would build it:
+    ``(lowercased name, entity_id, owner_user_id)``."""
+    out = set()
+    for n in names:
+        ent = await _seed_person(db, user_id, n)
+        out.add((n.strip().lower(), ent.id, user_id))
+    return out
+
+
 async def _seed_entity_with_relation(db: AsyncSession, user_id: int, name: str) -> KGEntity:
     """Create a person entity for ``name`` with one outgoing relation, so the
     recall-loss guard sees the subject as KG-representable."""
@@ -263,7 +284,7 @@ class TestSubsumePerFactGate:
         await _seed_entity_with_relation(pg_db_session, owner.id, "Anna")
         svc = _svc_perfact(pg_db_session, monkeypatch, subsume=True)
         # This turn the KG captured a relation ONLY for Tom (not Anna).
-        captured = {"tom"}
+        captured = await _captured(pg_db_session, owner.id, "Tom")
         saved = await svc._extract_and_save_v1_impl(
             "u", "a", user_id=owner.id, captured_kg_subjects=captured
         )
@@ -297,7 +318,7 @@ class TestSubsumePerFactGate:
         subsumed (the duplicate-reduction still works)."""
         owner = await _make_user(pg_db_session, "pf_tom")
         svc = _svc_perfact(pg_db_session, monkeypatch, subsume=True)
-        captured = {"anna", "tom"}
+        captured = await _captured(pg_db_session, owner.id, "Anna", "Tom")
         saved = await svc._extract_and_save_v1_impl(
             "u", "a", user_id=owner.id, captured_kg_subjects=captured
         )
@@ -332,7 +353,8 @@ class TestSubsumePerFactGate:
         owner = await _make_user(pg_db_session, "pf_off")
         svc = _svc_perfact(pg_db_session, monkeypatch, subsume=False)
         saved = await svc._extract_and_save_v1_impl(
-            "u", "a", user_id=owner.id, captured_kg_subjects={"anna", "tom"}
+            "u", "a", user_id=owner.id,
+            captured_kg_subjects=await _captured(pg_db_session, owner.id, "Anna", "Tom"),
         )
         contents = {m.content for m in saved}
         assert contents == {"Anna ist müde", "Tom arbeitet bei Siemens", "mag Jazz"}
@@ -340,16 +362,17 @@ class TestSubsumePerFactGate:
     async def test_should_subsume_fact_helper_direct(self, pg_db_session, monkeypatch):
         """_should_subsume_fact decision matrix."""
         owner = await _make_user(pg_db_session, "pf_helper")
-        await _seed_entity_with_relation(pg_db_session, owner.id, "Anna")
+        anna = await _seed_entity_with_relation(pg_db_session, owner.id, "Anna")
+        captured_anna = {("anna", anna.id, owner.id)}
         svc = ConversationMemoryService(pg_db_session)
         monkeypatch.setattr(settings, "memory_subsume_require_kg_relation", True)
         # Per-fact signal present (captured set is authoritative):
-        assert await svc._should_subsume_fact("Anna", owner.id, {"anna"}) is True
+        assert await svc._should_subsume_fact("Anna", owner.id, captured_anna) is True
         assert await svc._should_subsume_fact("Anna", owner.id, set()) is False
         # case-insensitive
-        assert await svc._should_subsume_fact("ANNA", owner.id, {"anna"}) is True
+        assert await svc._should_subsume_fact("ANNA", owner.id, captured_anna) is True
         # no subject -> never subsume
-        assert await svc._should_subsume_fact(None, owner.id, {"anna"}) is False
+        assert await svc._should_subsume_fact(None, owner.id, captured_anna) is False
         # uncoordinated (None) -> proxy fallback: Anna already-related -> True
         assert await svc._should_subsume_fact("Anna", owner.id, None) is True
         assert await svc._should_subsume_fact("Unknown", owner.id, None) is False
@@ -377,7 +400,7 @@ class TestSubsumePerFactGate:
             svc, "_parse_extraction_response", lambda raw: [dict(i) for i in mixed_items]
         )
         # "anna" captured this turn (the entity-object fact's relation was saved).
-        captured = {"anna"}
+        captured = await _captured(pg_db_session, owner.id, "Anna")
         saved = await svc._extract_and_save_v1_impl(
             "u", "a", user_id=owner.id, captured_kg_subjects=captured
         )

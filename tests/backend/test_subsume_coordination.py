@@ -21,9 +21,10 @@ pytestmark = [pytest.mark.unit, pytest.mark.asyncio]
 
 
 class _Ent:
-    def __init__(self, id_: int, name: str):
+    def __init__(self, id_: int, name: str, user_id: int | None = 7):
         self.id = id_
         self.name = name
+        self.user_id = user_id
 
 
 class _Rel:
@@ -45,15 +46,17 @@ class TestKgHookCapturesSubjects:
             async def extract_and_save(self, *a, **k):
                 return entities, relations
 
-        captured: set[str] = set()
+        captured: set[tuple[str, int, int | None]] = set()
         with patch.object(kgs, "KnowledgeGraphService", _FakeSvc), \
              patch("services.database.AsyncSessionLocal", _fake_session_local()):
             await kgs.kg_post_message_hook(
                 "u", "a", user_id=7, session_id="s",
                 captured_subjects=captured, lang="de",
             )
-        # Subjects of the two saved relations (lowercased), object 'Bonn' excluded.
-        assert captured == {"anna", "tom"}
+        # Subjects of the two saved relations, object 'Bonn' excluded. Keyed by
+        # ENTITY ID since the multi-user fix (§8.2) — a name alone cannot say
+        # WHICH Anna a relation was saved about.
+        assert captured == {("anna", 1, 7), ("tom", 3, 7)}
 
     async def test_no_capture_arg_is_noop(self):
         from services import knowledge_graph_service as kgs
