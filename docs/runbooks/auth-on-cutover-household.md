@@ -103,6 +103,32 @@ von Minuten — nicht Tagen. **Ein alter Zeitstempel heißt nicht „ruhig", son
 Abfrage, dass zwei der sechs Satelliten seit Tagen bzw. Wochen weg waren, lange
 vor dem Cutover — eine Ausfallliste ohne Zeitstempel ist eine Vermutung.
 
+Für einen Satelliten, der gerade NICHT im Netz ist, prüft man den PSK direkt
+gegen den Hash — und zwar **ohne** `evaluate_credential`: das stempelt bei
+Erfolg `last_authenticated_at` und zerstört genau das Signal aus Hälfte B.
+
+```bash
+python -c "import yaml,sys; sys.stdout.write(str(yaml.safe_load(
+  open('src/satellite/provisioning/host_vars/satellite-<name>.yml'))['satellite_enrollment_token']))" \
+| kubectl -n renfield exec -i deploy/backend -c backend -- python -c "
+import asyncio, sys
+psk = sys.stdin.read().strip()
+from sqlalchemy import select
+from services.database import AsyncSessionLocal
+from services.auth_service import pwd_context
+from models.database import Satellite
+async def main():
+    async with AsyncSessionLocal() as db:
+        row = (await db.execute(select(Satellite).where(
+            Satellite.satellite_id=='sat-<name>'))).scalar_one_or_none()
+        print('passt:', pwd_context.verify(psk, row.token_hash),
+              '| is_enabled:', row.is_enabled, '| revoked:', row.revoked_at)
+asyncio.run(main())"
+```
+
+Der PSK wandert dabei über stdin, nie über die Kommandozeile — sonst steht er
+in der Shell-Historie und in jedem Prozesslisting.
+
 Erst wenn A und B für JEDEN Satelliten stimmen, geht es weiter.
 
 ### 1.1 Die NEUN Schlüssel sind vorbereitet, aber noch nicht gesetzt
