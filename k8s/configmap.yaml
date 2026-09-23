@@ -12,8 +12,8 @@ data:
   # auth-off LAN posture — byte-identical to the code defaults, so setting them
   # here changes nothing today. The consistency validator in utils/config.py
   # (assert_auth_config_consistency) hard-fails on an incoherent combo.
-  RENFIELD_ENV: "development"       # NOT "production" — that arms the insecure-JWT-key boot guard; flip only with a strong SECRET_KEY (see cutover below)
-  AUTH_ENABLED: "false"            # single-user LAN; the whole multi-user surface — REST *and* WebSocket — is gated on this
+  RENFIELD_ENV: "production"        # auth-on cutover 2026-09-23 — NOT "production" — that arms the insecure-JWT-key boot guard; flip only with a strong SECRET_KEY (see cutover below)
+  AUTH_ENABLED: "true"             # auth-on cutover 2026-09-23 (war: false, single-user LAN); the whole multi-user surface — REST *and* WebSocket — is gated on this
   # WS_AUTH_ENABLED is RETIRED (was never an independent decision: the validator
   # refused to boot on AUTH_ENABLED=true + WS_AUTH_ENABLED=false, so only
   # both-on/both-off existed). A leftover key that AGREES with AUTH_ENABLED still
@@ -29,9 +29,9 @@ data:
   # no endpoint → federation unusable). Same-cluster peers use the internal svc DNS.
   FEDERATION_ADVERTISED_URL: "http://backend.renfield.svc.cluster.local:8000"
   ALLOW_REGISTRATION: "false"      # meaningless while auth is off (register route 403s either way); already the safe cutover value — a "true" here would count as "decided" and disarm the auth-on boot gate
-  CORS_ORIGINS: "*"               # pin to the frontend origin at cutover
-  TRUSTED_PROXIES: ""             # empty = legacy XFF[0] (per-client keying behind Traefik); set to the Traefik pod CIDR for the spoof-resistant walk (#693)
-  API_RATE_LIMIT_STORAGE_URI: "memory://"   # per-pod; set to "redis://redis:6379" for shared per-cluster limiting when >1 backend pod runs
+  CORS_ORIGINS: "https://renfield.local"   # gepinnt am Cutover 2026-09-23 (Ingress renfield-https); "*" schaltet den CSWSH-Schutz des WS ab
+  TRUSTED_PROXIES: "172.16.0.0/16"  # Cluster-Pod-CIDR, Cutover 2026-09-23 — leer = legacy XFF[0] (per-client keying behind Traefik); set to the Traefik pod CIDR for the spoof-resistant walk (#693)
+  API_RATE_LIMIT_STORAGE_URI: "redis://redis:6379"   # geteilt, Cutover 2026-09-23 — vorher per-pod; set to "redis://redis:6379" for shared per-cluster limiting when >1 backend pod runs
   #
   # ── AUTH-ON CUTOVER (xidra multi-user) — do NOT flip piecemeal ──────────────
   # Provision a strong SECRET_KEY (>= 32 random chars) in the renfield-secrets
@@ -221,6 +221,23 @@ data:
   # Release per OTA zu pushen (v1.4.6 ist signiert; bei jeder Satelliten-
   # Quellcode-Änderung neu signieren: bin/sign_satellite_release.py --sign).
   SATELLITE_OTA_REQUIRE_SIGNATURE: "true"
+  # Identitaet, unter der ein Satellitenzug OHNE erkannten Sprecher laeuft
+  # (auth-on Cutover D-4b, 2026-09-23). Das KENNZEICHEN users.is_device_account
+  # ist der Vertrag, nie der Name: es sperrt Erinnerungs-Extraktion und
+  # Praesenzbuchung. Die ROLLE dieses Kontos ist der Rechtesatz — deshalb wird
+  # SATELLITE_ANONYMOUS_PERMISSIONS auf diesem Pfad nicht mehr gelesen.
+  # Ein gesetzter, aber nicht aufloesbarer Name VERWEIGERT jeden anonymen Zug.
+  # Ohne dieses Konto gehoert ein Raumverlauf niemandem und faellt auf Stufe 0
+  # zurueck — die geteilten Raumverlaeufe (§8.1) waeren still wirkungslos.
+  SATELLITE_DEVICE_ACCOUNT: "Haushalt"
+
+  # Registry-Zeile dieser Instanz beim geteilten Voice-Server. Mit auth AN geht
+  # der Browser-Handschlag auf den authentifizierten Pfad und muss `?client=`
+  # mitfuehren; ohne die Kennung weist der Voice-Server ihn ab. Das Frontend
+  # holt sie zur LAUFZEIT vom Backend (Vorrang vor der Bauzeit-Variante), ein
+  # Neubau ist also nicht noetig. Bisher lief der Haushalt ueber
+  # voice-server-anon, das ANON_DEFAULT_CLIENT=renfield selbst ergaenzt.
+  VOICE_BROWSER_CLIENT_ID: "renfield"
 
   # Prometheus /metrics (in-cluster only: der Ingress routet /metrics nicht,
   # der Service ist ClusterIP — extern landet der Pfad auf der SPA). Enthält
@@ -416,7 +433,7 @@ data:
   KG_RECONCILER_ENABLED: "true"
   MEMORY_EXTRACTION_V2_SHADOW: "true"
   MEMORY_KG_BRIDGE_ENABLED: "true"
-  MEMORY_SUBSUME_TO_KG: "true"
+  MEMORY_SUBSUME_TO_KG: "false"   # AUS am Cutover 2026-09-23: der Startwaechter verweigert true+AUTH_ENABLED=true (§8.2). Nach dem Cutover bewusst wieder einschalten und den Waechter entfernen.
   MESSAGE_SEARCH_ENABLED: "true"
   NOTES_ENABLED: "true"
   OBLIGATION_DIGEST_ENABLED: "true"
