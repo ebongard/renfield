@@ -33,15 +33,25 @@ data:
   TRUSTED_PROXIES: "172.16.0.0/16"  # Cluster-Pod-CIDR, Cutover 2026-09-23 — leer = legacy XFF[0] (per-client keying behind Traefik); set to the Traefik pod CIDR for the spoof-resistant walk (#693)
   API_RATE_LIMIT_STORAGE_URI: "redis://redis:6379"   # geteilt, Cutover 2026-09-23 — vorher per-pod; set to "redis://redis:6379" for shared per-cluster limiting when >1 backend pod runs
   #
-  # ── AUTH-ON CUTOVER (xidra multi-user) — do NOT flip piecemeal ──────────────
+  # ── AUTH-ON CUTOVER — do NOT flip piecemeal ─────────────────────────────────
+  # BEFORE anything here: roll out the DEVICE half and prove it per satellite
+  # (docs/runbooks/auth-on-cutover-household.md §1.0). After the flip the way to
+  # the devices is cut — OTA travels over the very WS link that then fails.
   # Provision a strong SECRET_KEY (>= 32 random chars) in the renfield-secrets
-  # Secret FIRST, then set together:
+  # Secret FIRST — and check it per DEPLOYMENT, not per instance: every pod that
+  # imports config.py arms the guard (the household's document-worker died on
+  # exactly this). Then set the NINE together (this list said six until the
+  # household cutover 2026-09-23 had to add the last three by hand):
   #   RENFIELD_ENV: "production"      (arms the SECRET_KEY boot guard — #692)
   #   AUTH_ENABLED: "true"            (covers the WebSocket surface too — there is no second flag)
   #   ALLOW_REGISTRATION: "false"
   #   CORS_ORIGINS: "https://renfield.local"   (or the real origin)
   #   TRUSTED_PROXIES: "<Traefik pod CIDR>"    (verify live: kubectl get pod -n kube-system -l app.kubernetes.io/name=traefik -o wide)
   #   API_RATE_LIMIT_STORAGE_URI: "redis://redis:6379"
+  #   MEMORY_SUBSUME_TO_KG: "false"            (else the subsume validator refuses to boot)
+  #   SATELLITE_PSK_HANDSHAKE_ENABLED: "true"  (without it the server 403s EVERY satellite)
+  #   SATELLITE_DEVICE_ACCOUNT: "<name>"       (the device account must EXIST and carry the flag)
+  #   VOICE_BROWSER_CLIENT_ID: "<registry row>" (else browser voice is refused by the shared voice-server)
   # ────────────────────────────────────────────────────────────────────────────
 
   # Infra endpoints (cluster-internal DNS)

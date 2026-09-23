@@ -44,9 +44,49 @@ Erst weitermachen, wenn die Sicherung **fertig** ist und Du weißt, wo sie liegt
 
 ## 1. Vorflug
 
-Vier Prüfungen. Alle vier müssen stimmen, bevor P1 beginnt.
+Sechs Prüfungen. Alle sechs müssen stimmen, bevor P1 beginnt.
 
-### 1.1 Die sechs Schlüssel sind vorbereitet, aber noch nicht gesetzt
+### 1.0 Die GERÄTESEITE ist ausgerollt und NACHGEWIESEN — vor allem anderen
+
+Die teuerste Lehre des Haushalt-Cutovers (2026-09-23): der Schalter fiel, und
+alle laufenden Satelliten waren binnen Sekunden stumm — der Weg zu ihnen führt
+über dieselbe WS-Verbindung, die dann fehlt (OTA), es bleibt Ansible gegen
+fragile Pi Zeros. Die Serverhälfte (`SATELLITE_PSK_HANDSHAKE_ENABLED`) nützt
+nichts, solange das Gerät keinen `Authorization`-Kopf sendet.
+
+Nachweis, nicht Annahme — auf JEDEM Satelliten, noch unter auth-off:
+
+```bash
+# Die Geräteseite muss den Satelliten-Code ab #1305-Gerätehälfte fahren:
+#   - leitet sat.<id>.<psk> aus dem Enrollment-Token ab
+#   - Tor = auth_enabled ODER enrollment_token
+#   - Kopf-Kwarg aus der websockets-Signatur (extra_headers -> additional_headers)
+ssh <sat> 'cd /opt/renfield-satellite && venv/bin/python -c "
+from renfield_satellite.network.websocket_client import _HEADERS_KWARG
+import inspect, websockets
+print(_HEADERS_KWARG in inspect.signature(websockets.connect).parameters)"'
+```
+
+Und der einzige Nachweis, der zählt: ein Satellit, der sich mit dem PSK-Kopf
+anmeldet, WÄHREND `AUTH_ENABLED` noch `false` ist (der Server liest den Kopf
+dann gar nicht — die Probe muss den Handschlag also selbst fahren):
+
+```bash
+ssh <sat> 'cd /opt/renfield-satellite && venv/bin/python -c "
+import asyncio, ssl, websockets
+from renfield_satellite.config import load_config
+c = load_config(\"config/satellite.yaml\")
+ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT); ctx.check_hostname=False; ctx.verify_mode=ssl.CERT_NONE
+tok = c.server.auth_token or f\"sat.{c.satellite.id}.{c.server.enrollment_token}\"
+async def m():
+    async with websockets.connect(c.server.url, additional_headers={\"Authorization\": \"Bearer \"+tok}, ssl=ctx):
+        print(\"HANDSHAKE OK\")
+asyncio.run(m())"'
+```
+
+Ein Satellit, der hier nicht `HANDSHAKE OK` sagt, ist nach dem Umlegen stumm.
+
+### 1.1 Die NEUN Schlüssel sind vorbereitet, aber noch nicht gesetzt
 
 Sie werden in P3 **gemeinsam** gesetzt (§7). Jetzt nur ansehen:
 
@@ -58,6 +98,13 @@ Sie werden in P3 **gemeinsam** gesetzt (§7). Jetzt nur ansehen:
 | `CORS_ORIGINS` | `*` | `https://renfield.local` |
 | `TRUSTED_PROXIES` | `""` | Traefik-Pod-CIDR |
 | `API_RATE_LIMIT_STORAGE_URI` | `memory://` | `redis://redis:6379` |
+| `MEMORY_SUBSUME_TO_KG` | (unset) | `false` — sonst startet kein Pod (1.2) |
+| `SATELLITE_PSK_HANDSHAKE_ENABLED` | `false` | `true` — **ohne ihn sind die Satelliten tot** |
+| `SATELLITE_DEVICE_ACCOUNT` | (unset) | Name des Gerätekontos aus 1.4 |
+| `VOICE_BROWSER_CLIENT_ID` | (unset) | die Registry-Zeile der Instanz (Browser-Sprache) |
+
+Der Entwurf (§7) nennt sechs; es sind neun. Die drei letzten fehlten dort und
+wurden im Haushalt-Cutover einzeln nachgesetzt.
 
 `AUTH_COOKIE_ENABLED` bleibt **aus** und folgt als P4 nach
 `docs/runbooks/cookie-auth-flag-flip-xidra.md` (D-8).
@@ -136,6 +183,30 @@ Also VOR P2:
 Ein konfiguriertes, aber nicht auflösbares Gerätekonto **verweigert** jeden
 anonymen Satellitenzug — laut, nicht still. Das ist die gewollte Richtung; ein
 gar nicht konfiguriertes ist die stille.
+
+### 1.5 `SECRET_KEY` je DEPLOYMENT prüfen, nicht je Instanz
+
+Der Startwächter (`fail_closed_on_insecure_jwt_key`) prüft den Schlüssel bei
+`Settings()` — also in JEDEM Pod, der `config.py` importiert, nicht nur im
+Backend. Im Haushalt stoppte der `document-worker` in der Cutover-Nacht genau
+daran: das Repo-Manifest trug den Schlüssel, live fehlte er.
+
+Die Drift war STUNDEN vorher gefunden und beschrieben, und der
+Manifest-Kommentar sagte die Bedingung ausdrücklich — „DRIFT IS EXPECTED HERE
+**on the auth-off household**". Ein „erwarteter" Zustand ist bis zu einem
+DATUM erwartet: was nur gilt, solange das Flag aus ist, wird mit dem Umlegen
+fällig.
+
+```bash
+# Für JEDES Deployment, das das Backend-Image fährt:
+for d in backend document-worker meeting-worker pdf-split-worker; do
+  printf '%-20s ' "$d"
+  kubectl -n renfield get deploy $d -o jsonpath='{.spec.template.spec.containers[0].env[?(@.name=="SECRET_KEY")].valueFrom.secretKeyRef.name}'; echo
+done
+# und die Drift-Prüfung einmal in diesem Licht lesen: jedes
+# "Repo bewusst voraus" wird mit dem Umlegen fällig.
+bin/k8s-drift-check.sh
+```
 
 ---
 

@@ -113,11 +113,14 @@ spec:
             # crashes on any AUTH_ENABLED / RENFIELD_ENV=production instance without
             # this. optional:true = inject-if-present (auth-off installs unaffected).
             #
-            # DRIFT IS EXPECTED HERE on the auth-off household: its live worker has
-            # NO SECRET_KEY env (verified 2026-09-17) and does not need one, while
-            # auth-on xidra does have it. `bin/k8s-drift-check.sh` therefore reports
-            # this block against ns renfield — that is the repo being deliberately
-            # ahead, NOT a regression. Do not "fix" it by deleting these lines:
+            # NO LONGER DRIFT: the household went auth-on 2026-09-23 and this
+            # worker died on exactly that missing env — the drift had been found
+            # and written down hours earlier, and the comment that stood here
+            # said the drift was expected "on the auth-off household", i.e. only
+            # until the flag flipped. An "expected" deviation is expected until a
+            # DATE; when the flip is on the plan, it is a scheduled outage and
+            # belongs in the cutover checklist that day. Both instances now carry
+            # the key. Do not "fix" a future drift report by deleting these lines:
             # that would strip the guard from every auth-on instance.
             - name: SECRET_KEY
               valueFrom:

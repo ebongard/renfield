@@ -56,6 +56,14 @@ Loaded only when OTA-signing / update / enrollment code is read. Long form: `doc
   **Only `/ws/satellite` accepts it** (`authenticate_websocket(..., allow_satellite_psk=True)` — every other WS
   endpoint refuses a `sat.` token outright; never pass the flag elsewhere).
   No user is bound (device account = P0 Nr. 3). Under `AUTH_ENABLED=false` the header is never read.
+- **The device half is a separate half, and it ships FIRST.** A satellite that sends no `Authorization` header is
+  403'd before the register frame; after the flag flips, OTA travels over that very link, so only Ansible is left.
+  Three traps, all live-verified 2026-09-23: the satellite DERIVES `sat.<id>.<psk>` from its own enrollment token
+  (`_fetch_and_set_token`; an explicit `server.auth_token` still wins); the gate is `_needs_handshake_credential()`
+  = `auth_enabled OR enrollment_token`, never `auth_enabled` alone (False on every device provisioned auth-off);
+  the header kwarg comes from `websockets.connect`'s SIGNATURE (`_HEADERS_KWARG`) — `extra_headers` became
+  `additional_headers` in 14 and raises a TypeError in 16.x that `connect()` swallows, so the wrong name reads as
+  "cannot connect" forever, and the fleet runs several websockets versions.
 - Modes: OFF (`SATELLITE_ENROLLMENT_ENABLED=false`, the code default: register path byte-identical to legacy, IRK push
   on `SATELLITE_IRK_ALLOWLIST`) → **PERMISSIVE** (a presented PSK is verified; wrong/unknown/revoked rejected; no token
   allowed-but-logged) → **ENFORCING** (no valid PSK → reject).

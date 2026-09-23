@@ -97,7 +97,7 @@ HA-Webhook (eigenes Token, `notifications.py:97-121`), `/api/internal/auth/verif
 
 ## 7. Konfiguration des Schalters
 
-Der Kommentarblock in `k8s/configmap.yaml:36-44` nennt die sechs Schlüssel bereits; sie werden **gemeinsam** in einem Commit gesetzt:
+Der Kommentarblock in `k8s/configmap.yaml:36-44` nannte sechs Schlüssel; **es sind neun** — die drei letzten fehlten hier und mussten im Haushalt-Cutover am 2026-09-23 einzeln nachgesetzt werden. Sie werden **gemeinsam** in einem Commit gesetzt:
 
 | Schlüssel | heute | Cutover | Grund |
 |---|---|---|---|
@@ -107,6 +107,10 @@ Der Kommentarblock in `k8s/configmap.yaml:36-44` nennt die sechs Schlüssel bere
 | `CORS_ORIGINS` | `*` | `https://renfield.local` | `*` schaltet den CSWSH-Schutz des WS ab (`websocket_auth.py:127-129`); Cookie-Modus verweigert `*` |
 | `TRUSTED_PROXIES` | `""` | Traefik-Pod-CIDR | sonst Anmeldesperre nur je Nutzername (#1296; `docs/SECURITY.md:131`) |
 | `API_RATE_LIMIT_STORAGE_URI` | `memory://` | `redis://redis:6379` | geteilte Limits bei >1 Backend-Pod |
+| `MEMORY_SUBSUME_TO_KG` | (unbelegt) | `false` | sonst bricht der Subsume-Validator den Start (§8.2) |
+| `SATELLITE_PSK_HANDSHAKE_ENABLED` | `false` | `true` | ohne ihn weist der Server JEDEN Satelliten ab (D-4c) |
+| `SATELLITE_DEVICE_ACCOUNT` | (unbelegt) | Name des Gerätekontos | ohne es verweigert der anonyme Satellitenzug (D-4b) |
+| `VOICE_BROWSER_CLIENT_ID` | (unbelegt) | Registry-Zeile der Instanz | sonst weist der geteilte voice-server den Browser-Handschlag ab |
 
 `AUTH_COOKIE_ENABLED` bleibt beim Cutover **aus** und folgt als P4 nach `docs/runbooks/cookie-auth-flag-flip-xidra.md` (D-8; Vorflug §0 dort gilt unverändert; der Haushalts-Pfad ist git → `kubectl apply -f k8s/configmap.yaml`). `MEMORY_SUBSUME_TO_KG` siehe §8.2.
 
@@ -139,7 +143,7 @@ P0 der personenbezogenen Föderation ist dieser Cutover (`docs/design/federation
 | **P0 Bau (dunkel)** | (1) PSK am Handshake (§6.1 Nr. 1); (2) Anonym-Rechtesatz (Nr. 2); (3) `users.is_device_account` + Extraktions-/Präsenz-/Ersetzungstor (Nr. 3); (4) `kiosk.view` + Rolle (§6.2); (5) Adoption eigentümerloser Unterhaltungen aus (§4.2); (6) geteilte Verläufe nach Meeting-Datenmodell (§8.1, L); (7) Subsume mehrnutzerfähig + Validator (§8.2); (8) `bin/backfill_household_tiers.py` (§4.1); (9) Tests §11 | gewöhnliche PRs, alle dunkel |
 | **P1 Konten (noch auth-off)** | Konten für alle Mitglieder (`POST /api/users`), Rollen, Erfassungsvorgabe Familie 2 / Gast 0, Sprecher-Enrollment mit Einwilligung + Verknüpfung; Gerätekonten Haushalt + Kiosk | unter auth-off wirkungslos |
 | **P2 Backfill (noch auth-off)** | Dry-Run mit Zählwerten je Klasse → Freigabe → Commit: Stufen je Klasse (§4.1), NULL-Relationen, KB-Eigentümer, Unterhaltungen (§4.2), Kopplungs-Rest, Mitgliedschaften inkl. Gerätekonto nur beim Admin (§4.3) | unter auth-off ohne Wirkung auf Lesepfade; `--revert` |
-| **P3 Umschalten** | **Zuerst** PSK-Handshake in der Flotte aktiv (Provisionierung: `auth_enabled` + `auth_token` je Satellit, geprüfter Verbindungsaufbau — ein Satellit mit `auth_enabled` ohne Token läuft unter auth-on in eine 401 → 4001 → Neustart-Schleife); **dann** ConfigMap-Commit mit den sechs Schlüsseln; Rollout; Admin-Passwortrotation; Abnahme §11. Sperre: ohne `TRUSTED_PROXIES` satellitenweit (5 Versuche / 900 s); Entsperren über die Enrollment-Route | `AUTH_ENABLED=false` → Lesepfade byte-identisch; ein Satellit mit PSK verbindet auch unter auth-off, weil der Server den Header dann gar nicht prüft (`websocket_auth.py:173-174`) |
+| **P3 Umschalten** | **Zuerst** die GERÄTESEITE ausgerollt und je Satellit NACHGEWIESEN (`HANDSHAKE OK` noch unter auth-off, Runbook §1.0) — der Satellit leitet `sat.<id>.<psk>` aus seinem Enrollment-Token ab, das Tor ist `auth_enabled ODER enrollment_token`, und der Kopf-Kwarg kommt aus der websockets-Signatur; wird das versäumt, ist der Weg zum Gerät nach dem Umlegen abgeschnitten (OTA läuft über dieselbe Verbindung). **Dann** ConfigMap-Commit mit den NEUN Schlüsseln; Rollout; Admin-Passwortrotation; Abnahme §11. Sperre: ohne `TRUSTED_PROXIES` satellitenweit (5 Versuche / 900 s); Entsperren über die Enrollment-Route | `AUTH_ENABLED=false` → Lesepfade byte-identisch; ein Satellit mit PSK verbindet auch unter auth-off, weil der Server den Header dann gar nicht prüft (`websocket_auth.py:173-174`) |
 | **P4 Cookie** | `AUTH_COOKIE_ENABLED` nach dem Runbook (D-8) | Flag zurück, ~1 min |
 | **P5 danach** | F-ID-2 (D-9), Linker (E-1) | eigene Posten |
 
@@ -156,7 +160,7 @@ P0 der personenbezogenen Föderation ist dieser Cutover (`docs/design/federation
 5. **Kiosk-Rolle:** Kiosk-Konto öffnet `/ws/kiosk` und `/kiosk`, Admin-Routen 403.
 6. **Adoption aus:** eigentümerlose Unterhaltung wird unter auth-on nicht adoptiert.
 7. **Geteilte Verläufe:** Raumverlauf Stufe 2 für Mitglieder sichtbar und fortsetzbar über Sprecherwechsel; Eigentümer bleibt das Gerätekonto; Löschen nur `chat.all`; Browser-Chat Stufe 0 nur für den Eigentümer; Nachrichtensuche respektiert die Stufe; Erinnerung eines Zuges gehört dem erkannten Sprecher.
-8. **Boot-Validatoren:** die sechs Schlüssel zusammen booten; jede Einzelabweichung bricht laut; Subsume-Validator (`test_config_auth_consistency.py`).
+8. **Boot-Validatoren:** die neun Schlüssel zusammen booten; jede Einzelabweichung bricht laut; Subsume-Validator (`test_config_auth_consistency.py`).
 9. **Browser-E2E nach P3** (smoke-tester): Login, Passwortrotation, Chat, Wissen, Kiosk, ein Sprachzug am Satelliten mit und ohne erkannten Sprecher — Rückweg geprobt.
 
 ## 12. Gefahrenliste (aus dem Code)
