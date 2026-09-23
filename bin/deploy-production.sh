@@ -217,6 +217,19 @@ fi
 log "manifest drift check (read-only)"
 MANIFESTS_DIR="${RENFIELD_MANIFESTS_DIR:-}"
 [[ -z "$MANIFESTS_DIR" && "$NS" == "renfield" ]] && MANIFESTS_DIR="$REPO_ROOT/k8s"
+# A private instance keeps its manifests in a sibling repo. Look there by
+# convention instead of skipping: the check only ran when someone remembered to
+# export RENFIELD_MANIFESTS_DIR, so on xidra it effectively never ran — and the
+# image tag in x-ren silently fell ELEVEN DAYS behind the live deployment
+# (found 2026-09-23). A `kubectl apply -k` would have rolled four deployments
+# back onto an image whose ORM predates the live schema. A check that depends on
+# being remembered is not a check.
+if [[ -z "$MANIFESTS_DIR" ]]; then
+  for candidate in "$REPO_ROOT/../x-ren/k8s"; do
+    [[ -d "$candidate" ]] && { MANIFESTS_DIR="$candidate"; break; }
+  done
+  [[ -n "$MANIFESTS_DIR" ]] && echo "  (manifests: $MANIFESTS_DIR — sibling repo, by convention)"
+fi
 if [[ -z "$MANIFESTS_DIR" ]]; then
   echo "  (skipped: set RENFIELD_MANIFESTS_DIR to the manifests of $NS, e.g. ../x-ren/k8s)"
 elif [[ $DRY_RUN == 1 ]]; then
