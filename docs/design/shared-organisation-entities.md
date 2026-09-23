@@ -1,6 +1,14 @@
-# Dieselbe Organisation über Nutzergrenzen ist EINE Entität
+# Basiswissen: Organisationen, Orte, Allgemeinbegriffe
 
 Entwurf zu Issue #1314. Status: **entschieden, nicht gebaut.**
+
+Der Anlass war eng — zwei Briefe derselben Organisation an zwei Familienmitglieder
+ergeben zwei Knoten. Die Frage dahinter ist weiter: Organisationen, Länder, Städte
+und Allgemeinbegriffe („Brot") sollten **niemandem gehören**, sondern als
+Basisinformation im Haushalt existieren. Und weil der Haushalt bereits mit einer
+zweiten Instanz verbunden ist und zwei weitere folgen (Eltern, Verein), ist die
+Frage „wem gehört es" nicht mehr von der Frage „was verlässt das Haus" zu trennen.
+Beides steht deshalb in EINEM Dokument.
 
 ## Der Befund
 
@@ -48,32 +56,54 @@ M und nicht L ist.
 
 ## Entschieden
 
-### D-1 · Der erste Finder behält den Knoten, die Stufe steigt auf 2
+### D-1 · Ein Haushalts-Konto ist der Eigentümer, nicht eine Person
 
-Der Knoten bleibt bei dem Nutzer, dessen Dokument ihn angelegt hat, und wird auf
-Stufe 2 gehoben; der zweite Nutzer hängt seine Relationen daran. Kein neuer
-Eigentümer-Begriff, keine Sonderkonten.
+Basis-Entitäten gehören einem Konto, hinter dem keine Person steht — wie das
+Gerätekonto, aber für Wissen. Jedes Mitglied steht in dessen Kreis; die
+Mitgliedschaftsrichtung dafür legt `bin/backfill_household_tiers.py` bereits an.
 
-**Eigentümerlos scheidet technisch aus** und das ist keine Geschmacksfrage: unter
-auth-on ist eine eigentümerlose Zeile in *jedem* Zweig des Filters unerreichbar —
-der Eigentümerzweig vergleicht gegen NULL, der Mitgliedschaftszweig schlüsselt
-`circle_owner_id` darauf. Eine eigentümerlose Organisation wäre für niemanden
-sichtbar. (Dieselbe Falle hat das Backfill-Skript aus P0 Nr. 8 zutage gefördert.)
+**Warum nicht „der erste Finder behält ihn"** (die erste Fassung dieses Entwurfs):
+weil es keine Modellierung ist, sondern eine Verlegenheit. Wer zuerst Post bekam,
+besäße die Organisation; senkte er später seine Stufe, verlören die anderen den
+Knoten und ihre Relationen zeigten ins Leere. Man hätte einen Wächter gegen die
+stille Enteignung bauen müssen — den ersten Fall im System, in dem ein Eigentümer
+die Stufe seiner eigenen Zeile nicht frei wählt. Ein Haushalts-Konto braucht ihn
+nicht: es gehört von vornherein keiner Person, also kann keine Person es
+verengen. Schreiben bleibt eigentümergebunden, das heißt hier: nur der Admin
+benennt um oder führt zusammen — dieselbe Form wie beim Raumverlauf, wo sie
+funktioniert, und für Weltwissen die richtige (niemand soll „Brot" umbenennen
+können).
 
-**Die Folge, die diese Wahl mitbringt und die gebaut werden muss.** Der erste
-Finder ist Eigentümer und könnte die Stufe später senken — dann verlieren die
-anderen den Knoten, und ihre Relationen zeigen ins Leere. Eine willkürliche
-Ersteintreffer-Eigentümerschaft darf nicht zur stillen Enteignung der anderen
-werden. Deshalb:
+**Eigentümerlos scheidet aus, und die Begründung ist genauer als zunächst
+notiert.** Der öffentliche Zweig des Filters lautet `tabelle.circle_tier =
+:asker_id_pub` und fragt NICHT nach dem Eigentümer — eine eigentümerlose Zeile
+auf Stufe 4 wäre also durchaus lesbar. Sie scheitert an den anderen drei Zweigen
+und an etwas Grundsätzlicherem: `atoms.owner_user_id` ist NOT NULL, ohne
+Eigentümer gibt es also kein Atom, und ohne Atom keine Einzelfreigabe, kein
+`AtomService.update_tier` und keinen Eintrag in der Kreis-Übersicht. Die Regel
+„jede abrufbare Zeile trägt `circle_tier` UND `atom_id`" wäre gebrochen.
 
-> **Eine Organisations-Entität auf Stufe 2, an der Relationen anderer Nutzer
-> hängen, kann nicht unter die Reichweite dieser Nutzer verengt werden.** Der
-> Versuch wird abgelehnt und benennt, wie viele fremde Relationen betroffen
-> wären — nicht stillschweigend ausgeführt und nicht stillschweigend verweigert.
+**Warum kein fünfter Filterzweig und keine eigene Dimension.** Ein Zweig
+„Eigentümer IS NULL heißt Allgemeingut" drückt den Gedanken am ehrlichsten aus,
+ändert aber das eine Stück SQL, das jeder Lesepfad teilt, und rehabilitiert die
+eigentümerlose Zeile, die P0 Nr. 5 gerade verweigerbar gemacht hat. Eine eigene
+Dimension neben `tier` wäre begrifflich am saubersten — „Basiswissen" ist ja
+keine Reichweite —, aber der SQL-Filter kann nur `tier`; alles andere prüft
+`PolicyEvaluator` Python-seitig nach. Das hieße, die Durchsetzung für eine ganze
+Zeilenklasse aus dem SQL zu nehmen, **ausgerechnet auf dem Pfad, der anderen
+Instanzen gegenübersteht** (siehe unten). Beides bleibt möglich: von einem
+Haushalts-Konto kommt man später zu Zweig oder Dimension — umgekehrt nicht.
 
-Das ist neu und in keiner vorhandenen Regel enthalten. **Es braucht Deine
-ausdrückliche Zustimmung**, weil es das erste Mal wäre, dass ein Eigentümer die
-Stufe seiner eigenen Zeile nicht frei wählen darf.
+### D-1b · Zwei Klassen, und die Föderation ist der Grund
+
+| Klasse | Beispiele | Stufe | Wirkung |
+|---|---|---|---|
+| **Weltwissen** | Brot, Berlin, Montag, Bundesland | **4** | jeder Peer sieht es ohne Zutun; keine Instanz legt es neu an |
+| **Haushaltsspezifisch** | ein Versicherer, eine Schule, ein Arzt | **2** | verlässt das Haus nur zu einem Peer, den Du ausdrücklich auf diese Tiefe aufgenommen hast |
+
+In einer Ein-Instanz-Welt wäre das kosmetisch. Mit vier Instanzen ist es die
+Linie, an der entschieden wird, was das Haus verlässt — siehe den nächsten
+Abschnitt.
 
 ### D-2 · Automatisch nur bei zusätzlichem Beleg, sonst Vorschlag
 
@@ -93,6 +123,43 @@ Fehler, für den der Personen-Wächter gebaut wurde.
 dem eine Person beteiligt ist — primär oder über `entity_types`. Die neue
 Ausnahme gilt ausschließlich für `entity_type = organization`.
 
+## Der föderative Rahmen
+
+Der Haushalt ist bereits mit der xidra-Instanz verbunden; eine Eltern- und eine
+Vereins-Instanz kommen hinzu. Vier Instanzen, und damit hört „wem gehört es" auf,
+eine hausinterne Frage zu sein.
+
+**Was ein Peer sieht.** Für eine föderierte Abfrage (`peer_scoped`) fallen der
+Eigentümer- und der Freigabezweig weg; es bleibt
+
+```sql
+tabelle.circle_tier = :asker_id_pub   OR   EXISTS (Mitgliedschaft)
+```
+
+Ein Peer sieht **Stufe 4 immer** und alles Engere nur dort, wo der lokale
+Eigentümer ihn ausdrücklich auf diese Tiefe aufgenommen hat. Genau deshalb ist
+D-1b keine Geschmacksfrage: die Stufe IST der Föderationsschalter.
+
+**Und deshalb steht die Instanzfrage in diesem Dokument und nicht daneben.** Die
+Stufenwahl ist bereits die Föderationsentscheidung; sie in ein eigenes Issue zu
+heben, hieße die Begründung vom Beschluss zu trennen.
+
+**Was hier trotzdem NICHT entschieden wird: die Entitäts-IDENTITÄT über
+Instanzgrenzen.** Sind „Berlin" im Haushalt und „Berlin" bei den Eltern EIN
+Knoten oder zwei, die sich gegenseitig sehen? Dieser Entwurf beantwortet nur das
+Erste: was hinübergeht. Ob der hinübergehende Knoten *derselbe* ist — Auflösung,
+Zusammenführung, wessen Schreibweise gewinnt, was eine entfernte Entitäts-ID
+überhaupt bedeutet — ist ungleich größer und **blockiert das Erste nicht**: ein
+Peer LIEST unser Berlin, er verschmilzt es nicht. `federation-identity-mapping.md`
+bildet **Identitäten** ab; ob es auch **Entitäten** abbildet, ist offen.
+
+**Eine Kante, die dabei herausfällt und die noch niemand durchdacht hat:** der
+Verein ist beides. „Schiess-Sport-Verein 1966 Kleinenbroich e.V." ist eine
+Organisation im Graphen des Haushalts **und** eine Peer-Instanz. Ein Knoten, der
+zugleich ein Gegenüber ist. Was heißt es, wenn der Haushalt eine Entität für
+einen Peer führt, der seinerseits eine Entität für den Haushalt führt? Ungelöst,
+hier festgehalten, damit es beim Bau nicht überrascht.
+
 ## Offen
 
 - **(b) aus dem Issue: nur `organization`, oder auch `place` / `product`?**
@@ -105,10 +172,15 @@ Ausnahme gilt ausschließlich für `entity_type = organization`.
   `bin/backfill_household_tiers.py`: Probelauf mit Zählwerten, Freigabe,
   Schreiblauf, Protokoll als Rückweg. **Der Rückweg wird durchlaufen, nicht
   behauptet** (`.claude/rules/migrations.md`).
-- **Reihenfolge zum Cutover.** Das Zusammenführen erzeugt Stufe-2-Knoten. Vor dem
-  Cutover ist das inert, danach sofort wirksam. Sauberer also: nach dem Cutover
-  bauen, damit die Wirkung beobachtbar ist statt gleichzeitig mit zwanzig anderen
-  Änderungen einzutreten.
+- **Reihenfolge zum Cutover.** Das Zusammenführen erzeugt Stufe-2- und
+  Stufe-4-Knoten. Vor dem Cutover ist das inert, danach sofort wirksam — und
+  Stufe 4 ist zusätzlich sofort für jeden verbundenen Peer sichtbar. Also: nach
+  dem Cutover bauen, damit die Wirkung beobachtbar ist statt gleichzeitig mit
+  zwanzig anderen Änderungen einzutreten.
+- **Die Grenze zwischen den beiden Klassen ist nicht immer scharf.** „Grundschule"
+  ist Weltwissen, „die Grundschule am Ort" womöglich nicht. Vorschlag: im Zweifel
+  Stufe 2 — die engere Seite —, und einzelne Begriffe hebt der Admin bewusst auf
+  4. Eine Vorgabe, die im Zweifel weiter stellt, wäre die falsche Richtung.
 
 ## Abnahme
 
@@ -120,6 +192,9 @@ Ausnahme gilt ausschließlich für `entity_type = organization`.
 3. Gleicher Name ohne gemeinsames Merkmal → **Vorschlag**, keine Zusammenführung.
 4. Ein Paar mit einer Person darin wird nie zusammengeführt, auch nicht bei
    gleichem Namen und gemeinsamem Merkmal.
-5. Die Verengung einer Organisation unter die Reichweite fremder Relationen wird
-   abgelehnt und benennt die Zahl der betroffenen Relationen.
-6. Backfill: Probelauf-Zählwerte = Schreiblauf-Zählwerte; Rundlauf durchlaufen.
+5. Eine Basis-Entität gehört dem Haushalts-Konto; keine Person kann sie
+   umbenennen, zusammenführen oder verengen.
+6. Ein Peer sieht Weltwissen (Stufe 4) ohne Zutun und haushaltsspezifische
+   Organisationen (Stufe 2) NUR, wenn er ausdrücklich auf diese Tiefe aufgenommen
+   wurde — geprüft mit einer echten `peer_scoped`-Abfrage, nicht nur am Knoten.
+7. Backfill: Probelauf-Zählwerte = Schreiblauf-Zählwerte; Rundlauf durchlaufen.
