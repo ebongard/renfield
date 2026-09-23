@@ -44,6 +44,10 @@ route + frontend-page inventory), `docs/SECOND_BRAIN.md` (the four subsystems ci
   `atoms.policy` drift apart otherwise). Change a tier only through `AtomService` — it owns the **tier cascade**
   (entity → incident relations; `kb_document` → its facts `WHERE NOT tier_overridden`).
 - `services/kb_shares_service.py`: a KB-level share is exploded into per-chunk explicit grants.
+- **A membership has a DIRECTION.** `cm.circle_owner_id` keys on the ROW's owner, `cm.member_user_id` on the asker —
+  so "A is in B's circle" lets A read B's atoms, never the reverse. A shared artifact owned by a DEVICE account
+  (a satellite room history, `chat-branching.md`) therefore needs members inside the DEVICE's circle; the
+  reverse row only lets the device read. `bin/backfill_household_tiers.py` writes both.
 - `services/circle_resolver.py` = `PolicyEvaluator` + cache, for access checks outside the SQL paths.
 - `services/polymorphic_atom_store.py` = cross-source RRF; it emits per-entity `kg_node` + per-relation `kg_edge`
   atoms (`KGRetrieval.get_relevant_atoms`), while the agent's string context (`get_relevant_context`) is unchanged.
