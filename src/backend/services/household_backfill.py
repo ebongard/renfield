@@ -43,7 +43,15 @@ from sqlalchemy.ext.asyncio import AsyncSession
 TIER_HOUSEHOLD = 2
 TIER_SELF = 0
 
-_KG_ATOM_TYPES = ("kg_node", "kg_edge")
+# NODES ONLY — never `kg_edge`. A relation's tier is not its own: the cascade in
+# `AtomService.update_tier` recomputes it as `LEAST(subject.tier, object.tier)`,
+# the house invariant that a relation is never wider than its narrowest endpoint
+# (`kg-memory.md`). Moving an edge DIRECTLY breaks that: `kg_entities.atom_id` is
+# nullable, so an edge can have endpoints that carry no atom and are therefore
+# not in this selection — the direct write would set the edge to tier 2 while its
+# endpoints stay at 0, and nothing would ever pull it back. That is a visibility
+# RAISE on a row nobody asked to widen. The edges follow their nodes instead.
+_KG_ATOM_TYPES = ("kg_node",)
 _ADMIN_ATOM_TYPES = ("kb_document", "document_fact", "conversation_memory")
 
 # The dimension config a household member's circles row carries. Only the tier
@@ -54,6 +62,46 @@ _HOUSEHOLD_DIMENSION_CONFIG: dict[str, Any] = {
         "values": ["self", "trusted", "household", "extended", "public"],
     }
 }
+
+
+@dataclass
+class RunLog:
+    """What a commit run actually changed, so `--revert` KNOWS instead of guessing.
+
+    The first cut inferred it from the current state, and that was wrong in both
+    directions where it mattered:
+
+    * the membership revert deleted every pair in its plan that existed — which
+      includes one an operator created by hand at a different tier, a row the
+      forward run had deliberately left alone;
+    * the kg revert selected "admin-owned node at tier 2", which is exactly the
+      shape of the 19 hand-set tier-2 atoms the forward run refuses to touch. It
+      would have demoted them to 0 with nothing recording that it had.
+
+    "Before" is not reconstructible from "after". So the commit run writes this
+    down, and a revert without it declines rather than improvising.
+    """
+
+    kg_atom_ids: list[str] = field(default_factory=list)
+    membership_pairs: list[tuple[int, int]] = field(default_factory=list)
+
+    def to_json(self) -> dict[str, Any]:
+        return {
+            "kg_atom_ids": self.kg_atom_ids,
+            "membership_pairs": [list(p) for p in self.membership_pairs],
+        }
+
+    @classmethod
+    def from_json(cls, raw: dict[str, Any]) -> "RunLog":
+        return cls(
+            kg_atom_ids=list(raw.get("kg_atom_ids") or []),
+            membership_pairs=[tuple(p) for p in (raw.get("membership_pairs") or [])],
+        )
+
+
+class RevertWithoutLog(RuntimeError):
+    """`--revert` was asked for without the commit run's log. Refused on purpose:
+    reverting by inference is what would destroy a hand-set tier."""
 
 
 @dataclass
@@ -114,33 +162,60 @@ async def _atom_ids_at_fallback_tier(
 
 
 async def backfill_kg_tiers(
-    db: AsyncSession, members: MemberList, *, dry_run: bool = True, revert: bool = False
+    db: AsyncSession, members: MemberList, *, dry_run: bool = True,
+    revert: bool = False, log: RunLog | None = None,
 ) -> ClassResult:
     """The knowledge graph becomes household knowledge: tier 0 → 2 (§4.1).
 
-    The ONE class that actually moves rows. `update_tier` cascades a node's tier
-    onto its incident relations, so the edges follow their endpoints rather than
-    being moved separately.
+    The ONE class that actually moves rows, and it moves NODES only. Edges are
+    not moved: `update_tier`'s cascade recomputes every incident relation as
+    `LEAST(subject.tier, object.tier)`, so they follow their endpoints. Writing an
+    edge directly would break that invariant for any edge whose endpoints carry
+    no atom — see `_KG_ATOM_TYPES`.
     """
-    target = TIER_SELF if revert else TIER_HOUSEHOLD
-    source = TIER_HOUSEHOLD if revert else TIER_SELF
-    rows = (await db.execute(
-        text(
-            "SELECT atom_id FROM atoms "
-            " WHERE owner_user_id = :owner AND atom_type = ANY(:types) "
-            "   AND COALESCE((policy ->> 'tier')::int, 0) = :source"
-        ),
-        {"owner": members.admin_id, "types": list(_KG_ATOM_TYPES), "source": source},
-    )).all()
-    atom_ids = [r[0] for r in rows]
-    _, handset = await _atom_ids_at_fallback_tier(db, members.admin_id, _KG_ATOM_TYPES)
+    if revert:
+        if log is None:
+            raise RevertWithoutLog(
+                "kg --revert braucht das Protokoll des Schreiblaufs. Ohne es "
+                "müsste der Rückweg 'Admin-Knoten auf Stufe 2' auswählen — "
+                "und das ist genau die Form der 19 handgesetzten Stufe-2-Atome, "
+                "die der Hinweg unangetastet lässt. Sie würden auf 0 fallen, "
+                "ohne dass irgendwo steht, dass es passiert ist."
+            )
+        # Only the atoms THIS run moved, named one by one. A hand-set 2 was never
+        # in the log, so it cannot be demoted by it.
+        atom_ids = list(log.kg_atom_ids)
+        target = TIER_SELF
+        result = ClassResult(name="kg", examined=len(atom_ids))
+        result.notes.append(f"Stufe {TIER_HOUSEHOLD} → {target} (nur Protokoll-Einträge)")
+    else:
+        rows = (await db.execute(
+            text(
+                "SELECT atom_id FROM atoms "
+                " WHERE owner_user_id = :owner AND atom_type = ANY(:types) "
+                "   AND COALESCE((policy ->> 'tier')::int, 0) = :source"
+            ),
+            {"owner": members.admin_id, "types": list(_KG_ATOM_TYPES),
+             "source": TIER_SELF},
+        )).all()
+        atom_ids = [r[0] for r in rows]
+        _, handset = await _atom_ids_at_fallback_tier(
+            db, members.admin_id, _KG_ATOM_TYPES
+        )
+        target = TIER_HOUSEHOLD
+        result = ClassResult(
+            name="kg", examined=len(atom_ids), skipped_handset=handset
+        )
+        result.notes.append(f"Stufe {TIER_SELF} → {target}")
+        cascaded = await _handset_edge_tiers_the_cascade_will_recompute(db, atom_ids)
+        if cascaded:
+            result.notes.append(
+                f"{cascaded} handgesetzte Kanten-Stufe(n) rechnet die Kaskade neu "
+                "auf LEAST(Endpunkte) — unvermeidbar, siehe Modul-Dokumentation"
+            )
 
-    result = ClassResult(
-        name="kg", examined=len(atom_ids), skipped_handset=0 if revert else handset
-    )
     if dry_run:
         result.changed = len(atom_ids)
-        result.notes.append(f"Stufe {source} → {target} (Probelauf)")
         return result
 
     from services.atom_service import AtomService
@@ -148,17 +223,49 @@ async def backfill_kg_tiers(
     svc = AtomService(db)
     for atom_id in atom_ids:
         # Per-row transaction (§4.1): a failure halfway leaves a consistent
-        # prefix done, and a re-run picks up where it stopped — the selection
-        # above only sees rows still at the source tier, so it is idempotent.
+        # prefix done, and a re-run picks up where it stopped — the forward
+        # selection only sees rows still at the source tier, so it is idempotent.
         await svc.update_tier(atom_id, {"tier": target})
         await db.commit()
         result.changed += 1
-    result.notes.append(f"Stufe {source} → {target}")
+        if log is not None and not revert:
+            log.kg_atom_ids.append(atom_id)
     return result
 
 
+async def _handset_edge_tiers_the_cascade_will_recompute(
+    db: AsyncSession, node_atom_ids: list[str]
+) -> int:
+    """How many deliberately-set EDGE tiers the node cascade will overwrite.
+
+    Two house rules collide here and neither can simply win. `update_tier` owns
+    the cascade and recomputes every incident relation as
+    `LEAST(subject, object)`; going around it is the direct-write anti-pattern.
+    But a relation whose tier somebody set by hand is also a deliberate choice,
+    and the cascade does not know that.
+
+    It is not a leak — `LEAST` only ever narrows relative to the endpoints — but
+    it IS the script overruling an operator, so it must be visible in the
+    dry-run rather than discovered afterwards. Counting only; nothing is skipped.
+    """
+    if not node_atom_ids:
+        return 0
+    return int((await db.execute(
+        text(
+            "SELECT COUNT(*) FROM kg_relations r "
+            " WHERE r.circle_tier <> 0 "
+            "   AND (r.subject_id IN (SELECT source_id::int FROM atoms "
+            "                          WHERE atom_id = ANY(:ids)) "
+            "    OR r.object_id  IN (SELECT source_id::int FROM atoms "
+            "                          WHERE atom_id = ANY(:ids)))"
+        ),
+        {"ids": node_atom_ids},
+    )).scalar_one())
+
+
 async def report_admin_tiers(
-    db: AsyncSession, members: MemberList, *, dry_run: bool = True, revert: bool = False
+    db: AsyncSession, members: MemberList, *, dry_run: bool = True,
+    revert: bool = False, log: RunLog | None = None,
 ) -> ClassResult:
     """Documents, facts and memories stay with the admin at tier 0 (§4.1).
 
@@ -182,48 +289,53 @@ async def report_admin_tiers(
 
 
 async def backfill_null_relations(
-    db: AsyncSession, members: MemberList, *, dry_run: bool = True, revert: bool = False
+    db: AsyncSession, members: MemberList, *, dry_run: bool = True,
+    revert: bool = False, log: RunLog | None = None,
 ) -> ClassResult:
     """`kg_relations` with no owner (§4.2): unreachable in EVERY branch once auth
     is on — the owner branch compares against NULL and the membership branch
     keys `circle_owner_id` on it. They hang off the admin's entities, so they
     get the admin and the graph's tier."""
     if revert:
-        rows = (await db.execute(
-            text(
-                "SELECT COUNT(*) FROM kg_relations "
-                " WHERE user_id = :admin AND circle_tier = :tier"
-            ),
-            {"admin": members.admin_id, "tier": TIER_HOUSEHOLD},
-        )).scalar_one()
         return ClassResult(
-            name="null-relationen", examined=int(rows), changed=0,
+            name="null-relationen", examined=0, changed=0,
             notes=["Rückweg nicht eindeutig: welche Zeilen vorher NULL waren, "
                    "ist nicht mehr unterscheidbar — bewusst nicht zurückgenommen"],
         )
 
-    count = (await db.execute(
-        text("SELECT COUNT(*) FROM kg_relations WHERE user_id IS NULL")
-    )).scalar_one()
-    result = ClassResult(name="null-relationen", examined=int(count))
+    rows = (await db.execute(
+        text("SELECT id FROM kg_relations WHERE user_id IS NULL")
+    )).all()
+    ids = [r[0] for r in rows]
+    result = ClassResult(name="null-relationen", examined=len(ids))
+    result.notes.append(
+        f"→ Eigentümer {members.admin_id}; die Stufe kommt aus der Kaskade"
+    )
     if dry_run:
-        result.changed = int(count)
-        result.notes.append(f"→ Eigentümer {members.admin_id}, Stufe {TIER_HOUSEHOLD}")
+        result.changed = len(ids)
         return result
+    # OWNERSHIP ONLY. The first cut also wrote `circle_tier = 2` here, and that
+    # was wrong twice over: it is a direct write to a denormalized column whose
+    # atoms row would then still say tier 0 (the circles migration created one
+    # per relation), so the SQL filter and `PolicyEvaluator` would disagree with
+    # SQL the more permissive of the two; and it raised the tier unconditionally,
+    # ignoring `LEAST(subject, object)` — the same visibility raise the node-only
+    # selection above exists to avoid, for any relation whose endpoint belongs to
+    # somebody else at tier 0. The tier is not this class's business: §4.2 says
+    # "Stufe mit dem Graphen", and the graph delivers it through the `kg` class's
+    # cascade whichever order the two run in.
     await db.execute(
-        text(
-            "UPDATE kg_relations SET user_id = :admin, circle_tier = :tier "
-            " WHERE user_id IS NULL"
-        ),
-        {"admin": members.admin_id, "tier": TIER_HOUSEHOLD},
+        text("UPDATE kg_relations SET user_id = :admin WHERE user_id IS NULL"),
+        {"admin": members.admin_id},
     )
     await db.commit()
-    result.changed = int(count)
+    result.changed = len(ids)
     return result
 
 
 async def backfill_kb_owner(
-    db: AsyncSession, members: MemberList, *, dry_run: bool = True, revert: bool = False
+    db: AsyncSession, members: MemberList, *, dry_run: bool = True,
+    revert: bool = False, log: RunLog | None = None,
 ) -> ClassResult:
     """`knowledge_bases.owner_id IS NULL` (§4.2). The document owner branch reads
     the KB owner (with an atom-owner fallback for null-KB rows), so an ownerless
@@ -252,7 +364,8 @@ async def backfill_kb_owner(
 
 
 async def backfill_conversations(
-    db: AsyncSession, members: MemberList, *, dry_run: bool = True, revert: bool = False
+    db: AsyncSession, members: MemberList, *, dry_run: bool = True,
+    revert: bool = False, log: RunLog | None = None,
 ) -> ClassResult:
     """Ownerless conversations get an owner and an atom (§4.2, D-3).
 
@@ -308,7 +421,8 @@ async def backfill_conversations(
 
 
 async def backfill_pairing_remnant(
-    db: AsyncSession, members: MemberList, *, dry_run: bool = True, revert: bool = False
+    db: AsyncSession, members: MemberList, *, dry_run: bool = True,
+    revert: bool = False, log: RunLog | None = None,
 ) -> ClassResult:
     """Delete the stale self-membership `(admin, admin, tier)` (§4.3).
 
@@ -384,7 +498,8 @@ def _membership_pairs(members: MemberList) -> list[tuple[int, int, int]]:
 
 
 async def backfill_memberships(
-    db: AsyncSession, members: MemberList, *, dry_run: bool = True, revert: bool = False
+    db: AsyncSession, members: MemberList, *, dry_run: bool = True,
+    revert: bool = False, log: RunLog | None = None,
 ) -> ClassResult:
     """Create (or remove) the household's circle memberships + capture defaults.
 
@@ -404,10 +519,21 @@ async def backfill_memberships(
         )).all()
     }
     if revert:
-        removable = [p for p in pairs if (p[0], p[1]) in existing]
+        if log is None:
+            raise RevertWithoutLog(
+                "mitgliedschaften --revert braucht das Protokoll des "
+                "Schreiblaufs. Ohne es würde der Rückweg jede geplante Paarung "
+                "löschen, die es GIBT — auch eine, die jemand von Hand auf einer "
+                "anderen Stufe angelegt hat und die der Hinweg bewusst in Ruhe "
+                "gelassen hat."
+            )
+        # Only the pairs THIS run inserted. A pre-existing membership was never
+        # in the log, so the revert cannot remove it.
+        removable = list(log.membership_pairs)
+        result.examined = len(removable)
         result.changed = len(removable)
         if not dry_run:
-            for owner, member, _tier in removable:
+            for owner, member in removable:
                 await db.execute(
                     text(
                         "DELETE FROM circle_memberships "
@@ -434,12 +560,15 @@ async def backfill_memberships(
             ),
             {"o": owner, "m": member, "v": str(tier), "admin": members.admin_id},
         )
+        if log is not None:
+            log.membership_pairs.append((owner, member))
     await db.commit()
     return result
 
 
 async def backfill_capture_policy(
-    db: AsyncSession, members: MemberList, *, dry_run: bool = True, revert: bool = False
+    db: AsyncSession, members: MemberList, *, dry_run: bool = True,
+    revert: bool = False, log: RunLog | None = None,
 ) -> ClassResult:
     """Capture default per account (D-2c): family tier 2, guests tier 0.
 
@@ -497,6 +626,7 @@ async def run_backfill(
     only: list[str] | None = None,
     dry_run: bool = True,
     revert: bool = False,
+    log: RunLog | None = None,
 ) -> list[ClassResult]:
     """Run the selected classes in order and return one result per class.
 
@@ -504,6 +634,11 @@ async def run_backfill(
     `mitgliedschaften` decides who reaches them. Running memberships first would
     still be correct — the filter reads both at query time — but the dry-run
     reads better in the order the data acquires meaning.
+
+    ``log``: a commit run FILLS it (what was changed); a revert run READS it
+    (what to undo). Two classes refuse to revert without one, because for them
+    "before" cannot be reconstructed from "after" and guessing would destroy a
+    deliberate choice — see ``RunLog``.
     """
     names = only or list(CLASSES)
     unknown = [n for n in names if n not in CLASSES]
@@ -513,6 +648,8 @@ async def run_backfill(
     for name in names:
         logger.info(f"▶ {name} ({'Probelauf' if dry_run else 'Schreiblauf'})")
         results.append(
-            await CLASSES[name](db, members, dry_run=dry_run, revert=revert)
+            await CLASSES[name](
+                db, members, dry_run=dry_run, revert=revert, log=log
+            )
         )
     return results

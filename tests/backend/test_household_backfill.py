@@ -29,6 +29,8 @@ from models.database import (
 )
 from services.household_backfill import (
     MemberList,
+    RevertWithoutLog,
+    RunLog,
     _membership_pairs,
     run_backfill,
 )
@@ -140,8 +142,10 @@ class TestTheGraphBecomesHouseholdKnowledge:
         atom = await _kg_atom(db_session, household.admin_id, 0, 40)
         await db_session.commit()
 
-        await run_backfill(db_session, household, only=["kg"], dry_run=False)
-        await run_backfill(db_session, household, only=["kg"], dry_run=False, revert=True)
+        log = RunLog()
+        await run_backfill(db_session, household, only=["kg"], dry_run=False, log=log)
+        await run_backfill(db_session, household, only=["kg"], dry_run=False,
+                           revert=True, log=log)
 
         assert await _tier_of(db_session, atom.atom_id) == 0
 
@@ -174,10 +178,13 @@ class TestTheOwnerlessRows:
                                    dry_run=False)
 
         assert res.changed == 1
+        # OWNERSHIP only. The tier is not this class's business — it comes from
+        # the `kg` cascade as LEAST(endpoints); writing it here would raise the
+        # tier unconditionally and leave `atoms.policy` saying something else.
         row = (await db_session.execute(
             text("SELECT user_id, circle_tier FROM kg_relations")
         )).first()
-        assert row == (1, 2)
+        assert row == (1, 0)
 
     async def test_ownerless_knowledge_bases_get_the_admin(self, db_session, household):
         db_session.add(KnowledgeBase(name="Alt-KB", is_active=True, owner_id=None))
@@ -298,9 +305,11 @@ class TestTheMemberships:
         assert str(value).strip('"') == "4"
 
     async def test_revert_removes_what_it_created(self, db_session, household):
-        await run_backfill(db_session, household, only=["mitgliedschaften"], dry_run=False)
+        log = RunLog()
+        await run_backfill(db_session, household, only=["mitgliedschaften"],
+                           dry_run=False, log=log)
         [res] = await run_backfill(db_session, household, only=["mitgliedschaften"],
-                                   dry_run=False, revert=True)
+                                   dry_run=False, revert=True, log=log)
 
         assert res.changed == len(_membership_pairs(household))
         left = (await db_session.execute(
@@ -392,3 +401,166 @@ class TestTheRunner:
 
         results = await run_backfill(db_session, household, dry_run=True)
         assert [r.name for r in results] == list(CLASSES)
+
+
+class TestAnEdgeIsNeverWidenedDirectly:
+    """A relation's tier is not its own: `update_tier` recomputes every incident
+    relation as `LEAST(subject, object)` — the house invariant that a relation is
+    never wider than its narrowest endpoint (`kg-memory.md`).
+
+    `kg_entities.atom_id` is NULLABLE, so an edge can have endpoints that carry
+    no atom and are therefore invisible to the atom-keyed selection. Moving edge
+    atoms directly would set such an edge to tier 2 while its endpoints stayed at
+    0, and nothing would ever pull it back — a visibility RAISE on a row nobody
+    asked to widen.
+    """
+
+    async def test_an_edge_between_atomless_endpoints_stays_narrow(
+        self, db_session, household
+    ):
+        subj = KGEntity(user_id=1, name="Ohne Atom A", entity_type="person",
+                        circle_tier=0)
+        obj = KGEntity(user_id=1, name="Ohne Atom B", entity_type="place",
+                       circle_tier=0)
+        db_session.add_all([subj, obj])
+        await db_session.flush()
+        rel = KGRelation(user_id=1, subject_id=subj.id, predicate="wohnt_in",
+                         object_id=obj.id, confidence=0.9, circle_tier=0)
+        db_session.add(rel)
+        await db_session.flush()
+        # An edge ATOM exists even though neither endpoint has one — exactly the
+        # shape that made the direct write unsafe.
+        db_session.add(Atom(atom_id="edge-1", atom_type="kg_edge",
+                            source_table="kg_relations", source_id=str(rel.id),
+                            owner_user_id=1, policy={"tier": 0}))
+        await db_session.commit()
+
+        [res] = await run_backfill(db_session, household, only=["kg"], dry_run=False)
+
+        assert res.changed == 0, "edge atoms must not be selected"
+        tier = (await db_session.execute(
+            text("SELECT circle_tier FROM kg_relations WHERE id = :i"), {"i": rel.id}
+        )).scalar_one()
+        assert tier == 0, "the edge was widened past its endpoints"
+        assert await _tier_of(db_session, "edge-1") == 0
+
+    async def test_an_edge_follows_its_nodes_through_the_cascade(
+        self, db_session, household
+    ):
+        """The other half: when both endpoints DO move, the edge moves with them
+        — through the cascade, not through a write of its own."""
+        subj_atom = await _kg_atom(db_session, 1, 0, 60)
+        obj_atom = await _kg_atom(db_session, 1, 0, 61)
+        subj_id = int((await db_session.execute(
+            text("SELECT source_id::int FROM atoms WHERE atom_id = :a"),
+            {"a": subj_atom.atom_id},
+        )).scalar_one())
+        obj_id = int((await db_session.execute(
+            text("SELECT source_id::int FROM atoms WHERE atom_id = :a"),
+            {"a": obj_atom.atom_id},
+        )).scalar_one())
+        rel = KGRelation(user_id=1, subject_id=subj_id, predicate="kennt",
+                         object_id=obj_id, confidence=0.9, circle_tier=0)
+        db_session.add(rel)
+        await db_session.commit()
+
+        await run_backfill(db_session, household, only=["kg"], dry_run=False)
+
+        tier = (await db_session.execute(
+            text("SELECT circle_tier FROM kg_relations WHERE id = :i"), {"i": rel.id}
+        )).scalar_one()
+        assert tier == 2
+
+
+class TestTheRevertKnowsInsteadOfGuessing:
+    """The first cut inferred what to undo from the current state. For two
+    classes that inference is destructive, and both were caught in review.
+    """
+
+    async def test_kg_revert_without_a_log_is_refused(self, db_session, household):
+        """"Admin-owned node at tier 2" is exactly the shape of the 19 hand-set
+        tier-2 atoms the forward run refuses to touch. A revert selecting on that
+        would demote them to 0 with nothing recording it."""
+        with pytest.raises(RevertWithoutLog, match="handgesetzt"):
+            await run_backfill(db_session, household, only=["kg"],
+                               dry_run=False, revert=True)
+
+    async def test_kg_revert_leaves_a_hand_set_two_alone(self, db_session, household):
+        handset = await _kg_atom(db_session, household.admin_id, 2, 70)
+        moved = await _kg_atom(db_session, household.admin_id, 0, 71)
+        await db_session.commit()
+
+        log = RunLog()
+        await run_backfill(db_session, household, only=["kg"], dry_run=False, log=log)
+        await run_backfill(db_session, household, only=["kg"], dry_run=False,
+                           revert=True, log=log)
+
+        assert await _tier_of(db_session, moved.atom_id) == 0, "the run's own move"
+        assert await _tier_of(db_session, handset.atom_id) == 2, (
+            "a hand-set tier-2 atom was demoted by the revert"
+        )
+
+    async def test_membership_revert_without_a_log_is_refused(
+        self, db_session, household
+    ):
+        with pytest.raises(RevertWithoutLog, match="von Hand"):
+            await run_backfill(db_session, household, only=["mitgliedschaften"],
+                               dry_run=False, revert=True)
+
+    async def test_membership_revert_leaves_a_hand_made_row_alone(
+        self, db_session, household
+    ):
+        """A pair the forward run found already present is somebody's own
+        decision — the revert must not delete it just because it is in the plan."""
+        await db_session.execute(
+            text(
+                "INSERT INTO circle_memberships "
+                "(circle_owner_id, member_user_id, dimension, value, granted_by, granted_at) "
+                "VALUES (1, 2, 'tier', '4', 1, NOW())"
+            )
+        )
+        await db_session.commit()
+
+        log = RunLog()
+        await run_backfill(db_session, household, only=["mitgliedschaften"],
+                           dry_run=False, log=log)
+        await run_backfill(db_session, household, only=["mitgliedschaften"],
+                           dry_run=False, revert=True, log=log)
+
+        survivors = (await db_session.execute(
+            text(
+                "SELECT COUNT(*) FROM circle_memberships "
+                " WHERE circle_owner_id = 1 AND member_user_id = 2 AND dimension = 'tier'"
+            )
+        )).scalar_one()
+        assert survivors == 1, "the hand-made membership was deleted by the revert"
+
+    async def test_the_log_round_trips_through_json(self):
+        log = RunLog(kg_atom_ids=["a", "b"], membership_pairs=[(1, 2), (2, 1)])
+        import json
+
+        back = RunLog.from_json(json.loads(json.dumps(log.to_json())))
+        assert back.kg_atom_ids == ["a", "b"]
+        assert back.membership_pairs == [(1, 2), (2, 1)]
+
+
+class TestTheCascadeOverHandSetEdges:
+    """Two house rules collide and neither can simply win: `update_tier` owns the
+    cascade (going around it is the direct-write anti-pattern), but the cascade
+    recomputes a relation tier somebody set by hand. `LEAST` only narrows, so it
+    is not a leak — it IS the script overruling an operator, so the dry-run says
+    how often it will happen instead of leaving it to be discovered."""
+
+    async def test_the_dry_run_counts_them(self, db_session, household):
+        subj = await _kg_atom(db_session, 1, 0, 80)
+        obj = await _kg_atom(db_session, 1, 0, 81)
+        ids = [int((await db_session.execute(
+            text("SELECT source_id::int FROM atoms WHERE atom_id = :a"), {"a": a.atom_id}
+        )).scalar_one()) for a in (subj, obj)]
+        db_session.add(KGRelation(user_id=1, subject_id=ids[0], predicate="kennt",
+                                  object_id=ids[1], confidence=0.9, circle_tier=4))
+        await db_session.commit()
+
+        [res] = await run_backfill(db_session, household, only=["kg"], dry_run=True)
+
+        assert any("handgesetzte Kanten-Stufe" in n for n in res.notes), res.notes

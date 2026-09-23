@@ -26,19 +26,27 @@ Usage:
         --device-account 6
     python bin/backfill_household_tiers.py --dry-run --admin 1 --family 1,2,3 \
         --only kg,mitgliedschaften
-    python bin/backfill_household_tiers.py --commit  --admin 1 --family 1,2,3 --revert
+    python bin/backfill_household_tiers.py --commit  --admin 1 --family 1,2,3 \
+        --revert --log household-backfill-20260923-101500.json
 
 Classes (--only, comma-separated; default: all, in this order):
     kg                  knowledge-graph atoms 0 → 2 (the only class that moves rows)
     admin-atome         documents/facts/memories — REPORT only, already tier 0
-    null-relationen     kg_relations without an owner → admin, tier 2
+    null-relationen     kg_relations without an owner → admin (tier comes from the cascade)
     kb-eigentümer       knowledge_bases.owner_id NULL → admin
     unterhaltungen      ownerless conversations → speaker's user or admin, + atom
     kopplungs-rest      delete the stale (admin, admin, tier) pairing row
     mitgliedschaften    family × family, device ↔ admin, family → device's circle
     erfassungsvorgabe   capture default per account: family 2, guests 0
 
---revert undoes what can be undone: the knowledge-graph tier and the memberships.
+--revert undoes the knowledge-graph tier and the memberships, and it REQUIRES the
+--log the commit run wrote. That is not bookkeeping fussiness: reverting by
+inference is what would do the damage. "Admin-owned node at tier 2" is exactly
+the shape of the 19 hand-set tier-2 atoms the forward run refuses to touch, and
+"every planned membership that exists" includes one somebody created by hand at a
+different tier. The log names what THIS run changed, so the revert can undo that
+and nothing else.
+
 It deliberately does NOT undo the classes where "before" is not recoverable —
 once an ownerless row has an owner, nothing records that it had none. Those
 classes say so in their output instead of pretending.
@@ -47,10 +55,12 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import json
 import logging
 import os
 import sys
 from collections.abc import Mapping
+from datetime import datetime
 from pathlib import Path
 
 # --- backend import path (identical block in every bin/backfill_*.py) ---------------
@@ -86,7 +96,13 @@ if str(_BACKEND) not in sys.path:
 # --- end backend import path ---------------------------------------------------------
 
 from services.database import AsyncSessionLocal  # noqa: E402
-from services.household_backfill import CLASSES, MemberList, run_backfill  # noqa: E402
+from services.household_backfill import (  # noqa: E402
+    CLASSES,
+    MemberList,
+    RevertWithoutLog,
+    RunLog,
+    run_backfill,
+)
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s | %(levelname)s | %(message)s")
 logger = logging.getLogger("backfill_household_tiers")
@@ -117,7 +133,13 @@ def _build_parser() -> argparse.ArgumentParser:
     p.add_argument("--only", default=None,
                    help=f"Comma-separated classes. Known: {','.join(CLASSES)}")
     p.add_argument("--revert", action="store_true",
-                   help="Undo what can be undone (kg tiers, memberships).")
+                   help="Undo what can be undone (kg tiers, memberships) — needs --log.")
+    p.add_argument("--log", default=None,
+                   help="Run log. A --commit run WRITES it (default: "
+                        "./household-backfill-<timestamp>.json); a --revert run READS "
+                        "it and undoes exactly those changes. Without it, revert "
+                        "refuses: reverting by inference is what would demote a "
+                        "hand-set tier or delete somebody's own membership.")
     return p
 
 
@@ -160,15 +182,48 @@ async def _run(args: argparse.Namespace) -> int:
                 mode, members.admin_id, members.family, members.guests,
                 members.device_account_id)
 
+    log = RunLog()
+    log_path: Path | None = None
+    if args.revert:
+        if not args.log:
+            logger.error(
+                "--revert ohne --log. Der Rückweg darf nicht raten, was der "
+                "Schreiblauf getan hat: er würde sonst handgesetzte Stufen "
+                "senken und Mitgliedschaften löschen, die jemand selbst angelegt "
+                "hat. Gib das Protokoll des Schreiblaufs an."
+            )
+            return 2
+        log_path = Path(args.log)
+        if not log_path.is_file():
+            logger.error("Protokoll nicht gefunden: %s", log_path)
+            return 2
+        log = RunLog.from_json(json.loads(log_path.read_text()))
+        logger.info("Protokoll gelesen: %d kg-Atome, %d Mitgliedschaften",
+                    len(log.kg_atom_ids), len(log.membership_pairs))
+    elif args.commit:
+        log_path = Path(
+            args.log
+            or f"household-backfill-{datetime.now().strftime('%Y%m%d-%H%M%S')}.json"
+        )
+
     async with AsyncSessionLocal() as session:
         try:
             results = await run_backfill(
                 session, members, only=only,
-                dry_run=bool(args.dry_run), revert=bool(args.revert),
+                dry_run=bool(args.dry_run), revert=bool(args.revert), log=log,
             )
+        except RevertWithoutLog as e:
+            logger.error("%s", e)
+            return 2
         except ValueError as e:
             logger.error("%s", e)
             return 2
+        finally:
+            # Written even on a failure part-way: what it already did is exactly
+            # what a revert has to undo, and that is when the log matters most.
+            if log_path is not None and args.commit:
+                log_path.write_text(json.dumps(log.to_json(), indent=2))
+                logger.info("Protokoll geschrieben: %s", log_path)
 
     for r in results:
         logger.info("  %s", r.line())
