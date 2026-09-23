@@ -99,15 +99,43 @@ asyncio.run(main())"
 Notiere: `--admin`, `--family` (der Admin **gehört dazu**), `--guests`,
 `--device-account`. Die Liste wird in P2 unverändert benutzt.
 
-### 1.4 Das Gerätekonto existiert und ist gekennzeichnet
+### 1.4 Das Gerätekonto ANLEGEN — es existiert noch nicht
 
 ```bash
 kubectl -n renfield get cm renfield-env -o jsonpath='{.data.SATELLITE_DEVICE_ACCOUNT}'; echo
+kubectl -n renfield exec deploy/backend -c backend -- python -c "
+import asyncio
+from sqlalchemy import text
+from services.database import AsyncSessionLocal
+async def main():
+    async with AsyncSessionLocal() as db:
+        print((await db.execute(text(
+            'SELECT COUNT(*) FROM users WHERE is_device_account'
+        ))).scalar_one())
+asyncio.run(main())"
 ```
 
-Der Name muss zu einem Nutzer mit `is_device_account = true` passen. Ein
-konfiguriertes, aber nicht auflösbares Gerätekonto **verweigert** jeden anonymen
-Satellitenzug — laut, nicht still.
+**Stand 2026-09-23: der Schlüssel ist LEER und kein Nutzer trägt das Kennzeichen.**
+Das ist kein Randfall, sondern eine Vorbedingung, ohne die ein gebautes Feature
+nicht wirkt: ein Raumverlauf GEHÖRT dem Gerätekonto (§8.1). Ohne eines gibt es
+keinen Eigentümer, und weil eine eigentümerlose Zeile auf Stufe 2 niemanden
+erreicht, fällt die Stufe auf 0 zurück — die geteilten Raumverläufe aus P0 Nr. 6
+funktionieren dann schlicht nicht. Still, ohne Fehlermeldung.
+
+Also VOR P2:
+
+1. Einen Nutzer „Haushalt" anlegen (Admin-Oberfläche), Rolle mit dem
+   Anonym-Rechtesatz, **kein** persönliches Konto.
+2. `users.is_device_account = true` setzen. Das KENNZEICHEN ist der Vertrag, nie
+   der Name — es sperrt Erinnerungs-Extraktion und Präsenzbuchung (D-4b).
+3. `SATELLITE_DEVICE_ACCOUNT` in `k8s/configmap.yaml` auf diesen Namen setzen —
+   zusammen mit den sechs Schlüsseln in P3, nicht früher.
+4. Die Konto-ID notieren: sie ist `--device-account` im Backfill (P2), und ohne
+   sie legt das Backfill die Mitgliedschaften des Gerätekontos nicht an.
+
+Ein konfiguriertes, aber nicht auflösbares Gerätekonto **verweigert** jeden
+anonymen Satellitenzug — laut, nicht still. Das ist die gewollte Richtung; ein
+gar nicht konfiguriertes ist die stille.
 
 ---
 
@@ -137,12 +165,28 @@ der Sinn: die Daten liegen richtig, bevor der Schalter fällt.
 
 ### 3.1 Probelauf
 
+**Das Skript liegt NICHT im Image.** Der Build-Kontext des Backends ist
+`src/backend`; `bin/` ist nicht darin. Die Backfill-Skripte werden einzeln in den
+Pod kopiert — so sind sie gebaut (ihr Kopfkommentar sagt es), und `python
+bin/…` im Pod scheitert mit `No such file or directory`.
+
 ```bash
-kubectl -n renfield exec deploy/backend -- python bin/backfill_household_tiers.py \
-  --dry-run --admin 1 --family 1,2,3 --guests 4 --device-account 5
+POD=$(kubectl -n renfield get pods --no-headers -o custom-columns=":metadata.name" \
+        | grep '^backend-' | head -1)
+kubectl -n renfield cp bin/backfill_household_tiers.py $POD:/tmp/bf.py -c backend
+
+kubectl -n renfield exec $POD -c backend -- python /tmp/bf.py \
+  --dry-run --admin 1 --family 1,2,3,4,5 --device-account <ID aus 1.4>
 ```
 
 Die Ausgabe zeigt je Klasse `geändert von geprüft`. Lies sie ganz. Erwartet:
+
+Gemessen am 2026-09-23 (Probelauf, ohne Gerätekonto): **5021 Änderungen** —
+kg 4744, Unterhaltungen 208 (45 über Sprecher-Verknüpfung), Null-Relationen 38,
+KB-Eigentümer 6, Kopplungs-Rest 1, Mitgliedschaften 20, Erfassungsvorgabe 4;
+`admin-atome` 0 von 7525. Weicht Dein Probelauf stark davon ab, ist etwas anders
+als erwartet — nachsehen, bevor Du freigibst. **Mit** Gerätekonto steigen die
+Mitgliedschaften von 20 auf 26 (die sechs Zeilen des Gerätekontos).
 
 * **kg** bewegt als einzige Klasse wirklich etwas (Stufe 0 → 2).
 * **admin-atome** meldet `0` — Dokumente, Fakten und Erinnerungen stehen schon
@@ -159,8 +203,8 @@ Die Ausgabe zeigt je Klasse `geändert von geprüft`. Lies sie ganz. Erwartet:
 ### 3.2 Schreiblauf
 
 ```bash
-kubectl -n renfield exec deploy/backend -- python bin/backfill_household_tiers.py \
-  --commit --admin 1 --family 1,2,3 --guests 4 --device-account 5 \
+kubectl -n renfield exec $POD -c backend -- python /tmp/bf.py \
+  --commit --admin 1 --family 1,2,3,4,5 --device-account <ID aus 1.4> \
   --log /tmp/cutover-backfill.json
 ```
 
@@ -171,7 +215,7 @@ neu prüfen.
 ### 3.3 Das Protokoll sichern
 
 ```bash
-kubectl -n renfield cp backend-<pod>:/tmp/cutover-backfill.json ./cutover-backfill.json
+kubectl -n renfield cp $POD:/tmp/cutover-backfill.json ./cutover-backfill.json -c backend
 ```
 
 **Das ist der einzige Rückweg.** `--revert` verweigert ohne dieses Protokoll, und
@@ -265,8 +309,10 @@ bleiben.
 Die Stufen zusätzlich zurücknehmen — nur mit dem Protokoll aus 3.3:
 
 ```bash
-kubectl -n renfield exec deploy/backend -- python bin/backfill_household_tiers.py \
-  --commit --revert --admin 1 --family 1,2,3 --device-account 5 \
+kubectl -n renfield cp bin/backfill_household_tiers.py $POD:/tmp/bf.py -c backend
+kubectl -n renfield cp ./cutover-backfill.json $POD:/tmp/cutover-backfill.json -c backend
+kubectl -n renfield exec $POD -c backend -- python /tmp/bf.py \
+  --commit --revert --admin 1 --family 1,2,3,4,5 --device-account <ID aus 1.4> \
   --log /tmp/cutover-backfill.json
 ```
 
