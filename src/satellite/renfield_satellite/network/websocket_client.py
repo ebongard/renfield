@@ -28,6 +28,32 @@ except ImportError:
     print("Warning: websockets not installed. Network disabled.")
 
 
+def _headers_kwarg() -> str:
+    """Name of the connect() kwarg carrying extra request headers.
+
+    websockets <= 13: ``extra_headers``; >= 14: ``additional_headers``.
+    Falls back to the modern name when websockets is missing (the network
+    layer is disabled then anyway).
+    """
+    if websockets is None:
+        return "additional_headers"
+    try:
+        import inspect
+        params = inspect.signature(websockets.connect).parameters
+    except (TypeError, ValueError):  # pragma: no cover - exotic C wrapper
+        return "additional_headers"
+    if "additional_headers" in params:
+        return "additional_headers"
+    if "extra_headers" in params:
+        return "extra_headers"
+    # Neither name is introspectable (e.g. **kwargs only) - the modern name is
+    # the right guess for anything current.
+    return "additional_headers"
+
+
+_HEADERS_KWARG = _headers_kwarg()
+
+
 # Maximum TTS audio payload size (10MB ≈ 40s speech) to prevent OOM on constrained devices
 MAX_AUDIO_PAYLOAD_BYTES = 10 * 1024 * 1024
 
@@ -321,9 +347,17 @@ class WebSocketClient:
             if self._requested_audio_codec == "opus":
                 connect_kwargs["compression"] = None
 
-            # Pass auth token via header instead of URL query parameter
+            # Pass auth token via header instead of URL query parameter.
+            # websockets >= 14 renamed `extra_headers` to `additional_headers`
+            # and 16.x (what the current Pi images ship) REJECTS the old name
+            # with a TypeError — which `connect()` catches, so the satellite
+            # just "fails to connect" forever with no hint that the header is
+            # the reason. Pick the kwarg by signature, not by version string:
+            # the fleet runs several websockets versions (bare-metal Pi Zero
+            # images vs the arm64 pod) and this path is the ONLY way a
+            # satellite proves its enrollment PSK under auth-on.
             if self._auth_token:
-                connect_kwargs["extra_headers"] = {
+                connect_kwargs[_HEADERS_KWARG] = {
                     "Authorization": f"Bearer {self._auth_token}"
                 }
 

@@ -402,8 +402,8 @@ class Satellite:
             self.ws_client.set_verify_tls(self.config.server.verify_tls)
             print(f"Server: {server_url}")
 
-            # Fetch auth token if authentication is enabled
-            if self.config.server.auth_enabled:
+            # Set the handshake credential (see _needs_handshake_credential).
+            if self._needs_handshake_credential():
                 await self._fetch_and_set_token(server_url)
         else:
             print("No server URL configured and auto-discovery disabled/failed")
@@ -692,6 +692,18 @@ class Satellite:
 
         return False
 
+    def _needs_handshake_credential(self) -> bool:
+        """Whether a credential must be put on the WS handshake.
+
+        NOT ``auth_enabled`` alone: that device-side flag defaults to False and
+        is False on every satellite provisioned while the instance ran auth-off.
+        An ENROLLED satellite always has a credential to present (its PSK), and
+        under auth-on a handshake without an Authorization header is rejected
+        with 403 before the register frame is ever read — so the enrollment
+        token alone is reason enough.
+        """
+        return bool(self.config.server.auth_enabled or self.config.server.enrollment_token)
+
     async def _fetch_and_set_token(self, server_url: str):
         """
         Fetch authentication token and set it on the WebSocket client.
@@ -703,6 +715,22 @@ class Satellite:
         if self.config.server.auth_token:
             print("Using pre-configured auth token")
             self.ws_client.set_auth_token(self.config.server.auth_token)
+            return
+
+        # Derive the handshake credential from the enrollment PSK (H1). The
+        # backend recognises a satellite credential ONLY by the `sat.` prefix
+        # (services/websocket_auth.py, Strategy S) and verifies the secret
+        # against the same bcrypt hash the register frame uses — so the PSK
+        # already on this device IS the handshake credential; it just needs the
+        # prefix. Deriving it here means the operator provisions ONE secret,
+        # not two, and a device enrolled before the auth-on cutover needs no
+        # re-provisioning. Must come before the faucet below: POST /api/ws/token
+        # demands a logged-in user and returns 401 on an auth-on instance.
+        if self.config.server.enrollment_token:
+            print("Using enrollment PSK as handshake credential")
+            self.ws_client.set_auth_token(
+                f"sat.{self.config.satellite.id}.{self.config.server.enrollment_token}"
+            )
             return
 
         # Derive HTTP URL from WebSocket URL
