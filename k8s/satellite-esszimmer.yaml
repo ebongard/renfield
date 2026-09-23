@@ -138,7 +138,7 @@ spec:
                     values: ["arm64"]
       containers:
         - name: satellite
-          image: renfield/satellite:esszimmer-v13
+          image: renfield/satellite:esszimmer-v14
           imagePullPolicy: Never   # imported into node containerd (k8s.io ns)
           securityContext:
             privileged: true        # raw /dev access for USB audio + xvf_host
