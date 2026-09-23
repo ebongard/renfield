@@ -160,11 +160,11 @@ trap of optimizing for "what Open WebUI has." None of these should be deferred.
      `tsvector` column + migration + a backfill for existing rows — reuse the
      existing pattern on `document_chunks` / `conversation_memories`, not a new
      mechanism.
-   - **Scoping:** `Message` is **not an atom** — it has no `circle_tier`/`atom_id`.
-     Do NOT route it through `circle_sql.py`. Scope message search by
-     **conversation ownership** (and household-shared conversations if/when that
-     exists). `circle_sql` stays the rule for *atom-bearing* reads (provenance
-     #7, KB), which messages are not.
+   - **Scoping:** `Message` is still **not an atom** — no `circle_tier`/`atom_id`
+     of its own. The conversation carries both since auth-on §8.1, so the
+     "household-shared conversations if/when that exists" foreseen here now
+     exists: message search scopes by conversation **REACH** through
+     `circle_sql`, applied to the conversation row.
    - Frontend: a search field in `ChatSidebar.tsx` + jump-to-message.
    - Risk: medium — schema change (the `tsvector` column + backfill).
 
@@ -307,9 +307,9 @@ boundary (5) exists, since 8/9/10 reuse it.
 - Every new **atom-bearing** read path (provenance #7, KB-backed surfacing,
   shared-conversation reads over atoms) goes through `services/circle_sql.py` —
   no second unfiltered path, same rule as the rest of the corpus. **Message
-  search (#3) is the exception:** messages are not atoms, so it scopes by
-  conversation ownership instead — do not force it through the atom circle
-  filter.
+  search (#3) was the exception** while conversations carried no tier; since
+  auth-on §8.1 they do, so it scopes by conversation REACH — the filter rides
+  on the conversation row, not on the message.
 - Model output rendered as an artifact is **untrusted**: sandbox it. No raw HTML
   injection.
 - Dark mode (`dark:` variants) and i18n (`useTranslation`, both `de.json` +
@@ -353,8 +353,8 @@ propagation").
 ### Message search (`MESSAGE_SEARCH_ENABLED`)
 - Postgres FTS over the `messages` table via a GENERATED `search_vector` column (migration `pc20260617`, multilingual
   `tsvector` union); `GET /api/chat/messages/search` ranked by `ts_rank`; sidebar field + jump-to-message.
-- Scoped strictly by **conversation ownership** — messages are NOT atoms, so deliberately NOT routed through
-  `circle_sql`. XSS-safe sentinel→`<mark>` highlighting.
+- Scoped by **conversation REACH** — messages are still not atoms, but the conversation is one since auth-on
+  §8.1, so the filter rides on the conversation row through `circle_sql`. XSS-safe sentinel→`<mark>` highlighting.
 
 ### Typed artifacts (Lane A) and message branching
 - Typed artifacts (`ARTIFACTS_TYPED_ENABLED`, roadmap item 5): shipped status in

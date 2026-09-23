@@ -42,22 +42,37 @@ equality. Writing routes pass `for_write=True` and stay owner-bound.
 An atom needs an owner (`atoms.owner_user_id` NOT NULL), so an OWNERLESS conversation gets none — `atom_id` is
 nullable here, unlike on notes, and the P2 backfill fills it in when the row gets an owner.
 **The migration's downgrade drops the COLUMNS before deleting the atoms**: `atom_id` carries ON DELETE CASCADE, so
-the other order deletes every conversation and meeting.
+the other order deletes every conversation and meeting. That same CASCADE widens `AtomPurgeService.purge`: an Art.-17
+erasure now takes the whole conversation (with its messages) and the whole meeting, which is the point, not an accident.
 
-## Ownership of a conversation (`enforce_ownership`, auth-on only)
-ONE rule on both sides: a conversation that is not the caller's is refused — foreign AND **ownerless**. The session id
-is minted by the CLIENT and never validated, so an ownerless row is reachable by anyone holding such an id. Reads
-return `[]`, writes raise `PermissionError`, push-registration (`_session_registerable_by`) says no; only a session
-with **no row at all** is free to take. Adoption ("first writer becomes the owner") exists only under auth-off.
-The decision is taken at the BOUNDARY — the `register` frame and the first message of a session
-(`_replacement_session_for`) — not at persistence: the scan return path, the paperless-confirm lookup and the push
-registration all key on the id the turn STARTED with. A refused id is swapped there and announced as
-`{"type": "session_replaced", "session_id": …}` — the id and nothing else, or the frame becomes an oracle. The late
-`ConversationNotOwnedError` catch in the save block is a backstop for clients that send no register frame; it rebinds
-`session_state.db_session_id` too. Never catch a bare `PermissionError` there — it is a builtin `OSError` descendant.
-No identity (device token) → no replacement: it would mint a new ownerless row per turn.
-The same rule holds outside the socket: `api/routes/chat.py::conversation_is_callers` for the REST fallback, and the
-Paperless finalize announcement writes ownership-gated.
+**A room history is owned by the DEVICE account** (`satellite_handler.room_history_owner_id`), never by the recognised
+speaker — §8.1 rules that out by name, because `may_alter` would then let that one person delete the household's
+thread. No device account ⇒ no owner ⇒ tier falls back to 0: an ownerless row at tier 2 reaches nobody, since every
+branch of the filter keys on the owner. The handoff copies the source tier for the same reason — it runs BEFORE
+`save_message`, which never revisits the tier of a row that already exists.
+**Every place that hands a row an owner registers its atom** — creation, the auth-off adoption branch,
+`associate_speaker`, the handoff, `POST /api/chat/send`, and the meeting upload. `ConversationService.ensure_atom` is
+the one entry point and runs in a SAVEPOINT (`begin_nested`): `create_with_source` flushes, and a failed flush aborts
+the turn's whole transaction, so "best-effort" is only true inside one.
+
+## Access to a conversation (`enforce_ownership`, auth-on only)
+The rule is REACH, on both sides, and its negative half is unchanged: a conversation out of the caller's reach is
+refused — foreign AND **ownerless** (every reach branch keys on the owner, so an ownerless row reaches nobody). The
+session id is minted by the CLIENT and never validated, so such a row would otherwise be readable by anyone holding
+the id. Reads return `[]`, writes raise `PermissionError`, push-registration says no; only a session with **no row at
+all** is free to take. Adoption ("first writer becomes the owner") exists only under auth-off.
+**`enforce_ownership` is an auth-on rule — derive it from the flag, never hardcode `True`**: `reaches()` fails closed
+without a caller identity, so a hardcoded `True` refuses every write under auth-off (`scanner_jobs` did, and every
+scan outcome into a voice-started conversation was refused).
+The decision is taken at the BOUNDARY — `_session_registerable_by` on the `register` frame, `_replacement_session_for`
+on the first message, `api/routes/chat.py::conversation_is_callers` for the REST fallback — not at persistence: the
+scan return path, the paperless-confirm lookup and the push registration all key on the id the turn STARTED with.
+**Those boundary checks ask `reaches()` too**; on owner equality they would swap a member onto a fresh id before the
+service layer ever ran, and the shared thread would be readable but never continuable from a browser. A refused id is
+swapped and announced as `{"type": "session_replaced", "session_id": …}` — the id and nothing else, or the frame
+becomes an oracle. The late `ConversationNotOwnedError` catch in the save block is a backstop for clients that send no
+register frame; it rebinds `session_state.db_session_id` too. Never catch a bare `PermissionError` there — it is a
+builtin `OSError` descendant. No identity (device token) → no replacement: it would mint a new ownerless row per turn.
 
 ## Fork / switch / delete
 - `ConversationService.save_message` ALWAYS maintains the tree (`ollama_service.save_message` only delegates): normal

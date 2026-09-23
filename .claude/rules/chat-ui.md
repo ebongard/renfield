@@ -30,8 +30,10 @@ needs `WEATHER_ENABLED`.
 
 ## Message search
 `GET /api/chat/messages/search`: Postgres FTS on the GENERATED `messages.search_vector` (migration `pc20260617`), ranked
-by `ts_rank`. Scoped strictly by **conversation ownership** — messages are NOT atoms, so deliberately NOT routed through
-`circle_sql`. Highlighting is sentinel→`<mark>` (XSS-safe); never pass raw DB/headline markup to the DOM.
+by `ts_rank`. Scoped by **conversation REACH** (auth-on §8.1): messages are still not atoms, but the CONVERSATION is,
+so the filter rides on the conversation row through `circle_sql` — whoever may read a shared room history finds what
+was said in it. Under auth-off the owner filter stands. (This reverses the earlier owner-equality rule, which predates
+conversations carrying a tier.) Highlighting is sentinel→`<mark>` (XSS-safe); never pass raw DB/headline markup to the DOM.
 
 ## Typed artifacts (Lane A)
 - Typed JSON → real React components. **NO model HTML/SVG**; React's escape boundary is the whole security story (same

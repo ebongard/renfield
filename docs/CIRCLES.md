@@ -45,7 +45,8 @@ Jede „Informationseinheit" die einen Circle tragen soll, bekommt einen Eintrag
 
 ```
 atom_id           — UUID, primary key
-atom_type         — "document_chunk" | "kg_entity" | "kg_relation" | "conversation_memory" | ...
+atom_type         — "document_chunk" | "kg_entity" | "kg_relation" | "conversation_memory"
+                    | "note" | "conversation" | "meeting" | ...
 source_table      — Name der Quell-Tabelle ("document_chunks", "kg_entities", ...)
 source_id         — ID in der Quell-Tabelle (Text, da heterogen)
 owner_user_id     — der Eigentümer
@@ -226,3 +227,11 @@ must not be broken when editing the code are in `.claude/rules/circles.md` (plus
 `ConversationMemoryService.retrieve()` now respects circle reach — tier-2 household peers see each other's
 household-tier memories. Previously `user_id == asker_id` filtered strictly. Memory-retrieval callers pass
 `user_id=asker_id`; every `rag.search()` call passes `user_id=asker_id` too.
+
+Mit dem auth-on-Cutover (§8.1) gilt dasselbe für **Unterhaltungen und Meetings**: beide tragen jetzt
+`circle_tier` + `atom_id` und werden über `circle_sql` gelesen statt über Eigentümer-Gleichheit. Ein
+Raumverlauf am Satelliten gehört dem **Gerätekonto** auf Stufe 2, Browser-Chats bleiben auf Stufe 0.
+Zwei Hälften, die man nicht verwechseln darf: **Lesen folgt der Reichweite, Zerstören nicht** —
+`ConversationService.may_alter` (Eigentümer plus `chat.all`) und `_get_owned_meeting(..., for_write=True)`
+bleiben eigentümergebunden. Die Nachrichtensuche und die Chat-Anhänge folgen der Reichweite des Verlaufs,
+weil sie sonst einen Faden zeigten, dessen Inhalt niemand findet.

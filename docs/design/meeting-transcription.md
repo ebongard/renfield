@@ -59,9 +59,9 @@ already work via existing paths; this adds the multi-speaker piece.
    │  small talk; purpose-built action-item extraction comes with the minutes phase).
    │  file_to_paperless=False for transcripts.
    ▼
- GET /api/meetings/{id} — status poll (pending/processing/completed/failed), owner-gated
- GET /api/meetings     — owner-scoped list, newest-first, capped 1-200 (backs the frontend list; added PR-3)
- DELETE /api/meetings/{id} — owner-scoped whole-meeting delete (transcript doc + audio + row; shared purge_meeting)
+ GET /api/meetings/{id} — status poll (pending/processing/completed/failed), reach-gated (auth-on §8.1)
+ GET /api/meetings     — reach-scoped list, newest-first, capped 1-200 (backs the frontend list; added PR-3)
+ DELETE /api/meetings/{id} — OWNER-gated whole-meeting delete (transcript doc + audio + row; shared purge_meeting)
 ```
 
 **Re-attribution** (pseudonym → person, or fixing a name): update segments → re-render →
@@ -182,7 +182,9 @@ in `.claude/rules/meetings.md`.
 **Routes**
 
 - `POST /transcribe`, `GET /{id}`, `GET /{id}/segments`, `POST /{id}/relabel`, `DELETE /{id}` under `/api/meetings`,
-  plus the added owner-scoped `GET /api/meetings` list.
+  plus the added `GET /api/meetings` list. Reading follows tier REACH since auth-on §8.1 (the tier said
+  "shared artifact" from the start while the routes filtered on owner equality); every MUTATOR stays
+  owner-bound via `_get_owned_meeting(..., for_write=True)`.
 - `DELETE /{id}` is an owner-gated whole-meeting delete — transcript doc + audio + row — via the shared
   `meeting_retention.purge_meeting` cascade the retention sweep also uses (UI: a trash button + inline confirm on
   each card).

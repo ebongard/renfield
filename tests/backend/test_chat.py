@@ -404,61 +404,88 @@ class TestRestChatOwnership:
     ready. It finds the conversation by the CLIENT-supplied session id, so
     without a boundary it would read the last 10 messages of any conversation it
     merely named and append to it — the same rule as the WS path has to hold
-    here (auth-on cutover §4.2)."""
+    here (auth-on cutover §4.2).
+
+    Real rows, not in-memory model objects: since §8.1 the rule is tier REACH,
+    which is four branches of Postgres SQL. A stub conversation could only ever
+    re-assert owner equality, which is the thing that changed. The POSITIVE
+    reach case (a member continuing the device account's shared thread) lives in
+    `test_shared_conversations_boundaries.py` next to its circle memberships;
+    what this class pins is that the refusals still refuse.
+    """
 
     @staticmethod
-    def _conv(owner_id):
+    async def _conv(db, owner_id):
         from models.database import Conversation
 
-        return Conversation(session_id="s", user_id=owner_id)
+        conv = Conversation(session_id=f"s{owner_id}", user_id=owner_id)
+        db.add(conv)
+        await db.flush()
+        return conv
 
-    @staticmethod
-    def _user(uid):
-        from models.database import User
-
-        return User(id=uid, username=f"u{uid}", password_hash="x", role_id=1)
-
-    @pytest.mark.unit
-    def test_own_conversation_continues(self, monkeypatch):
+    @pytest.mark.database
+    async def test_own_conversation_continues(self, db_session, monkeypatch):
         from api.routes import chat as chat_routes
+        from tests.backend.dbrows import ensure_user
 
         monkeypatch.setattr(chat_routes.settings, "auth_enabled", True)
-        assert chat_routes.conversation_is_callers(self._conv(7), self._user(7)) is True
+        user = await ensure_user(db_session, 7)
+        conv = await self._conv(db_session, 7)
+        assert await chat_routes.conversation_is_callers(conv, user, db_session) is True
 
-    @pytest.mark.unit
-    def test_foreign_conversation_is_refused(self, monkeypatch):
+    @pytest.mark.database
+    async def test_foreign_conversation_is_refused(self, db_session, monkeypatch):
+        """No membership anywhere, so no reach: a tier-0 row is nobody else's."""
         from api.routes import chat as chat_routes
+        from tests.backend.dbrows import ensure_user
 
         monkeypatch.setattr(chat_routes.settings, "auth_enabled", True)
-        assert chat_routes.conversation_is_callers(self._conv(1), self._user(7)) is False
+        await ensure_user(db_session, 1)
+        caller = await ensure_user(db_session, 7)
+        conv = await self._conv(db_session, 1)
+        assert await chat_routes.conversation_is_callers(conv, caller, db_session) is False
 
-    @pytest.mark.unit
-    def test_ownerless_conversation_is_refused(self, monkeypatch):
-        """The case this change is about: with adoption gone an ownerless row
-        stays ownerless, and anyone holding the id could otherwise continue it."""
+    @pytest.mark.database
+    async def test_ownerless_conversation_is_refused(self, db_session, monkeypatch):
+        """The case this change is about, and it survives the move to reach:
+        with adoption gone an ownerless row stays ownerless, every reach branch
+        keys on the owner, so nobody reaches it — anyone holding the id could
+        otherwise continue it."""
         from api.routes import chat as chat_routes
+        from tests.backend.dbrows import ensure_user
 
         monkeypatch.setattr(chat_routes.settings, "auth_enabled", True)
-        assert chat_routes.conversation_is_callers(self._conv(None), self._user(7)) is False
+        caller = await ensure_user(db_session, 7)
+        conv = await self._conv(db_session, None)
+        assert await chat_routes.conversation_is_callers(conv, caller, db_session) is False
 
-    @pytest.mark.unit
-    def test_a_session_with_no_conversation_is_free(self, monkeypatch):
+    @pytest.mark.database
+    async def test_a_session_with_no_conversation_is_free(self, db_session, monkeypatch):
         from api.routes import chat as chat_routes
+        from tests.backend.dbrows import ensure_user
 
         monkeypatch.setattr(chat_routes.settings, "auth_enabled", True)
-        assert chat_routes.conversation_is_callers(None, self._user(7)) is True
+        caller = await ensure_user(db_session, 7)
+        assert await chat_routes.conversation_is_callers(None, caller, db_session) is True
 
-    @pytest.mark.unit
-    def test_auth_off_is_unchanged(self, monkeypatch):
+    @pytest.mark.database
+    async def test_auth_off_is_unchanged(self, db_session, monkeypatch):
         from api.routes import chat as chat_routes
+        from tests.backend.dbrows import ensure_user
 
         monkeypatch.setattr(chat_routes.settings, "auth_enabled", False)
-        assert chat_routes.conversation_is_callers(self._conv(1), self._user(7)) is True
+        await ensure_user(db_session, 1)
+        caller = await ensure_user(db_session, 7)
+        conv = await self._conv(db_session, 1)
+        assert await chat_routes.conversation_is_callers(conv, caller, db_session) is True
 
-    @pytest.mark.unit
-    def test_no_caller_identity_is_unchanged(self, monkeypatch):
+    @pytest.mark.database
+    async def test_no_caller_identity_is_unchanged(self, db_session, monkeypatch):
         # Device/satellite path: no JWT user, legacy behaviour.
         from api.routes import chat as chat_routes
+        from tests.backend.dbrows import ensure_user
 
         monkeypatch.setattr(chat_routes.settings, "auth_enabled", True)
-        assert chat_routes.conversation_is_callers(self._conv(1), None) is True
+        await ensure_user(db_session, 1)
+        conv = await self._conv(db_session, 1)
+        assert await chat_routes.conversation_is_callers(conv, None, db_session) is True

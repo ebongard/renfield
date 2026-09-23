@@ -329,14 +329,51 @@ class TestMeetingsFollowTheSameRule:
         assert reachable is None
 
     async def test_writing_routes_stay_owner_bound(self):
-        """Reach is not a licence to delete somebody else's recording: the
-        write routes pass `for_write=True`, which keeps owner equality."""
+        """Reach is not a licence to delete somebody else's recording: EVERY
+        mutating route passes `for_write=True`, which keeps owner equality.
+
+        Structural, not a count. The first cut of this test asserted
+        ``count("for_write=True") == 6`` — which is how `DELETE /{id}/minutes`
+        shipped read-gated: it was the seventh mutator, the count was written
+        from the six that existed, and a green test then certified the hole.
+        A number cannot say WHICH route is missing; this walks the router.
+        """
+        import ast
         import inspect
 
         from api.routes import meetings as meetings_routes
 
-        src = inspect.getsource(meetings_routes)
-        assert src.count("for_write=True") == 6   # patch, delete, relabel, 3× minutes
+        tree = ast.parse(inspect.getsource(meetings_routes))
+        mutating = {"post", "put", "patch", "delete"}
+        offenders: list[str] = []
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.AsyncFunctionDef):
+                continue
+            verbs = {
+                d.func.attr
+                for d in node.decorator_list
+                if isinstance(d, ast.Call)
+                and isinstance(d.func, ast.Attribute)
+                and isinstance(d.func.value, ast.Name)
+                and d.func.value.id == "router"
+            }
+            if not (verbs & mutating):
+                continue
+            for call in ast.walk(node):
+                if (
+                    isinstance(call, ast.Call)
+                    and isinstance(call.func, ast.Name)
+                    and call.func.id == "_get_owned_meeting"
+                ):
+                    if not any(
+                        kw.arg == "for_write" and getattr(kw.value, "value", None) is True
+                        for kw in call.keywords
+                    ):
+                        offenders.append(node.name)
+        assert offenders == [], (
+            f"mutating meeting routes fetch without for_write=True: {offenders}"
+        )
+
         gate = inspect.getsource(meetings_routes._get_owned_meeting)
         assert "meeting.owner_user_id != user.id" in gate
         assert "meetings_circles_filter" in gate

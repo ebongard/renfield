@@ -114,6 +114,33 @@ def _to_response(m: Meeting) -> MeetingResponse:
     )
 
 
+async def _ensure_meeting_atom(db: AsyncSession, meeting: Meeting) -> None:
+    """Register a meeting in the atoms registry (circles rule: never a bare
+    INSERT — the denormalized columns and ``atoms.policy`` drift apart).
+
+    An ownerless meeting gets none: ``atoms.owner_user_id`` is NOT NULL, and
+    under auth-off there is no owner to name. Inside a savepoint so a failure
+    here rolls back only itself — a failed flush would otherwise abort the whole
+    transaction and take the just-written meeting row with it.
+    """
+    if meeting.owner_user_id is None or meeting.atom_id is not None:
+        return
+    try:
+        from models.database import ATOM_TYPE_MEETING
+        from services.atom_service import AtomService
+
+        async with db.begin_nested():
+            meeting.atom_id = await AtomService(db).create_with_source(
+                atom_type=ATOM_TYPE_MEETING,
+                owner_user_id=meeting.owner_user_id,
+                tier=int(meeting.circle_tier or 0),
+                source_id=meeting.id,
+            )
+    except Exception as e:  # noqa: BLE001 — a recording must not die over an atom
+        meeting.atom_id = None
+        logger.warning(f"⚠️ Meeting ohne Atom angelegt (id={meeting.id}): {e}")
+
+
 @router.post("/transcribe", status_code=202, response_model=MeetingResponse)
 async def transcribe_meeting(
     response: Response,
@@ -201,6 +228,14 @@ async def transcribe_meeting(
         language=meeting_language,
     )
     db.add(meeting)
+    await db.flush()
+    # A meeting is an atom (auth-on §8.1). The migration backfilled the existing
+    # rows; without this every meeting recorded AFTER the deploy would carry a
+    # NULL `atom_id`, so `atom_explicit_grants` could never name one person to
+    # share it with and `AtomService.update_tier` would find nothing to move.
+    # Best-effort inside its own savepoint, like the conversation path: losing
+    # the atom must not cost the user their recording.
+    await _ensure_meeting_atom(db, meeting)
     await db.commit()
     await db.refresh(meeting)
 
@@ -569,9 +604,12 @@ async def delete_minutes(
     db: AsyncSession = Depends(get_db),
 ) -> MinutesResponse:
     """Discard minutes → back to none. Does NOT strip already-confirmed minutes
-    from the transcript document (a subsequent relabel/reindex would drop them)."""
+    from the transcript document (a subsequent relabel/reindex would drop them).
+
+    Owner-gated like every other mutator: discarding is destructive, and reach
+    is a licence to READ a shared meeting, never to throw away its minutes."""
     _require_minutes_enabled()
-    meeting = await _get_owned_meeting(meeting_id, user, db)
+    meeting = await _get_owned_meeting(meeting_id, user, db, for_write=True)
     meeting.minutes = None
     meeting.minutes_status = "none"
     meeting.minutes_generated_at = None

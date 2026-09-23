@@ -1,15 +1,24 @@
 """#657 — WS push-registration ownership boundary.
 
-A client may only register a session for server-push delivery if it owns that
-conversation, or no such conversation exists yet. Enforced only when auth is on
-and a JWT caller identity exists. Tested against the helper's logic with a faked
-DB session so it stays a fast, deterministic unit test.
+A client may only register a session for server-push delivery if the
+conversation is within its reach, or no such conversation exists yet. Enforced
+only when auth is on and a JWT caller identity exists. Tested against the
+helper's logic with a faked DB session so it stays a fast, deterministic unit
+test.
 
 Changed with the auth-on cutover (P0 Nr. 5): an EXISTING ownerless conversation
 used to be registerable by anyone, because "no row" and "row without an owner"
 both read as `None`. With adoption gone such a row stays ownerless forever, so
 the two cases are now told apart — no row is still fine, an ownerless row is
 not the caller's.
+
+Changed again with §8.1: the boundary asks for tier REACH, not owner equality,
+so a member may register for the shared room history. **This file still models
+only the degenerate case** — the fake database holds no `circle_memberships`,
+and with none configured reach reduces to ownership, which is what the fake
+answers. The cases where they DIFFER (a member reaching the device account's
+tier-2 thread) need the four-branch SQL and live in
+`test_shared_conversations_boundaries.py` against real Postgres.
 """
 import pytest
 
@@ -28,11 +37,23 @@ class _FakeRow:
 
 
 class _FakeResult:
-    def __init__(self, row):
+    """Answers both queries the boundary makes: the row lookup, and the reach
+    probe `ConversationService.reaches` runs for that row."""
+
+    def __init__(self, row, asker_id=None):
         self._row = row
+        self._asker_id = asker_id
 
     def first(self):
         return self._row
+
+    def scalar(self):
+        # The reach probe returns a row when the asker reaches the conversation.
+        # With no circle memberships in this fake, every reach branch but
+        # ownership is empty — so reach IS ownership here.
+        if self._row is None or self._row.user_id is None:
+            return None
+        return 1 if self._row.user_id == self._asker_id else None
 
 
 class _FakeSession:
@@ -45,8 +66,9 @@ class _FakeSession:
     async def __aexit__(self, *a):
         return False
 
-    async def execute(self, *_a, **_k):
-        return _FakeResult(self._row)
+    async def execute(self, _stmt=None, params=None, *_a, **_k):
+        asker_id = (params or {}).get("asker_id")
+        return _FakeResult(self._row, asker_id)
 
 
 def _patch(monkeypatch, *, auth_enabled: bool, owner):

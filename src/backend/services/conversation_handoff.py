@@ -21,6 +21,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.database import Conversation, Message
+from services.conversation_service import ConversationService
 from utils.config import settings
 
 # Debounce: track last handoff time per speaker to avoid rapid-fire copies
@@ -83,16 +84,26 @@ async def try_handoff_context(
                 logger.debug(f"Handoff skip: target {target_session_id} already more recent")
                 return False
 
-        # Create or update target conversation with source context
+        # Create or update target conversation with source context.
+        #
+        # The TIER travels with the context (auth-on §8.1). This runs BEFORE the
+        # turn's `save_message`, so whatever it creates here is what the turn
+        # then finds — a target left at the default tier 0 would silently turn
+        # the room history private the moment a speaker walks into another room,
+        # and `save_message` never revisits the tier of a row that already
+        # exists. Reach must survive a room change; that is what a handoff IS.
         if not target:
             target = Conversation(
                 session_id=target_session_id,
                 speaker_id=speaker_id,
                 user_id=source.user_id,
+                circle_tier=source.circle_tier,
                 context_vars=source.context_vars,
                 summary=source.summary,
             )
             db.add(target)
+            await db.flush()
+            await ConversationService(db).ensure_atom(target)
         else:
             if source.context_vars:
                 target.context_vars = source.context_vars
@@ -102,6 +113,8 @@ async def try_handoff_context(
                 target.speaker_id = speaker_id
             if source.user_id and not target.user_id:
                 target.user_id = source.user_id
+                await db.flush()
+                await ConversationService(db).ensure_atom(target)
 
         # If summary is NULL, copy last 5 messages as seed context
         if not source.summary:

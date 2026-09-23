@@ -38,7 +38,8 @@ route + frontend-page inventory), `docs/SECOND_BRAIN.md` (the four subsystems ci
 ## Writing source rows
 - Tables: `atoms` (polymorphic registry), `circles` (per-user dimension config), `circle_memberships`,
   `atom_explicit_grants`. Denormalized `circle_tier` + `atom_id` live on `document_chunks`, `kg_entities`,
-  `kg_relations`, `conversation_memories`, `notes`.
+  `kg_relations`, `conversation_memories`, `notes`, and — since auth-on §8.1 — `conversations` and `meetings`
+  (both `atom_id` NULLABLE there: a row nobody owns has no owner to hang an atom on; see `chat-branching.md`).
 - Create a source row via `AtomService.create_with_source`, **never a direct INSERT** (the denormalized columns and
   `atoms.policy` drift apart otherwise). Change a tier only through `AtomService` — it owns the **tier cascade**
   (entity → incident relations; `kb_document` → its facts `WHERE NOT tier_overridden`).

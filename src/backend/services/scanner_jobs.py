@@ -382,7 +382,14 @@ async def handle_job_event(db: Any, event: dict, *, redis: Any = None) -> str:
                 content=content,
                 metadata={"scanner_job": {"job_id": job_id, "status": status}},
                 user_id=requester.get("user_id"),
-                enforce_ownership=True,
+                # `enforce_ownership` is an AUTH-ON rule (see chat-branching.md);
+                # every other caller derives it from the flag and this one must
+                # too. It used to pass True unconditionally and got away with it
+                # because under auth-off both sides were None and the old check
+                # was `owner != caller`. Since the check became tier REACH, a
+                # caller without identity fails closed — which under auth-off
+                # refused every scan outcome into a voice-started conversation.
+                enforce_ownership=settings.auth_enabled,
             )
             if message is None:
                 raise RuntimeError("message was not saved")

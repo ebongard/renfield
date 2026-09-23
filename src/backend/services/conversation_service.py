@@ -91,7 +91,12 @@ class ConversationService:
         audited one.
 
         Does NOT consult ``settings.auth_enabled``: the caller already decided
-        by passing ``enforce_ownership`` (which it derives from the flag).
+        by passing ``enforce_ownership``, which it MUST derive from the flag —
+        ownership is an auth-on rule (see `chat-branching.md`). That is a real
+        contract, not a description: `scanner_jobs` passed a hard ``True`` and
+        got away with it only while the check was ``owner != caller`` and both
+        sides were ``None`` under auth-off. Under reach a caller without
+        identity fails closed, so a hard ``True`` there refuses every write.
         Gating twice would make an explicit "enforce this" silently not enforce.
         """
         if user_id is None:
@@ -127,7 +132,7 @@ class ConversationService:
             return True
         return conversation.user_id == user_id
 
-    async def _register_atom(self, conversation: Conversation) -> None:
+    async def ensure_atom(self, conversation: Conversation) -> None:
         """Give an owned conversation its atoms row (circles rule: never a bare
         INSERT — the denormalized columns and ``atoms.policy`` drift apart).
 
@@ -139,21 +144,29 @@ class ConversationService:
         not what makes the turn work. Losing it must never cost the user their
         message, so a failure is logged and the conversation stays at the reach
         its own ``circle_tier`` column gives it.
+
+        Inside a SAVEPOINT, which is what makes "best-effort" true rather than a
+        wish: ``create_with_source`` ends in a flush, and a failed flush aborts
+        the whole Postgres transaction — the caller's next statement would then
+        die with `current transaction is aborted` and the user WOULD lose their
+        message, just with a more confusing error. ``begin_nested`` rolls back
+        to the savepoint instead and leaves the turn intact.
         """
         if conversation.user_id is None or conversation.atom_id is not None:
             return
         try:
             from services.atom_service import AtomService
 
-            atom_id = await AtomService(self.db).create_with_source(
-                atom_type=ATOM_TYPE_CONVERSATION,
-                owner_user_id=conversation.user_id,
-                tier=int(conversation.circle_tier or 0),
-                source_id=conversation.id,
-            )
-            conversation.atom_id = atom_id
-            await self.db.flush()
+            async with self.db.begin_nested():
+                atom_id = await AtomService(self.db).create_with_source(
+                    atom_type=ATOM_TYPE_CONVERSATION,
+                    owner_user_id=conversation.user_id,
+                    tier=int(conversation.circle_tier or 0),
+                    source_id=conversation.id,
+                )
+                conversation.atom_id = atom_id
         except Exception as e:  # noqa: BLE001 — a turn must not die over an atom
+            conversation.atom_id = None
             logger.warning(f"⚠️ Konversation ohne Atom angelegt (id={conversation.id}): {e}")
 
     async def active_path_message_ids(self, conversation: Conversation) -> list[int]:
@@ -573,7 +586,7 @@ class ConversationService:
                 # orphaned (invisible to any JOIN-based history or
                 # message-count query).
                 await self.db.flush()
-                await self._register_atom(conversation)
+                await self.ensure_atom(conversation)
             elif enforce_ownership and not await self.reaches(conversation.id, user_id):
                 # Ownership guard (write side): never append into a conversation
                 # that is not the caller's. ONE rule for two cases that used to
@@ -599,8 +612,16 @@ class ConversationService:
                 )
                 raise ConversationNotOwnedError("conversation not owned by caller")
             elif user_id and conversation.user_id is None:
+                # Auth-off adoption — and the PRIMARY way a legacy or satellite
+                # conversation acquires an owner. An owner is exactly what an
+                # atom needs, so register one here too: without this the row
+                # ends up owned, tier-bearing and atom-less, which is the one
+                # state `ensure_atom` promises will not persist (no explicit
+                # grant can ever match it, and `AtomService.update_tier` finds
+                # nothing to move).
                 conversation.user_id = user_id
                 await self.db.flush()
+                await self.ensure_atom(conversation)
 
             # Chat branching (Phase 1): wire the message into the conversation
             # tree. Explicit parent (a fork) → sibling under that parent; else
@@ -866,6 +887,11 @@ class ConversationService:
                 changed = True
 
             if changed:
+                # A row that just got an owner gets its atom — the same
+                # invariant the creation and adoption branches keep. This is the
+                # third place ownership is assigned, and the one that runs for
+                # every recognised speaker at a satellite.
+                await self.ensure_atom(conv)
                 await self.db.commit()
                 logger.debug(f"Conversation {session_id} associated: speaker={speaker_id}, user={user_id}")
         except Exception as e:
@@ -1256,7 +1282,7 @@ class ConversationService:
         limit: int = 20,
         offset: int = 0,
     ) -> dict[str, Any]:
-        """Full-text message search, scoped by conversation OWNERSHIP.
+        """Full-text message search, scoped by conversation REACH.
 
         Roadmap item 3 (chat-UI modernization). Ranks matching ``messages``
         with Postgres FTS (``ts_rank`` over the GENERATED multilingual
@@ -1266,13 +1292,18 @@ class ConversationService:
         ``/api/chat/history`` returns, so the frontend can scroll to
         ``messages[message_index]``) + a highlighted snippet.
 
-        Scoping (critical): ``messages`` is NOT an atom — it has no
-        ``circle_tier`` / ``atom_id``. This does NOT route through
-        ``services/circle_sql.py``. Access = the asker OWNS the conversation
-        (``Conversation.user_id == user_id``). In single-user mode
-        (``user_id is None``, AUTH_ENABLED=false) all conversations are in
-        scope, mirroring ``list_all`` / the existing ``/api/chat/search``
-        ownership filter.
+        Scoping (critical, CHANGED in auth-on §8.1): ``messages`` is still not
+        an atom — it carries no ``circle_tier`` / ``atom_id``. But the
+        CONVERSATION is one now, so the filter rides on the conversation row
+        (alias ``c``) via ``conversations_circles_filter``: whoever may read the
+        shared kitchen thread also finds the line that was said in it. A search
+        that hid a line the same person sees on opening the thread would be a
+        break in the logic, which is why the earlier "ownership is the correct
+        and only access rule here" no longer holds. Destructive paths are
+        untouched — reach is for reading (see ``may_alter``). Under auth-off the
+        old owner-equality filter stands, and in single-user mode
+        (``user_id is None``) all conversations are in scope, mirroring
+        ``list_all``.
 
         Args:
             query: search text (caller enforces a min length).
@@ -1455,12 +1486,19 @@ class ConversationService:
         limit: int,
         offset: int,
     ) -> dict[str, Any]:
-        """Sqlite test-harness fallback: token-OR LIKE, ownership-scoped.
+        """Sqlite fallback: token-OR LIKE, ownership-scoped. DEAD CODE.
+
+        Kept only until it is deleted with its dialect switch: the test database
+        is real Postgres since #1311 and production always was, so nothing
+        reaches this branch. It is deliberately NOT converted to reach — a
+        second, divergent access rule for the same endpoint is worse than an
+        unreachable one, and converting it would imply it is still a path worth
+        having. When the dialect switch goes, this goes with it.
 
         No tsvector on sqlite. Match ANY token against ``content``, compute the
         per-conversation message_index in Python (timestamp ASC, id tiebreak),
         and a naive ``<mark>``-wrapped snippet. Rank = number of distinct tokens
-        matched. Same ownership scope as the Postgres path.
+        matched. Owner equality, which the Postgres path no longer uses.
         """
         # Pull the owned (and optionally session-scoped) conversations and ALL
         # their messages ordered timestamp-ASC so message_index is exact.

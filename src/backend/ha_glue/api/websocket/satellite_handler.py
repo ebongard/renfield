@@ -410,6 +410,31 @@ async def _load_device_account() -> tuple[int, list[str]] | None:
         return None
 
 
+async def room_history_owner_id() -> int | None:
+    """Who OWNS a room history: the device account, or nobody (auth-on §8.1).
+
+    Not the speaker, and deliberately not ``sat_user_id``. §8.1 rules out "the
+    first recognised speaker" by name: that is adoption through the back door,
+    and it would hand one member of the household — anybody holding `chat.own` —
+    the right to delete the room's shared thread (``ConversationService.may_alter``
+    answers to the owner). The recognised speaker still drives permissions,
+    presence and per-turn memory extraction; ownership of the THREAD is a
+    separate question with a separate answer.
+
+    ``None`` when auth is off (one trust domain, nothing to own) or when no
+    device account is configured. The caller must then NOT stamp tier 2: an
+    ownerless row at tier 2 reaches nobody — every branch of the circle filter
+    keys on the owner — so the shared thread would exist and be invisible to
+    everyone, silently.
+    """
+    if not settings.auth_enabled:
+        return None
+    if not settings.satellite_device_account.strip():
+        return None
+    account = await _load_device_account()
+    return account[0] if account else None
+
+
 async def resolve_anonymous_identity() -> AnonymousIdentity:
     """Identity and grants for a turn whose speaker was not recognised (D-4a/D-4b).
 
@@ -1158,18 +1183,25 @@ async def satellite_websocket(
                                 f"{len(sat_user_permissions)} Rechten"
                             )
 
+                    # Who owns the ROOM history (§8.1): the device account, or
+                    # nobody. Resolved once here because two places assign it —
+                    # this association and the message save at the end of the
+                    # turn — and they must not disagree. Never `sat_user_id`:
+                    # that is the recognised PERSON, and handing them the thread
+                    # is the adoption §8.1 rules out by name.
+                    room_owner_id = await room_history_owner_id()
+                    room_tier = 2 if room_owner_id is not None else 0
+
                     # Associate conversation with speaker (for handoff lookup).
-                    # When the turn runs as the device account, the room's
-                    # conversation becomes the device's — intended (§8.1: room
-                    # histories belong to the device account), and strictly
-                    # narrower than the ownerless row it would be otherwise.
+                    # The SPEAKER is the recognised person; the OWNER is the
+                    # device account. Two different questions, two values.
                     if spk and satellite_db_session_id:
                         try:
                             from services.conversation_service import ConversationService
                             async with AsyncSessionLocal() as assoc_db:
                                 assoc_svc = ConversationService(assoc_db)
                                 await assoc_svc.associate_speaker(
-                                    satellite_db_session_id, spk.id, user_id=sat_user_id
+                                    satellite_db_session_id, spk.id, user_id=room_owner_id
                                 )
                         except Exception as e:
                             logger.warning(f"⚠️ Failed to associate speaker with conversation: {e}")
@@ -1342,6 +1374,17 @@ Gib eine kurze, natürliche Antwort. KEIN JSON, nur Text."""
                                 # starting a context-less new one. Only used
                                 # when this turn CREATES the conversation; an
                                 # existing row keeps the tier it has.
+                                #
+                                # The OWNER is the device account, never
+                                # `sat_user_id` (§8.1 rules that out by name:
+                                # the recognised speaker would then be able to
+                                # delete the room's shared thread). Without a
+                                # device account there is nobody to own it, and
+                                # tier 2 on an ownerless row reaches NO ONE —
+                                # so the tier drops back to 0 rather than
+                                # producing a shared thread nobody can see.
+                                # (`room_owner_id` / `room_tier` are resolved
+                                # once, above, next to the speaker association.)
                                 await ollama.save_message(
                                     satellite_db_session_id, "user", text, db_session,
                                     metadata={
@@ -1349,14 +1392,14 @@ Gib eine kurze, natürliche Antwort. KEIN JSON, nur Text."""
                                         "room": satellite.room if satellite else None,
                                         "speaker": speaker_name
                                     },
-                                    user_id=sat_user_id,
-                                    circle_tier=2,
+                                    user_id=room_owner_id,
+                                    circle_tier=room_tier,
                                 )
                                 await ollama.save_message(
                                     satellite_db_session_id, "assistant", response_text, db_session,
                                     metadata=assistant_metadata,
-                                    user_id=sat_user_id,
-                                    circle_tier=2,
+                                    user_id=room_owner_id,
+                                    circle_tier=room_tier,
                                 )
                                 logger.debug(f"💾 Satellite messages saved to DB: {satellite_db_session_id}")
                         except Exception as e:

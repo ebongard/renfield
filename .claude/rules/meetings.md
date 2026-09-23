@@ -43,7 +43,12 @@ placeholder flag was removed). Frontend gates: `meeting_transcription_enabled`
   `Sprecher N:` / `Speaker N:` line-prefix regex) BEFORE KG extraction, so a pseudonym never becomes a person
   entity that collides across meetings; a relabelled real name is preserved.
 - Delete (owner-gated) + the retention sweep share ONE cascade: `meeting_retention.purge_meeting` (transcript doc +
-  audio + row). `GET /api/meetings` is owner-scoped, newest-first, capped 1-200.
+  audio + row). `GET /api/meetings` follows tier REACH, newest-first, capped 1-200.
+- **Reading follows reach, writing stays with the owner (auth-on §8.1).** `Meeting.circle_tier` defaulted to 2 from the
+  start while the routes filtered on owner EQUALITY — the declared tier was never true. A meeting now carries an
+  `atom_id` too and reads through `meetings_circles_filter`. `_get_owned_meeting(..., for_write=True)` is the
+  owner-bound half: **every mutator passes it**, `DELETE /{id}/minutes` included (it was missed once, and reach then
+  let any household member discard the owner's minutes). New meetings register their atom at upload.
 
 ## Minutes (`services/meeting_minutes.py`)
 - Lifecycle `minutes_status`: `none` → `draft` → `confirmed` (migration `pc20260718_meeting_minutes`). Routes are

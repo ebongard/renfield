@@ -8,6 +8,11 @@ The procedure (atomic per atom_id):
     2. INSERT them into wb_field_provenance_archive (atom_id stripped).
     3. DELETE FROM atoms WHERE atom_id = ? — FK CASCADE wipes
        wb_field_provenance, kg_entities, document_chunks, etc.
+       Since auth-on §8.1 that "etc." includes WHOLE user-facing rows:
+       `conversations` (and every message under it) and `meetings` (with its
+       audio + transcript pointers) carry the same CASCADE. That is the point,
+       not an accident — an Art. 17 erasure that left the conversation standing
+       would not be an erasure — but the blast radius is larger than it was.
     4. COMMIT.
 
 Why this isn't a database trigger:

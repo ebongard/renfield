@@ -204,10 +204,18 @@ async def _resolve_wire_speaker(
 
 async def _session_registerable_by(session_id: str, auth_user_id: int | None) -> bool:
     """#657: a client may only register a session for server-push delivery
-    (`register_ws_connection` → `notify_session`) if it OWNS that conversation,
-    or the session is brand-new/unowned. Without this, an authenticated user
+    (`register_ws_connection` → `notify_session`) if the conversation is within
+    its REACH, or the session is brand-new. Without this, an authenticated user
     could register another user's `session_id` and intercept (or evict) their
     pushed notifications — the registration boundary was previously unchecked.
+
+    Reach, not owner equality (auth-on §8.1): this is the BOUNDARY, and it runs
+    before anything else — `_replacement_session_for` swaps the session id right
+    here. Left on equality it would hand a member who may read and continue the
+    shared kitchen thread a fresh, context-less session instead, and the reach
+    conversion inside `ConversationService` would never be reached on the WS
+    path at all. The same four-branch filter, so there is ONE rule and not a
+    second one written in Python.
 
     Only enforced when auth is enabled AND a JWT caller identity exists; the
     single-user (auth off) and device/satellite (`user_id=None`) paths keep the
@@ -218,33 +226,35 @@ async def _session_registerable_by(session_id: str, auth_user_id: int | None) ->
     from sqlalchemy import select
 
     from models.database import Conversation
+    from services.conversation_service import ConversationService
 
     try:
         async with AsyncSessionLocal() as session:
             result = await session.execute(
-                select(Conversation.id, Conversation.user_id).where(
+                select(Conversation.id).where(
                     Conversation.session_id == session_id
                 )
             )
             row = result.first()
+            # No ROW yet → brand-new session, created for this caller: allowed.
+            # An EXISTING row must be within reach. An ownerless one is not
+            # (auth-on cutover, P0 Nr. 5): with adoption gone it stays
+            # ownerless, every reach branch keys on the owner, so `reaches`
+            # refuses it — which is the intended answer, since anyone holding
+            # the client-minted id could otherwise register for its pushes.
+            if row is None:
+                return True
+            return await ConversationService(session).reaches(row.id, auth_user_id)
     except Exception as e:
         # The call sites run inside the receive loop, whose only `except` is
         # OUTSIDE the loop — a raised DB error here would tear down the whole
         # chat WS. Fail closed (refuse the push-registration) but never raise, so
         # a transient DB blip can't kill an otherwise-healthy connection.
         logger.warning(
-            f"⚠️ WS ownership check failed for session {session_id}; "
+            f"⚠️ WS reach check failed for session {session_id}; "
             f"refusing push-register (connection kept alive): {e}"
         )
         return False
-    # No ROW yet → brand-new session, created for this caller: allowed.
-    # A row that exists must be the caller's. An EXISTING ownerless row is not
-    # (auth-on cutover, P0 Nr. 5): with adoption gone it stays ownerless, and
-    # anyone holding the client-minted id could otherwise register for its
-    # pushes. The two used to be indistinguishable — both read as `None`.
-    if row is None:
-        return True
-    return row.user_id == auth_user_id
 
 
 async def _replacement_session_for(

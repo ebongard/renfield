@@ -1018,28 +1018,28 @@ def _ensure_ha_glue_routes(app):
 
 
 @pytest.fixture
-async def app_with_test_db(override_get_db, mock_ha_client, async_engine, monkeypatch):
-    """FastAPI app with test database and mocked services"""
+async def own_session_to_test_db(async_engine, monkeypatch):
+    """Point code that opens its OWN session at the test database.
+
+    Some code deliberately opens `AsyncSessionLocal()` instead of taking the
+    request-scoped session: a streaming export that must outlive the request, a
+    background task that finishes after the response, a WebSocket boundary check
+    that must not borrow the caller's transaction. None of that is reached by
+    the `Depends(get_db)` override.
+
+    Patching `services.database.AsyncSessionLocal` alone is NOT enough: several
+    modules bind the NAME at import time (`from services.database import
+    AsyncSessionLocal` — chat_upload, voice, both WS handlers), so they keep
+    their own reference. Unswept, such a test reads and writes the REAL database
+    behind `DATABASE_URL` — silently, and usually still green, because it finds
+    no rows and every answer comes out as the default. (Exactly how the first
+    cut of `test_shared_conversations_boundaries.py` "passed".)
+
+    Request this fixture from any test that exercises such code WITHOUT the HTTP
+    client; `app_with_test_db` already includes it.
+    """
     import services.database as _db_mod
-    from main import app
-    from services.database import get_db
 
-    # Mount the ha_glue routers that the lifespan would normally register.
-    _ensure_ha_glue_routes(app)
-
-    # Override the request-scoped DB dependency (Depends(get_db)).
-    app.dependency_overrides[get_db] = override_get_db
-
-    # Some routes deliberately open their OWN session via AsyncSessionLocal
-    # instead of Depends(get_db) — a streaming export that must outlive the
-    # request-scoped session, a background task that finishes after the
-    # response. Those bypass the dependency override.
-    #
-    # Patching `services.database.AsyncSessionLocal` alone is NOT enough: four
-    # modules bind the name at import time (`from services.database import
-    # AsyncSessionLocal` — chat_upload, voice, and the two ha_glue WS
-    # handlers), so they keep their own reference and would write into the REAL
-    # database behind `DATABASE_URL`. Sweep every module holding the original.
     test_sessionmaker = async_sessionmaker(
         async_engine, class_=AsyncSession, expire_on_commit=False
     )
@@ -1055,6 +1055,23 @@ async def app_with_test_db(override_get_db, mock_ha_client, async_engine, monkey
             continue
         if _mod.__dict__.get("AsyncSessionLocal") is _original_sessionmaker:
             monkeypatch.setattr(_mod, "AsyncSessionLocal", test_sessionmaker, raising=False)
+    return test_sessionmaker
+
+
+@pytest.fixture
+async def app_with_test_db(
+    override_get_db, mock_ha_client, async_engine, own_session_to_test_db, monkeypatch
+):
+    """FastAPI app with test database and mocked services"""
+    from main import app
+    from services.database import get_db
+
+    # Mount the ha_glue routers that the lifespan would normally register.
+    _ensure_ha_glue_routes(app)
+
+    # Override the request-scoped DB dependency (Depends(get_db)). Code that
+    # opens its own session is covered by `own_session_to_test_db` above.
+    app.dependency_overrides[get_db] = override_get_db
 
     yield app
 

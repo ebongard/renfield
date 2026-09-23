@@ -35,11 +35,14 @@ from models.database import (
     Atom as AtomModel,
     Circle,
     CircleMembership,
+    Conversation,
     ConversationMemory,
     Document,
     DocumentChunk,
     KGEntity,
     KGRelation,
+    Meeting,
+    Message,
     User,
 )
 from services.auth_service import get_user_or_default
@@ -102,6 +105,8 @@ class AtomReviewResponse(BaseModel):
       - kg_edge        → "subj predicate obj"       + (empty preview)
       - kb_chunk       → documents.filename         + chunk.content[:200]
       - conversation_memory → "Conversation 2026-04-19" + content[:200]
+      - conversation   → "Verlauf · <stamp>"        + first user message[:200]
+      - meeting        → meeting title (or date)    + (empty preview)
       - unknown        → atom_type label            + (empty preview)
     """
     atom_id: str
@@ -538,6 +543,62 @@ async def _resolve_review_labels(
                 out[a.atom_id] = (f"Memory · {stamp}", _truncate(m.content))
             else:
                 out[a.atom_id] = (f"Unknown memory ({a.source_id})", None)
+
+    # --- conversations (auth-on §8.1) ---
+    # Without this branch every conversation atom fell to the backstop below and
+    # the tier-review page read "Unknown conversation" — and conversations are
+    # now the most numerous atom type there is. An owner gating a tier has to
+    # see WHAT is being gated; the first user message is what identifies a
+    # thread to a human.
+    conv_atoms = by_table.get("conversations", [])
+    if conv_atoms:
+        source_ids = [int(a.source_id) for a in conv_atoms if a.source_id.isdigit()]
+        convs: dict[int, Conversation] = {}
+        first_messages: dict[int, str] = {}
+        if source_ids:
+            rows = (await db.execute(
+                select(Conversation).where(Conversation.id.in_(source_ids))
+            )).scalars().all()
+            convs = {c.id: c for c in rows}
+            msg_q = (
+                select(Message.conversation_id, Message.content)
+                .where(
+                    Message.conversation_id.in_(source_ids),
+                    Message.role == "user",
+                )
+                .order_by(Message.conversation_id.asc(), Message.timestamp.asc())
+            )
+            for conv_id, content in (await db.execute(msg_q)).all():
+                first_messages.setdefault(conv_id, content)
+        for a in conv_atoms:
+            c = convs.get(int(a.source_id)) if a.source_id.isdigit() else None
+            if c is not None:
+                stamp = c.created_at.strftime("%Y-%m-%d %H:%M") if c.created_at else "?"
+                out[a.atom_id] = (
+                    f"Verlauf · {stamp}", _truncate(first_messages.get(c.id))
+                )
+            else:
+                out[a.atom_id] = (f"Unknown conversation ({a.source_id})", None)
+
+    # --- meetings ---
+    meeting_atoms = by_table.get("meetings", [])
+    if meeting_atoms:
+        source_ids = [int(a.source_id) for a in meeting_atoms if a.source_id.isdigit()]
+        meetings: dict[int, Meeting] = {}
+        if source_ids:
+            rows = (await db.execute(
+                select(Meeting).where(Meeting.id.in_(source_ids))
+            )).scalars().all()
+            meetings = {m.id: m for m in rows}
+        for a in meeting_atoms:
+            m = meetings.get(int(a.source_id)) if a.source_id.isdigit() else None
+            if m is not None:
+                stamp = m.date.isoformat() if m.date else (
+                    m.created_at.strftime("%Y-%m-%d") if m.created_at else "?"
+                )
+                out[a.atom_id] = (m.title or f"Meeting · {stamp}", None)
+            else:
+                out[a.atom_id] = (f"Unknown meeting ({a.source_id})", None)
 
     # Backstop — any atom_type we don't have a resolver for gets a
     # generic label so the row still renders useful info.

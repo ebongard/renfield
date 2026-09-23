@@ -14,7 +14,7 @@ from pathlib import Path
 import aiofiles
 from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, Query, Request, UploadFile
 from loguru import logger
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.database import (
@@ -27,6 +27,7 @@ from models.database import (
 )
 from models.permissions import Permission
 from services.auth_service import get_optional_user, require_permission
+from services.circle_sql import conversations_circles_filter
 from services.database import AsyncSessionLocal, get_db
 from services.document_processor import DocumentProcessor
 from utils.config import settings
@@ -237,15 +238,18 @@ async def _get_owned_upload(
     upload_id: int,
     user,
 ) -> ChatUpload | None:
-    """Fetch a ChatUpload, scoped to the authenticated user's conversations.
+    """Fetch a ChatUpload, scoped to the conversations the caller can REACH.
 
-    Ownership model: ChatUpload rows carry ``session_id`` only; the link back
-    to a user runs through ``Conversation.user_id``. We join chat_uploads →
-    conversations and filter by the authenticated user's id.
+    Access model: ChatUpload rows carry ``session_id`` only; the link back to a
+    user runs through the conversation. We join chat_uploads → conversations and
+    apply the same four-branch circle filter the conversation itself uses
+    (auth-on §8.1) — an attachment follows the thread it hangs in. Owner
+    equality would show a member the message and 404 the image inside it, a
+    visible break in one and the same conversation.
 
     When ``user`` is None (AUTH_ENABLED=false or anonymous dev setup), the
     scoping filter is skipped — matches the single-user fallback convention
-    established in #433. In auth-enabled multi-user mode, a cross-user lookup
+    established in #433. In auth-enabled multi-user mode, an out-of-reach lookup
     returns None (soft 404) rather than a 403, so the response doesn't leak
     the existence of other users' uploads.
     """
@@ -253,7 +257,12 @@ async def _get_owned_upload(
     if user is not None:
         query = query.join(
             Conversation, Conversation.session_id == ChatUpload.session_id,
-        ).where(Conversation.user_id == user.id)
+        )
+        if settings.auth_enabled:
+            clause, params = conversations_circles_filter(user.id, alias="conversations")
+            query = query.where(text(clause).bindparams(**params))
+        else:
+            query = query.where(Conversation.user_id == user.id)
     result = await db.execute(query)
     return result.scalar_one_or_none()
 
