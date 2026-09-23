@@ -41,3 +41,19 @@ database on the build box, never on a live DB: create the pre-migration state, `
 `upgrade head`, check the column and an existing row, `downgrade -1`, `upgrade head` again. `create_all` does not build
 GENERATED `search_vector` columns — add them explicitly when a test needs them. pgvector caps an indexed vector at
 2000 dimensions: use `::halfvec(2560)`.
+
+## The REVERSE path is exercised, never asserted
+Applies to `downgrade()`, to a backfill's `--revert`, to any flag rollback — the forward path gets the care and
+the reverse gets bolted on unrun. Two of them bit on one day:
+- `pc20260922` deleted the atoms BEFORE dropping the columns that reference them; those columns carry
+  `ON DELETE CASCADE`, so the downgrade took **every conversation and meeting** with it. The round trip found it;
+  reading the code had not. **With FKs the reverse order is not the mirror of the forward order** — release the
+  references first, delete the referenced second.
+- `bin/backfill_household_tiers.py --revert` inferred what to undo from the CURRENT state. "Admin-owned node at
+  tier 2" is exactly the shape of the hand-set tiers the forward run protects, so the revert would have destroyed
+  what the forward run carefully spared.
+
+**"Before" is not reconstructible from "after."** So: run the round trip (forward → reverse → forward) with
+row counts on real Postgres; where the prior state cannot be derived, have the forward run WRITE A LOG and feed
+the reverse only from it, refusing without one; and where even that is impossible (an ownerless row that now has
+an owner — nothing records that it had none), say so in the output instead of faking a reverse path.
