@@ -227,6 +227,14 @@ data:
   # provisioniert) den Latch. Nach dessen Provisionierung flippt die Fleet
   # automatisch und dauerhaft (Latch löscht sich nie selbst).
   SATELLITE_ENROLLMENT_AUTOFLIP_ENABLED: "true"
+  # Der Handschlag-Nachweis des Satelliten (`sat.<id>.<secret>` im
+  # Authorization-Kopf, gegen satellites.token_hash). Unter auth-off brauchte
+  # ein Satellit keinen Nachweis; mit auth AN braucht er einen, und OHNE diesen
+  # Schalter hat er keinen gueltigen Weg — /ws/satellite antwortet 403 und die
+  # Sprachbedienung des Hauses ist tot. Am Cutover 2026-09-23 genau so passiert:
+  # P0 Nr. 1 (#1305) war gebaut und gemergt, der Schalter nie umgelegt, und §7
+  # listet ihn nicht unter den sechs Schluesseln. Er gehoert dazu.
+  SATELLITE_PSK_HANDSHAKE_ENABLED: "true"
   # H6 fail-closed (2026-08-23): das Backend weigert sich, ein UNSIGNIERTES
   # Release per OTA zu pushen (v1.4.6 ist signiert; bei jeder Satelliten-
   # Quellcode-Änderung neu signieren: bin/sign_satellite_release.py --sign).
