@@ -102,6 +102,77 @@ describe('useDeviceConnection handshake credential', () => {
     });
   });
 
+  it('does NOT open a socket when disconnect() lands during the token fetch', async () => {
+    // disconnect() has nothing to close yet — the attempt is suspended in its
+    // faucet round-trip. Without the epoch guard it resumes into a live socket,
+    // re-registers the device and writes back the config resetSetup() just
+    // cleared.
+    let releaseToken: (t: string | null) => void = () => {};
+    mockedFetchWsToken.mockReturnValue(
+      new Promise<string | null>((resolve) => { releaseToken = resolve; }),
+    );
+    const hook = renderHook(() => useDeviceConnection());
+    try {
+      await act(async () => {
+        hook.result.current.connect({ room: 'Wohnzimmer' }).catch(() => {});
+        await Promise.resolve();
+        hook.result.current.disconnect();
+        releaseToken('ws-scoped-token');
+        await flushConnect();
+      });
+      expect(MockWebSocket.instances).toHaveLength(0);
+    } finally {
+      act(() => { hook.result.current.disconnect(); });
+      hook.unmount();
+    }
+  });
+
+  it('does not answer a connect() for a DIFFERENT room with the running one', async () => {
+    // Coalescing here would resolve the caller successfully while the device
+    // registered in the old room — and saveConfig would persist the old one.
+    let releaseToken: (t: string | null) => void = () => {};
+    mockedFetchWsToken.mockReturnValue(
+      new Promise<string | null>((resolve) => { releaseToken = resolve; }),
+    );
+    const hook = renderHook(() => useDeviceConnection());
+    try {
+      await act(async () => {
+        hook.result.current.connect({ room: 'Wohnzimmer' }).catch(() => {});
+        await Promise.resolve();
+        mockedFetchWsToken.mockResolvedValue('ws-scoped-token');
+        hook.result.current.connect({ room: 'Kueche' }).catch(() => {});
+        releaseToken('ws-scoped-token');
+        await flushConnect();
+      });
+      // Exactly one socket, and it belongs to the LATER (superseding) attempt:
+      // the first is aborted by the epoch before it can construct one.
+      expect(MockWebSocket.instances).toHaveLength(1);
+    } finally {
+      act(() => { hook.result.current.disconnect(); });
+      hook.unmount();
+    }
+  });
+
+  it('gives up when the token faucet hangs, instead of staying "connecting"', async () => {
+    vi.useFakeTimers();
+    mockedFetchWsToken.mockReturnValue(new Promise<string | null>(() => {}));
+    const hook = renderHook(() => useDeviceConnection());
+    try {
+      let rejected: unknown = null;
+      await act(async () => {
+        hook.result.current.connect({ room: 'Wohnzimmer' }).catch((e) => { rejected = e; });
+        await Promise.resolve();
+        await vi.advanceTimersByTimeAsync(6000);
+      });
+      expect(MockWebSocket.instances).toHaveLength(0);
+      expect((rejected as Error)?.message).toBe('Connection timeout');
+    } finally {
+      act(() => { hook.result.current.disconnect(); });
+      hook.unmount();
+      vi.useRealTimers();
+    }
+  });
+
   it('opens exactly ONE socket when connect() is called twice in a row', async () => {
     // The token fetch put an await before `new WebSocket`, so the "already
     // connecting" guard only holds if the attempt is published synchronously.

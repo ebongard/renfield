@@ -156,7 +156,9 @@ export function DeviceProvider({ children }: DeviceProviderProps) {
   const autoConnectFn = useCallback(() => {
     const storedConfig = deviceConnection.getStoredConfig();
     if (storedConfig) {
-      deviceConnection.connect(storedConfig);
+      // Fire-and-forget: connect() rejects on timeout or when a later
+      // connect()/disconnect() supersedes it, and nothing awaits this call.
+      deviceConnection.connect(storedConfig).catch(() => {});
     }
   }, [deviceConnection]);
 

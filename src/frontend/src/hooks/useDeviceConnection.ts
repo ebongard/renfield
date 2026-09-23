@@ -38,6 +38,19 @@ export {
 // Module-level storage for WebSocket connection (survives React remounts)
 let _activeWebSocket: WebSocket | null = null;
 let _activeConnectionPromise: Promise<{ deviceId: string; roomId: number }> | null = null;
+// Bumped by every connect() and by disconnect(). An attempt that is suspended in
+// its token fetch compares this before touching anything: without it, a
+// disconnect() during that round-trip has nothing to close yet, and the
+// resuming attempt would open a socket, register the device and write the
+// config back that the caller just cleared (`resetSetup`).
+let _connectEpoch = 0;
+// The config the in-flight attempt is connecting WITH, so a connect() for a
+// DIFFERENT room/type is not silently answered by the running one.
+let _activeConfigKey: string | null = null;
+// The pre-socket phase (fetching the WS token) sits outside the hook's own 10 s
+// connection timeout, so it gets its own bound — otherwise a hung faucet leaves
+// the UI at "connecting" for as long as the HTTP client allows.
+const TOKEN_FETCH_TIMEOUT_MS = 5000;
 let _connectionResolvers: {
   resolve: (value: { deviceId: string; roomId: number }) => void;
   reject: (reason: Error) => void;
@@ -220,13 +233,20 @@ export function useDeviceConnection({
       customCapabilities = {},
     } = config;
 
-    // If there's already an active connection attempt, return its promise.
-    // `_activeWebSocket` may still be null: since the handshake credential is
-    // fetched first, an attempt exists for a round-trip BEFORE its socket does.
-    // Requiring a socket here would let the second of two back-to-back calls
-    // through and open a duplicate. `_activeConnectionPromise` is cleared when
-    // the attempt settles, so a non-null value means "in flight".
+    const configKey = JSON.stringify({ room, type, name, isStationary, customCapabilities });
+
+    // Reuse an in-flight attempt only when it is connecting with the SAME
+    // config. `_activeWebSocket` may still be null: since the handshake
+    // credential is fetched first, an attempt exists for a round-trip BEFORE
+    // its socket does, and requiring a socket here would let the second of two
+    // back-to-back calls through and open a duplicate. But coalescing a call
+    // that carries a DIFFERENT room would resolve it successfully while the
+    // device registered in the old one — so that case starts a fresh attempt,
+    // which supersedes the running one via the epoch.
+    // `_activeConnectionPromise` is cleared when the attempt settles, so a
+    // non-null value means "in flight".
     if (_activeConnectionPromise
+        && _activeConfigKey === configKey
         && (!_activeWebSocket || _activeWebSocket.readyState <= WebSocket.OPEN)) {
       debug.log('🔄 Reusing existing connection attempt');
       return _activeConnectionPromise;
@@ -236,6 +256,7 @@ export function useDeviceConnection({
     // runs in a worker whose promise is published to `_activeConnectionPromise`
     // SYNCHRONOUSLY — otherwise two concurrent connect() calls would both pass
     // the guard above during the round-trip and open two sockets.
+    const epoch = ++_connectEpoch;
     const attempt = (async (): Promise<{ deviceId: string; roomId: number }> => {
     // Clean up existing connection
     if (wsRef.current && wsRef.current !== _activeWebSocket) {
@@ -256,7 +277,23 @@ export function useDeviceConnection({
     setConnectionState('connecting');
     setError(null);
 
-    const wsUrl = await getWsUrl();
+    const wsUrl = await Promise.race([
+      getWsUrl(),
+      new Promise<never>((_, rejectTimeout) => {
+        setTimeout(
+          () => rejectTimeout(new Error('Connection timeout')),
+          TOKEN_FETCH_TIMEOUT_MS,
+        );
+      }),
+    ]);
+    // The caller may have disconnected — or asked for a different room — while
+    // the faucet was answering. Nothing of this attempt exists yet for
+    // disconnect() to close, so the abort has to be checked here, before the
+    // first side effect. (Same guard as useKioskSocket's `intentionalCloseRef`.)
+    if (epoch !== _connectEpoch) {
+      debug.log('🚫 Connection attempt superseded during the token fetch');
+      throw new Error('Connection superseded');
+    }
     debug.log('🔌 Connecting to device WebSocket:', wsUrl.replace(/token=[^&]*/, 'token=***'));
 
     const ws = new WebSocket(wsUrl);
@@ -459,7 +496,9 @@ export function useDeviceConnection({
           debug.log('🔄 Attempting to reconnect...');
           const storedConfig = getStoredConfig();
           if (storedConfig) {
-            connect(storedConfig);
+            // Fire-and-forget: an aborted/superseded attempt rejects, and
+            // nobody awaits this one.
+            connect(storedConfig).catch(() => {});
           }
         }, 5000);
       }
@@ -488,10 +527,14 @@ export function useDeviceConnection({
     })();
 
     _activeConnectionPromise = attempt;
+    _activeConfigKey = configKey;
     // Clear module-level state when the attempt settles (only if it is still
     // the current one — a later connect() may already have replaced it).
     attempt.catch(() => {}).finally(() => {
-      if (_activeConnectionPromise === attempt) _activeConnectionPromise = null;
+      if (_activeConnectionPromise === attempt) {
+        _activeConnectionPromise = null;
+        _activeConfigKey = null;
+      }
     });
 
     return attempt;
@@ -499,6 +542,11 @@ export function useDeviceConnection({
 
   // Disconnect
   const disconnect = useCallback(() => {
+    // Invalidate any attempt still waiting on its token: it has no socket yet,
+    // so the closes below would miss it and it would resume into a live device.
+    _connectEpoch += 1;
+    _activeConfigKey = null;
+
     if (reconnectTimeoutRef.current) {
       clearTimeout(reconnectTimeoutRef.current);
     }
@@ -595,7 +643,7 @@ export function useDeviceConnection({
     if (autoConnect) {
       const storedConfig = getStoredConfig();
       if (storedConfig) {
-        connect(storedConfig);
+        connect(storedConfig).catch(() => {});
       }
     }
     // NOTE: Intentionally omitting 'connect' from deps to prevent reconnection loops.
