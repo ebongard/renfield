@@ -118,14 +118,18 @@ async def extract_structured_background(
     """Ordered background coroutine for the Phase 3-subsume coordination.
 
     Runs the `post_message` hooks FIRST (KG extraction + plugins like the twin),
-    capturing the subject NAMES of the relations the KG actually saved this turn
-    into a shared set, then runs memory extraction with that set so the subsume
-    gate is per (subject, turn): a state/attribute fact about a subject for whom
-    no relation was captured this turn is kept flat. (NOT truly per-fact — the
-    set holds subject names, not (subject, object) pairs, so a same-turn same-
-    subject state fact alongside an entity-object fact is still subsumed; see
+    capturing the subjects of the relations the KG actually saved this turn into a
+    shared set as ``(lowercased name, entity_id, owner_user_id)``, then runs memory
+    extraction with that set so the subsume gate is per (subject, turn): a
+    state/attribute fact about a subject for whom no relation was captured this
+    turn is kept flat. (NOT truly per-fact — the set holds subjects, not
+    (subject, object) pairs, so a same-turn same-subject state fact alongside an
+    entity-object fact is still subsumed; see
     ConversationMemoryService._should_subsume_fact.) KG extraction runs exactly
     ONCE (in the hook); the set is the only cross-task signal — no double-extract.
+
+    The set is shared with EVERY hook, plugins included, so readers must treat
+    its contents as untrusted shape (see ``_should_subsume_fact``).
 
     Stays entirely in the background (this coroutine is spawned AFTER the turn's
     answer is delivered), so re-sequencing KG-before-memory never delays the user

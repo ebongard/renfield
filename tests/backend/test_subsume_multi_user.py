@@ -260,3 +260,98 @@ class TestTheStartupGate:
             Settings(auth_enabled=True, memory_subsume_to_kg=True)
         message = str(exc.value)
         assert "MEMORY_SUBSUME_TO_KG=" in message and "false" in message
+
+
+class TestTheSignalSurvivesEveryFallback:
+    """The per-turn set must reach v1 even when v2 gives up — and v2 gives up on
+    routine paths (LLM error, schema reject, drift reject).
+
+    Without it v1 takes the UNCOORDINATED branch and subsumes on the proxy. And
+    the proxy is not neutral here: `kg_post_message_hook` runs FIRST in the same
+    coroutine and COMMITS, so by the time memory extraction runs the proxy also
+    sees THIS turn's relations and says "represented" almost every time. A
+    routine reject would quietly undo the per-fact gate and drop exactly the
+    facts it exists to keep flat.
+    """
+
+    async def test_every_v1_fallback_inside_v2_threads_the_set(self):
+        """Structural, deliberately: the failure is a MISSING kwarg on a path
+        that only fires when the LLM misbehaves, so no ordinary test run reaches
+        it. This one fails the moment a new fallback forgets."""
+        import ast
+        import inspect
+
+        from services import conversation_memory_service as cms
+
+        tree = ast.parse(inspect.getsource(cms))
+        v2 = next(
+            n for n in ast.walk(tree)
+            if isinstance(n, ast.AsyncFunctionDef) and n.name == "extract_and_save_v2"
+        )
+        calls = [
+            c for c in ast.walk(v2)
+            if isinstance(c, ast.Call)
+            and isinstance(c.func, ast.Attribute)
+            and c.func.attr == "_extract_and_save_v1_impl"
+        ]
+        assert calls, "no v1 fallback found in extract_and_save_v2 — did it move?"
+        missing = [
+            c.lineno for c in calls
+            if not any(kw.arg == "captured_kg_subjects" for kw in c.keywords)
+        ]
+        assert missing == [], (
+            f"v1 fallbacks inside v2 that drop the per-turn subsume signal: lines {missing}"
+        )
+
+    async def test_the_shadow_run_is_gated_like_the_live_one(self):
+        """The household runs shadow AND subsume. A shadow gated differently
+        from the v1 baseline it is compared against measures the wrong thing."""
+        import inspect
+
+        from services.conversation_memory_service import ConversationMemoryService
+
+        sig = inspect.signature(ConversationMemoryService._extract_v2_shadow_only)
+        assert "captured_kg_subjects" in sig.parameters
+        src = inspect.getsource(ConversationMemoryService._extract_v2_shadow_only)
+        assert "captured_kg_subjects=captured_kg_subjects" in src
+
+
+class TestTheCapturedSetIsUntrustedShape:
+    """The SAME set object is handed to every `post_message` hook, plugins
+    included. A stray entry must not cost the turn its memories."""
+
+    async def test_a_stray_string_is_skipped_not_unpacked(self, db_session, two_users):
+        anna, _ = two_users
+        ent = await _person(db_session, anna.id, "Anna")
+        await db_session.commit()
+
+        svc = ConversationMemoryService(db_session)
+        # A bare string of length 3 would unpack into characters under a naive
+        # `for a, b, c in ...`; anything else would raise straight out of the
+        # gate, and the caller swallows it — losing every memory of the turn.
+        polluted = {("anna", ent.id, anna.id), "abc", ("zu", "kurz")}
+        assert await svc._should_subsume_fact("Anna", anna.id, polluted) is True
+
+    async def test_pollution_alone_never_subsumes(self, db_session, two_users):
+        anna, _ = two_users
+        await _person(db_session, anna.id, "Anna")
+        await db_session.commit()
+
+        svc = ConversationMemoryService(db_session)
+        assert await svc._should_subsume_fact("Anna", anna.id, {"anna", "abc"}) is False
+
+
+class TestNoIdentityFailsClosed:
+    async def test_auth_on_without_a_caller_resolves_nothing(
+        self, db_session, two_users
+    ):
+        """Device / unrecognised voice. The legacy predicate would fall through
+        to `user_id IS NULL` — the ownerless entities this item exists to stop
+        being everyone's."""
+        anna, _ = two_users
+        ownerless = await _person(db_session, None, "Mama")
+        await db_session.commit()
+
+        svc = ConversationMemoryService(db_session)
+        assert await svc._resolve_subject_entity_id("Mama", None) is None
+        assert ownerless.id is not None

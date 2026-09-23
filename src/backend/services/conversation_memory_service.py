@@ -309,11 +309,14 @@ class ConversationMemoryService(AtomOwnerResolverMixin):
         directly to avoid an infinite dispatcher recursion when
         v2_authoritative is on.
 
-        ``captured_kg_subjects`` (Phase 3-subsume per-fact fix): the lowercased
-        subject NAMES of relations the KG extractor saved for THIS turn, passed
-        by the chat handler after the `post_message` hook runs FIRST in the same
-        background coroutine. It is the per-fact subsume signal; only the v1 path
-        (the only path with a subsume gate) consumes it. None = legacy /
+        ``captured_kg_subjects`` (Phase 3-subsume per-fact fix): the subjects of
+        the relations the KG extractor saved for THIS turn, as
+        ``(lowercased name, entity_id, owner_user_id)``, passed by the chat
+        handler after the `post_message` hook runs FIRST in the same background
+        coroutine. The ENTITY ID is what carries the multi-user answer (auth-on
+        §8.2). **Both** paths consume it — v2 got the same subsume gate — and
+        every fallback INSIDE v2 threads it on, or the uncoordinated proxy would
+        quietly take over on a routine schema/drift reject. None = legacy /
         uncoordinated caller → fall back to the subject-level proxy guard.
         """
         if settings.memory_extraction_v2_authoritative:
@@ -357,6 +360,7 @@ class ConversationMemoryService(AtomOwnerResolverMixin):
                     v1_outcome=f"saved_{len(v1_result)}" if v1_result else "noop",
                     v1_extracted_count=len(v1_result),
                     v1_latency_seconds=v1_latency,
+                    captured_kg_subjects=captured_kg_subjects,
                 )
             except Exception as e:
                 # Shadow must NEVER affect the primary path.
@@ -376,6 +380,7 @@ class ConversationMemoryService(AtomOwnerResolverMixin):
         v1_outcome: str | None = None,
         v1_extracted_count: int | None = None,
         v1_latency_seconds: float | None = None,
+        captured_kg_subjects: set[tuple[str, int, int | None]] | None = None,
     ) -> None:
         """Run v2 in shadow mode + log v1 vs v2 outcome to memory_v2_shadow_log.
 
@@ -410,6 +415,10 @@ class ConversationMemoryService(AtomOwnerResolverMixin):
                 session_id=session_id,
                 lang=lang,
                 _ops_capture=ops_capture,
+                # Same signal as the v1 baseline it is compared against — the
+                # household runs shadow AND subsume, so a shadow gated
+                # differently from the live path measures the wrong thing.
+                captured_kg_subjects=captured_kg_subjects,
             )
             v2_latency = time.monotonic() - started
             v2_count = len(result)
@@ -729,8 +738,16 @@ class ConversationMemoryService(AtomOwnerResolverMixin):
         name = subject.strip().lower()
         if not name:
             return None
+        if settings.auth_enabled and user_id is None:
+            # Auth on and no identity (device / unrecognised voice). Every reach
+            # branch keys on the asker, so there is nothing to resolve WITH —
+            # and the legacy predicate below would fall through to the ownerless
+            # entities, which belong to everyone. Fail closed: keep the fact
+            # flat. (Such a turn is refused upstream while auth is on; this is
+            # the seam's own guard, not a reliance on the caller's.)
+            return None
         try:
-            if settings.auth_enabled and user_id is not None:
+            if settings.auth_enabled:
                 from services.circle_sql import kg_entities_circles_filter
 
                 clause, params = kg_entities_circles_filter(user_id, alias="e")
@@ -844,7 +861,17 @@ class ConversationMemoryService(AtomOwnerResolverMixin):
                 # This asker has no reachable person entity by that name, so the
                 # relation captured this turn cannot be about their subject.
                 return False
-            return any(captured_id == entity_id for _n, captured_id, _o in captured_kg_subjects)
+            # Read defensively: the SAME set object is handed to EVERY
+            # `post_message` hook (turn_extraction), so a plugin can put
+            # anything in it. An unguarded unpack would either match nothing
+            # (a 3-character string unpacks into characters) or raise straight
+            # out of this gate — and the v1 call site has no try/except, so
+            # `extract_memories_background` would swallow it and the turn would
+            # lose ALL its memories over one stray entry. Skip what does not fit.
+            return any(
+                isinstance(entry, tuple) and len(entry) == 3 and entry[1] == entity_id
+                for entry in captured_kg_subjects
+            )
         # Uncoordinated caller — fall back to the subject-level proxy.
         return await self._subject_is_kg_representable(subject, user_id)
 
@@ -1290,9 +1317,18 @@ class ConversationMemoryService(AtomOwnerResolverMixin):
             scope=MEMORY_SCOPE_USER,
             atom_id=atom_id,
             circle_tier=default_tier,
-            # Subject attribution (D9) reaches v2 too: retrieval tags the
+            # Subject attribution (D9), the NAME half: retrieval tags the
             # injected context per subject, and a v2-written memory without it
-            # would conflate people the v1 path keeps apart.
+            # conflates people the v1 path keeps apart.
+            #
+            # The ENTITY half is NOT here and this is not yet parity with v1.
+            # v1 follows its save with `_bridge_subject_entity`, which resolves
+            # the subject to a `kg_entities` row and fills `subject_entity_id`;
+            # this path deliberately does not commit, and the bridge manages its
+            # own transaction. So a v2 row keeps `subject_entity_id IS NULL` and
+            # stays OUT of the entity-augmented retrieval union and out of
+            # `GET /api/memory/by-subject/{id}`. Strictly better than before
+            # (v2 wrote no subject at all), still a gap — see `memory-extraction.md`.
             subject_name=(subject.strip() or None) if subject else None,
         )
         self.db.add(memory)
@@ -1490,6 +1526,14 @@ class ConversationMemoryService(AtomOwnerResolverMixin):
                 user_id=user_id,
                 session_id=session_id,
                 lang=lang,
+                # The per-turn signal MUST survive the fallback. Without it v1
+                # takes the uncoordinated branch and subsumes on the proxy —
+                # which, because `kg_post_message_hook` runs FIRST in the same
+                # coroutine and COMMITS, now also sees THIS turn's relations and
+                # so says "represented" almost every time. A routine LLM/schema
+                # or drift reject would then quietly undo the whole per-fact gate
+                # and drop the facts it exists to keep flat.
+                captured_kg_subjects=captured_kg_subjects,
             )
 
         # Capture for shadow log: the LLM produced a valid ops list.
@@ -1602,6 +1646,14 @@ class ConversationMemoryService(AtomOwnerResolverMixin):
                 user_id=user_id,
                 session_id=session_id,
                 lang=lang,
+                # The per-turn signal MUST survive the fallback. Without it v1
+                # takes the uncoordinated branch and subsumes on the proxy —
+                # which, because `kg_post_message_hook` runs FIRST in the same
+                # coroutine and COMMITS, now also sees THIS turn's relations and
+                # so says "represented" almost every time. A routine LLM/schema
+                # or drift reject would then quietly undo the whole per-fact gate
+                # and drop the facts it exists to keep flat.
+                captured_kg_subjects=captured_kg_subjects,
             )
 
         return saved
