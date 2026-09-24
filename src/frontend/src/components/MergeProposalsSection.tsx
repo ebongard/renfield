@@ -39,6 +39,12 @@ export default function MergeProposalsSection() {
   const proposals: MergeProposal[] = query.data ?? [];
   const [dismissedIds, setDismissedIds] = useState<Set<number>>(() => new Set());
   const [pending, setPending] = useState<PendingMerge | null>(null);
+  // What a cluster decision REFUSED to do. The service can resolve a cluster
+  // partially — pairs that change visibility, cross a type boundary, or do not
+  // reach the survivor stay pending on purpose. Throwing that away made a
+  // partial refusal look exactly like a success: the cards vanished optimistically
+  // and the pairs sat open in the database until the next page load.
+  const [clusterNote, setClusterNote] = useState<string | null>(null);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const clearTimer = useCallback(() => {
@@ -108,16 +114,33 @@ export default function MergeProposalsSection() {
       .filter((p) => entityIds.includes(p.loser.id) && entityIds.includes(p.winner.id))
       .map((p) => p.id);
     setDismissedIds((prev) => new Set([...prev, ...touched]));
+    setClusterNote(null);
+    const restore = (): void => setDismissedIds((prev) => {
+      const n = new Set(prev);
+      for (const id of touched) n.delete(id);
+      return n;
+    });
     // On failure nothing was written — put the cluster back. Without this the
     // owner watches the queue shrink on an error and cannot get it back short
     // of reloading the page.
-    void resolveCluster.mutateAsync({ entityIds, decision, survivorId }).catch(() => {
-      setDismissedIds((prev) => {
-        const n = new Set(prev);
-        for (const id of touched) n.delete(id);
-        return n;
-      });
-    });
+    void resolveCluster.mutateAsync({ entityIds, decision, survivorId })
+      .then((res) => {
+        const left = (res.skipped_cross_tier ?? 0)
+          + (res.skipped_cross_type ?? 0)
+          + (res.skipped_unreachable ?? 0);
+        if (left === 0 && (res.notes?.length ?? 0) === 0) return;
+        // Partial refusal. The success path already invalidated the query, so a
+        // refetch is on its way with the truth; undoing the optimistic dismissal
+        // lets whatever stayed pending come back instead of disappearing until a
+        // page reload. And say so — a refusal is never silent here.
+        restore();
+        setClusterNote(
+          left > 0
+            ? t('circles.mergeProposals.cluster.partial', { count: left })
+            : (res.notes?.[0] ?? null),
+        );
+      })
+      .catch(restore);
   };
 
   return (
@@ -129,6 +152,17 @@ export default function MergeProposalsSection() {
         <GitMerge className="w-4 h-4" aria-hidden="true" />
         {t('circles.mergeProposals.sectionTitle')}
       </h2>
+
+      {clusterNote && (
+        <p
+          className="merge-visibility-warning"
+          role="status"
+          aria-live="polite"
+        >
+          <span aria-hidden="true">⚠</span>
+          <span>{clusterNote}</span>
+        </p>
+      )}
 
       <ul className="space-y-3 animate-stagger">
         {clusters.map((c) => (

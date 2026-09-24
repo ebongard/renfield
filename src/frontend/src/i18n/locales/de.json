@@ -1940,7 +1940,9 @@
         "crossTierLeft_one": "{{count}} Paar ändert die Sichtbarkeit und bleibt einzeln zu entscheiden",
         "crossTierLeft_other": "{{count}} Paare ändern die Sichtbarkeit und bleiben einzeln zu entscheiden",
         "confirmMerge": "Wirklich {{count}} Entitäten verschmelzen?",
-        "chainWarning": "Diese {{count}} Entitäten hängen über eine Kette von Ähnlichkeiten zusammen, nicht paarweise geprüft — je länger die Kette, desto wahrscheinlicher sind zwei verschiedene Dinge darin. Nochmal klicken, um zu falten."
+        "chainWarning": "Diese {{count}} Entitäten hängen über eine Kette von Ähnlichkeiten zusammen, nicht paarweise geprüft — je länger die Kette, desto wahrscheinlicher sind zwei verschiedene Dinge darin. Nochmal klicken, um zu falten.",
+        "partial_one": "{{count}} Paar wurde nicht mitgefaltet und bleibt offen.",
+        "partial_other": "{{count}} Paare wurden nicht mitgefaltet und bleiben offen."
       }
     },
     "settingsTitle": "Kreise & Mitglieder",

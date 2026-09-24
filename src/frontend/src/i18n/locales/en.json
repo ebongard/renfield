@@ -1940,7 +1940,9 @@
         "crossTierLeft_one": "{{count}} pair changes visibility and stays individually decidable",
         "crossTierLeft_other": "{{count}} pairs change visibility and stay individually decidable",
         "confirmMerge": "Really merge {{count}} entities?",
-        "chainWarning": "These {{count}} entities are linked by a CHAIN of similarities, not compared pairwise — the longer the chain, the likelier two different things are in it. Click again to fold."
+        "chainWarning": "These {{count}} entities are linked by a CHAIN of similarities, not compared pairwise — the longer the chain, the likelier two different things are in it. Click again to fold.",
+        "partial_one": "{{count}} pair was not folded in and stays pending.",
+        "partial_other": "{{count}} pairs were not folded in and stay pending."
       }
     },
     "settingsTitle": "Circles & Members",

@@ -172,7 +172,10 @@ Routes — all `KG_VIEW`, scoped to the caller's own graph + per-proposal owners
 - `/reconciler/run`
 
 Frontend: `MergeProposalsSection` + `MergeProposalCard` at the top of `/brain/review` (comparison + survivor toggle +
-cross-tier warning + 5s undo toast). The card de-emphasises the merge button for cross-tier, `name_typo`, `cross_type`
+cross-tier warning + 5s undo toast). A cluster decision can be resolved only in PART — the service leaves visibility-
+changing, type-incompatible and unreachable pairs pending on purpose — so the section reads `skipped_*` and `notes`
+back and says so, putting the optimistically dismissed cards back. Discarding that payload made a partial refusal
+look exactly like a success: the cards vanished and the pairs sat open until the next page load. The card de-emphasises the merge button for cross-tier, `name_typo`, `cross_type`
 and any pair whose primary types simply differ, and derives the displayed reason label from the live types when they
 differ and the pair is not cross-tier — the rows pending from before the type guard carry `gray_zone` and would
 otherwise be labelled "similar but uncertain".

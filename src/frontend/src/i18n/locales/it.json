@@ -1540,7 +1540,9 @@
         "crossTierLeft_one": "{{count}} coppia cambia la visibilità e resta da decidere singolarmente",
         "crossTierLeft_other": "{{count}} coppie cambiano la visibilità e restano da decidere singolarmente",
         "confirmMerge": "Unire davvero {{count}} entità?",
-        "chainWarning": "Queste {{count}} entità sono collegate da una CATENA di somiglianze, non confrontate a due a due — più lunga è la catena, più è probabile che contenga due cose diverse. Clicca di nuovo per unire."
+        "chainWarning": "Queste {{count}} entità sono collegate da una CATENA di somiglianze, non confrontate a due a due — più lunga è la catena, più è probabile che contenga due cose diverse. Clicca di nuovo per unire.",
+        "partial_one": "{{count}} coppia non è stata unita e resta in sospeso.",
+        "partial_other": "{{count}} coppie non sono state unite e restano in sospeso."
       }
     },
     "settingsTitle": "Cerchie e Membri",

@@ -1,0 +1,92 @@
+/**
+ * The review section's cluster path — specifically: a PARTIAL refusal.
+ *
+ * `resolve_cluster` can legitimately resolve a cluster only in part: pairs that
+ * change visibility, cross a type boundary, or do not reach the survivor stay
+ * pending on purpose and are reported back in `skipped_*`. The section used to
+ * discard that payload, so a partial refusal was indistinguishable from a full
+ * success — the cards were optimistically dismissed and the untouched pairs
+ * stayed invisible until a page reload.
+ */
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { http, HttpResponse } from 'msw';
+import { screen, fireEvent, waitFor } from '@testing-library/react';
+import { server } from '../mocks/server';
+import { renderWithProviders } from '../test-utils';
+import MergeProposalsSection from '../../../../src/frontend/src/components/MergeProposalsSection';
+import { TEST_CONFIG } from '../config';
+
+const BASE = TEST_CONFIG.API_BASE_URL;
+
+function ent(id: number, name: string, mentions: number) {
+  return {
+    id, name, entity_type: 'person', circle_tier: 2, mention_count: mentions,
+    surface_forms: [], relation_count: 0,
+  };
+}
+
+/** Three same-tier, same-type entities tied by two pairs — one cluster card. */
+const A = ent(1, 'Anna', 1);
+const B = ent(2, 'Anna', 9);
+const C = ent(3, 'Anna', 3);
+const PROPOSALS = [
+  { id: 10, similarity: 0.9, reason: 'gray_zone', status: 'pending', created_at: '', loser: A, winner: B },
+  { id: 11, similarity: 0.9, reason: 'gray_zone', status: 'pending', created_at: '', loser: C, winner: B },
+];
+
+function mockQueue(clusterResult: Record<string, unknown>) {
+  server.use(
+    http.get(`${BASE}/api/knowledge-graph/merge-proposals`, () =>
+      HttpResponse.json({ proposals: PROPOSALS, total: PROPOSALS.length })),
+    http.post(`${BASE}/api/knowledge-graph/merge-proposals/cluster`, () =>
+      HttpResponse.json(clusterResult)),
+  );
+}
+
+const FULL_SUCCESS = {
+  merged: 2, approved: 2, rejected: 0,
+  skipped_cross_tier: 0, skipped_cross_type: 0, skipped_unreachable: 0, notes: [],
+};
+
+describe('MergeProposalsSection — partial cluster refusal', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('says so, and puts the cluster back, when the service left pairs pending', async () => {
+    mockQueue({ ...FULL_SUCCESS, merged: 1, approved: 1, skipped_cross_tier: 1 });
+    renderWithProviders(<MergeProposalsSection />);
+
+    const merge = await screen.findByRole('button', { name: /zusammenführen/i });
+    fireEvent.click(merge);
+
+    // The refusal is named — not swallowed into a silent optimistic dismissal.
+    expect(await screen.findByText(/bleibt offen/i)).toBeInTheDocument();
+    // …and the card is back, so the still-pending pair is reachable again.
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /zusammenführen/i })).toBeInTheDocument();
+    });
+  });
+
+  it('stays quiet when the whole cluster really was folded', async () => {
+    mockQueue(FULL_SUCCESS);
+    renderWithProviders(<MergeProposalsSection />);
+
+    const merge = await screen.findByRole('button', { name: /zusammenführen/i });
+    fireEvent.click(merge);
+
+    await waitFor(() => {
+      expect(screen.queryByText(/bleibt offen/i)).not.toBeInTheDocument();
+      expect(screen.queryByText(/bleiben offen/i)).not.toBeInTheDocument();
+    });
+  });
+
+  it('surfaces a refusal note even when no pair was counted', async () => {
+    mockQueue({ ...FULL_SUCCESS, merged: 0, approved: 0, notes: ['cluster spans more than one tier — refusing'] });
+    renderWithProviders(<MergeProposalsSection />);
+
+    fireEvent.click(await screen.findByRole('button', { name: /zusammenführen/i }));
+
+    expect(await screen.findByText(/spans more than one tier/i)).toBeInTheDocument();
+  });
+});
