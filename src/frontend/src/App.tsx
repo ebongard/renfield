@@ -126,8 +126,16 @@ function AppRoutes() {
               </ProtectedRoute>
             } />
             <Route path="/chat" element={<Navigate to="/" replace />} />
-            <Route path="/tasks" element={<TasksPage />} />
-            <Route path="/connections" element={<ConnectionsPage />} />
+            <Route path="/tasks" element={
+              <ProtectedRoute>
+                <TasksPage />
+              </ProtectedRoute>
+            } />
+            <Route path="/connections" element={
+              <ProtectedRoute>
+                <ConnectionsPage />
+              </ProtectedRoute>
+            } />
             {projectsEnabled && (
               <Route path="/projects" element={
                 <ProtectedRoute>
@@ -243,8 +251,16 @@ function AppRoutes() {
                     <KnowledgePage />
                   </ProtectedRoute>
                 } />
-                <Route path="/memory" element={<MemoryPage />} />
-                <Route path="/knowledge-graph" element={<KnowledgeGraphPage />} />
+                <Route path="/memory" element={
+                  <ProtectedRoute>
+                    <MemoryPage />
+                  </ProtectedRoute>
+                } />
+                <Route path="/knowledge-graph" element={
+                  <ProtectedRoute>
+                    <KnowledgeGraphPage />
+                  </ProtectedRoute>
+                } />
                 {/* /wissensbasis: the A-LANDING 2D page, superseded 2026-05-12 by
                     the unified 3D Wissensgraph; ?focus= URLs resolve there. */}
                 <Route path="/wissensbasis" element={
