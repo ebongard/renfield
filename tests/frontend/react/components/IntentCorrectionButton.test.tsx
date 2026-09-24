@@ -4,6 +4,27 @@ import { screen, fireEvent, waitFor } from '@testing-library/react';
 import IntentCorrectionButton from '../../../../src/frontend/src/components/IntentCorrectionButton';
 import type { CorrectionHandler } from '../../../../src/frontend/src/components/IntentCorrectionButton';
 import { renderWithRouter } from '../test-utils';
+import { adminAuthMock } from '../test-auth-mock';
+import type { AuthContextValue } from '../../../../src/frontend/src/context/AuthContext';
+
+// The MCP option list comes from the ADMIN-gated /api/intents/status, so the
+// component asks only when the viewer is an admin. Default the suite to admin
+// (its existing expectations); the non-admin case gets its own test below.
+/** Authenticated, but without `admin` — the household's Familie role. */
+const familyAuthMock: AuthContextValue = {
+  ...adminAuthMock,
+  hasPermission: () => false,
+  hasAnyPermission: () => false,
+  isAdmin: () => false,
+};
+
+let authMock: AuthContextValue = adminAuthMock;
+vi.mock('../../../../src/frontend/src/context/AuthContext', async () => {
+  const actual = await vi.importActual<typeof import('../../../../src/frontend/src/context/AuthContext')>(
+    '../../../../src/frontend/src/context/AuthContext',
+  );
+  return { ...actual, useAuth: (): AuthContextValue => authMock };
+});
 
 // Mock axios to return MCP tools
 vi.mock('../../../../src/frontend/src/utils/axios', () => ({
@@ -37,6 +58,7 @@ describe('IntentCorrectionButton', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    authMock = adminAuthMock;
   });
 
   it('renders the button', () => {
@@ -234,5 +256,19 @@ describe('IntentCorrectionButton', () => {
 
     await screen.findByText('Korrektur gespeichert! Renfield lernt daraus.');
     expect(screen.queryByText('Neu beantworten')).not.toBeInTheDocument();
+  });
+
+  // Regression: /api/intents/status is ADMIN-gated. Asking as a Familie member
+  // was a guaranteed 403 — one console error per chat load and one refused
+  // request per family member per session, for a list that was then swallowed
+  // into an empty array. Live on the auth-on household, 2026-09-24.
+  it('does not ask the admin-gated endpoint as a non-admin', async () => {
+    authMock = familyAuthMock;
+    const axiosMock = (await import('../../../../src/frontend/src/utils/axios')).default;
+
+    renderWithRouter(<IntentCorrectionButton {...defaultProps} feedbackType="intent" />);
+
+    await waitFor(() => expect(screen.getByRole('button')).toBeInTheDocument());
+    expect(axiosMock.get).not.toHaveBeenCalled();
   });
 });

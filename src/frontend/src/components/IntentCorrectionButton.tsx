@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { useAuth } from '../context/AuthContext';
 import { useTranslation } from 'react-i18next';
 import { AlertCircle, Check, ChevronDown, RefreshCw } from 'lucide-react';
 
@@ -41,6 +42,11 @@ export type CorrectionHandler = (
 let _mcpOptionsCache: McpOption[] | null = null;
 let _mcpOptionsFetchPromise: Promise<McpOption[]> | null = null;
 
+/** `/api/intents/status` is ADMIN-gated (it exposes the whole MCP tool
+ *  registry). Only an admin may call it — see the guard at the single call
+ *  site: asking anyway meant a guaranteed 403, one console error per chat load
+ *  and one refused request per family member per session, for a list that was
+ *  then swallowed into an empty array anyway. */
 async function fetchMcpIntentOptions(): Promise<McpOption[]> {
   if (_mcpOptionsCache) return _mcpOptionsCache;
   if (_mcpOptionsFetchPromise) return _mcpOptionsFetchPromise;
@@ -102,12 +108,15 @@ export default function IntentCorrectionButton({
   const [submitted, setSubmitted] = useState<boolean>(false);
   const [correctedValue, setCorrectedValue] = useState<string | null>(null);
   const [mcpOptions, setMcpOptions] = useState<McpOption[]>([]);
+  const { hasPermission } = useAuth();
 
   useEffect(() => {
-    if (feedbackType === 'intent') {
-      fetchMcpIntentOptions().then(setMcpOptions);
+    // Non-admins get the core options only; the MCP list is behind an
+    // admin-gated endpoint, so do not ask for what this user cannot have.
+    if (feedbackType === 'intent' && hasPermission('admin')) {
+      void fetchMcpIntentOptions().then(setMcpOptions);
     }
-  }, [feedbackType]);
+  }, [feedbackType, hasPermission]);
 
   // Core intent options (always available)
   const coreOptions: IntentOption[] = [
