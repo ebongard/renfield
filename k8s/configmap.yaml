@@ -450,6 +450,17 @@ data:
   INGEST_CREDENTIALS_ENABLED: "true"
   KG_CONFLATION_MONITOR_ENABLED: "true"
   KG_RECONCILER_ENABLED: "true"
+  # Gemessen 2026-09-24: der Lauf um 17:25 gab candidates=35 + dropped_person_guard=65
+  # zurueck — EXAKT 100, also genau die bisherige SQL-Kappung max(50*2, 2). Die Abfrage
+  # hat abgeschnitten: zum Laufzeitpunkt lagen 116 frische Paare ab 0,85 an, gesehen
+  # wurden 100. Solange die Kappung greift, ist ein ABSENKEN der Kandidatenschwelle
+  # wirkungslos — neue Paare aus 0,80-0,85 ranken per Konstruktion unter allen
+  # bestehenden und werden nie erreicht. 150 (Kappung 300) liegt sicher ueber den
+  # 87 frischen Paaren ab 0,85, die Grenze greift damit nachweislich nicht mehr.
+  # Obergrenze der Neuvorschlaege pro Lauf ist dadurch beschraenkt: die Population
+  # ab 0,85 ist endlich (380 gesamt), das ist ein einmaliges Nachholen, keine Flut.
+  # Zurueck auf die Vorgabe: diesen Schluessel entfernen (Vorgabe 50, Kappung 100).
+  KG_RECONCILER_MAX_PER_RUN: "150"
   MEMORY_EXTRACTION_V2_SHADOW: "true"
   MEMORY_KG_BRIDGE_ENABLED: "true"
   MEMORY_SUBSUME_TO_KG: "false"   # AUS am Cutover 2026-09-23: der Startwaechter verweigert true+AUTH_ENABLED=true (§8.2). Nach dem Cutover bewusst wieder einschalten und den Waechter entfernen.
