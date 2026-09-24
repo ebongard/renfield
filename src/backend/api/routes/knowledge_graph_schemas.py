@@ -1,5 +1,7 @@
 """Pydantic schemas for Knowledge Graph API."""
 
+from typing import Literal
+
 from pydantic import BaseModel, Field
 
 
@@ -142,13 +144,46 @@ class MergeDuplicatesResponse(BaseModel):
 # --- Merge-proposal review queue (Structured Memory Phase 1, T5/D3) ---
 
 class MergeProposalEntityBrief(BaseModel):
-    """One side of a proposed merge, with the fields the owner needs to judge."""
+    """One side of a proposed merge, with the fields the owner needs to judge.
+
+    The review queue is dominated by same-named entities whose descriptions are
+    empty — which is precisely why the reconciler refuses to auto-merge them
+    (a name match cannot tell two real things apart). The owner is in the same
+    position unless the response carries what the embedding does not:
+    ``description`` when there is one, how many edges the entity holds in the
+    graph, and the window it was seen in. Those are the fields a person can
+    actually decide on.
+    """
     id: int
     name: str
     entity_type: str
     circle_tier: int = 0
     mention_count: int = 1
     surface_forms: list[str] = Field(default_factory=list)
+    description: str | None = None
+    relation_count: int = 0
+    first_seen_at: str | None = None
+    last_seen_at: str | None = None
+
+
+class ClusterResolveRequest(BaseModel):
+    """Resolve a whole name cluster in one decision.
+
+    ``entity_ids`` names the cluster; only entities tied into it by a pending
+    SAME-TIER proposal take part (cross-tier pairs change visibility and stay
+    individually decidable). ``survivor_id`` is required for "merge".
+    """
+    entity_ids: list[int] = Field(min_length=2)
+    decision: Literal["merge", "reject"]
+    survivor_id: int | None = None
+
+
+class ClusterResolveResponse(BaseModel):
+    merged: int = 0
+    approved: int = 0
+    rejected: int = 0
+    skipped_cross_tier: int = 0
+    notes: list[str] = Field(default_factory=list)
 
 
 class MergeProposalResponse(BaseModel):

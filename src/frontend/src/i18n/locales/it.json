@@ -1528,7 +1528,16 @@
       "merge": "Unisci",
       "reject": "Rifiuta",
       "merged": "Unito",
-      "undo": "Annulla"
+      "undo": "Annulla",
+      "cluster": {
+        "summary": "{{entities}} entità · {{pairs}} coppie",
+        "edges_one": "{{count}} arco",
+        "edges_other": "{{count}} archi",
+        "mergeAll": "Unisci tutte ({{count}})",
+        "rejectAll": "Scarta tutte",
+        "crossTierLeft_one": "{{count}} coppia cambia la visibilità e resta da decidere singolarmente",
+        "crossTierLeft_other": "{{count}} coppie cambiano la visibilità e restano da decidere singolarmente"
+      }
     },
     "settingsTitle": "Cerchie e Membri",
     "settingsSubtitle": "Gestisci i tuoi livelli e chi è invitato in ciascuno.",

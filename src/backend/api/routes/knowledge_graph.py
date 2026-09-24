@@ -4,7 +4,7 @@ Knowledge Graph API Routes — CRUD for entities and relations.
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from loguru import logger
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -22,6 +22,8 @@ from api.routes.knowledge_graph_schemas import (
     KGStatsResponse,
     MergeDuplicatesResponse,
     MergeEntitiesRequest,
+    ClusterResolveRequest,
+    ClusterResolveResponse,
     MergeProposalEntityBrief,
     MergeProposalResponse,
     ApproveMergeRequest,
@@ -35,6 +37,7 @@ from api.routes.knowledge_graph_schemas import (
 from models.database import (
     KG_MERGE_PROPOSAL_PENDING,
     TIER_PUBLIC,
+    KGRelation,
     KgMergeProposal,
     User,
 )
@@ -501,7 +504,8 @@ async def merge_duplicate_clusters(
 # Merge-proposal review queue (Structured Memory Phase 1, T5/D3)
 # =========================================================================
 
-def _merge_brief(e) -> MergeProposalEntityBrief:
+def _merge_brief(e, relation_counts: dict[int, int] | None = None) -> MergeProposalEntityBrief:
+    counts = relation_counts or {}
     return MergeProposalEntityBrief(
         id=e.id,
         name=e.name,
@@ -509,18 +513,24 @@ def _merge_brief(e) -> MergeProposalEntityBrief:
         circle_tier=e.circle_tier or 0,
         mention_count=e.mention_count or 1,
         surface_forms=list(e.surface_forms or []),
+        description=e.description,
+        relation_count=counts.get(e.id, 0),
+        first_seen_at=e.first_seen_at.isoformat() if e.first_seen_at else None,
+        last_seen_at=e.last_seen_at.isoformat() if e.last_seen_at else None,
     )
 
 
-def _proposal_to_response(p: KgMergeProposal) -> MergeProposalResponse:
+def _proposal_to_response(
+    p: KgMergeProposal, relation_counts: dict[int, int] | None = None
+) -> MergeProposalResponse:
     return MergeProposalResponse(
         id=p.id,
         similarity=p.similarity,
         reason=p.reason,
         status=p.status,
         created_at=p.created_at.isoformat() if p.created_at else "",
-        loser=_merge_brief(p.loser),
-        winner=_merge_brief(p.winner),
+        loser=_merge_brief(p.loser, relation_counts),
+        winner=_merge_brief(p.winner, relation_counts),
     )
 
 
@@ -559,7 +569,31 @@ async def list_merge_proposals(
     if uid is not None:
         q = q.where(KgMergeProposal.user_id == uid)
     rows = (await db.execute(q)).scalars().all()
-    proposals = [_proposal_to_response(p) for p in rows]
+    # Edge counts for every entity in the queue, in ONE aggregate — the owner
+    # needs them to tell same-named entities apart, and a per-entity query would
+    # be 2N round-trips over a queue that runs into the thousands.
+    ids: set[int] = set()
+    for p in rows:
+        ids.add(p.loser_entity_id)
+        ids.add(p.winner_entity_id)
+    relation_counts: dict[int, int] = {}
+    if ids:
+        id_list = list(ids)
+        counted = (await db.execute(
+            select(KGRelation.subject_id, func.count())
+            .where(KGRelation.subject_id.in_(id_list), KGRelation.is_active.is_(True))
+            .group_by(KGRelation.subject_id)
+        )).all()
+        for ent_id, n in counted:
+            relation_counts[ent_id] = relation_counts.get(ent_id, 0) + int(n)
+        counted = (await db.execute(
+            select(KGRelation.object_id, func.count())
+            .where(KGRelation.object_id.in_(id_list), KGRelation.is_active.is_(True))
+            .group_by(KGRelation.object_id)
+        )).all()
+        for ent_id, n in counted:
+            relation_counts[ent_id] = relation_counts.get(ent_id, 0) + int(n)
+    proposals = [_proposal_to_response(p, relation_counts) for p in rows]
     return MergeProposalsListResponse(proposals=proposals, total=len(proposals))
 
 
@@ -599,6 +633,43 @@ async def reject_merge_proposal(
     if not ok:
         raise HTTPException(status_code=409, detail="Proposal already resolved")
     return {"status": "rejected", "proposal_id": proposal_id}
+
+
+@router.post("/merge-proposals/cluster", response_model=ClusterResolveResponse)
+async def resolve_merge_cluster(
+    body: ClusterResolveRequest,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(require_permission(Permission.KG_VIEW)),
+):
+    """Resolve a whole NAME CLUSTER in one decision (merge all / reject all).
+
+    The queue's unit of judgement is the cluster, not the pair: the owner decides
+    once that a group of same-named entities is (or is not) the same thing. Only
+    pairs the reconciler already proposed take part, and only SAME-TIER ones —
+    a cross-tier pair changes an atom's reach and stays individually decidable
+    (it is reported back in ``skipped_cross_tier``, never silently swept).
+
+    KG_VIEW like approve/reject: this is the owner resolving their own queue.
+    Ownership is enforced inside the service by filtering the proposals on
+    ``user_id`` — an id the caller does not own simply contributes no pair.
+    """
+    uid = user.id if user else None
+    res = await KgReconcilerService(db).resolve_cluster(
+        user_id=uid,
+        entity_ids=body.entity_ids,
+        survivor_id=body.survivor_id,
+        decision=body.decision,
+        resolved_by=uid,
+    )
+    if res.notes and not (res.merged or res.approved or res.rejected):
+        raise HTTPException(status_code=400, detail="; ".join(res.notes))
+    return ClusterResolveResponse(
+        merged=res.merged,
+        approved=res.approved,
+        rejected=res.rejected,
+        skipped_cross_tier=res.skipped_cross_tier,
+        notes=res.notes,
+    )
 
 
 @router.post("/reconciler/run", response_model=ReconcilerRunResponse)

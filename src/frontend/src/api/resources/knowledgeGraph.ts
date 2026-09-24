@@ -284,6 +284,13 @@ export interface MergeProposalEntityBrief {
   circle_tier: number;
   mention_count: number;
   surface_forms: string[];
+  /** The evidence the embedding does NOT have. Same-named entities with no
+   *  description are exactly why the reconciler refuses to auto-merge them;
+   *  without these the owner is guessing too. */
+  description?: string | null;
+  relation_count?: number;
+  first_seen_at?: string | null;
+  last_seen_at?: string | null;
 }
 
 export interface MergeProposal {
@@ -312,6 +319,32 @@ async function approveMergeProposalRequest(input: { id: number; winnerId?: numbe
 
 async function rejectMergeProposalRequest(id: number): Promise<void> {
   await apiClient.post(`/api/knowledge-graph/merge-proposals/${id}/reject`, {});
+}
+
+export interface ClusterResolveInput {
+  entityIds: number[];
+  decision: 'merge' | 'reject';
+  survivorId?: number;
+}
+
+export interface ClusterResolveResult {
+  merged: number;
+  approved: number;
+  rejected: number;
+  skipped_cross_tier: number;
+  notes: string[];
+}
+
+async function resolveClusterRequest(input: ClusterResolveInput): Promise<ClusterResolveResult> {
+  const response = await apiClient.post<ClusterResolveResult>(
+    '/api/knowledge-graph/merge-proposals/cluster',
+    {
+      entity_ids: input.entityIds,
+      decision: input.decision,
+      ...(input.survivorId != null ? { survivor_id: input.survivorId } : {}),
+    },
+  );
+  return response.data;
 }
 
 export interface ReconcilerRunResult {
@@ -349,6 +382,17 @@ export function useRejectMergeProposal() {
   const queryClient = useQueryClient();
   return useApiMutation(
     { mutationFn: rejectMergeProposalRequest, onSuccess: () => invalidateKg(queryClient) },
+    'common.error',
+  );
+}
+
+/** Resolve a whole name cluster in one decision (merge all / reject all).
+ *  Cross-tier pairs never ride along — the backend reports them back in
+ *  `skipped_cross_tier` and leaves them pending. */
+export function useResolveCluster() {
+  const queryClient = useQueryClient();
+  return useApiMutation(
+    { mutationFn: resolveClusterRequest, onSuccess: () => invalidateKg(queryClient) },
     'common.error',
   );
 }

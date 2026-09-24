@@ -7,9 +7,12 @@ routes are actually registered on the router (catches decorator/import wiring
 regressions without standing up a full HTTP client).
 """
 import pytest
+from pydantic import ValidationError
 
 from api.routes.knowledge_graph import router
 from api.routes.knowledge_graph_schemas import (
+    ClusterResolveRequest,
+    ClusterResolveResponse,
     MergeProposalEntityBrief,
     MergeProposalResponse,
     MergeProposalsListResponse,
@@ -25,6 +28,32 @@ class TestMergeProposalSchemas:
         assert b.circle_tier == 0
         assert b.mention_count == 1
         assert b.surface_forms == []
+        # Evidence fields default to "nothing known", never to a wrong number:
+        # the cluster view shows them and the owner decides on them.
+        assert b.description is None
+        assert b.relation_count == 0
+        assert b.first_seen_at is None and b.last_seen_at is None
+
+    def test_entity_brief_carries_the_evidence(self):
+        b = MergeProposalEntityBrief(
+            id=1, name="Anna", entity_type="person", description="Nachbarin",
+            relation_count=12, first_seen_at="2026-06-01T00:00:00",
+            last_seen_at="2026-09-01T00:00:00",
+        )
+        assert (b.description, b.relation_count) == ("Nachbarin", 12)
+
+    def test_cluster_request_needs_two_entities(self):
+        with pytest.raises(ValidationError):
+            ClusterResolveRequest(entity_ids=[1], decision="merge", survivor_id=1)
+
+    def test_cluster_request_rejects_an_unknown_decision(self):
+        with pytest.raises(ValidationError):
+            ClusterResolveRequest(entity_ids=[1, 2], decision="obliterate")  # type: ignore[arg-type]
+
+    def test_cluster_response_defaults(self):
+        r = ClusterResolveResponse()
+        assert (r.merged, r.approved, r.rejected, r.skipped_cross_tier) == (0, 0, 0, 0)
+        assert r.notes == []
 
     def test_proposal_response_roundtrip(self):
         r = MergeProposalResponse(
@@ -69,3 +98,7 @@ class TestRouteRegistration:
         assert "/merge-proposals/{proposal_id}/reject" in paths
         assert "/reconciler/run" in paths
         assert "POST" in paths["/reconciler/run"]
+        # The cluster route must not collide with /{proposal_id}/... — a
+        # literal segment that a path parameter could swallow.
+        assert "/merge-proposals/cluster" in paths
+        assert "POST" in paths["/merge-proposals/cluster"]

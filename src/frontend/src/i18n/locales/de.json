@@ -1928,7 +1928,16 @@
       "merge": "Zusammenführen",
       "reject": "Ablehnen",
       "merged": "Zusammengeführt",
-      "undo": "Rückgängig"
+      "undo": "Rückgängig",
+      "cluster": {
+        "summary": "{{entities}} Entitäten · {{pairs}} Paare",
+        "edges_one": "{{count}} Kante",
+        "edges_other": "{{count}} Kanten",
+        "mergeAll": "Alle {{count}} zusammenführen",
+        "rejectAll": "Alle verwerfen",
+        "crossTierLeft_one": "{{count}} Paar ändert die Sichtbarkeit und bleibt einzeln zu entscheiden",
+        "crossTierLeft_other": "{{count}} Paare ändern die Sichtbarkeit und bleiben einzeln zu entscheiden"
+      }
     },
     "settingsTitle": "Kreise & Mitglieder",
     "settingsSubtitle": "Verwalte deine Kreis-Stufen und wer darin eingeladen ist.",

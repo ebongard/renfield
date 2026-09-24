@@ -1928,7 +1928,16 @@
       "merge": "Merge",
       "reject": "Reject",
       "merged": "Merged",
-      "undo": "Undo"
+      "undo": "Undo",
+      "cluster": {
+        "summary": "{{entities}} entities · {{pairs}} pairs",
+        "edges_one": "{{count}} edge",
+        "edges_other": "{{count}} edges",
+        "mergeAll": "Merge all {{count}}",
+        "rejectAll": "Dismiss all",
+        "crossTierLeft_one": "{{count}} pair changes visibility and stays individually decidable",
+        "crossTierLeft_other": "{{count}} pairs change visibility and stay individually decidable"
+      }
     },
     "settingsTitle": "Circles & Members",
     "settingsSubtitle": "Manage your tiers and who is invited into each.",

@@ -36,9 +36,11 @@ from datetime import UTC, datetime
 from loguru import logger
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine, AsyncSession
+from sqlalchemy.orm import selectinload
 
 from models.database import (
     EMBEDDING_DIMENSION,
+    KG_MERGE_PROPOSAL_APPROVED,
     KG_MERGE_PROPOSAL_PENDING,
     KG_MERGE_PROPOSAL_REJECTED,
     KG_MERGE_REASON_CROSS_TIER,
@@ -205,6 +207,16 @@ class MergeCandidate:
     # kept as a REVIEW candidate (reason name_typo), never auto-merged — the
     # gate above already refuses it via names_related=False; this is the label.
     name_typo: bool = False
+
+
+@dataclass
+class ClusterResolution:
+    """Outcome of one owner decision over a whole name cluster."""
+    merged: int = 0                 # entities folded into the survivor
+    approved: int = 0               # pending pairs closed as approved
+    rejected: int = 0               # pending pairs closed as rejected
+    skipped_cross_tier: int = 0     # left individually decidable (visibility)
+    notes: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -530,6 +542,123 @@ class KgReconcilerService:
             p.resolved_by_user_id = resolved_by
             await self.db.commit()
         return survivor
+
+    async def resolve_cluster(
+        self,
+        *,
+        user_id: int | None,
+        entity_ids: list[int],
+        survivor_id: int | None,
+        decision: str,
+        resolved_by: int | None = None,
+    ) -> ClusterResolution:
+        """Resolve a whole NAME CLUSTER in one owner decision.
+
+        The review queue is dominated by clusters of same-named entities with no
+        description to tell them apart (measured 2026-09-24: 1 365 pairs over 952
+        entities in 199 name clusters). Deciding those pair by pair is the wrong
+        unit — the owner judges "these are all the same thing" once.
+
+        INVARIANT: only SAME-TIER pairs take part. A cross-tier pair changes an
+        atom's reach, which is the one thing a bulk action must never do silently
+        (D3) — those stay individually decidable and are counted in
+        ``skipped_cross_tier``. Because every folded pair is same-tier, the
+        ``tier = MIN`` rule inside ``merge_entities`` is a no-op here: no
+        visibility can shift.
+
+        The fold set is derived from the PROPOSALS, not from ``entity_ids``: an
+        entity the caller names but that no pending same-tier proposal ties into
+        the cluster is never merged. Otherwise this route would be a way to merge
+        two arbitrary entities without a proposal behind it.
+        """
+        res = ClusterResolution()
+        if decision not in ("merge", "reject"):
+            res.notes.append(f"unknown decision: {decision}")
+            return res
+        ids = {int(i) for i in entity_ids}
+        if len(ids) < 2:
+            res.notes.append("a cluster needs at least two entities")
+            return res
+
+        q = (
+            select(KgMergeProposal)
+            .options(
+                selectinload(KgMergeProposal.loser),
+                selectinload(KgMergeProposal.winner),
+            )
+            .where(
+                KgMergeProposal.status == KG_MERGE_PROPOSAL_PENDING,
+                KgMergeProposal.loser_entity_id.in_(ids),
+                KgMergeProposal.winner_entity_id.in_(ids),
+            )
+        )
+        if user_id is not None:
+            q = q.where(KgMergeProposal.user_id == user_id)
+        pairs = list((await self.db.execute(q)).scalars().all())
+
+        same_tier: list[KgMergeProposal] = []
+        for p in pairs:
+            # Compare the LIVE tiers, not the ones stored when the pair was
+            # proposed — a tier may have moved since, in either direction.
+            lt = (p.loser.circle_tier if p.loser else None) or 0
+            wt = (p.winner.circle_tier if p.winner else None) or 0
+            if lt == wt:
+                same_tier.append(p)
+            else:
+                res.skipped_cross_tier += 1
+
+        if not same_tier:
+            res.notes.append("no same-tier pending pair in this cluster")
+            return res
+
+        now = datetime.now(UTC).replace(tzinfo=None)
+
+        if decision == "reject":
+            for p in same_tier:
+                p.status = KG_MERGE_PROPOSAL_REJECTED
+                p.resolved_at = now
+                p.resolved_by_user_id = resolved_by
+                res.rejected += 1
+            await self.db.commit()
+            return res
+
+        connected: set[int] = set()
+        for p in same_tier:
+            connected.add(int(p.loser_entity_id))
+            connected.add(int(p.winner_entity_id))
+        if survivor_id is None or int(survivor_id) not in connected:
+            res.notes.append("survivor must be one of the cluster's proposed entities")
+            return res
+        keep = int(survivor_id)
+
+        kg = KnowledgeGraphService(self.db)
+        for drop in sorted(connected - {keep}):
+            # merge_entities commits per fold and is idempotent on an
+            # already-tombstoned loser (returns None).
+            if await kg.merge_entities(drop, keep) is not None:
+                res.merged += 1
+
+        # Close the cluster's pairs. Every one of them said "these two are the
+        # same"; after the fold that statement holds for all of them, so the
+        # verdict is `approved` — `superseded` stays reserved for the concurrent
+        # race in approve_proposal.
+        reload_q = select(KgMergeProposal).where(
+            KgMergeProposal.id.in_([p.id for p in same_tier])
+        )
+        for p in (await self.db.execute(reload_q)).scalars().all():
+            if p.status != KG_MERGE_PROPOSAL_PENDING:
+                continue
+            p.status = KG_MERGE_PROPOSAL_APPROVED
+            p.resolved_at = now
+            p.resolved_by_user_id = resolved_by
+            res.approved += 1
+        await self.db.commit()
+        logger.info(
+            f"🔗 KG cluster resolved user={user_id} survivor={keep}: "
+            f"merged={res.merged}, approved={res.approved}, "
+            f"cross_tier_left={res.skipped_cross_tier}"
+        )
+        return res
 
     async def reject_proposal(self, proposal_id: int, resolved_by: int | None = None) -> bool:
         p = (await self.db.execute(
