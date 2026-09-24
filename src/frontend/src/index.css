@@ -291,9 +291,13 @@
          dark:bg-gray-700 dark:text-gray-300;
 }
 
-@utility merge-visibility-warning {
-  /* Cross-tier merge visibility-change notice — warning semantic (DESIGN:
-     warm = attention). Symbol + text so color is never the only signal. */
+@utility merge-notice {
+  /* Attention notice on a merge surface — warning semantic (DESIGN: warm =
+     attention). Symbol + text so color is never the only signal.
+     TWO uses, which is why the name no longer says "visibility": the
+     cross-tier visibility-change notice on a proposal card, and the refusal
+     of a whole cluster fold. The old name described the first and lied about
+     the second. */
   @apply flex items-center gap-2 rounded-sm px-2 py-1 text-xs font-medium
          bg-cream text-primary-700 border border-primary-200
          dark:bg-gray-800 dark:text-primary-300 dark:border-primary-700;

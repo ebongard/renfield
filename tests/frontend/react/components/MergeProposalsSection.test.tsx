@@ -202,7 +202,7 @@ describe('MergeProposalsSection — partial cluster refusal', () => {
     fireEvent.click(await screen.findByRole('button', { name: /zusammenführen/i }));
 
     await waitFor(() => {
-      expect(screen.getByRole('status')).toHaveTextContent(/\S/);
+      expect(screen.getByRole('alert')).toHaveTextContent(/\S/);
     });
     expect(screen.queryByText(/spans more than one tier/i)).not.toBeInTheDocument();
   });

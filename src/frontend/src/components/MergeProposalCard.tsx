@@ -121,7 +121,7 @@ export default function MergeProposalCard({ proposal, onApprove, onReject, busy 
       </div>
 
       {crossTier && (
-        <p className="merge-visibility-warning" role="note">
+        <p className="merge-notice" role="note">
           <span aria-hidden="true">⚠</span>
           <span>
             {t('circles.mergeProposals.visibilityWarning', {

@@ -209,9 +209,14 @@ export default function MergeProposalsSection() {
 
       {clusterNote && (
         <p
-          className="merge-visibility-warning"
-          role="status"
-          aria-live="polite"
+          className="merge-notice"
+          // `alert`, nicht `status`: das hier ist die Fehlermeldung zu einer
+          // gerade ausgeloesten Aktion, die NICHTS bewirkt hat — ein
+          // Bildschirmleser muss sie ansagen, nicht hoeflich anhaengen.
+          // Nebenwirkung, die zaehlt: der Rueckgaengig-Hinweis weiter unten ist
+          // ebenfalls `role="status"`, und `getByRole('status')` war dadurch
+          // zweideutig; jetzt ist jede Rolle eindeutig einem Ding zugeordnet.
+          role="alert"
         >
           <span aria-hidden="true">⚠</span>
           <span>{clusterNote}</span>

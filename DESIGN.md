@@ -301,7 +301,7 @@ reads considered, not slop. Defined in `@layer components` so utility classes
 .empty-state      /* empty state container — warm copy + primary CTA pattern */
 .merge-proposal-card    /* owner review card for a proposed KG entity merge (D3/D5) */
 .surface-form-pill      /* small absorbed-alias / surface-form chip (xs) */
-.merge-visibility-warning  /* cross-tier merge visibility-change notice — warning semantic, symbol + text */
+.merge-notice           /* attention notice on a merge surface: cross-tier visibility change, or a refused cluster fold — warning semantic, symbol + text */
 ```
 
 Each new class MUST: (a) use only DESIGN.md tokens, (b) have explicit `dark:` variants, (c) honor `prefers-reduced-motion`, (d) be referenced by ONE name throughout the codebase (no `.atom-card` and `.atom-row` fighting for the same concept).
