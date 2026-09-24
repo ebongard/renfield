@@ -61,6 +61,13 @@ function sameType(p: MergeProposal): boolean {
  * the two names. The service refuses the same pairs (`KG_MERGE_WEAK_REASONS`);
  * this is the view's half, so a weak pair is visible as its own card instead of
  * disappearing into a cluster.
+ *
+ * The set is written out twice, in two languages, and that is safe by
+ * CONSTRUCTION rather than by discipline: the SERVICE is what refuses the fold.
+ * Should this list ever fall behind, a weak pair becomes a cluster edge again,
+ * the fold is refused server-side, `skipped_weak_edge` counts it and the section
+ * shows the partial-refusal note. The divergence costs a confusing card, never a
+ * merge.
  */
 const WEAK_REASONS = new Set(['name_typo']);
 

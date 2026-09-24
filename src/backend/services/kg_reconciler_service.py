@@ -44,11 +44,11 @@ from models.database import (
     KG_MERGE_PROPOSAL_PENDING,
     KG_MERGE_PROPOSAL_REJECTED,
     KG_MERGE_PROPOSAL_SUPERSEDED,
-    KG_MERGE_WEAK_REASONS,
     KG_MERGE_REASON_CROSS_TIER,
     KG_MERGE_REASON_CROSS_TYPE,
     KG_MERGE_REASON_GRAY_ZONE,
     KG_MERGE_REASON_NAME_TYPO,
+    KG_MERGE_WEAK_REASONS,
     KGEntity,
     KgMergeProposal,
 )
@@ -661,15 +661,6 @@ class KgReconcilerService:
         ``tier = MIN`` rule inside ``merge_entities`` is a no-op here: no
         visibility can shift.
 
-        THIRD INVARIANT: only pairs the reconciler would auto-merge on their own
-        merits take part. A `name_typo` pair is "maybe two different people" by
-        definition — it is a review candidate precisely because a machine cannot
-        decide it, so sweeping it into a bulk decision hands it to a click that
-        shows a count instead of the two names. Counted in ``skipped_weak_edge``.
-        Note WHY `reason` and not `block_auto_merge`: the latter is a find-time
-        flag on `MergeCandidate` and is never persisted; `reason` is the only
-        trace of the weakness that reaches the queue.
-
         SECOND INVARIANT: only TYPE-COMPATIBLE pairs take part. Folding a place
         into an organization rewrites what the entity IS. Those are counted in
         ``skipped_cross_type`` and likewise stay individually decidable. Note
@@ -677,6 +668,23 @@ class KgReconcilerService:
         EQUALITY, which is transitive, so a cluster it submits can never contain
         such a pair. This bar is for the ROUTE — ``entity_ids`` is caller-supplied
         and need not come from a cluster card at all.
+
+        THIRD INVARIANT: a pair that might be two different THINGS never takes
+        part. Not "a pair the reconciler refuses to auto-merge" — that is a much
+        larger set and folding it in bulk is the whole point of this method: the
+        243 `gray_zone` pairs pending on the household graph carry
+        `block_auto_merge` from ``_name_collision_low_signal`` (same name, no
+        description to tell them apart) and they are exactly what the owner
+        decides once. The line runs elsewhere: `gray_zone` says "probably the
+        same thing, a machine should not decide alone", `name_typo` says "maybe
+        two different PEOPLE, one character apart". Only the second kind is
+        refused, counted in ``skipped_weak_edge``.
+
+        Note WHY the bar reads `reason` and not `block_auto_merge`: the latter is
+        a find-time flag on `MergeCandidate` and is never persisted; `reason` is
+        the only trace of the weakness that reaches the queue, which is why the
+        "review candidate only" promise held in ``_reconcile_pass`` and nowhere
+        else.
 
         The fold set is derived from the PROPOSALS, not from ``entity_ids``: an
         entity the caller names but that no pending same-tier proposal ties into
@@ -727,12 +735,15 @@ class KgReconcilerService:
             ):
                 res.skipped_cross_type += 1
                 continue
-            # A pair the reconciler would never auto-merge must not be folded in
-            # BULK either. `name_typo` means "maybe two different people, one
-            # character apart" — the owner has to judge that pair by its names,
-            # and a cluster card shows a count, not the names. One such edge also
-            # JOINS two components that were never compared: the weak claim would
-            # carry everything on both sides of it.
+            # A pair that might be two different THINGS is never bulk-folded.
+            # `name_typo` means "maybe two different people, one character apart"
+            # — the owner has to judge that pair by its names, and a cluster card
+            # shows a count, not the names. One such edge also JOINS two
+            # components that were never compared: the weak claim would carry
+            # everything on both sides of it.
+            # NOT the same as "the reconciler refuses to auto-merge it":
+            # `gray_zone` pairs carry `block_auto_merge` too and folding those in
+            # bulk is precisely what this method is for.
             if (p.reason or "") in KG_MERGE_WEAK_REASONS:
                 res.skipped_weak_edge += 1
                 continue

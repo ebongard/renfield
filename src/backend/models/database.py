@@ -2227,11 +2227,20 @@ KG_MERGE_REASON_GRAY_ZONE = "gray_zone"    # similar but below the auto-merge th
 KG_MERGE_REASON_NAME_TYPO = "name_typo"    # person names that differ by ONE in-token edit — review, never auto-merge (#876 field data)
 KG_MERGE_REASON_CROSS_TYPE = "cross_type"  # entity TYPES disjoint (place vs organization) — review, never auto-merge
 
-# Reasons whose pair is "maybe two different things" BY DEFINITION. The reconciler
-# refuses to auto-merge these; `resolve_cluster` must refuse to BULK-merge them for
-# the same reason. `block_auto_merge` is a find-time flag and is never persisted —
-# `reason` is the only trace that survives into the queue, so it is what the bulk
-# path has to read. A weak pair stays individually decidable.
+# Reasons whose pair might be two different THINGS. `resolve_cluster` refuses to
+# BULK-merge these: the cluster card shows a count, not the two names, and one such
+# edge joins components that were never compared.
+#
+# NOT "everything the reconciler refuses to auto-merge" — that set is far larger
+# and bulk-folding it is the point of the cluster view: a `gray_zone` pair carries
+# `block_auto_merge` from `_name_collision_low_signal` (same name, no description
+# to tell them apart) and is exactly what the owner decides once. `gray_zone` says
+# "probably the same thing, a machine should not decide alone"; `name_typo` says
+# "maybe two different PEOPLE, one character apart". Only the second kind belongs
+# in here.
+#
+# The bar reads `reason` because `block_auto_merge` is a find-time flag on
+# `MergeCandidate` and never reaches the queue.
 KG_MERGE_WEAK_REASONS = frozenset({KG_MERGE_REASON_NAME_TYPO})
 
 
