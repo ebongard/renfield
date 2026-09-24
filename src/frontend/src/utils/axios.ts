@@ -61,12 +61,31 @@ apiClient.interceptors.request.use(
   }
 );
 
+/**
+ * Fired when the backend refuses a call because the user must rotate their
+ * password first (`get_current_user` 403s every path outside the small
+ * change-password allowlist). AuthContext listens and re-reads /auth/me, whose
+ * `must_change_password` then makes ProtectedRoute redirect — an SPA-internal
+ * correction, no page reload.
+ *
+ * Without this, a flag set DURING a session (an admin forcing a rotation) is
+ * invisible to the app: it keeps its stale user object, every request 403s, and
+ * the sockets reconnect-loop against a faucet that will never answer.
+ */
+export const PASSWORD_CHANGE_REQUIRED_EVENT = 'renfield:password-change-required';
+
 // Response Interceptor
 apiClient.interceptors.response.use(
   (response: AxiosResponse) => {
     return response;
   },
-  (error: AxiosError) => {
+  (error: AxiosError<{ detail?: unknown }>) => {
+    if (
+      error.response?.status === 403
+      && error.response.data?.detail === 'password_change_required'
+    ) {
+      window.dispatchEvent(new CustomEvent(PASSWORD_CHANGE_REQUIRED_EVENT));
+    }
     // Globale Error-Behandlung
     console.error('API Error:', error);
     return Promise.reject(error);

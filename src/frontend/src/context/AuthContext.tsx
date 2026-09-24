@@ -5,7 +5,7 @@
  * Handles JWT token storage and automatic refresh.
  */
 import { createContext, useContext, useState, useEffect, useCallback, useRef, ReactNode } from 'react';
-import apiClient from '../utils/axios';
+import apiClient, { PASSWORD_CHANGE_REQUIRED_EVENT } from '../utils/axios';
 import { ACCESS_TOKEN_KEY, REFRESH_TOKEN_KEY } from '../utils/authTokens';
 import type { User, LoginResponse } from '../types/api';
 
@@ -238,6 +238,16 @@ export function AuthProvider({ children }: AuthProviderProps) {
   }, [getAccessToken, setTokens]);
 
   // Check auth status on mount
+  // A forced rotation flagged DURING the session shows up only as 403s. Re-read
+  // /auth/me so `must_change_password` reaches the user object and
+  // ProtectedRoute sends them to the change-password screen, instead of leaving
+  // the app running against a backend that refuses every call.
+  useEffect(() => {
+    const onRequired = (): void => { void fetchUser(); };
+    window.addEventListener(PASSWORD_CHANGE_REQUIRED_EVENT, onRequired);
+    return () => window.removeEventListener(PASSWORD_CHANGE_REQUIRED_EVENT, onRequired);
+  }, [fetchUser]);
+
   useEffect(() => {
     const checkAuthStatus = async () => {
       try {

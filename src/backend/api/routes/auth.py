@@ -583,7 +583,8 @@ async def register(
         personality_prompt=user.personality_prompt,
         created_at=user.created_at,
         last_login=user.last_login,
-        speaker_id=user.speaker_id
+        speaker_id=user.speaker_id,
+        must_change_password=user.must_change_password,
     )
 
 
@@ -610,7 +611,12 @@ async def get_current_user_info(
         personality_prompt=user.personality_prompt,
         created_at=user.created_at,
         last_login=user.last_login,
-        speaker_id=user.speaker_id
+        speaker_id=user.speaker_id,
+        # WITHOUT this the flagged user is soft-locked: ProtectedRoute decides
+        # the forced-rotation redirect from /auth/me, the model default is
+        # False, and get_current_user 403s every other path — so the app loads
+        # and every request fails with no way to reach /change-password.
+        must_change_password=user.must_change_password,
     )
 
 
@@ -795,7 +801,8 @@ async def get_auth_status(
             personality_prompt=user.personality_prompt,
             created_at=user.created_at,
             last_login=user.last_login,
-            speaker_id=user.speaker_id
+            speaker_id=user.speaker_id,
+            must_change_password=user.must_change_password,
         )
 
     return AuthStatusResponse(

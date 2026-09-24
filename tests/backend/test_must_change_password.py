@@ -5,6 +5,7 @@ endpoints until they rotate; every other route is 403 password_change_required.
 Enforced in get_current_user (the single authenticated chokepoint), using DB
 truth so a token minted before the flag was set is still blocked.
 """
+from datetime import datetime
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -165,3 +166,52 @@ class TestWebSocketMustChangePassword:
         result = await ws_auth.authenticate_websocket(MagicMock(), token="jwt")
         assert result is not None
         assert result["user_id"] == 1
+
+
+class TestFlagIsSurfacedToTheClient:
+    """Enforcing the rotation is only half of it — the flag must REACH the client.
+
+    The frontend decides the forced-rotation redirect from `/auth/me`
+    (`ProtectedRoute`), and `UserResponse.must_change_password` defaults to
+    False. When the builder omits the field, a flagged user logs in, is sent
+    into the app, and then 403s on every single call with no way to reach
+    `/change-password` — the app looks broken instead of asking for a new
+    password. Observed live on the auth-on household, 2026-09-24.
+    """
+
+    @staticmethod
+    def _full_user(must_change: bool) -> User:
+        u = _user(must_change)
+        u.first_name = "Alice"
+        u.last_name = None
+        u.email = None
+        u.role_id = 2
+        u.personality_style = "freundlich"
+        u.personality_prompt = None
+        u.created_at = datetime(2026, 9, 24, 0, 0, 0)
+        u.last_login = None
+        u.speaker_id = None
+        role = MagicMock()
+        role.name = "Familie"
+        u.role = role
+        u.get_permissions = lambda: ["chat.own"]
+        return u
+
+    @pytest.mark.backend
+    @pytest.mark.unit
+    @pytest.mark.parametrize("flagged", [True, False])
+    async def test_me_reports_the_flag(self, flagged):
+        from api.routes.auth import get_current_user_info
+
+        resp = await get_current_user_info(user=self._full_user(flagged))
+        assert resp.must_change_password is flagged
+
+    @pytest.mark.backend
+    @pytest.mark.unit
+    @pytest.mark.parametrize("flagged", [True, False])
+    async def test_status_reports_the_flag(self, flagged):
+        from api.routes.auth import get_auth_status
+
+        resp = await get_auth_status(user=self._full_user(flagged))
+        assert resp.user is not None
+        assert resp.user.must_change_password is flagged

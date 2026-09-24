@@ -3,7 +3,7 @@ import { http, HttpResponse } from 'msw';
 
 import { server } from '../mocks/server';
 import { BASE_URL } from '../mocks/handlers';
-import apiClient from '../../../../src/frontend/src/utils/axios';
+import apiClient, { PASSWORD_CHANGE_REQUIRED_EVENT } from '../../../../src/frontend/src/utils/axios';
 import { ACCESS_TOKEN_KEY } from '../../../../src/frontend/src/utils/authTokens';
 
 // Regression guard for the feature-flag auth race: the bearer token is attached
@@ -50,5 +50,39 @@ describe('apiClient auth interceptor', () => {
     );
     await apiClient.get('/api/_probe3', { headers: { Authorization: 'Bearer explicit' } });
     expect(auth).toBe('Bearer explicit');
+  });
+});
+
+// A forced password rotation flagged DURING a session is invisible to the app:
+// the user object is stale, so ProtectedRoute does not redirect, and every call
+// 403s `password_change_required` while the sockets reconnect-loop. The
+// interceptor turns that 403 into an event AuthContext acts on.
+describe('apiClient forced-rotation signal', () => {
+  beforeEach(() => localStorage.clear());
+
+  it('fires the event on a 403 password_change_required', async () => {
+    let fired = 0;
+    const onFired = (): void => { fired += 1; };
+    window.addEventListener(PASSWORD_CHANGE_REQUIRED_EVENT, onFired);
+    server.use(
+      http.get(`${BASE_URL}/api/_probe_rotate`, () =>
+        HttpResponse.json({ detail: 'password_change_required' }, { status: 403 })),
+    );
+    await expect(apiClient.get('/api/_probe_rotate')).rejects.toBeTruthy();
+    window.removeEventListener(PASSWORD_CHANGE_REQUIRED_EVENT, onFired);
+    expect(fired).toBe(1);
+  });
+
+  it('stays silent on an ordinary 403', async () => {
+    let fired = 0;
+    const onFired = (): void => { fired += 1; };
+    window.addEventListener(PASSWORD_CHANGE_REQUIRED_EVENT, onFired);
+    server.use(
+      http.get(`${BASE_URL}/api/_probe_forbidden`, () =>
+        HttpResponse.json({ detail: 'Not enough permissions' }, { status: 403 })),
+    );
+    await expect(apiClient.get('/api/_probe_forbidden')).rejects.toBeTruthy();
+    window.removeEventListener(PASSWORD_CHANGE_REQUIRED_EVENT, onFired);
+    expect(fired).toBe(0);
   });
 });
