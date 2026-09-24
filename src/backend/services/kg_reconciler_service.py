@@ -247,6 +247,13 @@ class MergeCandidate:
     # shape; it is a review candidate, never an auto-merge (see the type-guard in
     # find_duplicate_pairs).
     cross_type: bool = False
+    # Both sides actually state a primary type. `_types_compatible` is lenient by
+    # design — an absent type is no evidence of a mismatch — but that leniency
+    # belongs to the DROP decision, not to the decision to merge two rows
+    # silently. An auto-merge requires positive evidence; a review proposal does
+    # not. (`entity_type` is NOT NULL, so this is corruption-shaped, not a normal
+    # path — which is exactly why it must not be the thing that widens the gate.)
+    types_known: bool = True
 
 
 @dataclass
@@ -257,6 +264,7 @@ class ClusterResolution:
     rejected: int = 0               # pending pairs closed as rejected
     skipped_cross_tier: int = 0     # left individually decidable (visibility)
     skipped_cross_type: int = 0     # left individually decidable (disjoint types)
+    skipped_unreachable: int = 0    # same tier + type, but not in the survivor's component
     notes: list[str] = field(default_factory=list)
 
 
@@ -405,6 +413,7 @@ class KgReconcilerService:
                 names_related=related,
                 name_typo=typo,
                 cross_type=cross_type,
+                types_known=bool(_norm(r.etype_a) and _norm(r.etype_b)),
             ))
         return out
 
@@ -545,7 +554,8 @@ class KgReconcilerService:
                 # (block_auto_merge is already set); spelt out here so a future
                 # change to that flag cannot silently fold a place into a company.
                 if (c.loser_tier == c.winner_tier and c.similarity >= auto_t
-                        and not c.block_auto_merge and not c.cross_type and person_ok):
+                        and not c.block_auto_merge and not c.cross_type
+                        and c.types_known and person_ok):
                     kg = KnowledgeGraphService(self.db)
                     res = await kg.merge_entities(c.loser_id, c.winner_id)
                     if res is not None:
@@ -650,10 +660,12 @@ class KgReconcilerService:
         visibility can shift.
 
         SECOND INVARIANT: only TYPE-COMPATIBLE pairs take part. Folding a place
-        into an organization rewrites what the entity IS, and one such edge
-        inside a component would drag the whole component across the type
-        boundary. Those are counted in ``skipped_cross_type`` and likewise stay
-        individually decidable.
+        into an organization rewrites what the entity IS. Those are counted in
+        ``skipped_cross_type`` and likewise stay individually decidable. Note
+        where this bites: the review UI builds its components on primary-type
+        EQUALITY, which is transitive, so a cluster it submits can never contain
+        such a pair. This bar is for the ROUTE — ``entity_ids`` is caller-supplied
+        and need not come from a cluster card at all.
 
         The fold set is derived from the PROPOSALS, not from ``entity_ids``: an
         entity the caller names but that no pending same-tier proposal ties into
@@ -775,7 +787,11 @@ class KgReconcilerService:
         # rollback expires every persistent object in the session — touching
         # `p.id` afterwards would lazy-load on an AsyncSession and raise.
         pair_ids = [int(p.id) for p in in_component]
-        res.skipped_cross_tier += len(foldable) - len(in_component)
+        # NOT a visibility skip: these pairs cleared both filters and were left
+        # out only because they do not reach the survivor. Reporting them as
+        # `skipped_cross_tier` told the owner "different visibility", which is
+        # simply false — they have the survivor's tier by construction.
+        res.skipped_unreachable += len(foldable) - len(in_component)
 
         kg = KnowledgeGraphService(self.db)
         folded: set[int] = set()

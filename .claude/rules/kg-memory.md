@@ -46,7 +46,9 @@ exact name → surface-form (jsonb `@>`) → embedding (**SAME-TIER only** + hig
   overlap test disarms itself; the scalar type is written only by an explicit owner edit. `thing` is a WILDCARD
   (`_UNTYPED`, the extraction's no-type bucket) and an absent type likewise; and the drop is conditioned on
   `not typo`, else it cancels the #876 exception. Both find-time guards count what they eat
-  (`dropped_cross_type` / `dropped_person_guard`) — `candidates` counts survivors.
+  (`dropped_cross_type` / `dropped_person_guard`) — `candidates` counts survivors. The leniency (no type = no
+  mismatch) belongs to the DROP only: an AUTO-merge additionally requires `types_known`, else a corrupt empty
+  `entity_type` would be compatible with everything at the silent-merge gate.
 - Same-name gate: same normalized name + empty/identical descriptions never auto-merges → review.
 - Per-user non-blocking advisory lock `_RECONCILER_LOCK_NS`; an overlapping run is a no-op. Each pass first re-embeds
   up to `KG_RECONCILER_EMBED_BACKFILL_PER_RUN` null-embedding entities (else invisible to the self-join).
@@ -63,9 +65,11 @@ exact name → surface-form (jsonb `@>`) → embedding (**SAME-TIER only** + hig
   invariants make a bulk decision safe: **only same-tier pairs take part** (a cross-tier pair changes reach and is
   reported back in `skipped_cross_tier`, never swept — which also makes `tier = MIN` a no-op), and **the fold set is
   derived from the PROPOSALS, not from the request** (else the route merges two arbitrary entities on demand). #1330
-  added a third: **only type-compatible pairs take part** (`skipped_cross_type`) — one cross-type edge inside a
-  component drags the whole component across the type boundary. The frontend groups by connected components over the
-  pairs, NOT by name (a pair can hold two spellings), and does not chain across differing primary types either.
+  added a third: **only type-compatible pairs take part** (`skipped_cross_type`) — that bar is for the ROUTE, since
+  the UI builds components on primary-type EQUALITY and can never submit such a pair. Pairs that clear both filters
+  but do not reach the survivor are `skipped_unreachable`, NOT `skipped_cross_tier` — they sit at the survivor's own
+  tier, so calling them a visibility skip was a lie. The frontend groups by connected components over the pairs, NOT
+  by name (a pair can hold two spellings), and does not chain across differing primary types either.
 - The proposal list carries what the embedding does not — description, edge count, first/last seen — because the owner
   facing two bare identical names is in exactly the position the reconciler refused to decide from.
 

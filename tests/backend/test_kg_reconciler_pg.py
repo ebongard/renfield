@@ -844,6 +844,33 @@ class TestResolveCluster:
         assert (res.merged, res.approved, res.rejected) == (0, 0, 0)
         assert await _count_pending(pg_db_session, other.id) == 1
 
+    async def test_an_unreachable_pair_is_not_reported_as_a_visibility_skip(
+        self, pg_db_session, monkeypatch
+    ):
+        """Two disjoint components at the same tier: the far one is unreachable.
+
+        It cleared the tier filter AND the type filter — calling it
+        `skipped_cross_tier` tells the owner "different visibility", which is
+        false; the pair sits at the survivor's own tier.
+        """
+        owner = await _make_user(pg_db_session, "clu_unreach")
+        a = await _entity(pg_db_session, owner, "Anna", tier=2, mention=1, emb=_unit(6))
+        b = await _entity(pg_db_session, owner, "Anna", tier=2, mention=9, emb=_unit(6))
+        far1 = await _entity(pg_db_session, owner, "Anna", tier=2, mention=4, emb=_unit(6))
+        far2 = await _entity(pg_db_session, owner, "Anna", tier=2, mention=3, emb=_unit(6))
+        await self._proposal(pg_db_session, owner, a, b)
+        await self._proposal(pg_db_session, owner, far1, far2)   # its own component
+        rec = _recon(pg_db_session, monkeypatch)
+
+        res = await rec.resolve_cluster(
+            user_id=owner.id, entity_ids=[a.id, b.id, far1.id, far2.id],
+            survivor_id=b.id, decision="merge", resolved_by=owner.id,
+        )
+
+        assert res.merged == 1                 # only a folded into b
+        assert res.skipped_unreachable == 1    # the far pair, honestly labelled
+        assert res.skipped_cross_tier == 0     # nothing here is a visibility skip
+        assert res.skipped_cross_type == 0
 
 class TestTypeGuard:
     """A place must never be folded into the company seated in it.
@@ -1059,3 +1086,28 @@ class TestTypeGuard:
         assert report.candidates == 0          # nothing survived — and that is the point
         assert report.dropped_cross_type == 1
         assert report.dropped_person_guard == 1
+
+    async def test_a_missing_primary_type_does_not_buy_an_auto_merge(
+        self, pg_db_session, monkeypatch
+    ):
+        """Leniency belongs to the DROP, never to the silent merge.
+
+        `_types_compatible` treats an absent type as "no evidence of a mismatch",
+        which is right when deciding whether to throw a pair away. It must not
+        also be what lets two rows merge with nobody looking: an entity with an
+        empty `entity_type` would otherwise be auto-merge-compatible with
+        everything at >= the auto threshold.
+        """
+        owner = await _make_user(pg_db_session, "tg_notype")
+        await _entity(pg_db_session, owner, "Beispiel GmbH", tier=2, mention=1,
+                      emb=_unit(6), etype="", desc="ohne Typ")
+        await _entity(pg_db_session, owner, "Beispiel GmbH", tier=2, mention=9,
+                      emb=_unit(6), etype="organization", desc="Lieferant")
+        rec = _recon(pg_db_session, monkeypatch)
+
+        pairs = await rec.find_duplicate_pairs(owner.id)
+        assert len(pairs) == 1
+        assert pairs[0].types_known is False
+
+        report = await rec.run_for_user(owner.id)
+        assert (report.auto_merged, report.proposed) == (0, 1)
