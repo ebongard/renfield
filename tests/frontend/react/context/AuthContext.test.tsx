@@ -4,6 +4,7 @@ import { http, HttpResponse } from 'msw';
 import { server } from '../mocks/server';
 import { BASE_URL } from '../mocks/handlers';
 import { AuthProvider, useAuth } from '../../../../src/frontend/src/context/AuthContext';
+import { PASSWORD_CHANGE_REQUIRED_EVENT } from '../../../../src/frontend/src/utils/axios';
 
 // Shape of /api/auth/me used by these tests. Mirrors the JSON the real
 // backend returns and what AuthContext drops verbatim into `user` state via
@@ -459,5 +460,68 @@ describe('AuthContext with different permission levels', () => {
     await waitFor(() => {
       expect(screen.getByTestId('has-plugins-manage').textContent).toBe('true');
     });
+  });
+});
+
+// A forced rotation flagged mid-session is visible to the app only as 403s.
+// The axios interceptor turns those into an event; the context must act on it,
+// or `must_change_password` never reaches ProtectedRoute and the user sits in
+// an app where every single call fails.
+describe('AuthContext forced-rotation signal', () => {
+  beforeEach(() => {
+    localStorage.clear();
+    localStorage.setItem(ACCESS_TOKEN_KEY, 'tok');
+  });
+  afterEach(() => localStorage.clear());
+
+  function wireMe(onCall: () => AuthMeFixture & { must_change_password: boolean }): { calls: () => number } {
+    let calls = 0;
+    server.use(
+      http.get(`${BASE_URL}/api/auth/status`, () =>
+        HttpResponse.json({ auth_enabled: true, allow_registration: false } as AuthStatusFixture)),
+      http.get(`${BASE_URL}/api/auth/me`, () => {
+        calls += 1;
+        return HttpResponse.json(onCall());
+      }),
+    );
+    return { calls: () => calls };
+  }
+
+  it('re-reads /auth/me when the event fires and picks the flag up', async () => {
+    let flagged = false;
+    wireMe(() => ({
+      id: 7, username: 'claude-e2e', role: 'Familie', permissions: ['chat.own'],
+      must_change_password: flagged,
+    }));
+
+    const { result } = renderHook(() => useAuth(), { wrapper: AuthProvider });
+    await waitFor(() => expect(result.current.user?.username).toBe('claude-e2e'));
+    expect(result.current.user?.must_change_password).toBe(false);
+
+    flagged = true;
+    await act(async () => {
+      window.dispatchEvent(new CustomEvent(PASSWORD_CHANGE_REQUIRED_EVENT));
+    });
+
+    await waitFor(() => expect(result.current.user?.must_change_password).toBe(true));
+  });
+
+  it('asks once for a burst of 403s, not once per failing request', async () => {
+    const probe = wireMe(() => ({
+      id: 7, username: 'claude-e2e', role: 'Familie', permissions: ['chat.own'],
+      must_change_password: false,
+    }));
+
+    const { result } = renderHook(() => useAuth(), { wrapper: AuthProvider });
+    await waitFor(() => expect(result.current.user?.username).toBe('claude-e2e'));
+    const before = probe.calls();
+
+    await act(async () => {
+      for (let i = 0; i < 5; i += 1) {
+        window.dispatchEvent(new CustomEvent(PASSWORD_CHANGE_REQUIRED_EVENT));
+      }
+    });
+
+    expect(probe.calls() - before).toBe(1);
   });
 });

@@ -85,4 +85,20 @@ describe('apiClient forced-rotation signal', () => {
     window.removeEventListener(PASSWORD_CHANGE_REQUIRED_EVENT, onFired);
     expect(fired).toBe(0);
   });
+
+  it('also fires when the 403 body is binary (blob/arraybuffer downloads)', async () => {
+    // A `responseType` of blob/arraybuffer leaves `data` unparsed, so `.detail`
+    // is undefined. A user whose only failing call is a PDF-split download or a
+    // TTS fetch must not stay soft-locked for want of an inspectable body.
+    let fired = 0;
+    const onFired = (): void => { fired += 1; };
+    window.addEventListener(PASSWORD_CHANGE_REQUIRED_EVENT, onFired);
+    server.use(
+      http.get(`${BASE_URL}/api/_probe_blob`, () =>
+        new HttpResponse(new Blob(['nope']), { status: 403 })),
+    );
+    await expect(apiClient.get('/api/_probe_blob', { responseType: 'blob' })).rejects.toBeTruthy();
+    window.removeEventListener(PASSWORD_CHANGE_REQUIRED_EVENT, onFired);
+    expect(fired).toBe(1);
+  });
 });

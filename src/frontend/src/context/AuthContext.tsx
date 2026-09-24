@@ -242,11 +242,22 @@ export function AuthProvider({ children }: AuthProviderProps) {
   // /auth/me so `must_change_password` reaches the user object and
   // ProtectedRoute sends them to the change-password screen, instead of leaving
   // the app running against a backend that refuses every call.
+  //
+  // De-duplicated: on a reload while flagged, EVERY query on the page 403s at
+  // once (features, notifications, session list, the WS token faucet …). One
+  // /auth/me per 403 would mean N concurrent requests, each calling setUser
+  // with a fresh object identity and re-rendering every consumer. Once the
+  // flag is known, there is nothing left to learn.
+  const rotationCheckRef = useRef(false);
   useEffect(() => {
-    const onRequired = (): void => { void fetchUser(); };
+    const onRequired = (): void => {
+      if (rotationCheckRef.current || user?.must_change_password) return;
+      rotationCheckRef.current = true;
+      void fetchUser().finally(() => { rotationCheckRef.current = false; });
+    };
     window.addEventListener(PASSWORD_CHANGE_REQUIRED_EVENT, onRequired);
     return () => window.removeEventListener(PASSWORD_CHANGE_REQUIRED_EVENT, onRequired);
-  }, [fetchUser]);
+  }, [fetchUser, user?.must_change_password]);
 
   useEffect(() => {
     const checkAuthStatus = async () => {
