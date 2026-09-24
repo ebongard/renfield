@@ -48,6 +48,15 @@ exact name → surface-form (jsonb `@>`) → embedding (**SAME-TIER only** + hig
   (`POST /entities/merge`, `KG_MANAGE`). Label precedence when a pair qualifies twice: `cross_tier` > `name_typo` >
   `gray_zone` (the card keys its warning and button de-emphasis on `cross_tier`).
 - Routes are `KG_VIEW`, own graph only, per-proposal ownership 404. Scheduler `_schedule_kg_reconciler`.
+- **The queue's unit is the CLUSTER, not the pair** (`resolve_cluster`, `POST /merge-proposals/cluster`). Measured
+  2026-09-24: 1 391 pending, 2 ever resolved — 1 365 pairs over 952 entities in 199 name clusters, and every pair
+  above the auto bar had identical names + no description (the same-name gate above, working as designed). Two
+  invariants make a bulk decision safe: **only same-tier pairs take part** (a cross-tier pair changes reach and is
+  reported back in `skipped_cross_tier`, never swept — which also makes `tier = MIN` a no-op), and **the fold set is
+  derived from the PROPOSALS, not from the request** (else the route merges two arbitrary entities on demand). The
+  frontend groups by connected components over the pairs, NOT by name: a pair can hold two spellings.
+- The proposal list carries what the embedding does not — description, edge count, first/last seen — because the owner
+  facing two bare identical names is in exactly the position the reconciler refused to decide from.
 
 ## Conflation tripwire (`KG_CONFLATION_MONITOR_ENABLED`, dark, read-only)
 `services/kg_conflation_monitor.py` flags distinct-name same-type same-tier NON-person pairs only. Persons are excluded

@@ -65,6 +65,8 @@ Wenn der Eigentümer eine Tier-Änderung an einem Atom vornimmt (`PATCH /api/ato
 
 Werden zwei KG-Entitäten zusammengeführt (`merge_entities`, z. B. durch den Reconciler), gilt: **eine Verschmelzung darf die Sichtbarkeit nie erhöhen.** Der überlebende Knoten erhält `circle_tier = MIN(beide)`, und alle inzidenten Relationen rechnen auf `LEAST(subject, object)` neu (gleiche Kaskade wie oben). Deshalb werden **nur same-tier** Paare automatisch gemergt; **Cross-Tier-Paare gehen in die Owner-Review** (`/brain/review`, `kg_merge_proposals`) statt still verschmolzen zu werden. Der Loser bleibt als Tombstone (`is_active=False`, `canonical_id=<winner>`) für den Audit-Trail.
 
+Die Review-Schlange wird **je Namens-Cluster** entschieden, nicht je Paar (`POST /api/knowledge-graph/merge-proposals/cluster`): gemessen am 2026-09-24 lagen 1 365 offene Paare über 952 Entitäten in 199 Clustern, weit überwiegend gleichnamige Personen ohne unterscheidende Beschreibung. Eine Sammelentscheidung fasst **ausschließlich gleichstufige** Paare an — ein Cross-Tier-Paar bleibt einzeln zu entscheiden und wird zurückgemeldet, nie mitgenommen. Damit bleibt die Regel „eine Verschmelzung erhöht die Sichtbarkeit nie" nicht nur gewahrt, sondern gegenstandslos: bei gleicher Stufe ist `MIN` diese Stufe.
+
 ---
 
 ## Datenmodell
