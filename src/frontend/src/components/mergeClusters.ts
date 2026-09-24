@@ -40,7 +40,9 @@ function tierOf(p: MergeProposal): { same: boolean } {
   return { same: p.loser.circle_tier === p.winner.circle_tier };
 }
 
-/** Same KIND of thing — the primary type is what the brief carries. */
+/** Same KIND of thing. The primary type is the whole test on the service side
+ *  too (`_types_compatible`), so view and backend agree exactly — the multi-type
+ *  superset is deliberately not consulted by either, because it only ever grows. */
 function sameType(p: MergeProposal): boolean {
   return p.loser.entity_type === p.winner.entity_type;
 }

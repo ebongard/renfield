@@ -110,20 +110,32 @@ drags a whole cluster of company spellings into the town, where "fold all" would
 pair would have auto-merged outright: `_name_collision_low_signal` does not apply once both sides carry their own
 description, and a counter-test confirmed the subset case folding automatically without the guard.
 
-The guard mirrors the person-guard's shape: if the two sides' claimed types are DISJOINT (`_types_compatible` over
-`entity_type` plus the `entity_types` superset), the pair is dropped — **unless the names are related** (equal or
-whitespace-token-subset). That is the one shape in which a foreign type means a *mis-typed duplicate* rather than two
+The guard mirrors the person-guard's shape: if the two sides' **primary** types disagree (`_types_compatible`), the
+pair is dropped — **unless the names are related** (equal or whitespace-token-subset). That is the one shape in which a foreign type means a *mis-typed duplicate* rather than two
 different things, and both live graphs hold exactly one: `person "Pontresina"` → `place "Pontresina"` and
 `organization "Publikationsplattform"` → `thing "Publikationsplattform der …"`. Those survive as review proposals
 (`reason=cross_type`), never auto-merges — which type is right is a human call. An unknown type on either side counts
 as compatible: the guard accuses, it never guesses. Note the asymmetry it closes — the inline `resolve_entity` path
 has had `match_entity_type` since the bridge (3a below); the reconciler had nothing.
 
+**Why the scalar type and not the superset.** `entity_types` only ever grows: `merge_entities` unions both sides into
+the survivor, and every re-mention folds newly observed types in. An overlap test therefore disarms itself with
+exactly the usage the guard exists for — approve one legitimate mis-typed-duplicate fold and the survivor claims both
+types forever after, matching everything of either kind, invisibly. The scalar `entity_type` is stable: nothing
+writes it but an explicit owner edit (`update_entity`). Two consequences fall out. `thing` has to be a **wildcard**
+(`_UNTYPED`): `_build_entities` assigns it when the model named no type at all, so treating it as a claim would drop
+the commonest duplicate shape in an LLM graph — the same firm extracted once as `thing` and once as `organization`,
+names not token-related — with no merge, no proposal and no row the owner could ever find. And the guard must not
+cancel the `name_typo` exception: a typo pair is `related=False` by construction, so the drop is conditioned on
+`not typo` as well.
+
+Both find-time guards drop silently by design, which is why `ReconcileReport` carries `dropped_cross_type` and
+`dropped_person_guard` — `candidates` counts survivors, so without them a guard that is too greedy on some graph
+leaves no trace at all. They appear in the pass's log line and in `/reconciler/run`.
+
 `resolve_cluster` carries the same bar as a second invariant next to same-tier (`skipped_cross_type`), and the
-frontend's `mergeClusters` refuses to chain components across differing primary types — which also covers the pairs
-that were already pending when the guard landed. The frontend compares only the primary type (the brief carries no
-type set); the divergence is one-directional and harmless: the view may split a pair the backend would have folded,
-and it stays individually decidable.
+frontend's `mergeClusters` refuses to chain components across differing primary types — the same test on the same
+field, so view and service agree exactly. That also covers the pairs that were already pending when the guard landed.
 
 Operational details:
 

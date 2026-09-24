@@ -30,7 +30,6 @@ not re-litigate (the only way back is an explicit admin merge).
 """
 from __future__ import annotations
 
-import json
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 
@@ -113,26 +112,6 @@ def _is_person(etype: str | None, etypes_text: str | None) -> bool:
     return etype == "person" or (etypes_text is not None and '"person"' in etypes_text)
 
 
-def _type_tokens(etype: str | None, etypes: str | list | None) -> set[str]:
-    """Every type token an entity claims — the primary column plus the multi-type set.
-
-    ``etypes`` is either ``entity_types::text`` (a JSON array literal, how the
-    self-join selects it) or the decoded list (how the ORM hands it over).
-    Parsed leniently: anything unrecognised contributes nothing rather than
-    raising, so the caller degrades to the primary type alone.
-    """
-    tokens = {t for t in (_norm(etype),) if t}
-    values = etypes
-    if isinstance(values, str):
-        try:
-            values = json.loads(values)
-        except (TypeError, ValueError):
-            values = None
-    if isinstance(values, list):
-        tokens |= {_norm(t) for t in values if isinstance(t, str) and _norm(t)}
-    return tokens
-
-
 # The extraction's fallback bucket: `_build_entities` assigns "thing" when the
 # model named no type at all. It is the ABSENCE of a type claim, so it must not
 # make a pair "disjoint" — the single most common duplicate shape in an
@@ -143,23 +122,27 @@ def _type_tokens(etype: str | None, etypes: str | list | None) -> set[str]:
 _UNTYPED = {"thing"}
 
 
-def _types_compatible(
-    etype_a: str | None, etypes_a: str | list | None,
-    etype_b: str | None, etypes_b: str | list | None,
-) -> bool:
-    """False only when the two entities' claimed types are DISJOINT.
+def _types_compatible(etype_a: str | None, etype_b: str | None) -> bool:
+    """False only when the two entities' PRIMARY types disagree.
 
-    An unknown type on either side is not evidence of a mismatch, so it returns
-    True — the guard accuses, it never guesses. The same holds for the `thing`
-    bucket (see ``_UNTYPED``): no claim, no accusation.
+    Deliberately the scalar `entity_type`, not the `entity_types` superset. The
+    superset only ever GROWS — ``merge_entities`` unions both sides into the
+    survivor and every re-mention folds newly observed types in — so an
+    overlap test disarms itself with exactly the usage this guard exists for:
+    approve one legitimate mis-typed-duplicate fold and the survivor claims both
+    types forever after, matching everything of either kind. The primary is
+    stable: nothing writes it but an explicit owner edit (`update_entity`).
+    It is also what the review UI compares, so view and service agree.
+
+    An absent primary, or the `thing` bucket (see ``_UNTYPED``), is no claim at
+    all and therefore no mismatch — the guard accuses, it never guesses.
     """
-    ta = _type_tokens(etype_a, etypes_a)
-    tb = _type_tokens(etype_b, etypes_b)
-    if not ta or not tb:
+    pa, pb = _norm(etype_a), _norm(etype_b)
+    if not pa or not pb:
         return True
-    if (ta & _UNTYPED) or (tb & _UNTYPED):
+    if pa in _UNTYPED or pb in _UNTYPED:
         return True
-    return bool(ta & tb)
+    return pa == pb
 
 
 def _names_related(name_a: str | None, name_b: str | None) -> bool:
@@ -381,21 +364,18 @@ class KgReconcilerService:
                 if report is not None:
                     report.dropped_person_guard += 1
                 continue
-            # TYPE-GUARD: a pair whose claimed types are DISJOINT is a different
-            # KIND of thing, and embedding similarity cannot say so — a town and
-            # the company seated in it are described out of the same documents,
-            # so they embed well above the candidate threshold (measured on the
+            # TYPE-GUARD: two different PRIMARY types is a different KIND of
+            # thing, and embedding similarity cannot say so — a town and the
+            # company seated in it are described out of the same documents, so
+            # they embed well above the candidate threshold (measured on the
             # xidra graph 2026-09-24: place "Korschenbroich" ~ organization
             # "X-Idra Systems GmbH" at 0.895, four such pairs pending). Drop the
             # pair unless the NAMES are related, which is the one shape where a
-            # disjoint type means a MIS-TYPED duplicate rather than two different
-            # things (field data: person "Pontresina" -> place "Pontresina",
-            # organization "Publikationsplattform" -> thing "Publikationsplattform
-            # der ..."). Those survive as REVIEW candidates only: the type still
-            # has to be judged by a human, so no auto-merge.
-            cross_type = not _types_compatible(
-                r.etype_a, r.etypes_a, r.etype_b, r.etypes_b
-            )
+            # foreign type means a MIS-TYPED duplicate rather than two different
+            # things (field data: person "Pontresina" -> place "Pontresina").
+            # Those survive as REVIEW candidates only: which type is right is a
+            # human call, so no auto-merge.
+            cross_type = not _types_compatible(r.etype_a, r.etype_b)
             # `not typo` matters: a typo pair is `related=False` by construction,
             # so without it this line would quietly cancel the #876 exception the
             # person-guard above just granted (a person mis-extracted as another
@@ -720,9 +700,7 @@ class KgReconcilerService:
             # boundary. It stays an individual decision, exactly like cross-tier.
             if not _types_compatible(
                 p.loser.entity_type if p.loser else None,
-                p.loser.entity_types if p.loser else None,
                 p.winner.entity_type if p.winner else None,
-                p.winner.entity_types if p.winner else None,
             ):
                 res.skipped_cross_type += 1
                 continue
