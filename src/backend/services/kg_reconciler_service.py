@@ -30,6 +30,7 @@ not re-litigate (the only way back is an explicit admin merge).
 """
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 
@@ -47,6 +48,7 @@ from models.database import (
     KG_MERGE_REASON_CROSS_TIER,
     KG_MERGE_REASON_CROSS_TYPE,
     KG_MERGE_REASON_GRAY_ZONE,
+    KG_MERGE_REASON_NAME_TOKENIZATION,
     KG_MERGE_REASON_NAME_TYPO,
     KGEntity,
     KgMergeProposal,
@@ -170,6 +172,52 @@ def _names_related(name_a: str | None, name_b: str | None) -> bool:
 _TYPO_MIN_TOKEN_LEN = 4
 
 
+# CamelCase boundaries, as two ZERO-WIDTH lookarounds: they only insert a space,
+# they never alter a character.
+#   1. lower -> UPPER       "ProductOwner"  -> "Product Owner"
+#   2. acronym boundary     "QAEngineer"    -> "QA Engineer"
+# Rule 2 is easy to forget and carries half the cases ("XMLHttpRequest" without
+# it becomes "XMLHttp Request"). Agreed with the reva instance 2026-09-24, which
+# measured the field data this is built for.
+#
+# DIGITS ARE DELIBERATELY NOT A BOUNDARY (`[a-z]`, not `[a-z0-9]`): splitting
+# them turns "E2E" into "E2 E", which in the measured corpus produced one
+# nonsense pair and rescued nothing. `-` and `_` are not separators either —
+# a hyphen carries meaning in this data ("RM27-10", "Product A - 1.2.4"), and
+# splitting it would take apart exactly the version-number class that already
+# merges too easily.
+_CAMEL_LOWER_UPPER = re.compile(r"(?<=[a-z])(?=[A-Z])")
+_CAMEL_ACRONYM = re.compile(r"(?<=[A-Z])(?=[A-Z][a-z])")
+
+
+def _split_camel(s: str | None) -> str:
+    """Insert a space at every CamelCase boundary; otherwise leave the string alone."""
+    return _CAMEL_ACRONYM.sub(" ", _CAMEL_LOWER_UPPER.sub(" ", s or ""))
+
+
+def _names_related_after_split(name_a: str | None, name_b: str | None) -> bool:
+    """True when two names become token-related once CamelCase is split apart.
+
+    The gap both guards share: `_names_related` tokenizes on whitespace, so it
+    cannot see across a tokenization difference — "Product Owner" against
+    "ProductOwner" is a subset in neither direction, and the pair is dropped with
+    no merge, no proposal and no row the owner could find. In the field that
+    shape is almost always a MIS-TYPED ROLE ("ProductOwner", "SecurityEngineer",
+    "QAEngineer" carried as `person`), which is exactly what the `cross_type`
+    exception was built to collect and could not reach.
+
+    This is a SEPARATE test, never a loosening of `_names_related` — that one is
+    the person-guard's safety invariant, and `person_ok` reads it to open the
+    AUTO-MERGE gate. A pair rescued here keeps `names_related=False`, so the
+    gate stays shut; it may be reviewed, never silently folded.
+
+    Already-related names are not tokenization variants (nothing to rescue).
+    """
+    if _names_related(name_a, name_b):
+        return False
+    return _names_related(_split_camel(name_a), _split_camel(name_b))
+
+
 def _osa_distance_is_one(a: str, b: str) -> bool:
     """Optimal-string-alignment distance == 1: one substitution, insertion,
     deletion, or ADJACENT transposition. Names are short; a full DP is cheap."""
@@ -247,6 +295,10 @@ class MergeCandidate:
     # shape; it is a review candidate, never an auto-merge (see the type-guard in
     # find_duplicate_pairs).
     cross_type: bool = False
+    # The names only become token-related once CamelCase is split apart (see
+    # _names_related_after_split). Review candidate only: `names_related` stays
+    # False so the auto-merge gate refuses it, and block_auto_merge says so.
+    name_tokenization: bool = False
     # Both sides actually state a primary type. `_types_compatible` is lenient by
     # design — an absent type is no evidence of a mismatch — but that leniency
     # belongs to the DROP decision, not to the decision to merge two rows
@@ -368,7 +420,13 @@ class KgReconcilerService:
             # proposal only — names_related stays False, so the auto-merge gate
             # refuses it, and block_auto_merge says so explicitly.
             typo = bool(is_person and not related and _names_near_typo(r.name_a, r.name_b))
-            if is_person and not related and not typo:
+            # The second gap `_names_related` leaves: a name written as one word.
+            # It has to be answered HERE, at the person guard — the mis-typed
+            # roles this rescues ("ProductOwner" carried as `person`) die on this
+            # line, long before the type guard below could look at them.
+            tok = bool(not related and not typo
+                       and _names_related_after_split(r.name_a, r.name_b))
+            if is_person and not related and not typo and not tok:
                 if report is not None:
                     report.dropped_person_guard += 1
                 continue
@@ -388,7 +446,7 @@ class KgReconcilerService:
             # so without it this line would quietly cancel the #876 exception the
             # person-guard above just granted (a person mis-extracted as another
             # type, one in-token edit apart, is exactly the case worth reviewing).
-            if cross_type and not related and not typo:
+            if cross_type and not related and not typo and not tok:
                 if report is not None:
                     report.dropped_cross_type += 1
                 continue
@@ -406,13 +464,14 @@ class KgReconcilerService:
                 loser_id=loser_id, winner_id=winner_id,
                 similarity=float(r.similarity),
                 loser_tier=loser_tier, winner_tier=winner_tier,
-                block_auto_merge=typo or cross_type or _name_collision_low_signal(
+                block_auto_merge=typo or cross_type or tok or _name_collision_low_signal(
                     r.name_a, r.name_b, r.desc_a, r.desc_b,
                 ),
                 is_person_pair=is_person,
                 names_related=related,
                 name_typo=typo,
                 cross_type=cross_type,
+                name_tokenization=tok,
                 types_known=bool(_norm(r.etype_a) and _norm(r.etype_b)),
             ))
         return out
@@ -437,6 +496,8 @@ class KgReconcilerService:
             reason = KG_MERGE_REASON_CROSS_TYPE
         elif c.name_typo:
             reason = KG_MERGE_REASON_NAME_TYPO
+        elif c.name_tokenization:
+            reason = KG_MERGE_REASON_NAME_TOKENIZATION
         else:
             reason = KG_MERGE_REASON_GRAY_ZONE
         self.db.add(KgMergeProposal(
@@ -555,6 +616,7 @@ class KgReconcilerService:
                 # change to that flag cannot silently fold a place into a company.
                 if (c.loser_tier == c.winner_tier and c.similarity >= auto_t
                         and not c.block_auto_merge and not c.cross_type
+                        and not c.name_tokenization
                         and c.types_known and person_ok):
                     kg = KnowledgeGraphService(self.db)
                     res = await kg.merge_entities(c.loser_id, c.winner_id)

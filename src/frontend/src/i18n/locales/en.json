@@ -1919,7 +1919,8 @@
         "cross_tier": "different visibility",
         "cross_type": "different kinds of thing",
         "gray_zone": "similar but uncertain",
-        "name_typo": "spelling variant of a person's name"
+        "name_typo": "spelling variant of a person's name",
+        "name_tokenization": "spelling run together"
       },
       "survivorLegend": "Which entity should remain?",
       "keepThis": "Keep {{name}}",

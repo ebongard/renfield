@@ -15,6 +15,8 @@ import type { MergeProposal, MergeProposalEntityBrief } from '../api/resources/k
  *   - cross_tier  → both buttons secondary, Ablehnen focused first, + an
  *                   explicit visibility-change warning (color is never alone).
  *   - cross_type  → same treatment: the two sides are different KINDS of thing.
+ *   - name_tokenization → same: "ProductOwner" vs "Product Owner" is a review
+ *                   candidate, and usually a mis-typed role rather than a person.
  *   - gray_zone   → same tier, just below the auto bar → Zusammenführen primary.
  *
  * D2 survivor toggle: a radio group picks WHICH entity survives (default = the
@@ -39,7 +41,8 @@ export default function MergeProposalCard({ proposal, onApprove, onReject, busy 
   // rewrites what the entity IS). The visibility warning stays keyed on the tiers.
   const crossType = proposal.loser.entity_type !== proposal.winner.entity_type;
   const cautious = crossTier || crossType
-    || proposal.reason === 'name_typo' || proposal.reason === 'cross_type';
+    || proposal.reason === 'name_typo' || proposal.reason === 'cross_type'
+    || proposal.reason === 'name_tokenization';
   // What to CALL the pair. A differing primary type is the most useful thing to
   // say about it, whatever reason it was stored with: the pairs that were already
   // pending when the type guard landed carry `gray_zone`, and "similar but

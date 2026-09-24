@@ -2226,6 +2226,7 @@ KG_MERGE_REASON_CROSS_TIER = "cross_tier"  # endpoints at different tiers — ne
 KG_MERGE_REASON_GRAY_ZONE = "gray_zone"    # similar but below the auto-merge threshold (D10)
 KG_MERGE_REASON_NAME_TYPO = "name_typo"    # person names that differ by ONE in-token edit — review, never auto-merge (#876 field data)
 KG_MERGE_REASON_CROSS_TYPE = "cross_type"  # entity TYPES disjoint (place vs organization) — review, never auto-merge
+KG_MERGE_REASON_NAME_TOKENIZATION = "name_tokenization"  # names tokenize differently ("ProductOwner" / "Product Owner") — review, never auto-merge
 
 
 class KgMergeProposal(Base):

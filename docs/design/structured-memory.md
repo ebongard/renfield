@@ -133,6 +133,28 @@ Both find-time guards drop silently by design, which is why `ReconcileReport` ca
 `dropped_person_guard` — `candidates` counts survivors, so without them a guard that is too greedy on some graph
 leaves no trace at all. They appear in the pass's log line and in `/reconciler/run`.
 
+**The tokenization rescue** (2026-09-24, agreed with the reva instance, which measured it on its own graph).
+`_names_related` tokenizes on whitespace, so it cannot see across a tokenization difference: `concept "Product
+Owner"` against `person "ProductOwner"` is a subset in neither direction and dies at the PERSON guard, before the
+type guard could look at it. In the field that shape is almost always a mis-typed ROLE (`ProductOwner`,
+`SecurityEngineer`, `QAEngineer` carried as `person`) — exactly what the `cross_type` exception exists to collect and
+could not reach. `_names_related_after_split` re-tests the pair with CamelCase split apart, at two zero-width
+boundaries: lower→UPPER and the acronym boundary (`QAEngineer` → `QA Engineer`; without the second, `XMLHttpRequest`
+comes out as `XMLHttp Request`).
+
+It is a SEPARATE test, never a loosening of `_names_related`, and that distinction is the whole design:
+`person_ok = (not is_person) or names_related` means the auto-merge gate reads that flag. A rescued pair keeps
+`names_related=False` and sets `block_auto_merge`, so it can be reviewed and never silently folded. Digits are
+deliberately not a boundary (`E2E` stays whole) and `-`/`_` are not separators (a hyphen carries meaning here —
+`RM27-10`, `Product A - 1.2.4` — and splitting it would take apart the version-number class that already merges too
+easily). Label `name_tokenization`, ranked below `cross_type`: a cross-type tokenization pair is labelled by its type
+mismatch, because that is the actionable fact; the label surfaces on same-type pairs.
+
+**Measured before building, on three production graphs:** the rescue reaches **one** pair today (reva's, at 0.9030).
+Household and xidra contribute zero — their 88 and 10 tokenization-blind pairs all sit below the 0.85 candidate
+threshold (highest 0.7443 and 0.7247), so the self-join never fetches them. Built anyway because the blindness is
+structural rather than a property of one corpus; the number is honest about what it buys today.
+
 **Two limits worth knowing.** The disjointness test runs in Python, *after* the self-join's `ORDER BY similarity
 DESC LIMIT` (`cap = max(KG_RECONCILER_MAX_PER_RUN * 2, 2)`, so 100 by default). Every pair the guard eats therefore
 consumed a slot in that window, and a genuine duplicate ranked below it is not fetched at all — the guard shrinks the

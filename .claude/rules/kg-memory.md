@@ -49,13 +49,20 @@ exact name → surface-form (jsonb `@>`) → embedding (**SAME-TIER only** + hig
   (`dropped_cross_type` / `dropped_person_guard`) — `candidates` counts survivors. The leniency (no type = no
   mismatch) belongs to the DROP only: an AUTO-merge additionally requires `types_known`, else a corrupt empty
   `entity_type` would be compatible with everything at the silent-merge gate.
+- **Tokenization rescue (#1331):** `_names_related` tokenizes on whitespace and is blind across CamelCase, so
+  `person "ProductOwner"` ~ `concept "Product Owner"` died at the PERSON guard — the mis-typed ROLES the `cross_type`
+  exception exists for. `_names_related_after_split` re-tests with CamelCase split (lower→UPPER **and** the acronym
+  boundary; digits and `-`/`_` deliberately not). **A SEPARATE test, never a loosening of `_names_related`** — that
+  flag feeds `person_ok`, which opens the AUTO-merge gate; a rescued pair keeps `names_related=False` + sets
+  `block_auto_merge`. Label `name_tokenization`, ranked under `cross_type`.
 - Same-name gate: same normalized name + empty/identical descriptions never auto-merges → review.
 - Per-user non-blocking advisory lock `_RECONCILER_LOCK_NS`; an overlapping run is a no-op. Each pass first re-embeds
   up to `KG_RECONCILER_EMBED_BACKFILL_PER_RUN` null-embedding entities (else invisible to the self-join).
 - Approving a proposal whose counterpart was already merged closes it as `superseded`, not `approved`.
 - **A rejection is final for the reconciler.** The self-join AND `_propose` exclude pairs with a `pending` OR
   `rejected` proposal; a rejected pair never comes back on its own. The only way back is an explicit admin merge
-  (`POST /entities/merge`, `KG_MANAGE`). Label precedence: `cross_tier` > `cross_type` > `name_typo` > `gray_zone`;
+  (`POST /entities/merge`, `KG_MANAGE`). Label precedence: `cross_tier` > `cross_type` > `name_typo` >
+  `name_tokenization` > `gray_zone`;
   the card keys its warning on `cross_tier` and DERIVES the label from the live types when they differ (rows pending
   from before the guard carry `gray_zone` and would otherwise read "similar but uncertain").
 - Routes are `KG_VIEW`, own graph only, per-proposal ownership 404. Scheduler `_schedule_kg_reconciler`.

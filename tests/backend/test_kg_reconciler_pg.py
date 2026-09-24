@@ -22,6 +22,7 @@ from models.database import (
     KG_MERGE_PROPOSAL_SUPERSEDED,
     KG_MERGE_REASON_CROSS_TIER,
     KG_MERGE_REASON_CROSS_TYPE,
+    KG_MERGE_REASON_NAME_TOKENIZATION,
     KGEntity,
     KgMergeProposal,
     Role,
@@ -1111,3 +1112,149 @@ class TestTypeGuard:
 
         report = await rec.run_for_user(owner.id)
         assert (report.auto_merged, report.proposed) == (0, 1)
+
+
+class TestNameTokenization:
+    """The four acceptance conditions agreed with the reva instance 2026-09-24.
+
+    Its production graph holds the one pair in three graphs that this rescues —
+    `concept "Product Owner"` ~ `person "ProductOwner"` at 0.9030 — plus six
+    near-misses that must stay invisible. The negative controls carry more weight
+    than the positive one: a far too generous change passes the positive case
+    just as well.
+    """
+
+    async def test_a_mis_typed_role_reaches_review(self, pg_db_session, monkeypatch):
+        """The positive case. Dropped by the PERSON guard today, before the type
+        guard could ever look at it."""
+        owner = await _make_user(pg_db_session, "tok_role")
+        a = await _entity(pg_db_session, owner, "Product Owner", tier=2, mention=4,
+                          emb=_unit(0), etype="concept", desc="Rolle im Projekt")
+        b = await _entity(pg_db_session, owner, "ProductOwner", tier=2, mention=9,
+                          emb=_gray(), etype="person", desc="als Person extrahiert")
+        rec = _recon(pg_db_session, monkeypatch)
+
+        pairs = await rec.find_duplicate_pairs(owner.id)
+        assert len(pairs) == 1
+        assert pairs[0].name_tokenization is True
+        assert pairs[0].names_related is False     # the safety flag is untouched
+        assert pairs[0].block_auto_merge is True
+
+        report = await rec.run_for_user(owner.id)
+        assert (report.auto_merged, report.proposed) == (0, 1)
+        assert report.dropped_person_guard == 0
+        prop = (await pg_db_session.execute(
+            select(KgMergeProposal).where(KgMergeProposal.user_id == owner.id)
+        )).scalar_one()
+        # The LABEL is cross_type, not name_tokenization: this pair is BOTH, and
+        # the agreed precedence (cross_tier > cross_type > name_typo >
+        # name_tokenization > gray_zone) gives the type mismatch the label. That
+        # is the right answer for the owner — "one of these is mis-typed" is the
+        # actionable fact; how the names are written is only how it got missed.
+        # `name_tokenization` therefore surfaces on SAME-type pairs; see
+        # test_the_label_shows_on_a_same_type_pair below.
+        assert prop.reason == KG_MERGE_REASON_CROSS_TYPE
+        for e_id in (a.id, b.id):
+            row = (await pg_db_session.execute(
+                select(KGEntity).where(KGEntity.id == e_id)
+            )).scalar_one()
+            assert row.is_active is True
+
+    async def test_never_auto_merges_even_at_cosine_one(self, pg_db_session, monkeypatch):
+        """`person_ok` must stay shut. This is the whole reason the rescue is a
+        SEPARATE test instead of a loosening of `_names_related`."""
+        owner = await _make_user(pg_db_session, "tok_noauto")
+        await _entity(pg_db_session, owner, "Security", tier=2, mention=4,
+                      emb=_unit(6), etype="person", desc="Rolle")
+        await _entity(pg_db_session, owner, "SecurityEngineer", tier=2, mention=9,
+                      emb=_unit(6), etype="person", desc="Zustaendigkeit")
+        rec = _recon(pg_db_session, monkeypatch)
+
+        pairs = await rec.find_duplicate_pairs(owner.id)
+        assert pairs[0].similarity >= 0.99          # far above the auto bar
+        assert pairs[0].names_related is False      # … and the gate reads THIS
+        report = await rec.run_for_user(owner.id)
+        assert (report.auto_merged, report.proposed) == (0, 1)
+
+    async def test_the_label_shows_on_a_same_type_pair(self, pg_db_session, monkeypatch):
+        """Where `name_tokenization` is actually the most specific thing to say.
+
+        A cross-TYPE tokenization pair is labelled `cross_type` (that mismatch is
+        the actionable fact). On a same-type pair the tokenization IS the reason,
+        and the owner would otherwise be told only "similar but uncertain".
+        """
+        owner = await _make_user(pg_db_session, "tok_label")
+        await _entity(pg_db_session, owner, "Security", tier=2, mention=4,
+                      emb=_unit(0), etype="person", desc="Rolle")
+        await _entity(pg_db_session, owner, "SecurityEngineer", tier=2, mention=9,
+                      emb=_gray(), etype="person", desc="Zustaendigkeit")
+        rec = _recon(pg_db_session, monkeypatch)
+
+        report = await rec.run_for_user(owner.id)
+        assert (report.auto_merged, report.proposed) == (0, 1)
+        prop = (await pg_db_session.execute(
+            select(KgMergeProposal).where(KgMergeProposal.user_id == owner.id)
+        )).scalar_one()
+        assert prop.reason == KG_MERGE_REASON_NAME_TOKENIZATION
+
+    async def test_below_the_candidate_threshold_stays_invisible(
+        self, pg_db_session, monkeypatch
+    ):
+        """Negative control, and the one that matters most: `similarity >= :cand`
+        is a WHERE clause in the SQL, so the pair is never fetched and the rescue
+        never runs. reva's `person 'BackendEngineer'` ~ `thing 'backend'` sits at
+        0.6025 with the SAME owner — it tests the similarity filter in isolation,
+        without the owner condition helping."""
+        owner = await _make_user(pg_db_session, "tok_farapart")
+        await _entity(pg_db_session, owner, "backend", tier=2, mention=4,
+                      emb=_unit(1), etype="thing", desc="System")
+        await _entity(pg_db_session, owner, "BackendEngineer", tier=2, mention=9,
+                      emb=_unit(2), etype="person", desc="Rolle")   # orthogonal → 0.0
+        rec = _recon(pg_db_session, monkeypatch)
+
+        assert await rec.find_duplicate_pairs(owner.id) == []
+        report = await rec.run_for_user(owner.id)
+        assert (report.auto_merged, report.proposed) == (0, 0)
+        assert report.dropped_person_guard == 0     # not dropped — never fetched
+
+    async def test_a_different_owner_is_never_a_candidate(
+        self, pg_db_session, monkeypatch
+    ):
+        """`a.user_id = b.user_id` sits in the JOIN, next to the similarity filter.
+        Five of reva's six near-misses are excluded by it. Both of us had
+        overlooked this condition while reasoning about the guards."""
+        mine = await _make_user(pg_db_session, "tok_mine")
+        theirs = await _make_user(pg_db_session, "tok_theirs")
+        await _entity(pg_db_session, mine, "Product Owner", tier=2, mention=4,
+                      emb=_unit(6), etype="concept")
+        await _entity(pg_db_session, theirs, "ProductOwner", tier=2, mention=9,
+                      emb=_unit(6), etype="person")
+        rec = _recon(pg_db_session, monkeypatch)
+
+        assert await rec.find_duplicate_pairs(mine.id) == []
+        assert await rec.find_duplicate_pairs(theirs.id) == []
+
+    async def test_the_rescue_creates_no_new_candidates(
+        self, pg_db_session, monkeypatch
+    ):
+        """reva's fourth condition. The rescue runs in Python AFTER the self-join,
+        so it can only keep pairs the SQL already fetched — never add one. A
+        regression here would mean the normalization slipped in front of the
+        similarity filter."""
+        owner = await _make_user(pg_db_session, "tok_nonew")
+        # one fetched pair (cosine ~0.9) …
+        await _entity(pg_db_session, owner, "Product Owner", tier=2, mention=4,
+                      emb=_unit(0), etype="concept", desc="Rolle")
+        await _entity(pg_db_session, owner, "ProductOwner", tier=2, mention=9,
+                      emb=_gray(), etype="person", desc="Person")
+        # … and two that tokenize into each other but are orthogonal, so the SQL
+        # never hands them over however related their names are.
+        await _entity(pg_db_session, owner, "Billing Engine", tier=2, mention=2,
+                      emb=_unit(3), etype="thing", desc="A")
+        await _entity(pg_db_session, owner, "BillingEngine", tier=2, mention=1,
+                      emb=_unit(4), etype="thing", desc="B")
+        rec = _recon(pg_db_session, monkeypatch)
+
+        pairs = await rec.find_duplicate_pairs(owner.id)
+        assert len(pairs) == 1
+        assert pairs[0].name_tokenization is True
