@@ -17,9 +17,13 @@ den Entwurf abnehmen, dann bauen.**
       Aufzählung für `grund`, Beispiele aus der Abnahmeliste
 - [ ] `services/kg_name_adjudicator.py` — Bündelung zu 20, strenges JSON-Schema,
       `neutralize_delimiters` auf jedem Namen, Redis-Zwischenspeicher (30 d)
-- [ ] `find_duplicate_pairs`: die vier Funktionen entfernen
-      (`_names_near_typo`, `_osa_distance_is_one`, `_split_camel`,
-      `_names_related_after_split`), Adjudikator einsetzen
+- [ ] Adjudikator IN `find_duplicate_pairs` einsetzen — nicht in `_reconcile_pass`.
+      Die Verwerfungen, die er umkehren soll, stehen dort (Personen-Riegel `:369`,
+      Typriegel `:398`); eine Stufe später wäre billiger und retten würde er nichts.
+- [ ] `_osa_distance_is_one` entfernen. `_names_near_typo` **hinter dem Flag
+      behalten**, bis die lesende Phase belegt, dass der Prompt den #876-Fall
+      abdeckt — sonst hängt die Typo-Ausnahme daran, dass Ollama erreichbar ist,
+      und der Aus-Pfad wäre nicht byte-identisch (CLAUDE.md:56)
 - [ ] `_names_related` **unangetastet** lassen — einziges Tor zur stillen Faltung
 - [ ] `ReconcileReport`: `adjudicated`, `adjudicator_failed`, `rescued_by_model`
 - [ ] Flag `KG_NAME_ADJUDICATOR_ENABLED` (dunkel) + `docs/ENVIRONMENT_VARIABLES.md`

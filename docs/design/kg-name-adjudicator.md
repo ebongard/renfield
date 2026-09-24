@@ -56,8 +56,13 @@ Deterministisch bleiben, unverändert und vom Modell unerreichbar:
 
 Ein falsches „plausibel" kostet **einen Posten in der Prüfschlange**. Ein
 falsches „unplausibel" kostet eine übersehene Dublette — derselbe Preis, den die
-heutigen stillen Verwerfungen schon kosten. Keines von beidem kann den Graphen
-beschädigen.
+heutigen stillen Verwerfungen schon kosten.
+
+**Eine Ausnahme, und sie ist benannt:** für die Klasse, die #876 ausdrücklich
+gerettet hat (Personennamen mit einem Zeichen-Edit Abstand), stimmt diese Bilanz
+NICHT. Die werden heute unbedingt vorgelegt; hinge das am Modell, hinge es an
+dessen Erreichbarkeit. Deshalb bleibt `_names_near_typo` hinter dem Flag stehen,
+bis die lesende Phase belegt, dass der Prompt den Fall abdeckt — siehe §7.
 
 ## 3. Die Aufteilung
 
@@ -68,7 +73,8 @@ unauflösbar verheddert. Der Entwurf trennt sie:
 |---|---|---|
 | **`_names_related`** (gleich oder Token-Teilmenge) | **bleibt, deterministisch** | einziges Tor zur **stillen Faltung** (`person_ok`). Wird nie wieder aufgeweitet. |
 | `_norm`, `_name_collision_low_signal` | **bleiben** | Normalisierung bzw. Beschreibungs-Signal — beantworten die Namensfrage gar nicht |
-| **`_names_near_typo`, `_osa_distance_is_one`** | **entfallen** | existieren nur, um die **Vorlage** zu verbreitern |
+| **`_osa_distance_is_one`** | **entfällt** | existiert nur als Rechenkern für `_names_near_typo` |
+| `_names_near_typo` | **bleibt hinter dem Flag**, bis der Prompt den #876-Fall belegt abdeckt | sonst hängt die Typo-Ausnahme an der Erreichbarkeit des Modells |
 | **Adjudikator** (neu) | **kommt** | entscheidet allein, was dem Eigentümer **vorgelegt** wird |
 
 Netto: zwei Funktionen weg, eine hinzu — und die verbleibenden drei beantworten
@@ -147,8 +153,20 @@ beiden Typen** — keine Beschreibungen, keine Dokumentinhalte, keine Kreisstufe
 
 ## 6. Aufwand
 
-- **Bündelung:** ein Aufruf je 20 Paare. Beim Kappungswert von 100 also
-  **≤ 5 Aufrufe je Nutzer und Lauf**, nicht 100.
+- **Verortung:** der Adjudikator läuft **in `find_duplicate_pairs`**, nicht in
+  `_reconcile_pass`. Die Verwerfungen, die er umkehren soll, stehen dort
+  (Personen-Riegel, Typriegel); eine Stufe später wäre er billiger und würde
+  nichts retten. Das ist keine Wahl, sondern erzwungen.
+- **Bündelung:** ein Aufruf je 20 Paare. Der SQL-Kappungswert ist
+  `max(kg_reconciler_max_per_run * 2, 2)` — bei der Vorgabe 50 also **100 Zeilen,
+  ≤ 5 Aufrufe**. Zwei Schranken gehören dazu: bei `le=500` wären es 1000 Zeilen
+  und **50 Aufrufe**, und die Zahl gilt **je Nutzer** — `_reconcile_pass` läuft
+  über `list_active_user_ids()`, auf einem Mehrnutzer-Graphen ist der Lauf also
+  das Vielfache. Für reva, die messende Instanz, ist das die einzige Zahl, die zählt.
+- **Verschwendung, die zu entscheiden ist:** die Selbstverknüpfung liefert 100
+  Zeilen, verarbeitet werden `pairs[:kg_reconciler_max_per_run]` = 50. Adjudiziert
+  man alle 100, ist die Hälfte weggeworfen; adjudiziert man erst nach dem Schnitt,
+  hat der Schnitt schon nach Ähnlichkeit sortiert und nicht nach Urteil.
 - **Modelltier:** `ollama_intent_model` (kurze Klassifikation) mit
   `get_classification_chat_kwargs` — dieselbe Schiene wie Router und
   Absichtserkennung, Denkmodus aus.
@@ -156,13 +174,15 @@ beiden Typen** — keine Beschreibungen, keine Dokumentinhalte, keine Kreisstufe
 
 ## 7. Ausrollen
 
-Dunkel: `KG_NAME_ADJUDICATOR_ENABLED=false`. Flag aus → es gilt `_names_related`
-allein. Das ist **nicht byte-identisch** zu heute, und der Unterschied ist
-benennbar: die Typo-Ausnahme (#876) entfällt, also werden Personenpaare, die sich
-um einen Zeichen-Edit unterscheiden, wieder verworfen statt vorgelegt. Wer diese
-Ausnahme behalten will, muss sie als Modellfall in den Prompt nehmen — dort
-gehört sie hin, denn „Schmidt/Schmitt sind zwei Menschen" ist ebenfalls eine
-Bedeutungsfrage. Neue Umgebungsvariablen nach `docs/ENVIRONMENT_VARIABLES.md`.
+Dunkel: `KG_NAME_ADJUDICATOR_ENABLED=false`. Flag aus → `_names_related` **und**
+`_names_near_typo`, also **byte-identisch** zu heute, wie CLAUDE.md:56 es für
+jede neue Funktion verlangt. Ein früherer Entwurfsstand wollte die Typo-Ausnahme
+sofort mitentfernen; das hätte sie an die Erreichbarkeit des Modells gekoppelt
+(§5 behandelt einen Modellausfall als „unplausibel"), und eine unbedingte Vorlage
+wäre eine bedingte geworden. `_names_near_typo` entfällt erst, wenn die lesende
+Phase zeigt, dass der Prompt den Fall abdeckt — „Schmidt/Schmitt sind zwei
+Menschen" ist eine Bedeutungsfrage und gehört dorthin, aber belegt, nicht
+angenommen. Neue Umgebungsvariablen nach `docs/ENVIRONMENT_VARIABLES.md`.
 
 Reihenfolge: ausrollen → **lesend** gegen beide Bestände messen (der Adjudikator
 läuft, sein Urteil wird protokolliert, aber nicht angewandt) → Urteile gegen die
