@@ -69,6 +69,53 @@ describe('MergeProposalCard', () => {
     expect(merge.className).not.toContain('btn-primary');
   });
 
+  it('cross_type: renders the kind-mismatch label, no visibility warning, cautious button', () => {
+    // A same-tier pair of two different KINDS of thing — the mis-typed-duplicate
+    // shape the reconciler now routes to review instead of folding. Same
+    // treatment as name_typo: label + no-nudge button, no visibility warning
+    // (that one is keyed on the tiers).
+    const p = proposal({
+      reason: 'cross_type',
+      loser: brief({ id: 10, name: 'Pontresina', entity_type: 'person', circle_tier: 0, mention_count: 1 }),
+      winner: brief({ id: 20, name: 'Pontresina', entity_type: 'place', circle_tier: 0, mention_count: 9 }),
+    });
+    renderWithRouter(<MergeProposalCard proposal={p} onApprove={vi.fn()} onReject={vi.fn()} />);
+    expect(screen.getByText('verschiedene Arten von Dingen')).toBeInTheDocument();
+    expect(screen.queryByText(/Sichtbarkeit/)).not.toBeInTheDocument();
+    const merge = screen.getByRole('button', { name: 'Zusammenführen' });
+    expect(merge.className).toContain('btn-secondary');
+    expect(merge.className).not.toContain('btn-primary');
+  });
+
+  it('a differing primary type is cautious even on an older gray_zone pair', () => {
+    // The nine pairs already in the queue when the guard landed carry reason
+    // gray_zone — the types themselves have to drive the caution, not the label.
+    const p = proposal({
+      reason: 'gray_zone',
+      loser: brief({ id: 10, name: 'Korschenbroich', entity_type: 'place', circle_tier: 0, mention_count: 4 }),
+      winner: brief({ id: 20, name: 'Beispiel GmbH', entity_type: 'organization', circle_tier: 0, mention_count: 9 }),
+    });
+    renderWithRouter(<MergeProposalCard proposal={p} onApprove={vi.fn()} onReject={vi.fn()} />);
+    const merge = screen.getByRole('button', { name: 'Zusammenführen' });
+    expect(merge.className).toContain('btn-secondary');
+    expect(merge.className).not.toContain('btn-primary');
+    // … and it is CALLED what it is, not "similar but uncertain".
+    expect(screen.getByText('verschiedene Arten von Dingen')).toBeInTheDocument();
+  });
+
+  it('cross_tier keeps its visibility label even when the types differ too', () => {
+    // Precedence matches the reconciler's: the visibility change is the
+    // invariant-bearing fact, so it owns the label.
+    const p = proposal({
+      reason: 'cross_tier',
+      loser: brief({ id: 10, name: 'Korschenbroich', entity_type: 'place', circle_tier: 0 }),
+      winner: brief({ id: 20, name: 'Beispiel GmbH', entity_type: 'organization', circle_tier: 2, mention_count: 9 }),
+    });
+    renderWithRouter(<MergeProposalCard proposal={p} onApprove={vi.fn()} onReject={vi.fn()} />);
+    expect(screen.getByText('unterschiedliche Sichtbarkeit')).toBeInTheDocument();
+    expect(screen.getByText(/Sichtbarkeit ändert sich/)).toBeInTheDocument();
+  });
+
   it('cross_tier merge button is de-emphasised (secondary, no primary nudge)', () => {
     renderWithRouter(<MergeProposalCard proposal={proposal({ reason: 'cross_tier' })} onApprove={vi.fn()} onReject={vi.fn()} />);
     const merge = screen.getByRole('button', { name: 'Zusammenführen' });

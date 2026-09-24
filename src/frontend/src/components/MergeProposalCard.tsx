@@ -40,6 +40,13 @@ export default function MergeProposalCard({ proposal, onApprove, onReject, busy 
   const crossType = proposal.loser.entity_type !== proposal.winner.entity_type;
   const cautious = crossTier || crossType
     || proposal.reason === 'name_typo' || proposal.reason === 'cross_type';
+  // What to CALL the pair. A differing primary type is the most useful thing to
+  // say about it, whatever reason it was stored with: the pairs that were already
+  // pending when the type guard landed carry `gray_zone`, and "similar but
+  // uncertain" does not tell the owner that one side is a town and the other a
+  // company. Cross-tier still wins — the visibility change is the
+  // invariant-bearing fact, same precedence the reconciler uses when labelling.
+  const reasonKey = crossType && !crossTier ? 'cross_type' : proposal.reason;
   const pct = Math.round((proposal.similarity ?? 0) * 100);
   const radioName = `merge-${proposal.id}-survivor`;
 
@@ -95,7 +102,7 @@ export default function MergeProposalCard({ proposal, onApprove, onReject, busy 
         <GitMerge className="w-4 h-4" aria-hidden="true" />
         <span>{t('circles.mergeProposals.whySuggested', { pct })}</span>
         <span aria-hidden="true">·</span>
-        <span>{t(`circles.mergeProposals.reason.${proposal.reason}`, { defaultValue: proposal.reason })}</span>
+        <span>{t(`circles.mergeProposals.reason.${reasonKey}`, { defaultValue: reasonKey })}</span>
       </div>
 
       <div

@@ -634,6 +634,12 @@ class KgReconcilerService:
         ``tier = MIN`` rule inside ``merge_entities`` is a no-op here: no
         visibility can shift.
 
+        SECOND INVARIANT: only TYPE-COMPATIBLE pairs take part. Folding a place
+        into an organization rewrites what the entity IS, and one such edge
+        inside a component would drag the whole component across the type
+        boundary. Those are counted in ``skipped_cross_type`` and likewise stay
+        individually decidable.
+
         The fold set is derived from the PROPOSALS, not from ``entity_ids``: an
         entity the caller names but that no pending same-tier proposal ties into
         the cluster is never merged. Otherwise this route would be a way to merge
@@ -664,7 +670,7 @@ class KgReconcilerService:
             q = q.where(KgMergeProposal.user_id == user_id)
         pairs = list((await self.db.execute(q)).scalars().all())
 
-        same_tier: list[KgMergeProposal] = []
+        foldable: list[KgMergeProposal] = []
         for p in pairs:
             # Compare the LIVE tiers, not the ones stored when the pair was
             # proposed — a tier may have moved since, in either direction.
@@ -685,16 +691,16 @@ class KgReconcilerService:
             ):
                 res.skipped_cross_type += 1
                 continue
-            same_tier.append(p)
+            foldable.append(p)
 
-        if not same_tier:
+        if not foldable:
             res.notes.append("no foldable pending pair in this cluster")
             return res
 
         now = datetime.now(UTC).replace(tzinfo=None)
 
         if decision == "reject":
-            for p in same_tier:
+            for p in foldable:
                 p.status = KG_MERGE_PROPOSAL_REJECTED
                 p.resolved_at = now
                 p.resolved_by_user_id = resolved_by
@@ -715,7 +721,7 @@ class KgReconcilerService:
         # do. So: walk out from the survivor, and take only what is reachable.
         adjacency: dict[int, set[int]] = {}
         by_edge: dict[tuple[int, int], list[KgMergeProposal]] = {}
-        for p in same_tier:
+        for p in foldable:
             a, b = int(p.loser_entity_id), int(p.winner_entity_id)
             adjacency.setdefault(a, set()).add(b)
             adjacency.setdefault(b, set()).add(a)
@@ -737,11 +743,11 @@ class KgReconcilerService:
         # future change to the pair filter cannot reopen the hole above.
         tiers = {
             (p.loser.circle_tier or 0)
-            for p in same_tier
+            for p in foldable
             if int(p.loser_entity_id) in component
         } | {
             (p.winner.circle_tier or 0)
-            for p in same_tier
+            for p in foldable
             if int(p.winner_entity_id) in component
         }
         if len(tiers) > 1:
@@ -749,14 +755,14 @@ class KgReconcilerService:
             return res
 
         in_component = [
-            p for p in same_tier
+            p for p in foldable
             if int(p.loser_entity_id) in component and int(p.winner_entity_id) in component
         ]
         # Ids BEFORE the folds: merge_entities rolls back on its bail paths, and a
         # rollback expires every persistent object in the session — touching
         # `p.id` afterwards would lazy-load on an AsyncSession and raise.
         pair_ids = [int(p.id) for p in in_component]
-        res.skipped_cross_tier += len(same_tier) - len(in_component)
+        res.skipped_cross_tier += len(foldable) - len(in_component)
 
         kg = KnowledgeGraphService(self.db)
         folded: set[int] = set()
