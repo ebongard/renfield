@@ -86,4 +86,34 @@ describe('MergeClusterCard', () => {
     expect(screen.getByRole('button', { name: /Alle 2 zusammenführen/ })).toBeDisabled();
     expect(screen.getByRole('button', { name: /Alle verwerfen/ })).toBeDisabled();
   });
+
+  it('asks once more before folding a LARGE cluster, and says why', () => {
+    // Connected components over a similarity relation are not equivalence
+    // classes: a chain A~B~C joins two things that were never compared.
+    const many = Array.from({ length: 7 }, (_, i) => ent(100 + i, 'Anna', { mention_count: i }));
+    const onMerge = vi.fn();
+    renderWithProviders(
+      <MergeClusterCard
+        cluster={cluster({ entities: many })}
+        onMerge={onMerge}
+        onReject={vi.fn()}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: /Alle 2 zusammenführen/ }));
+    expect(onMerge).not.toHaveBeenCalled();
+    expect(screen.getByText(/Kette von Ähnlichkeiten/)).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: /Wirklich 7 Entitäten verschmelzen/ }));
+    expect(onMerge).toHaveBeenCalledTimes(1);
+  });
+
+  it('folds a small cluster without a second click', () => {
+    const onMerge = vi.fn();
+    renderWithProviders(
+      <MergeClusterCard cluster={cluster()} onMerge={onMerge} onReject={vi.fn()} />,
+    );
+    fireEvent.click(screen.getByRole('button', { name: /Alle 2 zusammenführen/ }));
+    expect(onMerge).toHaveBeenCalledTimes(1);
+  });
 });

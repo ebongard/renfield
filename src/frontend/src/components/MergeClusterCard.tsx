@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { ChevronDown, ChevronRight, GitMerge, ShieldAlert } from 'lucide-react';
 import TierBadge from './TierBadge';
@@ -51,6 +51,26 @@ export default function MergeClusterCard({ cluster, busy = false, onMerge, onRej
     [cluster.entities],
   );
   const [survivorId, setSurvivorId] = useState<number>(() => sorted[0]?.id ?? 0);
+  // The queue refetches after every decision. If the cluster came back with a
+  // different membership, a survivor chosen against the old one may no longer
+  // exist — submitting it would 400 and (with the optimistic dismissal) make
+  // the cluster vanish for nothing. Fall back to the new default.
+  useEffect(() => {
+    if (!cluster.entities.some((e) => e.id === survivorId)) {
+      setSurvivorId(sorted[0]?.id ?? 0);
+    }
+  }, [cluster.entities, sorted, survivorId]);
+
+  // Connected components over a SIMILARITY relation are not equivalence
+  // classes: a chain A~B~C joins two things that were never compared. The
+  // bigger the component, the weaker that transitive claim — so a large fold
+  // asks once more, and says why.
+  const LARGE_CLUSTER = 6;
+  const [confirming, setConfirming] = useState(false);
+  const confirmRef = useRef<HTMLButtonElement | null>(null);
+  useEffect(() => {
+    if (confirming) confirmRef.current?.focus();
+  }, [confirming]);
 
   const seen = (e: MergeProposalEntityBrief): string => {
     const opts: Intl.DateTimeFormatOptions = { year: '2-digit', month: '2-digit' };
@@ -131,10 +151,20 @@ export default function MergeClusterCard({ cluster, busy = false, onMerge, onRej
           type="button"
           className="btn-primary text-sm"
           disabled={busy || cluster.pairs.length === 0}
-          onClick={() => onMerge(survivorId)}
+          onClick={() => {
+            if (cluster.entities.length >= LARGE_CLUSTER && !confirming) {
+              setConfirming(true);
+              return;
+            }
+            setConfirming(false);
+            onMerge(survivorId);
+          }}
+          ref={confirmRef}
         >
           <GitMerge className="w-4 h-4 mr-1 inline" aria-hidden="true" />
-          {t('circles.mergeProposals.cluster.mergeAll', { count: cluster.pairs.length })}
+          {confirming
+            ? t('circles.mergeProposals.cluster.confirmMerge', { count: cluster.entities.length })
+            : t('circles.mergeProposals.cluster.mergeAll', { count: cluster.pairs.length })}
         </button>
         <button
           type="button"
@@ -145,6 +175,17 @@ export default function MergeClusterCard({ cluster, busy = false, onMerge, onRej
           {t('circles.mergeProposals.cluster.rejectAll', { count: cluster.pairs.length })}
         </button>
       </div>
+
+      {confirming && (
+        <p className="flex items-start gap-2 text-xs text-amber-700 dark:text-amber-400">
+          <ShieldAlert className="w-4 h-4 shrink-0" aria-hidden="true" />
+          <span>
+            {t('circles.mergeProposals.cluster.chainWarning', {
+              count: cluster.entities.length,
+            })}
+          </span>
+        </p>
+      )}
 
       {cluster.crossTierPairs.length > 0 && (
         <p className="flex items-start gap-2 text-xs text-amber-700 dark:text-amber-400">

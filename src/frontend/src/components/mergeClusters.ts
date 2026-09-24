@@ -82,10 +82,14 @@ export function groupProposals(proposals: MergeProposal[]): GroupedProposals {
   const clusters: MergeCluster[] = [];
   const singles: MergeProposal[] = [...crossOrphans];
   for (const [root, bucket] of byRoot) {
+    // A cross-tier pair is ALWAYS rendered as its own card, cluster or not —
+    // the cluster only carries it as a count for its footer. Counting it without
+    // rendering it would make it unreachable: no approve, no reject, exactly the
+    // opposite of "stays individually decidable".
+    singles.push(...(crossByRoot.get(root) ?? []));
     if (bucket.pairs.length < 2) {
       // A lone pair is a pair — the familiar card with its undo window.
       singles.push(...bucket.pairs);
-      singles.push(...(crossByRoot.get(root) ?? []));
       continue;
     }
     const entities = [...bucket.entities.values()];

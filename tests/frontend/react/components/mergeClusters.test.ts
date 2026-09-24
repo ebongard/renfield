@@ -75,8 +75,12 @@ describe('groupProposals', () => {
     expect(clusters).toHaveLength(1);
     expect(clusters[0].pairs).toHaveLength(2);
     expect(clusters[0].crossTierPairs).toHaveLength(1);
-    // The cross-tier entity is NOT offered as part of the bulk decision.
+    // The cross-tier entity is NOT offered as part of the bulk decision …
     expect(clusters[0].entities.some((e) => e.id === privat.id)).toBe(false);
+    // … but the pair itself is still rendered, or it would be unreachable:
+    // counted in the footer AND actionable as its own card.
+    const { singles } = groupProposals([pair(a, b), pair(c, b), pair(privat, b, 'cross_tier')]);
+    expect(singles.some((p) => p.reason === 'cross_tier')).toBe(true);
   });
 
   it('renders a cross-tier pair that touches no cluster as a plain pair', () => {

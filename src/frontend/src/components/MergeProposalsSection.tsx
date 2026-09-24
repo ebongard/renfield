@@ -104,14 +104,20 @@ export default function MergeProposalsSection() {
     // Optimistic: the whole cluster leaves the list at once. No undo window
     // here — a cluster fold touches many rows, and "undo" would have to unpick
     // merges the backend has already committed.
-    setDismissedIds((prev) => {
-      const n = new Set(prev);
-      for (const p of visible) {
-        if (entityIds.includes(p.loser.id) && entityIds.includes(p.winner.id)) n.add(p.id);
-      }
-      return n;
+    const touched = visible
+      .filter((p) => entityIds.includes(p.loser.id) && entityIds.includes(p.winner.id))
+      .map((p) => p.id);
+    setDismissedIds((prev) => new Set([...prev, ...touched]));
+    // On failure nothing was written — put the cluster back. Without this the
+    // owner watches the queue shrink on an error and cannot get it back short
+    // of reloading the page.
+    void resolveCluster.mutateAsync({ entityIds, decision, survivorId }).catch(() => {
+      setDismissedIds((prev) => {
+        const n = new Set(prev);
+        for (const id of touched) n.delete(id);
+        return n;
+      });
     });
-    resolveCluster.mutate({ entityIds, decision, survivorId });
   };
 
   return (

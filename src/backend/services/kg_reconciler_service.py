@@ -43,6 +43,7 @@ from models.database import (
     KG_MERGE_PROPOSAL_APPROVED,
     KG_MERGE_PROPOSAL_PENDING,
     KG_MERGE_PROPOSAL_REJECTED,
+    KG_MERGE_PROPOSAL_SUPERSEDED,
     KG_MERGE_REASON_CROSS_TIER,
     KG_MERGE_REASON_GRAY_ZONE,
     KG_MERGE_REASON_NAME_TYPO,
@@ -622,28 +623,82 @@ class KgReconcilerService:
             await self.db.commit()
             return res
 
-        connected: set[int] = set()
-        for p in same_tier:
-            connected.add(int(p.loser_entity_id))
-            connected.add(int(p.winner_entity_id))
-        if survivor_id is None or int(survivor_id) not in connected:
-            res.notes.append("survivor must be one of the cluster's proposed entities")
+        if survivor_id is None:
+            res.notes.append("merge needs a survivor")
             return res
         keep = int(survivor_id)
 
+        # The fold set is the CONNECTED COMPONENT of the survivor, not the union
+        # of every same-tier pair in the request. Two disjoint components can
+        # each be same-tier internally and still sit at DIFFERENT tiers — folding
+        # both into one survivor would apply `tier = MIN` across them and quietly
+        # narrow an atom's reach, the exact thing this method promises never to
+        # do. So: walk out from the survivor, and take only what is reachable.
+        adjacency: dict[int, set[int]] = {}
+        by_edge: dict[tuple[int, int], list[KgMergeProposal]] = {}
+        for p in same_tier:
+            a, b = int(p.loser_entity_id), int(p.winner_entity_id)
+            adjacency.setdefault(a, set()).add(b)
+            adjacency.setdefault(b, set()).add(a)
+            by_edge.setdefault((min(a, b), max(a, b)), []).append(p)
+        if keep not in adjacency:
+            res.notes.append("survivor must be one of the cluster's proposed entities")
+            return res
+        component: set[int] = set()
+        frontier = [keep]
+        while frontier:
+            node = frontier.pop()
+            if node in component:
+                continue
+            component.add(node)
+            frontier.extend(adjacency.get(node, ()))
+
+        # Belt and braces: every member must sit at the survivor's tier. The
+        # edges say so pairwise; this says so for the whole component, so a
+        # future change to the pair filter cannot reopen the hole above.
+        tiers = {
+            (p.loser.circle_tier or 0)
+            for p in same_tier
+            if int(p.loser_entity_id) in component
+        } | {
+            (p.winner.circle_tier or 0)
+            for p in same_tier
+            if int(p.winner_entity_id) in component
+        }
+        if len(tiers) > 1:
+            res.notes.append("cluster spans more than one tier — refusing")
+            return res
+
+        in_component = [
+            p for p in same_tier
+            if int(p.loser_entity_id) in component and int(p.winner_entity_id) in component
+        ]
+        # Ids BEFORE the folds: merge_entities rolls back on its bail paths, and a
+        # rollback expires every persistent object in the session — touching
+        # `p.id` afterwards would lazy-load on an AsyncSession and raise.
+        pair_ids = [int(p.id) for p in in_component]
+        res.skipped_cross_tier += len(same_tier) - len(in_component)
+
         kg = KnowledgeGraphService(self.db)
-        for drop in sorted(connected - {keep}):
+        folded: set[int] = set()
+        for drop in sorted(component - {keep}):
             # merge_entities commits per fold and is idempotent on an
             # already-tombstoned loser (returns None).
             if await kg.merge_entities(drop, keep) is not None:
                 res.merged += 1
+                folded.add(drop)
 
-        # Close the cluster's pairs. Every one of them said "these two are the
+        # Close the component's pairs. Every one of them said "these two are the
         # same"; after the fold that statement holds for all of them, so the
         # verdict is `approved` — `superseded` stays reserved for the concurrent
-        # race in approve_proposal.
-        reload_q = select(KgMergeProposal).where(
-            KgMergeProposal.id.in_([p.id for p in same_tier])
+        # race in approve_proposal. `populate_existing` because the session keeps
+        # objects alive across commits (expire_on_commit=False): without it this
+        # would read the stale in-memory status and overwrite a verdict another
+        # request reached in the meantime.
+        reload_q = (
+            select(KgMergeProposal)
+            .where(KgMergeProposal.id.in_(pair_ids))
+            .execution_options(populate_existing=True)
         )
         for p in (await self.db.execute(reload_q)).scalars().all():
             if p.status != KG_MERGE_PROPOSAL_PENDING:
@@ -652,6 +707,9 @@ class KgReconcilerService:
             p.resolved_at = now
             p.resolved_by_user_id = resolved_by
             res.approved += 1
+        await self._repoint_after_fold(
+            user_id=user_id, folded=folded, survivor_id=keep, now=now,
+        )
         await self.db.commit()
         logger.info(
             f"🔗 KG cluster resolved user={user_id} survivor={keep}: "
@@ -659,6 +717,62 @@ class KgReconcilerService:
             f"cross_tier_left={res.skipped_cross_tier}"
         )
         return res
+
+    async def _repoint_after_fold(
+        self,
+        *,
+        user_id: int | None,
+        folded: set[int],
+        survivor_id: int,
+        now: datetime,
+    ) -> None:
+        """Keep the promise that a cross-tier pair stays individually decidable.
+
+        A fold tombstones entities. A still-pending proposal pointing at one of
+        them — typically the CROSS-TIER pair the bulk action deliberately left
+        alone — would become un-exercisable: approving it merges into a
+        tombstone, which is a no-op, so the owner's "does this belong at that
+        tier" decision could never be taken. Re-point such a proposal at the
+        survivor instead, so it stays a real question about a real pair.
+
+        When the survivor already has a pending proposal with that partner, the
+        re-pointed one would be a duplicate: close it as superseded.
+        """
+        if not folded:
+            return
+        q = select(KgMergeProposal).where(
+            KgMergeProposal.status == KG_MERGE_PROPOSAL_PENDING,
+        ).execution_options(populate_existing=True)
+        if user_id is not None:
+            q = q.where(KgMergeProposal.user_id == user_id)
+        open_pairs = list((await self.db.execute(q)).scalars().all())
+
+        def edge(p: KgMergeProposal) -> tuple[int, int]:
+            a, b = int(p.loser_entity_id), int(p.winner_entity_id)
+            return (min(a, b), max(a, b))
+
+        existing = {edge(p) for p in open_pairs}
+        for p in open_pairs:
+            lid, wid = int(p.loser_entity_id), int(p.winner_entity_id)
+            if lid not in folded and wid not in folded:
+                continue
+            partner = wid if lid in folded else lid
+            if partner in folded or partner == survivor_id:
+                # Both sides went into the survivor — the pair has no question
+                # left to ask.
+                p.status = KG_MERGE_PROPOSAL_SUPERSEDED
+                p.resolved_at = now
+                continue
+            new_edge = (min(partner, survivor_id), max(partner, survivor_id))
+            if new_edge in existing:
+                p.status = KG_MERGE_PROPOSAL_SUPERSEDED
+                p.resolved_at = now
+                continue
+            existing.add(new_edge)
+            # Keep loser/winner orientation meaningful: the survivor is the
+            # established side by construction.
+            p.loser_entity_id = partner
+            p.winner_entity_id = survivor_id
 
     async def reject_proposal(self, proposal_id: int, resolved_by: int | None = None) -> bool:
         p = (await self.db.execute(

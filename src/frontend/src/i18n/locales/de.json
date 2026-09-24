@@ -1936,7 +1936,9 @@
         "mergeAll": "Alle {{count}} zusammenführen",
         "rejectAll": "Alle verwerfen",
         "crossTierLeft_one": "{{count}} Paar ändert die Sichtbarkeit und bleibt einzeln zu entscheiden",
-        "crossTierLeft_other": "{{count}} Paare ändern die Sichtbarkeit und bleiben einzeln zu entscheiden"
+        "crossTierLeft_other": "{{count}} Paare ändern die Sichtbarkeit und bleiben einzeln zu entscheiden",
+        "confirmMerge": "Wirklich {{count}} Entitäten verschmelzen?",
+        "chainWarning": "Diese {{count}} Entitäten hängen über eine Kette von Ähnlichkeiten zusammen, nicht paarweise geprüft — je länger die Kette, desto wahrscheinlicher sind zwei verschiedene Dinge darin. Nochmal klicken, um zu falten."
       }
     },
     "settingsTitle": "Kreise & Mitglieder",

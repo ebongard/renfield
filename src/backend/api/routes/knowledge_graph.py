@@ -9,9 +9,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from api.routes.knowledge_graph_schemas import (
+    ApproveMergeRequest,
     CircleTierInfo,
     CircleTiersListResponse,
     CleanupInvalidResponse,
+    ClusterResolveRequest,
+    ClusterResolveResponse,
     DuplicateCluster,
     DuplicateClustersResponse,
     EntityBrief,
@@ -22,11 +25,8 @@ from api.routes.knowledge_graph_schemas import (
     KGStatsResponse,
     MergeDuplicatesResponse,
     MergeEntitiesRequest,
-    ClusterResolveRequest,
-    ClusterResolveResponse,
     MergeProposalEntityBrief,
     MergeProposalResponse,
-    ApproveMergeRequest,
     MergeProposalsListResponse,
     ReconcilerRunResponse,
     RelationCreate,
@@ -37,8 +37,8 @@ from api.routes.knowledge_graph_schemas import (
 from models.database import (
     KG_MERGE_PROPOSAL_PENDING,
     TIER_PUBLIC,
-    KGRelation,
     KgMergeProposal,
+    KGRelation,
     User,
 )
 from models.permissions import Permission

@@ -1936,7 +1936,9 @@
         "mergeAll": "Merge all {{count}}",
         "rejectAll": "Dismiss all",
         "crossTierLeft_one": "{{count}} pair changes visibility and stays individually decidable",
-        "crossTierLeft_other": "{{count}} pairs change visibility and stay individually decidable"
+        "crossTierLeft_other": "{{count}} pairs change visibility and stay individually decidable",
+        "confirmMerge": "Really merge {{count}} entities?",
+        "chainWarning": "These {{count}} entities are linked by a CHAIN of similarities, not compared pairwise — the longer the chain, the likelier two different things are in it. Click again to fold."
       }
     },
     "settingsTitle": "Circles & Members",
