@@ -240,16 +240,18 @@ export function AuthProvider({ children }: AuthProviderProps) {
   // Check auth status on mount
   // A forced rotation flagged DURING the session shows up only as 403s. Re-read
   // /auth/me so `must_change_password` reaches the user object and
-  // ProtectedRoute sends them to the change-password screen, instead of leaving
-  // the app running against a backend that refuses every call.
+  // ProtectedRoute sends them to the change-password screen.
   //
-  // De-duplicated: on a reload while flagged, EVERY query on the page 403s at
-  // once (features, notifications, session list, the WS token faucet …). One
-  // /auth/me per 403 would mean N concurrent requests, each calling setUser
-  // with a fresh object identity and re-rendering every consumer. Once the
-  // flag is known, there is nothing left to learn.
+  // Only while auth is ON. With auth off the provider installs a pseudo-admin
+  // user, and `fetchUser()` wouldshort-circuit to setUser(null) — every
+  // permission-gated affordance would vanish until a page reload, for an event
+  // that on an auth-off instance can only be a false positive anyway.
+  //
+  // De-duplicated while a read is in flight: on a reload every query 403s at
+  // once, and one /auth/me per 403 would re-render every consumer N times.
   const rotationCheckRef = useRef(false);
   useEffect(() => {
+    if (!authEnabled) return undefined;
     const onRequired = (): void => {
       if (rotationCheckRef.current || user?.must_change_password) return;
       rotationCheckRef.current = true;
@@ -257,7 +259,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
     };
     window.addEventListener(PASSWORD_CHANGE_REQUIRED_EVENT, onRequired);
     return () => window.removeEventListener(PASSWORD_CHANGE_REQUIRED_EVENT, onRequired);
-  }, [fetchUser, user?.must_change_password]);
+  }, [authEnabled, fetchUser, user?.must_change_password]);
 
   useEffect(() => {
     const checkAuthStatus = async () => {

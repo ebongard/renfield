@@ -260,15 +260,25 @@ describe('IntentCorrectionButton', () => {
 
   // Regression: /api/intents/status is ADMIN-gated. Asking as a Familie member
   // was a guaranteed 403 — one console error per chat load and one refused
-  // request per family member per session, for a list that was then swallowed
-  // into an empty array. Live on the auth-on household, 2026-09-24.
-  it('does not ask the admin-gated endpoint as a non-admin', async () => {
+  // request per family member per session. Live on the auth-on household,
+  // 2026-09-24.
+  //
+  // The assertion is on what the NON-ADMIN SEES, not on the axios spy: the
+  // MCP list lives in a module-level cache that an earlier admin test in this
+  // file has already warmed, so `expect(get).not.toHaveBeenCalled()` would
+  // pass against unfixed code too. The rendered options cannot be faked that
+  // way — without the gate, the cached servers appear in the dropdown.
+  it('offers a non-admin the core options only, never the MCP servers', async () => {
     authMock = familyAuthMock;
-    const axiosMock = (await import('../../../../src/frontend/src/utils/axios')).default;
 
-    renderWithRouter(<IntentCorrectionButton {...defaultProps} feedbackType="intent" />);
+    renderWithRouter(
+      <IntentCorrectionButton {...defaultProps} feedbackType="intent" detectedIntent="general.conversation" />
+    );
+    fireEvent.click(screen.getByText('Falsch erkannt?'));
 
-    await waitFor(() => expect(screen.getByRole('button')).toBeInTheDocument());
-    expect(axiosMock.get).not.toHaveBeenCalled();
+    await waitFor(() => expect(screen.getByText(/knowledge|Wissen/i)).toBeInTheDocument());
+    expect(screen.queryByText('Paperless')).not.toBeInTheDocument();
+    expect(screen.queryByText('Homeassistant')).not.toBeInTheDocument();
+    expect(screen.queryByText('Weather')).not.toBeInTheDocument();
   });
 });

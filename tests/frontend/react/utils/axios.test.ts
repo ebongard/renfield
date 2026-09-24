@@ -86,10 +86,11 @@ describe('apiClient forced-rotation signal', () => {
     expect(fired).toBe(0);
   });
 
-  it('also fires when the 403 body is binary (blob/arraybuffer downloads)', async () => {
-    // A `responseType` of blob/arraybuffer leaves `data` unparsed, so `.detail`
-    // is undefined. A user whose only failing call is a PDF-split download or a
-    // TTS fetch must not stay soft-locked for want of an inspectable body.
+  it('stays silent on a 403 whose body is not inspectable JSON', async () => {
+    // A `responseType` of blob/arraybuffer leaves `data` unparsed. Treating
+    // that as a rotation candidate was tried and reverted: a CSRF 403 on the
+    // arraybuffer TTS POST is indistinguishable from here, and every playback
+    // would have fired a pointless /auth/me.
     let fired = 0;
     const onFired = (): void => { fired += 1; };
     window.addEventListener(PASSWORD_CHANGE_REQUIRED_EVENT, onFired);
@@ -99,6 +100,6 @@ describe('apiClient forced-rotation signal', () => {
     );
     await expect(apiClient.get('/api/_probe_blob', { responseType: 'blob' })).rejects.toBeTruthy();
     window.removeEventListener(PASSWORD_CHANGE_REQUIRED_EVENT, onFired);
-    expect(fired).toBe(1);
+    expect(fired).toBe(0);
   });
 });

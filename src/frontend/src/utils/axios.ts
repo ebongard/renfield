@@ -63,41 +63,24 @@ apiClient.interceptors.request.use(
 
 /**
  * Fired when the backend refuses a call because the user must rotate their
- * password first (`get_current_user` 403s every path outside the small
- * change-password allowlist). AuthContext listens and re-reads /auth/me, whose
- * `must_change_password` then makes ProtectedRoute redirect — an SPA-internal
- * correction, no page reload.
+ * password first. AuthContext listens and re-reads /auth/me, whose
+ * `must_change_password` then makes ProtectedRoute redirect — SPA-internal, no
+ * page reload.
  *
- * Without this, a flag set DURING a session is invisible to the app: it keeps
- * its stale user object and every request 403s. The WS surface is covered by
- * the same signal INDIRECTLY: a browser socket fetches its handshake token from
- * `POST /api/ws/token` on every (re)connect, and that HTTP call is what 403s —
- * so a reconnect loop ends in the redirect rather than spinning.
+ * SCOPE, honestly: this is a narrow safety net, not the fix. The fix is that
+ * `/auth/me` reports the flag at all. The only route that sets the flag
+ * mid-session (`POST /users/{id}/reset-password`) ALSO bumps `token_epoch`, and
+ * `get_current_user` checks the epoch BEFORE the rotation gate — so that path
+ * yields 401 "revoked", the refresh fails too, and the user lands on /login,
+ * never here. What remains for this event is a flag set without an epoch bump
+ * (a direct DB change, e.g. during an operator's test).
  *
- * What it does NOT do: reach into an ALREADY-OPEN socket. The WS gate is a
- * connect-time check (`websocket_auth.py`), so a live socket keeps serving
- * until it drops. In practice the only route that sets the flag
- * (`POST /users/{id}/reset-password`) also bumps `token_epoch`, which revokes
- * the tokens — so the socket's next reconnect fails and lands here anyway.
+ * Deliberately strict: only a parsed JSON body whose `detail` says so. Treating
+ * an unreadable body (a `responseType` of blob/arraybuffer) as a candidate was
+ * tried and reverted — a CSRF 403 on the arraybuffer TTS POST looks exactly the
+ * same from here, and a false positive costs a pointless /auth/me on every
+ * playback.
  */
-/**
- * Is this 403 body the forced-rotation refusal?
- *
- * Not every response is parsed JSON: a `responseType` of 'blob' or
- * 'arraybuffer' (the PDF-split download, the TTS fetch) leaves `data` as a
- * Blob/ArrayBuffer, where `.detail` is simply undefined. Reading only the
- * parsed shape would let a user whose sole failing call is a download stay
- * soft-locked — so a 403 whose body is NOT inspectable JSON counts as a
- * candidate too. The cost of a false positive is one extra /auth/me.
- */
-function isPasswordChangeRequired(data: unknown): boolean {
-  if (data && typeof data === 'object' && 'detail' in data) {
-    return (data as { detail?: unknown }).detail === 'password_change_required';
-  }
-  // Binary or empty body — cannot tell from here; let AuthContext ask.
-  return data instanceof Blob || data instanceof ArrayBuffer;
-}
-
 export const PASSWORD_CHANGE_REQUIRED_EVENT = 'renfield:password-change-required';
 
 // Response Interceptor
@@ -106,7 +89,10 @@ apiClient.interceptors.response.use(
     return response;
   },
   (error: AxiosError<{ detail?: unknown }>) => {
-    if (error.response?.status === 403 && isPasswordChangeRequired(error.response.data)) {
+    if (
+      error.response?.status === 403
+      && error.response.data?.detail === 'password_change_required'
+    ) {
       window.dispatchEvent(new CustomEvent(PASSWORD_CHANGE_REQUIRED_EVENT));
     }
     // Globale Error-Behandlung

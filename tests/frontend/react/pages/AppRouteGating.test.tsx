@@ -19,30 +19,43 @@ const APP = readFileSync(
   'utf8',
 );
 
-// Routes that legitimately render without a gate of their own:
-//  - the public auth pages,
-//  - the `/*` layout shell,
-//  - CHILD routes of `/wissen`, whose parent element already IS a
-//    ProtectedRoute (this regex cannot see the nesting).
-// Pure redirects are skipped by element type below — their target carries the
-// gate, so wrapping them would only add a second hop.
-const UNGATED_BY_DESIGN = new Set([
-  '/login', '/register', '/auth/callback', '/*',
-  'graph', 'erinnerungen', 'fristen',
-]);
+// Routes that legitimately render without a gate of their own: the public auth
+// pages and the `/*` layout shell. Everything else must carry one — EXCEPT the
+// children of `/wissen`, whose parent element already IS a ProtectedRoute;
+// those are excluded by SOURCE POSITION below, not by name, so a future
+// top-level route that happens to be called `graph` is still checked.
+const PUBLIC_PATHS = new Set(['/login', '/register', '/auth/callback', '/*']);
+
+/** The `/wissen` block, whose parent gate covers every child inside it. */
+function wissenBlock(src: string): [number, number] {
+  const from = src.indexOf('<Route path="/wissen"');
+  if (from < 0) return [-1, -1];
+  // The block ends at the closing tag of that Route element.
+  const to = src.indexOf('</Route>', from);
+  return [from, to < 0 ? src.length : to];
+}
 
 describe('App route gating', () => {
   it('renders no page component outside ProtectedRoute/AdminRoute', () => {
+    const [wFrom, wTo] = wissenBlock(APP);
     const offenders: string[] = [];
-    const re = /<Route path="([^"]+)" element=\{\s*<([A-Za-z]+)/g;
+
+    // Every <Route …>, whether it carries a path or is an index route, and
+    // whatever shape its element takes — the first component named inside
+    // `element={…}` is the one that renders.
+    const re = /<Route\s+(index|path="([^"]+)")[^>]*?element=\{\s*<([A-Za-z]+)/gs;
     let m: RegExpExecArray | null;
     while ((m = re.exec(APP)) !== null) {
-      const [, path, element] = m;
+      if (m.index >= wFrom && m.index <= wTo) continue; // gated by /wissen
+      const path = m[2] ?? '(index)';
+      const element = m[3];
       if (element === 'ProtectedRoute' || element === 'AdminRoute') continue;
+      // Pure redirects render no data; their target carries the gate.
       if (element === 'Navigate' || element === 'RedirectPreserving') continue;
-      if (UNGATED_BY_DESIGN.has(path)) continue;
+      if (PUBLIC_PATHS.has(path)) continue;
       offenders.push(`${path} → <${element}>`);
     }
+
     expect(offenders).toEqual([]);
   });
 });
