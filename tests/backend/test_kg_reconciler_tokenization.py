@@ -94,15 +94,54 @@ class TestNamesRelatedAfterSplit:
         assert _names_related_after_split("Product Owner", "ProductOwner") is True
 
     @pytest.mark.parametrize("a,b", [
+        ("Billing Engine", "BillingEngine"),
+        ("XML Http Request", "XMLHttpRequest"),
+        ("Document Management", "DocumentManagement"),
+    ])
+    def test_equal_token_sets_after_splitting(self, a, b):
+        """A tokenization variant is the SAME name written differently."""
+        assert _names_related(a, b) is False
+        assert _names_related_after_split(a, b) is True
+        assert _names_related_after_split(b, a) is True
+
+    @pytest.mark.parametrize("a,b", [
+        ("Anna", "AnnaLena"),
+        ("Lena", "AnnaLena"),
+        ("Hans", "HansPeter"),
+        ("Karl", "KarlHeinz"),
+        ("Marie", "MarieLuise"),
+    ])
+    def test_a_compound_first_name_is_two_people_not_a_variant(self, a, b):
+        """THE regression this guard exists to refuse, found in adversarial review.
+
+        A German compound first name written without its hyphen is a strict
+        SUPERSET of one of its halves. The first version of this rescue reused
+        `_names_related` wholesale, which accepts subsets, and thereby re-opened
+        the person guard for two genuinely different people — the exact thing it
+        exists to prevent. The household graph holds 7 person rows of this shape,
+        xidra 3. Equal token sets, never subset.
+        """
+        assert _names_related(a, b) is False
+        assert _names_related_after_split(a, b) is False
+        assert _names_related_after_split(b, a) is False
+
+    @pytest.mark.parametrize("a,b", [
         ("QA", "QAEngineer"),
         ("Security", "SecurityEngineer"),
         ("backend", "BackendEngineer"),
         ("Management", "DocumentManagement"),
     ])
-    def test_the_measured_role_shapes(self, a, b):
-        assert _names_related(a, b) is False
-        assert _names_related_after_split(a, b) is True
-        assert _names_related_after_split(b, a) is True
+    def test_a_subset_role_name_is_not_rescued_either(self, a, b):
+        """Same rule, and the cost is accepted knowingly.
+
+        These four are real mis-typed roles on the reva graph and they are NOT
+        rescued: "QA" and "QAEngineer" is the same subset shape as "Anna" and
+        "AnnaLena", and no test can tell a role from a person by name alone. All
+        four sit below the 0.85 candidate threshold there anyway (0.5242-0.6025),
+        so nothing measurable is lost; the one pair above it — "Product Owner" /
+        "ProductOwner", 0.9030 — has equal token sets and survives.
+        """
+        assert _names_related_after_split(a, b) is False
 
     @pytest.mark.parametrize("a,b", [
         ("Alice", "Alice B."),          # already related — nothing to rescue

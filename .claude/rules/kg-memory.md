@@ -52,7 +52,9 @@ exact name → surface-form (jsonb `@>`) → embedding (**SAME-TIER only** + hig
 - **Tokenization rescue (#1331):** `_names_related` tokenizes on whitespace and is blind across CamelCase, so
   `person "ProductOwner"` ~ `concept "Product Owner"` died at the PERSON guard — the mis-typed ROLES the `cross_type`
   exception exists for. `_names_related_after_split` re-tests with CamelCase split (lower→UPPER **and** the acronym
-  boundary; digits and `-`/`_` deliberately not). **A SEPARATE test, never a loosening of `_names_related`** — that
+  boundary; digits and `-`/`_` deliberately not) and demands **EQUAL token sets, NEVER subset** — a subset
+  re-opens the person guard for compound first names (`Anna` ⊂ `AnnaLena` = two people; 7 such rows in the
+  household graph, found in adversarial review). **A SEPARATE test, never a loosening of `_names_related`** — that
   flag feeds `person_ok`, which opens the AUTO-merge gate; a rescued pair keeps `names_related=False` + sets
   `block_auto_merge`. Label `name_tokenization`, ranked under `cross_type`. **Second effect, deliberate:** a same-type
   non-person tokenization pair is gated by no guard, so ABOVE the auto bar it would fold silently;

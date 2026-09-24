@@ -223,11 +223,26 @@ def _names_related_after_split(name_a: str | None, name_b: str | None) -> bool:
     AUTO-MERGE gate. A pair rescued here keeps `names_related=False`, so the
     gate stays shut; it may be reviewed, never silently folded.
 
+    EQUAL token sets, NOT subset — and that is the whole safety of it. The first
+    version reused `_names_related` wholesale, which accepts a strict subset, and
+    that quietly re-opened the person guard for the commonest German shape there
+    is: `_names_related("Anna", "AnnaLena")` is False, but after splitting it
+    became True. A compound first name written without its hyphen is TWO
+    DIFFERENT PEOPLE, and killing that pair dead is precisely the person guard's
+    job. `name_typo` carries a shape constraint for the same reason (equal token
+    count, one differing token, both >= 4 chars, OSA distance 1); this one had
+    none. A tokenization variant is the SAME name written differently, so its
+    token sets must match exactly — "Product Owner" / "ProductOwner" does,
+    "Anna" / "AnnaLena" does not. Found in adversarial review 2026-09-24; the
+    household graph holds 7 person rows of that shape, xidra 3.
+
     Already-related names are not tokenization variants (nothing to rescue).
     """
     if _names_related(name_a, name_b):
         return False
-    return _names_related(_split_camel(name_a), _split_camel(name_b))
+    ta = set(_norm(_split_camel(name_a)).split())
+    tb = set(_norm(_split_camel(name_b)).split())
+    return bool(ta) and ta == tb
 
 
 def _osa_distance_is_one(a: str, b: str) -> bool:

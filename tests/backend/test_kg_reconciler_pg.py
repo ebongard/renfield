@@ -1164,7 +1164,7 @@ class TestNameTokenization:
         """`person_ok` must stay shut. This is the whole reason the rescue is a
         SEPARATE test instead of a loosening of `_names_related`."""
         owner = await _make_user(pg_db_session, "tok_noauto")
-        await _entity(pg_db_session, owner, "Security", tier=2, mention=4,
+        await _entity(pg_db_session, owner, "Security Engineer", tier=2, mention=4,
                       emb=_unit(6), etype="person", desc="Rolle")
         await _entity(pg_db_session, owner, "SecurityEngineer", tier=2, mention=9,
                       emb=_unit(6), etype="person", desc="Zustaendigkeit")
@@ -1184,7 +1184,7 @@ class TestNameTokenization:
         and the owner would otherwise be told only "similar but uncertain".
         """
         owner = await _make_user(pg_db_session, "tok_label")
-        await _entity(pg_db_session, owner, "Security", tier=2, mention=4,
+        await _entity(pg_db_session, owner, "Security Engineer", tier=2, mention=4,
                       emb=_unit(0), etype="person", desc="Rolle")
         await _entity(pg_db_session, owner, "SecurityEngineer", tier=2, mention=9,
                       emb=_gray(), etype="person", desc="Zustaendigkeit")
@@ -1306,3 +1306,25 @@ class TestNameTokenization:
                 select(KGEntity).where(KGEntity.id == e_id)
             )).scalar_one()
             assert row.is_active is True
+
+    async def test_a_compound_first_name_never_survives_the_person_guard(
+        self, pg_db_session, monkeypatch
+    ):
+        """The regression the adversarial review caught, at the guard itself.
+
+        `person "Anna"` and `person "AnnaLena"` are two different people. The
+        first version of the tokenization rescue accepted subsets, so the split
+        made them "related" and the person guard let them through. Equal token
+        sets refuse it — the pair must die exactly where it died before.
+        """
+        owner = await _make_user(pg_db_session, "tok_compound")
+        await _entity(pg_db_session, owner, "Anna", tier=2, mention=4,
+                      emb=_unit(6), etype="person", desc="Nachbarin")
+        await _entity(pg_db_session, owner, "AnnaLena", tier=2, mention=9,
+                      emb=_unit(6), etype="person", desc="Kollegin")
+        rec = _recon(pg_db_session, monkeypatch)
+
+        assert await rec.find_duplicate_pairs(owner.id) == []
+        report = await rec.run_for_user(owner.id)
+        assert (report.auto_merged, report.proposed) == (0, 0)
+        assert report.dropped_person_guard == 1     # dropped, as it always was

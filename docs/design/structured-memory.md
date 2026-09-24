@@ -140,7 +140,17 @@ type guard could look at it. In the field that shape is almost always a mis-type
 `SecurityEngineer`, `QAEngineer` carried as `person`) — exactly what the `cross_type` exception exists to collect and
 could not reach. `_names_related_after_split` re-tests the pair with CamelCase split apart, at two zero-width
 boundaries: lower→UPPER and the acronym boundary (`QAEngineer` → `QA Engineer`; without the second, `XMLHttpRequest`
-comes out as `XMLHttp Request`).
+comes out as `XMLHttp Request`), and requires the resulting token sets to be **EQUAL**.
+
+Equal, not subset, and that is the whole safety of it. The first version reused `_names_related` wholesale, which
+accepts a strict subset — which re-opened the person guard for the commonest German shape there is:
+`_names_related("Anna", "AnnaLena")` is False, but after splitting it became True. A compound first name written
+without its hyphen is TWO DIFFERENT PEOPLE, and killing that pair dead is exactly the person guard's job; the
+household graph holds 7 person rows of that shape and xidra 3. `name_typo` carries a shape constraint for the same
+reason; this one had none. The cost is knowingly accepted: `QA` ~ `QAEngineer` and `Security` ~ `SecurityEngineer`
+are real mis-typed roles and are NOT rescued either, because no test tells a role from a person by name alone. All of
+them sit below the candidate threshold on the graph they were measured on (0.5242-0.6025), so nothing measurable is
+lost — and the one pair above it, `Product Owner` / `ProductOwner` at 0.9030, has equal token sets and survives.
 
 It is a SEPARATE test, never a loosening of `_names_related`, and that distinction is the whole design:
 `person_ok = (not is_person) or names_related` means the auto-merge gate reads that flag. A rescued pair keeps
