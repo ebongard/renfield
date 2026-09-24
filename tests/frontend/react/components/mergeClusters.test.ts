@@ -143,3 +143,38 @@ describe('groupProposals — the type boundary', () => {
     expect(singles.map((x) => x.id)).toEqual([p.id]);
   });
 });
+
+describe('groupProposals — schwache Kanten', () => {
+  // Gemessen am lebenden Haushalts-Graphen 2026-09-24: 11 `name_typo`-Paare
+  // offen, SECHS davon in einem faltbaren Cluster. Eine schwache Kante würde
+  // zwei nie verglichene Komponenten verbinden und beide mitfalten.
+  it('a name_typo pair is never an edge, and joins nothing', () => {
+    const a = ent(1, 'Anna', 2, 1);
+    const b = ent(2, 'Anna', 2, 9);
+    const c = ent(3, 'Anna', 2, 3);
+    const far1 = ent(4, 'Anne', 2, 5);
+    const far2 = ent(5, 'Anne', 2, 2);
+    const weak = pair(far1, b, 'name_typo');   // die Brücke
+
+    const { clusters, singles } = groupProposals([
+      pair(a, b), pair(c, b),          // Komponente 1
+      pair(far1, far2),                 // Komponente 2 — nur über `weak` verbunden
+      weak,
+    ]);
+
+    const withB = clusters.find((cl) => cl.entities.some((e) => e.id === 2));
+    expect(withB?.entities.map((e) => e.id).sort()).toEqual([1, 2, 3]);
+    expect(withB?.entities.some((e) => e.id === 4)).toBe(false);
+    // …und sie verschwindet nicht, sondern bleibt einzeln entscheidbar.
+    expect(singles.map((p) => p.id)).toContain(weak.id);
+  });
+
+  it('a gray_zone pair is still an edge', () => {
+    const a = ent(1, 'Anna', 2, 1);
+    const b = ent(2, 'Anna', 2, 9);
+    const c = ent(3, 'Anna', 2, 3);
+    const { clusters } = groupProposals([pair(a, b), pair(c, b)]);
+    expect(clusters).toHaveLength(1);
+    expect(clusters[0].entities).toHaveLength(3);
+  });
+});

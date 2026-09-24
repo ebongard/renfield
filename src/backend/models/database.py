@@ -2227,6 +2227,13 @@ KG_MERGE_REASON_GRAY_ZONE = "gray_zone"    # similar but below the auto-merge th
 KG_MERGE_REASON_NAME_TYPO = "name_typo"    # person names that differ by ONE in-token edit — review, never auto-merge (#876 field data)
 KG_MERGE_REASON_CROSS_TYPE = "cross_type"  # entity TYPES disjoint (place vs organization) — review, never auto-merge
 
+# Reasons whose pair is "maybe two different things" BY DEFINITION. The reconciler
+# refuses to auto-merge these; `resolve_cluster` must refuse to BULK-merge them for
+# the same reason. `block_auto_merge` is a find-time flag and is never persisted —
+# `reason` is the only trace that survives into the queue, so it is what the bulk
+# path has to read. A weak pair stays individually decidable.
+KG_MERGE_WEAK_REASONS = frozenset({KG_MERGE_REASON_NAME_TYPO})
+
 
 class KgMergeProposal(Base):
     """A reconciler-proposed entity merge awaiting owner review (D3).

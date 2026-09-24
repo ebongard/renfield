@@ -127,7 +127,8 @@ export default function MergeProposalsSection() {
       .then((res) => {
         const left = (res.skipped_cross_tier ?? 0)
           + (res.skipped_cross_type ?? 0)
-          + (res.skipped_unreachable ?? 0);
+          + (res.skipped_unreachable ?? 0)
+          + (res.skipped_weak_edge ?? 0);
         if (left === 0 && (res.notes?.length ?? 0) === 0) return;
         // Partial refusal. The success path already invalidated the query, so a
         // refetch is on its way with the truth; undoing the optimistic dismissal

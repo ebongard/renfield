@@ -336,6 +336,8 @@ export interface ClusterResolveResult {
   skipped_cross_type: number;
   /** Pairs that cleared both filters but do not reach the survivor. */
   skipped_unreachable: number;
+  /** Pairs left out because their reason marks them "maybe two different things". */
+  skipped_weak_edge: number;
   notes: string[];
 }
 

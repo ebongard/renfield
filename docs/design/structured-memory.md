@@ -146,6 +146,15 @@ That is an audit-trail fact, not a UI one — the card derives its label from th
 still read "different kinds of thing". Nothing re-writes a stored reason; a backfill would be a one-off `UPDATE` and
 is deliberately not part of the guard.
 
+**Weak edges never take part in a bulk fold** (#1333). `resolve_cluster` also refuses any pair whose `reason` is in
+`KG_MERGE_WEAK_REASONS` — today just `name_typo`, "maybe two different people, one character apart". Two reasons: the
+cluster card shows a count and not the two names, so a bulk fold hands exactly the judgement the reconciler refused to
+a single click; and one weak edge JOINS two components that were never compared, so the weak claim would carry
+everything on both sides of it. Measured on the live household graph 2026-09-24: 11 `name_typo` pairs pending, **six
+of them inside a foldable cluster**. The bar reads the persisted `reason`, not `block_auto_merge` — the latter is a
+find-time flag on `MergeCandidate` and never reaches the queue, which is why the "review candidate only" promise held
+in `_reconcile_pass` and nowhere else.
+
 `resolve_cluster` carries the same bar as a second invariant next to same-tier (`skipped_cross_type`), and the
 frontend's `mergeClusters` refuses to chain components across differing primary types — the same test on the same
 field, so view and service agree exactly. That also covers the pairs that were already pending when the guard landed.

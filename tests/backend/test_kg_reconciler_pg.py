@@ -22,6 +22,7 @@ from models.database import (
     KG_MERGE_PROPOSAL_SUPERSEDED,
     KG_MERGE_REASON_CROSS_TIER,
     KG_MERGE_REASON_CROSS_TYPE,
+    KG_MERGE_REASON_NAME_TYPO,
     KGEntity,
     KgMergeProposal,
     Role,
@@ -871,6 +872,71 @@ class TestResolveCluster:
         assert res.skipped_unreachable == 1    # the far pair, honestly labelled
         assert res.skipped_cross_tier == 0     # nothing here is a visibility skip
         assert res.skipped_cross_type == 0
+    async def test_a_weak_pair_is_never_bulk_folded(self, pg_db_session, monkeypatch):
+        """A `name_typo` edge must not ride along in a cluster decision.
+
+        "Maybe two different people, one character apart" is a review candidate
+        PRECISELY because a machine cannot decide it. The cluster card shows a
+        count, not the two names, so a bulk fold hands that judgement to a click.
+        Worse, one such edge JOINS two components that were never compared — the
+        weak claim would carry everything on both sides of it.
+
+        Measured on the live household graph 2026-09-24: 11 `name_typo` pairs
+        pending, SIX of them inside a foldable cluster.
+        """
+        owner = await _make_user(pg_db_session, "clu_weak")
+        a = await _entity(pg_db_session, owner, "Anna", tier=2, mention=1, emb=_unit(6))
+        b = await _entity(pg_db_session, owner, "Anna", tier=2, mention=9, emb=_unit(6))
+        # the weak edge, and the entity it would drag in
+        far = await _entity(pg_db_session, owner, "Anne", tier=2, mention=4, emb=_unit(6))
+        await self._proposal(pg_db_session, owner, a, b)
+        weak = await self._proposal(
+            pg_db_session, owner, far, b, reason=KG_MERGE_REASON_NAME_TYPO,
+        )
+        rec = _recon(pg_db_session, monkeypatch)
+
+        res = await rec.resolve_cluster(
+            user_id=owner.id, entity_ids=[a.id, b.id, far.id],
+            survivor_id=b.id, decision="merge", resolved_by=owner.id,
+        )
+
+        assert res.merged == 1                # only the gray_zone pair folded
+        assert res.skipped_weak_edge == 1
+        still = (await pg_db_session.execute(
+            select(KGEntity).where(KGEntity.id == far.id)
+        )).scalar_one()
+        assert still.is_active is True        # the "maybe another person" survives
+        prop = (await pg_db_session.execute(
+            select(KgMergeProposal).where(KgMergeProposal.id == weak.id)
+        )).scalar_one()
+        assert prop.status == KG_MERGE_PROPOSAL_PENDING
+
+    async def test_a_weak_pair_is_not_swept_by_reject_either(
+        self, pg_db_session, monkeypatch
+    ):
+        """Reject is a verdict too — and a final one for the reconciler."""
+        owner = await _make_user(pg_db_session, "clu_weak_rej")
+        a = await _entity(pg_db_session, owner, "Anna", tier=2, mention=1, emb=_unit(6))
+        b = await _entity(pg_db_session, owner, "Anna", tier=2, mention=9, emb=_unit(6))
+        far = await _entity(pg_db_session, owner, "Anne", tier=2, mention=4, emb=_unit(6))
+        await self._proposal(pg_db_session, owner, a, b)
+        weak = await self._proposal(
+            pg_db_session, owner, far, b, reason=KG_MERGE_REASON_NAME_TYPO,
+        )
+        rec = _recon(pg_db_session, monkeypatch)
+
+        res = await rec.resolve_cluster(
+            user_id=owner.id, entity_ids=[a.id, b.id, far.id],
+            survivor_id=None, decision="reject", resolved_by=owner.id,
+        )
+
+        assert res.rejected == 1
+        assert res.skipped_weak_edge == 1
+        prop = (await pg_db_session.execute(
+            select(KgMergeProposal).where(KgMergeProposal.id == weak.id)
+        )).scalar_one()
+        assert prop.status == KG_MERGE_PROPOSAL_PENDING
+
 
 class TestTypeGuard:
     """A place must never be folded into the company seated in it.

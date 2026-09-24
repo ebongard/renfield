@@ -65,7 +65,11 @@ exact name → surface-form (jsonb `@>`) → embedding (**SAME-TIER only** + hig
   invariants make a bulk decision safe: **only same-tier pairs take part** (a cross-tier pair changes reach and is
   reported back in `skipped_cross_tier`, never swept — which also makes `tier = MIN` a no-op), and **the fold set is
   derived from the PROPOSALS, not from the request** (else the route merges two arbitrary entities on demand). #1330
-  added a third: **only type-compatible pairs take part** (`skipped_cross_type`) — that bar is for the ROUTE, since
+  added a third and #1333 a fourth: **a WEAK pair never takes part** (`skipped_weak_edge`) — `name_typo` means
+  "maybe two different people", so a bulk fold would hand that judgement to a click showing a count, not the names,
+  and one such edge JOINS two components that were never compared (measured: 11 pending on the household graph, SIX
+  inside a foldable cluster). The bar reads `reason` (`KG_MERGE_WEAK_REASONS`), NOT `block_auto_merge` — that one is
+  a find-time flag and is never persisted. **only type-compatible pairs take part** (`skipped_cross_type`) — that bar is for the ROUTE, since
   the UI builds components on primary-type EQUALITY and can never submit such a pair. Pairs that clear both filters
   but do not reach the survivor are `skipped_unreachable`, NOT `skipped_cross_tier` — they sit at the survivor's own
   tier, so calling them a visibility skip was a lie. The frontend groups by connected components over the pairs, NOT

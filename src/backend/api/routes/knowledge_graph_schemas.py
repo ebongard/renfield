@@ -185,6 +185,7 @@ class ClusterResolveResponse(BaseModel):
     skipped_cross_tier: int = 0
     skipped_cross_type: int = 0
     skipped_unreachable: int = 0
+    skipped_weak_edge: int = 0
     notes: list[str] = Field(default_factory=list)
 
 

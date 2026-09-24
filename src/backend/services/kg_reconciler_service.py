@@ -44,6 +44,7 @@ from models.database import (
     KG_MERGE_PROPOSAL_PENDING,
     KG_MERGE_PROPOSAL_REJECTED,
     KG_MERGE_PROPOSAL_SUPERSEDED,
+    KG_MERGE_WEAK_REASONS,
     KG_MERGE_REASON_CROSS_TIER,
     KG_MERGE_REASON_CROSS_TYPE,
     KG_MERGE_REASON_GRAY_ZONE,
@@ -265,6 +266,7 @@ class ClusterResolution:
     skipped_cross_tier: int = 0     # left individually decidable (visibility)
     skipped_cross_type: int = 0     # left individually decidable (disjoint types)
     skipped_unreachable: int = 0    # same tier + type, but not in the survivor's component
+    skipped_weak_edge: int = 0      # "maybe two different things" by reason — never bulk-folded
     notes: list[str] = field(default_factory=list)
 
 
@@ -659,6 +661,15 @@ class KgReconcilerService:
         ``tier = MIN`` rule inside ``merge_entities`` is a no-op here: no
         visibility can shift.
 
+        THIRD INVARIANT: only pairs the reconciler would auto-merge on their own
+        merits take part. A `name_typo` pair is "maybe two different people" by
+        definition — it is a review candidate precisely because a machine cannot
+        decide it, so sweeping it into a bulk decision hands it to a click that
+        shows a count instead of the two names. Counted in ``skipped_weak_edge``.
+        Note WHY `reason` and not `block_auto_merge`: the latter is a find-time
+        flag on `MergeCandidate` and is never persisted; `reason` is the only
+        trace of the weakness that reaches the queue.
+
         SECOND INVARIANT: only TYPE-COMPATIBLE pairs take part. Folding a place
         into an organization rewrites what the entity IS. Those are counted in
         ``skipped_cross_type`` and likewise stay individually decidable. Note
@@ -715,6 +726,15 @@ class KgReconcilerService:
                 p.winner.entity_type if p.winner else None,
             ):
                 res.skipped_cross_type += 1
+                continue
+            # A pair the reconciler would never auto-merge must not be folded in
+            # BULK either. `name_typo` means "maybe two different people, one
+            # character apart" — the owner has to judge that pair by its names,
+            # and a cluster card shows a count, not the names. One such edge also
+            # JOINS two components that were never compared: the weak claim would
+            # carry everything on both sides of it.
+            if (p.reason or "") in KG_MERGE_WEAK_REASONS:
+                res.skipped_weak_edge += 1
                 continue
             foldable.append(p)
 

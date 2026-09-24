@@ -672,6 +672,7 @@ async def resolve_merge_cluster(
         skipped_cross_tier=res.skipped_cross_tier,
         skipped_cross_type=res.skipped_cross_type,
         skipped_unreachable=res.skipped_unreachable,
+        skipped_weak_edge=res.skipped_weak_edge,
         notes=res.notes,
     )
 
