@@ -930,16 +930,24 @@ class TestTypeGuard:
     async def test_subset_name_across_types_is_a_review_candidate_too(
         self, pg_db_session, monkeypatch
     ):
-        """organization "Publikationsplattform" ⊆ thing "Publikationsplattform der …"."""
+        """A subset name across two REAL type claims: review, never auto-merge.
+
+        The live field pair (organization "Publikationsplattform" ⊆ thing
+        "Publikationsplattform der …") is deliberately not the fixture here:
+        `thing` is the no-type bucket and disarms the guard entirely
+        (``_UNTYPED``), so that pair flows through as it always did. Two claimed
+        types are what the exception is actually about.
+        """
         owner = await _make_user(pg_db_session, "tg_subset")
         await _entity(pg_db_session, owner, "Publikationsplattform", tier=2, mention=1,
                       emb=_unit(6), etype="organization", desc="Kurzform")
         await _entity(pg_db_session, owner, "Publikationsplattform der Bundesanzeiger",
-                      tier=2, mention=9, emb=_unit(6), etype="thing", desc="Langform")
+                      tier=2, mention=9, emb=_unit(6), etype="concept", desc="Langform")
         rec = _recon(pg_db_session, monkeypatch)
 
         report = await rec.run_for_user(owner.id)
         assert (report.auto_merged, report.proposed) == (0, 1)
+        assert report.dropped_cross_type == 0
 
     async def test_same_type_still_auto_merges(self, pg_db_session, monkeypatch):
         """The guard must not be a blanket brake on the queue."""
@@ -990,3 +998,64 @@ class TestTypeGuard:
             select(KgMergeProposal).where(KgMergeProposal.id == px.id)
         )).scalar_one()
         assert prop.status == KG_MERGE_PROPOSAL_PENDING
+
+    async def test_thing_vs_organization_still_reaches_the_owner(
+        self, pg_db_session, monkeypatch
+    ):
+        """The guard must not eat the commonest LLM duplicate shape.
+
+        `thing` is the extraction's no-type fallback. Two unrelated-looking
+        names, one bucketed as `thing` and one as `organization`, are the same
+        firm more often than not — before the guard that was a `gray_zone`
+        proposal the owner could decide, and it has to stay one.
+        """
+        owner = await _make_user(pg_db_session, "tg_thing")
+        await _entity(pg_db_session, owner, "Fa. Beispiel", tier=2, mention=1,
+                      emb=_unit(6), etype="thing", desc="aus einer Rechnung")
+        await _entity(pg_db_session, owner, "Beispiel GmbH", tier=2, mention=9,
+                      emb=_unit(6), etype="organization", desc="Lieferant")
+        rec = _recon(pg_db_session, monkeypatch)
+
+        report = await rec.run_for_user(owner.id)
+        assert report.dropped_cross_type == 0
+        assert report.auto_merged + report.proposed == 1
+
+    async def test_a_typo_pair_survives_a_type_mismatch(
+        self, pg_db_session, monkeypatch
+    ):
+        """The type guard must not cancel the #876 typo exception.
+
+        A typo pair is `related=False` by construction, so a bare
+        `cross_type and not related` drop would swallow every person mis-extracted
+        under another type — the exact case that exception exists for.
+        """
+        owner = await _make_user(pg_db_session, "tg_typo")
+        await _entity(pg_db_session, owner, "Anna Schmitt", tier=2, mention=1,
+                      emb=_unit(6), etype="person", desc="aus einem Protokoll")
+        await _entity(pg_db_session, owner, "Anna Schmidt", tier=2, mention=9,
+                      emb=_unit(6), etype="concept", desc="falsch typisiert")
+        rec = _recon(pg_db_session, monkeypatch)
+
+        report = await rec.run_for_user(owner.id)
+        assert report.dropped_cross_type == 0
+        assert (report.auto_merged, report.proposed) == (0, 1)
+
+    async def test_the_guards_count_what_they_eat(self, pg_db_session, monkeypatch):
+        """`candidates` counts SURVIVORS, so a greedy guard is otherwise invisible."""
+        owner = await _make_user(pg_db_session, "tg_counters")
+        # dropped by the type guard: disjoint types, unrelated names
+        await _entity(pg_db_session, owner, "Korschenbroich", tier=2, mention=4,
+                      emb=_unit(6), etype="place", desc="Stadt")
+        await _entity(pg_db_session, owner, "Beispiel GmbH", tier=2, mention=9,
+                      emb=_unit(6), etype="organization", desc="Firma")
+        # dropped by the person guard: two different people, same embedding
+        await _entity(pg_db_session, owner, "Jutta", tier=2, mention=3,
+                      emb=_unit(7), etype="person", desc="Nachbarin")
+        await _entity(pg_db_session, owner, "Gaby", tier=2, mention=5,
+                      emb=_unit(7), etype="person", desc="Kollegin")
+        rec = _recon(pg_db_session, monkeypatch)
+
+        report = await rec.run_for_user(owner.id)
+        assert report.candidates == 0          # nothing survived — and that is the point
+        assert report.dropped_cross_type == 1
+        assert report.dropped_person_guard == 1

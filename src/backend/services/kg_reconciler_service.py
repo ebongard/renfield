@@ -133,6 +133,16 @@ def _type_tokens(etype: str | None, etypes: str | list | None) -> set[str]:
     return tokens
 
 
+# The extraction's fallback bucket: `_build_entities` assigns "thing" when the
+# model named no type at all. It is the ABSENCE of a type claim, so it must not
+# make a pair "disjoint" — the single most common duplicate shape in an
+# LLM-extracted graph is the same real thing extracted once as `thing` and once
+# as `organization`/`concept`, and those names are often NOT token-related
+# ("Fa. Müller" / "Müller GmbH"). Treating `thing` as a claim would drop exactly
+# those pairs with no merge, no proposal and no row the owner could ever find.
+_UNTYPED = {"thing"}
+
+
 def _types_compatible(
     etype_a: str | None, etypes_a: str | list | None,
     etype_b: str | None, etypes_b: str | list | None,
@@ -140,11 +150,14 @@ def _types_compatible(
     """False only when the two entities' claimed types are DISJOINT.
 
     An unknown type on either side is not evidence of a mismatch, so it returns
-    True — the guard accuses, it never guesses.
+    True — the guard accuses, it never guesses. The same holds for the `thing`
+    bucket (see ``_UNTYPED``): no claim, no accusation.
     """
     ta = _type_tokens(etype_a, etypes_a)
     tb = _type_tokens(etype_b, etypes_b)
     if not ta or not tb:
+        return True
+    if (ta & _UNTYPED) or (tb & _UNTYPED):
         return True
     return bool(ta & tb)
 
@@ -268,6 +281,12 @@ class ClusterResolution:
 class ReconcileReport:
     user_id: int
     candidates: int = 0
+    # Pairs the find-time guards ATE. `candidates` counts what survived them, so
+    # without these two a guard that is too greedy on some graph is invisible:
+    # no row, no proposal, no log line. Both guards drop silently by design —
+    # these make the silence measurable.
+    dropped_person_guard: int = 0
+    dropped_cross_type: int = 0
     auto_merged: int = 0
     proposed: int = 0
     embedded_backfilled: int = 0
@@ -285,11 +304,16 @@ class KgReconcilerService:
         ))).fetchall()
         return [int(r[0]) for r in rows]
 
-    async def find_duplicate_pairs(self, user_id: int) -> list[MergeCandidate]:
+    async def find_duplicate_pairs(
+        self, user_id: int, report: ReconcileReport | None = None,
+    ) -> list[MergeCandidate]:
         """Embedding self-join over the user's live canonical entities.
 
         sqlite has no halfvec — short-circuits to [] there so the rest of the
         pipeline can still be exercised on the shim.
+
+        ``report``, when given, collects how many pairs each find-time guard
+        dropped (they drop silently by design; the counters make that visible).
         """
         dialect = self.db.bind.dialect.name if self.db.bind is not None else ""
         if dialect != "postgresql":
@@ -354,6 +378,8 @@ class KgReconcilerService:
             # refuses it, and block_auto_merge says so explicitly.
             typo = bool(is_person and not related and _names_near_typo(r.name_a, r.name_b))
             if is_person and not related and not typo:
+                if report is not None:
+                    report.dropped_person_guard += 1
                 continue
             # TYPE-GUARD: a pair whose claimed types are DISJOINT is a different
             # KIND of thing, and embedding similarity cannot say so — a town and
@@ -370,7 +396,13 @@ class KgReconcilerService:
             cross_type = not _types_compatible(
                 r.etype_a, r.etypes_a, r.etype_b, r.etypes_b
             )
-            if cross_type and not related:
+            # `not typo` matters: a typo pair is `related=False` by construction,
+            # so without it this line would quietly cancel the #876 exception the
+            # person-guard above just granted (a person mis-extracted as another
+            # type, one in-token edit apart, is exactly the case worth reviewing).
+            if cross_type and not related and not typo:
+                if report is not None:
+                    report.dropped_cross_type += 1
                 continue
             # Winner = the more-established row: higher mention_count, tie-break
             # on the OLDER first_seen_at (smaller timestamp).
@@ -515,7 +547,7 @@ class KgReconcilerService:
     async def _reconcile_pass(self, user_id: int, report: ReconcileReport) -> ReconcileReport:
         """The actual work of one pass: embed-backfill, find, auto-merge/propose."""
         report.embedded_backfilled = await self.backfill_missing_embeddings(user_id)
-        pairs = await self.find_duplicate_pairs(user_id)
+        pairs = await self.find_duplicate_pairs(user_id, report)
         report.candidates = len(pairs)
 
         auto_t = settings.kg_reconciler_auto_merge_threshold
@@ -553,11 +585,14 @@ class KgReconcilerService:
                 )
 
         await self.db.commit()
-        if report.auto_merged or report.proposed or report.embedded_backfilled:
+        if (report.auto_merged or report.proposed or report.embedded_backfilled
+                or report.dropped_person_guard or report.dropped_cross_type):
             logger.info(
                 f"🔗 KG reconciler user={user_id}: auto_merged={report.auto_merged}, "
                 f"proposed={report.proposed}, candidates={report.candidates}, "
-                f"embedded_backfilled={report.embedded_backfilled}"
+                f"embedded_backfilled={report.embedded_backfilled}, "
+                f"dropped_person_guard={report.dropped_person_guard}, "
+                f"dropped_cross_type={report.dropped_cross_type}"
             )
         return report
 

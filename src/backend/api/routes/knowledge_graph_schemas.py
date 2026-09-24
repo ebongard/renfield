@@ -207,6 +207,10 @@ class ReconcilerRunResponse(BaseModel):
     auto_merged: int
     proposed: int
     embedded_backfilled: int = 0
+    # How many pairs the find-time guards ate. `candidates` counts survivors, so
+    # a guard that is too greedy on this graph is otherwise invisible here.
+    dropped_person_guard: int = 0
+    dropped_cross_type: int = 0
     notes: list[str] = Field(default_factory=list)
 
 

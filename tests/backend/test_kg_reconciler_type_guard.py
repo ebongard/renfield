@@ -15,7 +15,7 @@ Those must survive — as review candidates only.
 """
 import pytest
 
-from services.kg_reconciler_service import _type_tokens, _types_compatible
+from services.kg_reconciler_service import _UNTYPED, _type_tokens, _types_compatible
 
 
 @pytest.mark.unit
@@ -67,3 +67,33 @@ class TestTypesCompatible:
     def test_symmetric(self):
         assert (_types_compatible("place", None, "organization", None)
                 == _types_compatible("organization", None, "place", None))
+
+@pytest.mark.unit
+class TestThingIsNotATypeClaim:
+    """`thing` is the extraction's fallback bucket, not a type.
+
+    ``_build_entities`` assigns it when the model named no type at all
+    (knowledge_graph_service.py, ``raw_types[0] if raw_types else "thing"``), so
+    treating it as a claim would make the guard DELETE the most common duplicate
+    shape in an LLM-extracted graph: the same real thing extracted once as
+    `thing` and once as `organization`. Those names are often not token-related
+    ("Fa. Müller" / "Müller GmbH"), so the pair would be dropped with no merge,
+    no proposal and no row the owner could ever find — strictly worse than the
+    `gray_zone` proposal it used to get.
+    """
+
+    def test_thing_is_the_only_wildcard(self):
+        assert _UNTYPED == {"thing"}
+
+    @pytest.mark.parametrize("other", ["organization", "place", "person", "concept", "event"])
+    def test_thing_is_compatible_with_everything(self, other):
+        assert _types_compatible("thing", None, other, None) is True
+        assert _types_compatible(other, None, "thing", None) is True
+
+    def test_thing_in_the_multi_type_set_also_disarms(self):
+        assert _types_compatible("concept", '["concept", "thing"]', "organization", None) is True
+
+    def test_concept_is_a_real_claim_not_a_bucket(self):
+        # Only the no-type fallback is a wildcard; `concept` is assigned because
+        # the model SAID concept, so it still separates.
+        assert _types_compatible("concept", None, "organization", None) is False
