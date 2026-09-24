@@ -81,6 +81,28 @@ describe('MergeProposalsSection — partial cluster refusal', () => {
     });
   });
 
+  it('shows WHY when the service refused the whole fold (400)', async () => {
+    // Ein Refus kommt als 400 mit dem Vermerk als `detail`. Die Karten still
+    // zurueckzuholen waere derselbe Fehler eine Schicht tiefer.
+    server.use(
+      http.get(`${BASE}/api/knowledge-graph/merge-proposals`, () =>
+        HttpResponse.json({ proposals: PROPOSALS, total: PROPOSALS.length })),
+      http.post(`${BASE}/api/knowledge-graph/merge-proposals/cluster`, () =>
+        HttpResponse.json(
+          { detail: 'this cluster holds a pair that may be two different things — decide it first: Anna / Ana' },
+          { status: 400 },
+        )),
+    );
+    renderWithProviders(<MergeProposalsSection />);
+
+    fireEvent.click(await screen.findByRole('button', { name: /zusammenführen/i }));
+
+    expect(await screen.findByText(/may be two different things/i)).toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /zusammenführen/i })).toBeInTheDocument();
+    });
+  });
+
   it('surfaces a refusal note even when no pair was counted', async () => {
     mockQueue({ ...FULL_SUCCESS, merged: 0, approved: 0, notes: ['cluster spans more than one tier — refusing'] });
     renderWithProviders(<MergeProposalsSection />);

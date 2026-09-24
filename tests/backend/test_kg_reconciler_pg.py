@@ -1177,3 +1177,87 @@ class TestTypeGuard:
 
         report = await rec.run_for_user(owner.id)
         assert (report.auto_merged, report.proposed) == (0, 1)
+
+
+class TestWeakEdgeTriangle:
+    """The topology the bridge test does not cover, and the one that mattered.
+
+    A—B weak, A—C strong, B—C strong. Dropping the weak edge does NOT disconnect
+    anything: the component is still {A,B,C} through C, B folds into A, and
+    `_repoint_after_fold` then closes the weak A—B proposal as SUPERSEDED. The
+    weak claim would have been executed, its row closed, and the response would
+    still have said `skipped_weak_edge=1` — the owner told the pair stayed
+    pending, and then finding it gone.
+
+    Found in adversarial review 2026-09-24. The fold is refused as a whole.
+    """
+
+    @staticmethod
+    async def _proposal(db, owner, loser, winner, *, sim=0.9, reason="gray_zone"):
+        p = KgMergeProposal(
+            user_id=owner.id, loser_entity_id=loser.id, winner_entity_id=winner.id,
+            similarity=sim, loser_tier=loser.circle_tier, winner_tier=winner.circle_tier,
+            reason=reason, status=KG_MERGE_PROPOSAL_PENDING,
+        )
+        db.add(p)
+        await db.flush()
+        return p
+
+    async def test_a_weak_chord_refuses_the_whole_fold(self, pg_db_session, monkeypatch):
+        owner = await _make_user(pg_db_session, "clu_tri")
+        a = await _entity(pg_db_session, owner, "Ana", tier=2, mention=9, emb=_unit(6))
+        b = await _entity(pg_db_session, owner, "Anna", tier=2, mention=4, emb=_unit(6))
+        c = await _entity(pg_db_session, owner, "Ana", tier=2, mention=2, emb=_unit(6))
+        weak = await self._proposal(
+            pg_db_session, owner, b, a, reason=KG_MERGE_REASON_NAME_TYPO,
+        )
+        await self._proposal(pg_db_session, owner, c, a)     # A—C stark
+        await self._proposal(pg_db_session, owner, b, c)     # B—C stark, schliesst das Dreieck
+        rec = _recon(pg_db_session, monkeypatch)
+
+        res = await rec.resolve_cluster(
+            user_id=owner.id, entity_ids=[a.id, b.id, c.id],
+            survivor_id=a.id, decision="merge", resolved_by=owner.id,
+        )
+
+        # NICHTS wurde gefaltet — und der Vermerk nennt das Paar.
+        assert res.merged == 0
+        assert res.skipped_weak_edge == 1
+        assert res.notes and "two different things" in res.notes[0]
+        for e_id in (b.id, c.id):
+            row = (await pg_db_session.execute(
+                select(KGEntity).where(KGEntity.id == e_id)
+            )).scalar_one()
+            assert row.is_active is True
+        # …und das schwache Paar steht weiter offen, nicht superseded.
+        prop = (await pg_db_session.execute(
+            select(KgMergeProposal).where(KgMergeProposal.id == weak.id)
+        )).scalar_one()
+        assert prop.status == KG_MERGE_PROPOSAL_PENDING
+
+    async def test_a_weak_bridge_still_only_costs_its_own_edge(
+        self, pg_db_session, monkeypatch
+    ):
+        """The other half: no chord, so the fold proceeds and only the bridge stays."""
+        owner = await _make_user(pg_db_session, "clu_bridge")
+        a = await _entity(pg_db_session, owner, "Ana", tier=2, mention=9, emb=_unit(6))
+        b = await _entity(pg_db_session, owner, "Ana", tier=2, mention=4, emb=_unit(6))
+        far = await _entity(pg_db_session, owner, "Anna", tier=2, mention=2, emb=_unit(6))
+        await self._proposal(pg_db_session, owner, b, a)
+        await self._proposal(
+            pg_db_session, owner, far, a, reason=KG_MERGE_REASON_NAME_TYPO,
+        )
+        rec = _recon(pg_db_session, monkeypatch)
+
+        res = await rec.resolve_cluster(
+            user_id=owner.id, entity_ids=[a.id, b.id, far.id],
+            survivor_id=a.id, decision="merge", resolved_by=owner.id,
+        )
+
+        assert res.merged == 1
+        assert res.skipped_weak_edge == 1
+        assert not res.notes
+        still = (await pg_db_session.execute(
+            select(KGEntity).where(KGEntity.id == far.id)
+        )).scalar_one()
+        assert still.is_active is True

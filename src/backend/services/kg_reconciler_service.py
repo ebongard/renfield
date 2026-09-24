@@ -680,6 +680,14 @@ class KgReconcilerService:
         two different PEOPLE, one character apart". Only the second kind is
         refused, counted in ``skipped_weak_edge``.
 
+        Refused as an EDGE is not enough: dropping the edge shrinks reachability
+        but does not stop both endpoints arriving in the survivor by another
+        route, and ``_repoint_after_fold`` would then close the weak proposal as
+        superseded — executed, and reported as skipped. So a weak pair with both
+        endpoints inside the component refuses the WHOLE fold, with a note naming
+        the two entities. The owner decides that one pair on its own card, with
+        both names in front of them, and the cluster folds afterwards.
+
         Note WHY the bar reads `reason` and not `block_auto_merge`: the latter is
         a find-time flag on `MergeCandidate` and is never persisted; `reason` is
         the only trace of the weakness that reaches the queue, which is why the
@@ -717,6 +725,7 @@ class KgReconcilerService:
         pairs = list((await self.db.execute(q)).scalars().all())
 
         foldable: list[KgMergeProposal] = []
+        weak_pairs: list[KgMergeProposal] = []
         for p in pairs:
             # Compare the LIVE tiers, not the ones stored when the pair was
             # proposed — a tier may have moved since, in either direction.
@@ -746,6 +755,7 @@ class KgReconcilerService:
             # bulk is precisely what this method is for.
             if (p.reason or "") in KG_MERGE_WEAK_REASONS:
                 res.skipped_weak_edge += 1
+                weak_pairs.append(p)
                 continue
             foldable.append(p)
 
@@ -783,7 +793,11 @@ class KgReconcilerService:
             adjacency.setdefault(b, set()).add(a)
             by_edge.setdefault((min(a, b), max(a, b)), []).append(p)
         if keep not in adjacency:
-            res.notes.append("survivor must be one of the cluster's proposed entities")
+            # NOT "not one of the cluster's entities" — since the weak-edge bar,
+            # an entity whose every pending pair is weak IS in the cluster and
+            # still absent from `adjacency`. Saying otherwise asserts something
+            # false about a legitimate state.
+            res.notes.append("the survivor has no foldable pair in this cluster")
             return res
         component: set[int] = set()
         frontier = [keep]
@@ -793,6 +807,35 @@ class KgReconcilerService:
                 continue
             component.add(node)
             frontier.extend(adjacency.get(node, ()))
+
+        # Dropping a weak edge shrinks what is REACHABLE — it does not stop the
+        # two endpoints arriving in the survivor by another route. A—B weak,
+        # A—C and B—C strong: the component is still {A,B,C}, B folds into A,
+        # and `_repoint_after_fold` then closes the weak A—B proposal as
+        # SUPERSEDED. The weak claim would have been executed, its row closed,
+        # and the response would still say `skipped_weak_edge=1` — the owner
+        # told that the pair stayed pending, and then it is gone.
+        #
+        # So: if a weak pair has BOTH endpoints inside the component, the whole
+        # fold is refused. The alternative — fold and report it honestly — was
+        # rejected because a merge cannot be taken back and this one is exactly
+        # the "maybe two different people" case. The owner decides that ONE pair
+        # first, on its own card with both names, and the cluster folds after.
+        blocking = [
+            p for p in weak_pairs
+            if int(p.loser_entity_id) in component and int(p.winner_entity_id) in component
+        ]
+        if blocking:
+            names = []
+            for p in blocking[:3]:
+                a = (p.loser.name if p.loser else "?") or "?"
+                b = (p.winner.name if p.winner else "?") or "?"
+                names.append(f"{a} / {b}")
+            res.notes.append(
+                "this cluster holds a pair that may be two different things — "
+                "decide it first: " + "; ".join(names)
+            )
+            return res
 
         # Belt and braces: every member must sit at the survivor's tier. The
         # edges say so pairwise; this says so for the whole component, so a
