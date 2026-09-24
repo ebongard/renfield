@@ -105,15 +105,28 @@ export default function MergeProposalsSection() {
   // a cluster is one decision, a lone pair stays the familiar pair card.
   const { clusters, singles } = groupProposals(visible);
 
-  /** The refused-fold detail, translated. Null when this is any other error. */
-  const undecidableMessage = (err: unknown): string | null => {
+  /**
+   * A refused fold, translated. EVERY refusal carries a code, not just the
+   * undecidable-pair one — translating that single case would have left its six
+   * siblings ("cluster spans more than one tier", "merge needs a survivor", …)
+   * as raw English in a German UI. Null when the error is not a refusal at all.
+   */
+  const refusalMessage = (err: unknown): string | null => {
     const detail = (err as { response?: { data?: { detail?: unknown } } })
       ?.response?.data?.detail as
       { code?: string; pairs?: [string, string][]; total?: number } | undefined;
-    if (!detail || detail.code !== 'cluster_has_undecidable_pair') return null;
-    const shown = (detail.pairs ?? []).map(([a, b]) => `${a} / ${b}`).join('; ');
-    const total = detail.total ?? (detail.pairs?.length ?? 0);
-    const hidden = total - (detail.pairs?.length ?? 0);
+    const code = detail?.code;
+    if (!code) return null;
+    if (code !== 'cluster_has_undecidable_pair') {
+      // An unknown code must not render as a blank line: fall through to the
+      // generic error rather than an empty string.
+      const key = `circles.mergeProposals.cluster.refused_${code}`;
+      const text = t(key, { defaultValue: '' });
+      return text || null;
+    }
+    const shown = (detail?.pairs ?? []).map(([a, b]) => `${a} / ${b}`).join('; ');
+    const total = detail?.total ?? (detail?.pairs?.length ?? 0);
+    const hidden = total - (detail?.pairs?.length ?? 0);
     // Never truncate in silence: say how many are not listed.
     const pairs = hidden > 0
       ? t('circles.mergeProposals.cluster.undecidableMore', { pairs: shown, count: hidden })
@@ -165,7 +178,7 @@ export default function MergeProposalsSection() {
         // is built here so it can be translated. Anything else falls back to the
         // generic extractor.
         restore();
-        setClusterNote(undecidableMessage(err) ?? extractApiError(err, t('common.error')));
+        setClusterNote(refusalMessage(err) ?? extractApiError(err, t('common.error')));
       });
   };
 

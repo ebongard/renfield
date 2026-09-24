@@ -104,6 +104,46 @@ describe('MergeProposalsSection — partial cluster refusal', () => {
     });
   });
 
+  it('translates EVERY refusal code, not only the undecidable one', async () => {
+    // Den einen uebersetzten Fall zu pruefen haette die sechs Geschwister
+    // uebersehen — genau der Befund aus dem Review dieses Zweigs.
+    server.use(
+      http.get(`${BASE}/api/knowledge-graph/merge-proposals`, () =>
+        HttpResponse.json({ proposals: PROPOSALS, total: PROPOSALS.length })),
+      http.post(`${BASE}/api/knowledge-graph/merge-proposals/cluster`, () =>
+        HttpResponse.json(
+          { detail: { code: 'cluster_spans_tiers', pairs: [], total: 0,
+                      notes: ['cluster spans more than one tier — refusing'] } },
+          { status: 400 },
+        )),
+    );
+    renderWithProviders(<MergeProposalsSection />);
+
+    fireEvent.click(await screen.findByRole('button', { name: /zusammenführen/i }));
+
+    expect(await screen.findByText(/mehrere Sichtbarkeitsstufen/i)).toBeInTheDocument();
+    // …und NICHT der rohe englische Vermerk.
+    expect(screen.queryByText(/spans more than one tier/i)).not.toBeInTheDocument();
+  });
+
+  it('falls back to the generic error for an unknown refusal code', async () => {
+    // Ein unbekannter Code darf keine leere Zeile rendern.
+    server.use(
+      http.get(`${BASE}/api/knowledge-graph/merge-proposals`, () =>
+        HttpResponse.json({ proposals: PROPOSALS, total: PROPOSALS.length })),
+      http.post(`${BASE}/api/knowledge-graph/merge-proposals/cluster`, () =>
+        HttpResponse.json({ detail: { code: 'something_new', pairs: [], total: 0 } },
+                          { status: 400 })),
+    );
+    renderWithProviders(<MergeProposalsSection />);
+
+    fireEvent.click(await screen.findByRole('button', { name: /zusammenführen/i }));
+
+    await waitFor(() => {
+      expect(screen.getByRole('status')).toHaveTextContent(/\S/);
+    });
+  });
+
   it('says how many blocking pairs it is NOT naming', async () => {
     server.use(
       http.get(`${BASE}/api/knowledge-graph/merge-proposals`, () =>

@@ -81,8 +81,10 @@ exact name → surface-form (jsonb `@>`) → embedding (**SAME-TIER only** + hig
   the refused pair as `superseded` — executed, while the response calls it skipped. Any pairwise-refused pair with
   BOTH endpoints in the component therefore refuses the **whole fold**. The type bar exists FOR the route, which is
   exactly why leaving it out of this check left the route-only bar with a route-reachable bypass (#1334).
-  The refusal returns a CODE plus the pairs plus an uncapped total (`cluster_has_undecidable_pair`), never a
-  sentence: the UI translates it, and a capped list without the total truncates in silence.
+  **EVERY refusal of `resolve_cluster` returns a CODE**, never a sentence (`refusal_code`, seven of them) — the UI
+  cannot translate an English `notes` string, and translating only the one somebody complained about leaves its six
+  siblings in German-UI English. `cluster_has_undecidable_pair` additionally carries the pairs plus an **uncapped**
+  total, because a capped list without the total truncates in silence. `notes` rides along for the log.
   Measured 2026-09-24: 11 `name_typo` pending on the household, six inside a foldable cluster.
   🛑 `_repoint_after_fold` rewrites a pair's endpoints but NOT its `reason` — since #1333 that reason is a GATE, so a
   re-pointed pair can carry a stale one in either direction. Known, not fixed: the self-join excludes pending pairs,

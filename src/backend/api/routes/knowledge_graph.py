@@ -663,15 +663,19 @@ async def resolve_merge_cluster(
         decision=body.decision,
         resolved_by=uid,
     )
-    if res.blocked_total:
+    if res.refusal_code and not (res.merged or res.approved or res.rejected):
         # Structured, like the user-delete guard (#1328): the review UI has to
         # build a TRANSLATED sentence out of this, and a backend string cannot be
-        # translated. `pairs` is capped; `total` is not, so the UI can say how
+        # translated. EVERY refusal carries a code, not just the one somebody
+        # complained about — `notes` rides along for the log and for API
+        # consumers that are not the UI. `pairs`/`total` are only set by the
+        # undecidable-pair refusal; `total` is uncapped so the UI can say how
         # many it is not showing instead of truncating in silence.
         raise HTTPException(status_code=400, detail={
-            "code": "cluster_has_undecidable_pair",
+            "code": res.refusal_code,
             "pairs": [list(pair) for pair in res.blocked_pairs],
             "total": res.blocked_total,
+            "notes": res.notes,
         })
     if res.notes and not (res.merged or res.approved or res.rejected):
         raise HTTPException(status_code=400, detail="; ".join(res.notes))

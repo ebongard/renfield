@@ -173,10 +173,13 @@ organization while reporting `skipped_cross_type=1`. Route-only, because the UI 
 transitive — and that is precisely what made it matter, since #1330 built that bar FOR the route. The blocking check
 now reads every pairwise-refused pair, not just the weak ones.
 
-The refusal itself returns `{"code": "cluster_has_undecidable_pair", "pairs": [...], "total": n}` (the shape the
-user-delete guard uses, #1328) rather than a sentence: a backend string cannot be translated, and the earlier draft
-put English into a German UI. `total` is uncapped while `pairs` is capped at three, so the owner is told how many are
-not listed instead of being handed three of an unstated number.
+Every refusal returns `{"code": …, "pairs": [...], "total": n, "notes": [...]}` (the shape the user-delete guard
+uses, #1328) rather than a sentence: a backend string cannot be translated, and the earlier draft put English into a
+German UI. `resolve_cluster` has seven refusal codes and the first draft translated exactly the one that had been
+complained about, leaving "cluster spans more than one tier", "merge needs a survivor" and four siblings as raw
+English — fixing the instance instead of the class. `cluster_has_undecidable_pair` also carries the blocking pairs and
+an **uncapped** `total` while `pairs` is capped at three, so the owner is told how many are not listed instead of
+being handed three of an unstated number. `notes` rides along for the log and for API consumers that are not the UI.
 
 Known and not fixed: `_repoint_after_fold` rewrites a pair's endpoints but not its `reason`, and since this change
 that reason is a gate rather than a label. A re-pointed pair can therefore carry a stale reason in either direction
