@@ -9,16 +9,21 @@
 ## 1. Warum
 
 Der Abgleicher beantwortet eine **Bedeutungsfrage** — „bezeichnen diese beiden
-Zeilen dasselbe Ding?" — mit **sieben Zeichenkettenfunktionen**:
+Zeilen dasselbe Ding?" — mit Zeichenkettenfunktionen. Auf `main` sind es **fünf**:
 
 ```
-_norm · _name_collision_low_signal · _names_related · _split_camel
-· _names_related_after_split · _osa_distance_is_one · _names_near_typo
+_norm · _name_collision_low_signal · _names_related
+· _osa_distance_is_one · _names_near_typo
 ```
 
 Der Abgleicher ruft dabei nie ein Modell; die einzige Zeile mit Modellbezug ist
-`_get_embedding`. Am 2026-09-24 hat ein einziger Zweig (#1331) viermal dieselbe
-Ursache vorgeführt:
+`_get_embedding`.
+
+#1331 wollte zwei weitere hinzufügen (`_split_camel`, `_names_related_after_split`)
+und hat dabei in **einem einzigen Zweig viermal dieselbe Ursache** vorgeführt.
+Der Zweig wurde verworfen, die beiden Funktionen stehen NICHT auf `main` — die
+Fehlschläge sind trotzdem der Beleg, denn sie betreffen die Methode, nicht den
+Zweig:
 
 | Fehlschlag | Was die Regel nicht wissen konnte |
 |---|---|
@@ -56,18 +61,22 @@ beschädigen.
 
 ## 3. Die Aufteilung
 
-Heute leisten die sieben Funktionen zwei verschiedene Dinge, und genau deshalb
-sind sie unauflösbar verheddert. Der Entwurf trennt sie:
+Die fünf Funktionen leisten zwei verschiedene Dinge, und genau deshalb sind sie
+unauflösbar verheddert. Der Entwurf trennt sie:
 
-| | bleibt/kommt | Aufgabe |
+| | bleibt/entfällt | Aufgabe |
 |---|---|---|
 | **`_names_related`** (gleich oder Token-Teilmenge) | **bleibt, deterministisch** | einziges Tor zur **stillen Faltung** (`person_ok`). Wird nie wieder aufgeweitet. |
-| `_names_near_typo`, `_osa_distance_is_one`, `_split_camel`, `_names_related_after_split` | **entfallen** | existierten nur, um die **Vorlage** zu verbreitern |
+| `_norm`, `_name_collision_low_signal` | **bleiben** | Normalisierung bzw. Beschreibungs-Signal — beantworten die Namensfrage gar nicht |
+| **`_names_near_typo`, `_osa_distance_is_one`** | **entfallen** | existieren nur, um die **Vorlage** zu verbreitern |
 | **Adjudikator** (neu) | **kommt** | entscheidet allein, was dem Eigentümer **vorgelegt** wird |
 
+Netto: zwei Funktionen weg, eine hinzu — und die verbleibenden drei beantworten
+die Bedeutungsfrage nicht mehr. `_names_related` ist die einfachste der fünf und
+schon heute die einzige, die das Auto-Merge-Tor bedient; sie bleibt genau dafür.
+
 Damit ist die Sicherheitszusage beweisbar statt beteuert: das Modell taucht im
-Auto-Merge-Pfad nicht auf. `_names_related` bleibt als die einfachste der sieben
-Funktionen stehen — und sie ist heute schon die einzige, die das Tor bedient.
+Auto-Merge-Pfad nicht auf.
 
 ## 4. Was gefragt wird
 
@@ -106,9 +115,12 @@ Erwartete Urteile auf den bekannten Fällen:
 | `Release` ~ `HelmRelease` | nein | — |
 | `Product A - 1.2.4` ~ `Product A - 1.2.3` | nein | — |
 
-Die letzte Zeile ist #1329, das der heutige Abgleicher **automatisch verschmolzen
-hat**. Der Adjudikator löst es nicht direkt (er entscheidet die Vorlage, nicht
-die Faltung), aber er macht sichtbar, dass die Frage stellbar ist.
+Die letzte Zeile ist #1329. Sie wurde **auf dem reva-Graphen** automatisch
+verschmolzen (0,9505 und 0,9947, zwei Release-Versionen); auf Haushalt und xidra
+ist das gemessen **nicht** passiert (0 vollzogene Faltungen dieser Form, ein
+lebender Kandidat bei 0,8385 unter der Schwelle). Der Adjudikator löst #1329
+nicht — er entscheidet die Vorlage, nicht die Faltung —, aber er macht sichtbar,
+dass die Frage überhaupt stellbar ist.
 
 ## 5. Ausfall, Wiederholbarkeit, Vertrauensgrenze
 
@@ -144,10 +156,13 @@ beiden Typen** — keine Beschreibungen, keine Dokumentinhalte, keine Kreisstufe
 
 ## 7. Ausrollen
 
-Dunkel: `KG_NAME_ADJUDICATOR_ENABLED=false`. Flag aus → der Pfad ist
-**byte-identisch** zum heutigen Verhalten minus der entfallenen vier Funktionen,
-also `_names_related` allein. Neue Umgebungsvariablen nach
-`docs/ENVIRONMENT_VARIABLES.md`.
+Dunkel: `KG_NAME_ADJUDICATOR_ENABLED=false`. Flag aus → es gilt `_names_related`
+allein. Das ist **nicht byte-identisch** zu heute, und der Unterschied ist
+benennbar: die Typo-Ausnahme (#876) entfällt, also werden Personenpaare, die sich
+um einen Zeichen-Edit unterscheiden, wieder verworfen statt vorgelegt. Wer diese
+Ausnahme behalten will, muss sie als Modellfall in den Prompt nehmen — dort
+gehört sie hin, denn „Schmidt/Schmitt sind zwei Menschen" ist ebenfalls eine
+Bedeutungsfrage. Neue Umgebungsvariablen nach `docs/ENVIRONMENT_VARIABLES.md`.
 
 Reihenfolge: ausrollen → **lesend** gegen beide Bestände messen (der Adjudikator
 läuft, sein Urteil wird protokolliert, aber nicht angewandt) → Urteile gegen die
