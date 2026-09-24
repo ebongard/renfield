@@ -151,8 +151,11 @@ easily). Label `name_tokenization`, ranked below `cross_type`: a cross-type toke
 mismatch, because that is the actionable fact; the label surfaces on same-type pairs.
 
 **A second, deliberate effect.** A same-type non-person pair is gated by no guard — `related` is never consulted for
-it — so `thing "Billing Engine"` ~ `thing "BillingEngine"` was already a candidate and, above the auto bar with
-distinct descriptions, already auto-merged. `block_auto_merge` now demotes such pairs to review. That is wanted:
+it — so `thing "Billing Engine"` ~ `thing "BillingEngine"` is already a candidate, and *above* the auto bar with
+distinct descriptions it would be folded with nobody looking. `block_auto_merge` now demotes that case to review.
+Whether a real pair crosses the bar is an empirical question, and on all three measured graphs none does today (the
+reva pair sits at 0.8770 and is already a proposal there) — the mechanism is real, its effect today is nil. Demoting
+is wanted:
 tokenization-relatedness is a weak signal, and the same rule also pairs `Release` with `HelmRelease` and `Payment`
 with `PaymentGateway-Timeout` (measured on the reva graph). None of those may be folded with nobody looking. On the
 household and xidra graphs nothing is demoted today — the highest such pair sits at 0.8496 and 0.8103, below the

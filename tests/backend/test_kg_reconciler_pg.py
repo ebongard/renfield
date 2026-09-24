@@ -1265,10 +1265,16 @@ class TestNameTokenization:
         """The rescue's SECOND effect, deliberate and easy to miss.
 
         A same-type non-person pair is gated by no guard — `related` is never
-        consulted for it — so "Billing Engine" ~ "BillingEngine" was already a
-        candidate and, above the auto bar with distinct descriptions, already
-        AUTO-MERGED. Setting `block_auto_merge` for tokenization variants now
-        demotes it to review.
+        consulted for it — so "Billing Engine" ~ "BillingEngine" is already a
+        candidate, and ABOVE the auto bar with distinct descriptions it would be
+        folded with nobody looking. Setting `block_auto_merge` for tokenization
+        variants demotes that case to review.
+
+        Whether any real pair crosses the bar is an empirical question, and on
+        all three measured graphs none does today — the reva pair this fixture is
+        named after sits at 0.8770 and is already a proposal there. The fixture
+        puts it at cosine 1.0 on purpose: the mechanism has to be exercised even
+        where no production corpus reaches it.
 
         That is wanted, not collateral: tokenization-relatedness is a weak
         signal. The same rule that pairs "Billing Engine" with "BillingEngine"
