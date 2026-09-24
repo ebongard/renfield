@@ -39,22 +39,29 @@ exact name → surface-form (jsonb `@>`) → embedding (**SAME-TIER only** + hig
   ONE exception (#876 field data): a **typo pair** — same tokens except one, that one differing by a single in-token
   edit (`_names_near_typo`, both spellings ≥ 4 chars) — survives as a **review proposal** (`reason=name_typo`), never
   an auto-merge. Short tokens stay excluded on purpose (numbered test accounts "…01"/"…02" are distinct people).
+- **Type-guard (#1330):** DISJOINT claimed types (`entity_type` + `entity_types`, `_types_compatible`) drop the pair —
+  UNLESS the names are related (the mis-TYPED-duplicate shape), which survives as a review proposal (`cross_type`),
+  never an auto-merge. Embedding cannot see the difference: a town and the company seated in it are described out of
+  the same documents (0.895 measured). Unknown type on either side = compatible; the guard accuses, it never guesses.
 - Same-name gate: same normalized name + empty/identical descriptions never auto-merges → review.
 - Per-user non-blocking advisory lock `_RECONCILER_LOCK_NS`; an overlapping run is a no-op. Each pass first re-embeds
   up to `KG_RECONCILER_EMBED_BACKFILL_PER_RUN` null-embedding entities (else invisible to the self-join).
 - Approving a proposal whose counterpart was already merged closes it as `superseded`, not `approved`.
 - **A rejection is final for the reconciler.** The self-join AND `_propose` exclude pairs with a `pending` OR
   `rejected` proposal; a rejected pair never comes back on its own. The only way back is an explicit admin merge
-  (`POST /entities/merge`, `KG_MANAGE`). Label precedence when a pair qualifies twice: `cross_tier` > `name_typo` >
-  `gray_zone` (the card keys its warning and button de-emphasis on `cross_tier`).
+  (`POST /entities/merge`, `KG_MANAGE`). Label precedence: `cross_tier` > `cross_type` > `name_typo` > `gray_zone`;
+  the card keys its warning on `cross_tier` and DERIVES the label from the live types when they differ (rows pending
+  from before the guard carry `gray_zone` and would otherwise read "similar but uncertain").
 - Routes are `KG_VIEW`, own graph only, per-proposal ownership 404. Scheduler `_schedule_kg_reconciler`.
 - **The queue's unit is the CLUSTER, not the pair** (`resolve_cluster`, `POST /merge-proposals/cluster`). Measured
   2026-09-24: 1 391 pending, 2 ever resolved — 1 365 pairs over 952 entities in 199 name clusters, and every pair
   above the auto bar had identical names + no description (the same-name gate above, working as designed). Two
   invariants make a bulk decision safe: **only same-tier pairs take part** (a cross-tier pair changes reach and is
   reported back in `skipped_cross_tier`, never swept — which also makes `tier = MIN` a no-op), and **the fold set is
-  derived from the PROPOSALS, not from the request** (else the route merges two arbitrary entities on demand). The
-  frontend groups by connected components over the pairs, NOT by name: a pair can hold two spellings.
+  derived from the PROPOSALS, not from the request** (else the route merges two arbitrary entities on demand). #1330
+  added a third: **only type-compatible pairs take part** (`skipped_cross_type`) — one cross-type edge inside a
+  component drags the whole component across the type boundary. The frontend groups by connected components over the
+  pairs, NOT by name (a pair can hold two spellings), and does not chain across differing primary types either.
 - The proposal list carries what the embedding does not — description, edge count, first/last seen — because the owner
   facing two bare identical names is in exactly the position the reconciler refused to decide from.
 

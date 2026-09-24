@@ -101,6 +101,30 @@ the invariant-bearing fact and drives the card's warning). Since the same change
 is final for the reconciler — the self-join and `_propose` exclude `pending` and `rejected` pairs alike, so a
 "maybe two people" verdict is not re-asked every run; the only way back is an explicit admin merge.
 
+**Type-guard** — added 2026-09-24 (#1330) after the xidra queue showed what the embedding cannot see. The reconciler
+had no notion of entity TYPE at all; only notes were excluded. A town and the company seated in it are described out
+of the same documents, so they embed far above the 0.85 candidate bar: `place "Korschenbroich"` ~ `organization
+"X-Idra Systems GmbH"` measured at **0.895**, with eight such pairs pending in xidra and one in the household. The
+damage is not one bad row — the review queue groups pairs into connected components, so a single cross-type edge
+drags a whole cluster of company spellings into the town, where "fold all" would have merged them. Above 0.95 the
+pair would have auto-merged outright: `_name_collision_low_signal` does not apply once both sides carry their own
+description, and a counter-test confirmed the subset case folding automatically without the guard.
+
+The guard mirrors the person-guard's shape: if the two sides' claimed types are DISJOINT (`_types_compatible` over
+`entity_type` plus the `entity_types` superset), the pair is dropped — **unless the names are related** (equal or
+whitespace-token-subset). That is the one shape in which a foreign type means a *mis-typed duplicate* rather than two
+different things, and both live graphs hold exactly one: `person "Pontresina"` → `place "Pontresina"` and
+`organization "Publikationsplattform"` → `thing "Publikationsplattform der …"`. Those survive as review proposals
+(`reason=cross_type`), never auto-merges — which type is right is a human call. An unknown type on either side counts
+as compatible: the guard accuses, it never guesses. Note the asymmetry it closes — the inline `resolve_entity` path
+has had `match_entity_type` since the bridge (3a below); the reconciler had nothing.
+
+`resolve_cluster` carries the same bar as a second invariant next to same-tier (`skipped_cross_type`), and the
+frontend's `mergeClusters` refuses to chain components across differing primary types — which also covers the pairs
+that were already pending when the guard landed. The frontend compares only the primary type (the brief carries no
+type set); the divergence is one-directional and harmless: the view may split a pair the backend would have folded,
+and it stays individually decidable.
+
 Operational details:
 
 - Each pass is serialized per-user by a non-blocking advisory lock (`_RECONCILER_LOCK_NS`); an overlapping run is a
@@ -119,7 +143,10 @@ Routes — all `KG_VIEW`, scoped to the caller's own graph + per-proposal owners
 - `/reconciler/run`
 
 Frontend: `MergeProposalsSection` + `MergeProposalCard` at the top of `/brain/review` (comparison + survivor toggle +
-cross-tier warning + 5s undo toast).
+cross-tier warning + 5s undo toast). The card de-emphasises the merge button for cross-tier, `name_typo`, `cross_type`
+and any pair whose primary types simply differ, and derives the displayed reason label from the live types when they
+differ and the pair is not cross-tier — the rows pending from before the type guard carry `gray_zone` and would
+otherwise be labelled "similar but uncertain".
 
 ## Memory→KG bridge
 
