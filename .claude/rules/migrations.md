@@ -14,7 +14,19 @@ Loaded only when a migration file is read. Deploy order and the migration Job: `
   already forked — stop and fix that first) and `alembic current`.
 - Never run `alembic upgrade head` on an EMPTY database: a fresh DB self-bootstraps (`init_db()` runs
   `Base.metadata.create_all` + stamps HEAD). The chain from empty fails on `room_output_devices` (FK to `rooms`, which
-  only `create_all` creates).
+  only `create_all` creates) — the ROOT revision `9a0d8ccea5b0` is an empty `pass` stub, so the chain has never been a
+  complete description of the schema.
+- 🛑 **The consequence of that stamp: raw-SQL DDL in a migration NEVER reaches a fresh install.** `create_all` builds
+  tables and ORM-declared indexes; anything a migration adds via `op.execute("CREATE INDEX …")` is skipped, and the
+  stamp then claims it was applied, so nothing ever backfills it. Measured 2026-09-24, 37 data points without one
+  exception: every raw-SQL index from a migration dated up to 2026-04-02 is ABSENT on both instances, every one from
+  2026-04-25 on is present; the household DB was created 2026-04-18. Nine indexes were missing, five of them HNSW —
+  every semantic search ran as a seq scan (measured: 46 ms vs 0.57 ms on 5 000 rows). Repaired by
+  `pc20260924_restore_idx`; the CAUSE still stands, so a new raw-SQL index today is lost again on the next fresh
+  install. Declare it in the ORM as well, or accept that it is repair-migration material.
+- **`atttypmod` for a `vector(N)` column IS N** — there is no `+4` varlena offset. `pc20260402:60` computes
+  `atttypmod - 4` and would have built a `halfvec(2556)` index that queries casting to `halfvec(2560)` can never use:
+  built, maintained on every write, dead. `y8z9a0b1c2d3` reads it raw and is correct.
 
 ## Transaction model
 `alembic/env.py` runs with `transaction_per_migration=True` (online and offline). Each migration commits on its own: a

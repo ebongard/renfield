@@ -421,19 +421,33 @@ async def test_create_document_populates_atom_id_and_tier_from_kb(schema_conn):
     sm = async_sessionmaker(bind=conn, class_=AsyncSession, expire_on_commit=False)
 
     async with sm() as session:
-        role = Role(name="doc_role")
+        # Eindeutig je Lauf. Mit den festen Namen "doc_role"/"doc_owner" war der
+        # Test NICHT wiederholbar: `roles` und `users` liegen im public-Schema
+        # der geteilten Testbank, nicht im Wegwerf-Schema dieses Moduls, und der
+        # Aufräumlauf zwischen den Tests fasst sie nicht an. Der erste Lauf war
+        # grün, jeder weitere starb an `duplicate key … ix_roles_name`, und die
+        # Zeilen liessen sich wegen einer FK-Kette (users -> knowledge_bases)
+        # auch nicht mehr von Hand entfernen. Gefunden 2026-09-24.
+        #
+        # `tag` gilt fuer JEDEN eindeutigkeitsgebundenen Namen hier, nicht nur
+        # fuer den, der gerade rot war: `roles.name`, `users.username`,
+        # `users.email` UND `knowledge_bases.name` tragen alle ein UNIQUE. Nur
+        # die ersten drei zu kennzeichnen verschob den Fehler bloss eine Zeile
+        # weiter — beim ersten Versuch genau so passiert.
+        tag = uuid.uuid4().hex[:8]
+        role = Role(name=f"doc_role_{tag}")
         session.add(role)
         await session.flush()
         user = User(
-            username="doc_owner",
-            email="doc_owner@ex.test",
+            username=f"doc_owner_{tag}",
+            email=f"doc_owner_{tag}@ex.test",
             password_hash="x",
             role_id=role.id,
             is_active=True,
         )
         session.add(user)
         await session.flush()
-        kb = KnowledgeBase(name="Steuern KB", owner_id=user.id, default_circle_tier=3)
+        kb = KnowledgeBase(name=f"Steuern KB {tag}", owner_id=user.id, default_circle_tier=3)
         session.add(kb)
         await session.commit()
         kb_id = kb.id
