@@ -126,6 +126,10 @@ export default function MergeClusterCard({ cluster, busy = false, onMerge, onRej
                   <span className="block text-sm text-gray-900 dark:text-white truncate">{e.name}</span>
                   <span className="mt-0.5 flex flex-wrap items-center gap-2 text-xs text-gray-500 dark:text-gray-400">
                     <TierBadge tier={e.circle_tier} />
+                    {/* The KIND of thing, not decoration: a cluster that holds a
+                        place and an organization is a wrong fold, and without the
+                        type on the row there is nothing to see it by. */}
+                    <span>{e.entity_type}</span>
                     <span className="tabular-nums">
                       {t('circles.mergeProposals.mentions', { count: e.mention_count })}
                     </span>

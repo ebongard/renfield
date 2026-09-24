@@ -14,6 +14,7 @@ import type { MergeProposal, MergeProposalEntityBrief } from '../api/resources/k
  * so the button emphasis never pushes hard toward the merge:
  *   - cross_tier  → both buttons secondary, Ablehnen focused first, + an
  *                   explicit visibility-change warning (color is never alone).
+ *   - cross_type  → same treatment: the two sides are different KINDS of thing.
  *   - gray_zone   → same tier, just below the auto bar → Zusammenführen primary.
  *
  * D2 survivor toggle: a radio group picks WHICH entity survives (default = the
@@ -31,10 +32,14 @@ export default function MergeProposalCard({ proposal, onApprove, onReject, busy 
   const [winnerId, setWinnerId] = useState<number>(proposal.winner.id);
 
   const crossTier = proposal.loser.circle_tier !== proposal.winner.circle_tier;
-  // No merge nudge when the stakes are high: a visibility change (cross_tier) or
-  // a pair that is "maybe two people" by definition (name_typo — one in-token
-  // edit apart). The visibility warning itself stays keyed on the tiers.
-  const cautious = crossTier || proposal.reason === 'name_typo';
+  // No merge nudge when the stakes are high: a visibility change (cross_tier), a
+  // pair that is "maybe two people" by definition (name_typo — one in-token edit
+  // apart), or two different KINDS of thing (cross_type, or simply differing
+  // primary types on an older pair proposed before that guard existed — merging
+  // rewrites what the entity IS). The visibility warning stays keyed on the tiers.
+  const crossType = proposal.loser.entity_type !== proposal.winner.entity_type;
+  const cautious = crossTier || crossType
+    || proposal.reason === 'name_typo' || proposal.reason === 'cross_type';
   const pct = Math.round((proposal.similarity ?? 0) * 100);
   const radioName = `merge-${proposal.id}-survivor`;
 

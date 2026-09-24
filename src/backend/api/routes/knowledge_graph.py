@@ -647,7 +647,9 @@ async def resolve_merge_cluster(
     once that a group of same-named entities is (or is not) the same thing. Only
     pairs the reconciler already proposed take part, and only SAME-TIER ones —
     a cross-tier pair changes an atom's reach and stays individually decidable
-    (it is reported back in ``skipped_cross_tier``, never silently swept).
+    (it is reported back in ``skipped_cross_tier``, never silently swept). The
+    same holds for a pair whose entity types are disjoint — folding a place into
+    an organization rewrites what the entity is (``skipped_cross_type``).
 
     KG_VIEW like approve/reject: this is the owner resolving their own queue.
     Ownership is enforced inside the service by filtering the proposals on
@@ -668,6 +670,7 @@ async def resolve_merge_cluster(
         approved=res.approved,
         rejected=res.rejected,
         skipped_cross_tier=res.skipped_cross_tier,
+        skipped_cross_type=res.skipped_cross_type,
         notes=res.notes,
     )
 

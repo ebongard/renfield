@@ -15,6 +15,19 @@ import type { MergeCluster } from './MergeClusterCard';
  * component it touches (for the footer count) and otherwise left alone; one
  * that touches no component is returned in `crossTierOnly` to be rendered as an
  * ordinary single pair.
+ *
+ * A pair whose entity TYPES differ is excluded from the components for the same
+ * reason and a sharper one: it is usually not a duplicate at all. Embedding
+ * similarity cannot separate a town from the company seated in it — both are
+ * described out of the same documents — so the reconciler used to propose such
+ * pairs, and ONE of them inside a component drags the whole component across
+ * the type boundary (measured on the xidra graph 2026-09-24: a place pulled a
+ * cluster of company spellings into itself). The backend now refuses to propose
+ * them unless the names are related, and refuses to fold them in bulk either;
+ * this test is the view's own half, and it also holds for the pairs already in
+ * the queue from before that guard. A same-name/different-type pair is a real,
+ * decidable case (a mis-typed duplicate) — it is shown as a single pair, not
+ * dropped.
  */
 export interface GroupedProposals {
   /** Components with MORE than one pair — worth a cluster card. */
@@ -27,9 +40,18 @@ function tierOf(p: MergeProposal): { same: boolean } {
   return { same: p.loser.circle_tier === p.winner.circle_tier };
 }
 
+/** Same KIND of thing — the primary type is what the brief carries. */
+function sameType(p: MergeProposal): boolean {
+  return p.loser.entity_type === p.winner.entity_type;
+}
+
 export function groupProposals(proposals: MergeProposal[]): GroupedProposals {
-  const sameTier = proposals.filter((p) => tierOf(p).same);
-  const crossTier = proposals.filter((p) => !tierOf(p).same);
+  // A cross-type pair is never an edge and never a cluster member — it goes
+  // straight to the single-pair cards, ahead of the tier split.
+  const crossType = proposals.filter((p) => !sameType(p));
+  const typed = proposals.filter(sameType);
+  const sameTier = typed.filter((p) => tierOf(p).same);
+  const crossTier = typed.filter((p) => !tierOf(p).same);
 
   // Union-find over entity ids, edges = same-tier pairs.
   const parent = new Map<number, number>();
@@ -80,7 +102,7 @@ export function groupProposals(proposals: MergeProposal[]): GroupedProposals {
   }
 
   const clusters: MergeCluster[] = [];
-  const singles: MergeProposal[] = [...crossOrphans];
+  const singles: MergeProposal[] = [...crossType, ...crossOrphans];
   for (const [root, bucket] of byRoot) {
     // A cross-tier pair is ALWAYS rendered as its own card, cluster or not —
     // the cluster only carries it as a count for its footer. Counting it without

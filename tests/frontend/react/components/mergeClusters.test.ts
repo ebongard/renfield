@@ -10,8 +10,10 @@ import { describe, it, expect } from 'vitest';
 import { groupProposals } from '../../../../src/frontend/src/components/mergeClusters';
 import type { MergeProposal, MergeProposalEntityBrief } from '../../../../src/frontend/src/api/resources/knowledgeGraph';
 
-function ent(id: number, name: string, tier = 2, mentions = 1): MergeProposalEntityBrief {
-  return { id, name, entity_type: 'person', circle_tier: tier, mention_count: mentions, surface_forms: [] };
+function ent(
+  id: number, name: string, tier = 2, mentions = 1, entity_type = 'person',
+): MergeProposalEntityBrief {
+  return { id, name, entity_type, circle_tier: tier, mention_count: mentions, surface_forms: [] };
 }
 
 let nextId = 1;
@@ -97,5 +99,47 @@ describe('groupProposals', () => {
     const small = [pair(ent(10, 'B', 2, 1), ent(11, 'B', 2, 4)), pair(ent(12, 'B', 2, 2), ent(11, 'B', 2, 4))];
     const { clusters } = groupProposals([...small, ...big]);
     expect(clusters[0].pairs.length).toBeGreaterThan(clusters[1].pairs.length);
+  });
+});
+
+describe('groupProposals — the type boundary', () => {
+  // Field shape, xidra graph 2026-09-24: the reconciler proposed
+  // place "Korschenbroich" ~ organization "X-Idra Systems GmbH" (0.895 — both
+  // described out of the same letterhead). That ONE edge pulled the town into
+  // the cluster of company spellings, where "fold all" would have merged it.
+  it('never lets a cross-type pair chain two components together', () => {
+    const firm1 = ent(1, 'X-Idra Systems GmbH', 2, 3, 'organization');
+    const firm2 = ent(2, 'X-idra Systems GmbH', 2, 9, 'organization');
+    const firm3 = ent(5, 'XIdra Systems Gmbh', 2, 1, 'organization');
+    const town1 = ent(3, 'Korschenbroich', 2, 4, 'place');
+    const town2 = ent(4, 'Korschenbroich', 2, 2, 'place');
+    const town3 = ent(6, 'Korschenbroich', 2, 1, 'place');
+
+    const bridge = pair(town1, firm2);
+    const { clusters, singles } = groupProposals([
+      pair(firm1, firm2), pair(firm3, firm2),
+      pair(town1, town2), pair(town3, town2),
+      bridge,
+    ]);
+
+    // Two clusters, not one — and neither holds a member of the other kind.
+    expect(clusters).toHaveLength(2);
+    for (const c of clusters) {
+      expect(new Set(c.entities.map((e) => e.entity_type)).size).toBe(1);
+    }
+    // The bridge is not swept away: it stays decidable as its own pair.
+    expect(singles.map((p) => p.id)).toContain(bridge.id);
+  });
+
+  it('shows a same-name cross-type pair as a single pair, not as a cluster', () => {
+    // The mis-TYPED duplicate — a real case, just not a bulk decision.
+    const asPerson = ent(1, 'Pontresina', 2, 1, 'person');
+    const asPlace = ent(2, 'Pontresina', 2, 9, 'place');
+    const p = pair(asPerson, asPlace, 'cross_type');
+
+    const { clusters, singles } = groupProposals([p]);
+
+    expect(clusters).toHaveLength(0);
+    expect(singles.map((x) => x.id)).toEqual([p.id]);
   });
 });

@@ -183,13 +183,14 @@ class ClusterResolveResponse(BaseModel):
     approved: int = 0
     rejected: int = 0
     skipped_cross_tier: int = 0
+    skipped_cross_type: int = 0
     notes: list[str] = Field(default_factory=list)
 
 
 class MergeProposalResponse(BaseModel):
     id: int
     similarity: float
-    reason: str            # cross_tier | gray_zone | name_typo
+    reason: str            # cross_tier | cross_type | gray_zone | name_typo
     status: str            # pending | approved | rejected
     created_at: str = ""
     loser: MergeProposalEntityBrief

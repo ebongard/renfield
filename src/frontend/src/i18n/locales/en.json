@@ -1917,6 +1917,7 @@
       "whySuggested": "Possible duplicate · {{pct}}% similarity",
       "reason": {
         "cross_tier": "different visibility",
+        "cross_type": "different kinds of thing",
         "gray_zone": "similar but uncertain",
         "name_typo": "spelling variant of a person's name"
       },

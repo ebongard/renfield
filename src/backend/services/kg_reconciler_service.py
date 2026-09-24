@@ -30,6 +30,7 @@ not re-litigate (the only way back is an explicit admin merge).
 """
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 
@@ -45,6 +46,7 @@ from models.database import (
     KG_MERGE_PROPOSAL_REJECTED,
     KG_MERGE_PROPOSAL_SUPERSEDED,
     KG_MERGE_REASON_CROSS_TIER,
+    KG_MERGE_REASON_CROSS_TYPE,
     KG_MERGE_REASON_GRAY_ZONE,
     KG_MERGE_REASON_NAME_TYPO,
     KGEntity,
@@ -109,6 +111,42 @@ def _is_person(etype: str | None, etypes_text: str | None) -> bool:
     a deterministic, decoder-independent membership test.
     """
     return etype == "person" or (etypes_text is not None and '"person"' in etypes_text)
+
+
+def _type_tokens(etype: str | None, etypes: str | list | None) -> set[str]:
+    """Every type token an entity claims — the primary column plus the multi-type set.
+
+    ``etypes`` is either ``entity_types::text`` (a JSON array literal, how the
+    self-join selects it) or the decoded list (how the ORM hands it over).
+    Parsed leniently: anything unrecognised contributes nothing rather than
+    raising, so the caller degrades to the primary type alone.
+    """
+    tokens = {t for t in (_norm(etype),) if t}
+    values = etypes
+    if isinstance(values, str):
+        try:
+            values = json.loads(values)
+        except (TypeError, ValueError):
+            values = None
+    if isinstance(values, list):
+        tokens |= {_norm(t) for t in values if isinstance(t, str) and _norm(t)}
+    return tokens
+
+
+def _types_compatible(
+    etype_a: str | None, etypes_a: str | list | None,
+    etype_b: str | None, etypes_b: str | list | None,
+) -> bool:
+    """False only when the two entities' claimed types are DISJOINT.
+
+    An unknown type on either side is not evidence of a mismatch, so it returns
+    True — the guard accuses, it never guesses.
+    """
+    ta = _type_tokens(etype_a, etypes_a)
+    tb = _type_tokens(etype_b, etypes_b)
+    if not ta or not tb:
+        return True
+    return bool(ta & tb)
 
 
 def _names_related(name_a: str | None, name_b: str | None) -> bool:
@@ -208,6 +246,11 @@ class MergeCandidate:
     # kept as a REVIEW candidate (reason name_typo), never auto-merged — the
     # gate above already refuses it via names_related=False; this is the label.
     name_typo: bool = False
+    # The two sides claim DISJOINT types (a place and an organization). Such a
+    # pair only reaches here with related names, which is the mis-TYPED-duplicate
+    # shape; it is a review candidate, never an auto-merge (see the type-guard in
+    # find_duplicate_pairs).
+    cross_type: bool = False
 
 
 @dataclass
@@ -217,6 +260,7 @@ class ClusterResolution:
     approved: int = 0               # pending pairs closed as approved
     rejected: int = 0               # pending pairs closed as rejected
     skipped_cross_tier: int = 0     # left individually decidable (visibility)
+    skipped_cross_type: int = 0     # left individually decidable (disjoint types)
     notes: list[str] = field(default_factory=list)
 
 
@@ -311,6 +355,23 @@ class KgReconcilerService:
             typo = bool(is_person and not related and _names_near_typo(r.name_a, r.name_b))
             if is_person and not related and not typo:
                 continue
+            # TYPE-GUARD: a pair whose claimed types are DISJOINT is a different
+            # KIND of thing, and embedding similarity cannot say so — a town and
+            # the company seated in it are described out of the same documents,
+            # so they embed well above the candidate threshold (measured on the
+            # xidra graph 2026-09-24: place "Korschenbroich" ~ organization
+            # "X-Idra Systems GmbH" at 0.895, four such pairs pending). Drop the
+            # pair unless the NAMES are related, which is the one shape where a
+            # disjoint type means a MIS-TYPED duplicate rather than two different
+            # things (field data: person "Pontresina" -> place "Pontresina",
+            # organization "Publikationsplattform" -> thing "Publikationsplattform
+            # der ..."). Those survive as REVIEW candidates only: the type still
+            # has to be judged by a human, so no auto-merge.
+            cross_type = not _types_compatible(
+                r.etype_a, r.etypes_a, r.etype_b, r.etypes_b
+            )
+            if cross_type and not related:
+                continue
             # Winner = the more-established row: higher mention_count, tie-break
             # on the OLDER first_seen_at (smaller timestamp).
             a_key = (int(r.mc_a or 1), -(r.fs_a.timestamp() if r.fs_a else 0.0))
@@ -325,12 +386,13 @@ class KgReconcilerService:
                 loser_id=loser_id, winner_id=winner_id,
                 similarity=float(r.similarity),
                 loser_tier=loser_tier, winner_tier=winner_tier,
-                block_auto_merge=typo or _name_collision_low_signal(
+                block_auto_merge=typo or cross_type or _name_collision_low_signal(
                     r.name_a, r.name_b, r.desc_a, r.desc_b,
                 ),
                 is_person_pair=is_person,
                 names_related=related,
                 name_typo=typo,
+                cross_type=cross_type,
             ))
         return out
 
@@ -350,6 +412,8 @@ class KgReconcilerService:
             return False
         if c.loser_tier != c.winner_tier:
             reason = KG_MERGE_REASON_CROSS_TIER
+        elif c.cross_type:
+            reason = KG_MERGE_REASON_CROSS_TYPE
         elif c.name_typo:
             reason = KG_MERGE_REASON_NAME_TYPO
         else:
@@ -465,8 +529,11 @@ class KgReconcilerService:
                 # in depth behind the find-time drop): a distinct-name person pair
                 # must never silently merge two different people.
                 person_ok = (not c.is_person_pair) or c.names_related
+                # A disjoint-type pair is review-only by construction
+                # (block_auto_merge is already set); spelt out here so a future
+                # change to that flag cannot silently fold a place into a company.
                 if (c.loser_tier == c.winner_tier and c.similarity >= auto_t
-                        and not c.block_auto_merge and person_ok):
+                        and not c.block_auto_merge and not c.cross_type and person_ok):
                     kg = KnowledgeGraphService(self.db)
                     res = await kg.merge_entities(c.loser_id, c.winner_id)
                     if res is not None:
@@ -603,13 +670,25 @@ class KgReconcilerService:
             # proposed — a tier may have moved since, in either direction.
             lt = (p.loser.circle_tier if p.loser else None) or 0
             wt = (p.winner.circle_tier if p.winner else None) or 0
-            if lt == wt:
-                same_tier.append(p)
-            else:
+            if lt != wt:
                 res.skipped_cross_tier += 1
+                continue
+            # A disjoint-type pair is not bulk-decidable either: folding a place
+            # into an organization rewrites what the entity IS, and one such edge
+            # inside a component would drag the whole component across the type
+            # boundary. It stays an individual decision, exactly like cross-tier.
+            if not _types_compatible(
+                p.loser.entity_type if p.loser else None,
+                p.loser.entity_types if p.loser else None,
+                p.winner.entity_type if p.winner else None,
+                p.winner.entity_types if p.winner else None,
+            ):
+                res.skipped_cross_type += 1
+                continue
+            same_tier.append(p)
 
         if not same_tier:
-            res.notes.append("no same-tier pending pair in this cluster")
+            res.notes.append("no foldable pending pair in this cluster")
             return res
 
         now = datetime.now(UTC).replace(tzinfo=None)

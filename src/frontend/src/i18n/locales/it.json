@@ -1517,6 +1517,7 @@
       "whySuggested": "Possibile duplicato · {{pct}}% di somiglianza",
       "reason": {
         "cross_tier": "visibilità diversa",
+        "cross_type": "tipi di cosa diversi",
         "gray_zone": "simile ma incerto",
         "name_typo": "variante ortografica di un nome di persona"
       },
