@@ -186,6 +186,18 @@ _TYPO_MIN_TOKEN_LEN = 4
 # a hyphen carries meaning in this data ("RM27-10", "Product A - 1.2.4"), and
 # splitting it would take apart exactly the version-number class that already
 # merges too easily.
+#
+# KNOWN LIMITATION, measured and deliberately not fixed: a German legal form
+# written run-together comes apart wrongly — "XidraSystemsGmbH" becomes
+# "Xidra Systems Gmb H" (the lowercase "b" before the final "H" triggers rule 1),
+# so it does NOT match "Xidra Systems GmbH" and the pair is simply not rescued.
+# Tightening rule 1 to `(?=[A-Z][a-z])` fixes GmbH and BREAKS the other half:
+# "BeispielAG" and "StadtwerkeKG" then stop splitting at all. No positional rule
+# separates "Gmb|H" from "Beispiel|AG" — that needs a lexicon of legal forms.
+# Both variants fail CLOSED (the pair is dropped, never wrongly merged), the two
+# household graphs hold 7 and 4 such names, and neither variant rescues a single
+# measured pair. Swapping one German shape for the other would be churn; the
+# limitation is pinned by a test so nobody "fixes" it without seeing the trade.
 _CAMEL_LOWER_UPPER = re.compile(r"(?<=[a-z])(?=[A-Z])")
 _CAMEL_ACRONYM = re.compile(r"(?<=[A-Z])(?=[A-Z][a-z])")
 

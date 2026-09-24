@@ -49,6 +49,34 @@ class TestSplitCamel:
     def test_left_alone(self, raw):
         assert _split_camel(raw) == raw
 
+    @pytest.mark.parametrize("raw,split", [
+        # KNOWN LIMITATION, pinned on purpose. A run-together German legal form
+        # comes apart wrongly: the lowercase "b" before the final "H" triggers
+        # rule 1, so "…GmbH" becomes "…Gmb H" and never matches the spaced
+        # spelling. The pair is then simply not rescued — it fails CLOSED, it is
+        # never wrongly merged.
+        ("XidraSystemsGmbH", "Xidra Systems Gmb H"),
+        ("MüllerGmbH", "Müller Gmb H"),
+        # The other half of the trade, and why this is not "fixed": tightening
+        # rule 1 to `(?=[A-Z][a-z])` would repair GmbH and break these two.
+        ("BeispielAG", "Beispiel AG"),
+        ("StadtwerkeKG", "Stadtwerke KG"),
+    ])
+    def test_german_legal_forms_are_a_known_trade(self, raw, split):
+        """No positional rule separates "Gmb|H" from "Beispiel|AG" — that needs a
+        lexicon. Measured 2026-09-24: 7 such names on the household graph, 4 on
+        xidra, and neither variant rescues a single pair on either. Change this
+        only with a measurement that beats both halves."""
+        assert _split_camel(raw) == split
+
+    @pytest.mark.parametrize("raw", [
+        "ОООРога",      # Cyrillic — `[a-z]`/`[A-Z]` are ASCII ranges in `re`
+        "東京Tower",     # CJK has no case, so no boundary is found
+    ])
+    def test_non_latin_scripts_are_left_alone(self, raw):
+        """Fails closed: no split, no rescue, never a wrong merge."""
+        assert _split_camel(raw) == raw
+
     def test_none_is_empty_not_a_crash(self):
         assert _split_camel(None) == ""
 
