@@ -58,10 +58,13 @@ Gemessen auf der Baubox an 5 000 Zeilen × 2560 Dimensionen (Produktionsgröße:
 Sekundenbereich, deshalb gewöhnliches `CREATE INDEX` in der Transaktion und
 kein `CONCURRENTLY` (das ginge in einer Alembic-Transaktion ohnehin nicht).
 """
+import logging
 from typing import Sequence, Union
 
 from alembic import op
 from sqlalchemy import text
+
+logger = logging.getLogger("alembic.runtime.migration")
 
 revision: str = 'pc20260924_restore_idx'
 down_revision: Union[str, None] = 'pc20260922_conv_meeting_atoms'
@@ -119,8 +122,24 @@ def _table_exists(conn, table: str) -> bool:
     ), {"t": table}).scalar() is True
 
 
+def _configured_embedding_dim() -> int | None:
+    """`EMBEDDING_DIMENSION` aus der Konfiguration, oder None.
+
+    Nur für eine Warnung. Eine Migration darf nicht daran scheitern, dass die
+    Anwendungskonfiguration in diesem Kontext nicht importierbar ist — dann
+    entfällt eben die Warnung, nicht die Reparatur.
+    """
+    try:
+        from utils.config import settings
+
+        return int(settings.embedding_dimension)
+    except Exception:
+        return None
+
+
 def upgrade() -> None:
     conn = op.get_bind()
+    _configured_dim = _configured_embedding_dim()
 
     for name, table, column in _VECTOR_INDEXES:
         # Eine Instanz muss nicht jede Tabelle haben (dunkle Funktionen, andere
@@ -130,6 +149,22 @@ def upgrade() -> None:
         dim = _column_dim(conn, table, column)
         if dim is None:
             continue
+        # Der Index wird mit der Dimension der SPALTE gebaut — sie ist die
+        # Wahrheit darüber, was dort liegt. Die Abfragen der Dienste casten
+        # dagegen auf `EMBEDDING_DIMENSION` aus der Konfiguration. Laufen die
+        # beiden auseinander, ist der Index gebaut, gepflegt und wird NIE
+        # benutzt: exakt der stumme Fehlermodus, gegen den diese Migration
+        # antritt. Der Vorgabewert der Einstellung ist 768, produktiv steht
+        # 2560 nur, weil die ConfigMap es setzt — eine Instanz ohne diesen
+        # Schlüssel driftet also sofort. Das kann die Migration nicht
+        # reparieren, aber sie kann es SAGEN statt es geschehen zu lassen.
+        if _configured_dim is not None and _configured_dim != dim:
+            logger.warning(
+                "%s: Spalte %s.%s ist vector(%d), die Konfiguration sagt "
+                "EMBEDDING_DIMENSION=%d. Der Index wird auf %d gebaut und von "
+                "Abfragen, die auf %d casten, NIE benutzt werden.",
+                name, table, column, dim, _configured_dim, dim, _configured_dim,
+            )
         if dim > 2000:
             # halfvec, weil der reguläre vector-Typ beim Indizieren bei 2000 endet.
             expr = f"(({column}::halfvec({dim})) halfvec_cosine_ops)"
@@ -150,5 +185,16 @@ def downgrade() -> None:
     # Rein additiv, also ist der Rückweg ein reines Entfernen. `IF EXISTS`, damit
     # ein Rückbau auf einer Instanz, die einen dieser Indizes nie hatte, nicht
     # abbricht — genau die Lage, aus der diese Migration hervorging.
+    #
+    # 🛑 EINE UNSCHÄRFE, die hier steht statt verschwiegen zu werden: auf einer
+    # Instanz, die einen dieser Indizes SCHON HATTE, war das `upgrade()` wegen
+    # `IF NOT EXISTS` ein Nichts — dieses `downgrade()` entfernt ihn trotzdem.
+    # Der Rückbau stellt dort also nicht den Zustand von vorher her, sondern
+    # einen schlechteren. Bewusst in Kauf genommen: es sind reine Indizes, kein
+    # Datenverlust, in Sekunden neu gebaut (gemessen 762 ms je HNSW bei
+    # Produktionsgröße), und ein Buchführen darüber, wer welchen Index angelegt
+    # hat, wäre mehr Apparat als der Fehler wert. Wiederherstellung: `upgrade`
+    # erneut. Auf BEIDEN Produktivinstanzen fehlen heute alle acht, dort ist der
+    # Rundlauf exakt (gemessen: 326 → 334 → 326 → 334).
     for name in _ALL_NAMES:
         op.execute(f"DROP INDEX IF EXISTS {name}")
