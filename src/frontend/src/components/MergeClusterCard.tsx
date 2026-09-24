@@ -82,6 +82,15 @@ export default function MergeClusterCard({ cluster, busy = false, onMerge, onRej
 
   const headingId = `cluster-${cluster.key}-heading`;
 
+  // What KIND of thing this cluster is. It belongs in the header and nowhere
+  // else: grouping is primary-type EQUALITY, which is transitive, so every row
+  // in a cluster necessarily carries the same string — per-row it would be pure
+  // repetition, and it could never show the mixed cluster it was meant to expose.
+  // Rendered raw, like every other entity type in the KG surface (GraphView,
+  // FocusNeighborhood, the pair card): there is no per-value translation map,
+  // and inventing one here alone would leave the six other places inconsistent.
+  const kinds = [...new Set(cluster.entities.map((e) => e.entity_type))].join(' · ');
+
   return (
     <li className="merge-proposal-card animate-fade-slide-in flex flex-col gap-3">
       <button
@@ -97,6 +106,8 @@ export default function MergeClusterCard({ cluster, busy = false, onMerge, onRej
           {cluster.label}
         </span>
         <span className="text-xs text-gray-500 dark:text-gray-400 whitespace-nowrap">
+          {kinds}
+          <span aria-hidden="true"> · </span>
           {t('circles.mergeProposals.cluster.summary', {
             entities: cluster.entities.length,
             pairs: cluster.pairs.length + cluster.crossTierPairs.length,
@@ -126,10 +137,6 @@ export default function MergeClusterCard({ cluster, busy = false, onMerge, onRej
                   <span className="block text-sm text-gray-900 dark:text-white truncate">{e.name}</span>
                   <span className="mt-0.5 flex flex-wrap items-center gap-2 text-xs text-gray-500 dark:text-gray-400">
                     <TierBadge tier={e.circle_tier} />
-                    {/* The KIND of thing, not decoration: a cluster that holds a
-                        place and an organization is a wrong fold, and without the
-                        type on the row there is nothing to see it by. */}
-                    <span>{e.entity_type}</span>
                     <span className="tabular-nums">
                       {t('circles.mergeProposals.mentions', { count: e.mention_count })}
                     </span>

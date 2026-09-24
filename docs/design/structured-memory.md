@@ -133,9 +133,26 @@ Both find-time guards drop silently by design, which is why `ReconcileReport` ca
 `dropped_person_guard` — `candidates` counts survivors, so without them a guard that is too greedy on some graph
 leaves no trace at all. They appear in the pass's log line and in `/reconciler/run`.
 
+**Two limits worth knowing.** The disjointness test runs in Python, *after* the self-join's `ORDER BY similarity
+DESC LIMIT` (`cap = max(KG_RECONCILER_MAX_PER_RUN * 2, 2)`, so 100 by default). Every pair the guard eats therefore
+consumed a slot in that window, and a genuine duplicate ranked below it is not fetched at all — the guard shrinks the
+effective per-run budget. `dropped_cross_type` is the instrument for deciding whether that matters on a given graph;
+pushing the test into the SQL predicate (a safe superset, e.g. `a.entity_type = b.entity_type OR … OR the names share
+a token`) is the fix if it does. Not done pre-emptively: measure first.
+
+Second, the guard does not re-label what was already there. `find_duplicate_pairs` excludes any pair that already has
+a `pending` or `rejected` proposal, so the rows that were queued before the guard landed keep `reason=gray_zone`.
+That is an audit-trail fact, not a UI one — the card derives its label from the live types (above), so those rows
+still read "different kinds of thing". Nothing re-writes a stored reason; a backfill would be a one-off `UPDATE` and
+is deliberately not part of the guard.
+
 `resolve_cluster` carries the same bar as a second invariant next to same-tier (`skipped_cross_type`), and the
 frontend's `mergeClusters` refuses to chain components across differing primary types — the same test on the same
 field, so view and service agree exactly. That also covers the pairs that were already pending when the guard landed.
+Note what follows from that agreement: because the view groups on primary-type EQUALITY, which is transitive, a
+cluster it submits can never contain a type-incompatible pair, so `skipped_cross_type` guards the ROUTE (whose
+`entity_ids` are caller-supplied) rather than the click path. For the same reason the cluster card names the kind
+ONCE, in its header — per row it would be the same string repeated.
 
 Operational details:
 

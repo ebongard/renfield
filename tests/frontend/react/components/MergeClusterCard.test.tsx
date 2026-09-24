@@ -34,6 +34,27 @@ function cluster(overrides: Partial<MergeCluster> = {}): MergeCluster {
 }
 
 describe('MergeClusterCard', () => {
+  it('names the KIND of thing once, in the header', () => {
+    // Per row it would be pure repetition: grouping is primary-type equality,
+    // which is transitive, so every entity in a cluster carries the same type.
+    renderWithProviders(
+      <MergeClusterCard
+        cluster={cluster({
+          label: 'Beispiel GmbH',
+          entities: [
+            ent(1, 'Beispiel GmbH', { entity_type: 'organization' }),
+            ent(2, 'Beispiel Gmbh', { entity_type: 'organization', mention_count: 9 }),
+          ],
+        })}
+        onMerge={vi.fn()} onReject={vi.fn()}
+      />,
+    );
+    expect(screen.getAllByText(/organization/)).toHaveLength(1);
+    // …and still once after expanding: this is the actual claim.
+    fireEvent.click(screen.getByRole('button', { expanded: false }));
+    expect(screen.getAllByText(/organization/)).toHaveLength(1);
+  });
+
   it('summarises the cluster without expanding it', () => {
     renderWithProviders(
       <MergeClusterCard cluster={cluster()} onMerge={vi.fn()} onReject={vi.fn()} />,
