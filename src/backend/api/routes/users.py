@@ -15,11 +15,14 @@ from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException, status
 from loguru import logger
 from pydantic import BaseModel, EmailStr, Field
+import re
+
 from sqlalchemy import func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from models.database import Atom, Role, Speaker, User
+from models.database import Role, Speaker, User
 from models.permissions import (
     Permission,
     has_permission,
@@ -522,18 +525,26 @@ async def update_user(
     )
 
 
-async def _owned_atom_count(db: AsyncSession, user_id: int) -> int:
-    """How many atoms this user owns — the single question that decides whether
-    the account can be deleted at all.
+def _blocking_table(err: IntegrityError) -> str | None:
+    """Which table still references the user, from the FK violation itself.
 
-    `atoms` is the ownership spine of the circles model: every knowledge-graph
-    node, note, conversation and memory registers one, and `atoms.owner_user_id`
-    is a NOT NULL, non-deferrable FK to `users.id`. So this one count stands in
-    for "does removing this row take knowledge with it".
+    Postgres says it plainly: *update or delete on table "users" violates
+    foreign key constraint "atoms_owner_user_id_fkey" **on table "atoms"***.
+    Reading it off the error rather than enumerating tables is the whole point —
+    there are 36 blocking FKs to `users.id` today, and the next migration can add
+    one without anybody remembering this route.
     """
-    return int((await db.execute(
-        select(func.count()).select_from(Atom).where(Atom.owner_user_id == user_id)
-    )).scalar_one() or 0)
+    # NB the message names TWO tables: *on table "users" … on table "atoms"*.
+    # The one we want is the second — the table still holding the reference.
+    m = re.search(r'violates foreign key constraint "[^"]+" on table "([^"]+)"', str(err))
+    if m:
+        return m.group(1)
+    orig = getattr(err, "orig", None)
+    for candidate in (orig, getattr(orig, "__cause__", None)):
+        name = getattr(candidate, "constraint_name", None)
+        if name:
+            return str(name)
+    return None
 
 
 @router.delete("/{user_id}")
@@ -576,31 +587,40 @@ async def delete_user(
             detail="Refusing: this would leave the instance with no admin",
         )
 
-    # Ownership guard: a user OWNS atoms — knowledge-graph nodes, notes,
-    # conversations, memories. Deleting the row hits the non-deferrable
-    # `atoms.owner_user_id` FK and the request dies with a 500; worse, if the FKs
-    # ever cascaded it would silently destroy household-tier knowledge that other
-    # members can still read. Neither is a deletion anyone asked for.
+    # A user who still holds data cannot be deleted, and that is deliberate.
+    # 36 foreign keys reference `users.id` WITHOUT `ON DELETE` — atoms (the
+    # ownership spine: every graph node, note, conversation and memory registers
+    # one), circle memberships, notifications, reminders, proposals. Postgres
+    # refuses the parent DELETE, and before this the request died with a 500 that
+    # named nothing.
     #
-    # So: refuse, and say what the account actually holds. The supported move for
-    # a member who should lose access is DEACTIVATION (`is_active = false`) —
-    # the login goes, the knowledge stays where the household can reach it.
-    # A genuine removal needs the ownership transferred first, which is a
-    # decision about the knowledge, not about the account.
-    owned = await _owned_atom_count(db, user.id)
-    if owned:
+    # The fix is NOT a cascade: a member's atoms are household-tier knowledge the
+    # others still read, and deleting an account must never be a quiet way to
+    # delete that. So: let the database decide — it knows all 36, and it will
+    # know the 37th — and turn its refusal into an answer the operator can act on.
+    #
+    # Catching beats pre-counting here: a pre-check would have to enumerate every
+    # referencing table (and go stale), and it would still race — the victim's own
+    # satellite turn can write an atom between the count and the DELETE.
+    username = user.username
+    try:
+        # SAVEPOINT: a failed DELETE must not take the surrounding transaction
+        # with it. Without it the session is poisoned and a plain rollback would
+        # also discard whatever else the request had done.
+        async with db.begin_nested():
+            await db.delete(user)
+        await db.commit()
+    except IntegrityError as err:
+        blocked_by = _blocking_table(err)
+        logger.info(
+            f"Refused to delete user '{username}': still referenced by {blocked_by}"
+        )
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail=(
-                f"User '{user.username}' owns {owned} atoms (knowledge-graph "
-                f"nodes, notes, conversations). Deactivate the account instead "
-                f"(is_active=false), or transfer ownership first."
-            ),
-        )
-
-    username = user.username
-    await db.delete(user)
-    await db.commit()
+            # Structured: the frontend translates on `code` (CLAUDE.md i18n rule),
+            # `blocked_by` says which table for the operator and the logs.
+            detail={"code": "user_still_referenced", "blocked_by": blocked_by},
+        ) from err
 
     await run_hooks("household_graph_changed", kind="user", mutation="deleted")
     logger.info(f"Deleted user: {username} by {current_user.username if current_user else 'system'}")

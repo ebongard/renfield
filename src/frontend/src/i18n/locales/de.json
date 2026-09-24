@@ -1126,7 +1126,8 @@
       "direkt": "Direkt",
       "formell": "Formell",
       "casual": "Casual"
-    }
+    },
+    "stillReferenced": "„{{username}}\" kann nicht gelöscht werden: das Konto hält noch Daten ({{table}}). Das ist Wissen, das andere Mitglieder weiter lesen. Deaktiviere das Konto stattdessen — der Zugang geht, das Wissen bleibt."
   },
   "roles": {
     "title": "Rollenverwaltung",

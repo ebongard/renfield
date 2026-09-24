@@ -9,6 +9,7 @@ Testet:
 """
 
 from unittest.mock import AsyncMock, MagicMock, patch
+from uuid import uuid4
 
 import pytest
 from httpx import AsyncClient
@@ -523,26 +524,40 @@ class TestDeviceAccountFlag:
 
 
 class TestDeleteRefusesToTakeKnowledgeWithIt:
-    """`DELETE /users/{id}` used to 500 on any account that had ever chatted.
+    """`DELETE /users/{id}` used to 500 on any account that still held data.
 
-    `atoms.owner_user_id` is a NOT NULL, non-deferrable FK, and a conversation is
-    an atom — so `db.delete(user)` hit a ForeignKeyViolation and the caller got a
-    500 with no idea why. Found on 2026-09-24 while removing a test account.
+    36 foreign keys reference `users.id` WITHOUT `ON DELETE`, so Postgres refuses
+    the parent DELETE — and the caller got a 500 that named nothing. Found on
+    2026-09-24 while removing a test account.
 
-    The answer is not a cascade: the atoms a member owns are household-tier
-    knowledge other members still read. Deleting an account must never be a way
-    to delete that quietly. So the route refuses, names the number, and points at
-    deactivation.
+    The answer is not a cascade: a member's atoms are household-tier knowledge
+    the others still read. Nor is it a pre-count of one table — the first fix
+    tried that and left the 500 alive for every account with a circle membership
+    and no atoms, which on this household is every family member.
     """
 
     @staticmethod
     async def _plain_role(db: AsyncSession) -> Role:
         """A role WITHOUT `admin`: the victim must not be the last admin, or the
         last-admin guard answers first and this test proves nothing."""
-        role = Role(name="opfer_rolle", permissions=["chat.own"])
+        role = Role(name=f"opfer_rolle_{uuid4().hex[:8]}", permissions=["chat.own"])
         db.add(role)
         await db.flush()
         return role
+
+    async def _victim(self, db: AsyncSession, username: str) -> User:
+        u = User(username=username, password_hash="x",
+                 role_id=(await self._plain_role(db)).id, is_active=True)
+        db.add(u)
+        await db.flush()
+        return u
+
+    @staticmethod
+    def _admin(test_role: Role) -> MagicMock:
+        # id far out of the way: the victim is the first row in a fresh test DB
+        # and would otherwise trip the self-deletion guard.
+        return MagicMock(username="admin", id=999_999, role=test_role,
+                         get_permissions=lambda: test_role.permissions)
 
     @staticmethod
     async def _atom_for(db: AsyncSession, owner_id: int) -> None:
@@ -558,28 +573,19 @@ class TestDeleteRefusesToTakeKnowledgeWithIt:
     async def test_refuses_with_409_when_the_account_owns_atoms(
         self, db_session: AsyncSession, test_role: Role
     ):
+        from api.routes import users as users_routes
         from fastapi import HTTPException
 
-        from api.routes import users as users_routes
-
-        victim = User(username="hat-wissen", password_hash="x",
-                      role_id=(await self._plain_role(db_session)).id, is_active=True)
-        db_session.add(victim)
-        await db_session.flush()
+        victim = await self._victim(db_session, "hat-wissen")
         await self._atom_for(db_session, victim.id)
 
         with pytest.raises(HTTPException) as err:
             await users_routes.delete_user(
-                user_id=victim.id, db=db_session,
-                # id far out of the way: the victim is the first row in a fresh
-                # test DB and would otherwise trip the self-deletion guard.
-                current_user=MagicMock(username="admin", id=999_999, role=test_role,
-                                       get_permissions=lambda: test_role.permissions),
+                user_id=victim.id, db=db_session, current_user=self._admin(test_role),
             )
         assert err.value.status_code == 409
-        # The message has to be actionable: how much, and what to do instead.
-        assert "owns" in err.value.detail
-        assert "Deactivate" in err.value.detail
+        assert err.value.detail["code"] == "user_still_referenced"
+        assert err.value.detail["blocked_by"] == "atoms"
 
         still_there = (await db_session.execute(
             select(User).where(User.id == victim.id)
@@ -587,23 +593,43 @@ class TestDeleteRefusesToTakeKnowledgeWithIt:
         assert still_there is not None
 
     @pytest.mark.database
-    async def test_deletes_an_account_that_owns_nothing(
+    async def test_refuses_for_a_membership_too_not_just_atoms(
+        self, db_session: AsyncSession, test_role: Role
+    ):
+        """The regression the first fix missed. The household backfill writes a
+        PAIRWISE circle_memberships row for every family member, so an account
+        can hold nothing but a membership — and `circle_memberships` has three
+        blocking FKs to `users.id` of its own."""
+        from api.routes import users as users_routes
+        from fastapi import HTTPException
+        from models.database import CircleMembership
+
+        owner = await self._victim(db_session, "kreis-eigner")
+        victim = await self._victim(db_session, "nur-mitglied")
+        db_session.add(CircleMembership(
+            circle_owner_id=owner.id, member_user_id=victim.id,
+            dimension="tier", value="2", granted_by=owner.id,
+        ))
+        await db_session.flush()
+
+        with pytest.raises(HTTPException) as err:
+            await users_routes.delete_user(
+                user_id=victim.id, db=db_session, current_user=self._admin(test_role),
+            )
+        assert err.value.status_code == 409          # kein 500
+        assert err.value.detail["blocked_by"] == "circle_memberships"
+
+    @pytest.mark.database
+    async def test_deletes_an_account_that_holds_nothing(
         self, db_session: AsyncSession, test_role: Role
     ):
         from api.routes import users as users_routes
 
-        victim = User(username="leeres-konto", password_hash="x",
-                      role_id=(await self._plain_role(db_session)).id, is_active=True)
-        db_session.add(victim)
-        await db_session.flush()
+        victim = await self._victim(db_session, "leeres-konto")
 
         with patch("api.routes.users.run_hooks", new=AsyncMock()):
             out = await users_routes.delete_user(
-                user_id=victim.id, db=db_session,
-                # id far out of the way: the victim is the first row in a fresh
-                # test DB and would otherwise trip the self-deletion guard.
-                current_user=MagicMock(username="admin", id=999_999, role=test_role,
-                                       get_permissions=lambda: test_role.permissions),
+                user_id=victim.id, db=db_session, current_user=self._admin(test_role),
             )
         assert "leeres-konto" in out["message"]
         gone = (await db_session.execute(

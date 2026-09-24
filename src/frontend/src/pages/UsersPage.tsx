@@ -7,6 +7,7 @@ import { useState, useEffect } from 'react';
 import type { FormEvent } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useAuth } from '../context/AuthContext';
+import type { AxiosError } from 'axios';
 import { extractApiError, extractFieldErrors } from '../utils/axios';
 import { formatDateTime } from '../utils/datetime';
 import Modal from '../components/Modal';
@@ -243,6 +244,20 @@ export default function UsersPage() {
       await deleteUser.mutateAsync(user.id);
       setSuccess(t('users.userDeleted'));
     } catch (err) {
+      // The backend refuses to delete an account that still holds data (409):
+      // 36 foreign keys reference users.id without ON DELETE, and a member's
+      // atoms are household-tier knowledge the others still read. It answers
+      // with a CODE so this message can be translated instead of shipping an
+      // English sentence into a German admin page.
+      const detail = (err as AxiosError<{ detail?: { code?: string; blocked_by?: string } }>)
+        ?.response?.data?.detail;
+      if (detail?.code === 'user_still_referenced') {
+        setError(t('users.stillReferenced', {
+          username: user.username,
+          table: detail.blocked_by ?? '?',
+        }));
+        return;
+      }
       setError(extractApiError(err, t('users.failedToDelete')));
     }
   };

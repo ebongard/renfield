@@ -784,7 +784,8 @@
       "direkt": "Diretto",
       "formell": "Formale",
       "casual": "Informale"
-    }
+    },
+    "stillReferenced": "Impossibile eliminare \"{{username}}\": l'account contiene ancora dati ({{table}}). È conoscenza che altri membri continuano a leggere. Disattiva l'account — l'accesso sparisce, la conoscenza resta."
   },
   "roles": {
     "title": "Gestione Ruoli",

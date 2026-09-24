@@ -55,7 +55,7 @@ policy            — JSON: {"circle_tier": 2, ...}
 
 Die Quell-Tabellen tragen **denormalisiert** eine `circle_tier`- und `atom_id`-Spalte — nicht als Wahrheitsquelle, sondern als Performance-Abkürzung: das Retrieval kann in einem einzigen `JOIN` filtern, ohne jedes Mal über `atoms.policy` aufzulösen.
 
-**Folge für die Kontoverwaltung**: weil `atoms.owner_user_id` NOT NULL und nicht aufschiebbar ist, kann ein Konto, das Atome besitzt, nicht gelöscht werden — `DELETE /api/users/{id}` antwortet mit 409 und nennt die Zahl. Das ist Absicht: die Atome eines Mitglieds sind Wissen auf Haushalts-Stufe, das andere weiter lesen. Der unterstützte Weg ist **Deaktivieren**; eine echte Entfernung verlangt vorher einen Eigentumsübergang.
+**Folge für die Kontoverwaltung**: `atoms.owner_user_id` ist NOT NULL und nicht aufschiebbar — einer von **36** Fremdschlüsseln, die ohne `ON DELETE` auf `users.id` zeigen. Ein Konto, das noch Daten hält, lässt sich deshalb nicht löschen; `DELETE /api/users/{id}` antwortet mit 409 und nennt die blockierende Tabelle. Das ist Absicht: die Atome eines Mitglieds sind Wissen auf Haushalts-Stufe, das andere weiter lesen. Der unterstützte Weg ist **Deaktivieren**.
 
 **Invariante**: Schreibzugriffe auf source_tables gehen **ausschließlich** über `AtomService.upsert_atom`. Direkter `INSERT` in `document_chunks`/`kg_entities`/etc. ist durch Code-Review + einen CI-Lint verboten. Das garantiert, dass `atoms` und die denormalisierten Spalten nicht auseinanderlaufen.
 

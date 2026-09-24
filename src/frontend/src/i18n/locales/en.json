@@ -1126,7 +1126,8 @@
       "direkt": "Direct",
       "formell": "Formal",
       "casual": "Casual"
-    }
+    },
+    "stillReferenced": "Cannot delete \"{{username}}\": the account still holds data ({{table}}). That is knowledge other members still read. Deactivate the account instead — the login goes, the knowledge stays."
   },
   "roles": {
     "title": "Role Management",
