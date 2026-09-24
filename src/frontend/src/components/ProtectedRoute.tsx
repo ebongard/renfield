@@ -4,6 +4,7 @@
  * Wraps routes that require authentication or specific permissions.
  */
 import type { ReactNode } from 'react';
+import { useTranslation } from 'react-i18next';
 import { Navigate, useLocation } from 'react-router';
 import { useAuth } from '../context/AuthContext';
 import { Loader, ShieldOff } from 'lucide-react';
@@ -23,6 +24,7 @@ export default function ProtectedRoute({
 }: ProtectedRouteProps) {
   const { user, isAuthenticated, authEnabled, loading, hasPermission, hasAnyPermission } = useAuth();
   const location = useLocation();
+  const { t } = useTranslation();
 
   if (loading) {
     return (
@@ -58,10 +60,11 @@ export default function ProtectedRoute({
       return (
         <div className="flex flex-col items-center justify-center min-h-[50vh] text-center px-4">
           <ShieldOff className="w-16 h-16 text-red-500 mb-4" />
-          <h2 className="text-2xl font-bold text-white mb-2">Access Denied</h2>
-          <p className="text-gray-400 max-w-md">
-            You don't have permission to access this page.
-            Please contact an administrator if you believe this is an error.
+          <h2 className="text-2xl font-bold text-gray-900 dark:text-white mb-2">
+            {t('auth.accessDeniedTitle')}
+          </h2>
+          <p className="text-gray-600 dark:text-gray-400 max-w-md">
+            {t('auth.accessDeniedBody')}
           </p>
         </div>
       );

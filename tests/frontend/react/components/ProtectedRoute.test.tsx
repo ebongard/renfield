@@ -242,8 +242,8 @@ describe('ProtectedRoute', () => {
         </ProtectedRoute>,
       );
 
-      expect(screen.getByText('Access Denied')).toBeInTheDocument();
-      expect(screen.getByText(/you don't have permission/i)).toBeInTheDocument();
+      expect(screen.getByText('Zugriff verweigert')).toBeInTheDocument();
+      expect(screen.getByText(/keine Berechtigung/i)).toBeInTheDocument();
       expect(screen.queryByTestId('protected-content')).not.toBeInTheDocument();
     });
 
@@ -285,7 +285,7 @@ describe('ProtectedRoute', () => {
       );
 
       // Should be denied because user doesn't have 'admin'
-      expect(screen.getByText('Access Denied')).toBeInTheDocument();
+      expect(screen.getByText('Zugriff verweigert')).toBeInTheDocument();
     });
 
     it('allows access when user has all required permissions', () => {
@@ -348,7 +348,7 @@ describe('AdminRoute', () => {
       </AdminRoute>,
     );
 
-    expect(screen.getByText('Access Denied')).toBeInTheDocument();
+    expect(screen.getByText('Zugriff verweigert')).toBeInTheDocument();
   });
 
   // The kiosk gate (auth-on cutover D-5): the wall display is guarded by
@@ -394,7 +394,7 @@ describe('AdminRoute', () => {
         </ProtectedRoute>,
       );
 
-      expect(screen.getByText('Access Denied')).toBeInTheDocument();
+      expect(screen.getByText('Zugriff verweigert')).toBeInTheDocument();
     });
   });
 });

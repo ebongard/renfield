@@ -175,7 +175,9 @@
     "changePasswordSubmit": "Change password",
     "passwordChanged": "Password changed successfully.",
     "newPasswordSameAsCurrent": "The new password must differ from the current one.",
-    "changePasswordFailed": "Password change failed. Please try again."
+    "changePasswordFailed": "Password change failed. Please try again.",
+    "accessDeniedTitle": "Access denied",
+    "accessDeniedBody": "You don't have permission to view this page. Ask an administrator if you think you should."
   },
   "chat": {
     "title": "Chat",

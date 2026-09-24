@@ -175,7 +175,9 @@
     "changePasswordSubmit": "Passwort ändern",
     "passwordChanged": "Passwort erfolgreich geändert.",
     "newPasswordSameAsCurrent": "Das neue Passwort muss sich vom aktuellen unterscheiden.",
-    "changePasswordFailed": "Passwortänderung fehlgeschlagen. Bitte erneut versuchen."
+    "changePasswordFailed": "Passwortänderung fehlgeschlagen. Bitte erneut versuchen.",
+    "accessDeniedTitle": "Zugriff verweigert",
+    "accessDeniedBody": "Du hast keine Berechtigung für diese Seite. Wende dich an eine Administratorin oder einen Administrator, wenn du sie brauchst."
   },
   "chat": {
     "title": "Chat",

@@ -121,7 +121,9 @@
       "oidc_internal": "Errore interno. Riprova o contatta il supporto."
     },
     "completingSignIn": "Completamento accesso …",
-    "signInFailed": "Accesso non riuscito. Riprova."
+    "signInFailed": "Accesso non riuscito. Riprova.",
+    "accessDeniedTitle": "Accesso negato",
+    "accessDeniedBody": "Non hai i permessi per questa pagina. Rivolgiti a un amministratore se pensi di doverli avere."
   },
   "chat": {
     "title": "Chat",
