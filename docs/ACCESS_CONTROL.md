@@ -266,7 +266,7 @@ Neue Benutzer erhalten automatisch die "Gast"-Rolle.
 | `/api/users` | POST | Benutzer erstellen |
 | `/api/users/{id}` | GET | Benutzer abrufen |
 | `/api/users/{id}` | PATCH | Benutzer bearbeiten |
-| `/api/users/{id}` | DELETE | Benutzer löschen |
+| `/api/users/{id}` | DELETE | Benutzer löschen — **409, solange das Konto Atome besitzt** (Graph-Knoten, Notizen, Verläufe, Erinnerungen). Das ist Wissen auf Haushalts-Stufe, das andere weiter lesen; ein Konto zu löschen darf kein stiller Weg sein, es mitzulöschen. Der unterstützte Weg ist **Deaktivieren** (`is_active=false`): der Zugang geht, das Wissen bleibt. Eine echte Entfernung braucht vorher einen Eigentumsübergang. |
 | `/api/users/{id}/reset-password` | POST | Passwort zurücksetzen |
 | `/api/users/{id}/unlock` | POST | Anmeldesperre aufheben (`users.manage`; `GET /api/users` liefert `locked_out`) |
 | `/api/users/{id}/link-speaker` | POST | Sprecher verknüpfen |
