@@ -520,3 +520,93 @@ class TestDeviceAccountFlag:
         assert exc.value.status_code == 400
         await db_session.refresh(test_user)
         assert test_user.is_device_account is False
+
+
+class TestDeleteRefusesToTakeKnowledgeWithIt:
+    """`DELETE /users/{id}` used to 500 on any account that had ever chatted.
+
+    `atoms.owner_user_id` is a NOT NULL, non-deferrable FK, and a conversation is
+    an atom — so `db.delete(user)` hit a ForeignKeyViolation and the caller got a
+    500 with no idea why. Found on 2026-09-24 while removing a test account.
+
+    The answer is not a cascade: the atoms a member owns are household-tier
+    knowledge other members still read. Deleting an account must never be a way
+    to delete that quietly. So the route refuses, names the number, and points at
+    deactivation.
+    """
+
+    @staticmethod
+    async def _plain_role(db: AsyncSession) -> Role:
+        """A role WITHOUT `admin`: the victim must not be the last admin, or the
+        last-admin guard answers first and this test proves nothing."""
+        role = Role(name="opfer_rolle", permissions=["chat.own"])
+        db.add(role)
+        await db.flush()
+        return role
+
+    @staticmethod
+    async def _atom_for(db: AsyncSession, owner_id: int) -> None:
+        from models.database import ATOM_TYPE_KG_NODE
+        from services.atom_service import AtomService
+
+        aid = await AtomService(db).create_with_source(
+            atom_type=ATOM_TYPE_KG_NODE, owner_user_id=owner_id, tier=2,
+        )
+        await AtomService(db).finalize_source_id(aid, 1)
+
+    @pytest.mark.database
+    async def test_refuses_with_409_when_the_account_owns_atoms(
+        self, db_session: AsyncSession, test_role: Role
+    ):
+        from fastapi import HTTPException
+
+        from api.routes import users as users_routes
+
+        victim = User(username="hat-wissen", password_hash="x",
+                      role_id=(await self._plain_role(db_session)).id, is_active=True)
+        db_session.add(victim)
+        await db_session.flush()
+        await self._atom_for(db_session, victim.id)
+
+        with pytest.raises(HTTPException) as err:
+            await users_routes.delete_user(
+                user_id=victim.id, db=db_session,
+                # id far out of the way: the victim is the first row in a fresh
+                # test DB and would otherwise trip the self-deletion guard.
+                current_user=MagicMock(username="admin", id=999_999, role=test_role,
+                                       get_permissions=lambda: test_role.permissions),
+            )
+        assert err.value.status_code == 409
+        # The message has to be actionable: how much, and what to do instead.
+        assert "owns" in err.value.detail
+        assert "Deactivate" in err.value.detail
+
+        still_there = (await db_session.execute(
+            select(User).where(User.id == victim.id)
+        )).scalar_one_or_none()
+        assert still_there is not None
+
+    @pytest.mark.database
+    async def test_deletes_an_account_that_owns_nothing(
+        self, db_session: AsyncSession, test_role: Role
+    ):
+        from api.routes import users as users_routes
+
+        victim = User(username="leeres-konto", password_hash="x",
+                      role_id=(await self._plain_role(db_session)).id, is_active=True)
+        db_session.add(victim)
+        await db_session.flush()
+
+        with patch("api.routes.users.run_hooks", new=AsyncMock()):
+            out = await users_routes.delete_user(
+                user_id=victim.id, db=db_session,
+                # id far out of the way: the victim is the first row in a fresh
+                # test DB and would otherwise trip the self-deletion guard.
+                current_user=MagicMock(username="admin", id=999_999, role=test_role,
+                                       get_permissions=lambda: test_role.permissions),
+            )
+        assert "leeres-konto" in out["message"]
+        gone = (await db_session.execute(
+            select(User).where(User.id == victim.id)
+        )).scalar_one_or_none()
+        assert gone is None

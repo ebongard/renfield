@@ -19,7 +19,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from models.database import Role, Speaker, User
+from models.database import Atom, Role, Speaker, User
 from models.permissions import (
     Permission,
     has_permission,
@@ -522,6 +522,20 @@ async def update_user(
     )
 
 
+async def _owned_atom_count(db: AsyncSession, user_id: int) -> int:
+    """How many atoms this user owns — the single question that decides whether
+    the account can be deleted at all.
+
+    `atoms` is the ownership spine of the circles model: every knowledge-graph
+    node, note, conversation and memory registers one, and `atoms.owner_user_id`
+    is a NOT NULL, non-deferrable FK to `users.id`. So this one count stands in
+    for "does removing this row take knowledge with it".
+    """
+    return int((await db.execute(
+        select(func.count()).select_from(Atom).where(Atom.owner_user_id == user_id)
+    )).scalar_one() or 0)
+
+
 @router.delete("/{user_id}")
 async def delete_user(
     user_id: int,
@@ -560,6 +574,28 @@ async def delete_user(
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Refusing: this would leave the instance with no admin",
+        )
+
+    # Ownership guard: a user OWNS atoms — knowledge-graph nodes, notes,
+    # conversations, memories. Deleting the row hits the non-deferrable
+    # `atoms.owner_user_id` FK and the request dies with a 500; worse, if the FKs
+    # ever cascaded it would silently destroy household-tier knowledge that other
+    # members can still read. Neither is a deletion anyone asked for.
+    #
+    # So: refuse, and say what the account actually holds. The supported move for
+    # a member who should lose access is DEACTIVATION (`is_active = false`) —
+    # the login goes, the knowledge stays where the household can reach it.
+    # A genuine removal needs the ownership transferred first, which is a
+    # decision about the knowledge, not about the account.
+    owned = await _owned_atom_count(db, user.id)
+    if owned:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                f"User '{user.username}' owns {owned} atoms (knowledge-graph "
+                f"nodes, notes, conversations). Deactivate the account instead "
+                f"(is_active=false), or transfer ownership first."
+            ),
         )
 
     username = user.username
