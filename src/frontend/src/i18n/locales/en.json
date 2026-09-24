@@ -1932,17 +1932,20 @@
       "merged": "Merged",
       "undo": "Undo",
       "cluster": {
-        "summary": "{{entities}} entities · {{pairs}} pairs",
+        "chainWarning": "These {{count}} entities are linked by a CHAIN of similarities, not compared pairwise — the longer the chain, the likelier two different things are in it. Click again to fold.",
+        "confirmMerge": "Really merge {{count}} entities?",
+        "crossTierLeft_one": "{{count}} pair changes visibility and stays individually decidable",
+        "crossTierLeft_other": "{{count}} pairs change visibility and stay individually decidable",
         "edges_one": "{{count}} edge",
         "edges_other": "{{count}} edges",
         "mergeAll": "Merge all {{count}}",
-        "rejectAll": "Dismiss all",
-        "crossTierLeft_one": "{{count}} pair changes visibility and stays individually decidable",
-        "crossTierLeft_other": "{{count}} pairs change visibility and stay individually decidable",
-        "confirmMerge": "Really merge {{count}} entities?",
-        "chainWarning": "These {{count}} entities are linked by a CHAIN of similarities, not compared pairwise — the longer the chain, the likelier two different things are in it. Click again to fold.",
         "partial_one": "{{count}} pair was not folded in and stays pending.",
-        "partial_other": "{{count}} pairs were not folded in and stay pending."
+        "partial_other": "{{count}} pairs were not folded in and stay pending.",
+        "rejectAll": "Dismiss all",
+        "summary": "{{entities}} entities · {{pairs}} pairs",
+        "undecidableMore": "{{pairs}} and {{count}} more",
+        "undecidable_one": "This cluster holds a pair that may be two different things. Decide it first: {{pairs}}",
+        "undecidable_other": "This cluster holds {{count}} pairs that may be two different things. Decide them first: {{pairs}}"
       }
     },
     "settingsTitle": "Circles & Members",

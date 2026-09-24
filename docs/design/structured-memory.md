@@ -165,6 +165,19 @@ decides that one pair on its own card and the cluster folds afterwards. Folding 
 was the alternative and was rejected: a merge cannot be taken back, and this is exactly the "maybe two different
 people" case.
 
+The same hole sat one guard over and was found by verifying that fix (#1334). `_types_compatible` is deliberately
+non-transitive — `thing` is a wildcard, so `organization`~`thing` and `place`~`thing` both pass while
+`organization`~`place` does not. A cross-type pair could therefore be a chord too: the fold proceeded through the
+`thing` in the middle and `_repoint_after_fold` superseded the cross-type proposal, folding a place into an
+organization while reporting `skipped_cross_type=1`. Route-only, because the UI groups on type EQUALITY which IS
+transitive — and that is precisely what made it matter, since #1330 built that bar FOR the route. The blocking check
+now reads every pairwise-refused pair, not just the weak ones.
+
+The refusal itself returns `{"code": "cluster_has_undecidable_pair", "pairs": [...], "total": n}` (the shape the
+user-delete guard uses, #1328) rather than a sentence: a backend string cannot be translated, and the earlier draft
+put English into a German UI. `total` is uncapped while `pairs` is capped at three, so the owner is told how many are
+not listed instead of being handed three of an unstated number.
+
 Known and not fixed: `_repoint_after_fold` rewrites a pair's endpoints but not its `reason`, and since this change
 that reason is a gate rather than a label. A re-pointed pair can therefore carry a stale reason in either direction
 — over-refusal (harmless) or under-refusal (the hole, reopened for that one pair). Nothing re-evaluates it, because

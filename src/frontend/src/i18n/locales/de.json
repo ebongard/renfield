@@ -1932,17 +1932,20 @@
       "merged": "Zusammengeführt",
       "undo": "Rückgängig",
       "cluster": {
-        "summary": "{{entities}} Entitäten · {{pairs}} Paare",
+        "chainWarning": "Diese {{count}} Entitäten hängen über eine Kette von Ähnlichkeiten zusammen, nicht paarweise geprüft — je länger die Kette, desto wahrscheinlicher sind zwei verschiedene Dinge darin. Nochmal klicken, um zu falten.",
+        "confirmMerge": "Wirklich {{count}} Entitäten verschmelzen?",
+        "crossTierLeft_one": "{{count}} Paar ändert die Sichtbarkeit und bleibt einzeln zu entscheiden",
+        "crossTierLeft_other": "{{count}} Paare ändern die Sichtbarkeit und bleiben einzeln zu entscheiden",
         "edges_one": "{{count}} Kante",
         "edges_other": "{{count}} Kanten",
         "mergeAll": "Alle {{count}} zusammenführen",
-        "rejectAll": "Alle verwerfen",
-        "crossTierLeft_one": "{{count}} Paar ändert die Sichtbarkeit und bleibt einzeln zu entscheiden",
-        "crossTierLeft_other": "{{count}} Paare ändern die Sichtbarkeit und bleiben einzeln zu entscheiden",
-        "confirmMerge": "Wirklich {{count}} Entitäten verschmelzen?",
-        "chainWarning": "Diese {{count}} Entitäten hängen über eine Kette von Ähnlichkeiten zusammen, nicht paarweise geprüft — je länger die Kette, desto wahrscheinlicher sind zwei verschiedene Dinge darin. Nochmal klicken, um zu falten.",
         "partial_one": "{{count}} Paar wurde nicht mitgefaltet und bleibt offen.",
-        "partial_other": "{{count}} Paare wurden nicht mitgefaltet und bleiben offen."
+        "partial_other": "{{count}} Paare wurden nicht mitgefaltet und bleiben offen.",
+        "rejectAll": "Alle verwerfen",
+        "summary": "{{entities}} Entitäten · {{pairs}} Paare",
+        "undecidableMore": "{{pairs}} und {{count}} weitere",
+        "undecidable_one": "Dieses Cluster enthält ein Paar, das zwei verschiedene Dinge sein könnte. Entscheide es zuerst: {{pairs}}",
+        "undecidable_other": "Dieses Cluster enthält {{count}} Paare, die zwei verschiedene Dinge sein könnten. Entscheide sie zuerst: {{pairs}}"
       }
     },
     "settingsTitle": "Kreise & Mitglieder",

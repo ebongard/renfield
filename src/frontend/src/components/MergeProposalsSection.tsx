@@ -105,6 +105,22 @@ export default function MergeProposalsSection() {
   // a cluster is one decision, a lone pair stays the familiar pair card.
   const { clusters, singles } = groupProposals(visible);
 
+  /** The refused-fold detail, translated. Null when this is any other error. */
+  const undecidableMessage = (err: unknown): string | null => {
+    const detail = (err as { response?: { data?: { detail?: unknown } } })
+      ?.response?.data?.detail as
+      { code?: string; pairs?: [string, string][]; total?: number } | undefined;
+    if (!detail || detail.code !== 'cluster_has_undecidable_pair') return null;
+    const shown = (detail.pairs ?? []).map(([a, b]) => `${a} / ${b}`).join('; ');
+    const total = detail.total ?? (detail.pairs?.length ?? 0);
+    const hidden = total - (detail.pairs?.length ?? 0);
+    // Never truncate in silence: say how many are not listed.
+    const pairs = hidden > 0
+      ? t('circles.mergeProposals.cluster.undecidableMore', { pairs: shown, count: hidden })
+      : shown;
+    return t('circles.mergeProposals.cluster.undecidable', { count: total, pairs });
+  };
+
   const handleCluster = (
     entityIds: number[], decision: 'merge' | 'reject', survivorId?: number,
   ): void => {
@@ -143,12 +159,13 @@ export default function MergeProposalsSection() {
         );
       })
       .catch((err: unknown) => {
-        // A refusal must not be silent either. The service returns 400 with its
-        // note as the detail when it folded nothing — today that is a cluster
-        // holding a pair that may be two different things, and the owner needs
-        // to read WHICH pair, not just watch the cards come back.
+        // A refusal must not be silent either, and it must not be English in a
+        // German UI. The service refuses a whole fold with a STRUCTURED detail
+        // (`cluster_has_undecidable_pair` + the pairs + a total); the sentence
+        // is built here so it can be translated. Anything else falls back to the
+        // generic extractor.
         restore();
-        setClusterNote(extractApiError(err, t('common.error')));
+        setClusterNote(undecidableMessage(err) ?? extractApiError(err, t('common.error')));
       });
   };
 

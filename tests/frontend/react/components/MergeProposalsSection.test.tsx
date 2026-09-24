@@ -81,15 +81,15 @@ describe('MergeProposalsSection — partial cluster refusal', () => {
     });
   });
 
-  it('shows WHY when the service refused the whole fold (400)', async () => {
-    // Ein Refus kommt als 400 mit dem Vermerk als `detail`. Die Karten still
-    // zurueckzuholen waere derselbe Fehler eine Schicht tiefer.
+  it('translates the refusal instead of echoing the backend', async () => {
+    // Der Dienst liefert einen CODE plus die Paare; der Satz entsteht hier,
+    // sonst steht Englisch in einer deutschen Oberflaeche (CLAUDE.md).
     server.use(
       http.get(`${BASE}/api/knowledge-graph/merge-proposals`, () =>
         HttpResponse.json({ proposals: PROPOSALS, total: PROPOSALS.length })),
       http.post(`${BASE}/api/knowledge-graph/merge-proposals/cluster`, () =>
         HttpResponse.json(
-          { detail: 'this cluster holds a pair that may be two different things — decide it first: Anna / Ana' },
+          { detail: { code: 'cluster_has_undecidable_pair', pairs: [['Anna', 'Ana']], total: 1 } },
           { status: 400 },
         )),
     );
@@ -97,10 +97,30 @@ describe('MergeProposalsSection — partial cluster refusal', () => {
 
     fireEvent.click(await screen.findByRole('button', { name: /zusammenführen/i }));
 
-    expect(await screen.findByText(/may be two different things/i)).toBeInTheDocument();
+    expect(await screen.findByText(/zwei verschiedene Dinge sein könnte/i)).toBeInTheDocument();
+    expect(screen.getByText(/Anna \/ Ana/)).toBeInTheDocument();
     await waitFor(() => {
       expect(screen.getByRole('button', { name: /zusammenführen/i })).toBeInTheDocument();
     });
+  });
+
+  it('says how many blocking pairs it is NOT naming', async () => {
+    server.use(
+      http.get(`${BASE}/api/knowledge-graph/merge-proposals`, () =>
+        HttpResponse.json({ proposals: PROPOSALS, total: PROPOSALS.length })),
+      http.post(`${BASE}/api/knowledge-graph/merge-proposals/cluster`, () =>
+        HttpResponse.json(
+          { detail: { code: 'cluster_has_undecidable_pair',
+                      pairs: [['A', 'B'], ['C', 'D'], ['E', 'F']], total: 7 } },
+          { status: 400 },
+        )),
+    );
+    renderWithProviders(<MergeProposalsSection />);
+
+    fireEvent.click(await screen.findByRole('button', { name: /zusammenführen/i }));
+
+    // 7 gesamt, 3 genannt -> "und 4 weitere", nie stilles Abschneiden.
+    expect(await screen.findByText(/und 4 weitere/i)).toBeInTheDocument();
   });
 
   it('surfaces a refusal note even when no pair was counted', async () => {

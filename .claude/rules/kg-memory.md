@@ -75,9 +75,14 @@ exact name → surface-form (jsonb `@>`) → embedding (**SAME-TIER only** + hig
   everything the reconciler refuses to auto-merge**: a `gray_zone` pair carries `block_auto_merge` from
   `_name_collision_low_signal` too, and folding those is the whole point (243 pending on the household). The bar reads
   the persisted `reason`, not `block_auto_merge` (a find-time flag that never reaches the queue).
-  🛑 Refusing the EDGE is not enough: both endpoints can still arrive in the survivor via a third entity, and
-  `_repoint_after_fold` then closes the weak pair as `superseded` — executed, while the response calls it skipped. A
-  weak pair with BOTH endpoints in the component therefore refuses the **whole fold**, with a note naming the two.
+  🛑 Refusing the EDGE is not enough, and this holds for BOTH pairwise bars — weak AND cross-type. Neither relation
+  is transitive (`thing` is a wildcard: `organization`~`thing` and `place`~`thing` pass, `organization`~`place` does
+  not), so both endpoints can still arrive in the survivor via a third entity, and `_repoint_after_fold` then closes
+  the refused pair as `superseded` — executed, while the response calls it skipped. Any pairwise-refused pair with
+  BOTH endpoints in the component therefore refuses the **whole fold**. The type bar exists FOR the route, which is
+  exactly why leaving it out of this check left the route-only bar with a route-reachable bypass (#1334).
+  The refusal returns a CODE plus the pairs plus an uncapped total (`cluster_has_undecidable_pair`), never a
+  sentence: the UI translates it, and a capped list without the total truncates in silence.
   Measured 2026-09-24: 11 `name_typo` pending on the household, six inside a foldable cluster.
   🛑 `_repoint_after_fold` rewrites a pair's endpoints but NOT its `reason` — since #1333 that reason is a GATE, so a
   re-pointed pair can carry a stale one in either direction. Known, not fixed: the self-join excludes pending pairs,
