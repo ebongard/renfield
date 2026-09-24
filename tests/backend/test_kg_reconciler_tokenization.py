@@ -69,13 +69,20 @@ class TestSplitCamel:
         only with a measurement that beats both halves."""
         assert _split_camel(raw) == split
 
-    @pytest.mark.parametrize("raw", [
-        "ОООРога",      # Cyrillic — `[a-z]`/`[A-Z]` are ASCII ranges in `re`
-        "東京Tower",     # CJK has no case, so no boundary is found
+    @pytest.mark.parametrize("raw,split", [
+        # The reason this is `str.isupper()` and not `[A-Z]`: the ASCII ranges
+        # never split a German umlaut, on the two German graphs this ships to.
+        ("ProjektÜbersicht", "Projekt Übersicht"),
+        ("MüllerÖko", "Müller Öko"),
+        ("DatenÜbertragung", "Daten Übertragung"),
+        ("ИванПетров", "Иван Петров"),     # and any other cased script, for free
     ])
-    def test_non_latin_scripts_are_left_alone(self, raw):
-        """Fails closed: no split, no rescue, never a wrong merge."""
-        assert _split_camel(raw) == raw
+    def test_case_is_tested_per_script_not_per_ascii_range(self, raw, split):
+        assert _split_camel(raw) == split
+
+    def test_an_uncased_script_has_no_boundary(self):
+        """CJK has no case at all — nothing to split, so nothing is rescued."""
+        assert _split_camel("東京Tower") == "東京Tower"
 
     def test_none_is_empty_not_a_crash(self):
         assert _split_camel(None) == ""

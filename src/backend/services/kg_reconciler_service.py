@@ -172,39 +172,51 @@ def _names_related(name_a: str | None, name_b: str | None) -> bool:
 _TYPO_MIN_TOKEN_LEN = 4
 
 
-# CamelCase boundaries, as two ZERO-WIDTH lookarounds: they only insert a space,
-# they never alter a character.
+# CamelCase boundaries. Two of them, and BOTH are needed:
 #   1. lower -> UPPER       "ProductOwner"  -> "Product Owner"
 #   2. acronym boundary     "QAEngineer"    -> "QA Engineer"
 # Rule 2 is easy to forget and carries half the cases ("XMLHttpRequest" without
 # it becomes "XMLHttp Request"). Agreed with the reva instance 2026-09-24, which
 # measured the field data this is built for.
 #
-# DIGITS ARE DELIBERATELY NOT A BOUNDARY (`[a-z]`, not `[a-z0-9]`): splitting
-# them turns "E2E" into "E2 E", which in the measured corpus produced one
-# nonsense pair and rescued nothing. `-` and `_` are not separators either —
-# a hyphen carries meaning in this data ("RM27-10", "Product A - 1.2.4"), and
-# splitting it would take apart exactly the version-number class that already
-# merges too easily.
+# Written with `str.isupper()`/`islower()` rather than `[a-z]`/`[A-Z]`, which are
+# ASCII ranges in `re`: the first version never split "ProjektÜbersicht" or
+# "MüllerÖko" because Ä Ö Ü are outside `[A-Z]` — on the two GERMAN graphs this
+# ships to (adversarial review 2026-09-24). Hand-picked ranges would only move
+# the hole to the next alphabet, so the case test is the whole rule.
+#
+# DIGITS ARE DELIBERATELY NOT A BOUNDARY: `"2".islower()` is False, so "E2E"
+# stays whole. Splitting it produced one nonsense pair in the measured corpus and
+# rescued nothing. `-` and `_` are not separators either — a hyphen carries
+# meaning in this data ("RM27-10", "Product A - 1.2.4"), and splitting it would
+# take apart exactly the version-number class that already merges too easily.
 #
 # KNOWN LIMITATION, measured and deliberately not fixed: a German legal form
 # written run-together comes apart wrongly — "XidraSystemsGmbH" becomes
 # "Xidra Systems Gmb H" (the lowercase "b" before the final "H" triggers rule 1),
 # so it does NOT match "Xidra Systems GmbH" and the pair is simply not rescued.
-# Tightening rule 1 to `(?=[A-Z][a-z])` fixes GmbH and BREAKS the other half:
+# Requiring a following lowercase in rule 1 fixes GmbH and BREAKS the other half:
 # "BeispielAG" and "StadtwerkeKG" then stop splitting at all. No positional rule
 # separates "Gmb|H" from "Beispiel|AG" — that needs a lexicon of legal forms.
 # Both variants fail CLOSED (the pair is dropped, never wrongly merged), the two
 # household graphs hold 7 and 4 such names, and neither variant rescues a single
 # measured pair. Swapping one German shape for the other would be churn; the
 # limitation is pinned by a test so nobody "fixes" it without seeing the trade.
-_CAMEL_LOWER_UPPER = re.compile(r"(?<=[a-z])(?=[A-Z])")
-_CAMEL_ACRONYM = re.compile(r"(?<=[A-Z])(?=[A-Z][a-z])")
 
 
 def _split_camel(s: str | None) -> str:
     """Insert a space at every CamelCase boundary; otherwise leave the string alone."""
-    return _CAMEL_ACRONYM.sub(" ", _CAMEL_LOWER_UPPER.sub(" ", s or ""))
+    if not s:
+        return ""
+    out: list[str] = []
+    for i, ch in enumerate(s):
+        if i and ch.isupper():
+            prev = s[i - 1]
+            nxt = s[i + 1] if i + 1 < len(s) else ""
+            if prev.islower() or (prev.isupper() and nxt.islower()):
+                out.append(" ")
+        out.append(ch)
+    return "".join(out)
 
 
 def _names_related_after_split(name_a: str | None, name_b: str | None) -> bool:
@@ -357,6 +369,12 @@ class ReconcileReport:
     # these make the silence measurable.
     dropped_person_guard: int = 0
     dropped_cross_type: int = 0
+    # …and what the tokenization RESCUE pulled back out of those two. Without it
+    # the guards' counters silently go DOWN when the rescue fires and nothing
+    # goes up: the claim "its effect is nil today" would not be checkable in
+    # production, and a `_split_camel` regression that starts rescuing broadly
+    # would stay invisible until the proposals appeared.
+    rescued_tokenization: int = 0
     auto_merged: int = 0
     proposed: int = 0
     embedded_backfilled: int = 0
@@ -487,6 +505,8 @@ class KgReconcilerService:
             else:
                 winner_id, winner_tier = int(r.id_b), int(r.tier_b or 0)
                 loser_id, loser_tier = int(r.id_a), int(r.tier_a or 0)
+            if tok and report is not None:
+                report.rescued_tokenization += 1
             out.append(MergeCandidate(
                 loser_id=loser_id, winner_id=winner_id,
                 similarity=float(r.similarity),
@@ -665,13 +685,15 @@ class KgReconcilerService:
 
         await self.db.commit()
         if (report.auto_merged or report.proposed or report.embedded_backfilled
-                or report.dropped_person_guard or report.dropped_cross_type):
+                or report.dropped_person_guard or report.dropped_cross_type
+                or report.rescued_tokenization):
             logger.info(
                 f"🔗 KG reconciler user={user_id}: auto_merged={report.auto_merged}, "
                 f"proposed={report.proposed}, candidates={report.candidates}, "
                 f"embedded_backfilled={report.embedded_backfilled}, "
                 f"dropped_person_guard={report.dropped_person_guard}, "
-                f"dropped_cross_type={report.dropped_cross_type}"
+                f"dropped_cross_type={report.dropped_cross_type}, "
+                f"rescued_tokenization={report.rescued_tokenization}"
             )
         return report
 

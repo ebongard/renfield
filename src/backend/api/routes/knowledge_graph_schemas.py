@@ -212,6 +212,7 @@ class ReconcilerRunResponse(BaseModel):
     # a guard that is too greedy on this graph is otherwise invisible here.
     dropped_person_guard: int = 0
     dropped_cross_type: int = 0
+    rescued_tokenization: int = 0
     notes: list[str] = Field(default_factory=list)
 
 

@@ -58,8 +58,10 @@ exact name → surface-form (jsonb `@>`) → embedding (**SAME-TIER only** + hig
   flag feeds `person_ok`, which opens the AUTO-merge gate; a rescued pair keeps `names_related=False` + sets
   `block_auto_merge`. Label `name_tokenization`, ranked under `cross_type`. **Second effect, deliberate:** a same-type
   non-person tokenization pair is gated by no guard, so ABOVE the auto bar it would fold silently;
-  `block_auto_merge` demotes it to review (the same rule pairs `Release` with `HelmRelease` — too weak a signal).
-  No pair on any of the three measured graphs is above the bar today; the mechanism is real, its effect nil.
+  `block_auto_merge` demotes it to review. Conservative by choice, not by evidence — since the equality rule the
+  rescued set is exactly same-token-set pairs, a strong signal. **No DEMOTION had fired on any of the three graphs as
+  of 2026-09-24** (highest such pair 0.8496 / 0.8103 / 0.8770, all under the 0.95 bar); that is a dated snapshot, and
+  `rescued_tokenization` in `ReconcileReport` + `/reconciler/run` is what makes it checkable later.
 - Same-name gate: same normalized name + empty/identical descriptions never auto-merges → review.
 - Per-user non-blocking advisory lock `_RECONCILER_LOCK_NS`; an overlapping run is a no-op. Each pass first re-embeds
   up to `KG_RECONCILER_EMBED_BACKFILL_PER_RUN` null-embedding entities (else invisible to the self-join).

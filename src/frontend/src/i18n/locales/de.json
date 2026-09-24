@@ -1919,8 +1919,8 @@
         "cross_tier": "unterschiedliche Sichtbarkeit",
         "cross_type": "verschiedene Arten von Dingen",
         "gray_zone": "ähnlich, aber unsicher",
-        "name_typo": "Schreibvariante eines Personennamens",
-        "name_tokenization": "zusammengeschriebene Schreibweise"
+        "name_tokenization": "zusammengeschriebene Schreibweise",
+        "name_typo": "Schreibvariante eines Personennamens"
       },
       "survivorLegend": "Welche Entität soll bleiben?",
       "keepThis": "{{name}} behalten",

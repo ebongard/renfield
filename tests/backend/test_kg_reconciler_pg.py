@@ -1328,3 +1328,18 @@ class TestNameTokenization:
         report = await rec.run_for_user(owner.id)
         assert (report.auto_merged, report.proposed) == (0, 0)
         assert report.dropped_person_guard == 1     # dropped, as it always was
+
+    async def test_the_rescue_is_counted(self, pg_db_session, monkeypatch):
+        """F4: without this the guards' counters go DOWN when the rescue fires and
+        nothing goes up — the "effect is nil" claim would not be checkable, and a
+        splitter regression that starts rescuing broadly would stay invisible."""
+        owner = await _make_user(pg_db_session, "tok_counted")
+        await _entity(pg_db_session, owner, "Billing Engine", tier=2, mention=2,
+                      emb=_unit(0), etype="thing", desc="Abrechnung")
+        await _entity(pg_db_session, owner, "BillingEngine", tier=2, mention=9,
+                      emb=_gray(), etype="thing", desc="Komponente")
+        rec = _recon(pg_db_session, monkeypatch)
+
+        report = await rec.run_for_user(owner.id)
+        assert report.rescued_tokenization == 1
+        assert report.proposed == 1

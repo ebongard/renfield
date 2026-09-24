@@ -697,9 +697,10 @@ async def run_reconciler(
         dropped_person, dropped_type = (
             report.dropped_person_guard, report.dropped_cross_type,
         )
+        rescued_tok = report.rescued_tokenization
     else:
         candidates = auto_merged = proposed = backfilled = 0
-        dropped_person = dropped_type = 0
+        dropped_person = dropped_type = rescued_tok = 0
         notes: list[str] = []
         for active_uid in await svc.list_active_user_ids():
             r = await svc.run_for_user(active_uid)
@@ -709,6 +710,7 @@ async def run_reconciler(
             backfilled += r.embedded_backfilled
             dropped_person += r.dropped_person_guard
             dropped_type += r.dropped_cross_type
+            rescued_tok += r.rescued_tokenization
             notes.extend(r.notes)
     return ReconcilerRunResponse(
         candidates=candidates,
@@ -717,5 +719,6 @@ async def run_reconciler(
         embedded_backfilled=backfilled,
         dropped_person_guard=dropped_person,
         dropped_cross_type=dropped_type,
+        rescued_tokenization=rescued_tok,
         notes=notes,
     )
