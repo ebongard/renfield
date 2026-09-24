@@ -1258,3 +1258,45 @@ class TestNameTokenization:
         pairs = await rec.find_duplicate_pairs(owner.id)
         assert len(pairs) == 1
         assert pairs[0].name_tokenization is True
+
+    async def test_a_same_type_tokenization_pair_is_demoted_out_of_auto_merge(
+        self, pg_db_session, monkeypatch
+    ):
+        """The rescue's SECOND effect, deliberate and easy to miss.
+
+        A same-type non-person pair is gated by no guard — `related` is never
+        consulted for it — so "Billing Engine" ~ "BillingEngine" was already a
+        candidate and, above the auto bar with distinct descriptions, already
+        AUTO-MERGED. Setting `block_auto_merge` for tokenization variants now
+        demotes it to review.
+
+        That is wanted, not collateral: tokenization-relatedness is a weak
+        signal. The same rule that pairs "Billing Engine" with "BillingEngine"
+        also pairs "Release" with "HelmRelease" and "Payment" with
+        "PaymentGateway-Timeout" (measured on the reva graph) — none of which
+        may be folded with nobody looking.
+        """
+        owner = await _make_user(pg_db_session, "tok_demote")
+        a = await _entity(pg_db_session, owner, "Billing Engine", tier=2, mention=2,
+                          emb=_unit(6), etype="thing", desc="Abrechnung")
+        b = await _entity(pg_db_session, owner, "BillingEngine", tier=2, mention=9,
+                          emb=_unit(6), etype="thing", desc="Komponente")
+        rec = _recon(pg_db_session, monkeypatch)
+
+        pairs = await rec.find_duplicate_pairs(owner.id)
+        assert len(pairs) == 1
+        assert pairs[0].similarity >= 0.99          # above the auto bar …
+        assert pairs[0].name_tokenization is True   # … but a tokenization variant
+        assert pairs[0].block_auto_merge is True
+
+        report = await rec.run_for_user(owner.id)
+        assert (report.auto_merged, report.proposed) == (0, 1)
+        prop = (await pg_db_session.execute(
+            select(KgMergeProposal).where(KgMergeProposal.user_id == owner.id)
+        )).scalar_one()
+        assert prop.reason == KG_MERGE_REASON_NAME_TOKENIZATION
+        for e_id in (a.id, b.id):
+            row = (await pg_db_session.execute(
+                select(KGEntity).where(KGEntity.id == e_id)
+            )).scalar_one()
+            assert row.is_active is True

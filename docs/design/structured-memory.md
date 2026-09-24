@@ -150,6 +150,14 @@ deliberately not a boundary (`E2E` stays whole) and `-`/`_` are not separators (
 easily). Label `name_tokenization`, ranked below `cross_type`: a cross-type tokenization pair is labelled by its type
 mismatch, because that is the actionable fact; the label surfaces on same-type pairs.
 
+**A second, deliberate effect.** A same-type non-person pair is gated by no guard — `related` is never consulted for
+it — so `thing "Billing Engine"` ~ `thing "BillingEngine"` was already a candidate and, above the auto bar with
+distinct descriptions, already auto-merged. `block_auto_merge` now demotes such pairs to review. That is wanted:
+tokenization-relatedness is a weak signal, and the same rule also pairs `Release` with `HelmRelease` and `Payment`
+with `PaymentGateway-Timeout` (measured on the reva graph). None of those may be folded with nobody looking. On the
+household and xidra graphs nothing is demoted today — the highest such pair sits at 0.8496 and 0.8103, below the
+candidate threshold.
+
 **Measured before building, on three production graphs:** the rescue reaches **one** pair today (reva's, at 0.9030).
 Household and xidra contribute zero — their 88 and 10 tokenization-blind pairs all sit below the 0.85 candidate
 threshold (highest 0.7443 and 0.7247), so the self-join never fetches them. Built anyway because the blindness is
