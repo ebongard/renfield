@@ -85,6 +85,11 @@ exact name → surface-form (jsonb `@>`) → embedding (**SAME-TIER only** + hig
   cannot translate an English `notes` string, and translating only the one somebody complained about leaves its six
   siblings in German-UI English. `cluster_has_undecidable_pair` additionally carries the pairs plus an **uncapped**
   total, because a capped list without the total truncates in silence. `notes` rides along for the log.
+  The code also rides on the SUCCESS response (`ClusterResolveResponse.refusal_code`): the route's guard only throws
+  while nothing was written, so a future PARTIAL refusal would otherwise drop its reason on the floor — a 200 with no
+  explanation, the very failure the codes exist against. An UNKNOWN code renders a translated generic sentence and
+  logs the backend `notes` to the console: throwing the reason away left the owner one bare word while a precise
+  sentence sat in the payload. This fires whenever the backend is ahead of the bundle (cached service worker).
   Measured 2026-09-24: 11 `name_typo` pending on the household, six inside a foldable cluster.
   🛑 `_repoint_after_fold` rewrites a pair's endpoints but NOT its `reason` — since #1333 that reason is a GATE, so a
   re-pointed pair can carry a stale one in either direction. Known, not fixed: the self-join excludes pending pairs,

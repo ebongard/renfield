@@ -104,16 +104,28 @@ describe('MergeProposalsSection — partial cluster refusal', () => {
     });
   });
 
-  it('translates EVERY refusal code, not only the undecidable one', async () => {
-    // Den einen uebersetzten Fall zu pruefen haette die sechs Geschwister
-    // uebersehen — genau der Befund aus dem Review dieses Zweigs.
+  // Jeder Code, den `resolve_cluster` setzen kann, mit dem Satz, den der
+  // Eigentuemer sehen MUSS. Als Tabelle, weil die vorige Fassung genau EINEN
+  // Code prueffte — dieselbe Klasse-statt-Instanz-Luecke, gegen die dieser
+  // Zweig gebaut ist, eine Ebene hoeher. Ein Tippfehler in einem der sieben
+  // Schluessel ginge sonst mit gruener Suite als "Fehler" raus.
+  const REFUSALS: [string, RegExp][] = [
+    ['cluster_spans_tiers', /mehrere Sichtbarkeitsstufen/i],
+    ['cluster_too_small', /mindestens zwei Entit/i],
+    ['no_foldable_pair', /kein Paar faltbar/i],
+    ['survivor_required', /die bleiben soll/i],
+    ['survivor_not_foldable', /kein faltbares Paar/i],
+    ['unknown_decision', /Unbekannte Entscheidung/i],
+    ['nothing_folded', /bereits aufgel/i],
+  ];
+
+  it.each(REFUSALS)('translates the refusal code %s', async (code, expected) => {
     server.use(
       http.get(`${BASE}/api/knowledge-graph/merge-proposals`, () =>
         HttpResponse.json({ proposals: PROPOSALS, total: PROPOSALS.length })),
       http.post(`${BASE}/api/knowledge-graph/merge-proposals/cluster`, () =>
         HttpResponse.json(
-          { detail: { code: 'cluster_spans_tiers', pairs: [], total: 0,
-                      notes: ['cluster spans more than one tier — refusing'] } },
+          { detail: { code, pairs: [], total: 0, notes: ['an English sentence'] } },
           { status: 400 },
         )),
     );
@@ -121,27 +133,40 @@ describe('MergeProposalsSection — partial cluster refusal', () => {
 
     fireEvent.click(await screen.findByRole('button', { name: /zusammenführen/i }));
 
-    expect(await screen.findByText(/mehrere Sichtbarkeitsstufen/i)).toBeInTheDocument();
-    // …und NICHT der rohe englische Vermerk.
-    expect(screen.queryByText(/spans more than one tier/i)).not.toBeInTheDocument();
+    expect(await screen.findByText(expected)).toBeInTheDocument();
+    // …und NIE der rohe englische Vermerk aus der Antwort.
+    expect(screen.queryByText(/an English sentence/i)).not.toBeInTheDocument();
   });
 
-  it('falls back to the generic error for an unknown refusal code', async () => {
-    // Ein unbekannter Code darf keine leere Zeile rendern.
+  it('falls back to a translated sentence for an unknown refusal code', async () => {
+    // Die vorige Zusicherung war `toHaveTextContent(/\S/)` — die haelt auch das
+    // blosse Warndreieck, den rohen Schluessel oder "[object Object]" fuer
+    // bestanden. Jetzt steht da der Satz, den der Eigentuemer sehen soll, und
+    // ausdruecklich NICHT der Schluessel und nicht das englische Original.
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     server.use(
       http.get(`${BASE}/api/knowledge-graph/merge-proposals`, () =>
         HttpResponse.json({ proposals: PROPOSALS, total: PROPOSALS.length })),
       http.post(`${BASE}/api/knowledge-graph/merge-proposals/cluster`, () =>
-        HttpResponse.json({ detail: { code: 'something_new', pairs: [], total: 0 } },
-                          { status: 400 })),
+        HttpResponse.json(
+          { detail: { code: 'something_new', pairs: [], total: 0,
+                      notes: ['a brand new English reason'] } },
+          { status: 400 },
+        )),
     );
     renderWithProviders(<MergeProposalsSection />);
 
     fireEvent.click(await screen.findByRole('button', { name: /zusammenführen/i }));
 
-    await waitFor(() => {
-      expect(screen.getByRole('status')).toHaveTextContent(/\S/);
-    });
+    expect(await screen.findByText(/wurde abgelehnt/i)).toBeInTheDocument();
+    expect(screen.queryByText(/refused_|circles\./)).not.toBeInTheDocument();
+    expect(screen.queryByText(/a brand new English reason/i)).not.toBeInTheDocument();
+    // Der genaue Grund darf nicht verloren gehen — er gehoert in die Konsole,
+    // damit er ueberhaupt auswertbar bleibt.
+    expect(warn).toHaveBeenCalledWith(
+      '[merge-cluster] untranslated refusal', 'something_new', ['a brand new English reason'],
+    );
+    warn.mockRestore();
   });
 
   it('says how many blocking pairs it is NOT naming', async () => {
@@ -163,12 +188,22 @@ describe('MergeProposalsSection — partial cluster refusal', () => {
     expect(await screen.findByText(/und 4 weitere/i)).toBeInTheDocument();
   });
 
-  it('surfaces a refusal note even when no pair was counted', async () => {
+  it('never echoes a backend note, even on a 200', async () => {
+    // Fruehere Fassung dieses Tests: eine 200 TRUG den Vermerk, und die
+    // Oberflaeche gab ihn woertlich aus. Seit den Refus-Codes liefert jeder
+    // notes-Pfad in `resolve_cluster` eine 400 — diese Form kann der Dienst gar
+    // nicht mehr senden. Die Absicht bleibt (ein Refus ist nie stumm), der Weg
+    // ist ein anderer: uebersetzt statt englisch. Der Test bewacht die FALLE —
+    // wer als Naechstes eine Notiz auf dem Erfolgspfad anhaengt, liefert sonst
+    // wieder Englisch in eine deutsche Oberflaeche.
     mockQueue({ ...FULL_SUCCESS, merged: 0, approved: 0, notes: ['cluster spans more than one tier — refusing'] });
     renderWithProviders(<MergeProposalsSection />);
 
     fireEvent.click(await screen.findByRole('button', { name: /zusammenführen/i }));
 
-    expect(await screen.findByText(/spans more than one tier/i)).toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.getByRole('status')).toHaveTextContent(/\S/);
+    });
+    expect(screen.queryByText(/spans more than one tier/i)).not.toBeInTheDocument();
   });
 });

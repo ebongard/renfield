@@ -114,15 +114,24 @@ export default function MergeProposalsSection() {
   const refusalMessage = (err: unknown): string | null => {
     const detail = (err as { response?: { data?: { detail?: unknown } } })
       ?.response?.data?.detail as
-      { code?: string; pairs?: [string, string][]; total?: number } | undefined;
+      { code?: string; pairs?: [string, string][]; total?: number;
+        notes?: string[] } | undefined;
     const code = detail?.code;
     if (!code) return null;
     if (code !== 'cluster_has_undecidable_pair') {
-      // An unknown code must not render as a blank line: fall through to the
-      // generic error rather than an empty string.
       const key = `circles.mergeProposals.cluster.refused_${code}`;
       const text = t(key, { defaultValue: '' });
-      return text || null;
+      if (text) return text;
+      // Unbekannter Code. Das Backend LIEFERT den Grund mit (`notes`) — nur
+      // eben auf Englisch, und damit unbrauchbar auf dem Bildschirm. Ihn
+      // wegzuwerfen liess den Eigentuemer aber mit dem blossen Wort "Fehler"
+      // zurueck, waehrend ein diagnostizierbarer Satz in der Antwort stand.
+      // Also beides: ein wahrer allgemeiner Satz fuer die Anzeige, der genaue
+      // Grund in die Konsole fuer den, der ihn auswerten muss. Das greift, wenn
+      // das Backend dem Bundle vorauseilt (zwischengespeicherter Service
+      // Worker nach einem Rollout) oder ein neuer Code ohne Schluessel ging.
+      console.warn('[merge-cluster] untranslated refusal', code, detail?.notes);
+      return t('circles.mergeProposals.cluster.refused_generic');
     }
     const shown = (detail?.pairs ?? []).map(([a, b]) => `${a} / ${b}`).join('; ');
     const total = detail?.total ?? (detail?.pairs?.length ?? 0);
@@ -165,10 +174,16 @@ export default function MergeProposalsSection() {
         // lets whatever stayed pending come back instead of disappearing until a
         // page reload. And say so — a refusal is never silent here.
         restore();
+        // NOT `res.notes[0]`: that is a backend sentence, and a backend sentence
+        // cannot be translated — the same leak the refusal codes just closed.
+        // Every `notes` line in `resolve_cluster` today hangs off a refusal that
+        // returns 400, so this branch is unreachable; it stays translated so the
+        // next note appended on a SUCCESS path does not ship English into a
+        // German UI.
         setClusterNote(
           left > 0
             ? t('circles.mergeProposals.cluster.partial', { count: left })
-            : (res.notes?.[0] ?? null),
+            : t('common.error'),
         );
       })
       .catch((err: unknown) => {

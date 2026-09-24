@@ -939,6 +939,22 @@ class KgReconcilerService:
             user_id=user_id, folded=folded, survivor_id=keep, now=now,
         )
         await self.db.commit()
+        if not (res.merged or res.approved):
+            # Der neunte Ausgang, und der einzige, der bis eben STUMM war: alles
+            # geprueft, nichts getan. `merge_entities` gibt `None` auf einen
+            # bereits begrabenen Verlierer, eine fehlende Zeile und ein Paar
+            # ueber Eigentuemergrenzen zurueck, und die Zusage ueberspringt, was
+            # nicht mehr offen ist — beide zaehlen dann nicht hoch. Die Route
+            # lieferte dafuer eine 200 mit lauter Nullen, die Oberflaeche
+            # verwarf das Cluster stillschweigend optimistisch und sagte nichts.
+            # Meist ist es der Doppelklick: ein zweiter Aufruf, der dasselbe
+            # Cluster schon gefaltet vorfindet. Harmlos im Ergebnis, aber eine
+            # Aktion ohne Wirkung MUSS sichtbar sein — sonst ist genau die
+            # Klasse offen, gegen die die Codes gebaut sind. Nach dem `commit`
+            # gesetzt und trotzdem gefahrlos: `folded` ist leer, also hat
+            # `_repoint_after_fold` nichts angefasst und der Commit ist leer.
+            res.refusal_code = "nothing_folded"
+            res.notes.append("nothing left to fold in this cluster")
         logger.info(
             f"🔗 KG cluster resolved user={user_id} survivor={keep}: "
             f"merged={res.merged}, approved={res.approved}, "

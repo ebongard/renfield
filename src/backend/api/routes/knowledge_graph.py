@@ -677,8 +677,6 @@ async def resolve_merge_cluster(
             "total": res.blocked_total,
             "notes": res.notes,
         })
-    if res.notes and not (res.merged or res.approved or res.rejected):
-        raise HTTPException(status_code=400, detail="; ".join(res.notes))
     return ClusterResolveResponse(
         merged=res.merged,
         approved=res.approved,
@@ -687,6 +685,7 @@ async def resolve_merge_cluster(
         skipped_cross_type=res.skipped_cross_type,
         skipped_unreachable=res.skipped_unreachable,
         skipped_weak_edge=res.skipped_weak_edge,
+        refusal_code=res.refusal_code,
         notes=res.notes,
     )
 

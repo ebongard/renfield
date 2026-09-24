@@ -1179,6 +1179,60 @@ class TestTypeGuard:
         assert (report.auto_merged, report.proposed) == (0, 1)
 
 
+class TestNothingFolded:
+    """Der zweite Klick auf dasselbe Cluster sagt etwas — und zwar was.
+
+    Vorgeschichte, weil sie lehrreicher ist als der Test: der adversariale
+    Durchgang meldete den Erfolgsausgang als STUMMEN Pfad (200, lauter Nullen,
+    Cluster optimistisch verworfen, kein Wort). Der erste Entwurf dieses Tests
+    sollte das belegen und behauptete nur `refusal_code is not None`. Die
+    NEGATIVKONTROLLE — Riegel raus, Test muss rot werden — blieb gruen, und das
+    war der eigentliche Befund: der zweite Aufruf erreicht jenen Ausgang gar
+    nicht. Nach der ersten Faltung steht der Vorschlag auf `approved`, also
+    findet die Abfrage KEIN offenes Paar mehr und der Aufruf steigt bei
+    `no_foldable_pair` aus — einem Ausgang, der seinen Code laengst trug. Der
+    Doppelklick war nie stumm.
+
+    Deshalb prueft dieser Test, was wirklich geschieht, und nennt den Code beim
+    Namen; eine Zusicherung auf "irgendein Code" haette die Luecke genau so
+    verdeckt, wie sie es im ersten Entwurf tat.
+
+    Der Erfolgsausgang mit lauter Nullen bleibt moeglich, aber nur im echten
+    Wettlauf zwischen Abfrage und Nachladen INNERHALB eines Aufrufs. Dagegen
+    steht ein Riegel im Dienst (`nothing_folded`); er ist durch Konstruktion
+    gedeckt, nicht durch diesen Test, und das steht hier, statt ein gruener Test
+    das Gegenteil zu suggerieren.
+    """
+
+    async def test_a_second_fold_of_the_same_cluster_is_not_silent(
+        self, pg_db_session, monkeypatch,
+    ):
+        owner = await _make_user(pg_db_session, "clu_twice")
+        a = await _entity(pg_db_session, owner, "Acme GmbH", tier=2, mention=9, emb=_unit(7))
+        b = await _entity(pg_db_session, owner, "Acme G.m.b.H.", tier=2, mention=3, emb=_unit(7))
+        await TestWeakEdgeTriangle._proposal(pg_db_session, owner, b, a)
+        rec = _recon(pg_db_session, monkeypatch)
+
+        first = await rec.resolve_cluster(
+            user_id=owner.id, entity_ids=[a.id, b.id],
+            survivor_id=a.id, decision="merge", resolved_by=owner.id,
+        )
+        assert first.merged == 1
+        assert first.refusal_code is None      # der Erfolg traegt keinen Code
+
+        # Derselbe Aufruf noch einmal — der Doppelklick.
+        second = await rec.resolve_cluster(
+            user_id=owner.id, entity_ids=[a.id, b.id],
+            survivor_id=a.id, decision="merge", resolved_by=owner.id,
+        )
+
+        assert second.merged == 0
+        assert second.approved == 0
+        # Beim Namen genannt: "irgendein Code" hat im ersten Entwurf genau die
+        # Luecke verdeckt, die die Negativkontrolle dann aufdeckte.
+        assert second.refusal_code == "no_foldable_pair"
+
+
 class TestWeakEdgeTriangle:
     """The topology the bridge test does not cover, and the one that mattered.
 

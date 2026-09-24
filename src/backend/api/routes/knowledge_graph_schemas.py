@@ -186,6 +186,11 @@ class ClusterResolveResponse(BaseModel):
     skipped_cross_type: int = 0
     skipped_unreachable: int = 0
     skipped_weak_edge: int = 0
+    # Auch auf dem ERFOLGSWEG mitgegeben. Der Riegel in der Route wirft nur,
+    # solange nichts geschrieben wurde; schriebe je eine Verweigerung TEILWEISE,
+    # fiele ihr Grund sonst ersatzlos vom Tisch — eine 200 ohne Erklaerung, also
+    # genau der Fehlermodus, gegen den die Codes gebaut sind.
+    refusal_code: str | None = None
     notes: list[str] = Field(default_factory=list)
 
 
