@@ -1972,7 +1972,7 @@ KG_RECONCILER_INTERVAL=86400                  # Sekunden zwischen Laeufen (defau
 # Kandidaten + Auto-Merge
 KG_RECONCILER_CANDIDATE_THRESHOLD=0.85        # Cosine ab wann ein Paar ueberhaupt betrachtet wird
 KG_RECONCILER_AUTO_MERGE_THRESHOLD=0.95       # Same-Tier-Auto-Merge-Schwelle (>= candidate)
-KG_RECONCILER_MAX_PER_RUN=50                  # Safety-Cap pro User pro Lauf
+KG_RECONCILER_MAX_PER_RUN=50                  # Safety-Cap pro User pro Lauf — setzt AUCH das SQL-LIMIT (2x)
 KG_RECONCILER_EMBED_BACKFILL_PER_RUN=50       # Null-Embedding-Entitaeten pro Lauf nach-einbetten (0 deaktiviert)
 
 # KG-Konflations-Tripwire (read-only Fruehwarnung) — opt-in, mutiert NIE
@@ -2024,7 +2024,30 @@ werden bis zu `KG_RECONCILER_EMBED_BACKFILL_PER_RUN` aktive Entitaeten ohne
 Embedding nach-eingebettet — sonst blieben sie im Self-Join unsichtbar. Ein
 halfvec-Embedding-Self-Join findet dann Duplikat-Paare desselben Users (Cosine
 >= `KG_RECONCILER_CANDIDATE_THRESHOLD`); Winner = mehr Erwaehnungen, tie-break
-aelteres `first_seen_at`. Dann:
+aelteres `first_seen_at`.
+
+> **Die beiden Schrauben haengen zusammen, und die Reihenfolge ist nicht
+> offensichtlich.** `KG_RECONCILER_MAX_PER_RUN` begrenzt nicht nur, wie viele
+> Paare VERARBEITET werden — derselbe Wert setzt auch das SQL-`LIMIT` auf das
+> **Doppelte** (`max(max_per_run * 2, 2)`), und zwar hinter einem
+> `ORDER BY similarity DESC`. **Solange diese Kappung greift, ist ein Absenken
+> von `KG_RECONCILER_CANDIDATE_THRESHOLD` wirkungslos:** neue Paare aus dem
+> Band unterhalb ranken per Konstruktion unter allen bestehenden und werden nie
+> erreicht.
+>
+> Woran man erkennt, dass sie greift: `candidates` + `dropped_person_guard` +
+> `dropped_cross_type` aus der Logzeile des Laufs ergeben zusammen **genau** das
+> Limit. Gemessen im Haushalt am 2026-09-24: 35 + 65 + 0 = 100 bei
+> `max_per_run=50`. Nach der Anhebung auf 150 lieferte die Abfrage 87 Zeilen von
+> erlaubten 300 — die Grenze greift seither nachweislich nicht mehr.
+>
+> Zweite, teurere Erkenntnis derselben Messung: eine Schwellwertsenkung kostet
+> **keine** zusaetzliche Rechenzeit (der Abstand wird ohnehin fuer jedes Paar
+> berechnet — es gibt keinen Vektorindex auf `kg_entities`, ein Lauf dauert
+> ~355 s bei 4 128 Entitaeten). Der Preis ist allein die Aufmerksamkeit des
+> Eigentuemers, der jeden zusaetzlichen Vorschlag entscheiden muss.
+
+Dann:
 
 1. **Same-Tier + Cosine >= `KG_RECONCILER_AUTO_MERGE_THRESHOLD`** → automatischer
    Merge via `merge_entities` (absorbiert surface_forms/Multi-Typ, reparentiert
