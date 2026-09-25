@@ -230,7 +230,12 @@ class SpeakerCandidate(Base):
     See docs/design/speaker-enrollment-redesign.md."""
     __tablename__ = "speaker_candidates"
 
-    id = Column(Integer, primary_key=True, index=True)
+    # KEIN `index=True`: die Spalte ist der Primaerschluessel und traegt dessen
+    # UNIQUE-Index bereits. `index=True` baute daneben einen zweiten, nicht
+    # eindeutigen Index auf dieselbe Spalte — reine Schreiblast. Gemessen
+    # 2026-09-25: `create_all` erzeugte 25 solche Doppler, die KEINE Instanz
+    # hat; die Produktion lief nie mit ihnen.
+    id = Column(Integer, primary_key=True)
     embedding = Column(Text, nullable=False)         # Base64-encoded ONNX embedding
     best_score = Column(Float, nullable=True)        # cosine to the nearest enrolled profile
     best_speaker_id = Column(
@@ -251,7 +256,12 @@ class SpeakerVocabularyCorpus(Base):
     """
     __tablename__ = "speaker_vocabulary_corpus"
 
-    id = Column(Integer, primary_key=True, index=True)
+    # KEIN `index=True`: die Spalte ist der Primaerschluessel und traegt dessen
+    # UNIQUE-Index bereits. `index=True` baute daneben einen zweiten, nicht
+    # eindeutigen Index auf dieselbe Spalte — reine Schreiblast. Gemessen
+    # 2026-09-25: `create_all` erzeugte 25 solche Doppler, die KEINE Instanz
+    # hat; die Produktion lief nie mit ihnen.
+    id = Column(Integer, primary_key=True)
     user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
     text = Column(Text, nullable=False)
     language = Column(String(10), nullable=False, default="de")
@@ -269,7 +279,12 @@ class SpeakerVocabulary(Base):
     """
     __tablename__ = "speaker_vocabulary"
 
-    id = Column(Integer, primary_key=True, index=True)
+    # KEIN `index=True`: die Spalte ist der Primaerschluessel und traegt dessen
+    # UNIQUE-Index bereits. `index=True` baute daneben einen zweiten, nicht
+    # eindeutigen Index auf dieselbe Spalte — reine Schreiblast. Gemessen
+    # 2026-09-25: `create_all` erzeugte 25 solche Doppler, die KEINE Instanz
+    # hat; die Produktion lief nie mit ihnen.
+    id = Column(Integer, primary_key=True)
     user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
     term = Column(String(100), nullable=False)
     frequency = Column(Integer, nullable=False, default=0)
@@ -348,7 +363,12 @@ class Project(Base):
     """
     __tablename__ = "projects"
 
-    id = Column(Integer, primary_key=True, index=True)
+    # KEIN `index=True`: die Spalte ist der Primaerschluessel und traegt dessen
+    # UNIQUE-Index bereits. `index=True` baute daneben einen zweiten, nicht
+    # eindeutigen Index auf dieselbe Spalte — reine Schreiblast. Gemessen
+    # 2026-09-25: `create_all` erzeugte 25 solche Doppler, die KEINE Instanz
+    # hat; die Produktion lief nie mit ihnen.
+    id = Column(Integer, primary_key=True)
     name = Column(String(255), nullable=False)
     description = Column(Text, nullable=True)
 
@@ -383,7 +403,12 @@ class Meeting(Base):
     """
     __tablename__ = "meetings"
 
-    id = Column(Integer, primary_key=True, index=True)
+    # KEIN `index=True`: die Spalte ist der Primaerschluessel und traegt dessen
+    # UNIQUE-Index bereits. `index=True` baute daneben einen zweiten, nicht
+    # eindeutigen Index auf dieselbe Spalte — reine Schreiblast. Gemessen
+    # 2026-09-25: `create_all` erzeugte 25 solche Doppler, die KEINE Instanz
+    # hat; die Produktion lief nie mit ihnen.
+    id = Column(Integer, primary_key=True)
 
     # Ownership (nullable for auth-disabled single-user deploys, mirrors Project).
     owner_user_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
@@ -472,7 +497,12 @@ class MeetingSpeakerFingerprint(Base):
     """
     __tablename__ = "meeting_speaker_fingerprints"
 
-    id = Column(Integer, primary_key=True, index=True)
+    # KEIN `index=True`: die Spalte ist der Primaerschluessel und traegt dessen
+    # UNIQUE-Index bereits. `index=True` baute daneben einen zweiten, nicht
+    # eindeutigen Index auf dieselbe Spalte — reine Schreiblast. Gemessen
+    # 2026-09-25: `create_all` erzeugte 25 solche Doppler, die KEINE Instanz
+    # hat; die Produktion lief nie mit ihnen.
+    id = Column(Integer, primary_key=True)
 
     # Owner-scoped (nullable for auth-off single-user; SET NULL mirrors Meeting/
     # Project/Note — a deleted owner de-scopes rather than drops the identity).
@@ -1479,7 +1509,12 @@ class ScheduledTask(Base):
     """
     __tablename__ = "scheduled_tasks"
 
-    id = Column(Integer, primary_key=True, index=True)
+    # KEIN `index=True`: die Spalte ist der Primaerschluessel und traegt dessen
+    # UNIQUE-Index bereits. `index=True` baute daneben einen zweiten, nicht
+    # eindeutigen Index auf dieselbe Spalte — reine Schreiblast. Gemessen
+    # 2026-09-25: `create_all` erzeugte 25 solche Doppler, die KEINE Instanz
+    # hat; die Produktion lief nie mit ihnen.
+    id = Column(Integer, primary_key=True)
     # UNIQUE — the seed/idempotency key (ensure_builtin_tasks ON CONFLICT (name)).
     name = Column(String(255), nullable=False, unique=True)
     handler_key = Column(String(100), nullable=False)
@@ -1531,7 +1566,12 @@ class ScheduledTaskRun(Base):
     and prunes to the newest ``scheduled_tasks_run_history_limit`` per task."""
     __tablename__ = "scheduled_task_runs"
 
-    id = Column(Integer, primary_key=True, index=True)
+    # KEIN `index=True`: die Spalte ist der Primaerschluessel und traegt dessen
+    # UNIQUE-Index bereits. `index=True` baute daneben einen zweiten, nicht
+    # eindeutigen Index auf dieselbe Spalte — reine Schreiblast. Gemessen
+    # 2026-09-25: `create_all` erzeugte 25 solche Doppler, die KEINE Instanz
+    # hat; die Produktion lief nie mit ihnen.
+    id = Column(Integer, primary_key=True)
     # No single-column index=True: the composite ix_scheduled_task_runs_task_started
     # (below) covers task_id-prefix lookups, and the migration creates only that —
     # keep create_all + Alembic in lockstep.
@@ -1795,7 +1835,12 @@ class ProceduralSkill(Base):
     """
     __tablename__ = "procedural_skills"
 
-    id = Column(Integer, primary_key=True, index=True)
+    # KEIN `index=True`: die Spalte ist der Primaerschluessel und traegt dessen
+    # UNIQUE-Index bereits. `index=True` baute daneben einen zweiten, nicht
+    # eindeutigen Index auf dieselbe Spalte — reine Schreiblast. Gemessen
+    # 2026-09-25: `create_all` erzeugte 25 solche Doppler, die KEINE Instanz
+    # hat; die Produktion lief nie mit ihnen.
+    id = Column(Integer, primary_key=True)
     user_id = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
 
     title = Column(String(255), nullable=False)
@@ -1896,7 +1941,12 @@ class AgentTrajectory(Base):
     """
     __tablename__ = "agent_trajectories"
 
-    id = Column(Integer, primary_key=True, index=True)
+    # KEIN `index=True`: die Spalte ist der Primaerschluessel und traegt dessen
+    # UNIQUE-Index bereits. `index=True` baute daneben einen zweiten, nicht
+    # eindeutigen Index auf dieselbe Spalte — reine Schreiblast. Gemessen
+    # 2026-09-25: `create_all` erzeugte 25 solche Doppler, die KEINE Instanz
+    # hat; die Produktion lief nie mit ihnen.
+    id = Column(Integer, primary_key=True)
     user_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
     conversation_id = Column(Integer, ForeignKey("conversations.id", ondelete="SET NULL"), nullable=True)
 
@@ -1958,7 +2008,12 @@ class ToolOutcomeStat(Base):
     """
     __tablename__ = "tool_outcome_stats"
 
-    id = Column(Integer, primary_key=True, index=True)
+    # KEIN `index=True`: die Spalte ist der Primaerschluessel und traegt dessen
+    # UNIQUE-Index bereits. `index=True` baute daneben einen zweiten, nicht
+    # eindeutigen Index auf dieselbe Spalte — reine Schreiblast. Gemessen
+    # 2026-09-25: `create_all` erzeugte 25 solche Doppler, die KEINE Instanz
+    # hat; die Produktion lief nie mit ihnen.
+    id = Column(Integer, primary_key=True)
     user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=True, index=True)
     tool_name = Column(String(128), nullable=False, index=True)
 
@@ -2018,7 +2073,12 @@ class SkillCuratorRun(Base):
     """
     __tablename__ = "skill_curator_runs"
 
-    id = Column(Integer, primary_key=True, index=True)
+    # KEIN `index=True`: die Spalte ist der Primaerschluessel und traegt dessen
+    # UNIQUE-Index bereits. `index=True` baute daneben einen zweiten, nicht
+    # eindeutigen Index auf dieselbe Spalte — reine Schreiblast. Gemessen
+    # 2026-09-25: `create_all` erzeugte 25 solche Doppler, die KEINE Instanz
+    # hat; die Produktion lief nie mit ihnen.
+    id = Column(Integer, primary_key=True)
     started_at = Column(DateTime, default=_utcnow, nullable=False, index=True)
     finished_at = Column(DateTime, nullable=True)
     run_type = Column(String(20), nullable=False, default=CURATOR_RUN_TYPE_SCHEDULED)
@@ -2054,7 +2114,12 @@ class SkillWouldHaveInjectedLog(Base):
     """
     __tablename__ = "skill_would_have_injected_log"
 
-    id = Column(Integer, primary_key=True, index=True)
+    # KEIN `index=True`: die Spalte ist der Primaerschluessel und traegt dessen
+    # UNIQUE-Index bereits. `index=True` baute daneben einen zweiten, nicht
+    # eindeutigen Index auf dieselbe Spalte — reine Schreiblast. Gemessen
+    # 2026-09-25: `create_all` erzeugte 25 solche Doppler, die KEINE Instanz
+    # hat; die Produktion lief nie mit ihnen.
+    id = Column(Integer, primary_key=True)
     skill_id = Column(
         Integer,
         ForeignKey("procedural_skills.id", ondelete="CASCADE"),
@@ -2257,7 +2322,12 @@ class KgMergeProposal(Base):
     """
     __tablename__ = "kg_merge_proposals"
 
-    id = Column(Integer, primary_key=True, index=True)
+    # KEIN `index=True`: die Spalte ist der Primaerschluessel und traegt dessen
+    # UNIQUE-Index bereits. `index=True` baute daneben einen zweiten, nicht
+    # eindeutigen Index auf dieselbe Spalte — reine Schreiblast. Gemessen
+    # 2026-09-25: `create_all` erzeugte 25 solche Doppler, die KEINE Instanz
+    # hat; die Produktion lief nie mit ihnen.
+    id = Column(Integer, primary_key=True)
     user_id = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
     loser_entity_id = Column(Integer, ForeignKey("kg_entities.id", ondelete="CASCADE"), nullable=False)
     winner_entity_id = Column(Integer, ForeignKey("kg_entities.id", ondelete="CASCADE"), nullable=False)
@@ -2292,7 +2362,12 @@ class PdfSplitProposal(Base):
     """
     __tablename__ = "pdf_split_proposals"
 
-    id = Column(Integer, primary_key=True, index=True)
+    # KEIN `index=True`: die Spalte ist der Primaerschluessel und traegt dessen
+    # UNIQUE-Index bereits. `index=True` baute daneben einen zweiten, nicht
+    # eindeutigen Index auf dieselbe Spalte — reine Schreiblast. Gemessen
+    # 2026-09-25: `create_all` erzeugte 25 solche Doppler, die KEINE Instanz
+    # hat; die Produktion lief nie mit ihnen.
+    id = Column(Integer, primary_key=True)
     document_id = Column(
         Integer,
         ForeignKey("documents.id", ondelete="CASCADE"),
@@ -2412,7 +2487,12 @@ class DocumentDuplicateProposal(Base):
     """
     __tablename__ = "document_duplicate_proposals"
 
-    id = Column(Integer, primary_key=True, index=True)
+    # KEIN `index=True`: die Spalte ist der Primaerschluessel und traegt dessen
+    # UNIQUE-Index bereits. `index=True` baute daneben einen zweiten, nicht
+    # eindeutigen Index auf dieselbe Spalte — reine Schreiblast. Gemessen
+    # 2026-09-25: `create_all` erzeugte 25 solche Doppler, die KEINE Instanz
+    # hat; die Produktion lief nie mit ihnen.
+    id = Column(Integer, primary_key=True)
     user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
     document_a_id = Column(
         Integer, ForeignKey("documents.id", ondelete="CASCADE"), nullable=False
@@ -2780,7 +2860,12 @@ class DocumentFact(Base):
     """
     __tablename__ = "document_facts"
 
-    id = Column(Integer, primary_key=True, index=True)
+    # KEIN `index=True`: die Spalte ist der Primaerschluessel und traegt dessen
+    # UNIQUE-Index bereits. `index=True` baute daneben einen zweiten, nicht
+    # eindeutigen Index auf dieselbe Spalte — reine Schreiblast. Gemessen
+    # 2026-09-25: `create_all` erzeugte 25 solche Doppler, die KEINE Instanz
+    # hat; die Produktion lief nie mit ihnen.
+    id = Column(Integer, primary_key=True)
     document_id = Column(Integer, ForeignKey("documents.id", ondelete="CASCADE"), nullable=False, index=True)
     category = Column(String(16), nullable=False)   # identifier | obligation | universal
     kind = Column(String(32), nullable=False)       # steuernummer | zahlung | issuer | ...
@@ -2852,7 +2937,12 @@ class Note(Base):
     """
     __tablename__ = "notes"
 
-    id = Column(Integer, primary_key=True, index=True)
+    # KEIN `index=True`: die Spalte ist der Primaerschluessel und traegt dessen
+    # UNIQUE-Index bereits. `index=True` baute daneben einen zweiten, nicht
+    # eindeutigen Index auf dieselbe Spalte — reine Schreiblast. Gemessen
+    # 2026-09-25: `create_all` erzeugte 25 solche Doppler, die KEINE Instanz
+    # hat; die Produktion lief nie mit ihnen.
+    id = Column(Integer, primary_key=True)
     owner_user_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
     # Optional Project scope (Phase 4A synergy): a scoped note joins the
     # /projects/{id} timeline as a 5th source.
@@ -2902,7 +2992,12 @@ class ObligationAcknowledgement(Base):
     """
     __tablename__ = "obligation_acknowledgements"
 
-    id = Column(Integer, primary_key=True, index=True)
+    # KEIN `index=True`: die Spalte ist der Primaerschluessel und traegt dessen
+    # UNIQUE-Index bereits. `index=True` baute daneben einen zweiten, nicht
+    # eindeutigen Index auf dieselbe Spalte — reine Schreiblast. Gemessen
+    # 2026-09-25: `create_all` erzeugte 25 solche Doppler, die KEINE Instanz
+    # hat; die Produktion lief nie mit ihnen.
+    id = Column(Integer, primary_key=True)
     document_fact_id = Column(Integer, ForeignKey("document_facts.id", ondelete="CASCADE"), nullable=False, index=True)
     user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
     milestone = Column(String(16), nullable=False)  # 14d|7d|3d|1d|due|overdue|confirmed
@@ -2932,7 +3027,12 @@ class ObligationDigestLog(Base):
     """
     __tablename__ = "obligation_digest_log"
 
-    id = Column(Integer, primary_key=True, index=True)
+    # KEIN `index=True`: die Spalte ist der Primaerschluessel und traegt dessen
+    # UNIQUE-Index bereits. `index=True` baute daneben einen zweiten, nicht
+    # eindeutigen Index auf dieselbe Spalte — reine Schreiblast. Gemessen
+    # 2026-09-25: `create_all` erzeugte 25 solche Doppler, die KEINE Instanz
+    # hat; die Produktion lief nie mit ihnen.
+    id = Column(Integer, primary_key=True)
     user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
     period_key = Column(String(16), nullable=False)  # ISO year-week, e.g. "2026-W23"
     created_at = Column(DateTime, default=_utcnow)
@@ -2972,7 +3072,12 @@ class ObligationCalendarEvent(Base):
     """
     __tablename__ = "obligation_calendar_events"
 
-    id = Column(Integer, primary_key=True, index=True)
+    # KEIN `index=True`: die Spalte ist der Primaerschluessel und traegt dessen
+    # UNIQUE-Index bereits. `index=True` baute daneben einen zweiten, nicht
+    # eindeutigen Index auf dieselbe Spalte — reine Schreiblast. Gemessen
+    # 2026-09-25: `create_all` erzeugte 25 solche Doppler, die KEINE Instanz
+    # hat; die Produktion lief nie mit ihnen.
+    id = Column(Integer, primary_key=True)
     document_fact_id = Column(Integer, ForeignKey("document_facts.id", ondelete="SET NULL"), nullable=True, index=True)
     user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
     calendar = Column(String(64), nullable=False)
@@ -3139,7 +3244,12 @@ class PeerUser(Base):
     """
     __tablename__ = "peer_users"
 
-    id = Column(Integer, primary_key=True, index=True)
+    # KEIN `index=True`: die Spalte ist der Primaerschluessel und traegt dessen
+    # UNIQUE-Index bereits. `index=True` baute daneben einen zweiten, nicht
+    # eindeutigen Index auf dieselbe Spalte — reine Schreiblast. Gemessen
+    # 2026-09-25: `create_all` erzeugte 25 solche Doppler, die KEINE Instanz
+    # hat; die Produktion lief nie mit ihnen.
+    id = Column(Integer, primary_key=True)
     circle_owner_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
 
     # 32-byte Ed25519 pubkey, stored as 64-char hex for SQL-friendliness.
@@ -3235,7 +3345,12 @@ class FederationQueryLog(Base):
     """
     __tablename__ = "federation_query_log"
 
-    id = Column(Integer, primary_key=True, index=True)
+    # KEIN `index=True`: die Spalte ist der Primaerschluessel und traegt dessen
+    # UNIQUE-Index bereits. `index=True` baute daneben einen zweiten, nicht
+    # eindeutigen Index auf dieselbe Spalte — reine Schreiblast. Gemessen
+    # 2026-09-25: `create_all` erzeugte 25 solche Doppler, die KEINE Instanz
+    # hat; die Produktion lief nie mit ihnen.
+    id = Column(Integer, primary_key=True)
     # No single-column index on user_id — the composite
     # `idx_fed_audit_user_initiated` covers `WHERE user_id = ?` queries
     # via the leading-column rule.

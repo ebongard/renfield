@@ -400,7 +400,12 @@ class UserBleIrk(Base):
 
     __tablename__ = "user_ble_irks"
 
-    id = Column(Integer, primary_key=True, index=True)
+    # KEIN `index=True`: die Spalte ist der Primaerschluessel und traegt dessen
+    # UNIQUE-Index bereits. `index=True` baute daneben einen zweiten, nicht
+    # eindeutigen Index auf dieselbe Spalte — reine Schreiblast. Gemessen
+    # 2026-09-25: `create_all` erzeugte 25 solche Doppler, die KEINE Instanz
+    # hat; die Produktion lief nie mit ihnen.
+    id = Column(Integer, primary_key=True)
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
     # Globally-unique stable identity the satellite reports on a resolved match;
     # the backend maps it back to this user for presence attribution.
@@ -432,7 +437,12 @@ class Satellite(Base):
 
     __tablename__ = "satellites"
 
-    id = Column(Integer, primary_key=True, index=True)
+    # KEIN `index=True`: die Spalte ist der Primaerschluessel und traegt dessen
+    # UNIQUE-Index bereits. `index=True` baute daneben einen zweiten, nicht
+    # eindeutigen Index auf dieselbe Spalte — reine Schreiblast. Gemessen
+    # 2026-09-25: `create_all` erzeugte 25 solche Doppler, die KEINE Instanz
+    # hat; die Produktion lief nie mit ihnen.
+    id = Column(Integer, primary_key=True)
     # The asserted identity the satellite registers under; the token is bound
     # to this id, so a register frame whose satellite_id ≠ the token's id fails.
     satellite_id = Column(String(100), unique=True, nullable=False, index=True)
