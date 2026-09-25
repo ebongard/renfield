@@ -60,12 +60,16 @@ Long form: `docs/design/scheduled-tasks.md` (#1137); index-health verdicts in `d
 
 ## `vector_index_threshold` — ein Ausloeser gegen eine Ausnahme mit Verfallsdatum
 
-Taeglich, schweigt im Normalfall. Zaehlt die Tabellen, deren ORDER-BY-Vektorsuche bewusst NICHT auf
-`halfvec` castet (heute `document_chunks`, `conversation_memories`), und warnt ab 4 000 eingebetteten Zeilen.
-Der Cast waere dort heute ein Rueckschritt — der Planer waehlt den HNSW-Index bei ihrer Groesse nicht, und
-die Umwandlung kostet dann jede Zeile umsonst (gemessen: 101 ms mit Cast gegen 16 ms ohne). Ab der Schwelle
-kippt das moeglicherweise. Die Aufgabe behauptet das NICHT, sie verlangt eine NEUE MESSUNG. Details und
-Zahlen: `services/vector_index_threshold.py`, Regel in `.claude/rules/migrations.md`.
+Taeglich, schweigt im Normalfall. Die Aufgabe ZAEHLT NICHT — sie fragt je beobachteter Tabelle
+(`document_chunks`, `conversation_memories`) per `EXPLAIN (FORMAT JSON)`, ob der Planer den HNSW-Index
+NAEHME, wenn die Abfrage auf `halfvec` castete. Nur dann meldet sie. Kein `ANALYZE`, also keine
+Ausfuehrung und keine Last.
+
+🛑 Die erste Fassung meldete ab 4 000 Zeilen und wurde am Tag ihrer Einfuehrung widerlegt: xidra nutzt den
+Index auf `kg_entities` schon bei 1 953 Zeilen, auf `document_chunks` bei 3 165 nicht. Heap-Seiten und
+Indexform entscheiden, nicht die Zeilenzahl (416 Seiten bei 2 847 Zeilen gegen 150 bei 4 813, geschaetzter
+HNSW-Einstieg Faktor acht auseinander). Eine Zahl, die das Falsche misst, ist kein Ausloeser, sondern eine
+zweite Falle. Details: `services/vector_index_threshold.py`, Regel in `.claude/rules/migrations.md`.
 
 ## Other self-gating built-ins
 - Paperless dedupe: gates on `PAPERLESS_DEDUPE_RECONCILER_ENABLED`, calls `mcp.paperless.dedupe_documents` (MCP

@@ -39,8 +39,12 @@ Loaded only when a migration file is read. Deploy order and the migration Job: `
   index was slower still (159 ms). A synthetic benchmark lies here: 5 000 RANDOM vectors showed 0.57 ms vs 46 ms,
   because random vectors are far apart while real embeddings cluster and HNSW must explore far more. **Measure on
   real data, per table, before adding the cast.** Tables below the threshold deliberately do NOT cast
-  (`SCALE_EXEMPT_FILES` in the guard test), and the daily `vector_index_threshold` task warns when one crosses 4 000
-  embedded rows — an exemption without a trigger goes silently stale: nothing breaks, it just gets slow.
+  (`SCALE_EXEMPT_FILES` in the guard test), and the daily `vector_index_threshold` task ASKS THE PLANNER — via
+  `EXPLAIN (FORMAT JSON)`, no execution — whether it would take the index if the query cast, and warns only then.
+  🛑 Not a row count: that does not predict it. xidra picks the index on `kg_entities` at 1 953 rows but not on
+  `document_chunks` at 3 165; heap pages and index shape decide (416 pages for 2 847 rows vs 150 for 4 813, estimated
+  HNSW startup 8x apart). An exemption without a trigger goes silently stale: nothing breaks, it just gets slow —
+  and a trigger that measures the wrong quantity is a second trap, not a safeguard.
 - **`atttypmod` for a `vector(N)` column IS N** — there is no `+4` varlena offset. `pc20260402:60` computes
   `atttypmod - 4` and would have built a `halfvec(2556)` index that queries casting to `halfvec(2560)` can never use:
   built, maintained on every write, dead. `y8z9a0b1c2d3` reads it raw and is correct.

@@ -227,17 +227,16 @@ class RAGRetrieval:
             AND dc.embedding IS NOT NULL
             AND {circles_clause}
             {kb_filter}
--- KEIN halfvec-Cast, und das ist GEMESSEN, nicht vermutet.
--- Der Cast lohnt nur, wenn der Planer den HNSW-Index daraufhin
--- auch waehlt. Haushalt 2026-09-25, 2 122 Zeilen: mit Cast
--- 101 ms (Seq Scan, die Umwandlung kostet je Zeile), ohne
--- Cast 16 ms. Erzwungen war der Indexscan noch langsamer.
--- Zum Vergleich kg_entities bei 4 813 Zeilen: 4,6 ms MIT Cast
--- gegen 34 ms ohne — dort waehlt der Planer den Index und
--- gewinnt siebenfach. Die Schwelle liegt also dazwischen.
--- AUSLOESER: die Aufgabe `vector_index_threshold` meldet, wenn
--- diese Tabelle 4 000 Zeilen ueberschreitet. Dann NEU MESSEN
--- (nicht annehmen) und den Cast gegebenenfalls setzen.
+            -- KEIN halfvec-Cast, und das ist GEMESSEN, nicht vermutet. Der Cast
+            -- lohnt nur, wenn der Planer den HNSW-Index daraufhin auch waehlt.
+            -- Haushalt 2026-09-25, 2 122 Zeilen: mit Cast 101 ms (Seq Scan, die
+            -- Umwandlung kostet je Zeile), ohne Cast 16 ms. Erzwungen war der
+            -- Indexscan noch langsamer. Auf xidra dasselbe Bild bei 3 165 Zeilen.
+            -- AUSLOESER: die Aufgabe `vector_index_threshold` fragt taeglich den
+            -- PLANER, ob er den Index bei GECASTETER Form naehme, und meldet erst
+            -- dann. NICHT die Zeilenzahl: die sagt es nicht vorher (xidra nutzt den
+            -- Index auf kg_entities schon bei 1 953 Zeilen, hier bei 3 165 nicht).
+            -- Auf die Meldung hin gegenmessen, nicht annehmen.
             ORDER BY dc.embedding <=> CAST(:embedding AS vector)
             LIMIT :limit
         """)

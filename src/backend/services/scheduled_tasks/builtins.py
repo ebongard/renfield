@@ -491,9 +491,11 @@ async def _placeholder_atom_reaper_handler(app: "FastAPI", params: dict) -> str 
 
 
 async def _vector_index_threshold_handler(app: "FastAPI", params: dict) -> str | None:
-    # Kein Tor; nur Lesen. Meldet, wenn eine Tabelle die Groesse erreicht, ab der
-    # ihr HNSW-Index sich lohnen KOENNTE — und verlangt dann eine NEUE MESSUNG,
-    # statt zu behaupten, er lohne jetzt. Siehe services/vector_index_threshold.py.
+    # Kein Tor; nur Lesen, und nur EXPLAIN (keine Ausfuehrung). Fragt den PLANER,
+    # ob er den HNSW-Index naehme, wenn die Abfrage auf halfvec castete — und
+    # meldet nur dann. ZAEHLT KEINE ZEILEN: die sagen es nicht vorher (xidra nutzt
+    # den Index auf kg_entities bei 1 953 Zeilen, auf document_chunks bei 3 165
+    # nicht). Siehe services/vector_index_threshold.py.
     from services.vector_index_threshold import check_vector_index_thresholds
 
     return await check_vector_index_thresholds()
@@ -629,7 +631,7 @@ def builtin_task_seeds() -> list[TaskSeed]:
         # create_with_source. DB-only, no runtime gate; the reaper's age floor
         # protects in-flight creates.
         TaskSeed(name="Verwaiste Platzhalter-Atoms aufräumen", handler_key="placeholder_atom_reaper", interval_seconds=settings.placeholder_atom_reaper_interval, run_at_boot=True, enabled=True),
-        # Täglich, weil die beobachteten Tabellen langsam wachsen und die
-        # Aufgabe im Normalfall schweigt (nur eine Warnung über der Schwelle).
+        # Täglich, weil die beobachteten Tabellen langsam wachsen und die Aufgabe
+        # im Normalfall schweigt (sie meldet nur, wenn der Planer umschwenkt).
         TaskSeed(name="Vektorindex-Schwelle prüfen", handler_key="vector_index_threshold", interval_seconds=86400, run_at_boot=True, enabled=True),
     ]

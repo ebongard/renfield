@@ -2113,8 +2113,11 @@ class ConversationMemoryService(AtomOwnerResolverMixin):
             -- Indexscan noch langsamer. Zum Vergleich kg_entities bei 4 813 Zeilen:
             -- 4,6 ms MIT Cast gegen 34 ms ohne — dort waehlt der Planer den Index
             -- und gewinnt siebenfach. Die Schwelle liegt also dazwischen.
-            -- AUSLOESER: die Aufgabe `vector_index_threshold` meldet, sobald diese
-            -- Tabelle 4 000 Zeilen ueberschreitet. Dann NEU MESSEN, nicht annehmen.
+            -- AUSLOESER: die Aufgabe `vector_index_threshold` fragt taeglich den
+            -- PLANER, ob er den Index bei GECASTETER Form naehme, und meldet erst
+            -- dann. NICHT die Zeilenzahl: die sagt es nicht vorher (xidra nutzt den
+            -- Index auf kg_entities schon bei 1 953 Zeilen, auf document_chunks bei
+            -- 3 165 nicht). Auf die Meldung hin gegenmessen, nicht annehmen.
             ORDER BY embedding <=> CAST(:embedding AS vector)
             LIMIT :top_k
         """)
@@ -2477,8 +2480,11 @@ class ConversationMemoryService(AtomOwnerResolverMixin):
             -- Indexscan noch langsamer. Zum Vergleich kg_entities bei 4 813 Zeilen:
             -- 4,6 ms MIT Cast gegen 34 ms ohne — dort waehlt der Planer den Index
             -- und gewinnt siebenfach. Die Schwelle liegt also dazwischen.
-            -- AUSLOESER: die Aufgabe `vector_index_threshold` meldet, sobald diese
-            -- Tabelle 4 000 Zeilen ueberschreitet. Dann NEU MESSEN, nicht annehmen.
+            -- AUSLOESER: die Aufgabe `vector_index_threshold` fragt taeglich den
+            -- PLANER, ob er den Index bei GECASTETER Form naehme, und meldet erst
+            -- dann. NICHT die Zeilenzahl: die sagt es nicht vorher (xidra nutzt den
+            -- Index auf kg_entities schon bei 1 953 Zeilen, auf document_chunks bei
+            -- 3 165 nicht). Auf die Meldung hin gegenmessen, nicht annehmen.
             ORDER BY embedding <=> CAST(:embedding AS vector)
             LIMIT 1
         """)

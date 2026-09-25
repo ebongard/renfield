@@ -56,9 +56,10 @@ INDEXED_TABLES = {
 #       kg_entities            4 813 Zeilen   4,6 ms mit Cast (hnsw) / 34 ms ohne
 #       document_chunks        2 122 Zeilen   101 ms mit Cast (seq)  / 16 ms ohne
 #       conversation_memories     81 Zeilen   4,1 ms mit Cast (seq)  / 0,9 ms ohne
-#     Die Schwelle liegt dazwischen. AUSLÖSER gegen das Vergessen:
-#     `services/vector_index_threshold.py` meldet täglich, sobald eine dieser
-#     Tabellen 4 000 eingebettete Zeilen überschreitet — dann NEU MESSEN.
+#     AUSLÖSER gegen das Vergessen: `services/vector_index_threshold.py` fragt
+#     täglich den PLANER, ob er den Index bei gecasteter Form nähme — nicht die
+#     Zeilenzahl. Die sagt es nicht vorher: xidra nutzt den Index auf
+#     kg_entities schon bei 1 953 Zeilen, auf document_chunks bei 3 165 nicht.
 SCALE_EXEMPT_FILES = {
     "rag_retrieval.py", "rag_service.py",
     "memory_retrieval.py", "conversation_memory_service.py",
