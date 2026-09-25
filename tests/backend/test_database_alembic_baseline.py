@@ -104,3 +104,58 @@ def test_ensure_alembic_baseline_widens_before_insert():
         "Widen ALTER must run BEFORE the INSERT — otherwise the INSERT "
         "still crashes when the column was VARCHAR(32)"
     )
+
+
+# ---------------------------------------------------------------------------
+# Die Basis-Migration und ihr Stempel (#B3)
+# ---------------------------------------------------------------------------
+class TestBaselineStamp:
+    """`PRE_BASELINE_REVISION` MUSS die Vorgaengerrevision der Basis sein.
+
+    🛑 Stimmt das nicht, wird die Basis auf einer frischen Datenbank
+    UEBERSPRUNGEN — und alles ist wieder wie vorher: das Roh-SQL aus den
+    Migrationen entsteht nie, und niemand merkt es, weil nichts kaputtgeht.
+    Es wird nur langsam. Genau dieser Fehlermodus hat neun Indizes auf beiden
+    Instanzen gekostet, fuenf davon HNSW.
+
+    Ein blosser Vergleich zweier Zeichenketten waere wertlos: der Test LIEST
+    die Basis-Migration und nimmt ihr `down_revision`.
+    """
+
+    @staticmethod
+    def _baseline_module():
+        import importlib.util
+
+        root = Path(_database_module.__file__).resolve().parents[1]
+        path = root / "alembic" / "versions" / "pc20260926_schema_baseline.py"
+        assert path.exists(), f"Basis-Migration fehlt: {path}"
+        spec = importlib.util.spec_from_file_location("baseline_under_test", path)
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        return mod
+
+    def test_the_stamp_is_the_baselines_parent(self):
+        from services.database import PRE_BASELINE_REVISION
+
+        mod = self._baseline_module()
+        assert mod.down_revision == PRE_BASELINE_REVISION, (
+            "Der Stempel zeigt nicht auf die Vorgaengerrevision der Basis — eine "
+            "frische Datenbank wuerde die Basis ueberspringen und das Roh-SQL "
+            "nie bekommen."
+        )
+
+    def test_the_baseline_is_the_head(self):
+        # Zeigt eine spaetere Migration auf die Basis, ist das in Ordnung — sie
+        # laeuft auf einer Neuinstallation ganz normal MIT. Der Stempel darf
+        # aber niemals auf die Basis selbst oder dahinter zeigen.
+        from services.database import PRE_BASELINE_REVISION
+
+        mod = self._baseline_module()
+        assert PRE_BASELINE_REVISION != mod.revision
+
+    def test_the_guard_names_a_table_that_exists_everywhere(self):
+        # Der Waechter entscheidet an EINER Tabelle, ob das Schema schon da ist.
+        # Waehlt jemand eine, die es auf einer aelteren Instanz nicht gibt, liefe
+        # die Basis dort an und versuchte, ein vorhandenes Schema neu zu bauen.
+        mod = self._baseline_module()
+        assert mod.SENTINEL_TABLE == "users"

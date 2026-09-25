@@ -7,7 +7,6 @@ from loguru import logger
 from sqlalchemy import event, inspect, text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
-from models.database import Base
 from utils.config import settings
 
 # Async Engine erstellen
@@ -104,6 +103,54 @@ AsyncSessionLocal = async_sessionmaker(
     expire_on_commit=False
 )
 
+#: Revision UNMITTELBAR VOR `pc20260926_baseline`. Eine frische Datenbank wird
+#: hierauf gestempelt, damit `upgrade head` genau die Basis faehrt und nicht die
+#: 115 Migrationen davor — die laufen aus dem Leeren ohnehin nicht durch (die
+#: Wurzel `9a0d8ccea5b0` ist ein leerer `pass`-Rumpf, `rooms` legt keine
+#: Migration an). `tests/backend/test_database_alembic_baseline.py` haelt fest,
+#: dass dieser Wert wirklich die Vorgaengerrevision der Basis ist.
+PRE_BASELINE_REVISION = "pc20260924_restore_idx"
+
+
+async def _run_alembic_upgrade_head() -> None:
+    """`alembic upgrade head` im selben Prozess, gegen dieselbe Datenbank."""
+    import asyncio
+
+    from alembic.config import Config
+
+    from alembic import command
+
+    backend_root = Path(__file__).resolve().parent.parent
+    cfg = Config(str(backend_root / "alembic.ini"))
+    cfg.set_main_option("script_location", str(backend_root / "alembic"))
+    # Alembic laeuft synchron; in einem eigenen Thread, damit die Ereignisschleife
+    # nicht blockiert.
+    await asyncio.to_thread(command.upgrade, cfg, "head")
+
+
+async def _stamp_pre_baseline() -> None:
+    """`alembic_version` auf die Revision VOR der Basis setzen.
+
+    Nur fuer eine leere Datenbank. Der Unterschied zum frueheren Verhalten ist
+    genau ein Wort: frueher HEAD, jetzt die Vorgaengerrevision der Basis — damit
+    die Basis danach auch WIRKLICH laeuft, statt uebersprungen zu werden.
+    """
+    async with engine.begin() as conn:
+        await conn.execute(text(
+            "CREATE TABLE IF NOT EXISTS alembic_version ("
+            "version_num VARCHAR(64) NOT NULL, "
+            "CONSTRAINT alembic_version_pkc PRIMARY KEY (version_num))"
+        ))
+        existing = (await conn.execute(text(
+            "SELECT version_num FROM alembic_version LIMIT 1"
+        ))).first()
+        if existing:
+            return
+        await conn.execute(text("INSERT INTO alembic_version (version_num) VALUES (:v)"),
+                           {"v": PRE_BASELINE_REVISION})
+    logger.info(f"alembic_version auf {PRE_BASELINE_REVISION} gestempelt (vor der Basis)")
+
+
 async def _ensure_alembic_baseline():
     """Stamp alembic_version to HEAD when the DB was just bootstrapped by create_all.
 
@@ -162,14 +209,45 @@ async def _ensure_alembic_baseline():
 
 
 async def init_db():
-    """Datenbank initialisieren und Tabellen erstellen"""
+    """Schema einer frischen Datenbank herstellen — ueber die MIGRATION, nicht
+    ueber `create_all`.
+
+    🛑 WARUM DAS GEAENDERT WURDE. Frueher lief hier `Base.metadata.create_all`
+    und danach ein STEMPEL auf den Alembic-Kopf. Damit entstand jedes DDL, das
+    eine Migration per `op.execute("CREATE INDEX …")` anlegt, auf einer
+    Neuinstallation NIE — und wurde nie nachgeholt, weil der Stempel behauptete,
+    die Migration sei angewandt. Nachgewiesen am 2026-09-25 an 37 Datenpunkten
+    ohne eine Ausnahme: neun Indizes fehlten auf BEIDEN Instanzen, fuenf davon
+    HNSW; jede semantische Suche lief als Seq Scan. #1336 hat den Bestand
+    repariert, `pc20260926_baseline` behebt die Ursache.
+
+    Jetzt: eine LEERE Datenbank wird auf die Revision VOR der Basis gestempelt
+    und dann durch `alembic upgrade head` gefahren. Die Basis ist das Einzige,
+    was dabei laeuft, und sie bringt beides mit — die Tabellen aus den Modellen
+    UND das Roh-SQL. Verifiziert per MENGENvergleich gegen das Produktionsschema
+    (nicht per Zahl): 76 Tabellen und 333 Indizes, beide Differenzen leer.
+
+    🛑 Eine BESTEHENDE Datenbank wird hier NICHT migriert. Migrationen laufen in
+    diesem Projekt als eigener Job VOR dem Rollout (`bin/deploy-production.sh
+    --migrate`) — ein automatisches `upgrade` beim Start waere eine andere
+    Betriebsart und genau die Art stiller Aenderung, die hier nichts zu suchen
+    hat.
+    """
     try:
         async with engine.begin() as conn:
-            # Ensure pgvector extension exists before creating tables with vector columns
             await conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
-            await conn.run_sync(Base.metadata.create_all)
-        logger.info("✅ Datenbank-Tabellen erstellt")
-        await _ensure_alembic_baseline()
+            fresh = (await conn.execute(text(
+                "SELECT to_regclass('public.users') IS NULL"
+            ))).scalar()
+
+        if not fresh:
+            logger.info("Datenbank vorhanden — keine Initialisierung noetig")
+            return
+
+        logger.info("Leere Datenbank erkannt — Schema ueber die Basis-Migration")
+        await _stamp_pre_baseline()
+        await _run_alembic_upgrade_head()
+        logger.info("✅ Schema ueber `alembic upgrade head` hergestellt")
     except Exception as e:
         logger.error(f"❌ Fehler beim Initialisieren der Datenbank: {e}")
         raise

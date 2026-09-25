@@ -30,7 +30,7 @@ wären auf jeder Neuinstallation reine Schreiblast.
 
 ## Schritte
 
-- [ ] B1 Die 25 redundanten `index=True` (Primärschlüsselspalten) aus den Modellen
+- [x] B1 Die 25 redundanten `index=True` (Primärschlüsselspalten) aus den Modellen
       entfernen. Belegen, dass `create_all` danach genau 25 Indizes weniger baut.
 - [x] B2 ENTSCHIEDEN. Nicht nach Namen verglichen, sondern nach (Tabelle,
       Spalten) UND Prädikat — ein partieller Index deckt eben nicht alles ab.
@@ -65,16 +65,16 @@ wären auf jeder Neuinstallation reine Schreiblast.
       mit der Basis-Migration, und B3 legt ohnehin fest, wie das Modell Indizes
       deklariert. Vorher umzubauen hieße, Arbeit auf eine noch nicht getroffene
       Entscheidung zu setzen.
-- [ ] B3 Basis-Migration bauen, die das Produktionsschema erzeugt. Mechanismus noch
+- [x] B3 Basis-Migration gebaut: `pc20260926_baseline`, am Kettenende MIT WÄCHTER, die das Produktionsschema erzeugt. Mechanismus noch
       offen — die Kette hat heute EINE Wurzel (`9a0d8ccea5b0`, leerer Rumpf), und
       eine committete Migration darf nicht bearbeitet werden. Kandidaten:
       zweite Wurzel, gestauchte Kette mit angepasstem `alembic_version` auf beiden
       Instanzen, oder Basis am Kettenende mit Neuinstallations-Weiche.
-- [ ] B4 `_ensure_alembic_baseline()` ablösen: eine frische Datenbank läuft durch
+- [x] B4 `init_db()` stempelt die Vorgängerrevision und fährt `upgrade head`: eine frische Datenbank läuft durch
       `alembic upgrade head` statt `create_all` + Stempel.
-- [ ] B5 Beweis: leere Datenbank -> `upgrade head` -> Schemaabzug Zeile für Zeile
+- [x] B5 BEWIESEN per Mengenvergleich: 76 Tabellen, 333 Indizes, beide Differenzen LEER. leere Datenbank -> `upgrade head` -> Schemaabzug Zeile für Zeile
       gegen die Produktion. KEIN Zahlenvergleich, ein Mengenvergleich.
-- [ ] B6 Rückweg durchlaufen, nicht behaupten.
+- [x] B6 Rückweg durchlaufen (333→333→333 und 326→326→326). durchlaufen, nicht behaupten.
 
 ## Nicht in diesem Vorhaben
 - Die 44 Indizes mit 0 Scans beschneiden — das Fenster trägt die Aussage nicht.

@@ -12,11 +12,18 @@ Loaded only when a migration file is read. Deploy order and the migration Job: `
   naming schemes. Query the LIVE database and use that string verbatim:
   `kubectl -n <namespace> exec deploy/backend -c backend -- alembic heads` (must be ONE revision; several = the chain is
   already forked — stop and fix that first) and `alembic current`.
-- Never run `alembic upgrade head` on an EMPTY database: a fresh DB self-bootstraps (`init_db()` runs
-  `Base.metadata.create_all` + stamps HEAD). The chain from empty fails on `room_output_devices` (FK to `rooms`, which
-  only `create_all` creates) — the ROOT revision `9a0d8ccea5b0` is an empty `pass` stub, so the chain has never been a
-  complete description of the schema.
-- 🛑 **The consequence of that stamp: raw-SQL DDL in a migration NEVER reaches a fresh install.** `create_all` builds
+- **The chain still does not run from the ROOT.** Revision `9a0d8ccea5b0` is an empty `pass` stub and no migration
+  ever creates `rooms`, so `upgrade` from base fails on `room_output_devices`. That has always been true and is not
+  going to change.
+- ✅ **A fresh database IS now built by a migration** (`pc20260926_baseline`, #B3): `init_db()` stamps
+  `PRE_BASELINE_REVISION` (the baseline's parent) and runs `alembic upgrade head`, so the baseline is the only thing
+  that runs — and it brings BOTH the model tables and the raw-SQL DDL. Verified by SET comparison against the live
+  production schema, not by count: 76 tables and 333 indexes, both differences empty. An EXISTING database is left
+  alone: the baseline's guard checks `SENTINEL_TABLE` and returns. Existing installs are still migrated by the deploy
+  job (`--migrate`), never at boot.
+  **A new raw-SQL index goes in a NEW migration, never into the baseline** — migrations after it run on a fresh
+  install like any other. The baseline covers only what came before it and never needs updating.
+- 🛑 **Historisch (bis #B3): raw-SQL DDL in a migration NEVER reached a fresh install.** `create_all` builds
   tables and ORM-declared indexes; anything a migration adds via `op.execute("CREATE INDEX …")` is skipped, and the
   stamp then claims it was applied, so nothing ever backfills it. Measured 2026-09-24, 37 data points without one
   exception: every raw-SQL index from a migration dated up to 2026-04-02 is ABSENT on both instances, every one from

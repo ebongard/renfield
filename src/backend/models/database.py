@@ -1011,9 +1011,9 @@ class PaperlessPendingFinalize(Base):
     original_metadata = Column(JSON, nullable=False, default=dict)
     created_note = Column(Text, nullable=True)
     doc_text = Column(Text, nullable=True)
-    created_at = Column(DateTime, nullable=False, default=_utcnow, index=True)
+    created_at = Column(DateTime, nullable=False, default=_utcnow)
     # NULL until the finalize completes; the reconciler only re-runs NULL rows.
-    finalized_at = Column(DateTime, nullable=True, index=True)
+    finalized_at = Column(DateTime, nullable=True)
     attempts = Column(Integer, nullable=False, default=0)
 
 
@@ -1673,7 +1673,7 @@ class ConversationMemory(Base):
     # Back-fill from scope='user'->0(self), 'team'->2(household), 'global'->4(public)
     # in pc20260420_circles_v1 migration. team_id remains on the row (parked for v2
     # named-circles per Finding 1.2C).
-    atom_id = Column(String(36), ForeignKey("atoms.atom_id", ondelete="CASCADE"), nullable=True, index=True)
+    atom_id = Column(String(36), ForeignKey("atoms.atom_id", ondelete="CASCADE"), nullable=True)
     circle_tier = Column(Integer, nullable=False, default=0)
 
     # --- Structured Memory (Phase 0/D9): subject attribution ---
@@ -1841,7 +1841,7 @@ class ProceduralSkill(Base):
     # 2026-09-25: `create_all` erzeugte 25 solche Doppler, die KEINE Instanz
     # hat; die Produktion lief nie mit ihnen.
     id = Column(Integer, primary_key=True)
-    user_id = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
 
     title = Column(String(255), nullable=False)
     body_md = Column(Text, nullable=False)
@@ -1862,7 +1862,6 @@ class ProceduralSkill(Base):
         String(20),
         nullable=False,
         default=SKILL_STATUS_DRAFT,
-        index=True,
     )
     # Owner can pin an approved skill so the curator's stale-archive job
     # never touches it. Pin is orthogonal to status — only meaningful for
@@ -1878,7 +1877,6 @@ class ProceduralSkill(Base):
         String(36),
         ForeignKey("atoms.atom_id", ondelete="CASCADE"),
         nullable=True,
-        index=True,
     )
     circle_tier = Column(Integer, nullable=False, default=0)
 
@@ -1891,7 +1889,6 @@ class ProceduralSkill(Base):
         Integer,
         ForeignKey("procedural_skills.id", ondelete="SET NULL"),
         nullable=True,
-        index=True,
     )
 
     created_at = Column(DateTime, default=_utcnow)
@@ -1947,7 +1944,7 @@ class AgentTrajectory(Base):
     # 2026-09-25: `create_all` erzeugte 25 solche Doppler, die KEINE Instanz
     # hat; die Produktion lief nie mit ihnen.
     id = Column(Integer, primary_key=True)
-    user_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     conversation_id = Column(Integer, ForeignKey("conversations.id", ondelete="SET NULL"), nullable=True)
 
     # The complete trace. Keys: user_message, system_role, steps[],
@@ -1959,7 +1956,7 @@ class AgentTrajectory(Base):
     redacted_payload = Column(JSON, nullable=True)
 
     # Quick-filter fields denormalized out of raw_payload for indexed lookups.
-    outcome = Column(String(20), nullable=False, default=TRAJECTORY_OUTCOME_SUCCESS, index=True)
+    outcome = Column(String(20), nullable=False, default=TRAJECTORY_OUTCOME_SUCCESS)
     tool_count = Column(Integer, nullable=False, default=0)
     distinct_tool_count = Column(Integer, nullable=False, default=0)
     token_count = Column(Integer, nullable=True)  # input+output for the turn
@@ -1971,8 +1968,8 @@ class AgentTrajectory(Base):
     # IDs of injected skills (JSON list); used for offline skill-effectiveness analytics.
     used_skill_ids = Column(JSON, nullable=True)
 
-    flagged_for_retention = Column(Boolean, nullable=False, default=False, index=True)
-    created_at = Column(DateTime, default=_utcnow, index=True)
+    flagged_for_retention = Column(Boolean, nullable=False, default=False)
+    created_at = Column(DateTime, default=_utcnow)
 
     __table_args__ = (
         Index("idx_trajectories_user_created", "user_id", "created_at"),
@@ -2014,8 +2011,8 @@ class ToolOutcomeStat(Base):
     # 2026-09-25: `create_all` erzeugte 25 solche Doppler, die KEINE Instanz
     # hat; die Produktion lief nie mit ihnen.
     id = Column(Integer, primary_key=True)
-    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=True, index=True)
-    tool_name = Column(String(128), nullable=False, index=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=True)
+    tool_name = Column(String(128), nullable=False)
 
     success_count = Column(Integer, nullable=False, default=0)
     failure_count = Column(Integer, nullable=False, default=0)
@@ -2079,7 +2076,7 @@ class SkillCuratorRun(Base):
     # 2026-09-25: `create_all` erzeugte 25 solche Doppler, die KEINE Instanz
     # hat; die Produktion lief nie mit ihnen.
     id = Column(Integer, primary_key=True)
-    started_at = Column(DateTime, default=_utcnow, nullable=False, index=True)
+    started_at = Column(DateTime, default=_utcnow, nullable=False)
     finished_at = Column(DateTime, nullable=True)
     run_type = Column(String(20), nullable=False, default=CURATOR_RUN_TYPE_SCHEDULED)
     triggered_by_user_id = Column(
@@ -2124,7 +2121,6 @@ class SkillWouldHaveInjectedLog(Base):
         Integer,
         ForeignKey("procedural_skills.id", ondelete="CASCADE"),
         nullable=False,
-        index=True,
     )
     user_id = Column(
         Integer,
@@ -2141,7 +2137,7 @@ class SkillWouldHaveInjectedLog(Base):
     # later approve/reject doesn't make the log row look like it
     # corresponds to a different gate decision.
     status_at_query = Column(String(20), nullable=False)
-    created_at = Column(DateTime, default=_utcnow, nullable=False, index=True)
+    created_at = Column(DateTime, default=_utcnow, nullable=False)
 
     skill = relationship("ProceduralSkill", foreign_keys=[skill_id])
     user = relationship("User", foreign_keys=[user_id])
@@ -2185,7 +2181,7 @@ class KGEntity(Base):
     # FK to atoms registry + denormalized circle_tier for SQL filter perf.
     # Back-fill from old scope='personal'->0(self), yaml-defined->2(household)
     # in pc20260420_circles_v1 migration.
-    atom_id = Column(String(36), ForeignKey("atoms.atom_id", ondelete="CASCADE"), nullable=True, index=True)
+    atom_id = Column(String(36), ForeignKey("atoms.atom_id", ondelete="CASCADE"), nullable=True)
     circle_tier = Column(Integer, nullable=False, default=0)
 
     # --- Structured Memory (Phase 0): canonicalization + multi-type ---
@@ -2258,7 +2254,7 @@ class KGRelation(Base):
     # pc20260420_circles_v1 migration. Cascade rule for runtime tier changes
     # lives in AtomService.update_tier (when a kg_node tier changes, all
     # incident relations recompute their tier in the same transaction).
-    atom_id = Column(String(36), ForeignKey("atoms.atom_id", ondelete="CASCADE"), nullable=True, index=True)
+    atom_id = Column(String(36), ForeignKey("atoms.atom_id", ondelete="CASCADE"), nullable=True)
     circle_tier = Column(Integer, nullable=False, default=0)
 
     # --- Structured Memory (Phase 0): provenance ---
@@ -2328,7 +2324,7 @@ class KgMergeProposal(Base):
     # 2026-09-25: `create_all` erzeugte 25 solche Doppler, die KEINE Instanz
     # hat; die Produktion lief nie mit ihnen.
     id = Column(Integer, primary_key=True)
-    user_id = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
     loser_entity_id = Column(Integer, ForeignKey("kg_entities.id", ondelete="CASCADE"), nullable=False)
     winner_entity_id = Column(Integer, ForeignKey("kg_entities.id", ondelete="CASCADE"), nullable=False)
     similarity = Column(Float, nullable=False, default=0.0)
@@ -3481,7 +3477,6 @@ class DocumentProcessingHistory(Base):
         Integer,
         ForeignKey("documents.id", ondelete="CASCADE"),
         nullable=False,
-        index=True,
     )
 
     started_at = Column(DateTime(timezone=True), nullable=False, default=_utcnow)
