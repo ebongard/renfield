@@ -45,6 +45,18 @@ Loaded only when a migration file is read. Deploy order and the migration Job: `
   `document_chunks` at 3 165; heap pages and index shape decide (416 pages for 2 847 rows vs 150 for 4 813, estimated
   HNSW startup 8x apart). An exemption without a trigger goes silently stale: nothing breaks, it just gets slow —
   and a trigger that measures the wrong quantity is a second trap, not a safeguard.
+- 🛑 **`create_all` and the production schema are NOT the same schema — and the index COUNT will tell you they are.**
+  Measured 2026-09-25: 75 tables = 75 tables, 333 indexes = 333 indexes, and yet **45 indexes exist only in production
+  and 45 only from `create_all`**. A count comparison reports "identical"; only a SET comparison shows the third that
+  differs. Production-only = every HNSW, every full-text GIN, the partial and composite ones, 3 UNIQUE (raw-SQL
+  migration DDL). `create_all`-only = single-column `index=True` declarations, **25 of them redundant with the primary
+  key** they sit on (removed in #1339). Compare `comm -13/-23` on sorted `pg_indexes` listings, never the counts.
+  A related trap when measuring: `Base.metadata` only knows tables whose MODULE was imported — import
+  `ha_glue.models.database` too, or 13 tables appear "missing" that are not.
+- 🛑 **`idx_scan` cannot prove an index is unused.** `pg_stat_user_indexes` counters only cover the window since the
+  last stats reset; after a restart that may be hours. "0 scans" then means "not needed in 3.5 h", which says nothing
+  about a daily or weekly task. And a UNIQUE index enforces an invariant no matter how often it is scanned. Use the
+  counters as evidence FOR use, never against.
 - **`atttypmod` for a `vector(N)` column IS N** — there is no `+4` varlena offset. `pc20260402:60` computes
   `atttypmod - 4` and would have built a `halfvec(2556)` index that queries casting to `halfvec(2560)` can never use:
   built, maintained on every write, dead. `y8z9a0b1c2d3` reads it raw and is correct.
