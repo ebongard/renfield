@@ -44,10 +44,26 @@ INDEXED_TABLES = {
     "meeting_speaker_fingerprints",
 }
 
-# Eine gewichtete Rangfolge kann eine HNSW-Suche prinzipiell nicht bedienen
-# (sie ordnet nur nach reiner Distanz). Solche Stellen tragen bewusst keinen
-# Cast; sie stehen hier namentlich, damit „Ausnahme" eine Entscheidung bleibt
-# und nicht zur Lücke wird.
+# Bewusste Ausnahmen. Sie stehen NAMENTLICH hier, damit „Ausnahme" eine
+# Entscheidung bleibt und nicht zur Lücke wird — und jede trägt ihren Grund.
+#
+# (a) Gewichtete Rangfolge: eine HNSW-Suche ordnet nur nach reiner Distanz,
+#     eine Formel mit importance/confidence ist prinzipiell nicht indexfähig.
+# (b) Tabellen, bei denen der Planer den Index BEI IHRER GRÖSSE nicht wählt.
+#     Der Cast ist nur gratis, wenn der Index daraufhin benutzt wird; sonst
+#     kostet die halfvec-Umwandlung jede Zeile eines Seq Scans umsonst.
+#     Gemessen im Haushalt 2026-09-25 an echten Daten:
+#       kg_entities            4 813 Zeilen   4,6 ms mit Cast (hnsw) / 34 ms ohne
+#       document_chunks        2 122 Zeilen   101 ms mit Cast (seq)  / 16 ms ohne
+#       conversation_memories     81 Zeilen   4,1 ms mit Cast (seq)  / 0,9 ms ohne
+#     Die Schwelle liegt dazwischen. AUSLÖSER gegen das Vergessen:
+#     `services/vector_index_threshold.py` meldet täglich, sobald eine dieser
+#     Tabellen 4 000 eingebettete Zeilen überschreitet — dann NEU MESSEN.
+SCALE_EXEMPT_FILES = {
+    "rag_retrieval.py", "rag_service.py",
+    "memory_retrieval.py", "conversation_memory_service.py",
+}
+
 WEIGHTED_EXEMPT = {
     ("memory_retrieval.py", "* importance * confidence"),
 }
@@ -85,6 +101,8 @@ def test_every_indexed_vector_order_by_casts_to_halfvec():
     for name, lineno, line in _order_by_vector_lines():
         if any(name == f and marker in line for f, marker in WEIGHTED_EXEMPT):
             continue
+        if name in SCALE_EXEMPT_FILES:
+            continue
         if "halfvec" not in line:
             offenders.append(f"{name}:{lineno}  {line[:100]}")
     assert offenders == [], (
@@ -100,7 +118,25 @@ def test_the_cast_appears_on_both_sides():
     for name, lineno, line in _order_by_vector_lines():
         if any(name == f and marker in line for f, marker in WEIGHTED_EXEMPT):
             continue
+        if name in SCALE_EXEMPT_FILES:
+            continue
         if line.count("halfvec") < 2:
             offenders.append(f"{name}:{lineno}  {line[:100]}")
     assert offenders == [], (
         "halfvec steht nur auf EINER Seite des <=>:\n  " + "\n  ".join(offenders))
+
+
+def test_the_scale_exemption_is_documented_and_watched():
+    """Jede Groessen-Ausnahme muss im Ausloeser stehen — sonst verfaellt sie stumm.
+
+    Eine Ausnahme ohne Ueberwachung ist ein Befund mit Verfallsdatum: sie
+    stimmt heute und wird irgendwann still falsch, ohne dass etwas kaputtgeht
+    — es wird nur langsam. Deshalb muss jede hier ausgenommene Datei auch in
+    `services/vector_index_threshold.py` beobachtet werden.
+    """
+    watched = (_services_dir() / "vector_index_threshold.py").read_text(encoding="utf-8")
+    missing = [f for f in SCALE_EXEMPT_FILES if f not in watched]
+    assert missing == [], (
+        "Diese Dateien sind vom halfvec-Cast ausgenommen, werden aber von der "
+        "Schwellen-Aufgabe NICHT beobachtet — die Ausnahme koennte still "
+        "veralten:\n  " + "\n  ".join(missing))

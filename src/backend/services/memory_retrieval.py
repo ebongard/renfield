@@ -67,7 +67,6 @@ from models.database import TIER_PUBLIC, ConversationMemory
 from services.circle_sql import conversation_memories_circles_filter
 from utils.config import settings
 from utils.llm_client import get_embed_client
-from models.database import EMBEDDING_DIMENSION
 
 # Similarity score assigned to deterministic subject-linked memories (Phase 3c).
 # High floor so a fact about a query-named subject is never ranked below a fuzzy
@@ -180,7 +179,16 @@ class MemoryRetrieval:
                     WHERE is_active = true
                       AND embedding IS NOT NULL
                       AND {circles_clause}
-                    ORDER BY (embedding::halfvec({EMBEDDING_DIMENSION}) <=> CAST(:embedding AS halfvec({EMBEDDING_DIMENSION}))) ASC
+                    -- KEIN halfvec-Cast, und das ist GEMESSEN, nicht vermutet. Der Cast
+                    -- lohnt nur, wenn der Planer den HNSW-Index daraufhin auch waehlt.
+                    -- Haushalt 2026-09-25, 81 Zeilen: mit Cast 4,1 ms (Seq Scan, die
+                    -- Umwandlung kostet je Zeile), ohne Cast 0,9 ms. Erzwungen war der
+                    -- Indexscan noch langsamer. Zum Vergleich kg_entities bei 4 813 Zeilen:
+                    -- 4,6 ms MIT Cast gegen 34 ms ohne — dort waehlt der Planer den Index
+                    -- und gewinnt siebenfach. Die Schwelle liegt also dazwischen.
+                    -- AUSLOESER: die Aufgabe `vector_index_threshold` meldet, sobald diese
+                    -- Tabelle 4 000 Zeilen ueberschreitet. Dann NEU MESSEN, nicht annehmen.
+                    ORDER BY (embedding <=> CAST(:embedding AS vector)) ASC
                     LIMIT :recall_k
                 )
                 SELECT

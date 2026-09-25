@@ -1287,7 +1287,7 @@ class RAGService(AtomOwnerResolverMixin):
         query_embedding = await self.get_embedding(query)
         embedding_str = f"[{','.join(map(str, query_embedding))}]"
 
-        sql = text(f"""
+        sql = text("""
             SELECT
                 dc.id,
                 dc.content,
@@ -1299,7 +1299,16 @@ class RAGService(AtomOwnerResolverMixin):
             FROM document_chunks dc
             WHERE dc.document_id = :doc_id
             AND dc.embedding IS NOT NULL
-            ORDER BY dc.embedding::halfvec({EMBEDDING_DIMENSION}) <=> CAST(:embedding AS halfvec({EMBEDDING_DIMENSION}))
+            -- KEIN halfvec-Cast, und das ist GEMESSEN, nicht vermutet. Der Cast
+            -- lohnt nur, wenn der Planer den HNSW-Index daraufhin auch waehlt.
+            -- Haushalt 2026-09-25, 2 122 Zeilen: mit Cast 101 ms (Seq Scan, die
+            -- Umwandlung kostet je Zeile), ohne Cast 16 ms. Erzwungen war der
+            -- Indexscan noch langsamer. Zum Vergleich kg_entities bei 4 813 Zeilen:
+            -- 4,6 ms MIT Cast gegen 34 ms ohne — dort waehlt der Planer den Index
+            -- und gewinnt siebenfach. Die Schwelle liegt also dazwischen.
+            -- AUSLOESER: die Aufgabe `vector_index_threshold` meldet, sobald diese
+            -- Tabelle 4 000 Zeilen ueberschreitet. Dann NEU MESSEN, nicht annehmen.
+            ORDER BY dc.embedding <=> CAST(:embedding AS vector)
             LIMIT :limit
         """)
 

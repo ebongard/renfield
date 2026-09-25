@@ -490,12 +490,22 @@ async def _placeholder_atom_reaper_handler(app: "FastAPI", params: dict) -> str 
     return None
 
 
+async def _vector_index_threshold_handler(app: "FastAPI", params: dict) -> str | None:
+    # Kein Tor; nur Lesen. Meldet, wenn eine Tabelle die Groesse erreicht, ab der
+    # ihr HNSW-Index sich lohnen KOENNTE — und verlangt dann eine NEUE MESSUNG,
+    # statt zu behaupten, er lohne jetzt. Siehe services/vector_index_threshold.py.
+    from services.vector_index_threshold import check_vector_index_thresholds
+
+    return await check_vector_index_thresholds()
+
+
 # ---------------------------------------------------------------------------
 # Registration + seeds
 # ---------------------------------------------------------------------------
 
 def register_builtin_handlers() -> None:
     """Register every built-in handler. Idempotent — called once at lifespan."""
+    register_handler("vector_index_threshold", _vector_index_threshold_handler)
     register_handler("paperless_dedupe", _paperless_dedupe_handler)
     register_handler("paperless_index_health", _paperless_index_health_handler)
     register_handler("federation_audit_cleanup", _federation_audit_cleanup_handler)
@@ -619,4 +629,7 @@ def builtin_task_seeds() -> list[TaskSeed]:
         # create_with_source. DB-only, no runtime gate; the reaper's age floor
         # protects in-flight creates.
         TaskSeed(name="Verwaiste Platzhalter-Atoms aufräumen", handler_key="placeholder_atom_reaper", interval_seconds=settings.placeholder_atom_reaper_interval, run_at_boot=True, enabled=True),
+        # Täglich, weil die beobachteten Tabellen langsam wachsen und die
+        # Aufgabe im Normalfall schweigt (nur eine Warnung über der Schwelle).
+        TaskSeed(name="Vektorindex-Schwelle prüfen", handler_key="vector_index_threshold", interval_seconds=86400, run_at_boot=True, enabled=True),
     ]

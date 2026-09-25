@@ -707,7 +707,11 @@ class TestBatchBCHandlers:
         builtins.register_builtin_handlers()
         seeds = builtins.builtin_task_seeds()
 
-        assert len(seeds) == 26  # +1: Paperless-Suchindex prüfen (Fix B)
+        # +1: Vektorindex-Schwelle prüfen — der Auslöser gegen eine Ausnahme mit
+        # Verfallsdatum (PR #1336: document_chunks/conversation_memories casten
+        # bewusst nicht auf halfvec, weil der Planer den Index bei ihrer Größe
+        # nicht wählt; ab 4 000 eingebetteten Zeilen ist neu zu messen).
+        assert len(seeds) == 27  # +1: Paperless-Suchindex prüfen (Fix B)
         names = [s.name for s in seeds]
         # Names are the ON CONFLICT seed key — a duplicate would silently drop a
         # built-in. Expressed against len(seeds) so adding a built-in updates ONE

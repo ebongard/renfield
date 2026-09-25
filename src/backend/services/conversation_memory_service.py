@@ -38,7 +38,6 @@ from models.database import (
 from services.atom_owner import AtomOwnerResolverMixin
 from utils.config import settings
 from utils.llm_client import get_default_client, get_embed_client
-from models.database import EMBEDDING_DIMENSION
 
 # ---------------------------------------------------------------------------
 # Memory Poisoning Defense — pattern lists for extraction gating
@@ -2107,7 +2106,16 @@ class ConversationMemoryService(AtomOwnerResolverMixin):
             WHERE is_active = true
               AND embedding IS NOT NULL
               {user_filter}
-            ORDER BY embedding::halfvec({EMBEDDING_DIMENSION}) <=> CAST(:embedding AS halfvec({EMBEDDING_DIMENSION}))
+            -- KEIN halfvec-Cast, und das ist GEMESSEN, nicht vermutet. Der Cast
+            -- lohnt nur, wenn der Planer den HNSW-Index daraufhin auch waehlt.
+            -- Haushalt 2026-09-25, 81 Zeilen: mit Cast 4,1 ms (Seq Scan, die
+            -- Umwandlung kostet je Zeile), ohne Cast 0,9 ms. Erzwungen war der
+            -- Indexscan noch langsamer. Zum Vergleich kg_entities bei 4 813 Zeilen:
+            -- 4,6 ms MIT Cast gegen 34 ms ohne — dort waehlt der Planer den Index
+            -- und gewinnt siebenfach. Die Schwelle liegt also dazwischen.
+            -- AUSLOESER: die Aufgabe `vector_index_threshold` meldet, sobald diese
+            -- Tabelle 4 000 Zeilen ueberschreitet. Dann NEU MESSEN, nicht annehmen.
+            ORDER BY embedding <=> CAST(:embedding AS vector)
             LIMIT :top_k
         """)
 
@@ -2462,7 +2470,16 @@ class ConversationMemoryService(AtomOwnerResolverMixin):
             WHERE is_active = true
               AND embedding IS NOT NULL
               {user_filter}
-            ORDER BY embedding::halfvec({EMBEDDING_DIMENSION}) <=> CAST(:embedding AS halfvec({EMBEDDING_DIMENSION}))
+            -- KEIN halfvec-Cast, und das ist GEMESSEN, nicht vermutet. Der Cast
+            -- lohnt nur, wenn der Planer den HNSW-Index daraufhin auch waehlt.
+            -- Haushalt 2026-09-25, 81 Zeilen: mit Cast 4,1 ms (Seq Scan, die
+            -- Umwandlung kostet je Zeile), ohne Cast 0,9 ms. Erzwungen war der
+            -- Indexscan noch langsamer. Zum Vergleich kg_entities bei 4 813 Zeilen:
+            -- 4,6 ms MIT Cast gegen 34 ms ohne — dort waehlt der Planer den Index
+            -- und gewinnt siebenfach. Die Schwelle liegt also dazwischen.
+            -- AUSLOESER: die Aufgabe `vector_index_threshold` meldet, sobald diese
+            -- Tabelle 4 000 Zeilen ueberschreitet. Dann NEU MESSEN, nicht annehmen.
+            ORDER BY embedding <=> CAST(:embedding AS vector)
             LIMIT 1
         """)
 
