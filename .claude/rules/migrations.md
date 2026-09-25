@@ -24,6 +24,14 @@ Loaded only when a migration file is read. Deploy order and the migration Job: `
   every semantic search ran as a seq scan (measured: 46 ms vs 0.57 ms on 5 000 rows). Repaired by
   `pc20260924_restore_idx`; the CAUSE still stands, so a new raw-SQL index today is lost again on the next fresh
   install. Declare it in the ORM as well, or accept that it is repair-migration material.
+- 🛑 **An HNSW index on `(embedding::halfvec(N)) halfvec_cosine_ops` is an EXPRESSION index — the query must match
+  it SYNTACTICALLY or the planner ignores it.** `ORDER BY embedding <=> CAST(:e AS vector)` does not match; it needs
+  `ORDER BY embedding::halfvec(N) <=> CAST(:e AS halfvec(N))`. Measured 2026-09-24 on 5 000 rows: no cast → Seq Scan
+  46 ms, cast → Index Scan 0.57 ms. Creating such an index without fixing the queries ships write cost and zero read
+  benefit — #1336 nearly shipped four of them. Only the **ORDER BY** decides index usage; leave the `1 - (…)` select
+  expression on full `vector` (more precise, free at LIMIT scale). A weighted ranking (`(1-dist) * importance`) and a
+  `(1 - dist) DESC` ordering are NOT ANN-indexable at all — flip the latter to `dist ASC`, and leave the former with a
+  comment rather than a cast that fakes index usage. `tests/backend/test_vector_query_index_usage.py` guards the class.
 - **`atttypmod` for a `vector(N)` column IS N** — there is no `+4` varlena offset. `pc20260402:60` computes
   `atttypmod - 4` and would have built a `halfvec(2556)` index that queries casting to `halfvec(2560)` can never use:
   built, maintained on every write, dead. `y8z9a0b1c2d3` reads it raw and is correct.
