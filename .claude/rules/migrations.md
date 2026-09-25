@@ -32,6 +32,15 @@ Loaded only when a migration file is read. Deploy order and the migration Job: `
   expression on full `vector` (more precise, free at LIMIT scale). A weighted ranking (`(1-dist) * importance`) and a
   `(1 - dist) DESC` ordering are NOT ANN-indexable at all — flip the latter to `dist ASC`, and leave the former with a
   comment rather than a cast that fakes index usage. `tests/backend/test_vector_query_index_usage.py` guards the class.
+- 🛑 **…and the cast is only free when the planner ACTUALLY picks the index — which depends on TABLE SIZE.** Measured
+  on live household data 2026-09-25: `kg_entities` (4 813 rows) 4.6 ms with the cast (hnsw) vs 34 ms without — a 7×
+  win; `document_chunks` (2 122 rows) **101 ms with the cast (seq scan!) vs 16 ms without** — a 6× LOSS, because the
+  halfvec conversion runs per row while the index is never chosen. `ANALYZE` does not change it, and forcing the
+  index was slower still (159 ms). A synthetic benchmark lies here: 5 000 RANDOM vectors showed 0.57 ms vs 46 ms,
+  because random vectors are far apart while real embeddings cluster and HNSW must explore far more. **Measure on
+  real data, per table, before adding the cast.** Tables below the threshold deliberately do NOT cast
+  (`SCALE_EXEMPT_FILES` in the guard test), and the daily `vector_index_threshold` task warns when one crosses 4 000
+  embedded rows — an exemption without a trigger goes silently stale: nothing breaks, it just gets slow.
 - **`atttypmod` for a `vector(N)` column IS N** — there is no `+4` varlena offset. `pc20260402:60` computes
   `atttypmod - 4` and would have built a `halfvec(2556)` index that queries casting to `halfvec(2560)` can never use:
   built, maintained on every write, dead. `y8z9a0b1c2d3` reads it raw and is correct.

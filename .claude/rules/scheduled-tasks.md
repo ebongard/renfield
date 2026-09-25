@@ -58,6 +58,15 @@ Long form: `docs/design/scheduled-tasks.md` (#1137); index-health verdicts in `d
   KEEPS its Redis page cursor so the streak can build. After `PAPERLESS_INDEX_HEAL_MAX_ATTEMPTS` a doc is given up
   (excluded, direct rate-limited `ops_alert`, walk continues). Needs renfield-mcp-paperless ≥1.13.0.
 
+## `vector_index_threshold` — ein Ausloeser gegen eine Ausnahme mit Verfallsdatum
+
+Taeglich, schweigt im Normalfall. Zaehlt die Tabellen, deren ORDER-BY-Vektorsuche bewusst NICHT auf
+`halfvec` castet (heute `document_chunks`, `conversation_memories`), und warnt ab 4 000 eingebetteten Zeilen.
+Der Cast waere dort heute ein Rueckschritt — der Planer waehlt den HNSW-Index bei ihrer Groesse nicht, und
+die Umwandlung kostet dann jede Zeile umsonst (gemessen: 101 ms mit Cast gegen 16 ms ohne). Ab der Schwelle
+kippt das moeglicherweise. Die Aufgabe behauptet das NICHT, sie verlangt eine NEUE MESSUNG. Details und
+Zahlen: `services/vector_index_threshold.py`, Regel in `.claude/rules/migrations.md`.
+
 ## Other self-gating built-ins
 - Paperless dedupe: gates on `PAPERLESS_DEDUPE_RECONCILER_ENABLED`, calls `mcp.paperless.dedupe_documents` (MCP
   ≥1.12.0) — the logic lives in the MCP; `internal.paperless_dedupe` calls the same tool. No fork.
