@@ -86,15 +86,39 @@ _PLAIN_INDEXES = [
     ("idx_document_chunks_doc_chunk", "document_chunks",
      "CREATE INDEX IF NOT EXISTS idx_document_chunks_doc_chunk "
      "ON document_chunks (document_id, chunk_index)"),
-    ("idx_document_chunks_search_vector", "document_chunks",
-     "CREATE INDEX IF NOT EXISTS idx_document_chunks_search_vector "
+    # NICHT `idx_document_chunks_search_vector` — das ist der ALTE Name. Der
+    # GIN heisst heute `..._gin`: `pc20260529` wirft die alte Spalte weg
+    # (Postgres entfernt deren Index automatisch) und benennt den neuen um.
+    # `rag_service.py:1207` sucht ihn NAMENTLICH unter `..._gin`. Den alten
+    # Namen anzulegen hiesse: im Haushalt ein zweiter, vollstaendig redundanter
+    # GIN auf derselben GENERATED-Spalte (doppelte Schreibkosten, null
+    # Lesenutzen), auf xidra ein Index, den der Dienst nie findet. Gefunden im
+    # adversarialen Review von #1336 — ich hatte die Liste aus den alten
+    # Migrationen abgeschrieben, ohne den Rename mitzulesen.
+    # Auf xidra fehlt der GIN wirklich; unter DIESEM Namen schliesst das die Luecke.
+    ("idx_document_chunks_search_vector_gin", "document_chunks",
+     "CREATE INDEX IF NOT EXISTS idx_document_chunks_search_vector_gin "
      "ON document_chunks USING gin(search_vector)"),
     ("ix_conv_memories_cleanup", "conversation_memories",
      "CREATE INDEX IF NOT EXISTS ix_conv_memories_cleanup "
      "ON conversation_memories (category, last_accessed_at) WHERE is_active = true"),
 ]
 
-_ALL_NAMES = [n for n, _, _ in _VECTOR_INDEXES] + [n for n, _, _ in _PLAIN_INDEXES]
+# Der Rückbau fasst NICHT alles an, was das `upgrade()` anlegt.
+# `idx_document_chunks_search_vector_gin` existiert im Haushalt bereits (aus dem
+# Rename in `pc20260529`), dort ist das `upgrade()` wegen `IF NOT EXISTS` ein
+# Nichts — ein `DROP` im Rückbau würde also einen FREMDEN, produktiv genutzten
+# Index entfernen und der lexikalischen Suche die Grundlage nehmen
+# (`rag_service.py:1207` sucht ihn namentlich). Nur auf xidra legt ihn diese
+# Migration wirklich an; dort bleibt er nach einem Rückbau stehen. Das ist die
+# richtige Richtung des Irrtums: ein Index zu viel kostet Schreibzeit, ein
+# fehlender kostet jede Suche.
+_KEEP_ON_DOWNGRADE = {"idx_document_chunks_search_vector_gin"}
+
+_ALL_NAMES = [
+    n for n, _, _ in _VECTOR_INDEXES + _PLAIN_INDEXES
+    if n not in _KEEP_ON_DOWNGRADE
+]
 
 
 def _column_dim(conn, table: str, column: str) -> int | None:
