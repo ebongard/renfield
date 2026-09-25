@@ -19,6 +19,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from models.database import IntentCorrection
 from utils.config import settings
 from utils.llm_client import get_embed_client
+from models.database import EMBEDDING_DIMENSION
 
 
 class IntentFeedbackService:
@@ -158,7 +159,7 @@ class IntentFeedbackService:
 
         embedding_str = f"[{','.join(map(str, query_embedding))}]"
 
-        sql = text("""
+        sql = text(f"""
             SELECT
                 id,
                 message_text,
@@ -169,7 +170,7 @@ class IntentFeedbackService:
             FROM intent_corrections
             WHERE feedback_type = :feedback_type
               AND embedding IS NOT NULL
-            ORDER BY embedding <=> CAST(:embedding AS vector)
+            ORDER BY embedding::halfvec({EMBEDDING_DIMENSION}) <=> CAST(:embedding AS halfvec({EMBEDDING_DIMENSION}))
             LIMIT :limit
         """)
 

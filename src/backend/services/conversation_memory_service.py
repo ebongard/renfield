@@ -38,6 +38,7 @@ from models.database import (
 from services.atom_owner import AtomOwnerResolverMixin
 from utils.config import settings
 from utils.llm_client import get_default_client, get_embed_client
+from models.database import EMBEDDING_DIMENSION
 
 # ---------------------------------------------------------------------------
 # Memory Poisoning Defense — pattern lists for extraction gating
@@ -2106,7 +2107,7 @@ class ConversationMemoryService(AtomOwnerResolverMixin):
             WHERE is_active = true
               AND embedding IS NOT NULL
               {user_filter}
-            ORDER BY embedding <=> CAST(:embedding AS vector)
+            ORDER BY embedding::halfvec({EMBEDDING_DIMENSION}) <=> CAST(:embedding AS halfvec({EMBEDDING_DIMENSION}))
             LIMIT :top_k
         """)
 
@@ -2461,7 +2462,7 @@ class ConversationMemoryService(AtomOwnerResolverMixin):
             WHERE is_active = true
               AND embedding IS NOT NULL
               {user_filter}
-            ORDER BY embedding <=> CAST(:embedding AS vector)
+            ORDER BY embedding::halfvec({EMBEDDING_DIMENSION}) <=> CAST(:embedding AS halfvec({EMBEDDING_DIMENSION}))
             LIMIT 1
         """)
 

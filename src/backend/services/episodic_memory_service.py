@@ -18,6 +18,7 @@ from models.database import (
 )
 from utils.config import settings
 from utils.llm_client import get_embed_client
+from models.database import EMBEDDING_DIMENSION
 
 
 class EpisodicMemoryService:
@@ -156,7 +157,7 @@ class EpisodicMemoryService:
             WHERE is_active = true
               AND embedding IS NOT NULL
               {user_filter}
-            ORDER BY (1 - (embedding <=> CAST(:embedding AS vector))) DESC
+            ORDER BY embedding::halfvec({EMBEDDING_DIMENSION}) <=> CAST(:embedding AS halfvec({EMBEDDING_DIMENSION})) ASC
             LIMIT :limit
         """)
 

@@ -57,6 +57,7 @@ from services.fts_languages import build_tsquery_union_sql
 from utils.config import settings
 from utils.llm_client import get_embed_client
 from utils.prompt_safety import neutralize_delimiters
+from models.database import EMBEDDING_DIMENSION
 
 
 class RAGRetrieval:
@@ -227,7 +228,7 @@ class RAGRetrieval:
             AND dc.embedding IS NOT NULL
             AND {circles_clause}
             {kb_filter}
-            ORDER BY dc.embedding <=> CAST(:embedding AS vector)
+            ORDER BY dc.embedding::halfvec({EMBEDDING_DIMENSION}) <=> CAST(:embedding AS halfvec({EMBEDDING_DIMENSION}))
             LIMIT :limit
         """)
 

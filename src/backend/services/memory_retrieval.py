@@ -67,6 +67,7 @@ from models.database import TIER_PUBLIC, ConversationMemory
 from services.circle_sql import conversation_memories_circles_filter
 from utils.config import settings
 from utils.llm_client import get_embed_client
+from models.database import EMBEDDING_DIMENSION
 
 # Similarity score assigned to deterministic subject-linked memories (Phase 3c).
 # High floor so a fact about a query-named subject is never ranked below a fuzzy
@@ -179,7 +180,7 @@ class MemoryRetrieval:
                     WHERE is_active = true
                       AND embedding IS NOT NULL
                       AND {circles_clause}
-                    ORDER BY (embedding <=> CAST(:embedding AS vector)) ASC
+                    ORDER BY (embedding::halfvec({EMBEDDING_DIMENSION}) <=> CAST(:embedding AS halfvec({EMBEDDING_DIMENSION}))) ASC
                     LIMIT :recall_k
                 )
                 SELECT
@@ -221,6 +222,12 @@ class MemoryRetrieval:
                 WHERE is_active = true
                   AND embedding IS NOT NULL
                   AND {circles_clause}
+                -- KEIN halfvec-Cast, und das ist Absicht: diese Rangfolge
+                -- gewichtet die Aehnlichkeit mit importance und confidence.
+                -- Eine HNSW-Suche kann nur nach der reinen Distanz ordnen,
+                -- eine gewichtete Formel ist prinzipiell nicht indexfaehig
+                -- (gemessen: Seq Scan auch MIT Cast). Ein Cast brauchte hier
+                -- also nur Rechenzeit und taeuschte Indexnutzung vor.
                 ORDER BY (1 - (embedding <=> CAST(:embedding AS vector))) * importance * confidence DESC
                 LIMIT :limit
             """)

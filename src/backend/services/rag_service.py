@@ -1287,7 +1287,7 @@ class RAGService(AtomOwnerResolverMixin):
         query_embedding = await self.get_embedding(query)
         embedding_str = f"[{','.join(map(str, query_embedding))}]"
 
-        sql = text("""
+        sql = text(f"""
             SELECT
                 dc.id,
                 dc.content,
@@ -1299,7 +1299,7 @@ class RAGService(AtomOwnerResolverMixin):
             FROM document_chunks dc
             WHERE dc.document_id = :doc_id
             AND dc.embedding IS NOT NULL
-            ORDER BY dc.embedding <=> CAST(:embedding AS vector)
+            ORDER BY dc.embedding::halfvec({EMBEDDING_DIMENSION}) <=> CAST(:embedding AS halfvec({EMBEDDING_DIMENSION}))
             LIMIT :limit
         """)
 

@@ -64,6 +64,7 @@ from models.database import KGEntity
 from utils.config import settings
 from utils.llm_client import get_default_client, get_embed_client
 from utils.prompt_safety import neutralize_delimiters
+from models.database import EMBEDDING_DIMENSION
 
 
 class KGRetrieval:
@@ -302,7 +303,7 @@ class KGRetrieval:
                 WHERE e.is_active = true
                   AND e.embedding IS NOT NULL
                   {entity_filter}
-                ORDER BY e.embedding <=> CAST(:embedding AS vector)
+                ORDER BY e.embedding::halfvec({EMBEDDING_DIMENSION}) <=> CAST(:embedding AS halfvec({EMBEDDING_DIMENSION}))
                 LIMIT 10
             """)
 
@@ -528,7 +529,7 @@ class KGRetrieval:
                 WHERE e.is_active = true
                   AND e.embedding IS NOT NULL
                   {entity_filter}
-                ORDER BY e.embedding <=> CAST(:embedding AS vector)
+                ORDER BY e.embedding::halfvec({EMBEDDING_DIMENSION}) <=> CAST(:embedding AS halfvec({EMBEDDING_DIMENSION}))
                 LIMIT 10
             """)
             result = await self.db.execute(sql, params)
