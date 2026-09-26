@@ -9,6 +9,15 @@ paths:
 ---
 # Satellites & voice capture
 
+🛑 **Ein ausgefallener Satellit faellt NICHT von selbst auf.** Bis 2026-09-26 gab es
+dafuer nichts: die halbe Flotte war dunkel (Esszimmer 1 Tag, Arbeitszimmer 2 Tage,
+BensZimmer 30 Tage) und keine einzige Benachrichtigung. Jetzt meldet die stuendliche
+Aufgabe `satellite_fleet_watchdog` die Fehlenden. Das Lebenszeichen ist die LAUFENDE
+Registratur des `SatelliteManager`, NICHT `satellites.last_authenticated_at` — die
+Spalte wird nur beim Verbindungsaufbau gesetzt und altert bei einem stabil verbundenen
+Geraet, waehrend es quicklebendig ist. Details: `.claude/rules/scheduled-tasks.md`.
+
+
 Loaded only when a satellite file is read. Trust/OTA signing lives in `satellite-trust-ota.md`.
 Long form: `docs/design/ble-presence-improvement.md`, `docs/SATELLITE_ACOUSTIC_COMMISSIONING.md`,
 `docs/SATELLITE_OTA_UPDATES.md`, `docs/XVF3800_SATELLITE.md`.

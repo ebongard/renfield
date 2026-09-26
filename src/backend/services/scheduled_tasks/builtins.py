@@ -490,6 +490,18 @@ async def _placeholder_atom_reaper_handler(app: "FastAPI", params: dict) -> str 
     return None
 
 
+async def _satellite_fleet_watchdog_handler(app: "FastAPI", params: dict) -> str | None:
+    # Kein Tor; nur Lesen. Vergleicht eingebuchte gegen verbundene Satelliten und
+    # meldet die Fehlenden. NICHT `last_authenticated_at` allein: deren Alter
+    # misst "Zeit seit dem letzten Neuverbinden", nicht "seit dem letzten
+    # Lebenszeichen" — ein Waechter darauf haette am 2026-09-26 die drei
+    # GESUNDEN gemeldet und die drei toten verschwiegen. Siehe
+    # services/satellite_fleet_watchdog.py.
+    from services.satellite_fleet_watchdog import check_satellite_fleet
+
+    return await check_satellite_fleet()
+
+
 async def _vector_index_threshold_handler(app: "FastAPI", params: dict) -> str | None:
     # Kein Tor; nur Lesen, und nur EXPLAIN (keine Ausfuehrung). Fragt den PLANER,
     # ob er den HNSW-Index naehme, wenn die Abfrage auf halfvec castete — und
@@ -507,6 +519,7 @@ async def _vector_index_threshold_handler(app: "FastAPI", params: dict) -> str |
 
 def register_builtin_handlers() -> None:
     """Register every built-in handler. Idempotent — called once at lifespan."""
+    register_handler("satellite_fleet_watchdog", _satellite_fleet_watchdog_handler)
     register_handler("vector_index_threshold", _vector_index_threshold_handler)
     register_handler("paperless_dedupe", _paperless_dedupe_handler)
     register_handler("paperless_index_health", _paperless_index_health_handler)
@@ -634,4 +647,9 @@ def builtin_task_seeds() -> list[TaskSeed]:
         # Täglich, weil die beobachteten Tabellen langsam wachsen und die Aufgabe
         # im Normalfall schweigt (sie meldet nur, wenn der Planer umschwenkt).
         TaskSeed(name="Vektorindex-Schwelle prüfen", handler_key="vector_index_threshold", interval_seconds=86400, run_at_boot=True, enabled=True),
+        # Stuendlich, nicht taeglich: ein toter Raum soll in Stunden auffallen,
+        # nicht in Tagen (BensZimmer war 30 Tage weg, ohne dass es jemand sagte).
+        # `run_at_boot=False`: direkt nach dem Start ist die Registratur leer,
+        # die Aufgabe wuerde ohnehin in ihre Karenz laufen.
+        TaskSeed(name="Satelliten-Flotte prüfen", handler_key="satellite_fleet_watchdog", interval_seconds=3600, run_at_boot=False, enabled=True),
     ]

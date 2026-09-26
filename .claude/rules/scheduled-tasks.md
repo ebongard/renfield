@@ -71,6 +71,30 @@ Indexform entscheiden, nicht die Zeilenzahl (416 Seiten bei 2 847 Zeilen gegen 1
 HNSW-Einstieg Faktor acht auseinander). Eine Zahl, die das Falsche misst, ist kein Ausloeser, sondern eine
 zweite Falle. Details: `services/vector_index_threshold.py`, Regel in `.claude/rules/migrations.md`.
 
+## `satellite_fleet_watchdog` — weil ein toter Raum sonst still bleibt
+
+Stuendlich. Vergleicht die eingebuchten Satelliten (`satellites`, nicht widerrufen,
+aktiviert) gegen die LAUFENDE Registratur des `SatelliteManager` und meldet die Fehlenden
+per `ops_alert.notify_admin`. Der `dedup_key` folgt der LAGE, nicht dem Lauf: solange
+dieselben Raeume fehlen, wird nicht stuendlich erneut gemeldet.
+
+🛑 **NICHT `last_authenticated_at` als Lebenszeichen.** Die Spalte wird beim
+VERBINDUNGSAUFBAU gesetzt; ihr Alter misst „Zeit seit dem letzten Neuverbinden", nicht
+„seit dem letzten Lebenszeichen". Am 2026-09-26 gemessen: direkt nach einem
+Backend-Neustart zeigten alle drei GESUNDEN Satelliten vier Minuten, die drei toten Tage
+bis Wochen — ein Waechter auf dieser Spalte haette also die Gesunden gemeldet und die
+Toten verschwiegen. Sie liefert nur noch das SEIT WANN fuer den Meldetext.
+
+🛑 **Karenz nach dem Start** (`SETTLE_SECONDS`, 300 s): die Registratur lebt im
+Arbeitsspeicher und ist beim Start leer. Ohne Karenz meldete jeder Rollout die ganze
+Flotte als tot, und ein Fehlalarm dieser Groesse macht jede echte Meldung wertlos.
+Deshalb auch `run_at_boot=False`.
+
+**Warum es das ueberhaupt gibt:** am 2026-09-26 war die halbe Flotte dunkel — Esszimmer
+1 Tag (k8s-Knoten `NotReady`), Arbeitszimmer 2 Tage, BensZimmer **30 Tage** — und in
+36 Stunden gab es keine einzige Satelliten-Benachrichtigung. MCP-Server hatten
+Gesundheitsproben, Aufgaben eine Fehlerserien-Erkennung, die Satelliten nichts.
+
 ## Other self-gating built-ins
 - Paperless dedupe: gates on `PAPERLESS_DEDUPE_RECONCILER_ENABLED`, calls `mcp.paperless.dedupe_documents` (MCP
   ≥1.12.0) — the logic lives in the MCP; `internal.paperless_dedupe` calls the same tool. No fork.
