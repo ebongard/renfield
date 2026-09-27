@@ -75,8 +75,16 @@ zweite Falle. Details: `services/vector_index_threshold.py`, Regel in `.claude/r
 
 Stuendlich. Vergleicht die eingebuchten Satelliten (`satellites`, nicht widerrufen,
 aktiviert) gegen die LAUFENDE Registratur des `SatelliteManager` und meldet die Fehlenden
-per `ops_alert.notify_admin`. Der `dedup_key` folgt der LAGE, nicht dem Lauf: solange
-dieselben Raeume fehlen, wird nicht stuendlich erneut gemeldet.
+per `ops_alert.notify_admin` — aber NUR, wenn sich die Menge der Fehlenden aendert.
+
+🛑 **Der `dedup_key` allein reicht dafuer NICHT.** Ich hatte das behauptet; der Betrieb hat
+es in drei Stunden widerlegt (drei identische Meldungen 13:59/14:59/15:59), weil
+`proactive_suppression_window` **60 Sekunden** ist — das unterdrueckt Salven, keine
+stuendliche Wiederholung. Bei einem 30-Tage-Ausfall waeren das 24 Meldungen am Tag.
+Deshalb merkt der Waechter die zuletzt GEMELDETE Menge in `system_settings`
+(`satellite_fleet_watchdog:last_reported`) und meldet nur eine Aenderung — Rueckkehr
+eingeschlossen, die den Marker LEERT (sonst bliebe derselbe Ausfall danach stumm).
+Ins Protokoll geht weiterhin jeder Lauf.
 
 🛑 **NICHT `last_authenticated_at` als Lebenszeichen.** Die Spalte wird beim
 VERBINDUNGSAUFBAU gesetzt; ihr Alter misst „Zeit seit dem letzten Neuverbinden", nicht

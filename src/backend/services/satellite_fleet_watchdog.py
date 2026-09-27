@@ -40,6 +40,23 @@ und ist nach einem Neustart leer, bis sich alle wieder gemeldet haben. Deshalb:
   `satellites`.
 * **Fehlend** = erwartet minus verbunden. `last_authenticated_at` liefert dann
   nur noch das SEIT WANN fuer den Text, nicht das OB.
+
+🛑 GEMELDET WIRD NUR EINE AENDERUNG
+-----------------------------------
+Die erste Fassung verliess sich auf den `dedup_key` von `notify_admin` und ich
+habe behauptet, damit werde „nicht stuendlich erneut gemeldet". Das war falsch,
+und der Betrieb hat es innerhalb von drei Stunden gezeigt: drei identische
+Benachrichtigungen um 13:59, 14:59, 15:59. Der Grund steht in `config.py` —
+`proactive_suppression_window` ist **60 Sekunden**. Das unterdrueckt Salven,
+keine stuendliche Wiederholung. Bei BensZimmer (30 Tage weg) waeren das 24
+Meldungen am Tag: Alarmmuedigkeit mit Ansage, und damit genau das kaputt, wofuer
+diese Aufgabe gebaut ist.
+
+Deshalb merkt sich der Waechter die zuletzt GEMELDETE Menge in `system_settings`
+(dasselbe Schluessel-Wert-Moebel, das `chat_upload_tool` schon nutzt) und meldet
+nur, wenn sie sich aendert — einschliesslich der Rueckkehr: kommt ein Raum
+zurueck, ist das eine eigene, gute Nachricht. Ins PROTOKOLL geht weiterhin jeder
+Lauf, damit die Lage ohne Benachrichtigung nachlesbar bleibt.
 """
 from __future__ import annotations
 
@@ -59,6 +76,11 @@ SETTLE_SECONDS = 300
 #: Zeitpunkt des Prozessstarts. Modulweit, weil die Aufgabe zustandslos laeuft.
 _STARTED_AT = time.monotonic()
 
+#: Schluessel in `system_settings`, unter dem die zuletzt GEMELDETE Menge steht.
+#: Dauerhaft, nicht im Speicher: sonst meldete jeder Neustart erneut, und bei
+#: einem wochenlangen Ausfall waere das wieder Laerm.
+STATE_KEY = "satellite_fleet_watchdog:last_reported"
+
 
 def _uptime_seconds() -> float:
     return time.monotonic() - _STARTED_AT
@@ -76,7 +98,30 @@ async def _fetch_enrolled() -> list[tuple[str, str | None, datetime | None]]:
         """))).all())
 
 
-async def check_satellite_fleet(*, notify=None, manager=None, fetch_enrolled=None) -> str | None:
+async def _read_last_reported() -> str:
+    from models.database import SystemSetting
+
+    async with AsyncSessionLocal() as db:
+        row = await db.get(SystemSetting, STATE_KEY)
+        return (row.value or "") if row else ""
+
+
+async def _write_last_reported(value: str) -> None:
+    from models.database import SystemSetting
+
+    async with AsyncSessionLocal() as db:
+        row = await db.get(SystemSetting, STATE_KEY)
+        if row is None:
+            db.add(SystemSetting(key=STATE_KEY, value=value))
+        else:
+            row.value = value
+        await db.commit()
+
+
+async def check_satellite_fleet(
+    *, notify=None, manager=None, fetch_enrolled=None,
+    read_state=None, write_state=None,
+) -> str | None:
     """Vergleiche eingebuchte gegen verbundene Satelliten.
 
     ``notify`` und ``manager`` sind nur fuer Tests einspeisbar — ohne sie waere
@@ -103,7 +148,25 @@ async def check_satellite_fleet(*, notify=None, manager=None, fetch_enrolled=Non
     rows = await fetch_enrolled()
 
     missing = [(sid, room, seen) for sid, room, seen in rows if sid not in connected]
+
+    # Die zuletzt GEMELDETE Menge, damit nur eine Aenderung eine Nachricht wird.
+    read_state = read_state or _read_last_reported
+    write_state = write_state or _write_last_reported
+    signature = ",".join(sorted(sid for sid, _, _ in missing))
+    previous = await read_state()
+    changed = signature != previous
+
     if not missing:
+        if changed:
+            # Rueckkehr ist eine eigene, gute Nachricht — und der Marker MUSS
+            # geleert werden, sonst bliebe der naechste Ausfall stumm.
+            logger.info("🛰 Flottenwache: alle Satelliten wieder verbunden")
+            await _try_notify(
+                notify, title="Alle Satelliten wieder verbunden",
+                message="Es fehlt kein Satellit mehr.",
+                dedup_key=f"{STATE_KEY}:clear",
+            )
+            await write_state("")
         return None
 
     now = datetime.now(UTC).replace(tzinfo=None)
@@ -117,29 +180,36 @@ async def check_satellite_fleet(*, notify=None, manager=None, fetch_enrolled=Non
                      else f"{room or sid} (seit {hours // 24} Tagen)")
 
     summary = ", ".join(parts)
-    logger.warning(
-        f"🛰 Flottenwache: {len(missing)} von {len(rows)} Satelliten nicht "
-        f"verbunden — {summary}"
-    )
+    line = (f"🛰 Flottenwache: {len(missing)} von {len(rows)} Satelliten nicht "
+            f"verbunden — {summary}")
+    # Ins PROTOKOLL geht JEDER Lauf: die Lage soll ohne Benachrichtigung
+    # nachlesbar sein. Nur die Dringlichkeit unterscheidet unveraendert von neu.
+    (logger.warning if changed else logger.info)(
+        line if changed else line + " (unveraendert, keine neue Meldung)")
 
+    if changed:
+        await _try_notify(
+            notify, title=f"{len(missing)} Satellit(en) offline",
+            # Raumnamen sind keine privaten INHALTE — sie stehen so auch in der
+            # Geraeteverwaltung. Es geht kein Gespraech und kein Dokument mit.
+            message=f"Nicht verbunden: {summary}.",
+            dedup_key=f"satellite_fleet_offline:{signature}",
+        )
+        await write_state(signature)
+
+    return f"offline: {summary}" + ("" if changed else " (unveraendert)")
+
+
+async def _try_notify(notify, *, title: str, message: str, dedup_key: str) -> None:
+    """EINE Meldung an den Eigentuemer. Ein Fehler hier darf die Aufgabe nie
+    umbringen — die Lage steht ohnehin im Protokoll."""
     if notify is None:
         from services import ops_alert
 
         notify = ops_alert.notify_admin
     try:
-        await notify(
-            title=f"{len(missing)} Satellit(en) offline",
-            # Raumnamen sind keine privaten INHALTE — sie stehen so auch in der
-            # Geraeteverwaltung. Es geht kein Gespraech und kein Dokument mit.
-            message=f"Nicht verbunden: {summary}.",
-            # Ein Schluessel je LAGE, nicht je Lauf: solange dieselben Raeume
-            # fehlen, wird nicht erneut gemeldet. Aendert sich die Menge, ist es
-            # eine neue Nachricht — und das soll es auch sein.
-            dedup_key="satellite_fleet_offline:" + ",".join(sorted(s for s, _, _ in missing)),
-            event_type="satellite_health",
-            source="satellite_fleet_watchdog",
-        )
+        await notify(title=title, message=message, dedup_key=dedup_key,
+                     event_type="satellite_health",
+                     source="satellite_fleet_watchdog")
     except Exception as exc:  # pragma: no cover - eine Meldung darf nie stoeren
         logger.warning(f"Flottenwache: Benachrichtigung fehlgeschlagen: {exc}")
-
-    return f"offline: {summary}"
