@@ -1959,6 +1959,24 @@ Manueller Trigger: `POST /api/skills/curator/run` (admin-only). Optional `{"user
 
 ---
 
+### KG-Kanten-Gültigkeit (#875 Stufe 1)
+
+Gültigkeitsintervall auf `kg_relations` (`valid_from`/`valid_to`,
+`docs/design/kg-bitemporal-edges.md`). Der Schalter gilt nur für den
+**Lesefilter** `valid_to IS NULL OR valid_to > now` auf allen Pfaden, die aktive
+Kanten lesen (`services/kg_validity_sql.py`).
+
+```bash
+KG_VALIDITY_FILTER_ENABLED=false   # aus = SQL byte-identisch zu vorher
+```
+
+In Stufe 1 setzt nichts `valid_to` — Einschalten ändert also kein Ergebnis, es
+macht den Filter nur scharf für den Widerspruchsdetektor aus Stufe 2 (eigener
+Schalter, eigenes Go). Bestandskanten haben `valid_from = NULL` („gilt, Anfang
+unbekannt“); es gibt bewusst keinen Backfill aus `created_at`.
+
+---
+
 ### KG Entity Reconciler (Structured Memory)
 
 Periodischer Per-User-Lauf, der near-duplicate KG-Entitaeten zusammenfuehrt

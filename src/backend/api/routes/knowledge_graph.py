@@ -46,6 +46,7 @@ from services.api_rate_limiter import limiter
 from services.auth_service import require_permission
 from services.database import get_db
 from services.kg_reconciler_service import KgReconcilerService
+from services.kg_validity_sql import live_conditions
 from services.knowledge_graph_service import KnowledgeGraphService
 from utils.config import settings
 
@@ -581,14 +582,21 @@ async def list_merge_proposals(
         id_list = list(ids)
         counted = (await db.execute(
             select(KGRelation.subject_id, func.count())
-            .where(KGRelation.subject_id.in_(id_list), KGRelation.is_active.is_(True))
+            # #875: reviewers see the entity's LIVE edge count.
+            .where(
+                KGRelation.subject_id.in_(id_list), KGRelation.is_active.is_(True),
+                *live_conditions(KGRelation),
+            )
             .group_by(KGRelation.subject_id)
         )).all()
         for ent_id, n in counted:
             relation_counts[ent_id] = relation_counts.get(ent_id, 0) + int(n)
         counted = (await db.execute(
             select(KGRelation.object_id, func.count())
-            .where(KGRelation.object_id.in_(id_list), KGRelation.is_active.is_(True))
+            .where(
+                KGRelation.object_id.in_(id_list), KGRelation.is_active.is_(True),
+                *live_conditions(KGRelation),
+            )
             .group_by(KGRelation.object_id)
         )).all()
         for ent_id, n in counted:

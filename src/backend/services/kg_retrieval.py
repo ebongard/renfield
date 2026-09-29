@@ -61,6 +61,7 @@ from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.database import EMBEDDING_DIMENSION, KGEntity
+from services.kg_validity_sql import live_clause
 from utils.config import settings
 from utils.llm_client import get_default_client, get_embed_client
 from utils.prompt_safety import neutralize_delimiters
@@ -324,16 +325,19 @@ class KGRetrieval:
         # (defends against the case where an entity is accessible but a relation
         # at a more-restrictive tier should still be hidden — kg_relations
         # carries its own circle_tier from MIN(subject.tier, object.tier)).
+        # #875: only edges that hold now; "" when KG_VALIDITY_FILTER_ENABLED is off.
+        validity_clause, validity_params = live_clause("r")
         rel_sql = text(f"""
             SELECT r.id, r.subject_id, r.predicate, r.object_id
             FROM kg_relations r
-            WHERE r.is_active = true
+            WHERE r.is_active = true{validity_clause}
               AND (r.subject_id = ANY(:rel_ids) OR r.object_id = ANY(:rel_ids))
               {relation_filter_clause}
             LIMIT :max_triples
         """)
         rel_params_full = {
             **relation_params,
+            **validity_params,
             "rel_ids": relevant_ids,
             "max_triples": max_triples,
         }
@@ -546,17 +550,23 @@ class KGRetrieval:
         if not entities:
             return {"entities": [], "relations": []}
 
+        validity_clause, validity_params = live_clause("r")  # #875
         rel_sql = text(f"""
             SELECT r.id, r.subject_id, r.predicate, r.object_id, r.circle_tier
             FROM kg_relations r
-            WHERE r.is_active = true
+            WHERE r.is_active = true{validity_clause}
               AND (r.subject_id = ANY(:rel_ids) OR r.object_id = ANY(:rel_ids))
               {relation_filter_clause}
             LIMIT :max_triples
         """)
         rel_result = await self.db.execute(
             rel_sql,
-            {**relation_params, "rel_ids": list(entities.keys()), "max_triples": max_triples},
+            {
+                **relation_params,
+                **validity_params,
+                "rel_ids": list(entities.keys()),
+                "max_triples": max_triples,
+            },
         )
         relation_rows = rel_result.fetchall()
 

@@ -24,6 +24,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.database import KGEntity, KGRelation, Note
+from services.kg_validity_sql import live_conditions
 
 # [[Target]] — no nested brackets; the inner text is the target note title.
 _LINK_RE = re.compile(r"\[\[([^\]\[]+)\]\]")
@@ -95,6 +96,8 @@ async def sync_note_links(db: AsyncSession, note: Note, *, owner_id: int | None)
         target_ids.add(tgt.id)
 
     # Deactivate stale outgoing links (removed from the body since last save).
+    # #875: no validity filter — structural diff; note_link edges never expire
+    # (docs/design/kg-bitemporal-edges.md §6.1).
     existing = (await db.execute(
         select(KGRelation).where(
             KGRelation.subject_id == src.id,
@@ -177,6 +180,9 @@ async def backlinks(
             KGRelation.object_id == ent.id,
             KGRelation.predicate == NOTE_LINK_PREDICATE,
             KGRelation.is_active == True,  # noqa: E712
+            # #875: a no-op for note_link edges (they never expire, §6.1) — kept
+            # so every live-relation read follows one rule.
+            *live_conditions(KGRelation),
         )
     )).all()
     out: list[dict[str, Any]] = []

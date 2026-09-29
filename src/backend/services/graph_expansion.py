@@ -35,6 +35,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.database import ATOM_TYPE_KG_EDGE, ATOM_TYPE_KG_NODE, TIER_PUBLIC
 from services.atom_types import Atom, AtomMatch
+from services.kg_validity_sql import live_clause
 from utils.config import settings
 
 
@@ -108,12 +109,13 @@ async def _edges_within(
     if len(ids) < 2:
         return []
     rfilter, rparams = _relation_filter(asker_id, enforce_circles)
+    vclause, vparams = live_clause("r")  # #875: "" when the validity filter is off
     rows = (await db.execute(text(f"""
         SELECT r.id, r.subject_id, r.predicate, r.object_id, r.circle_tier
         FROM kg_relations r
-        WHERE r.is_active = true AND r.subject_id <> r.object_id
+        WHERE r.is_active = true{vclause} AND r.subject_id <> r.object_id
           AND r.subject_id = ANY(:ids) AND r.object_id = ANY(:ids) {rfilter}
-    """), {"ids": ids, **rparams})).fetchall()
+    """), {"ids": ids, **rparams, **vparams})).fetchall()
     return [{"id": int(r.id), "subject_id": int(r.subject_id), "predicate": r.predicate,
              "object_id": int(r.object_id), "circle_tier": int(r.circle_tier or 0)} for r in rows]
 
@@ -193,11 +195,14 @@ async def expand_fused(
         # after _edges_within hides the predicate. Non-federation path: rfilter=""
         # → byte-identical.
         rfilter, rparams = _relation_filter(asker_id, enforce_circles)
+        # #875 R4: validity PER HOP, like the circle filter — an expired edge used
+        # as a bridge would drag stale neighbours in and amplify them each hop.
+        vclause, vparams = live_clause("r")
         rows = (await db.execute(text(f"""
             SELECT r.subject_id, r.object_id FROM kg_relations r
-            WHERE r.is_active = true AND r.subject_id <> r.object_id
+            WHERE r.is_active = true{vclause} AND r.subject_id <> r.object_id
               AND (r.subject_id = ANY(:f) OR r.object_id = ANY(:f)) {rfilter}
-        """), {"f": frontier, **rparams})).fetchall()
+        """), {"f": frontier, **rparams, **vparams})).fetchall()
         best: dict[int, float] = {}
         for s, o in rows:
             s, o = int(s), int(o)
