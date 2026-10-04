@@ -430,6 +430,22 @@ ConfigMap loses nothing but still runs synchronously. Set
 `SCANNER_INGEST_CLIENT_IDS` (backend) and `SCANNER_CALLER_TARGET_<CALLER>`
 (scanner host) before the first scan.
 
+### Der Grund gehört auch ins Protokoll
+
+Die Zustellzeile schrieb lange nur `(failed)`. **Welcher** der neun `error_code`
+es war, stand danach ausschliesslich in der Konversation der anfragenden Person
+— der Betreiber konnte einen Fehlschlag also nur beheben, indem er in einen
+fremden Chat sah. Am 2026-10-04 war genau das die Sackgasse: ein Scan scheiterte
+(`device_unavailable`), auf den Scanner-Rechner führte kein SSH, und das
+Backend-Protokoll schwieg über die Ursache.
+
+`describe_failure_for_log()` schreibt ihn jetzt mit. Der Code wird dabei
+**validiert, nicht durchgereicht**: er kommt aus fremder Quelle, also wird nur
+ein Wert aus `_KNOWN_ERROR_CODES` als solcher geschrieben, alles andere gekürzt
+und als unbekannt markiert. Die Codemenge leitet sich aus den Texten ab statt
+danebenzustehen — eine neue Fehlerart bekommt ihren Text, und das Protokoll
+kennt sie damit automatisch.
+
 ## macOS host specifics
 
 The host decision is a Mac Studio (`Mac16,11`) — a stationary desktop with
