@@ -9,12 +9,14 @@ codes the scanner's retry logic depends on.
 """
 
 import json
+from contextlib import contextmanager
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
+from loguru import logger as loguru_logger
 
 from services import scanner_jobs as sj
 
@@ -158,6 +160,79 @@ async def test_event_lands_in_the_requesting_conversation(conversation, monkeypa
     _channel, payload = redis.published[0]
     assert json.loads(payload) == {"target": 7, "type": "scan_job_finished", "reason": "done",
                                    "session_id": "session-1"}
+
+
+@contextmanager
+def _captured_logs(level="INFO"):
+    """🛑 loguru-Senke, NICHT `caplog`.
+
+    Das Projekt protokolliert ueber loguru; `caplog` der Standardbibliothek
+    bleibt leer und ein Test darauf ist gruen, ohne irgendetwas zu pruefen.
+    Dieselbe Falle steht schon in `test_config_auth_consistency.py` — ich bin
+    beim ersten Anlauf trotzdem hineingelaufen.
+    """
+    zeilen: list[str] = []
+    sink = loguru_logger.add(lambda m: zeilen.append(str(m)), level=level)
+    try:
+        yield zeilen
+    finally:
+        loguru_logger.remove(sink)
+
+
+async def test_a_failed_job_names_its_reason_in_the_log(conversation, monkeypatch):
+    """🛑 Der Befund vom 2026-10-04: ein Scan schlug fehl, und das Protokoll sagte
+    nur `(failed)`.
+
+    WELCHER Grund — kein Papier, Geraet weg, Ziel unkonfiguriert — stand danach
+    ausschliesslich in der Konversation der anfragenden Person. Der Betreiber
+    konnte den Fehlschlag also nur beheben, indem er in einen fremden Chat sah;
+    auf den Scanner-Rechner gibt es keinen Zugriff. Eine Diagnose, die
+    Privatsphaere kostet, ist keine.
+    """
+    monkeypatch.setattr(sj.settings, "default_language", "de")
+    redis = FakeRedis()
+    await sj.remember_scan_requester(
+        _tool_result({"ok": True, "job_id": JOB_ID}), user_id=7, session_id="session-1", redis=redis
+    )
+
+    with _captured_logs() as zeilen:
+        assert await sj.handle_job_event(
+            MagicMock(), _event(status="failed", error_code="no_pages"), redis=redis
+        ) == "delivered"
+
+    assert any("error_code=no_pages" in z for z in zeilen), zeilen
+
+
+async def test_an_unknown_reason_is_marked_not_echoed(conversation, monkeypatch):
+    """Der Code kommt aus fremder Quelle. Ein unbekannter Wert wird gekuerzt und
+    als unbekannt markiert — er darf das Protokoll weder faelschen noch fluten."""
+    monkeypatch.setattr(sj.settings, "default_language", "de")
+    redis = FakeRedis()
+    await sj.remember_scan_requester(
+        _tool_result({"ok": True, "job_id": JOB_ID}), user_id=7, session_id="session-1", redis=redis
+    )
+
+    with _captured_logs() as zeilen:
+        await sj.handle_job_event(
+            MagicMock(),
+            _event(status="failed", error_code="x" * 200 + " <script>"),
+            redis=redis,
+        )
+
+    text = "".join(zeilen)
+    assert "<unbekannt:" in text
+    assert "<script>" not in text
+    assert "x" * 60 not in text
+
+
+def test_the_log_vocabulary_follows_the_texts():
+    """Die Codemenge wird aus den Texten abgeleitet, nicht zweitgeschrieben —
+    sonst kennt das Protokoll eine neue Fehlerart nicht und meldet sie als
+    unbekannt, obwohl die Oberflaeche sie laengst benennt."""
+    assert sj._KNOWN_ERROR_CODES == frozenset(sj._TEXT["de"]["errors"])
+    assert "no_pages" in sj._KNOWN_ERROR_CODES
+    assert sj.describe_failure_for_log("done", {}) == ""
+    assert sj.describe_failure_for_log("failed", {}) == " error_code=<fehlt>"
 
 
 async def test_title_comes_from_the_request_not_the_event(conversation, monkeypatch):

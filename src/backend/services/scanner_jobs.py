@@ -185,6 +185,38 @@ _TEXT = {
 }
 
 
+# Aus den Texten abgeleitet statt zweitgeschrieben: eine neue Fehlerart bekommt
+# ihren Text, und das Protokoll kennt sie damit automatisch.
+_KNOWN_ERROR_CODES = frozenset(_TEXT["de"]["errors"])
+
+
+def describe_failure_for_log(status: str, result: dict) -> str:
+    """Der Grund eines Fehlschlags, kurz und protokolltauglich.
+
+    🛑 WARUM ES DAS GIBT
+    Die Zustellzeile protokollierte nur `(failed)`. WELCHER Grund — Papier
+    fehlte, Gerät nicht erreichbar, Ziel unkonfiguriert — stand danach
+    ausschliesslich in der Konversation der anfragenden Person. Der Betreiber
+    konnte einen Fehlschlag also nur beheben, indem er in einen fremden Chat
+    sah; am 2026-10-04 war genau das die Sackgasse (kein SSH auf den
+    Scanner-Rechner, kein Code im Protokoll).
+
+    🛑 Der Code wird VALIDIERT, nicht durchgereicht. Er kommt aus einer fremden
+    Quelle; nur ein bekannter Wert wird als solcher geschrieben, alles andere
+    gekuerzt und als unbekannt markiert. Freitext aus dem Ereignis erreicht
+    weder Chat noch Protokoll.
+    """
+    if status == "done":
+        return ""
+    code = str(result.get("error_code") or "")
+    if code in _KNOWN_ERROR_CODES:
+        return f" error_code={code}"
+    if not code:
+        return " error_code=<fehlt>"
+    safe = "".join(c for c in code if c.isalnum() or c == "_")[:40]
+    return f" error_code=<unbekannt:{safe or '?'}>"
+
+
 def render_completion_message(status: str, title: str, result: dict, lang: str) -> str:
     """The assistant message for a finished job. Plain text, rendered escaped.
 
@@ -360,11 +392,14 @@ async def handle_job_event(db: Any, event: dict, *, redis: Any = None) -> str:
     if not await redis.set(claim_key, claim_token, nx=True, ex=_CLAIM_TTL_SECONDS):
         return "in_progress"
 
+    # Einmal gebunden: die Nachricht und die Protokollzeile beschreiben
+    # denselben Ausgang und duerfen nicht aus zwei Quellen lesen.
+    result = event.get("result") or {}
     try:
         # The title is the requester's own (recorded at request time), never the
         # event's — the event is only trusted for WHICH outcome happened.
         content = render_completion_message(
-            status, str(requester.get("title") or ""), event.get("result") or {},
+            status, str(requester.get("title") or ""), result,
             settings.default_language,
         )
         try:
@@ -413,5 +448,8 @@ async def handle_job_event(db: Any, event: dict, *, redis: Any = None) -> str:
         redis, target, EVENT_SCAN_JOB_FINISHED, reason=status, session_id=session_id,
     )
     await _announce_in_origin_room(requester, status)
-    logger.info(f"scanner: job {job_id} ({status}) reported to its conversation")
+    logger.info(
+        f"scanner: job {job_id} ({status})"
+        f"{describe_failure_for_log(status, result)} reported to its conversation"
+    )
     return "delivered"
