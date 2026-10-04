@@ -18,6 +18,16 @@ document-worker **pre-stage before Docling**, so ALL batch entry points are cove
 - **Approve NEVER splits in the API pod.** It parks `split_pending` + enqueues; the worker replays the stored plan.
 - **Never re-run the boundary LLM on resume.** A confident split persists its plan as an *approved*
   `pdf_split_proposals` row **BEFORE** executing; crash-resume replays it verbatim (the LLM is nondeterministic).
+- 🛑 **Der archivierte Elternteil verliert Abschnitte UND Fakten** (#1374). Die Abschnitte wurden immer abgeräumt,
+  die Schicht-A-Fakten nicht — bei einem Posteingang aus neun Schreiben sind sie zusammengerührt und liegen daneben
+  noch einmal richtig bei den Kindern (gemessen an doc 460: 21 gegen 157). 🛑 Das Abräumen läuft über
+  `AtomPurgeService.purge`, **nie** über ein direktes DELETE: die Faktenzeile hängt per CASCADE am Atom, und dort
+  sitzt die `legal_hold`-Unterscheidung für `wb_field_provenance` (`test_no_direct_atom_delete.py` verbietet den
+  kurzen Weg). Scheitert ein einzelner Purge, läuft der Schnitt weiter — die Kinder sind dann schon materialisiert.
+- 🛑 **Die KG-Beiträge des Elternteils bleiben und sind nicht identifizierbar** — `kg_entities`/`kg_relations`
+  führen keine Dokumentspalte, `source=doc:N` ist eine Protokollzeile, und `atom_id` zeigt auf die eigene Zeile,
+  nicht auf das Dokument. Der Schaden ist Doppelzählung (`mention_count`), nicht falsches Wissen. Eine
+  Herkunftsspalte ist Voraussetzung für #875 (expire statt delete) und dort zu entscheiden.
 - **Never let the archived original come back.** The combined original is archived (`split_archived`, chunkless,
   Paperless-settled) behind a **flag-INDEPENDENT** worker guard + a reindex-409 — neither a flag-off rollback nor a
   reindex click may resurrect it.

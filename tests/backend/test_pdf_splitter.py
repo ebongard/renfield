@@ -73,10 +73,15 @@ def _parent(**over):
     return SimpleNamespace(**defaults)
 
 
-def _db():
+def _db(parent_facts=()):
+    """`parent_facts` = [(fact_id, atom_id), …] — was die Faktenabfrage in
+    `_purge_parent_facts` findet. Standard: keine, also der haeufige Fall
+    (Schnitt zur Einlieferungszeit, der Elternteil hat noch keine Fakten)."""
     db = MagicMock()
     db.commit = AsyncMock()
-    db.execute = AsyncMock()
+    ergebnis = MagicMock()
+    ergebnis.all = MagicMock(return_value=list(parent_facts))
+    db.execute = AsyncMock(return_value=ergebnis)
     db.get = AsyncMock(return_value=None)
     db.add = MagicMock()
     return db
@@ -172,6 +177,116 @@ async def test_execute_split_creates_all_parts_and_archives_last(monkeypatch):
     # parent archived + Paperless settled
     assert parent.status == DOC_STATUS_SPLIT_ARCHIVED
     assert parent.paperless_state == PAPERLESS_STATE_DONE
+
+
+async def test_the_parents_facts_are_purged_through_the_service(monkeypatch):
+    """🛑 #1374: die Abschnitte des Elternteils wurden immer abgeräumt, seine
+    FAKTEN nicht.
+
+    Bei einem Posteingang aus neun Schreiben sind sie zusammengerührt — ein
+    Absender, ein Datum, ein Betrag über den ganzen Stapel — und liegen
+    daneben noch einmal richtig bei den Kindern. Gemessen an Dokument 460:
+    21 Elternfakten gegen 157 der Kinder.
+
+    🛑 Über `AtomPurgeService`, NIE mit einem direkten DELETE: die Faktenzeile
+    hängt per CASCADE am Atom, und dort sitzt die `legal_hold`-Unterscheidung
+    für `wb_field_provenance`. `test_no_direct_atom_delete.py` verbietet den
+    kurzen Weg aus genau diesem Grund.
+    """
+    db = _db(parent_facts=[(1, "atom-a"), (2, "atom-b")])
+    parent = _parent()
+    db.get = AsyncMock(return_value=SimpleNamespace(id=101, split_from_document_id=None))
+    _wire_split(
+        monkeypatch,
+        ingest_results=[
+            IngestResult(IngestStatus.INGESTED, document_id=101),
+            IngestResult(IngestStatus.INGESTED, document_id=102),
+        ],
+    )
+    gepurgt = []
+    reihenfolge = []
+
+    class _Purge:
+        @staticmethod
+        async def purge(session, *, atom_id, reason):
+            if parent.status == DOC_STATUS_SPLIT_ARCHIVED and "archiviert" not in reihenfolge:
+                reihenfolge.append("archiviert")
+            reihenfolge.append(atom_id)
+            gepurgt.append((atom_id, reason))
+            return 0
+
+    import services.atom_purge_service as aps
+    monkeypatch.setattr(aps, "AtomPurgeService", _Purge)
+
+    await execute_split(db, parent, [_piece(1, 2), _piece(3, 5)])
+
+    assert [a for a, _ in gepurgt] == ["atom-a", "atom-b"]
+    # Der Grund gehoert in die Pruefspur, nicht ins Nichts.
+    assert all(r == "pdf_split_parent_archived" for _, r in gepurgt)
+    # 🛑 NACH dem Archiv-Commit. `AtomPurgeService.purge` committet selbst, einmal
+    # je Atom — stand der Aufruf davor, committete der erste Purge die
+    # Abschnittsloeschung, waehrend der Elternteil noch nicht archiviert war.
+    # Der Riegel dagegen: beim ersten Purge MUSS der Status schon stehen.
+    assert reihenfolge == ["archiviert", "atom-a", "atom-b"], reihenfolge
+
+
+async def test_a_parent_without_facts_purges_nothing(monkeypatch):
+    """Der haeufige Fall: Schnitt zur Einlieferungszeit. Der Elternteil hat noch
+    keine Fakten, die Schleife laeuft null Mal — und darf nichts anfassen."""
+    db = _db()  # keine Fakten
+    parent = _parent()
+    db.get = AsyncMock(return_value=SimpleNamespace(id=101, split_from_document_id=None))
+    _wire_split(
+        monkeypatch,
+        ingest_results=[
+            IngestResult(IngestStatus.INGESTED, document_id=101),
+            IngestResult(IngestStatus.INGESTED, document_id=102),
+        ],
+    )
+    gepurgt = []
+
+    class _Purge:
+        @staticmethod
+        async def purge(session, *, atom_id, reason):
+            gepurgt.append(atom_id)
+            return 0
+
+    import services.atom_purge_service as aps
+    monkeypatch.setattr(aps, "AtomPurgeService", _Purge)
+
+    await execute_split(db, parent, [_piece(1, 2), _piece(3, 5)])
+
+    assert gepurgt == []
+
+
+async def test_a_failing_purge_never_stops_the_split(monkeypatch):
+    """Die Kinder sind zu diesem Zeitpunkt bereits materialisiert. Ein Atom, das
+    schon weg ist, darf den Schnitt nicht auf halbem Weg stehen lassen —
+    sonst wäre der Elternteil nicht archiviert und die Kinder existierten
+    doppelt beim nächsten Versuch."""
+    db = _db(parent_facts=[(1, "atom-a")])
+    parent = _parent()
+    db.get = AsyncMock(return_value=SimpleNamespace(id=101, split_from_document_id=None))
+    _wire_split(
+        monkeypatch,
+        ingest_results=[
+            IngestResult(IngestStatus.INGESTED, document_id=101),
+            IngestResult(IngestStatus.INGESTED, document_id=102),
+        ],
+    )
+
+    class _Purge:
+        @staticmethod
+        async def purge(session, *, atom_id, reason):
+            raise RuntimeError("Atom schon weg")
+
+    import services.atom_purge_service as aps
+    monkeypatch.setattr(aps, "AtomPurgeService", _Purge)
+
+    out = await execute_split(db, parent, [_piece(1, 2), _piece(3, 5)])
+
+    assert out == [101, 102]
+    assert parent.status == DOC_STATUS_SPLIT_ARCHIVED
 
 
 async def test_execute_split_resume_skips_existing_parts(monkeypatch):
