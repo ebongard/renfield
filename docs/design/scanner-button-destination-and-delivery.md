@@ -205,7 +205,48 @@ bereits eingezogen ist.
 - Echtes Papier, Knopfdruck, Haushalt: Dokument abgelegt, Nachricht in der
   konfigurierten Konversation, Ansage im Raum, keine 409-Schleife im Protokoll.
 
-## 9. Offen
+## 9. Nachtrag 2026-10-04 — die Korrektur ist nicht idempotent
+
+Beim Versuch, den liegengebliebenen Stapel einzuliefern, wies das Backend ihn mit
+`file_too_large` ab: **147,3 MB gegen eine Grenze von 50 MB**. Die Untersuchung
+fand dabei etwas Schwerwiegenderes als ein Größenproblem.
+
+**Gemessen:** `correct_file()` schreibt jede Seite *in place* und macht sie bei
+jedem Durchlauf kleiner. Dieselbe Seite, viermal nachkorrigiert:
+
+```
+1,444 → 1,198 → 1,129 → 1,068 → 1,004 MB
+```
+
+Das ist keine Effizienz, das ist **Substanzverlust**. Jeder Wiederholungsversuch
+— und `route_scan` auf einen liegenden Stapel ist einer — bearbeitet bereits
+bearbeitete Pixel erneut. Die Notiz zu diesem Scanner warnt dieselbe
+Fehlerklasse schon einmal („Never deskew twice — a second resampling pass"); sie
+gilt für die ganze Korrekturkette, nicht nur fürs Entzerren.
+
+**Folge für den liegenden Stapel:** die Seiten auf Platte sind bereits einmal
+nachkorrigiert; das 147-MB-PDF stammt vom ersten Durchlauf und ist damit die
+**beste** Fassung. Es gehört unverändert eingeliefert, nicht neu gebaut.
+
+**Was damit NICHT die Lösung ist:** das PDF kleiner zu packen, indem die
+Korrektur erneut läuft. Das tauscht Qualität gegen Bytes, und zwar lautlos.
+
+**Vorschlag:** `correct_file()` erhält eine Marke je Seite (Seitenzustand neben
+der Datei oder ein Eintrag in `stage.json`) und läuft **genau einmal**. Ein
+zweiter Aufruf ist dann ein No-op statt eines Qualitätsverlusts. Die Montage
+darf danach beliebig oft wiederholt werden — genau das braucht ein
+Wiederholungsversuch.
+
+Gegengeprüft wurde dabei auch, was es **nicht** ist: `img2pdf` bettet PNG
+verlustfrei und größengleich ein, und `ocrmypdf` kostet in der PDF/A-Vorgabe
+rund 8 % (gemessen: 13 → 14 MB auf sechs Seiten). Beide meiner ersten
+Erklärungen waren falsch.
+
+Die Größengrenze selbst ist separat auf 200 MB angehoben, weil der PDF-Schneider
+als Vorstufe im document-worker **nach** der Einlieferung läuft: ein Stapel, der
+das Schneiden braucht, kam vorher nie bis dorthin.
+
+## 10. Offen
 
 - Die Raum-Id für den Scanner-Standort ist noch nirgends konfiguriert.
 - Ob die zwei wartenden Ablagen vom 2026-10-04 über `route_scan` hereingeholt

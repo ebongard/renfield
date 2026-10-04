@@ -78,6 +78,27 @@ data:
   SCANNER_MCP_URL: "http://192.168.1.228:9093/mcp"
   SCANNER_MCP_ENABLED: "true"
 
+  # 🛑 ANGEHOBEN AM 2026-10-04, WEIL DER SCHNEIDER HINTER DIESER SCHRANKE SITZT.
+  #
+  # `PDF_SPLIT_ENABLED` ist an, und die Rule sagt, der Schneider decke "ALL batch
+  # entry points ... without new upload paths" ab — er laeuft als Vorstufe im
+  # document-worker, also NACH der Einlieferung. Die Vorgabe von 50 MB steht
+  # davor. Damit galt: je mehr ein Stapel das Schneiden braucht, desto sicherer
+  # kommt er nicht dorthin. Ein einseitiger Brief passt immer, ein 38-seitiger
+  # Posteingang nie — gemessen am 2026-10-04 mit 147 MB abgewiesen
+  # (`file_too_large`), waehrend genau dieser Stapel in Einzeldokumente zerlegt
+  # werden sollte.
+  #
+  # 🛑 DIE ZAHL IST EINE WETTE AUF GLEICHZEITIGKEIT. `api/routes/folder_ingest.py`
+  # liest die Datei VOLLSTAENDIG in den Arbeitsspeicher (`buf = bytearray()`),
+  # also 200 MB je gleichzeitigem Upload. Das Backend hat 6 GiB Grenze bei 1 GiB
+  # Anforderung, und der Scanner liefert einzeln ein — vertretbar, aber keine
+  # Dauerloesung. Der saubere Weg ist, die Einlieferung auf Platte zu streamen;
+  # dann ist die Grenze eine Frage des Plattenplatzes, nicht des Pod-Speichers.
+  # Bis dahin: wer diese Zahl weiter anhebt, muss vorher die Gleichzeitigkeit
+  # messen, nicht schaetzen.
+  MAX_FILE_SIZE_MB: "200"
+
   # External integrations
   HOME_ASSISTANT_URL: "http://192.168.1.80:8123"
   FRIGATE_URL: "http://frigate.local:5000"          # TODO: resolve to IP when needed
