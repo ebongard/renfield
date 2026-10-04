@@ -22,6 +22,17 @@ document-worker **pre-stage before Docling**, so ALL batch entry points are cove
   Paperless-settled) behind a **flag-INDEPENDENT** worker guard + a reindex-409 — neither a flag-off rollback nor a
   reindex click may resurrect it.
 
+- 🛑 **Eine LUECKE wird repariert, eine UEBERLAPPUNG nie** (#1368). Das Modell liess bei einem duplex eingezogenen
+  Posteingang die leeren Rueckseiten weg (38 Seiten, 9 erkannte Dokumente, Seiten 6/12/18/20/30/34/38 fehlten) — die
+  exakte Pruefung verwarf daran **alle neun** Grenzen und fiel auf „ein Dokument" zurueck. Bei einem Duplex-Stapel
+  ist das der Normalfall. `validate_boundaries(..., absorb_gaps=True)` schlaegt uebersprungene Seiten dem
+  **vorangehenden** Dokument zu — genau so, wie der Prompt es dem Modell vorschreibt. Der Prompt war NICHT die
+  Ursache und wurde nicht angefasst; er sagt es bereits in beiden Sprachen, das Modell haelt sich nicht daran.
+- 🛑 **`absorb_gaps` ist OPT-IN und gilt nur dem Modell-Pfad.** Die Freigabe durch den MENSCHEN
+  (`pdf_split_proposals`, `/api/pdf-split`) bleibt streng und antwortet mit **422** — eine still reparierte
+  Handeingabe verbirgt den Fehler dessen, der sie gemacht hat. Ein fehlender Kopf und jede Ueberlappung bleiben
+  auch mit Reparatur ein Grund zum Verwerfen. Jede Reparatur wird protokolliert.
+
 ## Decision path
 - Whole-file confidence gate `PDF_SPLIT_AUTO_THRESHOLD`: confident → auto split; uncertain → OWNER REVIEW on
   `/brain/review` (`pdf_split_proposals` + `/api/pdf-split`).
