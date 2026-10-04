@@ -28,6 +28,11 @@ document-worker **pre-stage before Docling**, so ALL batch entry points are cove
   ist das der Normalfall. `validate_boundaries(..., absorb_gaps=True)` schlaegt uebersprungene Seiten dem
   **vorangehenden** Dokument zu — genau so, wie der Prompt es dem Modell vorschreibt. Der Prompt war NICHT die
   Ursache und wurde nicht angefasst; er sagt es bereits in beiden Sprachen, das Modell haelt sich nicht daran.
+- 🛑 **Die geschlossene Lücke ist auf `_MAX_ABSORBED_GAP` = 2 Seiten begrenzt.** Unbegrenzt war sie ein Datenfehler:
+  gemessen ergab `(1,2),(30,38)` über 38 Seiten `1-29, 30-38` — aus einem zweiseitigen Brief wurde ein 29-seitiges
+  Dokument, 27 Seiten fremder Post lagen unter dessen Titel. Eine Warnung NACH der Ablage repariert keine Ablage.
+  Zwei Seiten fangen ein beidseitig leeres Trennblatt; darüber fehlt ein ganzes Dokument, und dann ist der Rückfall
+  „ein Dokument" richtig — er ist sichtbar falsch, eine falsche Zuordnung sieht wie ein geglückter Schnitt aus.
 - 🛑 **`absorb_gaps` ist OPT-IN und gilt nur dem Modell-Pfad.** Die Freigabe durch den MENSCHEN
   (`pdf_split_proposals`, `/api/pdf-split`) bleibt streng und antwortet mit **422** — eine still reparierte
   Handeingabe verbirgt den Fehler dessen, der sie gemacht hat. Ein fehlender Kopf und jede Ueberlappung bleiben

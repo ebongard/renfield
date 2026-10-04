@@ -298,6 +298,23 @@ def _clean(value: Any, cap: int) -> str:
     return (str(value).strip())[:cap] if value is not None else ""
 
 
+# 🛑 WIE GROSS DARF EINE GESCHLOSSENE LUECKE SEIN (#1368, Review-Nachtrag)
+#
+# Die Reparatur war zuerst UNBEGRENZT, und das war ein Datenfehler: gemessen
+# ergab `(1,2),(30,38)` ueber 38 Seiten das Ergebnis `1-29, 30-38` — aus einem
+# zweiseitigen Brief wurde ein 29-seitiges Dokument, und 27 Seiten fremder Post
+# lagen unter dessen Titel. Das Protokoll meldete es, da waren die Seiten aber
+# schon falsch abgelegt. Eine Warnung NACH der Ablage repariert keine Ablage.
+#
+# Gemeint waren leere Rueckseiten eines Duplex-Einzugs. Im echten Fall war jede
+# der sieben Luecken genau EINE Seite; zwei faengt zusaetzlich ein beidseitig
+# leeres Trennblatt. Darueber ist es kein Leerblatt mehr, sondern ein
+# verlorenes Dokument — und dann ist der Rueckfall "ein Dokument" richtig, denn
+# er ist sichtbar falsch, waehrend eine falsche Zuordnung wie ein geglueckter
+# Schnitt aussieht.
+_MAX_ABSORBED_GAP = 2
+
+
 def validate_boundaries(
     raw: dict | None, start_page: int, end_page: int, *, absorb_gaps: bool = False
 ) -> list[SplitPiece] | None:
@@ -328,6 +345,8 @@ def validate_boundaries(
     Raten, sondern das Anwenden der dokumentierten Regel.
 
     Was NICHT repariert wird:
+    * **Eine Luecke ueber `_MAX_ABSORBED_GAP` Seiten** — das ist kein Leerblatt
+      mehr, sondern ein verlorenes Dokument. Siehe die Begruendung dort.
     * **Ueberlappungen** (`s < expected_start`) — ein echter Widerspruch; welche
       Seite zu welchem Dokument gehoert, ist dann nicht mehr bestimmt.
     * **Ein fehlender Kopf** (erstes Stueck beginnt nach `start_page`) — es gibt
@@ -367,7 +386,16 @@ def validate_boundaries(
         if absorb_gaps and s > expected_start and pieces:
             # Luecke: die uebersprungenen Seiten fallen an das vorangehende
             # Dokument — dieselbe Regel, die der Prompt dem Modell gibt.
-            absorbed += s - expected_start
+            luecke = s - expected_start
+            if luecke > _MAX_ABSORBED_GAP:
+                logger.warning(
+                    f"pdf-split: Luecke von {luecke} Seiten vor Seite {s} "
+                    f"(Bereich {start_page}-{end_page}) — zu gross fuer leere "
+                    f"Rueckseiten, hier fehlt ein ganzes Dokument. Verworfen "
+                    f"statt dem vorangehenden Dokument zugeschlagen."
+                )
+                return None
+            absorbed += luecke
             vorher = pieces[-1]
             pieces[-1] = replace(vorher, end_page=s - 1)
             expected_start = s
@@ -391,8 +419,16 @@ def validate_boundaries(
     if expected_start != end_page + 1:
         if not absorb_gaps or not pieces:
             return None  # coverage gap at the tail
-        # Luecke am Ende: das letzte Stueck reicht bis zur letzten Seite.
-        absorbed += end_page + 1 - expected_start
+        # Luecke am Ende: dieselbe Grenze wie in der Mitte.
+        luecke = end_page + 1 - expected_start
+        if luecke > _MAX_ABSORBED_GAP:
+            logger.warning(
+                f"pdf-split: Luecke von {luecke} Seiten am Ende "
+                f"(Bereich {start_page}-{end_page}) — zu gross fuer leere "
+                f"Rueckseiten. Verworfen."
+            )
+            return None
+        absorbed += luecke
         pieces[-1] = replace(pieces[-1], end_page=end_page)
     if absorbed:
         logger.info(

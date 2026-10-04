@@ -40,7 +40,10 @@ dedup / tier / PDF-Split / Paperless are unchanged.
   Sackgasse: kein SSH auf den Scanner-Rechner, kein Code im Log — die Ursache wäre nur durch einen Blick in einen
   fremden Chat zu holen gewesen. `describe_failure_for_log()` schreibt ihn jetzt mit, **validiert** gegen
   `_KNOWN_ERROR_CODES` (aus den Texten abgeleitet, keine zweite Liste): unbekannt → gekürzt und markiert, nie
-  roh durchgereicht.
+  roh durchgereicht. 🛑 Nur FEHLSCHLÄGE tragen einen Code — `done`, `unrouted` und `interrupted` haben eigene
+  Texte und nie einen; die Menge liegt in `_STATES_WITHOUT_ERROR_CODE`, **derselben**, über die
+  `render_completion_message` verzweigt. Vorher waren es zwei Weichen auf eine Menge, und die zweite war
+  veraltet: ein echter `unrouted`-Auftrag hätte `error_code=<fehlt>` gemeldet, wo nie einer erwartet war.
 - The outcome = an assistant message in the requesting conversation + a content-free `scan_job_finished` `/ws/user`
   event carrying the conversation `session_id` (routing key), so only the tab that wrote into it toasts
   (`utils/tabConversations.ts`, `ScanJobToast`; chat reload deferred while a turn streams; in auth-off every tab

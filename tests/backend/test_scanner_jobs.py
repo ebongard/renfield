@@ -225,6 +225,26 @@ async def test_an_unknown_reason_is_marked_not_echoed(conversation, monkeypatch)
     assert "x" * 60 not in text
 
 
+def test_only_failures_carry_a_code():
+    """🛑 Nachtrag aus dem Review: der Helfer behandelte JEDEN Zustand ausser
+    `done` als Fehlschlag und meldete `error_code=<fehlt>`.
+
+    `unrouted` und `interrupted` haben eigene Texte und nie einen Code. Ein
+    echter Auftrag vom 2026-10-04 (8851f161, `unrouted`) haette damit einen
+    fehlenden Code gemeldet, wo nie einer erwartet war. Die Menge liegt jetzt
+    an EINER Stelle, dieselbe, ueber die `render_completion_message` verzweigt.
+    """
+    for zustand in ("done", "unrouted", "interrupted"):
+        assert sj.describe_failure_for_log(zustand, {}) == "", zustand
+    # Gegenprobe: ein echter Fehlschlag nennt ihn weiterhin.
+    assert sj.describe_failure_for_log("failed", {"error_code": "no_pages"}) == (
+        " error_code=no_pages"
+    )
+    assert sj._STATES_WITHOUT_ERROR_CODE == frozenset(
+        {"done", "unrouted", "interrupted"}
+    )
+
+
 def test_the_log_vocabulary_follows_the_texts():
     """Die Codemenge wird aus den Texten abgeleitet, nicht zweitgeschrieben —
     sonst kennt das Protokoll eine neue Fehlerart nicht und meldet sie als
