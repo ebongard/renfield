@@ -5,7 +5,20 @@ websockets>=12.0
 python-multipart>=0.0.6
 
 # Datenbank
-sqlalchemy>=2.0.25
+# 🛑 DER EXTRA UND DIE OBERGRENZE GEHOEREN ZUSAMMEN (Ausfall 2026-10-04)
+# `greenlet` war NIE deklariert. Der async-Pfad hat es immer gebraucht, es kam
+# nur transitiv mit: SQLAlchemy 2.0 zog es implizit, 2.1 nicht mehr — dort
+# verlangt es den `[asyncio]`-Extra. Die offene Untergrenze liess den Bau am
+# 2026-10-04 von 2.0.54 auf 2.1.3 springen, greenlet fehlte, und JEDER
+# Backend-Pod stuerzte beim Import:
+#   ImportError: The SQLAlchemy asyncio module requires that the Python
+#   'greenlet' library is installed.
+# Haushalt-Backend und alle drei Worker gingen in CrashLoopBackOff; der Dienst
+# war unten, bis auf das letzte gute Bild zurueckgerollt wurde.
+# Der Extra ist, was die Fehlermeldung selbst empfiehlt. Die Obergrenze ist die
+# andere Haelfte: ein Deploy darf keine ungebetene Abhaengigkeits-Aktualisierung
+# sein. Der Sprung auf 2.1 ist ein eigener, geprüfter Schritt.
+sqlalchemy[asyncio]>=2.0.25,<2.1
 asyncpg>=0.29.0
 alembic>=1.13.1
 

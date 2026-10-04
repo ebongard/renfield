@@ -50,6 +50,17 @@ reload after a frontend deploy.
 Backend readiness `/health/ready` (DB reachability), liveness `/health/live` (dependency-free — a DB-dependent liveness
 would restart-storm every replica during a DB outage). A rollout against a dead DB waits at NotReady; that is intended.
 
+## Ein Deploy ist keine Abhängigkeits-Aktualisierung
+🛑 **Eine offene Untergrenze macht jeden Bau zur Wette.** Am 2026-10-04 führte `requirements.txt`
+`sqlalchemy>=2.0.25` ohne den `[asyncio]`-Extra; `greenlet` war **nie** deklariert und kam nur transitiv mit.
+Der Bau sprang von 2.0.54 auf **2.1.3**, wo greenlet nicht mehr implizit ist — Backend **und alle drei Worker**
+starben beim Import (`CrashLoopBackOff`, Dienst unten bis zum Rollback auf das letzte gute Bild).
+Behoben: `sqlalchemy[asyncio]>=2.0.25,<2.1`, dazu `tests/backend/test_async_stack_requirements.py` als Riegel.
+🛑 **Der Prüfstand kann das NICHT finden** — er läuft im ALTEN Bild und hat die alten Pakete. Ein
+Umgebungstest wäre genau dort grün, wo er nichts beweist; geprüft wird deshalb die **Deklaration**.
+🛑 **Nach einem Bau, der Abhängigkeiten neu auflöst, die Versionen vergleichen** (`pip show` im alten gegen das
+neue Bild). Ein grüner Testlauf beweist hier nichts.
+
 ## Bildmarken in den Manifesten
 🛑 `kubectl set image` ändert die LIVE-Objekte, NICHT die Dateien — ohne Nachziehen wirft ein späteres
 `kubectl apply -f` die Instanz auf das alte Bild zurück. `bin/deploy-production.sh` ruft dafür
