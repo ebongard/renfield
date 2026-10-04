@@ -8,6 +8,7 @@ and window batching with the open-trailing-piece carry.
 from __future__ import annotations
 
 import json
+from itertools import pairwise
 from unittest.mock import AsyncMock
 
 import pytest
@@ -55,8 +56,60 @@ class TestValidateBoundaries:
         pieces = validate_boundaries(_payload((1, 2), (3, 3), (4, 9)), 1, 9)
         assert [(p.start_page, p.end_page) for p in pieces] == [(1, 2), (3, 3), (4, 9)]
 
-    def test_gap_is_rejected(self):
+    def test_a_gap_falls_to_the_preceding_document(self):
+        """🛑 Fruehere Absicht war: Luecke → alles verwerfen. Geaendert mit #1368.
+
+        Ein duplex eingezogener Posteingang (38 Seiten, Dokument 460,
+        2026-10-04) blieb ungeschnitten, weil das Modell die leeren Rueckseiten
+        wegliess — neun korrekt erkannte Grenzen wurden an EINER Leerseite
+        verworfen. Bei einem Duplex-Stapel ist das der Normalfall.
+
+        Die Luecke wird genau so geschlossen, wie der Prompt es dem Modell
+        vorschreibt: uebersprungene Seiten fallen an das vorangehende Dokument.
+        """
+        pieces = validate_boundaries(
+            _payload((1, 2), (4, 5)), 1, 5, absorb_gaps=True
+        )
+        assert [(p.start_page, p.end_page) for p in pieces] == [(1, 3), (4, 5)]
+
+        # 🛑 Und die Gegenprobe: ohne das Opt-in bleibt es streng. Der Pfad des
+        # MENSCHEN (`/api/pdf-split`) muss weiterhin 422 geben statt still zu
+        # reparieren — daran fiel der erste Entwurf, der den gemeinsamen
+        # Pruefer fuer alle Aufrufer aenderte.
         assert validate_boundaries(_payload((1, 2), (4, 5)), 1, 5) is None
+
+    def test_the_real_duplex_batch_survives(self):
+        """Der gemessene Fall aus Dokument 460: neun Dokumente, sieben fehlende
+        Leerseiten (6, 12, 18, 20, 30, 34, 38). Vorher: nichts geschnitten."""
+        pieces = validate_boundaries(
+            _payload((1, 5), (7, 11), (13, 17), (19, 19), (21, 26),
+                     (27, 29), (31, 33), (35, 36), (37, 37)),
+            1, 38, absorb_gaps=True,
+        )
+        assert pieces is not None and len(pieces) == 9
+        # Lueckenlos und bis zur letzten Seite.
+        assert pieces[0].start_page == 1 and pieces[-1].end_page == 38
+        for vorher, danach in pairwise(pieces):
+            assert danach.start_page == vorher.end_page + 1
+
+    def test_an_overlap_is_rejected_even_with_the_repair_on(self):
+        """🛑 Die Reparatur darf Luecken schliessen, niemals Widersprueche. Eine
+        Ueberlappung laesst offen, zu welchem Dokument eine Seite gehoert."""
+        assert validate_boundaries(
+            _payload((1, 3), (3, 5)), 1, 5, absorb_gaps=True
+        ) is None
+
+    def test_a_missing_head_is_rejected_even_with_the_repair_on(self):
+        """Es gibt kein vorangehendes Dokument, dem Seite 1 zufallen koennte."""
+        assert validate_boundaries(
+            _payload((2, 5)), 1, 5, absorb_gaps=True
+        ) is None
+
+    def test_an_overlap_is_still_rejected(self):
+        """Eine Ueberlappung ist ein echter Widerspruch — welche Seite zu
+        welchem Dokument gehoert, ist dann nicht mehr bestimmt. Sie darf NICHT
+        in dieselbe Reparatur geraten wie eine Luecke."""
+        assert validate_boundaries(_payload((1, 3), (3, 5)), 1, 5) is None
 
     def test_overlap_is_rejected(self):
         assert validate_boundaries(_payload((1, 3), (3, 5)), 1, 5) is None
@@ -64,10 +117,20 @@ class TestValidateBoundaries:
     def test_out_of_range_end_is_rejected(self):
         assert validate_boundaries(_payload((1, 2), (3, 7)), 1, 5) is None
 
-    def test_tail_not_covered_is_rejected(self):
+    def test_a_tail_gap_extends_the_last_document(self):
+        """Dieselbe Regel am Ende des Bereichs: Seite 38 fehlte im echten Fall
+        genauso wie die Rueckseiten in der Mitte."""
+        pieces = validate_boundaries(
+            _payload((1, 2), (3, 4)), 1, 5, absorb_gaps=True
+        )
+        assert [(p.start_page, p.end_page) for p in pieces] == [(1, 2), (3, 5)]
         assert validate_boundaries(_payload((1, 2), (3, 4)), 1, 5) is None
 
-    def test_wrong_start_is_rejected(self):
+    def test_a_missing_head_is_still_rejected(self):
+        """🛑 Die Grenze der Reparatur. Beginnt das erste Stueck nach
+        `start_page`, gibt es kein VORANGEHENDES Dokument, dem die Seiten
+        zufallen koennten — hier zu raten hiesse, Seite 1 einem Dokument
+        zuzuschlagen, von dem niemand weiss, ob es dazugehoert."""
         assert validate_boundaries(_payload((2, 5)), 1, 5) is None
 
     def test_reversed_range_is_rejected(self):

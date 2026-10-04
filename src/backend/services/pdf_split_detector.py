@@ -28,7 +28,7 @@ from __future__ import annotations
 
 import asyncio
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any
 
 from loguru import logger
@@ -299,12 +299,54 @@ def _clean(value: Any, cap: int) -> str:
 
 
 def validate_boundaries(
-    raw: dict | None, start_page: int, end_page: int
+    raw: dict | None, start_page: int, end_page: int, *, absorb_gaps: bool = False
 ) -> list[SplitPiece] | None:
     """Coerce a raw LLM boundary payload into validated pieces covering
     ``start_page..end_page`` exactly: contiguous, non-overlapping, in order.
     Returns None when the payload cannot be salvaged (caller falls back to a
-    single-document verdict)."""
+    single-document verdict).
+
+    🛑 EINE LUECKE WIRD REPARIERT, NIE EINE UEBERLAPPUNG (#1368)
+    ============================================================
+    Ein duplex eingezogener Posteingang (38 Seiten, Dokument 460, 2026-10-04)
+    blieb ungeschnitten, obwohl das Modell neun Dokumente korrekt erkannt hatte:
+    es liess die leeren Rueckseiten (6, 12, 18, 20, 30, 34, 38) einfach weg.
+    Die frueher exakte Pruefung verwarf daran ALLE NEUN Grenzen und fiel auf
+    "ein Dokument" zurueck. Bei einem Duplex-Stapel ist das der Normalfall,
+    nicht die Ausnahme.
+
+    🛑 Der Prompt ist NICHT die Ursache und wurde deshalb nicht angefasst. Er
+    sagt es bereits wortwoertlich (`prompts/pdf_split.yaml`, de UND en): eine
+    "[leere Seite]" ist "NIE eine Dokumentgrenze und NIE ein eigenes Dokument;
+    sie gehoeren zum vorhergehenden Dokument", und die Bereiche muessen
+    "lueckenlos, ueberlappungsfrei und aufsteigend" abdecken. Das Modell haelt
+    sich nicht daran. Eine weitere Verschaerfung waere eine Hoffnung, keine
+    Reparatur.
+
+    Die Luecke wird darum GENAU SO geschlossen, wie der Prompt es vorschreibt:
+    uebersprungene Seiten fallen an das VORANGEHENDE Dokument. Das ist kein
+    Raten, sondern das Anwenden der dokumentierten Regel.
+
+    Was NICHT repariert wird:
+    * **Ueberlappungen** (`s < expected_start`) — ein echter Widerspruch; welche
+      Seite zu welchem Dokument gehoert, ist dann nicht mehr bestimmt.
+    * **Ein fehlender Kopf** (erstes Stueck beginnt nach `start_page`) — es gibt
+      kein vorangehendes Dokument, dem die Seiten zufallen koennten.
+    Beides bleibt ein Grund zum Verwerfen.
+
+    🛑 `absorb_gaps` IST OPT-IN, UND ZWAR AUS EINEM GRUND
+    ====================================================
+    Nur der MODELL-Pfad (`detect_boundaries`) repariert. Die Freigabe durch den
+    MENSCHEN (`pdf_split_proposals`, `/api/pdf-split`) bleibt streng: wer
+    Bereiche von Hand einreicht, soll ein **422** sehen und seinen Fehler
+    korrigieren, nicht eine stille Reparatur bekommen. Ein erster Entwurf
+    aenderte den gemeinsamen Pruefer fuer alle Aufrufer — `test_approve_non_
+    covering_ranges_is_422` fiel darueber, zu Recht.
+
+    Jede Reparatur wird PROTOKOLLIERT. Eine stille Reparatur verbirgt, dass das
+    Modell die Anweisung missachtet — und genau diese Zahl braucht man, um den
+    Prompt je zu beurteilen.
+    """
     if not isinstance(raw, dict):
         return None
     docs = raw.get("documents")
@@ -313,6 +355,7 @@ def validate_boundaries(
 
     pieces: list[SplitPiece] = []
     expected_start = start_page
+    absorbed = 0
     for entry in docs:
         if not isinstance(entry, dict):
             return None
@@ -321,6 +364,13 @@ def validate_boundaries(
             e = int(entry.get("end_page"))
         except (TypeError, ValueError):
             return None
+        if absorb_gaps and s > expected_start and pieces:
+            # Luecke: die uebersprungenen Seiten fallen an das vorangehende
+            # Dokument — dieselbe Regel, die der Prompt dem Modell gibt.
+            absorbed += s - expected_start
+            vorher = pieces[-1]
+            pieces[-1] = replace(vorher, end_page=s - 1)
+            expected_start = s
         if s != expected_start or e < s or e > end_page:
             return None
         try:
@@ -339,7 +389,18 @@ def validate_boundaries(
         )
         expected_start = e + 1
     if expected_start != end_page + 1:
-        return None  # coverage gap at the tail
+        if not absorb_gaps or not pieces:
+            return None  # coverage gap at the tail
+        # Luecke am Ende: das letzte Stueck reicht bis zur letzten Seite.
+        absorbed += end_page + 1 - expected_start
+        pieces[-1] = replace(pieces[-1], end_page=end_page)
+    if absorbed:
+        logger.info(
+            f"pdf-split: {absorbed} uebersprungene Seite(n) dem vorangehenden "
+            f"Dokument zugeschlagen (Seiten {start_page}-{end_page}, "
+            f"{len(pieces)} Stueck) — das Modell liess sie aus, der Prompt "
+            f"verlangt eine lueckenlose Ueberdeckung"
+        )
     return pieces
 
 
@@ -475,7 +536,9 @@ async def detect_boundaries(
                 carry_start if carry_start is not None and carry_start < w_start
                 else w_start
             )
-            window_pieces = validate_boundaries(raw, effective_start, w_end)
+            window_pieces = validate_boundaries(
+                raw, effective_start, w_end, absorb_gaps=True
+            )
             if window_pieces is None:
                 logger.info(
                     f"pdf-split: unusable boundary response for pages "
