@@ -189,6 +189,16 @@ _TEXT = {
 # ihren Text, und das Protokoll kennt sie damit automatisch.
 _KNOWN_ERROR_CODES = frozenset(_TEXT["de"]["errors"])
 
+# 🛑 EINE QUELLE FUER BEIDE WEICHEN.
+# `render_completion_message` und `describe_failure_for_log` verzweigen ueber
+# dieselbe Zustandsmenge, und sie sind auseinandergelaufen: der Protokollhelfer
+# behandelte JEDEN Zustand ausser "done" als Fehlschlag und schrieb
+# `error_code=<fehlt>`. Fuer `unrouted` und `interrupted` gibt es aber bewusst
+# keinen Code — sie haben eigene Texte. Ein echter Auftrag vom 2026-10-04
+# (8851f161, `unrouted`) haette damit einen fehlenden Code gemeldet, wo nie
+# einer erwartet war. Zwei Weichen auf eine Menge: die zweite vergisst man.
+_STATES_WITHOUT_ERROR_CODE = frozenset({"done", "unrouted", "interrupted"})
+
 
 def describe_failure_for_log(status: str, result: dict) -> str:
     """Der Grund eines Fehlschlags, kurz und protokolltauglich.
@@ -201,12 +211,17 @@ def describe_failure_for_log(status: str, result: dict) -> str:
     sah; am 2026-10-04 war genau das die Sackgasse (kein SSH auf den
     Scanner-Rechner, kein Code im Protokoll).
 
+    🛑 Nur FEHLSCHLAEGE tragen einen Code. `done`, `unrouted` und `interrupted`
+    haben eigene Texte und nie einen `error_code` — fuer sie bleibt die Zeile
+    stumm (`_STATES_WITHOUT_ERROR_CODE`, dieselbe Menge wie in
+    `render_completion_message`).
+
     🛑 Der Code wird VALIDIERT, nicht durchgereicht. Er kommt aus einer fremden
     Quelle; nur ein bekannter Wert wird als solcher geschrieben, alles andere
     gekuerzt und als unbekannt markiert. Freitext aus dem Ereignis erreicht
     weder Chat noch Protokoll.
     """
-    if status == "done":
+    if status in _STATES_WITHOUT_ERROR_CODE:
         return ""
     code = str(result.get("error_code") or "")
     if code in _KNOWN_ERROR_CODES:

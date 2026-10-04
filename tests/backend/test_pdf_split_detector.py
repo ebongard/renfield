@@ -92,6 +92,46 @@ class TestValidateBoundaries:
         for vorher, danach in pairwise(pieces):
             assert danach.start_page == vorher.end_page + 1
 
+    def test_a_gap_too_large_for_blank_backs_is_rejected(self):
+        """🛑 Nachtrag aus dem Review: die Reparatur war UNBEGRENZT.
+
+        Gemessen ergab `(1,2),(30,38)` ueber 38 Seiten das Ergebnis
+        `1-29, 30-38` — aus einem zweiseitigen Brief wurde ein 29-seitiges
+        Dokument, und 27 Seiten fremder Post lagen unter dessen Titel. Eine
+        Warnung NACH der Ablage repariert keine Ablage.
+
+        Gemeint waren leere Rueckseiten (im echten Fall je EINE Seite); zwei
+        faengt ein beidseitig leeres Trennblatt. Darueber fehlt ein ganzes
+        Dokument, und dann ist der Rueckfall "ein Dokument" richtig: er ist
+        sichtbar falsch, waehrend eine falsche Zuordnung wie ein geglueckter
+        Schnitt aussieht.
+        """
+        assert validate_boundaries(
+            _payload((1, 2), (30, 38)), 1, 38, absorb_gaps=True
+        ) is None
+
+    def test_the_gap_limit_sits_at_two_pages(self):
+        """Die Grenze selbst, von beiden Seiten angefasst."""
+        # Zwei Seiten (leeres Trennblatt beidseitig) werden geschlossen.
+        zwei = validate_boundaries(
+            _payload((1, 2), (5, 6)), 1, 6, absorb_gaps=True
+        )
+        assert [(p.start_page, p.end_page) for p in zwei] == [(1, 4), (5, 6)]
+        # Drei nicht mehr.
+        assert validate_boundaries(
+            _payload((1, 2), (6, 7)), 1, 7, absorb_gaps=True
+        ) is None
+
+    def test_the_tail_gap_obeys_the_same_limit(self):
+        """Die Grenze gilt am Ende wie in der Mitte — sonst waere das Ende die
+        Luecke, durch die ein verlorenes Dokument doch noch hereinkommt."""
+        assert validate_boundaries(
+            _payload((1, 2),), 1, 3, absorb_gaps=True
+        ) is not None  # eine Seite am Ende: geschlossen
+        assert validate_boundaries(
+            _payload((1, 2),), 1, 6, absorb_gaps=True
+        ) is None      # vier Seiten am Ende: verworfen
+
     def test_an_overlap_is_rejected_even_with_the_repair_on(self):
         """🛑 Die Reparatur darf Luecken schliessen, niemals Widersprueche. Eine
         Ueberlappung laesst offen, zu welchem Dokument eine Seite gehoert."""
