@@ -56,6 +56,7 @@ from models.database import (
     Atom,
     Document,
     DocumentChunk,
+    DocumentFact,
     PdfSplitProposal,
 )
 from services.folder_ingest import IngestMeta, IngestStatus, ingest_document
@@ -224,6 +225,62 @@ async def _record_child_id(
         await db.commit()
 
 
+async def _purge_parent_facts(db: AsyncSession, parent_id: int) -> int:
+    """Die Schicht-A-Fakten des Elternteils abräumen. Gibt die Anzahl zurück.
+
+    🛑 WARUM DAS NEBEN DEM ABRÄUMEN DER ABSCHNITTE STEHEN MUSS (#1374)
+    ==================================================================
+    Die Abschnitte wurden schon immer entfernt — der archivierte Stapel darf
+    nicht in der Suche auftauchen. Seine FAKTEN blieben dagegen stehen, und die
+    sind bei einem Posteingang aus neun Schreiben zusammengerührt: ein
+    Absender, ein Datum, ein Betrag über den ganzen Stapel. Daneben liegen
+    dieselben Sachverhalte noch einmal, diesmal richtig, bei den Kindern.
+    Gemessen am 2026-10-04 an Dokument 460: 21 Elternfakten gegen 157 der
+    Kinder. Die Wissensbasis trug damit eine Schicht, die ein Dokument
+    beschreibt, das es nicht mehr gibt.
+
+    🛑 ÜBER `AtomPurgeService`, NIE MIT EINEM DIREKTEN DELETE. Die Faktenzeile
+    hängt per CASCADE am Atom, der Löschweg führt also über das Atom — und dort
+    sitzt die `legal_hold`-Unterscheidung für `wb_field_provenance`. Ein direktes
+    `DELETE FROM atoms` überspringt den Archivschritt und vernichtet
+    BaFin-pflichtige Prüfspuren; `tests/backend/test_no_direct_atom_delete.py`
+    verbietet es aus genau diesem Grund.
+
+    Der häufige Fall — Schnitt zur Einlieferungszeit — ist unberührt: dort hat
+    der Elternteil noch keine Fakten, die Schleife läuft null Mal.
+    """
+    from services.atom_purge_service import AtomPurgeService
+
+    rows = (await db.execute(
+        select(DocumentFact.id, DocumentFact.atom_id).where(
+            DocumentFact.document_id == parent_id
+        )
+    )).all()
+    geloescht = 0
+    for _fact_id, atom_id in rows:
+        if not atom_id:
+            continue
+        try:
+            await AtomPurgeService.purge(
+                db, atom_id=atom_id, reason="pdf_split_parent_archived"
+            )
+            geloescht += 1
+        except Exception as exc:
+            # Best-effort: ein einzelnes Atom, das schon weg ist (oder dessen
+            # Purge scheitert), darf den Schnitt nicht aufhalten — die Kinder
+            # sind zu diesem Zeitpunkt bereits materialisiert.
+            logger.warning(
+                f"pdf-split: Faktenatom {atom_id} von doc {parent_id} nicht "
+                f"abgeräumt: {exc!r}"
+            )
+    if geloescht:
+        logger.info(
+            f"pdf-split: {geloescht} Elternfakt(en) von doc {parent_id} "
+            f"abgeräumt — der archivierte Stapel beschreibt kein Dokument mehr"
+        )
+    return geloescht
+
+
 async def execute_split(
     db: AsyncSession,
     parent: Document,
@@ -368,6 +425,18 @@ async def execute_split(
     parent.paperless_state = PAPERLESS_STATE_DONE
     parent.error_message = None
     await db.commit()
+
+    # 🛑 NACH dem Archiv-Commit, nicht davor. `AtomPurgeService.purge` committet
+    # selbst (einmal je Atom) — stand der Aufruf vor dieser Zeile, committete
+    # der erste Purge die Abschnittslöschung, während der Elternteil noch NICHT
+    # archiviert war. Damit war die Zusage zwei Zeilen höher — "Archive LAST,
+    # only when every piece is accounted for" — gebrochen.
+    #
+    # Hier gelesen ist es harmlos: die Fakten abzuräumen ist idempotent, und
+    # ein Absturz davor lässt sie stehen. Das ist der Zustand, den dieser Fix
+    # behebt, also kein neuer Schaden — ein zerrissenes Archiv-Commit wäre
+    # einer.
+    await _purge_parent_facts(db, parent.id)
     logger.info(
         f"pdf-split: doc {parent.id} ({parent.filename!r}) split into "
         f"{len(pieces)} documents: {[c for c in child_ids if c is not None]}"
