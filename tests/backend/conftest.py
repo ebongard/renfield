@@ -250,6 +250,13 @@ async def _claim_database(dsn: str) -> None:
             "your own — a second run would drop this one's schema mid-test.",
             returncode=1,
         )
+    # pg_try_advisory_lock is SESSION-level, so it survives this commit — but the
+    # implicit transaction the SELECT opened does not need to. Left open, this
+    # connection sat "idle in transaction" for the whole run, and every
+    # CREATE INDEX CONCURRENTLY in the test DB (pc20260929, #875) waited on its
+    # virtualxid forever: the full suite hung for three days without a line of
+    # output. Committing keeps the run lock and drops the transaction.
+    await conn.commit()
     _RUN_LOCK_CONN = conn   # released when the process ends
 
 
