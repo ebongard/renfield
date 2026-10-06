@@ -20,6 +20,7 @@ from services.mcp_client import (
     MCPValidationError,
     TokenBucketRateLimiter,
     _coerce_arguments,
+    _detect_inner_error,
     _resolve_value,
     _sanitize_credentials,
     _substitute_env_vars,
@@ -608,6 +609,140 @@ class TestExecuteTool:
 # ============================================================================
 # Connect — Partial Failure
 # ============================================================================
+
+
+# ============================================================================
+# Inner-error detection (#1367) — a tool that reports its failure in the PAYLOAD
+# ============================================================================
+
+class TestDetectInnerError:
+    """``_detect_inner_error`` decides whether a returned call actually FAILED.
+
+    Measured 2026-10-04: ``route_scan`` answers a rejected ingest with
+    ``{"ok": false, …}`` and no ``success``/``error`` key at all, so the call
+    counted as a success, ``action_success`` was stored as ``true``, and the
+    stale-error marker in ``agent_service`` never fired — Renfield then recited
+    the old refusal from its history instead of calling the tool again (#1367).
+
+    The shapes below are taken from the real servers in
+    ``config/mcp_servers.yaml``, not invented.
+    """
+
+    @pytest.mark.unit
+    def test_scanner_route_scan_rejected_ingest_is_an_error(self):
+        """THE measured regression: ok=false, no success key, no error key."""
+        payload = json.dumps({
+            "ok": False, "routed": True, "target": "household", "pages": 38,
+            "status": "failed", "renfield_document_id": None,
+            "paperless_document_id": None, "fatal": True,
+            "detail": "file_too_large", "error_code": "ingest_rejected",
+            "stage_id": "20261004-134653",
+        })
+        assert _detect_inner_error(payload) is True
+
+    @pytest.mark.unit
+    def test_scanner_route_scan_success_is_not_an_error(self):
+        """The same tool's success envelope must stay a success."""
+        payload = json.dumps({
+            "ok": True, "routed": True, "target": "household", "pages": 38,
+            "status": "accepted", "renfield_document_id": 460,
+            "paperless_document_id": None, "fatal": False, "detail": "",
+            "stage_id": None,
+        })
+        assert _detect_inner_error(payload) is False
+
+    @pytest.mark.unit
+    def test_report_about_a_past_failure_is_not_a_fresh_one(self):
+        """``get_scan_job`` on a FAILED job: the call succeeded, the job did not.
+
+        The outcome flag at the TOP level decides; the nested ``result`` is data
+        about history. Reading it would turn every status query into an error and
+        mark a perfectly good turn as failed.
+        """
+        payload = json.dumps({
+            "ok": True, "job_id": "j-7", "status": "failed", "title": "",
+            "result": {"ok": False, "error": "no pages scanned",
+                       "error_code": "no_pages"},
+        })
+        assert _detect_inner_error(payload) is False
+
+    @pytest.mark.unit
+    def test_scanner_err_envelope_is_an_error(self):
+        """``tools._err``: ok=false AND error AND error_code."""
+        payload = json.dumps({
+            "ok": False, "error": "no pages scanned — is the feeder loaded?",
+            "error_code": "no_pages",
+        })
+        assert _detect_inner_error(payload) is True
+
+    @pytest.mark.unit
+    def test_success_false_still_detected(self):
+        """Regression guard for the pre-existing n8n-mcp shape."""
+        assert _detect_inner_error(json.dumps({"success": False, "error": "nope"})) is True
+
+    @pytest.mark.unit
+    def test_success_true_wins_over_a_reported_error_code(self):
+        """An explicit outcome flag decides on its own — nothing below is read."""
+        payload = json.dumps({"success": True, "error_code": "device_unavailable"})
+        assert _detect_inner_error(payload) is False
+
+    @pytest.mark.unit
+    def test_null_error_code_beside_a_result_is_not_an_error(self):
+        """``error_code: null`` is the ABSENCE of an error, not an error."""
+        payload = json.dumps({"items": [1, 2], "error_code": None})
+        assert _detect_inner_error(payload) is False
+
+    @pytest.mark.unit
+    def test_truthy_error_code_without_an_outcome_flag_is_an_error(self):
+        assert _detect_inner_error(json.dumps({"error_code": "unknown_target"})) is True
+
+    @pytest.mark.unit
+    def test_non_boolean_ok_is_not_an_outcome_flag(self):
+        """The Samsung key map literally contains ``"ok": "KEY_ENTER"``."""
+        assert _detect_inner_error(json.dumps({"ok": "KEY_ENTER", "sent": True})) is False
+
+    @pytest.mark.unit
+    def test_plain_prose_is_not_an_error(self):
+        assert _detect_inner_error("Es sind 15 Grad in Berlin.") is False
+
+    @pytest.mark.unit
+    def test_json_list_payload_is_not_an_error(self):
+        assert _detect_inner_error(json.dumps([{"ok": False}])) is False
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_execute_tool_reports_payload_failure_as_failure(self):
+        """End to end through ``execute_tool``: isError=False, ok=false in the body."""
+        manager = MCPManager()
+        tool = MCPToolInfo("scanner", "route_scan", "mcp.scanner.route_scan", "Route")
+        manager._tool_index["mcp.scanner.route_scan"] = tool
+
+        mock_content = MagicMock()
+        mock_content.text = json.dumps({
+            "ok": False, "routed": True, "status": "failed",
+            "error_code": "ingest_rejected", "detail": "file_too_large",
+        })
+        mock_content.type = "text"
+
+        mock_result = MagicMock()
+        mock_result.isError = False  # the MCP protocol level says OK
+        mock_result.content = [mock_content]
+
+        mock_session = AsyncMock()
+        mock_session.call_tool = AsyncMock(return_value=mock_result)
+
+        manager._servers["scanner"] = MCPServerState(
+            config=MCPServerConfig(name="scanner"),
+            connected=True,
+            session=mock_session,
+        )
+
+        result = await manager.execute_tool(
+            "mcp.scanner.route_scan", {"stage_id": "s1", "target": "household"}
+        )
+        assert result["success"] is False
+        assert "ingest_rejected" in result["message"]
+
 
 class TestConnectPartialFailure:
     """Test that partial connection failures don't block other servers."""

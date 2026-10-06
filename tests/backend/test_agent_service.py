@@ -1076,6 +1076,55 @@ class TestAgentServiceRun:
         prompt_content = await self._capture_prompt(history)
         assert not self._has_failed_action_marker(prompt_content)
 
+    @pytest.mark.unit
+    async def test_payload_level_tool_failure_reaches_the_marker(self):
+        """#1367 — the WHOLE chain, not just its last link.
+
+        The marker test above starts from a hand-written
+        ``action_success: False``, which is exactly the value the agent path
+        could never produce: ``_build_agent_action_result`` hardcoded
+        ``success: True``, so a tool reporting its failure inside its own
+        payload (``{"ok": false, ...}`` from the scanner) was persisted as a
+        SUCCESS and the next turn recited the old refusal instead of calling
+        the tool again.
+
+        So this test builds the metadata the way ``chat_handler`` does, from a
+        turn whose only tool call failed, and asserts the marker fires. If the
+        chain breaks anywhere between the two modules, this goes red while the
+        hand-written test above stays green.
+        """
+        from api.websocket.chat_handler import (
+            _build_agent_action_result,
+            _failed_agent_actions,
+        )
+
+        # The turn as the agent loop reports it: one tool_result step, failed,
+        # carrying no data (which is why it never reached ``tool_results``).
+        outcomes = [("mcp.scanner.route_scan", False)]
+        failed = _failed_agent_actions(outcomes)
+        action_result = _build_agent_action_result([], failed)
+
+        # chat_handler's own expression for the persisted metadata.
+        action_success = action_result.get("success") if action_result else None
+        assert action_success is False, (
+            "a payload-level tool failure must reach action_success as False; "
+            f"got {action_success!r}"
+        )
+
+        history = [
+            {"role": "user", "content": "Lege den Stapel ab"},
+            {
+                "role": "assistant",
+                "content": "Die Ablage wurde abgelehnt: file_too_large.",
+                "metadata": {
+                    "intent": "agent.documents",
+                    "action_success": action_success,
+                },
+            },
+        ]
+        prompt_content = await self._capture_prompt(history)
+        assert self._has_failed_action_marker(prompt_content)
+
 
 # ============================================================================
 # Test AgentService — Timeout and Safety
