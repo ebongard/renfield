@@ -4,6 +4,13 @@
 laufenden `voice-server`-Pod und über die Proxmox-API — nicht aus älteren Dokumenten
 übernommen. Ergänzt am selben Tag, nachdem eine Tesla V100 32 GB gekauft wurde (§6).
 
+**Nachtrag 2026-10-06:** In `k8s-gpu-3` steckt nicht mehr die RTX 4060 Ti, sondern die
+**RTX 5060 Ti** — die Karte, die am 2026-09-01 in `k8s-gpu-1` mit Xid 79 ausgefallen und
+dort ausgebaut worden war. Die 4060 Ti ist **nicht mehr im Bestand**. Gemessen per
+`nvidia-smi` im voice-server-Pod und `lspci`/`qm config` auf `promox01`. §1–§3 und die
+Bewertung in §6 sind angepasst; die 4060-Ti-Spalten in §4/§4.2 bleiben als Vergleichswerte
+stehen.
+
 Dieses Dokument hält drei Dinge fest: **welche GPUs es gibt und was darauf läuft**,
 **welche Karten überhaupt in Frage kommen**, und **wo der Engpass heute tatsächlich
 sitzt** — er sitzt nicht dort, wo man ihn vermutet.
@@ -14,7 +21,7 @@ sitzt** — er sitzt nicht dort, wo man ihn vermutet.
 |---|---|---|---|---|---|
 | k8s-gpu-1 (192.168.1.180) | **1×** RTX 5070 Ti | 16303 MiB | 570.211.01 | 12.0 | **DRA-Claim** `ollama-gpu-5070ti` |
 | k8s-gpu-2 (192.168.1.148) | **keine** | – | – | – | 0 — CPU-Node |
-| k8s-gpu-3 (192.168.1.254) | RTX 4060 Ti | 16380 MiB | **595.84** | 8.9 | `nvidia.com/gpu: 1` (voice-server, ns `voice`) |
+| k8s-gpu-3 (192.168.1.254) | RTX 5060 Ti | 16311 MiB | **595.91.07** | 12.0 | `nvidia.com/gpu: 1` (voice-server, ns `voice`) |
 | cuda.local (192.168.1.227) | RTX 5090 | 32607 MiB | 575.64.03 | 12.0 | kein k8s-Node |
 
 **Virtualisierung (Proxmox, über die API gelesen):**
@@ -23,7 +30,7 @@ sitzt** — er sitzt nicht dort, wo man ihn vermutet.
 |---|---|---|---|
 | k8s-gpu-1 | 201 | **pve4** (Ryzen 9 3950X, 135 GB RAM) | `0000:0b:00` = GB203, RTX 5070 Ti |
 | k8s-gpu-2 | 202 | pve4 | **kein `hostpci`** — bestätigt ohne GPU |
-| k8s-gpu-3 | 109 | **promox01** (i5-12600H, **Mobil-CPU**, 101 GB RAM) | `0000:01:00` = AD106, RTX 4060 Ti |
+| k8s-gpu-3 | 109 | **promox01** (i5-12600H, **Mobil-CPU**, 101 GB RAM) | `0000:01:00` = GB206 (`10de:2d04`), RTX 5060 Ti |
 
 `promox01` läuft auf einer Mobil-CPU. Eine 250-W-Karte in Dual-Slot-Bauweise mit passiver
 Kühlung ist dort praktisch ausgeschlossen — unabhängig von jeder Softwarefrage.
@@ -31,9 +38,14 @@ Kühlung ist dort praktisch ausgeschlossen — unabhängig von jeder Softwarefra
 eine Sichtprüfung am Gerät.
 
 **Es gibt derzeit keinen freien GPU-Platz im Cluster.** Die zweite Karte in `k8s-gpu-1`
-(RTX 5060 Ti) ist ausgefallen — **Xid 79** — und physisch nicht mehr vorhanden. Seither
-läuft die Zuteilung dort über einen **DRA-Claim** statt über das Device-Plugin, weil
-das Plugin nach dem Ausfall nichts mehr zuteilen konnte.
+(RTX 5060 Ti) ist dort ausgefallen — **Xid 79** — und wurde ausgebaut. Seither läuft die
+Zuteilung auf `k8s-gpu-1` über einen **DRA-Claim** statt über das Device-Plugin, weil das
+Plugin nach dem Ausfall nichts mehr zuteilen konnte. Die 5060 Ti selbst arbeitet seither in
+`k8s-gpu-3` (siehe Nachtrag oben).
+
+Das PCI-Mapping auf `promox01` heißt noch **`gpu-rtx4060ti`**, zeigt aber auf
+`10de:2d04` = GB206/5060 Ti. Der Name ist nur ein Etikett; wer nach ihm sucht, findet die
+falsche Karte.
 
 `k8s-gpu-2` trägt den Namen zu Unrecht: Die VM hat keinen GPU-Passthrough, `lspci` zeigt
 nur eine QEMU-VGA. Die installierten NVIDIA-Pakete ändern daran nichts.
@@ -52,7 +64,7 @@ ebenso (`replicas: 0`).
   und nomic-embed-text, zusammen etwa 10,1 von 16,3 GB, geteilt mit Reva.
   `qwen3-vl:8b` lief früher hier und brauchte gemessen **11,9 GB** — es verdrängte alle
   anderen Modelle und wurde deshalb auf die 5090 verlegt.
-- **k8s-gpu-3 (4060 Ti)** — voice-server: faster-whisper `medium` mit `int8_float16`,
+- **k8s-gpu-3 (5060 Ti)** — voice-server: faster-whisper `medium` mit `int8_float16`,
   Sprechererkennung (ECAPA) über onnxruntime, Piper-TTS; pyannote-Diarisierung nur bei
   `MEETING_ENABLED`.
 - **Ohne GPU:** Backend (`torch==2.6.0+cpu`), document-worker, pdf-split-worker und
@@ -74,8 +86,8 @@ vorhanden ist — und PTX ist ausschließlich aufwärtskompatibel. `compute_120`
 älteren Karten nicht. Der Fehler zeigt sich nicht beim Import, sondern erst beim ersten
 Kernel: `no kernel image is available for execution on the device`.
 
-Warum es heute passt: `sm_89` (4060 Ti) wird vom `sm_86`-Cubin bedient, die 5090 trifft
-`sm_120` direkt.
+Warum es heute passt: 5060 Ti, 5070 Ti und 5090 treffen `sm_120` direkt. (Die frühere
+4060 Ti, `sm_89`, wurde vom `sm_86`-Cubin bedient.)
 
 **Grenze B — das Treiberband.** Blackwell verlangt mindestens Treiber 570, Volta wird
 längstens vom **580er-Zweig** getragen. Das gemeinsame Band ist also **570–580**, und es
@@ -89,7 +101,7 @@ Data-Center-Release-Notes zu R580 nennen Volta und Blackwell zusammen. R580 ist 
 
 Zwei Unschärfen: Im Deprecation-Schedule wird Volta über TITAN V und Quadro GV100 belegt,
 nicht über die Tesla V100 selbst. Und dass **R595 Volta nicht mehr führt**, steht nirgends
-wörtlich — es folgt nur aus „580 ist der letzte Zweig". `k8s-gpu-3` läuft auf 595.84 und
+wörtlich — es folgt nur aus „580 ist der letzte Zweig". `k8s-gpu-3` läuft auf 595.91.07 und
 läge damit darüber.
 
 **Wichtig: Beim Durchreichen gilt das Band pro VM, nicht pro Host.** Der Proxmox-Host
@@ -106,7 +118,7 @@ Luftstrom)? (4) Erst danach über VRAM und Bandbreite reden.
 
 ## 4. Papierwerte der beteiligten Karten
 
-| | **V100 PCIe 32 GB** | **RTX 5070 Ti** | **RTX 4060 Ti 16G** | **RTX 5090** |
+| | **V100 PCIe 32 GB** | **RTX 5070 Ti** | **RTX 4060 Ti 16G** (nicht mehr im Bestand) | **RTX 5090** |
 |---|---|---|---|---|
 | VRAM / Typ | 32 GB **HBM2** | 16 GB GDDR7 | 16 GB GDDR6 | 32 GB GDDR7 |
 | Bandbreite | **900 GB/s** | 896 GB/s | 288 GB/s | **1792 GB/s** |
@@ -281,7 +293,7 @@ gleichauf mit der 5070 Ti und bei dichter fp16-Rechenleistung darüber (§4).
 | **Eigene VM auf `pve4` als zweiter `llama-server`** | **empfohlen** | Löst den echten Engpass (§5): zweiter Endpunkt für die dritte Instanz; 32 GB tragen dasselbe Modell mit ~9 GiB für KV statt 4,2; Treiberband bleibt auf diese VM beschränkt |
 | Zusätzlich in `k8s-gpu-1` (neben der 5070 Ti) | möglich | 16 + 32 GB, VLM/OCR kämen zurück in den Cluster — aber beide Karten in einer VM heißt Treiber 580 für beide |
 | Ersatz der 5070 Ti | nein | Tauscht bf16/tf32/fp8 gegen Speicher und lässt eine moderne Karte ungenutzt |
-| Ersatz der 4060 Ti (`k8s-gpu-3`) | nein | `promox01` ist eine Mobil-CPU-Plattform (§1), dazu Treiber 595 und Verlust der Diarisierung |
+| Ersatz der 5060 Ti (`k8s-gpu-3`) | nein | `promox01` ist eine Mobil-CPU-Plattform (§1), dazu Treiber 595 und Verlust der Diarisierung |
 | Ersatz der 5090 | nein | Halbe Bandbreite, kein bf16/fp8 |
 
 **Bedingungen, falls die Karte in Betrieb geht:**
