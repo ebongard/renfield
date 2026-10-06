@@ -919,3 +919,87 @@ async def test_prestage_mid_split_with_live_heartbeat_is_acked(monkeypatch):
 
     assert doc.status == DOC_STATUS_SPLIT_PENDING  # NOT un-parked
     execute.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# Wiederanstoß (#1372): vorlegen statt ausführen
+# ---------------------------------------------------------------------------
+
+async def test_a_resplit_always_proposes_even_when_confident(monkeypatch):
+    """🛑 Die Lehre vom 2026-10-04.
+
+    Beim ERSTEN Durchlauf ist Auto-Schneiden vertretbar: niemand hat das
+    Dokument je gesehen. Bei einem WIEDERANSTOSS steht es in Paperless, trägt
+    vielleicht gepflegte Tags, und jemand hat es angesehen.
+
+    Der Unterschied ist teuer geworden: eine Leseprobe ergab Zuversicht 0,0
+    (also Vorlage), der echte Lauf kam über die Schwelle und schnitt sofort —
+    acht Dokumente angelegt, Original archiviert, ohne Bestätigung, obwohl eine
+    Vorlage angekündigt war. Derselbe Aufruf gab in drei Durchläufen 9 Stücke,
+    8 Stücke und Zuversicht 0,0.
+
+    Aus einer Leseprobe ist nicht ableitbar, was der nächste Lauf tut. Darum
+    hängt die Entscheidung hier NICHT an der Zuversicht.
+    """
+    doc = _parent()
+    db, execute, _store = _wire_prestage(monkeypatch, doc=doc, threshold=0.85)
+    verdict = SplitVerdict(
+        kind=VERDICT_MULTI, pieces=[_piece(1, 2, 0.99), _piece(3, 5, 0.99)]
+    )
+    proposal = AsyncMock(return_value=SimpleNamespace(id=9))
+    import services.pdf_split_proposals as props
+    monkeypatch.setattr(props, "create_review_proposal", proposal)
+
+    out = await ps.act_on_verdict(db, doc, verdict, None, force_review=True)
+
+    assert out == "review"
+    execute.assert_not_awaited()   # NICHTS wurde geschnitten
+    proposal.assert_awaited_once()
+
+
+async def test_without_a_resplit_the_threshold_still_decides(monkeypatch):
+    """Gegenprobe. Ohne sie wäre der Test oben auch grün, wenn `force_review`
+    fest verdrahtet wäre — und der erste Durchlauf dürfte nie mehr automatisch
+    schneiden."""
+    doc = _parent()
+    db, execute, _store = _wire_prestage(monkeypatch, doc=doc, threshold=0.85)
+    verdict = SplitVerdict(
+        kind=VERDICT_MULTI, pieces=[_piece(1, 2, 0.99), _piece(3, 5, 0.99)]
+    )
+
+    out = await ps.act_on_verdict(db, doc, verdict, None)
+
+    assert out == "split"
+    execute.assert_awaited_once()
+
+
+async def test_the_resplit_flag_travels_in_the_slow_lane_payload(monkeypatch):
+    """🛑 Die Stelle, an der es still nicht funktioniert hätte.
+
+    Der langsame Pfad liegt hinter Redis. Trüge seine Nutzlast das Kennzeichen
+    nicht, würde ein Wiederanstoß an einem unlesbaren Stapel wieder automatisch
+    schneiden — und genau über diesen Pfad lief das Dokument, das den Vorgang
+    ausgelöst hat.
+    """
+    doc = _parent()
+    monkeypatch.setattr(ps.settings, "pdf_split_enabled", True)
+    monkeypatch.setattr(
+        "services.task_queue.pdf_split_worker_is_alive", AsyncMock(return_value=True)
+    )
+    monkeypatch.setattr(ps.settings, "ollama_vision_model", "qwen-vl")
+    queue = MagicMock()
+    queue.enqueue = AsyncMock()
+    monkeypatch.setattr("services.task_queue.PdfSplitTaskQueue", MagicMock(return_value=queue))
+    db = _db()
+
+    await ps._route_to_slow_lane(db, doc, "vlm", None, resplit=True)
+
+    nutzlast = queue.enqueue.await_args.args[0]
+    assert nutzlast.get("resplit") is True, nutzlast
+
+    # Gegenprobe: ohne Wiederanstoss bleibt die Nutzlast byte-gleich — ein
+    # bestehender Test nagelt sie fest, und aeltere Stream-Eintraege kennen
+    # den Schluessel nicht.
+    queue.enqueue.reset_mock()
+    await ps._route_to_slow_lane(db, doc, "vlm", None)
+    assert "resplit" not in queue.enqueue.await_args.args[0]

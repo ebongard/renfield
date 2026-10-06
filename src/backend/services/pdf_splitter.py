@@ -517,6 +517,7 @@ async def maybe_split_at_ingest(
     *,
     skip_split: bool = False,
     user_id: int | None = None,
+    resplit: bool = False,
 ) -> bool:
     """Run PDF-split detection for one enqueued document. Returns True when
     the split lifecycle now OWNS the document (split executed, or the row is
@@ -614,7 +615,9 @@ async def maybe_split_at_ingest(
             return False
         slow_reason = classify_slow_lane(signals)
         if slow_reason:
-            return await _route_to_slow_lane(db, doc, slow_reason, user_id)
+            return await _route_to_slow_lane(
+                db, doc, slow_reason, user_id, resplit=resplit
+            )
         verdict = await detect_boundaries(signals)
     except SplitTransientError:
         raise
@@ -622,7 +625,7 @@ async def maybe_split_at_ingest(
         logger.warning(f"pdf-split: detection failed for doc {doc_id}: {e}")
         return False
 
-    outcome = await act_on_verdict(db, doc, verdict, user_id)
+    outcome = await act_on_verdict(db, doc, verdict, user_id, force_review=resplit)
     return outcome != "single"
 
 
@@ -631,14 +634,35 @@ async def act_on_verdict(
     doc: Document,
     verdict: SplitVerdict,
     user_id: int | None,
+    *,
+    force_review: bool = False,
 ) -> str:
     """Shared verdict handling for the inline pre-stage AND the slow-lane
     worker: ``'split'`` (confident — plan persisted + executed), ``'review'``
     (uncertain — pending proposal filed, parent parked), or ``'single'``
-    (caller proceeds with / hands back to normal ingest)."""
+    (caller proceeds with / hands back to normal ingest).
+
+    🛑 ``force_review`` — EIN WIEDERANSTOSS LEGT VOR, ER FÜHRT NICHT AUS (#1372)
+    ==========================================================================
+    Beim ERSTEN Durchlauf ist Auto-Schneiden vertretbar: niemand hat das
+    Dokument je gesehen, es ist noch nirgends abgelegt, und ein falscher
+    Schnitt kostet eine Wiederholung. Bei einem WIEDERANSTOSS ist das anders —
+    das Dokument steht in Paperless, trägt vielleicht von Hand gepflegte Tags,
+    und jemand hat es angesehen. Dort gehört die Entscheidung dem Menschen.
+
+    Der Unterschied ist am 2026-10-04 teuer geworden: eine lesende Probe ergab
+    Zuversicht 0,0 (also Vorlage), der echte Lauf kam über die Schwelle und
+    schnitt sofort — acht Dokumente angelegt, Original archiviert, ohne
+    Bestätigung, obwohl eine Vorlage angekündigt war. Derselbe Aufruf gab in
+    drei Durchläufen 9 Stücke, 8 Stücke und Zuversicht 0,0.
+
+    🛑 Aus einer Leseprobe ist NICHT ableitbar, was der nächste Lauf tut. Darum
+    hängt die Entscheidung bei einem Wiederanstoß nicht an der Zuversicht,
+    sondern ist festgelegt: immer Vorlage.
+    """
     if verdict.kind != VERDICT_MULTI:
         return "single"
-    if verdict.min_confidence < settings.pdf_split_auto_threshold:
+    if force_review or verdict.min_confidence < settings.pdf_split_auto_threshold:
         # Uncertain boundaries → owner review: file/refresh the PENDING
         # proposal, park the parent in split_review (this ack + the worker
         # guard keep it parked; the MCP re-push keeps the source file in the
@@ -664,11 +688,19 @@ async def act_on_verdict(
             )
             await db.rollback()
             return "single"
+        # Der Grund gehoert in die Zeile. Mit `force_review` kann die
+        # Zuversicht HOCH sein — "confidence X < threshold" waere dann falsch,
+        # und wer das Protokoll liest, suchte an der Schwelle statt beim
+        # Wiederanstoss.
+        grund = (
+            "resplit — Entscheidung liegt beim Eigentümer"
+            if force_review
+            else f"min confidence {verdict.min_confidence:.2f} < "
+                 f"{settings.pdf_split_auto_threshold}"
+        )
         logger.info(
             f"pdf-split: doc {doc.id} looks like {len(verdict.pieces)} "
-            f"documents at min confidence {verdict.min_confidence:.2f} < "
-            f"{settings.pdf_split_auto_threshold} — held for owner review "
-            f"(proposal {row.id})"
+            f"documents ({grund}) — held for owner review (proposal {row.id})"
         )
         return "review"
 
@@ -689,7 +721,12 @@ async def _rejection_recorded(db: AsyncSession, document_id: int) -> bool:
 
 
 async def _route_to_slow_lane(
-    db: AsyncSession, doc: Document, slow_reason: str, user_id: int | None
+    db: AsyncSession,
+    doc: Document,
+    slow_reason: str,
+    user_id: int | None,
+    *,
+    resplit: bool = False,
 ) -> bool:
     """Hand a VLM-needing / multi-window file to the dedicated split worker:
     park the parent ``split_pending`` and enqueue on the pdfsplit stream.
@@ -723,7 +760,15 @@ async def _route_to_slow_lane(
 
     try:
         await PdfSplitTaskQueue(redis_client=get_redis()).enqueue(
+            # 🛑 `resplit` MUSS ueber Redis mitreisen. Der langsame Pfad ist
+            # genau der, ueber den Dokument 460 lief (unlesbare Seiten → VLM);
+            # faellt das Kennzeichen hier weg, wuerde ein Wiederanstoss
+            # ausgerechnet an diesem Dokument wieder automatisch schneiden.
+            # `resplit` NUR wenn gesetzt: der haeufige Pfad behaelt seine
+            # Nutzlast byte-gleich, und aeltere Eintraege im Stream bleiben
+            # lesbar (`params.get("resplit")` ist ohne Schluessel falsch).
             {"document_id": doc.id, "user_id": user_id}
+            | ({"resplit": True} if resplit else {})
         )
     except Exception as e:
         # The parent is already parked; a swallowed enqueue failure would let

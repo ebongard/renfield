@@ -246,6 +246,11 @@ async def _process_entry(
 ) -> None:
     document_id = entry.params.get("document_id")
     user_id = entry.params.get("user_id")
+    # 🛑 Ein Wiederanstoss legt VOR, er fuehrt nicht aus (#1372). Das Kennzeichen
+    # kommt aus der Nutzlast — der langsame Pfad liegt hinter Redis, und ohne
+    # es wuerde ein Wiederanstoss an einem unlesbaren Stapel (genau der Fall,
+    # der #1368 ausgeloest hat) wieder automatisch schneiden.
+    resplit = bool(entry.params.get("resplit"))
     if document_id is None:
         logger.error(f"skipping entry {entry.entry_id}: missing document_id")
         await queue.ack(entry.entry_id)
@@ -313,7 +318,7 @@ async def _process_entry(
     row_stop = asyncio.Event()
     row_hb = asyncio.create_task(_row_heartbeat_loop(document_id, row_stop))
     try:
-        outcome = await process_slow_split(document_id, user_id)
+        outcome = await process_slow_split(document_id, user_id, resplit=resplit)
         await queue.ack(entry.entry_id)
         await _clear_transient(redis, entry.entry_id)
         logger.info(
