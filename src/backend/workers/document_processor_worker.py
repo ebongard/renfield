@@ -252,6 +252,43 @@ async def _process_entry(
         logger.info(f"paperless_refile doc {doc_id} (entry {entry.entry_id})")
         return
 
+    if trigger == "resplit":
+        # 🛑 WIEDERANSTOSS DER SCHNITT-ERKENNUNG (#1372)
+        #
+        # Die Idempotenz-Sperre weiter unten (`initial_ingest_status ==
+        # COMPLETED` -> "duplicate delivery, acked") sitzt VOR der
+        # Schneide-Vorstufe. Fuer Doppelzustellungen ist das richtig, aber sie
+        # machte auch jeden gewollten Wiederanstoss unmoeglich: nach einer
+        # Reparatur am Schneider kam man an bereits abgelegte Stapel nicht mehr
+        # heran (am 2026-10-04 musste `maybe_split_at_ingest` dafuer von Hand
+        # im Pod gerufen werden — Handarbeit am laufenden System).
+        #
+        # Dieser Zweig laeuft DAVOR und faehrt NUR die Erkennung. Die normale
+        # Einlieferung wird nicht wiederholt — sonst zweite Paperless-Ablage,
+        # doppelte Abschnitte, doppelte KG-Extraktion, und die Sperre haette
+        # recht gehabt.
+        #
+        # 🛑 `resplit=True` heisst: immer VORLEGEN, nie ausfuehren. Begruendung
+        # im Docstring von `act_on_verdict`.
+        try:
+            from services.pdf_splitter import maybe_split_at_ingest
+
+            async with AsyncSessionLocal() as db:
+                besitzt = await maybe_split_at_ingest(
+                    db, doc_id, user_id=user_id, resplit=True
+                )
+            logger.info(
+                f"resplit doc {doc_id}: split lifecycle owns it={besitzt} "
+                f"(entry {entry.entry_id})"
+            )
+        except Exception as e:
+            # Best-effort wie beim Nachlegen: ein gescheiterter Wiederanstoss
+            # laesst das Dokument unveraendert stehen und ist wiederholbar. Ein
+            # ungeackter Eintrag wuerde dagegen endlos neu zugestellt.
+            logger.warning(f"resplit for doc {doc_id} failed: {e}")
+        await queue.ack(entry.entry_id)
+        return
+
     try:
         async with AsyncSessionLocal() as db:
             rag = RAGService(db)

@@ -82,7 +82,9 @@ async def _hand_back_single(db, doc: Document, user_id: int | None) -> None:
         ) from e
 
 
-async def process_slow_split(document_id: int, user_id: int | None) -> str:
+async def process_slow_split(
+    document_id: int, user_id: int | None, *, resplit: bool = False
+) -> str:
     """Run slow-lane detection + resolution for one parked document.
 
     Returns the outcome for the worker's logging: ``split`` / ``review`` /
@@ -172,7 +174,9 @@ async def process_slow_split(document_id: int, user_id: int | None) -> str:
             )
             await _hand_back_single(db, doc, user_id)
             return "single"
-        outcome = await act_on_verdict(db, doc, verdict, user_id)
+        outcome = await act_on_verdict(
+            db, doc, verdict, user_id, force_review=resplit
+        )
         if outcome == "single":
             await _hand_back_single(db, doc, user_id)
         return outcome

@@ -760,3 +760,48 @@ def test_pdfsplit_queue_uses_own_stream_and_group():
     assert q.stream_key == "renfield:tasks:pdfsplit"
     assert q.group_name == "pdfsplitworker"
     assert q.stream_key != DQ.DEFAULT_STREAM
+
+
+# ---------------------------------------------------------------------------
+# Wiederanstoß (#1372): das Kennzeichen muss über Redis bis hierher reisen
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_resplit_reaches_act_on_verdict_through_the_slow_lane(monkeypatch):
+    """🛑 DIE STELLE, AN DER ES STILL NICHT FUNKTIONIERT HÄTTE.
+
+    Der langsame Pfad liegt hinter Redis; seine Nutzlast war
+    `{"document_id", "user_id"}`. Fiele das Kennzeichen dort weg, würde ein
+    Wiederanstoß an einem unlesbaren Stapel wieder AUTOMATISCH schneiden — und
+    genau über diesen Pfad lief Dokument 460, das den ganzen Vorgang ausgelöst
+    hat.
+    """
+    _db, act, _execute, _q = _wire_lane(
+        monkeypatch,
+        doc=_doc(),
+        signals=[_sig(1), _sig(2)],
+        verdict=SplitVerdict(kind="multi", pieces=[_piece(1, 1), _piece(2, 2)]),
+        outcome="review",
+    )
+
+    await lane.process_slow_split(7, None, resplit=True)
+
+    assert act.await_args.kwargs.get("force_review") is True
+
+
+@pytest.mark.asyncio
+async def test_a_normal_slow_split_does_not_force_review(monkeypatch):
+    """Gegenprobe: ohne Wiederanstoß bleibt die Schwelle die Entscheidung.
+    Ohne diesen Test wäre der obige auch grün, wenn `force_review` fest auf
+    True stünde."""
+    _db, act, _execute, _q = _wire_lane(
+        monkeypatch,
+        doc=_doc(),
+        signals=[_sig(1), _sig(2)],
+        verdict=SplitVerdict(kind="multi", pieces=[_piece(1, 1), _piece(2, 2)]),
+        outcome="split",
+    )
+
+    await lane.process_slow_split(7, None)
+
+    assert act.await_args.kwargs.get("force_review") is False

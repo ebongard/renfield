@@ -48,6 +48,17 @@ document-worker **pre-stage before Docling**, so ALL batch entry points are cove
   Handeingabe verbirgt den Fehler dessen, der sie gemacht hat. Ein fehlender Kopf und jede Ueberlappung bleiben
   auch mit Reparatur ein Grund zum Verwerfen. Jede Reparatur wird protokolliert.
 
+- 🛑 **Ein WIEDERANSTOSS legt vor, er führt nie aus** (#1372). `trigger: "resplit"` im document-worker läuft VOR der
+  Idempotenz-Sperre (`initial ingest already completed`) und fährt nur die Erkennung — die Einlieferung wird nicht
+  wiederholt, sonst zweite Paperless-Ablage und doppelte KG-Extraktion. `act_on_verdict(force_review=True)` macht
+  die Entscheidung unabhängig von der Zuversicht: beim ERSTEN Durchlauf hat niemand das Dokument gesehen, bei einem
+  Wiederanstoß steht es in Paperless und trägt vielleicht gepflegte Tags.
+  🛑 Das Kennzeichen muss durch die **Redis-Nutzlast des langsamen Pfads** reisen (`{"resplit": true}`, nur wenn
+  gesetzt — der häufige Pfad bleibt byte-gleich). Fällt es dort weg, schneidet ein Wiederanstoß an einem unlesbaren
+  Stapel wieder automatisch, und genau über diesen Pfad lief der Fall, der #1368 ausgelöst hat.
+  🛑 Aus einer Leseprobe ist NICHT ableitbar, was der nächste Lauf tut: derselbe Aufruf gab am 2026-10-04 in drei
+  Durchläufen 9 Stücke, 8 Stücke und Zuversicht 0,0.
+
 ## Decision path
 - Whole-file confidence gate `PDF_SPLIT_AUTO_THRESHOLD`: confident → auto split; uncertain → OWNER REVIEW on
   `/brain/review` (`pdf_split_proposals` + `/api/pdf-split`).
