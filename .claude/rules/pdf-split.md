@@ -59,6 +59,16 @@ document-worker **pre-stage before Docling**, so ALL batch entry points are cove
   🛑 Aus einer Leseprobe ist NICHT ableitbar, was der nächste Lauf tut: derselbe Aufruf gab am 2026-10-04 in drei
   Durchläufen 9 Stücke, 8 Stücke und Zuversicht 0,0.
 
+- 🛑 **`paperless_state == 'done'` heißt ZWEIERLEI** (#1373): „erfolgreich abgelegt" ODER „beigelegt, nie abgelegt"
+  (so stempelt `execute_split` den archivierten Elternteil selbst). Die Ablage-Absicht der Kinder liest deshalb
+  `pending` **oder** ein gesetztes `paperless_document_id` — gesetzt heißt TATSÄCHLICH abgelegt. Vorher fielen beide
+  Bedeutungen auf „nicht ablegen", und der Wiederanstoß von doc 460 erzeugte acht Kinder, von denen **keines**
+  Paperless erreichte; dort stand weiter der 38-seitige Stapel mit einem Korrespondenten, der für sieben der acht
+  Briefe falsch war.
+  🛑 **Das bereits abgelegte Original wird NICHT angefasst.** Es zu ersetzen hieße, ein Paperless-Dokument zu
+  löschen — unwiderruflich, und daran hängen womöglich von Hand gepflegte Tags. Das bleibt eine ausdrückliche
+  Handlung des Eigentümers, keine Nebenwirkung des Schnitts.
+
 ## Decision path
 - Whole-file confidence gate `PDF_SPLIT_AUTO_THRESHOLD`: confident → auto split; uncertain → OWNER REVIEW on
   `/brain/review` (`pdf_split_proposals` + `/api/pdf-split`).

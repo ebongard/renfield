@@ -322,10 +322,36 @@ async def execute_split(
         parent.status = DOC_STATUS_SPLIT_PENDING
         await db.commit()
 
-    # The child's Paperless intent mirrors the parent's at detection time: only
-    # a filing-wanted parent (stamped 'pending' by its entry point) produces
-    # filing-wanted children.
-    to_paperless = parent.paperless_state == PAPERLESS_STATE_PENDING
+    # Die Ablage-Absicht der Kinder — abgeleitet, nicht gespeichert (#1373).
+    #
+    # 🛑 `paperless_state == 'done'` HEISST ZWEIERLEI, und darin lag der Fehler.
+    # Es bedeutet "erledigt" — entweder "erfolgreich abgelegt" ODER "beigelegt,
+    # nie abgelegt" (so stempelt diese Funktion selbst den archivierten
+    # Elternteil, s. Modul-Docstring). Die alte Ableitung las nur `pending` und
+    # machte aus beidem "nicht ablegen".
+    #
+    # Beim Schnitt zur EINLIEFERUNGSZEIT stimmte das: der Elternteil ist dort
+    # `pending`, die Absicht erbt sich richtig. Bei einem WIEDERANSTOSS ist er
+    # `done`, weil er längst in Paperless liegt — und die Absicht ist dann nicht
+    # "nicht ablegen", sondern "schon abgelegt". Zwei verschiedene Dinge, die
+    # auf denselben Wert fielen.
+    #
+    # Gemessen am 2026-10-04: der Wiederanstoss von Dokument 460 erzeugte acht
+    # Kinder, von denen KEINES Paperless erreichte. Dort stand weiter der
+    # 38-seitige Stapel mit einem Korrespondenten, der für sieben der acht
+    # Briefe falsch war — genau das Problem, das den Schnitt motiviert hatte.
+    #
+    # Der Unterschied ist `paperless_document_id`: gesetzt heisst TATSAECHLICH
+    # abgelegt. Dann wollen die Kinder dorthin, sonst verschwinden sie.
+    #
+    # 🛑 Das Original wird dabei NICHT angefasst. Es zu ersetzen hiesse, ein
+    # Paperless-Dokument zu loeschen — unwiderruflich, und moeglicherweise haengen
+    # daran von Hand gepflegte Tags. Das bleibt eine ausdrueckliche Handlung des
+    # Eigentuemers; hier waere es eine Nebenwirkung.
+    to_paperless = (
+        parent.paperless_state == PAPERLESS_STATE_PENDING
+        or parent.paperless_document_id is not None
+    )
     owner_user_id = await _resolve_parent_owner(db, parent)
     if owner_user_id is None:
         owner_user_id = user_id
