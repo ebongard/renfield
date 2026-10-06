@@ -279,6 +279,107 @@ class TestBuildAgentActionResult:
         result = fn(tool_results)
         assert result["_agent_intent"] == "tool2"
 
+    # --- #1367: success is the turn's OUTCOME, not "a call came back" ---------
+
+    def test_failed_action_makes_the_turn_unsuccessful(self):
+        """A failed action flips success to False even beside usable data.
+
+        Without this the metadata said ``action_success: true`` for a turn whose
+        tool refused the work, and the stale-error marker never fired.
+        """
+        fn = self._get_func()
+        result = fn(
+            [("mcp.scanner.list_pending_scans", {"pending": [{"stage_id": "s1"}]})],
+            ["mcp.scanner.route_scan"],
+        )
+        assert result["success"] is False
+        assert result["failed_actions"] == ["mcp.scanner.route_scan"]
+        # The data is kept — follow-up resolution still needs the ids.
+        assert result["data"] == {"pending": [{"stage_id": "s1"}]}
+
+    def test_only_tool_failed_yields_false_not_none(self):
+        """THE measured hole: the failing tool carries no data.
+
+        A failed step never reaches ``tool_results``, so before #1367 this turn
+        produced ``action_result = None`` and therefore ``action_success = None``,
+        which is just as unmarked as ``True``. It has to be ``False``.
+        """
+        fn = self._get_func()
+        result = fn([], ["mcp.scanner.route_scan"])
+        assert result is not None
+        assert result["success"] is False
+        # This expression IS the one chat_handler stores as metadata.
+        assert (result.get("success") if result else None) is False
+
+    def test_successful_turn_unchanged(self):
+        """No failed action: the previous shape, unchanged."""
+        fn = self._get_func()
+        assert fn([("search_docs", {"results": [1]})], []) == {
+            "success": True,
+            "data": {"results": [1]},
+            "_agent_intent": "search_docs",
+        }
+
+    def test_no_data_and_no_failure_is_still_none(self):
+        assert self._get_func()([], []) is None
+
+
+# ============================================================================
+# _failed_agent_actions Tests (#1367)
+# ============================================================================
+
+@pytest.mark.backend
+class TestFailedAgentActions:
+    """Which of a turn's tool calls count as a FAILED ACTION."""
+
+    def _get_func(self):
+        from api.websocket.chat_handler import _failed_agent_actions
+        return _failed_agent_actions
+
+    def test_no_tool_calls(self):
+        assert self._get_func()([]) == []
+
+    def test_all_successful(self):
+        fn = self._get_func()
+        assert fn([("a", True), ("b", True)]) == []
+
+    def test_single_failure(self):
+        fn = self._get_func()
+        assert fn([("mcp.scanner.route_scan", False)]) == ["mcp.scanner.route_scan"]
+
+    def test_retry_of_the_same_tool_counts_as_recovery(self):
+        """A rejected parameter followed by a correct retry is NOT a failed turn.
+
+        This is the normal agent-loop shape; marking it failed would suppress
+        memory extraction and chips for turns that in fact succeeded.
+        """
+        fn = self._get_func()
+        assert fn([
+            ("internal.control_device", False),
+            ("internal.control_device", True),
+        ]) == []
+
+    def test_unretried_failure_survives_a_later_different_tool(self):
+        """The measured shape: route_scan fails, a read tool then succeeds.
+
+        The agent calls something else to EXPLAIN the failure. The action still
+        failed, so the turn did.
+        """
+        fn = self._get_func()
+        assert fn([
+            ("mcp.scanner.route_scan", False),
+            ("mcp.scanner.scanner_status", True),
+        ]) == ["mcp.scanner.route_scan"]
+
+    def test_success_none_is_not_a_failure(self):
+        """Only an explicit False counts; ``None`` means "not stated"."""
+        fn = self._get_func()
+        assert fn([("a", None)]) == []
+
+    def test_nameless_tool_does_not_crash(self):
+        fn = self._get_func()
+        assert fn([(None, False)]) == ["?"]
+
 
 # ============================================================================
 # _build_action_summary Tests

@@ -59,7 +59,8 @@ Decomposable `fact` memories with a subject are NOT stored flat; preferences/ins
 ## Spoken turns (`services/turn_extraction.py`) — deliberately UNFLAGGED, no kill-switch
 - Both producers (browser `chat_handler`, `satellite_handler._spawn_satellite_extraction`) go through the same seam:
   `spawn_memory_extraction` / `spawn_post_message_hooks`. **ONE skip policy:** memory flags off / empty answer /
-  `action_success is False` → nothing scheduled. Do not fork a second policy per producer.
+  `action_success is False` → nothing scheduled. Do not fork a second policy per producer. Since #1367 an AGENT turn
+  can be `False` too (a tool that reported its failure in its own payload), so this skip now really fires there.
 - `TurnExtractionSpawn.owns_post_message` keeps KG extraction at exactly once per turn under subsume coordination.
 - **Privacy boundary:** a spoken turn is extracted ONLY when the speaker was recognized (`sat_user_id`). `None` ⇒ no
   memory extraction AND no `post_message` hooks — an unattributed voice must not become somebody's memory.

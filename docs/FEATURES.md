@@ -300,6 +300,8 @@ Der Agent bricht automatisch ab, wenn wiederholte Suchen (z.B. Jellyfin-Suche) k
 
 Frühere fehlgeschlagene Aktionen werden im `KONVERSATIONS-KONTEXT` mit dem Marker `[VORHERIGE_FEHLGESCHLAGENE_AKTION]` gekennzeichnet. Der Agent-Prompt weist explizit darauf hin, dass solche historischen Fehler **nicht** den aktuellen Zustand belegen — fordert der Nutzer dieselbe Aktion erneut an, wird das Tool neu ausgeführt statt mit einer alten Fehlermeldung zu antworten. Der Marker wird aus dem `action_success`-Metadatum am Message-Turn abgeleitet.
 
+`action_success` bildet den **Ausgang** des Zuges ab, nicht die Rückkehr des Aufrufs (#1367). Ein Werkzeug, das seinen Fehlschlag in der eigenen Nutzlast meldet (`{"ok": false, …}` — die Form unserer eigenen MCP-Server), galt bis dahin als Erfolg, der Marker feuerte nie, und Renfield gab die alte Absage aus dem Verlauf wieder, obwohl die Sache längst behoben war. Der Ausgang einer Aktion ist ihr **letzter Versuch mit demselben Werkzeug**: eine sofort korrigierte Wiederholung ist eine Erholung, ein nicht wiederholter Fehlschlag bleibt einer — auch wenn danach ein anderes Werkzeug gelang.
+
 ### Konfiguration
 
 ```env

@@ -336,6 +336,8 @@ browser path is unchanged. `satellite_handler._spawn_satellite_extraction` calls
 persisted — fire-and-forget, so the TTS is never delayed, and every failure is swallowed.
 
 - ONE skip policy for both producers: memory flags off / empty answer / `action_success is False` → nothing scheduled.
+  Since #1367 an agent turn can carry `False` as well (a tool reporting its failure inside its own payload used to be
+  stored as a success), so the skip is no longer effectively intent-path-only.
 - `TurnExtractionSpawn.owns_post_message` keeps KG extraction at exactly once per turn when subsume coordination is
   active.
 - **Privacy boundary: a spoken turn is extracted ONLY when the speaker was recognized** — `sat_user_id` (Speaker →

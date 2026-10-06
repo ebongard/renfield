@@ -425,12 +425,44 @@ def _collect_tool_artifacts(tool_results: list) -> list:
     return artifacts
 
 
-def _build_agent_action_result(tool_results: list) -> dict:
+def _failed_agent_actions(outcomes: list) -> list:
+    """Which ACTIONS of this agent turn ended in failure.
+
+    ``outcomes`` is every ``tool_result`` step of the turn as ``(tool, success)``
+    in call order. An action's outcome is its LAST attempt with that tool: the
+    agent routinely gets a parameter rejected and immediately retries the same
+    tool, and such a turn RECOVERED — it did not fail. A tool that was never
+    retried and ended in failure DID fail, even when a different tool succeeded
+    afterwards: the shape measured on 2026-10-04 is `route_scan` failing and a
+    read tool then succeeding while the agent explains why.
+
+    Order matters, dict insertion order does not: the verdict is per tool name,
+    so the list is "actions that ended badly", not "calls that failed".
+    """
+    last: dict[str, bool | None] = {}
+    for tool, success in outcomes:
+        last[tool or "?"] = success
+    return [tool for tool, success in last.items() if success is False]
+
+
+def _build_agent_action_result(tool_results: list, failed_actions: list | None = None) -> dict:
     """Build a synthetic action_result from agent tool results for conversation history.
 
     Agent loop responses don't have action_result like single-intent paths.
     This collects the most useful tool results (searches, not downloads) and
     builds a result dict that _build_action_summary can process.
+
+    ``success`` is the turn's OUTCOME, not the fact that a call came back
+    (#1367). It used to be hardcoded ``True``, so a tool reporting its failure
+    inside its own payload — `{"ok": false, …}` from the scanner — produced
+    ``action_success: true`` and the stale-error marker in
+    ``agent_service._build_agent_prompt`` never fired: the next turn read the old
+    refusal as present fact and answered from it without calling the tool again.
+    Fixing only ``mcp_client._detect_inner_error`` is NOT enough — a failed step
+    carries no ``data``, so it never reaches ``tool_results`` and the turn would
+    merely go from ``true`` to ``None``, which is just as unmarked.
+
+    Returns None only when the turn neither produced usable data nor failed.
     """
     # Prefer search/list results over download/send results for the summary
     # (search results contain IDs and titles needed for follow-ups)
@@ -444,14 +476,19 @@ def _build_agent_action_result(tool_results: list) -> dict:
             best_data = data
             best_intent = tool_name
 
-    if best_data is None:
+    if best_data is None and not failed_actions:
         return None
 
-    return {
-        "success": True,
+    result = {
+        "success": not failed_actions,
         "data": best_data,
         "_agent_intent": best_intent,
     }
+    if failed_actions:
+        # Tool NAMES only — the reason stays out of the metadata. The operator
+        # needs to know WHICH action failed without reading someone's chat.
+        result["failed_actions"] = list(failed_actions)
+    return result
 
 
 def _build_action_summary(intent: dict, action_result: dict, max_chars: int = 2000) -> str:
@@ -1419,6 +1456,11 @@ async def websocket_endpoint(
             # Shared init so the persist/done block can reference it on every path
             # (the legacy non-agent path never touches agent_tool_results).
             agent_tool_results: list = []
+            # EVERY tool_result step of the turn as (tool, success) — including
+            # the failures, which carry no data and therefore never land in
+            # agent_tool_results. This is what makes action_success able to say
+            # False on the agent path at all (#1367).
+            agent_tool_outcomes: list = []
             # Validated chat artifacts (Lane A typed table/list/keyvalue/chart)
             # produced by the hook / sub-intent / orchestration card path this
             # turn. Emitted as `artifact` WS frames and persisted into
@@ -1946,6 +1988,7 @@ async def websocket_endpoint(
                         logger.info(f"🎼 Orchestrator: {len(sub_queries)} sub-queries → {[sq.get('role') for sq in sub_queries]}")
                         executor = ActionExecutor(mcp_manager=mcp_manager, session_id=msg_session_id)
                         agent_tool_results = []
+                        agent_tool_outcomes = []
                         # Buffer final_answer AND card steps so check_output
                         # can redact before send AND the card arrives after
                         # the assistant message bubble it should attach to.
@@ -2001,8 +2044,10 @@ async def websocket_endpoint(
                                 deferred_paperless_confirm = step.data
                             else:
                                 await websocket.send_json(step_to_ws_message(step))
-                            if step.step_type == "tool_result" and step.success and step.data:
-                                agent_tool_results.append((step.tool, step.data))
+                            if step.step_type == "tool_result":
+                                agent_tool_outcomes.append((step.tool, step.success))
+                                if step.success and step.data:
+                                    agent_tool_results.append((step.tool, step.data))
                             if step.step_type in ("tool_call", "tool_result"):
                                 agent_steps_count += 1
 
@@ -2053,8 +2098,15 @@ async def websocket_endpoint(
                                 )
                             ))
 
-                        if agent_tool_results:
-                            action_result = _build_agent_action_result(agent_tool_results)
+                        _failed = _failed_agent_actions(agent_tool_outcomes)
+                        if agent_tool_results or _failed:
+                            action_result = _build_agent_action_result(
+                                agent_tool_results, _failed
+                            )
+                        if _failed:
+                            logger.warning(
+                                f"🤖 Orchestrator-Zug mit fehlgeschlagener Aktion: {_failed}"
+                            )
                         if not intent:
                             intent = {"intent": "agent.orchestrated", "confidence": 1.0, "parameters": {}}
 
@@ -2132,6 +2184,7 @@ async def websocket_endpoint(
                     executor = ActionExecutor(mcp_manager=mcp_manager, session_id=msg_session_id)
 
                     agent_tool_results = []
+                    agent_tool_outcomes = []
 
                     # F4c — federation progress relay. When the agent's
                     # tool call is a federated query, ProgressChunks
@@ -2188,8 +2241,10 @@ async def websocket_endpoint(
 
                         if step.step_type == "final_answer":
                             full_response = step.content
-                        if step.step_type == "tool_result" and step.success and step.data:
-                            agent_tool_results.append((step.tool, step.data))
+                        if step.step_type == "tool_result":
+                            agent_tool_outcomes.append((step.tool, step.success))
+                            if step.success and step.data:
+                                agent_tool_results.append((step.tool, step.data))
                         if step.step_type in ("tool_call", "tool_result"):
                             agent_steps_count += 1
                         # Track last media room from agent tool call parameters
@@ -2200,9 +2255,18 @@ async def websocket_endpoint(
                             if _room:
                                 session_state.last_media_room = _room
 
-                    # Build action summary from agent tool results for conversation history
-                    if agent_tool_results:
-                        action_result = _build_agent_action_result(agent_tool_results)
+                    # Build action summary from agent tool results for conversation
+                    # history — and let a tool that FAILED set the turn's outcome,
+                    # so the stale-error marker can fire on the next turn (#1367).
+                    _failed = _failed_agent_actions(agent_tool_outcomes)
+                    if agent_tool_results or _failed:
+                        action_result = _build_agent_action_result(
+                            agent_tool_results, _failed
+                        )
+                    if _failed:
+                        logger.warning(
+                            f"🤖 Agent-Zug mit fehlgeschlagener Aktion: {_failed}"
+                        )
 
                     # Gen-UI: emit any typed widgets the agent rendered via the
                     # render_table / render_list / weather_widget tools.
@@ -2698,9 +2762,16 @@ WICHTIG: Nutze die ECHTEN Daten aus dem Ergebnis! Gib NUR die Antwort, KEIN JSON
                 _chat_turn_marked = False
                 await note_chat_turn_active(False)
 
-            # Proactive feedback: ask user when action failed or returned empty
+            # Proactive feedback: ask user when action failed or returned empty.
+            # INTENT-PATH ONLY. The question it asks is "did I understand you?",
+            # which only the ranked-intent path can get wrong — the agent path
+            # has no intent to confirm (its intent is the synthetic
+            # `agent.<role>`, confidence 1.0). It was unreachable there while
+            # `_build_agent_action_result` hardcoded success=True; now that a
+            # failed tool makes the turn False (#1367), the guard has to say so
+            # explicitly instead of relying on that accident.
             should_request_feedback = False
-            if intent and intent.get("intent") != "general.conversation":
+            if not agent_used and intent and intent.get("intent") != "general.conversation":
                 if action_result and (
                     not action_result.get("success") or action_result.get("empty_result")
                 ):

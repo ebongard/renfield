@@ -671,6 +671,17 @@ def _sanitize_credentials(text: str) -> str:
     return _CREDENTIAL_PATTERN.sub(r'\1***REDACTED***', text)
 
 
+# The keys our own and third-party MCP servers use for "did this call achieve
+# anything": `success` (n8n-mcp, mail, calendar, dlna, tracking) and `ok`
+# (scanner, filesystem). Checked in this order, and an explicit boolean DECIDES
+# — nothing below is consulted once one is present. That precedence is what
+# keeps a *report about* a past failure from reading as a fresh one: the
+# scanner's `get_scan_job` answers `{"ok": true, "result": {"ok": false,
+# "error_code": "…"}}` for a job that failed, and the CALL did succeed.
+# Only the TOP level is inspected, never nested payloads, for the same reason.
+_OUTCOME_KEYS = ("success", "ok")
+
+
 def _detect_inner_error(message: str) -> bool:
     """
     Detect application-level errors inside MCP response text.
@@ -680,21 +691,33 @@ def _detect_inner_error(message: str) -> bool:
     ``isError`` flag stays False.  This function parses the message to detect
     such inner failures.
 
-    Also detects ``{"error": "..."}`` without a ``success`` field — a common
-    pattern in simple MCP servers (e.g. DLNA).
+    Recognised shapes, in precedence order:
+
+    1. an explicit outcome flag — ``{"success": false}`` or ``{"ok": false}``
+       (``_OUTCOME_KEYS``). Present and boolean, it decides on its own.
+    2. ``{"error": "…"}`` without an outcome flag — a common pattern in simple
+       MCP servers (e.g. DLNA).
+    3. a TRUTHY ``error_code`` without an outcome flag. ``error_code: null``
+       alongside a result is not a failure, which is why truthiness matters.
+
+    A non-boolean ``ok``/``success`` (the Samsung key map has ``"ok":
+    "KEY_ENTER"``) is not an outcome flag and falls through to 2/3.
 
     Returns True if the inner response indicates an error, False otherwise.
     """
     try:
         data = json.loads(message)
-        if isinstance(data, dict):
-            if "success" in data:
-                return data["success"] is False
-            if "error" in data and isinstance(data["error"], str):
-                return True
     except (json.JSONDecodeError, TypeError, ValueError):
-        pass
-    return False
+        return False
+    if not isinstance(data, dict):
+        return False
+    for key in _OUTCOME_KEYS:
+        value = data.get(key)
+        if isinstance(value, bool):
+            return value is False
+    if isinstance(data.get("error"), str):
+        return True
+    return bool(data.get("error_code"))
 
 
 # Upstream-throttle recognition (Phase 3). Matched ONLY against results that are

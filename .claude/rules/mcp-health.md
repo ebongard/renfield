@@ -28,6 +28,9 @@ Retry-After is honoured, no automatic retry; signal + alert stay dark).
   fine with `[]`, so a reconnect "recovers" a tool-less server.
 - `execute_tool_streaming` shares `execute_tool`'s accounting (caller cancellation records nothing; app error ≠
   disconnect). Connect + `refresh_tools` install tools ONLY through `_install_discovered_tools`.
+- **Error result** = `_detect_inner_error`, TOP level only: a `success`/`ok` BOOLEAN decides alone, else an `error`
+  string or a TRUTHY `error_code`. `ok` was missing until #1367, so our own servers' `{"ok": false, …}` passed as a
+  success into `action_success`. Never recurse — `{"ok": true, "result": {"ok": false}}` is a REPORT about a failure.
 
 ## Functional probes (`health_probe:` stanza: `tool`/`args`/`interval`/`timeout`/`expect.{min_items,path}`, parsed like `notifications:`)
 - Verdict = `probe_consecutive_failures`, kept SEPARATE from `recent_outcomes`; hysteresis
