@@ -68,6 +68,7 @@ def _parent(**over):
         chunk_count=0,
         split_from_document_id=None,
         split_heartbeat_at=None,
+        paperless_document_id=None,
     )
     defaults.update(over)
     return SimpleNamespace(**defaults)
@@ -1003,3 +1004,90 @@ async def test_the_resplit_flag_travels_in_the_slow_lane_payload(monkeypatch):
     queue.enqueue.reset_mock()
     await ps._route_to_slow_lane(db, doc, "vlm", None)
     assert "resplit" not in queue.enqueue.await_args.args[0]
+
+
+# ---------------------------------------------------------------------------
+# #1373: die Kinder eines Wiederanstoßes müssen Paperless erreichen
+# ---------------------------------------------------------------------------
+
+async def test_children_of_an_already_filed_parent_are_filed_too(monkeypatch):
+    """🛑 Der Befund vom 2026-10-04.
+
+    `paperless_state == 'done'` heißt ZWEIERLEI: "erfolgreich abgelegt" oder
+    "beigelegt, nie abgelegt". Die alte Ableitung las nur `pending` und machte
+    aus beidem "nicht ablegen".
+
+    Folge: der Wiederanstoß von Dokument 460 erzeugte acht Kinder, von denen
+    KEINES Paperless erreichte. Dort stand weiter der 38-seitige Stapel mit
+    einem Korrespondenten, der für sieben der acht Briefe falsch war — genau
+    das Problem, das den Schnitt motiviert hatte.
+
+    Der Unterschied ist `paperless_document_id`: gesetzt heißt TATSÄCHLICH
+    abgelegt.
+    """
+    parent = _parent(
+        paperless_state=PAPERLESS_STATE_DONE, paperless_document_id=2667
+    )
+    db = _db()
+    db.get = AsyncMock(return_value=SimpleNamespace(id=101, split_from_document_id=None))
+    calls = _wire_split(
+        monkeypatch,
+        ingest_results=[
+            IngestResult(IngestStatus.INGESTED, document_id=101),
+            IngestResult(IngestStatus.INGESTED, document_id=102),
+        ],
+    )
+
+    await execute_split(db, parent, [_piece(1, 2), _piece(3, 5)])
+
+    _, _meta, kwargs = calls["ingest"][0]
+    assert kwargs["file_to_paperless"] is True
+
+
+async def test_a_settled_parent_that_was_never_filed_keeps_its_children_out(monkeypatch):
+    """🛑 Die Gegenprobe, und sie ist der Grund für `paperless_document_id`.
+
+    `done` OHNE Id heißt "beigelegt, nie abgelegt" — so stempelt `execute_split`
+    den archivierten Elternteil selbst. Würde man nur auf `done` prüfen, legte
+    jeder Schnitt eines nie abgelegten Dokuments plötzlich ab, und die
+    Ablage-Absicht wäre nicht mehr erbbar, sondern geraten.
+    """
+    parent = _parent(paperless_state=PAPERLESS_STATE_DONE, paperless_document_id=None)
+    db = _db()
+    db.get = AsyncMock(return_value=SimpleNamespace(id=101, split_from_document_id=None))
+    calls = _wire_split(
+        monkeypatch,
+        ingest_results=[
+            IngestResult(IngestStatus.INGESTED, document_id=101),
+            IngestResult(IngestStatus.INGESTED, document_id=102),
+        ],
+    )
+
+    await execute_split(db, parent, [_piece(1, 2), _piece(3, 5)])
+
+    _, _meta, kwargs = calls["ingest"][0]
+    assert kwargs["file_to_paperless"] is False
+
+
+async def test_the_already_filed_original_is_left_alone(monkeypatch):
+    """Das Original zu ersetzen hieße, ein Paperless-Dokument zu löschen —
+    unwiderruflich, und vielleicht hängen daran von Hand gepflegte Tags. Das
+    bleibt eine ausdrückliche Handlung des Eigentümers, keine Nebenwirkung des
+    Schnitts."""
+    parent = _parent(
+        paperless_state=PAPERLESS_STATE_DONE, paperless_document_id=2667
+    )
+    db = _db()
+    db.get = AsyncMock(return_value=SimpleNamespace(id=101, split_from_document_id=None))
+    _wire_split(
+        monkeypatch,
+        ingest_results=[
+            IngestResult(IngestStatus.INGESTED, document_id=101),
+            IngestResult(IngestStatus.INGESTED, document_id=102),
+        ],
+    )
+
+    await execute_split(db, parent, [_piece(1, 2), _piece(3, 5)])
+
+    # Die Id bleibt stehen: nichts wurde in Paperless entfernt.
+    assert parent.paperless_document_id == 2667
