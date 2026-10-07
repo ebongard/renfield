@@ -38,6 +38,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.database import TIER_PUBLIC, KGEntity, KGRelation
 from services.circle_sql import kg_entities_circles_filter
+from services.kg_validity_sql import live_conditions
 from utils.config import settings
 
 # Render budgets. Tuned for the current ~200-entity prod graph; generous
@@ -174,6 +175,7 @@ class KGGraphService:
             KGRelation.subject_id, KGRelation.object_id, KGRelation.predicate
         ).where(
             KGRelation.is_active == True,  # noqa: E712
+            *live_conditions(KGRelation),  # #875; [] when the validity filter is off
             KGRelation.subject_id.in_(entity_ids),
             KGRelation.object_id.in_(entity_ids),
         )
@@ -275,6 +277,7 @@ class KGGraphService:
             KGRelation.subject_id, KGRelation.object_id, KGRelation.predicate
         ).where(
             KGRelation.is_active == True,  # noqa: E712
+            *live_conditions(KGRelation),  # #875
             KGRelation.subject_id != KGRelation.object_id,
             or_(
                 KGRelation.subject_id.in_(frontier_ids),

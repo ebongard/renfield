@@ -882,6 +882,14 @@ class Settings(BaseSettings):
     skill_curator_min_uses_to_consider_stale: int = Field(default=3, ge=1, le=100)  # Avoid archiving rarely-tested skills
     skill_curator_max_merges_per_run: int = Field(default=20, ge=1, le=200)   # Safety cap
 
+    # KG edge validity (#875 Stufe 1, docs/design/kg-bitemporal-edges.md). Gates the
+    # READ filter `valid_to IS NULL OR valid_to > now` on every live-relation query
+    # (services/kg_validity_sql.py). Off = every query's SQL is byte-identical to
+    # before the columns existed. Stufe 1 never SETS valid_to, so turning it on
+    # changes no result either — it only arms the filter for Stufe 2's detector,
+    # which will get its own switch and its own explicit go.
+    kg_validity_filter_enabled: bool = False
+
     # KG entity reconciler (Structured Memory Phase 1, T5). Periodic per-user
     # self-join over kg_entities embeddings: same-tier high-confidence dupes are
     # auto-merged; cross-tier / gray-zone dupes become kg_merge_proposals for

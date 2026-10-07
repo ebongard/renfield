@@ -2296,10 +2296,30 @@ class KGRelation(Base):
     stated_by_user_id = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
     # The specific message the assertion was extracted from (when available).
     source_message_id = Column(Integer, ForeignKey("messages.id"), nullable=True)
+    # Validity interval (#875 Stufe 1, docs/design/kg-bitemporal-edges.md §5).
+    # NULL valid_from = "holds, start unknown" — deliberately NOT backfilled from
+    # created_at: the extraction time is not the time a fact began to hold.
+    # NULL valid_to = "still holds". Only one time axis; created_at already is the
+    # de-facto transaction axis. Validity is NOT is_active (§4): is_active already
+    # carries five unrelated meanings (merge dedup, cascade, cleanup, wikilink
+    # removed, manual delete) and must not gain a sixth.
+    valid_from = Column(DateTime, nullable=True)
+    valid_to = Column(DateTime, nullable=True)
+    # Which relation superseded this one — makes every expire explainable and
+    # exactly reversible (null both columns). SET NULL keeps the expired edge if
+    # its successor is ever hard-deleted.
+    invalidated_by_relation_id = Column(
+        Integer, ForeignKey("kg_relations.id", ondelete="SET NULL"), nullable=True
+    )
 
     __table_args__ = (
         Index('idx_kg_relations_subj_tier', 'subject_id', 'circle_tier'),
         Index('idx_kg_relations_obj_tier', 'object_id', 'circle_tier'),
+        # Partial: expired edges are never read in normal operation (§5.1).
+        Index(
+            'idx_kg_relations_live', 'subject_id', 'predicate',
+            postgresql_where=sa_text("is_active = true AND valid_to IS NULL"),
+        ),
     )
 
     subject = relationship("KGEntity", foreign_keys=[subject_id], back_populates="subject_relations")

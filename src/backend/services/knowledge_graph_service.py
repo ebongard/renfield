@@ -28,6 +28,7 @@ from models.database import (
 from services.atom_owner import AtomOwnerResolverMixin
 from services.kg_validator import load_heuristics as load_kg_heuristics
 from services.kg_validator import validate_relation as validate_kg_relation
+from services.kg_validity_sql import live_conditions
 from services.merge_guard import is_already_merged
 from utils.config import settings
 from utils.llm_client import get_default_client, get_embed_client
@@ -797,6 +798,9 @@ class KnowledgeGraphService(AtomOwnerResolverMixin):
             KGRelation.predicate == predicate,
             KGRelation.object_id == object_id,
             KGRelation.is_active == True,  # noqa: E712
+            # #875: an EXPIRED identical triple must not absorb a re-assertion —
+            # "moved back to Bonn" is a new edge with its own validity.
+            *live_conditions(KGRelation),
         )
         result = await self.db.execute(query)
         existing = result.scalar_one_or_none()
@@ -1700,9 +1704,11 @@ class KnowledgeGraphService(AtomOwnerResolverMixin):
 
         query = (
             select(KGRelation)
-            .where(KGRelation.is_active == True)  # noqa: E712
+            .where(KGRelation.is_active == True, *live_conditions(KGRelation))  # noqa: E712
         )
-        count_query = select(func.count(KGRelation.id)).where(KGRelation.is_active == True)  # noqa: E712
+        count_query = select(func.count(KGRelation.id)).where(
+            KGRelation.is_active == True, *live_conditions(KGRelation)  # noqa: E712
+        )
 
         if user_id is not None:
             query = query.where(KGRelation.user_id == user_id)
@@ -1781,6 +1787,8 @@ class KnowledgeGraphService(AtomOwnerResolverMixin):
         object_id: int | None = None,
     ) -> KGRelation | None:
         """Update an existing relation's predicate, confidence, or endpoints."""
+        # #875: no validity filter — addressed BY ID by an admin, who must be able
+        # to correct an expired edge too (tests/backend/test_kg_validity_sites.py).
         result = await self.db.execute(
             select(KGRelation).where(
                 KGRelation.id == relation_id,
@@ -1818,6 +1826,7 @@ class KnowledgeGraphService(AtomOwnerResolverMixin):
         return relation
 
     async def delete_relation(self, relation_id: int) -> bool:
+        # #875: no validity filter — by-id admin delete must reach expired edges too.
         result = await self.db.execute(
             select(KGRelation).where(
                 KGRelation.id == relation_id,
@@ -1852,7 +1861,9 @@ class KnowledgeGraphService(AtomOwnerResolverMixin):
         )
 
         base_entity = select(func.count(KGEntity.id)).where(KGEntity.is_active == True)  # noqa: E712
-        base_relation = select(func.count(KGRelation.id)).where(KGRelation.is_active == True)  # noqa: E712
+        base_relation = select(func.count(KGRelation.id)).where(
+            KGRelation.is_active == True, *live_conditions(KGRelation)  # noqa: E712
+        )
         type_query = (
             select(KGEntity.entity_type, func.count(KGEntity.id))
             .where(KGEntity.is_active == True)  # noqa: E712

@@ -82,7 +82,8 @@ class KGCleanupService:
                 .values(is_active=False)
             )
 
-            # Cascade-deactivate orphaned relations
+            # Cascade-deactivate orphaned relations. #875: no validity filter — a
+            # cascade must also retire EXPIRED edges of a deleted entity.
             orphaned_result = await self.db.execute(
                 update(KGRelation)
                 .where(
@@ -102,7 +103,8 @@ class KGCleanupService:
         else:
             orphaned_count = 0
             if invalid_ids:
-                # Count relations that would be orphaned
+                # Count relations that would be orphaned — the same set the cascade
+                # above deactivates, so no validity filter here either (#875).
                 count_result = await self.db.execute(
                     select(func.count(KGRelation.id))
                     .where(

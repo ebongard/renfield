@@ -16,6 +16,13 @@ Long form: `docs/design/structured-memory.md`, `docs/design/kg-cross-user-canoni
   `entity_types` JSONB = multi-type superset, scalar `entity_type` stays the closed-enum primary.
 - `kg_relations.stated_by_user_id` = who asserted the fact, NOT the owner.
 
+## Gültigkeit (`pc20260929_kg_validity`, #875 Stufe 1)
+- `kg_relations.valid_from`/`valid_to` (nullable, kein Backfill). **Jede** Lesestelle für lebende Kanten nimmt das
+  Prädikat aus `services/kg_validity_sql.py` (`live_clause` für `text()`, `live_conditions` für ORM) — nie selbst
+  `valid_to IS NULL` schreiben. `test_kg_validity_sites.py` schlägt an, wenn eine Abfrage `is_active` ohne es filtert.
+- `KG_VALIDITY_FILTER_ENABLED=false` (Default) = SQL byte-identisch zu vorher. Nichts setzt `valid_to` bis Stufe 2;
+  die braucht vorher eine Belegstrecke (Herkunft je Kante, siehe #875-Kommentar / #1374).
+
 ## `KnowledgeGraphService.resolve_entity` — cascade order is the contract
 exact name → surface-form (jsonb `@>`) → embedding (**SAME-TIER only** + high threshold, `::halfvec`) → create new.
 - Never fold across tiers or on a weak signal inline — that is a reconciler proposal.
