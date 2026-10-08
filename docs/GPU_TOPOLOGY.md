@@ -190,7 +190,7 @@ Geprüft am 2026-09-18 gegen die Build-Konfigurationen der Projekte, nicht gegen
 | **llama.cpp / Ollama** | **ja** | Ollamas Preset `llama_cuda_v12_linux` enthält `70`; Flash-Attention über `volta_mma_available` |
 | **ctranslate2** (Whisper) | ja | `CUDA_ARCH_LIST="Common"` enthält 7.0 ab CUDA ≥ 9 |
 | **onnxruntime-gpu** (ECAPA) | ja | Release-Pipeline baut mit `70-real` |
-| **vLLM** | **nein**, seit v0.11.1 | `CUDA_SUPPORTED_ARCHS` fiel von `7.0;7.2;7.5;…` auf `7.5;…`; Doku: „compute capability 7.5 or higher" |
+| **vLLM** | **nein** mit den fertigen Paketen, seit **v0.20.0** | Doku ab v0.20.0: „compute capability 7.5 or higher" (bis v0.19.1: 7.0); Wheels (CUDA 12.8/12.9/13.0) und Docker-Image bauen ab `7.5`. Nachgeprüft am 2026-10-08, Einzelheiten unten |
 | **SGLang** | **nein**, nie | Alle `gencode`-Stufen beginnen bei `compute_80`; FlashInfer verlangt sm75+ |
 | **PyTorch cu128 / cu13** | **nein** | `#removing sm_50-sm_70`; CUDA 13 hat sm_50/60/70 gestrichen |
 
@@ -201,6 +201,8 @@ samt `xformers`-Backend entfernt, FlashAttention-2 verlangt ohnehin Ampere, und 
 geduldeter Alt-Pfad für Volta existiert nicht mehr. Die vLLM-Tabelle, die für Volta noch
 GPTQ und GGUF als unterstützt führt, beschreibt den Zustand von damals: Ohne `sm_70`-Kernel
 im Wheel ist sie gegenstandslos.
+Das gilt für die **fertigen Pakete**; welcher Eigenbau-Zweig in vLLM formal noch offen ist,
+steht in §4.5.
 
 **Folge für die Modellwahl:** Auf der V100 ist **llama.cpp der Weg**, und dort sind
 **quantisierte GGUF-Modelle richtig** — sie nutzen dieselben fp16-Tensor-Kerne (die
@@ -417,6 +419,30 @@ gitignored): `…-nothink-*` ist der Lauf der Tabelle, `…-quality-*` der mit T
 Fazit: Das 262k-Fenster läuft auf der V100, und bei diesen Fragen antwortet das
 2-Bit-Modell nicht schlechter als das heutige — aber rund dreimal so langsam wie die 5090.
 
+### 4.5 vLLM auf Volta — nachgeprüft am 2026-10-08
+
+Gegen `CMakeLists.txt`, die Installationsdoku, `requirements/cuda.txt` und das Dockerfile
+der Release-Tags gelesen (aktuell **v0.31.0**), nichts davon gebaut oder gestartet:
+
+- **Die frühere Angabe „seit v0.11.1" war falsch.** Mit v0.11.1 fiel `7.0` nur aus dem
+  Zweig für **CUDA ≥ 13**. Der Zweig für CUDA 12.8 führte `7.0;7.2` bis einschließlich
+  **v0.19.1** weiter, und die Doku nannte bis dahin „compute capability 7.0 or higher".
+  Erst **v0.20.0** hob beides auf 7.5.
+- **Fertige Pakete heute: nein.** Die Doku verlangt 7.5; die Wheels werden mit CUDA 12.9
+  (Standard), 12.8 und 13.0 gebaut und landen damit in Zweigen ohne `7.0`; das Dockerfile
+  setzt `torch_cuda_arch_list='7.5 8.0 …'`.
+- **Auf dem Papier bleibt ein Eigenbau.** Der `else`-Zweig für CUDA **unter 12.8** führt
+  auch in v0.31.0 noch `7.0;7.5;8.0;8.6;8.7;8.9;9.0`, und das gepinnte `torch==2.13.0` gibt
+  es als `cu126`-Wheel (für `2.14.1+cu126` ist `sm_70` in der `arch_list` gemessen, §4.3;
+  für 2.13.0 nicht geprüft). Ungeprüft und unsupportet: Die Marlin-Kernel beginnen bei
+  `7.5`, und `flashinfer-python`/`flashinfer-cubin` sind feste Abhängigkeiten.
+- **Ältere Versionen (≤ v0.19.1)** hätten `sm_70` im eigenen Code, ziehen aber ein
+  PyTorch-Wheel für CUDA 12.8/12.9, dem `sm_70` fehlt — sie liefen nur mit einem
+  ausgetauschten `cu126`-Torch. Ebenfalls ungeprüft.
+
+Für den Betrieb ändert das nichts: **llama.cpp bleibt der Weg** (§4.1). Die Aussage zu
+SGLang wurde nicht erneut geprüft.
+
 ## 5. Der eigentliche Engpass: das geteilte LLM-Tier
 
 Nicht das VRAM der 16-GB-Karten ist knapp, sondern der KV-Cache auf `cuda.local`:
@@ -486,6 +512,24 @@ Messwerte in §4.3. Von den Bedingungen unten sind damit erledigt:
 | Ersatz der 5070 Ti | nein | Tauscht bf16/tf32/fp8 gegen Speicher und lässt eine moderne Karte ungenutzt |
 | Ersatz der 5060 Ti (`k8s-gpu-3`) | nein | `promox01` ist eine Mobil-CPU-Plattform (§1), dazu Treiber 595 und Verlust der Diarisierung |
 | Ersatz der 5090 | nein | Halbe Bandbreite, kein bf16/fp8 |
+
+**Einsatzszenarien nach den Messungen (2026-10-08).** Die Karte taugt als **zweiter
+LLM-Endpunkt** neben der 5090, nicht als deren Ersatz. Nach Eignung geordnet:
+
+| Szenario | Urteil | Grund |
+|---|---|---|
+| **Hintergrundaufgaben auslagern** (Memory- und KG-Extraktion, Dokumenten-Worker, OCR-Nachbearbeitung) | **am besten geeignet** | Wartezeit ist dort unkritisch; entlastet den geteilten KV-Cache auf `cuda.local` (§5) |
+| **Ausfallschutz für `cuda.local`** | geeignet | Trägt dasselbe Modell mit demselben 262k-Fenster (§4.3) — gleiches Verhalten statt des kleineren `qwen3:14b`, nur langsamer |
+| **Eigener Endpunkt für Reva oder die dritte Instanz** | geeignet bei kurzen Prompts | Reva-Prompts haben 249–2.813 Token (§4.4), dort wiegt die Prompt-Schwäche wenig; Antworten rund 2,5- bis 3-mal langsamer als auf der 5090. Nur `LLM_OPENAI_BASE_URL`, kein Code |
+| **Testumgebung** für Modelle, llama.cpp-Versionen und Einstellungen | geeignet | Kein Eingriff in den produktiven Server |
+| Renfields Hauptchat mit langen Kontexten | **nein** | Last ist prompt-dominiert (9,1 : 1); kalte lange Prompts rund 13-mal langsamer (§4.3) |
+| Voice-Pfad | **nein** | pyannote läuft nicht, `sm_70` fehlt im PyTorch-Build des voice-servers (§3) |
+| vLLM oder SGLang | **nein** | Fertige Pakete beginnen bei Compute Capability 7.5 (§4.1, §4.5) |
+
+**Vorbehalte:** `pveold` ist ein alter Desktop (32 GB RAM, eine SSD, Kernel-Parameter als
+Workaround für die Karte) — für alles, worauf sich die Produktion verlässt, gehört die Karte
+in einen solideren Host. **Nicht gemessen** sind der echte Renfield-Agent mit Tools,
+Parallelbetrieb unter realer Last und Dauerbetrieb über Tage samt Kühlung.
 
 **Bedingungen, falls die Karte in Betrieb geht:**
 
