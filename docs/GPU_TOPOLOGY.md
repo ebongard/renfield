@@ -4,6 +4,10 @@
 laufenden `voice-server`-Pod und über die Proxmox-API — nicht aus älteren Dokumenten
 übernommen. Ergänzt am selben Tag, nachdem eine Tesla V100 32 GB gekauft wurde (§6).
 
+**Nachtrag 2026-10-07:** Die Tesla V100 ist in Betrieb — im Proxmox-Host `pveold`,
+nicht im Cluster — und selbst vermessen (§4.3, §4.4, §6). Nachgemessen auf allen fünf
+Proxmox-Hosts (`lspci`, VM-/LXC-Konfiguration) und in den VMs (`nvidia-smi`).
+
 **Nachtrag 2026-10-06:** In `k8s-gpu-3` steckt nicht mehr die RTX 4060 Ti, sondern die
 **RTX 5060 Ti** — die Karte, die am 2026-09-01 in `k8s-gpu-1` mit Xid 79 ausgefallen und
 dort ausgebaut worden war. Die 4060 Ti ist **nicht mehr im Bestand**. Gemessen per
@@ -22,7 +26,8 @@ sitzt** — er sitzt nicht dort, wo man ihn vermutet.
 | k8s-gpu-1 (192.168.1.180) | **1×** RTX 5070 Ti | 16303 MiB | 570.211.01 | 12.0 | **DRA-Claim** `ollama-gpu-5070ti` |
 | k8s-gpu-2 (192.168.1.148) | **keine** | – | – | – | 0 — CPU-Node |
 | k8s-gpu-3 (192.168.1.254) | RTX 5060 Ti | 16311 MiB | **595.91.07** | 12.0 | `nvidia.com/gpu: 1` (voice-server, ns `voice`) |
-| cuda.local (192.168.1.227) | RTX 5090 | 32607 MiB | 575.64.03 | 12.0 | kein k8s-Node |
+| cuda.local (192.168.1.15) | RTX 5090 | 32607 MiB | 575.64.03 | 12.0 | kein k8s-Node |
+| gpu-ct (192.168.1.94, DHCP) | **Tesla V100 PCIe 32 GB** | 32768 MiB | **580.178.04** | 7.0 | kein k8s-Node |
 
 **Virtualisierung (Proxmox, über die API gelesen):**
 
@@ -31,6 +36,10 @@ sitzt** — er sitzt nicht dort, wo man ihn vermutet.
 | k8s-gpu-1 | 201 | **pve4** (Ryzen 9 3950X, 135 GB RAM) | `0000:0b:00` = GB203, RTX 5070 Ti |
 | k8s-gpu-2 | 202 | pve4 | **kein `hostpci`** — bestätigt ohne GPU |
 | k8s-gpu-3 | 109 | **promox01** (i5-12600H, **Mobil-CPU**, 101 GB RAM) | `0000:01:00` = GB206 (`10de:2d04`), RTX 5060 Ti |
+| cuda.local | 110 | **promox** (i5-14600K, 188 GiB RAM) | `0000:01:00` = GB202, RTX 5090 (Mapping `gpu-rtx5090`) |
+| gpu-ct | LXC 100 | **pveold** (i7-4770K, 31 GiB RAM) | **kein Passthrough** — der Host lädt den Treiber, der Container bekommt die Gerätedateien `/dev/nvidia*` (§6) |
+
+Der fünfte Host `storage` trägt nur eine GT 730 für die Konsole.
 
 `promox01` läuft auf einer Mobil-CPU. Eine 250-W-Karte in Dual-Slot-Bauweise mit passiver
 Kühlung ist dort praktisch ausgeschlossen — unabhängig von jeder Softwarefrage.
@@ -67,6 +76,16 @@ ebenso (`replicas: 0`).
 - **k8s-gpu-3 (5060 Ti)** — voice-server: faster-whisper `medium` mit `int8_float16`,
   Sprechererkennung (ECAPA) über onnxruntime, Piper-TTS; pyannote-Diarisierung nur bei
   `MEETING_ENABLED`.
+- **pveold / gpu-ct (V100)** — **Testbetrieb**, keine Instanz zeigt dorthin. Eingerichtet
+  am 2026-10-07 sind drei Dienste, von denen jeweils nur einer auf die Karte passt:
+  ein `llama-server` mit demselben Image, Modell und denselben Argumenten wie auf
+  `cuda.local` (Docker-Container `llama-server`, Port 8081), Strata mit
+  `Qwen3.8-Flash-Next` Q2_0 (Docker-Container `strata`, Port 8080, §4.4) und Ollama 0.30.8
+  (systemd, Port 11434). **Der Host wurde am Abend des 2026-10-07 heruntergefahren.** Nach
+  dem Einschalten startet `gpu-ct` von selbst, die beiden Docker-Container aber nicht
+  (`llama-server` wurde gestoppt, `strata` hat keine Restart-Policy): `docker start strata`
+  oder `docker start llama-server` im Container. Stratas Thinking-Abschaltung ist nur zur
+  Laufzeit gesetzt (`POST /settings`) und muss nach einem Start erneut gesetzt werden.
 - **Ohne GPU:** Backend (`torch==2.6.0+cpu`), document-worker, pdf-split-worker und
   meeting-worker — die rufen nur nach außen. Auch die Zweitinstanz `renfield-xidra` hat
   **keinen einzigen** GPU-Request; sie nutzt dieselben geteilten Dienste (§5).
@@ -127,6 +146,9 @@ Luftstrom)? (4) Erst danach über VRAM und Bandbreite reden.
 | bf16 / tf32 / fp8 | **nein / nein / nein** | ja / ja / ja | ja / ja / ja | ja / ja / ja |
 | PCIe | Gen3 x16 (15,75 GB/s) | Gen5 x16 (63,0) | Gen4 x8 (15,75) | Gen5 x16 (63,0) |
 | TDP / Jahr | 250 W / 2018 | 300 W / 2025 | 165 W / 2023 | 575 W / 2025 |
+
+Für die **RTX 5060 Ti** führt `docs/private/LLM_MODEL_GUIDE.md` 448 GB/s Bandbreite;
+weitere Papierwerte sind hier nicht nachgetragen.
 
 **Konvention — sonst vergleicht man Falsches:** Alle fp16-Werte sind **dense, mit
 fp32-Akkumulation, ohne Sparsity**. Mit fp16-Akkumulation verdoppeln sich die
@@ -190,8 +212,8 @@ laufen vier).
 
 ### 4.2 Gemessene Werte — und wo sie den Papierwerten widersprechen
 
-Recherchiert am 2026-09-18. Alle Zahlen sind **Fremdmessungen aus dem Netz**, nichts davon
-auf unserer Hardware gemessen.
+Recherchiert am 2026-09-18. Alle Zahlen in diesem Abschnitt sind **Fremdmessungen aus dem
+Netz**, nichts davon auf unserer Hardware gemessen. Die eigene Messung der V100 steht in §4.3.
 
 **`llama-bench`, gleiches Modell `llama 7B Q4_0`**, alle aus derselben Sammelstelle
 (llama.cpp-Diskussion #15013, **Community-Einreichungen**, keine offiziellen Zahlen):
@@ -247,6 +269,154 @@ sind die „FA an"-Zeilen oben gültig und sogar schneller. Die separate Bibliot
 **FlashAttention-2** von Dao-AILab verlangt Ampere und ist das, woran vLLM und SGLang
 hängen. Kein Widerspruch, zwei verschiedene Dinge.
 
+### 4.3 Eigene Messung der V100 PCIe (2026-10-07)
+
+Gemessen auf `pveold` im Container `gpu-ct`: `llama-server` aus demselben Image wie auf
+`cuda.local` (per Digest gepinnt, Build b10423, CUDA 12.8), dasselbe Modell
+`Qwen3.6-35B-A3B-UD-Q4_K_XL.gguf` samt mmproj vom NFS, dieselben Argumente
+(`--ctx-size 262144`, KV `q8_0`, `--flash-attn on`, 4 Slots), Treiber 580.178.04. Der
+Lastlauf stellt den aus `docs/private/LLM_INFRASTRUCTURE_ANALYSIS.md` §1.4 nach
+(Einzelstrom, `temperature=0`); die 5090-Spalte ist von dort übernommen (2026-09-03).
+Der lange Prompt hatte hier 14.765 Token statt 15.640.
+
+| Messung | RTX 5090 | **V100 PCIe** |
+|---|---:|---:|
+| Ausgabe (Decode) | 192–234 Token/s | **80–85 Token/s** |
+| Prompt-Verarbeitung, langer Prompt kalt | 8.272 Token/s | **645 Token/s** |
+| Langer Prompt kalt, Gesamtzeit | 2,06 s | **23,15 s** |
+| Langer Prompt, Prefix-Cache-Treffer | 0,14 s | 0,22 s |
+
+| Parallele Streams (je 128 Token) | 5090 gesamt | V100 gesamt | 5090 je Stream | V100 je Stream |
+|---|---:|---:|---:|---:|
+| 1 | 174,6 | 69,6 | 233,2 | 80,0 |
+| 2 | 267,4 | 102,1 | 166,2 | 61,6 |
+| 4 | 332,6 | 137,3 | 114,2 | 43,0 |
+| 8 | 312,6 | 137,7 | 118,9 | 45,7 |
+
+- **Ausgabe:** Die 5090 ist 2,4- bis 2,9-mal schneller — mehr als das Bandbreitenverhältnis
+  von 2,0 (§4). Die Fremdmessung aus §4.2 (98,8 Token/s, SXM2, 16k Kontext) liegt darüber.
+- **Prompt-Verarbeitung:** Die 5090 ist rund **13-mal** schneller; nach dichter fp16-Leistung
+  wären es knapp 1,9. Der Befund aus §4.2 gilt also auch auf unserer Karte, der Absolutwert
+  ist mit 645 Token/s aber fast doppelt so hoch wie die 352 Token/s der Fremdmessung.
+- **Das volle 262k-Fenster passt** in die 32 GB (26,1 GB belegt). Der Engpass ist nicht der
+  Speicher, sondern die Zeit für kalte lange Prompts; der Prefix-Cache gleicht das aus.
+- **Kaltstart:** Das Laden des Modells über NFS dauert rund 7,5 Minuten (449 s, zweimal
+  gemessen), und die erste Anfrage nach jedem Laden brauchte reproduzierbar 66 s bis zum
+  ersten Token. Die Ursache der 66 s ist nicht geklärt.
+- Im selben Container gemessen: `torch 2.14.1+cu126` führt `sm_70` in der `arch_list` und
+  rechnet auf der Karte; Ollama 0.30.8 lädt `qwen3.6:35b` vollständig auf die GPU
+  (77,5 Token/s bei 32k Kontext) und nutzt dafür den `cuda_v12`-Zweig — der `cuda_v13`-Zweig
+  überspringt die Karte (`compute capability not in compiled architectures`).
+
+**V100 gegen RTX 5070 Ti, gleiches Modell (2026-10-07).** `qwen3:8b` (derselbe Blob,
+ID `500a1f067a9f`), beide Seiten Ollama **0.35.1**, Kontext 4096, `think=false`,
+`temperature=0`, Einzelstrom, Median aus drei Läufen, Zeiten vom Server gemeldet. Die
+5070 Ti ist das Cluster-Ollama auf `k8s-gpu-1` (Modell war bereits geladen, die Karte
+teilt sich mit den Einbettungsmodellen); auf der V100 lief Ollama allein auf der Karte.
+
+| Messung | RTX 5070 Ti | **V100 PCIe** | Faktor |
+|---|---:|---:|---:|
+| Ausgabe, kurze Antwort | 139,9 Token/s | 104,6 Token/s | 1,34 |
+| Ausgabe, 256 Token | 130,1 Token/s | 101,2 Token/s | 1,29 |
+| Prompt-Verarbeitung (3,26k Token, kalt) | 6.763 Token/s | 2.586 Token/s | 2,6 |
+| Langer Prompt kalt, Gesamtzeit | 0,55 s | 1,34 s | 2,4 |
+| Langer Prompt, Cache-Treffer | 0,08 s | 0,09 s | — |
+
+- **Ausgabe: Papierwert widerlegt.** Nach Bandbreite wären beide gleichauf (900 gegen
+  896 GB/s, §4); gemessen ist die 5070 Ti rund 1,3-mal schneller.
+- **Prompt-Verarbeitung: Papierwert widerlegt.** Nach dichter fp16-Leistung läge die V100
+  27 % vorn; gemessen ist die 5070 Ti 2,6-mal schneller.
+- `qwen3:14b` auf der V100 (gleiche Einstellungen): **56,5 Token/s** Ausgabe bei 256 Token
+  (Läufe 52,5–61,5), **1.411 Token/s** Prompt-Verarbeitung. Auf der 5070 Ti ist dieses
+  Modell nicht nachgemessen — es zu laden hätte dort die Einbettungsmodelle verdrängt.
+
+**Weiterhin nicht vergleichbar gemessen** ist die 5060 Ti: Für sie gibt es nur die
+Circa-Angabe aus `docs/private/LLM_MODEL_GUIDE.md` mit `qwen3:14b` über Ollama
+(~30–40 Token/s; für die 5070 Ti stehen dort ~40–60), kein Lastlauf.
+
+### 4.4 Strata auf der V100 (2026-10-07)
+
+[Strata](https://github.com/Niko1221/Strata) (MIT, auf llama.cpp/ggml aufgebaut) betreibt
+**ausschließlich** `Qwen3.8-Flash-Next` (125 Mrd. Parameter, MoE, rund 6 Mrd. aktiv) und
+bringt für Volta eigene Kernel mit — unter anderem eine Prompt-Attention auf den
+fp16-Tensor-Kernen (`mma.m8n8k4`). Unser `qwen3.6-35b-a3b` lädt es nicht; der Vergleich
+unten stellt also **zwei verschiedene Modelle** auf derselben Karte gegenüber.
+
+Aufbau: v0.1.40.3 in `gpu-ct`, Engine von Strata selbst mit CUDA 12.8 für `sm_70`
+kompiliert (experimenteller Pfad, eine fertige Engine gibt es für Volta unter Linux nicht),
+Größe **Q2_0** im Low-RAM-Modus (die Karte hält rund 79 % der Experten, 9,1 GiB liegen
+gesperrt im RAM), zunächst Kontext 32.768, KV `int8`, Thinking an. Der Container brauchte dafür
+28 GB RAM und rund 102 GB Platte. Gleicher Lastlauf wie in §4.3, drei Läufe, Zeiten vom
+Server gemeldet.
+
+| Messung | llama.cpp, `qwen3.6-35b-a3b` Q4 | **Strata, `Qwen3.8-Flash-Next` Q2_0** |
+|---|---:|---:|
+| Prompt-Verarbeitung, langer Prompt kalt | 645 Token/s (14.765 Token) | **1.558–1.569 Token/s** (14.270 Token) |
+| Langer Prompt kalt, Gesamtzeit | 23,15 s | **9,3–9,4 s** |
+| Langer Prompt, Cache-Treffer | 0,22 s | 0,28–0,42 s |
+| Ausgabe, kurze Antworten | 80–85 Token/s | 72–93 Token/s |
+| Ausgabe, 256 Token | rund 80 Token/s | 70–77 Token/s |
+| Start bis bereit | rund 7,5 min (Modell über NFS) | 92 s (Modell auf lokaler SSD) |
+| Kontextfenster | 262.144 | 32.768 |
+
+- **Die Prompt-Schwäche der V100 ist großteils Software.** Mit Volta-eigenen Kerneln liest
+  dieselbe Karte ein doppelt so großes aktives Modell rund 2,4-mal so schnell ein.
+- Die Ausgabe ist etwa gleich schnell; Strata nutzt dafür spekulatives Dekodieren (MTP).
+- `bench.py` vom NFS: drei von drei Tool-Aufrufen gültig, deutsche Aufgaben sinnvoll
+  beantwortet. Die **Antwortqualität** des 2-Bit-Modells gegen das heutige Modell ist
+  **nicht bewertet**.
+- Die Karte ist damit voll (32,0 von 32,8 GB); `llama-server` und Strata passen nicht
+  gleichzeitig darauf. Strata arbeitet standardmäßig eine Anfrage nach der anderen ab
+  (`--parallel` ist ein Schalter, nicht gemessen).
+- `--ulimit memlock=-1` aus Stratas Docker-Anleitung ist im unprivilegierten LXC nicht
+  erlaubt und wurde weggelassen; die Seitensperre meldete das Log dennoch als aktiv.
+
+**Mit 262.144 Token Kontext** (wie auf `cuda.local`; Setup neu mit `--context 262144`,
+Thinking serverseitig aus über `POST /settings`). Der KV-Cache bleibt im VRAM, dafür hält
+die Karte weniger Experten: 17.450 statt 20.050 Cache-Plätze, 12,4 statt 9,1 GiB im RAM.
+
+| Messung | Kontext 32k | **Kontext 262k** |
+|---|---:|---:|
+| Prompt-Verarbeitung, 14,3k Token kalt | 1.558–1.569 Token/s | 1.559 Token/s |
+| Ausgabe, 256 Token | 70–77 Token/s | 59 Token/s (ein Lauf) |
+| **Prompt mit 101.548 Token, kalt** | — | **1.391 Token/s, 78 s gesamt** |
+| Derselbe Prompt, Cache-Treffer | — | 2,5 s |
+
+Die Frage zum 101k-Prompt (zwei Werte aus Abschnitt 1234 von 1900) wurde **halb richtig**
+beantwortet: Warnungen richtig, Tag falsch (27 statt 3). Ein Einzelversuch, kein
+Qualitätsurteil.
+
+**Reva-Fragen** (`reva/bench`, 19 Unterhaltungen × 3 Züge mit echten Tool-Ergebnissen,
+Prompts 249–2.813 Token, ein Strom) gegen die Basislinie `5090-qwen36-quality`:
+
+| | RTX 5090, `qwen3.6` | **V100, Strata Q2_0** |
+|---|---:|---:|
+| Fehler | 0 von 57 | 0 von 57 |
+| Erwartete Entitäten in der Antwort | 27 von 28 | 28 von 28 |
+| Zeit bis zum ersten Token, p50 / p95 | 0,16 s / 0,38 s | 0,71 s / 1,79 s |
+| Dauer je Zug, p50 / p95 | 1,76 s / 2,79 s | 5,28 s / 7,60 s |
+| Durchsatz | 194 Token/s | 63 Token/s |
+| Gesamtdauer | 103 s | 291 s |
+
+Der Tool-Probe (`get_release`) bestand. Mit eingeschaltetem Thinking dauerte derselbe Lauf
+418 s (Zug p50 7,8 s).
+
+**Renfield-Fragen** (`tests/eval/golden_dataset.json`, 37 Anfragen) als vereinfachter
+Routing-Test mit einem **eigens geschriebenen** Router-Prompt — nicht Renfields echter
+Router, daher nur im Vergleich der beiden Modelle aussagekräftig:
+
+| | RTX 5090, `qwen3.6` | **V100, Strata Q2_0** |
+|---|---:|---:|
+| Richtige Rolle | 24 von 32 | 25 von 32 |
+| Abgelehnte Angriffsversuche | 5 von 5 | 5 von 5 |
+| Latenz, Median | 0,11 s | 0,63 s |
+
+Die Rohdaten der Reva-Läufe liegen in `reva/bench/results/v100-strata-q2-*` (dort
+gitignored): `…-nothink-*` ist der Lauf der Tabelle, `…-quality-*` der mit Thinking.
+
+Fazit: Das 262k-Fenster läuft auf der V100, und bei diesen Fragen antwortet das
+2-Bit-Modell nicht schlechter als das heutige — aber rund dreimal so langsam wie die 5090.
+
 ## 5. Der eigentliche Engpass: das geteilte LLM-Tier
 
 Nicht das VRAM der 16-GB-Karten ist knapp, sondern der KV-Cache auf `cuda.local`:
@@ -274,6 +444,27 @@ Frage von `LLM_OPENAI_BASE_URL`, nicht von Code.
 „kein Kauf für den Cluster"; nach der Messung der Papierwerte und der Klärung des
 Treiberbands ist die Karte besser als zunächst angenommen — sie liegt bei der Bandbreite
 gleichauf mit der 5070 Ti und bei dichter fp16-Rechenleistung darüber (§4).
+
+**Stand 2026-10-07: Die Karte ist in Betrieb** — nicht wie unten empfohlen in einer VM auf
+`pve4`, sondern im Proxmox-Host `pveold` (i7-4770K, Gigabyte Z87X-UD5H, PVE 9.2.21,
+Kernel 7.0.14). Auf diesem Host ist keine IOMMU aktiv (alle Geräte ohne IOMMU-Gruppe),
+VM-Passthrough scheidet dort also aus: Der Treiber **580.178.04** (proprietäre Module,
+DKMS) läuft auf dem Host, der unprivilegierte LXC-Container `gpu-ct` (ID 100) bekommt die
+Gerätedateien und denselben Treiber als Userspace. Darin laufen Docker mit dem
+NVIDIA-Container-Toolkit (`no-cgroups = true`, LXC-Feature `keyctl`) und der `llama-server`.
+Messwerte in §4.3. Von den Bedingungen unten sind damit erledigt:
+
+- **1 (R580):** 580.178.04 baut und lädt auf Kernel 7.0.14.
+- **2 (Ollama pinnen):** auf 0.30.8 festgelegt, dieselbe Version wie auf `cuda.local`.
+  Ollama 0.40.0 wollte im geteilten Modellspeicher ein `manifests-v2` anlegen (Migration);
+  der Speicher ist in `gpu-ct` deshalb **nur lesend** eingebunden.
+- **5 (Above-4G):** Der Fehler ist selbst beobachtet — `BAR1 is 0M @ 0x0`, die Firmware bot
+  nur Adressraum unter 4 GB. Gelöst nicht im BIOS, sondern mit dem Kernel-Parameter
+  `pci=realloc,nocrs` in `/etc/default/grub`; ohne ihn initialisiert die Karte nicht.
+- **7 (llama.cpp-Image):** per Digest auf das CUDA-12.8-Image von `cuda.local` gepinnt;
+  die Karte läuft mit dem fertigen Image.
+- **8 (Kontextfenster):** bewusst **nicht** verkleinert — 262k passt, kostet aber bei
+  kalten langen Prompts Zeit (§4.3).
 
 **Befunde gegen die zwei Grenzen:**
 
