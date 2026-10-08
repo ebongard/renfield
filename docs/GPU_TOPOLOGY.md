@@ -4,14 +4,14 @@
 laufenden `voice-server`-Pod und über die Proxmox-API — nicht aus älteren Dokumenten
 übernommen. Ergänzt am selben Tag, nachdem eine Tesla V100 32 GB gekauft wurde (§6).
 
-**Nachtrag 2026-10-07:** Die Tesla V100 ist in Betrieb — im Proxmox-Host `pveold`,
+**Nachtrag 2026-10-07:** Die Tesla V100 ist in Betrieb — im Proxmox-Host D,
 nicht im Cluster — und selbst vermessen (§4.3, §4.4, §6). Nachgemessen auf allen fünf
 Proxmox-Hosts (`lspci`, VM-/LXC-Konfiguration) und in den VMs (`nvidia-smi`).
 
-**Nachtrag 2026-10-06:** In `k8s-gpu-3` steckt nicht mehr die RTX 4060 Ti, sondern die
-**RTX 5060 Ti** — die Karte, die am 2026-09-01 in `k8s-gpu-1` mit Xid 79 ausgefallen und
+**Nachtrag 2026-10-06:** In GPU-Node 3 steckt nicht mehr die RTX 4060 Ti, sondern die
+**RTX 5060 Ti** — die Karte, die am 2026-09-01 in GPU-Node 1 mit Xid 79 ausgefallen und
 dort ausgebaut worden war. Die 4060 Ti ist **nicht mehr im Bestand**. Gemessen per
-`nvidia-smi` im voice-server-Pod und `lspci`/`qm config` auf `promox01`. §1–§3 und die
+`nvidia-smi` im voice-server-Pod und `lspci`/`qm config` auf Proxmox-Host B. §1–§3 und die
 Bewertung in §6 sind angepasst; die 4060-Ti-Spalten in §4/§4.2 bleiben als Vergleichswerte
 stehen.
 
@@ -21,68 +21,71 @@ sitzt** — er sitzt nicht dort, wo man ihn vermutet.
 
 ## 1. Bestand
 
+Hostnamen und IP-Adressen sind in diesem Dokument bewusst durch neutrale Bezeichnungen
+ersetzt (GPU-Node 1–3, 5090-Host, V100-Container, Proxmox-Host A–E).
+
 | Host | GPU | VRAM | Treiber | Compute Capability | k8s-Zuteilung |
 |---|---|---|---|---|---|
-| k8s-gpu-1 (192.168.1.180) | **1×** RTX 5070 Ti | 16303 MiB | 570.211.01 | 12.0 | **DRA-Claim** `ollama-gpu-5070ti` |
-| k8s-gpu-2 (192.168.1.148) | **keine** | – | – | – | 0 — CPU-Node |
-| k8s-gpu-3 (192.168.1.254) | RTX 5060 Ti | 16311 MiB | **595.91.07** | 12.0 | `nvidia.com/gpu: 1` (voice-server, ns `voice`) |
-| cuda.local (192.168.1.15) | RTX 5090 | 32607 MiB | 575.64.03 | 12.0 | kein k8s-Node |
-| gpu-ct (192.168.1.94, DHCP) | **Tesla V100 PCIe 32 GB** | 32768 MiB | **580.178.04** | 7.0 | kein k8s-Node |
+| GPU-Node 1 | **1×** RTX 5070 Ti | 16303 MiB | 570.211.01 | 12.0 | **DRA-Claim** `ollama-gpu-5070ti` |
+| GPU-Node 2 | **keine** | – | – | – | 0 — CPU-Node |
+| GPU-Node 3 | RTX 5060 Ti | 16311 MiB | **595.91.07** | 12.0 | `nvidia.com/gpu: 1` (voice-server, ns `voice`) |
+| 5090-Host | RTX 5090 | 32607 MiB | 575.64.03 | 12.0 | kein k8s-Node |
+| V100-Container | **Tesla V100 PCIe 32 GB** | 32768 MiB | **580.178.04** | 7.0 | kein k8s-Node |
 
 **Virtualisierung (Proxmox, über die API gelesen):**
 
 | k8s-Node | VM | Proxmox-Host | Durchgereicht |
 |---|---|---|---|
-| k8s-gpu-1 | 201 | **pve4** (Ryzen 9 3950X, 135 GB RAM) | `0000:0b:00` = GB203, RTX 5070 Ti |
-| k8s-gpu-2 | 202 | pve4 | **kein `hostpci`** — bestätigt ohne GPU |
-| k8s-gpu-3 | 109 | **promox01** (i5-12600H, **Mobil-CPU**, 101 GB RAM) | `0000:01:00` = GB206 (`10de:2d04`), RTX 5060 Ti |
-| cuda.local | 110 | **promox** (i5-14600K, 188 GiB RAM) | `0000:01:00` = GB202, RTX 5090 (Mapping `gpu-rtx5090`) |
-| gpu-ct | LXC 100 | **pveold** (i7-4770K, 31 GiB RAM) | **kein Passthrough** — der Host lädt den Treiber, der Container bekommt die Gerätedateien `/dev/nvidia*` (§6) |
+| GPU-Node 1 | 201 | **Proxmox-Host A** (Ryzen 9 3950X, 135 GB RAM) | `0000:0b:00` = GB203, RTX 5070 Ti |
+| GPU-Node 2 | 202 | Proxmox-Host A | **kein `hostpci`** — bestätigt ohne GPU |
+| GPU-Node 3 | 109 | **Proxmox-Host B** (i5-12600H, **Mobil-CPU**, 101 GB RAM) | `0000:01:00` = GB206 (`10de:2d04`), RTX 5060 Ti |
+| 5090-Host | 110 | **Proxmox-Host C** (i5-14600K, 188 GiB RAM) | `0000:01:00` = GB202, RTX 5090 (Mapping `gpu-rtx5090`) |
+| V100-Container | LXC 100 | **Proxmox-Host D** (i7-4770K, 31 GiB RAM) | **kein Passthrough** — der Host lädt den Treiber, der Container bekommt die Gerätedateien `/dev/nvidia*` (§6) |
 
-Der fünfte Host `storage` trägt nur eine GT 730 für die Konsole.
+Der fünfte Host (Proxmox-Host E) trägt nur eine GT 730 für die Konsole.
 
-`promox01` läuft auf einer Mobil-CPU. Eine 250-W-Karte in Dual-Slot-Bauweise mit passiver
+Proxmox-Host B läuft auf einer Mobil-CPU. Eine 250-W-Karte in Dual-Slot-Bauweise mit passiver
 Kühlung ist dort praktisch ausgeschlossen — unabhängig von jeder Softwarefrage.
 **Freier Steckplatz und Netzteilreserve sind über die API nicht ermittelbar** und brauchen
 eine Sichtprüfung am Gerät.
 
-**Es gibt derzeit keinen freien GPU-Platz im Cluster.** Die zweite Karte in `k8s-gpu-1`
+**Es gibt derzeit keinen freien GPU-Platz im Cluster.** Die zweite Karte in GPU-Node 1
 (RTX 5060 Ti) ist dort ausgefallen — **Xid 79** — und wurde ausgebaut. Seither läuft die
-Zuteilung auf `k8s-gpu-1` über einen **DRA-Claim** statt über das Device-Plugin, weil das
+Zuteilung auf GPU-Node 1 über einen **DRA-Claim** statt über das Device-Plugin, weil das
 Plugin nach dem Ausfall nichts mehr zuteilen konnte. Die 5060 Ti selbst arbeitet seither in
-`k8s-gpu-3` (siehe Nachtrag oben).
+GPU-Node 3 (siehe Nachtrag oben).
 
-Das PCI-Mapping auf `promox01` heißt noch **`gpu-rtx4060ti`**, zeigt aber auf
+Das PCI-Mapping auf Proxmox-Host B heißt noch **`gpu-rtx4060ti`**, zeigt aber auf
 `10de:2d04` = GB206/5060 Ti. Der Name ist nur ein Etikett; wer nach ihm sucht, findet die
 falsche Karte.
 
-`k8s-gpu-2` trägt den Namen zu Unrecht: Die VM hat keinen GPU-Passthrough, `lspci` zeigt
+GPU-Node 2 heißt nur so (der echte Knotenname enthält ebenfalls „gpu“): Die VM hat keinen GPU-Passthrough, `lspci` zeigt
 nur eine QEMU-VGA. Die installierten NVIDIA-Pakete ändern daran nichts.
 
-**Veraltete Manifeste:** `k8s/llama-server.yaml` fordert **2 GPUs** auf `k8s-gpu-1` an
+**Veraltete Manifeste:** `k8s/llama-server.yaml` fordert **2 GPUs** auf GPU-Node 1 an
 (`replicas: 0`) und passt nicht mehr zur Ein-Karten-Bestückung. `k8s/speaches.yaml`
 ebenso (`replicas: 0`).
 
 ## 2. Was worauf läuft
 
-- **cuda.local (5090)** — das Text-Hauptmodell `qwen3.6-35b-a3b` über llama.cpp
+- **5090-Host** — das Text-Hauptmodell `qwen3.6-35b-a3b` über llama.cpp
   (`--ctx-size 262144`, KV-Cache `q8_0`, `--flash-attn on`), rund 26,5 von 32 GB belegt.
   **Zusätzlich der VLM-/OCR-Pfad**: `OLLAMA_VISION_URL` und `OLLAMA_VISION_MODEL=qwen3.6`
   zeigen hierher, also laufen auch OCR-Nachbearbeitung und PDF-Split hier.
-- **k8s-gpu-1 (5070 Ti)** — Cluster-Ollama mit llama3.2:3b, qwen3:8b, qwen3-embedding:4b
+- **GPU-Node 1 (5070 Ti)** — Cluster-Ollama mit llama3.2:3b, qwen3:8b, qwen3-embedding:4b
   und nomic-embed-text, zusammen etwa 10,1 von 16,3 GB, geteilt mit Reva.
   `qwen3-vl:8b` lief früher hier und brauchte gemessen **11,9 GB** — es verdrängte alle
   anderen Modelle und wurde deshalb auf die 5090 verlegt.
-- **k8s-gpu-3 (5060 Ti)** — voice-server: faster-whisper `medium` mit `int8_float16`,
+- **GPU-Node 3 (5060 Ti)** — voice-server: faster-whisper `medium` mit `int8_float16`,
   Sprechererkennung (ECAPA) über onnxruntime, Piper-TTS; pyannote-Diarisierung nur bei
   `MEETING_ENABLED`.
-- **pveold / gpu-ct (V100)** — **Testbetrieb**, keine Instanz zeigt dorthin. Eingerichtet
+- **Proxmox-Host D / V100-Container** — **Testbetrieb**, keine Instanz zeigt dorthin. Eingerichtet
   am 2026-10-07 sind drei Dienste, von denen jeweils nur einer auf die Karte passt:
   ein `llama-server` mit demselben Image, Modell und denselben Argumenten wie auf
-  `cuda.local` (Docker-Container `llama-server`, Port 8081), Strata mit
+  dem 5090-Host (Docker-Container `llama-server`, Port 8081), Strata mit
   `Qwen3.8-Flash-Next` Q2_0 (Docker-Container `strata`, Port 8080, §4.4) und Ollama 0.30.8
   (systemd, Port 11434). **Der Host wurde am Abend des 2026-10-07 heruntergefahren.** Nach
-  dem Einschalten startet `gpu-ct` von selbst, die beiden Docker-Container aber nicht
+  dem Einschalten startet der V100-Container von selbst, die beiden Docker-Container aber nicht
   (`llama-server` wurde gestoppt, `strata` hat keine Restart-Policy): `docker start strata`
   oder `docker start llama-server` im Container. Stratas Thinking-Abschaltung ist nur zur
   Laufzeit gesetzt (`POST /settings`) und muss nach einem Start erneut gesetzt werden.
@@ -120,7 +123,7 @@ Data-Center-Release-Notes zu R580 nennen Volta und Blackwell zusammen. R580 ist 
 
 Zwei Unschärfen: Im Deprecation-Schedule wird Volta über TITAN V und Quadro GV100 belegt,
 nicht über die Tesla V100 selbst. Und dass **R595 Volta nicht mehr führt**, steht nirgends
-wörtlich — es folgt nur aus „580 ist der letzte Zweig". `k8s-gpu-3` läuft auf 595.91.07 und
+wörtlich — es folgt nur aus „580 ist der letzte Zweig". GPU-Node 3 läuft auf 595.91.07 und
 läge damit darüber.
 
 **Wichtig: Beim Durchreichen gilt das Band pro VM, nicht pro Host.** Der Proxmox-Host
@@ -209,7 +212,7 @@ steht in §4.5.
 Gewichte werden zur Laufzeit entpackt) und sparen zugleich Bandbreite, die bei der
 Token-Ausgabe der eigentliche Engpass ist. Gewichte in fp16 zu speichern brächte **keine
 zusätzliche Tensor-Kern-Leistung**, sondern nur doppelten Speicherverkehr. Mehrmandanten-
-Betrieb braucht dafür kein vLLM: llama.cpp bedient bereits mehrere Slots (auf `cuda.local`
+Betrieb braucht dafür kein vLLM: llama.cpp bedient bereits mehrere Slots (auf dem 5090-Host
 laufen vier).
 
 ### 4.2 Gemessene Werte — und wo sie den Papierwerten widersprechen
@@ -247,11 +250,11 @@ llama.cpp für `sm_70`, CUDA 12.9, **Treiber 580.159.03** — bestätigt das Tre
 
 Das dichte 27B ist von einer zweiten, unabhängigen Quelle mit 32,17 Token/s bestätigt.
 Kleinmodelle auf 2× V100 (Community-Repo, Ollama Q4_K_M): `llama3.2:3b` 157 Token/s,
-`qwen3:1.7b` 166, `gemma3:4b` 119 — also die Modellklasse, die heute auf `k8s-gpu-1` läuft.
+`qwen3:1.7b` 166, `gemma3:4b` 119 — also die Modellklasse, die heute auf GPU-Node 1 läuft.
 
 **Was daraus für den Betrieb folgt.** Bei 352 Token/s Prompt-Verarbeitung dauert ein
 Prompt von 4000 Token rund **11 Sekunden**, einer von 16 000 Token rund **47 Sekunden**.
-`cuda.local` ist auf **262 144** Token Kontext konfiguriert. Eine V100-Instanz braucht
+Der 5090-Host ist auf **262 144** Token Kontext konfiguriert. Eine V100-Instanz braucht
 daher ein **deutlich kleineres Kontextfenster** und Prompt-Zwischenspeicherung; lange
 Kontexte bleiben auf der 5090. Die Ausgabegeschwindigkeit ist dagegen unkritisch.
 
@@ -273,8 +276,8 @@ hängen. Kein Widerspruch, zwei verschiedene Dinge.
 
 ### 4.3 Eigene Messung der V100 PCIe (2026-10-07)
 
-Gemessen auf `pveold` im Container `gpu-ct`: `llama-server` aus demselben Image wie auf
-`cuda.local` (per Digest gepinnt, Build b10423, CUDA 12.8), dasselbe Modell
+Gemessen auf Proxmox-Host D im V100-Container: `llama-server` aus demselben Image wie auf
+dem 5090-Host (per Digest gepinnt, Build b10423, CUDA 12.8), dasselbe Modell
 `Qwen3.6-35B-A3B-UD-Q4_K_XL.gguf` samt mmproj vom NFS, dieselben Argumente
 (`--ctx-size 262144`, KV `q8_0`, `--flash-attn on`, 4 Slots), Treiber 580.178.04. Der
 Lastlauf stellt den aus `docs/private/LLM_INFRASTRUCTURE_ANALYSIS.md` §1.4 nach
@@ -313,7 +316,7 @@ Der lange Prompt hatte hier 14.765 Token statt 15.640.
 **V100 gegen RTX 5070 Ti, gleiches Modell (2026-10-07).** `qwen3:8b` (derselbe Blob,
 ID `500a1f067a9f`), beide Seiten Ollama **0.35.1**, Kontext 4096, `think=false`,
 `temperature=0`, Einzelstrom, Median aus drei Läufen, Zeiten vom Server gemeldet. Die
-5070 Ti ist das Cluster-Ollama auf `k8s-gpu-1` (Modell war bereits geladen, die Karte
+5070 Ti ist das Cluster-Ollama auf GPU-Node 1 (Modell war bereits geladen, die Karte
 teilt sich mit den Einbettungsmodellen); auf der V100 lief Ollama allein auf der Karte.
 
 | Messung | RTX 5070 Ti | **V100 PCIe** | Faktor |
@@ -344,7 +347,7 @@ bringt für Volta eigene Kernel mit — unter anderem eine Prompt-Attention auf 
 fp16-Tensor-Kernen (`mma.m8n8k4`). Unser `qwen3.6-35b-a3b` lädt es nicht; der Vergleich
 unten stellt also **zwei verschiedene Modelle** auf derselben Karte gegenüber.
 
-Aufbau: v0.1.40.3 in `gpu-ct`, Engine von Strata selbst mit CUDA 12.8 für `sm_70`
+Aufbau: v0.1.40.3 im V100-Container, Engine von Strata selbst mit CUDA 12.8 für `sm_70`
 kompiliert (experimenteller Pfad, eine fertige Engine gibt es für Volta unter Linux nicht),
 Größe **Q2_0** im Low-RAM-Modus (die Karte hält rund 79 % der Experten, 9,1 GiB liegen
 gesperrt im RAM), zunächst Kontext 32.768, KV `int8`, Thinking an. Der Container brauchte dafür
@@ -373,7 +376,7 @@ Server gemeldet.
 - `--ulimit memlock=-1` aus Stratas Docker-Anleitung ist im unprivilegierten LXC nicht
   erlaubt und wurde weggelassen; die Seitensperre meldete das Log dennoch als aktiv.
 
-**Mit 262.144 Token Kontext** (wie auf `cuda.local`; Setup neu mit `--context 262144`,
+**Mit 262.144 Token Kontext** (wie auf dem 5090-Host; Setup neu mit `--context 262144`,
 Thinking serverseitig aus über `POST /settings`). Der KV-Cache bleibt im VRAM, dafür hält
 die Karte weniger Experten: 17.450 statt 20.050 Cache-Plätze, 12,4 statt 9,1 GiB im RAM.
 
@@ -445,7 +448,7 @@ SGLang wurde nicht erneut geprüft.
 
 ## 5. Der eigentliche Engpass: das geteilte LLM-Tier
 
-Nicht das VRAM der 16-GB-Karten ist knapp, sondern der KV-Cache auf `cuda.local`:
+Nicht das VRAM der 16-GB-Karten ist knapp, sondern der KV-Cache auf dem 5090-Host:
 
 - llama.cpp läuft dort mit **`n_slots = 4`, `n_ctx_slot = 262144`, `kv_unified = true`** —
   ein **gemeinsamer** KV-Pool, aus dem sich alle Slots bedienen, kein festes Kontingent
@@ -472,22 +475,22 @@ Treiberbands ist die Karte besser als zunächst angenommen — sie liegt bei der
 gleichauf mit der 5070 Ti und bei dichter fp16-Rechenleistung darüber (§4).
 
 **Stand 2026-10-07: Die Karte ist in Betrieb** — nicht wie unten empfohlen in einer VM auf
-`pve4`, sondern im Proxmox-Host `pveold` (i7-4770K, Gigabyte Z87X-UD5H, PVE 9.2.21,
+Proxmox-Host A, sondern im Proxmox-Host D (i7-4770K, Gigabyte Z87X-UD5H, PVE 9.2.21,
 Kernel 7.0.14). Auf diesem Host ist keine IOMMU aktiv (alle Geräte ohne IOMMU-Gruppe),
 VM-Passthrough scheidet dort also aus: Der Treiber **580.178.04** (proprietäre Module,
-DKMS) läuft auf dem Host, der unprivilegierte LXC-Container `gpu-ct` (ID 100) bekommt die
+DKMS) läuft auf dem Host, der unprivilegierte LXC-Container (ID 100) bekommt die
 Gerätedateien und denselben Treiber als Userspace. Darin laufen Docker mit dem
 NVIDIA-Container-Toolkit (`no-cgroups = true`, LXC-Feature `keyctl`) und der `llama-server`.
 Messwerte in §4.3. Von den Bedingungen unten sind damit erledigt:
 
 - **1 (R580):** 580.178.04 baut und lädt auf Kernel 7.0.14.
-- **2 (Ollama pinnen):** auf 0.30.8 festgelegt, dieselbe Version wie auf `cuda.local`.
+- **2 (Ollama pinnen):** auf 0.30.8 festgelegt, dieselbe Version wie auf dem 5090-Host.
   Ollama 0.40.0 wollte im geteilten Modellspeicher ein `manifests-v2` anlegen (Migration);
-  der Speicher ist in `gpu-ct` deshalb **nur lesend** eingebunden.
+  der Speicher ist im V100-Container deshalb **nur lesend** eingebunden.
 - **5 (Above-4G):** Der Fehler ist selbst beobachtet — `BAR1 is 0M @ 0x0`, die Firmware bot
   nur Adressraum unter 4 GB. Gelöst nicht im BIOS, sondern mit dem Kernel-Parameter
   `pci=realloc,nocrs` in `/etc/default/grub`; ohne ihn initialisiert die Karte nicht.
-- **7 (llama.cpp-Image):** per Digest auf das CUDA-12.8-Image von `cuda.local` gepinnt;
+- **7 (llama.cpp-Image):** per Digest auf das CUDA-12.8-Image des 5090-Hosts gepinnt;
   die Karte läuft mit dem fertigen Image.
 - **8 (Kontextfenster):** bewusst **nicht** verkleinert — 262k passt, kostet aber bei
   kalten langen Prompts Zeit (§4.3).
@@ -507,10 +510,10 @@ Messwerte in §4.3. Von den Bedingungen unten sind damit erledigt:
 
 | Einsatz | Urteil | Grund |
 |---|---|---|
-| **Eigene VM auf `pve4` als zweiter `llama-server`** | **empfohlen** | Löst den echten Engpass (§5): zweiter Endpunkt für die dritte Instanz; 32 GB tragen dasselbe Modell mit ~9 GiB für KV statt 4,2; Treiberband bleibt auf diese VM beschränkt |
-| Zusätzlich in `k8s-gpu-1` (neben der 5070 Ti) | möglich | 16 + 32 GB, VLM/OCR kämen zurück in den Cluster — aber beide Karten in einer VM heißt Treiber 580 für beide |
+| **Eigene VM auf Proxmox-Host A als zweiter `llama-server`** | **empfohlen** | Löst den echten Engpass (§5): zweiter Endpunkt für die dritte Instanz; 32 GB tragen dasselbe Modell mit ~9 GiB für KV statt 4,2; Treiberband bleibt auf diese VM beschränkt |
+| Zusätzlich in GPU-Node 1 (neben der 5070 Ti) | möglich | 16 + 32 GB, VLM/OCR kämen zurück in den Cluster — aber beide Karten in einer VM heißt Treiber 580 für beide |
 | Ersatz der 5070 Ti | nein | Tauscht bf16/tf32/fp8 gegen Speicher und lässt eine moderne Karte ungenutzt |
-| Ersatz der 5060 Ti (`k8s-gpu-3`) | nein | `promox01` ist eine Mobil-CPU-Plattform (§1), dazu Treiber 595 und Verlust der Diarisierung |
+| Ersatz der 5060 Ti (GPU-Node 3) | nein | Proxmox-Host B ist eine Mobil-CPU-Plattform (§1), dazu Treiber 595 und Verlust der Diarisierung |
 | Ersatz der 5090 | nein | Halbe Bandbreite, kein bf16/fp8 |
 
 **Einsatzszenarien nach den Messungen (2026-10-08).** Die Karte taugt als **zweiter
@@ -552,7 +555,7 @@ Parallelbetrieb unter realer Last und Dauerbetrieb über Tage samt Kühlung.
    Image-Schichten wurden nicht auf enthaltene Cubins untersucht.)*
 8. **Kontextfenster klein halten** und Prompt-Zwischenspeicherung nutzen (§4.2).
 
-**Offen, nur physisch zu klären:** freier Dual-Slot-Platz und Netzteilreserve in `pve4`,
+**Offen, nur physisch zu klären:** freier Dual-Slot-Platz und Netzteilreserve in Proxmox-Host A,
 Luftstrom für die passive Kühlung (die Tabelle im NVIDIA-Product-Brief ließ sich nicht
 extrahieren), IOMMU-Gruppierung.
 
