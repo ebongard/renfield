@@ -518,15 +518,15 @@ LLM-Endpunkt** neben der 5090, nicht als deren Ersatz. Nach Eignung geordnet:
 
 | Szenario | Urteil | Grund |
 |---|---|---|
-| **Hintergrundaufgaben auslagern** (Memory- und KG-Extraktion, Dokumenten-Worker, OCR-Nachbearbeitung) | **am besten geeignet** | Wartezeit ist dort unkritisch; entlastet den geteilten KV-Cache auf `cuda.local` (§5) |
-| **Ausfallschutz für `cuda.local`** | geeignet | Trägt dasselbe Modell mit demselben 262k-Fenster (§4.3) — gleiches Verhalten statt des kleineren `qwen3:14b`, nur langsamer |
+| **Hintergrundaufgaben auslagern** (Memory- und KG-Extraktion, Dokumenten-Worker, OCR-Nachbearbeitung) | **am besten geeignet** | Wartezeit ist dort unkritisch; entlastet den geteilten KV-Cache auf dem 5090-Host (§5) |
+| **Ausfallschutz für den 5090-Host** | geeignet | Trägt dasselbe Modell mit demselben 262k-Fenster (§4.3) — gleiches Verhalten statt des kleineren `qwen3:14b`, nur langsamer |
 | **Eigener Endpunkt für Reva oder die dritte Instanz** | geeignet bei kurzen Prompts | Reva-Prompts haben 249–2.813 Token (§4.4), dort wiegt die Prompt-Schwäche wenig; Antworten rund 2,5- bis 3-mal langsamer als auf der 5090. Nur `LLM_OPENAI_BASE_URL`, kein Code |
 | **Testumgebung** für Modelle, llama.cpp-Versionen und Einstellungen | geeignet | Kein Eingriff in den produktiven Server |
 | Renfields Hauptchat mit langen Kontexten | **nein** | Last ist prompt-dominiert (9,1 : 1); kalte lange Prompts rund 13-mal langsamer (§4.3) |
 | Voice-Pfad | **nein** | pyannote läuft nicht, `sm_70` fehlt im PyTorch-Build des voice-servers (§3) |
 | vLLM oder SGLang | **nein** | Fertige Pakete beginnen bei Compute Capability 7.5 (§4.1, §4.5) |
 
-**Vorbehalte:** `pveold` ist ein alter Desktop (32 GB RAM, eine SSD, Kernel-Parameter als
+**Vorbehalte:** Der jetzige V100-Host ist ein alter Desktop (32 GB RAM, eine SSD, Kernel-Parameter als
 Workaround für die Karte) — für alles, worauf sich die Produktion verlässt, gehört die Karte
 in einen solideren Host. **Nicht gemessen** sind der echte Renfield-Agent mit Tools,
 Parallelbetrieb unter realer Last und Dauerbetrieb über Tage samt Kühlung.
