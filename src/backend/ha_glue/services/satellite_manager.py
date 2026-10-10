@@ -135,9 +135,6 @@ class SatelliteSession:
     # gekappte Äußerung war von einem fertigen Satz nicht zu unterscheiden.
     turn_end_reason: str | None = None
 
-    # Timeout settings
-    max_duration_seconds: float = 30.0
-
 
 class SatelliteManager:
     """

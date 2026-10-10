@@ -160,6 +160,7 @@ def _spawn_satellite_extraction(
     lang: str,
     action_success: bool | None,
     is_device_account: bool = False,
+    turn_truncated: bool = False,
 ) -> TurnExtractionSpawn | None:
     """Feed a completed SPOKEN turn to the same extractors the browser chat uses.
 
@@ -187,6 +188,16 @@ def _spawn_satellite_extraction(
     memories with ``session_id=None``, attached to no conversation — so an
     unpersisted turn is skipped as well. Rare in practice, not impossible.
 
+    **Vollständigkeits-Grenze — nur eine GANZE Äußerung wird Wissen.**
+    ``turn_truncated`` ist gesetzt, wenn der Satellit mit ``reason="timeout"``
+    aufgehört hat: ``vad.max_recording_seconds`` hat gegriffen, der Satz ist
+    mitten im Wort abgeschnitten. Aus einem halben Satz eine DAUERHAFTE
+    Erinnerung oder eine KG-Kante zu bauen heißt, eine möglicherweise falsche
+    Tatsache festzuschreiben — und eine falsche KG-Kante ist praktisch nicht
+    zurückzunehmen (die Kanten führen keine Dokumentherkunft, s.
+    `docs/design/kg-bitemporal-edges.md`). Gemessen 7 Fälle in 7 Tagen: der
+    Verzicht kostet fast nichts, der Irrtum bliebe. Entschieden 2026-10-10.
+
     Fire-and-forget: the work is scheduled, never awaited, so the turn's TTS is
     not delayed; every failure is swallowed so a broken extractor cannot break
     the spoken turn.
@@ -207,6 +218,12 @@ def _spawn_satellite_extraction(
         logger.debug(
             "📝 Satellite-Extraktion übersprungen: Turn nicht persistiert "
             f"(user_id={user_id})"
+        )
+        return None
+    if turn_truncated:
+        logger.info(
+            "📝 Satellite-Extraktion übersprungen: Äußerung bei der Höchstdauer "
+            f"gekappt, ein halber Satz wird kein Wissen (session={session_id})"
         )
         return None
     try:
@@ -1473,6 +1490,10 @@ Gib eine kurze, natürliche Antwort. KEIN JSON, nur Text."""
                         lang=satellite_language,
                         action_success=assistant_metadata.get("action_success"),
                         is_device_account=sat_is_device_account,
+                        # Ein gekappter Satz wird kein dauerhaftes Wissen — und
+                        # damit erreicht auch der Geräte-Hinweis aus
+                        # `truncation_notice` die Extraktion nicht.
+                        turn_truncated=reason == TURN_END_TIMEOUT,
                     )
 
                     # Generate TTS with satellite's language

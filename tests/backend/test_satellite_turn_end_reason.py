@@ -32,6 +32,7 @@ import pytest
 
 from ha_glue.api.websocket.satellite_handler import (
     TURN_END_TIMEOUT,
+    _spawn_satellite_extraction,
     truncation_notice,
 )
 from ha_glue.services.satellite_manager import SatelliteSession, SatelliteState
@@ -185,3 +186,88 @@ def test_handler_stellt_den_hinweis_VORAN():
         "der Grund muss festgehalten werden, nicht nur protokolliert — "
         "genau das war der Fehler"
     )
+
+
+# ---------------------------------------------------------------------------
+# Ein halber Satz wird kein Wissen (Review-Befund 2026-10-10)
+# ---------------------------------------------------------------------------
+
+def test_gekappter_durchlauf_extrahiert_NICHT(monkeypatch):
+    """🛑 Aus einer mitten im Wort abgeschnittenen Äußerung darf keine
+    DAUERHAFTE Erinnerung und keine KG-Kante entstehen.
+
+    Im Review aufgefallen: `response_text` geht nach `spawn_memory_extraction`
+    UND `spawn_post_message_hooks`. Bei `timeout` ist die Frage ein halber Satz
+    — und seit dem Kappungshinweis stünde zusätzlich Geräte-Text darin. Eine
+    falsche KG-Kante ist praktisch nicht zurückzunehmen; der Verzicht kostet
+    bei 7 Fällen in 7 Tagen fast nichts.
+    """
+    gerufen: list[str] = []
+    monkeypatch.setattr(
+        "ha_glue.api.websocket.satellite_handler.spawn_memory_extraction",
+        lambda **kw: gerufen.append("memory"),
+    )
+    monkeypatch.setattr(
+        "ha_glue.api.websocket.satellite_handler.spawn_post_message_hooks",
+        lambda **kw: gerufen.append("post_message"),
+    )
+
+    ergebnis = _spawn_satellite_extraction(
+        user_text="Überweise an die Stadtkasse dreihundert",   # abgeschnitten
+        response_text="Ich musste die Aufnahme … ",
+        user_id=1,
+        session_id="sess-1",
+        lang="de",
+        action_success=True,
+        turn_truncated=True,
+    )
+    assert ergebnis is None
+    assert gerufen == [], (
+        f"ein gekappter Satz darf nichts extrahieren, gerufen wurde: {gerufen}"
+    )
+
+
+def test_vollstaendiger_durchlauf_extrahiert_WEITERHIN(monkeypatch):
+    """🛑 Negativkontrolle, und die wichtigere Hälfte: die Grenze darf die
+    normale Wissensbildung nicht abschalten.
+
+    Ohne diesen Test wäre „nichts extrahiert" grün, auch wenn die Extraktion
+    gar nicht mehr läuft — und das Haus würde sich nichts mehr merken.
+    """
+    gerufen: list[str] = []
+
+    class _Spawn:
+        owns_post_message = False
+
+    monkeypatch.setattr(
+        "ha_glue.api.websocket.satellite_handler.spawn_memory_extraction",
+        lambda **kw: (gerufen.append("memory"), _Spawn())[1],
+    )
+    monkeypatch.setattr(
+        "ha_glue.api.websocket.satellite_handler.spawn_post_message_hooks",
+        lambda **kw: gerufen.append("post_message"),
+    )
+
+    ergebnis = _spawn_satellite_extraction(
+        user_text="Stelle den Wecker auf sieben Uhr",
+        response_text="Ist gestellt.",
+        user_id=1,
+        session_id="sess-2",
+        lang="de",
+        action_success=True,
+        turn_truncated=False,
+    )
+    assert ergebnis is not None
+    assert gerufen == ["memory", "post_message"]
+
+
+def test_tote_sitzungsgrenze_ist_weg():
+    """`max_duration_seconds = 30.0` hatte im ganzen Backend keinen Leser und
+    täuschte über genau den Mechanismus, um den es hier geht: es las sich wie
+    eine 30-Sekunden-Sitzungsgrenze gegen eine 60-Sekunden-Aufnahme.
+
+    Spiegelt `test_device_manager_liveness.py:26`, das dasselbe für die
+    Schwesterklasse `DeviceSession` behauptet — dort war es schon entfernt.
+    Die echte Grenze ist `settings.device_session_timeout`.
+    """
+    assert "max_duration_seconds" not in SatelliteSession.__dataclass_fields__
