@@ -129,6 +129,11 @@ class SatelliteSession:
     started_at: float = field(default_factory=time.time)
     transcription: str | None = None
     response_text: str | None = None
+    # WARUM der Satellit aufgehört hat: "silence" | "timeout" | "button".
+    # Das Geraet schickt es mit `audio_end`; bis 2026-10-10 wurde es nur
+    # protokolliert und nie wieder gelesen — eine bei `max_recording_seconds`
+    # gekappte Äußerung war von einem fertigen Satz nicht zu unterscheiden.
+    turn_end_reason: str | None = None
 
     # Timeout settings
     max_duration_seconds: float = 30.0
@@ -441,6 +446,19 @@ class SatelliteManager:
             return None
         return frame_packets(session.opus_packets)
 
+    def set_turn_end_reason(self, session_id: str, reason: str) -> None:
+        """Merke, WARUM der Satellit das Horchen beendet hat.
+
+        `"silence"` = zu Ende gesprochen, `"button"` = Taste, `"timeout"` =
+        `vad.max_recording_seconds` hat gegriffen, die Äußerung ist also
+        MITTEN IM SATZ abgeschnitten. Genau diese Unterscheidung ging bis
+        2026-10-10 verloren: das Backend protokollierte den Grund und gab die
+        gekappte Aufnahme wie eine vollstaendige an die Transkription.
+        """
+        session = self.sessions.get(session_id)
+        if session:
+            session.turn_end_reason = reason
+
     def has_session(self, session_id: str) -> bool:
         """Whether a session id is currently active (cheap membership test).
 
@@ -709,6 +727,10 @@ class SatelliteManager:
         self._add_event(session.satellite_id, "session_end", {
             "session_id": session_id,
             "reason": reason,
+            # Der Grund des GERAETS, getrennt vom Grund des Backends: nur so ist
+            # in der Satelliten-Historie zu sehen, dass eine Aeusserung gekappt
+            # wurde (`timeout`) und nicht einfach zu Ende gesprochen war.
+            "turn_end_reason": session.turn_end_reason,
             "duration": duration,
             "success": success,
             "transcription": session.transcription

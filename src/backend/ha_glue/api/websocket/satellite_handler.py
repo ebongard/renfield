@@ -116,6 +116,41 @@ def _build_assistant_metadata(
     }
 
 
+# Der Satellit meldet mit `audio_end`, WARUM er aufgehört hat. `"timeout"`
+# heißt: `vad.max_recording_seconds` hat gegriffen, die Äußerung ist mitten im
+# Satz abgeschnitten. Bis 2026-10-10 wurde dieser Grund nur protokolliert
+# (satellite_handler, Zeile ~906) und nie wieder gelesen — eine gekappte
+# Aufnahme ging wie ein fertiger Satz in die Transkription. Gemessen am
+# Haushalt: 7 Mal in 7 Tagen, jedes Mal ohne jeden Hinweis an den Sprechenden.
+TURN_END_TIMEOUT = "timeout"
+
+_CUT_NOTICE = {
+    "de": "Ich musste die Aufnahme bei der Höchstdauer abbrechen "
+          "und habe nur den Anfang gehört. ",
+    "en": "I had to stop recording at the maximum length, "
+          "so I only heard the beginning. ",
+}
+
+
+def truncation_notice(turn_end_reason: str | None, language: str | None) -> str:
+    """Der Hinweis, dass die Äußerung gekappt wurde — oder "" wenn nicht.
+
+    🛑 DETERMINISTISCH, kein Prompt-Zusatz. Ob jemand erfährt, dass sein Satz
+    abgeschnitten wurde, ist eine TATSACHE ÜBER DAS GERÄT und darf nicht davon
+    abhängen, ob das Modell sie erwähnt.
+
+    Nur `timeout` löst ihn aus. `silence` (zu Ende gesprochen) und `button`
+    sind vollständige Äußerungen; ein Fehlweckruf läuft nie bis an die
+    Höchstdauer, hier ist also keine Verwechslung möglich.
+
+    Die Höchstdauer selbst steht in der Satelliten-Konfiguration, nicht hier —
+    darum nennt der Text keine Zahl, die auseinanderlaufen könnte.
+    """
+    if turn_end_reason != TURN_END_TIMEOUT:
+        return ""
+    return _CUT_NOTICE.get(language or "de", _CUT_NOTICE["en"])
+
+
 def _spawn_satellite_extraction(
     *,
     user_text: str,
@@ -905,6 +940,14 @@ async def satellite_websocket(
                     logger.info(f"📸 Image received with audio_end ({len(image_b64)} chars base64)")
                 logger.info(f"🔚 Audio ended for session {session_id} (reason: {reason})")
 
+                # Den Grund FESTHALTEN, nicht nur protokollieren: `timeout`
+                # heisst, `vad.max_recording_seconds` hat gegriffen und die
+                # Äußerung ist mitten im Satz abgeschnitten. Bis 2026-10-10
+                # endete diese Information in der Zeile darueber, und eine
+                # gekappte Aufnahme ging wie ein fertiger Satz in die
+                # Transkription — 7 Mal in 7 Tagen, ohne jeden Hinweis.
+                satellite_manager.set_turn_end_reason(session_id, reason)
+
                 # Update state to processing
                 await satellite_manager.set_session_state(session_id, SatelliteState.PROCESSING)
 
@@ -1319,6 +1362,19 @@ Gib eine kurze, natürliche Antwort. KEIN JSON, nur Text."""
                         # Normal conversation (with history for follow-up questions)
                         async for chunk in ollama.chat_stream(text, history=satellite_conversation_history):
                             response_text += chunk
+
+                    # Die Kappung VORAN stellen, weil der Hinweis die Antwort
+                    # einordnet — hinterher käme er zu spät. Er landet damit
+                    # auch in der Historie und in der Datenbank, nicht nur im
+                    # gesprochenen Satz: sonst wäre beim nächsten Durchlauf
+                    # nicht mehr zu sehen, dass die Frage unvollständig war.
+                    _cut_notice = truncation_notice(reason, satellite_language)
+                    if _cut_notice:
+                        response_text = _cut_notice + response_text
+                        logger.warning(
+                            f"✂️ Äußerung bei der Höchstdauer gekappt "
+                            f"(session {session_id}) — Hinweis vorangestellt"
+                        )
 
                     logger.info(f"💬 Response: '{response_text[:100]}...'")
 
