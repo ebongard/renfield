@@ -58,9 +58,16 @@ The `release.yml` workflow on tag-push **does not actually build images** (CI is
 ## Build + push workflow (rsync-to-staging — preferred)
 
 > **Script:** `bin/deploy-production.sh` automates the mechanical backbone of
-> this skill — rsync contexts → build+push backend/frontend → (optional
-> `--migrate`) alembic job → `set image` + `rollout status` → smoke test →
-> prune. It has `--dry-run`, `--skip-backend`/`--skip-frontend`, and takes the
+> this skill — rsync contexts → build+push backend/frontend → **migration gate**
+> → (optional `--migrate`) alembic job → `set image` + `rollout status` → smoke
+> test → prune. The gate compares the alembic head IN THE BUILT IMAGE against
+> `alembic current` of the target DB after the push and before the first `set
+> image`, and **aborts** when the image is ahead and `--migrate` is not set
+> (#1392 — ~35 min of production damage, `/health/ready` green throughout). It
+> never migrates on its own, and it never passes on an unreadable probe;
+> `--skip-migration-gate` is the deliberate, typed bypass. Details:
+> `.claude/rules/deploy.md`.
+> It has `--dry-run`, `--skip-backend`/`--skip-frontend`, and takes the
 > tags as args (backend date-tag, frontend semver). It deliberately does NOT
 > touch satellites (SD-card brick risk), voice-server/dlna/samsung images, or
 > invent tags. Example: `bin/deploy-production.sh --backend-tag 2026-06-25-satsec

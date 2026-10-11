@@ -8,6 +8,8 @@
 # What it does (idempotent, re-runnable):
 #   1. rsync the build contexts to the .159 build box
 #   2. build + push the backend and/or frontend image to Harbor
+#   2b. PREFLIGHT GATE: alembic head IN THE BUILT IMAGE vs. the running DB —
+#      abort when they diverge and --migrate is not set (issue #1392)
 #   3. (optional, --migrate) run the alembic-upgrade Job with the NEW image,
 #      BEFORE the rollout, and verify it completed
 #   4. `set image` + `rollout status` for the changed deployments
@@ -26,6 +28,7 @@
 #   bin/deploy-production.sh --backend-tag 2026-06-26-foo --skip-frontend          # backend only
 #   bin/deploy-production.sh --frontend-tag v2.15.30 --skip-backend                # frontend only
 #   bin/deploy-production.sh --backend-tag x --frontend-tag y --dry-run            # print, don't run
+#   bin/deploy-production.sh --backend-tag x --skip-frontend --skip-migration-gate # bypass the gate (last resort)
 #
 # Conventions (from the live cluster): backend tags are date-based
 # (YYYY-MM-DD-label), frontend tags are semver (vX.Y.Z). Both also get :latest.
@@ -39,7 +42,7 @@ NS="${RENFIELD_NS:-renfield}"
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 # --- args -------------------------------------------------------------------
-BACKEND_TAG="" FRONTEND_TAG="" DO_MIGRATE=0 DRY_RUN=0 SKIP_BACKEND=0 SKIP_FRONTEND=0
+BACKEND_TAG="" FRONTEND_TAG="" DO_MIGRATE=0 DRY_RUN=0 SKIP_BACKEND=0 SKIP_FRONTEND=0 SKIP_MIGRATION_GATE=0
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --backend-tag)   BACKEND_TAG="$2"; shift 2 ;;
@@ -48,7 +51,12 @@ while [[ $# -gt 0 ]]; do
     --dry-run)       DRY_RUN=1; shift ;;
     --skip-backend)  SKIP_BACKEND=1; shift ;;
     --skip-frontend) SKIP_FRONTEND=1; shift ;;
-    -h|--help)       sed -n '2,40p' "$0"; exit 0 ;;
+    # Deliberate bypass of the 2b gate. It exists so a probe that CANNOT answer
+    # (build box unreachable, old pod already gone) does not leave the operator
+    # with no way forward — but it has to be typed, which is the whole point:
+    # the failure mode of #1392 was a gate that nobody had to think about.
+    --skip-migration-gate) SKIP_MIGRATION_GATE=1; shift ;;
+    -h|--help)       sed -n '2,34p' "$0"; exit 0 ;;
     *) echo "unknown arg: $1" >&2; exit 2 ;;
   esac
 done
@@ -151,6 +159,198 @@ if [[ $SKIP_FRONTEND == 0 ]]; then
   on_build "set -e; cd $STAGING/src/frontend && \
     docker build -q --build-arg VITE_FEATURE_VOICE_STREAM=true --build-arg VITE_BUILD_STAMP=$FRONTEND_TAG -t $REGISTRY/frontend:latest -t $REGISTRY/frontend:$FRONTEND_TAG -f Dockerfile . && \
     docker push -q $REGISTRY/frontend:$FRONTEND_TAG && docker push -q $REGISTRY/frontend:latest"
+fi
+
+# --- 2b. Vorflug-Tor: Alembic-Kopf im BILD gegen die laufende Datenbank ------
+# Das Bild ist gepusht, aber NOCH NICHTS ausgerollt — die letzte Stelle, an der
+# ein Abbruch kostenlos ist.
+#
+# Warum es das gibt (#1392): `--migrate` ist ein Schalter, den der Bediener
+# setzen muss, und wer ihn vergisst, bekommt keinen Hinweis, sondern einen
+# Ausfall. Am 2026-10-11 ~35 min Produktionsschaden auf dem Haushalt: der PR
+# enthielt keine Migration, das Bild wird aber aus `main` gebaut, und dort lag
+# `pc20260929_kg_validity`. Das ORM waehlt jede Spalte unbedingt → roher
+# SQLAlchemy-Fehler samt SQL in der Seite, KG-Extraktion tot. `/health/ready`
+# meldete durchgehend `healthy`; gefunden hat es allein der Browser-E2E.
+#
+# 🛑 Das Tor MIGRIERT NICHT von selbst. Eine Migration ist eine Entscheidung —
+# ein stiller Rollout darueber hinweg ist keine.
+#
+# 🛑 Und es laesst bei Unklarheit NICHT durch: schlaegt eine der beiden
+# Abfragen fehl, bricht es ab (ausser im --dry-run, der nichts veraendern
+# darf). Ein Tor, das im Zweifel oeffnet, ist genau der Fehler, gegen den
+# dieses Issue geschrieben ist.
+
+# Nimmt die Ausgabe von `alembic heads`/`alembic current` auf stdin und gibt je
+# Zeile EINE Revision aus. Beide Kommandos schreiben INFO-Zeilen auf denselben
+# Strom, das Bild zusaetzlich eine Pydantic-Warnung, und Annotationen stehen in
+# Klammern (`(head)`, `(branchlabel)`). Bewusst grep-UNABHAENGIG von Dateinamen:
+# Dateinamen tragen die Revision NICHT — `pc20260929_kg_relation_validity.py`
+# haelt die Revision `pc20260929_kg_validity`, und genau diese Verwechslung hat
+# den Bediener am 2026-10-11 ein zweites Mal beruhigt.
+# Bewusst ohne `mapfile`/Arrays: macOS liefert bash 3.2 aus, und dieses Skript
+# wird vom Laptop gestartet — ein bash-4-Builtin waere hier ein Tor, das auf dem
+# Rechner des Bedieners gar nicht erst laeuft.
+alembic_revs() {
+  # Zwei Stolpersteine auf einmal, und sie ziehen in verschiedene Richtungen:
+  #
+  # 1. RAUSCHEN. `alembic` schreibt INFO-Zeilen und das Bild eine
+  #    Pydantic-Warnung. `tr -d '[:blank:]'` klebt so eine Zeile zu EINEM Token
+  #    zusammen, das an Klammern und Punkten scheitert — das ist der Grund,
+  #    warum hier geklebt wird. Wer stattdessen auf Zeilenumbruch zerlegt,
+  #    bekommt `INFO` und `Context` als Revisionskandidaten geliefert
+  #    (selbst hineingelaufen, 2026-10-11).
+  # 2. ZWEI KOEPFE IN EINER ZEILE. Genau dasselbe Kleben verband
+  #    `aaa111 (head) bbb222 (head)` zu einer Phantom-Revision, die den
+  #    Mehrfachkopf-Abbruch uebersprang und als „DB ist zurueck" gelesen wurde
+  #    — mit --migrate also durchgelassen (Review-Befund, latent).
+  #
+  # Loesung, die beides traegt: ZUERST nach einer schliessenden Klammer
+  # umbrechen (nur Annotationen wie `(head)` tragen eine), DANN kleben. Die
+  # Rauschzeilen haben keine Klammerpaare mit folgendem Blank und bleiben eine
+  # Zeile; zwei Koepfe werden getrennt.
+  sed -E 's/\)[[:blank:]]+/)\n/g' | sed -E 's/\([^)]*\)//g' | tr -d '[:blank:]' \
+    | grep -E '^[0-9A-Za-z][0-9A-Za-z_-]{2,}$' || true
+}
+count_lines() { printf '%s' "$1" | grep -c . || true; }
+
+# Abbruch des Tores. Im --dry-run wird nur GEZEIGT, was es taete: ein Probelauf
+# veraendert nichts und darf deshalb auch nicht am Tor scheitern — er ist die
+# einzige Moeglichkeit, das Tor vor einem echten Deploy zu proben.
+gate_abort() {
+  if [[ $DRY_RUN == 1 ]]; then
+    printf '  [dry-run] TOR WUERDE ABBRECHEN: %s\n' "$1"
+  else
+    printf '\n\033[1;31mERROR: %s\033[0m\n' "$1" >&2
+    echo "       Bewusstes Uebergehen (nur wenn die Lage geklaert ist): --skip-migration-gate" >&2
+    exit 1
+  fi
+}
+
+if [[ $SKIP_BACKEND == 1 ]]; then
+  : # kein neues Backend-Bild → es gibt keinen Kopf zu vergleichen
+elif [[ $SKIP_MIGRATION_GATE == 1 ]]; then
+  log "Migrations-Tor UEBERSPRUNGEN (--skip-migration-gate)"
+  echo "  WARNING: der Alembic-Kopf des Bildes wurde NICHT gegen $NS geprueft." >&2
+else
+  log "Vorflug-Tor: Alembic-Kopf im Bild gegen $NS"
+  IMAGE_REF="$REGISTRY/backend:$BACKEND_TAG"
+  GATE_PROBED=1
+
+  # Beide Abfragen laufen AUCH im --dry-run: sie sind lesend, und ein Probelauf,
+  # der das Tor nicht ausfuehrt, probt es auch nicht. Deshalb hier `ssh` direkt
+  # statt `on_build` (das im --dry-run nur druckt).
+  # 🛑 Erst nachsehen, OB das Bild lokal liegt. Sonst versucht `docker run`
+  # einen Registry-Pull — im Probelauf auf eine noch nicht gebaute Marke ist
+  # das der NORMALFALL (Bau und Push werden dort nur gedruckt), und das Tor
+  # meldete dafuer einen Abbruch, den es im echten Lauf nie gaebe. Dazu zieht
+  # ein Pull 4,08 GB. Im Review vom 2026-10-11 gemessen.
+  #
+  # Im echten Lauf MUSS das Bild liegen — Schritt 2 hat es gerade gebaut. Fehlt
+  # es dort, ist etwas anderes schiefgegangen, und dann wird nicht ausgerollt.
+  if ! ssh "$BUILD_HOST" "docker image inspect $IMAGE_REF >/dev/null 2>&1"; then
+    if [[ $DRY_RUN == 1 ]]; then
+      echo "  [dry-run] $IMAGE_REF liegt nicht auf $BUILD_HOST — im Probelauf ist das Tor damit NICHT probebar."
+      echo "  [dry-run] (im echten Lauf hat Schritt 2 das Bild gerade gebaut; ein Pull wird hier bewusst vermieden)"
+      GATE_PROBED=0
+    else
+      gate_abort "$IMAGE_REF liegt nach dem Bau nicht auf $BUILD_HOST — Bau oder Push ist schiefgegangen. Es wird nicht ausgerollt."
+    fi
+  fi
+
+  IMG_HEADS=""
+  if [[ $GATE_PROBED == 1 ]] && img_out="$(ssh "$BUILD_HOST" "docker run --rm $IMAGE_REF sh -c 'cd /app && python -m alembic heads' 2>&1")"; then
+    IMG_HEADS="$(printf '%s\n' "$img_out" | alembic_revs)"
+  elif [[ $GATE_PROBED == 1 ]]; then
+    printf '%s\n' "$img_out" | tail -5 >&2
+    gate_abort "Alembic-Kopf aus $IMAGE_REF nicht ermittelbar (docker-Fehler). Im Zweifel wird NICHT ausgerollt."
+    GATE_PROBED=0
+  fi
+
+  # Die laufende Datenbank: der noch laufende ALTE Pod liest `alembic_version`.
+  # Robuster als psql gegen den CNPG-Pod, dessen Name je Namensraum abweicht.
+  DB_REVS=""
+  if [[ $GATE_PROBED == 1 ]] && db_out="$("${KUBECTL[@]}" exec deploy/backend -c backend -- sh -c 'cd /app && python -m alembic current' 2>&1)"; then
+    DB_REVS="$(printf '%s\n' "$db_out" | alembic_revs)"
+  elif [[ $GATE_PROBED == 1 ]]; then
+    printf '%s\n' "$db_out" | tail -5 >&2
+    gate_abort "Alembic-Revision der Datenbank in $NS nicht ermittelbar (kein laufender backend-Pod?). Im Zweifel wird NICHT ausgerollt."
+    GATE_PROBED=0
+  fi
+
+  if [[ $GATE_PROBED == 1 ]]; then
+    IMG_HEAD_COUNT="$(count_lines "$IMG_HEADS")"
+    DB_REV_COUNT="$(count_lines "$DB_REVS")"
+    IMG_HEAD="$(printf '%s' "$IMG_HEADS" | head -1)"
+    DB_REV="$(printf '%s' "$DB_REVS" | head -1)"
+    echo "  Bild  $IMAGE_REF"
+    echo "        Kopf:     ${IMG_HEADS//$'\n'/ } (${IMG_HEAD_COUNT})"
+    echo "  DB    $NS"
+    echo "        Revision: ${DB_REVS//$'\n'/ } (${DB_REV_COUNT})"
+
+    if [[ $IMG_HEAD_COUNT -eq 0 ]]; then
+      gate_abort "Aus der Ausgabe von \`alembic heads\` liess sich keine Revision lesen — Format geaendert? Es wird nicht geraten."
+    elif [[ $IMG_HEAD_COUNT -gt 1 ]]; then
+      # Gegabelte Kette. Bisher wurde das nur beim SCHREIBEN einer Migration
+      # geprueft; hier steht es auf der Rollout-Seite.
+      gate_abort "Mehrere Alembic-Koepfe im Bild (gegabelte Kette): ${IMG_HEADS//$'\n'/ }. Erst zusammenfuehren (merge-Revision), dann ausrollen."
+    elif [[ $DB_REV_COUNT -ne 1 ]]; then
+      # Leere oder gegabelte `alembic_version`. Mit --migrate zieht der
+      # Migrationsschritt das gerade, ohne ihn ist die Lage unklar.
+      if [[ $DO_MIGRATE == 1 ]]; then
+        echo "  WARNING: Datenbank-Revision in $NS unklar ($DB_REV_COUNT Eintraege) — --migrate ist gesetzt, der Migrationsschritt laeuft davor." >&2
+      else
+        gate_abort "Datenbank-Revision in $NS unklar ($DB_REV_COUNT Eintraege) — leere oder gegabelte \`alembic_version\`. Nicht ausrollen."
+      fi
+    elif [[ "$IMG_HEAD" == "$DB_REV" ]]; then
+      echo "  OK: Bild und Datenbank stehen auf $IMG_HEAD — keine Migration ausstehend."
+    # Koepfe verschieden. Die Richtung entscheidet, und sie wird ERFRAGT, nicht
+    # aus Bildmarken oder Datumsnamen geraten: kennt das Bild die DB-Revision,
+    # dann liegt sie in seiner Kette und die DB ist ZURUECK (der gefaehrliche
+    # Fall). Kennt es sie nicht, traegt die DB eine Revision, die dieses Bild
+    # nie gesehen hat — nach einem Rueckfall der uebliche Fall.
+    #
+    # 🛑 DIE SONDE WIRD GEGEN SICH SELBST GEGENGEPRUEFT. Die erste Fassung
+    # fragte nur `alembic show $DB_REV` und las JEDEN Rueckgabewert != 0 als
+    # „Revision unbekannt" → Rueckfall-Zweig → WARNUNG → Rollout. Damit war
+    # ein `ssh`-Aussetzer (255), ein docker-Fehler oder ein Importfehler im
+    # Bild von „die DB ist alt" nicht unterscheidbar — und das Tor oeffnete
+    # genau im gefaehrlichen Fall. Im Review vom 2026-10-11 gemessen:
+    # DB zurueck + Sonde mit Code 255 ergab rc=0 und vier `set image`, also
+    # exakt den Ausfall, gegen den dieses Tor gebaut ist, mit einer Warnzeile
+    # davor.
+    #
+    # Das Bild MUSS seinen eigenen Kopf kennen. Tut es das nicht, ist die
+    # Sonde kaputt, nicht die Datenbank alt. Beide Abfragen laufen in EINEM
+    # `ssh`/`docker run` und liefern ihre Rueckgabewerte als Text zurueck,
+    # damit „Sonde kaputt" vom Befund unterscheidbar bleibt.
+    else
+      probe_out="$(ssh "$BUILD_HOST" "docker run --rm $IMAGE_REF sh -c '
+        cd /app
+        python -m alembic show $IMG_HEAD >/dev/null 2>&1; echo \"head=\$?\"
+        python -m alembic show $DB_REV  >/dev/null 2>&1; echo \"db=\$?\"
+      '" 2>&1)" || probe_out="$probe_out"
+      probe_head="$(printf '%s\n' "$probe_out" | sed -n 's/^head=\([0-9]\{1,\}\)$/\1/p' | head -1)"
+      probe_db="$(printf '%s\n' "$probe_out" | sed -n 's/^db=\([0-9]\{1,\}\)$/\1/p' | head -1)"
+
+      if [[ -z "$probe_head" || -z "$probe_db" ]]; then
+        printf '%s\n' "$probe_out" | tail -5 >&2
+        gate_abort "$(printf 'Die Richtungs-Sonde hat nicht geantwortet (ssh/docker-Fehler?) — ob die Datenbank in %s zurueck oder weiter ist, ist damit UNBEKANNT.\n       Im Zweifel wird NICHT ausgerollt. Alembic-Kopf im Bild: %s, in der DB: %s.' "$NS" "$IMG_HEAD" "$DB_REV")"
+      elif [[ "$probe_head" != "0" ]]; then
+        gate_abort "$(printf 'Die Richtungs-Sonde ist KAPUTT: das Bild kennt seinen EIGENEN Kopf %s nicht (alembic show → %s).\n       Damit ist aus einem Fehlschlag fuer %s kein Schluss zu ziehen. Im Zweifel wird NICHT ausgerollt.' "$IMG_HEAD" "$probe_head" "$DB_REV")"
+      elif [[ "$probe_db" == "0" ]]; then
+        if [[ $DO_MIGRATE == 1 ]]; then
+          echo "  Datenbank ist ZURUECK ($DB_REV → $IMG_HEAD) — --migrate ist gesetzt, der Migrationsschritt laeuft vor dem Rollout."
+        else
+          gate_abort "$(printf 'Die Datenbank in %s ist ZURUECK hinter dem Bild — ohne --migrate wird das ein Ausfall.\n       Alembic-Kopf im Bild:  %s\n       Alembic in der DB:     %s\n       Das ORM waehlt jede Spalte unbedingt: ein Pod auf diesem Bild scheitert an JEDER\n       Abfrage auf die geaenderten Tabellen, und /health/ready meldet dabei weiter healthy.\n       → --migrate nachlegen (die Migration laeuft dann VOR dem Rollout).' "$NS" "$IMG_HEAD" "$DB_REV")"
+        fi
+      else
+        # Erlaubt (zusaetzliche Spalten sind nullbar), aber nicht verschweigen.
+        echo "  WARNING: die Datenbank in $NS traegt $DB_REV — eine Revision, die dieses Bild nicht kennt (Kopf: $IMG_HEAD)." >&2
+        echo "           Das ist ein RUECKFALL auf ein aelteres Bild. Erlaubt, solange die zusaetzlichen Spalten nullbar sind — nachsehen." >&2
+      fi
+    fi
+  fi
 fi
 
 # --- 3. migrate (BEFORE rollout, with the new image) ------------------------
