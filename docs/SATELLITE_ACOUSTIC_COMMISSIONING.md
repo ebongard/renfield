@@ -92,9 +92,33 @@ bin/capture-room-ambient.sh satellite-<room> --minutes 45 --label commissioning
 ```
 
 The script reads the satellite's live audio config, records **raw
-multi-channel** off the shared `dsnoop` PCM (no service stop needed on HAT
-mics), runs the sanity gate, and stores the result plus a provenance sidecar
-under `data/wakeword-ambient/<satellite>/`.
+multi-channel**, runs the sanity gate, and stores the result plus a provenance
+sidecar under `data/wakeword-ambient/<satellite>/`.
+
+**Who holds the mic depends on `hat_type`, and the script branches on it** (read
+from the inventory, never guessed):
+
+| `hat_type` | Capture | Service |
+|---|---|---|
+| `2mic`, `2mic-v2`, `4mic`, `whisplay` | off the shared `dsnoop` PCM | keeps running |
+| `xvf3800-usb` | exclusive — `asoundrc-xvf3800-usb.j2` defines no `dsnoop`/`dmix` on purpose, so `arecord` and the satellite service cannot both open `hw:Array` | **stopped for the capture**, started again right after |
+
+On an exclusive mic the stop needs `--allow-service-stop` (or an interactive
+`yes`): it is an intervention on a Pi Zero and the room is deaf until the
+capture ends. The restart hangs off a trap (EXIT/INT/TERM) and is verified with
+`systemctl is-active`, so an aborted capture does not leave a mute satellite;
+if the restart cannot be confirmed the script says so and exits non-zero.
+A capture is also handed the mic back before the (minutes-long) transfer.
+
+The sidecar records `hat_type` and `mic_capture_mode` for the capture. The
+XVF3800 keeps its capture gain in chip flash rather than in ALSA, so there the
+sidecar has no gain provenance and the script warns — note the
+`xvf3800_tuning` value from `host_vars/satellite-<room>.yml` alongside the
+capture (§2).
+
+An unknown `hat_type`, a host without one, and a host that is not in the
+Ansible inventory at all (the Esszimmer satellite is a k8s pod) are refusals,
+not guesses.
 
 **The capture must span the room's real acoustic events.** A quiet 10-minute
 block captures a noise floor, and a noise floor is not what false-fires the
