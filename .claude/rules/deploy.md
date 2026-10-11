@@ -61,6 +61,25 @@ Umgebungstest wäre genau dort grün, wo er nichts beweist; geprüft wird deshal
 🛑 **Nach einem Bau, der Abhängigkeiten neu auflöst, die Versionen vergleichen** (`pip show` im alten gegen das
 neue Bild). Ein grüner Testlauf beweist hier nichts.
 
+## Das Vorflug-Tor: Alembic-Kopf im BILD gegen die laufende Datenbank
+🛑 `--migrate` ist ein Schalter, den der Bediener setzen muss — also prüft `bin/deploy-production.sh` ihn nicht
+mehr auf Vertrauen. Nach dem Push und **vor dem ersten `set image`** stellt es den Kopf im gebauten Bild
+(`docker run --rm <bild> alembic heads` auf der Baubox, dort liegt es lokal) gegen `alembic current` im noch
+laufenden alten Pod. Bild **vor** der DB und `--migrate` nicht gesetzt → **Abbruch** mit beiden Revisionen im
+Klartext. Mehrere Köpfe im Bild → Abbruch (gegabelte Kette, jetzt auch auf der Rollout-Seite). DB **weiter** als
+das Bild (Rückfall) → erlaubt, aber als WARNUNG protokolliert.
+🛑 **Das Tor migriert NICHT von selbst.** Eine Migration ist eine Entscheidung; ein stiller Rollout darüber
+hinweg ist keine.
+🛑 **Bei Unklarheit wird NICHT ausgerollt.** Schlägt eine der beiden Abfragen fehl (Bild nicht auf der Baubox,
+kein laufender Pod), bricht das Tor ab. Übergehen geht nur über das ausdrücklich getippte
+`--skip-migration-gate`. Im `--dry-run` führt es die (lesenden) Abfragen trotzdem aus und zeigt sein Urteil —
+ein Probelauf, der das Tor nicht ausführt, probt es auch nicht.
+🛑 **Die naheliegenden Prüfungen sind die falschen** und haben am 2026-10-11 beide beruhigt, während ~35 min
+Produktion lag: ob der *PR* Migrationen enthält (das Bild wird aus `main` gebaut, nicht aus dem PR), und ein
+`ls … | grep <revision>` über `alembic/versions/` (**Dateinamen tragen die Revision nicht** —
+`pc20260929_kg_relation_validity.py` hält `pc20260929_kg_validity`). `/health/ready` meldete die ganze Zeit
+`healthy`; gefunden hat es allein der Browser-E2E. Regressionstest: `tests/backend/test_deploy_migration_gate.py`.
+
 ## Bildmarken in den Manifesten
 🛑 `kubectl set image` ändert die LIVE-Objekte, NICHT die Dateien — ohne Nachziehen wirft ein späteres
 `kubectl apply -f` die Instanz auf das alte Bild zurück. `bin/deploy-production.sh` ruft dafür
