@@ -90,5 +90,9 @@ metric lies by ~30×; mic-gain levers reduce false wakes, only room-specific neg
 first shipped with `4mic` in the shared column because the table was written against that prose. On an exclusive mic
 `arecord` and the running service cannot both open the device, so the capture must stop `renfield-satellite` first.
 `bin/capture-room-ambient.sh` reads `hat_type` from the inventory and branches; the stop is never silent
-(`--allow-service-stop` or an interactive `yes`) and the restart hangs off a trap (EXIT/INT/TERM) and is confirmed
-with `systemctl is-active` — a satellite left deaf by an aborted capture is worse than a failed capture.
+(`--allow-service-stop` or an interactive `yes`, and that switch FORCES the exclusive path from every mode — the
+escape hatch when a classification is wrong on a device). A satellite left deaf by an aborted capture is worse than a
+failed capture, so the restart hangs off a trap (EXIT/INT/TERM), `on_exit` first sets SIG_IGN for INT/TERM (inherited
+by the `systemctl start` child — a second Ctrl-C is the REGULAR case, the slow ssh restart looks like a hang), retries
+3× with a pause, and is confirmed with ONE `systemctl is-active`. **DEAF is only claimed when the STOP was confirmed**;
+a failed stop yields a WARNING that the service is probably still running — the wrong verdict costs a trip.
