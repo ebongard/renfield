@@ -45,7 +45,19 @@ case "$args" in
       exit 125
     fi
     printf '%s\n' "${STUB_IMG_HEADS}"; exit 0 ;;
-  *"alembic show"*) exit "${STUB_SHOW_EXIT:-0}" ;;
+  *"image inspect"*) exit "${STUB_IMG_PRESENT_EXIT:-0}" ;;
+  # Die Richtungs-Sonde fragt BEIDE Revisionen in EINEM Aufruf und gibt die
+  # Rueckgabewerte als Text zurueck. `STUB_PROBE_SILENT=1` spielt den Fall, in
+  # dem ssh/docker gar nicht antworten — genau der Fail-open-Pfad aus dem
+  # Review vom 2026-10-11.
+  *"alembic show"*)
+    if [[ "${STUB_PROBE_SILENT:-0}" == 1 ]]; then
+      echo "ssh: connect to host ... port 22: Operation timed out" >&2
+      exit 255
+    fi
+    echo "head=${STUB_SHOW_HEAD_EXIT:-0}"
+    echo "db=${STUB_SHOW_EXIT:-0}"
+    exit 0 ;;
 esac
 exit 0
 """
@@ -231,3 +243,84 @@ def test_dry_run_shows_the_verdict_but_never_aborts(deploy):
     assert not rolled_out, "ein Probelauf rollt nichts aus"
     assert "TOR WUERDE ABBRECHEN" in proc.stdout
     assert "pc20260927_voice2fa" in proc.stdout
+
+
+# ---------------------------------------------------------------------------
+# Die Richtungs-Sonde darf bei EIGENEM Scheitern nicht oeffnen
+# (Review-Befund vom 2026-10-11)
+# ---------------------------------------------------------------------------
+#
+# 🛑 Der einzige Fail-open-Pfad, den das Tor hatte — und er sass im
+# gefaehrlichen Zweig. Die erste Fassung fragte nur `alembic show <db-rev>`
+# und las JEDEN Rueckgabewert != 0 als „Revision unbekannt" → Rueckfall →
+# WARNUNG → Rollout. Gemessen: Datenbank zurueck + Sonde mit Code 255 ergab
+# rc=0 und vier `kubectl set image` — exakt der Ausfall, gegen den dieses Tor
+# gebaut ist, nur mit einer Warnzeile davor.
+#
+# Der alte Test schrieb die Luecke als ABSICHT fest: `STUB_SHOW_EXIT=1` mit
+# rc=0 plus Rollout trennte „unbekannte Revision" nicht von „Sonde kaputt".
+
+
+def test_a_silent_probe_aborts(deploy):
+    """ssh/docker antworten nicht → die Richtung ist UNBEKANNT, nicht
+    „Rueckfall". Im Zweifel wird nicht ausgerollt."""
+    proc, rolled_out = deploy(
+        STUB_IMG_HEADS="neu_kopf (head)",
+        STUB_DB_OUT="alt_rev",
+        STUB_PROBE_SILENT=1,
+    )
+    assert proc.returncode == 1, "eine stumme Sonde darf nicht durchlassen"
+    assert not rolled_out, "der Abbruch muss VOR dem ersten `set image` liegen"
+    assert "UNBEKANNT" in proc.stderr
+
+
+def test_a_probe_that_fails_on_its_own_head_aborts(deploy):
+    """Das Bild MUSS seinen eigenen Kopf kennen. Tut es das nicht, ist die
+    Sonde kaputt, und aus dem Fehlschlag fuer die DB-Revision ist kein Schluss
+    zu ziehen."""
+    proc, rolled_out = deploy(
+        STUB_IMG_HEADS="neu_kopf (head)",
+        STUB_DB_OUT="alt_rev",
+        STUB_SHOW_HEAD_EXIT=1,
+        STUB_SHOW_EXIT=1,
+    )
+    assert proc.returncode == 1, "eine kaputte Sonde darf nicht als Rueckfall gelten"
+    assert not rolled_out
+    assert "KAPUTT" in proc.stderr
+
+
+def test_a_genuine_rollback_still_proceeds(deploy):
+    """🛑 Negativkontrolle, und die wichtigere Haelfte: ein ECHTER Rueckfall —
+    das Bild kennt seinen eigenen Kopf, aber die DB-Revision nicht — muss
+    weiterhin durchlassen. Sonst blockiert das Tor jeden Rueckfall auf ein
+    aelteres Bild, wird umgangen und ist wirkungslos."""
+    proc, rolled_out = deploy(
+        STUB_IMG_HEADS="alt_kopf (head)",
+        STUB_DB_OUT="neu_rev",
+        STUB_SHOW_HEAD_EXIT=0,
+        STUB_SHOW_EXIT=1,
+    )
+    assert proc.returncode == 0, "ein echter Rueckfall muss durchlassen"
+    assert rolled_out, "und ausrollen"
+    assert "RUECKFALL" in proc.stderr
+
+
+def test_a_missing_image_in_dry_run_is_not_an_abort(deploy):
+    """Im --dry-run ist eine noch nicht gebaute Marke der NORMALFALL (Bau und
+    Push werden dort nur gedruckt). Das Tor meldete dafuer einen Abbruch, den
+    es im echten Lauf nie gaebe — und `docker run` haette dafuer 4,08 GB aus
+    der Registry gezogen."""
+    proc, _ = deploy("--dry-run", STUB_IMG_PRESENT_EXIT=1)
+    assert proc.returncode == 0
+    assert "TOR WUERDE ABBRECHEN" not in proc.stdout, (
+        f"kein falscher Abbruch im Probelauf, war: {proc.stdout}"
+    )
+    assert "NICHT probebar" in proc.stdout
+
+
+def test_a_missing_image_in_a_real_run_aborts(deploy):
+    """Im echten Lauf hat Schritt 2 das Bild gerade gebaut. Fehlt es dann, ist
+    Bau oder Push schiefgegangen — und dann wird nicht ausgerollt."""
+    proc, rolled_out = deploy(STUB_IMG_PRESENT_EXIT=1)
+    assert proc.returncode == 1
+    assert not rolled_out
