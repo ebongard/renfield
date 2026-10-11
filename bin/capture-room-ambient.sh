@@ -25,19 +25,28 @@
 # pre-downmixed mono throws away the ability to reproduce what the detector
 # actually hears, and on a beamforming satellite that mono is the wrong signal.
 #
-# Who holds the mic — this depends on hat_type, read from the inventory:
-#   * HAT mics (2mic, 2mic-v2, 4mic, whisplay): their asoundrc defines a dsnoop
-#     capture PCM, so arecord and the running satellite service share the mic.
-#     The capture is concurrent and the service keeps running.
-#   * XVF3800 over USB: asoundrc-xvf3800-usb.j2 deliberately omits dmix/dsnoop
-#     (those allocate SysV IPC objects that deadlock PortAudio once a root
-#     process has created them), so capture is EXCLUSIVE: arecord and the
-#     service both want hw:Array and the second opener loses the device. The
-#     capture therefore stops renfield-satellite for its duration and starts it
-#     again right after — never silently: it needs --allow-service-stop or an
-#     interactive confirmation, and the restart is guaranteed by a trap
-#     (EXIT/INT/TERM), because a satellite left deaf by an aborted capture
-#     would be worse than a failed capture.
+# Who holds the mic — a property of hat_type, read from the inventory. THE
+# TEMPLATE DECIDES, NOT THE PROSE: the answer is whether that hat's
+# provisioning/templates/asoundrc-<hat_type>.j2 resolves its capture PCM to a
+# `type dsnoop` (shareable) or straight to a hw:/plughw: device (exclusive).
+# Prose around the fleet says "HAT mics allow concurrent capture", and for 4mic
+# that is simply false. tests/satellite/test_capture_room_ambient.py derives the
+# table from the templates so a drifting comment cannot move the behaviour.
+#   * SHARED — 2mic, 2mic-v2, whisplay: capture -> pcm.array -> `type dsnoop`,
+#     so arecord and the running satellite service share the mic. The capture
+#     is concurrent and the service keeps running.
+#   * EXCLUSIVE — 4mic: capture -> plughw:seeed4micvoicec, no dsnoop anywhere.
+#     asoundrc-4mic.j2 says why: "Do NOT use dsnoop or dmix on the AC108 — they
+#     crash the kernel driver." A second opener therefore loses the device.
+#   * EXCLUSIVE — XVF3800 over USB: asoundrc-xvf3800-usb.j2 deliberately omits
+#     dmix/dsnoop (those allocate SysV IPC objects that deadlock PortAudio once
+#     a root process has created them), so arecord and the service both want
+#     hw:Array and the second opener loses it.
+# On an exclusive mic the capture stops renfield-satellite for its duration and
+# starts it again right after — never silently: it needs --allow-service-stop or
+# an interactive confirmation, and the restart is guaranteed by a trap
+# (EXIT/INT/TERM), because a satellite left deaf by an aborted capture would be
+# worse than a failed capture.
 #
 # Usage:
 #   bin/capture-room-ambient.sh satellite-kinderbad
@@ -138,12 +147,16 @@ read -r HAT_TYPE SSH_TARGET <<<"$FACTS_PARSED"
     exit 1
 }
 
-# Which asoundrc profile shares the mic: the HAT templates all define a dsnoop
-# capture PCM, asoundrc-xvf3800-usb.j2 deliberately defines none.
+# Which asoundrc profile shares the mic. Read off the TEMPLATES, not off any
+# prose: "HAT mic" is not the criterion — 4mic is a HAT and is exclusive, since
+# asoundrc-4mic.j2 routes capture to plughw: and forbids dsnoop/dmix outright
+# (they crash the AC108 kernel driver). The structural test in
+# tests/satellite/test_capture_room_ambient.py re-derives this table from
+# provisioning/templates/asoundrc-*.j2 and fails if the two drift apart.
 case "$HAT_TYPE" in
-    2mic|2mic-v2|4mic|whisplay) CAPTURE_MODE="shared" ;;
-    *usb*)                      CAPTURE_MODE="exclusive" ;;
-    *)                          CAPTURE_MODE="unknown" ;;
+    2mic|2mic-v2|whisplay) CAPTURE_MODE="shared" ;;     # capture -> dsnoop
+    4mic|*usb*)            CAPTURE_MODE="exclusive" ;;  # capture -> hw/plughw
+    *)                     CAPTURE_MODE="unknown" ;;
 esac
 
 if [[ "$CAPTURE_MODE" == "unknown" ]]; then

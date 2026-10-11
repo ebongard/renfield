@@ -16,8 +16,11 @@ The load-bearing case is `test_interrupted_capture_still_restarts_the_service`:
 a trap nobody exercised is a claim, not a guarantee, and a satellite left deaf
 by an aborted capture would be worse than today's failure.
 """
+import fnmatch
 import json
 import os
+import pathlib
+import re
 import shutil
 import signal
 import stat
@@ -227,16 +230,37 @@ def box(tmp_path):
 # --- the two branches --------------------------------------------------------
 
 
-def test_hat_mic_captures_concurrently_and_never_touches_the_service(box):
-    """2mic/4mic/whisplay share the mic via dsnoop — this is the one case where
-    "the service keeps running" is true."""
-    box.env["HAT_TYPE"] = "2mic"
+@pytest.mark.parametrize("hat", ["2mic", "2mic-v2", "whisplay"])
+def test_dsnoop_mic_captures_concurrently_and_never_touches_the_service(box, hat):
+    """2mic, 2mic-v2 and whisplay resolve capture to a `type dsnoop` PCM — these
+    are the hats where "the service keeps running" is true. NOT 4mic: it is a
+    HAT too, and its template routes capture straight to plughw:."""
+    box.env["HAT_TYPE"] = hat
     res = box.run("--minutes", "15")
 
     assert res.returncode == 0, res.stderr
     assert "the service keeps running" in res.stdout
     assert box.calls == [], f"the service was touched on a shared mic: {box.calls}"
     assert box.sidecar()["mic_capture_mode"] == "shared"
+
+
+def test_4mic_is_exclusive_although_it_is_a_hat(box):
+    """The AC108 4-mic array forbids dsnoop/dmix outright ("they crash the
+    kernel driver"), so `arecord` and the service cannot share it. Classified
+    off the template, not off the "HAT mics are concurrent" prose."""
+    box.env["HAT_TYPE"] = "4mic"
+
+    refused = box.run("--minutes", "15")
+    assert refused.returncode != 0, "4mic was treated as a shared mic"
+    assert "--allow-service-stop" in refused.stderr
+    assert box.calls == []
+
+    res = box.run("--minutes", "15", "--allow-service-stop")
+    assert res.returncode == 0, res.stderr
+    assert "the service keeps running" not in res.stdout
+    ops = [c.split("systemctl ")[1].split()[0] for c in box.calls]
+    assert ops[:2] == ["stop", "start"], box.calls
+    assert box.sidecar()["mic_capture_mode"] == "exclusive"
 
 
 def test_usb_mic_stops_the_service_for_the_capture_and_starts_it_again(box):
@@ -375,3 +399,107 @@ def test_host_outside_the_inventory_names_the_pod_case(box):
     assert "no entry in" in res.stderr
     assert "k8s POD" in res.stderr
     assert box.calls == []
+
+
+# --- the table is derived from the templates, not from prose ----------------
+# #1388 shipped with `4mic` in the shared column because the classification was
+# written against the fleet's prose ("HAT mics allow concurrent capture") while
+# asoundrc-4mic.j2 says the opposite. These two helpers re-derive the truth from
+# the templates so the next drifting comment cannot move the behaviour.
+
+TEMPLATES = REPO / "src/satellite/provisioning/templates"
+
+
+def _pcm_blocks(text: str) -> dict:
+    """{name: body} for every `pcm.<name> { ... }` definition, comments stripped."""
+    text = "\n".join(ln for ln in text.splitlines() if not ln.lstrip().startswith("#"))
+    blocks, i = {}, 0
+    while True:
+        m = re.compile(r"pcm\.(!?[\w:.-]+)\s*\{").search(text, i)
+        if not m:
+            return blocks
+        depth, j = 1, m.end()
+        while depth and j < len(text):
+            depth += {"{": 1, "}": -1}.get(text[j], 0)
+            j += 1
+        blocks[m.group(1)] = text[m.end() : j - 1]
+        i = m.end()
+
+
+def _slave_pcm(body: str) -> str:
+    """The PCM a block feeds from: `slave.pcm "x"` or `slave { pcm "x" ... }`."""
+    m = re.search(r'slave\.pcm\s*"([^"]+)"', body) or re.search(
+        r'slave\s*\{[^}]*?\bpcm\s*"([^"]+)"', body, re.S
+    )
+    return m.group(1) if m else ""
+
+
+def capture_mode_of_template(path: pathlib.Path) -> str:
+    """Follow !default's capture chain: a `type dsnoop` on the way = shareable,
+    a hw:/plughw: terminal = exclusive."""
+    blocks = _pcm_blocks(path.read_text())
+    default = blocks["!default"]
+    inline = re.search(r"capture\.pcm\s*\{(.*?)\}", default, re.S)
+    named = re.search(r'capture\.pcm\s*"([^"]+)"', default)
+    ref = _slave_pcm(inline.group(1)) if inline else (named.group(1) if named else "")
+    assert ref, f"{path.name}: no capture PCM found"
+
+    for _ in range(10):
+        if ref.startswith(("hw:", "plughw:", "dmix:", "default:")):
+            return "exclusive"          # a direct device open
+        body = blocks.get(ref)
+        if body is None:
+            return "exclusive"          # an unresolvable name is a device name
+        if re.search(r"\btype\s+dsnoop\b", body):
+            return "shared"
+        ref = _slave_pcm(body)
+        assert ref, f"{path.name}: capture chain dead-ends in {body!r}"
+    raise AssertionError(f"{path.name}: capture chain does not terminate")
+
+
+def capture_mode_of_script(hat_type: str) -> str:
+    """Classify `hat_type` exactly as the script's case table does."""
+    body = SCRIPT_SRC.read_text()
+    table = re.search(r'case "\$HAT_TYPE" in(.*?)\nesac', body, re.S)
+    assert table, "the case table moved — this guard needs updating"
+    for arm in re.finditer(
+        r'^\s*([^\s)]+)\)\s*CAPTURE_MODE="(\w+)"', table.group(1), re.M
+    ):
+        patterns, mode = arm.group(1).split("|"), arm.group(2)
+        if any(fnmatch.fnmatchcase(hat_type, pat) for pat in patterns):
+            return mode
+    raise AssertionError(f"no arm matched {hat_type}")
+
+
+def test_every_asoundrc_template_has_a_matching_case_table_entry():
+    templates = sorted(TEMPLATES.glob("asoundrc-*.j2"))
+    assert len(templates) >= 5, templates
+    # provision.yml deploys `asoundrc-{{ hat_type }}.j2`, so the filename IS the
+    # hat_type — the mapping is mechanical, not a convention to be remembered.
+    mismatched = {}
+    for tpl in templates:
+        hat = tpl.name[len("asoundrc-") : -len(".j2")]
+        from_template = capture_mode_of_template(tpl)
+        from_script = capture_mode_of_script(hat)
+        if from_template != from_script:
+            mismatched[hat] = (from_template, from_script)
+    assert not mismatched, (
+        "the case table contradicts the asoundrc templates "
+        "(hat: template says / script says): " + repr(mismatched)
+    )
+
+
+def test_the_template_resolver_reads_the_known_profiles_correctly():
+    """A guard whose resolver is wrong proves nothing — pin it to the four
+    profiles whose templates were read by hand for #1388."""
+    modes = {
+        tpl.name: capture_mode_of_template(tpl)
+        for tpl in sorted(TEMPLATES.glob("asoundrc-*.j2"))
+    }
+    assert modes == {
+        "asoundrc-2mic-v2.j2": "shared",
+        "asoundrc-2mic.j2": "shared",
+        "asoundrc-4mic.j2": "exclusive",
+        "asoundrc-whisplay.j2": "shared",
+        "asoundrc-xvf3800-usb.j2": "exclusive",
+    }, modes

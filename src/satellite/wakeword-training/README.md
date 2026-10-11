@@ -112,11 +112,13 @@ The fix (scripts: `gen_hard_negs.py`, `validate_ambient.py`, `measure_wav.py`,
 `renfield_de_v2.yaml`, `renfield_de_v3.yaml`):
 
 1. **Record real room ambient** on each satellite:
-   `bin/capture-room-ambient.sh satellite-<room> --minutes 45`. XVF3800/USB mics
-   are exclusive, so there the script stops the satellite service for the
-   capture and starts it again afterwards — pass `--allow-service-stop` to
-   authorise that; HAT mics allow concurrent capture via the shared `dsnoop`
-   PCM and keep the service running. Capture while the room is **in use** — a quiet
+   `bin/capture-room-ambient.sh satellite-<room> --minutes 45`. Whether the mic
+   can be shared is a property of that hat's asoundrc template, not of "HAT vs
+   USB": `2mic`, `2mic-v2` and `whisplay` capture through a `dsnoop` PCM and
+   keep the service running, while **`4mic` (AC108, dsnoop/dmix crash its
+   kernel driver) and XVF3800/USB are exclusive** — there the script stops the
+   satellite service for the capture and starts it again afterwards, which
+   `--allow-service-stop` authorises. Capture while the room is **in use** — a quiet
    noise floor is not what false-fires the model — and at the **deployment mic
    gain**. The script records RAW multi-channel (never a pre-downmixed mono: on a
    beamforming satellite that is a different signal than the detector scores) and

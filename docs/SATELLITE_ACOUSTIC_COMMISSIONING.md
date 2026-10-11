@@ -96,12 +96,19 @@ multi-channel**, runs the sanity gate, and stores the result plus a provenance
 sidecar under `data/wakeword-ambient/<satellite>/`.
 
 **Who holds the mic depends on `hat_type`, and the script branches on it** (read
-from the inventory, never guessed):
+from the inventory, never guessed). **The template decides, not the prose** —
+the criterion is whether `provisioning/templates/asoundrc-<hat_type>.j2`
+resolves its capture PCM to a `type dsnoop` or straight to a `hw:`/`plughw:`
+device. "HAT mic" is *not* the criterion: `4mic` is a HAT and is exclusive.
 
-| `hat_type` | Capture | Service |
-|---|---|---|
-| `2mic`, `2mic-v2`, `4mic`, `whisplay` | off the shared `dsnoop` PCM | keeps running |
-| `xvf3800-usb` | exclusive — `asoundrc-xvf3800-usb.j2` defines no `dsnoop`/`dmix` on purpose, so `arecord` and the satellite service cannot both open `hw:Array` | **stopped for the capture**, started again right after |
+| `hat_type` | Capture PCM resolves to | Capture | Service |
+|---|---|---|---|
+| `2mic`, `2mic-v2`, `whisplay` | `pcm.array` → `type dsnoop` | shared | keeps running |
+| `4mic` | `plughw:seeed4micvoicec` | exclusive — `asoundrc-4mic.j2`: "Do NOT use dsnoop or dmix on the AC108 — they crash the kernel driver" | **stopped for the capture**, started again right after |
+| `xvf3800-usb` | `hw:Array` via `plug` | exclusive — `asoundrc-xvf3800-usb.j2` omits `dsnoop`/`dmix` on purpose (SysV IPC ownership deadlocks PortAudio) | **stopped for the capture**, started again right after |
+
+`tests/satellite/test_capture_room_ambient.py` re-derives this table from the
+templates themselves, so a comment that drifts cannot move the behaviour.
 
 On an exclusive mic the stop needs `--allow-service-stop` (or an interactive
 `yes`): it is an intervention on a Pi Zero and the room is deaf until the

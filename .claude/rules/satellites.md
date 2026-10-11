@@ -83,9 +83,12 @@ biases room arbitration). Do not bond a phone to one satellite — it out-shouts
 ## Acoustic commissioning is mandatory
 A new room is not live until its ambient audio is in the wake-word hard-negative set. The synthetic false-positive
 metric lies by ~30×; mic-gain levers reduce false wakes, only room-specific negatives eliminate them.
-**Who may hold the mic is a property of `hat_type`, not of the room.** The HAT profiles capture through a shared
-`dsnoop` PCM, `asoundrc-xvf3800-usb.j2` deliberately defines none — so on a USB array `arecord` and the running
-service cannot both open `hw:Array` and the capture must stop `renfield-satellite` first (#1388).
+**Who may hold the mic is a property of `hat_type`, and THE TEMPLATE DECIDES, NOT THE PROSE.** The criterion is whether
+`provisioning/templates/asoundrc-<hat_type>.j2` resolves its capture PCM to a `type dsnoop` (`2mic`, `2mic-v2`,
+`whisplay` → shareable) or straight to a device (`4mic` → `plughw:` because dsnoop/dmix crash the AC108 driver;
+`xvf3800-usb` → `hw:Array`, dmix/dsnoop omitted on purpose → both EXCLUSIVE). "HAT mic" is NOT the criterion — #1388
+first shipped with `4mic` in the shared column because the table was written against that prose. On an exclusive mic
+`arecord` and the running service cannot both open the device, so the capture must stop `renfield-satellite` first.
 `bin/capture-room-ambient.sh` reads `hat_type` from the inventory and branches; the stop is never silent
 (`--allow-service-stop` or an interactive `yes`) and the restart hangs off a trap (EXIT/INT/TERM) and is confirmed
 with `systemctl is-active` — a satellite left deaf by an aborted capture is worse than a failed capture.
