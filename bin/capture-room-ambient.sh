@@ -185,6 +185,12 @@ elif [[ "$CAPTURE_MODE" == "unknown" ]]; then
 fi
 
 SERVICE_STOPPED=0
+# Intent vs fact, and they are NOT the same: SERVICE_STOPPED says "a stop was
+# issued, so a start is owed", STOP_CONFIRMED says the stop actually succeeded.
+# Only the latter licenses the word DEAF — claiming it after a FAILED stop sends
+# someone to a device whose service is still running, and a wrong verdict in
+# that direction costs a trip.
+STOP_CONFIRMED=0
 # The restart is the one step this script calls worse-than-a-failed-capture, and
 # group_vars/satellites.yml says it itself: "Pi Zero 2 W 2.4GHz WiFi is
 # marginal". A single attempt turns one dropped packet into a deaf room, so try
@@ -222,8 +228,17 @@ resume_service_if_stopped() {
     # Give up, and record that we did: a later exit path must not silently run
     # the whole sequence a second time. The operator gets the manual command.
     SERVICE_STOPPED=0
-    echo "!!! CRITICAL: $SERVICE_UNIT is not confirmed active on $HOST after $START_ATTEMPTS attempts" >&2
-    echo "    — the room is DEAF. Start it by hand:" >&2
+    if (( STOP_CONFIRMED )); then
+        echo "!!! CRITICAL: $SERVICE_UNIT is not confirmed active on $HOST after $START_ATTEMPTS attempts" >&2
+        echo "    — it WAS stopped for the capture, so the room is DEAF. Start it by hand:" >&2
+    else
+        # The stop never succeeded, so the service was most likely never down.
+        echo "!!! WARNING: $SERVICE_UNIT is not confirmed active on $HOST after $START_ATTEMPTS" >&2
+        echo "    attempts, but the STOP did not succeed either — so it is probably still" >&2
+        echo "    running and the room is most likely NOT deaf. Verify before travelling:" >&2
+        echo "    ansible $HOST -i $INVENTORY -b -m shell -a 'systemctl is-active $SERVICE_UNIT'" >&2
+        echo "    If it is down, start it by hand:" >&2
+    fi
     echo "    ansible $HOST -i $INVENTORY -b -m shell -a 'systemctl start $SERVICE_UNIT'" >&2
     return 1
 }
@@ -260,6 +275,7 @@ stop_service() {
     SERVICE_STOPPED=1
     ansible_root_sh "systemctl stop $SERVICE_UNIT" >/dev/null \
         || { echo "error: could not stop $SERVICE_UNIT on $HOST" >&2; exit 1; }
+    STOP_CONFIRMED=1
 }
 
 confirm_service_stop() {

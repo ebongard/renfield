@@ -418,6 +418,24 @@ def test_unconfirmed_restart_is_loud_and_fails_the_run(box):
     assert "systemctl start" in res.stderr  # the manual recovery command
 
 
+def test_a_failed_stop_does_not_produce_a_deaf_verdict(box):
+    """If the stop itself failed the service was most likely never down, so
+    "the room is DEAF" is a false alarm in the expensive direction — it sends
+    someone to a device that is fine. The verdict follows the confirmed STOP,
+    not the mere intent to stop."""
+    box.env["HAT_TYPE"] = "xvf3800-usb"
+    box.env["STOP_FAILS"] = "1"
+    box.env["START_FAILS"] = "1"
+    res = box.run("--minutes", "15", "--allow-service-stop")
+
+    assert res.returncode != 0
+    assert "DEAF" not in res.stderr, res.stderr
+    assert "CRITICAL" not in res.stderr
+    assert "the STOP did not succeed either" in res.stderr
+    assert "probably still" in res.stderr
+    assert "systemctl is-active" in res.stderr  # how to check without a trip
+
+
 def test_a_transient_start_failure_is_retried_instead_of_judged(box):
     """The fleet's own notes call this Wi-Fi "marginal" — one dropped packet
     must not turn into a deaf room."""
