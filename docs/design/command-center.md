@@ -334,6 +334,16 @@ active-subsystem pulse. Files: `components/kiosk/KioskConstellation.tsx` + `useK
   `_recorded_chunks` counter. Until v1.4.9 it read the length of a write-only audio buffer capped at 500 chunks = 40.0 s,
   so after the 20 → 60 s raise the limit silently never fired and the recording died unanswered in this 120 s backstop
   (the 2026-09-19 regression; the buffer is removed — never derive a duration from a bounded container).
+- **Und dann greift die Grenze — und bis 2026-10-10 hörte das niemand.** Der Satellit überträgt mit `audio_end`
+  WARUM er aufgehört hat (`silence` zu Ende gesprochen, `button` Taste, `timeout` = die Höchstdauer hat gegriffen).
+  Das Backend nahm den Grund an, protokollierte ihn und las ihn nie wieder: eine mitten im Satz abgeschnittene
+  Äußerung ging wie eine vollständige in die Transkription, und der Sprechende bekam eine Antwort auf seinen halben
+  Satz, ohne es zu erfahren. Am Haushalt gemessen: 7 Kappungen in 7 Tagen (voice-server-Längen exakt `01:00.080`).
+  Seither stellt `truncation_notice()` einen DETERMINISTISCHEN Hinweis voran — kein Prompt-Zusatz, denn ob jemand
+  von der Kappung erfährt, darf nicht davon abhängen, ob das Modell sie erwähnt — und `turn_end_reason` steht im
+  `session_end`-Ereignis, damit es in der Satelliten-Historie nachweisbar bleibt.
+- Dieselbe Messung widerlegte den Verdacht, lange Befehle trügen gar nicht: 35–52 s laufen vollständig durch. Was
+  fehlte, war nicht die Aufnahme, sondern die Rückmeldung.
 - All four knobs live in `k8s/configmap.yaml`. #1277 tracks the still-unscheduled `DeviceManager` sweep. A resumed
   satellite is reinstated via `satellite_online`.
 - Consequence for the frontend: NO wall-clock decay of frozen snapshot values; a reconnect re-anchors from a fresh
