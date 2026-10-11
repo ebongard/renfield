@@ -8,8 +8,21 @@ job this instance did not record is ignored (see services/scanner_jobs.py).
 Replies: 403 for a bad token, 404 when folder ingest is off (final), 409 for a
 job this instance has not recorded (retryable — the outcome may simply have
 outrun the requester record), 5xx when the message could not be written
-(retryable), 2xx otherwise. The scanner treats 401/403/404 as final and retries
+(retryable), 2xx otherwise. The scanner treats 401/403 as final and retries
 anything else.
+
+A 404 is only final when it carries the application's own marker::
+
+    {"detail": {"reason": "folder_ingest_disabled", "message": "<human text>"}}
+
+Any other 404 — above all one without that body — is RETRYABLE for the scanner.
+The number alone cannot be trusted: while no backend pod is ready the ingress
+answers 404 itself, and a completion event in flight during a rollout was then
+discarded for good (#1391, measured 2026-10-11: two correct 503, then a Traefik
+404 that never reached the application). The marker is the only thing that says
+"the application saw this request and the feature is off"; the reason string is
+what the scanner compares against, so never rename it without changing the
+scanner with it.
 """
 
 from __future__ import annotations
@@ -33,6 +46,12 @@ from services.scanner_jobs import (
 from utils.config import settings
 
 router = APIRouter()
+
+# The machine-readable marker that makes THIS 404 distinguishable from a
+# transient ingress 404 during a rollout (#1391). The scanner treats a 404 as
+# final only when ``detail.reason`` equals this string — a cross-repo contract,
+# hence a named constant and never an inline literal.
+FOLDER_INGEST_DISABLED_REASON = "folder_ingest_disabled"
 
 
 class ScanJobResult(BaseModel):
@@ -78,8 +97,16 @@ async def scan_job_event(
     # tying up the worker threads.
     if not settings.folder_ingest_enabled:
         # The scanner pushes through folder ingest; with it off there is nothing
-        # to report. 404 is final for the scanner, so it stops retrying.
-        raise HTTPException(status_code=404, detail="Folder ingest is disabled")
+        # to report. 404 is final for the scanner, so it stops retrying — but
+        # ONLY because of the marker below: a bare 404 is the ingress speaking
+        # for a pod that is not ready yet, and that is the opposite of final.
+        raise HTTPException(
+            status_code=404,
+            detail={
+                "reason": FOLDER_INGEST_DISABLED_REASON,
+                "message": "Folder ingest is disabled",
+            },
+        )
     token = authorization.removeprefix("Bearer ").strip() if authorization.startswith("Bearer ") else ""
     client = await resolve_folder_ingest_client(db, token) if token else None
     if client is None:
@@ -108,7 +135,8 @@ async def scan_job_event(
         # report back before this instance has recorded who asked. 409 makes the
         # scanner retry with backoff until the record exists — and an event sent
         # to the wrong instance ends as a loud give-up instead of a silent
-        # "delivered". Never 404, which the scanner treats as final.
+        # "delivered". Never 404: 409 says retryable outright, while a 404 only
+        # stays retryable as long as it is kept free of the disabled marker.
         raise HTTPException(status_code=409, detail="unknown job")
     if outcome == "in_progress":
         # Another delivery of this job holds the short claim — or held it and its

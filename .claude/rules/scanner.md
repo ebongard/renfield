@@ -18,6 +18,10 @@ dedup / tier / PDF-Split / Paperless are unchanged.
   (`services/scanner_jobs.py`). The event carries **no user identity** — never trust one from it.
 - Unknown job → **409** (a fast-failing scan retries until the requester is recorded), **never 404**. An ownership
   refusal is final.
+- 🛑 **Eine 404 ist nur mit MERKMAL endgültig** (#1391): die Zahl allein kommt auch vom Ingress, wenn kein Pod
+  bereit ist. Die Abschalt-404 trägt `{"detail": {"reason": "folder_ingest_disabled", "message": …}}`, jede
+  andere 404 gilt dem Scanner als wiederholbar. Repo-übergreifender Vertrag — nie umbenennen ohne den Scanner,
+  und an **keine** andere Antwort hängen: dort macht das Merkmal eine wiederholbare Ablehnung endgültig.
 - The route accepts ONLY `SCANNER_INGEST_CLIENT_IDS` (fail-closed, rate-limited).
 
 ## Delivery: exactly once into the conversation
