@@ -98,6 +98,7 @@ def box(tmp_path):
     marker = tmp_path / "capture-started"
     restart_begun = tmp_path / "restart-begun"
     restart_finished = tmp_path / "restart-finished"
+    start_tries = tmp_path / "start-tries"
 
     # ansible-inventory --host <h>: emits the host vars, or fails when the host
     # is not in the inventory (HOST_IN_INVENTORY=0).
@@ -136,6 +137,15 @@ def box(tmp_path):
         "        exit 0 ;;\n"
         '      *"systemctl start"*)\n'
         '        [ "${START_FAILS:-0}" = "1" ] && { echo "Failed to start unit" >&2; exit 2; }\n'
+        # START_FAIL_TIMES=N: only the first N attempts fail — a flaky link,
+        # which is the normal Pi Zero 2 W 2.4 GHz Wi-Fi failure mode.
+        '        if [ "${START_FAIL_TIMES:-0}" != "0" ]; then\n'
+        '          n=$(( $(cat "$START_TRIES" 2>/dev/null || echo 0) + 1 ))\n'
+        '          echo "$n" > "$START_TRIES"\n'
+        '          if [ "$n" -le "${START_FAIL_TIMES}" ]; then\n'
+        '            echo "Failed to start unit" >&2; exit 2\n'
+        "          fi\n"
+        "        fi\n"
         # RESTART_DELAY makes the restart slow (it IS slow over ssh to a Pi
         # Zero). The two markers distinguish "the restart was started" from
         # "the restart ran to completion" — a signal that kills it mid-flight
@@ -188,6 +198,9 @@ def box(tmp_path):
             "CAPTURE_MARKER": str(marker),
             "RESTART_BEGUN": str(restart_begun),
             "RESTART_FINISHED": str(restart_finished),
+            "START_TRIES": str(start_tries),
+            # Keep the retry pause real but short; production uses 5 s.
+            "AMBIENT_START_RETRY_SECONDS": "0.2",
             "PROBE_JSON": PROBE_JSON,
             "GATE_JSON": GATE_JSON,
             "WAV_PAYLOAD": WAV_PAYLOAD,
@@ -403,6 +416,37 @@ def test_unconfirmed_restart_is_loud_and_fails_the_run(box):
     assert "CRITICAL" in res.stderr
     assert "DEAF" in res.stderr
     assert "systemctl start" in res.stderr  # the manual recovery command
+
+
+def test_a_transient_start_failure_is_retried_instead_of_judged(box):
+    """The fleet's own notes call this Wi-Fi "marginal" — one dropped packet
+    must not turn into a deaf room."""
+    box.env["HAT_TYPE"] = "xvf3800-usb"
+    box.env["START_FAIL_TIMES"] = "1"  # first attempt fails, second works
+    res = box.run("--minutes", "15", "--allow-service-stop")
+
+    assert res.returncode == 0, res.stderr
+    assert "CRITICAL" not in res.stderr
+    assert "DEAF" not in res.stderr
+    starts = [c for c in box.calls if "systemctl start" in c]
+    assert len(starts) == 2, f"no second attempt: {box.calls}"
+    assert "is active (attempt 2/3)" in res.stdout
+
+
+def test_the_deaf_verdict_comes_only_after_every_attempt(box):
+    box.env["HAT_TYPE"] = "xvf3800-usb"
+    box.env["START_FAILS"] = "1"  # every attempt fails
+    started = time.monotonic()
+    res = box.run("--minutes", "15", "--allow-service-stop")
+    elapsed = time.monotonic() - started
+
+    assert res.returncode != 0
+    starts = [c for c in box.calls if "systemctl start" in c]
+    assert len(starts) == 3, f"expected 3 attempts, got {box.calls}"
+    assert res.stderr.count("CRITICAL") == 1, "one verdict, not one per attempt"
+    assert "after 3 attempts" in res.stderr
+    # The pause between attempts really runs (2 x AMBIENT_START_RETRY_SECONDS).
+    assert elapsed >= 0.4, f"the retry pause was skipped ({elapsed:.2f}s)"
 
 
 # --- the busy device says it is busy ----------------------------------------

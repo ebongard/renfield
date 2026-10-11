@@ -185,6 +185,13 @@ elif [[ "$CAPTURE_MODE" == "unknown" ]]; then
 fi
 
 SERVICE_STOPPED=0
+# The restart is the one step this script calls worse-than-a-failed-capture, and
+# group_vars/satellites.yml says it itself: "Pi Zero 2 W 2.4GHz WiFi is
+# marginal". A single attempt turns one dropped packet into a deaf room, so try
+# a few times with a short pause before passing the DEAF verdict.
+START_ATTEMPTS=3
+# Test seam only — production always uses the 5 s default.
+START_RETRY_SECONDS="${AMBIENT_START_RETRY_SECONDS:-5}"
 
 start_service() {
     local state
@@ -197,14 +204,26 @@ start_service() {
 
 resume_service_if_stopped() {
     (( SERVICE_STOPPED )) || return 0
-    SERVICE_STOPPED=0
+    local attempt
     echo "==> Starting $SERVICE_UNIT on $HOST again"
-    if start_service; then
-        echo "    $SERVICE_UNIT is active"
-        return 0
-    fi
-    echo "!!! CRITICAL: $SERVICE_UNIT is not confirmed active on $HOST — the room is DEAF." >&2
-    echo "    Start it by hand:" >&2
+    for (( attempt = 1; attempt <= START_ATTEMPTS; attempt++ )); do
+        if start_service; then
+            # Cleared only once the start is CONFIRMED — clearing it up front
+            # turned the whole retry question into a single attempt.
+            SERVICE_STOPPED=0
+            echo "    $SERVICE_UNIT is active (attempt $attempt/$START_ATTEMPTS)"
+            return 0
+        fi
+        if (( attempt < START_ATTEMPTS )); then
+            echo "    attempt $attempt/$START_ATTEMPTS did not confirm it — retrying in ${START_RETRY_SECONDS}s" >&2
+            sleep "$START_RETRY_SECONDS"
+        fi
+    done
+    # Give up, and record that we did: a later exit path must not silently run
+    # the whole sequence a second time. The operator gets the manual command.
+    SERVICE_STOPPED=0
+    echo "!!! CRITICAL: $SERVICE_UNIT is not confirmed active on $HOST after $START_ATTEMPTS attempts" >&2
+    echo "    — the room is DEAF. Start it by hand:" >&2
     echo "    ansible $HOST -i $INVENTORY -b -m shell -a 'systemctl start $SERVICE_UNIT'" >&2
     return 1
 }
