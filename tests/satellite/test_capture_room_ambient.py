@@ -376,6 +376,33 @@ def test_busy_device_is_reported_as_busy_not_as_a_config_error(box):
     assert "audio open error" not in res.stderr
 
 
+def test_the_busy_advice_on_a_shared_mic_is_followable(box):
+    """The BUSY message on a mic classified as shared says "re-run with
+    --allow-service-stop". The first version of #1388 printed that while the
+    switch only lifted `unknown` -> `exclusive`: byte-identical output with and
+    without it, zero systemctl calls, no way out but editing the script. This
+    test holds the INTENT the message states — the advice has to work.
+    """
+    box.env["HAT_TYPE"] = "2mic"  # the table says shared …
+    box.env["ARECORD_MODE"] = "busy"  # … and the device says otherwise
+
+    refused = box.run("--minutes", "15")
+    assert refused.returncode != 0
+    assert "--allow-service-stop" in refused.stderr, "the message must name the way out"
+    assert box.calls == []
+
+    # Exactly what the message tells the operator to do.
+    box.env["ARECORD_MODE"] = "ok"  # with the service out of the way it records
+    followed = box.run("--minutes", "15", "--allow-service-stop")
+
+    assert followed.returncode == 0, followed.stderr
+    ops = [c.split("systemctl ")[1].split()[0] for c in box.calls]
+    assert ops[:2] == ["stop", "start"], (
+        f"the switch did not force the exclusive path on a 'shared' mic: {box.calls}"
+    )
+    assert box.sidecar()["mic_capture_mode"] == "exclusive"
+
+
 def test_busy_device_on_an_exclusive_mic_blames_a_third_party(box):
     box.env["HAT_TYPE"] = "xvf3800-usb"
     box.env["ARECORD_MODE"] = "busy"

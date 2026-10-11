@@ -58,9 +58,13 @@
 #   --label NAME          label for the filename + sidecar (default "ambient")
 #   --out DIR             output root (default data/wakeword-ambient)
 #   --allow-service-stop  authorise stopping renfield-satellite for the capture.
-#                         Needed on an exclusive (XVF3800/USB) mic; without it
-#                         the script asks when it has a terminal and refuses
+#                         Needed on an exclusive mic (4mic, XVF3800/USB); without
+#                         it the script asks when it has a terminal and refuses
 #                         otherwise. The room is DEAF while the service is down.
+#                         It FORCES the exclusive path from every mode, including
+#                         a mic classified as shared — so it is the escape hatch
+#                         when the classification below turns out to be wrong on
+#                         a device, without editing this script.
 #
 set -euo pipefail
 
@@ -159,20 +163,25 @@ case "$HAT_TYPE" in
     *)                     CAPTURE_MODE="unknown" ;;
 esac
 
-if [[ "$CAPTURE_MODE" == "unknown" ]]; then
-    if (( ALLOW_SERVICE_STOP )); then
-        # Stopping the service is always sufficient for the capture, and the
-        # operator has authorised it — so an unrecognised profile takes the
-        # exclusive path instead of assuming a dsnoop PCM that may not exist.
-        echo "note: unknown hat_type '$HAT_TYPE' — treating the mic as exclusive"
-        CAPTURE_MODE="exclusive"
-    else
-        echo "error: unknown hat_type '$HAT_TYPE' for $HOST — cannot tell whether its ALSA" >&2
-        echo "       profile shares the mic via dsnoop. Add it to the case table in" >&2
-        echo "       bin/capture-room-ambient.sh, or re-run with --allow-service-stop to" >&2
-        echo "       capture with $SERVICE_UNIT stopped." >&2
-        exit 1
+if (( ALLOW_SERVICE_STOP )); then
+    # The switch forces the exclusive path from EVERY mode, not just "unknown".
+    # Stopping the service is always sufficient for the capture and the operator
+    # has authorised it, so this is the one lever that does not depend on the
+    # table being right — which is what makes "re-run with --allow-service-stop"
+    # a followable instruction when a mic classified as shared turns out busy.
+    # Without it the escape hatch existed only for the hat the table does not
+    # know, and was missing for the hat it knows WRONGLY.
+    if [[ "$CAPTURE_MODE" != "exclusive" ]]; then
+        echo "note: --allow-service-stop given — capturing with $SERVICE_UNIT stopped"
+        echo "      (hat_type=$HAT_TYPE would otherwise be treated as '$CAPTURE_MODE')"
     fi
+    CAPTURE_MODE="exclusive"
+elif [[ "$CAPTURE_MODE" == "unknown" ]]; then
+    echo "error: unknown hat_type '$HAT_TYPE' for $HOST — cannot tell whether its ALSA" >&2
+    echo "       profile shares the mic via dsnoop. Add it to the case table in" >&2
+    echo "       bin/capture-room-ambient.sh, or re-run with --allow-service-stop to" >&2
+    echo "       capture with $SERVICE_UNIT stopped." >&2
+    exit 1
 fi
 
 SERVICE_STOPPED=0
