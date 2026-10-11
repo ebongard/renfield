@@ -214,6 +214,14 @@ resume_service_if_stopped() {
 # below) and the signal handlers route into it by exiting.
 on_exit() {
     local rc=$?
+    # FIRST, before anything touches the service: make INT/TERM unreachable for
+    # the rest of this run. Ctrl-C goes to the whole foreground process group,
+    # so a second one would otherwise kill the `ansible systemctl start` child
+    # mid-flight and leave the room deaf — and a second Ctrl-C is the NORMAL
+    # case, because the restart over ssh to a Pi Zero takes seconds and the
+    # first Ctrl-C therefore looks like a hang. `trap ''` sets SIG_IGN, which
+    # bash passes on to children across exec, so the restart is shielded too.
+    trap '' INT TERM
     trap - EXIT
     resume_service_if_stopped || { (( rc )) || rc=1; }
     exit "$rc"

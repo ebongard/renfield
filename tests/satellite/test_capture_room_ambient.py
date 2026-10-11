@@ -96,6 +96,8 @@ def box(tmp_path):
     stubs.mkdir()
     calls = tmp_path / "calls"
     marker = tmp_path / "capture-started"
+    restart_begun = tmp_path / "restart-begun"
+    restart_finished = tmp_path / "restart-finished"
 
     # ansible-inventory --host <h>: emits the host vars, or fails when the host
     # is not in the inventory (HOST_IN_INVENTORY=0).
@@ -134,6 +136,13 @@ def box(tmp_path):
         "        exit 0 ;;\n"
         '      *"systemctl start"*)\n'
         '        [ "${START_FAILS:-0}" = "1" ] && { echo "Failed to start unit" >&2; exit 2; }\n'
+        # RESTART_DELAY makes the restart slow (it IS slow over ssh to a Pi
+        # Zero). The two markers distinguish "the restart was started" from
+        # "the restart ran to completion" — a signal that kills it mid-flight
+        # leaves the first and not the second.
+        '        : > "$RESTART_BEGUN"\n'
+        '        [ "${RESTART_DELAY:-0}" != "0" ] && sleep "$RESTART_DELAY"\n'
+        '        : > "$RESTART_FINISHED"\n'
         "        exit 0 ;;\n"
         '      *"systemctl is-active"*)\n'
         '        if [ "${START_FAILS:-0}" = "1" ]; then echo "inactive"; exit 3; fi\n'
@@ -177,6 +186,8 @@ def box(tmp_path):
             "PATH": f"{stubs}:{env['PATH']}",
             "CALLS": str(calls),
             "CAPTURE_MARKER": str(marker),
+            "RESTART_BEGUN": str(restart_begun),
+            "RESTART_FINISHED": str(restart_finished),
             "PROBE_JSON": PROBE_JSON,
             "GATE_JSON": GATE_JSON,
             "WAV_PAYLOAD": WAV_PAYLOAD,
@@ -190,6 +201,8 @@ def box(tmp_path):
             self.env = env
             self.calls_file = calls
             self.marker = marker
+            self.restart_begun = restart_begun
+            self.restart_finished = restart_finished
             self.out_dir = tmp_path / "data/wakeword-ambient" / HOST
 
         def run(self, *args, timeout=60):
@@ -212,6 +225,14 @@ def box(tmp_path):
                 stdin=subprocess.DEVNULL,
                 start_new_session=True,  # own process group: SIGINT stays here
             )
+
+        def wait_for(self, path, proc=None, timeout=30, what="marker"):
+            deadline = time.time() + timeout
+            while not path.exists() and time.time() < deadline:
+                if proc is not None and proc.poll() is not None:
+                    raise AssertionError(f"script exited before the {what} appeared")
+                time.sleep(0.05)
+            assert path.exists(), f"the {what} never appeared"
 
         @property
         def calls(self):
@@ -318,11 +339,7 @@ def test_interrupted_capture_still_restarts_the_service(box):
     box.env["ARECORD_MODE"] = "hang"
 
     proc = box.popen("--minutes", "45", "--allow-service-stop")
-    deadline = time.time() + 30
-    while not box.marker.exists() and time.time() < deadline:
-        assert proc.poll() is None, "script exited before the capture started"
-        time.sleep(0.1)
-    assert box.marker.exists(), "capture never started"
+    box.wait_for(box.marker, proc, what="capture")
 
     # Exactly what an operator's Ctrl-C does: SIGINT to the foreground group.
     os.killpg(os.getpgid(proc.pid), signal.SIGINT)
@@ -335,6 +352,34 @@ def test_interrupted_capture_still_restarts_the_service(box):
         f"the service was stopped and not started again: {box.calls}\n{err}"
     )
     assert "interrupted" in err
+
+
+def test_a_second_interrupt_does_not_abort_the_running_restart(box):
+    """Ctrl-C goes to the whole foreground process group, so a second one hits
+    the `ansible systemctl start` child as well — and the first Ctrl-C looks
+    like a hang precisely because the restart over ssh to a Pi Zero takes
+    seconds. `on_exit` therefore sets SIG_IGN for INT/TERM before touching the
+    service: bash passes SIG_IGN on to children across exec, so the restart is
+    shielded too."""
+    box.env["HAT_TYPE"] = "xvf3800-usb"
+    box.env["ARECORD_MODE"] = "hang"
+    box.env["RESTART_DELAY"] = "3"
+
+    proc = box.popen("--minutes", "45", "--allow-service-stop")
+    box.wait_for(box.marker, proc, what="capture")
+
+    os.killpg(os.getpgid(proc.pid), signal.SIGINT)        # the operator aborts
+    box.wait_for(box.restart_begun, proc, what="restart")
+    os.killpg(os.getpgid(proc.pid), signal.SIGINT)        # "it hangs!" — again
+    _out, err = proc.communicate(timeout=60)
+
+    assert box.restart_finished.exists(), (
+        "the second interrupt killed the running restart — the room stays deaf\n"
+        f"calls={box.calls}\n{err}"
+    )
+    ops = [c.split("systemctl ")[1].split()[0] for c in box.calls]
+    assert "is-active" in ops, f"the restart was never confirmed: {box.calls}"
+    assert proc.returncode != 0
 
 
 def test_failed_capture_still_restarts_the_service(box):
