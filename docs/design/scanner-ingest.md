@@ -328,15 +328,18 @@ The shape now:
 - **Completion is an event, never a poll.** The scanner knows which instance
   asked — the per-caller Bearer token — and `SCANNER_CALLER_TARGET_<CALLER>` maps
   that caller to its target, whose base URL and folder-ingest token carry
-  `POST /api/scanner/job-event` back. Delivery retries with capped backoff; 401,
-  403 and 404 are final. A restart closes cut-off jobs as `interrupted` and
-  re-sends events that never got through.
+  `POST /api/scanner/job-event` back. Delivery retries with capped backoff; 401
+  and 403 are final, and a 404 only when it carries the application's
+  `folder_ingest_disabled` marker (see "Eine 404 ist nur mit Merkmal endgültig"
+  below). A restart closes cut-off jobs as `interrupted` and re-sends events that
+  never got through.
 - **Renfield** (`services/scanner_jobs.py`, `api/routes/scanner_jobs.py`): when
   `mcp.scanner.scan_document` returns a job id, `action_executor` stores the
   requester (user + chat session) from the AUTHENTICATED turn in Redis (24 h).
   The event carries no user identity; a job this instance did not record is
-  ignored (2xx, never 404). Delivery is at-most-once into the chat (claim via
-  `SET NX`, released if the write fails so the scanner's retry lands): the
+  ignored (409 after the hardening below, never 404). Delivery is at-most-once
+  into the chat (claim via `SET NX`, released if the write fails so the
+  scanner's retry lands): the
   outcome becomes an assistant message in the requesting conversation, plus a
   content-free `scan_job_finished` event on `/ws/user` that reloads the open chat
   and shows a small notice. Personal proactive notifications were rejected as the
@@ -351,7 +354,8 @@ Hardening from the pre-merge review (2026-09-14):
 - **Only the scanner may report.** The route accepts only the ingest client ids in
   `SCANNER_INGEST_CLIENT_IDS` (fail-closed) — any other folder-ingest credential
   plus a known job id could otherwise write into a conversation. Rate-limited like
-  the ingest routes; 404 (final) while folder ingest is off.
+  the ingest routes; 404 while folder ingest is off — final only because of the
+  `folder_ingest_disabled` marker in its body.
 - **No free text from the event reaches the chat.** The message is built from
   fixed, localised templates: the title comes from the requester's own tool call,
   a failure from its `error_code` (`no_pages`, `device_unavailable`, `scan_error`,
@@ -425,10 +429,57 @@ Hardening from the post-deploy review (2026-09-14):
   `Retry-After` honoured up to the backoff cap, keeping the 24 h horizon.
 
 **Deploy order.** Backend + ConfigMap and scanner together: a new scanner against
-an old backend gets 404 (final) on the event route; an old scanner against the new
-ConfigMap loses nothing but still runs synchronously. Set
+an old backend gets a 404 on the event route — bare, so the marker rule keeps
+retrying it for the 24 h horizon rather than discarding the outcome; an old
+scanner against the new ConfigMap loses nothing but still runs synchronously. Set
 `SCANNER_INGEST_CLIENT_IDS` (backend) and `SCANNER_CALLER_TARGET_<CALLER>`
 (scanner host) before the first scan.
+
+### Eine 404 ist nur mit Merkmal endgültig
+
+Die Zahl 404 hat zwei Absender. Der eine ist die Anwendung: Ordner-Ingest ist
+abgeschaltet, es gibt nichts zu melden, und den Auftrag 24 Stunden lang erneut
+anzutragen wäre sinnlos — endgültig ist richtig. Der andere ist der Ingress:
+während eines Rollouts, solange kein Pod bereit ist, antwortet Traefik selbst
+404, und dann ist dieselbe Zahl das genaue Gegenteil von endgültig.
+
+Am 2026-10-11 wurde das beim Token-Wechsel gemessen (#1391). Der Lebenslauf
+einer Fertigmeldung: zwei 503 (korrekt wiederholt), dann eine 404 — und der
+Scanner verwarf die Meldung. Dass sie nicht aus der Anwendung kam, ist belegt:
+`FOLDER_INGEST_ENABLED` stand auf `true`, und zur Sekunde der Ablehnung stand im
+Backend-Protokoll keine `job-event`-Zeile, nur Startmeldungen. Die Anfrage hat
+die Anwendung nie erreicht. **Jede Fertigmeldung, die während eines Rollouts in
+Flug ist, konnte damit dauerhaft verlorengehen** — das Dokument eingelesen, aber
+niemand erfährt vom Abschluss. Rückblickend erklärt das die zwei 404 vom
+2026-10-04.
+
+Die Unterscheidung muss von der Seite kommen, die sie kennt, also von der
+Anwendung. Die Abschalt-404 trägt seither ein festes, maschinenlesbares Merkmal:
+
+```json
+{"detail": {"reason": "folder_ingest_disabled", "message": "<menschlicher Text>"}}
+```
+
+Der Scanner behandelt eine 404 nur als endgültig, wenn `detail.reason` genau
+diese Zeichenkette ist; jede andere 404 — vor allem eine ohne Rumpf — ist für ihn
+wiederholbar. Die beiden Hälften sind ein **repo-übergreifender Vertrag**: die
+Zeichenkette lebt in `api/routes/scanner_jobs.py` als benannte Konstante
+`FOLDER_INGEST_DISABLED_REASON` und wird nie umbenannt, ohne den Scanner
+mitzuändern. Die Form ist dieselbe, die der Ingest-Pfad schon benutzt
+(`{"message", "reason"}` in `folder_ingest.py` / `email_ingest.py`) — kein neues
+Format, nur eine weitere Antwort, die es trägt.
+
+Das Merkmal gehört an **genau diese** Antwort und an keine andere. An eine
+wiederholbare Ablehnung gehängt — 403 ohne Berechtigung, 409 für einen noch nicht
+eingetragenen Auftrag — würde es diese endgültig machen und den Fehler nur
+verschieben. Ein Negativtest in `tests/backend/test_scanner_jobs.py` prüft genau
+das: keine der vier anderen Ablehnungen des Routers trägt das Merkmal.
+
+Die Ingress-Variante (Traefik während eines Rollouts 503 statt 404 antworten
+lassen) bleibt als eigener Posten offen. Sie löst es für **alle** Clients auf
+einmal, ist aber eine Infrastruktureinstellung mit grösserer Reichweite — und
+`reference_ws_404_transient_during_deploy` zeigt, dass dasselbe Muster auch den
+WebSocket-Pfad trifft.
 
 ### Der Grund gehört auch ins Protokoll
 

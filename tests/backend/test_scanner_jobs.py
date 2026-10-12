@@ -24,6 +24,8 @@ pytestmark = [pytest.mark.unit]
 
 JOB_ID = "ab" * 16
 SCANNER_CLIENT = SimpleNamespace(client_id="scanner-hh", label="Scanner", route="folder")
+# A valid folder-ingest credential that is NOT the scanner's — e.g. the filesystem MCP.
+OTHER_INGEST_CLIENT = SimpleNamespace(client_id="filesystem", label="Files", route="folder")
 
 
 class FakeRedis:
@@ -686,9 +688,8 @@ def _body(status="done"):
 async def test_route_accepts_only_the_scanner_credential(client):
     """Security review: ANY folder-ingest client (e.g. the filesystem MCP) plus a
     known job_id could otherwise write into someone's conversation."""
-    other = SimpleNamespace(client_id="filesystem", label="Files", route="folder")
     handler = AsyncMock(return_value="delivered")
-    with patch("api.routes.scanner_jobs.resolve_folder_ingest_client", AsyncMock(return_value=other)), \
+    with patch("api.routes.scanner_jobs.resolve_folder_ingest_client", AsyncMock(return_value=OTHER_INGEST_CLIENT)), \
          patch("api.routes.scanner_jobs.handle_job_event", handler):
         resp = await client.post("/api/scanner/job-event", json=_body(),
                                  headers={"Authorization": "Bearer ok"})
@@ -776,6 +777,12 @@ async def test_route_refuses_missing_or_non_bearer_tokens(client, header):
 
 
 async def test_route_is_final_404_when_folder_ingest_is_off(client, monkeypatch):
+    """#1391: the status code alone is NOT the signal. During a rollout Traefik
+    answers 404 itself while no pod is ready (measured 2026-10-11: two correct
+    503, then a 404 that never reached the application), and the scanner
+    discarded a real completion event for good. So the application's own 404
+    carries a fixed, machine-readable marker, and the scanner treats a 404 as
+    final only when it sees it."""
     from api.routes import scanner_jobs as route
 
     monkeypatch.setattr(route.settings, "folder_ingest_enabled", False)
@@ -784,7 +791,37 @@ async def test_route_is_final_404_when_folder_ingest_is_off(client, monkeypatch)
         resp = await client.post("/api/scanner/job-event", json=_body(),
                                  headers={"Authorization": "Bearer ok"})
     assert resp.status_code == 404
+    detail = resp.json()["detail"]
+    # The literal, not the constant: the scanner in the other repo compares
+    # against this exact string, so a rename here must fail the test.
+    assert detail["reason"] == "folder_ingest_disabled"
+    assert route.FOLDER_INGEST_DISABLED_REASON == "folder_ingest_disabled"
+    assert detail["message"]  # a human-readable half travels with it
     resolver.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    "resolved,outcome,expected",
+    [
+        (None, None, 403),                      # bad token
+        (OTHER_INGEST_CLIENT, None, 403),       # a folder-ingest client, not the scanner
+        (SCANNER_CLIENT, "unknown_job", 409),   # requester record not written yet
+        (SCANNER_CLIENT, "in_progress", 409),   # another delivery holds the lease
+    ],
+)
+async def test_no_other_refusal_carries_the_disabled_marker(client, resolved, outcome, expected):
+    """Negative control for #1391: the marker means exactly one thing — "the
+    application answered and the feature is off". Attached to a retryable
+    refusal it would make that refusal final and lose the outcome, so nothing
+    but the disabled-404 may carry it."""
+    with patch("api.routes.scanner_jobs.resolve_folder_ingest_client", AsyncMock(return_value=resolved)), \
+         patch("api.routes.scanner_jobs.handle_job_event", AsyncMock(return_value=outcome)):
+        resp = await client.post("/api/scanner/job-event", json=_body(),
+                                 headers={"Authorization": "Bearer ok"})
+    assert resp.status_code == expected
+    detail = resp.json().get("detail")
+    reason = detail.get("reason") if isinstance(detail, dict) else None
+    assert reason != "folder_ingest_disabled"
 
 
 async def test_route_rejects_a_malformed_job_id(client):
