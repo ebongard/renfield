@@ -92,9 +92,56 @@ bin/capture-room-ambient.sh satellite-<room> --minutes 45 --label commissioning
 ```
 
 The script reads the satellite's live audio config, records **raw
-multi-channel** off the shared `dsnoop` PCM (no service stop needed on HAT
-mics), runs the sanity gate, and stores the result plus a provenance sidecar
-under `data/wakeword-ambient/<satellite>/`.
+multi-channel**, runs the sanity gate, and stores the result plus a provenance
+sidecar under `data/wakeword-ambient/<satellite>/`.
+
+**Who holds the mic depends on `hat_type`, and the script branches on it** (read
+from the inventory, never guessed). **The template decides, not the prose** —
+the criterion is whether `provisioning/templates/asoundrc-<hat_type>.j2`
+resolves its capture PCM to a `type dsnoop` or straight to a `hw:`/`plughw:`
+device. "HAT mic" is *not* the criterion: `4mic` is a HAT and is exclusive.
+
+| `hat_type` | Capture PCM resolves to | Capture | Service |
+|---|---|---|---|
+| `2mic`, `2mic-v2`, `whisplay` | `pcm.array` → `type dsnoop` | shared | keeps running |
+| `4mic` | `plughw:seeed4micvoicec` | exclusive — `asoundrc-4mic.j2`: "Do NOT use dsnoop or dmix on the AC108 — they crash the kernel driver" | **stopped for the capture**, started again right after |
+| `xvf3800-usb` | `hw:Array` via `plug` | exclusive — `asoundrc-xvf3800-usb.j2` omits `dsnoop`/`dmix` on purpose (SysV IPC ownership deadlocks PortAudio) | **stopped for the capture**, started again right after |
+
+`tests/satellite/test_capture_room_ambient.py` re-derives this table from the
+templates themselves, so a comment that drifts cannot move the behaviour.
+
+On an exclusive mic the stop needs `--allow-service-stop` (or an interactive
+`yes`): it is an intervention on a Pi Zero and the room is deaf until the
+capture ends. `--allow-service-stop` **forces** the exclusive path from every
+mode, including a mic the table calls shared — that is the escape hatch when a
+classification turns out wrong on a device, with no script edit.
+
+The restart is guaranteed, not hoped for:
+
+- it hangs off a trap (EXIT/INT/TERM), so an aborted capture does not leave a
+  mute satellite, and the mic is handed back **before** the minutes-long
+  transfer;
+- `on_exit` makes INT/TERM unreachable (`trap ''`, inherited as SIG_IGN by the
+  `systemctl start` child) before touching the service, because the restart
+  over ssh takes seconds, the first Ctrl-C therefore looks like a hang, and a
+  second one would otherwise kill the restart in flight;
+- it is retried up to **3 times** with a 5 s pause (this Wi-Fi is marginal; one
+  dropped packet must not mean a deaf room) and confirmed with a single
+  `systemctl is-active` — never a `journalctl` follow;
+- the verdict distinguishes the two cases: stop confirmed and restart
+  unconfirmed is `CRITICAL … the room is DEAF`; a stop that itself failed
+  yields `WARNING … probably still running`, with the `is-active` command to
+  check before travelling to the device. Both exit non-zero.
+
+The sidecar records `hat_type` and `mic_capture_mode` for the capture. The
+XVF3800 keeps its capture gain in chip flash rather than in ALSA, so there the
+sidecar has no gain provenance and the script warns — note the
+`xvf3800_tuning` value from `host_vars/satellite-<room>.yml` alongside the
+capture (§2).
+
+An unknown `hat_type`, a host without one, and a host that is not in the
+Ansible inventory at all (the Esszimmer satellite is a k8s pod) are refusals,
+not guesses.
 
 **The capture must span the room's real acoustic events.** A quiet 10-minute
 block captures a noise floor, and a noise floor is not what false-fires the

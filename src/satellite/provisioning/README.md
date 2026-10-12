@@ -132,6 +132,9 @@ reduce this; only room-specific hard-negatives eliminate it.
 ```bash
 # From the repo root, after provisioning:
 bin/capture-room-ambient.sh satellite-<room> --minutes 45 --label commissioning
+# On an XVF3800/USB host the mic is exclusive: the capture needs the satellite
+# service stopped for its duration, which must be authorised explicitly.
+bin/capture-room-ambient.sh satellite-<room> --minutes 45 --allow-service-stop
 ```
 
 Capture while the room is **in use** — a quiet noise floor is not what
