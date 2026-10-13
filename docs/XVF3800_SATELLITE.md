@@ -643,8 +643,47 @@ USB-C-Port** (neben der 3.5-mm-Klinke, NICHT der ESP32S3-Port). Wenn das Board
 gar nicht als DFU erscheint: **Safe Mode** = Mute-Taste beim Einstecken halten.
 Firmware + Anleitung liegen unter `src/satellite/hardware/xvf3800/firmware/`:
 ```
-dfu-util -R -e -a 1 -D respeaker_xvf3800_usb_dfu_firmware_v2.0.9.bin
+dfu-util -R -e -a 1 -D respeaker_xvf3800_usb_dfu_firmware_v2.1.1.bin
 ```
+
+#### 🛑 Woran man es ERKENNT, statt zu raten
+
+`dfu-util -l` unterscheidet die beiden Zustände eindeutig, und zwar an `intf`:
+
+```
+ohne UAC2 :  ver=0003, intf=0, alt 0 Factory / 1 Upgrade / 2 DataPartition
+mit  UAC2 :  ver=0211, intf=4, alt 0 Factory / 1 Upgrade
+```
+
+**`intf=4` heißt: die DFU-Schnittstelle liegt HINTER drei Audio-Schnittstellen.**
+`intf=0` heißt, es gibt keine — das Board kann dann gar kein USB-Mikrofon sein,
+egal an welchem Rechner. Am 2026-10-13 kostete das eine Stunde, weil zuerst
+Kabel, Buchse und `dwc2` verdächtigt wurden. Gegenprobe ohne jedes Werkzeug:
+ein Board ohne UAC2 taucht auf KEINEM Rechner als Audiogerät auf — erscheint es
+auch am Laptop nicht, ist es nicht der Pi.
+
+Der Lesetest am Mac, ohne etwas zu schreiben:
+```
+dfu-util -l | grep -i "found dfu"
+system_profiler SPAudioDataType | grep -A4 -i respeaker     # Soll: Input Channels: 2
+```
+🛑 `system_profiler SPUSBDataType` gibt auf manchen Macs **null Zeilen** zurück,
+ohne Fehler. Für den USB-Bus `ioreg` benutzen, nicht `system_profiler`.
+
+#### Welches Abbild
+
+| Abbild | Kanäle / Rate | wofür |
+|---|---|---|
+| `…_v2.1.1.bin` | 2 ch / 16 kHz | **der Normalfall** — passt zu `audio_channels: 2` + `combine: select` ch0 |
+| `…_v2.1.1_16k6ch.bin` | 6 ch / 16 kHz | ch1–2 wie oben, ch3–6 die ROHEN Mikrofone (leiser, unbearbeitet). Für Messungen und Kalibrierung, nicht für den Betrieb — bricht die Kanalauswahl. |
+| `…_v2.1.1_48k2ch.bin` | 2 ch / 48 kHz | nicht verwenden, die Kette läuft auf 16 kHz |
+
+**Flottenstand (2026-10-13):** Fitnessraum `ver=0209` (v2.0.9), Wohnzimmer
+`ver=0211` (v2.1.1). Die Abweichung ist bewusst: v2.1.1 behebt u. a. einen
+Linux-Aufnahmefehler (isochrones `EOVERFLOW` nach Bus-Reset, seit v2.0.10) und
+entkoppelt die Richtungserkennung vom LED-Effekt — bei uns allerdings in sieben
+Tagen Protokoll **nie beobachtet**. Wer den Fitnessraum nachzieht, misst
+vorher den Tonweg dort nach.
 
 ### dwc_otg vs. dwc2 (Pi Zero) — kein Faktor
 
