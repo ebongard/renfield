@@ -434,12 +434,7 @@
         path: /boot/firmware/config.txt
         regexp: "^dtoverlay={{ item }}"
         state: absent
-      loop:
-        - seeed-2mic-gpclk-simple
-        - seeed-2mic-gpclk-full
-        - seeed-2mic-voicecard
-        - seeed-4mic-voicecard
-        - wm8960-soundcard
+      loop: "{{ stale_i2s_hat_overlays | reject('equalto', 'respeaker-2mic-v2_0') | list }}"
       notify: reboot after driver install
 
     # --- Whisplay HAT: WM8960 codec driver ---
@@ -485,11 +480,7 @@
         path: /boot/firmware/config.txt
         regexp: "^dtoverlay={{ item }}"
         state: absent
-      loop:
-        - seeed-4mic-voicecard
-        - seeed-2mic-voicecard
-        - respeaker-2mic-v2_0
-        - wm8960-soundcard
+      loop: "{{ stale_i2s_hat_overlays }}"
       notify: reboot after driver install
 
     - name: Create bin directory for xvf_host

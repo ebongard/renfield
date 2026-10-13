@@ -284,3 +284,19 @@ silero_vad_version: "v6.2"
 silero_vad_url: "https://github.com/snakers4/silero-vad/raw/{{ silero_vad_version }}/src/silero_vad/data/silero_vad.onnx"
 silero_vad_sha256: "1a153a22f4509e292a94e67d6f9b85e8deb25b4988682b7e174c65279d8788e3"
 alexa_model_url: "{{ oww_base_url }}/alexa_v0.1.onnx"
+
+# 🛑 EINE Liste, zwei Verwender. Jeder I2S-HAT-Overlay, der beim Wechsel der
+# Soundkarte liegenbleibt, meldet beim Start eine Phantomkarte an und kann die
+# neue Karte an der Anmeldung hindern. Bis 2026-10-13 gab es dafür ZWEI
+# getrennte Listen im Playbook (eine für `2mic-v2`, eine für `xvf3800-usb`),
+# und die zweite war eine Teilmenge der ersten: `seeed-2mic-gpclk-simple` und
+# `-full` fehlten ihr. Genau dieses Overlay trug das Wohnzimmer nach dem
+# Wechsel auf den XVF3800 — der Aufräumschritt hätte es stehen gelassen.
+# Zwei Listen für dieselbe Aufgabe driften; eine tut es nicht.
+stale_i2s_hat_overlays:
+  - seeed-2mic-gpclk-simple
+  - seeed-2mic-gpclk-full
+  - seeed-2mic-voicecard
+  - seeed-4mic-voicecard
+  - respeaker-2mic-v2_0
+  - wm8960-soundcard
