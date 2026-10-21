@@ -21,12 +21,17 @@ dedup / tier / PDF-Split / Paperless are unchanged.
 - 🛑 **Die `unrouted`-Meldung NENNT die `stage_id`** — und prüft sie dabei. `render_completion_message` ist eine
   Vertrauensgrenze: ihr Text wird in späteren Agentenzügen WIEDER EINGESPIELT, darf also kein Kanal für freien
   Text aus dem Ereignis sein. Darum ist das Feld im Modell NACHSICHTIG (nur Länge — ein 422 dort verwürfe eine
-  echte Fertigmeldung) und wird beim Verwenden gegen `^scan-\d{8}-\d{6}-[0-9a-f]{8}$` geprüft; passt es nicht,
+  echte Fertigmeldung) und wird beim Verwenden mit `fullmatch` gegen `scan-\d{8}-\d{6}-[0-9a-f]{8}` geprüft — OHNE Anker und NICHT
+  mit `match`, denn Pythons `$` passt auch VOR einem abschließenden Zeilenumbruch (gemessen im Review zu
+  #1405: `match` liess `"scan-…cc\n"` durch). Passt es nicht,
   entfällt die Kennung und der Satz bleibt der alte. Die GESPROCHENE Kurzform bleibt ohne Kennung.
   Anlass: am 2026-10-21 griff der Agent auf „Scannen nach Haushalt" zu `paperless.search_documents` — der Router
   verstand es richtig (`sub_intent` „scan nach household"), aber `route_scan` braucht eine `stage_id`, und die
-  stand nirgends. Dazu `tool_hints` für `route_scan` und `list_pending_scans`, die die echten Formulierungen
-  nennen — die Orchestrierung bleibt beim Modell, kein Fusionswerkzeug.
+  stand nirgends. Dazu `tool_hints` für `route_scan`, `scan_document` und `list_pending_scans`, die die echten
+  Formulierungen nennen — die Orchestrierung bleibt beim Modell, kein Fusionswerkzeug.
+  🛑 Ein Hinweis darf nicht fremdes Gebiet beanspruchen: die erste Fassung gab „scanne das nach <Ziel>" an
+  `route_scan`, aber `scan_document` nimmt selbst ein `target` — ein NEUER Scan mit Ziel wäre damit bei der
+  Zuordnung gelandet. Ein Fehlgriff gegen einen anderen getauscht.
 - 🛑 **Ausnahme, und nur sie: der KNOPF.** Eine Fertigmeldung hängt an der `session_id` des anfordernden Chats; ein
   Knopfdruck hat keine, also entsteht der Eintrag NIE und die 409 ist für ihn endgültig. Am 2026-10-21 wiederholte
   der Scanner deshalb gegen eine Antwort, die sich nicht ändern konnte. Das Ereignis führt jetzt `caller` mit, und
