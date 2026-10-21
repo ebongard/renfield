@@ -18,6 +18,15 @@ dedup / tier / PDF-Split / Paperless are unchanged.
   (`services/scanner_jobs.py`). The event carries **no user identity** — never trust one from it.
 - Unknown job → **409** (a fast-failing scan retries until the requester is recorded), **never 404**. An ownership
   refusal is final.
+- 🛑 **Die `unrouted`-Meldung NENNT die `stage_id`** — und prüft sie dabei. `render_completion_message` ist eine
+  Vertrauensgrenze: ihr Text wird in späteren Agentenzügen WIEDER EINGESPIELT, darf also kein Kanal für freien
+  Text aus dem Ereignis sein. Darum ist das Feld im Modell NACHSICHTIG (nur Länge — ein 422 dort verwürfe eine
+  echte Fertigmeldung) und wird beim Verwenden gegen `^scan-\d{8}-\d{6}-[0-9a-f]{8}$` geprüft; passt es nicht,
+  entfällt die Kennung und der Satz bleibt der alte. Die GESPROCHENE Kurzform bleibt ohne Kennung.
+  Anlass: am 2026-10-21 griff der Agent auf „Scannen nach Haushalt" zu `paperless.search_documents` — der Router
+  verstand es richtig (`sub_intent` „scan nach household"), aber `route_scan` braucht eine `stage_id`, und die
+  stand nirgends. Dazu `tool_hints` für `route_scan` und `list_pending_scans`, die die echten Formulierungen
+  nennen — die Orchestrierung bleibt beim Modell, kein Fusionswerkzeug.
 - 🛑 **Ausnahme, und nur sie: der KNOPF.** Eine Fertigmeldung hängt an der `session_id` des anfordernden Chats; ein
   Knopfdruck hat keine, also entsteht der Eintrag NIE und die 409 ist für ihn endgültig. Am 2026-10-21 wiederholte
   der Scanner deshalb gegen eine Antwort, die sich nicht ändern konnte. Das Ereignis führt jetzt `caller` mit, und

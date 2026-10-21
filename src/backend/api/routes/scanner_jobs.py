@@ -82,6 +82,12 @@ class ScanJobResult(BaseModel):
     target: str | None = Field(default=None, max_length=64)
     pages: int | None = Field(default=None, ge=0, le=100_000)
     renfield_document_id: int | None = None
+    # Kennung der Zwischenlage bei `unrouted` — die Antwort auf „und welcher
+    # Scan?". NACHSICHTIG hier (nur Länge): ein Formfehler darf die
+    # Fertigmeldung nicht mit 422 verwerfen. Geprüft wird beim VERWENDEN, in
+    # `render_completion_message`, gegen die bekannte Form; passt sie nicht,
+    # entfällt die Kennung und der Satz bleibt der alte.
+    stage_id: str | None = Field(default=None, max_length=64)
     documents: list[Any] = Field(default_factory=list, max_length=500)
     skipped: list[Any] = Field(default_factory=list, max_length=500)
     # A code, never the free-form error text: the message is rendered from fixed
