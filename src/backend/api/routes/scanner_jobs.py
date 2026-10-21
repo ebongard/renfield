@@ -53,6 +53,21 @@ router = APIRouter()
 # hence a named constant and never an inline literal.
 FOLDER_INGEST_DISABLED_REASON = "folder_ingest_disabled"
 
+#: Auslöser eines Scans, den der blaue Knopf am Gerät gestartet hat.
+#: Muss zu `BUTTON_CALLER` in renfield-mcp-scanner/button.py passen.
+BUTTON_CALLER = "button"
+
+#: Merkmal einer 409, die ENDGÜLTIG ist — die Gegenseite darf aufhören.
+#:
+#: 🛑 Eine blanke 409 „unknown job" ist mit Absicht WIEDERHOLBAR (s. unten):
+#: ein sofort scheiternder Scan kann melden, bevor wir notiert haben, wer
+#: gefragt hat. Für einen KNOPF-Scan gilt das nie — er hat keine Sitzung, an
+#: die eine Fertigmeldung gebunden werden könnte, also entsteht hier nie ein
+#: Eintrag. Am 2026-10-21 wiederholte der Scanner deshalb 409 um 409 gegen
+#: eine Antwort, die sich nicht ändern konnte. Dasselbe Muster wie bei der
+#: 404: endgültig ist eine Ablehnung nur MIT Merkmal.
+NO_RECIPIENT_REASON = "no_recipient_for_caller"
+
 
 class ScanJobResult(BaseModel):
     """Only the fields the completion message reads — bounded, extras dropped.
@@ -78,6 +93,9 @@ class ScanJobEvent(BaseModel):
     contract_version: str = Field(default="", max_length=16)
     job_id: str = Field(pattern=f"^{JOB_ID_PATTERN}$")
     status: str = Field(max_length=32)
+    # Wer den Scan ausgelöst hat. Leer bei einem Scanner-Stand, der das Feld
+    # noch nicht sendet — dann gilt die alte, wiederholbare Antwort.
+    caller: str = Field(default="", max_length=64)
     title: str = Field(default="", max_length=500)
     started_at: str | None = Field(default=None, max_length=40)
     finished_at: str | None = Field(default=None, max_length=40)
@@ -130,6 +148,27 @@ async def scan_job_event(
     if event.status not in TERMINAL_STATUSES:
         return {"status": "ignored", "detail": "not a terminal status"}
     outcome = await handle_job_event(db, event.model_dump())
+    if outcome == "unknown_job" and event.caller == BUTTON_CALLER:
+        # 🛑 Für den KNOPF ist diese Ablehnung endgültig, und nur für ihn.
+        # Eine Fertigmeldung wird an die `session_id` des anfordernden Chats
+        # gebunden; ein Knopfdruck hat keine Sitzung, also entsteht hier NIE
+        # ein Eintrag. Ohne Merkmal wiederholte der Scanner am 2026-10-21
+        # gegen eine Antwort, die sich nicht ändern konnte.
+        #
+        # Das DOKUMENT ist davon unberührt: es kommt über den getrennten
+        # Ingest-Weg und war längst abgelegt. Offen bleibt allein, WEM eine
+        # Fertigmeldung gälte — ein Knopfdruck nennt keinen Empfänger (#1390).
+        logger.info(
+            f"scanner: Knopf-Scan {event.job_id} ({event.status}) ohne "
+            f"Meldeadresse — Dokument ist abgelegt, Meldung entfällt"
+        )
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "reason": NO_RECIPIENT_REASON,
+                "message": "No recipient for a button-initiated scan",
+            },
+        )
     if outcome == "unknown_job":
         # NOT a 2xx: a scan that fails instantly (no device, empty feeder) can
         # report back before this instance has recorded who asked. 409 makes the
