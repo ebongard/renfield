@@ -534,6 +534,18 @@ servers:
       interval: 900
       expect:
         min_items: 0
+    # 🛑 Das Werkzeug erscheint über tools/list auch im Werkzeugkasten jeder
+    # Rolle, die `scanner` führt. Es ist eine DIAGNOSE, keine Statusfrage —
+    # ohne diesen Hinweis könnte der Agent auf „Ist der Scanner bereit?" mit
+    # `watcher_health` antworten und „ok" melden, während der Scanner aus ist.
+    # Bewusst NICHT über `prompt_tools` ausgeblendet: das wäre eine Aufzählung
+    # aller übrigen Werkzeuge und driftet beim nächsten neuen Werkzeug.
+    tool_hints:
+      watcher_health: >-
+        NUR Diagnose für die Gesundheitsprobe: sagt, ob der HARDWARE-KNOPF
+        funktioniert, und fasst den Scanner nicht an. Für „ist der Scanner
+        bereit / liegt Papier ein" IMMER scanner_status nehmen — dieses
+        Werkzeug meldet auch bei ausgeschaltetem Scanner ok.
     example_intent: mcp.scanner.scanner_status
     examples:
       de:
