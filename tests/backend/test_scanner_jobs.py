@@ -760,10 +760,18 @@ def test_eine_UNPASSENDE_kennung_verliert_die_meldung_NICHT():
         "../../etc/passwd",
         "<script>alert(1)</script>",
         "scan-2026-10-21-160741-5afef3cc",   # falsche Form
+        # 🛑 Im Review zu #1405 gefunden: Pythons `$` passt auch VOR einem
+        # abschliessenden Zeilenumbruch, `re.match` liess das durch. Ein rohes
+        # Newline in einer Nachricht, die in spaeteren Agentenzuegen wieder
+        # eingespielt wird. Jetzt `fullmatch`.
+        "scan-20261021-160741-5afef3cc\n",
+        "scan-20261021-160741-5afef3cc\r\n",
+        " scan-20261021-160741-5afef3cc",
         "", None, 12345, {"a": 1},
     ):
         msg = sj.render_completion_message("unrouted", "", {"stage_id": boese}, "de")
         assert "nichts wurde abgelegt" in msg, f"Meldung verloren bei {boese!r}"
+        assert "\n" not in msg, f"roher Zeilenumbruch in der Nachricht bei {boese!r}"
         assert "ignoriere" not in msg
         assert "<script>" not in msg
         assert "passwd" not in msg

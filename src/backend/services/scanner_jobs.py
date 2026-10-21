@@ -214,7 +214,12 @@ _STATES_WITHOUT_ERROR_CODE = frozenset({"done", "unrouted", "interrupted"})
 #: Text aus dem Ereignis sein. Eine Kennung, die nicht genau so aussieht,
 #: entfällt — der Satz bleibt dann der bisherige. Im Modell zu prüfen wäre
 #: falsch: ein 422 dort würde eine echte Fertigmeldung verwerfen.
-_STAGE_ID = re.compile(r"^scan-\d{8}-\d{6}-[0-9a-f]{8}$")
+#: 🛑 OHNE Anker und mit `fullmatch` geprüft, nicht `match` mit `$`:
+#: Pythons `$` passt auch VOR einem abschließenden Zeilenumbruch, also
+#: käme `"scan-…cc\n"` durch — ein rohes Newline in einer Nachricht, die
+#: in späteren Agentenzügen wieder eingespielt wird. Im Review zu #1405
+#: nachgemessen.
+_STAGE_ID = re.compile(r"scan-\d{8}-\d{6}-[0-9a-f]{8}")
 
 
 def describe_failure_for_log(status: str, result: dict) -> str:
@@ -271,7 +276,7 @@ def render_completion_message(status: str, title: str, result: dict, lang: str) 
         )
     if status == "unrouted":
         stage = str(result.get("stage_id") or "")
-        if _STAGE_ID.match(stage):
+        if _STAGE_ID.fullmatch(stage):
             return text["unrouted_stage"].format(title=title_part, stage=stage)
         return text["unrouted"].format(title=title_part)
     if status == "interrupted":
