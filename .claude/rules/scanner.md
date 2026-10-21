@@ -18,6 +18,12 @@ dedup / tier / PDF-Split / Paperless are unchanged.
   (`services/scanner_jobs.py`). The event carries **no user identity** — never trust one from it.
 - Unknown job → **409** (a fast-failing scan retries until the requester is recorded), **never 404**. An ownership
   refusal is final.
+- 🛑 **Ausnahme, und nur sie: der KNOPF.** Eine Fertigmeldung hängt an der `session_id` des anfordernden Chats; ein
+  Knopfdruck hat keine, also entsteht der Eintrag NIE und die 409 ist für ihn endgültig. Am 2026-10-21 wiederholte
+  der Scanner deshalb gegen eine Antwort, die sich nicht ändern konnte. Das Ereignis führt jetzt `caller` mit, und
+  nur bei `caller == "button"` trägt die 409 `{"reason": "no_recipient_for_caller"}`. Jede andere 409 bleibt blank
+  und damit wiederholbar — die Unterscheidung gehört der Anwendung, nie dem Statuscode. Das DOKUMENT ist davon
+  unberührt: es kommt über den getrennten Ingest-Weg. WEM eine Knopf-Meldung gälte, ist offen (#1390).
 - 🛑 **Eine 404 ist nur mit MERKMAL endgültig** (#1391): die Zahl allein kommt auch vom Ingress, wenn kein Pod
   bereit ist. Die Abschalt-404 trägt `{"detail": {"reason": "folder_ingest_disabled", "message": …}}`, jede
   andere 404 gilt dem Scanner als wiederholbar. Repo-übergreifender Vertrag — nie umbenennen ohne den Scanner,

@@ -729,6 +729,45 @@ async def test_route_answers_an_unknown_job_retryably(client):
     assert resp.status_code == 409
 
 
+async def test_ein_KNOPF_scan_bekommt_eine_ENDGUELTIGE_409_mit_merkmal(client):
+    """🛑 Am 2026-10-21 gemessen: der Scanner wiederholte 409 um 409.
+
+    Eine Fertigmeldung wird an die `session_id` des anfordernden Chats
+    gebunden. Ein Knopfdruck hat keine Sitzung, also entsteht hier NIE ein
+    Eintrag — die Ablehnung kann sich nicht ändern. Das Merkmal sagt das, der
+    Statuscode allein kann es nicht.
+    """
+    body = {**_body(), "caller": "button"}
+    with patch("api.routes.scanner_jobs.resolve_folder_ingest_client", AsyncMock(return_value=SCANNER_CLIENT)), \
+         patch("api.routes.scanner_jobs.handle_job_event", AsyncMock(return_value="unknown_job")):
+        resp = await client.post("/api/scanner/job-event", json=body,
+                                 headers={"Authorization": "Bearer ok"})
+    assert resp.status_code == 409
+    detail = resp.json()["detail"]
+    assert isinstance(detail, dict), "ohne Wörterbuch kann der Scanner nichts auswerten"
+    assert detail["reason"] == "no_recipient_for_caller"
+
+
+async def test_ein_CHAT_scan_bleibt_wiederholbar(client):
+    """🛑 Die Gegenprobe, und sie ist die wichtigere.
+
+    Ohne sie hätte man „409 ist endgültig" gebaut — und damit genau den Fall
+    zerstört, für den die 409 erfunden wurde: ein Scan, der sofort scheitert,
+    meldet, BEVOR der Anforderer notiert ist. Diese Wiederholung muss bleiben.
+    """
+    for caller in ("", "chat", "household"):
+        body = {**_body(), "caller": caller}
+        with patch("api.routes.scanner_jobs.resolve_folder_ingest_client", AsyncMock(return_value=SCANNER_CLIENT)), \
+             patch("api.routes.scanner_jobs.handle_job_event", AsyncMock(return_value="unknown_job")):
+            resp = await client.post("/api/scanner/job-event", json=body,
+                                     headers={"Authorization": "Bearer ok"})
+        assert resp.status_code == 409, caller
+        detail = resp.json()["detail"]
+        assert not isinstance(detail, dict) or detail.get("reason") != "no_recipient_for_caller", (
+            f"caller={caller!r} darf KEIN Endgültigkeits-Merkmal bekommen — "
+            "sonst gibt der Scanner auf, bevor der Eintrag entstehen konnte")
+
+
 async def test_route_answers_a_delivery_in_progress_retryably(client):
     """A claim held by a crashed pod must not end in a 2xx — the retry after it
     lapses is what delivers the outcome."""
