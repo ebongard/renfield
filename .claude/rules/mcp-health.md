@@ -40,6 +40,14 @@ Retry-After is honoured, no automatic retry; signal + alert stay dark).
   `services/search_health.py` (#1162) via `_BESPOKE_PROBES` + `record_external_probe`; `unknown` records nothing.
 - Skipped on purpose: `per_user_auth` servers (a `user_id=None` call is denied fail-closed → permanent false
   failure), federation, disconnected, every server without a stanza.
+- 🛑 **A probe must not fire on the NORMAL state, or it gets switched off.** `scanner` had no stanza until
+  2026-10-21 because "the operator Mac is asleep" reads as `down` — true, and already covered by the
+  disconnected skip. But the same reasoning covered a second case it should not have: service up, button dead.
+  On 2026-10-21 the blue button was dead for NINE DAYS with a live supervisor, green liveness and
+  `device_readable: true`. The stanza now probes `watcher_health`, NOT `scanner_status`: the latter touches the
+  device and returns an error envelope for a switched-off scanner (the normal case). `watcher_health` reads only
+  free things (the watcher's timestamp, `ioreg`) — so it cannot wedge the device it measures — and errors ONLY on
+  watcher dead/crashloop or a WEDGE (USB node present, SANE blind). A missing `ioreg` answer is never a finding.
 - Probes run as system calls (`user_permissions=None`/`user_id=None`) so they never colour `ToolOutcomeStat`.
 
 ## Alerting

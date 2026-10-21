@@ -176,3 +176,46 @@ def test_scanner_timeouts_follow_which_tools_still_work_inside_the_call():
     assert _server_call_timeout(state, "scanner_status") == settings.mcp_call_timeout
     assert _server_call_timeout(state, "route_scan") >= 300
     assert _server_call_timeout(state, "retry_pending_scans") >= 300
+
+
+def test_scanner_wird_mit_einem_GERAETEFREIEN_werkzeug_gesondet():
+    """🛑 Die Probe darf das Gerät NICHT anfassen — und nicht am Normalfall
+    anschlagen.
+
+    Der Scanner hatte bis 2026-10-21 gar keine Funktionssonde, mit der
+    Begründung in der YAML, ein schlafender Arbeitsplatzrechner lese `down`
+    und das sei erwartet. Das stimmt, und das Rahmenwerk überspringt getrennte
+    Server ohnehin — nur hat dieselbe Begründung den zweiten Fall mitgedeckt:
+    Dienst läuft, Knopf tot. Neun Tage, bei lebender Aufsicht und grüner
+    Lebendigkeit.
+
+    Zwei Eigenschaften halten diesen Test fest, weil beide durch eine
+    naheliegende „Verbesserung" wieder verloren gehen:
+
+    * `scanner_status` fasst das Gerät an (`find_device` + `read_sensors`) und
+      gibt bei AUSGESCHALTETEM Scanner eine Fehlerantwort zurück. Eine Probe
+      darauf schlüge am Normalfall an und würde abgeschaltet.
+    * Eine taktende Probe, die selbst öffnet, ist Last auf genau dem
+      Anschluss, dessen Gesundheit sie misst. Am 2026-10-21 war der Scanner
+      neun Tage am Bus angemeldet und für SANE unansprechbar, OHNE dass eine
+      Gerätesuche gelaufen war — der billige Sensorabruf ist seither der
+      Hauptverdächtige, nicht die Suche.
+    """
+    from pathlib import Path
+
+    import yaml
+
+    root = Path(__file__).resolve().parents[2]
+    entries = yaml.safe_load((root / "config" / "mcp_servers.yaml").read_text())["servers"]
+    scanner = next(e for e in entries if e["name"] == "scanner")
+
+    probe = scanner.get("health_probe")
+    assert probe, (
+        "der Scanner braucht eine Funktionssonde — ohne sie bleibt ein toter "
+        "blauer Knopf unbemerkt, gemessen: neun Tage am 2026-10-21")
+    assert probe["tool"] == "watcher_health", (
+        f"gesondet werden muss das gerätefreie `watcher_health`, nicht "
+        f"{probe['tool']!r}")
+    assert probe["tool"] != "scanner_status", (
+        "`scanner_status` fasst das Gerät an und meldet einen ausgeschalteten "
+        "Scanner als Fehler — eine Probe darauf schlägt am Normalfall an")
