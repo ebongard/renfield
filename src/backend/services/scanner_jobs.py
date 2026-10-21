@@ -121,6 +121,11 @@ _TEXT = {
                       "übergeben. Die Ablage in Paperless folgt separat.",
         "unrouted": "Der Scan{title} ist fertig, aber sein Ziel ist noch offen. Er wartet auf dem "
                     "Scanner-Rechner auf eine Zuordnung — nichts wurde abgelegt.",
+        # Mit Kennung: die Antwort „nach Haushalt" braucht sonst erst einen
+        # Zwischenschritt (`list_pending_scans`), und am 2026-10-21 hat der
+        # Agent an dieser Stelle zu einer Paperless-Suche gegriffen.
+        "unrouted_stage": "Der Scan{title} ist fertig, aber sein Ziel ist noch offen. Er wartet "
+                          "als {stage} auf eine Zuordnung — nichts wurde abgelegt.",
         "failed": "Der Scan{title} ist fehlgeschlagen: {error}",
         "interrupted": "Der Scan{title} wurde unterbrochen, weil der Scanner-Dienst neu gestartet "
                        "ist. Bitte nicht davon ausgehen, dass etwas abgelegt wurde; wartende "
@@ -155,6 +160,8 @@ _TEXT = {
                       "over. Filing into Paperless follows separately.",
         "unrouted": "The scan{title} is done, but its destination is still open. It is waiting "
                     "on the scanner host for a routing decision — nothing was filed.",
+        "unrouted_stage": "The scan{title} is done, but its destination is still open. It is "
+                          "waiting as {stage} for a destination — nothing was filed.",
         "failed": "The scan{title} failed: {error}",
         "interrupted": "The scan{title} was interrupted because the scanner service restarted. "
                        "Do not assume anything was filed; waiting scans can be checked on the "
@@ -198,6 +205,21 @@ _KNOWN_ERROR_CODES = frozenset(_TEXT["de"]["errors"])
 # (8851f161, `unrouted`) haette damit einen fehlenden Code gemeldet, wo nie
 # einer erwartet war. Zwei Weichen auf eine Menge: die zweite vergisst man.
 _STATES_WITHOUT_ERROR_CODE = frozenset({"done", "unrouted", "interrupted"})
+
+#: Die bekannte Form einer Zwischenlagen-Kennung: `scan-20261021-160741-5afef3cc`.
+#:
+#: 🛑 Sie wird hier geprüft, nicht im Modell. Der Docstring von
+#: `render_completion_message` ist eine Vertrauensgrenze: die Nachricht wird in
+#: späteren Agentenzügen WIEDER EINGESPIELT, darf also kein Kanal für freien
+#: Text aus dem Ereignis sein. Eine Kennung, die nicht genau so aussieht,
+#: entfällt — der Satz bleibt dann der bisherige. Im Modell zu prüfen wäre
+#: falsch: ein 422 dort würde eine echte Fertigmeldung verwerfen.
+#: 🛑 OHNE Anker und mit `fullmatch` geprüft, nicht `match` mit `$`:
+#: Pythons `$` passt auch VOR einem abschließenden Zeilenumbruch, also
+#: käme `"scan-…cc\n"` durch — ein rohes Newline in einer Nachricht, die
+#: in späteren Agentenzügen wieder eingespielt wird. Im Review zu #1405
+#: nachgemessen.
+_STAGE_ID = re.compile(r"scan-\d{8}-\d{6}-[0-9a-f]{8}")
 
 
 def describe_failure_for_log(status: str, result: dict) -> str:
@@ -253,6 +275,9 @@ def render_completion_message(status: str, title: str, result: dict, lang: str) 
             doc=text["doc"].format(id=doc_id) if isinstance(doc_id, int) else "",
         )
     if status == "unrouted":
+        stage = str(result.get("stage_id") or "")
+        if _STAGE_ID.fullmatch(stage):
+            return text["unrouted_stage"].format(title=title_part, stage=stage)
         return text["unrouted"].format(title=title_part)
     if status == "interrupted":
         return text["interrupted"].format(title=title_part)
