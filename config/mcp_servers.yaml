@@ -560,13 +560,21 @@ servers:
         „ordne den wartenden Scan zu", „der wartende Scan gehört zu <Ziel>",
         „das offene Ziel ist <Ziel>". Braucht die stage_id; sie steht in der
         Fertigmeldung, sonst erst list_pending_scans aufrufen.
+        🛑 `target` ist die technische KENNUNG, klein und englisch — NICHT die
+        deutsche Anzeigebezeichnung: „Haushalt" wird abgelehnt, `household`
+        angenommen. Derzeit `household` und `xidra`; die gültige Liste steht in
+        der Zielkonfiguration des Scanners und wird bei einem unbekannten Wert
+        in der Fehlermeldung mitgenannt (`known: [...]`) — danach richten, nie
+        raten.
         NICHT für einen NEUEN Scan — „scanne die Seiten nach <Ziel>" ist
         scan_document mit target. NICHT paperless.search_documents: das sucht
         Abgelegtes und ordnet nichts zu.
       scan_document: >-
         Startet einen NEUEN Scan. Nimmt selbst ein `target` — „scanne die
         Seiten nach <Ziel>", „einscannen und nach <Ziel> ablegen" gehören
-        hierher, nicht zu route_scan. Ohne `target` entscheidet Trennblatt
+        hierher, nicht zu route_scan. 🛑 `target` ist die technische KENNUNG,
+        klein und englisch (derzeit `household`, `xidra`), nicht die deutsche
+        Anzeigebezeichnung. Ohne `target` entscheidet Trennblatt
         oder Klassifizierer; ist dessen Urteil zu unsicher, bleibt der Scan
         liegen und route_scan ordnet ihn später zu.
       list_pending_scans: >-
