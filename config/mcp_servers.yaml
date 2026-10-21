@@ -507,6 +507,33 @@ servers:
     call_timeout:
       route_scan: 600
       retry_pending_scans: 600
+    # Funktionssonde (A1) — kam SPÄT, 2026-10-21, und der Grund steht weiter
+    # oben im Kopf dieses Servers: „liest `down`, wenn der Rechner schläft —
+    # erwartet, kein Fehler". Für den schlafenden Mac stimmt das, und das
+    # Rahmenwerk überspringt Proben für GETRENNTE Server ohnehin. Nur hat
+    # dieselbe Begründung auch den anderen Fall gedeckt: Dienst läuft, Knopf
+    # tot. Am 2026-10-21 war der blaue Knopf neun Tage tot — bei lebender
+    # Aufsicht, grüner Lebendigkeit und `device_readable: true` — und nichts
+    # hat es gesagt, weil niemand hingesehen hat.
+    #
+    # 🛑 Gesondet wird `watcher_health`, NICHT `scanner_status`:
+    #   * `scanner_status` fasst das Gerät an (`find_device` + `read_sensors`)
+    #     und gibt bei fehlendem Gerät eine Fehlerantwort zurück — ein
+    #     ausgeschalteter Scanner ist der Normalfall, die Probe schlüge also
+    #     dauernd an und würde abgeschaltet.
+    #   * `watcher_health` liest nur Kostenloses: die Zeitmarke des Wächters
+    #     und den USB-Knoten über `ioreg`. Es kann den Scanner nicht
+    #     verklemmen — nach dem Befund vom 2026-10-21 (neun Tage am Bus
+    #     angemeldet, für SANE unansprechbar, OHNE dass eine Gerätesuche lief)
+    #     keine Nebensache.
+    # Fehler NUR bei: Wächter tot, Wächter im Absturzkreis, Gerät verklemmt
+    # (USB-Knoten da, SANE blind). Ausgeschalteter Scanner und fehlende
+    # USB-Auskunft sind ok.
+    health_probe:
+      tool: watcher_health
+      interval: 900
+      expect:
+        min_items: 0
     example_intent: mcp.scanner.scanner_status
     examples:
       de:
