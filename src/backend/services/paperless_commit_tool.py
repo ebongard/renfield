@@ -425,7 +425,7 @@ async def _commit_approved(
             continue
 
         if action != "create":
-            logger.warning("Unknown decision action, skipping: %r", action)
+            logger.warning("Unknown decision action, skipping: {!r}", action)
             continue
 
         # action == "create"
@@ -436,7 +436,7 @@ async def _commit_approved(
             "storage_path": "mcp.paperless.create_storage_path",
         }.get(field)
         if create_tool is None:
-            logger.warning("Unknown decision field, skipping: %r", field)
+            logger.warning("Unknown decision field, skipping: {!r}", field)
             continue
 
         create_params: dict[str, Any] = {"name": value}
@@ -448,18 +448,18 @@ async def _commit_approved(
         try:
             result = await mcp_manager.execute_tool(create_tool, create_params)
         except Exception as exc:
-            logger.warning("Failed to create %s %r: %s", field, value, exc)
+            logger.warning("Failed to create {} {!r}: {}", field, value, exc)
             continue
 
         if not result or not result.get("success"):
             inner = (result or {}).get("message") or "no detail"
             if "already_exists" in str(inner):
-                logger.info("%s %r already exists, reusing", field, value)
+                logger.info("{} {!r} already exists, reusing", field, value)
                 resolved_fields.setdefault(field, []).append(value)
                 created_entries.setdefault(field, []).append(value)
             else:
                 logger.warning(
-                    "Create %s %r failed: %s", field, value, str(inner)[:120],
+                    "Create {} {!r} failed: {}", field, value, str(inner)[:120],
                 )
             continue
         resolved_fields.setdefault(field, []).append(value)
@@ -472,7 +472,7 @@ async def _commit_approved(
             from services.paperless_metadata_extractor import _invalidate_taxonomy_cache
             _invalidate_taxonomy_cache()
         except Exception as exc:  # pragma: no cover — defensive
-            logger.debug("Could not flush taxonomy cache: %s", exc)
+            logger.debug("Could not flush taxonomy cache: {}", exc)
 
     # Step 2 — fetch the ChatUpload bytes + build the upload call.
     async with AsyncSessionLocal() as db:
@@ -722,7 +722,7 @@ async def _finalize_paperless_commit(
             task_id, timeout_s=poll_timeout_s,
         )
     except Exception as exc:
-        logger.warning("paperless finalize: task poll failed: %s", exc)
+        logger.warning("paperless finalize: task poll failed: {}", exc)
 
     patch_note = ""
     if document_id is not None and deferred_patch and any(deferred_patch.values()):
@@ -739,7 +739,7 @@ async def _finalize_paperless_commit(
                     "bitte in Paperless prüfen)"
                 )
         except Exception as exc:
-            logger.warning("paperless finalize: update_document failed: %s", exc)
+            logger.warning("paperless finalize: update_document failed: {}", exc)
             patch_note = " (Zusatz-Metadaten konnten nicht gesetzt werden)"
 
     if failure_reason:
@@ -837,7 +837,7 @@ async def _finalize_paperless_commit(
                     )
             await db.commit()
     except Exception as exc:
-        logger.warning("paperless finalize: outcome persist failed: %s", exc)
+        logger.warning("paperless finalize: outcome persist failed: {}", exc)
 
     if session_id and not already_tracked and not suppress_announce:
         try:
@@ -850,7 +850,7 @@ async def _finalize_paperless_commit(
                 "message": message,
             })
         except Exception as exc:
-            logger.warning("paperless finalize: notify_session failed: %s", exc)
+            logger.warning("paperless finalize: notify_session failed: {}", exc)
 
     # Reported to the reconciler (#658): a "pending" consume refunds its attempt
     # (healthy-but-slow, not a failure); "completed"/"failed" are terminal.

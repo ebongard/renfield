@@ -185,13 +185,13 @@ async def _warn_about_tables_no_migration_created() -> None:
         missing = sorted(set(Base.metadata.tables) - live)
         if missing:
             logger.warning(
-                "%d Tabelle(n) stehen im Modell, aber nicht in der Datenbank: %s. "
+                "{} Tabelle(n) stehen im Modell, aber nicht in der Datenbank: {}. "
                 "Es fehlt eine Migration — frueher hat `create_all` das beim Start "
                 "still nachgeholt und damit verdeckt.",
                 len(missing), ", ".join(missing[:10]),
             )
     except Exception as exc:  # pragma: no cover - eine Warnung darf nie stoeren
-        logger.debug("Tabellenabgleich uebersprungen: %s", exc)
+        logger.debug("Tabellenabgleich uebersprungen: {}", exc)
 
 
 async def init_db():

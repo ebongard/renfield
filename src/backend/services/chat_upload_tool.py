@@ -237,7 +237,7 @@ async def forward_attachment_to_paperless(
                 if upload is not None:
                     logger.info(
                         "forward_attachment_to_paperless: no usable attachment_id "
-                        "(%r); session fallback → upload %s (%s)",
+                        "({!r}); session fallback → upload {} ({})",
                         attachment_id_raw, upload.id, upload.filename,
                     )
 
@@ -273,7 +273,7 @@ async def forward_attachment_to_paperless(
             if _should_auto_skip_metadata(upload.filename, file_size):
                 skip_metadata = True
                 logger.debug(
-                    "Auto-skipping metadata extraction for %s (size=%d)",
+                    "Auto-skipping metadata extraction for {} (size={})",
                     upload.filename, file_size,
                 )
 

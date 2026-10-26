@@ -573,7 +573,7 @@ def validate_extraction(
     if metadata.created_date is not None:
         if metadata.created_date < _date_min() or metadata.created_date > _date_max():
             logger.warning(
-                "Dropping created_date out of range: %s",
+                "Dropping created_date out of range: {}",
                 metadata.created_date,
             )
             metadata.created_date = None
@@ -1018,8 +1018,8 @@ class PaperlessMetadataExtractor:
             err_str = err if isinstance(err, str) else str(err)
             if "unknown" in err_str.lower() or "not found" in err_str.lower():
                 logger.warning(
-                    "MCP tool %s not available — is the MCP server at "
-                    "v1.3.0 or later? (got: %s)",
+                    "MCP tool {} not available — is the MCP server at "
+                    "v1.3.0 or later? (got: {})",
                     full_name, err_str[:120],
                 )
             else:
@@ -1142,7 +1142,7 @@ def _parse_llm_json(raw: str) -> dict | None:
     try:
         parsed = json.loads(json_fragment)
     except json.JSONDecodeError as exc:
-        logger.debug("Could not parse LLM JSON: %s | raw=%r", exc, raw[:200])
+        logger.debug("Could not parse LLM JSON: {} | raw={!r}", exc, raw[:200])
         return None
 
     if not isinstance(parsed, dict):

@@ -73,7 +73,7 @@ async def fetch_relevant_examples(
     try:
         embedding = await _embed_doc_text(doc_text)
     except Exception as exc:
-        logger.warning("Paperless example retrieval skipped — embed failed: %s", exc)
+        logger.warning("Paperless example retrieval skipped — embed failed: {}", exc)
         return []
 
     if embedding is None:
@@ -84,7 +84,7 @@ async def fetch_relevant_examples(
         from models.database import PaperlessExtractionExample
         from services.database import AsyncSessionLocal
     except ImportError as exc:
-        logger.warning("Paperless example retrieval skipped — DB not available: %s", exc)
+        logger.warning("Paperless example retrieval skipped — DB not available: {}", exc)
         return []
 
     try:
@@ -125,7 +125,7 @@ async def fetch_relevant_examples(
             result = await db.execute(stmt)
             rows = result.scalars().all()
     except Exception as exc:
-        logger.warning("Paperless example retrieval skipped — DB query failed: %s", exc)
+        logger.warning("Paperless example retrieval skipped — DB query failed: {}", exc)
         return []
 
     examples: list[dict[str, Any]] = []
@@ -151,7 +151,7 @@ async def embed_doc_text(doc_text: str) -> list[float] | None:
     try:
         return await _embed_doc_text(doc_text)
     except Exception as exc:
-        logger.warning("Paperless example embed failed (row will store NULL): %s", exc)
+        logger.warning("Paperless example embed failed (row will store NULL): {}", exc)
         return None
 
 

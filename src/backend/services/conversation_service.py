@@ -369,8 +369,8 @@ class ConversationService:
         changed = len(to_activate) + len(to_deactivate)
         if changed:
             logger.info(
-                "🌿 Branch recompute: %d memory(s) reactivated, %d deactivated "
-                "(conversation %s, active path %d msgs)",
+                "🌿 Branch recompute: {} memory(s) reactivated, {} deactivated "
+                "(conversation {}, active path {} msgs)",
                 len(to_activate), len(to_deactivate), conversation.id, len(active_ids),
             )
         return changed
@@ -883,7 +883,7 @@ class ConversationService:
         conversation.updated_at = datetime.now(UTC).replace(tzinfo=None)
         await self.db.commit()
         logger.info(
-            "🌿 Branch deleted: msg %s + %d descendant(s) in conversation %s",
+            "🌿 Branch deleted: msg {} + {} descendant(s) in conversation {}",
             message_id, len(subtree_ids) - 1, conversation.id,
         )
         return "ok"

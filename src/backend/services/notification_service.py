@@ -651,7 +651,7 @@ class NotificationService:
                         f"unexpected shape (type={type(result).__name__}); ignoring"
                     )
             except Exception as e:
-                logger.debug("Could not resolve target user room via hook: %s", e)
+                logger.debug("Could not resolve target user room via hook: {}", e)
 
         # Store embedding in background
         if embedding:

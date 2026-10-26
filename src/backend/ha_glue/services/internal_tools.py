@@ -2972,7 +2972,7 @@ class InternalToolService:
             # actionable "search first" message rather than a generic error.
             if "notcompatible" in f"{raw_text} {stream_url}".lower():
                 logger.warning(
-                    "Radio station_id '%s' resolved to the TuneIn 'notcompatible' "
+                    "Radio station_id '{}' resolved to the TuneIn 'notcompatible' "
                     "placeholder — invalid or guessed id (search_stations was likely skipped)",
                     station_id,
                 )

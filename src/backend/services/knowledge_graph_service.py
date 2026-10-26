@@ -568,7 +568,7 @@ class KnowledgeGraphService(AtomOwnerResolverMixin):
         # is covered too.
         is_person = "person" in seed_types
         if is_person and is_generic_person_description(description):
-            logger.debug("KG: dropping generic person description %r for '%s'", description, name)
+            logger.debug("KG: dropping generic person description {!r} for '{}'", description, name)
             description = None
 
         embedding = None
