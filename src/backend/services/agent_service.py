@@ -877,14 +877,25 @@ def _record_agent_turn_metrics(context: AgentContext, last_step: AgentStep | Non
 #: Wie viel der GENERISCHEN Werkzeugbeschreibung die Vorauswahl sieht.
 #:
 #: 🛑 Die 80 stammen aus #312 und waren dort nie begruendet — nur das Wort
-#: „compact" stand daneben. Nachgemessen am 2026-10-26: die ganze Liste kostet
-#: bei 33 Werkzeugen ~866 Token, bei 240 Zeichen ~2186. Das Kontextfenster
-#: fasst 262.144 Token und die Agentenaufrufe lagen bei 2,1 % Auslastung — die
-#: Kuerzung spart also ein halbes Prozent und kostete dafuer den Steuertext,
-#: der die Entscheidung tragen soll. Sie bleibt fuer die generische
-#: Beschreibung (die ist lang und gleichfoermig), gilt aber NICHT fuer den
-#: `tool_hints`-Eintrag.
-_PRESELECT_DESC_CHARS = 80
+#: „compact" stand daneben. Was sie gekostet haben, ist gemessen: auf „scanne
+#: nach xidra" fiel `scan_document` aus der Auswahl und der Agent suchte in
+#: Paperless, weil der Steuertext jenseits der Grenze lag.
+#:
+#: 480 ist ABGELEITET, nicht gewaehlt. Die entscheidenden Riegel in den
+#: `internal.*`-Beschreibungen — die Saetze, die eine Fehlauswahl verhindern,
+#: etwa „Use it ONLY for an explicit announcement to everybody" — beginnen bei
+#: Zeichen 56, 121, 284, 385 und 472 (2026-10-26 ausgemessen). 480 deckt alle.
+#:
+#: Die Kosten, mit dem echten Zaehler gemessen: bei 106 Werkzeugen (der
+#: schlimmste beobachtete Fall) 3063 Token bei Grenze 80 und 6829 bei 480 —
+#: also 1,2 % gegen 2,6 % eines 262.144-Token-Fensters. Der Zuwachs ist 1,4
+#: Prozentpunkte fuer einen Klassifizierungsaufruf.
+#:
+#: 🛑 Fuer den `tool_hints`-Eintrag gilt die Grenze GAR NICHT: der ist der
+#: absichtliche Steuertext des Betreibers und geht ungekuerzt mit. Interne
+#: Werkzeuge und Foederations-Werkzeuge tragen keinen solchen Eintrag — ihre
+#: Anleitung steht in der Beschreibung, und darum musste die Grenze reichen.
+_PRESELECT_DESC_CHARS = 480
 
 
 def preselect_tool_line(name: str, tool) -> str:

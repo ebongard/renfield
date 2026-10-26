@@ -3294,7 +3294,12 @@ class MCPManager:
         """One discovered tool as the agent sees it: the upstream description plus
         the ``tool_hints`` entry from mcp_servers.yaml, if any."""
         description = tool.description or ""
-        hint = (config.tool_hints.get(tool.name) if config.tool_hints else None) or ""
+        # 🛑 `.strip()` an der QUELLE. Die Verbindung unten strippt das Ganze;
+        # traegt der Hinweis selbst Leerzeichen am Rand (ein quotierter
+        # YAML-Eintrag genuegt), passt `description.endswith(hint)` in
+        # `preselect_tool_line` nicht mehr und der Hinweis steht DOPPELT in der
+        # Zeile. Im Review zu #1410 gemessen.
+        hint = ((config.tool_hints.get(tool.name) if config.tool_hints else None) or "").strip()
         if hint:
             description = f"{description} {hint}".strip()
         return MCPToolInfo(

@@ -8,6 +8,38 @@ paths:
 
 Loaded only when `agent_service.py`, `prompts/agent.yaml` or the chat handler is read.
 
+## Eine wiederholte Bitte am GERÄT ist eine neue — alles Hinausgehende nicht
+- Der Stale-Error-Marker deckt nur GESCHEITERTE Züge. Für eine **erfolgreich** erledigte Aktion fehlte das
+  Gegenstück: am 2026-10-26 antwortete der Agent auf „scanne nach haushalt" mit „ist bereits abgeschlossen,
+  Dokument 515" und rief das Werkzeug nicht. 🛑 Die Frischeprüfung der Historie hat das erst sichtbar gemacht —
+  vorher sah er die Fertigmeldung gar nicht.
+- `conv_context_template` trägt dafür ZWEI Hinweise, und sie gehören zusammen:
+  **(a)** eine wiederholte Bitte an einem **Gerät**, dessen Vorlage gewechselt sein kann (Scan, Zähler, Foto),
+  ist eine neue Bitte → Werkzeug ausführen, und das alte Ergebnis nicht als das neue ausgeben.
+  **(b)** alles, was etwas **hinausgibt** — Mail, Weiterleitung, Ansage, Ablage, Kauf — ist ausdrücklich
+  ausgenommen: dort **zurückfragen** statt wiederholen.
+- 🛑 Ohne (b) ist (a) gefährlich. Im Review zu #1410 belegt: der erste Entwurf nannte „schicke …", „lege … ab",
+  und `send_email` ist ein aktives Werkzeug; `broadcast_announcement` warnt in der eigenen Beschreibung „Do NOT
+  retry … (it would re-announce in the rooms that already played)". Der häufigste Auslöser ist harmlos gemeint:
+  der Nutzer wiederholt, weil er die Antwort nicht gesehen hat. Beim Scan ist das Papier, bei der Mail der Empfänger.
+- Beide Hinweise stehen in **de UND en**, gleich stark formuliert; ein Test prüft beide Hälften je Sprache.
+  Ein Einheitentest kann nur zeigen, dass der Text im Prompt steht — nicht, dass das Modell folgt.
+
+## Der Steuertext muss die VORAUSWAHL erreichen
+- `_preselect_tools` ist eine eigene LLM-Schicht VOR dem Agenten. Fällt ein Werkzeug dort heraus, kann der Agent
+  es nicht rufen, egal wie gut seine Beschreibung ist. Am 2026-10-26 fiel `scan_document` auf „scanne nach xidra"
+  heraus (3 von 33) und der Agent griff `mcp.paperless.search_documents` — er suchte statt zu scannen.
+- Der `tool_hints`-Eintrag aus `mcp_servers.yaml` geht dort **ungekürzt** mit (`ToolDefinition.hint`, getrennt von
+  `description`, in der er auch steckt). `_PRESELECT_DESC_CHARS` beschneidet nur die generische
+  Herstellerbeschreibung.
+- 🛑 Die Grenze ist **abgeleitet**: die entscheidenden Riegel in den `internal.*`-Beschreibungen (die Sätze, die
+  eine Fehlauswahl verhindern, etwa „Use it ONLY for an explicit announcement to everybody") beginnen bei Zeichen
+  56/121/284/385/472 — 480 deckt alle. Kosten gemessen: bei 106 Werkzeugen 3063 Token bei 80 gegen 6829 bei 480,
+  also 1,2 % gegen 2,6 % eines 262.144-Token-Fensters. Die alten 80 waren aus #312 und nie begründet.
+- Interne und Föderations-Werkzeuge tragen **keinen** `hint` — ihre Anleitung steht in der Beschreibung, und
+  darum muss die Grenze dafür reichen. Wer eine neue Werkzeugquelle anbindet, entscheidet: Hinweis anlegen oder
+  die Anleitung in die ersten `_PRESELECT_DESC_CHARS` Zeichen setzen.
+
 ## Stale-error marker — the two halves must stay together
 - A failed tool turn is persisted with `action_success: False` in the message metadata.
 - The `conv_context` builder in `services/agent_service.py` prepends `[VORHERIGE_FEHLGESCHLAGENE_AKTION]` to those

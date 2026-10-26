@@ -21,7 +21,7 @@ Kürzung sparte ein halbes Prozent.
 import pytest
 
 from services.agent_service import _PRESELECT_DESC_CHARS, preselect_tool_line
-from services.agent_tools import ToolDefinition
+from services.agent_tools import AgentToolRegistry, ToolDefinition
 
 pytestmark = [pytest.mark.unit, pytest.mark.backend]
 
@@ -72,12 +72,17 @@ def test_the_generic_description_is_still_clipped():
         description=f"{BESCHREIBUNG} {HINWEIS}",
         hint=HINWEIS,
     )
+    # 🛑 Lang genug, dass die Grenze wirklich greift — sonst prueft der Test
+    # nichts. Die erste Fassung hatte stattdessen
+    # `assert len(rumpf) <= _PRESELECT_DESC_CHARS`, und das ist IMMER wahr,
+    # weil `rumpf` selbst auf diese Laenge geschnitten war. Eine leere
+    # Behauptung. Im Review zu #1410 gefunden.
+    lang = "X" * (_PRESELECT_DESC_CHARS + 200) + "ENDE_DER_BESCHREIBUNG"
+    tool = ToolDefinition(name="mcp.a.b", description=f"{lang} {HINWEIS}", hint=HINWEIS)
     zeile = _zeilen([tool])[0]
-    # Der englische Teil endet nach der Grenze; was danach kommt, ist Hinweis.
-    rumpf = zeile.split(": ", 1)[1][: _PRESELECT_DESC_CHARS]
-    assert len(rumpf) <= _PRESELECT_DESC_CHARS
-    assert "takes from half a minute" not in zeile, (
+    assert "ENDE_DER_BESCHREIBUNG" not in zeile, (
         "die generische Beschreibung wurde nicht beschnitten")
+    assert HINWEIS in zeile, "der Hinweis muss trotzdem vollstaendig dastehen"
 
 
 def test_a_tool_without_a_hint_is_unchanged():
@@ -114,16 +119,64 @@ def test_the_hint_is_not_duplicated():
     assert kurz in zeile, "die kurze Beschreibung darf nicht verloren gehen"
 
 
-def test_the_registry_carries_the_hint_through():
-    """Ohne dieses Feld ist der Hinweis in `description` nicht mehr
-    herauszuloesen — genau daran scheiterte es."""
-    from services.mcp_client import MCPToolInfo
+def test_the_hint_survives_the_whole_chain():
+    """🛑 Die ECHTEN Stationen, nicht die Dataclass.
 
-    info = MCPToolInfo(
-        server_name="scanner", original_name="scan_document",
-        namespaced_name="mcp.scanner.scan_document",
-        description=f"{BESCHREIBUNG} {HINWEIS}", hint=HINWEIS,
-    )
-    assert info.hint == HINWEIS
+    Die erste Fassung baute `MCPToolInfo(hint=…)` selbst und prueffte
+    `info.hint == HINWEIS` — das testete das Feld, nicht die UEBERGABE. Beide
+    Stationen (`mcp_client._tool_info_from_mcp` und
+    `agent_tools._register_mcp_tools`) blieben unmessen, waehrend der Docstring
+    behauptete, genau daran sei es gescheitert. Im Review zu #1410 gefunden.
+    """
+    from types import SimpleNamespace
+
+    from services.mcp_client import MCPManager, MCPServerConfig
+
+    cfg = MCPServerConfig(name="scanner", transport="streamable_http",
+                          tool_hints={"scan_document": HINWEIS})
+    rohes = SimpleNamespace(name="scan_document", description=BESCHREIBUNG,
+                            inputSchema={"properties": {}, "required": []})
+
+    # Station 1: der Entdecker
+    info = MCPManager._tool_info_from_mcp(cfg, rohes)
+    assert info.hint == HINWEIS, "Station 1 verliert den Hinweis"
+    assert info.description.endswith(HINWEIS), (
+        "die Beschreibung muss den Hinweis weiter hinten tragen — darauf baut "
+        "das Abziehen in `preselect_tool_line`")
+
+    # Station 2: die Registratur des Agenten
+    r = AgentToolRegistry.__new__(AgentToolRegistry)
+    r._tools = {}
+    mgr = SimpleNamespace(get_all_tools=lambda: [info])
+    AgentToolRegistry._register_mcp_tools(r, mgr)
+    tool = r._tools["mcp.scanner.scan_document"]
+    assert tool.hint == HINWEIS, "Station 2 verliert den Hinweis"
+
+    # Und die Zeile, die daraus wird, traegt ihn ungekuerzt.
+    assert HINWEIS in preselect_tool_line(tool.name, tool)
+
+
+def test_a_hint_with_stray_whitespace_is_not_duplicated():
+    """🛑 Ein quotierter YAML-Eintrag mit Leerzeichen am Rand genuegte, um den
+    Hinweis DOPPELT in die Zeile zu bringen: die Verbindung strippt das Ganze,
+    `endswith(hint)` passt dann nicht mehr. Darum wird an der Quelle
+    getrimmt."""
+    from types import SimpleNamespace
+
+    from services.mcp_client import MCPManager, MCPServerConfig
+
+    cfg = MCPServerConfig(name="scanner", transport="streamable_http",
+                          tool_hints={"scan_document": f"  {HINWEIS}  "})
+    rohes = SimpleNamespace(name="scan_document", description="Scan a stack.",
+                            inputSchema={"properties": {}, "required": []})
+    info = MCPManager._tool_info_from_mcp(cfg, rohes)
+    tool = ToolDefinition(name=info.namespaced_name,
+                          description=info.description, hint=info.hint)
+    zeile = preselect_tool_line(tool.name, tool)
+    assert zeile.count("Startet einen NEUEN Scan.") == 1, (
+        f"der Hinweis steht doppelt in der Zeile:\n{zeile}")
+
+
+def test_a_tool_without_a_hint_has_an_empty_field():
     assert ToolDefinition(name="x", description="y").hint == "", (
         "ohne Hinweis muss das Feld leer sein, nicht None")

@@ -192,15 +192,25 @@ async def test_a_repeat_after_a_completed_action_is_steered_to_rerun(db_session:
         conversation_history=verlauf, lang="de",
     )
 
-    # Der Hinweis MUSS im Prompt stehen — sonst hat das Modell keinen Grund,
-    # die Wiederholung als neue Bitte zu lesen.
-    assert "WIEDERHOLTE Bitte ist eine NEUE Bitte" in prompt, (
+    # 🛑 Was dieser Test BEWEIST und was nicht: er zeigt, dass der Hinweis im
+    # gebauten Prompt steht. Er zeigt NICHT, dass das Modell ihm folgt — das
+    # ist mit einem Einheitentest nicht zu haben und bleibt eine Frage der
+    # Abnahme am laufenden System. Der Verlaufsaufbau oben ist dabei nicht
+    # Dekoration: er stellt genau die Lage her, in der es schieflief.
+    assert "an einem GERAET ist eine NEUE Bitte" in prompt, (
         "der Hinweis fehlt — dann antwortet das Modell aus dem alten Lauf")
     # Und er muss zur Ausführung auffordern, nicht bloß beschreiben.
-    hinweis = next(z for z in prompt.splitlines() if "WIEDERHOLTE Bitte" in z)
+    hinweis = next(z for z in prompt.splitlines() if "an einem GERAET" in z)
     assert "fuehre das Tool aus" in hinweis, hinweis
     assert "schon erledigt" in hinweis, (
         "der Hinweis muss die falsche Antwort ausdrücklich verbieten")
+    # 🛑 Und die Gegenregel muss MIT im Prompt stehen. Ohne sie wuerde
+    # derselbe Satz eine Mail zweimal schicken — im Review zu #1410 gefunden:
+    # `send_email` ist ein aktives Werkzeug, und `broadcast_announcement`
+    # warnt selbst „Do NOT retry … it would re-announce".
+    assert "FRAGE ZURUECK" in prompt, (
+        "die Gegenregel fuer alles, was etwas HINAUSGIBT, fehlt — der Hinweis "
+        "allein kann einen nicht zurueckholbaren Versand wiederholen")
 
 
 def test_the_repeat_hint_exists_in_both_languages():
@@ -218,11 +228,25 @@ def test_the_repeat_hint_exists_in_both_languages():
     assert {"de", "en"} <= set(d), sorted(d)
     de = d["de"]["conv_context_template"]
     en = d["en"]["conv_context_template"]
-    assert "WIEDERHOLTE Bitte ist eine NEUE Bitte" in de, (
-        "der deutschen Vorlage fehlt der Hinweis")
-    assert "REPEATED request is a NEW request" in en, (
-        "der englischen Vorlage fehlt der Hinweis — eine englische Sitzung "
-        "liefe dann ohne ihn")
+    # 🛑 BEIDE Haelften gleich stark pruefen. Die erste Fassung prueffte im
+    # Englischen nur die Ueberschrift und im Deutschen zusaetzlich die
+    # Handlungsanweisung — die schwaechere Variante blieb ungedeckt, und
+    # ungleiche Prompts erzeugen ungleiches Verhalten je Sprache.
+    for name, v, marke, tun, verbot in (
+        ("de", de, "an einem GERAET ist eine NEUE Bitte",
+         "fuehre das Tool aus", "schon erledigt"),
+        ("en", en, "at a DEVICE is a NEW request",
+         "run the tool", "already done"),
+    ):
+        assert marke in v, f"der {name}-Vorlage fehlt der Hinweis"
+        zeile = next(z for z in v.splitlines() if marke in z)
+        assert tun in zeile, f"{name}: der Hinweis fordert keine Ausfuehrung: {zeile}"
+        assert verbot in zeile, f"{name}: das falsche Verhalten ist nicht verboten"
+
+    # Und die Gegenregel fuer alles, was etwas HINAUSGIBT — ohne sie koennte
+    # der Hinweis eine Mail zweimal schicken (im Review zu #1410 gefunden).
+    assert "FRAGE ZURUECK" in de, "der de-Vorlage fehlt die Gegenregel"
+    assert "ASK BACK" in en, "der en-Vorlage fehlt die Gegenregel"
     # Und der ALTE Riegel muss beide weiterhin tragen; die Rule verlangt
     # ausdruecklich, dass man die Haelften nie einseitig aendert.
     for name, v in (("de", de), ("en", en)):
