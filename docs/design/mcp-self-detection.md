@@ -417,6 +417,72 @@ telemetry-excluded today) — not built.
   (pinned by tests against a real YAML-loaded `MCPManager`). Neither instance's
   live `mcp_servers.yaml` sets `tool_hints` today, so no hint was lost in prod.
 
+## Der zweite echte Fang der Sonde: n8n, lautlos tot (2026-10-26)
+
+Die Funktionssonde hat zum zweiten Mal etwas gefangen, das der Transport
+verbirgt — und diesmal einen **Totalausfall**, nicht eine Fehlkonfiguration.
+
+Gemessen, Stufe für Stufe:
+
+| Prüfung | Ergebnis |
+|---|---|
+| n8n aus dem Cluster erreichbar? | ja — ohne Schlüssel HTTP 401 in 25 ms, Startseite 200 |
+| Zugangsschlüssel gültig? | ja — mit Schlüssel HTTP 200 |
+| stdio-Server verbunden? | ja — „connected: 13/28 tools (filtered)" |
+| Werkzeugaufrufe? | **alle abgewiesen** |
+
+Ursache: `n8n-mcp@2.94.3` prüft die **API-Basisadresse** durch seinen
+SSRF-Riegel. `dist/services/n8n-api-client.js:200` ruft
+`SSRFProtection.validateWebhookUrl(this.baseUrl)` — der Riegel sitzt also trotz
+seines Namens nicht nur im Webhook-Pfad — und verweigert private Adressen.
+n8n muss hier aber im LAN stehen (`http://192.168.1.78:5678`, #1235, nachdem
+die öffentliche Adresse auf einen fremden Hoster zeigte). Beides schließt sich
+aus. Ausweg ist der Schalter des Pakets selbst: `WEBHOOK_SECURITY_MODE=permissive`,
+gesetzt in der `env`-Liste der n8n-Stanza.
+
+**Der Mechanismus darunter ist der eigentliche Befund, und er reicht weiter
+als n8n.** Das Bild installierte `n8n-mcp@latest`; damit entschied der Zeitpunkt
+des Bildbaus, welcher Code mit n8n spricht, und eine Verhaltensänderung kam ohne
+eine einzige Zeile Diff herein. Dass die Zeile wirklich entscheidet, ist für
+`n8n-mcp` geprüft: im laufenden Pod läuft `node /usr/bin/n8n-mcp`, also die
+globale Installation.
+
+🛑 **Der schlimmere Fall stand daneben und wäre an einer Dockerfile-Prüfung
+vorbeigegangen.** `mcp-newsapi` (Server `news`, `NEWS_ENABLED: "true"`) war
+überhaupt nicht im Bild. `npx -y mcp-newsapi` lädt es deshalb beim POD-START
+aus dem Netz und führt es aus — nicht der Bildbau entscheidet, sondern der
+Start. Im laufenden Pod nachgesehen: `npm ls -g` kennt nur `corepack`,
+`n8n-mcp`, `npm`; `which mcp-newsapi` findet nichts; und unter
+`$HOME/.npm/_npx/<hash>` (HOME ist `/app/data/cache-home`, **nicht** `/root`)
+liegt `{"dependencies": {"mcp-newsapi": "^1.0.0"}}` — eine Caret-Spanne, zur
+Laufzeit aufgelöst. Das Paket läuft damit neben der Datenbank, den
+Modellservern und den beiden MCP-Diensten, die absichtlich Zugangsdaten halten,
+die das Backend nicht hat.
+
+Eine frühere Fassung dieses Abschnitts behauptete „kein npx-Cache". Das war
+falsch gemessen: gesucht wurde nach `n8n-mcp` IM Cache und danach unter
+`/root` — nicht unter dem echten `HOME`. Die Messung antwortete auf eine engere
+Frage als die Behauptung, die daraus wurde.
+
+Beide Pakete sind jetzt exakt festgenagelt, in `Dockerfile` **und**
+`Dockerfile.gpu` (ein lebender Bauweg über `docker-compose*.yml` und
+`release.yml`). Der Test leitet die Pflicht aus der KONFIGURATION her — jeder
+stdio-Server mit `command: npx` muss im Bild stehen —, damit ein neu
+hinzugefügter Server von selbst durchfällt statt an einer Dockerfile-Prüfung
+vorbeizurutschen: `tests/backend/test_n8n_mcp_ssrf_and_pin.py`.
+
+Was die Verdikt-Regel hier bestätigt: der Ausfall erzeugte **keine**
+Zeitüberschreitungen, also hätte `calls_failing` ihn nie gesehen — eine
+Ablehnung ist eine App-Antwort. Genau dafür gibt es die Sonde.
+
+Dazu zwei Beobachtungen für die nächste Diagnose:
+- Das Verdikt des Wächters erscheint **nicht** auf INFO, Sondenaufrufe auch
+  nicht. Aus dem Protokoll allein ist der Grund nicht zu bestimmen; es blieb der
+  Weg über Paketquelle und Adressprüfung.
+- `/api/mcp/status` und `/api/mcp-health` verlangen Anmeldung (der Haushalt
+  läuft auth-on), sind also für eine schnelle Diagnose von außen nicht
+  verfügbar.
+
 ## Rollout
 
 Dark everywhere. To enable on an instance: set `MCP_HEALTH_MONITOR_ENABLED=true`

@@ -128,8 +128,32 @@ RUN mkdir -p /usr/share/piper/voices \
 # Remove wget after downloads complete (security hardening)
 RUN apt-get purge -y wget && apt-get autoremove -y && rm -rf /var/lib/apt/lists/*
 
-# Pre-install MCP stdio server packages (avoids npx download delay on first use)
-RUN npm install -g n8n-mcp@latest
+# Pre-install MCP stdio server packages, EXACT versions.
+#
+# 🛑 Jeder stdio-Server, der per `npx` startet, MUSS hier stehen. Steht er
+# nicht drin, laedt `npx -y <paket>` ihn beim Pod-Start aus dem NETZ und fuehrt
+# ihn aus — nicht der Bildbau entscheidet dann, welcher Code laeuft, sondern
+# der Start. Am 2026-10-26 war genau das der Fall: `mcp-newsapi` fehlte hier,
+# der laufende Pod hielt stattdessen einen npx-Cache unter
+# `$HOME/.npm/_npx/<hash>` (HOME ist `/app/data/cache-home`, NICHT `/root`) mit
+# `{"dependencies": {"mcp-newsapi": "^1.0.0"}}` — eine Caret-Spanne, zur
+# Laufzeit aufgeloest, mit `NEWS_ENABLED=true` in Produktion.
+#
+# 🛑 Und NIE `@latest`: 2.9x von `n8n-mcp` brachte einen SSRF-Riegel auf die
+# API-Basisadresse, der private Adressen abweist. Das hat alle 13
+# n8n-Werkzeuge getoetet, waehrend der Server weiter als „verbunden" galt —
+# siehe die `WEBHOOK_SECURITY_MODE`-Notiz in `config/mcp_servers.yaml`. Eine
+# Versionsanhebung ist ein bewusster Schritt mit eigener Messung, nicht ein
+# Nebeneffekt des Bauens.
+#
+# Ist ein Paket hier global installiert, loest `npx -y <paket>` darauf auf und
+# laedt nichts nach (fuer `n8n-mcp` im laufenden Pod geprueft: es laeuft
+# `node /usr/bin/n8n-mcp`).
+RUN npm install -g n8n-mcp@2.94.3 mcp-newsapi@1.0.0
+#
+# Dieselbe Liste wie in `Dockerfile` — beide muessen im Gleichschritt bleiben;
+# dies hier ist ein LEBENDER Bauweg (docker-compose.yml,
+# docker-compose.prod.yml, .github/workflows/release.yml).
 
 # App Code
 COPY . .
