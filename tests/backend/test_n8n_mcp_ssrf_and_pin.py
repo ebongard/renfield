@@ -21,6 +21,7 @@ Darunter liegt der Mechanismus, der es lautlos machte: das Bild installierte
 `n8n-mcp@latest`, also entschied jeder Bildbau neu, welcher Code mit n8n
 spricht.
 """
+import re
 from pathlib import Path
 
 import pytest
@@ -94,6 +95,66 @@ def test_the_probe_that_catches_it_still_exists():
         "faellt ein Totalausfall der Anbindung wieder niemandem auf")
 
 
+def _npx_server_pakete() -> list[tuple[str, str]]:
+    """`(servername, paket)` fuer JEDEN stdio-Server, der per npx startet.
+
+    🛑 Die Herleitung geht von der KONFIGURATION aus, nicht vom Dockerfile.
+    Die erste Fassung las nur `npm install -g`-Zeilen und beglaubigte damit die
+    Klasse auf der Staerke der einen reparierten Instanz: `mcp-newsapi` stand
+    gar nicht im Bild, lief aber in Produktion (`NEWS_ENABLED: "true"`), und
+    der Test war gruen. Von der Konfiguration her gedacht faellt ein NEU
+    hinzugefuegter npx-Server von selbst durch, statt an einer
+    Dockerfile-Pruefung vorbeizurutschen. Im Review zu #1412 gefunden.
+    """
+    eintraege = yaml.safe_load(
+        (WURZEL / "config" / "mcp_servers.yaml").read_text())["servers"]
+    treffer = []
+    for e in eintraege:
+        if e.get("command") != "npx":
+            continue
+        args = [a for a in (e.get("args") or []) if not a.startswith("-")]
+        assert args, f"npx-Server `{e['name']}` nennt kein Paket in args"
+        treffer.append((e["name"], args[0]))
+    return treffer
+
+
+def _installierte_pakete() -> dict[str, dict[str, str]]:
+    """`{dateiname: {paketname: version}}` aus allen Backend-Bilddateien."""
+    je_datei: dict[str, dict[str, str]] = {}
+    for datei, zeile in _globale_installationszeilen():
+        for token in re.findall(r"(?<=\s)([@\w][\w@/.-]*@[\w.+-]+)", " " + zeile):
+            name, _, version = token.rpartition("@")
+            je_datei.setdefault(datei, {})[name] = version
+    return je_datei
+
+
+def test_every_npx_mcp_server_is_pinned_in_every_backend_image():
+    """🛑 Ohne globale Installation laedt `npx -y <paket>` beim POD-START aus
+    dem Netz und fuehrt den Code aus — der Startzeitpunkt entscheidet dann,
+    welcher Code neben der Datenbank, den Modellservern und den beiden
+    MCP-Diensten laeuft, die absichtlich Zugangsdaten halten.
+
+    Am 2026-10-26 im laufenden Pod gemessen: `mcp-newsapi` war NICHT im Bild,
+    stattdessen lag unter `$HOME/.npm/_npx/<hash>` ein Cache mit
+    `{"dependencies": {"mcp-newsapi": "^1.0.0"}}` — eine Caret-Spanne, zur
+    Laufzeit aufgeloest, bei `NEWS_ENABLED: "true"`.
+    """
+    erwartet = _npx_server_pakete()
+    assert erwartet, "kein npx-Server mehr in der Konfiguration — Test anpassen"
+    installiert = _installierte_pakete()
+    assert installiert, "keine globale npm-Installation in den Bilddateien"
+
+    fehlend = []
+    for datei, pakete in sorted(installiert.items()):
+        for server, paket in erwartet:
+            if paket not in pakete:
+                fehlend.append(f"{datei}: `{paket}` (Server `{server}`) fehlt")
+    assert not fehlend, (
+        "ein per npx gestarteter MCP-Server ist nicht im Bild festgenagelt — "
+        "dann laedt der Pod ihn beim Start aus dem Netz:\n  "
+        + "\n  ".join(fehlend))
+
+
 def test_no_mcp_package_in_the_image_floats_on_latest():
     """🛑 Die KLASSE, nicht nur n8n-mcp.
 
@@ -121,8 +182,6 @@ def test_every_globally_installed_mcp_package_names_an_exact_version():
     Vorabversion ist unveraenderlich; `latest`, ein dist-tag, `^`, `~` und `x`
     sind es nicht. Im Review zu #1412 gefunden.
     """
-    import re
-
     zeilen = _globale_installationszeilen()
     assert zeilen, "keine globale npm-Installation mehr im Bild — Test anpassen"
     pakete = [(d, m) for d, z in zeilen

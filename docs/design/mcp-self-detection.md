@@ -440,13 +440,36 @@ die öffentliche Adresse auf einen fremden Hoster zeigte). Beides schließt sich
 aus. Ausweg ist der Schalter des Pakets selbst: `WEBHOOK_SECURITY_MODE=permissive`,
 gesetzt in der `env`-Liste der n8n-Stanza.
 
-**Der Mechanismus darunter ist der eigentliche Befund.** Das Bild installierte
-`n8n-mcp@latest`. Damit entschied der Zeitpunkt des Bildbaus, welcher Code mit
-n8n spricht, und eine Verhaltensänderung kam ohne eine einzige Zeile Diff
-herein. `npx -y n8n-mcp` löst auf diese globale Installation auf (im laufenden
-Pod nachgesehen: `node /usr/bin/n8n-mcp`, kein npx-Cache), die Zeile entscheidet
-also wirklich. Jetzt exakt festgenagelt, und ein Test hält beides:
-`tests/backend/test_n8n_mcp_ssrf_and_pin.py`.
+**Der Mechanismus darunter ist der eigentliche Befund, und er reicht weiter
+als n8n.** Das Bild installierte `n8n-mcp@latest`; damit entschied der Zeitpunkt
+des Bildbaus, welcher Code mit n8n spricht, und eine Verhaltensänderung kam ohne
+eine einzige Zeile Diff herein. Dass die Zeile wirklich entscheidet, ist für
+`n8n-mcp` geprüft: im laufenden Pod läuft `node /usr/bin/n8n-mcp`, also die
+globale Installation.
+
+🛑 **Der schlimmere Fall stand daneben und wäre an einer Dockerfile-Prüfung
+vorbeigegangen.** `mcp-newsapi` (Server `news`, `NEWS_ENABLED: "true"`) war
+überhaupt nicht im Bild. `npx -y mcp-newsapi` lädt es deshalb beim POD-START
+aus dem Netz und führt es aus — nicht der Bildbau entscheidet, sondern der
+Start. Im laufenden Pod nachgesehen: `npm ls -g` kennt nur `corepack`,
+`n8n-mcp`, `npm`; `which mcp-newsapi` findet nichts; und unter
+`$HOME/.npm/_npx/<hash>` (HOME ist `/app/data/cache-home`, **nicht** `/root`)
+liegt `{"dependencies": {"mcp-newsapi": "^1.0.0"}}` — eine Caret-Spanne, zur
+Laufzeit aufgelöst. Das Paket läuft damit neben der Datenbank, den
+Modellservern und den beiden MCP-Diensten, die absichtlich Zugangsdaten halten,
+die das Backend nicht hat.
+
+Eine frühere Fassung dieses Abschnitts behauptete „kein npx-Cache". Das war
+falsch gemessen: gesucht wurde nach `n8n-mcp` IM Cache und danach unter
+`/root` — nicht unter dem echten `HOME`. Die Messung antwortete auf eine engere
+Frage als die Behauptung, die daraus wurde.
+
+Beide Pakete sind jetzt exakt festgenagelt, in `Dockerfile` **und**
+`Dockerfile.gpu` (ein lebender Bauweg über `docker-compose*.yml` und
+`release.yml`). Der Test leitet die Pflicht aus der KONFIGURATION her — jeder
+stdio-Server mit `command: npx` muss im Bild stehen —, damit ein neu
+hinzugefügter Server von selbst durchfällt statt an einer Dockerfile-Prüfung
+vorbeizurutschen: `tests/backend/test_n8n_mcp_ssrf_and_pin.py`.
 
 Was die Verdikt-Regel hier bestätigt: der Ausfall erzeugte **keine**
 Zeitüberschreitungen, also hätte `calls_failing` ihn nie gesehen — eine

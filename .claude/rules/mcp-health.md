@@ -49,13 +49,15 @@ Retry-After is honoured, no automatic retry; signal + alert stay dark).
   free things (the watcher's timestamp, `ioreg`) — so it cannot wedge the device it measures — and errors ONLY on
   watcher dead/crashloop or a WEDGE (USB node present, SANE blind). A missing `ioreg` answer is never a finding.
 - Probes run as system calls (`user_permissions=None`/`user_id=None`) so they never colour `ToolOutcomeStat`.
-- 🛑 **Ein MCP-Paket im Bild darf nicht an `@latest` hängen.** `npx -y <paket>` nimmt die globale Installation, die
-  Dockerfile-Zeile entscheidet also, welcher Code mit dem Dienst spricht — mit `@latest` entscheidet das der
-  Zeitpunkt des Bildbaus, und eine Verhaltensänderung kommt ohne eine Zeile Diff herein. Am 2026-10-26 so
-  passiert: `n8n-mcp` prüft die API-BASISADRESSE durch seinen SSRF-Riegel und weist private Adressen ab, n8n muss
-  aber im LAN stehen → alle 13 Werkzeuge tot, Transport weiter „verbunden", nur die Sonde sah es. Schalter
-  `WEBHOOK_SECURITY_MODE: permissive` in der Stanza; Test `test_n8n_mcp_ssrf_and_pin.py`. Hergang:
-  `docs/design/mcp-self-detection.md`.
+- 🛑 **Jeder stdio-Server mit `command: npx` muss im Bild auf eine EXAKTE Version festgenagelt sein.** Fehlt er
+  dort, lädt `npx -y <paket>` ihn beim POD-START aus dem Netz und führt ihn aus (so lief `mcp-newsapi@^1.0.0`
+  in Produktion); steht er mit `@latest` drin, entscheidet der Bildbau. Beides holt eine Verhaltensänderung ohne
+  eine Zeile Diff herein. Am 2026-10-26 so passiert: `n8n-mcp` prüft die API-BASISADRESSE durch seinen
+  SSRF-Riegel und weist private Adressen ab, n8n muss aber im LAN stehen → alle 13 Werkzeuge tot, Transport
+  weiter „verbunden", nur die Sonde sah es. Schalter `WEBHOOK_SECURITY_MODE: permissive` in der Stanza (er räumt
+  Loopback, private Bereiche und private IPv6 ab; die Metadaten-Sperrliste und die Schema-Prüfung bleiben in
+  JEDEM Modus). Die Pflicht wird aus der Konfiguration hergeleitet, nicht aus dem Dockerfile:
+  `test_n8n_mcp_ssrf_and_pin.py`. Hergang: `docs/design/mcp-self-detection.md`.
 
 ## Alerting
 - "Told" = **a notification row exists.** `notify_admin` returns `True` for a failure AFTER `process_webhook`

@@ -177,17 +177,28 @@ RUN mkdir -p /usr/share/piper/voices \
 # Remove wget after downloads complete (security hardening)
 RUN apt-get purge -y wget && apt-get autoremove -y && rm -rf /var/lib/apt/lists/*
 
-# Pre-install MCP stdio server packages (avoids npx download delay on first use)
+# Pre-install MCP stdio server packages, EXACT versions.
 #
-# 🛑 EXACT VERSION, never `@latest`. `npx -y n8n-mcp` resolves to this global
-# install (verified in the live pod: `node /usr/bin/n8n-mcp` runs and there is
-# no npx cache), so this line decides which code talks to n8n — and `@latest`
-# let a behaviour change in and nobody noticed. 2.9x added an SSRF guard on the
-# API base URL that refuses private addresses, which killed every n8n tool
-# while the server still reported "connected"; see the WEBHOOK_SECURITY_MODE
-# note in `config/mcp_servers.yaml`. A version bump is a deliberate step with
-# its own measurement, not a side effect of rebuilding the image.
-RUN npm install -g n8n-mcp@2.94.3
+# 🛑 Jeder stdio-Server, der per `npx` startet, MUSS hier stehen. Steht er
+# nicht drin, laedt `npx -y <paket>` ihn beim Pod-Start aus dem NETZ und fuehrt
+# ihn aus — nicht der Bildbau entscheidet dann, welcher Code laeuft, sondern
+# der Start. Am 2026-10-26 war genau das der Fall: `mcp-newsapi` fehlte hier,
+# der laufende Pod hielt stattdessen einen npx-Cache unter
+# `$HOME/.npm/_npx/<hash>` (HOME ist `/app/data/cache-home`, NICHT `/root`) mit
+# `{"dependencies": {"mcp-newsapi": "^1.0.0"}}` — eine Caret-Spanne, zur
+# Laufzeit aufgeloest, mit `NEWS_ENABLED=true` in Produktion.
+#
+# 🛑 Und NIE `@latest`: 2.9x von `n8n-mcp` brachte einen SSRF-Riegel auf die
+# API-Basisadresse, der private Adressen abweist. Das hat alle 13
+# n8n-Werkzeuge getoetet, waehrend der Server weiter als „verbunden" galt —
+# siehe die `WEBHOOK_SECURITY_MODE`-Notiz in `config/mcp_servers.yaml`. Eine
+# Versionsanhebung ist ein bewusster Schritt mit eigener Messung, nicht ein
+# Nebeneffekt des Bauens.
+#
+# Ist ein Paket hier global installiert, loest `npx -y <paket>` darauf auf und
+# laedt nichts nach (fuer `n8n-mcp` im laufenden Pod geprueft: es laeuft
+# `node /usr/bin/n8n-mcp`).
+RUN npm install -g n8n-mcp@2.94.3 mcp-newsapi@1.0.0
 
 # Application code
 COPY . .

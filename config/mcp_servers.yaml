@@ -321,9 +321,20 @@ servers:
       # `eingeschränkt`, weil der Riegel jeden Werkzeugaufruf abwies. Der
       # stdio-Server verbindet dabei sauber mit 13 Werkzeugen; nur benutzen
       # kann sie niemand.
-      # Die Lockerung ist hier vertretbar, weil die Zieladresse vom Betreiber
-      # gesetzt wird und absichtlich im eigenen Netz liegt — nicht von einem
-      # Modell oder einem Nutzer.
+      # Was `permissive` genau abraeumt (gegen die Paketquelle geprueft):
+      # die Loopback-Sperre, die privaten Bereiche (weiter als RFC1918 — auch
+      # 169.254/16 link-local, 100.64/10, Multicast) und die privaten
+      # IPv6-Formen. Was in JEDEM Modus stehen bleibt: Nicht-http(s)-Schemata,
+      # eine gescheiterte Namensauflösung und die Sperrliste der
+      # Cloud-Metadaten (169.254.169.254 und Verwandte), geprueft nach Name UND
+      # nach aufgelöster Adresse. `moderate` genuegt NICHT: der Modus laesst nur
+      # Loopback zu, nicht 192.168/16.
+      # Vertretbar ist die Lockerung aus ZWEI Gruenden, und der zweite ist der
+      # tragende: die Zieladresse setzt der BETREIBER, und auf keinem
+      # erreichbaren Pfad darf ein Aufrufer einen Host angeben — jede URL ist
+      # `baseUrl` plus Pfad, und die Autorität endet vor jeder Eingabe des
+      # Aufrufers. Beim Anheben der Version ist genau das die Eigenschaft, die
+      # neu zu pruefen ist.
       WEBHOOK_SECURITY_MODE: "permissive"
     refresh_interval: 300
     example_intent: mcp.n8n.n8n_list_workflows
