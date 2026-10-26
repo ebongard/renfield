@@ -9,6 +9,7 @@ Implements a Reason + Act loop where the LLM iteratively:
 Uses structured JSON protocol for robustness with local models.
 """
 import asyncio
+import hashlib
 import json
 import re
 import time
@@ -898,6 +899,30 @@ def _record_agent_turn_metrics(context: AgentContext, last_step: AgentStep | Non
 _PRESELECT_DESC_CHARS = 480
 
 
+def preselect_input_signature(tool_names: list[str]) -> str:
+    """Ein kurzer Fingerabdruck der ANGEBOTENEN Liste, in ihrer Reihenfolge.
+
+    🛑 Der Anlass, am 2026-10-26 gemessen. Auf dieselbe Nachricht
+    („scanne nach xidra") lieferte die Vorauswahl neunmal zwei verschiedene
+    Ergebnisse: siebenmal die Scanner-Werkzeuge, zweimal die Dokumentensuche.
+    Das Protokoll sagte beide Male „3/33" — und damit war NICHT zu entscheiden,
+    ob sich die Eingabe geändert hatte oder das Modell schwankte. Drei
+    Fehldiagnosen gingen auf diese Lücke; die dritte hätte eine Verschlechterung
+    ausgerollt, wenn sie nicht vorher gemessen worden wäre.
+
+    Mit dem Fingerabdruck ist die Frage in einem Blick entschieden: gleiche
+    Signatur und verschiedenes Ergebnis heißt, die Eingabe war identisch;
+    verschiedene Signatur heißt, die Liste hat sich geändert (Reihenfolge,
+    Zugang oder Wegfall eines Werkzeugs).
+
+    Die REIHENFOLGE geht ein, nicht nur die Menge: `get_tool_names()` gibt die
+    Einfügereihenfolge eines dict zurück, und die ändert sich bei einer
+    Neuregistrierung (`refresh_interval`).
+    """
+    roh = "\n".join(tool_names).encode("utf-8")
+    return hashlib.sha1(roh, usedforsecurity=False).hexdigest()[:8]
+
+
 def preselect_tool_line(name: str, tool) -> str:
     """Eine Zeile der Werkzeugliste fuer die Vorauswahl.
 
@@ -1137,10 +1162,19 @@ class AgentService:
             # `scan_document` gar nicht angeboten oder nur nicht gewaehlt
             # wurde. Eine Zaehlung ohne Namen ist fuer die Diagnose fast
             # wertlos; die Liste ist kurz, der Platz kostet nichts.
+            # 🛑 `in=` ist der Fingerabdruck der ANGEBOTENEN Liste samt
+            # Reihenfolge. Ohne ihn war am 2026-10-26 nicht zu entscheiden, ob
+            # ein wechselndes Ergebnis von einer geaenderten Eingabe oder vom
+            # Modell kam — siehe `preselect_input_signature`.
             logger.info(
-                "Tool pre-selection: {}/{} tools selected for: '{}' -> {}",
-                len(filtered), len(tool_names), message[:60], sorted(filtered),
+                "Tool pre-selection: {}/{} tools selected for: '{}' (in={}) -> {}",
+                len(filtered), len(tool_names), message[:60],
+                preselect_input_signature(tool_names), sorted(filtered),
             )
+            # Die ganze Liste nur auf DEBUG: 33 Namen je Zug sind im Betrieb
+            # Laerm, in der Diagnose aber genau das Fehlende.
+            logger.debug("Tool pre-selection input (in={}): {}",
+                         preselect_input_signature(tool_names), tool_names)
             return filtered
 
         except (TimeoutError, json.JSONDecodeError, Exception) as e:
