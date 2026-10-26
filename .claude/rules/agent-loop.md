@@ -38,6 +38,11 @@ Loaded only when `agent_service.py`, `prompts/agent.yaml` or the chat handler is
   also 1,2 % gegen 2,6 % eines 262.144-Token-Fensters. Die alten 80 waren aus #312 und nie begründet.
 - 🛑 Die Protokollzeile nennt die **Namen**, nicht nur die Anzahl: „3/33 tools selected" lässt offen, ob das
   Werkzeug nicht angeboten oder nur nicht gewählt wurde — zwei verschiedene Reparaturen.
+- 🛑 Und `(in=…)` ist der Fingerabdruck der **angebotenen** Liste samt Reihenfolge. Gleiche Signatur bei
+  verschiedenem Ergebnis heißt: Eingabe identisch, das Modell hat gewechselt; andere Signatur heißt: die Liste
+  hat sich geändert (`get_tool_names()` gibt Einfügereihenfolge, die eine Neuregistrierung umstellt). Ohne das
+  kostete ein schwankender Fehlgriff am 2026-10-26 drei widerlegte Hypothesen, eine davon hätte die Trefferquote
+  von 14/15 auf 7/15 gesenkt. Die volle Liste steht auf DEBUG.
 - 🛑 Ein `hint` darf kein fremdes Gebiet beanspruchen. In der Rolle `general` (`mcp_servers: null`,
   `internal_tools: null`, zugleich Rückfall des Routers) liegen ALLE Werkzeuge in einer Liste; ein Rollenzaun aus
   `agent_roles.yaml` greift dort nicht. Ein unbedingtes „<Wort> heißt immer X" zieht die Geschwister mit herein.

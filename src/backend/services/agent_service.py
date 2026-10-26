@@ -899,8 +899,8 @@ def _record_agent_turn_metrics(context: AgentContext, last_step: AgentStep | Non
 _PRESELECT_DESC_CHARS = 480
 
 
-def preselect_input_signature(tool_names: list[str]) -> str:
-    """Ein kurzer Fingerabdruck der ANGEBOTENEN Liste, in ihrer Reihenfolge.
+def preselect_input_signature(lang: str, tool_list: str) -> str:
+    """Ein kurzer Fingerabdruck der ANGEBOTENEN Eingabe — des ganzen Prompts.
 
     🛑 Der Anlass, am 2026-10-26 gemessen. Auf dieselbe Nachricht
     („scanne nach xidra") lieferte die Vorauswahl neunmal zwei verschiedene
@@ -915,11 +915,22 @@ def preselect_input_signature(tool_names: list[str]) -> str:
     verschiedene Signatur heißt, die Liste hat sich geändert (Reihenfolge,
     Zugang oder Wegfall eines Werkzeugs).
 
-    Die REIHENFOLGE geht ein, nicht nur die Menge: `get_tool_names()` gibt die
-    Einfügereihenfolge eines dict zurück, und die ändert sich bei einer
-    Neuregistrierung (`refresh_interval`).
+    🛑 Gehasht wird die ZUSAMMENGESETZTE Liste, nicht die Namen — und die
+    Sprache dazu. Die erste Fassung nahm nur `tool_names`, und damit war die
+    Behauptung „gleiche Signatur heißt identische Eingabe" FALSCH: in den
+    Prompt geht `tool_list` ein, also Name PLUS beschnittene Beschreibung PLUS
+    ungekürzter Hinweis, und `lang` wählt die Vorlage (de/en existieren beide).
+    Ein geänderter Hinweis — etwa durch einen ConfigMap-Patch, wie am
+    2026-10-26 geschehen — hätte den Prompt umgestellt und die Signatur
+    unberührt gelassen. Genau derselbe Fehler, den dieser Fingerabdruck
+    aufdecken soll: eine Messung, die eine engere Frage beantwortet als die
+    Behauptung darauf. Im Review zu #1413 gefunden.
+
+    Die REIHENFOLGE geht mit ein, weil die verbundenen Zeilen sie tragen:
+    `get_tool_names()` gibt die Einfügereihenfolge eines dict, und die ändert
+    sich bei einer Neuregistrierung (`refresh_interval`).
     """
-    roh = "\n".join(tool_names).encode("utf-8")
+    roh = f"{lang}\n{tool_list}".encode()
     return hashlib.sha1(roh, usedforsecurity=False).hexdigest()[:8]
 
 
@@ -1109,6 +1120,9 @@ class AgentService:
         ]
 
         tool_list = "\n".join(tool_lines)
+        # Einmal berechnen, nicht je Protokollzeile: loguru wertet seine
+        # Argumente eifrig aus, auch wenn die DEBUG-Zeile nie erscheint.
+        eingabe_signatur = preselect_input_signature(lang, tool_list)
         preselect_prompt = prompt_manager.get(
             "agent", "tool_preselect_prompt", lang=lang,
             message=message, tool_list=tool_list
@@ -1169,12 +1183,14 @@ class AgentService:
             logger.info(
                 "Tool pre-selection: {}/{} tools selected for: '{}' (in={}) -> {}",
                 len(filtered), len(tool_names), message[:60],
-                preselect_input_signature(tool_names), sorted(filtered),
+                eingabe_signatur, sorted(filtered),
             )
             # Die ganze Liste nur auf DEBUG: 33 Namen je Zug sind im Betrieb
-            # Laerm, in der Diagnose aber genau das Fehlende.
+            # Laerm, in der Diagnose aber genau das Fehlende. Die NAMEN, nicht
+            # die vollen Zeilen — die tragen Hinweistexte und blaehen das
+            # Protokoll um Groessenordnungen auf.
             logger.debug("Tool pre-selection input (in={}): {}",
-                         preselect_input_signature(tool_names), tool_names)
+                         eingabe_signatur, tool_names)
             return filtered
 
         except (TimeoutError, json.JSONDecodeError, Exception) as e:
