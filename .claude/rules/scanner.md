@@ -32,6 +32,10 @@ dedup / tier / PDF-Split / Paperless are unchanged.
   🛑 Ein Hinweis darf nicht fremdes Gebiet beanspruchen: die erste Fassung gab „scanne das nach <Ziel>" an
   `route_scan`, aber `scan_document` nimmt selbst ein `target` — ein NEUER Scan mit Ziel wäre damit bei der
   Zuordnung gelandet. Ein Fehlgriff gegen einen anderen getauscht.
+  🛑 **„scanne nach <X>" ist syntaktisch nicht von „suche nach <X>" zu unterscheiden** — am 2026-10-26 nahm das
+  Modell <X> als Suchbegriff und griff `paperless.search_documents`. Der Hinweis zu `scan_document` muss darum
+  ausdrücklich sagen, dass <X> immer das ZIEL ist, nie ein Suchbegriff. Eine Formulierung, die nur das Ziel
+  benennt, ohne die Zweideutigkeit zu bestreiten, genügt nicht.
 - 🛑 **Ausnahme, und nur sie: der KNOPF.** Eine Fertigmeldung hängt an der `session_id` des anfordernden Chats; ein
   Knopfdruck hat keine, also entsteht der Eintrag NIE und die 409 ist für ihn endgültig. Am 2026-10-21 wiederholte
   der Scanner deshalb gegen eine Antwort, die sich nicht ändern konnte. Das Ereignis führt jetzt `caller` mit, und
