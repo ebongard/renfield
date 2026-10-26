@@ -1127,9 +1127,17 @@ class AgentService:
                 logger.warning("Tool pre-selection matched 0 valid tools — using all")
                 return None
 
+            # 🛑 Die NAMEN gehoeren in die Zeile, nicht nur die Anzahl.
+            # „3/33 tools selected" sagt nicht, ob das EINE richtige Werkzeug
+            # dabei war — und genau das war am 2026-10-26 die Frage: auf
+            # „scanne nach xidra" griff der Agent dreimal zur Paperless-Suche,
+            # und aus dem Protokoll war nicht zu entscheiden, ob
+            # `scan_document` gar nicht angeboten oder nur nicht gewaehlt
+            # wurde. Eine Zaehlung ohne Namen ist fuer die Diagnose fast
+            # wertlos; die Liste ist kurz, der Platz kostet nichts.
             logger.info(
-                f"Tool pre-selection: {len(filtered)}/{len(tool_names)} tools "
-                f"selected for: '{message[:60]}'"
+                "Tool pre-selection: {}/{} tools selected for: '{}' -> {}",
+                len(filtered), len(tool_names), message[:60], sorted(filtered),
             )
             return filtered
 

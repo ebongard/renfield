@@ -577,13 +577,20 @@ servers:
         scan_document mit target. NICHT paperless.search_documents: das sucht
         Abgelegtes und ordnet nichts zu.
       scan_document: >-
-        Startet einen NEUEN Scan. Nimmt selbst ein `target` — „scanne die
-        Seiten nach <Ziel>", „einscannen und nach <Ziel> ablegen" gehören
-        hierher, nicht zu route_scan. 🛑 `target` ist die technische KENNUNG,
-        klein und englisch (derzeit `household`, `xidra`), nicht die deutsche
-        Anzeigebezeichnung. Ohne `target` entscheidet Trennblatt
-        oder Klassifizierer; ist dessen Urteil zu unsicher, bleibt der Scan
-        liegen und route_scan ordnet ihn später zu.
+        Startet einen NEUEN Scan: Papier aus dem Einzug einlesen. 🛑 „scanne
+        nach <X>" bedeutet IMMER, dass <X> das ZIEL ist — eine Richtung, NIE
+        ein Suchbegriff. „scanne nach xidra" heißt „lies das Papier ein und
+        lege es in der Instanz xidra ab", NICHT „suche nach dem Wort xidra".
+        Wer suchen will, sagt „suche", „finde" oder „zeige mir"; „scanne"
+        bedeutet immer Papier einlesen. Nimm bei „scanne nach <X>" also
+        dieses Werkzeug mit `target=<X>` und NIEMALS eine Dokumentensuche.
+        Ebenso hierher: „einscannen und nach <Ziel> ablegen", „Seiten nach
+        <Ziel> scannen". NICHT zu route_scan — das ordnet nur einen schon
+        FERTIGEN Scan zu. 🛑 `target` ist die technische KENNUNG, klein und
+        englisch (derzeit `household`, `xidra`), nicht die deutsche
+        Anzeigebezeichnung. Ohne `target` entscheidet Trennblatt oder
+        Klassifizierer; ist dessen Urteil zu unsicher, bleibt der Scan liegen
+        und route_scan ordnet ihn später zu.
       list_pending_scans: >-
         Zeigt Scans, die FERTIG sind und auf eine Zuordnung warten, mit ihrer
         stage_id. Nehmen bei „welche Scans warten", „was ist offen", und immer
