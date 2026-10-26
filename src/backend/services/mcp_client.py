@@ -3324,6 +3324,12 @@ class MCPManager:
         state.all_discovered_tools = [self._tool_info_from_mcp(state.config, t) for t in raw_tools]
         state.note_discovered_tools()
         self._apply_tool_filter(state)
+        # 🛑 NACH dem Filtern: `log_hint_arrival` zaehlt auch, wie viele der
+        # behinweisten Werkzeuge noch ANGEBOTEN werden. Vor dem Filtern waere
+        # `state.tools` der alte Stand, und ein `prompt_tools`-Filter oder eine
+        # DB-Uebersteuerung, die ein behinweistes Werkzeug herauswirft, bliebe
+        # unsichtbar — gemeldet als gesund. Im Review zu #1415 gefunden.
+        log_hint_arrival(state)
 
     def _apply_tool_filter(self, state: MCPServerState) -> None:
         """Rebuild state.tools + _tool_index: DB override > YAML prompt_tools > all."""
@@ -3429,3 +3435,68 @@ class MCPManager:
 
         self._tool_index.clear()
         logger.info("MCP manager shut down")
+
+
+def log_hint_arrival(state: "MCPServerState") -> None:
+    """Protokolliert, ob die konfigurierten `tool_hints` wirklich ANKOMMEN.
+
+    🛑 Am 2026-10-26 standen vier Hinweise für den Scanner in `mcp_servers.yaml`
+    (1426/791/186/379 Zeichen). Mount und Lader trugen sie, und derselbe
+    Codepfad lieferte in einer Nachstellung im laufenden Pod eine 1529 Zeichen
+    lange Vorauswahlzeile. Im echten Prompt war dieselbe Zeile 102 Zeichen lang
+    und trug keinen Hinweis. Vier Review-Runden arbeiteten an Texten, die nie
+    ankamen, und nichts im Protokoll sagte es.
+
+    🛑 **Abwesenheit ist keine Diagnose.** Eine frühere Fassung kehrte bei
+    einem Server ohne Hinweise still zurück — und damit sahen drei
+    verschiedene Lagen gleich aus: Server ohne Hinweise, Konfiguration ohne
+    Hinweise (etwa ein Prozess, der vor dem Patch startete), und ein Bild ohne
+    diese Funktion. Jede erzeugte dieselbe Stille. Darum IMMER eine Zeile, auch
+    `0 hint(s) configured`. Im Review zu #1415 gefunden.
+
+    Gezählt wird ZWEIMAL, und der Unterschied ist der Punkt: `attached` sind
+    Werkzeuge, denen der Hinweis angehängt wurde; `offered` sind die, die
+    danach noch in `state.tools` stehen. Ein `prompt_tools`-Filter oder eine
+    DB-Übersteuerung kann einen Hinweis tragen und das Werkzeug trotzdem
+    herausfiltern — die alte Fassung hätte das als gesund gemeldet.
+
+    Protokolliert werden NUR Namen und Längen, nie der Hinweistext.
+    """
+    konfiguriert = dict(state.config.tool_hints or {})
+    entdeckt = {t.original_name for t in state.all_discovered_tools}
+    angehaengt = [t for t in state.all_discovered_tools if t.hint]
+    angeboten = [t for t in (state.tools or []) if t.hint]
+    ohne_werkzeug = sorted(set(konfiguriert) - entdeckt)
+    gefiltert = len(angehaengt) - len(angeboten)
+
+    # 🛑 Nur bei ÄNDERUNG protokollieren. Der Inhalt ändert sich erst, wenn
+    # jemand die YAML bearbeitet, die Entdeckung läuft aber alle ~60 s je
+    # Server (`mcp_refresh_interval`, und `refresh_tools` liest den
+    # per-Server-Wert nicht). Ohne das wären es ~60 Zeilen je Stunde und
+    # Server, und ein dauerhaft unpassender Schlüssel ein Dauerfeuer.
+    zustand = (len(konfiguriert), len(angehaengt), len(angeboten),
+               tuple(ohne_werkzeug))
+    if getattr(state, "_hint_arrival_state", None) == zustand:
+        return
+    state._hint_arrival_state = zustand
+
+    if ohne_werkzeug or gefiltert or (konfiguriert and not angehaengt):
+        # Jeder dieser Fälle heißt: der Steuertext des Betreibers erreicht das
+        # Modell nicht oder nicht ganz.
+        logger.warning(
+            "MCP '{}': {} hint(s) configured, {} attached, {} offered"
+            "{}{}",
+            state.config.name, len(konfiguriert), len(angehaengt),
+            len(angeboten),
+            f"; {len(ohne_werkzeug)} key(s) match no discovered tool: "
+            f"{ohne_werkzeug}" if ohne_werkzeug else "",
+            f"; {gefiltert} hinted tool(s) filtered out of the offered set"
+            if gefiltert else "",
+        )
+    else:
+        logger.info(
+            "MCP '{}': {} hint(s) configured, {} attached, {} offered "
+            "({} chars total)",
+            state.config.name, len(konfiguriert), len(angehaengt),
+            len(angeboten), sum(len(t.hint) for t in angeboten),
+        )

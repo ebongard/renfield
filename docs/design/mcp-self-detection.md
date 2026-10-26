@@ -483,6 +483,42 @@ Dazu zwei Beobachtungen für die nächste Diagnose:
   läuft auth-on), sind also für eine schnelle Diagnose von außen nicht
   verfügbar.
 
+## Der Steuertext kam vier Review-Runden lang nicht an (2026-10-26)
+
+Vier Hinweise standen für den Scanner in `config/mcp_servers.yaml`
+(1426/791/186/379 Zeichen). Der gemountete Pfad trug sie, der Lader trug sie,
+und derselbe Codepfad lieferte in einer Nachstellung **im laufenden Pod** eine
+1529 Zeichen lange Vorauswahlzeile.
+
+Im **echten** Prompt war dieselbe Zeile **102 Zeichen** lang:
+
+```
+- mcp.scanner.scan_document: START scanning every sheet in the document feeder into one searchable PDF
+```
+
+Das ist exakt die erste Zeile des Docstrings aus
+`renfield-mcp-scanner/server.py:102` — kein Hinweis, kein Wort über Ziele.
+`internal.paperless_dedupe` steht im selben Prompt mit 509 Zeichen, die
+480er-Grenze greift also; nur die MCP-Werkzeuge kommen nackt an.
+
+Damit hatte alles, was in vier Review-Runden am Hinweistext gebaut wurde
+(#1411 Sprachfalle, Bluetooth-Abgrenzung, die `known:`-Korrektur), in
+Produktion keine Wirkung. Sichtbar wurde es erst durch einen eigens gebauten
+Prompt-Auszug (`AGENT_PRESELECT_PROMPT_DUMP`, #1414) — nichts im Protokoll
+sagte es.
+
+Geprüft und AUSGESCHLOSSEN wurde dabei: eine veraltete Konfiguration im
+laufenden Prozess (die ConfigMap wurde zuletzt um 18:53 geändert, der Pod
+startete um 20:12 und las sie beim Start), ein Overlay (`config/mcp.d` trägt
+nur `twin.yaml`), ein nicht verbundener Server (der Scanner verband sich um
+20:12:20 mit 10 Werkzeugen) und ein Namensfehler beim Schlüssel (die
+Nachstellung mit der geladenen Konfiguration liefert den Hinweis).
+
+Die Ursache ist damit noch offen. `log_hint_arrival` macht sie ab dem nächsten
+Verbinden ablesbar statt erschlossen — und das ist der Unterschied, der
+gefehlt hat: an diesem Tag wurde dreimal geraten und dreimal danebengelegen,
+zweimal auf Nachbildungen, die nichts bewiesen.
+
 ## Rollout
 
 Dark everywhere. To enable on an instance: set `MCP_HEALTH_MONITOR_ENABLED=true`

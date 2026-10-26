@@ -59,6 +59,18 @@ Retry-After is honoured, no automatic retry; signal + alert stay dark).
   JEDEM Modus). Die Pflicht wird aus der Konfiguration hergeleitet, nicht aus dem Dockerfile:
   `test_n8n_mcp_ssrf_and_pin.py`. Hergang: `docs/design/mcp-self-detection.md`.
 
+## Kommt der Steuertext überhaupt an?
+- 🛑 **`tool_hints` können konfiguriert sein und das Modell trotzdem NIE erreichen** — am 2026-10-26 taten sie
+  das vier Review-Runden lang. `log_hint_arrival` (gerufen in `_install_discovered_tools`, NACH dem Filtern)
+  zählt je Entdeckung: konfiguriert / angehängt / **angeboten**. Die Differenz ist der Punkt — ein
+  `prompt_tools`-Filter oder eine DB-Übersteuerung kann ein behinweistes Werkzeug aus `state.tools` werfen.
+- 🛑 **Abwesenheit ist keine Diagnose:** es gibt IMMER eine Zeile, auch `0 hint(s) configured`. Sonst sehen drei
+  Lagen gleich aus — Server ohne Hinweise, Konfiguration ohne, Bild ohne die Funktion.
+- Nur bei ÄNDERUNG, weil die Entdeckung alle ~60 s läuft (`mcp_refresh_interval`; `refresh_tools` liest den
+  per-Server-Wert NICHT). Nur Namen und Längen, nie der Hinweistext.
+- 🛑 Der Schlüssel ist der ROHE Werkzeugname (`scan_document`), nicht der namensräumliche. Hergang:
+  `docs/design/mcp-self-detection.md`.
+
 ## Alerting
 - "Told" = **a notification row exists.** `notify_admin` returns `True` for a failure AFTER `process_webhook`
   committed the row (fresh-session check `_persisted_since`); only a MISSING row is retried, after
