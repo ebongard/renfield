@@ -209,13 +209,13 @@ async def _run_sweep_tick_locked(
             # Deterministic: the doc is just too big for the current
             # MCP response cap. Retrying next hour won't help — stamp
             # swept_at to drain it from the candidate queue.
-            logger.warning("ui-edit sweep: %s (skipping)", exc)
+            logger.warning("ui-edit sweep: {} (skipping)", exc)
             counters["truncated"] += 1
             swept_ids.append(tracking.id)
             continue
         except Exception as exc:
             logger.warning(
-                "ui-edit sweep: get_document for paperless doc %d failed: %s",
+                "ui-edit sweep: get_document for paperless doc {} failed: {}",
                 tracking.paperless_document_id, exc,
             )
             counters["errors"] += 1
@@ -241,7 +241,7 @@ async def _run_sweep_tick_locked(
                 except Exception as exc:
                     # Persist without embedding — same fallback PR 3
                     # uses. Row is still useful for future backfill.
-                    logger.warning("ui-edit sweep embed failed: %s", exc)
+                    logger.warning("ui-edit sweep embed failed: {}", exc)
 
     # Per-row persist: if one example row violates a constraint (bad
     # JSON shape, FK race, etc.), we don't want to roll back the whole
@@ -253,7 +253,7 @@ async def _run_sweep_tick_locked(
                 db.add(row)
                 await db.commit()
         except Exception as exc:
-            logger.warning("ui-edit sweep persist failed for row: %s", exc)
+            logger.warning("ui-edit sweep persist failed for row: {}", exc)
             counters["errors"] += 1
 
     # Swept_at stamps land in their own transaction so a persist failure
@@ -270,8 +270,8 @@ async def _run_sweep_tick_locked(
 
     if counters["edits_detected"] or counters["errors"] or counters["truncated"]:
         logger.info(
-            "ui-edit sweep: %d candidates → %d edits, %d expired, "
-            "%d truncated, %d errors",
+            "ui-edit sweep: {} candidates → {} edits, {} expired, "
+            "{} truncated, {} errors",
             counters["candidates"], counters["edits_detected"],
             counters["expired"], counters["truncated"], counters["errors"],
         )
@@ -514,7 +514,7 @@ async def run_abandoned_confirm_sweep(
                     # file is cheaper than a stranded DB row that
                     # blocks future sweeps.
                     logger.warning(
-                        "abandoned-confirm sweep: unlink %s failed: %s",
+                        "abandoned-confirm sweep: unlink {} failed: {}",
                         upload.file_path, exc,
                     )
                     file_errors += 1
@@ -525,8 +525,8 @@ async def run_abandoned_confirm_sweep(
 
     if reaped:
         logger.info(
-            "abandoned-confirm sweep: %d ChatUploads + pending_confirms "
-            "older than %d h purged (%d file-unlink errors)",
+            "abandoned-confirm sweep: {} ChatUploads + pending_confirms "
+            "older than {} h purged ({} file-unlink errors)",
             reaped, max_age_hours, file_errors,
         )
     return reaped

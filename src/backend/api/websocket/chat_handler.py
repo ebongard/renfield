@@ -2590,7 +2590,7 @@ WICHTIG: Nutze die ECHTEN Daten aus dem Ergebnis! Gib NUR die Antwort, KEIN JSON
                                 # Drop the id so the save path below appends a
                                 # normal turn (regenerate_mode stays False).
                                 logger.warning(
-                                    "🌿 Fork target %s not in session %s — "
+                                    "🌿 Fork target {} not in session {} — "
                                     "ignoring fork_from_message_id (normal turn)",
                                     fork_from_message_id, msg_session_id,
                                 )

@@ -175,7 +175,7 @@ async def resolve_meeting_fingerprints(db, meeting, raw_segments: list[dict]) ->
                 "person_name": fp.person_name,  # known name if enrolled (autoname)
             }
             logger.debug(
-                "meeting %s cluster %s → fingerprint %s (%.3f)",
+                "meeting {} cluster {} → fingerprint {} ({:.3f})",
                 meeting.id, cluster_key, fp.label, best[0],
             )
         else:
@@ -192,7 +192,7 @@ async def resolve_meeting_fingerprints(db, meeting, raw_segments: list[dict]) ->
             resolved[cluster_key] = {
                 "fingerprint_id": fp.id, "fingerprint_label": fp.label, "person_name": None,
             }
-            logger.debug("meeting %s cluster %s → NEW fingerprint %s", meeting.id, cluster_key, label)
+            logger.debug("meeting {} cluster {} → NEW fingerprint {}", meeting.id, cluster_key, label)
 
     return resolved
 

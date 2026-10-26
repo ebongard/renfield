@@ -365,7 +365,7 @@ class ConversationMemoryService(AtomOwnerResolverMixin):
             except Exception as e:
                 # Shadow must NEVER affect the primary path.
                 logger.warning(
-                    "v2 shadow: outer call failed (swallowed): %s", type(e).__name__
+                    "v2 shadow: outer call failed (swallowed): {}", type(e).__name__
                 )
 
         return v1_result
@@ -437,7 +437,7 @@ class ConversationMemoryService(AtomOwnerResolverMixin):
             v2_error = type(e).__name__
             v2_outcome = "error"
             logger.warning(
-                "v2 shadow: extraction failed (swallowed): %s", v2_error
+                "v2 shadow: extraction failed (swallowed): {}", v2_error
             )
         finally:
             if sp is not None:
@@ -1545,7 +1545,7 @@ class ConversationMemoryService(AtomOwnerResolverMixin):
                 _ops_capture.append(ops_list.model_dump_json())
             except Exception as e_dump:
                 logger.warning(
-                    "v2 extract: ops_capture serialization failed: %s",
+                    "v2 extract: ops_capture serialization failed: {}",
                     type(e_dump).__name__,
                 )
 
