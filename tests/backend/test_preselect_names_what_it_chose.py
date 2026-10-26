@@ -112,6 +112,15 @@ async def test_the_log_line_still_carries_count_and_message(protokoll, gestellte
         "scanne nach xidra", gestellter_pfad, "irgendein-modell",
     )
     zeile = next(z for z in protokoll if "Tool pre-selection" in z)
+    # 🛑 Der Fingerabdruck der Eingabe MUSS in der Zeile stehen — er ist der
+    # ganze Liefergegenstand von #1413. Ohne diese Behauptung bemerkt kein Test
+    # den stillen Fall: `logger.info` mit einem Argument zu wenig laesst die
+    # Zeile sauber formatieren, nur ohne `in=`. Die umgekehrte Richtung (ein
+    # Platzhalter zu viel) wirft und wird vom blanken `except Exception`
+    # geschluckt — dann faellt die Vorauswahl auf ALLE Werkzeuge zurueck und
+    # meldet das als Modellfehler. Im Review zu #1413 gefunden.
+    assert "(in=" in zeile, (
+        f"der Eingabe-Fingerabdruck fehlt in der Zeile:\n{zeile}")
     assert f"{len(GEWAEHLT)}/{len(ALLE)}" in zeile, f"die Zaehlung fehlt:\n{zeile}"
     assert "scanne nach xidra" in zeile, f"der Anlass fehlt:\n{zeile}"
     assert "{}" not in zeile, (

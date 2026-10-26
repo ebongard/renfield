@@ -899,8 +899,8 @@ def _record_agent_turn_metrics(context: AgentContext, last_step: AgentStep | Non
 _PRESELECT_DESC_CHARS = 480
 
 
-def preselect_input_signature(lang: str, tool_list: str) -> str:
-    """Ein kurzer Fingerabdruck der ANGEBOTENEN Eingabe — des ganzen Prompts.
+def preselect_input_signature(preselect_prompt: str) -> str:
+    """Ein kurzer Fingerabdruck des FERTIGEN Vorauswahl-Prompts.
 
     🛑 Der Anlass, am 2026-10-26 gemessen. Auf dieselbe Nachricht
     („scanne nach xidra") lieferte die Vorauswahl neunmal zwei verschiedene
@@ -915,23 +915,31 @@ def preselect_input_signature(lang: str, tool_list: str) -> str:
     verschiedene Signatur heißt, die Liste hat sich geändert (Reihenfolge,
     Zugang oder Wegfall eines Werkzeugs).
 
-    🛑 Gehasht wird die ZUSAMMENGESETZTE Liste, nicht die Namen — und die
-    Sprache dazu. Die erste Fassung nahm nur `tool_names`, und damit war die
-    Behauptung „gleiche Signatur heißt identische Eingabe" FALSCH: in den
-    Prompt geht `tool_list` ein, also Name PLUS beschnittene Beschreibung PLUS
-    ungekürzter Hinweis, und `lang` wählt die Vorlage (de/en existieren beide).
-    Ein geänderter Hinweis — etwa durch einen ConfigMap-Patch, wie am
-    2026-10-26 geschehen — hätte den Prompt umgestellt und die Signatur
-    unberührt gelassen. Genau derselbe Fehler, den dieser Fingerabdruck
-    aufdecken soll: eine Messung, die eine engere Frage beantwortet als die
-    Behauptung darauf. Im Review zu #1413 gefunden.
+    🛑 Gehasht wird der ZUSAMMENGESETZTE Prompt, nichts daraus Ausgewähltes.
+    Zwei Fassungen davor waren zu eng, und jedes Mal war die Behauptung
+    „gleiche Signatur heißt identische Eingabe" damit falsch:
 
-    Die REIHENFOLGE geht mit ein, weil die verbundenen Zeilen sie tragen:
-    `get_tool_names()` gibt die Einfügereihenfolge eines dict, und die ändert
-    sich bei einer Neuregistrierung (`refresh_interval`).
+    - Fassung 1 nahm nur `tool_names`. Ein geänderter Hinweistext — etwa durch
+      einen ConfigMap-Patch, wie am 2026-10-26 geschehen — stellte den Prompt
+      um und ließ die Signatur unberührt.
+    - Fassung 2 nahm `lang` + `tool_list`. Die NACHRICHT fehlte, und die Zeile
+      zeigt nur `message[:60]`: zwei Züge, die in den ersten 60 Zeichen
+      übereinstimmen und danach auseinandergehen, hätten identische Nachricht
+      UND identische Signatur über zwei verschiedene Prompts gezeigt. Dazu war
+      `lang` der ANGEFRAGTE Code, nicht die aufgelöste Vorlage — bei einer
+      Sprache ohne eigenen Eintrag fällt `prompt_manager` auf die Vorgabe
+      zurück, und die Signatur hätte eine Änderung behauptet, wo der Prompt
+      byteweise derselbe war.
+
+    Der fertige Prompt trägt alle vier Eingänge: aufgelöste Vorlage, Sprache,
+    Nachricht und Werkzeugliste — und er kann nicht veralten, wenn ein fünfter
+    dazukommt. Die Reihenfolge der Liste geht mit ein, weil sie im Text steht.
+
+    Beides im Review zu #1413 gefunden, bevor es gemergt wurde.
     """
-    roh = f"{lang}\n{tool_list}".encode()
-    return hashlib.sha1(roh, usedforsecurity=False).hexdigest()[:8]
+    return hashlib.sha1(
+        preselect_prompt.encode("utf-8"), usedforsecurity=False,
+    ).hexdigest()[:8]
 
 
 def preselect_tool_line(name: str, tool) -> str:
@@ -1120,15 +1128,26 @@ class AgentService:
         ]
 
         tool_list = "\n".join(tool_lines)
-        # Einmal berechnen, nicht je Protokollzeile: loguru wertet seine
-        # Argumente eifrig aus, auch wenn die DEBUG-Zeile nie erscheint.
-        eingabe_signatur = preselect_input_signature(lang, tool_list)
         preselect_prompt = prompt_manager.get(
             "agent", "tool_preselect_prompt", lang=lang,
             message=message, tool_list=tool_list
         )
         if not preselect_prompt:
+            # 🛑 Auch das ist ein stiller Rückfall auf ALLE Werkzeuge: ein
+            # fehlender oder umbenannter Prompt-Schlüssel schaltet die
+            # Vorauswahl ab, ohne eine Spur zu lassen. Die Abwesenheit der
+            # Zeile ist dann nicht von „weniger als 7 Werkzeuge" zu
+            # unterscheiden.
+            logger.warning(
+                "Tool pre-selection disabled: no `tool_preselect_prompt` "
+                "for lang={} — using all {} tools", lang, len(tool_names),
+            )
             return None
+
+        # Einmal berechnen und an jede Protokollzeile weitergeben: loguru
+        # wertet seine Argumente eifrig aus, auch wenn eine Zeile nie
+        # erscheint.
+        eingabe_signatur = preselect_input_signature(preselect_prompt)
 
         try:
             classification_kwargs = get_classification_chat_kwargs(agent_model)
@@ -1149,7 +1168,16 @@ class AgentService:
             # Parse JSON array from response
             selected = json.loads(response_text)
             if not isinstance(selected, list) or not selected:
-                logger.warning(f"Tool pre-selection returned non-list: {response_text[:100]}")
+                # 🛑 Haeufigster Fall ist eine LEERE Liste (die Aufgabe
+                # braucht kein Werkzeug), und leer ist falsy — darum derselbe
+                # Zweig. `in=` gehoert auch hierher: dieser Pfad faellt auf
+                # ALLE Werkzeuge zurueck, und genau das ist der Vorfall, den
+                # die Signatur aufklaeren soll.
+                logger.warning(
+                    "Tool pre-selection unusable response (in={}): {!r} "
+                    "— using all {} tools",
+                    eingabe_signatur, response_text[:100], len(tool_names),
+                )
                 return None
 
             # Re-add any structural prerequisites the LLM pruned (e.g. it picked
@@ -1165,7 +1193,10 @@ class AgentService:
             }
 
             if not filtered:
-                logger.warning("Tool pre-selection matched 0 valid tools — using all")
+                logger.warning(
+                    "Tool pre-selection matched 0 valid tools (in={}) "
+                    "— using all {}", eingabe_signatur, len(tool_names),
+                )
                 return None
 
             # 🛑 Die NAMEN gehoeren in die Zeile, nicht nur die Anzahl.
@@ -1185,16 +1216,25 @@ class AgentService:
                 len(filtered), len(tool_names), message[:60],
                 eingabe_signatur, sorted(filtered),
             )
-            # Die ganze Liste nur auf DEBUG: 33 Namen je Zug sind im Betrieb
-            # Laerm, in der Diagnose aber genau das Fehlende. Die NAMEN, nicht
-            # die vollen Zeilen — die tragen Hinweistexte und blaehen das
-            # Protokoll um Groessenordnungen auf.
-            logger.debug("Tool pre-selection input (in={}): {}",
-                         eingabe_signatur, tool_names)
+            # 🛑 Auf DEBUG je Werkzeug ein Abdruck SEINER Zeile, in der
+            # Reihenfolge der Liste. Die vollen Zeilen hierher zu schreiben
+            # waere unbrauchbar (sie tragen die Hinweistexte, Groessenordnungen
+            # mehr), die blossen NAMEN aber auch: dann sagt ein geaenderter
+            # `in=` nur DASS sich etwas geaendert hat, nie WAS. Mit dem
+            # Zeilenabdruck ist das Werkzeug benennbar, das sich bewegt hat.
+            logger.debug(
+                "Tool pre-selection input (in={}): {}",
+                eingabe_signatur,
+                [f"{name}:{preselect_input_signature(zeile)[:4]}"
+                 for name, zeile in zip(tool_names, tool_lines, strict=False)],
+            )
             return filtered
 
         except (TimeoutError, json.JSONDecodeError, Exception) as e:
-            logger.warning(f"Tool pre-selection failed (using all tools): {e}")
+            logger.warning(
+                "Tool pre-selection failed (in={}, using all {} tools): {}",
+                eingabe_signatur, len(tool_names), e,
+            )
             return None
 
     async def _apply_adaptive_tool_budget(
