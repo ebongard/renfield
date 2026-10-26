@@ -2086,6 +2086,14 @@ async def websocket_endpoint(
                             user_id=user_id,
                             context_vars_text=_context_vars_text,
                             summary_text=_summary_text,
+                            # 🛑 Auch hier: der Orchestrator wird NICHT von einer
+                            # Korrektur unterdrueckt (die Tore bei :2030 pruefen
+                            # nur sub_queries/role/entity). Ohne diese Zeile faellt
+                            # die Korrektur bei jeder mehrdomaenigen Anfrage eine
+                            # Schicht tiefer weg — genau die stille Wirkungslosigkeit,
+                            # die dieser Zweig beenden soll. `agent_kwargs` wird in
+                            # `agent.run(**agent_kwargs)` gespreizt.
+                            corrected_intent=_corrected,
                         ):
                             if step.step_type == "final_answer":
                                 deferred_final_answer = step.content

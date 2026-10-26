@@ -1188,8 +1188,13 @@ class AgentService:
         # genau diese Zeile. Er ist dunkel, weil der Prompt die Nachricht des
         # Nutzers UNGEKUERZT traegt.
         if settings.agent_preselect_prompt_dump:
+            # 🛑 `{!r}` und nicht `{}`: der Prompt traegt die Nachricht des
+            # Nutzers WOERTLICH, und ein Zeilenumbruch darin koennte sonst
+            # beliebige Protokollzeilen faelschen. Dieselbe Begruendung wie
+            # beim Korrekturwert und bei `chat_handler.py:1733`. Nebeneffekt:
+            # der Auszug bleibt EINE Zeile und ist damit greifbar.
             logger.info(
-                "Tool pre-selection PROMPT (in={}):\n{}",
+                "Tool pre-selection PROMPT (in={}): {!r}",
                 eingabe_signatur, preselect_prompt,
             )
 
@@ -1251,16 +1256,29 @@ class AgentService:
             # Genau diesen Vertreter zu erzwingen waere falsch — der Nutzer
             # meint „das ist eine Scanner-Sache", nicht „rufe `list_scanners`".
             # Ein `internal.<x>` ist dagegen EIN Werkzeug und bleibt eines.
-            for name in _tools_pinned_by_correction(
-                corrected_intent, self.tool_registry._tools,
-            ):
-                if name not in filtered:
+            if corrected_intent:
+                festgenagelt = _tools_pinned_by_correction(
+                    corrected_intent, self.tool_registry._tools,
+                )
+                neu_dazu = [n for n in festgenagelt if n not in filtered]
+                for name in neu_dazu:
                     filtered[name] = self.tool_registry._tools[name]
-                    logger.info(
-                        "Tool pre-selection: {} forced back in by the user's "
-                        "correction {!r} (in={})",
-                        name, corrected_intent, eingabe_signatur,
-                    )
+                # 🛑 EINE Zeile, immer — auch wenn nichts festgenagelt wurde.
+                # Ohne sie sehen fuenf verschiedene Faelle gleich aus, naemlich
+                # STILL: `knowledge.ask` (kein Werkzeug dahinter), ein
+                # unbekannter Server, ein Server, den die gewaehlte Rolle nicht
+                # besitzt (Paletten-Rollenhinweis), eine Vorauswahl, die vorher
+                # abbrach, und ein Werkzeug, das das Modell schon gewaehlt
+                # hatte. Der naechste Bericht „meine Korrektur hat nichts
+                # bewirkt" laese sich dann genauso schlecht beantworten wie
+                # der, der diesen Zweig ausgeloest hat.
+                logger.info(
+                    "Tool pre-selection: correction {!r} pinned {} tool(s), "
+                    "{} newly added{} (in={})",
+                    corrected_intent, len(festgenagelt), len(neu_dazu),
+                    f" {sorted(neu_dazu)}" if neu_dazu else "",
+                    eingabe_signatur,
+                )
 
             if not filtered:
                 logger.warning(

@@ -55,6 +55,16 @@ Loaded only when `agent_service.py`, `prompts/agent.yaml` or the chat handler is
   Vertreter festzunageln wäre ebenso falsch: der Nutzer meint den Server, nicht `list_scanners`.
   `_tools_pinned_by_correction`: `mcp.<server>.<tool>` → alle Werkzeuge des Servers, `internal.<x>` → genau eines,
   `knowledge.ask`/`general.conversation` → nichts.
+  🛑 **Die Korrektur muss an JEDEM Einstieg weitergereicht werden** — `agent.run` im `chat_handler`, der REST-Pfad
+  (`routes/chat.py`, Rückfall wenn die WS-Verbindung noch nicht steht) und `run_orchestrated`, das sie per
+  `**agent_kwargs` weitergibt. Alle drei fehlten zuerst; `test_agent_run_call_sites_forward_correction.py` hält
+  die Klasse. Die Festnagelung läuft VOR dem Null-Werkzeuge-Rückfall, sonst geht sie genau dort verloren.
+  🛑 Das Auswahlmenü holt die MCP-Einträge nur für **Admins** (`IntentCorrectionButton.tsx:114-117`,
+  `/api/intents/status` ist admin-gated). Für alle anderen bleiben zwei Kern-Einträge, die nichts festnageln —
+  die Korrektur ist dort wirkungslos, und das ist eine offene Entscheidung, keine Reparatur.
+  🛑 Festnageln heißt ANBIETEN, nicht benutzen: der Agent sieht das Werkzeug, wählt aber weiter selbst. Eine
+  Zeile sagt immer, was die Korrektur bewirkt hat (`pinned N, M newly added`) — fünf verschiedene Fälle sahen
+  vorher gleich aus, nämlich still.
 - 🛑 `AGENT_PRESELECT_PROMPT_DUMP` (dunkel) gibt den VOLLEN Prompt aus — eigener Schalter, nicht `LOG_LEVEL=DEBUG`:
   die Senke ist global und einstufig, ein DEBUG-Lauf schriebe auch gespeicherte Nachrichten mit. Der Prompt trägt
   die Nachricht ungekürzt.

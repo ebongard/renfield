@@ -41,6 +41,7 @@ ALLE = [
     "mcp.email.send",
     "mcp.calendar.list_events",
 ]
+PROMPT_MARKE = "VORAUSWAHL-PROMPT-MARKE"
 GEWAEHLT = ["mcp.scanner.scan_document", "internal.list_rooms"]
 
 
@@ -69,9 +70,12 @@ def gestellter_pfad(monkeypatch):
     """Die Stationen um den LLM-Aufruf herum, damit er bis zur Zeile kommt."""
     import services.agent_service as mod
 
+    # 🛑 Die Vorlage traegt eine Marke UND die Werkzeugliste, damit ein Test
+    # den INHALT des Prompt-Auszugs pruefen kann und nicht nur, dass eine
+    # Zeile kam.
     monkeypatch.setattr(
         mod.prompt_manager, "get",
-        lambda *a, **k: "waehle die passenden Werkzeuge",
+        lambda *a, **k: f"{PROMPT_MARKE} {k.get('message', '')} {k.get('tool_list', '')}",
     )
 
     async def chat(**kwargs):
@@ -165,3 +169,9 @@ async def test_the_prompt_dump_shows_the_real_prompt_when_switched_on(
     assert zeilen, "der Schalter ist an, aber es kommt keine Zeile"
     assert "(in=" in zeilen[0], (
         "ohne die Signatur ist der Auszug keiner bestimmten Zeile zuzuordnen")
+    # 🛑 Der INHALT, nicht nur die Existenz der Zeile. Diese Behauptung fehlte,
+    # und eine Mutation, die statt des Prompts eine LEERE Zeichenkette ausgab,
+    # liess alle zehn Tests gruen — genau der Fehlschlag, den der Schalter
+    # verhindern soll. Im Review zu #1414 durch Mutationstest gefunden.
+    assert PROMPT_MARKE in zeilen[0], (
+        f"der Auszug traegt den Prompt nicht:\n{zeilen[0][:200]}")

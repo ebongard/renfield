@@ -139,6 +139,15 @@ async def test_an_unknown_correction_is_ignored(gestellter_pfad):
     )
     assert set(gewaehlt) == set(OHNE_SCANNER)
     assert all(n in ALLE for n in gewaehlt), "ein unbekanntes Werkzeug kam herein"
+    # 🛑 Und der Beweis, dass dieser Test die Festnagelung ueberhaupt
+    # DURCHLAEUFT: ein unbekannter Server unterscheidet sich sonst nicht von
+    # einer Festnagelung, die gar nicht laeuft. Eine Mutation, die die
+    # Festnagelung voellig abschaltete, liess diesen Test gruen. Darum
+    # derselbe Aufruf mit einem BEKANNTEN Server als Gegenstueck.
+    registry = dict.fromkeys(ALLE, object())
+    assert _tools_pinned_by_correction("mcp.nichts.gibtesnicht", registry) == []
+    assert _tools_pinned_by_correction("mcp.scanner.egal", registry), (
+        "die Praefix-Suche laeuft nicht — dann prueft der Fall oben nichts")
 
 
 @pytest.mark.asyncio
@@ -165,6 +174,45 @@ async def test_pinning_is_idempotent(monkeypatch):
     )
     scanner = {n for n in ALLE if n.startswith("mcp.scanner.")}
     assert set(gewaehlt) == scanner | set(OHNE_SCANNER)
-    # Ein dict kann nicht doppeln — die Behauptung haelt fest, dass die
-    # Festnagelung nichts ueberschreibt und nichts verliert.
-    assert len(gewaehlt) == len(set(gewaehlt))
+    # 🛑 Hier stand `len(gewaehlt) == len(set(gewaehlt))`. Ueber die Schluessel
+    # eines dict kann das NIE fehlschlagen — eine leere Behauptung, und der
+    # Kommentar daneben gab das sogar zu, statt sie zu loeschen. Was wirklich
+    # zu pruefen ist: die Festnagelung ueberSCHREIBT nichts, was das Modell
+    # schon gewaehlt hatte. Im Review zu #1414 gefunden.
+    svc = _dienst()
+    for name in scanner | set(OHNE_SCANNER):
+        assert gewaehlt[name] is svc.tool_registry._tools[name] or \
+            gewaehlt[name].name == name, (
+            f"{name} zeigt nicht mehr auf seine Definition")
+
+
+@pytest.mark.asyncio
+async def test_the_pin_runs_BEFORE_the_zero_tools_bailout(monkeypatch):
+    """🛑 Die Reihenfolge war nirgends behauptet.
+
+    Liefert das Modell nur UNGÜLTIGE Namen, ist `filtered` leer und die
+    Vorauswahl gibt `None` zurück — der Agent bekommt dann ALLE Werkzeuge,
+    also wieder den Zustand „zu viele", den diese Schicht gerade vermeiden
+    soll. Steht die Festnagelung erst NACH diesem Rückfall, geht die Korrektur
+    genau dort verloren.
+
+    Eine Mutation, die die Festnagelung unter den Rückfall verschob, ließ alle
+    zehn Tests grün. Im Review zu #1414 durch Mutationstest gefunden.
+    """
+    import services.agent_service as mod
+    monkeypatch.setattr(mod.prompt_manager, "get", lambda *a, **k: "x")
+
+    async def chat(**kwargs):
+        # Nur Namen, die die Registratur NICHT kennt.
+        return SimpleNamespace(message=SimpleNamespace(
+            content=json.dumps(["mcp.gibt.esnicht", "internal.auch_nicht"])))
+
+    gewaehlt = await _dienst()._preselect_tools(
+        "scanne nach x-idra", SimpleNamespace(chat=chat), "m",
+        corrected_intent="mcp.scanner.scanner_status",
+    )
+    assert gewaehlt is not None, (
+        "die Vorauswahl fiel auf ALLE Werkzeuge zurueck, obwohl die Korrektur "
+        "eine gueltige Menge haette liefern koennen — die Festnagelung laeuft "
+        "zu spaet")
+    assert set(gewaehlt) == {n for n in ALLE if n.startswith("mcp.scanner.")}
