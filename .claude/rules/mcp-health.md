@@ -59,6 +59,19 @@ Retry-After is honoured, no automatic retry; signal + alert stay dark).
   JEDEM Modus). Die Pflicht wird aus der Konfiguration hergeleitet, nicht aus dem Dockerfile:
   `test_n8n_mcp_ssrf_and_pin.py`. Hergang: `docs/design/mcp-self-detection.md`.
 
+## Kommt der Steuertext überhaupt an?
+- 🛑 **`tool_hints` können konfiguriert sein und das Modell trotzdem NIE erreichen.** Am 2026-10-26 standen vier
+  Hinweise für den Scanner in der YAML (1426/791/186/379 Zeichen), Mount und Lader trugen sie, und derselbe
+  Codepfad lieferte in einer Nachstellung im laufenden Pod eine 1529-Zeichen-Zeile. Im ECHTEN Prompt war sie
+  **102 Zeichen** lang und trug keinen Hinweis — nur die erste Docstring-Zeile des Servers. Vier Review-Runden
+  arbeiteten an Texten, die nie ankamen.
+- `log_hint_arrival` in `_install_discovered_tools` zählt jetzt bei jeder Entdeckung: konfiguriert, angewendet,
+  und welche Schlüssel zu KEINEM entdeckten Werkzeug passen. Ein nicht passender Schlüssel war vorher ein
+  stiller Leerlauf (`config.tool_hints.get(tool.name)` → `None`). WARNING, nicht INFO — beides heißt, der
+  Steuertext erreicht das Modell nicht. Nur Namen und Längen, nie der Text.
+- 🛑 Der Schlüssel ist der ROHE Werkzeugname (`scan_document`), nicht der namensräumliche
+  (`mcp.scanner.scan_document`). Ein Tippfehler oder ein umbenanntes Werkzeug fällt jetzt auf.
+
 ## Alerting
 - "Told" = **a notification row exists.** `notify_admin` returns `True` for a failure AFTER `process_webhook`
   committed the row (fresh-session check `_persisted_since`); only a MISSING row is retried, after

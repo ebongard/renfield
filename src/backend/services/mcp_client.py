@@ -3322,6 +3322,7 @@ class MCPManager:
         use time and never lived in the tool list.
         """
         state.all_discovered_tools = [self._tool_info_from_mcp(state.config, t) for t in raw_tools]
+        log_hint_arrival(state)
         state.note_discovered_tools()
         self._apply_tool_filter(state)
 
@@ -3429,3 +3430,50 @@ class MCPManager:
 
         self._tool_index.clear()
         logger.info("MCP manager shut down")
+
+
+def log_hint_arrival(state: "MCPServerState") -> None:
+    """Protokolliert, ob die konfigurierten `tool_hints` wirklich ANKOMMEN.
+
+    🛑 Am 2026-10-26 standen vier Hinweise für den Scanner in `mcp_servers.yaml`
+    (1426/791/186/379 Zeichen). Der Mount trug sie, der Lader trug sie, und
+    derselbe Codepfad lieferte in einer Nachstellung im laufenden Pod eine 1529
+    Zeichen lange Vorauswahlzeile. In Produktion war dieselbe Zeile 102 Zeichen
+    lang und trug KEINEN Hinweis.
+
+    Vier Review-Runden lang wurde an diesen Texten gearbeitet, ohne dass einer
+    beim Modell ankam — und nichts im Protokoll sagte das. Diese Funktion
+    schließt die Lücke: sie zählt, was konfiguriert ist, was angewendet wurde,
+    und welche Schlüssel zu KEINEM entdeckten Werkzeug passen.
+
+    Ein Schlüssel, der nicht passt, ist die wahrscheinlichste Ursache und war
+    bisher ein stiller Leerlauf: `config.tool_hints.get(tool.name)` liefert
+    dann schlicht `None`, ohne eine Spur.
+
+    Protokolliert werden NUR Namen und Längen. Werkzeugnamen und Hinweistexte
+    sind Betreiberkonfiguration, keine Nutzerinhalte; der Hinweistext selbst
+    steht nicht in der Zeile.
+    """
+    konfiguriert = dict(state.config.tool_hints or {})
+    if not konfiguriert:
+        return
+
+    entdeckt = {t.original_name for t in state.all_discovered_tools}
+    angewendet = [t for t in state.all_discovered_tools if t.hint]
+    ohne_werkzeug = sorted(set(konfiguriert) - entdeckt)
+
+    if ohne_werkzeug or not angewendet:
+        # 🛑 WARNING, nicht INFO: beides heißt, dass der Steuertext des
+        # Betreibers das Modell NICHT erreicht — und genau das war unsichtbar.
+        logger.warning(
+            "MCP '{}': {} hint(s) configured, {} applied; {} key(s) match no "
+            "discovered tool: {} (discovered: {})",
+            state.config.name, len(konfiguriert), len(angewendet),
+            len(ohne_werkzeug), ohne_werkzeug, sorted(entdeckt),
+        )
+    else:
+        logger.info(
+            "MCP '{}': {} hint(s) configured, {} applied ({} chars total)",
+            state.config.name, len(konfiguriert), len(angewendet),
+            sum(len(t.hint) for t in angewendet),
+        )
