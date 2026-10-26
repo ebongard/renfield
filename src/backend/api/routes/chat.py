@@ -6,7 +6,7 @@ from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from loguru import logger
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -27,6 +27,11 @@ class ChatRequest(BaseModel):
     message: str
     session_id: str | None = None
     context: list[dict] | None = None
+    # 🛑 Dieselbe Laenge wie im WS-Rahmen (`websocket_messages.py`): das
+    # Frontend faellt auf REST zurueck, wenn die WS-Verbindung noch nicht
+    # steht, und ein „Korrigieren & neu beantworten" im Wettlauf mit dem
+    # Handschlag verlor sonst Rollenhinweis UND Festnagelung.
+    corrected_intent: str | None = Field(None, max_length=128)
 
 class ChatResponse(BaseModel):
     message: str
@@ -234,6 +239,7 @@ async def send_message(
                     session_id=session_id,
                     user_permissions=user_permissions,
                     user_id=user_id,
+                    corrected_intent=chat_request.corrected_intent,
                 ):
                     if step.step_type == "final_answer":
                         response_text = step.content

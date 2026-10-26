@@ -899,6 +899,37 @@ def _record_agent_turn_metrics(context: AgentContext, last_step: AgentStep | Non
 _PRESELECT_DESC_CHARS = 480
 
 
+def _tools_pinned_by_correction(
+    corrected_intent: str | None, registry: dict,
+) -> list[str]:
+    """Welche Werkzeuge eine Nutzerkorrektur gegen die Vorauswahl festnagelt.
+
+    🛑 Das Auswahlmenue „Korrigieren & neu beantworten" gruppiert die
+    MCP-Werkzeuge NACH SERVER: die Beschriftung ist der Servername („Scanner"),
+    der gesendete Wert ist das ERSTE Werkzeug dieses Servers als Vertreter
+    (`IntentCorrectionButton.tsx:57-67`). Wer „Scanner" waehlt, meint also den
+    Server — nicht den Vertreter, der dort zufaellig vorn steht. Genau ihn zu
+    erzwingen hiesse, eine Korrektur in ein anderes Werkzeug umzudeuten.
+
+    - `mcp.<server>.<tool>` -> ALLE Werkzeuge dieses Servers
+    - `internal.<x>`        -> genau dieses Werkzeug (kein Server dahinter)
+    - alles andere (`knowledge.ask`, `general.conversation`, Unbekanntes)
+      -> nichts; dort entscheidet weiter die Rolle
+
+    Am 2026-10-26 gemeldet: „wenn ich über falsch erkannt den scanner
+    auswähle, sollte das eine Auswirkung haben."
+    """
+    if not corrected_intent:
+        return []
+    teile = corrected_intent.split(".")
+    if teile[0] == "mcp" and len(teile) >= 3:
+        praefix = f"mcp.{teile[1]}."
+        return sorted(n for n in registry if n.startswith(praefix))
+    if corrected_intent in registry:
+        return [corrected_intent]
+    return []
+
+
 def preselect_input_signature(preselect_prompt: str) -> str:
     """Ein kurzer Fingerabdruck des FERTIGEN Vorauswahl-Prompts.
 
@@ -1094,6 +1125,7 @@ class AgentService:
         agent_client,
         agent_model: str,
         lang: str = "de",
+        corrected_intent: str | None = None,
     ) -> dict | None:
         """Pre-select relevant tools via LLM when there are many available.
 
@@ -1149,6 +1181,23 @@ class AgentService:
         # erscheint.
         eingabe_signatur = preselect_input_signature(preselect_prompt)
 
+        # 🛑 Der ganze Prompt, hinter einem EIGENEN Schalter — nicht hinter
+        # DEBUG. Die Senke in `main.py` ist global und einstufig; ein
+        # DEBUG-Lauf schriebe auch gespeicherte Nachrichten und
+        # Gedaechtnisauszuege aus anderen Modulen mit. Dieser Schalter oeffnet
+        # genau diese Zeile. Er ist dunkel, weil der Prompt die Nachricht des
+        # Nutzers UNGEKUERZT traegt.
+        if settings.agent_preselect_prompt_dump:
+            # 🛑 `{!r}` und nicht `{}`: der Prompt traegt die Nachricht des
+            # Nutzers WOERTLICH, und ein Zeilenumbruch darin koennte sonst
+            # beliebige Protokollzeilen faelschen. Dieselbe Begruendung wie
+            # beim Korrekturwert und bei `chat_handler.py:1733`. Nebeneffekt:
+            # der Auszug bleibt EINE Zeile und ist damit greifbar.
+            logger.info(
+                "Tool pre-selection PROMPT (in={}): {!r}",
+                eingabe_signatur, preselect_prompt,
+            )
+
         try:
             classification_kwargs = get_classification_chat_kwargs(agent_model)
             preselect_options = _llm_options_or_default(
@@ -1191,6 +1240,45 @@ class AgentService:
                 for name in selected
                 if name in self.tool_registry._tools
             }
+
+            # 🛑 Eine ausdrueckliche Korrektur des Nutzers ueberstimmt die
+            # Vorauswahl. Bis 2026-10-26 leitete der `chat_handler` daraus nur
+            # die ROLLE ab und warf den Rest weg — und die Rolle war in jedem
+            # gemeldeten Fehlgriff schon die richtige. Die Korrektur blieb also
+            # ohne Wirkung, weil die Schicht DARUNTER das Werkzeug wieder
+            # entfernte. Wer sagt „das war ein Scan", hat die Frage
+            # entschieden; ein Vorauswahl-Modell darf sie nicht neu aufwerfen.
+            #
+            # 🛑 Und zwar der ganze SERVER, nicht das benannte Werkzeug: das
+            # Auswahlmenue gruppiert die MCP-Werkzeuge nach Server, zeigt den
+            # Servernamen („Scanner") und schickt als Wert das ERSTE Werkzeug
+            # dieses Servers als Vertreter (`IntentCorrectionButton.tsx:57-67`).
+            # Genau diesen Vertreter zu erzwingen waere falsch — der Nutzer
+            # meint „das ist eine Scanner-Sache", nicht „rufe `list_scanners`".
+            # Ein `internal.<x>` ist dagegen EIN Werkzeug und bleibt eines.
+            if corrected_intent:
+                festgenagelt = _tools_pinned_by_correction(
+                    corrected_intent, self.tool_registry._tools,
+                )
+                neu_dazu = [n for n in festgenagelt if n not in filtered]
+                for name in neu_dazu:
+                    filtered[name] = self.tool_registry._tools[name]
+                # 🛑 EINE Zeile, immer — auch wenn nichts festgenagelt wurde.
+                # Ohne sie sehen fuenf verschiedene Faelle gleich aus, naemlich
+                # STILL: `knowledge.ask` (kein Werkzeug dahinter), ein
+                # unbekannter Server, ein Server, den die gewaehlte Rolle nicht
+                # besitzt (Paletten-Rollenhinweis), eine Vorauswahl, die vorher
+                # abbrach, und ein Werkzeug, das das Modell schon gewaehlt
+                # hatte. Der naechste Bericht „meine Korrektur hat nichts
+                # bewirkt" laese sich dann genauso schlecht beantworten wie
+                # der, der diesen Zweig ausgeloest hat.
+                logger.info(
+                    "Tool pre-selection: correction {!r} pinned {} tool(s), "
+                    "{} newly added{} (in={})",
+                    corrected_intent, len(festgenagelt), len(neu_dazu),
+                    f" {sorted(neu_dazu)}" if neu_dazu else "",
+                    eingabe_signatur,
+                )
 
             if not filtered:
                 logger.warning(
@@ -1744,6 +1832,7 @@ class AgentService:
         summary_text: str = "",
         progress_sink=None,
         session_id: str | None = None,
+        corrected_intent: str | None = None,
     ) -> AsyncGenerator[AgentStep, None]:
         """Thin wrapper around _run_impl.
 
@@ -1786,6 +1875,7 @@ class AgentService:
                 context_vars_text=context_vars_text,
                 summary_text=summary_text,
                 progress_sink=progress_sink,
+                corrected_intent=corrected_intent,
             ):
                 # _run_impl records tool_call/tool_result/error into
                 # context.steps but yields the terminal final_answer WITHOUT
@@ -1897,6 +1987,7 @@ class AgentService:
         context_vars_text: str = "",
         summary_text: str = "",
         progress_sink=None,
+        corrected_intent: str | None = None,
     ) -> AsyncGenerator[AgentStep, None]:
         """
         Run the Agent Loop. Yields AgentStep objects for real-time feedback.
@@ -1938,7 +2029,8 @@ class AgentService:
         total_tools = len(self.tool_registry.get_tool_names())
         if total_tools > 6:
             self._preselected_tools = await self._preselect_tools(
-                message, agent_client, agent_model, lang
+                message, agent_client, agent_model, lang,
+                corrected_intent=corrected_intent,
             )
             if self._preselected_tools:
                 total_tools = len(self._preselected_tools)

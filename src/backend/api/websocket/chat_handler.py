@@ -1719,8 +1719,14 @@ async def websocket_endpoint(
                 # "Korrigieren & neu beantworten" regenerate maps its corrected
                 # intent to the owning role (None = fall through to normal routing).
                 _role_hint = getattr(msg, "role_hint", None)
+                # 🛑 Ausserhalb des `if` gelesen: die Korrektur steuert nicht
+                # nur die Rolle, sie muss auch die Werkzeug-VORAUSWAHL
+                # erreichen. Bis 2026-10-26 wurde nur die Rolle abgeleitet und
+                # der Werkzeugname weggeworfen — und die Rolle war in jedem
+                # gemeldeten Fehlgriff schon die richtige, die Korrektur also
+                # ohne Wirkung.
+                _corrected = getattr(msg, "corrected_intent", None)
                 if not _role_hint:
-                    _corrected = getattr(msg, "corrected_intent", None)
                     if _corrected:
                         _role_hint = agent_router.role_for_intent(_corrected)
                         # !r so an injected newline in the client string can't forge log lines.
@@ -2080,6 +2086,14 @@ async def websocket_endpoint(
                             user_id=user_id,
                             context_vars_text=_context_vars_text,
                             summary_text=_summary_text,
+                            # 🛑 Auch hier: der Orchestrator wird NICHT von einer
+                            # Korrektur unterdrueckt (die Tore bei :2030 pruefen
+                            # nur sub_queries/role/entity). Ohne diese Zeile faellt
+                            # die Korrektur bei jeder mehrdomaenigen Anfrage eine
+                            # Schicht tiefer weg — genau die stille Wirkungslosigkeit,
+                            # die dieser Zweig beenden soll. `agent_kwargs` wird in
+                            # `agent.run(**agent_kwargs)` gespreizt.
+                            corrected_intent=_corrected,
                         ):
                             if step.step_type == "final_answer":
                                 deferred_final_answer = step.content
@@ -2293,6 +2307,7 @@ async def websocket_endpoint(
                         summary_text=_summary_text,
                         progress_sink=_federation_progress_sink,
                         session_id=msg_session_id,
+                        corrected_intent=_corrected,
                     ):
                         ws_msg = step_to_ws_message(step)
                         await websocket.send_json(ws_msg)

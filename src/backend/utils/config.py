@@ -382,6 +382,22 @@ class Settings(BaseSettings):
     agent_preselect_timeout: float = Field(default=10.0, ge=1.0, le=60.0)
     """Timeout for tool pre-selection LLM call in agent_service.py:_preselect_tools.
     Short JSON-only response, deterministic — keep low to fail fast."""
+    agent_preselect_prompt_dump: bool = False
+    """Protokolliert den VOLLSTÄNDIGEN Vorauswahl-Prompt auf INFO. Dunkel.
+
+    🛑 Der Prompt enthält die Nachricht des Nutzers UNGEKÜRZT — die reguläre
+    Zeile zeigt nur `message[:60]`. Darum ein eigener Schalter und nicht
+    `LOG_LEVEL=DEBUG`: die Senke in `main.py` ist GLOBAL und mit einer Stufe,
+    ein DEBUG-Lauf würde auch `conversation_service` und
+    `conversation_memory_service` mitschreiben, die gespeicherte Nachrichten
+    und Gedächtnisauszüge protokollieren. Dieser Schalter öffnet genau eine
+    Zeile, und nur die.
+
+    Für eine Diagnose anlegen, den fraglichen Zug fahren, wieder ausschalten.
+    Am 2026-10-26 gebraucht: `scanne nach x-idra` griff reproduzierbar zur
+    Suche, die Eingabe-Signatur belegte die Reproduzierbarkeit — aber WAS im
+    Prompt stand, war nirgends ablesbar, und jede Nachbildung (6, dann 10 von
+    33 Werkzeugen) wählte richtig und bewies damit nichts."""
     orchestrator_synthesis_timeout: float = Field(default=30.0, ge=5.0, le=300.0)
     """Timeout for orchestrator's synthesis call (combine sub-agent results into one answer)."""
     orchestrator_deterministic_merge: bool = True

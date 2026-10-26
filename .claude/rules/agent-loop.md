@@ -48,6 +48,26 @@ Loaded only when `agent_service.py`, `prompts/agent.yaml` or the chat handler is
   je Werkzeug ein Abdruck SEINER Zeile — die Namen allein sagten nur DASS sich etwas änderte, nie WAS.
   Ohne das kostete ein schwankender Fehlgriff am 2026-10-26 drei widerlegte Hypothesen, eine davon hätte die
   Trefferquote von 14/15 auf 7/15 gesenkt.
+- 🛑 **Eine Nutzerkorrektur überstimmt die Vorauswahl — und zwar der ganze SERVER.** „Korrigieren & neu
+  beantworten" zeigt den SERVERNAMEN („Scanner") und schickt als Wert das ERSTE Werkzeug dieses Servers als
+  Vertreter (`IntentCorrectionButton.tsx:57-67`). Bis 2026-10-26 leitete der Handler daraus nur die ROLLE ab —
+  die in jedem gemeldeten Fehlgriff schon die richtige war —, die Korrektur blieb also wirkungslos. Genau den
+  Vertreter festzunageln wäre ebenso falsch: der Nutzer meint den Server, nicht `list_scanners`.
+  `_tools_pinned_by_correction`: `mcp.<server>.<tool>` → alle Werkzeuge des Servers, `internal.<x>` → genau eines,
+  `knowledge.ask`/`general.conversation` → nichts.
+  🛑 **Die Korrektur muss an JEDEM Einstieg weitergereicht werden** — `agent.run` im `chat_handler`, der REST-Pfad
+  (`routes/chat.py`, Rückfall wenn die WS-Verbindung noch nicht steht) und `run_orchestrated`, das sie per
+  `**agent_kwargs` weitergibt. Alle drei fehlten zuerst; `test_agent_run_call_sites_forward_correction.py` hält
+  die Klasse. Die Festnagelung läuft VOR dem Null-Werkzeuge-Rückfall, sonst geht sie genau dort verloren.
+  🛑 Das Auswahlmenü holt die MCP-Einträge nur für **Admins** (`IntentCorrectionButton.tsx:114-117`,
+  `/api/intents/status` ist admin-gated). Für alle anderen bleiben zwei Kern-Einträge, die nichts festnageln —
+  die Korrektur ist dort wirkungslos, und das ist eine offene Entscheidung, keine Reparatur.
+  🛑 Festnageln heißt ANBIETEN, nicht benutzen: der Agent sieht das Werkzeug, wählt aber weiter selbst. Eine
+  Zeile sagt immer, was die Korrektur bewirkt hat (`pinned N, M newly added`) — fünf verschiedene Fälle sahen
+  vorher gleich aus, nämlich still.
+- 🛑 `AGENT_PRESELECT_PROMPT_DUMP` (dunkel) gibt den VOLLEN Prompt aus — eigener Schalter, nicht `LOG_LEVEL=DEBUG`:
+  die Senke ist global und einstufig, ein DEBUG-Lauf schriebe auch gespeicherte Nachrichten mit. Der Prompt trägt
+  die Nachricht ungekürzt.
 - 🛑 Ein `hint` darf kein fremdes Gebiet beanspruchen. In der Rolle `general` (`mcp_servers: null`,
   `internal_tools: null`, zugleich Rückfall des Routers) liegen ALLE Werkzeuge in einer Liste; ein Rollenzaun aus
   `agent_roles.yaml` greift dort nicht. Ein unbedingtes „<Wort> heißt immer X" zieht die Geschwister mit herein.
