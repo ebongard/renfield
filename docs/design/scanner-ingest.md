@@ -308,7 +308,7 @@ registered.
 | `scan_document(target?, title?)` | STARTS a scan job and returns `{job_id, status: running}` at once; scan, assemble, route and dispatch run in the background. `target` omitted → L2/L3 decide. A second call while a scan runs returns `busy` with the running job's id. |
 | `scan_job_status(job_id)` | How a job stands or ended — for an explicit user question only, never polled |
 | `list_pending_scans()` | The review floor — unrouted batches with evidence |
-| `route_scan(scan_id, target)` | Resolve one, dispatch it, purge from staging |
+| `route_scan(stage_id, target)` | Resolve one, dispatch it, purge from staging |
 
 ### Der Steuertext von `scan_document` — zwei Grenzen, beide schon einmal verletzt
 

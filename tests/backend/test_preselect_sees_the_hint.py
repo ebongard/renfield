@@ -257,6 +257,37 @@ def test_the_hint_keeps_the_way_back_from_a_display_name():
     hinweis = _scan_document_hinweis()
     assert "Haushalt" in hinweis and "household" in hinweis, (
         "der Hinweis zeigt das Paar Anzeigebezeichnung -> Kennung nicht mehr")
-    assert "known:" in hinweis, (
-        "der Hinweis nennt die Rettung bei unbekanntem Ziel nicht mehr — das "
-        "Modell muss dann raten")
+
+
+def test_the_hint_promises_no_error_channel_that_is_walled_off():
+    """🛑 Dieser Test stand erst UMGEKEHRT da — die Absicht war falsch.
+
+    Die erste Fassung forderte, der Hinweis müsse die gültige Zielliste nennen,
+    die bei einem unbekannten Wert in der Fehlermeldung mitkommt (`known: [...]`).
+    Das ist vom Nachbarn `route_scan` abgeschrieben, wo es SYNCHRON im Aufruf
+    stimmt. Für `scan_document` stimmt es nicht und kann es nicht:
+
+    - der Auftrag startet und liefert `{job_id, status: running}` sofort; das
+      Ziel wird erst im Hintergrund geprüft;
+    - die Fertigmeldung trägt NUR einen Code — `ScanJobResult` in
+      `api/routes/scanner_jobs.py:93`: „A code, never the free-form error text:
+      the message is rendered from fixed localised templates";
+    - `unknown_target` wird zu einer festen Vorlage („das angegebene Ziel ist
+      nicht konfiguriert", `services/scanner_jobs.py:137`) — ohne Liste.
+
+    Der Hinweis hätte das Modell also auf einen Rückweg gestellt, den die
+    Architektur ABSICHTLICH zumauert (freier Fehlertext wird nie Chat-Inhalt).
+    Statt dessen sagt er jetzt, dass ein unbekanntes Ziel erst spät auffällt —
+    und was dann zu tun ist: nicht raten.
+
+    Im zweiten adversarialen Durchgang zu #1411 gefunden.
+    """
+    hinweis = _scan_document_hinweis()
+    assert "known:" not in hinweis, (
+        "der Hinweis verspricht die `known: [...]`-Liste — die kann den Agenten "
+        "auf diesem Weg nie erreichen")
+    # Betonung durch Großschreibung ist in diesen Hinweisen Stilmittel
+    # („NICHT raten"), darum unabhängig davon vergleichen.
+    klein = hinweis.lower()
+    assert "nicht raten" in klein or "nie raten" in klein, (
+        "der Hinweis sagt nicht, was bei unsicherem Ziel zu tun ist")
