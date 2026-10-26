@@ -48,6 +48,16 @@ Loaded only when `agent_service.py`, `prompts/agent.yaml` or the chat handler is
   je Werkzeug ein Abdruck SEINER Zeile — die Namen allein sagten nur DASS sich etwas änderte, nie WAS.
   Ohne das kostete ein schwankender Fehlgriff am 2026-10-26 drei widerlegte Hypothesen, eine davon hätte die
   Trefferquote von 14/15 auf 7/15 gesenkt.
+- 🛑 **Eine Nutzerkorrektur überstimmt die Vorauswahl — und zwar der ganze SERVER.** „Korrigieren & neu
+  beantworten" zeigt den SERVERNAMEN („Scanner") und schickt als Wert das ERSTE Werkzeug dieses Servers als
+  Vertreter (`IntentCorrectionButton.tsx:57-67`). Bis 2026-10-26 leitete der Handler daraus nur die ROLLE ab —
+  die in jedem gemeldeten Fehlgriff schon die richtige war —, die Korrektur blieb also wirkungslos. Genau den
+  Vertreter festzunageln wäre ebenso falsch: der Nutzer meint den Server, nicht `list_scanners`.
+  `_tools_pinned_by_correction`: `mcp.<server>.<tool>` → alle Werkzeuge des Servers, `internal.<x>` → genau eines,
+  `knowledge.ask`/`general.conversation` → nichts.
+- 🛑 `AGENT_PRESELECT_PROMPT_DUMP` (dunkel) gibt den VOLLEN Prompt aus — eigener Schalter, nicht `LOG_LEVEL=DEBUG`:
+  die Senke ist global und einstufig, ein DEBUG-Lauf schriebe auch gespeicherte Nachrichten mit. Der Prompt trägt
+  die Nachricht ungekürzt.
 - 🛑 Ein `hint` darf kein fremdes Gebiet beanspruchen. In der Rolle `general` (`mcp_servers: null`,
   `internal_tools: null`, zugleich Rückfall des Routers) liegen ALLE Werkzeuge in einer Liste; ein Rollenzaun aus
   `agent_roles.yaml` greift dort nicht. Ein unbedingtes „<Wort> heißt immer X" zieht die Geschwister mit herein.

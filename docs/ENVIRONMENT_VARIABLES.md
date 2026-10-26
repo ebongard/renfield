@@ -268,6 +268,15 @@ AGENT_TOTAL_TIMEOUT=120.0
 # Optionale separate Ollama-Instanz für Agent
 # AGENT_OLLAMA_URL=http://cuda.local:11434
 
+# 🛑 DIAGNOSE, dunkel: protokolliert den VOLLSTÄNDIGEN Vorauswahl-Prompt auf
+# INFO. Der Prompt trägt die Nachricht des Nutzers UNGEKÜRZT — die reguläre
+# Zeile zeigt nur die ersten 60 Zeichen. Darum ein eigener Schalter und NICHT
+# `LOG_LEVEL=DEBUG`: die loguru-Senke ist global und einstufig, ein DEBUG-Lauf
+# schriebe auch gespeicherte Nachrichten und Gedächtnisauszüge aus anderen
+# Modulen mit. Für eine Diagnose anlegen, den fraglichen Zug fahren, wieder
+# ausschalten.
+AGENT_PRESELECT_PROMPT_DUMP=false
+
 # Konversations-Kontext im Agent Loop (Anzahl Nachrichten)
 AGENT_CONV_CONTEXT_MESSAGES=12
 
