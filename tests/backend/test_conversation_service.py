@@ -576,3 +576,71 @@ class TestConversationOwnershipGuard:
         # auth-off (the default) still reads it
         ctx = await service.load_context("idor-load-ownerless", user_id=7)
         assert [m["content"] for m in ctx] == ["geheim"]
+
+
+@pytest.mark.backend
+@pytest.mark.database
+class TestLatestMessageId:
+    """Die Frischemarke: erkennt sie einen FREMDEN Schreibvorgang?
+
+    🛑 Wozu: die Historie einer lebenden Sitzung wird einmal je Socket aus der
+    Datenbank geladen und waechst danach nur ueber `add_to_history`. Ein
+    asynchroner Erzeuger — die Scanner-Fertigmeldung, die Gespraechsuebergabe,
+    die Paperless-Bestaetigung — schreibt direkt in die Datenbank und faesst
+    die lebende Liste nicht an. Der Agent las damit einen veralteten Kontext.
+
+    Gemessen am 2026-10-26: ein Scan scheiterte am Papierstau, die Meldung
+    stand in der Datenbank — und der Agent antwortete auf zwei weitere Bitten
+    „der Scan laeuft bereits im Hintergrund, Du wirst benachrichtigt" und rief
+    `scan_document` nie. Diese Zahl ist das Mittel, das zu bemerken.
+    """
+
+    async def test_an_unknown_session_has_no_id(self, db_session: AsyncSession):
+        """Keine Sitzung heisst „keine Auskunft", nicht 0 — sonst waere jede
+        frische Sitzung sofort „veraltet"."""
+        service = ConversationService(db_session)
+        assert await service.latest_message_id("gibt-es-nicht") is None
+
+    async def test_the_id_rises_with_every_write(self, db_session: AsyncSession):
+        service = ConversationService(db_session)
+        sid = "frische-1"
+        await service.save_message(sid, "user", "scanne nach Haushalt")
+        erste = await service.latest_message_id(sid)
+        assert erste is not None
+
+        # Der Zug selbst schreibt seine Antwort …
+        await service.save_message(sid, "assistant", "Scan gestartet",
+                                   metadata={"action_success": True})
+        zweite = await service.latest_message_id(sid)
+        assert zweite > erste
+
+        # … und DANACH schreibt ein asynchroner Erzeuger die Fertigmeldung.
+        # Genau diesen Schreibvorgang muss die Marke sichtbar machen.
+        await service.save_message(
+            sid, "assistant", "Der Scan ist am Papierstau gescheitert.",
+            metadata={"scanner_job": {"job_id": "x", "status": "failed"},
+                      "action_success": False})
+        dritte = await service.latest_message_id(sid)
+        assert dritte > zweite, (
+            "ein fremder Schreibvorgang hebt die Marke nicht — eine lebende "
+            "Sitzung koennte ihn damit nie bemerken")
+
+    async def test_the_loaded_history_carries_the_marker(self, db_session: AsyncSession):
+        """Und nach dem Neuladen traegt die Historie `action_success: False`,
+        damit der Stale-Error-Riegel greifen KANN. Ohne diese Haelfte ist die
+        Frischepruefung wirkungslos — und umgekehrt."""
+        service = ConversationService(db_session)
+        sid = "frische-2"
+        await service.save_message(sid, "assistant", "Scan gestartet",
+                                   metadata={"action_success": True})
+        await service.save_message(
+            sid, "assistant", "Der Scan ist am Papierstau gescheitert.",
+            metadata={"scanner_job": {"job_id": "x", "status": "failed"},
+                      "action_success": False})
+
+        verlauf = await service.load_context(sid, max_messages=10)
+        gescheitert = [m for m in verlauf
+                       if (m.get("metadata") or {}).get("action_success") is False]
+        assert len(gescheitert) == 1, (
+            f"genau eine Nachricht muss als gescheitert markiert sein: {verlauf}")
+        assert "Papierstau" in gescheitert[0]["content"]
