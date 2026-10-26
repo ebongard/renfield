@@ -43,6 +43,7 @@ from utils.voice_context import voice_originated
 
 from .shared import (
     ConversationSessionState,
+    history_needs_reload,
     is_followup_question,
     register_ws_connection,
     send_ws_error,
@@ -1293,8 +1294,50 @@ async def websocket_endpoint(
 
             # Handle session_id for conversation persistence
             if msg_session_id:
-                # Load history from DB if this is the first message with this session_id
-                if not session_state.history_loaded or session_state.db_session_id != msg_session_id:
+                # 🛑 Die Historie wird NICHT nur einmal je Socket geladen. Sie
+                # waechst danach ueber `add_to_history`, und ein ASYNCHRONER
+                # Erzeuger faesst diese Liste nicht an: die Scanner-
+                # Fertigmeldung, die Gespraechsuebergabe und die
+                # Paperless-Bestaetigung schreiben direkt in die Datenbank.
+                # Der Agent las damit einen veralteten Kontext.
+                #
+                # Gemessen am 2026-10-26: ein Scan scheiterte am Papierstau,
+                # die Meldung stand in der Datenbank — und auf zwei weitere
+                # Bitten antwortete der Agent „der Scan laeuft bereits im
+                # Hintergrund, Du wirst benachrichtigt" und rief das Werkzeug
+                # NIE. Eine erfundene Beruhigung ueber einen Scan, der nicht
+                # lief, im SELBEN Tab.
+                #
+                # Eine indizierte `max(id)`-Abfrage je Zug kostet gegen eine
+                # LLM-Runde nichts (`ix_messages_conversation_id`). `None`
+                # heisst „keine Auskunft" und laedt NICHT neu — eine fehlende
+                # Messung darf keinen Neuladezyklus erzwingen.
+                _neueste = None
+                if (session_state.history_loaded
+                        and session_state.db_session_id == msg_session_id
+                        and session_state.history_watermark is not None):
+                    try:
+                        from services.conversation_service import ConversationService
+                        async with AsyncSessionLocal() as _db_frisch:
+                            _neueste = await ConversationService(
+                                _db_frisch).latest_message_id(msg_session_id)
+                    except Exception as _exc:
+                        logger.warning(f"⚠️ Frischeprüfung fehlgeschlagen: {_exc}")
+
+                # Die Regel steht in `shared.history_needs_reload` — eine reine
+                # Funktion, damit sie pruefbar ist statt hier zu stecken.
+                if history_needs_reload(
+                    history_loaded=session_state.history_loaded,
+                    known_session_id=session_state.db_session_id,
+                    wanted_session_id=msg_session_id,
+                    watermark=session_state.history_watermark,
+                    newest_in_db=_neueste,
+                ):
+                    if _neueste is not None:
+                        logger.info(
+                            "📬 Historie veraltet (Datenbank %s > bekannt %s) — ein "
+                            "asynchroner Erzeuger hat geschrieben, wird neu geladen",
+                            _neueste, session_state.history_watermark)
                     _msg_auth_uid = auth_result.get("user_id") if isinstance(auth_result, dict) else None
                     # Same boundary decision as on the `register` frame, for the
                     # client that sends none: replace BEFORE the turn keys on it.
@@ -1327,6 +1370,14 @@ async def websocket_endpoint(
                                 session_state.conversation_history = db_history
                                 logger.info(f"📚 Conversation history loaded: {len(db_history)} messages for session {msg_session_id}")
                             session_state.history_loaded = True
+                            # Die Marke gilt fuer den Stand, den wir JETZT
+                            # gelesen haben — auch wenn die Historie leer
+                            # zurueckkam (fremde Sitzung, nichts da).
+                            from services.conversation_service import (
+                                ConversationService as _CS,
+                            )
+                            session_state.history_watermark = await _CS(
+                                db_session).latest_message_id(msg_session_id)
                     except Exception as e:
                         logger.warning(f"⚠️ Failed to load conversation history: {e}")
 
@@ -2581,6 +2632,15 @@ WICHTIG: Nutze die ECHTEN Daten aus dem Ergebnis! Gib NUR die Antwort, KEIN JSON
                             enforce_ownership=settings.auth_enabled,
                         )
                         saved_assistant_message_id = _asst_msg.id
+                        # 🛑 Die eigenen Schreibvorgaenge heben die Marke MIT.
+                        # Ohne das waere der naechste Zug immer „veraltet" und
+                        # die Frischepruefung wuerde zum Dauer-Neuladen — also
+                        # eine Verhaltensaenderung, die niemand bestellt hat.
+                        # Die In-Memory-Historie ist hier schon gleichauf
+                        # (`add_to_history` weiter oben), es fehlt nur die Zahl.
+                        if _asst_msg.id is not None:
+                            session_state.history_watermark = max(
+                                session_state.history_watermark or 0, _asst_msg.id)
                         logger.debug(f"💾 Messages saved to DB: session_id={msg_session_id}, user_id={user_id}")
 
                         # Chat branching (Phase 2): on a fork, recompute memory

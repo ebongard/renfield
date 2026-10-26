@@ -413,6 +413,36 @@ class ConversationService:
                 }
         return out
 
+    async def latest_message_id(self, session_id: str) -> int | None:
+        """Die hoechste Nachrichten-Kennung dieser Sitzung, oder `None`.
+
+        🛑 Billig und ABSICHTLICH ohne Besitzpruefung: die Zahl ist keine
+        Auskunft ueber Inhalte, sie entscheidet nur, ob die Historie neu
+        geladen werden muss. Das Laden selbst prueft den Besitz
+        (`load_context` mit `enforce_ownership`), eine fremde Sitzung ergibt
+        dort weiterhin eine leere Historie.
+
+        Wozu: die Historie wird einmal je Socket geladen, ein ASYNCHRONER
+        Erzeuger schreibt aber in die Datenbank, ohne die lebende Liste
+        anzufassen (Scanner-Fertigmeldung, Gespraechsuebergabe,
+        Paperless-Bestaetigung). Ohne diesen Vergleich las der Agent einen
+        veralteten Kontext — gemessen am 2026-10-26, als er einen am
+        Papierstau gescheiterten Scan fuer laufend hielt und auf zwei weitere
+        Bitten nur beteuerte, er laufe.
+        """
+        try:
+            result = await self.db.execute(
+                select(func.max(Message.id))
+                .join(Conversation, Message.conversation_id == Conversation.id)
+                .where(Conversation.session_id == session_id)
+            )
+            return result.scalar_one_or_none()
+        except Exception as exc:
+            # Eine fehlende Auskunft darf den Zug nicht mitnehmen. `None` heisst
+            # „keine Aussage"; der Aufrufer behandelt das wie „unveraendert".
+            logger.warning(f"⚠️ latest_message_id failed for {session_id}: {exc}")
+            return None
+
     async def load_context(
         self,
         session_id: str,

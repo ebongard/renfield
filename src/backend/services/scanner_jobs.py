@@ -206,6 +206,20 @@ _KNOWN_ERROR_CODES = frozenset(_TEXT["de"]["errors"])
 # einer erwartet war. Zwei Weichen auf eine Menge: die zweite vergisst man.
 _STATES_WITHOUT_ERROR_CODE = frozenset({"done", "unrouted", "interrupted"})
 
+#: Zustände, nach denen die Bitte der Person ERLEDIGT ist.
+#:
+#: 🛑 Eine DRITTE Menge, und sie ist absichtlich nicht `_STATES_WITHOUT_ERROR_CODE`:
+#: `interrupted` trägt keinen Fehlercode und ist für den Agenten trotzdem ein
+#: Fehlschlag — eine wiederholte Bitte braucht danach einen NEUEN Scan.
+#:
+#: 🛑 Und sie ist als ERFOLGS-Menge formuliert, nicht als Fehler-Menge, damit
+#: ein unbekannter Zustand als Fehlschlag gilt. Das deckt sich mit
+#: `render_completion_message`, das für alles Unbekannte auf seinen
+#: `failed`-Text zurückfällt. Eine Fehler-Menge hätte einen neuen Zustand
+#: stillschweigend als Erfolg gezählt — gerendert als Fehlschlag, markiert als
+#: Erfolg, also genau die Spaltung, die 2026-10-26 den Scan blockierte.
+_STATES_COUNTING_AS_SUCCESS = frozenset({"done", "unrouted"})
+
 #: Die bekannte Form einer Zwischenlagen-Kennung: `scan-20261021-160741-5afef3cc`.
 #:
 #: 🛑 Sie wird hier geprüft, nicht im Modell. Der Docstring von
@@ -455,7 +469,27 @@ async def handle_job_event(db: Any, event: dict, *, redis: Any = None) -> str:
                 session_id=session_id,
                 role="assistant",
                 content=content,
-                metadata={"scanner_job": {"job_id": job_id, "status": status}},
+                metadata={
+                    "scanner_job": {"job_id": job_id, "status": status},
+                    # 🛑 OHNE dieses Feld hält der Agent einen gescheiterten
+                    # Scan für laufend. Gemessen am 2026-10-26: der Scan vom
+                    # 12:05 scheiterte am Papierstau, die Meldung stand im
+                    # Verlauf — aber ohne `action_success` feuerte der
+                    # Stale-Error-Riegel nicht (`[VORHERIGE_FEHLGESCHLAGENE_
+                    # AKTION]` hängt an `action_success is False`), während die
+                    # Nachricht davor „Scan gestartet" mit `true` trug. Auf
+                    # zwei weitere Bitten antwortete der Agent „läuft bereits
+                    # im Hintergrund, Du wirst benachrichtigt" und rief das
+                    # Werkzeug NIE auf — eine erfundene Beruhigung über einen
+                    # Scan, der nicht lief.
+                    #
+                    # Das ist das „dritte Halbe" aus `agent-loop.md` an einer
+                    # neuen Stelle: beide Hälften des Riegels waren intakt, nur
+                    # schrieb niemand `False`. Ein ASYNCHRONER Fehlschlag
+                    # braucht seinen eigenen Schreiber, denn der Werkzeugaufruf
+                    # selbst war erfolgreich — er hat den Auftrag ja gestartet.
+                    "action_success": status in _STATES_COUNTING_AS_SUCCESS,
+                },
                 user_id=requester.get("user_id"),
                 # `enforce_ownership` is an AUTH-ON rule (see chat-branching.md);
                 # every other caller derives it from the flag and this one must

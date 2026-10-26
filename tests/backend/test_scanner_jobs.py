@@ -968,3 +968,61 @@ async def test_executor_leaves_other_mcp_tools_alone():
         await executor.execute({"intent": "mcp.scanner.scanner_status", "parameters": {}})
 
     remember.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# Ein gescheiterter Auftrag MARKIERT seinen Zug
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize(
+    ("status", "erwartet"),
+    [("done", True), ("unrouted", True), ("interrupted", False),
+     ("failed", False), ("etwas_neues", False)],
+)
+async def test_the_turn_is_marked_by_the_outcome(conversation, monkeypatch, status, erwartet):
+    """🛑 Gemessen am 2026-10-26: der Scan um 12:05 scheiterte am Papierstau,
+    die Meldung stand im Verlauf — aber ohne `action_success` feuerte der
+    Stale-Error-Riegel nicht, waehrend die Nachricht davor („Scan gestartet")
+    `true` trug. Auf zwei weitere Bitten antwortete der Agent „laeuft bereits
+    im Hintergrund, Du wirst benachrichtigt" und rief das Werkzeug NIE auf.
+    Eine erfundene Beruhigung ueber einen Scan, der nicht lief.
+
+    `etwas_neues` ist der wichtige Fall: ein UNBEKANNTER Zustand muss als
+    Fehlschlag gelten, weil `render_completion_message` ihn als Fehlschlag
+    rendert. Eine Fehler-Menge statt einer Erfolgs-Menge haette ihn
+    stillschweigend als Erfolg gezaehlt.
+    """
+    monkeypatch.setattr(sj.settings, "default_language", "de")
+    redis = FakeRedis()
+    await sj.remember_scan_requester(
+        _tool_result({"ok": True, "job_id": JOB_ID}), user_id=7, session_id="session-1", redis=redis
+    )
+
+    await sj.handle_job_event(MagicMock(), _event(status=status), redis=redis)
+
+    conversation.save_message.assert_called_once()
+    metadata = conversation.save_message.call_args.kwargs["metadata"]
+    assert metadata["action_success"] is erwartet, (
+        f"Zustand {status!r} muss action_success={erwartet} tragen — sonst liest "
+        "der Agent den alten Zustand als den gegenwaertigen")
+    # Die Auftragskennung darf dabei nicht verloren gehen.
+    assert metadata["scanner_job"]["status"] == status
+
+
+def test_the_three_status_sets_stay_consistent():
+    """🛑 Drei Weichen auf dieselbe Zustandsmenge — die dritte vergisst man.
+
+    `_STATES_WITHOUT_ERROR_CODE` (kein Fehlercode) und
+    `_STATES_COUNTING_AS_SUCCESS` (Bitte erledigt) sind absichtlich
+    VERSCHIEDEN: `interrupted` traegt keinen Code und ist trotzdem ein
+    Fehlschlag. Dieser Test haelt die Beziehung fest, damit ein neuer Zustand
+    nicht durch beide faellt.
+    """
+    ohne_code = sj._STATES_WITHOUT_ERROR_CODE
+    erfolg = sj._STATES_COUNTING_AS_SUCCESS
+
+    # Jeder Erfolgszustand traegt auch keinen Fehlercode — ein Erfolg MIT
+    # Fehlercode waere ein Widerspruch.
+    assert erfolg <= ohne_code, sorted(erfolg - ohne_code)
+    # Und die Differenz ist genau der eine bewusste Fall.
+    assert ohne_code - erfolg == {"interrupted"}, sorted(ohne_code - erfolg)

@@ -34,6 +34,24 @@ class ConversationSessionState:
     conversation_history: list[dict] = field(default_factory=list)
     history_loaded: bool = False  # Whether history was loaded from DB
     db_session_id: str | None = None  # Session ID for DB persistence
+    #: Die hoechste Nachrichten-Kennung, die diese Sitzung KENNT.
+    #:
+    #: 🛑 Wozu: die Historie wird einmal je Socket aus der Datenbank geladen und
+    #: waechst danach nur noch ueber `add_to_history`. Ein ASYNCHRONER Erzeuger
+    #: — der Scanner mit seiner Fertigmeldung, die Gespraechsuebergabe, die
+    #: Paperless-Bestaetigung — schreibt in die Datenbank, ohne diese Liste
+    #: anzufassen. Der Agent las damit einen veralteten Kontext und antwortete
+    #: daraus, ohne das Werkzeug zu rufen.
+    #:
+    #: Gemessen am 2026-10-26: ein Scan scheiterte am Papierstau, die Meldung
+    #: stand in der Datenbank — und der Agent sagte auf zwei weitere Bitten
+    #: „der Scan laeuft bereits im Hintergrund, Du wirst benachrichtigt" und
+    #: rief `scan_document` NIE. Erfundene Beruhigung ueber einen Scan, der
+    #: nicht lief.
+    #:
+    #: Liegt in der Datenbank eine hoehere Kennung als diese Marke, hat jemand
+    #: anders geschrieben und die Historie wird neu geladen.
+    history_watermark: int | None = None
 
     # RAG-specific state
     last_rag_context: str | None = None  # Last retrieved document context
@@ -106,6 +124,7 @@ class ConversationSessionState:
         """Clear all session state."""
         self.conversation_history = []
         self.history_loaded = False
+        self.history_watermark = None
         self.clear_rag()
         self.last_intent = None
         self.last_action_result = None
@@ -200,6 +219,38 @@ async def send_ws_error(websocket: WebSocket, code: WSErrorCode, message: str, r
 # =============================================================================
 
 _ws_connections: dict[str, WebSocket] = {}
+
+
+def history_needs_reload(
+    *, history_loaded: bool, known_session_id: str | None, wanted_session_id: str,
+    watermark: int | None, newest_in_db: int | None,
+) -> bool:
+    """Muss die Historie dieser Sitzung aus der Datenbank neu geladen werden?
+
+    Eine REINE Funktion, damit die Regel pruefbar ist statt im Handler zu
+    stecken. Drei Gruende, und der dritte ist der neue:
+
+    1. Noch nie geladen.
+    2. Der Socket wechselt die Sitzung.
+    3. In der Datenbank steht eine HOEHERE Kennung als die bekannte — dann hat
+       ein asynchroner Erzeuger geschrieben, ohne die lebende Liste
+       anzufassen.
+
+    🛑 `newest_in_db is None` heisst „keine Auskunft" und laedt NICHT neu. Eine
+    fehlende Messung darf keinen Neuladezyklus erzwingen; sonst tauscht man
+    einen veralteten Kontext gegen eine Abfrage je Zug, die bei jeder Stoerung
+    der Datenbank zuschlaegt.
+
+    🛑 `watermark is None` bei geladener Historie heisst ebenfalls nicht neu
+    laden: die Marke fehlt nur, wenn das Lesen der Zahl scheiterte, und daraus
+    einen Dauer-Neuladezyklus zu machen waere schlimmer als der Zustand, den
+    sie verhindert.
+    """
+    if not history_loaded or known_session_id != wanted_session_id:
+        return True
+    if watermark is None or newest_in_db is None:
+        return False
+    return newest_in_db > watermark
 
 
 def register_ws_connection(session_id: str, websocket: WebSocket) -> None:
