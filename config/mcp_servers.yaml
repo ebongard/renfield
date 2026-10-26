@@ -308,6 +308,23 @@ servers:
       N8N_MCP_TELEMETRY_DISABLED: "true"
       MCP_MODE: "stdio"
       LOG_LEVEL: "error"
+      # 🛑 OHNE DIESE ZEILE SIND ALLE n8n-WERKZEUGE TOT, und zwar lautlos:
+      # `n8n-mcp` prüft seit 2.9x die API-Basisadresse durch seinen
+      # SSRF-Riegel (`dist/services/n8n-api-client.js:200` ruft
+      # `SSRFProtection.validateWebhookUrl(this.baseUrl)` — der Riegel sitzt
+      # also NICHT nur im Webhook-Pfad, dem Namen zum Trotz) und verweigert
+      # private Adressen. n8n MUSS hier aber im LAN stehen (#1235,
+      # `http://192.168.1.78:5678`), nachdem die öffentliche Adresse auf einen
+      # fremden Hoster zeigte. Beides schließt sich aus.
+      # Am 2026-10-26 gemessen: n8n erreichbar (401 ohne Schlüssel in 25 ms),
+      # Schlüssel gültig (HTTP 200) — und trotzdem meldete die Funktionssonde
+      # `eingeschränkt`, weil der Riegel jeden Werkzeugaufruf abwies. Der
+      # stdio-Server verbindet dabei sauber mit 13 Werkzeugen; nur benutzen
+      # kann sie niemand.
+      # Die Lockerung ist hier vertretbar, weil die Zieladresse vom Betreiber
+      # gesetzt wird und absichtlich im eigenen Netz liegt — nicht von einem
+      # Modell oder einem Nutzer.
+      WEBHOOK_SECURITY_MODE: "permissive"
     refresh_interval: 300
     example_intent: mcp.n8n.n8n_list_workflows
     # Funktionssonde (A1): fängt den Fall vom 12.09., dass der Hostname aus dem

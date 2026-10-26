@@ -417,6 +417,49 @@ telemetry-excluded today) — not built.
   (pinned by tests against a real YAML-loaded `MCPManager`). Neither instance's
   live `mcp_servers.yaml` sets `tool_hints` today, so no hint was lost in prod.
 
+## Der zweite echte Fang der Sonde: n8n, lautlos tot (2026-10-26)
+
+Die Funktionssonde hat zum zweiten Mal etwas gefangen, das der Transport
+verbirgt — und diesmal einen **Totalausfall**, nicht eine Fehlkonfiguration.
+
+Gemessen, Stufe für Stufe:
+
+| Prüfung | Ergebnis |
+|---|---|
+| n8n aus dem Cluster erreichbar? | ja — ohne Schlüssel HTTP 401 in 25 ms, Startseite 200 |
+| Zugangsschlüssel gültig? | ja — mit Schlüssel HTTP 200 |
+| stdio-Server verbunden? | ja — „connected: 13/28 tools (filtered)" |
+| Werkzeugaufrufe? | **alle abgewiesen** |
+
+Ursache: `n8n-mcp@2.94.3` prüft die **API-Basisadresse** durch seinen
+SSRF-Riegel. `dist/services/n8n-api-client.js:200` ruft
+`SSRFProtection.validateWebhookUrl(this.baseUrl)` — der Riegel sitzt also trotz
+seines Namens nicht nur im Webhook-Pfad — und verweigert private Adressen.
+n8n muss hier aber im LAN stehen (`http://192.168.1.78:5678`, #1235, nachdem
+die öffentliche Adresse auf einen fremden Hoster zeigte). Beides schließt sich
+aus. Ausweg ist der Schalter des Pakets selbst: `WEBHOOK_SECURITY_MODE=permissive`,
+gesetzt in der `env`-Liste der n8n-Stanza.
+
+**Der Mechanismus darunter ist der eigentliche Befund.** Das Bild installierte
+`n8n-mcp@latest`. Damit entschied der Zeitpunkt des Bildbaus, welcher Code mit
+n8n spricht, und eine Verhaltensänderung kam ohne eine einzige Zeile Diff
+herein. `npx -y n8n-mcp` löst auf diese globale Installation auf (im laufenden
+Pod nachgesehen: `node /usr/bin/n8n-mcp`, kein npx-Cache), die Zeile entscheidet
+also wirklich. Jetzt exakt festgenagelt, und ein Test hält beides:
+`tests/backend/test_n8n_mcp_ssrf_and_pin.py`.
+
+Was die Verdikt-Regel hier bestätigt: der Ausfall erzeugte **keine**
+Zeitüberschreitungen, also hätte `calls_failing` ihn nie gesehen — eine
+Ablehnung ist eine App-Antwort. Genau dafür gibt es die Sonde.
+
+Dazu zwei Beobachtungen für die nächste Diagnose:
+- Das Verdikt des Wächters erscheint **nicht** auf INFO, Sondenaufrufe auch
+  nicht. Aus dem Protokoll allein ist der Grund nicht zu bestimmen; es blieb der
+  Weg über Paketquelle und Adressprüfung.
+- `/api/mcp/status` und `/api/mcp-health` verlangen Anmeldung (der Haushalt
+  läuft auth-on), sind also für eine schnelle Diagnose von außen nicht
+  verfügbar.
+
 ## Rollout
 
 Dark everywhere. To enable on an instance: set `MCP_HEALTH_MONITOR_ENABLED=true`

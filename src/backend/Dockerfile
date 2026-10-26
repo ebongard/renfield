@@ -178,7 +178,16 @@ RUN mkdir -p /usr/share/piper/voices \
 RUN apt-get purge -y wget && apt-get autoremove -y && rm -rf /var/lib/apt/lists/*
 
 # Pre-install MCP stdio server packages (avoids npx download delay on first use)
-RUN npm install -g n8n-mcp@latest
+#
+# 🛑 EXACT VERSION, never `@latest`. `npx -y n8n-mcp` resolves to this global
+# install (verified in the live pod: `node /usr/bin/n8n-mcp` runs and there is
+# no npx cache), so this line decides which code talks to n8n — and `@latest`
+# let a behaviour change in and nobody noticed. 2.9x added an SSRF guard on the
+# API base URL that refuses private addresses, which killed every n8n tool
+# while the server still reported "connected"; see the WEBHOOK_SECURITY_MODE
+# note in `config/mcp_servers.yaml`. A version bump is a deliberate step with
+# its own measurement, not a side effect of rebuilding the image.
+RUN npm install -g n8n-mcp@2.94.3
 
 # Application code
 COPY . .
