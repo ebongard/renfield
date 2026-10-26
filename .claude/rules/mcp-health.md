@@ -60,17 +60,16 @@ Retry-After is honoured, no automatic retry; signal + alert stay dark).
   `test_n8n_mcp_ssrf_and_pin.py`. Hergang: `docs/design/mcp-self-detection.md`.
 
 ## Kommt der Steuertext überhaupt an?
-- 🛑 **`tool_hints` können konfiguriert sein und das Modell trotzdem NIE erreichen.** Am 2026-10-26 standen vier
-  Hinweise für den Scanner in der YAML (1426/791/186/379 Zeichen), Mount und Lader trugen sie, und derselbe
-  Codepfad lieferte in einer Nachstellung im laufenden Pod eine 1529-Zeichen-Zeile. Im ECHTEN Prompt war sie
-  **102 Zeichen** lang und trug keinen Hinweis — nur die erste Docstring-Zeile des Servers. Vier Review-Runden
-  arbeiteten an Texten, die nie ankamen.
-- `log_hint_arrival` in `_install_discovered_tools` zählt jetzt bei jeder Entdeckung: konfiguriert, angewendet,
-  und welche Schlüssel zu KEINEM entdeckten Werkzeug passen. Ein nicht passender Schlüssel war vorher ein
-  stiller Leerlauf (`config.tool_hints.get(tool.name)` → `None`). WARNING, nicht INFO — beides heißt, der
-  Steuertext erreicht das Modell nicht. Nur Namen und Längen, nie der Text.
-- 🛑 Der Schlüssel ist der ROHE Werkzeugname (`scan_document`), nicht der namensräumliche
-  (`mcp.scanner.scan_document`). Ein Tippfehler oder ein umbenanntes Werkzeug fällt jetzt auf.
+- 🛑 **`tool_hints` können konfiguriert sein und das Modell trotzdem NIE erreichen** — am 2026-10-26 taten sie
+  das vier Review-Runden lang. `log_hint_arrival` (gerufen in `_install_discovered_tools`, NACH dem Filtern)
+  zählt je Entdeckung: konfiguriert / angehängt / **angeboten**. Die Differenz ist der Punkt — ein
+  `prompt_tools`-Filter oder eine DB-Übersteuerung kann ein behinweistes Werkzeug aus `state.tools` werfen.
+- 🛑 **Abwesenheit ist keine Diagnose:** es gibt IMMER eine Zeile, auch `0 hint(s) configured`. Sonst sehen drei
+  Lagen gleich aus — Server ohne Hinweise, Konfiguration ohne, Bild ohne die Funktion.
+- Nur bei ÄNDERUNG, weil die Entdeckung alle ~60 s läuft (`mcp_refresh_interval`; `refresh_tools` liest den
+  per-Server-Wert NICHT). Nur Namen und Längen, nie der Hinweistext.
+- 🛑 Der Schlüssel ist der ROHE Werkzeugname (`scan_document`), nicht der namensräumliche. Hergang:
+  `docs/design/mcp-self-detection.md`.
 
 ## Alerting
 - "Told" = **a notification row exists.** `notify_admin` returns `True` for a failure AFTER `process_webhook`

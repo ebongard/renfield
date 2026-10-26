@@ -3322,9 +3322,14 @@ class MCPManager:
         use time and never lived in the tool list.
         """
         state.all_discovered_tools = [self._tool_info_from_mcp(state.config, t) for t in raw_tools]
-        log_hint_arrival(state)
         state.note_discovered_tools()
         self._apply_tool_filter(state)
+        # 🛑 NACH dem Filtern: `log_hint_arrival` zaehlt auch, wie viele der
+        # behinweisten Werkzeuge noch ANGEBOTEN werden. Vor dem Filtern waere
+        # `state.tools` der alte Stand, und ein `prompt_tools`-Filter oder eine
+        # DB-Uebersteuerung, die ein behinweistes Werkzeug herauswirft, bliebe
+        # unsichtbar — gemeldet als gesund. Im Review zu #1415 gefunden.
+        log_hint_arrival(state)
 
     def _apply_tool_filter(self, state: MCPServerState) -> None:
         """Rebuild state.tools + _tool_index: DB override > YAML prompt_tools > all."""
@@ -3436,44 +3441,62 @@ def log_hint_arrival(state: "MCPServerState") -> None:
     """Protokolliert, ob die konfigurierten `tool_hints` wirklich ANKOMMEN.
 
     🛑 Am 2026-10-26 standen vier Hinweise für den Scanner in `mcp_servers.yaml`
-    (1426/791/186/379 Zeichen). Der Mount trug sie, der Lader trug sie, und
-    derselbe Codepfad lieferte in einer Nachstellung im laufenden Pod eine 1529
-    Zeichen lange Vorauswahlzeile. In Produktion war dieselbe Zeile 102 Zeichen
-    lang und trug KEINEN Hinweis.
+    (1426/791/186/379 Zeichen). Mount und Lader trugen sie, und derselbe
+    Codepfad lieferte in einer Nachstellung im laufenden Pod eine 1529 Zeichen
+    lange Vorauswahlzeile. Im echten Prompt war dieselbe Zeile 102 Zeichen lang
+    und trug keinen Hinweis. Vier Review-Runden arbeiteten an Texten, die nie
+    ankamen, und nichts im Protokoll sagte es.
 
-    Vier Review-Runden lang wurde an diesen Texten gearbeitet, ohne dass einer
-    beim Modell ankam — und nichts im Protokoll sagte das. Diese Funktion
-    schließt die Lücke: sie zählt, was konfiguriert ist, was angewendet wurde,
-    und welche Schlüssel zu KEINEM entdeckten Werkzeug passen.
+    🛑 **Abwesenheit ist keine Diagnose.** Eine frühere Fassung kehrte bei
+    einem Server ohne Hinweise still zurück — und damit sahen drei
+    verschiedene Lagen gleich aus: Server ohne Hinweise, Konfiguration ohne
+    Hinweise (etwa ein Prozess, der vor dem Patch startete), und ein Bild ohne
+    diese Funktion. Jede erzeugte dieselbe Stille. Darum IMMER eine Zeile, auch
+    `0 hint(s) configured`. Im Review zu #1415 gefunden.
 
-    Ein Schlüssel, der nicht passt, ist die wahrscheinlichste Ursache und war
-    bisher ein stiller Leerlauf: `config.tool_hints.get(tool.name)` liefert
-    dann schlicht `None`, ohne eine Spur.
+    Gezählt wird ZWEIMAL, und der Unterschied ist der Punkt: `attached` sind
+    Werkzeuge, denen der Hinweis angehängt wurde; `offered` sind die, die
+    danach noch in `state.tools` stehen. Ein `prompt_tools`-Filter oder eine
+    DB-Übersteuerung kann einen Hinweis tragen und das Werkzeug trotzdem
+    herausfiltern — die alte Fassung hätte das als gesund gemeldet.
 
-    Protokolliert werden NUR Namen und Längen. Werkzeugnamen und Hinweistexte
-    sind Betreiberkonfiguration, keine Nutzerinhalte; der Hinweistext selbst
-    steht nicht in der Zeile.
+    Protokolliert werden NUR Namen und Längen, nie der Hinweistext.
     """
     konfiguriert = dict(state.config.tool_hints or {})
-    if not konfiguriert:
-        return
-
     entdeckt = {t.original_name for t in state.all_discovered_tools}
-    angewendet = [t for t in state.all_discovered_tools if t.hint]
+    angehaengt = [t for t in state.all_discovered_tools if t.hint]
+    angeboten = [t for t in (state.tools or []) if t.hint]
     ohne_werkzeug = sorted(set(konfiguriert) - entdeckt)
+    gefiltert = len(angehaengt) - len(angeboten)
 
-    if ohne_werkzeug or not angewendet:
-        # 🛑 WARNING, nicht INFO: beides heißt, dass der Steuertext des
-        # Betreibers das Modell NICHT erreicht — und genau das war unsichtbar.
+    # 🛑 Nur bei ÄNDERUNG protokollieren. Der Inhalt ändert sich erst, wenn
+    # jemand die YAML bearbeitet, die Entdeckung läuft aber alle ~60 s je
+    # Server (`mcp_refresh_interval`, und `refresh_tools` liest den
+    # per-Server-Wert nicht). Ohne das wären es ~60 Zeilen je Stunde und
+    # Server, und ein dauerhaft unpassender Schlüssel ein Dauerfeuer.
+    zustand = (len(konfiguriert), len(angehaengt), len(angeboten),
+               tuple(ohne_werkzeug))
+    if getattr(state, "_hint_arrival_state", None) == zustand:
+        return
+    state._hint_arrival_state = zustand
+
+    if ohne_werkzeug or gefiltert or (konfiguriert and not angehaengt):
+        # Jeder dieser Fälle heißt: der Steuertext des Betreibers erreicht das
+        # Modell nicht oder nicht ganz.
         logger.warning(
-            "MCP '{}': {} hint(s) configured, {} applied; {} key(s) match no "
-            "discovered tool: {} (discovered: {})",
-            state.config.name, len(konfiguriert), len(angewendet),
-            len(ohne_werkzeug), ohne_werkzeug, sorted(entdeckt),
+            "MCP '{}': {} hint(s) configured, {} attached, {} offered"
+            "{}{}",
+            state.config.name, len(konfiguriert), len(angehaengt),
+            len(angeboten),
+            f"; {len(ohne_werkzeug)} key(s) match no discovered tool: "
+            f"{ohne_werkzeug}" if ohne_werkzeug else "",
+            f"; {gefiltert} hinted tool(s) filtered out of the offered set"
+            if gefiltert else "",
         )
     else:
         logger.info(
-            "MCP '{}': {} hint(s) configured, {} applied ({} chars total)",
-            state.config.name, len(konfiguriert), len(angewendet),
-            sum(len(t.hint) for t in angewendet),
+            "MCP '{}': {} hint(s) configured, {} attached, {} offered "
+            "({} chars total)",
+            state.config.name, len(konfiguriert), len(angehaengt),
+            len(angeboten), sum(len(t.hint) for t in angeboten),
         )

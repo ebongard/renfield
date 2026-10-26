@@ -6,21 +6,18 @@ sie, der Lader trug sie, und derselbe Codepfad lieferte in einer Nachstellung
 IM LAUFENDEN POD eine 1529 Zeichen lange Vorauswahlzeile.
 
 In Produktion war dieselbe Zeile **102 Zeichen** lang und trug keinen Hinweis —
-nur die erste Zeile des Docstrings vom Scanner-Server:
+nur die erste Zeile des Docstrings vom Scanner-Server. Vier Review-Runden
+arbeiteten an diesen Texten (#1411 Sprachfalle, Bluetooth-Abgrenzung, die
+`known:`-Korrektur), ohne dass einer beim Modell ankam. Nichts im Protokoll
+sagte es; sichtbar wurde es erst durch einen eigens gebauten Prompt-Auszug.
 
-    - mcp.scanner.scan_document: START scanning every sheet in the document
-      feeder into one searchable PDF
-
-Vier Review-Runden lang wurde an diesen Texten gearbeitet (#1411 Sprachfalle,
-Bluetooth-Abgrenzung, die `known:`-Korrektur), ohne dass einer beim Modell
-ankam. Nichts im Protokoll sagte das, und erst ein eigens gebauter
-Prompt-Auszug machte es sichtbar.
-
-Der wahrscheinlichste Fehlermodus war dabei immer ein stiller Leerlauf:
-`config.tool_hints.get(tool.name)` liefert bei einem Schlüssel, der zu keinem
-entdeckten Werkzeug passt, schlicht `None` — ohne eine Spur. Genau das hält
-dieser Test fest.
+🛑 **Abwesenheit ist keine Diagnose.** Die erste Fassung dieser Funktion kehrte
+bei einem Server ohne Hinweise still zurück — und ein Test schrieb diese Stille
+als gewolltes Verhalten fest. Damit sahen drei verschiedene Lagen gleich aus:
+Server ohne Hinweise, Konfiguration ohne Hinweise, Bild ohne diese Funktion.
+Im Review zu #1415 gefunden und umgedreht.
 """
+import inspect
 from dataclasses import dataclass, field
 from types import SimpleNamespace
 
@@ -43,12 +40,16 @@ class _Zustand:
     """So viel von `MCPServerState`, wie die Funktion anfasst."""
     config: object
     all_discovered_tools: list = field(default_factory=list)
+    tools: list = field(default_factory=list)
 
 
-def _zustand(hinweise: dict, werkzeuge: list[_Werkzeug]) -> _Zustand:
+def _zustand(hinweise: dict, entdeckt: list[_Werkzeug],
+             angeboten: list[_Werkzeug] | None = None) -> _Zustand:
+    """`angeboten=None` heißt: der Filter wirft nichts weg (der Normalfall)."""
     return _Zustand(
         config=SimpleNamespace(name="scanner", tool_hints=hinweise),
-        all_discovered_tools=werkzeuge,
+        all_discovered_tools=entdeckt,
+        tools=list(entdeckt) if angeboten is None else angeboten,
     )
 
 
@@ -63,11 +64,8 @@ def protokoll():
 
 
 def test_a_key_that_matches_no_tool_is_a_WARNING(protokoll):
-    """🛑 Der Fall, der monatelang unsichtbar war.
-
-    Ein Schlüssel, der zu keinem entdeckten Werkzeug passt, ist ein stiller
-    Leerlauf — der Steuertext erreicht das Modell nie, und nichts sagt es.
-    """
+    """Ein Schlüssel, der zu keinem entdeckten Werkzeug passt, war ein stiller
+    Leerlauf: `config.tool_hints.get(tool.name)` liefert `None`, ohne Spur."""
     log_hint_arrival(_zustand(
         {"scan_document": "x" * 1426, "tippfehler_tool": "y" * 100},
         [_Werkzeug("scan_document", "x" * 1426), _Werkzeug("scanner_status")],
@@ -79,51 +77,104 @@ def test_a_key_that_matches_no_tool_is_a_WARNING(protokoll):
         f"ist sie nicht handlungsfaehig:\n{warnungen[0]}")
 
 
-def test_hints_configured_but_NONE_applied_is_a_WARNING(protokoll):
+def test_hints_configured_but_NONE_attached_is_a_WARNING(protokoll):
     """Genau die Lage vom 2026-10-26: konfiguriert ja, angekommen nichts."""
     log_hint_arrival(_zustand(
         {"scan_document": "x" * 1426},
         [_Werkzeug("scan_document"), _Werkzeug("scanner_status")],
     ))
     warnungen = [m for stufe, m in protokoll if stufe == "WARNING"]
+    assert warnungen, f"kein WARNING: {protokoll}"
+    assert "0 attached" in warnungen[0], warnungen[0]
+
+
+def test_a_hinted_tool_filtered_OUT_of_the_offered_set_is_a_WARNING(protokoll):
+    """🛑 Angehängt ist nicht angeboten.
+
+    `prompt_tools` oder eine DB-Übersteuerung können ein Werkzeug aus
+    `state.tools` werfen, NACHDEM sein Hinweis angehängt wurde. Die erste
+    Fassung zählte nur `all_discovered_tools` und hätte das als GESUND
+    gemeldet. Im Review zu #1415 gefunden.
+    """
+    log_hint_arrival(_zustand(
+        {"scan_document": "x" * 1426},
+        [_Werkzeug("scan_document", "x" * 1426), _Werkzeug("scanner_status")],
+        angeboten=[_Werkzeug("scanner_status")],   # der behinweiste fiel raus
+    ))
+    warnungen = [m for stufe, m in protokoll if stufe == "WARNING"]
     assert warnungen, (
-        "vier konfigurierte Hinweise, null angewendet — und kein WARNING. "
-        f"Genau so blieb es unsichtbar: {protokoll}")
-    assert "1 hint(s) configured, 0 applied" in warnungen[0], warnungen[0]
+        f"ein behinweistes Werkzeug wurde herausgefiltert und das galt als "
+        f"gesund: {protokoll}")
+    assert "filtered out" in warnungen[0], warnungen[0]
 
 
 def test_the_healthy_case_is_INFO_with_counts(protokoll):
-    """Wenn alles ankommt, genügt eine Zählung — und sie muss belastbar sein."""
+    """Wenn alles ankommt, genügt eine Zählung — mit Gesamtlänge, sonst wäre
+    ein abgeschnittener Hinweis nicht von einem vollständigen zu
+    unterscheiden."""
     log_hint_arrival(_zustand(
         {"scan_document": "x" * 1426, "route_scan": "y" * 791},
         [_Werkzeug("scan_document", "x" * 1426), _Werkzeug("route_scan", "y" * 791)],
     ))
     infos = [m for stufe, m in protokoll if stufe == "INFO"]
     assert infos, f"keine INFO-Zeile: {protokoll}"
-    assert "2 hint(s) configured, 2 applied" in infos[0], infos[0]
-    assert str(1426 + 791) in infos[0], (
-        f"die Gesamtlaenge fehlt — dann ist ein abgeschnittener Hinweis "
-        f"nicht von einem vollstaendigen zu unterscheiden:\n{infos[0]}")
+    assert "2 hint(s) configured, 2 attached, 2 offered" in infos[0], infos[0]
+    assert str(1426 + 791) in infos[0], infos[0]
     assert not [m for stufe, m in protokoll if stufe == "WARNING"]
 
 
-def test_a_server_without_hints_stays_silent(protokoll):
-    """🛑 Die meisten Server haben keine `tool_hints`. Eine Zeile je Server und
-    Verbindung waere Laerm und wuerde die echten Faelle zudecken."""
+def test_a_server_WITHOUT_hints_still_says_so(protokoll):
+    """🛑 Umgedreht gegenüber der ersten Fassung, und das ist der Kern.
+
+    Sie kehrte hier still zurück, und ein Test hielt diese Stille fest. Damit
+    war „Server hat keine Hinweise" nicht von „die Konfiguration dieses
+    Prozesses hat keine" und nicht von „dieses Bild kennt die Funktion nicht"
+    zu unterscheiden — drei Lagen, eine Stille. Genau das Rätselraten, das
+    diesen Zweig ausgelöst hat.
+    """
     log_hint_arrival(_zustand({}, [_Werkzeug("irgendwas")]))
-    assert not protokoll, f"ein Server ohne Hinweise hat protokolliert: {protokoll}"
+    assert protokoll, (
+        "ein Server ohne Hinweise schweigt — dann ist Abwesenheit wieder eine "
+        "Diagnose, und drei verschiedene Lagen sehen gleich aus")
+    stufe, nachricht = protokoll[0]
+    assert stufe == "INFO", f"das ist kein Problem, also kein WARNING: {nachricht}"
+    assert "0 hint(s) configured" in nachricht, nachricht
+
+
+def test_the_line_appears_only_ON_CHANGE(protokoll):
+    """🛑 Die Entdeckung läuft alle ~60 s je Server (`mcp_refresh_interval`;
+    `refresh_tools` liest den per-Server-Wert NICHT). Eine Zeile je Durchlauf
+    wären ~60 je Stunde, und ein dauerhaft unpassender Schlüssel ein
+    Dauerfeuer, das die echten Fälle zudeckt."""
+    z = _zustand({"scan_document": "x" * 10},
+                 [_Werkzeug("scan_document", "x" * 10)])
+    log_hint_arrival(z)
+    log_hint_arrival(z)
+    log_hint_arrival(z)
+    assert len(protokoll) == 1, (
+        f"drei Durchlaeufe, {len(protokoll)} Zeilen — ein unveraenderter "
+        "Zustand darf nur einmal protokollieren")
+
+    # Ändert sich etwas, muss es wieder erscheinen.
+    z.all_discovered_tools = [_Werkzeug("scan_document")]
+    z.tools = list(z.all_discovered_tools)
+    log_hint_arrival(z)
+    assert len(protokoll) == 2, (
+        "der Hinweis ist weggefallen und das Protokoll schweigt — dann nuetzt "
+        "die Drosselung nichts")
 
 
 def test_the_hint_TEXT_never_reaches_the_log(protokoll):
-    """🛑 Nur Namen und Längen. Hinweistexte sind Betreiberkonfiguration, aber
-    die Zeile soll auch nicht um Größenordnungen aufgeblasen werden — 2689
-    Zeichen Hinweis je Verbindung waeren genau das."""
+    """🛑 Nur Namen und Längen — und zwar auf BEIDEN Zweigen.
+
+    Die erste Fassung prüfte nur den INFO-Zweig; der WARNING-Zweig ist aber
+    der, der variable Inhalte einsetzt. Im Review zu #1415 gefunden.
+    """
     geheim = "DIESER-TEXT-DARF-NICHT-INS-PROTOKOLL"
+    log_hint_arrival(_zustand({"a": geheim}, [_Werkzeug("a", geheim)]))
     log_hint_arrival(_zustand(
-        {"scan_document": geheim},
-        [_Werkzeug("scan_document", geheim)],
-    ))
-    assert protokoll, "gar nichts protokolliert"
+        {"a": geheim, "fehlt": geheim}, [_Werkzeug("a", geheim)]))
+    assert [s for s, _ in protokoll].count("WARNING") == 1, protokoll
     for _, nachricht in protokoll:
         assert geheim not in nachricht, (
             f"der Hinweistext steht im Protokoll:\n{nachricht}")
@@ -132,11 +183,9 @@ def test_the_hint_TEXT_never_reaches_the_log(protokoll):
 def test_the_discovery_path_actually_calls_it(protokoll):
     """🛑 Die VERDRAHTUNG, nicht nur die Funktion.
 
-    Der Fehler dieses Tages war fünfmal derselbe: ein Riegel war richtig
-    gebaut und wurde nirgends gerufen, oder ein Parameter fiel eine Schicht
-    höher weg, und jeder Einheitentest blieb grün. Dieser Test geht durch
-    `_install_discovered_tools` — die EINE Stelle, an der eine entdeckte
-    Werkzeugliste lebender Zustand wird.
+    Der Fehler dieses Tages war fünfmal derselbe: ein Riegel richtig gebaut
+    und nirgends gerufen, oder ein Parameter eine Schicht höher weggefallen —
+    und jeder Einheitentest blieb grün.
     """
     from services.mcp_client import MCPManager, MCPServerConfig, MCPServerState
 
@@ -148,10 +197,9 @@ def test_the_discovery_path_actually_calls_it(protokoll):
     rohe = [SimpleNamespace(name="scan_document", description="Scan a stack.",
                             inputSchema={"properties": {}, "required": []})]
 
-    # 🛑 Ein ECHTER Manager, kein `__new__`: die Nachbarschritte
-    # (`_apply_tool_filter`) brauchen Zustand, den `__init__` anlegt, und ein
-    # halb gebautes Objekt haette den Test an der falschen Stelle scheitern
-    # lassen statt am Befund.
+    # 🛑 Ein ECHTER Manager, kein `__new__`: `_apply_tool_filter` braucht
+    # Zustand, den `__init__` anlegt (`_tool_overrides`). Geprueft: `__init__`
+    # macht kein I/O — nur Zuweisungen.
     mgr = MCPManager()
     mgr._install_discovered_tools(state, rohe)
 
@@ -160,5 +208,21 @@ def test_the_discovery_path_actually_calls_it(protokoll):
         "der Entdeckungspfad protokolliert nichts ueber die Hinweise — dann "
         f"bleibt ihr Ausbleiben wieder unsichtbar: {protokoll}")
     assert "gibtesnicht" in warnungen[0], warnungen[0]
-    # Und der Hinweis, der PASST, ist wirklich angekommen:
     assert state.all_discovered_tools[0].hint == "H" * 50
+
+
+def test_the_two_discovery_entry_points_reach_the_install():
+    """🛑 Und die Verdrahtung DAVOR.
+
+    Der Test oben beweist nur, dass `_install_discovered_tools` die Zählung
+    ruft — nicht, dass Verbinden und Auffrischen dort ankommen. Ein Umbau, der
+    die Entdeckung wieder in `_connect_server` einzieht, liesse ihn grün und
+    die Zeile verschwinden. Im Review zu #1415 benannt.
+    """
+    from services.mcp_client import MCPManager
+
+    for name in ("_connect_server", "refresh_tools"):
+        quelle = inspect.getsource(getattr(MCPManager, name))
+        assert "_install_discovered_tools" in quelle, (
+            f"`{name}` geht nicht mehr ueber `_install_discovered_tools` — "
+            "dann entfaellt die Hinweis-Zaehlung auf diesem Weg")
