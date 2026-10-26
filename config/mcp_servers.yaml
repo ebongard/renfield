@@ -527,7 +527,14 @@ servers:
     #     angemeldet, für SANE unansprechbar, OHNE dass eine Gerätesuche lief)
     #     keine Nebensache.
     # Fehler NUR bei: Wächter tot, Wächter im Absturzkreis, Gerät verklemmt
-    # (USB-Knoten da, SANE blind). Ausgeschalteter Scanner und fehlende
+    # (USB-Knoten da, SANE blind). 🛑 Seit 2026-10-26 ist der Knopfwächter ab
+    # Vorgabe AUS (scanner #12) — „tot" und „Absturzkreis" können damit nicht
+    # mehr auftreten, es bleibt „verklemmt". Dafür erkennt die Sonde das
+    # Verklemmen jetzt am LETZTEN angeforderten Zugriff
+    # (`device_wedged_last_attempt`) statt an der Zeitmarke des Wächters;
+    # ohne diesen Ersatz hätte das Abschalten die Erkennung mitgenommen und
+    # den Neun-Tage-Ausfall durch eine neue Tür zurückgebracht.
+    # Ausgeschalteter Scanner und fehlende
     # USB-Auskunft sind ok.
     health_probe:
       tool: watcher_health
@@ -582,10 +589,12 @@ servers:
         stage_id. Nehmen bei „welche Scans warten", „was ist offen", und immer
         dann, wenn für route_scan die stage_id fehlt.
       watcher_health: >-
-        NUR Diagnose für die Gesundheitsprobe: sagt, ob der HARDWARE-KNOPF
-        funktioniert, und fasst den Scanner nicht an. Für „ist der Scanner
-        bereit / liegt Papier ein" IMMER scanner_status nehmen — dieses
-        Werkzeug meldet auch bei ausgeschaltetem Scanner ok.
+        NUR Diagnose für die Gesundheitsprobe, fasst den Scanner nicht an.
+        Meldet, ob das Gerät verklemmt ist (Knoten da, letzter Zugriff
+        gescheitert). 🛑 Der Knopfwächter ist ab Vorgabe AUS — dann meldet es
+        zum Knopf nur „aus", nicht „funktioniert". Für „ist der Scanner bereit
+        / liegt Papier ein" IMMER scanner_status nehmen — dieses Werkzeug
+        meldet auch bei ausgeschaltetem Scanner ok.
     example_intent: mcp.scanner.scanner_status
     examples:
       de:
