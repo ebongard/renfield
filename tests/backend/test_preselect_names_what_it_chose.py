@@ -12,6 +12,12 @@ einen eigenen Durchlauf mit nachgerüsteter Protokollzeile.
 
 Eine Zählung ohne Namen ist für die Diagnose fast wertlos. Dieser Test hält
 fest, dass die Namen dastehen.
+
+🛑 Negativkontrolle gemessen: gegen die alte f-string-Zeile schlägt
+`test_the_log_line_names_the_chosen_tools` fehl („`mcp.scanner.scan_document`
+fehlt in der Zeile"). `test_the_log_line_still_carries_count_and_message`
+bleibt dabei GRÜN, und das ist Absicht — Zählung und Anlass trug die alte
+Zeile auch; er sichert die loguru-Umstellung, nicht die Namen.
 """
 import json
 from types import SimpleNamespace
@@ -50,7 +56,7 @@ def _dienst() -> AgentService:
 
 
 @pytest.fixture
-def protokoll(monkeypatch):
+def protokoll():
     """Fängt die echten loguru-Zeilen ab — nach der Ersetzung der Argumente."""
     zeilen: list[str] = []
     sink = logger.add(lambda m: zeilen.append(m.record["message"]), level="INFO")

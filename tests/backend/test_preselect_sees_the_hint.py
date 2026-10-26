@@ -180,3 +180,37 @@ def test_a_hint_with_stray_whitespace_is_not_duplicated():
 def test_a_tool_without_a_hint_has_an_empty_field():
     assert ToolDefinition(name="x", description="y").hint == "", (
         "ohne Hinweis muss das Feld leer sein, nicht None")
+
+
+def test_the_real_config_still_rules_out_the_search_reading():
+    """🛑 Die ECHTE Konfiguration, nicht die Konstante dieser Datei.
+
+    Der zweite Fehlschlag vom 2026-10-26 war nicht der Mechanismus, sondern der
+    TEXT: „scanne nach <X>" parst syntaktisch genau wie „suche nach <X>", und
+    der damalige Hinweis benannte das nicht. Das Modell nahm <X> als Suchbegriff
+    und griff `paperless.search_documents`.
+
+    Alles darüber in dieser Datei arbeitet mit `HINWEIS`, einer Konstante — der
+    Hinweis, der in Produktion wirkt, wurde von keinem Test berührt. Wird er
+    später „aufgeräumt", fällt das erst im nächsten Vorfall auf. Genau so ist es
+    passiert. Im Review zu #1411 gefunden.
+    """
+    from pathlib import Path
+
+    import yaml
+
+    wurzel = Path(__file__).resolve().parents[2]
+    eintraege = yaml.safe_load(
+        (wurzel / "config" / "mcp_servers.yaml").read_text())["servers"]
+    scanner = next(e for e in eintraege if e["name"] == "scanner")
+    hinweis = (scanner.get("tool_hints") or {}).get("scan_document", "")
+
+    assert hinweis, "`scan_document` hat keinen Hinweis mehr — die Vorauswahl entscheidet dann blind"
+    # Die Zweideutigkeit muss BESTRITTEN werden, nicht nur das Ziel benannt.
+    assert "Suchbegriff" in hinweis, (
+        "der Hinweis schliesst die Lesart 'Suchbegriff' nicht mehr aus — das "
+        "war der Fehlgriff vom 2026-10-26")
+    assert "ZIEL" in hinweis, "der Hinweis sagt nicht mehr, dass <X> das Ziel ist"
+    # Und die Formulierung, an der es konkret scheiterte, muss vorkommen.
+    assert "scanne nach" in hinweis, (
+        "der Hinweis nennt die zweideutige Formulierung selbst nicht mehr")
