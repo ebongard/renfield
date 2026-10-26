@@ -1334,8 +1334,15 @@ async def websocket_endpoint(
                     newest_in_db=_neueste,
                 ):
                     if _neueste is not None:
+                        # 🛑 Geschweifte Klammern, NICHT `%s`: der Logger dieses
+                        # Moduls ist loguru, und das ersetzt nur `{}`. Mit `%s`
+                        # fallen die Argumente still weg — die Zeile druckte
+                        # woertlich „(Datenbank %s > bekannt %s)", also genau
+                        # ohne die beiden Zahlen, die man zum Nachmessen eines
+                        # Neuladezyklus braucht. In der Abnahme zum Deploy vom
+                        # 2026-10-26 live gefunden.
                         logger.info(
-                            "📬 Historie veraltet (Datenbank %s > bekannt %s) — ein "
+                            "📬 Historie veraltet (Datenbank {} > bekannt {}) — ein "
                             "asynchroner Erzeuger hat geschrieben, wird neu geladen",
                             _neueste, session_state.history_watermark)
                     _msg_auth_uid = auth_result.get("user_id") if isinstance(auth_result, dict) else None
