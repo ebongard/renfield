@@ -36,6 +36,11 @@ Loaded only when `agent_service.py`, `prompts/agent.yaml` or the chat handler is
   eine Fehlauswahl verhindern, etwa „Use it ONLY for an explicit announcement to everybody") beginnen bei Zeichen
   56/121/284/385/472 — 480 deckt alle. Kosten gemessen: bei 106 Werkzeugen 3063 Token bei 80 gegen 6829 bei 480,
   also 1,2 % gegen 2,6 % eines 262.144-Token-Fensters. Die alten 80 waren aus #312 und nie begründet.
+- 🛑 Die Protokollzeile nennt die **Namen**, nicht nur die Anzahl: „3/33 tools selected" lässt offen, ob das
+  Werkzeug nicht angeboten oder nur nicht gewählt wurde — zwei verschiedene Reparaturen.
+- 🛑 Ein `hint` darf kein fremdes Gebiet beanspruchen. In der Rolle `general` (`mcp_servers: null`,
+  `internal_tools: null`, zugleich Rückfall des Routers) liegen ALLE Werkzeuge in einer Liste; ein Rollenzaun aus
+  `agent_roles.yaml` greift dort nicht. Ein unbedingtes „<Wort> heißt immer X" zieht die Geschwister mit herein.
 - Interne und Föderations-Werkzeuge tragen **keinen** `hint` — ihre Anleitung steht in der Beschreibung, und
   darum muss die Grenze dafür reichen. Wer eine neue Werkzeugquelle anbindet, entscheidet: Hinweis anlegen oder
   die Anleitung in die ersten `_PRESELECT_DESC_CHARS` Zeichen setzen.

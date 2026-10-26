@@ -32,6 +32,11 @@ dedup / tier / PDF-Split / Paperless are unchanged.
   🛑 Ein Hinweis darf nicht fremdes Gebiet beanspruchen: die erste Fassung gab „scanne das nach <Ziel>" an
   `route_scan`, aber `scan_document` nimmt selbst ein `target` — ein NEUER Scan mit Ziel wäre damit bei der
   Zuordnung gelandet. Ein Fehlgriff gegen einen anderen getauscht.
+  🛑 Der Hinweis zu `scan_document` trägt drei Grenzen, jede einmal verletzt: „scanne nach <X>" ist nicht von
+  „suche nach <X>" zu unterscheiden (Zweideutigkeit BESTREITEN, nicht nur das Ziel nennen); „scanne" gehört
+  nicht ganz dem Papier (`internal.bluetooth_scan` liegt in `general` daneben, Rollenzaun greift dort nicht);
+  und wer eine Kennung fordert, muss den Weg von der Anzeigebezeichnung dorthin zeigen. Alle drei unter Test
+  gegen die ECHTE Konfiguration. Hergang: `docs/design/scanner-ingest.md`.
 - 🛑 **Ausnahme, und nur sie: der KNOPF.** Eine Fertigmeldung hängt an der `session_id` des anfordernden Chats; ein
   Knopfdruck hat keine, also entsteht der Eintrag NIE und die 409 ist für ihn endgültig. Am 2026-10-21 wiederholte
   der Scanner deshalb gegen eine Antwort, die sich nicht ändern konnte. Das Ereignis führt jetzt `caller` mit, und

@@ -576,18 +576,43 @@ servers:
         NICHT für einen NEUEN Scan — „scanne die Seiten nach <Ziel>" ist
         scan_document mit target. NICHT paperless.search_documents: das sucht
         Abgelegtes und ordnet nichts zu.
+      # 🛑 Der Hinweis darf „scanne" NICHT im Ganzen beanspruchen: in der Rolle
+      # `general` (alle Server, alle internen Werkzeuge, zugleich Rückfall des
+      # Routers) liegt `internal.bluetooth_scan` in derselben Vorauswahlliste.
+      # Ein unbedingtes „scanne heißt Papier" würde „scanne nach
+      # Bluetooth-Geräten" hierher ziehen — ein Fehlgriff gegen einen anderen
+      # getauscht, zum dritten Mal. Darum die Ausnahme ausdrücklich benannt.
       scan_document: >-
-        Startet einen NEUEN Scan. Nimmt selbst ein `target` — „scanne die
-        Seiten nach <Ziel>", „einscannen und nach <Ziel> ablegen" gehören
-        hierher, nicht zu route_scan. 🛑 `target` ist die technische KENNUNG,
-        klein und englisch (derzeit `household`, `xidra`), nicht die deutsche
-        Anzeigebezeichnung. Ohne `target` entscheidet Trennblatt
-        oder Klassifizierer; ist dessen Urteil zu unsicher, bleibt der Scan
-        liegen und route_scan ordnet ihn später zu.
+        Startet einen NEUEN Scan: Papier aus dem Einzug einlesen. 🛑 „scanne
+        nach <X>" bedeutet beim PAPIERSCANNER IMMER, dass <X> das ZIEL ist —
+        eine Richtung, NIE ein Suchbegriff. „scanne nach xidra" heißt „lies
+        das Papier ein und lege es in der Instanz xidra ab", NICHT „suche nach
+        dem Wort xidra". Wer suchen will, sagt „suche" oder „finde"; greife
+        bei „scanne nach <Ziel>" NIEMALS zu einer Dokumentensuche.
+        🛑 Das gilt nur für PAPIER: „scanne nach Bluetooth-Geräten", „scanne
+        die Umgebung nach Geräten" meinen eine Funksuche und gehören zu
+        internal.bluetooth_scan. Dieses Werkzeug fasst ausschließlich den
+        Dokumentenscanner an.
+        Ebenso hierher: „einscannen und nach <Ziel> ablegen", „Seiten nach
+        <Ziel> scannen". NICHT zu route_scan — das ordnet nur einen schon
+        FERTIGEN Scan zu.
+        🛑 `target` ist die technische KENNUNG, klein und englisch — NICHT die
+        deutsche Anzeigebezeichnung: „Haushalt" wird abgelehnt, `household`
+        angenommen. Bei „scanne nach Haushalt" also `target=household`
+        übergeben, nicht `target=Haushalt`. Derzeit `household` und `xidra`.
+        🛑 Ein unbekanntes Ziel fällt hier NICHT im Aufruf auf: der Auftrag
+        startet, und der Fehlschlag kommt erst mit der Fertigmeldung — ohne
+        Liste der gültigen Ziele. Bei Unsicherheit also NICHT raten, sondern
+        `target` weglassen (dann entscheidet Trennblatt oder Klassifizierer,
+        und bei zu unsicherem Urteil bleibt der Scan liegen, route_scan ordnet
+        ihn später zu) oder den Nutzer fragen.
       list_pending_scans: >-
         Zeigt Scans, die FERTIG sind und auf eine Zuordnung warten, mit ihrer
-        stage_id. Nehmen bei „welche Scans warten", „was ist offen", und immer
-        dann, wenn für route_scan die stage_id fehlt.
+        stage_id. Nehmen bei „welche Scans warten", „welche Scans sind offen",
+        und immer dann, wenn für route_scan die stage_id fehlt. 🛑 NICHT für
+        „was ist offen" im Allgemeinen — Rückstau und nicht abgelegte
+        Dokumente gehören zu internal.ingest_status bzw.
+        internal.list_unfiled_documents.
       watcher_health: >-
         NUR Diagnose für die Gesundheitsprobe, fasst den Scanner nicht an.
         Meldet, ob das Gerät verklemmt ist (Knoten da, letzter Zugriff
