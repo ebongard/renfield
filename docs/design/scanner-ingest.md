@@ -310,6 +310,38 @@ registered.
 | `list_pending_scans()` | The review floor — unrouted batches with evidence |
 | `route_scan(scan_id, target)` | Resolve one, dispatch it, purge from staging |
 
+### Der Steuertext von `scan_document` — zwei Grenzen, beide schon einmal verletzt
+
+Der `tool_hints`-Eintrag entscheidet, ob der Agent überhaupt zum Scanner greift.
+Zweimal lag er daneben, auf entgegengesetzte Weise:
+
+**Zu schwach (2026-10-26).** Der Eigentümer sagte sechsmal „scanne nach …";
+zweimal passierte das Falsche. „scanne nach <X>" ist syntaktisch nicht von
+„suche nach <X>" zu unterscheiden, das Modell nahm <X> als Suchbegriff und
+griff `mcp.paperless.search_documents`. Der Hinweis benannte das Ziel, bestritt
+die zweite Lesart aber nicht. Er tut es jetzt ausdrücklich.
+
+**Zu stark (im Review desselben Tages gefunden).** Die Reparatur sagte
+unbedingt „`scanne` bedeutet immer Papier einlesen". In der Rolle `general`
+(`agent_roles.yaml`: `mcp_servers: null`, `internal_tools: null` — und zugleich
+der Rückfall des Routers bei Parse-Fehler und Zeitüberschreitung) liegt
+`internal.bluetooth_scan` in derselben Vorauswahlliste. Der Rollenzaun („NUR
+Bluetooth-Funkgeraete — NICHT Dokumente/Papier einscannen") greift dort nicht.
+„scanne nach Bluetooth-Geräten" wäre damit beim Papierscanner gelandet: ein
+Fehlgriff gegen einen anderen getauscht, zum dritten Mal in derselben Datei.
+Der Hinweis grenzt die Funksuche jetzt namentlich ab.
+
+Dazu ein Widerspruch im eigenen Text: „nimm `target=<X>`" gegen „`target` ist
+die technische Kennung". Für „scanne nach Haushalt" musste das Modell raten.
+Der Nachbar `route_scan` trug die Auflösung seit jeher („„Haushalt" wird
+abgelehnt, `household` angenommen", plus `known: [...]` aus der Fehlermeldung);
+`scan_document` hat sie jetzt auch.
+
+Alle drei Grenzen stehen unter Tests in `tests/backend/test_preselect_sees_the_hint.py`,
+jede gegen die ECHTE `config/mcp_servers.yaml`, jede einmal rot gemessen. Kosten
+gegengerechnet: alle `tool_hints` zusammen 2689 Zeichen ≈ 244 Token = 0,09 %
+eines 262.144-Token-Fensters.
+
 ### Scan jobs (implemented 2026-09-14)
 
 The scan used to run inside the `scan_document` tool call. On 2026-09-14 that

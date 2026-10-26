@@ -39,6 +39,19 @@ BESCHREIBUNG = ("START scanning every sheet in the document feeder into one "
 
 
 
+def _scan_document_hinweis() -> str:
+    """Der Hinweis aus der ECHTEN Konfiguration — dieselbe Datei, die ausgeliefert wird."""
+    from pathlib import Path
+
+    import yaml
+
+    wurzel = Path(__file__).resolve().parents[2]
+    eintraege = yaml.safe_load(
+        (wurzel / "config" / "mcp_servers.yaml").read_text())["servers"]
+    scanner = next(e for e in eintraege if e["name"] == "scanner")
+    return (scanner.get("tool_hints") or {}).get("scan_document", "")
+
+
 def _zeilen(tools: list[ToolDefinition]) -> list[str]:
     """Die Zeilen, wie die PRODUKTION sie baut.
 
@@ -195,15 +208,7 @@ def test_the_real_config_still_rules_out_the_search_reading():
     später „aufgeräumt", fällt das erst im nächsten Vorfall auf. Genau so ist es
     passiert. Im Review zu #1411 gefunden.
     """
-    from pathlib import Path
-
-    import yaml
-
-    wurzel = Path(__file__).resolve().parents[2]
-    eintraege = yaml.safe_load(
-        (wurzel / "config" / "mcp_servers.yaml").read_text())["servers"]
-    scanner = next(e for e in eintraege if e["name"] == "scanner")
-    hinweis = (scanner.get("tool_hints") or {}).get("scan_document", "")
+    hinweis = _scan_document_hinweis()
 
     assert hinweis, "`scan_document` hat keinen Hinweis mehr — die Vorauswahl entscheidet dann blind"
     # Die Zweideutigkeit muss BESTRITTEN werden, nicht nur das Ziel benannt.
@@ -214,3 +219,44 @@ def test_the_real_config_still_rules_out_the_search_reading():
     # Und die Formulierung, an der es konkret scheiterte, muss vorkommen.
     assert "scanne nach" in hinweis, (
         "der Hinweis nennt die zweideutige Formulierung selbst nicht mehr")
+
+
+def test_the_hint_does_not_claim_the_bluetooth_scan():
+    """🛑 Ein Hinweis darf kein fremdes Gebiet beanspruchen — dritte Instanz.
+
+    In der Rolle `general` (`agent_roles.yaml`: `mcp_servers: null`,
+    `internal_tools: null`) liegen `scan_document` und `internal.bluetooth_scan`
+    in DERSELBEN Vorauswahlliste, und `general` ist der Rückfall des Routers bei
+    Parse-Fehler und Zeitüberschreitung. Der Rollenzaun
+    („NUR Bluetooth-Funkgeraete — NICHT Dokumente/Papier einscannen") greift
+    dort nicht.
+
+    Die erste Fassung dieses Hinweises sagte unbedingt „`scanne` bedeutet immer
+    Papier einlesen". Damit wäre „scanne nach Bluetooth-Geräten" beim
+    Papierscanner gelandet: ein Fehlgriff gegen einen anderen getauscht, genau
+    das Muster, das `.claude/rules/scanner.md` zwei Zeilen darüber schon zweimal
+    festhält. Im adversarialen Durchgang zu #1411 gefunden.
+    """
+    hinweis = _scan_document_hinweis()
+    assert "bluetooth_scan" in hinweis, (
+        "der Hinweis grenzt die Funksuche nicht ab — „scanne nach "
+        "Bluetooth-Geraeten\" landet dann beim Papierscanner")
+    assert "PAPIER" in hinweis, (
+        "der Hinweis sagt nicht, dass seine Regel nur fuer Papier gilt")
+
+
+def test_the_hint_keeps_the_way_back_from_a_display_name():
+    """Die Kennung verlangen genügt nicht — der Weg zurück muss dastehen.
+
+    Der Hinweis fordert eine technische Kennung und zugleich, „scanne nach
+    <X>" als Ziel zu lesen. Für „scanne nach Haushalt" widersprechen sich beide,
+    wenn nicht dasteht, wie aus der Anzeigebezeichnung die Kennung wird. Der
+    Nachbar `route_scan` trägt diese Auflösung seit jeher; `scan_document` hatte
+    sie verloren.
+    """
+    hinweis = _scan_document_hinweis()
+    assert "Haushalt" in hinweis and "household" in hinweis, (
+        "der Hinweis zeigt das Paar Anzeigebezeichnung -> Kennung nicht mehr")
+    assert "known:" in hinweis, (
+        "der Hinweis nennt die Rettung bei unbekanntem Ziel nicht mehr — das "
+        "Modell muss dann raten")
