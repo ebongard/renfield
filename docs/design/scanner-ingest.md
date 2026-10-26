@@ -310,7 +310,7 @@ registered.
 | `list_pending_scans()` | The review floor — unrouted batches with evidence |
 | `route_scan(stage_id, target)` | Resolve one, dispatch it, purge from staging |
 
-### Der Steuertext von `scan_document` — zwei Grenzen, beide schon einmal verletzt
+### Der Steuertext von `scan_document` — drei Grenzen, jede schon einmal verletzt
 
 Der `tool_hints`-Eintrag entscheidet, ob der Agent überhaupt zum Scanner greift.
 Zweimal lag er daneben, auf entgegengesetzte Weise:
@@ -339,7 +339,7 @@ abgelehnt, `household` angenommen", plus `known: [...]` aus der Fehlermeldung);
 
 Alle drei Grenzen stehen unter Tests in `tests/backend/test_preselect_sees_the_hint.py`,
 jede gegen die ECHTE `config/mcp_servers.yaml`, jede einmal rot gemessen. Kosten
-gegengerechnet: alle `tool_hints` zusammen 2689 Zeichen ≈ 244 Token = 0,09 %
+gegengerechnet: alle `tool_hints` zusammen 2782 Zeichen ≈ 253 Token = 0,10 %
 eines 262.144-Token-Fensters.
 
 ### Scan jobs (implemented 2026-09-14)

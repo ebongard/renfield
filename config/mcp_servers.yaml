@@ -608,8 +608,11 @@ servers:
         ihn später zu) oder den Nutzer fragen.
       list_pending_scans: >-
         Zeigt Scans, die FERTIG sind und auf eine Zuordnung warten, mit ihrer
-        stage_id. Nehmen bei „welche Scans warten", „was ist offen", und immer
-        dann, wenn für route_scan die stage_id fehlt.
+        stage_id. Nehmen bei „welche Scans warten", „welche Scans sind offen",
+        und immer dann, wenn für route_scan die stage_id fehlt. 🛑 NICHT für
+        „was ist offen" im Allgemeinen — Rückstau und nicht abgelegte
+        Dokumente gehören zu internal.ingest_status bzw.
+        internal.list_unfiled_documents.
       watcher_health: >-
         NUR Diagnose für die Gesundheitsprobe, fasst den Scanner nicht an.
         Meldet, ob das Gerät verklemmt ist (Knoten da, letzter Zugriff

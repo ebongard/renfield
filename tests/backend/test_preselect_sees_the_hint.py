@@ -241,8 +241,11 @@ def test_the_hint_does_not_claim_the_bluetooth_scan():
     assert "bluetooth_scan" in hinweis, (
         "der Hinweis grenzt die Funksuche nicht ab — „scanne nach "
         "Bluetooth-Geraeten\" landet dann beim Papierscanner")
-    assert "PAPIER" in hinweis, (
-        "der Hinweis sagt nicht, dass seine Regel nur fuer Papier gilt")
+    # 🛑 Nicht auf „PAPIER" pruefen: das passt auch INNERHALB von
+    # „PAPIERSCANNER", der abgrenzende Satz koennte also entfallen und der
+    # Test bliebe gruen. Auf die Einschraenkung selbst pruefen.
+    assert "gilt nur für PAPIER" in hinweis, (
+        "der Hinweis schraenkt seine Regel nicht mehr auf Papier ein")
 
 
 def test_the_hint_keeps_the_way_back_from_a_display_name():
@@ -255,8 +258,16 @@ def test_the_hint_keeps_the_way_back_from_a_display_name():
     sie verloren.
     """
     hinweis = _scan_document_hinweis()
-    assert "Haushalt" in hinweis and "household" in hinweis, (
-        "der Hinweis zeigt das Paar Anzeigebezeichnung -> Kennung nicht mehr")
+    # 🛑 Nicht blosse Ko-Praesenz pruefen: „Haushalt" und „household" stehen
+    # auch in anderen Saetzen („Derzeit `household` und `xidra`"), der
+    # Abbildungssatz koennte also entfallen und der Test bliebe gruen. Auf die
+    # Anweisung pruefen, die die Abbildung wirklich vollzieht.
+    assert "`target=household`" in hinweis, (
+        "der Hinweis vollzieht die Abbildung Anzeigebezeichnung -> Kennung "
+        "nicht mehr an einem Beispiel")
+    assert "Haushalt" in hinweis, (
+        "der Hinweis nennt die deutsche Anzeigebezeichnung nicht mehr, an der "
+        "es scheitert")
 
 
 def test_the_hint_promises_no_error_channel_that_is_walled_off():
@@ -291,3 +302,34 @@ def test_the_hint_promises_no_error_channel_that_is_walled_off():
     klein = hinweis.lower()
     assert "nicht raten" in klein or "nie raten" in klein, (
         "der Hinweis sagt nicht, was bei unsicherem Ziel zu tun ist")
+
+
+def test_the_pending_scans_hint_does_not_claim_the_general_question():
+    """🛑 Dieselbe Klasse, anderes Werkzeug — und mein erster Sweep fand sie nicht.
+
+    `list_pending_scans` beanspruchte „was ist offen" unbedingt. Die Frage
+    gehört in der Rolle `general` auch `internal.ingest_status`
+    („gibt es einen Rückstau?", `services/kb_maintenance_tool.py:259`) und
+    `internal.list_unfiled_documents`
+    („welche Dokumente konnten nicht abgelegt werden?", `:336`).
+
+    Mein Klassen-Sweep hatte „was ist offen" sogar ausgedruckt und für
+    unbesetzt erklärt — er hatte nur `internal_tools.py` und die
+    `examples:`-Blöcke durchsucht, nicht die eigenen `*_tool.py`-Dateien. Die
+    Behauptung „keine Kollision" war damit falsch gemessen, nicht falsch
+    geschlossen.
+    """
+    from pathlib import Path
+
+    import yaml
+
+    wurzel = Path(__file__).resolve().parents[2]
+    eintraege = yaml.safe_load(
+        (wurzel / "config" / "mcp_servers.yaml").read_text())["servers"]
+    scanner = next(e for e in eintraege if e["name"] == "scanner")
+    hinweis = (scanner.get("tool_hints") or {}).get("list_pending_scans", "")
+
+    assert hinweis, "`list_pending_scans` hat keinen Hinweis mehr"
+    assert "ingest_status" in hinweis or "list_unfiled_documents" in hinweis, (
+        "der Hinweis grenzt die allgemeine Frage „was ist offen\" nicht gegen "
+        "die Nachbarn ab")

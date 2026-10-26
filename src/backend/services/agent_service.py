@@ -1070,8 +1070,10 @@ class AgentService:
         # Was ohne das passiert, am 2026-10-26 gemessen: auf „scanne nach
         # xidra" fiel `scan_document` aus der Vorauswahl (3 von 33 Werkzeugen)
         # und der Agent griff `mcp.paperless.search_documents` — er SUCHTE
-        # statt zu scannen. Der Hinweis nennt wortwoertlich „scanne die Seiten
-        # nach <Ziel>", stand aber hinter einer ueber 500 Zeichen langen
+        # statt zu scannen. Der Hinweis NANNTE damals wortwoertlich „scanne
+        # die Seiten nach <Ziel>" (heute steht diese Formulierung nur noch in
+        # der NICHT-Klausel von `route_scan`), stand aber hinter einer
+        # ueber 500 Zeichen langen
         # englischen Beschreibung und lag damit jenseits der 80 Zeichen, die
         # diese Schicht sah. Der Agent selbst sieht den vollen Text — nur
         # bekam er das Werkzeug nie angeboten.
