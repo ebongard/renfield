@@ -129,7 +129,11 @@ RUN mkdir -p /usr/share/piper/voices \
 RUN apt-get purge -y wget && apt-get autoremove -y && rm -rf /var/lib/apt/lists/*
 
 # Pre-install MCP stdio server packages (avoids npx download delay on first use)
-RUN npm install -g n8n-mcp@latest
+# 🛑 EXACT VERSION, never `@latest` — same reason as in `Dockerfile`, keep both
+# in step. This file is a live build path (docker-compose.yml,
+# docker-compose.prod.yml, .github/workflows/release.yml), so a float here
+# reintroduces the silent n8n outage all by itself.
+RUN npm install -g n8n-mcp@2.94.3
 
 # App Code
 COPY . .

@@ -31,19 +31,39 @@ pytestmark = [pytest.mark.unit, pytest.mark.backend]
 WURZEL = Path(__file__).resolve().parents[2]
 
 
-def _globale_installationszeilen() -> list[str]:
-    """Die echten `npm install -g`-Zeilen — ohne Kommentare.
+def _globale_installationszeilen() -> list[tuple[str, str]]:
+    """Die echten `npm install -g`-Zeilen ALLER Backend-Bilddateien.
 
-    🛑 Die erste Fassung griff über das ganze Dockerfile und sammelte dabei
-    einen KOMMENTAR ein, der `npm install -g <localdir>` nur erklärt (Zeile 201,
-    der mitgelieferte SearXNG-Fork). Der Test schlug fehl und der Befund war
-    meine Messung, nicht das Dockerfile. Nur Anweisungszeilen zählen.
+    Rückgabe: `(dateiname, zeile)`, damit eine Fehlermeldung sagt WO.
+
+    🛑 Zwei eigene Fehlmessungen stecken in dieser Funktion, beide am
+    2026-10-26 im Review gefunden:
+
+    1. Die erste Fassung griff über das ganze Dockerfile und sammelte einen
+       KOMMENTAR ein, der `npm install -g <localdir>` nur erklärt (der
+       mitgelieferte SearXNG-Fork). Der rote Test war meine Messung, nicht das
+       Dockerfile. Darum jetzt nur Anweisungszeilen.
+    2. Die zweite Fassung las NUR `Dockerfile` — und `Dockerfile.gpu` trug
+       `n8n-mcp@latest` unverändert weiter, obwohl es ein lebender Bauweg ist
+       (`docker-compose.yml`, `docker-compose.prod.yml`,
+       `.github/workflows/release.yml`). Der Test war grün, während der Ausfall
+       in jedem GPU-Bild reproduzierbar blieb: die benannte Instanz repariert,
+       das Geschwister stehen gelassen. Darum `glob("Dockerfile*")`.
+
+    Fortsetzungszeilen werden zusammengezogen, sonst entgeht ein
+    `RUN npm install -g` mit Zeilenumbruch und dem Paket auf der nächsten
+    Zeile der Prüfung.
     """
-    zeilen = (WURZEL / "src" / "backend" / "Dockerfile").read_text().splitlines()
-    return [
-        z.strip() for z in zeilen
-        if "npm install -g" in z and not z.lstrip().startswith("#")
-    ]
+    treffer: list[tuple[str, str]] = []
+    for datei in sorted((WURZEL / "src" / "backend").glob("Dockerfile*")):
+        if not datei.is_file():
+            continue
+        # Fortsetzungen zu einer logischen Anweisung verbinden.
+        text = datei.read_text().replace("\\\n", " ")
+        for zeile in text.splitlines():
+            if "npm install -g" in zeile and not zeile.lstrip().startswith("#"):
+                treffer.append((datei.name, " ".join(zeile.split())))
+    return treffer
 
 
 def _server(name: str) -> dict:
@@ -83,7 +103,8 @@ def test_no_mcp_package_in_the_image_floats_on_latest():
     der Zeitpunkt des Bildbaus, und eine Verhaltensänderung kommt ohne eine
     einzige Zeile Diff herein — genau so geschah es.
     """
-    offen = [z for z in _globale_installationszeilen() if "@latest" in z]
+    offen = [f"{d}: {z}" for d, z in _globale_installationszeilen()
+             if "@latest" in z]
     assert not offen, (
         "ein MCP-Paket haengt an `@latest` — jeder Bildbau kann dann ein "
         "anderes Verhalten einziehen, ohne dass der Diff etwas zeigt:\n  "
@@ -91,16 +112,25 @@ def test_no_mcp_package_in_the_image_floats_on_latest():
 
 
 def test_every_globally_installed_mcp_package_names_an_exact_version():
-    """Und die Gegenrichtung: eine Angabe wie `^2.9` waere ebenso offen."""
+    """Und die Gegenrichtung: eine Angabe wie `^2.9` waere ebenso offen.
+
+    🛑 Geprueft wird das SCHWEBEN, nicht die SemVer-Form. Die erste Fassung
+    verlangte genau `\\d+.\\d+.\\d+` und haette damit eine absichtliche
+    Festlegung auf eine Vorabversion (`2.94.3-rc.1`, etwa um einen noch nicht
+    veroeffentlichten Fix zu holen) aus dem falschen Grund abgelehnt. Eine
+    Vorabversion ist unveraenderlich; `latest`, ein dist-tag, `^`, `~` und `x`
+    sind es nicht. Im Review zu #1412 gefunden.
+    """
     import re
 
     zeilen = _globale_installationszeilen()
     assert zeilen, "keine globale npm-Installation mehr im Bild — Test anpassen"
-    pakete = [m for z in zeilen for m in re.findall(r"npm install -g\s+(\S+)", z)]
-    for paket in pakete:
-        assert "@" in paket, f"`{paket}` nennt keine Version"
+    pakete = [(d, m) for d, z in zeilen
+              for m in re.findall(r"npm install -g\s+(\S+)", z)]
+    for datei, paket in pakete:
+        assert "@" in paket, f"{datei}: `{paket}` nennt keine Version"
         version = paket.rsplit("@", 1)[1]
-        assert re.fullmatch(r"\d+\.\d+\.\d+", version), (
-            f"`{paket}` ist keine exakte Version — `latest`, `^x.y` und `~x.y` "
-            "lassen den Bildbau entscheiden, welcher Code mit dem Dienst "
-            "spricht")
+        assert re.match(r"^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$", version), (
+            f"{datei}: `{paket}` schwebt — `latest`, ein dist-tag, `^x.y`, "
+            "`~x.y` oder `x` lassen den Bildbau entscheiden, welcher Code mit "
+            "dem Dienst spricht")
