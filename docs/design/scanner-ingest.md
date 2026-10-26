@@ -583,12 +583,34 @@ practice:
   configured targets.
 - **Phase 4 (optional) — promote to k8s** if the scanner ever moves to a node.
   Packaging change only.
-- **Phase 5 (optional) — the physical Scan button.** Separated from Phase 4
+- **Phase 5 (optional, gebaut, AUS als Vorgabe) — the physical Scan button.** Separated from Phase 4
   because it is not a packaging change: it is the one place in this design that
   has to break a project rule, and it raises a routing question the rest of the
   design deliberately refuses to answer. See below.
 
 ### Phase 5 — the physical Scan button
+
+> 🛑 **Nachtrag 2026-10-26: gebaut, dann AUS als Vorgabe** (`SCANNER_BUTTON_WATCH`,
+> scanner #12). **Frage 3 unten ist beantwortet — verneinend.** Der Takt setzt
+> das Gerät fest: der Eigentümer musste mehrmals täglich aus- und einschalten,
+> und das Protokoll zählt am 22.–25.10. je 640–669 Fehlzeilen am Tag.
+>
+> **Dieses Dokument hat das vorhergesagt und wir haben es ignoriert.** Frage 3
+> stand als *Open* und verlangte ausdrücklich, die Kosten VOR der Festlegung zu
+> messen und die Phase fallen zu lassen, falls sie das Gerät destabilisiert.
+> Die Phase ging trotzdem live, ungemessen. Der Satz „A scan button that makes
+> scanning less reliable is a bad trade" war richtig; der Fehler lag darin,
+> ein offenes Tor zu überschreiten, nicht im Entwurf.
+>
+> Die Messungen stehen im README des Scanner-Repos (Abschnitt „Der blaue
+> Knopf") — hier nicht gedoppelt. Kurzfassung: der Impuls hält nicht
+> (200–250 ms), die IORegistry trägt kein Knopfmerkmal, also ist „Knopf
+> jederzeit" mit „verklemmt nie" auf dieser Hardware unvereinbar. Die DOSIS
+> bleibt unbelegt (850 gegen 18.000 Öffnungen, widersprüchlich) — deshalb ist
+> der Wächter AUS und nicht bloß langsamer gestellt.
+>
+> Alles Folgende beschreibt den Entwurf und gilt weiter, wenn der Wächter
+> eingeschaltet wird.
 
 Today, pressing the blue button does **nothing**. The button works and its state
 is readable (`--scan`), but nothing is watching: `read_sensors()` runs only on
@@ -624,7 +646,10 @@ no `target`:
     (`list_pending_scans` / `route_scan`). Safe, but a button press on a bare
     stack is then a two-step action, so the convenience depends on using sheets.
 
-**3. The polling cost must be measured, not assumed.** *Open.* `read_sensors()`
+**3. The polling cost must be measured, not assumed.** *Beantwortet
+2026-10-26 — verneinend, s. den Nachtrag oben. Dieses Tor wurde nie
+durchschritten; die Phase ging ungemessen live, und genau der hier
+beschriebene Schaden trat ein.* `read_sensors()`
 spawns a `scanimage` process per call. At one call a second that is a permanent
 process churn against a device that has only just become reliable, and against a
 USB stack that the vendor software already proved fragile. Measure the cost of
@@ -632,8 +657,9 @@ the poll at the intended interval BEFORE committing to it, and be willing to
 lengthen the interval or drop the phase if it destabilises the device. A scan
 button that makes scanning less reliable is a bad trade.
 
-**Sequencing, therefore:** the routing prerequisite is in place; what remains is
-showing the poll to be free of side effects. It is genuinely optional — every
+**Sequencing, therefore:** the routing prerequisite is in place; what remained
+was showing the poll to be free of side effects — *das ist versucht und
+gescheitert (2026-10-26). Der Takt ist NICHT nebenwirkungsfrei.* It is genuinely optional — every
 scan is already reachable by voice, which is how the design intends it.
 
 ### A partial scan must never be filed

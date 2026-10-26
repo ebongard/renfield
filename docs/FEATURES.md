@@ -563,7 +563,10 @@ Produzent davor.
 Durchschein-Korrektur, durchsuchbares PDF. Die Ablage in den Watch-Folder bleibt
 vorerst ein Handgriff. Der MCP-Server (`renfield-mcp-scanner`) mit
 sprachgesteuertem Scan und inhaltsbasiertem Routing auf **1..n Ziel-Instanzen**
-ist entworfen, aber noch nicht gebaut: `docs/design/scanner-ingest.md`.
+ist seit #1243 **in Betrieb** (Entwurf: `docs/design/scanner-ingest.md`).
+Der physische blaue Knopf am Gerät ist gebaut, aber seit 2026-10-26 **ab
+Vorgabe abgeschaltet** — der Sensortakt setzte den Scanner fest. Gescannt wird
+über Sprache, Chat oder die Weboberfläche.
 
 Betriebshinweise, jeweils an echten Scans gemessen — sie gelten unverändert für
 den späteren MCP-Server, der dieselbe PDF-Assemblierung vornimmt:

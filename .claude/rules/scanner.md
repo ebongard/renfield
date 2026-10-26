@@ -38,6 +38,10 @@ dedup / tier / PDF-Split / Paperless are unchanged.
   nur bei `caller == "button"` trägt die 409 `{"reason": "no_recipient_for_caller"}`. Jede andere 409 bleibt blank
   und damit wiederholbar — die Unterscheidung gehört der Anwendung, nie dem Statuscode. Das DOKUMENT ist davon
   unberührt: es kommt über den getrennten Ingest-Weg. WEM eine Knopf-Meldung gälte, ist offen (#1390).
+  🛑 Seit 2026-10-26 ist der Knopfwächter AUS als Vorgabe (`SCANNER_BUTTON_WATCH`, scanner #12) — der
+  Sensortakt setzt das Gerät fest; die DOSIS ist unbelegt (850 gegen 18.000 Öffnungen, widersprüchlich),
+  deshalb aus und nicht langsamer. `caller == "button"` entsteht damit nicht mehr von SELBST — auslösbar
+  bleibt es, `caller` ist freier Text im Rumpf. Anschalten heisst Verklemmen.
 - 🛑 **Eine 404 ist nur mit MERKMAL endgültig** (#1391): die Zahl allein kommt auch vom Ingress, wenn kein Pod
   bereit ist. Die Abschalt-404 trägt `{"detail": {"reason": "folder_ingest_disabled", "message": …}}`, jede
   andere 404 gilt dem Scanner als wiederholbar. Repo-übergreifender Vertrag — nie umbenennen ohne den Scanner,

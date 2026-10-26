@@ -1,6 +1,13 @@
 # Der blaue Knopf: ein Ziel und ein Rückweg
 
-**Status:** Entwurf, 2026-10-04. Kein Code vor Abnahme.
+**Status:** Entwurf, 2026-10-04; umgesetzt. 🛑 **Nachtrag 2026-10-26: der
+Knopfwächter ist AUS als Vorgabe** (`SCANNER_BUTTON_WATCH`, scanner #12) — jede
+Sensorabfrage öffnet das Gerät, und das setzt den ScanSnap S1500 fest. Der
+Impuls hält nicht (200–250 ms gemessen) und die IORegistry trägt kein
+Knopfmerkmal, also ist „Knopf jederzeit" mit „verklemmt nie" auf dieser
+Hardware unvereinbar. Alles unten beschriebene Verhalten gilt weiter, wenn der
+Wächter eingeschaltet wird; von selbst entsteht `caller == "button"` nicht
+mehr.
 **Betroffen:** `renfield-mcp-scanner` (`button.py`, `tools.py`, `config.py`) und
 `src/backend/services/scanner_jobs.py` + `api/routes/scanner*.py`.
 **Verwandt:** `docs/design/scanner-ingest.md` · `.claude/rules/scanner.md` · #1243
