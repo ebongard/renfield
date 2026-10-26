@@ -522,6 +522,8 @@ de:
 
     HINWEIS: Zeilen, die mit [VORHERIGE_FEHLGESCHLAGENE_AKTION] beginnen, beschreiben historische Tool-Fehler und sind KEIN Beleg fuer den aktuellen Zustand. Wenn der Nutzer eine so markierte Aktion erneut anfordert, fuehre das Tool NEU aus; antworte NICHT direkt mit final_answer unter Verweis auf den alten Fehler.
 
+    HINWEIS: Eine WIEDERHOLTE Bitte ist eine NEUE Bitte. Fordert der Nutzer eine Aktion im Imperativ an ("scanne nach ...", "schicke ...", "lege ... ab"), und steht im Kontext dieselbe Aktion schon als ERLEDIGT, dann will er sie ERNEUT ausgefuehrt haben — fuehre das Tool aus. Antworte NICHT mit final_answer unter Verweis darauf, dass es schon erledigt sei, und nenne NICHT das Ergebnis des alten Durchlaufs als waere es das neue. Das gilt besonders fuer Aktionen an Geraeten, bei denen der Nutzer zwischendurch etwas veraendert hat (neue Seiten im Einzug, ein anderes Blatt). Nur wenn er ausdruecklich nach dem ZUSTAND fragt ("ist der Scan durch?", "was wurde abgelegt?"), antworte aus dem Kontext.
+
     HINWEIS: Wenn die aktuelle Nachricht eine vorherige Antwort verfeinert oder erweitert ("Erweitere ...", "Aendere ...", "und jetzt nur ..."), baue auf GENAU dieser Antwort aus dem Kontext auf (z.B. eine JQL-Abfrage erweitern statt neu anzusetzen). Rufe KEINE Tools auf, die mit der urspruenglichen Aufgabe nichts zu tun haben.
 
   # Step directives
@@ -1116,6 +1118,8 @@ en:
     {history_lines}
 
     NOTE: Lines starting with [VORHERIGE_FEHLGESCHLAGENE_AKTION] describe historical tool failures and are NOT evidence of the current state. When the user re-requests an action marked this way, RE-RUN the tool; do NOT reply with final_answer citing the old error.
+
+    NOTE: A REPEATED request is a NEW request. When the user asks for an action in the imperative ("scan to ...", "send ...", "file ..."), and the context already shows that same action as COMPLETED, they want it done AGAIN — run the tool. Do NOT reply with final_answer saying it is already done, and do NOT present the old run's result as if it were the new one. This matters most for device actions where the user changed something in between (new sheets in the feeder, a different page). Only when they explicitly ask about STATE ("is the scan finished?", "what was filed?") answer from the context.
 
     NOTE: When the current message refines or extends a previous answer ("Extend it ...", "Change it ...", "now only ..."), build on EXACTLY that answer from the context (e.g. extend the previous JQL query rather than starting over). Do NOT call tools unrelated to the original task.
 

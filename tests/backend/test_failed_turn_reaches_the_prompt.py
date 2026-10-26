@@ -149,3 +149,81 @@ async def test_without_the_metadata_there_is_no_marker(db_session: AsyncSession)
     assert MARKE not in stau, (
         f"ohne `action_success: False` darf die Verlaufszeile keinen Marker "
         f"tragen — sonst beweist der Test oben nichts: {stau}")
+
+
+# ---------------------------------------------------------------------------
+# Eine WIEDERHOLTE Bitte ist eine NEUE Bitte
+# ---------------------------------------------------------------------------
+
+async def test_a_repeat_after_a_completed_action_is_steered_to_rerun(db_session: AsyncSession):
+    """🛑 Der zweite Fehler aus demselben Vorgang, und mein eigener Fix hat ihn
+    erst sichtbar gemacht.
+
+    Gemessen am 2026-10-26, 12:37 UTC. Der Eigentümer sagte „scanne nach
+    haushalt", nachdem ein Scan erfolgreich durchgelaufen war. Der Agent
+    antwortete — wörtlich aus dem Protokoll:
+
+        „der Scan für den Haushalt ist bereits abgeschlossen und das Dokument
+         (Dokument 515) wurde erfolgreich an die Instanz household übergeben"
+
+    mit der Begründung: „Der Konversationsverlauf zeigt, dass der Scan bereits
+    gestartet und abgeschlossen wurde." Er hielt die NEUE Bitte für eine Frage
+    nach dem ALTEN Scan und rief das Werkzeug nicht.
+
+    Vor der Frischeprüfung sah er die Fertigmeldung gar nicht — der Fehler war
+    damit unerreichbar. Der Riegel `[VORHERIGE_FEHLGESCHLAGENE_AKTION]` deckt
+    nur GESCHEITERTE Züge; für erfolgreiche fehlte das Gegenstück.
+    """
+    service = ConversationService(db_session)
+    sid = "wiederholung-1"
+    await service.save_message(sid, "user", "scanne nach haushalt")
+    await service.save_message(sid, "assistant", "Der Scan wurde gestartet.",
+                               metadata={"action_success": True})
+    await service.save_message(
+        sid, "assistant",
+        "Der Scan ist fertig: 4 Seiten an „household“ übergeben.",
+        metadata={"scanner_job": {"job_id": "x", "status": "done"},
+                  "action_success": True})
+    verlauf = await service.load_context(sid, max_messages=10)
+
+    prompt = await _agent()._build_agent_prompt(
+        "scanne nach haushalt",
+        AgentContext(original_message="scanne nach haushalt"),
+        conversation_history=verlauf, lang="de",
+    )
+
+    # Der Hinweis MUSS im Prompt stehen — sonst hat das Modell keinen Grund,
+    # die Wiederholung als neue Bitte zu lesen.
+    assert "WIEDERHOLTE Bitte ist eine NEUE Bitte" in prompt, (
+        "der Hinweis fehlt — dann antwortet das Modell aus dem alten Lauf")
+    # Und er muss zur Ausführung auffordern, nicht bloß beschreiben.
+    hinweis = next(z for z in prompt.splitlines() if "WIEDERHOLTE Bitte" in z)
+    assert "fuehre das Tool aus" in hinweis, hinweis
+    assert "schon erledigt" in hinweis, (
+        "der Hinweis muss die falsche Antwort ausdrücklich verbieten")
+
+
+def test_the_repeat_hint_exists_in_both_languages():
+    """🛑 Die Rule `agent-loop.md` sagt es fuer den Fehlschlag-Riegel, und es
+    gilt hier genauso: beide Sprachvarianten tragen den Hinweis, oder eine
+    englische Sitzung laeuft ohne ihn.
+    """
+    from pathlib import Path
+
+    import yaml
+
+    p = Path(__file__).resolve().parents[2] / "src" / "backend" / "prompts" / "agent.yaml"
+    d = yaml.safe_load(p.read_text(encoding="utf-8"))
+    # Die Vorlagen liegen je Sprache unter `de:` / `en:` — nicht oben.
+    assert {"de", "en"} <= set(d), sorted(d)
+    de = d["de"]["conv_context_template"]
+    en = d["en"]["conv_context_template"]
+    assert "WIEDERHOLTE Bitte ist eine NEUE Bitte" in de, (
+        "der deutschen Vorlage fehlt der Hinweis")
+    assert "REPEATED request is a NEW request" in en, (
+        "der englischen Vorlage fehlt der Hinweis — eine englische Sitzung "
+        "liefe dann ohne ihn")
+    # Und der ALTE Riegel muss beide weiterhin tragen; die Rule verlangt
+    # ausdruecklich, dass man die Haelften nie einseitig aendert.
+    for name, v in (("de", de), ("en", en)):
+        assert "[VORHERIGE_FEHLGESCHLAGENE_AKTION]" in v, name

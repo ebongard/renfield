@@ -976,6 +976,16 @@ class MCPToolInfo:
     namespaced_name: str  # "mcp.<server>.<tool>"
     description: str
     input_schema: dict = field(default_factory=dict)
+    #: Der `tool_hints`-Eintrag aus `mcp_servers.yaml`, GETRENNT aufbewahrt.
+    #:
+    #: 🛑 Er steckt auch in `description` (hinten angehaengt), aber dort ist er
+    #: nicht mehr herauszuloesen — und genau das hat am 2026-10-26 einen Scan
+    #: verhindert: die Werkzeug-VORAUSWAHL kuerzt die Beschreibung auf 80
+    #: Zeichen, der Hinweis steht dahinter und erreichte sie nie. Auf „scanne
+    #: nach xidra" fiel `scan_document` aus der Auswahl und der Agent suchte
+    #: in Paperless. Der Hinweis ist der absichtliche Steuertext des
+    #: Betreibers; er darf nicht an einer gewaehlten Zahl abreissen.
+    hint: str = ""
 
 
 @dataclass
@@ -3284,7 +3294,7 @@ class MCPManager:
         """One discovered tool as the agent sees it: the upstream description plus
         the ``tool_hints`` entry from mcp_servers.yaml, if any."""
         description = tool.description or ""
-        hint = config.tool_hints.get(tool.name) if config.tool_hints else None
+        hint = (config.tool_hints.get(tool.name) if config.tool_hints else None) or ""
         if hint:
             description = f"{description} {hint}".strip()
         return MCPToolInfo(
@@ -3293,6 +3303,7 @@ class MCPManager:
             namespaced_name=f"mcp.{config.name}.{tool.name}",
             description=description,
             input_schema=tool.inputSchema if hasattr(tool, "inputSchema") else {},
+            hint=hint,
         )
 
     def _install_discovered_tools(self, state: MCPServerState, raw_tools: Any) -> None:

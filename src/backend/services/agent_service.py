@@ -874,6 +874,47 @@ def _record_agent_turn_metrics(context: AgentContext, last_step: AgentStep | Non
         logger.warning(f"⚠️ Could not record agent turn metrics: {e!r}")
 
 
+#: Wie viel der GENERISCHEN Werkzeugbeschreibung die Vorauswahl sieht.
+#:
+#: 🛑 Die 80 stammen aus #312 und waren dort nie begruendet — nur das Wort
+#: „compact" stand daneben. Nachgemessen am 2026-10-26: die ganze Liste kostet
+#: bei 33 Werkzeugen ~866 Token, bei 240 Zeichen ~2186. Das Kontextfenster
+#: fasst 262.144 Token und die Agentenaufrufe lagen bei 2,1 % Auslastung — die
+#: Kuerzung spart also ein halbes Prozent und kostete dafuer den Steuertext,
+#: der die Entscheidung tragen soll. Sie bleibt fuer die generische
+#: Beschreibung (die ist lang und gleichfoermig), gilt aber NICHT fuer den
+#: `tool_hints`-Eintrag.
+_PRESELECT_DESC_CHARS = 80
+
+
+def preselect_tool_line(name: str, tool) -> str:
+    """Eine Zeile der Werkzeugliste fuer die Vorauswahl.
+
+    🛑 EINE reine Funktion, damit Test und Produktion dieselbe benutzen. Die
+    erste Fassung der Tests baute die Zeile selbst nach — und war damit
+    tautologisch: beide Negativkontrollen blieben gruen, obwohl der
+    Produktionspfad zerschnitten war. Ein Test, der seine eigene Kopie prueft,
+    beweist nichts.
+
+    Der `tool_hints`-Eintrag des Betreibers geht UNGEKUERZT mit; nur die
+    generische Beschreibung des Herstellers wird auf `_PRESELECT_DESC_CHARS`
+    beschnitten. Der Hinweis steckt auch am ENDE von `description` (s.
+    `mcp_client._tool_info_from_mcp`) und wird dort abgezogen, sonst stuende er
+    zweimal in der Zeile.
+    """
+    # 🛑 `str()` ist nicht Zierde: die Registratur garantiert keine Typen, und
+    # der Vorgaenger kam damit durch, weil `desc[:80]` auf allem funktioniert.
+    # Meine erste Fassung rief `.endswith()` und brach damit
+    # `test_max_steps_reached` (ein Mock als Beschreibung) — eine Regression,
+    # die der Test sofort gefangen hat. Die Funktion bleibt total.
+    desc = str(getattr(tool, "description", "") or "")
+    hint = str(getattr(tool, "hint", "") or "")
+    if hint and desc.endswith(hint):
+        desc = desc[: len(desc) - len(hint)].rstrip()
+    zeile = f"- {name}: {desc[:_PRESELECT_DESC_CHARS]}"
+    return f"{zeile} {hint}" if hint else zeile
+
+
 class AgentService:
     """
     ReAct Agent Loop — iteratively calls tools until a final answer is produced.
@@ -1009,12 +1050,25 @@ class AgentService:
             return None
 
         # Build compact tool list (name + description only, no parameters)
-        tool_lines = []
-        for name in tool_names:
-            tool = self.tool_registry._tools.get(name)
-            if tool:
-                desc = getattr(tool, 'description', '') or ''
-                tool_lines.append(f"- {name}: {desc[:80]}")
+        #
+        # 🛑 `_PRESELECT_DESC_CHARS` beschneidet die GENERISCHE Beschreibung des
+        # Herstellers. Der `tool_hints`-Eintrag des Betreibers geht UNGEKUERZT
+        # mit, und das ist der Punkt: er ist absichtlich fuer genau diese
+        # Entscheidung geschrieben.
+        #
+        # Was ohne das passiert, am 2026-10-26 gemessen: auf „scanne nach
+        # xidra" fiel `scan_document` aus der Vorauswahl (3 von 33 Werkzeugen)
+        # und der Agent griff `mcp.paperless.search_documents` — er SUCHTE
+        # statt zu scannen. Der Hinweis nennt wortwoertlich „scanne die Seiten
+        # nach <Ziel>", stand aber hinter einer ueber 500 Zeichen langen
+        # englischen Beschreibung und lag damit jenseits der 80 Zeichen, die
+        # diese Schicht sah. Der Agent selbst sieht den vollen Text — nur
+        # bekam er das Werkzeug nie angeboten.
+        tool_lines = [
+            preselect_tool_line(name, self.tool_registry._tools.get(name))
+            for name in tool_names
+            if self.tool_registry._tools.get(name) is not None
+        ]
 
         tool_list = "\n".join(tool_lines)
         preselect_prompt = prompt_manager.get(
