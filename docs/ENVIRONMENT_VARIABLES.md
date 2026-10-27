@@ -33,6 +33,33 @@ Vollständige Referenz aller Umgebungsvariablen für Renfield.
 
 ## Core System
 
+### Instanzkennung
+
+```bash
+# Der Name DIESER Instanz, wie die Gegenstellen ihn fuehren.
+# Haushalt: household · x-idra: xidra
+INSTANCE_ID=household
+```
+
+**Vorgabe:** leer.
+**Wofuer:** Eine Instanz kannte sich bis 2026-10-27 selbst nicht — sie trug nur
+ihren Ed25519-Foederationsschluessel, der kein lesbarer Name ist. Der Wert
+entscheidet, ob ein Scan-Ziel die eigene oder eine fremde Instanz meint.
+
+🛑 **Er muss Zeichen fuer Zeichen der `id` in der `targets.yaml` des Scanners
+entsprechen** (`renfield-mcp-scanner`). Verglichen wird ohne Ruecksicht auf
+Gross-/Kleinschreibung und Randleerzeichen.
+
+🛑 **Fail-closed, und darum eine STILLE Falle bei einem falschen Wert:** ist er
+leer, gilt jedes benannte Ziel als fremd; die Scan-Fertigmeldung zeigt dann
+statt des Knopfes zum Paperless-Dokument nur einen Hinweis. Steht hier ein
+anderer Name als beim Scanner, passiert dasselbe fuer JEDEN eigenen Scan — kein
+Fehler im Protokoll, nur ein fehlender Knopf. Wer die Ziele im Scanner
+umbenennt, zieht diesen Wert mit. Hergang:
+`docs/design/cross-instance-document-reference.md`.
+
+---
+
 ### Datenbank
 
 ```bash

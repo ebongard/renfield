@@ -336,7 +336,7 @@ async function fetchDocument(id: number): Promise<DocumentRow> {
 export function useDocumentQuery(id: number, enabled = true) {
   return useApiQuery(
     {
-      queryKey: keys.knowledge.detail(id),
+      queryKey: keys.knowledge.document(id),
       queryFn: () => fetchDocument(id),
       staleTime: STALE.DEFAULT,
       enabled,

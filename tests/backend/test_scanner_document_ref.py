@@ -167,7 +167,13 @@ def test_the_comparison_ignores_case_and_spacing(monkeypatch):
 
 def test_WITHOUT_a_self_identity_every_named_target_is_remote(monkeypatch):
     """🛑 Fail-closed. Eine unkonfigurierte Instanz verlinkt nie falsch — sie
-    verlinkt gar nicht."""
+    verlinkt gar nicht.
+
+    Der Mechanismus ist die Ungleichheit selbst, kein eigener Zweig: ein
+    nichtleeres Ziel ist ungleich der leeren Selbstkennung. Wer hier einen
+    zweiten Riegel einbaut, baut einen wirkungslosen — dieser Test bestünde
+    mit und ohne ihn.
+    """
     from utils.config import settings
     monkeypatch.setattr(settings, "instance_id", "", raising=False)
     meta = _meta()

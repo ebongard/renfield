@@ -107,6 +107,15 @@ At pairing each side grants the other a **circle tier** (0 self … 4 public). T
 records a `CircleMembership` for the remote peer — the same ladder that gates
 local sharing (see [`CIRCLES.md`](CIRCLES.md)).
 
+> [!CAUTION]
+> **The ladder runs the opposite way to the intuition: a LOWER number grants
+> MORE.** The SQL is `cm.value <= atom.tier` (`circle_sql.py:196`) — a member
+> placed at tier 0 reaches atoms at tier 0 and wider, which is everything;
+> a member at tier 4 reaches only public. So granting `0` opens the whole
+> instance and granting `4` is the most restrictive choice. Anyone reaching for
+> "0 = least" here opens their brain to the peer. Nearly made that mistake on
+> 2026-10-27; this note is the result.
+
 A federated peer's queries run **peer-scoped**: the filter keeps
 `(public) OR (content shared to the tier you granted them)` and **drops** the
 owner-equality and explicit-grant branches (`circle_sql.circles_filter_clause(
@@ -124,7 +133,12 @@ must never be treated as the local owner.
 > F-ID-2): the mapped path runs the query *as* the linked local user with
 > `enforce_circles=False`. Today an ADMIN can create/list/delete links via
 > `GET/POST/DELETE /api/federation/user-links` (`federation_user_links.py`); their
-> effect stays dark behind `FEDERATION_IDENTITY_LINKS_ENABLED`. The deferred part is
+> effect is gated on `FEDERATION_IDENTITY_LINKS_ENABLED`, **on in both instances
+> since 2026-10-27** (renfield #1418 / x-ren !31) — it was a no-op at the time
+> of flipping, since both carried zero link rows, and it takes effect with the
+> first link. The responder additionally requires `AUTH_ENABLED=true` and a
+> `querier_ref` on the request, and refuses to map under auth-off
+> (`federation_query_responder.py:308-318`). The deferred part is
 > the **user-establishable consent handshake** (F-ID-2, both sides prove ownership). This
 > handshake therefore proves the transport and gives you public + granted-tier
 > reach; it is not yet a full personal-brain bridge.

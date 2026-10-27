@@ -324,7 +324,12 @@ def attach_document_ref(metadata: dict, status: str, result: dict, job_id: str) 
     ziel = result.get("target")
     if isinstance(ziel, str) and ziel.strip():
         eigen = (settings.instance_id or "").strip().lower()
-        if ziel.strip().lower() != eigen or not eigen:
+        # Die Ungleichheit TRÄGT den Fail-closed-Fall schon allein: `ziel` ist
+        # hier nachweislich nicht leer, eine leere Selbstkennung ist also
+        # automatisch ungleich. Ein zusätzliches `or not eigen` sähe nach einem
+        # zweiten Riegel aus und wäre in JEDEM Pfad wirkungslos — und der Test
+        # dazu würde mit und ohne es bestehen.
+        if ziel.strip().lower() != eigen:
             daten["instance"] = ziel.strip()
     try:
         artifact = validate_artifact({
