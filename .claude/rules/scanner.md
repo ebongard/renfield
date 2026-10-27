@@ -37,6 +37,9 @@ dedup / tier / PDF-Split / Paperless are unchanged.
   nicht ganz dem Papier (`internal.bluetooth_scan` liegt in `general` daneben, Rollenzaun greift dort nicht);
   und wer eine Kennung fordert, muss den Weg von der Anzeigebezeichnung dorthin zeigen. Alle drei unter Test
   gegen die ECHTE Konfiguration. Hergang: `docs/design/scanner-ingest.md`.
+  🛑 Seit 2026-10-27 ist dieser Hinweis GEMESSEN statt geraten: er entwertet die Schreibweise des Ziels und nennt
+  dafür kein Beispiel mehr; die Satzstellung erklärt eine Grundregel in `prompts/agent.yaml` (nur `de`). Jede
+  weitere Änderung läuft über `bin/measure-preselect.py` — Einzelheiten in `.claude/rules/agent-loop.md`.
 - 🛑 **Ausnahme, und nur sie: der KNOPF.** Eine Fertigmeldung hängt an der `session_id` des anfordernden Chats; ein
   Knopfdruck hat keine, also entsteht der Eintrag NIE und die 409 ist für ihn endgültig. Am 2026-10-21 wiederholte
   der Scanner deshalb gegen eine Antwort, die sich nicht ändern konnte. Das Ereignis führt jetzt `caller` mit, und
