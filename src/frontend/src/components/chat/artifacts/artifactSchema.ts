@@ -99,6 +99,14 @@ export const presenceMapDataSchema = z.object({
   rooms: z.array(z.object({ room: z.string(), users: z.array(z.string()) })),
 });
 
+// Verweis auf ein Renfield-Dokument. NUR die Kennung — der Link entsteht erst
+// beim Rendern. Zur Schreibzeit gibt es ihn meist noch nicht (die Paperless-
+// Ablage ist ein entkoppelter Nachlauf, Ingest im Mittel 363 s), und eine
+// persistierte URL waere eingefroren; die Kennung altert nicht.
+export const documentRefDataSchema = z.object({
+  documentId: z.number().int().positive(),
+});
+
 // Discriminated union on `kind` so a malformed `data` for the declared kind is
 // a clean parse failure (→ fallback), not a wrong-renderer dispatch.
 const baseFields = {
@@ -115,6 +123,7 @@ export const artifactSchema = z.discriminatedUnion('kind', [
   z.object({ ...baseFields, kind: z.literal('weather'), data: weatherDataSchema }),
   z.object({ ...baseFields, kind: z.literal('device_control'), data: deviceControlDataSchema }),
   z.object({ ...baseFields, kind: z.literal('presence_map'), data: presenceMapDataSchema }),
+  z.object({ ...baseFields, kind: z.literal('document_ref'), data: documentRefDataSchema }),
 ]);
 
 export type ChatArtifact = z.infer<typeof artifactSchema>;
@@ -126,6 +135,7 @@ export type WeatherData = z.infer<typeof weatherDataSchema>;
 export type DeviceControlData = z.infer<typeof deviceControlDataSchema>;
 export type DeviceControlDevice = z.infer<typeof deviceControlDeviceSchema>;
 export type PresenceMapData = z.infer<typeof presenceMapDataSchema>;
+export type DocumentRefData = z.infer<typeof documentRefDataSchema>;
 export type ChartSeries = z.infer<typeof chartSeriesSchema>;
 
 /** Parse an unknown payload into a typed artifact, or null on any shape failure. */

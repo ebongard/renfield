@@ -112,6 +112,17 @@ class Settings(BaseSettings):
     # plain-text PDFs/docx/md. Empty → falls back to ollama_vision_model,
     # then ollama_chat_model. The extractor uses whichever is set.
     paperless_extraction_model: str = ""
+    #: Basis-URL der Paperless-Oberfläche, für Links aus Renfield heraus.
+    #:
+    #: 🛑 Dieselbe Variable, die der Paperless-MCP-Server schon bekommt — hier nur
+    #: als Settings-Feld nachgezogen, damit das Backend einen Link bauen kann.
+    #: KEINE neue Umgebungsvariable: `PAPERLESS_API_URL` steht in beiden
+    #: Instanzen bereits in `renfield-env`.
+    #: Leer heißt: kein Link. Der Knopf zeigt dann den Zustand ohne Ziel.
+    #: 🛑 Es ist eine LAN-Adresse. Der Link trägt im Heimnetz; von außen läuft er
+    #: ins Leere. Bewusst so entschieden (2026-10-27) — wird es später zum
+    #: Problem, trennt man Link-Basis und API-URL.
+    paperless_api_url: str = ""
     ollama_embed_url: str | None = None          # Separate Ollama URL for embeddings (default: ollama_url)
 
     # Voice-server (B.4) — when set, backend's /api/voice/voice-chat

@@ -68,6 +68,11 @@ export interface DocumentRow {
   /** The document's own date (invoice/letter date) for the Dokumentdatum sort;
    *  null when none derivable. Distinct from created_at (import). */
   document_date?: string | null;
+  /** Fertiger Link auf das Dokument in Paperless; null, solange die Ablage
+   *  laeuft, und dauerhaft null bei einer Dublette (die hat keine eigene
+   *  Kennung). Das Backend setzt ihn zusammen — das Frontend kennt die
+   *  Paperless-Adresse nicht. */
+  paperless_url?: string | null;
   /** Integration upload status for the per-row icons. */
   in_paperless?: boolean;
   in_simba?: boolean;
@@ -311,6 +316,31 @@ export function useBulkSetDocumentTier() {
       onSuccess: () => {
         queryClient.invalidateQueries({ queryKey: keys.knowledge.all });
       },
+    },
+    'common.error',
+  );
+}
+
+async function fetchDocument(id: number): Promise<DocumentRow> {
+  const response = await apiClient.get<DocumentRow>(`/api/knowledge/documents/${id}`);
+  return response.data;
+}
+
+/**
+ * Ein einzelnes Dokument — fuer den Knopf unter einer Scan-Fertigmeldung.
+ *
+ * Der Endpunkt setzt den Zugriffsschutz durch (401/403 ueber
+ * `check_document_access`); ein Fehlschlag ist deshalb kein Sonderfall, der
+ * behandelt werden muesste, sondern bedeutet schlicht: kein Link.
+ */
+export function useDocumentQuery(id: number, enabled = true) {
+  return useApiQuery(
+    {
+      queryKey: keys.knowledge.detail(id),
+      queryFn: () => fetchDocument(id),
+      staleTime: STALE.DEFAULT,
+      enabled,
+      retry: false,
     },
     'common.error',
   );

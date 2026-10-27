@@ -86,6 +86,13 @@ class DocumentResponse(BaseModel):
     # Integration upload status for the per-row status icons: whether the doc has
     # been filed in Paperless / uploaded to Simba (xidra). Default False.
     in_paperless: bool = False
+    #: Fertiger Link auf das Dokument in Paperless, oder None.
+    #:
+    #: 🛑 Das Feld MUSS hier stehen, nicht nur im Serialisierer: Pydantic verwirft
+    #: unbekannte Schlüssel beim Bauen des Modells STILL (`DocumentResponse(**kwargs)`),
+    #: das Feld käme also nie beim Frontend an und nichts würde es melden.
+    #: Im Review zu diesem Plan als C1 gefunden, bevor es gebaut wurde.
+    paperless_url: str | None = None
     in_simba: bool = False
     # Circle visibility (tier-control UX). circle_tier is the document's
     # denormalized tier (0 self … 4 public); atom_id is its atoms-row UUID

@@ -266,7 +266,13 @@
         "bar": "Bar chart",
         "line": "Line chart"
       },
-      "seriesFallback": "Series {{n}}"
+      "seriesFallback": "Series {{n}}",
+      "documentRef": {
+        "open": "Open in Paperless",
+        "filing": "being filed",
+        "alreadyThere": "already in Paperless",
+        "notFiled": "not filed in Paperless"
+      }
     },
     "roleBadge": {
       "pin": "Answered by {{role}} · pin for the next turn",
