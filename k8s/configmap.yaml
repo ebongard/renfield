@@ -360,7 +360,7 @@ data:
   # nur fuer eine gezielte Messung anschalten und danach wieder aus.
   # Am 2026-10-27 eingetragen, weil der Schalter zuvor an git vorbei
   # gesetzt wurde und damit nirgends nachlesbar war.
-  AGENT_PRESELECT_PROMPT_DUMP: "true"
+  AGENT_PRESELECT_PROMPT_DUMP: "false"
   MCP_ENABLED: "true"
   # MCP self-detection (Phase 1): surface MCP failures renfield already detects
   # (Plane-A get_status() degrade/down + Plane-B ingest-MCP OPERATOR-NOTIFY pushes)
