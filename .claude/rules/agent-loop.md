@@ -71,6 +71,25 @@ Loaded only when `agent_service.py`, `prompts/agent.yaml` or the chat handler is
 - 🛑 Ein `hint` darf kein fremdes Gebiet beanspruchen. In der Rolle `general` (`mcp_servers: null`,
   `internal_tools: null`, zugleich Rückfall des Routers) liegen ALLE Werkzeuge in einer Liste; ein Rollenzaun aus
   `agent_roles.yaml` greift dort nicht. Ein unbedingtes „<Wort> heißt immer X" zieht die Geschwister mit herein.
+- 🛑 **Das Modell folgt den BEISPIELZEICHENKETTEN, nicht der Regel.** Am 2026-10-27 am echten Prompt gemessen
+  (Signatur-Abgleich, nicht Nachbau): der `scan_document`-Hinweis nannte „scanne nach xidra" und „scanne nach
+  Haushalt" als Beispiele — **nur diese beiden Schreibweisen trafen**. `household`, im selben Hinweis als *Wert*
+  genannt, aber nie nach „scanne nach", fiel durch; ebenso jedes Ziel mit Bindestrich (`x-idra`, der gemeldete
+  Fall). Mehr Beispiele heilen das nicht, sie SIND der Fehler. Ein Hinweis muss die **Schreibweise entwerten**
+  („unabhängig davon, ob englisch, groß oder mit Bindestrich") statt einen weiteren Fall aufzuzählen.
+- 🛑 **Eine Grammatikregel gehört in die VORLAGE, nicht in den Hinweis.** Im Hinweis braucht sie Beispiele, und die
+  prägen wieder Zeichenketten: ein Suchbeispiel „scanne x-idra nach <X>" liess den gemeldeten Fall von 3/3 auf 0/3
+  fallen. Als Grundregel in `tool_preselect_prompt` (nur `de`, mit Platzhalter `X`) wirkt dieselbe Regel: Hinweis
+  allein 89 %, Grundregel allein 88 %, **zusammen 95 %** gegen 70 % ohne beides. Gegengeprüft, dass sie fremdes
+  Gebiet NICHT übernimmt: `internal.bluetooth_scan` bleibt bei „scanne nach Bluetooth-Geräten" 20/20.
+- 🛑 **Vor jeder Änderung an einem Hinweis messen:** `bin/measure-preselect.py` spielt den per
+  `AGENT_PRESELECT_PROMPT_DUMP` eingefangenen ECHTEN Prompt wiederholt und verschränkt durch und prüft über
+  `--verify-signature`, dass es der aus dem Protokoll ist. Vier Fassungen, die „offensichtlich besser" aussahen,
+  massen schlechter (70/74/89 % gegen 95 %).
+- 🛑 **Mess-Falle: ein Eintrag der Werkzeugliste geht über ZEILENUMBRÜCHE.** Beschreibungen enthalten Umbrüche; wer
+  mit `startswith("- ")` zählt, misst nur die erste physische Zeile. So entstand zweimal der Befund
+  „`scan_document` ist 102 Zeichen lang und trägt keinen Hinweis" — der Eintrag war 1936 Zeichen lang und trug ihn
+  vollständig. Ein Eintrag reicht von `^- ` bis zum nächsten: `re.split(r"(?m)^- ", prompt)`.
 - Interne und Föderations-Werkzeuge tragen **keinen** `hint` — ihre Anleitung steht in der Beschreibung, und
   darum muss die Grenze dafür reichen. Wer eine neue Werkzeugquelle anbindet, entscheidet: Hinweis anlegen oder
   die Anleitung in die ersten `_PRESELECT_DESC_CHARS` Zeichen setzen.
