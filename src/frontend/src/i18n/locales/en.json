@@ -2127,7 +2127,8 @@
     "revokeLinkConfirm": "Afterwards this instance answers queries from {{name}} only within the paired tier again.",
     "linkRevoked": "The link has been revoked.",
     "linkRevokeFailed": "The link could not be revoked.",
-    "linkCreatedAt": "linked on {{date}}"
+    "linkCreatedAt": "linked on {{date}}",
+    "linkHalfDone": "Your side of the link is in place. It only takes effect once the other instance completes it."
   },
   "federationAudit": {
     "title": "Federation history",

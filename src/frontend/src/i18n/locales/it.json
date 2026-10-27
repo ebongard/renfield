@@ -1724,7 +1724,8 @@
     "revokeLinkConfirm": "In seguito questa istanza risponderà alle richieste di {{name}} di nuovo solo entro il livello accoppiato.",
     "linkRevoked": "Il collegamento è stato revocato.",
     "linkRevokeFailed": "Non è stato possibile revocare il collegamento.",
-    "linkCreatedAt": "collegato il {{date}}"
+    "linkCreatedAt": "collegato il {{date}}",
+    "linkHalfDone": "Il tuo lato del collegamento è pronto. Diventa effettivo solo al completamento sull'altra istanza."
   },
   "federationAudit": {
     "title": "Cronologia federazione",

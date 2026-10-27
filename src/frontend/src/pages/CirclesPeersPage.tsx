@@ -268,7 +268,13 @@ export default function CirclesPeersPage() {
       <LinkIdentityResponderModal
         isOpen={showAcceptLink}
         onClose={() => setShowAcceptLink(false)}
-        onLinked={() => { setSuccess(t('circles.linkSuccess')); linksQuery.refetch(); }}
+        /* 🛑 NICHT `linkSuccess`. Beim Annehmen steht erst die EIGENE Haelfte;
+           wirksam wird die Verknuepfung mit dem Abschluss drueben. Die erste
+           Fassung meldete hier „Die Identitaeten sind verknuepft" — und
+           widersprach damit dem Hinweis im selben Dialog, der es richtig sagt.
+           Wer das liest, schliesst beide Fenster und laesst einen halben
+           Handschlag zurueck. */
+        onLinked={() => { setSuccess(t('circles.linkHalfDone')); linksQuery.refetch(); }}
       />
 
       {ConfirmDialogComponent}

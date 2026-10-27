@@ -150,13 +150,16 @@ hatten wir das designed"), und die Nachmessung gibt ihm recht:
 Beide Seiten haben **echte Aufrufer** — das ist eigens geprüft, weil in diesem Projekt
 mehrfach korrekt gebaute Riegel ohne Aufrufer standen.
 
-**Was F-ID-2 wirklich ist:** die *Selbstbedienung* beim Verknüpfen (doppelte Anmeldung als
-Einwilligung). Eine Verwaltungskraft kann die Verknüpfung heute schon anlegen. F-ID-2 ist
-Bequemlichkeit, nicht Fähigkeit.
+**Was F-ID-2 wirklich ist** (Stand 2026-10-27 nachmittags: **gebaut**, PR #1419): die
+*Selbstbedienung* beim Verknüpfen über einen doppelten Anmelde-Handschlag. Dieser Absatz sagte
+vormittags noch „Bequemlichkeit, nicht Fähigkeit" — das greift zu kurz. Der Admin-Weg legt eine
+Verknüpfung aufgrund einer **Behauptung** an; der Handschlag verlangt eine angemeldete Sitzung
+auf **beiden** Seiten und ist damit ein **Beweis**. Das ist ein Unterschied in der Art des
+Nachweises, nicht im Komfort.
 
 **Was Stufe 3 also tatsächlich braucht:**
 
-1. `FEDERATION_IDENTITY_LINKS_ENABLED=true` in beiden Instanzen (heute `false`).
+1. ~~`FEDERATION_IDENTITY_LINKS_ENABLED=true` in beiden Instanzen (heute `false`).~~ **Seit 2026-10-27 in beiden `true`.**
 2. Eine Verknüpfung je Person, die auf beiden Seiten ein Konto hat.
 3. Eine bestehende Paarung der beiden Instanzen — **die fehlt heute wirklich**: x-idra
    trägt keine einzige Föderationsvariable.

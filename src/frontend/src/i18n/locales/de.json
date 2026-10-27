@@ -2127,7 +2127,8 @@
     "revokeLinkConfirm": "Danach beantwortet diese Instanz Anfragen von {{name}} wieder nur im Rahmen der gekoppelten Stufe.",
     "linkRevoked": "Die Verknüpfung wurde widerrufen.",
     "linkRevokeFailed": "Die Verknüpfung konnte nicht widerrufen werden.",
-    "linkCreatedAt": "verknüpft am {{date}}"
+    "linkCreatedAt": "verknüpft am {{date}}",
+    "linkHalfDone": "Ihre Seite der Verknüpfung steht. Wirksam wird sie erst mit dem Abschluss auf der anderen Instanz."
   },
   "federationAudit": {
     "title": "Föderations-Verlauf",

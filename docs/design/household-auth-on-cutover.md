@@ -134,6 +134,22 @@ Spike gemergt (#1302): Co-Referenz statt Shared-Ownership. Für den Haushalt bra
 
 ### 8.4 BL-0305 — F-ID-2 Double-Login-Consent, beide Richtungen an (D-9)
 
+> **Stand 2026-10-27: GEBAUT** (PR #1419) — Dienst `services/link_handshake_service.py`,
+> Routen `api/routes/federation_links.py`, Dialoge `LinkIdentity{Initiator,Responder}Modal`,
+> Abschnitt „Verknüpfte Identitäten" auf der Peers-Seite, 103 Backend- und 27 Frontend-Tests.
+> Der Satz unten „Routen, Zustandsautomat, UI und Tests fehlen" ist damit erledigt.
+>
+> 🛑 **Eine Festlegung dieses Abschnitts wurde dabei UMGEKEHRT.** D-9 verlangte „Ehren von
+> Links ist ein Schalter je Peer und je Richtung" mit einer eigenen Spalte an `peer_users`.
+> Am 2026-10-27 entschieden: **es bleibt beim einen globalen
+> `FEDERATION_IDENTITY_LINKS_ENABLED`.** Begründung: eine Verknüpfung wirkt ohnehin erst,
+> wenn die betroffene Person sie SELBST im Handschlag erzeugt hat — die Feinsteuerung liegt
+> damit bei der Person statt beim Betreiber, und ein zweiter Schalter wäre ein weiterer Ort,
+> an dem Absicht und Wirklichkeit auseinanderlaufen können. Die Spalte ist nicht gebaut.
+> Wer sie später doch will, braucht eine Migration und einen Riegel mehr; die Begründung
+> dafür müsste über „§7 schlug es vor" hinausgehen.
+
+
 P0 der personenbezogenen Föderation ist dieser Cutover (`docs/design/federation-identity-mapping.md:52,115,263`). Der Bauplan steht (§9 dort: offer → accept → complete, beide Seiten signiert, keine Halblinks; Routen, Zustandsautomat, UI und Tests fehlen — `api/routes/federation_user_links.py:68-122` ist Admin-CRUD). Festgehalten aus §7 dort: `querier_ref` je `(peer, user)`, nie global; **Ehren von Links ist ein Schalter je Peer und je Richtung** (§7 dort fordert den Schalter; die Spalte an `peer_users` ist die Festlegung dieses Entwurfs), Vorgabe für den Haushalt: **eingehend und ausgehend an** — von beiden Seiten die jeweils verknüpfte Personensicht. Nach dem Cutover verliert die Peer-Scope-Begründung „Haushalt = ein Nutzer“ (`docs/CIRCLES.md:38`, `docs/SECOND_BRAIN.md:139`) ihre Prämisse; die dort notierte `remote_user_id`-Kollision bei ≥ 2 Peers ist vor dem ersten Personenlink zu schließen (F-ID-3).
 
 ## 9. Reihenfolge — streng nacheinander (D-10), jede Stufe rückbaubar
