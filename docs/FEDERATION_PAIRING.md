@@ -139,9 +139,15 @@ must never be treated as the local owner.
 > first link. The responder additionally requires `AUTH_ENABLED=true` and a
 > `querier_ref` on the request, and refuses to map under auth-off
 > (`federation_query_responder.py:308-318`). The deferred part is
-> the **user-establishable consent handshake** (F-ID-2, both sides prove ownership). This
-> handshake therefore proves the transport and gives you public + granted-tier
-> reach; it is not yet a full personal-brain bridge.
+> ~~the **user-establishable consent handshake** (F-ID-2).~~ **Built and shipped
+> 2026-10-27.** A person now establishes their own link through the
+> double-login handshake under *Verknüpfte Identitäten* on the peers page —
+> signed in on both instances, each side signing its own half. The admin CRUD
+> above stays as break-glass only.
+>
+> So this pairing handshake proves the transport and gives public + granted-tier
+> reach; the **person link** on top of it is what turns that into a same-person
+> bridge, and it is now self-service rather than an admin assertion.
 
 ---
 

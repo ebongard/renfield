@@ -1,15 +1,20 @@
 import { useState, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Link } from 'react-router';
-import { Users, Trash2, Clock, Fingerprint, History } from 'lucide-react';
+import { Users, Trash2, Clock, Fingerprint, History, Link2, Link2Off } from 'lucide-react';
 import PageHeader from '../components/PageHeader';
 import Alert from '../components/Alert';
 import TierBadge from '../components/TierBadge';
 import { useConfirmDialog } from '../components/ConfirmDialog';
+import LinkIdentityInitiatorModal from '../components/LinkIdentityInitiatorModal';
+import LinkIdentityResponderModal from '../components/LinkIdentityResponderModal';
 import {
   useFederationPeersQuery,
   useDeleteFederationPeer,
+  useMyIdentityLinksQuery,
+  useDeleteIdentityLink,
   type FederationPeer,
+  type IdentityLink,
 } from '../api/resources/federation';
 import { extractApiError } from '../utils/axios';
 
@@ -21,6 +26,15 @@ export default function CirclesPeersPage() {
   const peers = peersQuery.data ?? [];
 
   const deletePeer = useDeleteFederationPeer();
+
+  // F-ID-2: die eigenen Personenverknuepfungen. Bewusst HIER und nicht auf einer
+  // eigenen Seite — eine Verknuepfung haengt immer an einer Paarung, und wer sie
+  // widerrufen will, sucht sie dort, wo die Gegenstelle steht.
+  const linksQuery = useMyIdentityLinksQuery();
+  const links = linksQuery.data ?? [];
+  const deleteLink = useDeleteIdentityLink();
+  const [linkPeer, setLinkPeer] = useState<FederationPeer | null>(null);
+  const [showAcceptLink, setShowAcceptLink] = useState(false);
 
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
@@ -49,6 +63,22 @@ export default function CirclesPeersPage() {
       return t('circles.peerDaysAgo', { n: days });
     } catch {
       return iso;
+    }
+  };
+
+  const handleRevokeLink = async (link: IdentityLink) => {
+    const ok = await confirm({
+      title: t('circles.revokeLinkTitle'),
+      message: t('circles.revokeLinkConfirm', { name: link.peer_display_name }),
+      confirmLabel: t('common.delete'),
+      variant: 'danger',
+    });
+    if (!ok) return;
+    try {
+      await deleteLink.mutateAsync(link.id);
+      setSuccess(t('circles.linkRevoked'));
+    } catch (err) {
+      setError(extractApiError(err, t('circles.linkRevokeFailed')));
     }
   };
 
@@ -145,6 +175,15 @@ export default function CirclesPeersPage() {
                 </Link>
                 <button
                   type="button"
+                  onClick={() => setLinkPeer(peer)}
+                  className="btn-icon btn-icon-ghost"
+                  title={t('circles.linkStartHandshake')}
+                  aria-label={t('circles.linkStartHandshake')}
+                >
+                  <Link2 className="w-4 h-4" />
+                </button>
+                <button
+                  type="button"
                   onClick={() => handleRevoke(peer)}
                   disabled={revokingIds.has(peer.id)}
                   className="btn-icon btn-icon-danger disabled:opacity-50"
@@ -158,6 +197,79 @@ export default function CirclesPeersPage() {
           ))}
         </ul>
       )}
+
+      {/* ── Verknuepfte Identitaeten (F-ID-2) ─────────────────────────────── */}
+      <section className="space-y-3 pt-2">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div>
+            <h2 className="text-lg font-semibold text-gray-900 dark:text-white">
+              {t('circles.linksTitle')}
+            </h2>
+            <p className="text-sm text-gray-500 dark:text-gray-400">
+              {t('circles.linksSubtitle')}
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={() => setShowAcceptLink(true)}
+            className="btn-secondary px-3 py-2 rounded-lg text-sm inline-flex items-center gap-2"
+          >
+            <Link2 className="w-4 h-4" aria-hidden="true" />
+            {t('circles.linkAcceptHandshake')}
+          </button>
+        </div>
+
+        {links.length === 0 ? (
+          <div className="card text-center py-8">
+            <Link2Off className="w-10 h-10 mx-auto mb-3 text-gray-300 dark:text-gray-600" aria-hidden="true" />
+            <p className="text-gray-500 dark:text-gray-400 mb-2">
+              {t('circles.linksEmptyHeadline')}
+            </p>
+            <p className="text-sm text-gray-400 dark:text-gray-500">
+              {t('circles.linksEmptyHint')}
+            </p>
+          </div>
+        ) : (
+          <ul className="space-y-3">
+            {links.map((link) => (
+              <li key={link.id} className="atom-row flex-col sm:flex-row">
+                <div className="flex-1 min-w-0">
+                  <span className="font-medium text-gray-900 dark:text-white truncate">
+                    {link.peer_display_name}
+                  </span>
+                  <div className="text-xs text-gray-500 dark:text-gray-400">
+                    {t('circles.linkCreatedAt', {
+                      date: link.created_at ? new Date(link.created_at).toLocaleDateString() : '—',
+                    })}
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => handleRevokeLink(link)}
+                  className="btn-icon btn-icon-danger sm:ml-4 sm:flex-shrink-0 mt-3 sm:mt-0"
+                  title={t('circles.revokeLink')}
+                  aria-label={t('circles.revokeLink')}
+                >
+                  <Trash2 className="w-4 h-4" />
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
+
+      <LinkIdentityInitiatorModal
+        isOpen={linkPeer !== null}
+        peerId={linkPeer ? Number(linkPeer.id) : null}
+        peerName={linkPeer?.remote_display_name}
+        onClose={() => setLinkPeer(null)}
+        onLinked={() => { setSuccess(t('circles.linkSuccess')); linksQuery.refetch(); }}
+      />
+      <LinkIdentityResponderModal
+        isOpen={showAcceptLink}
+        onClose={() => setShowAcceptLink(false)}
+        onLinked={() => { setSuccess(t('circles.linkSuccess')); linksQuery.refetch(); }}
+      />
 
       {ConfirmDialogComponent}
     </div>

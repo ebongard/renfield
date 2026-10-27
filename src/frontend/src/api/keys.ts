@@ -104,6 +104,7 @@ export const keys = {
     all: ['federation'] as const,
     audit: () => ['federation', 'audit'] as const,
     peers: () => ['federation', 'peers'] as const,
+    links: () => ['federation', 'links'] as const,
   },
   routing: {
     all: ['routing'] as const,

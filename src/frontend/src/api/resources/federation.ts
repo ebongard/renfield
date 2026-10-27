@@ -78,3 +78,50 @@ export function useDeleteFederationPeer() {
     'circles.peerRevokeFailed',
   );
 }
+
+/**
+ * Eine Personenverknuepfung, wie sie die EIGENE Person sieht.
+ *
+ * 🛑 Ohne `querier_ref`. Der ist das opake Band zwischen zwei Instanzen und
+ * kein Anzeigewert — wer ihn hat, kann sich bei der Gegenstelle als diese
+ * Person ausgeben. Das Backend laesst ihn darum gar nicht erst heraus.
+ */
+export interface IdentityLink {
+  id: number;
+  peer_id: number;
+  peer_display_name: string;
+  created_at: string;
+}
+
+async function fetchMyIdentityLinks(): Promise<IdentityLink[]> {
+  const response = await apiClient.get<IdentityLink[]>('/api/federation/links/mine');
+  return response.data ?? [];
+}
+
+async function deleteIdentityLinkRequest(linkId: number): Promise<void> {
+  await apiClient.delete(`/api/federation/links/${linkId}`);
+}
+
+export function useMyIdentityLinksQuery() {
+  return useApiQuery(
+    {
+      queryKey: keys.federation.links(),
+      queryFn: fetchMyIdentityLinks,
+      staleTime: STALE.DEFAULT,
+    },
+    'circles.linksCouldNotLoad',
+  );
+}
+
+export function useDeleteIdentityLink() {
+  const queryClient = useQueryClient();
+  return useApiMutation(
+    {
+      mutationFn: deleteIdentityLinkRequest,
+      onSuccess: () => {
+        queryClient.invalidateQueries({ queryKey: keys.federation.links() });
+      },
+    },
+    'circles.linkRevokeFailed',
+  );
+}
