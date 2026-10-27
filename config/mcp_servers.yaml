@@ -610,8 +610,25 @@ servers:
       # Ein unbedingtes „scanne heißt Papier" würde „scanne nach
       # Bluetooth-Geräten" hierher ziehen — ein Fehlgriff gegen einen anderen
       # getauscht, zum dritten Mal. Darum die Ausnahme ausdrücklich benannt.
+      # 🛑 Der erste Absatz ist gemessen, nicht geraten. Vorher folgte das
+      # Modell den BEISPIELZEICHENKETTEN statt der Regel: nur „scanne nach
+      # xidra" und „scanne nach Haushalt" trafen — genau die beiden
+      # Formulierungen, die hier woertlich stehen. Alles andere fiel zur
+      # Dokumentensuche durch, selbst die kanonische Kennung `household` und
+      # jedes Ziel mit Bindestrich (der gemeldete Fall „scanne nach x-idra").
+      # Darum entwertet der Absatz die SCHREIBWEISE des Ziels und nennt KEIN
+      # Beispiel — jedes Beispiel praegt wieder eine Zeichenkette.
+      # Die Satzstellung erklaert er NICHT; das kann das Modell von selbst
+      # („scanne das Dokument nach <X>" waehlt es korrekt als Suche), und
+      # Versuche, sie ihm hier beizubringen, massen 74 % statt 89 %.
       scan_document: >-
-        Startet einen NEUEN Scan: Papier aus dem Einzug einlesen. 🛑 „scanne
+        Startet einen NEUEN Scan: Papier aus dem Einzug einlesen.
+        🛑 Über „scannen oder suchen" entscheidet NICHT, wie das Ziel
+        geschrieben ist. Bei „scanne nach <Ziel>" ist <Ziel> das Ablageziel und
+        dies ist scan_document — auch wenn du <Ziel> nicht kennst, und auch
+        wenn es englisch, groß oder mit Bindestrich geschrieben ist. Ein
+        unbekanntes Ziel macht aus einem Scanauftrag keine Dokumentensuche.
+        🛑 „scanne
         nach <X>" bedeutet beim PAPIERSCANNER IMMER, dass <X> das ZIEL ist —
         eine Richtung, NIE ein Suchbegriff. „scanne nach xidra" heißt „lies
         das Papier ein und lege es in der Instanz xidra ab", NICHT „suche nach

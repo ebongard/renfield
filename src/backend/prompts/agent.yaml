@@ -562,9 +562,23 @@ de:
   thinking_message: "Analysiere Anfrage und plane Schritte..."
 
   # Tool pre-selection prompt
+  #
+  # 🛑 Die Grundregel unten steht hier und NICHT im Werkzeughinweis, und das ist
+  # gemessen, nicht Geschmack. Im Hinweis braucht eine Grammatikregel Beispiele,
+  # um konkret zu sein — und das Modell lernt dann die BEISPIELZEICHENKETTE statt
+  # der Regel. Belegt am 2026-10-27: ein Suchbeispiel „scanne x-idra nach <X>"
+  # im Hinweis liess „scanne nach x-idra" von 3/3 auf 0/3 fallen.
+  # Hier, vor der Werkzeugliste und mit dem Platzhalter X statt echter Namen,
+  # wirkt sie: zusammen mit dem scan_document-Hinweis 54/57 statt 40/57.
+  # Nur im deutschen Abschnitt — es ist eine Regel ueber deutsche Satzstellung.
+  #
+  # 🛑 Der Absatz ist EINE Zeile. Gemessen wurde er ohne innere Umbrueche; ein
+  # Umbruch hier aenderte den Prompt und damit das Gemessene.
   tool_preselect_prompt: |
     Welche 3-5 Tools sind fuer diese Aufgabe relevant?
     Aufgabe: "{message}"
+
+    Grundregel zur deutschen Satzstellung bei „scannen": Steht zwischen dem Verb und „nach" KEIN Objekt („scanne nach X"), bezeichnet X das ZIEL — wohin eingelesen wird. Steht dort ein Objekt, das bereits lesbaren Text hat („scanne das Dokument nach X"), bezeichnet X einen SUCHBEGRIFF — wonach gesucht wird. Wie X geschrieben ist, spielt dabei keine Rolle; ein dir unbekanntes X aendert die Satzstellung nicht.
 
     Verfuegbare Tools:
     {tool_list}
