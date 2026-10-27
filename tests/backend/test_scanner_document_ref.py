@@ -36,7 +36,13 @@ def _meta() -> dict:
     return {"scanner_job": {"job_id": "scan-20261027-120000-abcdef12", "status": "done"}}
 
 
-def test_a_finished_scan_carries_a_document_ref_artifact():
+def test_a_finished_scan_carries_a_document_ref_artifact(monkeypatch):
+    # Die Selbstkennung gehoert zum Fall: `_DONE` scannt nach `household`, und
+    # erst mit gesetzter `instance_id` ist das NACHWEISLICH die eigene Instanz.
+    # Ohne sie greift die Fail-closed-Regel unten — siehe
+    # `test_WITHOUT_a_self_identity_every_named_target_is_remote`.
+    from utils.config import settings
+    monkeypatch.setattr(settings, "instance_id", "household", raising=False)
     meta = _meta()
     attach_document_ref(meta, "done", _DONE, "scan-20261027-120000-abcdef12")
     arts = meta.get("artifacts")
@@ -116,3 +122,68 @@ def test_the_attachment_branches_over_the_SHARED_state_set():
         "ein zweites Literal neben der Menge — genau die Drift:\n" + quelle)
     assert "unrouted" not in _STATES_WITH_DOCUMENT, (
         "`unrouted` hat kein abgelegtes Dokument")
+
+
+# --- Instanzgrenze -----------------------------------------------------------
+#
+# 🛑 Der Fehler, den der Eigentümer beim Lesen fand: der Scanner schickt die
+# Fertigmeldung an die Instanz, die GEFRAGT hat — das Dokument kann aber in
+# einer anderen liegen. Die Kennung gehört dann jener anderen Instanz, und weil
+# beide eigene Zählfolgen führen, gibt es sie hier auch, für ein anderes
+# Dokument. Ein Knopf darauf führt nicht ins Leere, sondern ins FALSCHE.
+
+
+def _mit_ziel(ziel):
+    return {**_DONE, "target": ziel}
+
+
+def test_a_scan_into_THIS_instance_stays_linkable(monkeypatch):
+    from utils.config import settings
+    monkeypatch.setattr(settings, "instance_id", "household", raising=False)
+    meta = _meta()
+    attach_document_ref(meta, "done", _mit_ziel("household"), "scan-20261027-120000-abcdef12")
+    assert "instance" not in meta["artifacts"][0]["data"], (
+        "ein lokales Dokument braucht keine Instanzangabe — sonst fragt die "
+        "Komponente gar nicht erst nach")
+
+
+def test_a_scan_into_ANOTHER_instance_is_marked_remote(monkeypatch):
+    from utils.config import settings
+    monkeypatch.setattr(settings, "instance_id", "household", raising=False)
+    meta = _meta()
+    attach_document_ref(meta, "done", _mit_ziel("xidra"), "scan-20261027-120000-abcdef12")
+    assert meta["artifacts"][0]["data"]["instance"] == "xidra", (
+        "ohne Markierung loeste die Komponente xidras Kennung LOKAL auf und "
+        "traefe ein fremdes Dokument derselben Nummer")
+
+
+def test_the_comparison_ignores_case_and_spacing(monkeypatch):
+    from utils.config import settings
+    monkeypatch.setattr(settings, "instance_id", "  Household ", raising=False)
+    meta = _meta()
+    attach_document_ref(meta, "done", _mit_ziel("HOUSEHOLD"), "scan-20261027-120000-abcdef12")
+    assert "instance" not in meta["artifacts"][0]["data"]
+
+
+def test_WITHOUT_a_self_identity_every_named_target_is_remote(monkeypatch):
+    """🛑 Fail-closed. Eine unkonfigurierte Instanz verlinkt nie falsch — sie
+    verlinkt gar nicht."""
+    from utils.config import settings
+    monkeypatch.setattr(settings, "instance_id", "", raising=False)
+    meta = _meta()
+    attach_document_ref(meta, "done", _mit_ziel("household"), "scan-20261027-120000-abcdef12")
+    assert meta["artifacts"][0]["data"]["instance"] == "household", (
+        "ohne Selbstkennung muss JEDES benannte Ziel als fremd gelten")
+
+
+def test_an_unnamed_target_stays_local(monkeypatch):
+    """Ohne Ziel im Ereignis gibt es nichts zu vergleichen — `n=1` kurzschliesst
+    die ganze Routing-Schicht, dort ist der Scan immer hier."""
+    from utils.config import settings
+    monkeypatch.setattr(settings, "instance_id", "household", raising=False)
+    for ziel in (None, "", "   "):
+        meta = _meta()
+        attach_document_ref(meta, "done", {**_DONE, "target": ziel},
+                            "scan-20261027-120000-abcdef12")
+        assert "instance" not in meta["artifacts"][0]["data"], f"target={ziel!r}"
+

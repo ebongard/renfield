@@ -105,6 +105,12 @@ export const presenceMapDataSchema = z.object({
 // persistierte URL waere eingefroren; die Kennung altert nicht.
 export const documentRefDataSchema = z.object({
   documentId: z.number().int().positive(),
+  // Gesetzt NUR, wenn das Dokument in einer anderen Instanz liegt. Die
+  // Entscheidung faellt im Backend (es kennt `instance_id`); hier heisst
+  // „vorhanden" schlicht: nicht lokal nachfragen, nur benennen. Ein Scan nach
+  // xidra meldet sich im Haushalt mit XIDRAS Dokumentkennung — und die gibt es
+  // hier auch, fuer ein anderes Dokument.
+  instance: z.string().min(1).optional(),
 });
 
 // Discriminated union on `kind` so a malformed `data` for the declared kind is

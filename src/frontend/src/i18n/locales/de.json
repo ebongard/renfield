@@ -271,7 +271,8 @@
         "open": "In Paperless öffnen",
         "filing": "wird gerade abgelegt",
         "alreadyThere": "war schon in Paperless",
-        "notFiled": "nicht in Paperless abgelegt"
+        "notFiled": "nicht in Paperless abgelegt",
+        "otherInstance": "liegt in {{instance}} — von hier aus noch nicht abrufbar"
       }
     },
     "roleBadge": {

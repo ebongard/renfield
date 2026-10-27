@@ -92,6 +92,36 @@ describe('DocumentRefArtifact', () => {
     expect(await screen.findByText(/wird gerade abgelegt/i)).toBeInTheDocument();
   });
 
+  // --- Instanzgrenze ---------------------------------------------------------
+  //
+  // 🛑 Der Kern ist NICHT der Hinweistext, sondern die ausbleibende Abfrage.
+  // Die Kennung gehoert der anderen Instanz; beide fuehren eigene Zaehlfolgen,
+  // eine lokale Abfrage traefe also ein FREMDES Dokument derselben Nummer. Der
+  // Abruf darf darum gar nicht erst ausgeloest werden, nicht nur sein Ergebnis
+  // verworfen. Gezaehlt wird am Endpunkt — die Negativkontrolle direkt darunter
+  // beweist mit demselben Zaehler, dass er ueberhaupt anschlaegt.
+  it('🛑 ein Dokument in einer anderen Instanz fragt hier NICHT nach', async () => {
+    let abrufe = 0;
+    server.use(http.get(URL, () => { abrufe += 1; return HttpResponse.json(doc()); }));
+    renderWithProviders(<DocumentRefArtifact data={{ documentId: 515, instance: 'xidra' }} />);
+
+    expect(await screen.findByText(/liegt in xidra/i)).toBeInTheDocument();
+    expect(screen.queryByRole('link')).toBeNull();
+    // Kurz warten, damit ein verspaeteter Abruf noch auffallen wuerde.
+    await waitFor(() => expect(abrufe).toBe(0));
+  });
+
+  it('Negativkontrolle: derselbe Zaehler schlaegt lokal sehr wohl an', async () => {
+    let abrufe = 0;
+    server.use(http.get(URL, () => { abrufe += 1; return HttpResponse.json(doc()); }));
+    renderWithProviders(<DocumentRefArtifact data={{ documentId: 515 }} />);
+
+    // Nicht auf GENAU eins festgenagelt: der Testrahmen haengt die
+    // Komponente doppelt ein (StrictMode), gemessen 2 Abrufe. Die Aussage
+    // hier ist allein, dass der Zaehler ueberhaupt anschlaegt.
+    await waitFor(() => expect(abrufe).toBeGreaterThan(0));
+  });
+
   it('🛑 KEIN Zustand ausser dem Link ist fokussierbar', async () => {
     for (const fall of [
       doc({ status: 'processing' }),

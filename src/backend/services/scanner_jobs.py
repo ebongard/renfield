@@ -312,6 +312,20 @@ def attach_document_ref(metadata: dict, status: str, result: dict, job_id: str) 
         validate_artifact,
     )
 
+    # 🛑 WESSEN Kennung ist das? Der Scanner schickt die Fertigmeldung an die
+    # Instanz, die GEFRAGT hat — das Dokument kann aber in einer anderen liegen
+    # (`renfield-mcp-scanner/contract.py:29-31` sagt das ausdrücklich). Die
+    # Kennung gehört dann der ANDEREN Instanz, und weil beide eigene Zählfolgen
+    # führen, gibt es sie hier auch: für ein anderes Dokument. Ein Knopf darauf
+    # führte nicht ins Leere, sondern ins Falsche.
+    #
+    # 🛑 FAIL-CLOSED: ohne `settings.instance_id` ist jedes benannte Ziel fremd.
+    daten: dict = {"documentId": doc_id}
+    ziel = result.get("target")
+    if isinstance(ziel, str) and ziel.strip():
+        eigen = (settings.instance_id or "").strip().lower()
+        if ziel.strip().lower() != eigen or not eigen:
+            daten["instance"] = ziel.strip()
     try:
         artifact = validate_artifact({
             # Stabil je Auftrag: eine zweite Zustellung desselben Scans ersetzt
@@ -319,7 +333,7 @@ def attach_document_ref(metadata: dict, status: str, result: dict, job_id: str) 
             # verschlüsselt nach `id`).
             "id": f"scanjob-{job_id}-doc",
             "kind": "document_ref",
-            "data": {"documentId": doc_id},
+            "data": daten,
         })
     except ArtifactRejected as e:
         # Ein abgelehntes Artefakt darf die Zustellung NIE verhindern — die

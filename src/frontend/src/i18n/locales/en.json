@@ -271,7 +271,8 @@
         "open": "Open in Paperless",
         "filing": "being filed",
         "alreadyThere": "already in Paperless",
-        "notFiled": "not filed in Paperless"
+        "notFiled": "not filed in Paperless",
+        "otherInstance": "stored in {{instance}} — not reachable from here yet"
       }
     },
     "roleBadge": {

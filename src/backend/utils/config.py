@@ -123,6 +123,21 @@ class Settings(BaseSettings):
     #: ins Leere. Bewusst so entschieden (2026-10-27) — wird es später zum
     #: Problem, trennt man Link-Basis und API-URL.
     paperless_api_url: str = ""
+    #: Der Name DIESER Instanz, wie die Scan-Zielregistratur ihn führt
+    #: (`household`, `xidra`). Leer heißt: unbekannt.
+    #:
+    #: 🛑 Eine Instanz kannte sich bis 2026-10-27 selbst nicht — sie trug nur ihren
+    #: Ed25519-Föderationsschlüssel, der kein lesbarer Name ist. Genau diese Lücke
+    #: machte den folgenden Fehler möglich: ein Scan aus dem Haushalt nach xidra
+    #: liefert eine Fertigmeldung MIT xidras Dokumentkennung an den Haushalt. Da
+    #: beide Instanzen eigene Zählfolgen führen, gibt es diese Kennung hier auch —
+    #: für ein anderes Dokument. Ein Knopf darauf führt nicht ins Leere, sondern
+    #: ins Falsche.
+    #:
+    #: 🛑 FAIL-CLOSED: ist der Wert leer, gilt JEDER zielbehaftete Verweis als
+    #: entfernt. Eine unkonfigurierte Instanz verlinkt also nie falsch, sie
+    #: verlinkt gar nicht. Entwurf: `docs/design/cross-instance-document-reference.md`.
+    instance_id: str = ""
     ollama_embed_url: str | None = None          # Separate Ollama URL for embeddings (default: ollama_url)
 
     # Voice-server (B.4) — when set, backend's /api/voice/voice-chat

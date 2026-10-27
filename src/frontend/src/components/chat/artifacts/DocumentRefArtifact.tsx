@@ -46,7 +46,17 @@ function Hint({ text }: { text: string }) {
 
 export default function DocumentRefArtifact({ data }: { data: DocumentRefData }) {
   const { t } = useTranslation();
-  const { data: doc, isLoading, isError } = useDocumentQuery(data.documentId);
+  // 🛑 `instance` gesetzt heisst: das Dokument liegt woanders. NICHT lokal
+  // nachfragen — die Kennung gehoert der anderen Instanz, und weil beide eigene
+  // Zaehlfolgen fuehren, traefe eine lokale Abfrage ein fremdes Dokument mit
+  // derselben Nummer. Der Abruf wird darum gar nicht erst ausgeloest
+  // (`enabled: false`), nicht nur sein Ergebnis verworfen.
+  const remote = data.instance;
+  const { data: doc, isLoading, isError } = useDocumentQuery(data.documentId, !remote);
+
+  if (remote) {
+    return <Hint text={t('chat.artifacts.documentRef.otherInstance', { instance: remote })} />;
+  }
 
   if (isLoading) return <Skeleton />;
 

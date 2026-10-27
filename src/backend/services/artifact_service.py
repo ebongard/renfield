@@ -369,7 +369,16 @@ def _validate_document_ref(data: object) -> dict:
     # gueltige Dokumentkennung.
     if not isinstance(doc_id, int) or isinstance(doc_id, bool) or doc_id <= 0:
         raise ArtifactRejected("document_ref.data: documentId must be a positive int")
-    return {"documentId": doc_id}
+    out: dict = {"documentId": doc_id}
+    # 🛑 `instance` wird NUR gesetzt, wenn das Dokument in einer ANDEREN Instanz
+    # liegt. Die Entscheidung faellt im Backend (es kennt `settings.instance_id`),
+    # nicht im Frontend: so gibt es genau eine Stelle, an der „lokal oder
+    # entfernt" entschieden wird. Vorhanden heisst fuer die Komponente schlicht:
+    # nicht hier nachfragen, nur benennen.
+    instance = data.get("instance")
+    if instance is not None:
+        out["instance"] = _require_str(instance, field="document_ref.instance", max_chars=64)
+    return out
 
 
 _VALIDATORS = {
