@@ -24,6 +24,7 @@ Why Ed25519 vs RSA/ECDSA:
 """
 from __future__ import annotations
 
+import json
 import os
 import threading
 from pathlib import Path
@@ -37,6 +38,44 @@ from loguru import logger
 # container storage, so the key would otherwise regenerate on every restart and
 # break every pairing on the next deploy).
 _DEFAULT_KEY_PATH = Path("/app/secrets/federation_identity_key")
+
+
+def canonical_bytes(payload: dict) -> bytes:
+    """Die Bytes, die eine Ed25519-Signatur abdeckt — fuer JEDES Protokoll hier.
+
+    Kanonisches JSON: sortierte Schluessel, kompakte Trenner, ASCII-escaped,
+    NaN/Infinity verboten. Weichen Unterzeichner und Pruefer in der
+    Kanonisierung auch nur um ein Zeichen ab, scheitert JEDE Signatur — darum
+    gibt es genau diese eine Fassung.
+
+    🛑 Sie stand bis 2026-10-27 als `_canonical_bytes` privat im
+    `pairing_service` und ist hierher gewandert, als der Personen-Handschlag
+    (F-ID-2) ein ZWEITES Protokoll mit denselben Bytes bekam. Eine abgeschriebene
+    zweite Fassung waere der klassische stille Bruch: beide Seiten signieren
+    fleissig, und nichts verifiziert mehr. `pairing_service._canonical_bytes`
+    bleibt als Alias bestehen, weil dessen Tests den privaten Namen einfuehren.
+
+    Die ausdruecklichen Schalter wehren je eine konkrete Falle ab:
+      - `allow_nan=False`: Pythons `json.dumps` schreibt sonst die
+        nicht-standardkonformen Literale `NaN`/`Infinity`, die kaum eine
+        andere Sprache wieder einliest. Ein boesartiger Anbietender koennte
+        eine Signatur erzeugen, die ein Peer in Go oder Rust nie nachrechnen
+        kann.
+      - `ensure_ascii=True`: entspricht der Vorgabe, steht aber ausdruecklich
+        da, damit eine Gegenstelle sie nicht unbemerkt umstellt.
+
+    Aufrufende muessen dafuer sorgen, dass die Nutzlast nur JSON-sichere
+    Grundtypen enthaelt; Pydantics dict-Durchreiche lehnt Gleitkommazahlen
+    nicht ab.
+    """
+    return json.dumps(
+        payload,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=True,
+        allow_nan=False,
+    ).encode("utf-8")
+
 
 
 class FederationIdentity:

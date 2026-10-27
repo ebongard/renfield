@@ -28,6 +28,7 @@ from api.routes import (
     document_dedupe,
     email_ingest,
     federation_audit,
+    federation_links,
     federation_pairing,
     federation_query,
     federation_user_links,
@@ -278,6 +279,7 @@ app.include_router(federation_pairing.router, prefix="/api/federation", tags=["F
 app.include_router(federation_query.router, prefix="/api/federation", tags=["Federation - Query"])
 app.include_router(federation_audit.router, prefix="/api/federation", tags=["Federation - Audit"])
 app.include_router(federation_user_links.router, prefix="/api/federation", tags=["Federation - Identity Links"])
+app.include_router(federation_links.router, prefix="/api/federation", tags=["Federation - Person Handshake"])
 
 # WebSocket Routers
 app.include_router(chat_router, tags=["WebSocket Chat"])

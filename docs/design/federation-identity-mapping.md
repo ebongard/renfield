@@ -1,6 +1,6 @@
 # Design — Person-scoped federation (cross-instance identity mapping)
 
-**Status:** F-ID-1 SHIPPED dark (#959 2026-07-12: migration `pc20260712_federation_user_links`, `services/federation_identity_link.py`, admin route `api/routes/federation_user_links.py`, flag `FEDERATION_IDENTITY_LINKS_ENABLED=false`; #960 durable instance identity). **Open:** F-ID-2 (user-establishable link handshake — decision: double-login consent, §4.2 A; build plan §9) and the activation.
+**Status:** F-ID-1 SHIPPED dark (#959 2026-07-12: migration `pc20260712_federation_user_links`, `services/federation_identity_link.py`, admin route `api/routes/federation_user_links.py`, flag `FEDERATION_IDENTITY_LINKS_ENABLED=false`; #960 durable instance identity). **F-ID-2 SHIPPED 2026-10-27** (consent-signed double-login handshake, §4.2 A, built per §9: `services/link_handshake_service.py`, `api/routes/federation_links.py`, `LinkIdentity{Initiator,Responder}Modal`, „Verknüpfte Identitäten" on the peers page). `FEDERATION_IDENTITY_LINKS_ENABLED=true` in both instances since the same day. **Open:** F-ID-3.
 **Motivating case:** linking a personal (household) Renfield instance to a business instance so that a *person* who has an account on both sees, from either side, exactly what that person is entitled to see on the other — while everyone else sees only public.
 **Depends on:** the peer-scoped federation fix (`services/circle_sql.py::peer_scoped` + `enforce_circles`, shipped in PR #957) is the FALLBACK path this builds on. Read that first.
 
@@ -259,12 +259,34 @@ Fail-closed everywhere: unverified signature / expired / wrong-peer / nonce-repl
 - Revoke either side → subsequent query falls back to peer-scoped.
 - Wrong-peer offer (M2 pubkey mismatch) → reject.
 
-### Prerequisite
-P0 still holds: the **personal** instance must run auth-on for a *person* to be
-mapped (xidra already is; household is single-user/auth-off, so household→xidra
-person-mapping needs the household auth-on cutover first — the deferred item in
-`project_security_sprint_inflight`). The handshake code can land + be tested
-between two auth-on instances before that cutover.
+### Prerequisite — CLEARED, and a different one took its place
+~~P0: the personal instance must run auth-on.~~ **The household has been auth-on
+since 2026-09-23** (`AUTH_ENABLED=true`, verified live in both instances on
+2026-10-27). This paragraph said "household is single-user/auth-off" for a month
+after that stopped being true — a stale blocker is worse than a known one,
+because it defers work that is actually unblocked.
+
+🛑 **What DOES still gate the first real link: a completed instance pairing on
+BOTH sides.** Steps 2 and 3 call `create_link(peer=…)`, so each side needs a
+`peer_users` row. Measured 2026-10-27: household **1** peer, xidra **0** — so no
+mutual pairing exists. The handshake code is independent of this (its tests
+stand up their own peer rows), but the acceptance run must pair first, through
+the existing UI under the circle settings.
+
+### Implementation note — the nonce is NOT the replay defence
+The pairing handshake keeps its nonce in a **process-local dict**
+(`pairing_service._nonce_cache`), flagged in its own comment as unhardened for
+multi-process deploys. F-ID-2 deliberately did **not** copy that. Instead the
+offer carries itself: `stated_by`, `nonce` and `expires_at` are inside the
+payload M1 signs, the browser echoes the whole offer back on completion, and M1
+verifies **its own** signature. No session state, survives restarts and replicas.
+
+🛑 And the honest part: `get_pending_store().record_nonce` only covers
+`NONCE_WINDOW_SECONDS` (60 s) while an offer lives 600 s. It is an early
+rejecter for the double-submit, **not** a wall. What actually bounds replay is
+`UNIQUE(peer_id, querier_ref)` plus the 600 s expiry plus the requirement of an
+authenticated session on each side. Anyone reading "nonce, therefore replay-safe"
+would be wrong for nine of those ten minutes.
 
 *Piece 3 is the deferred payoff: it turns the proven public↔public transport into
 a genuine same-person private-brain bridge, established through a consent handshake

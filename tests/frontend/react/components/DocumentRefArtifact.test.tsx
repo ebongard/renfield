@@ -32,7 +32,10 @@ function doc(over: Record<string, unknown> = {}) {
   };
 }
 
-function antwortet(body: unknown, status = 200) {
+// `unknown` ging hier durch Vitest, aber nicht durch `tsc`: MSW verlangt
+// `JsonBodyType`. Gefunden am 2026-10-27, nachdem `npm run typecheck` im
+// Testverzeichnis gelaufen war — der Lauf, den ich beim Schreiben ausliess.
+function antwortet(body: Record<string, unknown>, status = 200) {
   server.use(http.get(URL, () => HttpResponse.json(body, { status })));
 }
 

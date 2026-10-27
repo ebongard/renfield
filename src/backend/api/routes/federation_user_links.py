@@ -1,6 +1,14 @@
 """
 Federation identity-link admin API (F-ID-1 — person-scoped federation).
 
+🛑 NOTLUKE, nicht der regulaere Weg. Seit 2026-10-27 stellt eine Person ihre
+Verknuepfung SELBST her, ueber den einwilligungs-signierten Handschlag in
+`api/routes/federation_links.py` — angemeldet auf beiden Instanzen, jede Seite
+unterschreibt ihre eigene Haelfte. Dieses Modul bleibt fuer den Fall, dass der
+Handschlag nicht geht (eine Oberflaeche ist unerreichbar, eine Zeile muss von
+Hand gerade gezogen werden). Wer es als Normalweg benutzt, tauscht einen Beweis
+gegen eine Behauptung.
+
 ADMIN-gated CRUD over `federation_user_links` — the cross-instance person map
 that lets a federated query be served AS a mapped local user (full circle
 reach) instead of the peer-scoped public/guest fallback.

@@ -32,7 +32,6 @@ F3 (query_brain) consumes PeerUser rows created here.
 """
 from __future__ import annotations
 
-import json
 import secrets
 import time
 from dataclasses import dataclass
@@ -52,7 +51,7 @@ from models.database import (
     User,
 )
 from services.federation_cert_pin import probe_peer_cert_fingerprint
-from services.federation_identity import get_federation_identity
+from services.federation_identity import canonical_bytes, get_federation_identity
 
 OFFER_TTL_SECONDS = 600  # 10 minutes — enough to scan + accept, short
                          # enough that a leaked QR code doesn't outlive its usefulness
@@ -521,38 +520,13 @@ class PairingService:
 # =============================================================================
 
 
-def _canonical_bytes(payload: dict[str, Any]) -> bytes:
-    """
-    Canonical JSON (sorted keys, compact separators, ASCII-escaped,
-    NaN/Infinity rejected) is the byte sequence the Ed25519 signature
-    covers on both ends. Any mismatch between signer and verifier
-    canonicalisation means every signature fails — keep this one
-    implementation across create_offer, accept_offer, complete_handshake.
-
-    Explicit flags defend against:
-      - `allow_nan=False`: Python's json.dumps emits non-standard
-        `NaN`/`Infinity` literals by default; most non-Python JSON
-        libraries reject them. Even though F2 only runs Python peers,
-        the signature must survive any later peer written in Go/Rust/
-        Node (Reva enterprise deployments — per project memory).
-        A malicious initiator embedding `float("nan")` into
-        `offered_endpoints` would produce a signature that non-Python
-        peers can never re-verify.
-      - `ensure_ascii=True`: matches the default, made explicit so
-        peers that override it (to support non-ASCII display names
-        natively) don't silently drift.
-
-    Consumers must ensure `offered_endpoints`/`accepted_endpoints` carry
-    only JSON-safe primitives (str/int/bool/None/list/dict). Pydantic's
-    dict passthrough doesn't reject floats — callers own that validation.
-    """
-    return json.dumps(
-        payload,
-        sort_keys=True,
-        separators=(",", ":"),
-        ensure_ascii=True,
-        allow_nan=False,
-    ).encode("utf-8")
+#: 🛑 Der Rumpf ist am 2026-10-27 nach `federation_identity.canonical_bytes`
+#: gewandert, weil der Personen-Handschlag (F-ID-2) DIESELBEN Bytes signiert.
+#: Zwei Abschriften waeren der stille Bruch: beide Seiten signieren fleissig,
+#: und nichts verifiziert mehr. Der private Name bleibt hier stehen, weil die
+#: Tests dieses Moduls ihn einfuehren — und weil jeder Aufruf unten unveraendert
+#: weiterlaeuft.
+_canonical_bytes = canonical_bytes
 
 
 async def _get_or_create_circle(db: AsyncSession, owner_user_id: int) -> Circle:
