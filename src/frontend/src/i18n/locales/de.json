@@ -266,7 +266,14 @@
         "bar": "Balkendiagramm",
         "line": "Liniendiagramm"
       },
-      "seriesFallback": "Reihe {{n}}"
+      "seriesFallback": "Reihe {{n}}",
+      "documentRef": {
+        "open": "In Paperless öffnen",
+        "filing": "wird gerade abgelegt",
+        "alreadyThere": "war schon in Paperless",
+        "notFiled": "nicht in Paperless abgelegt",
+        "otherInstance": "liegt in {{instance}} — von hier aus noch nicht abrufbar"
+      }
     },
     "roleBadge": {
       "pin": "Beantwortet von {{role}} · für die nächste Frage anheften",

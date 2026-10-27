@@ -603,6 +603,25 @@ async def _simba_uploaded_ids(db: AsyncSession, doc_ids: list[int]) -> set[int]:
     return {int(r) for r in rows}
 
 
+def paperless_document_url(paperless_document_id: int | None) -> str | None:
+    """Der Link auf ein Dokument in Paperless, oder None.
+
+    🛑 EINE Stelle, nicht drei: `_doc_to_response_kwargs` bedient `/documents`,
+    `/documents/batch`, `/documents/{id}`, `/upload` und `/reindex`. Eine
+    zusammengesetzte URL an mehreren Stellen läuft auseinander.
+
+    None, wenn die Kennung fehlt (das Dokument ist noch nicht abgelegt, oder es
+    war eine Dublette) oder keine Basis-URL konfiguriert ist. Der abschließende
+    Schrägstrich wird abgeschnitten, damit kein `//documents/` entsteht.
+    """
+    if not isinstance(paperless_document_id, int) or isinstance(paperless_document_id, bool):
+        return None
+    base = (settings.paperless_api_url or "").rstrip("/")
+    if not base:
+        return None
+    return f"{base}/documents/{paperless_document_id}/details"
+
+
 def _doc_to_response_kwargs(doc: Document, *, in_simba: bool = False) -> dict:
     """Common Document → DocumentResponse mapping. Lives in one place so
     new fields land consistently across single-doc, list, and batch
@@ -632,6 +651,9 @@ def _doc_to_response_kwargs(doc: Document, *, in_simba: bool = False) -> dict:
         "document_date": doc.document_date.isoformat() if doc.document_date else None,
         # Integration upload status for the per-row status icons.
         "in_paperless": (doc.paperless_document_id is not None or doc.paperless_state == "done"),
+        # Fertiger Link statt roher Kennung: das Frontend soll keine Paperless-
+        # Adresse kennen müssen, und die Zusammensetzung bleibt an einer Stelle.
+        "paperless_url": paperless_document_url(doc.paperless_document_id),
         "in_simba": in_simba,
         # Circle visibility for the tier-control UX. Denormalized on the
         # documents row; atom_id may be NULL on legacy / global-RAG docs.

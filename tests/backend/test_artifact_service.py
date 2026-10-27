@@ -29,9 +29,39 @@ def _table(rows):
 
 @pytest.mark.unit
 def test_allowed_kinds_are_exactly_lane_a():
+    """Die Typenmenge ist AUSDRUECKLICH — eine Erweiterung ist eine Handlung.
+
+    `document_ref` kam am 2026-10-27 dazu (Knopf zum Paperless-Dokument unter
+    einer Scan-Fertigmeldung). Er ist Lane A: typisiertes JSON, das eine echte
+    React-Komponente rendert, kein Markup.
+    """
     assert ALLOWED_KINDS == frozenset(
-        {"table", "list", "keyvalue", "chart", "weather", "device_control", "presence_map"}
+        {"table", "list", "keyvalue", "chart", "weather", "device_control",
+         "presence_map", "document_ref"}
     )
+
+
+@pytest.mark.unit
+def test_lane_b_kinds_stay_out():
+    """Der eigentliche Riegel hinter der Liste: kein Markup-Typ schleicht sich ein."""
+    for verboten in ("html", "svg", "iframe", "script", "markdown"):
+        assert verboten not in ALLOWED_KINDS, verboten
+
+
+@pytest.mark.unit
+def test_every_allowed_kind_has_a_validator():
+    """🛑 Zwei Stellen, eine Menge — genau die Drift, die man vergisst.
+
+    Ein Typ in `ALLOWED_KINDS` ohne Eintrag in `_VALIDATORS` kommt durch den
+    Erlaubnis-Riegel und stirbt dann an einem KeyError tief im Aufruf, statt
+    sauber abgelehnt zu werden.
+    """
+    from services.artifact_service import _VALIDATORS
+
+    assert set(ALLOWED_KINDS) == set(_VALIDATORS), (
+        f"Erlaubnisliste und Validatoren weichen ab: "
+        f"nur erlaubt {sorted(set(ALLOWED_KINDS) - set(_VALIDATORS))}, "
+        f"nur Validator {sorted(set(_VALIDATORS) - set(ALLOWED_KINDS))}")
 
 
 # --- weather widget (Gen-UI kind) ------------------------------------------

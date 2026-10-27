@@ -112,6 +112,32 @@ class Settings(BaseSettings):
     # plain-text PDFs/docx/md. Empty → falls back to ollama_vision_model,
     # then ollama_chat_model. The extractor uses whichever is set.
     paperless_extraction_model: str = ""
+    #: Basis-URL der Paperless-Oberfläche, für Links aus Renfield heraus.
+    #:
+    #: 🛑 Dieselbe Variable, die der Paperless-MCP-Server schon bekommt — hier nur
+    #: als Settings-Feld nachgezogen, damit das Backend einen Link bauen kann.
+    #: KEINE neue Umgebungsvariable: `PAPERLESS_API_URL` steht in beiden
+    #: Instanzen bereits in `renfield-env`.
+    #: Leer heißt: kein Link. Der Knopf zeigt dann den Zustand ohne Ziel.
+    #: 🛑 Es ist eine LAN-Adresse. Der Link trägt im Heimnetz; von außen läuft er
+    #: ins Leere. Bewusst so entschieden (2026-10-27) — wird es später zum
+    #: Problem, trennt man Link-Basis und API-URL.
+    paperless_api_url: str = ""
+    #: Der Name DIESER Instanz, wie die Scan-Zielregistratur ihn führt
+    #: (`household`, `xidra`). Leer heißt: unbekannt.
+    #:
+    #: 🛑 Eine Instanz kannte sich bis 2026-10-27 selbst nicht — sie trug nur ihren
+    #: Ed25519-Föderationsschlüssel, der kein lesbarer Name ist. Genau diese Lücke
+    #: machte den folgenden Fehler möglich: ein Scan aus dem Haushalt nach xidra
+    #: liefert eine Fertigmeldung MIT xidras Dokumentkennung an den Haushalt. Da
+    #: beide Instanzen eigene Zählfolgen führen, gibt es diese Kennung hier auch —
+    #: für ein anderes Dokument. Ein Knopf darauf führt nicht ins Leere, sondern
+    #: ins Falsche.
+    #:
+    #: 🛑 FAIL-CLOSED: ist der Wert leer, gilt JEDER zielbehaftete Verweis als
+    #: entfernt. Eine unkonfigurierte Instanz verlinkt also nie falsch, sie
+    #: verlinkt gar nicht. Entwurf: `docs/design/cross-instance-document-reference.md`.
+    instance_id: str = ""
     ollama_embed_url: str | None = None          # Separate Ollama URL for embeddings (default: ollama_url)
 
     # Voice-server (B.4) — when set, backend's /api/voice/voice-chat

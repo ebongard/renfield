@@ -212,7 +212,14 @@
         "bar": "Grafico a barre",
         "line": "Grafico a linee"
       },
-      "seriesFallback": "Serie {{n}}"
+      "seriesFallback": "Serie {{n}}",
+      "documentRef": {
+        "open": "Apri in Paperless",
+        "filing": "archiviazione in corso",
+        "alreadyThere": "già presente in Paperless",
+        "notFiled": "non archiviato in Paperless",
+        "otherInstance": "si trova in {{instance}} — non ancora accessibile da qui"
+      }
     },
     "roleBadge": {
       "pin": "Risposto da {{role}} · fissa per la prossima domanda",

@@ -220,6 +220,21 @@ _STATES_WITHOUT_ERROR_CODE = frozenset({"done", "unrouted", "interrupted"})
 #: Erfolg, also genau die Spaltung, die 2026-10-26 den Scan blockierte.
 _STATES_COUNTING_AS_SUCCESS = frozenset({"done", "unrouted"})
 
+#: Zustände, in denen ein Dokument entstanden ist — nur dort gibt es etwas zu
+#: verlinken.
+#:
+#: 🛑 Die VIERTE Menge über dieselben Zustände, und sie steht hier oben, weil die
+#: zweite es nicht tat: `describe_failure_for_log` zählte jeden Zustand außer
+#: „done" als Fehlschlag und meldete für einen echten `unrouted`-Auftrag am
+#: 2026-10-04 `error_code=<fehlt>`, wo nie einer erwartet war. Zwei Weichen auf
+#: eine Menge — die zweite vergisst man. Das gilt auch für eine Menge mit einem
+#: einzigen Eintrag.
+#:
+#: 🛑 `unrouted` fehlt bewusst: dort steht das Ziel noch aus, es gibt also kein
+#: abgelegtes Dokument zu öffnen. Ein NEUER Zustand muss hier entscheiden,
+#: statt stillschweigend auf „kein Knopf" zu fallen.
+_STATES_WITH_DOCUMENT = frozenset({"done"})
+
 #: Die bekannte Form einer Zwischenlagen-Kennung: `scan-20261021-160741-5afef3cc`.
 #:
 #: 🛑 Sie wird hier geprüft, nicht im Modell. Der Docstring von
@@ -266,6 +281,71 @@ def describe_failure_for_log(status: str, result: dict) -> str:
         return " error_code=<fehlt>"
     safe = "".join(c for c in code if c.isalnum() or c == "_")[:40]
     return f" error_code=<unbekannt:{safe or '?'}>"
+
+
+def attach_document_ref(metadata: dict, status: str, result: dict, job_id: str) -> None:
+    """Hängt der Fertigmeldung einen Knopf zum Dokument an — als typisiertes Artefakt.
+
+    🛑 Der Meldungs-TEXT bleibt unberührt. `render_completion_message` ist eine
+    Vertrauensgrenze: ihr Text wird in späteren Agentenzügen WIEDER EINGESPIELT,
+    also gehört dort kein Link hinein. Der Knopf lebt in den Metadaten und wird
+    vom Artefakt-System gerendert, das Form und Rückfall bereits prüft.
+
+    🛑 Das Artefakt trägt nur die KENNUNG, nie eine URL: zur Schreibzeit ist die
+    Paperless-Ablage meist noch nicht durch (Ingest ⌀ 363 s, am 2026-10-27 im
+    Haushalt gemessen), und eine persistierte URL wäre eingefroren.
+
+    🛑 `result["documents"]` wird NICHT angefasst — es ist `list[Any]` aus dem
+    unvertrauten Ereignis. Ein geteilter Scan bekommt deshalb keinen Knopf,
+    statt aus freiem Text Kennungen zu raten.
+    """
+    if status not in _STATES_WITH_DOCUMENT:
+        return
+    doc_id = result.get("renfield_document_id")
+    # Dieselbe Prüfung, die `render_completion_message` für denselben Wert macht.
+    # `bool` ist in Python ein `int` — ohne den Ausschluss wäre `True` eine Kennung.
+    if not isinstance(doc_id, int) or isinstance(doc_id, bool):
+        return
+    from services.artifact_service import (
+        ArtifactRejected,
+        merge_artifacts_into_metadata,
+        validate_artifact,
+    )
+
+    # 🛑 WESSEN Kennung ist das? Der Scanner schickt die Fertigmeldung an die
+    # Instanz, die GEFRAGT hat — das Dokument kann aber in einer anderen liegen
+    # (`renfield-mcp-scanner/contract.py:29-31` sagt das ausdrücklich). Die
+    # Kennung gehört dann der ANDEREN Instanz, und weil beide eigene Zählfolgen
+    # führen, gibt es sie hier auch: für ein anderes Dokument. Ein Knopf darauf
+    # führte nicht ins Leere, sondern ins Falsche.
+    #
+    # 🛑 FAIL-CLOSED: ohne `settings.instance_id` ist jedes benannte Ziel fremd.
+    daten: dict = {"documentId": doc_id}
+    ziel = result.get("target")
+    if isinstance(ziel, str) and ziel.strip():
+        eigen = (settings.instance_id or "").strip().lower()
+        # Die Ungleichheit TRÄGT den Fail-closed-Fall schon allein: `ziel` ist
+        # hier nachweislich nicht leer, eine leere Selbstkennung ist also
+        # automatisch ungleich. Ein zusätzliches `or not eigen` sähe nach einem
+        # zweiten Riegel aus und wäre in JEDEM Pfad wirkungslos — und der Test
+        # dazu würde mit und ohne es bestehen.
+        if ziel.strip().lower() != eigen:
+            daten["instance"] = ziel.strip()
+    try:
+        artifact = validate_artifact({
+            # Stabil je Auftrag: eine zweite Zustellung desselben Scans ersetzt
+            # den Eintrag, statt ihn zu verdoppeln (`merge_artifacts_into_metadata`
+            # verschlüsselt nach `id`).
+            "id": f"scanjob-{job_id}-doc",
+            "kind": "document_ref",
+            "data": daten,
+        })
+    except ArtifactRejected as e:
+        # Ein abgelehntes Artefakt darf die Zustellung NIE verhindern — die
+        # Meldung selbst ist das Wichtige.
+        logger.warning(f"scanner: document_ref artifact rejected for {job_id}: {e}")
+        return
+    merge_artifacts_into_metadata(metadata, [artifact])
 
 
 def render_completion_message(status: str, title: str, result: dict, lang: str) -> str:
@@ -465,31 +545,34 @@ async def handle_job_event(db: Any, event: dict, *, redis: Any = None) -> str:
 
             from services.conversation_service import ConversationService
 
+            meta = {
+                "scanner_job": {"job_id": job_id, "status": status},
+                # 🛑 OHNE dieses Feld hält der Agent einen gescheiterten
+                # Scan für laufend. Gemessen am 2026-10-26: der Scan vom
+                # 12:05 scheiterte am Papierstau, die Meldung stand im
+                # Verlauf — aber ohne `action_success` feuerte der
+                # Stale-Error-Riegel nicht (`[VORHERIGE_FEHLGESCHLAGENE_
+                # AKTION]` hängt an `action_success is False`), während die
+                # Nachricht davor „Scan gestartet" mit `true` trug. Auf
+                # zwei weitere Bitten antwortete der Agent „läuft bereits
+                # im Hintergrund, Du wirst benachrichtigt" und rief das
+                # Werkzeug NIE auf — eine erfundene Beruhigung über einen
+                # Scan, der nicht lief.
+                #
+                # Das ist das „dritte Halbe" aus `agent-loop.md` an einer
+                # neuen Stelle: beide Hälften des Riegels waren intakt, nur
+                # schrieb niemand `False`. Ein ASYNCHRONER Fehlschlag
+                # braucht seinen eigenen Schreiber, denn der Werkzeugaufruf
+                # selbst war erfolgreich — er hat den Auftrag ja gestartet.
+                "action_success": status in _STATES_COUNTING_AS_SUCCESS,
+            }
+            attach_document_ref(meta, status, result, job_id)
+
             message = await ConversationService(db).save_message(
                 session_id=session_id,
                 role="assistant",
                 content=content,
-                metadata={
-                    "scanner_job": {"job_id": job_id, "status": status},
-                    # 🛑 OHNE dieses Feld hält der Agent einen gescheiterten
-                    # Scan für laufend. Gemessen am 2026-10-26: der Scan vom
-                    # 12:05 scheiterte am Papierstau, die Meldung stand im
-                    # Verlauf — aber ohne `action_success` feuerte der
-                    # Stale-Error-Riegel nicht (`[VORHERIGE_FEHLGESCHLAGENE_
-                    # AKTION]` hängt an `action_success is False`), während die
-                    # Nachricht davor „Scan gestartet" mit `true` trug. Auf
-                    # zwei weitere Bitten antwortete der Agent „läuft bereits
-                    # im Hintergrund, Du wirst benachrichtigt" und rief das
-                    # Werkzeug NIE auf — eine erfundene Beruhigung über einen
-                    # Scan, der nicht lief.
-                    #
-                    # Das ist das „dritte Halbe" aus `agent-loop.md` an einer
-                    # neuen Stelle: beide Hälften des Riegels waren intakt, nur
-                    # schrieb niemand `False`. Ein ASYNCHRONER Fehlschlag
-                    # braucht seinen eigenen Schreiber, denn der Werkzeugaufruf
-                    # selbst war erfolgreich — er hat den Auftrag ja gestartet.
-                    "action_success": status in _STATES_COUNTING_AS_SUCCESS,
-                },
+                metadata=meta,
                 user_id=requester.get("user_id"),
                 # `enforce_ownership` is an AUTH-ON rule (see chat-branching.md);
                 # every other caller derives it from the flag and this one must

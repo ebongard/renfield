@@ -29,6 +29,32 @@ data:
   # peer's transport_config gets a usable endpoint (without it a UI pairing yields
   # no endpoint → federation unusable). Same-cluster peers use the internal svc DNS.
   FEDERATION_ADVERTISED_URL: "http://backend.renfield.svc.cluster.local:8000"
+  # Der Name DIESER Instanz. Er muss Zeichen fuer Zeichen der `id` entsprechen,
+  # unter der die Gegenstelle sie kennt — fuer den Scanner ist das die `id` in
+  # dessen `targets.yaml` (dort `household` bzw. `xidra`, am 2026-10-27 in der
+  # echten Konfiguration nachgesehen, nicht geraten). Verglichen wird ohne
+  # Ruecksicht auf Gross-/Kleinschreibung und Randleerzeichen.
+  #
+  # 🛑 FAIL-CLOSED und darum eine stille Falle, wenn der Wert FALSCH ist: ist er
+  # leer, gilt jedes benannte Ziel als fremd und die Fertigmeldung zeigt statt
+  # des Knopfes nur einen Hinweis. Steht hier ein anderer Name als beim Scanner,
+  # passiert dasselbe fuer JEDEN eigenen Scan — kein Fehler, nur ein fehlender
+  # Knopf. Wer die Ziele im Scanner umbenennt, zieht diesen Wert mit.
+  INSTANCE_ID: "household"
+  # Personengebundene Foederation (F-ID-1), angeschaltet am 2026-10-27.
+  #
+  # AUS gilt: eine Anfrage der Gegenstelle laeuft als die GANZE fremde Instanz,
+  # mit der bei der Paarung gewaehrten Stufe. AN gilt: traegt die Anfrage einen
+  # `querier_ref`, zu dem hier eine Verknuepfung steht, laeuft sie als DIESE
+  # Person mit deren eigener Reichweite; die Paarungsstufe wird dann gar nicht
+  # gelesen (federation_query_responder.py:320).
+  #
+  # 🛑 Fail-closed und vor dem Umlegen nachgemessen: ohne Verknuepfungszeile
+  # aendert das Flag NICHTS (beide Instanzen hatten 0). Der Riegel verlangt
+  # zusaetzlich AUTH_ENABLED=true und verweigert die Zuordnung ausdruecklich,
+  # wenn Auth aus ist — unter Auth-aus gaebe es keine Kreise durchzusetzen und
+  # die Zuordnung oeffnete das ganze Gehirn.
+  FEDERATION_IDENTITY_LINKS_ENABLED: "true"
   ALLOW_REGISTRATION: "false"      # meaningless while auth is off (register route 403s either way); already the safe cutover value — a "true" here would count as "decided" and disarm the auth-on boot gate
   CORS_ORIGINS: "https://renfield.local"   # gepinnt am Cutover 2026-09-23 (Ingress renfield-https); "*" schaltet den CSWSH-Schutz des WS ab
   TRUSTED_PROXIES: "172.16.0.0/16"  # Cluster-Pod-CIDR, Cutover 2026-09-23 — leer = legacy XFF[0] (per-client keying behind Traefik); set to the Traefik pod CIDR for the spoof-resistant walk (#693)

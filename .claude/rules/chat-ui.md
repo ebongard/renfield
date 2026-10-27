@@ -47,6 +47,12 @@ conversations carrying a tier.) Highlighting is sentinel→`<mark>` (XSS-safe); 
   render tools (`services/widget_tools.py`) return `data={"artifacts":[…]}`, gathered by
   `chat_handler._collect_tool_artifacts` from `agent_tool_results`.
 - Persisted as `message_metadata.artifacts[]` keyed by `id`; a same-`id` streaming patch must stay idempotent.
+- 🛑 **`document_ref` ist der erste kind, der beim Rendern NACHLÄDT** (2026-10-27). Alle übrigen tragen reine Daten;
+  er trägt nur eine `documentId` und holt den Rest über `GET /api/knowledge/documents/<id>`. Grund: zur Schreibzeit
+  gibt es den Paperless-Link noch nicht (Ablage ist entkoppelter Nachlauf, Ingest ⌀ 363 s) und **6 von 37**
+  abgeschlossenen Dokumenten bekommen nie eine Kennung (Dubletten) — eine persistierte URL wäre eingefroren oder
+  dauerhaft leer. Nebenwirkung, die man wollen muss: der Zugriffsschutz des Endpunkts gilt, ein 403 heißt schlicht
+  „kein Link". Wer einen weiteren nachladenden kind baut, erbt diese Eigenschaft bewusst.
   Lane A relies on the enforcing baseline CSP in `nginx.conf`.
 
 ## `device_action` write-back (first artifact→action channel)

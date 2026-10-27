@@ -26,6 +26,7 @@ import ChartArtifact from './ChartArtifact';
 import WeatherArtifact from './WeatherArtifact';
 import DeviceControlArtifact, { type DeviceActionFn } from './DeviceControlArtifact';
 import PresenceMapArtifact from './PresenceMapArtifact';
+import DocumentRefArtifact from './DocumentRefArtifact';
 
 export interface ArtifactRendererProps {
   /** The raw artifact payload (from a WS frame or rehydrated metadata). */
@@ -95,6 +96,8 @@ function ArtifactBody({ artifact, onDeviceAction }: { artifact: ChatArtifact; on
       return <DeviceControlArtifact data={artifact.data} onAction={onDeviceAction} />;
     case 'presence_map':
       return <PresenceMapArtifact data={artifact.data} />;
+    case 'document_ref':
+      return <DocumentRefArtifact data={artifact.data} />;
     default:
       // Unreachable — the zod discriminated union rejects unknown kinds before
       // we get here — but exhaustiveness keeps it honest.

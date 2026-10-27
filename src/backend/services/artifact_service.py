@@ -42,7 +42,8 @@ logger = logging.getLogger(__name__)
 
 # --- The kind allowlist (Lane A only; html/svg are Lane B and rejected here) ---
 ALLOWED_KINDS: frozenset[str] = frozenset(
-    {"table", "list", "keyvalue", "chart", "weather", "device_control", "presence_map"}
+    {"table", "list", "keyvalue", "chart", "weather", "device_control", "presence_map",
+     "document_ref"}
 )
 
 # --- DoS caps (the backend's ONLY validation responsibility) -----------------
@@ -347,6 +348,39 @@ def _validate_presence_map(data: object) -> dict:
     return {"rooms": out_rooms}
 
 
+def _validate_document_ref(data: object) -> dict:
+    """Ein Verweis auf ein Renfield-Dokument — der Knopf loest ihn beim Anzeigen auf.
+
+    🛑 Dieses Artefakt traegt NUR eine Kennung, nie eine URL. Der Link entsteht
+    erst beim Rendern aus `GET /api/knowledge/documents/<id>`, und zwar aus zwei
+    Gruenden:
+      - Zur Schreibzeit gibt es ihn noch nicht. Die Paperless-Ablage ist ein
+        entkoppelter Nachlauf; gemessen am 2026-10-27 im Haushalt brauchte der
+        Ingest im Schnitt 363 s, und 6 von 37 abgeschlossenen Dokumenten bekamen
+        nie eine Paperless-Kennung (Dubletten).
+      - Eine persistierte URL waere eingefroren. Die Kennung altert nicht.
+    Damit gilt auch der Zugriffsschutz des Endpunkts (401/403 ueber
+    `check_document_access`) statt eines Links, der an ihm vorbeifuehrt.
+    """
+    if not isinstance(data, dict):
+        raise ArtifactRejected("document_ref.data: not an object")
+    doc_id = data.get("documentId")
+    # 🛑 `bool` ist in Python ein `int`; ohne den Ausschluss waere `True` eine
+    # gueltige Dokumentkennung.
+    if not isinstance(doc_id, int) or isinstance(doc_id, bool) or doc_id <= 0:
+        raise ArtifactRejected("document_ref.data: documentId must be a positive int")
+    out: dict = {"documentId": doc_id}
+    # 🛑 `instance` wird NUR gesetzt, wenn das Dokument in einer ANDEREN Instanz
+    # liegt. Die Entscheidung faellt im Backend (es kennt `settings.instance_id`),
+    # nicht im Frontend: so gibt es genau eine Stelle, an der „lokal oder
+    # entfernt" entschieden wird. Vorhanden heisst fuer die Komponente schlicht:
+    # nicht hier nachfragen, nur benennen.
+    instance = data.get("instance")
+    if instance is not None:
+        out["instance"] = _require_str(instance, field="document_ref.instance", max_chars=64)
+    return out
+
+
 _VALIDATORS = {
     "table": _validate_table,
     "list": _validate_list,
@@ -355,6 +389,7 @@ _VALIDATORS = {
     "weather": _validate_weather,
     "device_control": _validate_device_control,
     "presence_map": _validate_presence_map,
+    "document_ref": _validate_document_ref,
 }
 
 

@@ -66,6 +66,12 @@ export const keys = {
     all: ['knowledge'] as const,
     list: () => ['knowledge', 'list'] as const,
     detail: (id: number) => ['knowledge', 'detail', id] as const,
+    // 🛑 EIGENER Namensraum, nicht `detail`: dessen Geschwister nehmen alle
+    // eine Wissensspeicher-Kennung (`documents(kbId)`, `permissions(kbId)`).
+    // Ein Dokument unter `detail` abzulegen hiesse, dass Wissensspeicher 515
+    // und Dokument 515 sich denselben Zwischenspeichereintrag teilen — und
+    // wer zuerst da ist, liefert dem anderen die falsche Form.
+    document: (id: number) => ['knowledge', 'document', id] as const,
     documents: (kbId: number) => ['knowledge', kbId, 'documents'] as const,
     permissions: (kbId: number) => ['knowledge', kbId, 'permissions'] as const,
   },
