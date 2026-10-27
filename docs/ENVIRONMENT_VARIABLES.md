@@ -2940,6 +2940,10 @@ SEARCH_FUNCTIONAL_MIN_ENGINES=2       # degraded, wenn < N distinct general-Engi
 SEARCH_FUNCTIONAL_BACKBONE_ENGINES=bing,google-cse
 
 # Paperless-NGX URL
+# Seit 2026-10-27 liest das Backend sie auch selbst (`settings.paperless_api_url`),
+# um aus `GET /api/knowledge/documents/<id>` ein fertiges `paperless_url` zu bauen —
+# der Knopf unter einer Scan-Fertigmeldung. Leer heisst: kein Link, kein Fehler.
+# Es ist eine LAN-Adresse; der Link traegt nur im Heimnetz.
 PAPERLESS_API_URL=http://paperless.local:8000
 
 # Calendar (Unified Calendar MCP Server — EWS, Google, CalDAV)

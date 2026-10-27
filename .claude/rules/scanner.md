@@ -54,6 +54,12 @@ dedup / tier / PDF-Split / Paperless are unchanged.
   bereit ist. Die Abschalt-404 trägt `{"detail": {"reason": "folder_ingest_disabled", "message": …}}`, jede
   andere 404 gilt dem Scanner als wiederholbar. Repo-übergreifender Vertrag — nie umbenennen ohne den Scanner,
   und an **keine** andere Antwort hängen: dort macht das Merkmal eine wiederholbare Ablehnung endgültig.
+- 🛑 **Die Fertigmeldung trägt einen KNOPF zum Dokument — in den Metadaten, nie im Text** (2026-10-27).
+  `attach_document_ref` hängt ein `document_ref`-Artefakt an; `render_completion_message` bleibt unberührt, weil ihr
+  Text in späteren Agentenzügen wieder eingespielt wird. Verzweigt über `_STATES_WITH_DOCUMENT` — die **vierte**
+  benannte Zustandsmenge dieser Datei, hochgezogen trotz nur eines Eintrags, weil die zweite es nicht war und
+  2026-10-04 zwei Zustände vergaß. Ein geteilter Scan bekommt KEINEN Knopf: `result["documents"]` ist `list[Any]`
+  aus dem unvertrauten Ereignis, nur `renfield_document_id` wird als `int` geprüft.
 - The route accepts ONLY `SCANNER_INGEST_CLIENT_IDS` (fail-closed, rate-limited).
 
 ## Delivery: exactly once into the conversation

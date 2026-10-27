@@ -1,125 +1,411 @@
-# Basis-Migration: eine Neuinstallation soll dasselbe Schema bekommen wie die Produktion
+# Scan-Fertigmeldung: Knopf zum Paperless-Dokument
 
-Auslöser 2026-09-25: `_ensure_alembic_baseline()` baut das Schema aus den ORM-Modellen
-und stempelt den Alembic-Kopf. Roh-SQL-DDL aus Migrationen entsteht dadurch NIE.
-Repariert wurde der Bestand (#1336); die URSACHE steht noch.
+**Bitte (2026-10-27):** „wenn ich scanne, dann möchte ich danach ein Link zu dem
+Paperless Document in der Antwort haben, nicht nur die Nummer."
 
-## Gemessen, nicht vermutet (2026-09-25)
+**Entschieden:** Chip in der Meldung, **beim Anzeigen aufgelöst**. LAN-Adresse
+als Linkziel genügt.
 
-`create_all` (mit ALLEN Modellmodulen importiert) gegen das Produktionsschema:
+## Warum nicht einfach einen Link in den Text
 
-| | Anzahl | Art |
-|---|---|---|
-| Tabellen | 75 = 75 | deckungsgleich |
-| Indizes | 333 = 333 | **aber zu einem Drittel verschiedene** |
-| nur Produktion | 45 | HNSW, Volltext-GIN, partielle + zusammengesetzte, 3 UNIQUE |
-| nur `create_all` | 45 | **25 redundant zum Primärschlüssel**, 20 eigenständig-unbelegt |
+Gemessen, bevor entworfen wurde:
 
-🛑 Gleiche ZAHL ist nicht gleiche MENGE — das hätte mich fast in die Irre geführt.
+| Befund | Folge |
+|---|---|
+| Die Nummer ist `renfield_document_id`, nicht Paperless | heute zeigt die Antwort die falsche Kennung für diesen Zweck |
+| Paperless-Kennung existiert zur Meldung noch nicht (⌀ 363 s Ingest, Haushalt, 60 Tage) | ein Link beim Schreiben wäre meistens leer |
+| 6 von 37 abgeschlossenen bekommen **nie** eine (Dublette/Ablehnung) | der Fall „kein Link" muss sauber aussehen |
+| Der Chat rendert **kein** Markdown | ein Rohtext-Link bliebe tote Zeichenkette |
+| `render_completion_message` ist eine **Vertrauensgrenze** (Text wird in spätere Agentenzüge wieder eingespielt) | der Text bleibt unverändert; der Link lebt in den Metadaten |
+| Die Meldung trägt bereits `message_metadata.scanner_job` | der Hausweg steht offen: strukturierte Daten → React-Komponente |
 
-**Nutzungsmessung taugt NICHT zum Beschneiden:** Postgres lief erst 3,5 h, die
-Zähler sahen also höchstens dieses Fenster. „0 Scans" heißt nicht „ungenutzt",
-sondern „in 3,5 h nicht gebraucht" — bei täglichen/wöchentlichen Aufgaben wertlos.
-Belastbar ist nur die Gegenrichtung: was Scans HAT, wird gebraucht.
+## Plan
 
-## Entscheidung (aus der Messung, nicht aus Geschmack)
+### Backend
+- [x] `services/artifact_service.py`: `ALLOWED_KINDS` um `document_ref` ergänzen
+      (Backend deckelt nur Größe; die Form prüft zod im Frontend).
+- [x] `services/scanner_jobs.py`: bei `status == "done"` ein `document_ref`-Artefakt
+      über `merge_artifacts_into_metadata` an die Meldung hängen. **Der
+      Meldungstext bleibt Zeichen für Zeichen gleich** — kein Link im Text.
+- [x] `src/frontend/src/components/chat/artifacts/artifactSchema.ts`: `kind`
+      `document_ref` in die zod-Union, Daten = `{ documentId: number }`.
+- [x] 🛑 `api/routes/knowledge_schemas.py`: `paperless_url: str | None = None` auf
+      `DocumentResponse` deklarieren. OHNE das verwirft Pydantic den Schlüssel
+      **still** (`knowledge.py:706` baut `DocumentResponse(**kwargs)`), und das
+      Feld käme nie beim Frontend an. Vorbild steht daneben: `in_paperless`.
+      (Review-Korrektur C1, keine Wahl — ohne sie wirkt das Feature nicht.)
+- [x] `api/routes/knowledge.py`: im gemeinsamen Dokument-Serialisierer
+      `paperless_url: str | None` ergänzen, zusammengesetzt aus
+      `settings.paperless_api_url` + `/documents/<id>/details`, nur wenn
+      `paperless_document_id` gesetzt ist. `in_paperless` bleibt unverändert.
+      🛑 Das Zusammensetzen gehört in **eine** Hilfsfunktion, damit es testbar
+      ist und nicht an drei Endpunkten driftet (`/documents`,
+      `/documents/batch`, `/documents/{id}` teilen den Serialisierer).
+- [x] Keine neue Einstellung: `PAPERLESS_API_URL` wird wiederverwendet.
 
-**Die Produktion ist die Wahrheit.** Die Basis erzeugt das heute laufende Schema.
-Die 25 redundanten `index=True` kommen NICHT hinein — sie doppeln den PK-Index und
-wären auf jeder Neuinstallation reine Schreiblast.
+### Frontend
+- [x] Neue Artefakt-Komponente `DocumentRefArtifact.tsx` neben den bestehenden
+      (`KeyValueArtifact`, `PresenceMapArtifact`, `DeviceControlArtifact`), in
+      `ArtifactRenderer.tsx` auf den neuen `kind` geschaltet. Sie holt
+      `GET /api/knowledge/documents/<id>` und zeigt genau einen von drei
+      Zuständen:
+      - `paperless_url` gesetzt → Knopf „In Paperless öffnen"
+      - noch im Ingest → „wird gerade abgelegt" (nicht klickbar)
+      - abgeschlossen ohne Kennung → „nicht in Paperless abgelegt"
+- [x] i18n-Schlüssel in `de.json` **und** `en.json` (und `it.json`, wo die
+      Nachbarschlüssel existieren). Keine fest verdrahteten Texte.
+- [x] Dark-Mode-Varianten, nur DESIGN.md-Token. Kein vom Modell erzeugtes HTML.
 
-## Schritte
+### Tests (Pflicht, nicht optional)
+- [x] Backend: `paperless_url` ist gesetzt, wenn die Kennung existiert, und
+      `None`, wenn nicht. Zusammensetzung ohne doppelten Schrägstrich.
+- [x] Backend: die Metadaten tragen `renfield_document_id` — **und** eine
+      Negativkontrolle, dass der Meldungs*text* unverändert bleibt (die
+      Vertrauensgrenze darf nicht aufweichen).
+- [x] Backend: ein Scan ohne Dokument (unrouted/failed) trägt **keine**
+      `renfield_document_id` und die Komponente erscheint dort nicht.
+- [x] Frontend: RTL + MSW für alle drei Zustände.
 
-- [x] B1 Die 25 redundanten `index=True` (Primärschlüsselspalten) aus den Modellen
-      entfernen. Belegen, dass `create_all` danach genau 25 Indizes weniger baut.
-- [x] B2 ENTSCHIEDEN. Nicht nach Namen verglichen, sondern nach (Tabelle,
-      Spalten) UND Prädikat — ein partieller Index deckt eben nicht alles ab.
+### Doku (nach `/review`, vor dem Merge)
+- [x] `.claude/rules/scanner.md`: ein Satz, dass die Meldung die Dokument-
+      kennung in den Metadaten führt und der Knopf erst beim Anzeigen auflöst —
+      samt Begründung (Kennung existiert zur Meldung noch nicht).
 
-      | Gruppe | n | Entscheidung |
-      |---|---|---|
-      | gleichwertig, nur anderer Name | 8 | Modell bekommt den PRODUKTIONSNAMEN (erst mit B3) |
-      | gedeckt durch zusammengesetzten (führende Spalte) | 5 | Modell deklariert den ZUSAMMENGESETZTEN (erst mit B3) |
-      | wirklich fehlend | 7 | KEINE Migration — gemessen, s.u. |
+## Offene Punkte / Risiken
+- **Berechtigung:** `GET /documents/{id}` muss für die anfragende Person
+  zugelassen sein und über die Kreis-Stufen gehen (`user_id=asker_id`). Vor dem
+  Bau prüfen, ob der Endpunkt das bereits tut — sonst ist das der erste Schritt.
+- **LAN-Grenze:** Der Link trägt nur im Heimnetz. Bewusst so entschieden; falls
+  das später stört, wird aus `PAPERLESS_API_URL` eine getrennte Link-Basis.
+- **Ein Abruf je Scan-Nachricht.** Selten genug, kein Zwischenspeicher nötig.
 
-      🛑 **Die Falle, in die ich fast gelaufen wäre:** die 13 aus den ersten
-      beiden Gruppen NICHT einfach aus dem Modell entfernen. Auf einer
-      Neuinstallation werden die Migrationen übersprungen — `create_all` ist
-      dort die EINZIGE Quelle. Ohne die Deklaration bekäme eine frische Instanz
-      gar keinen Index auf diesen Spalten, also genau den Schaden, den dieser
-      Strang beheben soll.
+## Decision ledger
 
-      🛑 **Zwei meiner ersten Einstufungen waren falsch** und wurden beim
-      Nachprüfen gefangen: `ix_pf_finalize_unfinalized (created_at) WHERE
-      finalized_at IS NULL` und `uq_tool_outcome_system_tool (tool_name) WHERE
-      user_id IS NULL` sind PARTIELL. Gleiche Spalte ist nicht gleiche Deckung.
-      Sie zählen zu den 7 Fehlenden, nicht zu den Gleichwertigen.
+### R1: Traegermechanik fuer den Knopf — bestehendes Artefakt-System oder eigene Komponente
+Finding: F3 (P1, confidence 9/10, `src/frontend/src/components/chat/artifacts/artifactSchema.ts:110`,
+Reviewer: plan-eng-review, ausgeloest durch die Nutzerfrage „Haben wir nicht eine extra
+Funktionalitaet fuer das Rendering von Daten, wie z.B. Wetterdaten?")
+Plan baseline: urspruenglicher Vorschlag — eigene Komponente, die `message_metadata.scanner_job`
+liest und in `ChatMessages.tsx` eingehaengt wird. Nicht genehmigt.
+Runtime evidence:
+- `artifactSchema.ts:110-117` — zod-Union ueber `kind`: table, list, keyvalue, chart, weather,
+  device_control, presence_map. `weather` ist woertlich der vom Nutzer genannte Fall.
+- `chat_handler.py:1524-1525` — „Emitted as `artifact` WS frames and persisted into
+  message_metadata[\"artifacts\"]". Artefakte sind also PERSISTENT, nicht nur Strom.
+- `ChatContext.tsx:245` — `...(Array.isArray(meta?.artifacts) && … { artifacts: meta.artifacts })`
+  — Rehydrierung beim Verlaufsladen. Genau der Weg, den eine Scan-Meldung nimmt.
+- `ChatMessages.tsx:533` — Renderstelle existiert, hinter `artifacts_typed_enabled`.
+- Live: `ARTIFACTS_TYPED_ENABLED=true` im Haushalt.
+- `artifact_service.py:44` — `ALLOWED_KINDS` (Backend deckelt Groesse), Form prueft zod vorne.
+- `artifactSchema.ts:36-38` — `keyValueDataSchema` ist nur `pairs: [{key, value}]`, reine
+  Zeichenketten. Ein bestehender kind kann KEINEN Link tragen.
 
-      **Warum für die 7 keine Migration:** die Tabellen sind zu klein, als dass
-      der Planer einen Index wählte — `kg_entities` 4 813 Zeilen / 1,2 MB,
-      `kg_relations` 4 231, `conversation_memories` 81, `procedural_skills` 5,
-      `tool_outcome_stats` 3, `paperless_pending_finalize` LEER. Dieselbe
-      Lektion wie bei den Vektorindizes: ein Index, den der Planer nicht nimmt,
-      ist reine Schreiblast. Wenn eine dieser Tabellen wächst, neu messen.
+Comparison grid:
 
-      **Umsetzung der 13 gehört zu B3**, nicht davor: der Nutzen entsteht erst
-      mit der Basis-Migration, und B3 legt ohnehin fest, wie das Modell Indizes
-      deklariert. Vorher umzubauen hieße, Arbeit auf eine noch nicht getroffene
-      Entscheidung zu setzen.
-- [x] B3 Basis-Migration gebaut: `pc20260926_baseline`, am Kettenende MIT WÄCHTER, die das Produktionsschema erzeugt. Mechanismus noch
-      offen — die Kette hat heute EINE Wurzel (`9a0d8ccea5b0`, leerer Rumpf), und
-      eine committete Migration darf nicht bearbeitet werden. Kandidaten:
-      zweite Wurzel, gestauchte Kette mit angepasstem `alembic_version` auf beiden
-      Instanzen, oder Basis am Kettenende mit Neuinstallations-Weiche.
-- [x] B4 `init_db()` stempelt die Vorgängerrevision und fährt `upgrade head`: eine frische Datenbank läuft durch
-      `alembic upgrade head` statt `create_all` + Stempel.
-- [x] B5 BEWIESEN per Mengenvergleich: 76 Tabellen, 333 Indizes, beide Differenzen LEER. leere Datenbank -> `upgrade head` -> Schemaabzug Zeile für Zeile
-      gegen die Produktion. KEIN Zahlenvergleich, ein Mengenvergleich.
-- [x] B6 Rückweg durchlaufen (333→333→333 und 326→326→326). durchlaufen, nicht behaupten.
+| Choice | Current | A (Artefakt-System) | B (eigene Komponente) |
+|---|---|---|---|
+| Traegermechanik | keine, pending | bestehendes Artefakt-System, neuer `kind` | eigenes Feld in `scanner_job` |
+| Formpruefung | keine, pending | zod, mit Rueckfall auf escaped Codeblock | keine |
+| Persistenz/Rehydrierung | keine, pending | vorhanden, wiederverwendet | eigener Pfad ueber `scanner_job` |
+| Renderstelle | keine, pending | vorhanden (`ChatMessages.tsx:533`) | neue Einhaengung noetig |
+| Funktionsschalter | keine, pending | `artifacts_typed_enabled` (live an) | keiner |
+| Live-Aufloesung Paperless | gefordert | in der neuen Komponente | in der neuen Komponente |
+| Dateien | — | ~13 | ~12 |
+| `paperless_url` im Serialisierer | pending | gleich | gleich |
 
-## Nicht in diesem Vorhaben
-- Die 44 Indizes mit 0 Scans beschneiden — das Fenster trägt die Aussage nicht.
-  Wenn das gewollt ist: Statistiken zurücksetzen, zwei Wochen laufen lassen, dann messen.
+State: approved
+Actual answer: A) Bestehendes Artefakt-System (Antwort auf D2)
+Accepted scope: Der Knopf faehrt auf dem bestehenden Artefakt-System. Neuer `kind`
+`document_ref` in `artifact_service.ALLOWED_KINDS` (Backend-Deckel) und in
+`artifactSchema.ts` (zod-Form); die Scan-Fertigmeldung haengt ihr Artefakt ueber
+`merge_artifacts_into_metadata` an; eine neue Artefakt-Komponente loest beim Anzeigen
+auf und zeigt Paperless-Link / „wird abgelegt" / „nicht abgelegt". Renderstelle,
+Persistenz, Rehydrierung und Funktionsschalter werden WIEDERVERWENDET, nicht neu gebaut.
+Nicht genehmigt und nicht Teil dieser Antwort: F1 und F2 (siehe Befunde).
+History: D1 (Komplexitaetstor, Dateiaufteilung) ist damit erledigt — unter A ist die
+Komponentendatei vom System vorgegeben, nicht waehlbar; die Aufteilung wird nicht neu
+gestellt. D1 (Komplexitaetstor, Dateiaufteilung) wurde gestellt und vom Nutzer mit dieser
+Rueckfrage beantwortet statt mit einer Auswahl. D1 ist dadurch gegenstandslos geworden:
+unter A ist die eigene Komponentendatei vom System vorgegeben, nicht waehlbar. D1 wird nach
+der Entscheidung zu R1 nur dann neu gestellt, wenn die Aufteilung dann noch offen ist.
 
----
+### R2: Wie der Artefakt-Anhang auf `done` begrenzt wird
+Finding: C2 (P2, confidence 9/10, `src/backend/services/scanner_jobs.py:200`, Reviewer: plan-eng-review)
+Plan baseline: nicht spezifiziert — der Plan sagt nur „bei `status == \"done\"`". Nicht genehmigt.
+Runtime evidence:
+- Prior learning `two-switches-over-one-status-set-drift` (9/10, 2026-10-04): in DIESER Datei
+  verzweigten `render_completion_message` und `describe_failure_for_log` ueber dieselbe
+  Statusmenge; die zweite vergass zwei Zustaende, ein `unrouted`-Auftrag meldete
+  `error_code=<fehlt>`.
+- `scanner_jobs.py:200` — Kommentar: „`render_completion_message` und `describe_failure_for_log`
+  verzweigen ueber ..." — die Menge `_STATES_WITHOUT_ERROR_CODE` wurde daraufhin hochgezogen.
+- Der Artefakt-Anhang waere die DRITTE Verzweigung ueber dieselbe Statusmenge.
 
-# 2026-09-27 — Sechs Baustellen: Tore, Flags, Doku, Issues
+Comparison grid:
 
-Auftrag: veraltete Doku beheben, Schließbares schließen, das kaputte Lint-Tor und den
-latenten Hook-Fehler beheben, die Flags reparieren, die beim Einschalten brechen, und
-die 12 vorbereiteten Issue-Aktionen ausführen.
+| Choice | Current | A (Menge hochziehen) | B (inline `== "done"`) |
+|---|---|---|---|
+| Verhalten: Artefakt nur bei `done` | gefordert | gleich | gleich |
+| Wo steht die Statusmenge | 1 hochgezogene + 1 inline | 2 hochgezogene, geteilt | 1 hochgezogen + 2 inline |
+| Drift bei einem neuen Status | moeglich | Strukturtest faengt sie | moeglich, still |
+| Test | pending | Test ueber die geteilte Menge | Test je Zustand |
+| Aufwand | — | human ~20min / CC ~3min | human ~5min / CC ~1min |
 
-## Erledigt
+State: approved
+Actual answer: A) Menge hochziehen und teilen (Antwort auf D3)
+Accepted scope: Die Zustaende, bei denen ein Dokument existiert, werden als benannte
+Modulkonstante in `scanner_jobs.py` gefuehrt (Muster: `_STATES_WITHOUT_ERROR_CODE`), der
+Artefakt-Anhang verzweigt ueber genau diese Menge, und ein Test haelt das fest.
+History: —
 
-- [x] **Lint-Tor** (`fix/lint-gate-and-latent-defects`, 3 Commits). Es lief seit seiner
-      Einführung nie: `--config /app/pyproject.toml` zeigte auf eine Datei, die nie im
-      Bild war, und `ruff` ist im Produktionsbild nicht installiert. Neu:
-      `bin/lint-backend.sh` (Host, Version festgenagelt auf 0.16.9, weil `RUF100` an der
-      aktiven Regelmenge hängt). 1469 → 0 Befunde.
-- [x] **Frontend-Tor** — dieselbe Hälfte war rot: 9 Fehler, darunter zwei kaputte
-      `eslint-disable`-Kommentare. `npm run lint` → 0 Fehler.
-- [x] **Latenter Hook-Fehler** `TierPicker.tsx` — `useRef`/`useEffect` standen hinter dem
-      vorzeitigen `return` für `variant === 'compact'`. Neuer Test mit Gegenkontrolle
-      (`Rendered fewer hooks than expected`).
-- [x] **Drei Flags** (`fix/flags-that-break-when-enabled`, 1 Commit):
-      `VOICE_AUTH_ENABLED` war ein `TypeError` (+ drei weitere Brüche desselben Flags);
-      `/api/speakers/identify` rechnete einen anderen Schwerpunkt als die Erkennung
-      (drei Abweichungen, nicht eine); `MEMORY_EXTRACTION_V2_AUTHORITATIVE` ist überholt.
-      10 neue Tests, 8 davon fallen gegen den Vorzustand.
-- [x] **12 Issue-Aktionen** ausgeführt: 7 geschlossen (#11, #13, #23, #127, #1113,
-      #1116, #1277), 3 angelegt (#1343/#1344/#1345), 2 zugeschnitten (#270, #263),
-      3 kommentiert (#342, #1206, #876).
-- [x] **Veraltete Doku**: Kopfdatum in `docs/TECHNICAL_DEBT.md` (war zwei Monate alt bei
-      aktueller Tabelle), Flag-Liste 4a in `docs/BACKLOG_INVENTORY.md` (gegen die LIVE-
-      ConfigMaps nachgemessen), die Begründung im `catch` von `ObligationRow.tsx`.
+## Testabdeckung (geplante Pfade)
 
-## Offen / an den Eigentümer
+```
+CODE PATHS                                              USER FLOWS
+[+] services/scanner_jobs.py                            [+] Scan fertig -> Knopf
+  |-- Artefakt-Anhang                                     |-- [GAP] Meldung erscheint, Knopf sichtbar
+  |   |-- [GAP] status in DOCUMENT_STATES + doc_id        |-- [GAP] Klick oeffnet Paperless
+  |   |-- [GAP] status in DOCUMENT_STATES, doc_id fehlt   |-- [GAP] Ablage laeuft noch -> "wird abgelegt"
+  |   |-- [GAP] status NICHT in DOCUMENT_STATES           |-- [GAP] Dublette -> "nicht abgelegt"
+  |   \-- [GAP] Meldungstext UNVERAENDERT (Negativkontrolle)
+  \-- [GAP] Strukturtest: Verzweigung ueber die GETEILTE Menge (R2)
+[+] api/routes/knowledge.py                             [+] Fehlerzustaende
+  |-- paperless_url                                       |-- [GAP] Abruf 403 -> kein Knopf, keine Fehlerwand
+  |   |-- [GAP] paperless_document_id gesetzt             |-- [GAP] Abruf 404 -> dasselbe
+  |   |-- [GAP] None -> Feld ist None                     \-- [GAP] Netzfehler -> stiller Rueckfall
+  |   \-- [GAP] Basis-URL mit Schraegstrich am Ende
+  \-- [GAP] C1: Feld kommt TATSAECHLICH durch das response_model
+[+] DocumentRefArtifact.tsx                             [+] Schalter
+  |-- [GAP] [->E2E nicht noetig] drei Zustaende            \-- [GAP] artifacts_typed_enabled aus -> kein Knopf
+  \-- [GAP] zod-Formfehler -> Rueckfall auf Codeblock (vom System geerbt)
 
-- [ ] 🛑 **`AUTH_COOKIE_ENABLED` im Haushalt** — nicht gesetzt (Standard `False`), während
-      `AUTH_ENABLED` seit 2026-09-23 an ist. Das Sitzungstoken liegt dort in
-      `localStorage`; xidra führt eine HttpOnly-Sitzung. Ein Auth-Flag in der Produktion
-      lege ich nicht selbst um.
-- [ ] Der Doku-Kehraus der 101 `status: docs-pr`-Posten — ein großer Teil davon ist in
-      `TODOS.md` längst nachgezogen; die Prüfung Posten für Posten läuft.
-- [ ] Das neue Issue „Geteilte Verläufe nach dem Vorbild der Meetings" — Abschnitt 4 der
-      Vorlage behält es dem Eigentümer vor.
-- [ ] Push + PRs: drei Zweige liegen lokal, gestapelt. Ungefragt pushe ich nicht.
+COVERAGE: 0/18 geplante Pfade (Plan, noch kein Code)  |  GAPS: 18
+```
+
+🛑 Zwei Tests tragen mehr als die anderen:
+- **Die Negativkontrolle auf den unveraenderten Meldungstext.** `render_completion_message`
+  ist eine Vertrauensgrenze (ihr Text wird in spaetere Agentenzuege wieder eingespielt).
+  Ohne diesen Test weicht sie beim naechsten Umbau unbemerkt auf.
+- **C1 muss END-ZU-ENDE geprueft werden**, nicht am Serialisierer: ein Test, der nur
+  `_doc_to_response_kwargs` aufruft, bliebe gruen, waehrend Pydantic das Feld verwirft.
+  Der Test muss durch `DocumentResponse` gehen.
+
+## NOT in scope
+- **Zweite Nachricht, wenn die Ablage spaeter durchlaeuft.** Verworfen in der
+  Entwurfsentscheidung: braucht eine zweite Zustellung mit denselben
+  Genau-einmal-Garantien wie die erste.
+- **Von aussen erreichbare Paperless-Adresse.** Bewusst zurueckgestellt; der Link
+  traegt im Heimnetz. Aenderung waere spaeter eine getrennte Link-Basis, kein Code.
+- **Buendelung der Dokumentabrufe** ueber `/documents/batch` (knowledge.py:643).
+  Bei 37 Scans in 60 Tagen Vorratshaltung; P3.
+- **Renfield-eigene Dokument-Detailseite.** Existiert nicht und wird hier nicht gebaut.
+
+## What already exists (wiederverwendet statt nachgebaut)
+- **Artefakt-System**: `artifactSchema.ts` (zod-Union), `ArtifactRenderer.tsx`,
+  `artifact_service.merge_artifacts_into_metadata`, Persistenz in
+  `message_metadata["artifacts"]`, Rehydrierung in `ChatContext.tsx:245`,
+  Renderstelle `ChatMessages.tsx:533`, Schalter `artifacts_typed_enabled` (live an).
+  Neu ist allein ein `kind` plus seine Komponente.
+- **Zugriffsschutz**: `GET /documents/{id}` ist fail-closed (401/403 ueber
+  `check_document_access`). Kein neuer Riegel noetig.
+- **Dokument-Serialisierer**: `_doc_to_response_kwargs` bedient bereits alle fuenf
+  Dokument-Endpunkte; `in_paperless` ist das Vorbild fuer `paperless_url`.
+- **Statusmengen-Muster**: `_STATES_WITHOUT_ERROR_CODE` in `scanner_jobs.py`.
+
+## Datenfluss
+
+```
+Scanner (Mac) --POST /api/scanner/job-event--> Backend
+                                                 |
+                                   render_completion_message()   [Text, UNVERAENDERT]
+                                                 |
+                              status in DOCUMENT_STATES ? --nein--> keine Artefakte
+                                                 | ja
+                              merge_artifacts_into_metadata(meta, [document_ref])
+                                                 |
+                                         save_message() --> DB
+                                                 |
+           /ws/user scan_job_finished --> Frontend laedt Gespraech neu
+                                                 |
+                      ChatContext rehydriert meta.artifacts --> ArtifactRenderer
+                                                 |
+                                      DocumentRefArtifact (kind=document_ref)
+                                                 |
+                              GET /api/knowledge/documents/<id>   [401/403 fail-closed]
+                                                 |
+                 paperless_url ? --ja--> Knopf "In Paperless oeffnen"
+                                 --nein, in Arbeit--> "wird gerade abgelegt"
+                                 --nein, abgeschlossen--> "nicht in Paperless abgelegt"
+```
+
+## Failure modes
+| Pfad | Realistischer Produktionsfehler | Abdeckung | Sichtbar? |
+|---|---|---|---|
+| Artefakt-Anhang | Caps des Backends weisen das Artefakt ab | Test geplant | Knopf fehlt, Meldung bleibt — kein Bruch |
+| `paperless_url` | Feld nicht auf `DocumentResponse` (C1) | Test geplant (end-zu-ende) | 🛑 STILL, deshalb C1 als Pflicht im Plan |
+| Abruf im Knopf | 403, weil das Dokument einer anderen Person gehoert | Test geplant | Knopf zeigt keinen Link, keine Fehlerwand |
+| Abruf im Knopf | Netzfehler / Backend weg | Test geplant | stiller Rueckfall auf "wird abgelegt" |
+| Schalter aus | `artifacts_typed_enabled=false` | Test geplant | Knopf verschwindet ganz |
+
+**Kritische Luecken: 0** — jede Stelle, die still scheitern koennte, hat einen geplanten Test.
+C1 waere ohne den Plan-Eintrag eine gewesen.
+
+## Worktree parallelization strategy
+Sequential implementation, no parallelization opportunity. Das Frontend braucht
+`paperless_url` aus dem Backend, und der neue `kind` muss in beiden Erlaubnislisten
+stehen, bevor die Komponente etwas zu rendern hat.
+
+## Implementation Tasks
+Synthesized from this review's findings. Each task derives from a specific
+finding above. Run with Claude Code or Codex; checkbox as you ship.
+
+- [x] **T1 (P1, human: ~45min / CC: ~5min)** — backend/artifacts — `document_ref` als kind registrieren
+  - Surfaced by: R1 (Antwort D2) — bestehendes Artefakt-System statt Parallelgleis
+  - Files: `src/backend/services/artifact_service.py`, `src/frontend/src/components/chat/artifacts/artifactSchema.ts`
+  - Verify: Backend-Test auf `ALLOWED_KINDS`; `npx tsc --noEmit -p .` im Frontend
+- [x] **T2 (P1, human: ~1h / CC: ~8min)** — scanner — Artefakt an die Fertigmeldung haengen
+  - Surfaced by: R2 (Antwort D3) — Verzweigung ueber die geteilte Statusmenge
+  - Files: `src/backend/services/scanner_jobs.py`, `tests/backend/test_scanner_jobs*.py`
+  - Verify: Tests inkl. Negativkontrolle „Meldungstext unveraendert"
+- [x] **T3 (P1, human: ~30min / CC: ~4min)** — api — `paperless_url` ausliefern
+  - Surfaced by: C1 — Pydantic verwirft unbekannte Schluessel still
+  - Files: `src/backend/api/routes/knowledge_schemas.py`, `src/backend/api/routes/knowledge.py`, `tests/backend/test_knowledge*.py`
+  - Verify: Test geht durch `DocumentResponse`, nicht nur durch den Serialisierer
+- [x] **T4 (P1, human: ~2h / CC: ~12min)** — frontend — `DocumentRefArtifact` mit drei Zustaenden
+  - Surfaced by: Entwurfsentscheidung „beim Anzeigen aufloesen"
+  - Files: `src/frontend/src/components/chat/artifacts/DocumentRefArtifact.tsx`, `ArtifactRenderer.tsx`, `i18n/locales/{de,en,it}.json`, `tests/frontend/react/`
+  - Verify: RTL fuer alle drei Zustaende + 403/Netzfehler; dark mode, DESIGN.md-Token
+- [x] **T5 (P2, human: ~15min / CC: ~2min)** — docs — Rule nachziehen
+  - Surfaced by: Doku-Tor des Projekts
+  - Files: `.claude/rules/scanner.md`
+  - Verify: Sweep ueber `docs/`, `CLAUDE.md`, `.claude/rules/`
+
+## Unresolved decisions that may bite you later
+Keine. R1 und R2 sind beantwortet; C1 ist eine sachliche Korrektur ohne Wahl;
+A1, A2 und die Leistungsnotiz sind berichtet und bewusst nicht remediert.
+
+Approval readiness: PASS — R1 (Antwort D2), R2 (Antwort D3). C1 als notwendige
+Umsetzung eines bereits genehmigten Vertrags mitgefuehrt, ohne eigene Frage.
+
+## Completion summary
+- Step 0: Scope Challenge — scope accepted as-is (Komplexitaetstor ausgeloest, D1 durch D2 gegenstandslos)
+- Architecture Review: 2 issues found (A1, A2; A3 geprueft und entkraeftet)
+- Code Quality Review: 2 issues found (C1, C2)
+- Test Review: diagram produced, 18 gaps identified (Plan ohne Code)
+- Performance Review: 1 issue found (P3, Buendelung zurueckgestellt)
+- NOT in scope: written
+- What already exists: written
+- TODOS.md updates: 0 items proposed to user
+- Failure modes: 0 critical gaps flagged
+- Unresolved decisions: 0 in this review
+- Outside voice: codex, unavailable (nicht installiert; nativer Rueckfall mangels TaskOutput nicht moeglich)
+- Parallelization: 1 lane, 0 parallel / 5 sequential
+- Lake Score: 2/2 = 10/10 choices
+
+## Review
+(wird nach der Umsetzung ergänzt)
+
+## Gestaltungsentscheidungen (plan-design-review)
+
+### Zustandstabelle
+
+| Zustand | Auftritt | Token | Text (de) |
+|---|---|---|---|
+| Link vorhanden | Knopf, `.btn-secondary`, Radius `sm` 4px | Standard-Knopf aus DESIGN.md §Buttons | „In Paperless öffnen" |
+| wird gerade abgelegt | gedämpfter Text, kein Knopf | neutral gedämpft (`text-gray-500 dark:text-gray-400`) | „wird gerade abgelegt" |
+| nicht abgelegt | gedämpfter Text, **Grund im Text** | dieselbe neutrale Dämpfung | „schon vorhanden" (Dublette) / „nicht abgelegt" |
+
+🛑 **Entscheidung D2: KEIN Bernstein für „nicht abgelegt".** Eine Dublette ist kein
+Fehlschlag — das Dokument liegt in Paperless, nur schon länger. Gemessen betrifft das
+rund jeden sechsten Scan (6 von 37 in 60 Tagen); eine Warnfarbe bei jedem sechsten Mal
+nutzt sich ab und warnt bald vor nichts mehr. Bernstein bleibt den Fällen vorbehalten,
+die DESIGN.md am 2026-09-28 dafür vorgesehen hat.
+Preis, bewusst in Kauf genommen: eine echte Ablehnung durch Paperless sieht damit so
+ruhig aus wie eine Dublette. Der Grund steht aber im Text.
+
+### Zustandsabdeckung (Entscheidung D3)
+
+| Feature | LADEN | LEER | FEHLER | ERFOLG | TEILWEISE |
+|---|---|---|---|---|---|
+| Dokumentknopf | Ladegerüst des Artefakt-Rahmens (`animate-pulse motion-reduce:animate-none`) | entfällt — ohne Dokumentkennung entsteht kein Artefakt | wie „wird gerade abgelegt": der Stand ist unbekannt | Knopf „In Paperless öffnen" | erbt der Artefakt-Rahmen (`partial` → Rückfall) |
+
+🛑 **Nur der klickbare Zustand ist ein `<button>`/`<a>`.** Die übrigen sind schlichter
+Text ohne Fokus — kein Tabben durch tote Schaltflächen, und der Screenreader kündigt
+keine Taste an, die keine ist. Ein deaktivierter Knopf wäre zudem regelmäßig unter
+4,5:1 Kontrast.
+
+Bewusst nicht unterschieden: gescheiterter Abruf und „noch in Arbeit" sehen gleich aus.
+Für die Person bedeutet beides dasselbe — noch kein Link.
+
+### Zugänglichkeit (aus DESIGN.md übernommen, keine neuen Entscheidungen)
+- Tippfläche im Link-Zustand **≥ 44 px** (DESIGN.md §Accessibility).
+- Kontrast **≥ 4,5:1** für allen Text, auch den gedämpften.
+- Dunkelmodus über `dark:`-Varianten; keine fest verdrahteten Farben.
+- Reduzierte Bewegung: erbt der Artefakt-Rahmen (`motion-reduce:animate-none`).
+- Der Knopf öffnet in einem neuen Tab (`rel="noopener"`), weil er aus dem Gespräch
+  herausführt — das Gespräch bleibt stehen.
+
+### Sperrlisten-Abgleich
+Keine Treffer. Kein Symbol in farbigem Kreis (Sperrliste 3), keine farbige linke
+Kante (8), kein eigener Radius (5 — es gilt `sm` 4px aus der Skala), keine Emoji (7),
+kein Verlauf (1). Der Knopf ist ein Knopf.
+
+## Implementation Tasks (Gestaltung, Ergänzung zu T1–T5)
+
+- [x] **T4a (P1, human: ~30min / CC: ~4min)** — frontend — Zustandstabelle umsetzen
+  - Surfaced by: Pass 2 / D3 — Lade- und Fehlerzustand fehlten im Plan
+  - Files: `src/frontend/src/components/chat/artifacts/DocumentRefArtifact.tsx`
+  - Verify: RTL deckt Laden, Erfolg, „wird abgelegt", „schon vorhanden", Abruffehler
+- [x] **T4b (P2, human: ~20min / CC: ~3min)** — frontend — Zugänglichkeit festnageln
+  - Surfaced by: Pass 6 — nichts spezifiziert
+  - Files: dieselbe Komponente
+  - Verify: nur der Link-Zustand ist fokussierbar; Tippfläche ≥44px; Kontrast geprüft
+
+```
+  +====================================================================+
+  |         DESIGN PLAN REVIEW — COMPLETION SUMMARY                    |
+  +====================================================================+
+  | System Audit         | DESIGN.md vorhanden + festgelegt; UI-Umfang:|
+  |                      | eine Artefakt-Komponente, drei Zustaende    |
+  | Step 0               | 4/10, Fokus auf Zustaende/Zugang/Text       |
+  | Pass 1  (Info Arch)  | nicht bewertet — vom Nutzer ausgeklammert   |
+  | Pass 2  (States)     | 3/10 -> 9/10 after fixes                    |
+  | Pass 3  (Journey)    | nicht bewertet — vom Nutzer ausgeklammert   |
+  | Pass 4  (AI Slop)    | nicht bewertet — Sperrlisten-Abgleich: 0    |
+  | Pass 5  (Design Sys) | 2/10 -> 9/10 after fixes                    |
+  | Pass 6  (Responsive) | 1/10 -> 9/10 after fixes                    |
+  | Pass 7  (Decisions)  | 2 resolved, 0 deferred                      |
+  +--------------------------------------------------------------------+
+  | NOT in scope         | written (4 items, aus der Technikpruefung)   |
+  | What already exists  | written                                     |
+  | TODOS.md updates     | 0 items proposed                            |
+  | Approved Mockups     | 0 generated, 0 approved (vom Nutzer         |
+  |                      | ausgeklammert)                              |
+  | Decisions made       | 2 added to plan (D2 Token, D3 Zustaende)    |
+  | Decisions deferred   | 0                                           |
+  | Overall design score | 4/10 -> 9/10                                |
+  +====================================================================+
+```
+
+🛑 **Drei Dimensionen wurden auf ausdruecklichen Wunsch NICHT geprueft** (Informations-
+hierarchie, Nutzerreise, volle Slop-Pruefung mit Bildentwuerfen). Der Gesamtwert bezieht
+sich auf die drei geprueften. Das ist eine bewusste Einschraenkung, keine Abdeckung.
+
+## GSTACK REVIEW REPORT
+
+| Review | Trigger | Why | Runs | Status | Findings |
+|--------|---------|-----|------|--------|----------|
+| CEO Review | `/plan-ceo-review` | Scope & strategy | 3 | STALE (2026-06-22, issues_open) | mode: HOLD_SCOPE, 5 critical gaps |
+| Outside Review | codex (`/plan-eng-review`) | Independent 2nd opinion | 17 | UNAVAILABLE (2026-10-27) | nicht installiert; nativer Rueckfall mangels TaskOutput nicht moeglich |
+| Eng Review | `/plan-eng-review` | Architecture & tests (required) | 29 | ISSUES OPEN (PLAN) | 5 issues, 0 critical gaps |
+| Design Review | `/plan-design-review` | UI/UX gaps | 7 | CLEAR (FULL) | score: 4/10 -> 9/10, 2 decisions |
+| DX Review | `/plan-devex-review` | Developer experience gaps | 1 | STALE | — |
+
+- **OUTSIDE COVERAGE:** codex, Phase plan-review, **unavailable** (nicht installiert,
+  nativer Rueckfall mangels `TaskOutput` nicht moeglich). Die Gestaltungspruefung hat
+  ihre eigenen Fremdstimmen NICHT angefordert — der Umfang wurde auf drei Dimensionen
+  ohne Bildentwuerfe begrenzt. Beides sind Luecken, keine sauberen Ergebnisse.
+- **VERDICT:** Design Review CLEAR. Eng Review ISSUES OPEN — 5 Befunde, alle in
+  Aufgaben ueberfuehrt, 0 kritische Luecken. eng review required
+
+NO UNRESOLVED DECISIONS
