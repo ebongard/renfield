@@ -112,6 +112,30 @@ def aufgabe_finden(prompt: str) -> str:
     return treffer.group(1)
 
 
+def aufgabe_einsetzen(prompt: str, alt: str, neu: str) -> str:
+    """Tauscht die Aufgabe — ausschliesslich in der `Aufgabe:`/`Task:`-Zeile.
+
+    🛑 Ein blankes `prompt.replace(alt, neu)` hat zwei stille Fehlschlaege, und
+    beide sehen nach einem Ergebnis aus:
+    - fehlt `alt` in einer Variante, misst JEDER Fall denselben Prompt, und die
+      Ausgabe steht voller glatter 5/5 oder 0/5;
+    - steht `alt` zufaellig auch in einer Werkzeugbeschreibung, wird die Liste
+      mitveraendert und damit etwas anderes gemessen als beabsichtigt.
+    Darum zeilengenau — und ein Fehlschlag bricht ab, statt zu schweigen.
+    """
+    zeilen = prompt.split("\n")
+    getroffen = 0
+    for i, zeile in enumerate(zeilen):
+        if zeile.startswith(("Aufgabe: ", "Task: ")) and alt in zeile:
+            zeilen[i] = zeile.replace(alt, neu)
+            getroffen += 1
+    if getroffen != 1:
+        raise ValueError(
+            f"Aufgabe {alt!r} steht {getroffen}x in einer `Aufgabe:`/`Task:`-Zeile "
+            "— erwartet genau einmal. Falsche Datei oder falsches --original-task?")
+    return "\n".join(zeilen)
+
+
 def frage(url: str, modell: str, prompt: str, zeit: float) -> list:
     nutzlast = {"model": modell, "messages": [{"role": "user", "content": prompt}],
                 **AUFRUF}
@@ -158,7 +182,21 @@ def main() -> int:
             faelle = json.load(datei)
     else:
         faelle = STANDARDFAELLE
+    erlaubt = {"treffer", "kein-treffer"}
+    for nr, fall in enumerate(faelle, 1):
+        if fall.get("expect") not in erlaubt:
+            # 🛑 Ohne diese Pruefung zaehlt ein Tippfehler stumm als
+            # "kein-treffer" und dreht die Bewertung des Falls um.
+            sys.exit(f"Fall {nr} ({fall.get('task')!r}): expect="
+                     f"{fall.get('expect')!r}, erlaubt sind {sorted(erlaubt)}.")
     original = a.original_task or aufgabe_finden(next(iter(fassungen.values())))
+
+    # 🛑 Jede Fassung muss die Aufgabe tragen, BEVOR 100+ Aufrufe laufen.
+    for label, text in fassungen.items():
+        try:
+            aufgabe_einsetzen(text, original, original)
+        except ValueError as e:
+            sys.exit(f"Fassung {label!r}: {e}")
 
     print(f"  Aufgabe in den Dateien: {original!r}")
     for label, text in fassungen.items():
@@ -185,7 +223,7 @@ def main() -> int:
     laeufe: dict = defaultdict(int)
     fehler = 0
     for n, (label, aufgabe, soll, _) in enumerate(auftraege, 1):
-        prompt = fassungen[label].replace(original, aufgabe)
+        prompt = aufgabe_einsetzen(fassungen[label], original, aufgabe)
         try:
             werkzeuge = frage(a.url, a.model, prompt, a.timeout)
         except Exception as e:
