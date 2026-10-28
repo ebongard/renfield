@@ -97,7 +97,8 @@ note-entity + its relations (mirror `merge_guard`/tombstone patterns).
 ## 4. Retrieval integration (RRF)
 
 - **`services/note_retrieval.py`** (`NoteRetrieval(db).search(query, *, asker_id,
-  top_k, enforce_circles=False) -> list[dict]`), mirrors
+  top_k, peer=None) -> list[dict]`, seit F-ID-3 2026-10-28 `peer: PeerScope | None`
+  statt `enforce_circles: bool`), mirrors
   `DocumentFactRetrieval`: a dense branch (embedding cosine) UNION a lexical branch
   (`search_vector @@ plainto_tsquery`), both through `notes_circles_filter`, RRF-or-
   score-merged, returns `{id, atom_id, circle_tier, title, snippet, score}`.

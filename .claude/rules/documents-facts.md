@@ -42,11 +42,14 @@ commit, gated by `schicht_a_extraction_enabled`. `display_name = generated_title
 
 ## Document search (`GET /api/knowledge/documents?q=`, always-on) — `services/document_search.py::search_documents`
 Three signals — NAME (`documents.search_vector` FTS + ILIKE), FACTS, CHUNKS — RRF-fused (`rag_hybrid_rrf_k`), then
-**ONE circle gate on the fused ids** (`document_chunks_circles_filter`). **The NAME signal is NOT circle-filtered on its
-own**: its safety rests entirely on that gate, which is Postgres-only — hence
-`gate_available = not enforce_circles or postgres`, and NAME contributes only when it is true. FACTS/CHUNKS are already
-filtered in-service. A failing signal degrades to the others; blank `q` → the recency list. Migration
-`pc20260829_documents_fts` (GENERATED `search_vector` via `build_generated_tsvector_expression`, GIN `CONCURRENTLY`).
+**ONE circle gate on the fused ids** (`document_chunks_circles_filter`). **The NAME signal is NOT circle-filtered on
+its own**: its safety rests on that gate, which is Postgres-only — hence `gate_available = not enforce_circles or
+postgres`. FACTS/CHUNKS are filtered in-service. A failing signal degrades to the others; blank `q` → the recency
+list. Migration `pc20260829_documents_fts` (GENERATED `search_vector`, GIN `CONCURRENTLY`).
+🛑 `enforce_circles` hat **keine Vorgabe** (Weglassen = `TypeError`); die Route übergibt `settings.auth_enabled`. Es
+gab eine, F-ID-3 riss das Argument mit, sie erbte still `True` — bei Anmeldung AUS ist der Fragende `None`, also blieb
+nur Stufe 4 und jedes eigentümergebundene Dokument fiel heraus. Es heißt NUR „Filter überhaupt anwenden", NICHT der
+gleichnamige Föderationsschalter: Peer-Begrenzung lebt allein in `circle_sql.PeerScope`.
 
 ## Per-fact tier override (`document_facts.tier_overridden`)
 - A per-fact tier PATCH sets it; `AtomService.update_tier`'s kb_document cascade re-tiers only

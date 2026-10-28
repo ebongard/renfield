@@ -182,19 +182,20 @@ async def search_documents(
     query: str,
     *,
     asker_id: int | None,
+    enforce_circles: bool,
     knowledge_base_id: int | None = None,
     status: str | None = None,
     limit: int = 100,
     offset: int = 0,
-    enforce_circles: bool,
 ) -> list[Document]:
     """Ranked hybrid document search. Returns ``Document`` rows in RRF order,
     sliced to ``[offset:offset+limit]``. Empty query → ``[]`` (caller lists by
     recency instead).
 
     🛑 ``enforce_circles`` has NO DEFAULT on purpose. It lost one on 2026-10-27
-    and the single caller then silently inherited ``True``, which under auth-off
-    means "only public" — the route returned nothing and
+    and the single caller then silently inherited ``True``. Under auth-off the
+    asker is ``None``, so the gate keeps only the PUBLIC rung — every
+    owner-held document drops out of the result, and
     ``test_route_q_searches_documents`` went red unnoticed. A security-relevant
     switch that can be forgotten WILL be forgotten; now forgetting it raises.
 

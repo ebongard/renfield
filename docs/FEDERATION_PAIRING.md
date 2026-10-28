@@ -132,8 +132,10 @@ must never be treated as the local owner.
 > tier* — it does **not** let `<user>` logged into xidra read everything `<user>`
 > can read at home (their own private, owner-tier, explicitly-granted content).
 > That "act as the same person" escalation is the **person-link** (Piece 3 /
-> F-ID-2): the mapped path runs the query *as* the linked local user with
-> `enforce_circles=False`. Today an ADMIN can create/list/delete links via
+> F-ID-2): the mapped path runs the query *as* the linked local user — since
+> F-ID-3 (2026-10-28) that is `mapped=True` on the pending record, which makes
+> `_peer_scope_for` return `None`, i.e. no peer scoping at all (it was
+> `enforce_circles=False` before). Today an ADMIN can create/list/delete links via
 > `GET/POST/DELETE /api/federation/user-links` (`federation_user_links.py`); their
 > effect is gated on `FEDERATION_IDENTITY_LINKS_ENABLED`, **on in both instances
 > since 2026-10-27** (renfield #1418 / x-ren !31) — it was a no-op at the time

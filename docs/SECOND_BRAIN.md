@@ -235,7 +235,10 @@ history, the tooling and the frontend wiring.
   via `ts_rank` + an ILIKE partial-token fallback), FACTS (`DocumentFactRetrieval`), CHUNKS (`RAGRetrieval`) —
   RRF-fuses them (`rag_hybrid_rrf_k`) and applies ONE circle-visibility gate on the fused ids (D2 —
   `document_chunks_circles_filter`). With `gate_available = not enforce_circles or postgres`, a leak is structurally
-  impossible even in an unsupported auth-on-against-sqlite config.
+  impossible even in an unsupported auth-on-against-sqlite config. 🛑 `enforce_circles` carries **no default** since
+  2026-10-28 — the route passes `settings.auth_enabled`, and omitting it raises instead of silently enforcing: when
+  F-ID-3 dropped the argument, the inherited `True` reduced every auth-off result to the public rung. It means only
+  "apply the circle filter at all" and is NOT the federation switch of the same name (that is `circle_sql.PeerScope`).
 - Migration `pc20260829_documents_fts` adds the GENERATED multilingual `documents.search_vector`
   (`build_generated_tsvector_expression` over `generated_title || title || filename`) + a GIN index built
   `CONCURRENTLY`.
