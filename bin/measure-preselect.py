@@ -136,9 +136,38 @@ def aufgabe_einsetzen(prompt: str, alt: str, neu: str) -> str:
     return "\n".join(zeilen)
 
 
-def frage(url: str, modell: str, prompt: str, zeit: float) -> list:
+def werkzeugnamen(prompt: str) -> list:
+    """Die angebotenen Werkzeugnamen aus dem Prompt — fuer das `enum`.
+
+    🛑 `re.split(r"(?m)^- ")` und NICHT `splitlines()`: ein Eintrag geht ueber
+    Zeilenumbrueche, weil die Hinweistexte welche enthalten. Dieser Schnitt hat
+    am 2026-10-27 zweimal einen Falschbefund erzeugt.
+    """
+    namen = []
+    for stueck in re.split(r"(?m)^- ", prompt):
+        kopf = stueck.split(":", 1)[0].strip()
+        if kopf.startswith(("mcp.", "internal.")):
+            namen.append(kopf)
+    return namen
+
+
+def frage(url: str, modell: str, prompt: str, zeit: float, typisiert: bool = False) -> list:
     nutzlast = {"model": modell, "messages": [{"role": "user", "content": prompt}],
                 **AUFRUF}
+    if typisiert:
+        # Wurzel-Array, damit der PROMPT unveraendert bleibt: so unterscheiden
+        # sich die beiden Messungen in genau einer Variable.
+        nutzlast["response_format"] = {
+            "type": "json_schema",
+            "json_schema": {"name": "preselect", "strict": True, "schema": {
+                # `maxItems` ist Pflicht: `uniqueItems` wird NICHT erzwungen,
+                # also wiederholt das Modell sonst einen gueltigen Namen bis das
+                # Token-Budget aufgebraucht ist und die Antwort abgeschnitten
+                # zurueckkommt. Muss zu `_build_preselect_schema` passen.
+                "type": "array", "maxItems": 8, "uniqueItems": True,
+                "items": {"type": "string", "enum": werkzeugnamen(prompt)},
+            }},
+        }
     anfrage = urllib.request.Request(
         url, data=json.dumps(nutzlast).encode(),
         headers={"Content-Type": "application/json"})
@@ -165,6 +194,9 @@ def main() -> int:
     p.add_argument("--timeout", type=float, default=180.0)
     p.add_argument("--seed", type=int, default=0)
     p.add_argument("--original-task", help="Aufgabe, die in den Dateien steht")
+    p.add_argument("--typed", action="store_true",
+                   help="Antwort an ein JSON-Schema binden (Wurzel-Array, enum "
+                        "ueber die angebotenen Namen) — Prompt bleibt identisch")
     p.add_argument("--verify-signature", metavar="HEX8",
                    help="bricht ab, wenn eine Datei nicht diese Signatur hat")
     a = p.parse_args()
@@ -225,7 +257,7 @@ def main() -> int:
     for n, (label, aufgabe, soll, _) in enumerate(auftraege, 1):
         prompt = aufgabe_einsetzen(fassungen[label], original, aufgabe)
         try:
-            werkzeuge = frage(a.url, a.model, prompt, a.timeout)
+            werkzeuge = frage(a.url, a.model, prompt, a.timeout, a.typed)
         except Exception as e:
             fehler += 1
             print(f"  FEHLER {label}/{aufgabe!r}: {e}", file=sys.stderr)

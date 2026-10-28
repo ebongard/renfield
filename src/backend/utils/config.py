@@ -409,6 +409,10 @@ class Settings(BaseSettings):
     """Timeout for tool pre-selection LLM call in agent_service.py:_preselect_tools.
     Short JSON-only response, deterministic — keep low to fail fast."""
     agent_preselect_prompt_dump: bool = False
+    # Bindet die Antwort der Werkzeug-Vorauswahl an ein JSON-Schema
+    # (Wurzel-Array, `enum` ueber die angebotenen Namen). Dunkel: der Pfad mit
+    # `false` ist byteweise der alte, der Prompt ist in beiden Faellen derselbe.
+    agent_preselect_typed: bool = False
     """Protokolliert den VOLLSTÄNDIGEN Vorauswahl-Prompt auf INFO. Dunkel.
 
     🛑 Der Prompt enthält die Nachricht des Nutzers UNGEKÜRZT — die reguläre

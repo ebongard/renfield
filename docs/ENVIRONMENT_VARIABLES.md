@@ -304,6 +304,27 @@ AGENT_TOTAL_TIMEOUT=120.0
 # ausschalten.
 AGENT_PRESELECT_PROMPT_DUMP=false
 
+# Bindet die Antwort der Werkzeug-Vorauswahl an ein JSON-Schema (Wurzel-Array,
+# `enum` ueber die angebotenen Namen, `maxItems`). Der PROMPT bleibt dabei
+# unveraendert — darum unterscheiden sich an/aus in genau einer Variable.
+#
+# Warum es das gibt: ohne Bindung ist eine unparsbare Antwort bauartbedingt
+# moeglich, und sie kostet nicht die Genauigkeit der Vorauswahl, sondern ihre
+# ganze Wirkung — der Fehlerzweig gibt `None` zurueck und ALLE Werkzeuge landen
+# im Agent-Prompt. Am 2026-10-28 live beobachtet: auf „scanne nach x-idra"
+# antwortete das Modell in der Form eines Werkzeug-AUFRUFS statt mit der Liste.
+# Dieselbe Eingabe traf am Pruefstand 5/5 richtig — die freie Form war das
+# Problem, nicht der Prompt.
+#
+# 🛑 Die Trefferquote aendert sich dadurch NICHT: 90/95 (95 %) gebunden wie
+# ungebunden, Fall fuer Fall gleich. Der Gewinn ist allein die Zusicherung.
+# 🛑 `maxItems` ist dabei Pflicht: `uniqueItems` wird von llama-server NICHT
+# erzwungen, und ohne Laengengrenze wiederholt das Modell einen gueltigen Namen
+# bis das Token-Budget aufgebraucht ist — dann ist die Antwort abgeschnitten und
+# wieder unparsbar. Mit Grenze kamen alle drei boshaften Pruefprompts sauber
+# zurueck, ohne sie zwei von drei nicht.
+AGENT_PRESELECT_TYPED=false
+
 # Konversations-Kontext im Agent Loop (Anzahl Nachrichten)
 AGENT_CONV_CONTEXT_MESSAGES=12
 
