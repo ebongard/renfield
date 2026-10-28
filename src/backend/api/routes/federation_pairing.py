@@ -140,16 +140,41 @@ async def create_pair_offer(
     )
 
 
+async def _resync_peer_registry(request: Request, db: AsyncSession, reason: str) -> None:
+    """Rebuild the `peer_<id>` MCP servers so `query_brain` matches the DB.
+
+    🛑 EVERY route that creates or revokes a pairing must call this. It was
+    wired only into `revoke_peer` and app startup, so a pairing made while the
+    backend was running stayed INVISIBLE to the agent loop until the next
+    restart: the row was in `peer_users`, the tool was not in `_tool_index`,
+    and a federated question failed as if the pairing had not happened.
+    Measured 2026-10-28 — both pods started 13:35 UTC, both pairings went live
+    14:22 UTC, neither tool was registered. The comment in `mcp_client.py`
+    claiming a sync "on pair/unpair events" described an intention, not code.
+
+    Non-fatal: the DB stays authoritative and the responder re-checks the peer
+    per request, so a failed resync costs discoverability, never safety.
+    """
+    try:
+        manager = getattr(request.app.state, "mcp_manager", None)
+        if manager is not None:
+            from services.peer_mcp_registry import sync_peers
+            await sync_peers(manager, db)
+    except Exception as e:
+        logger.warning(f"Peer registry resync after {reason} failed (non-fatal): {e}")
+
+
 @router.post("/pair/accept", response_model=PairingResponse)
 async def accept_pair_offer(
     body: AcceptOfferRequest,
+    request: Request,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_user_or_default),
 ):
     """Responder step 2 — verify offer + create PeerUser + sign response."""
     svc = PairingService(db)
     try:
-        return await svc.accept_offer(
+        response = await svc.accept_offer(
             current_user=current_user,
             offer=body.offer,
             my_tier_for_you=body.my_tier_for_you,
@@ -165,10 +190,15 @@ async def accept_pair_offer(
         # Uniform error — no oracle on which check failed.
         raise HTTPException(status_code=400, detail="Pairing handshake failed")
 
+    await _resync_peer_registry(request, db, "pair/accept")
+
+    return response
+
 
 @router.post("/pair/complete", response_model=PeerUserResponse)
 async def complete_pair_handshake(
     body: CompleteHandshakeRequest,
+    request: Request,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_user_or_default),
 ):
@@ -186,6 +216,8 @@ async def complete_pair_handshake(
     except PairingError as e:
         logger.warning(f"Pairing complete failed for user {current_user.id}: {e}")
         raise HTTPException(status_code=400, detail="Pairing handshake failed")
+
+    await _resync_peer_registry(request, db, "pair/complete")
 
     return PeerUserResponse(
         id=peer.id,
@@ -311,16 +343,9 @@ async def revoke_peer(
             f"for revoked peer {peer.remote_display_name}"
         )
 
-    # Refresh the MCP registry so `mcp.peer_<id>.query_brain` disappears
-    # from the agent loop. Non-fatal on failure — the DB is authoritative
-    # and F3's per-request peer lookup will reject the tool anyway.
-    try:
-        manager = getattr(request.app.state, "mcp_manager", None)
-        if manager is not None:
-            from services.peer_mcp_registry import sync_peers
-            await sync_peers(manager, db)
-    except Exception as e:
-        logger.warning(f"Peer registry resync after revoke failed (non-fatal): {e}")
+    # Same helper as the two pairing routes — `mcp.peer_<id>.query_brain`
+    # disappears from the agent loop here instead of appearing.
+    await _resync_peer_registry(request, db, "revoke")
 
     logger.info(
         f"🔗 Peer {peer.remote_display_name} (id={peer.id}) revoked by "

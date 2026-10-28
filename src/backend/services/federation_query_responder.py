@@ -708,15 +708,15 @@ class FederationQueryResponder:
         # Haushalt stand das am 2026-10-28 unmittelbar bevor: eine aktive Zeile
         # fuer Konto 1 und eine widerrufene fuer Konto 2, beide mit x-idras
         # Schluessel; ein erneutes Paaren haette die zweite wiederbelebt.
-        kandidaten = (await self.db.execute(
+        candidates = (await self.db.execute(
             select(PeerUser).where(
                 PeerUser.remote_pubkey == asker_pubkey,
                 PeerUser.revoked_at.is_(None),
             ).order_by(PeerUser.id)
         )).scalars().all()
-        if not kandidaten:
+        if not candidates:
             raise FederationQueryError("Unknown or revoked peer")
-        if len(kandidaten) > 1:
+        if len(candidates) > 1:
             # 🛑 ABWEISEN, nicht waehlen. Es gaebe einen naheliegenden Ausweg —
             # den `querier_ref` entscheiden lassen, welche Paarung gemeint ist.
             # Der kommt aber VON DER GEGENSTELLE. Ihn bestimmen zu lassen, in
@@ -724,13 +724,13 @@ class FederationQueryResponder:
             # die F-ID-3 gerade beseitigt hat: eine fremde Angabe entscheidet
             # ueber lokale Reichweite.
             logger.warning(
-                f"Federation query_brain: {len(kandidaten)} aktive Paarungen mit "
+                f"Federation query_brain: {len(candidates)} aktive Paarungen mit "
                 f"demselben Schluessel (Eigentuemer "
-                f"{[k.circle_owner_id for k in kandidaten]}) — abgewiesen. "
+                f"{[k.circle_owner_id for k in candidates]}) — abgewiesen. "
                 f"Genau eine davon darf aktiv sein."
             )
             raise FederationQueryError("Unknown or revoked peer")
-        peer = kandidaten[0]
+        peer = candidates[0]
         try:
             peer.last_seen_at = datetime.now(UTC).replace(tzinfo=None)
             await self.db.commit()
