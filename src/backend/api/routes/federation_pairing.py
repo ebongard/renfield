@@ -140,7 +140,7 @@ async def create_pair_offer(
     )
 
 
-async def _resync_peer_registry(request: Request, db: AsyncSession, anlass: str) -> None:
+async def _resync_peer_registry(request: Request, db: AsyncSession, reason: str) -> None:
     """Rebuild the `peer_<id>` MCP servers so `query_brain` matches the DB.
 
     🛑 EVERY route that creates or revokes a pairing must call this. It was
@@ -161,7 +161,7 @@ async def _resync_peer_registry(request: Request, db: AsyncSession, anlass: str)
             from services.peer_mcp_registry import sync_peers
             await sync_peers(manager, db)
     except Exception as e:
-        logger.warning(f"Peer registry resync after {anlass} failed (non-fatal): {e}")
+        logger.warning(f"Peer registry resync after {reason} failed (non-fatal): {e}")
 
 
 @router.post("/pair/accept", response_model=PairingResponse)
@@ -174,14 +174,12 @@ async def accept_pair_offer(
     """Responder step 2 — verify offer + create PeerUser + sign response."""
     svc = PairingService(db)
     try:
-        antwort = await svc.accept_offer(
+        response = await svc.accept_offer(
             current_user=current_user,
             offer=body.offer,
             my_tier_for_you=body.my_tier_for_you,
             accepted_endpoints=_resolve_advertised_endpoints(body.accepted_endpoints),
         )
-        await _resync_peer_registry(request, db, "pair/accept")
-        return antwort
     except AlreadyPairedElsewhere as e:
         # 🛑 VOR dem uniformen Fang: lokaler Zustand, kein kryptografischer
         # Befund. Opak gehalten schickt er die Person an die falsche Stelle.
@@ -191,6 +189,10 @@ async def accept_pair_offer(
         logger.warning(f"Pairing accept failed for user {current_user.id}: {e}")
         # Uniform error — no oracle on which check failed.
         raise HTTPException(status_code=400, detail="Pairing handshake failed")
+
+    await _resync_peer_registry(request, db, "pair/accept")
+
+    return response
 
 
 @router.post("/pair/complete", response_model=PeerUserResponse)

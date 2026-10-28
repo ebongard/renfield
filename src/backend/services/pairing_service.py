@@ -458,14 +458,14 @@ class PairingService:
         # machen jede foederierte Anfrage mehrdeutig, und er weist dann ALLE ab
         # (`_lookup_peer`). Lieber hier mit einer lesbaren Begruendung
         # scheitern als dort stumm.
-        fremde = (await self.db.execute(
+        other_owner_rows = (await self.db.execute(
             select(PeerUser).where(
                 PeerUser.remote_pubkey == remote_pubkey,
                 PeerUser.circle_owner_id != owner_user_id,
                 PeerUser.revoked_at.is_(None),
             )
         )).scalars().all()
-        if fremde:
+        if other_owner_rows:
             raise AlreadyPairedElsewhere(
                 "Diese Instanz ist bereits mit einem anderen lokalen Konto "
                 "gepaart. Erst dort widerrufen, dann neu paaren."
