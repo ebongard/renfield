@@ -33,6 +33,7 @@ from services.auth_service import get_user_or_default
 from services.database import get_db
 from services.federation_identity import get_federation_identity
 from services.pairing_service import (
+    AlreadyPairedElsewhere,
     PairingError,
     PairingOffer,
     PairingResponse,
@@ -154,6 +155,11 @@ async def accept_pair_offer(
             my_tier_for_you=body.my_tier_for_you,
             accepted_endpoints=_resolve_advertised_endpoints(body.accepted_endpoints),
         )
+    except AlreadyPairedElsewhere as e:
+        # 🛑 VOR dem uniformen Fang: lokaler Zustand, kein kryptografischer
+        # Befund. Opak gehalten schickt er die Person an die falsche Stelle.
+        logger.warning(f"Pairing accept refused for user {current_user.id}: {e}")
+        raise HTTPException(status_code=409, detail=str(e)) from e
     except PairingError as e:
         logger.warning(f"Pairing accept failed for user {current_user.id}: {e}")
         # Uniform error — no oracle on which check failed.
@@ -174,6 +180,9 @@ async def complete_pair_handshake(
             response=body.response,
             their_tier_for_me=body.their_tier_for_me,
         )
+    except AlreadyPairedElsewhere as e:
+        logger.warning(f"Pairing complete refused for user {current_user.id}: {e}")
+        raise HTTPException(status_code=409, detail=str(e)) from e
     except PairingError as e:
         logger.warning(f"Pairing complete failed for user {current_user.id}: {e}")
         raise HTTPException(status_code=400, detail="Pairing handshake failed")

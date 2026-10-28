@@ -112,6 +112,19 @@ class PairingError(Exception):
     """Any handshake failure — signature/expiry/nonce/FK/tier. Uniform
     at the API boundary so we don't leak which check failed."""
 
+class AlreadyPairedElsewhere(PairingError):
+    """Eine ANDERE lokale Person ist bereits mit dieser Gegenstelle gepaart.
+
+    🛑 Bewusst eine eigene Klasse, damit die Routenschicht sie sichtbar machen
+    kann. Die Regel „kein Orakel" schuetzt die kryptografischen Pruefungen —
+    Signatur, Nonce, Ablauf —, damit niemand ablesen kann, WELCHE davon griff.
+    Dieser Fall ist etwas anderes: lokaler Zustand, den die angemeldete Person
+    ohnehin aendern darf. Ihn hinter demselben „Pairing handshake failed" zu
+    verstecken schickt sie an die falsche Stelle; genau dieser Fehlermodus hat
+    am 2026-10-27 eine Stunde Suche gekostet.
+    """
+
+
 
 # =============================================================================
 # Nonce cache (single-process LRU)
@@ -453,7 +466,7 @@ class PairingService:
             )
         )).scalars().all()
         if fremde:
-            raise PairingError(
+            raise AlreadyPairedElsewhere(
                 "Diese Instanz ist bereits mit einem anderen lokalen Konto "
                 "gepaart. Erst dort widerrufen, dann neu paaren."
             )

@@ -125,7 +125,9 @@ def test_the_pairing_refuses_a_second_owner_for_the_same_instance():
     baum = ast.parse(quelle)
     rumpf = ast.unparse(baum)
     assert "circle_owner_id != owner_user_id" in rumpf, rumpf
-    assert "PairingError" in rumpf, rumpf
+    # Seit dem Review zu PR #1421 die SICHTBARE Unterklasse — der uniforme
+    # 400 haette die Begruendung verschluckt.
+    assert "AlreadyPairedElsewhere" in rumpf, rumpf
     # Und sie sitzt in `_upsert_peer_user`, also greift sie bei accept UND
     # complete — nicht nur an einem der beiden Schritte.
     import services.pairing_service as ps
@@ -134,3 +136,45 @@ def test_the_pairing_refuses_a_second_owner_for_the_same_instance():
         if isinstance(n, ast.Attribute) and n.attr == "_upsert_peer_user"
     ]
     assert len(aufrufer) >= 2, f"nur {len(aufrufer)} Aufrufer gefunden"
+
+
+def test_the_already_paired_refusal_is_VISIBLE_not_swallowed():
+    """🛑 Gefunden im Review zu diesem PR.
+
+    Die Routenschicht faengt jeden `PairingError` und macht daraus ein
+    uniformes „Pairing handshake failed" — kein Orakel. Diese Regel schuetzt
+    die KRYPTOGRAFISCHEN Pruefungen (Signatur, Nonce, Ablauf): niemand soll
+    ablesen koennen, welche davon griff.
+
+    „Eine andere lokale Person ist schon gepaart" ist etwas anderes: lokaler
+    Zustand, den die angemeldete Person ohnehin aendern darf. Opak gehalten
+    schickt er sie an die falsche Stelle — genau dieser Fehlermodus hat am
+    2026-10-27 eine Stunde Suche gekostet.
+
+    Darum eine eigene Klasse und ein eigener Fang VOR dem uniformen. Dieser
+    Test haelt die Reihenfolge fest: steht der uniforme Fang zuerst, ist die
+    Meldung wieder weg, und nichts ausser diesem Test merkt es.
+    """
+    import ast
+    import inspect
+
+    from api.routes import federation_pairing
+    from services.pairing_service import AlreadyPairedElsewhere, PairingError
+
+    assert issubclass(AlreadyPairedElsewhere, PairingError), (
+        "muss eine Unterklasse bleiben, sonst entkommt sie dem uniformen Fang ganz")
+
+    baum = ast.parse(inspect.getsource(federation_pairing))
+    for fn in ast.walk(baum):
+        if not isinstance(fn, ast.AsyncFunctionDef):
+            continue
+        namen = [
+            h.type.id for t in ast.walk(fn) if isinstance(t, ast.Try)
+            for h in t.handlers if isinstance(h.type, ast.Name)
+        ]
+        if "PairingError" in namen:
+            assert "AlreadyPairedElsewhere" in namen, (
+                f"{fn.name}: faengt PairingError, aber nicht den sichtbaren Sonderfall")
+            assert namen.index("AlreadyPairedElsewhere") < namen.index("PairingError"), (
+                f"{fn.name}: der uniforme Fang steht VOR dem Sonderfall und "
+                "verschluckt ihn")
