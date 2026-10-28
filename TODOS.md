@@ -71,7 +71,7 @@ Funktionen sind auf **keiner** Instanz je eingeschaltet worden. Kein P0.
 `ollama/ollama:latest` ungepinnt und llama.cpp-Image ohne CUDA-12-Bindung (`docs/GPU_TOPOLOGY.md` §6) ·
 OTA-Signaturen nie scharfgeschaltet (Flotte nicht re-provisioniert) ·
 #1210 OTA-Henne-Ei **nicht** behoben (der September-PR beseitigte nur das Symptom) ·
-~~Letzter-Admin-Schutz TOCTOU-anfällig~~ (behoben in #1122: `acquire_last_admin_guard_lock`, `pg_advisory_xact_lock`) · Föderations-`remote_user_id`-Kollision ab dem 2. Peer (`:100`).
+~~Letzter-Admin-Schutz TOCTOU-anfällig~~ (behoben in #1122: `acquire_last_admin_guard_lock`, `pg_advisory_xact_lock`) · ~~Föderations-`remote_user_id`-Kollision ab dem 2. Peer~~ (behoben in F-ID-3, 2026-10-28: Stufe an `peer_users.granted_tier`, `PeerScope` statt `peer_scoped`).
 
 ### S5 — Entwürfe, die nur eine Freigabe brauchen
 #875 bi-temporale Kanten und #1240 Kontaktpunkte warten beide ausdrücklich auf ein Go für Stufe 1 ·
@@ -168,7 +168,24 @@ Origin: `feat/sso-token-handoff-hardening` (#1004, merged + deployed **dark** to
 ### ~~JWT / session storage — the deferred HttpOnly-cookie hardening~~ ✅ SHIPPED + LIVE (#1125 + #1128, 2026-08-25)
 The session now lives in HttpOnly+Secure+SameSite=Lax cookies + stateless double-submit CSRF (`AUTH_COOKIE_ENABLED`, flipped on xidra). Cookie-first-then-Bearer dual-read kept Reva/voice/legacy working. The **voice-WS follow-up (#1128)** replaced the last localStorage JWT (the voice `?token=`) with a short-lived `scope:"voice"` faucet token, so in cookie mode NEITHER access nor refresh token is JS-readable — the XSS token-theft surface is closed on the business instance. `SECRET_KEY` untouched (tri-purpose). Deployed both instances (tags `2026-08-25-cookie-auth` / `-voice-ws`), E2E green. **Remaining debt (own items):** the SSO cutover below (Reva `?code=`); retiring the `/api/ws/token` faucet + Bearer interceptor once Reva is cookie-native; enabling browser voice on an auth-on instance (then the full live `scope:voice` E2E). See CLAUDE.md §"JWT HttpOnly-cookie session + CSRF" + `docs/runbooks/cookie-auth-flag-flip-xidra.md`.
 
-### Federation multi-peer: `remote_user_id` collision in the kept tier-membership arm
+### ~~Federation multi-peer: `remote_user_id` collision in the kept tier-membership arm~~ — BEHOBEN 2026-10-28
+
+> **F-ID-3 / BL-0135, erledigt.** Die Stufe steht jetzt an der Paarung
+> (`peer_users.granted_tier`), der Filter nimmt eine `PeerScope(owner_id, tier)` statt eines
+> `peer_scoped`-Bools, und im peer-bezogenen Zweig entsteht gar keine `asker_id` mehr.
+> `_resolve_asker_tier` ist entfallen — damit auch das `scalar_one_or_none()`.
+>
+> 🛑 Der Posten war als „latent, beisst erst ab 2 Peers" geführt. Er hat am **2026-10-27**
+> zugeschlagen, und zwar schon beim ERSTEN Peer: nicht als `MultipleResultsFound`, sondern als
+> Fremdschlüsselbruch auf x-idra (dort gibt es die Kennung 2 nicht) und, schlimmer, als
+> stille Fehlbindung im Haushalt (dort gibt es sie, an einer anderen Person). „Latent" war zu
+> beruhigend formuliert: die Kollision brauchte keine zwei Peers, nur zwei Instanzen mit
+> unterschiedlich vielen Konten.
+>
+> Beleg: `tests/backend/test_peer_tier_isolation_pg.py` — zwei Peers unter EINEM Eigentümer,
+> beide `remote_user_id=1`, verschiedene Stufen, jeder bekommt seine eigene.
+
+*Historischer Stand (vor der Behebung):*
 Origin: `/review` of PR #957 (federation responder circle-enforcement). The peer-scoped circle filter and `FederationQueryResponder._resolve_asker_tier` both key the tier-membership on `circle_memberships.member_user_id = peer.remote_user_id`. `remote_user_id` is the REMOTE instance's user id, and `member_user_id` is an FK to the LOCAL `users.id`. With **two** peers paired to one local owner, both numbering their users from 1, their memberships collide to the same integer: `_resolve_asker_tier`'s `scalar_one_or_none()` would raise `MultipleResultsFound`, and the SQL membership arm `cm.member_user_id = :asker` could match the WRONG peer's grant (a peer sees atoms granted to a different peer at that tier). **Not introduced by #957** — the fix REDUCES the collision class (it removed the owner + explicit-grant equality branches); this is the residual in the one arm that must stay. Only bites with ≥2 peers under one owner (single bidirectional links are safe).
 - **WHAT:** Give each `PeerUser` a per-peer LOCAL identity namespace so `member_user_id` (and the responder's `asker_id`) is unique per peer, not the raw `remote_user_id`. Likely a dedicated local surrogate id minted at pairing (or composite `(peer_id, remote_user_id)` keying). Then `_resolve_asker_tier` and the membership arm are collision-free.
 - **WHY:** Correctness + isolation once federation grows past a single peer. Same identity-namespace class as the deferred N-peer items in `docs/FEDERATION_MULTI_PEER.md`.

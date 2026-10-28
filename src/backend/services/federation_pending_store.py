@@ -71,10 +71,42 @@ class _PendingRequest:
     max_visible_tier: int
     query: str
     initiated_at: float
-    # F-ID-1: True = peer-scoped fallback (public/guest); False = the querier was
-    # identity-mapped to `asker_local_user_id`, so run AS that local user with
-    # full circle reach. Defaults True so any un-updated caller stays fail-closed.
-    enforce_circles: bool = True
+    #: F-ID-3: gesetzt = peer-bezogener Rueckfall; dies ist die Kennung des
+    #: lokalen Menschen, der die PAARUNG eingegangen ist
+    #: (`peer_users.circle_owner_id`). Zusammen mit `max_visible_tier` ergibt
+    #: das die `PeerScope`, mit der der Filter laeuft.
+    #:
+    #: `None` = der gemappte Pfad (F-ID-1): die Anfrage laeuft ALS die
+    #: verknuepfte Person mit deren voller Reichweite.
+    #:
+    #: 🛑 Hier stand bis 2026-10-27 ein `enforce_circles: bool = True`, und die
+    #: Stufe kam aus einer `CircleMembership`, die auf der ENTFERNTEN
+    #: Nutzerkennung keyte. Der Vorgabewert war `True` und damit fail-closed —
+    #: das bleibt so: ohne Eigentuemer gibt es keinen peer-bezogenen Filter,
+    #: und ohne Verknuepfung auch keine gemappte Reichweite. Eine alte, noch im
+    #: Speicher liegende Zeile ohne dieses Feld faellt auf `None`, also auf den
+    #: gemappten Pfad — der verlangt seinerseits eine Verknuepfung und liefert
+    #: ohne sie nichts.
+    peer_owner_id: int | None = None
+
+    #: 🛑 Der DISKRIMINATOR, und sein Vorgabewert ist Absicht.
+    #:
+    #: `False` = Rueckfall (peer-bezogen) und verlangt `peer_owner_id`.
+    #: `True`  = gemappt: die Anfrage laeuft ALS die verknuepfte Person.
+    #:
+    #: Warum nicht einfach `peer_owner_id is None` als Unterscheidung? Weil eine
+    #: ZEILE AUS EINER AELTEREN FASSUNG dieses Feld nicht kennt und auf die
+    #: Vorgabe faellt — und beim Redis-Speicher ist genau das laut
+    #: `_from_jsonable` der Normalfall waehrend eines rollenden Deploys. Eine
+    #: alte Zeile traegt `asker_local_user_id = peer.remote_user_id` (die
+    #: geliehene fremde Kennung) und KEIN `peer_owner_id`; ohne diesen
+    #: Diskriminator saehe sie aus wie ein gueltiger gemappter Satz und liefe
+    #: mit genau der Kennung, die F-ID-3 abgeschafft hat.
+    #:
+    #: Mit `mapped=False` als Vorgabe ist so eine Zeile WIDERSPRUECHLICH
+    #: (Rueckfall ohne Eigentuemer) und wird abgewiesen, statt still auf den
+    #: weiteren Pfad zu fallen. Der Vorgabewert landet auf der sicheren Seite.
+    mapped: bool = False
     status: str = STATUS_PROCESSING
     progress_label: str = PROGRESS_LABEL_RETRIEVING
     progress_count: int = 0

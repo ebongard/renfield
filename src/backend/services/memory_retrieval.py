@@ -64,7 +64,7 @@ from sqlalchemy import text, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.database import TIER_PUBLIC, ConversationMemory
-from services.circle_sql import conversation_memories_circles_filter
+from services.circle_sql import PeerScope, conversation_memories_circles_filter
 from utils.config import settings
 from utils.llm_client import get_embed_client
 
@@ -120,7 +120,7 @@ class MemoryRetrieval:
         limit: int | None = None,
         threshold: float | None = None,
         ranker: str = "default",
-        enforce_circles: bool = False,
+        peer: PeerScope | None = None,
         track_access: bool = True,
     ) -> list[dict]:
         """
@@ -165,7 +165,7 @@ class MemoryRetrieval:
             return []
 
         embedding_str = f"[{','.join(map(str, query_embedding))}]"
-        circles_clause, circles_params = self._memory_circles_filter(user_id, enforce_circles)
+        circles_clause, circles_params = self._memory_circles_filter(user_id, peer)
 
         if ranker == "recency_aware":
             recall_k = max(int(settings.memory_retrieval_recall_k), int(limit))
@@ -276,7 +276,7 @@ class MemoryRetrieval:
             existing_ids = {m["id"] for m in memories}
             subject_hits = [
                 h for h in await self._subject_linked_memories(
-                    message, user_id, union_limit, enforce_circles=enforce_circles
+                    message, user_id, union_limit, peer=peer
                 )
                 if h["id"] not in existing_ids
             ]
@@ -452,7 +452,7 @@ class MemoryRetrieval:
 
     async def _subject_linked_memories(
         self, message: str, user_id: int | None, limit: int,
-        enforce_circles: bool = False,
+        peer: PeerScope | None = None,
     ) -> list[dict]:
         """Deterministic memories whose subject entity is named in the query (Phase 3c).
 
@@ -465,7 +465,7 @@ class MemoryRetrieval:
         eids = await self._find_query_entities(message, user_id)
         if not eids:
             return []
-        clause, cparams = self._memory_circles_filter(user_id, enforce_circles)
+        clause, cparams = self._memory_circles_filter(user_id, peer)
         sql = text(f"""
             SELECT id, content, category, importance, access_count, created_at, subject_name
             FROM conversation_memories m
@@ -531,7 +531,7 @@ class MemoryRetrieval:
 
     @staticmethod
     def _memory_circles_filter(
-        user_id: int | None, enforce_circles: bool = False
+        user_id: int | None, peer: PeerScope | None = None
     ) -> tuple[str, dict[str, Any]]:
         """
         Build the conversation_memories WHERE-fragment + bind params for circle access.
@@ -543,11 +543,11 @@ class MemoryRetrieval:
         `circle_sql.conversation_memories_circles_filter` (peer-scoped drops the
         owner + explicit-grant branches).
         """
-        if not settings.auth_enabled and not enforce_circles:
+        if not settings.auth_enabled and peer is None:
             return ("TRUE", {})
         if user_id is None:
             return ("m.circle_tier = :asker_id_pub", {"asker_id_pub": TIER_PUBLIC})
-        return conversation_memories_circles_filter(user_id, alias="m", peer_scoped=enforce_circles)
+        return conversation_memories_circles_filter(user_id, alias="m", peer=peer)
 
     async def retrieve_for_prompt(
         self,

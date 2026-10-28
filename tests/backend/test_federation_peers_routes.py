@@ -32,13 +32,16 @@ def _mock_request(manager=None):
 
 
 def _peer_row(*, id_=1, owner_id=42, pubkey="a" * 64, display="Mom",
-              remote_user_id=99, revoked=None, paired_at=None, last_seen_at=None):
+              remote_user_id=99, revoked=None, paired_at=None, last_seen_at=None,
+              granted_tier=4):
     row = MagicMock()
     row.id = id_
     row.circle_owner_id = owner_id
     row.remote_pubkey = pubkey
     row.remote_display_name = display
     row.remote_user_id = remote_user_id
+    # Die gewaehrte Stufe steht seit F-ID-3 auf der Paarungszeile selbst.
+    row.granted_tier = granted_tier
     row.revoked_at = revoked
     row.paired_at = paired_at or datetime.now(UTC).replace(tzinfo=None)
     row.last_seen_at = last_seen_at
@@ -60,10 +63,12 @@ class TestListPeers:
 
     @pytest.mark.asyncio
     @pytest.mark.unit
-    async def test_hydrates_tier_from_membership(self):
-        """circle_tier must be pulled from CircleMembership, not made up."""
+    async def test_hydrates_tier_from_the_pairing_row(self):
+        """🛑 `circle_tier` kommt aus `peer_users.granted_tier` — nicht aus einer
+        CircleMembership (die auf der ENTFERNTEN Kennung keyte) und erst recht
+        nicht erfunden."""
         db = MagicMock()
-        peers = [_peer_row(id_=1, owner_id=42, remote_user_id=99, display="Mom")]
+        peers = [_peer_row(id_=1, owner_id=42, remote_user_id=99, display="Mom", granted_tier=2)]
         membership = MagicMock(value=2)  # household tier
 
         call_idx = [0]
@@ -90,61 +95,69 @@ class TestListPeers:
 
 
 class TestTierForPeer:
-    @pytest.mark.asyncio
+    """Die Stufe kommt seit F-ID-3 aus der PAARUNG, nicht aus einer Mitgliedschaft.
+
+    🛑 Diese Klasse prueefte vier Fail-closed-Faelle, die es nicht mehr gibt:
+    fehlende Mitgliedschaftszeile, fehlende `remote_user_id`, unlesbarer
+    JSON-Wert. Alle drei entstanden daraus, dass die Stufe woanders lag als die
+    Paarung und ueber eine FREMDE Nutzerkennung gesucht wurde. `granted_tier`
+    ist `NOT NULL` auf derselben Zeile — es gibt keinen Fehlschlagfall mehr,
+    auf den man antworten muesste. Das ist kein verlorener Riegel, sondern ein
+    entfallener Fehlermodus.
+    """
+
     @pytest.mark.unit
-    async def test_returns_private_when_no_membership(self):
-        """Fail-closed: missing membership row → tier 0 (self), not 4 (public).
-        A UI showing 'public' for a data-integrity bug would mislead the
-        owner into thinking they shared broadly."""
-        db = MagicMock()
-        r = MagicMock()
-        r.scalar_one_or_none = lambda: None
-        db.execute = AsyncMock(return_value=r)
+    def test_reads_the_tier_off_the_pairing_row(self):
+        peer = MagicMock(granted_tier=3)
+        assert _tier_for_peer(peer) == 3
 
-        tier = await _tier_for_peer(db, owner_id=1, remote_user_id=99)
-        assert tier == 0
-
-    @pytest.mark.asyncio
     @pytest.mark.unit
-    async def test_returns_private_when_remote_user_id_missing(self):
-        """Fail-closed for missing remote_user_id. Also: no DB query issued."""
-        db = MagicMock()
-        db.execute = AsyncMock()
+    def test_takes_no_database_at_all(self):
+        """🛑 Frueher eine Abfrage mit `scalar_one_or_none()` — die bei ZWEI
+        Peers unter einem Eigentuemer (beide numerieren ab 1) geworfen haette
+        (BL-0135). Ohne Abfrage gibt es die Mehrdeutigkeit nicht mehr."""
+        import ast
+        import inspect
+        import textwrap
 
-        tier = await _tier_for_peer(db, owner_id=1, remote_user_id=None)
-        assert tier == 0
-        db.execute.assert_not_awaited()
+        from api.routes import federation_pairing
 
-    @pytest.mark.asyncio
+        # 🛑 Den RUMPF pruefen, nicht die Quelle als Text: der Docstring dieser
+        # Funktion ERKLAERT, dass dort frueher eine `CircleMembership` gesucht
+        # wurde — eine Zeichenkettenpruefung traefe also die Erklaerung statt
+        # des Codes. Genau dieser Fehler ist mir am 2026-10-27 schon einmal
+        # unterlaufen (beim Riegel-Test des Personen-Handschlags).
+        baum = ast.parse(textwrap.dedent(
+            inspect.getsource(federation_pairing._tier_for_peer)))
+        fn = baum.body[0]
+        rumpf = ast.unparse(ast.Module(
+            body=[k for k in fn.body if not (
+                isinstance(k, ast.Expr) and isinstance(k.value, ast.Constant)
+                and isinstance(k.value.value, str))],
+            type_ignores=[]))
+        assert "execute" not in rumpf, rumpf
+        assert "CircleMembership" not in rumpf, rumpf
+        assert "scalar_one_or_none" not in rumpf, rumpf
+        assert not inspect.iscoroutinefunction(federation_pairing._tier_for_peer)
+        # Negativkontrolle: der Rumpf ist nicht leer, die Pruefung misst also
+        # ueberhaupt etwas.
+        assert "granted_tier" in rumpf, rumpf
+
     @pytest.mark.unit
-    async def test_returns_private_on_non_integer_value(self):
-        """Malformed membership.value → 0, not 4."""
-        db = MagicMock()
-        membership = MagicMock(value="not-a-number")
-        r = MagicMock()
-        r.scalar_one_or_none = lambda: membership
-        db.execute = AsyncMock(return_value=r)
-
-        tier = await _tier_for_peer(db, owner_id=1, remote_user_id=99)
-        assert tier == 0
-
-    @pytest.mark.asyncio
-    @pytest.mark.unit
-    async def test_parses_tier_int(self):
-        db = MagicMock()
-        membership = MagicMock(value=3)
-        r = MagicMock()
-        r.scalar_one_or_none = lambda: membership
-        db.execute = AsyncMock(return_value=r)
-
-        tier = await _tier_for_peer(db, owner_id=1, remote_user_id=99)
-        assert tier == 3
+    def test_two_peers_under_one_owner_keep_their_own_tiers(self):
+        """Das Abnahmekriterium aus BL-0135, auf Einheitsebene: zwei Peers,
+        dieselbe `remote_user_id`, verschiedene Stufen — jeder seine eigene.
+        Frueher haetten beide dieselbe Mitgliedschaftszeile getroffen."""
+        a = MagicMock(granted_tier=2, remote_user_id=1)
+        b = MagicMock(granted_tier=4, remote_user_id=1)
+        assert _tier_for_peer(a) == 2
+        assert _tier_for_peer(b) == 4
 
 
 class TestRevokePeer:
     @pytest.mark.asyncio
     @pytest.mark.unit
-    async def test_sets_revoked_at_and_deletes_membership(self):
+    async def test_sets_revoked_at_and_narrows_the_tier(self):
         peer = _peer_row(id_=1, owner_id=42, remote_user_id=99)
         db = MagicMock()
         r1 = MagicMock()
@@ -160,8 +173,15 @@ class TestRevokePeer:
         # revoked_at is now set
         assert peer.revoked_at is not None
         assert isinstance(peer.revoked_at, datetime)
-        # DELETE membership was issued (2 execute calls: SELECT peer + DELETE membership)
-        assert db.execute.await_count == 2
+        # 🛑 Nur NOCH der SELECT auf die Peer-Zeile. Das zweite `execute` war ein
+        # DELETE auf `circle_memberships` mit `member_user_id = remote_user_id` —
+        # der Fehler selbst, und obendrein ohne `dimension`-Filter, also auch
+        # `tenant`/`project`-Zeilen desselben Paares treffend.
+        assert db.execute.await_count == 1
+        # Die Reichweite faellt jetzt ueber die Zeile selbst: widerrufen UND
+        # auf die engste Stufe zurueckgesetzt, damit ein spaeteres Entsperren
+        # nicht still die alte Gewaehrung erbt.
+        assert peer.granted_tier == 4
         db.commit.assert_awaited_once()
 
     @pytest.mark.asyncio
@@ -318,10 +338,15 @@ class TestRevokePeer:
 
     @pytest.mark.asyncio
     @pytest.mark.unit
-    async def test_invalidates_circle_resolver_cache(self, monkeypatch):
-        """BLOCKING #2 regression: CircleResolver's class-level
-        (owner, member) → tier cache must be invalidated on revoke so
-        any in-flight handler drops the stale pre-revocation tier."""
+    async def test_does_NOT_touch_the_circle_resolver_cache(self, monkeypatch):
+        """🛑 Der Zwischenspeicher haelt `(circle_owner_id, member_user_id)`-Paare.
+
+        Ein Peer hat seit F-ID-3 kein solches Paar mehr — seine Stufe steht auf
+        der eigenen Zeile. Ihn trotzdem zu leeren waere harmlos, aber es waere
+        ein Aufruf, der etwas behauptet, das nicht mehr stimmt: dass ein Peer
+        eine Mitgliedschaft hat. Laufende Anfragen raeumt
+        `purge_requests_for_pubkey` weg, das bleibt.
+        """
         peer = _peer_row(id_=1, owner_id=42, remote_user_id=99)
         db = MagicMock()
         r = MagicMock()
@@ -329,10 +354,10 @@ class TestRevokePeer:
         db.execute = AsyncMock(return_value=r)
         db.commit = AsyncMock()
 
-        invalidated_with: list[tuple[int, int]] = []
+        gerufen: list = []
 
-        def fake_invalidate(cls, owner_id, member_user_id):
-            invalidated_with.append((owner_id, member_user_id))
+        def fake_invalidate(cls, owner_id, member_id):
+            gerufen.append((owner_id, member_id))
 
         from services.circle_resolver import CircleResolver
         monkeypatch.setattr(
@@ -340,7 +365,8 @@ class TestRevokePeer:
             classmethod(fake_invalidate),
         )
 
-        user = MagicMock(id=42)
-        await revoke_peer(peer_id=1, request=_mock_request(), db=db, current_user=user)
+        await revoke_peer(peer_id=1, request=_mock_request(), db=db,
+                          current_user=MagicMock(id=42))
 
-        assert invalidated_with == [(42, 99)]
+        assert gerufen == [], gerufen
+

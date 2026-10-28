@@ -101,13 +101,20 @@ async def _name_ilike(
 
 
 async def _fact_candidates(
-    db: AsyncSession, q: str, asker_id: int | None, enforce_circles: bool
+    db: AsyncSession, q: str, asker_id: int | None
 ) -> list[int]:
     try:
         from services.document_fact_retrieval import DocumentFactRetrieval
 
         hits = await DocumentFactRetrieval(db).search(
-            q, asker_id=asker_id, top_k=_CANDIDATES, enforce_circles=enforce_circles
+            # 🛑 KEIN `peer`: das hier ist der LOKALE Suchpfad. Bis 2026-10-27
+            # wurde `enforce_circles` (= `settings.auth_enabled`) als
+            # `peer_scoped` weitergereicht, wodurch eine angemeldete Person die
+            # peer-bezogene Form bekam — ohne Eigentuemerzweig und ohne
+            # Freigaben. Sie verlor damit ihre EIGENEN nicht-oeffentlichen
+            # Treffer in der Vorauswahl. Zwei Bedeutungen in einem Schalter;
+            # `enforce_circles` heisst hier nur noch „das Tor anwenden".
+            q, asker_id=asker_id, top_k=_CANDIDATES
         )
         return _dedup_doc_ids(hits)
     except Exception as e:
@@ -196,7 +203,7 @@ async def search_documents(
     # in-service, so they always contribute.
     gate_available = (not enforce_circles) or _is_postgres(db)
     name_ids = await _name_candidates(db, q, knowledge_base_id, status) if gate_available else []
-    fact_ids = await _fact_candidates(db, q, asker_id, enforce_circles)
+    fact_ids = await _fact_candidates(db, q, asker_id)
     chunk_ids = await _chunk_candidates(db, q, asker_id, knowledge_base_id)
 
     fused = _rrf([name_ids, fact_ids, chunk_ids], k=settings.rag_hybrid_rrf_k)

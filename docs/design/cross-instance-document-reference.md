@@ -41,7 +41,7 @@ aber nur Fremdes — nicht das eigene falsche Dokument.
 | Föderation als MCP-Server-Art | `MCPServerKind.FEDERATION`, `services/mcp_client.py:857` |
 | Paarung + Peer-Registratur | `api/routes/federation_pairing.py`, `PeerUser`, `CircleMembership` |
 | Instanz-Identität | Ed25519-Schlüsselpaar, `services/federation_identity.py`; `FEDERATION_REQUIRE_PERSISTENT_IDENTITY=true` im Haushalt |
-| Kreis-Durchsetzung über die Grenze | `circle_sql.peer_scoped` + `enforce_circles` (#957) |
+| Kreis-Durchsetzung über die Grenze | `circle_sql.PeerScope` (#957, seit F-ID-3 2026-10-28 ohne `enforce_circles`) |
 | Schwärzung für die Gegenseite | `atom_types.redacted_for_remote()` |
 | Prüfprotokoll | `services/federation_audit.py`, `FederationQueryLog` |
 | **Personenbezogene Abbildung** | **gebaut und beidseitig verdrahtet**, nur dunkel (`FEDERATION_IDENTITY_LINKS_ENABLED=false`). Siehe §4 — die erste Fassung dieses Entwurfs lag hier falsch. |

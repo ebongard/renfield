@@ -532,7 +532,6 @@ async def list_documents(
             status=status,
             limit=limit,
             offset=offset,
-            enforce_circles=settings.auth_enabled,
         )
         # Search returns relevance-ranked; if the user picked a sort, apply it to
         # the returned page (page-level — the recency branch sorts the full set).

@@ -129,7 +129,7 @@ Der Haushalt ist bereits mit der xidra-Instanz verbunden; eine Eltern- und eine
 Vereins-Instanz kommen hinzu. Vier Instanzen, und damit hört „wem gehört es" auf,
 eine hausinterne Frage zu sein.
 
-**Was ein Peer sieht.** Für eine föderierte Abfrage (`peer_scoped`) fallen der
+**Was ein Peer sieht.** Für eine föderierte Abfrage (`peer=PeerScope(...)`, seit F-ID-3) fallen der
 Eigentümer- und der Freigabezweig weg; es bleibt
 
 ```sql
@@ -196,5 +196,5 @@ hier festgehalten, damit es beim Bau nicht überrascht.
    umbenennen, zusammenführen oder verengen.
 6. Ein Peer sieht Weltwissen (Stufe 4) ohne Zutun und haushaltsspezifische
    Organisationen (Stufe 2) NUR, wenn er ausdrücklich auf diese Tiefe aufgenommen
-   wurde — geprüft mit einer echten `peer_scoped`-Abfrage, nicht nur am Knoten.
+   wurde — geprüft mit einer echten föderierten Abfrage, nicht nur am Knoten.
 7. Backfill: Probelauf-Zählwerte = Schreiblauf-Zählwerte; Rundlauf durchlaufen.

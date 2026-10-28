@@ -61,6 +61,7 @@ from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.database import EMBEDDING_DIMENSION, KGEntity
+from services.circle_sql import PeerScope
 from services.kg_validity_sql import live_clause
 from utils.config import settings
 from utils.llm_client import get_default_client, get_embed_client
@@ -171,7 +172,7 @@ class KGRetrieval:
             return []
 
     async def _resolve_entity_names(
-        self, ids, user_id: int | None, enforce_circles: bool = False
+        self, ids, user_id: int | None, peer: PeerScope | None = None
     ) -> dict[int, str]:
         """Resolve entity ids → names, circle-filtered by the asker's access.
 
@@ -191,14 +192,14 @@ class KGRetrieval:
             KGEntity.is_active == True,  # noqa: E712
             KGEntity.id.in_(ids),
         )
-        if not settings.auth_enabled and not enforce_circles:
+        if not settings.auth_enabled and peer is None:
             pass
         elif user_id is None:
             from models.database import TIER_PUBLIC
             base = base.where(KGEntity.circle_tier == TIER_PUBLIC)
         else:
             clause, params = kg_entities_circles_filter(
-                user_id, alias="kg_entities", peer_scoped=enforce_circles
+                user_id, alias="kg_entities", peer=peer
             )
             base = base.where(text(clause).bindparams(**params))
         rows = (await self.db.execute(base)).all()
@@ -210,7 +211,7 @@ class KGRetrieval:
         user_id: int | None = None,
         user_role: str | None = None,  # kept for back-compat; ignored under circles
         lang: str = "de",
-        enforce_circles: bool = False,
+        peer: PeerScope | None = None,
     ) -> str | None:
         """
         Retrieve relevant graph triples for a query, filtered by circle access.
@@ -244,7 +245,7 @@ class KGRetrieval:
         # Anonymous-but-auth-on (`user_id is None`) → public-tier only.
         # Authenticated (or enforce_circles) → circle_sql helpers (peer-scoped
         # drops the owner + explicit-grant branches).
-        if not settings.auth_enabled and not enforce_circles:
+        if not settings.auth_enabled and peer is None:
             entity_filter = ""
             entity_params: dict[str, Any] = {}
             relation_filter_clause = ""
@@ -257,12 +258,12 @@ class KGRetrieval:
             relation_params = {"pub_tier": TIER_PUBLIC}
         else:
             ent_clause, ent_params = kg_entities_circles_filter(
-                user_id, alias="e", peer_scoped=enforce_circles
+                user_id, alias="e", peer=peer
             )
             entity_filter = f"AND {ent_clause}"
             entity_params = ent_params
             rel_clause, rel_params = kg_relations_circles_filter(
-                user_id, alias="r", peer_scoped=enforce_circles
+                user_id, alias="r", peer=peer
             )
             relation_filter_clause = f"AND {rel_clause}"
             relation_params = rel_params
@@ -365,7 +366,7 @@ class KGRetrieval:
             entity_ids.add(r.object_id)
 
         entity_map = await self._resolve_entity_names(
-            entity_ids, user_id, enforce_circles=enforce_circles
+            entity_ids, user_id, peer=peer
         )
 
         # Format triples (the direct, flat-1-hop seed relations)
@@ -413,7 +414,7 @@ class KGRetrieval:
                 max_pivots=settings.graph_expansion_max_pivots,
                 max_hops=settings.graph_expansion_max_hops,
                 max_expanded=settings.graph_expansion_max_expanded,
-                enforce_circles=enforce_circles,
+                peer=peer,
             )
             # The expanded kg_edge atoms are ALREADY circle-filtered + leak-safe
             # (both endpoints accessible, relation-tier gated), so their names are
@@ -459,7 +460,7 @@ class KGRetrieval:
         query: str,
         user_id: int | None = None,
         lang: str = "de",
-        enforce_circles: bool = False,
+        peer: PeerScope | None = None,
     ) -> dict[str, list[dict[str, Any]]]:
         """
         Structured sibling of ``get_relevant_context``: returns the matched
@@ -488,7 +489,7 @@ class KGRetrieval:
         threshold = settings.kg_retrieval_threshold
         max_triples = settings.kg_max_context_triples
 
-        if not settings.auth_enabled and not enforce_circles:
+        if not settings.auth_enabled and peer is None:
             entity_filter = ""
             entity_params: dict[str, Any] = {}
             relation_filter_clause = ""
@@ -501,12 +502,12 @@ class KGRetrieval:
             relation_params = {"pub_tier": TIER_PUBLIC}
         else:
             ent_clause, ent_params = kg_entities_circles_filter(
-                user_id, alias="e", peer_scoped=enforce_circles
+                user_id, alias="e", peer=peer
             )
             entity_filter = f"AND {ent_clause}"
             entity_params = ent_params
             rel_clause, rel_params = kg_relations_circles_filter(
-                user_id, alias="r", peer_scoped=enforce_circles
+                user_id, alias="r", peer=peer
             )
             relation_filter_clause = f"AND {rel_clause}"
             relation_params = rel_params
@@ -582,7 +583,7 @@ class KGRetrieval:
         missing = {i for i in needed_ids if i not in name_map}
         if missing:
             name_map.update(await self._resolve_entity_names(
-                missing, user_id, enforce_circles=enforce_circles
+                missing, user_id, peer=peer
             ))
 
         relations = [

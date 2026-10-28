@@ -65,6 +65,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.database import PeerUser
 from services.atom_types import Provenance
+from services.circle_sql import PeerScope
 from services.database import AsyncSessionLocal
 from services.federation_identity import (
     FederationIdentity,
@@ -165,6 +166,38 @@ async def _prune_expired(now: float | None = None) -> None:
     explicit pruning.
     """
     await get_pending_store().prune_expired(now=now)
+
+
+class PendingScopeError(Exception):
+    """Ein Pending-Satz, der sich nicht eindeutig deuten laesst."""
+
+
+def _peer_scope_for(pending: _PendingRequest) -> PeerScope | None:
+    """Die `PeerScope` zu einem Pending-Satz — oder ein Fehlschlag.
+
+    🛑 Hier wird NICHT geraten. Ein Satz ist entweder gemappt (`mapped=True`,
+    laeuft als die verknuepfte Person, kein Peer-Filter) oder ein Rueckfall
+    (`mapped=False`, verlangt `peer_owner_id`). Alles andere ist
+    widerspruechlich und wird abgewiesen.
+
+    Der Fall, den das abfaengt: eine Zeile aus einer AELTEREN Fassung, die
+    weder `mapped` noch `peer_owner_id` kennt. Beim Redis-Speicher ist das
+    waehrend eines rollenden Deploys der Normalfall (siehe `_from_jsonable`).
+    Sie traegt `asker_local_user_id = peer.remote_user_id` — die geliehene
+    fremde Kennung, die F-ID-3 abgeschafft hat — und saehe ohne diese Pruefung
+    aus wie ein gueltiger gemappter Satz. Unter Auth-aus faende sie dann sogar
+    die Einzelnutzer-Abkuerzung.
+
+    Lieber eine abgewiesene Anfrage als eine beantwortete mit falscher Reichweite.
+    """
+    if pending.mapped:
+        return None
+    if pending.peer_owner_id is None:
+        raise PendingScopeError(
+            f"Rueckfall ohne Eigentuemer (request_id={pending.request_id}) — "
+            "vermutlich ein Satz aus einer aelteren Fassung; abgewiesen"
+        )
+    return PeerScope(owner_id=pending.peer_owner_id, tier=pending.max_visible_tier)
 
 
 async def _record_nonce(nonce: str, now: float) -> bool:
@@ -319,19 +352,23 @@ class FederationQueryResponder:
         if mapped_user_id is not None:
             # MAPPED — run as the local user with full circle semantics.
             asker_local_user_id = mapped_user_id
-            max_visible_tier = 0          # not consulted when enforce_circles=False
-            enforce_circles = False
+            max_visible_tier = 0          # im gemappten Pfad nicht gelesen
+            peer_owner_id = None
+            mapped = True
         else:
-            # FALLBACK — the peer-scoped path (PR #957). The responder granted
-            # the whole peer instance a tier via CircleMembership at pairing;
-            # the asker's id on OUR side is the PeerUser.remote_user_id echo, and
-            # the membership lookup keys on (circle_owner_id, member_user_id).
-            asker_local_user_id = peer.remote_user_id
-            max_visible_tier = await self._resolve_asker_tier(
-                owner_user_id=peer.circle_owner_id,
-                member_user_id=peer.remote_user_id,
-            )
-            enforce_circles = True
+            # FALLBACK — peer-bezogen. Die Stufe kommt seit F-ID-3 aus der
+            # PAARUNG (`peer_users.granted_tier`), nicht mehr aus einer
+            # `CircleMembership`, die auf `peer.remote_user_id` keyte.
+            #
+            # 🛑 `asker_local_user_id` wird hier NICHT mehr gesetzt. Es stand
+            # dort `peer.remote_user_id` — eine Zahl der GEGENSTELLE, die der
+            # Filter als lokale Person las. Im peer-bezogenen Zweig gibt es
+            # keine fragende lokale Person mehr, also auch keine Kennung, die
+            # jemand verwechseln koennte.
+            asker_local_user_id = None
+            max_visible_tier = peer.granted_tier
+            peer_owner_id = peer.circle_owner_id
+            mapped = False
 
         request_id = str(uuid.uuid4())
         await _prune_expired(now=now)
@@ -343,7 +380,8 @@ class FederationQueryResponder:
             max_visible_tier=max_visible_tier,
             query=req.query,
             initiated_at=now,
-            enforce_circles=enforce_circles,
+            peer_owner_id=peer_owner_id,
+            mapped=mapped,
         ))
 
         # Schedule the background work. The task is fire-and-forget —
@@ -499,15 +537,15 @@ class FederationQueryResponder:
             asker_id=pending.asker_local_user_id or 0,
             max_visible_tier=pending.max_visible_tier,
             top_k=10,
-            # FALLBACK (enforce_circles=True): peer-scoped circle enforcement
-            # regardless of settings.auth_enabled — a federated peer is never the
-            # local single user, so without it an auth-off responder leaks its
-            # whole brain and a colliding asker_id could hit the owner branch
-            # (PR #957 + circle_sql peer_scoped).
-            # MAPPED (enforce_circles=False, F-ID-1): the querier was identity-
-            # linked to `asker_local_user_id`, so run AS that user with full
-            # circle reach. Set in _handle_initiate; defaults True (fail-closed).
-            enforce_circles=pending.enforce_circles,
+            # FALLBACK: `peer` gesetzt → peer-bezogener Filter, unabhaengig von
+            # `settings.auth_enabled`. Ohne ihn liefe eine auth-aus-Instanz in
+            # die Einzelnutzer-Abkuerzung und gaebe ihr ganzes Gehirn preis.
+            # Die Stufe stammt aus der Paarung, der Eigentuemer bindet sie an
+            # dessen Zeilen — beides zusammen, sonst saehe der Peer seine Stufe
+            # bei jedem Eigentuemer.
+            # MAPPED (F-ID-1): `peer=None` → die Anfrage laeuft ALS die
+            # verknuepfte Person mit deren voller Reichweite.
+            peer=_peer_scope_for(pending),
         )
 
     async def _synthesize(self, query: str, matches: list) -> str:
@@ -680,28 +718,11 @@ class FederationQueryResponder:
             await self.db.rollback()
         return peer
 
-    async def _resolve_asker_tier(
-        self,
-        owner_user_id: int,
-        member_user_id: int | None,
-    ) -> int:
-        """Look up what tier the responder granted the asker on pairing."""
-        if member_user_id is None:
-            return 0  # No membership — treat as self-only view (empty)
-        from models.database import CircleMembership
-        row = (await self.db.execute(
-            select(CircleMembership).where(
-                CircleMembership.circle_owner_id == owner_user_id,
-                CircleMembership.member_user_id == member_user_id,
-                CircleMembership.dimension == "tier",
-            )
-        )).scalar_one_or_none()
-        if row is None:
-            return 0
-        try:
-            return int(row.value)
-        except (TypeError, ValueError):
-            return 0
+    # 🛑 `_resolve_asker_tier` ist am 2026-10-27 ENTFALLEN (F-ID-3). Sie suchte
+    # eine `CircleMembership` ueber `member_user_id = peer.remote_user_id` — eine
+    # fremde Zahl in einer Spalte mit Fremdschluessel auf die lokale `users.id` —
+    # und tat das mit `scalar_one_or_none()`, das bei zwei Peers unter einem
+    # Eigentuemer geworfen haette. Die Stufe kommt jetzt aus `peer.granted_tier`.
 
     @staticmethod
     async def _emit_progress(pending: _PendingRequest, label: str) -> None:

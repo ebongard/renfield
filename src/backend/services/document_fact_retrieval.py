@@ -34,7 +34,7 @@ from sqlalchemy.exc import OperationalError, ProgrammingError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.database import OBLIGATION_MILESTONE_CONFIRMED, TIER_PUBLIC
-from services.circle_sql import document_facts_circles_filter
+from services.circle_sql import PeerScope, document_facts_circles_filter
 from services.fts_languages import build_tsquery_union_sql
 from services.lexical_retrieval import _significant_tokens
 from utils.config import settings
@@ -124,7 +124,7 @@ class DocumentFactRetrieval:
     # ------------------------------------------------------------------ #
     @staticmethod
     def _facts_circles_filter(
-        user_id: int | None, enforce_circles: bool = False
+        user_id: int | None, peer: PeerScope | None = None
     ) -> tuple[str, dict[str, Any]]:
         """WHERE-fragment + params for circle access on ``document_facts``.
 
@@ -134,11 +134,11 @@ class DocumentFactRetrieval:
         Authenticated caller (or ``enforce_circles``) → the parent-Document OR via
         ``circle_sql`` (peer-scoped drops the owner + explicit-grant branches).
         """
-        if not settings.auth_enabled and not enforce_circles:
+        if not settings.auth_enabled and peer is None:
             return ("TRUE", {})
         if user_id is None:
             return ("df.circle_tier = :asker_id_pub", {"asker_id_pub": TIER_PUBLIC})
-        return document_facts_circles_filter(user_id, peer_scoped=enforce_circles)
+        return document_facts_circles_filter(user_id, peer=peer)
 
     def _is_postgres(self) -> bool:
         return (
@@ -175,7 +175,7 @@ class DocumentFactRetrieval:
         *,
         asker_id: int | None,
         top_k: int,
-        enforce_circles: bool = False,
+        peer: PeerScope | None = None,
     ) -> list[dict[str, Any]]:
         """Keyword search over facts: FTS on ``search_vector`` plus an
         identifier-ILIKE branch (added only for identifier-shaped queries).
@@ -191,10 +191,10 @@ class DocumentFactRetrieval:
 
         if not self._is_postgres():
             return await self._search_sqlite(
-                fts_tokens, ident_tokens, asker_id, top_k, enforce_circles
+                fts_tokens, ident_tokens, asker_id, top_k, peer
             )
 
-        circles_clause, circles_params = self._facts_circles_filter(asker_id, enforce_circles)
+        circles_clause, circles_params = self._facts_circles_filter(asker_id, peer)
         params: dict[str, Any] = {"limit": top_k, **circles_params}
         match_parts: list[str] = []
         rank_terms: list[str] = []
@@ -249,7 +249,7 @@ class DocumentFactRetrieval:
         ident_tokens: list[str],
         asker_id: int | None,
         top_k: int,
-        enforce_circles: bool = False,
+        peer: PeerScope | None = None,
     ) -> list[dict[str, Any]]:
         """Sqlite test-harness fallback: token-OR LIKE with a match-count rank.
 
@@ -262,7 +262,7 @@ class DocumentFactRetrieval:
         tokens = list(dict.fromkeys([*fts_tokens, *ident_tokens]))
         if not tokens:
             return []
-        circles_clause, circles_params = self._facts_circles_filter(asker_id, enforce_circles)
+        circles_clause, circles_params = self._facts_circles_filter(asker_id, peer)
         params: dict[str, Any] = {"limit": top_k, **circles_params}
         match_terms: list[str] = []
         count_terms: list[str] = []

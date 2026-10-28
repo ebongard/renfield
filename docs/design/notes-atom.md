@@ -57,7 +57,7 @@ notes
 1. `ATOM_TYPE_NOTE = "note"` + `Note` ORM in `models/database.py`.
 2. `"note": "notes"` in `AtomService._table_for_atom_type`; `"note_id"` in
    `_source_id_for`.
-3. `notes_circles_filter(asker_id, alias="n", *, peer_scoped=False)` in
+3. `notes_circles_filter(asker_id, alias="n", *, peer=None)` in
    `circle_sql.py` — direct-owner shape (mirrors `kg_entities_circles_filter`).
 
 ## 3. `[[bidirectional links]]`

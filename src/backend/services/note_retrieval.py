@@ -20,7 +20,7 @@ from sqlalchemy.exc import OperationalError, ProgrammingError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.database import EMBEDDING_DIMENSION, TIER_PUBLIC
-from services.circle_sql import notes_circles_filter
+from services.circle_sql import PeerScope, notes_circles_filter
 from services.fts_languages import build_tsquery_union_sql
 from services.lexical_retrieval import _significant_tokens
 from utils.config import settings
@@ -53,17 +53,17 @@ class NoteRetrieval:
 
     @staticmethod
     def _notes_circles_filter(
-        user_id: int | None, enforce_circles: bool = False
+        user_id: int | None, peer: PeerScope | None = None
     ) -> tuple[str, dict[str, Any]]:
         """WHERE-fragment + params for circle access on ``notes`` (alias ``n``).
 
         AUTH off → bypass (unless federation ``enforce_circles``). Anonymous authed
         caller → public-tier only. Else the 4-branch atom filter."""
-        if not settings.auth_enabled and not enforce_circles:
+        if not settings.auth_enabled and peer is None:
             return ("TRUE", {})
         if user_id is None:
             return ("n.circle_tier = :asker_id_pub", {"asker_id_pub": TIER_PUBLIC})
-        return notes_circles_filter(user_id, peer_scoped=enforce_circles)
+        return notes_circles_filter(user_id, peer=peer)
 
     def _is_postgres(self) -> bool:
         return self.db.bind is not None and self.db.bind.dialect.name == "postgresql"
@@ -84,7 +84,7 @@ class NoteRetrieval:
         *,
         asker_id: int | None,
         top_k: int,
-        enforce_circles: bool = False,
+        peer: PeerScope | None = None,
     ) -> list[dict[str, Any]]:
         """Hybrid search over note title+body, circle-filtered: the FTS branch
         RRF-fused with a dense (embedding) branch. ``[]`` on thin query / error.
@@ -97,26 +97,26 @@ class NoteRetrieval:
         if not tokens:
             return []
         if not self._is_postgres():
-            return await self._search_sqlite(tokens, asker_id, top_k, enforce_circles)
+            return await self._search_sqlite(tokens, asker_id, top_k, peer)
 
         # Over-fetch each branch so the fusion has candidates to reorder.
         fan = max(top_k * 3, top_k)
-        fts_rows = await self._fts_search(tokens, asker_id, fan, enforce_circles)
+        fts_rows = await self._fts_search(tokens, asker_id, fan, peer)
 
         dense_rows: list[Any] = []
         if settings.notes_semantic_search_enabled:
             qemb = await self._embed_query(query)
             if qemb is not None:
-                dense_rows = await self._dense_search(qemb, asker_id, fan, enforce_circles)
+                dense_rows = await self._dense_search(qemb, asker_id, fan, peer)
 
         if not dense_rows:
             return [_row_to_dict(r, rank=r.rank) for r in fts_rows[:top_k]]
         return self._rrf_fuse([fts_rows, dense_rows], top_k)
 
     async def _fts_search(
-        self, tokens: list[str], asker_id: int | None, limit: int, enforce_circles: bool
+        self, tokens: list[str], asker_id: int | None, limit: int, peer: PeerScope | None
     ) -> list[Any]:
-        circles_clause, circles_params = self._notes_circles_filter(asker_id, enforce_circles)
+        circles_clause, circles_params = self._notes_circles_filter(asker_id, peer)
         params: dict[str, Any] = {"limit": limit, "or_query": " OR ".join(tokens), **circles_params}
         tsq = build_tsquery_union_sql("or_query")
         sql = text(f"""
@@ -132,11 +132,11 @@ class NoteRetrieval:
         return await self._fetch(sql, params)
 
     async def _dense_search(
-        self, query_embedding: list[float], asker_id: int | None, limit: int, enforce_circles: bool
+        self, query_embedding: list[float], asker_id: int | None, limit: int, peer: PeerScope | None
     ) -> list[Any]:
         """Circle-filtered cosine over note embeddings via a halfvec cast (uses the
         halfvec HNSW index). `dim` is the trusted settings value → f-string safe."""
-        circles_clause, circles_params = self._notes_circles_filter(asker_id, enforce_circles)
+        circles_clause, circles_params = self._notes_circles_filter(asker_id, peer)
         dim = EMBEDDING_DIMENSION
         params: dict[str, Any] = {
             "limit": limit,
@@ -178,10 +178,10 @@ class NoteRetrieval:
         return [_row_to_dict(row_by_id[nid], rank=score) for nid, score in ordered]
 
     async def _search_sqlite(
-        self, tokens: list[str], asker_id: int | None, top_k: int, enforce_circles: bool
+        self, tokens: list[str], asker_id: int | None, top_k: int, peer: PeerScope | None
     ) -> list[dict[str, Any]]:
         """Sqlite test fallback: token-OR LIKE over title+body with a match-count rank."""
-        circles_clause, circles_params = self._notes_circles_filter(asker_id, enforce_circles)
+        circles_clause, circles_params = self._notes_circles_filter(asker_id, peer)
         params: dict[str, Any] = {"limit": top_k, **circles_params}
         match_terms, count_terms = [], []
         for i, tok in enumerate(tokens):

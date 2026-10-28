@@ -1,6 +1,6 @@
 # Design — Person-scoped federation (cross-instance identity mapping)
 
-**Status:** F-ID-1 SHIPPED dark (#959 2026-07-12: migration `pc20260712_federation_user_links`, `services/federation_identity_link.py`, admin route `api/routes/federation_user_links.py`, flag `FEDERATION_IDENTITY_LINKS_ENABLED=false`; #960 durable instance identity). **F-ID-2 SHIPPED 2026-10-27** (consent-signed double-login handshake, §4.2 A, built per §9: `services/link_handshake_service.py`, `api/routes/federation_links.py`, `LinkIdentity{Initiator,Responder}Modal`, „Verknüpfte Identitäten" on the peers page). `FEDERATION_IDENTITY_LINKS_ENABLED=true` in both instances since the same day. **Open:** F-ID-3.
+**Status:** F-ID-1 SHIPPED dark (#959 2026-07-12: migration `pc20260712_federation_user_links`, `services/federation_identity_link.py`, admin route `api/routes/federation_user_links.py`, flag `FEDERATION_IDENTITY_LINKS_ENABLED=false`; #960 durable instance identity). **F-ID-2 SHIPPED 2026-10-27** (consent-signed double-login handshake, §4.2 A, built per §9: `services/link_handshake_service.py`, `api/routes/federation_links.py`, `LinkIdentity{Initiator,Responder}Modal`, „Verknüpfte Identitäten" on the peers page). `FEDERATION_IDENTITY_LINKS_ENABLED=true` in both instances since the same day. **F-ID-3 SHIPPED 2026-10-28** (`peer_users.granted_tier`, Migration `pc20261027_peer_tier`, `PeerScope` statt `peer_scoped`). **Open:** nichts mehr aus dieser Reihe.
 **Motivating case:** linking a personal (household) Renfield instance to a business instance so that a *person* who has an account on both sees, from either side, exactly what that person is entitled to see on the other — while everyone else sees only public.
 **Depends on:** the peer-scoped federation fix (`services/circle_sql.py::peer_scoped` + `enforce_circles`, shipped in PR #957) is the FALLBACK path this builds on. Read that first.
 
@@ -115,7 +115,33 @@ The unmapped path is exactly the current PR-#957 behavior. The instance-level `C
 1. **P0 (prereq):** personal instance → auth-on with real accounts. Separate track.
 2. **F-ID-1:** schema (`federation_user_links`) + envelope `querier_ref` (signed) + responder mapped/fallback branch (mapped path reuses `enforce_circles=False`). Dark behind a flag; no `querier_ref` sent → 100% fallback = today's behavior.
 3. **F-ID-2:** the link-establishment handshake (double-login consent, §4.2 option A) + admin UI to view/revoke links.
-4. **F-ID-3:** unify with the multi-peer `remote_user_id` identity-namespace TODO (one opaque per-peer identity model for both fallback and mapped paths).
+4. ~~**F-ID-3:** unify with the multi-peer `remote_user_id` identity-namespace TODO.~~
+   **Erledigt 2026-10-28, aber ANDERS als hier vorgezeichnet** — und der Unterschied ist es
+   wert, festgehalten zu werden.
+
+   Das Zielbild lautete „ein opakes Identitätsmodell je Peer für beide Pfade". Gebaut ist
+   etwas Kleineres: der **Rückfallpfad bekommt gar keine Identität mehr**. Er brauchte nie
+   eine. Was er brauchte, war die gewährte Stufe und der Eigentümer, der sie gewährt hat —
+   beides Eigenschaften der PAARUNG, nicht einer Person. Also steht die Stufe jetzt als
+   `peer_users.granted_tier` auf der Paarungszeile, und `circles_filter_clause` nimmt eine
+   `PeerScope(owner_id, tier)` statt eines `peer_scoped`-Bools. Der gemappte Pfad behält
+   `querier_ref` → lokale Person; das ist weiterhin eine echte Identität und soll eine sein.
+
+   Zwei Modelle statt einem, jedes für seinen Zweck — das ist die Abweichung. Sie ist
+   bewusst: ein Schattenkonto je Peer hätte „ein Modell" erfüllt, aber den kaputten
+   Mechanismus (fremde Zahl in einer lokalen Fremdschlüsselspalte) erhalten und nur mit
+   gültigen Werten gefüttert.
+
+   🛑 **Was dabei nebenbei herauskam:** `enforce_circles` bedeutete an den Abrufmodulen
+   zweierlei zugleich — „den Einzelnutzer-Bypass unterdrücken" UND „ich bin ein Peer". Der
+   LOKALE Dokumentsuchpfad (`knowledge.py` → `document_search` → `lexical_retrieval`) reichte
+   dafür `settings.auth_enabled` durch. Im auth-on-Haushalt lief damit **jede** Dokumentsuche
+   einer angemeldeten Person peer-bezogen, ohne Eigentümer- und Freigabezweig: sie verlor ihre
+   EIGENEN nicht-öffentlichen Treffer in der Vorauswahl. Der Schalter ist ersatzlos entfallen.
+
+   Beleg: `tests/backend/test_peer_tier_isolation_pg.py` (fünf Fälle gegen echtes Postgres,
+   darunter das wörtliche Abnahmekriterium aus BL-0135), Migration vorwärts/rückwärts/vorwärts
+   gegen eine Wegwerf-Datenbank durchlaufen.
 
 ## 7. Open questions
 

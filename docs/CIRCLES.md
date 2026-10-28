@@ -35,7 +35,11 @@ Die Vier-Zweig-Logik wird einmal zentral formuliert in `services/circle_sql.py` 
 
 **Edge-Case — Single-User-Mode**: bei `AUTH_ENABLED=false` wird die gesamte Filterlogik übersprungen (OR-Short-Circuit). Ein einzelner Nutzer sieht alles, unabhängig von Tiers.
 
-**Ausnahme — Federation (`enforce_circles` / `peer_scoped`)**: der Single-User-Bypass gilt **nur für lokale Aufrufer**. Eine föderierte Peer-Query läuft mit `enforce_circles=True` durch `PolymorphicAtomStore.query` → jedes Retrieval-Modul filtert weiter, auch bei `AUTH_ENABLED=false`. Zusätzlich läuft der Filter *peer-scoped*: `circle_sql.circles_filter_clause(peer_scoped=True)` **entfernt** die Zweige „Owner-Gleichheit" und „expliziter Grant" und lässt nur `(public) ODER (Tier-Mitgliedschaft aus der Paarung)` übrig. Das ist die Kollisions-Verteidigung: die föderierte `asker_id` = `PeerUser.remote_user_id` ist ein FK-gebundener lokaler `users.id`, der im Single-User-Haushalt strukturell = Owner-ID ist — ohne Peer-Scope würde der Owner-Zweig den Peer als Eigentümer autorisieren. Nur `public`-Tier und die bei der Paarung gesetzte `CircleMembership`-Zeile sind kollisionssicher.
+**Ausnahme — Federation (`peer`)**: der Single-User-Bypass gilt **nur für lokale Aufrufer**. Eine föderierte Peer-Query reicht eine `PeerScope(owner_id, tier)` bis in den Filter; jedes Retrieval-Modul filtert dann weiter, auch bei `AUTH_ENABLED=false`. Der Filter lässt die Zweige „Owner-Gleichheit" und „expliziter Grant" weg, und es bleibt beweisbar `(public) ODER (DIESER Eigentümer UND seine gewährte Stufe)`.
+
+🛑 **Beide Hälften sind tragend.** Die Stufe allein genügt nicht: ohne die Bindung an `peer_users.circle_owner_id` sähe der Peer seine Stufe bei *jedem* Eigentümer der Instanz.
+
+🛑 **Seit 2026-10-27 (F-ID-3) gibt es im peer-bezogenen Zweig gar keine `asker_id` mehr.** Hier stand bis dahin: die föderierte `asker_id` sei `PeerUser.remote_user_id`, ein FK-gebundener lokaler `users.id`, der „im Single-User-Haushalt strukturell = Owner-ID" sei — und die bei der Paarung gesetzte `CircleMembership`-Zeile sei kollisionssicher. Beides stimmte nicht mehr: der Haushalt ist seit dem **2026-09-23** auth-on mit sieben Konten, und die Mitgliedschaft war die Kollision, nicht ihre Abwehr. Am 2026-10-27 brach genau das die erste echte Paarung — auf x-idra am Fremdschlüssel (500), im Haushalt still auf die falsche Person. Die Stufe steht jetzt als `peer_users.granted_tier` an der Paarung, und der Filter nennt den Peer, statt sich eine lokale Kennung zu leihen.
 
 ---
 
