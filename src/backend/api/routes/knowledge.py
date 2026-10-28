@@ -532,6 +532,9 @@ async def list_documents(
             status=status,
             limit=limit,
             offset=offset,
+            # Auth off = one implicit user, no per-user circles to enforce; the
+            # filter would then reduce every result to the public rung.
+            enforce_circles=settings.auth_enabled,
         )
         # Search returns relevance-ranked; if the user picked a sort, apply it to
         # the returned page (page-level — the recency branch sorts the full set).

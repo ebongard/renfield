@@ -740,10 +740,10 @@ class TestTier2AuthHardening:
         from services import graph_expansion as ge
 
         monkeypatch.setattr(ge.settings, "auth_enabled", False)
-        assert ge._relation_filter(asker_id=5, enforce_circles=False) == ("", {})
+        assert ge._relation_filter(asker_id=5, peer=None) == ("", {})
 
         monkeypatch.setattr(ge.settings, "auth_enabled", True)
-        clause, _ = ge._relation_filter(asker_id=5, enforce_circles=False)
+        clause, _ = ge._relation_filter(asker_id=5, peer=None)
         # Must enforce the relation's OWN circle_tier — the leak was that
         # relations (unlike entities) were unfiltered on the auth-on path, so a
         # non-empty-but-tier-less clause would not close it.
@@ -751,7 +751,7 @@ class TestTier2AuthHardening:
             "auth-on relation filter must reference r.circle_tier"
         )
 
-        clause_anon, params_anon = ge._relation_filter(asker_id=None, enforce_circles=False)
+        clause_anon, params_anon = ge._relation_filter(asker_id=None, peer=None)
         assert "circle_tier" in clause_anon and params_anon
 
     async def test_roles_taxonomy_gate(self, db_session, monkeypatch):
