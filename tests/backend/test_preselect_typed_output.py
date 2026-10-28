@@ -141,3 +141,90 @@ def test_the_harness_measures_the_SAME_schema_as_production():
         assert paare["maxItems"].value == stand["maxItems"], (
             f"maxItems driftet: Pruefstand {paare['maxItems'].value} "
             f"gegen Produktion {stand['maxItems']}")
+
+
+class TestTheEnumMatchesTheOffer:
+    """🛑 Angebot und erlaubte Antwort muessen DIESELBE Menge sein.
+
+    `get_tool_names()` kann Namen tragen, deren Registry-Eintrag `None` ist.
+    Die fallen beim Bau der Prompt-Zeilen heraus und stehen dann nicht im
+    Prompt — das `enum` aus `tool_names` zu bauen erlaubte also einen Namen,
+    den das Modell nie gesehen hat. Und `filtered` unten prueft nur
+    `name in _tools`, nicht den WERT: ein `None`-Werkzeug kaeme durch.
+    Gefunden im `/review` des eigenen Diffs, bevor das Flag anging.
+    """
+
+    @pytest.mark.unit
+    async def test_a_None_tool_is_in_neither_the_prompt_nor_the_enum(self, monkeypatch):
+        from unittest.mock import AsyncMock, MagicMock
+
+        from services.agent_service import AgentService
+        from services.agent_tools import AgentToolRegistry
+        from utils.config import settings
+
+        registry = MagicMock(spec=AgentToolRegistry)
+        tools: dict = {}
+        for i in range(8):
+            w = MagicMock()
+            w.description = f"Beschreibung {i}"
+            tools[f"mcp.server.tool_{i}"] = w
+        tools["mcp.server.kaputt"] = None          # genau der Fall
+        registry._tools = tools
+        registry.get_tool_names.return_value = list(tools.keys())
+
+        rolle = MagicMock()
+        rolle.max_steps, rolle.prompt_key = 5, "agent_prompt"
+        rolle.model = rolle.ollama_url = None
+        rolle.name = "general"
+        agent = AgentService(registry, role=rolle)
+
+        antwort = MagicMock()
+        antwort.message.content = '["mcp.server.tool_0"]'
+        client = AsyncMock()
+        client.chat = AsyncMock(return_value=antwort)
+
+        monkeypatch.setattr(settings, "agent_preselect_typed", True)
+        await agent._preselect_tools("Test", client, "qwen3.6")
+
+        kwargs = client.chat.await_args.kwargs
+        prompt = kwargs["messages"][0]["content"]
+        enum = kwargs["format"]["items"]["enum"]
+
+        assert "mcp.server.kaputt" not in prompt, "der kaputte Name steht im Prompt"
+        assert "mcp.server.kaputt" not in enum, (
+            "das enum erlaubt einen Namen, den das Modell nie gesehen hat")
+        # Negativkontrolle: die Pruefung ist nicht trivial wahr — die GESUNDEN
+        # Namen stehen sehr wohl in beiden.
+        assert "mcp.server.tool_0" in enum and "mcp.server.tool_0" in prompt
+
+    @pytest.mark.unit
+    async def test_the_flag_off_path_sends_no_format_at_all(self, monkeypatch):
+        """Dunkel heisst byteweise der alte Pfad — kein `format` im Aufruf."""
+        from unittest.mock import AsyncMock, MagicMock
+
+        from services.agent_service import AgentService
+        from services.agent_tools import AgentToolRegistry
+        from utils.config import settings
+
+        registry = MagicMock(spec=AgentToolRegistry)
+        tools = {}
+        for i in range(8):
+            w = MagicMock()
+            w.description = f"Beschreibung {i}"
+            tools[f"mcp.server.tool_{i}"] = w
+        registry._tools = tools
+        registry.get_tool_names.return_value = list(tools.keys())
+        rolle = MagicMock()
+        rolle.max_steps, rolle.prompt_key = 5, "agent_prompt"
+        rolle.model = rolle.ollama_url = None
+        rolle.name = "general"
+        agent = AgentService(registry, role=rolle)
+
+        antwort = MagicMock()
+        antwort.message.content = '["mcp.server.tool_0"]'
+        client = AsyncMock()
+        client.chat = AsyncMock(return_value=antwort)
+
+        monkeypatch.setattr(settings, "agent_preselect_typed", False)
+        await agent._preselect_tools("Test", client, "qwen3.6")
+        assert "format" not in client.chat.await_args.kwargs

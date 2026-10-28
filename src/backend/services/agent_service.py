@@ -516,7 +516,10 @@ def _build_preselect_schema(tool_names: list[str]) -> dict:
 
     `enum` is the second half and the stronger one: the model cannot invent a
     tool name, so the registry filter downstream stops being the only thing
-    between a hallucinated name and a silent drop.
+    between a hallucinated name and a silent drop. 🛑 Feed it the names that
+    are actually IN the prompt, not `get_tool_names()` — those differ when a
+    registry entry is `None`, and the gap would let the grammar allow a name
+    the model was never shown.
 
     🛑 `maxItems` is NOT decoration — without it the binding only MOVES the
     failure. Measured against the live endpoint: `uniqueItems` is accepted but
@@ -1195,10 +1198,20 @@ class AgentService:
         # englischen Beschreibung und lag damit jenseits der 80 Zeichen, die
         # diese Schicht sah. Der Agent selbst sieht den vollen Text — nur
         # bekam er das Werkzeug nie angeboten.
-        tool_lines = [
-            preselect_tool_line(name, self.tool_registry._tools.get(name))
-            for name in tool_names
+        # 🛑 EINE Liste fuer beides. `tool_names` kann Namen tragen, deren
+        # Werkzeug `None` ist; die fallen hier heraus und stehen dann NICHT im
+        # Prompt. Wuerde das `enum` der Schema-Bindung trotzdem aus
+        # `tool_names` gebaut, erlaubte die Grammatik einen Namen, den das
+        # Modell nie gesehen hat — und `filtered` unten prueft nur
+        # `name in _tools`, nicht den Wert, liesse also ein `None`-Werkzeug
+        # durch. Angebot und erlaubte Antwort muessen dieselbe Menge sein.
+        angebotene = [
+            name for name in tool_names
             if self.tool_registry._tools.get(name) is not None
+        ]
+        tool_lines = [
+            preselect_tool_line(name, self.tool_registry._tools[name])
+            for name in angebotene
         ]
 
         tool_list = "\n".join(tool_lines)
@@ -1255,7 +1268,7 @@ class AgentService:
             # Dieselbe Eingabe traf im Prueflauf 5/5 richtig; der Fehlgriff lag
             # nicht am Prompt, sondern an der freien Form der Antwort.
             typed_format = (
-                _build_preselect_schema(tool_names)
+                _build_preselect_schema(angebotene)
                 if settings.agent_preselect_typed else None
             )
             if typed_format is not None:
