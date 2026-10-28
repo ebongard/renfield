@@ -258,8 +258,8 @@ async def test_dense_and_fts_branches_apply_identical_circle_filter(monkeypatch)
 
     monkeypatch.setattr(NoteRetrieval, "_fetch", fake_fetch)
     nr = NoteRetrieval(db=None)  # type: ignore[arg-type]
-    await nr._fts_search(["foo"], asker_id=7, limit=5, enforce_circles=False)
-    await nr._dense_search([0.1, 0.2, 0.3, 0.4], asker_id=7, limit=5, enforce_circles=False)
+    await nr._fts_search(["foo"], asker_id=7, limit=5, peer=None)
+    await nr._dense_search([0.1, 0.2, 0.3, 0.4], asker_id=7, limit=5, peer=None)
 
     (fts_sql, fts_params), (dense_sql, dense_params) = captured[0], captured[1]
     branch_only = {"limit", "or_query", "qemb"}

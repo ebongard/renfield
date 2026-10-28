@@ -182,15 +182,31 @@ async def search_documents(
     query: str,
     *,
     asker_id: int | None,
+    enforce_circles: bool,
     knowledge_base_id: int | None = None,
     status: str | None = None,
     limit: int = 100,
     offset: int = 0,
-    enforce_circles: bool = True,
 ) -> list[Document]:
     """Ranked hybrid document search. Returns ``Document`` rows in RRF order,
     sliced to ``[offset:offset+limit]``. Empty query → ``[]`` (caller lists by
-    recency instead)."""
+    recency instead).
+
+    🛑 ``enforce_circles`` has NO DEFAULT on purpose. It lost one on 2026-10-27
+    and the single caller then silently inherited ``True``. Under auth-off the
+    asker is ``None``, so the gate keeps only the PUBLIC rung — every
+    owner-held document drops out of the result, and
+    ``test_route_q_searches_documents`` went red unnoticed. A security-relevant
+    switch that can be forgotten WILL be forgotten; now forgetting it raises.
+
+    🛑 ``enforce_circles`` here means ONLY "apply the circle filter at all" —
+    the auth-off / sqlite bypass. It is NOT the federation switch of the same
+    name that F-ID-3 removed on 2026-10-27: that one also meant "I am a peer",
+    and the conflation cost every signed-in person their own non-public hits
+    on the auth-on household. A peer never reaches this function; peer scoping
+    lives in ``circle_sql.PeerScope`` and nowhere else. ``_visible_ids`` below
+    builds no peer branch, which is what keeps the two apart.
+    """
     q = (query or "").strip()
     if not q:
         return []

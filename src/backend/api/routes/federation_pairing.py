@@ -260,12 +260,13 @@ async def revoke_peer(
 ):
     """Revoke a paired peer. Side effects:
       - PeerUser.revoked_at := now (the row stays for audit trail)
-      - CircleMembership for this peer deleted (they no longer reach
-        any atoms at their old tier; F3 read-time verify already
-        short-circuits on revoked_at, but the membership cleanup is
-        the authoritative revoke)
+      - PeerUser.granted_tier := 4, the narrowest rung, so a later
+        re-pairing cannot silently inherit the old grant
       - MCPManager peer registry re-synced so `mcp.peer_<id>.query_brain`
         vanishes from the agent loop's tool surface
+
+    Owner-scoped: only the account that owns the pairing can revoke it,
+    and a peer owned by someone else answers 404 like a missing one.
     """
     peer = (await db.execute(
         select(PeerUser).where(
