@@ -88,6 +88,25 @@ class _PendingRequest:
     #: gemappten Pfad — der verlangt seinerseits eine Verknuepfung und liefert
     #: ohne sie nichts.
     peer_owner_id: int | None = None
+
+    #: 🛑 Der DISKRIMINATOR, und sein Vorgabewert ist Absicht.
+    #:
+    #: `False` = Rueckfall (peer-bezogen) und verlangt `peer_owner_id`.
+    #: `True`  = gemappt: die Anfrage laeuft ALS die verknuepfte Person.
+    #:
+    #: Warum nicht einfach `peer_owner_id is None` als Unterscheidung? Weil eine
+    #: ZEILE AUS EINER AELTEREN FASSUNG dieses Feld nicht kennt und auf die
+    #: Vorgabe faellt — und beim Redis-Speicher ist genau das laut
+    #: `_from_jsonable` der Normalfall waehrend eines rollenden Deploys. Eine
+    #: alte Zeile traegt `asker_local_user_id = peer.remote_user_id` (die
+    #: geliehene fremde Kennung) und KEIN `peer_owner_id`; ohne diesen
+    #: Diskriminator saehe sie aus wie ein gueltiger gemappter Satz und liefe
+    #: mit genau der Kennung, die F-ID-3 abgeschafft hat.
+    #:
+    #: Mit `mapped=False` als Vorgabe ist so eine Zeile WIDERSPRUECHLICH
+    #: (Rueckfall ohne Eigentuemer) und wird abgewiesen, statt still auf den
+    #: weiteren Pfad zu fallen. Der Vorgabewert landet auf der sicheren Seite.
+    mapped: bool = False
     status: str = STATUS_PROCESSING
     progress_label: str = PROGRESS_LABEL_RETRIEVING
     progress_count: int = 0

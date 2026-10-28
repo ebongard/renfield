@@ -168,6 +168,38 @@ async def _prune_expired(now: float | None = None) -> None:
     await get_pending_store().prune_expired(now=now)
 
 
+class PendingScopeError(Exception):
+    """Ein Pending-Satz, der sich nicht eindeutig deuten laesst."""
+
+
+def _peer_scope_for(pending: _PendingRequest) -> PeerScope | None:
+    """Die `PeerScope` zu einem Pending-Satz — oder ein Fehlschlag.
+
+    🛑 Hier wird NICHT geraten. Ein Satz ist entweder gemappt (`mapped=True`,
+    laeuft als die verknuepfte Person, kein Peer-Filter) oder ein Rueckfall
+    (`mapped=False`, verlangt `peer_owner_id`). Alles andere ist
+    widerspruechlich und wird abgewiesen.
+
+    Der Fall, den das abfaengt: eine Zeile aus einer AELTEREN Fassung, die
+    weder `mapped` noch `peer_owner_id` kennt. Beim Redis-Speicher ist das
+    waehrend eines rollenden Deploys der Normalfall (siehe `_from_jsonable`).
+    Sie traegt `asker_local_user_id = peer.remote_user_id` — die geliehene
+    fremde Kennung, die F-ID-3 abgeschafft hat — und saehe ohne diese Pruefung
+    aus wie ein gueltiger gemappter Satz. Unter Auth-aus faende sie dann sogar
+    die Einzelnutzer-Abkuerzung.
+
+    Lieber eine abgewiesene Anfrage als eine beantwortete mit falscher Reichweite.
+    """
+    if pending.mapped:
+        return None
+    if pending.peer_owner_id is None:
+        raise PendingScopeError(
+            f"Rueckfall ohne Eigentuemer (request_id={pending.request_id}) — "
+            "vermutlich ein Satz aus einer aelteren Fassung; abgewiesen"
+        )
+    return PeerScope(owner_id=pending.peer_owner_id, tier=pending.max_visible_tier)
+
+
 async def _record_nonce(nonce: str, now: float) -> bool:
     """
     Returns True iff the nonce is new. Delegates to the configured
@@ -322,6 +354,7 @@ class FederationQueryResponder:
             asker_local_user_id = mapped_user_id
             max_visible_tier = 0          # im gemappten Pfad nicht gelesen
             peer_owner_id = None
+            mapped = True
         else:
             # FALLBACK — peer-bezogen. Die Stufe kommt seit F-ID-3 aus der
             # PAARUNG (`peer_users.granted_tier`), nicht mehr aus einer
@@ -335,6 +368,7 @@ class FederationQueryResponder:
             asker_local_user_id = None
             max_visible_tier = peer.granted_tier
             peer_owner_id = peer.circle_owner_id
+            mapped = False
 
         request_id = str(uuid.uuid4())
         await _prune_expired(now=now)
@@ -347,6 +381,7 @@ class FederationQueryResponder:
             query=req.query,
             initiated_at=now,
             peer_owner_id=peer_owner_id,
+            mapped=mapped,
         ))
 
         # Schedule the background work. The task is fire-and-forget —
@@ -510,11 +545,7 @@ class FederationQueryResponder:
             # bei jedem Eigentuemer.
             # MAPPED (F-ID-1): `peer=None` → die Anfrage laeuft ALS die
             # verknuepfte Person mit deren voller Reichweite.
-            peer=(
-                PeerScope(owner_id=pending.peer_owner_id,
-                          tier=pending.max_visible_tier)
-                if pending.peer_owner_id is not None else None
-            ),
+            peer=_peer_scope_for(pending),
         )
 
     async def _synthesize(self, query: str, matches: list) -> str:
