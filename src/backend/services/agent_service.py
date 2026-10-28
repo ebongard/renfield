@@ -499,6 +499,51 @@ _DEFAULT_LLM_OPTIONS_TOOL_PRESELECT = {
 # prunes them. STRUCTURAL dependencies, not preferences: internal.play_radio
 # plays a TuneIn station_id that ONLY mcp.radio.search_stations can resolve —
 # drop the search tool and the agent guesses an id and loops.
+def _build_preselect_schema(tool_names: list[str]) -> dict:
+    """A root-level JSON array of tool names, constrained to the names on offer.
+
+    🛑 Why a ROOT ARRAY and not an object: the prompt already asks for an array
+    and the parser already expects one, so binding the array shape leaves the
+    prompt BYTE-IDENTICAL. Flag off and flag on then differ in exactly one
+    variable, which is what makes the harness comparison a comparison. An
+    object (`{"tools": [...]}`) would have forced a prompt edit and measured two
+    changes at once.
+
+    🛑 Verified against the live endpoint before building (cuda.local:8081,
+    qwen3.6): llama-server accepts a root-array `json_schema` and enforces it.
+    `json_object` is NOT enforced on this build, `json_schema` IS — same finding
+    as the typed planner in `orchestrator.py`.
+
+    `enum` is the second half and the stronger one: the model cannot invent a
+    tool name, so the registry filter downstream stops being the only thing
+    between a hallucinated name and a silent drop. 🛑 Feed it the names that
+    are actually IN the prompt, not `get_tool_names()` — those differ when a
+    registry entry is `None`, and the gap would let the grammar allow a name
+    the model was never shown.
+
+    🛑 `maxItems` is NOT decoration — without it the binding only MOVES the
+    failure. Measured against the live endpoint: `uniqueItems` is accepted but
+    NOT enforced, so a model nudged toward a different shape emits the same
+    valid name over and over until `num_predict` runs out, and the JSON comes
+    back TRUNCATED — unparseable again, just for a new reason. Two of three
+    adversarial prompts did exactly that. With `maxItems` the grammar bounds the
+    array and all three came back parseable and valid. 8 leaves headroom over
+    the 3-5 the prompt asks for and over `_with_required_companions`.
+
+    Duplicates inside the bound stay possible (that is what `uniqueItems` not
+    being enforced means); they collapse harmlessly, because the caller builds
+    a dict keyed by name.
+    """
+    return {
+        "type": "array",
+        "maxItems": 8,
+        # Angenommen, aber NICHT erzwungen — siehe Docstring. Bleibt als
+        # Absichtserklaerung stehen, traegt aber keine Zusicherung.
+        "uniqueItems": True,
+        "items": {"type": "string", "enum": list(tool_names)},
+    }
+
+
 _REQUIRED_TOOL_COMPANIONS: dict[str, tuple[str, ...]] = {
     "internal.play_radio": ("mcp.radio.search_stations",),
 }
@@ -1153,10 +1198,20 @@ class AgentService:
         # englischen Beschreibung und lag damit jenseits der 80 Zeichen, die
         # diese Schicht sah. Der Agent selbst sieht den vollen Text — nur
         # bekam er das Werkzeug nie angeboten.
-        tool_lines = [
-            preselect_tool_line(name, self.tool_registry._tools.get(name))
-            for name in tool_names
+        # 🛑 EINE Liste fuer beides. `tool_names` kann Namen tragen, deren
+        # Werkzeug `None` ist; die fallen hier heraus und stehen dann NICHT im
+        # Prompt. Wuerde das `enum` der Schema-Bindung trotzdem aus
+        # `tool_names` gebaut, erlaubte die Grammatik einen Namen, den das
+        # Modell nie gesehen hat — und `filtered` unten prueft nur
+        # `name in _tools`, nicht den Wert, liesse also ein `None`-Werkzeug
+        # durch. Angebot und erlaubte Antwort muessen dieselbe Menge sein.
+        angebotene = [
+            name for name in tool_names
             if self.tool_registry._tools.get(name) is not None
+        ]
+        tool_lines = [
+            preselect_tool_line(name, self.tool_registry._tools[name])
+            for name in angebotene
         ]
 
         tool_list = "\n".join(tool_lines)
@@ -1203,6 +1258,21 @@ class AgentService:
             preselect_options = _llm_options_or_default(
                 "llm_options_tool_preselect", _DEFAULT_LLM_OPTIONS_TOOL_PRESELECT,
             )
+            # 🛑 Ohne Bindung ist eine unparsbare Antwort BAUARTBEDINGT
+            # moeglich, und sie kostet nicht die Vorauswahl, sondern ihre
+            # ganze Wirkung: der `except`-Zweig unten gibt `None` zurueck, und
+            # dann stehen ALLE Werkzeuge im Agent-Prompt. Am 2026-10-28 live
+            # beobachtet — das Modell antwortete auf „scanne nach x-idra" mit
+            # der Form eines Werkzeug-AUFRUFS (`"query": "xidra"` samt
+            # `"reason"`, ohne schliessende Klammern) statt mit der Liste.
+            # Dieselbe Eingabe traf im Prueflauf 5/5 richtig; der Fehlgriff lag
+            # nicht am Prompt, sondern an der freien Form der Antwort.
+            typed_format = (
+                _build_preselect_schema(angebotene)
+                if settings.agent_preselect_typed else None
+            )
+            if typed_format is not None:
+                classification_kwargs["format"] = typed_format
             raw_response = await asyncio.wait_for(
                 agent_client.chat(
                     model=agent_model,

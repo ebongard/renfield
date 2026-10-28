@@ -121,3 +121,16 @@ Both halves can be intact and the marker still never fire, because nothing ever 
 - `action_success` has four consumers — this marker, `turn_extraction` (no memory from a failed turn), the kiosk role
   activity, and the follow-up chips. A fifth, the proactive intent-feedback frame, is deliberately fenced to the
   ranked-intent path (`not agent_used`): the agent path has no recognised intent to confirm.
+
+## Die Vorauswahl scheitert nicht ungenau, sondern wirkungslos
+Eine unparsbare Antwort der Werkzeug-Vorauswahl gibt `None` zurueck — und dann stehen ALLE Werkzeuge im
+Agent-Prompt. Das ist kein Randfall: ohne Formatbindung ist die freie Antwort bauartbedingt moeglich
+(2026-10-28 live: das Modell antwortete auf „scanne nach x-idra" in der Form eines Werkzeug-AUFRUFS).
+`AGENT_PRESELECT_TYPED` bindet sie an ein Wurzel-Array mit `enum` — der Prompt bleibt dabei unveraendert,
+damit an/aus sich in genau einer Variable unterscheiden.
+🛑 **`maxItems` ist Pflicht, nicht Zierde.** `uniqueItems` wird von llama-server NICHT erzwungen; ohne
+Laengengrenze wiederholt das Modell einen gueltigen Namen, bis das Budget aufgebraucht ist, und die Antwort
+kommt ABGESCHNITTEN zurueck — unparsbar wie vorher. Ohne diesen Schluessel verschiebt die Bindung den Fehler.
+🛑 **Die Quote aendert sich nicht** (90/95 beidseits). Wer hier Genauigkeit erwartet, misst das Falsche;
+die Grammatikfrage sitzt im `tool_preselect_prompt`, und jede Aenderung daran geht durch
+`bin/measure-preselect.py` — vier Review-Runden am Hinweistext ohne Messung kosteten acht Messrunden.
