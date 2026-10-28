@@ -11,13 +11,19 @@ Handshake State Machine):
   2. Responder's Renfield receives the scanned offer (via frontend) and
      calls accept_offer(). Verifies the initiator's signature, checks
      the offer hasn't expired, persists a PeerUser row on the responder
-     side, creates a CircleMembership at `my_tier_for_you`, and returns
-     a signed PairingResponse for the initiator to ingest.
+     side with `granted_tier = my_tier_for_you`, and returns a signed
+     PairingResponse for the initiator to ingest.
 
   3. Initiator calls complete_handshake() with the scanned response.
      Verifies the responder's signature, validates the cached nonce,
-     persists a PeerUser row on the initiator side, creates a matching
-     CircleMembership. The pairing is live.
+     persists a PeerUser row on the initiator side with
+     `granted_tier = their_tier_for_me`. The pairing is live.
+
+🛑 Die gewaehrte Stufe steht seit 2026-10-27 (F-ID-3) AN DER PAARUNG, nicht
+mehr als `CircleMembership`. Davor landete die ENTFERNTE Nutzerkennung in
+`circle_memberships.member_user_id` — einer Spalte, deren Fremdschluessel auf
+die LOKALE `users.id` zeigt. Das brach auf einer Instanz den Schluessel und
+band auf der anderen still die falsche Person.
 
 Adversary model (design doc § Threat Model):
   - Offers expire in 10 minutes. The nonce cache is TTL'd + single-use.
@@ -46,7 +52,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.database import (
     Circle,
-    CircleMembership,
     PeerUser,
     User,
 )
@@ -295,9 +300,10 @@ class PairingService:
         accepted_endpoints: list[dict[str, Any]] | None = None,
     ) -> PairingResponse:
         """
-        Verify the offer + create the responder-side PeerUser row +
-        issue a CircleMembership placing the initiator at `my_tier_for_you`.
-        Returns a signed response for the initiator to ingest.
+        Verify the offer + create the responder-side PeerUser row carrying
+        `granted_tier = my_tier_for_you`. Returns a signed response for the
+        initiator to ingest. KEINE `CircleMembership` mehr — siehe
+        Modul-Docstring.
         """
         self._verify_offer(offer)
 
@@ -316,16 +322,18 @@ class PairingService:
             remote_pubkey=offer.initiator_pubkey,
             remote_display_name=offer.display_name,
             remote_user_id=offer.initiator_user_id,
+            # 🛑 Die Stufe steht AN DER PAARUNG, seit F-ID-3. Hier stand bis
+            # 2026-10-27 ein `_upsert_circle_membership(member_user_id=
+            # offer.initiator_user_id, …)` — die ENTFERNTE Kennung in einer
+            # Spalte mit Fremdschluessel auf die LOKALE `users.id`. Auf x-idra
+            # brach das den Schluessel (500); im Haushalt gab es die Zahl, also
+            # entstand still eine Zugriffszeile fuer die FALSCHE Person.
+            granted_tier=my_tier_for_you,
             transport_config=transport_config,
         )
-        # Ensure the responder has a circles row (needed for membership FK).
+        # Die `circles`-Zeile bleibt: sie wird anderswo gelesen, und in einer
+        # Sicherheitsaenderung wird nicht nebenbei aufgeraeumt.
         await _get_or_create_circle(self.db, current_user.id)
-        await self._upsert_circle_membership(
-            circle_owner_id=current_user.id,
-            member_user_id=offer.initiator_user_id,
-            tier=my_tier_for_you,
-            granted_by=current_user.id,
-        )
 
         now = int(time.time())
         unsigned = {
@@ -380,15 +388,10 @@ class PairingService:
             remote_pubkey=response.responder_pubkey,
             remote_display_name=response.responder_display_name,
             remote_user_id=response.responder_user_id,
+            granted_tier=their_tier_for_me,   # siehe `accept_offer`
             transport_config=transport_config,
         )
         await _get_or_create_circle(self.db, current_user.id)
-        await self._upsert_circle_membership(
-            circle_owner_id=current_user.id,
-            member_user_id=response.responder_user_id,
-            tier=their_tier_for_me,
-            granted_by=current_user.id,
-        )
         return peer
 
     # -------------------------------------------------------------------------
@@ -432,6 +435,7 @@ class PairingService:
         remote_pubkey: str,
         remote_display_name: str,
         remote_user_id: int | None,
+        granted_tier: int,
         transport_config: dict[str, Any],
     ) -> PeerUser:
         existing = (await self.db.execute(
@@ -445,6 +449,10 @@ class PairingService:
         if existing is not None:
             existing.remote_display_name = remote_display_name
             existing.remote_user_id = remote_user_id
+            # Ein erneutes Paaren setzt die Stufe NEU — sonst behielte eine
+            # Zweitpaarung still die alte Gewaehrung, und die Oberflaeche zeigte
+            # eine Zahl, die nicht gilt.
+            existing.granted_tier = granted_tier
             existing.transport_config = transport_config
             existing.last_seen_at = now
             existing.revoked_at = None
@@ -457,6 +465,7 @@ class PairingService:
             remote_pubkey=remote_pubkey,
             remote_display_name=remote_display_name,
             remote_user_id=remote_user_id,
+            granted_tier=granted_tier,
             transport_config=transport_config,
             paired_at=now,
             last_seen_at=now,
@@ -480,40 +489,12 @@ class PairingService:
         await self.db.refresh(peer)
         return peer
 
-    async def _upsert_circle_membership(
-        self,
-        *,
-        circle_owner_id: int,
-        member_user_id: int,
-        tier: int,
-        granted_by: int,
-    ) -> CircleMembership:
-        existing = (await self.db.execute(
-            select(CircleMembership).where(
-                CircleMembership.circle_owner_id == circle_owner_id,
-                CircleMembership.member_user_id == member_user_id,
-                CircleMembership.dimension == "tier",
-            )
-        )).scalar_one_or_none()
-
-        if existing is not None:
-            existing.value = tier
-            await self.db.commit()
-            await self.db.refresh(existing)
-            return existing
-
-        membership = CircleMembership(
-            circle_owner_id=circle_owner_id,
-            member_user_id=member_user_id,
-            dimension="tier",
-            value=tier,
-            granted_by=granted_by,
-        )
-        self.db.add(membership)
-        await self.db.commit()
-        await self.db.refresh(membership)
-        return membership
-
+    # 🛑 `_upsert_circle_membership` ist am 2026-10-27 ENTFALLEN (F-ID-3).
+    # Sie schrieb die ENTFERNTE Nutzerkennung in `circle_memberships.member_user_id`,
+    # eine Spalte mit Fremdschluessel auf die LOKALE `users.id`. Die Stufe steht
+    # jetzt als `peer_users.granted_tier` an der Paarung. Wer hier wieder eine
+    # Mitgliedschaft schreiben will, baut den Fehler neu — ein Strukturtest in
+    # `tests/backend/test_peer_tier_isolation.py` haelt das fest.
 
 # =============================================================================
 # Helpers
@@ -531,8 +512,11 @@ _canonical_bytes = canonical_bytes
 
 async def _get_or_create_circle(db: AsyncSession, owner_user_id: int) -> Circle:
     """
-    Ensure a `circles` row exists for the pairing user (needed for the
-    circle_memberships FK). Mirrors the helper in api/routes/circles.py:
+    Ensure a `circles` row exists for the pairing user. Seit F-ID-3 braucht
+    die PAARUNG sie nicht mehr (die Stufe steht an `peer_users`), aber die
+    Zeile wird anderswo gelesen und ist idempotent — in einer
+    Sicherheitsaenderung wird nicht nebenbei aufgeraeumt.
+    Mirrors the helper in api/routes/circles.py:
     IntegrityError recovery for concurrent-first-hit races.
     """
     existing = (await db.execute(

@@ -52,7 +52,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.database import TIER_PUBLIC
-from services.circle_sql import document_chunks_circles_filter
+from services.circle_sql import PeerScope, document_chunks_circles_filter
 from services.fts_languages import build_tsquery_union_sql
 from utils.config import settings
 from utils.llm_client import get_embed_client
@@ -108,7 +108,7 @@ class RAGRetrieval:
         knowledge_base_id: int | None = None,
         similarity_threshold: float | None = None,
         user_id: int | None = None,
-        enforce_circles: bool = False,
+        peer: PeerScope | None = None,
     ) -> list[dict[str, Any]]:
         """
         Search relevant chunks for a query.
@@ -140,7 +140,7 @@ class RAGRetrieval:
             query_embedding = None
 
         if query_embedding is None:
-            results = await self._search_bm25(query, top_k, knowledge_base_id, user_id, enforce_circles)
+            results = await self._search_bm25(query, top_k, knowledge_base_id, user_id, peer)
             logger.info(
                 f"📚 RAG BM25-only Fallback: query='{query[:50]}', kb_id={knowledge_base_id}, "
                 f"found={len(results)}"
@@ -148,10 +148,10 @@ class RAGRetrieval:
         elif settings.rag_hybrid_enabled:
             candidate_k = top_k * 3
             dense_results = await self._search_dense(
-                query_embedding, candidate_k, knowledge_base_id, threshold, user_id, enforce_circles
+                query_embedding, candidate_k, knowledge_base_id, threshold, user_id, peer
             )
             bm25_results = await self._search_bm25(
-                query, candidate_k, knowledge_base_id, user_id, enforce_circles
+                query, candidate_k, knowledge_base_id, user_id, peer
             )
             results = self._reciprocal_rank_fusion(dense_results, bm25_results, top_k)
             logger.info(
@@ -160,7 +160,7 @@ class RAGRetrieval:
             )
         else:
             results = await self._search_dense(
-                query_embedding, top_k, knowledge_base_id, threshold, user_id, enforce_circles
+                query_embedding, top_k, knowledge_base_id, threshold, user_id, peer
             )
             logger.info(
                 f"📚 RAG Dense Search: query='{query[:50]}', kb_id={knowledge_base_id}, "
@@ -190,11 +190,11 @@ class RAGRetrieval:
         knowledge_base_id: int | None = None,
         threshold: float | None = None,
         user_id: int | None = None,
-        enforce_circles: bool = False,
+        peer: PeerScope | None = None,
     ) -> list[dict[str, Any]]:
         embedding_str = f"[{','.join(map(str, query_embedding))}]"
         kb_filter = "AND d.knowledge_base_id = :kb_id" if knowledge_base_id else ""
-        circles_clause, circles_params = self._chunk_circles_filter(user_id, enforce_circles)
+        circles_clause, circles_params = self._chunk_circles_filter(user_id, peer)
 
         # LEFT JOIN on knowledge_bases so documents without a KB (legacy
         # direct-upload path where knowledge_base_id IS NULL) are still
@@ -298,10 +298,10 @@ class RAGRetrieval:
         top_k: int,
         knowledge_base_id: int | None = None,
         user_id: int | None = None,
-        enforce_circles: bool = False,
+        peer: PeerScope | None = None,
     ) -> list[dict[str, Any]]:
         kb_filter = "AND d.knowledge_base_id = :kb_id" if knowledge_base_id else ""
-        circles_clause, circles_params = self._chunk_circles_filter(user_id, enforce_circles)
+        circles_clause, circles_params = self._chunk_circles_filter(user_id, peer)
 
         # OR-match: any query term can match; ts_rank_cd ranks by coverage.
         # Tokens are split on whitespace and rejoined with " OR " for
@@ -652,17 +652,17 @@ class RAGRetrieval:
         top_k: int | None = None,
         knowledge_base_id: int | None = None,
         user_id: int | None = None,
-        enforce_circles: bool = False,
+        peer: PeerScope | None = None,
     ) -> str:
         """Search + format into a prompt-ready context string with source attribution."""
         results = await self.search(
-            query, top_k, knowledge_base_id, user_id=user_id, enforce_circles=enforce_circles
+            query, top_k, knowledge_base_id, user_id=user_id, peer=peer
         )
         return self.format_context_from_results(results)
 
     @staticmethod
     def _chunk_circles_filter(
-        user_id: int | None, enforce_circles: bool = False
+        user_id: int | None, peer: PeerScope | None = None
     ) -> tuple[str, dict[str, Any]]:
         """
         Build the document_chunks WHERE-fragment + bind params for circle access.
@@ -679,11 +679,11 @@ class RAGRetrieval:
         `circle_sql.document_chunks_circles_filter`. With ``enforce_circles`` the
         clause is peer-scoped (owner + explicit-grant branches dropped).
         """
-        if not settings.auth_enabled and not enforce_circles:
+        if not settings.auth_enabled and peer is None:
             return ("TRUE", {})
         if user_id is None:
             return ("dc.circle_tier = :asker_id_pub", {"asker_id_pub": TIER_PUBLIC})
-        return document_chunks_circles_filter(user_id, peer_scoped=enforce_circles)
+        return document_chunks_circles_filter(user_id, peer=peer)
 
     def format_context_from_results(self, results: list[dict[str, Any]]) -> str:
         """Format pre-fetched search results into context string without re-searching.

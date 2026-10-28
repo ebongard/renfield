@@ -117,9 +117,11 @@ local sharing (see [`CIRCLES.md`](CIRCLES.md)).
 > 2026-10-27; this note is the result.
 
 A federated peer's queries run **peer-scoped**: the filter keeps
-`(public) OR (content shared to the tier you granted them)` and **drops** the
+`(public) OR (this owner AND the tier you granted them)` and **drops** the
 owner-equality and explicit-grant branches (`circle_sql.circles_filter_clause(
-peer_scoped=True)`). So the tier is honored today — grant **household (2)** and
+peer=PeerScope(owner_id, tier))`). Seit F-ID-3 (2026-10-28) kommt die Stufe aus
+`peer_users.granted_tier` — der Paarungszeile selbst — statt aus einer
+`CircleMembership`, die auf der ENTFERNTEN Nutzerkennung keyte. So the tier is honored today — grant **household (2)** and
 the peer reaches what you've shared at household level; grant **public (4)** and
 they see public only. This is the collision-safe default: a federated `asker_id`
 must never be treated as the local owner.

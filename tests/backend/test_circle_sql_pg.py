@@ -56,6 +56,7 @@ from models.database import (
     User,
 )
 from services.circle_sql import (
+    PeerScope,
     conversation_memories_circles_filter,
     document_chunks_circles_filter,
     kg_entities_circles_filter,
@@ -547,78 +548,93 @@ async def test_document_chunks_stranger_sees_neither_self_chunk(
 # ---------------------------------------------------------------------------
 # peer_scoped (federation) — the collision + explicit-grant suppression proof.
 #
-# A federated asker_id comes from PeerUser.remote_user_id, an FK-constrained
-# local users.id that structurally collides with the owner's own id in a
-# single-user household. peer_scoped MUST drop the owner-equality and
-# explicit-grant branches so a colliding/granted asker sees ONLY public +
-# pairing tier-membership.
+# Eine foederierte Anfrage traegt seit F-ID-3 eine `PeerScope` — Eigentuemer der
+# Paarung UND gewaehrte Stufe. Vorher war es ein blosses `peer_scoped=True`, und
+# die fragende Kennung kam aus `PeerUser.remote_user_id`: eine Zahl der
+# Gegenstelle in einer Spalte mit Fremdschluessel auf die LOKALE `users.id`. Die
+# Zweige „Eigentuemer" und „Freigabe" entfallen weiterhin; die Stufe kommt jetzt
+# aus der Paarung statt aus einer Mitgliedschaft.
 # ---------------------------------------------------------------------------
 
 
-async def _run_kg_clause_peer_scoped(session: AsyncSession, asker_id: int) -> set[int]:
-    clause, params = kg_entities_circles_filter(asker_id=asker_id, peer_scoped=True)
+async def _run_kg_clause_peer_scoped(
+    session: AsyncSession, owner_id: int, tier: int,
+) -> set[int]:
+    """🛑 Nimmt KEINE Fragenden-Kennung mehr entgegen — es gibt im
+    peer-bezogenen Zweig keine fragende lokale Person. Genau diese Kennung war
+    der Fehler."""
+    clause, params = kg_entities_circles_filter(
+        asker_id=0, peer=PeerScope(owner_id=owner_id, tier=tier),
+    )
     sql = f"SELECT e.id FROM kg_entities e WHERE e.is_active AND ({clause})"
     result = await session.execute(text(sql), params)
     return {row.id for row in result.all()}
 
 
-async def test_peer_scoped_colliding_asker_id_denied_owner_branch(
+async def test_a_colliding_id_can_no_longer_even_be_SUPPLIED(
     pg_db_session: AsyncSession,
     seeded_circle_world: dict,
 ) -> None:
-    """THE core fix: asker_id == owner_id (the FK-forced collision) must NOT
-    unlock the owner's own atoms under peer_scoped. With the owner branch
-    dropped and no membership row for the owner-as-member, only public is left.
+    """DER Kern des Fixes, an der Bank gemessen.
+
+    Frueher musste man beweisen, dass eine kollidierende `asker_id` den
+    Eigentuemerzweig nicht aufschliesst. Jetzt gibt es diese Kennung im
+    peer-bezogenen Zweig GAR NICHT MEHR: die Klausel nennt sie nicht, und
+    `circles_filter_params` gibt sie nicht aus. Ein Fehler, der nicht
+    formulierbar ist, kann nicht auftreten.
     """
     owner_id = seeded_circle_world["owner_id"]
 
-    # Sanity: WITHOUT peer_scoped, that same id is the owner → sees everything.
+    # Zur Gegenprobe: OHNE Peer ist derselbe Mensch der Eigentuemer und sieht alles.
     unscoped = await _run_kg_clause_for(pg_db_session, owner_id)
     assert seeded_circle_world["kg_self_id"] in unscoped
 
-    # WITH peer_scoped: the colliding id sees ONLY public.
-    visible = await _run_kg_clause_peer_scoped(pg_db_session, owner_id)
-    assert seeded_circle_world["kg_self_id"] not in visible, (
-        "peer_scoped must NOT let a colliding asker_id reach owner self atoms"
+    _, params = kg_entities_circles_filter(
+        asker_id=owner_id, peer=PeerScope(owner_id=owner_id, tier=4),
     )
-    assert seeded_circle_world["kg_household_id"] not in visible
-    assert seeded_circle_world["kg_extended_id"] not in visible
-    assert visible == {seeded_circle_world["kg_public_id"]}
+    assert "asker_id" not in params, params
+
+    # Und die Wirkung: Stufe 4 beim eigenen Eigentuemer erreicht nur Oeffentliches.
+    visible = await _run_kg_clause_peer_scoped(pg_db_session, owner_id, tier=4)
+    assert visible == {seeded_circle_world["kg_public_id"]}, visible
 
 
-async def test_peer_scoped_drops_explicit_grant(
+async def test_peer_scope_drops_explicit_grant(
     pg_db_session: AsyncSession,
     seeded_circle_world: dict,
 ) -> None:
-    """The explicit-grant branch is also an asker-id equality sink → dropped.
+    """Der Freigabe-Zweig bleibt weg.
 
-    `stranger` has an explicit grant to the tier-0 self entity. Unscoped they
-    see it; peer_scoped they do not (only public remains).
+    `stranger` hat eine ausdrueckliche Freigabe auf die Stufe-0-Entitaet. Ohne
+    Peer sieht er sie; mit Peer nicht — die Freigabe haengt an einer lokalen
+    Person, und ein Peer ist keine.
     """
     stranger_id = seeded_circle_world["stranger_id"]
+    owner_id = seeded_circle_world["owner_id"]
 
     unscoped = await _run_kg_clause_for(pg_db_session, stranger_id)
     assert seeded_circle_world["kg_self_id"] in unscoped, (
-        "precondition: stranger sees self entity via explicit grant when unscoped"
+        "Vorbedingung: ohne Peer sieht stranger die Entitaet ueber die Freigabe"
     )
 
-    visible = await _run_kg_clause_peer_scoped(pg_db_session, stranger_id)
-    assert seeded_circle_world["kg_self_id"] not in visible, (
-        "peer_scoped must drop the explicit-grant branch"
-    )
+    visible = await _run_kg_clause_peer_scoped(pg_db_session, owner_id, tier=4)
+    assert seeded_circle_world["kg_self_id"] not in visible
     assert visible == {seeded_circle_world["kg_public_id"]}
 
 
-async def test_peer_scoped_membership_still_reaches_granted_tier(
+async def test_the_granted_tier_still_reaches_what_it_should(
     pg_db_session: AsyncSession,
     seeded_circle_world: dict,
 ) -> None:
-    """The safe branch survives: a peer granted tier=2 (household) still reaches
-    household + extended + public via the pairing tier-membership EXISTS — and
-    still NOT the owner's tier-0 self atom.
+    """Der tragende Zweig bleibt: Stufe 2 erreicht Haushalt, Erweitert und
+    Oeffentlich — und NICHT die Stufe-0-Zeile des Eigentuemers.
+
+    🛑 Frueher kam diese Stufe aus einer `circle_memberships`-Zeile, die auf der
+    ENTFERNTEN Nutzerkennung keyte. Jetzt aus `peer_users.granted_tier`. Die
+    Wirkung ist dieselbe — der Weg dorthin traegt.
     """
-    member_id = seeded_circle_world["member_household_id"]
-    visible = await _run_kg_clause_peer_scoped(pg_db_session, member_id)
+    owner_id = seeded_circle_world["owner_id"]
+    visible = await _run_kg_clause_peer_scoped(pg_db_session, owner_id, tier=2)
     assert seeded_circle_world["kg_self_id"] not in visible
     assert seeded_circle_world["kg_household_id"] in visible
     assert seeded_circle_world["kg_extended_id"] in visible

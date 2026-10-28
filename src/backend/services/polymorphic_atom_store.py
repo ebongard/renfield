@@ -54,6 +54,7 @@ from models.database import (
 from services.atom_service import AtomService
 from services.atom_types import Atom, AtomMatch
 from services.circle_resolver import CircleResolver
+from services.circle_sql import PeerScope
 from utils.config import settings
 
 
@@ -73,7 +74,7 @@ class PolymorphicAtomStore:
         max_visible_tier: int,
         hybrid: bool = True,
         top_k: int = 20,
-        enforce_circles: bool = False,
+        peer: PeerScope | None = None,
     ) -> Sequence[AtomMatch]:
         """
         Query each source in parallel; merge with RRF; return top_k.
@@ -97,12 +98,14 @@ class PolymorphicAtomStore:
         ``users.id`` — often the sole owner's). Default False → local callers
         (REST ``/api/atoms``, agent path) are byte-identical to today.
 
-        ``max_visible_tier`` is NOT consulted as a scalar: the peer's effective
-        visibility floor is enforced purely through the ``enforce_circles`` →
-        peer-scoped SQL path keyed on the same ``CircleMembership`` row the
-        federation responder's ``_resolve_asker_tier`` reads (single source of
-        truth — the two cannot diverge). The parameter is retained for call-site
-        compatibility; do not read it as the active filter.
+        🛑 ``max_visible_tier`` IST seit 2026-10-27 der wirksame Filter — hier
+        stand bis dahin das Gegenteil („not consulted as a scalar … retained for
+        call-site compatibility"). Der Grund fuer die Untaetigkeit WAR der
+        Fehler: die Stufe kam aus einer ``CircleMembership``, die auf der
+        ENTFERNTEN Nutzerkennung keyte. Jetzt stammt sie aus der Paarung
+        (``peer_users.granted_tier``), wird zusammen mit dem Eigentuemer als
+        ``PeerScope`` weitergereicht und bildet im peer-bezogenen Zweig die
+        Bedingung ``granted_tier <= atom.circle_tier``.
         """
         from services.document_fact_retrieval import DocumentFactRetrieval
         from services.kg_retrieval import KGRetrieval
@@ -115,17 +118,17 @@ class PolymorphicAtomStore:
         candidate_k = top_k * 3  # over-fetch for RRF fusion across sources
 
         rag_task = RAGRetrieval(self.db).search(
-            query_text, top_k=candidate_k, user_id=asker_id, enforce_circles=enforce_circles
+            query_text, top_k=candidate_k, user_id=asker_id, peer=peer
         )
         # Structured per-entity/-relation KG atoms (not the aggregated string):
         # each kg_node/kg_edge carries its source id so the detail drawer can
         # render the entity + edit its tier. The agent path still uses the
         # string form (get_relevant_context) elsewhere.
         kg_task = KGRetrieval(self.db).get_relevant_atoms(
-            query_text, user_id=asker_id, enforce_circles=enforce_circles
+            query_text, user_id=asker_id, peer=peer
         )
         memory_task = MemoryRetrieval(self.db).retrieve(
-            query_text, user_id=asker_id, limit=candidate_k, enforce_circles=enforce_circles
+            query_text, user_id=asker_id, limit=candidate_k, peer=peer
         )
         # Lexical retrievers — keyword / name fallback for queries the
         # vector path mis-ranks (single tokens like "Jutta", short
@@ -138,17 +141,17 @@ class PolymorphicAtomStore:
         # behaviour we want.
         lex = LexicalRetrieval(self.db)
         lexical_chunks_task = lex.search_chunks_lexical(
-            query_text, asker_id=asker_id, top_k=candidate_k, enforce_circles=enforce_circles,
+            query_text, asker_id=asker_id, top_k=candidate_k, peer=peer,
         )
         lexical_memories_task = lex.search_memories_lexical(
-            query_text, asker_id=asker_id, top_k=candidate_k, enforce_circles=enforce_circles,
+            query_text, asker_id=asker_id, top_k=candidate_k, peer=peer,
         )
         # Schicht A document facts — a sixth source so structured facts
         # (Steuernummer, issuer, obligation) surface in /brain search via the
         # same RRF fusion. Keyword/identifier retrieval, not vector (facts are
         # short structured strings; the parent chunk is already embedded).
         document_fact_task = DocumentFactRetrieval(self.db).search(
-            query_text, asker_id=asker_id, top_k=candidate_k, enforce_circles=enforce_circles,
+            query_text, asker_id=asker_id, top_k=candidate_k, peer=peer,
         )
         # Self-learning Phase 1: procedural skills are atoms too — give
         # them a fourth source for the unified /brain search. Gated on
@@ -156,7 +159,7 @@ class PolymorphicAtomStore:
         # unchanged for deployments that haven't opted in.
         if settings.skills_enabled:
             skill_task = SkillService(self.db).find_similar(
-                query_text, asker_id=asker_id, top_k=candidate_k, enforce_circles=enforce_circles,
+                query_text, asker_id=asker_id, top_k=candidate_k, peer=peer,
             )
         else:
             async def _empty():
@@ -169,7 +172,7 @@ class PolymorphicAtomStore:
         # existing seven-source behavior is unchanged when off.
         if settings.notes_enabled:
             note_task = NoteRetrieval(self.db).search(
-                query_text, asker_id=asker_id, top_k=candidate_k, enforce_circles=enforce_circles,
+                query_text, asker_id=asker_id, top_k=candidate_k, peer=peer,
             )
         else:
             async def _empty_notes():
@@ -223,7 +226,7 @@ class PolymorphicAtomStore:
                 max_pivots=settings.graph_expansion_max_pivots,
                 max_hops=settings.graph_expansion_max_hops,
                 max_expanded=settings.graph_expansion_max_expanded,
-                enforce_circles=enforce_circles,
+                peer=peer,
             )
             if extra:
                 have = {m.atom.atom_id for m in merged}

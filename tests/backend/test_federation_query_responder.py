@@ -89,6 +89,10 @@ def mock_db_with_peer(asker_identity):
     peer.circle_owner_id = 1  # responder's local user
     peer.remote_pubkey = asker_identity.public_key_hex()
     peer.remote_user_id = 42
+    # 🛑 Seit F-ID-3 traegt die PAARUNG die Stufe. Vorher kam sie aus einer
+    # `CircleMembership`, die auf `remote_user_id` keyte — einer Zahl der
+    # GEGENSTELLE in einer Spalte mit Fremdschluessel auf die LOKALE users.id.
+    peer.granted_tier = 2
     peer.revoked_at = None
 
     db.execute = AsyncMock()
@@ -585,14 +589,14 @@ class TestProgressRateLimit:
 
 class TestEnforceCirclesOnRetrieve:
     """The responder's retrieval MUST run PolymorphicAtomStore.query with
-    enforce_circles=True — otherwise an auth-off (household) responder bypasses
+    `peer` gesetzt — otherwise an auth-off (household) responder bypasses
     every circle filter and leaks its whole brain, and even with auth on the
     remote-supplied asker_id can collide with a local owner id (see the
     circle_sql peer_scoped fix)."""
 
     @pytest.mark.asyncio
     @pytest.mark.unit
-    async def test_retrieve_forces_enforce_circles_true(self, responder_identity, monkeypatch):
+    async def test_retrieve_forces_a_named_peer_scope(self, responder_identity, monkeypatch):
         import services.polymorphic_atom_store as pas
         from services.federation_pending_store import _PendingRequest
 
@@ -602,8 +606,8 @@ class TestEnforceCirclesOnRetrieve:
             def __init__(self, session):
                 pass
 
-            async def query(self, query_text, *, asker_id, max_visible_tier, top_k, enforce_circles=False):
-                captured["enforce_circles"] = enforce_circles
+            async def query(self, query_text, *, asker_id, max_visible_tier, top_k, peer=None):
+                captured["peer"] = peer
                 captured["asker_id"] = asker_id
                 captured["max_visible_tier"] = max_visible_tier
                 return []
@@ -615,8 +619,12 @@ class TestEnforceCirclesOnRetrieve:
             request_id="r1",
             asker_pubkey="ab" * 32,
             peer_user_id=77,
-            asker_local_user_id=42,
+            # 🛑 Im Rueckfall gibt es KEINE fragende lokale Person mehr. Hier
+            # stand `asker_local_user_id=42` — `peer.remote_user_id`, eine Zahl
+            # der Gegenstelle, die der Filter als lokale Kennung las.
+            asker_local_user_id=None,
             max_visible_tier=2,
+            peer_owner_id=1,
             query="what does the household know?",
             initiated_at=time.time(),
         )
@@ -636,15 +644,23 @@ class TestEnforceCirclesOnRetrieve:
         async with fqr.AsyncSessionLocal() as session:
             await responder._retrieve(session, pending)
 
-        assert captured["enforce_circles"] is True
-        assert captured["asker_id"] == 42
+        # 🛑 Der peer-bezogene Filter laeuft — und er NENNT den Peer. Ein blosses
+        # „ja, durchsetzen" war der Fehler: es liess offen, WELCHER Peer, und der
+        # Filter griff daraufhin zur Kennung des Fragenden.
+        assert captured["peer"] is not None
+        assert captured["peer"].owner_id == 1
+        assert captured["peer"].tier == 2
+        # Die Kennung ist 0 (der Platzhalter), und das ist folgenlos: im
+        # peer-bezogenen Zweig erzeugt `circles_filter_params` gar keine
+        # `:asker_id`-Bindung mehr.
+        assert captured["asker_id"] == 0
 
 
 class TestPersonScopedMapping:
     """F-ID-1: a querier_ref that maps (via federation_user_links) to a local
-    user must serve AS that user (enforce_circles=False); everything else —
+    user must serve AS that user (`peer=None`); everything else —
     flag off, no ref, no link — must fall back to the peer-scoped path
-    (enforce_circles=True). The pending record carries the decision."""
+    (`peer_owner_id` gesetzt). The pending record carries the decision."""
 
     @pytest.mark.asyncio
     @pytest.mark.unit
@@ -659,8 +675,12 @@ class TestPersonScopedMapping:
         resp = await responder.handle_initiate(req)
 
         pending = await get_pending_store().get(resp.request_id)
-        assert pending.enforce_circles is True                 # fallback
-        assert pending.asker_local_user_id == 42               # peer.remote_user_id echo
+        assert pending.peer_owner_id == 1                      # Rueckfall: an den Eigentuemer gebunden
+        # 🛑 Der Rueckfall leiht sich KEINE lokale Kennung mehr. Hier stand
+        # `== 42`, also `peer.remote_user_id` — genau die fremde Zahl, die der
+        # Filter als lokale Person las und die am 2026-10-27 im Haushalt die
+        # falsche Person traf und auf x-idra den Fremdschluessel brach.
+        assert pending.asker_local_user_id is None
 
     @pytest.mark.asyncio
     @pytest.mark.unit
@@ -680,8 +700,8 @@ class TestPersonScopedMapping:
         resp = await responder.handle_initiate(req)
 
         pending = await get_pending_store().get(resp.request_id)
-        assert pending.enforce_circles is True                 # fallback
-        assert pending.asker_local_user_id == 42
+        assert pending.peer_owner_id == 1                      # Rueckfall: an den Eigentuemer gebunden
+        assert pending.asker_local_user_id is None
 
     @pytest.mark.asyncio
     @pytest.mark.unit
@@ -700,7 +720,7 @@ class TestPersonScopedMapping:
         resp = await responder.handle_initiate(req)
 
         pending = await get_pending_store().get(resp.request_id)
-        assert pending.enforce_circles is False                # MAPPED — run as the user
+        assert pending.peer_owner_id is None                   # GEMAPPT — laeuft als die Person
         assert pending.asker_local_user_id == 99               # the linked local user
 
     @pytest.mark.asyncio
@@ -708,7 +728,7 @@ class TestPersonScopedMapping:
     async def test_auth_off_never_maps_even_with_link(
         self, responder_identity, asker_identity, mock_db_with_peer, monkeypatch,
     ):
-        # SECURITY: under AUTH_ENABLED=false, enforce_circles=False would hit the
+        # SECURITY: unter AUTH_ENABLED=false wuerde ein gemappter Pfad die
         # single-user full-bypass and leak the WHOLE brain. The mapped path must
         # be refused (fall back to peer-scoped) regardless of a matching link.
         monkeypatch.setattr(settings, "federation_identity_links_enabled", True)
@@ -725,8 +745,10 @@ class TestPersonScopedMapping:
 
         spy.assert_not_awaited()                               # never even consults the link
         pending = await get_pending_store().get(resp.request_id)
-        assert pending.enforce_circles is True                 # forced fallback
-        assert pending.asker_local_user_id == 42               # peer echo, not the linked user
+        assert pending.peer_owner_id == 1                      # erzwungener Rueckfall
+        # Auch hier keine geliehene Kennung mehr — und vor allem nicht die des
+        # verknuepften Nutzers: unter Auth-aus wird NICHT gemappt.
+        assert pending.asker_local_user_id is None
 
     @pytest.mark.asyncio
     @pytest.mark.unit
@@ -746,7 +768,7 @@ class TestPersonScopedMapping:
 
         spy.assert_not_awaited()                               # short-circuit on empty ref
         pending = await get_pending_store().get(resp.request_id)
-        assert pending.enforce_circles is True
+        assert pending.peer_owner_id == 1
 
 
 class TestQuerierRefCanonicalPayload:

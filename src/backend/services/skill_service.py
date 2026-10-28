@@ -67,6 +67,7 @@ from models.database import (
     SkillWouldHaveInjectedLog,
 )
 from services.atom_service import AtomService
+from services.circle_sql import PeerScope
 from utils.config import settings
 from utils.llm_client import get_embed_client
 from utils.prompt_scrub import scrub_for_prompt
@@ -350,7 +351,7 @@ class SkillService:
         *,
         top_k: int | None = None,
         threshold: float | None = None,
-        enforce_circles: bool = False,
+        peer: PeerScope | None = None,
     ) -> list[dict]:
         """Return top-K active skills closest to the message.
 
@@ -380,10 +381,10 @@ class SkillService:
         # federation (``enforce_circles``) query — a None asker means a
         # code-path bug (a caller forgot to thread user_id); rather than
         # leak every user's tier-0 self-skills, return [].
-        if asker_id is None and (settings.auth_enabled or enforce_circles):
+        if asker_id is None and (settings.auth_enabled or peer):
             logger.warning(
                 "🧠 SkillService.find_similar called with asker_id=None while "
-                "AUTH_ENABLED=true or enforce_circles — returning [] to avoid leak"
+                "AUTH_ENABLED=true or peer — returning [] to avoid leak"
             )
             return []
 
@@ -435,11 +436,21 @@ class SkillService:
         # to a width that misses the index entirely.
         dim = EMBEDDING_DIMENSION
 
-        # Visibility arms. `enforce_circles` (federation) DROPS the null-asker
-        # bypass arm AND the `user_id = :asker` owner arm — both are id-collision
-        # sinks for a peer asker (see circle_sql peer_scoped rationale). The
-        # public-seed and tier-membership arms are collision-safe and kept.
+        # Visibility arms. Eine foederierte Anfrage (`peer`) DROPS den
+        # null-asker-Zweig UND den `user_id = :asker`-Eigentuemerzweig — beide
+        # waren Kollisionssenken, solange die Peer-Kennung eine fremde Zahl in
+        # einer lokalen Spalte war.
+        #
+        # 🛑 DIESE STELLE IST EINE ZWEITE, HANDGESCHRIEBENE KOPIE des Praedikats
+        # aus `circle_sql.circles_filter_clause`. Ein Umbau dort erfasst sie
+        # NICHT. Vergisst man sie, bekommt ein Peer stillschweigend die falschen
+        # Faehigkeiten — und nichts meldet es. Beide Stellen wurden am
+        # 2026-10-27 gemeinsam von der Mitgliedschaft auf die Paarungsstufe
+        # umgestellt; `test_peer_tier_isolation.py` haelt ihren Gleichlauf fest.
         seed_arm = "(user_id IS NULL AND source = :seed AND circle_tier = 4)"
+        # Der LOKALE Mitgliedschaftszweig bleibt unveraendert: er beschreibt eine
+        # echte Mitgliedschaft zwischen zwei lokalen Menschen und hat mit der
+        # Peer-Kollision nichts zu tun.
         membership_arm = (
             "EXISTS ("
             "  SELECT 1 FROM circle_memberships cm"
@@ -449,8 +460,12 @@ class SkillService:
             "    AND (cm.value::text)::int <= procedural_skills.circle_tier"
             ")"
         )
-        if enforce_circles:
-            visibility_sql = f"{seed_arm} OR {membership_arm}"
+        peer_arm = (
+            "(procedural_skills.user_id = CAST(:peer_owner AS INTEGER)"
+            " AND CAST(:peer_tier AS INTEGER) <= procedural_skills.circle_tier)"
+        )
+        if peer is not None:
+            visibility_sql = f"{seed_arm} OR {peer_arm}"
         else:
             # :asker is cast to integer at every site. asyncpg renders each
             # named-param occurrence as a distinct positional placeholder and asks
@@ -482,13 +497,18 @@ class SkillService:
             ORDER BY embedding::halfvec({dim}) <=> CAST(:embedding AS vector)::halfvec({dim})
             LIMIT :limit
         """)
-        rows = (await self.db.execute(sql, {
+        params: dict = {
             "embedding": embedding_str,
             "status_filter": [SKILL_STATUS_APPROVED],
             "asker": asker_id,
             "seed": SKILL_SOURCE_SEED,
             "limit": top_k * 2,  # over-fetch then threshold-filter
-        })).fetchall()
+        }
+        if peer is not None:
+            # Nur hier, weil nur der peer-bezogene Zweig sie nennt.
+            params["peer_owner"] = peer.owner_id
+            params["peer_tier"] = peer.tier
+        rows = (await self.db.execute(sql, params)).fetchall()
 
         out: list[dict] = []
         for r in rows:

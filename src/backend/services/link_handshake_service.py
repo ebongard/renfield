@@ -4,7 +4,7 @@ Eine **Personenverknuepfung** behauptet „Nutzer U auf Instanz A und Nutzer X a
 Instanz B sind derselbe Mensch". Sie ist folgenreich: liegt sie vor, laeuft eine
 foederierte Anfrage nicht mehr als die GANZE fremde Instanz mit der bei der
 Paarung gewaehrten Stufe, sondern als DIESE PERSON mit deren eigener, voller
-Reichweite (`federation_query_responder`, `enforce_circles=False`).
+Reichweite (`federation_query_responder`, gemappter Pfad: `peer=None`).
 
 Bis heute liess sie sich nur behaupten: ein Administrator trug zwei
 Kontonummern und ein Geheimnis von Hand ein (`api/routes/federation_user_links`).

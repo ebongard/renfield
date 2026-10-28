@@ -3306,7 +3306,27 @@ class PeerUser(Base):
     remote_display_name = Column(String(255), nullable=False)
     # The remote's user_id on their own Renfield — cosmetic; real identity
     # is the pubkey. Useful for display ("Mom @ mom's-renfield").
+    #
+    # 🛑 "Cosmetic" was ASPIRATIONAL until 2026-10-27. Until then pairing wrote
+    # this REMOTE integer into `circle_memberships.member_user_id`, a column
+    # whose FK points at the LOCAL `users.id` — so it decided access. On a
+    # household with users 1..8 it silently bound a grant to local user 1; on
+    # xidra, which only has user 1, the first real pairing died on a foreign-key
+    # violation. The grant now lives in `granted_tier` below and this column is
+    # finally what the comment always claimed. NEVER route authorization
+    # through it again. See F-ID-3 / BL-0135.
     remote_user_id = Column(Integer, nullable=True)
+
+    #: Die Kreis-Stufe, die DIESE Instanz dem Peer bei der Paarung gewaehrt
+    #: (0 self … 4 public). Sie ist eine Eigenschaft der PAARUNG, nicht einer
+    #: Mitgliedschaft zwischen zwei lokalen Personen — genau diese Verwechslung
+    #: war der Fehler.
+    #:
+    #: 🛑 Die Leiter laeuft gegen die Anschauung: eine KLEINERE Zahl gewaehrt
+    #: MEHR (`granted_tier <= atom.circle_tier`). 0 oeffnete alles, 4 nur
+    #: Oeffentliches. Die Vorgabe ist darum 4, die engste Stufe — ein Peer, der
+    #: durch eine Luecke ohne ausdrueckliche Gewaehrung entsteht, sieht nichts.
+    granted_tier = Column(Integer, nullable=False, server_default="4", default=4)
 
     # {endpoint_url, transport, tls_fingerprint, relay_via}
     transport_config = Column(JSON, nullable=False, default=dict)

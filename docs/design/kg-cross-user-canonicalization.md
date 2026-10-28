@@ -131,7 +131,7 @@ owner_circle_id  INTEGER FK→named_circles.id ON DELETE RESTRICT NULL
 > **Rejected alternative — the "synthetic user" hack.** Model the household as a fake
 > `users` row and give shared atoms `owner_user_id = <household_user>`. Tempting (zero schema
 > change to `atoms`/`circle_sql`) but rejected: (a) it re-introduces the exact
-> **federation `peer_scoped` collision class** the filter warns about
+> **federation collision class** the filter warns about (vor F-ID-3 `peer_scoped`)
 > (`circle_sql.py:99-118`) — a raw owner-equality value that isn't a real person; (b) it
 > pollutes auth/RPBAC (a "user" that can't log in); (c) the OWNER branch would still be
 > tier-blind for that synthetic user, which is the very asymmetry §2 is trying to kill. An
@@ -167,7 +167,7 @@ Properties that make this leak-safe **by construction**:
   `user_id IS NULL`, so the owner-equality branch is dead — access is **purely** membership
   + tier, **symmetric across all members**. No member is privileged over another; there is
   no tier-blind owner.
-- It is `peer_scoped`-safe: a federation peer is never written into `named_circle_members`
+- It is peer-safe: a federation peer is never written into `named_circle_members`
   (membership is a local-only admin action), so the branch simply never matches a peer.
   Under `peer_scoped=True` we **also drop** the circle-membership branch for the same reason
   we drop owner-equality/grants (defence in depth — a peer must reach a shared atom only if

@@ -37,6 +37,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from services.circle_sql import (
+    PeerScope,
     conversation_memories_circles_filter,
     document_chunks_circles_filter,
 )
@@ -123,7 +124,7 @@ class LexicalRetrieval:
         *,
         asker_id: int | None,
         top_k: int,
-        enforce_circles: bool = False,
+        peer: PeerScope | None = None,
     ) -> list[dict[str, Any]]:
         """tsvector OR-match across `document_chunks.search_vector`.
 
@@ -132,9 +133,14 @@ class LexicalRetrieval:
         can consume the output directly.
 
         Lexical retrieval has no ``auth_enabled`` bypass — it always circle-filters
-        by ``asker_id`` — but it DOES inherit the id-collision risk, so a federation
-        caller passes ``enforce_circles=True`` to drop the owner + explicit-grant
-        branches (peer scope).
+        by ``asker_id``. Ein foederierter Aufrufer uebergibt eine ``PeerScope``
+        als ``peer``; dann entfallen Eigentuemer- und Freigabezweig, und die
+        Stufe kommt aus der Paarung.
+
+        🛑 Hier stand ``enforce_circles=True``, und der LOKALE Suchpfad
+        (`knowledge.py` → `document_search`) reichte dafuer
+        ``settings.auth_enabled`` durch — eine angemeldete Person bekam also die
+        peer-bezogene Form und verlor ihre eigenen nicht-oeffentlichen Treffer.
 
         Skips silently when the query has no significant tokens, when
         the asker isn't identified (caller will scope to the right
@@ -158,7 +164,7 @@ class LexicalRetrieval:
         # ts_rank_cd (cover-density, used here for chunks below) is
         # better suited to multi-sentence content than plain ts_rank.
         circles_clause, circles_params = document_chunks_circles_filter(
-            asker_id, peer_scoped=enforce_circles
+            asker_id, peer=peer
         )
         or_query = " OR ".join(tokens)
         tsquery_union = build_tsquery_union_sql("or_query")
@@ -230,7 +236,7 @@ class LexicalRetrieval:
         *,
         asker_id: int | None,
         top_k: int,
-        enforce_circles: bool = False,
+        peer: PeerScope | None = None,
     ) -> list[dict[str, Any]]:
         """FTS search over ``conversation_memories.search_vector``.
 
@@ -278,7 +284,7 @@ class LexicalRetrieval:
             or_query = " OR ".join(tokens)
             tsquery_union = build_tsquery_union_sql("or_query")
             circles_clause, circles_params = conversation_memories_circles_filter(
-                asker_id, peer_scoped=enforce_circles
+                asker_id, peer=peer
             )
             params: dict[str, Any] = {
                 "or_query": or_query,

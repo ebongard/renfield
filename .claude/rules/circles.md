@@ -35,6 +35,18 @@ route + frontend-page inventory), `docs/SECOND_BRAIN.md` (the four subsystems ci
 - Behavioural change vs pre-circles: `ConversationMemoryService.retrieve()` respects circle reach — tier-2 household
   peers see each other's household-tier memories (it used to filter strictly `user_id == asker_id`).
 
+## Der föderierte Zweig (`PeerScope`)
+- Föderiert = `peer=PeerScope(owner_id, tier)` bis in `circles_filter_clause`. Owner- und
+  Grant-Zweig entfallen; es bleibt `(public) OR (owner = :peer_owner AND :peer_tier <= tier)`.
+- 🛑 **Beide Hälften tragen.** Ohne die Eigentümer-Bindung sähe der Peer seine Stufe bei JEDEM
+  Eigentümer. Die Stufe steht an der PAARUNG (`peer_users.granted_tier`), nie in `circle_memberships`.
+- 🛑 **Im peer-Zweig entsteht KEINE `:asker_id`** — es gibt dort keine fragende lokale Person.
+  Wer sie wieder einführt, baut F-ID-3 neu: bis 2026-10-27 war sie `PeerUser.remote_user_id`,
+  eine fremde Zahl in einer Spalte mit FK auf `users.id`; das brach x-idras Paarung am
+  Fremdschlüssel und band im Haushalt still die falsche Person (BL-0135).
+- 🛑 `skill_service.py:443ff` trägt eine ZWEITE, handgeschriebene Kopie des Prädikats — ein
+  Umbau hier erfasst sie nicht. Hergang: `docs/design/federation-identity-mapping.md`.
+
 ## Writing source rows
 - Tables: `atoms` (polymorphic registry), `circles` (per-user dimension config), `circle_memberships`,
   `atom_explicit_grants`. Denormalized `circle_tier` + `atom_id` live on `document_chunks`, `kg_entities`,

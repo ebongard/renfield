@@ -283,7 +283,6 @@ class TestCompleteHandshake:
         # monkeypatch — auto-restored on teardown, no cross-test leak.
         monkeypatch.setattr(ps, "_get_or_create_circle", AsyncMock(return_value=MagicMock()))
         svc._upsert_peer_user = AsyncMock(return_value=MagicMock(id=1))
-        svc._upsert_circle_membership = AsyncMock()
 
         # First call succeeds
         await svc.complete_handshake(mock_user, response, their_tier_for_me=3)
@@ -304,7 +303,6 @@ class TestCompleteHandshake:
         response = self._make_signed_response(tmp_identity, nonce=offer.nonce)
         monkeypatch.setattr(ps, "_get_or_create_circle", AsyncMock(return_value=MagicMock()))
         svc._upsert_peer_user = AsyncMock(return_value=MagicMock(id=1))
-        svc._upsert_circle_membership = AsyncMock()
 
         with pytest.raises(PairingError, match="Tier must be"):
             await svc.complete_handshake(mock_user, response, their_tier_for_me=5)
@@ -334,7 +332,6 @@ class TestCompleteHandshake:
 
         monkeypatch.setattr(ps, "_get_or_create_circle", AsyncMock(return_value=MagicMock()))
         svc._upsert_peer_user = AsyncMock(return_value=MagicMock(id=1))
-        svc._upsert_circle_membership = AsyncMock()
 
         # Forged attempt is rejected via signature check, NOT nonce check
         with pytest.raises(PairingError, match="signature"):
@@ -395,7 +392,6 @@ class TestFullHandshakeRoundtrip:
         svc_bob.identity = responder_identity  # as if this were Bob's Renfield
         monkeypatch.setattr(ps, "_get_or_create_circle", AsyncMock(return_value=MagicMock()))
         svc_bob._upsert_peer_user = AsyncMock(return_value=MagicMock(id=10))
-        svc_bob._upsert_circle_membership = AsyncMock()
 
         response = await svc_bob.accept_offer(
             current_user=bob, offer=offer, my_tier_for_you=2,
@@ -408,7 +404,6 @@ class TestFullHandshakeRoundtrip:
         # verify() must succeed using response.responder_pubkey as the
         # key material — that's the whole point of peer identity.
         svc_alice._upsert_peer_user = AsyncMock(return_value=MagicMock(id=20))
-        svc_alice._upsert_circle_membership = AsyncMock()
 
         peer = await svc_alice.complete_handshake(
             current_user=alice, response=response, their_tier_for_me=3,
@@ -418,9 +413,21 @@ class TestFullHandshakeRoundtrip:
         # Alice persisted bob as her peer + bob persisted alice as his peer.
         svc_alice._upsert_peer_user.assert_awaited_once()
         svc_bob._upsert_peer_user.assert_awaited_once()
-        # Both sides also issued a CircleMembership (at the respective tiers).
-        svc_alice._upsert_circle_membership.assert_awaited_once()
-        svc_bob._upsert_circle_membership.assert_awaited_once()
+        # 🛑 KEINE Seite schreibt mehr eine CircleMembership (F-ID-3). Hier
+        # stand `_upsert_circle_membership.assert_awaited_once()` fuer beide.
+        # Die Methode gibt es nicht mehr: sie trug die ENTFERNTE Nutzerkennung
+        # in eine Spalte mit Fremdschluessel auf die LOKALE `users.id`. Die
+        # Stufe reist jetzt als `granted_tier` an der Paarungszeile mit.
+        # 🛑 Gegen die KLASSE pruefen, nicht gegen die Attrappe: die erste
+        # Fassung fragte `hasattr(svc_alice, …)` und mass damit, dass der Test
+        # sich das Attribut selbst gesetzt hatte.
+        assert not hasattr(PairingService, "_upsert_circle_membership"), (
+            "Der Mitgliedschafts-Schreiber ist zurueck — das ist der Fehler von F-ID-3")
+        # bob gewaehrt alice 2 (accept), alice gewaehrt bob 3 (complete) —
+        # die Werte stehen oben im Rundlauf, nicht geraten.
+        for svc, erwartet in ((svc_alice, 3), (svc_bob, 2)):
+            kwargs = svc._upsert_peer_user.await_args.kwargs
+            assert kwargs["granted_tier"] == erwartet, kwargs
 
         reset_federation_identity_for_tests()
 

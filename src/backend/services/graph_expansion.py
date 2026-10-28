@@ -35,34 +35,35 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.database import ATOM_TYPE_KG_EDGE, ATOM_TYPE_KG_NODE, TIER_PUBLIC
 from services.atom_types import Atom, AtomMatch
+from services.circle_sql import PeerScope
 from services.kg_validity_sql import live_clause
 from utils.config import settings
 
 
 def _entity_filter(
-    asker_id: int | None, enforce_circles: bool = False
+    asker_id: int | None, peer: PeerScope | None = None
 ) -> tuple[str, dict[str, Any]]:
     """Circle WHERE-fragment for kg_entities alias ``e`` (mirrors kg_retrieval).
 
     ``enforce_circles`` (federation): keep the peer-scoped circle filter active
     even with auth off (drops the owner + explicit-grant branches).
     """
-    if not settings.auth_enabled and not enforce_circles:
+    if not settings.auth_enabled and peer is None:
         return ("", {})
     if asker_id is None:
         return ("AND e.circle_tier = :pub_tier", {"pub_tier": TIER_PUBLIC})
     from services.circle_sql import kg_entities_circles_filter
-    clause, params = kg_entities_circles_filter(asker_id, alias="e", peer_scoped=enforce_circles)
+    clause, params = kg_entities_circles_filter(asker_id, alias="e", peer=peer)
     return (f"AND {clause}", params)
 
 
 async def _accessible(
-    db: AsyncSession, ids: list[int], asker_id: int | None, enforce_circles: bool = False
+    db: AsyncSession, ids: list[int], asker_id: int | None, peer: PeerScope | None = None
 ) -> dict[int, dict[str, Any]]:
     """Of ``ids``, the live canonical entities the asker may see (kg_node shape)."""
     if not ids:
         return {}
-    efilter, eparams = _entity_filter(asker_id, enforce_circles)
+    efilter, eparams = _entity_filter(asker_id, peer)
     rows = (await db.execute(text(f"""
         SELECT e.id, e.name, e.entity_type, e.circle_tier
         FROM kg_entities e
@@ -76,7 +77,7 @@ async def _accessible(
 
 
 def _relation_filter(
-    asker_id: int | None, enforce_circles: bool = False
+    asker_id: int | None, peer: PeerScope | None = None
 ) -> tuple[str, dict[str, Any]]:
     """Peer-scoped circle WHERE-fragment for kg_relations alias ``r``.
 
@@ -92,23 +93,23 @@ def _relation_filter(
     who could see two entities also saw a stricter-tier relation between them —
     entities were tier-filtered but relations were not.
     """
-    if not settings.auth_enabled and not enforce_circles:
+    if not settings.auth_enabled and peer is None:
         return ("", {})
     if asker_id is None:
         return ("AND r.circle_tier = :rel_pub_tier", {"rel_pub_tier": TIER_PUBLIC})
     from services.circle_sql import kg_relations_circles_filter
-    clause, params = kg_relations_circles_filter(asker_id, alias="r", peer_scoped=enforce_circles)
+    clause, params = kg_relations_circles_filter(asker_id, alias="r", peer=peer)
     return (f"AND {clause}", params)
 
 
 async def _edges_within(
-    db: AsyncSession, ids: list[int], asker_id: int | None = None, enforce_circles: bool = False
+    db: AsyncSession, ids: list[int], asker_id: int | None = None, peer: PeerScope | None = None
 ) -> list[dict[str, Any]]:
     """Active relations whose BOTH endpoints are in ``ids`` (all already accessible)
     AND whose own ``circle_tier`` the asker may reach (relation-tier gate)."""
     if len(ids) < 2:
         return []
-    rfilter, rparams = _relation_filter(asker_id, enforce_circles)
+    rfilter, rparams = _relation_filter(asker_id, peer)
     vclause, vparams = live_clause("r")  # #875: "" when the validity filter is off
     rows = (await db.execute(text(f"""
         SELECT r.id, r.subject_id, r.predicate, r.object_id, r.circle_tier
@@ -158,7 +159,7 @@ async def expand_fused(
     max_pivots: int = 8,
     max_hops: int = 2,
     max_expanded: int = 15,
-    enforce_circles: bool = False,
+    peer: PeerScope | None = None,
 ) -> list[AtomMatch]:
     """Post-RRF expansion. Returns NEW kg_node/kg_edge atoms (decay-scored,
     provenance-marked) to append to ``merged``. [] if flag off / nothing to do.
@@ -194,7 +195,7 @@ async def expand_fused(
         # private edge discloses graph structure (that two nodes are linked) even
         # after _edges_within hides the predicate. Non-federation path: rfilter=""
         # → byte-identical.
-        rfilter, rparams = _relation_filter(asker_id, enforce_circles)
+        rfilter, rparams = _relation_filter(asker_id, peer)
         # #875 R4: validity PER HOP, like the circle filter — an expired edge used
         # as a bridge would drag stale neighbours in and amplify them each hop.
         vclause, vparams = live_clause("r")
@@ -211,7 +212,7 @@ async def expand_fused(
                     best[far] = max(best.get(far, 0.0), origin[near])
         if not best:
             break
-        acc = await _accessible(db, list(best), asker_id, enforce_circles)   # circle filter at THIS hop
+        acc = await _accessible(db, list(best), asker_id, peer)   # circle filter at THIS hop
         for eid, ent in acc.items():
             seen.add(eid)
             ent["_score"] = best[eid] / (1 + hop)
@@ -240,9 +241,9 @@ async def expand_fused(
     names = {e["id"]: e.get("name", "") for e in top}
     pivot_only = [eid for eid, _ in pivots if eid not in names]  # pivot names not in `accessible`
     if pivot_only:
-        for eid, ent in (await _accessible(db, pivot_only, asker_id, enforce_circles)).items():
+        for eid, ent in (await _accessible(db, pivot_only, asker_id, peer)).items():
             names[eid] = ent.get("name", "")
-    for r in await _edges_within(db, list(node_ids), asker_id, enforce_circles):
+    for r in await _edges_within(db, list(node_ids), asker_id, peer):
         if r["subject_id"] in names and r["object_id"] in names:
             hop = max(accessible.get(r["subject_id"], {}).get("_hop", 0),
                       accessible.get(r["object_id"], {}).get("_hop", 0)) or 1

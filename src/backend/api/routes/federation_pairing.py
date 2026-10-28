@@ -25,10 +25,10 @@ from datetime import UTC, datetime
 from fastapi import APIRouter, Depends, HTTPException, Request
 from loguru import logger
 from pydantic import BaseModel, Field
-from sqlalchemy import delete, select
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from models.database import CircleMembership, PeerUser, User
+from models.database import PeerUser, User
 from services.auth_service import get_user_or_default
 from services.database import get_db
 from services.federation_identity import get_federation_identity
@@ -192,35 +192,21 @@ async def complete_pair_handshake(
 # =============================================================================
 
 
-async def _tier_for_peer(
-    db: AsyncSession, owner_id: int, remote_user_id: int | None,
-) -> int:
-    """Look up the tier this owner granted the given peer at pair time.
+def _tier_for_peer(peer: PeerUser) -> int:
+    """Die Stufe, die dieser Eigentuemer dem Peer bei der Paarung gewaehrt hat.
 
-    Fail-closed fallback: returns tier 0 (self / most private) on any
-    data-integrity failure (missing membership row, non-integer value,
-    missing remote_user_id). Tier 4 would mean PUBLIC, which is the
-    opposite of defensive — a row displayed with a permissive tier
-    badge on the peers page could mislead the owner into thinking
-    they'd shared broadly when the underlying record is missing. The
-    F2 pairing flow always writes a membership, so this fallback only
-    fires on data-integrity bugs, and 0 is the safer wrong answer.
+    🛑 Seit F-ID-3 steht sie AN DER PAARUNG. Hier wurde bis 2026-10-27 eine
+    `CircleMembership` gesucht, deren `member_user_id` die ENTFERNTE
+    Nutzerkennung war — mit `scalar_one_or_none()`, das bei zwei Peers unter
+    einem Eigentuemer (beide numerieren ihre Nutzer ab 1) `MultipleResultsFound`
+    geworfen und im SQL-Zweig die Gewaehrung des FALSCHEN Peers getroffen haette
+    (BL-0135). Beides ist mit dieser Spalte strukturell weg: eine Paarung, eine
+    Zeile, eine Stufe.
+
+    Die Spalte ist `NOT NULL` mit Vorgabe 4 — es gibt keinen Fehlschlagfall
+    mehr, auf den man fail-closed antworten muesste.
     """
-    if remote_user_id is None:
-        return 0
-    row = (await db.execute(
-        select(CircleMembership).where(
-            CircleMembership.circle_owner_id == owner_id,
-            CircleMembership.member_user_id == remote_user_id,
-            CircleMembership.dimension == "tier",
-        )
-    )).scalar_one_or_none()
-    if row is None:
-        return 0
-    try:
-        return int(row.value)
-    except (TypeError, ValueError):
-        return 0
+    return peer.granted_tier
 
 
 @router.get("/peers", response_model=PeerListResponse)
@@ -243,7 +229,7 @@ async def list_peers(
 
     peers = []
     for peer in rows:
-        tier = await _tier_for_peer(db, current_user.id, peer.remote_user_id)
+        tier = _tier_for_peer(peer)
         peers.append(PeerDetailResponse(
             id=peer.id,
             remote_pubkey=peer.remote_pubkey,
@@ -285,28 +271,22 @@ async def revoke_peer(
 
     peer.revoked_at = datetime.now(UTC).replace(tzinfo=None)
 
-    # Delete the tier membership so their circle reach drops to zero
-    # immediately. F3 retrieval paths also check revoked_at on the
-    # PeerUser row, but circle_memberships is the authoritative record.
-    if peer.remote_user_id is not None:
-        await db.execute(
-            delete(CircleMembership).where(
-                CircleMembership.circle_owner_id == current_user.id,
-                CircleMembership.member_user_id == peer.remote_user_id,
-            )
-        )
+    # 🛑 Hier stand bis 2026-10-27 ein DELETE auf `circle_memberships` mit
+    # `member_user_id = peer.remote_user_id`. Das war der Fehler selbst — die
+    # Zeile gehoerte nie dorthin — und es loeschte obendrein OHNE
+    # `dimension`-Filter, also auch `tenant`- und `project`-Zeilen desselben
+    # Paares. Die Reichweite des Peers haengt jetzt an `revoked_at` und an
+    # `granted_tier`; beides steht auf seiner eigenen Zeile.
+    #
+    # `granted_tier` wird mit zurueckgesetzt, damit ein spaeteres Entsperren
+    # nicht stillschweigend die alte Gewaehrung erbt.
+    peer.granted_tier = 4
 
     await db.commit()
 
-    # Invalidate the CircleResolver class-level cache so any in-flight
-    # handler that already cached (owner, member) → tier drops the stale
-    # entry. Without this, retrieval paths keep resolving the peer at
-    # their pre-revocation reach until process restart.
-    if peer.remote_user_id is not None:
-        from services.circle_resolver import CircleResolver
-        CircleResolver.invalidate_for_membership(
-            current_user.id, peer.remote_user_id,
-        )
+    # Der `CircleResolver`-Zwischenspeicher wird NICHT mehr geleert: er haelt
+    # `(circle_owner_id, member_user_id)`-Paare, und ein Peer hat kein solches
+    # Paar mehr. Laufende Anfragen raeumt der Aufruf darunter weg.
 
     # Purge in-flight pending query_brain requests bound to this peer's
     # pubkey. Without this, a revoked peer could still poll /retrieve
