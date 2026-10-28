@@ -853,7 +853,10 @@ class MCPTransportType(str, Enum):
     # through FederationQueryAsker instead of session.call_tool. The
     # only tool such servers expose is `query_brain`. Registry lives in
     # services/peer_mcp_registry.py; it syncs peers into _servers at
-    # startup (and on pair/unpair events).
+    # startup and from `_resync_peer_registry` in api/routes/federation_pairing.py
+    # (pair/accept, pair/complete, revoke). 🛑 Until 2026-10-28 this comment said
+    # "and on pair/unpair events" while only revoke actually called it, so a
+    # pairing made at runtime stayed invisible until the next restart.
     FEDERATION = "federation"
 
 

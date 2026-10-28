@@ -99,6 +99,18 @@ On each instance, open **Kreise → Peers** (`/settings/circles/peers`). Each si
 now lists the other peer with its pubkey and the tier you granted. The connection
 is established.
 
+The pairing also registers an MCP server `peer_<id>` exposing one tool,
+`mcp.peer_<id>.query_brain`, which is how the agent loop reaches the other
+instance. 🛑 **A pairing the agent loop cannot see is not a pairing.** Until
+2026-10-28 `sync_peers` ran only at app startup and on revoke, so a pairing made
+while the backend was running stayed invisible until the next restart: the row
+sat in `peer_users`, the tool was absent from the manager's index, and a
+federated question failed exactly as if the handshake had never happened.
+Measured on both instances that day — pods up 13:35 UTC, pairings live 14:22
+UTC, no tool registered. All three mutating routes (`pair/accept`,
+`pair/complete`, `revoke`) now go through `_resync_peer_registry`, and
+`TestPeerRegistryResync` fails if a fourth one forgets.
+
 ---
 
 ## 2. What the tier does (and what's still deferred)

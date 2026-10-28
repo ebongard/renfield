@@ -13,7 +13,7 @@ Coverage:
 from __future__ import annotations
 
 import time
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -500,3 +500,83 @@ class TestAdvertisedEndpointResolution:
             bytes.fromhex(offer.signature),
             _canonical_bytes(stripped),
         )
+
+
+class TestPeerRegistryResync:
+    """🛑 Eine Kopplung, die der agent loop nicht sieht, ist keine Kopplung.
+
+    `sync_peers` hing bis zum 2026-10-28 nur am Widerruf und am App-Start. Wer
+    paarte, waehrend das Backend lief, bekam die Zeile in `peer_users`, aber
+    `mcp.peer_<id>.query_brain` erschien erst nach dem naechsten Neustart —
+    gemessen an beiden Instanzen: Pods um 13:35 UTC gestartet, Kopplungen um
+    14:22 UTC aktiv, kein tool registriert.
+    """
+
+    async def test_helper_syncs_when_a_manager_is_present(self, monkeypatch):
+        from api.routes import federation_pairing as fp
+        from services import peer_mcp_registry
+
+        gerufen = []
+        monkeypatch.setattr(
+            peer_mcp_registry, "sync_peers",
+            AsyncMock(side_effect=lambda m, d: gerufen.append(m)))
+
+        manager = MagicMock()
+        request = MagicMock()
+        request.app.state.mcp_manager = manager
+
+        await fp._resync_peer_registry(request, MagicMock(), "test")
+        assert gerufen == [manager]
+
+    async def test_no_manager_is_not_an_error(self, monkeypatch):
+        """Beim Start ohne MCP (Tests, Migrations-Pod) darf das nicht werfen."""
+        from api.routes import federation_pairing as fp
+
+        request = MagicMock()
+        request.app.state.mcp_manager = None
+        await fp._resync_peer_registry(request, MagicMock(), "test")  # kein raise
+
+    async def test_a_failing_sync_never_breaks_the_pairing(self, monkeypatch):
+        """Die Datenbank ist massgeblich; ein fehlgeschlagener resync kostet
+        Auffindbarkeit, nie Sicherheit — er darf die Paarung nicht umwerfen."""
+        from api.routes import federation_pairing as fp
+        from services import peer_mcp_registry
+
+        monkeypatch.setattr(
+            peer_mcp_registry, "sync_peers",
+            AsyncMock(side_effect=RuntimeError("Harbor weg")))
+        request = MagicMock()
+        request.app.state.mcp_manager = MagicMock()
+        await fp._resync_peer_registry(request, MagicMock(), "test")  # kein raise
+
+    def test_every_pairing_mutating_route_resyncs(self):
+        """🛑 Die KLASSE, nicht die Instanz: jede Route, die eine Kopplung
+        anlegt oder widerruft, ruft den Helfer. Am AST gemessen, nicht am
+        Quelltext — ein Kommentar, der `sync_peers` erwaehnt, ist kein Aufruf.
+        Genau diese Verwechslung stand bis zum 2026-10-28 in `mcp_client.py`.
+        """
+        import ast
+        import inspect
+
+        from api.routes import federation_pairing as fp
+
+        baum = ast.parse(inspect.getsource(fp))
+        ruft: dict[str, bool] = {}
+        for fn in ast.walk(baum):
+            if not isinstance(fn, ast.AsyncFunctionDef):
+                continue
+            ruft[fn.name] = any(
+                isinstance(n, ast.Call)
+                and getattr(n.func, "id", getattr(n.func, "attr", None))
+                == "_resync_peer_registry"
+                for n in ast.walk(fn)
+            )
+
+        for name in ("accept_pair_offer", "complete_pair_handshake", "revoke_peer"):
+            assert ruft.get(name) is True, f"{name} synchronisiert die Registry nicht"
+
+        # Negativkontrolle: die Pruefung ist nicht trivial wahr. `/pair/offer`
+        # legt noch keine Paarung an und darf NICHT synchronisieren.
+        assert ruft.get("create_pair_offer") is False, (
+            "create_pair_offer sollte nicht synchronisieren — die Pruefung "
+            "trifft offenbar jede Route und beweist nichts")
