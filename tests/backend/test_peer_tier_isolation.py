@@ -63,3 +63,74 @@ def test_the_default_of_the_discriminator_is_the_SAFE_side():
     ginge der Test darueber durch, ohne etwas zu pruefen."""
     assert _PendingRequest.__dataclass_fields__["mapped"].default is False
     assert _PendingRequest.__dataclass_fields__["peer_owner_id"].default is None
+
+
+# =============================================================================
+# Die Auflösung einer Paarung — gefunden am 2026-10-28 beim Prüfen der Live-Lage
+# =============================================================================
+#
+# 🛑 Der Eigentümer fand es an der Oberfläche: „auf x-ren gibt es einen peer, auf
+# haushalt nicht." Die Peers-Seite zeigt nur EIGENE, nicht widerrufene Zeilen —
+# die aktive Zeile im Haushalt gehörte dem Konto 1, die des fragenden Menschen
+# war widerrufen. Beim Nachsehen fiel das Ernstere auf: der Antwortende suchte
+# seine Paarung ALLEIN über `remote_pubkey`, mit `scalar_one_or_none()`.
+#
+# Der Eindeutigkeitsindex ist aber `(circle_owner_id, remote_pubkey)`: zwei
+# lokale Menschen dürfen sich mit derselben Gegenstelle paaren. Dann wirft
+# `scalar_one_or_none()` — jede föderierte Anfrage endet als 500. Genau das
+# stand bevor: id=2 (Konto 1, aktiv) und id=3 (Konto 2, widerrufen), beide mit
+# x-idras Schlüssel; ein erneutes Paaren hätte die zweite wiederbelebt.
+
+import inspect
+
+
+def test_the_responder_no_longer_resolves_a_peer_by_pubkey_ALONE():
+    """Strukturtest: `scalar_one_or_none()` auf der Schluesselsuche ist weg.
+
+    🛑 Der Rumpf wird geprueft, nicht der Quelltext als Zeichenkette — der
+    Kommentar darueber ERKLAERT den alten Aufruf und wuerde eine Textsuche
+    treffen. Diesen Fehler habe ich am 2026-10-27 zweimal gemacht.
+    """
+    import ast
+    import textwrap
+
+    from services.federation_query_responder import FederationQueryResponder
+
+    baum = ast.parse(textwrap.dedent(
+        inspect.getsource(FederationQueryResponder._lookup_peer)))
+    fn = baum.body[0]
+    rumpf = ast.unparse(ast.Module(
+        body=[k for k in fn.body if not (
+            isinstance(k, ast.Expr) and isinstance(k.value, ast.Constant)
+            and isinstance(k.value.value, str))],
+        type_ignores=[]))
+    assert "scalar_one_or_none" not in rumpf, rumpf
+    # Negativkontrolle: der Rumpf ist nicht leer, die Pruefung misst also etwas.
+    assert "scalars" in rumpf and "revoked_at" in rumpf, rumpf
+
+
+def test_the_pairing_refuses_a_second_owner_for_the_same_instance():
+    """🛑 Die Ursache, nicht nur ihre Erkennung.
+
+    Ohne diese Sperre entstuende die mehrdeutige Lage weiterhin, und der
+    Antwortende wiese danach ALLE Anfragen ab — ein stiller Totalausfall der
+    Foederation statt einer lesbaren Absage beim Paaren.
+    """
+    import ast
+    import textwrap
+
+    from services.pairing_service import PairingService
+
+    quelle = textwrap.dedent(inspect.getsource(PairingService._upsert_peer_user))
+    baum = ast.parse(quelle)
+    rumpf = ast.unparse(baum)
+    assert "circle_owner_id != owner_user_id" in rumpf, rumpf
+    assert "PairingError" in rumpf, rumpf
+    # Und sie sitzt in `_upsert_peer_user`, also greift sie bei accept UND
+    # complete — nicht nur an einem der beiden Schritte.
+    import services.pairing_service as ps
+    aufrufer = [
+        n for n in ast.walk(ast.parse(inspect.getsource(ps)))
+        if isinstance(n, ast.Attribute) and n.attr == "_upsert_peer_user"
+    ]
+    assert len(aufrufer) >= 2, f"nur {len(aufrufer)} Aufrufer gefunden"

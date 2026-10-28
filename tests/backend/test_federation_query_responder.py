@@ -96,16 +96,19 @@ def mock_db_with_peer(asker_identity):
     peer.revoked_at = None
 
     db.execute = AsyncMock()
-    # Default: first execute returns peer, subsequent return membership tier
-    membership = MagicMock(value=2)  # responder granted asker tier=2 (household)
 
     async def execute_side(stmt):
         result = MagicMock()
         if "peer_users" in str(stmt):
+            # 🛑 Seit 2026-10-28 holt `_lookup_peer` ALLE aktiven Zeilen zum
+            # Schluessel und weist ab, wenn es mehr als eine ist. Vorher war es
+            # ein `scalar_one_or_none()`, das bei zwei lokalen Konten mit
+            # derselben Gegenstelle `MultipleResultsFound` geworfen haette —
+            # also jede foederierte Anfrage als 500.
+            result.scalars = lambda: MagicMock(all=lambda: [peer])
             result.scalar_one_or_none = lambda: peer
-        elif "circle_memberships" in str(stmt):
-            result.scalar_one_or_none = lambda: membership
         else:
+            result.scalars = lambda: MagicMock(all=lambda: [])
             result.scalar_one_or_none = lambda: None
         return result
 
@@ -253,6 +256,8 @@ class TestHandleInitiate:
         async def no_peer(stmt):
             r = MagicMock()
             r.scalar_one_or_none = lambda: None
+            # Keine aktive Paarung zu diesem Schluessel — die neue Form.
+            r.scalars = lambda: __import__("unittest.mock", fromlist=["MagicMock"]).MagicMock(all=lambda: [])
             return r
         db.execute = AsyncMock(side_effect=no_peer)
         db.commit = AsyncMock()

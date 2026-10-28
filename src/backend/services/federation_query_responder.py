@@ -699,14 +699,38 @@ class FederationQueryResponder:
         signed peer could also exploit this path to amplify writes;
         debouncing is a future F5 task.
         """
-        peer = (await self.db.execute(
+        # 🛑 Die Kennung einer Paarung ist `(circle_owner_id, remote_pubkey)` —
+        # so steht es im Eindeutigkeitsindex `uq_peer_users_owner_pubkey`. Hier
+        # wurde bis 2026-10-28 allein ueber den Schluessel gesucht, und zwar mit
+        # `scalar_one_or_none()`. Zwei lokale Menschen, die sich mit DERSELBEN
+        # Gegenstelle paaren, sind laut Index erlaubt — und liessen dann jede
+        # foederierte Anfrage mit `MultipleResultsFound` als 500 enden. Im
+        # Haushalt stand das am 2026-10-28 unmittelbar bevor: eine aktive Zeile
+        # fuer Konto 1 und eine widerrufene fuer Konto 2, beide mit x-idras
+        # Schluessel; ein erneutes Paaren haette die zweite wiederbelebt.
+        kandidaten = (await self.db.execute(
             select(PeerUser).where(
                 PeerUser.remote_pubkey == asker_pubkey,
                 PeerUser.revoked_at.is_(None),
-            )
-        )).scalar_one_or_none()
-        if peer is None:
+            ).order_by(PeerUser.id)
+        )).scalars().all()
+        if not kandidaten:
             raise FederationQueryError("Unknown or revoked peer")
+        if len(kandidaten) > 1:
+            # 🛑 ABWEISEN, nicht waehlen. Es gaebe einen naheliegenden Ausweg —
+            # den `querier_ref` entscheiden lassen, welche Paarung gemeint ist.
+            # Der kommt aber VON DER GEGENSTELLE. Ihn bestimmen zu lassen, in
+            # wessen Kreis die Anfrage laeuft, waere dieselbe Klasse von Fehler,
+            # die F-ID-3 gerade beseitigt hat: eine fremde Angabe entscheidet
+            # ueber lokale Reichweite.
+            logger.warning(
+                f"Federation query_brain: {len(kandidaten)} aktive Paarungen mit "
+                f"demselben Schluessel (Eigentuemer "
+                f"{[k.circle_owner_id for k in kandidaten]}) — abgewiesen. "
+                f"Genau eine davon darf aktiv sein."
+            )
+            raise FederationQueryError("Unknown or revoked peer")
+        peer = kandidaten[0]
         try:
             peer.last_seen_at = datetime.now(UTC).replace(tzinfo=None)
             await self.db.commit()
