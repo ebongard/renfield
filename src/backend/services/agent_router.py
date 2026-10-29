@@ -21,6 +21,14 @@ from typing import TYPE_CHECKING, Optional
 import yaml
 from loguru import logger
 
+# 🛑 Importiert, NICHT abgeschrieben. F2′ erkennt einen Peer am TRANSPORT
+# (`MCPManager.is_federation_server`), aber der Transport ist nur dort zu
+# haben, wo der Manager in der Hand ist. Hier gibt es nur Namen:
+# `connected_servers` ist eine Liste von Zeichenketten, und ein Intent ist
+# `mcp.peer_<id>.<tool>`. Also am Praefix — aber an der EINEN Definition,
+# die `peer_mcp_registry` dafuer haelt, nie an einem Literal.
+from services.peer_mcp_registry import FEDERATION_SERVER_PREFIX
+
 # Anti-dashboard guard: ``my_dashboard`` is the personal-overview
 # sub_intent. Messages that request a deliverable (status report,
 # release details, explicit list/fetch) must NOT be mis-classified as
@@ -58,6 +66,10 @@ class AgentRole:
     name: str
     description: dict[str, str]  # lang -> description
     mcp_servers: list[str] | None = None  # None = all servers
+    #: Darf diese Rolle gepaarte Peers fragen? Die Positivliste oben kann
+    #: sie NICHT nennen — `peer_<id>` entsteht erst beim Paaren, der Name
+    #: ist beim Schreiben der Konfiguration unbekannt. Vorgabe: nein.
+    federation: bool = False
     internal_tools: list[str] | None = None  # None = all internal tools
     max_steps: int = 8
     prompt_key: str = "agent_prompt"
@@ -143,6 +155,7 @@ def _parse_roles(config: dict) -> dict[str, AgentRole]:
             name=name,
             description=description,
             mcp_servers=role_data.get("mcp_servers"),
+            federation=bool(role_data.get("federation", False)),
             internal_tools=role_data.get("internal_tools"),
             max_steps=role_data.get("max_steps", 8),
             prompt_key=role_data.get("prompt_key", "agent_prompt"),
@@ -183,7 +196,17 @@ def _filter_available_roles(
             filtered[name] = role
         else:
             # Check if at least one required server is connected
-            if any(server in connected_set for server in role.mcp_servers):
+            # 🛑 Ein gepaarter Peer zaehlt fuer eine foederationsfaehige Rolle
+            # mit. `connected_set` enthaelt ihn (`peer_mcp_registry` setzt
+            # `connected=True` — im eigenen Kommentar als „a lie — there's no
+            # MCP session" bezeichnet, gesetzt genau damit er hier erscheint),
+            # aber die Positivliste kann ihn nicht nennen. Ohne das waere eine
+            # Rolle, deren reale Server ausfallen, waehrend der Peer steht,
+            # faelschlich nicht verfuegbar.
+            hat_peer = role.federation and any(
+                n.startswith(FEDERATION_SERVER_PREFIX) for n in connected_set
+            )
+            if hat_peer or any(server in connected_set for server in role.mcp_servers):
                 filtered[name] = role
             else:
                 logger.debug(
@@ -265,6 +288,31 @@ class AgentRouter:
                     (name, role) for name, role in self.roles.items()
                     if role.mcp_servers and server in role.mcp_servers
                 ]
+                # 🛑 VORBESTEHENDER Fehler, vom Architektur-Review am
+                # 2026-10-29 gefunden: fuer ein `mcp.peer_<id>.*`-Intent fand
+                # diese Liste NIE eine Rolle. Die Positivliste kann den Peer
+                # nicht nennen, und `general` traegt `mcp_servers = None` —
+                # falsy, also hier nie Kandidat, obwohl es faktisch jedes
+                # Werkzeug sieht. Die Korrektur „das war eine
+                # Foederationssache" lief damit ins Leere, und zwar unabhaengig
+                # von jeder Filterform: wer nur den Filter repariert, repariert
+                # die Korrektur nicht mit.
+                if not candidates and server.startswith(FEDERATION_SERVER_PREFIX):
+                    candidates = [
+                        (name, role) for name, role in self.roles.items()
+                        if role.federation
+                    ]
+                    if candidates:
+                        # Nur nach Namen, nicht nach `len(mcp_servers)` wie der
+                        # Zweig darunter: die Spezifitaetsregel dort meint „die
+                        # engste Positivliste gewinnt", und ein Peer steht in
+                        # keiner. Bei mehreren foederationsfaehigen Rollen ist
+                        # die Wahl damit willkuerlich, aber bestimmt — und nicht
+                        # von der Reihenfolge in der YAML abhaengig.
+                        candidates.sort(key=lambda nr: nr[0])
+                        return candidates[0][0]
+                    # Keine foederationsfaehige Rolle: faellt unten auf `None`
+                    # durch, wie jedes unbekannte Intent.
                 if not candidates:
                     return None
                 candidates.sort(key=lambda nr: (len(nr[1].mcp_servers), nr[0]))

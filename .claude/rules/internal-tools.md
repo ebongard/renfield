@@ -3,6 +3,7 @@ paths:
   - "src/backend/services/*_tool.py"
   - "src/backend/services/action_executor.py"
   - "config/agent_roles.yaml"
+  - "src/backend/services/agent_tools.py"
   - "src/backend/ha_glue/services/internal_tools.py"
   - "src/backend/services/widget_tools.py"
 ---
@@ -59,3 +60,18 @@ A tool re-checks its feature flag in-handler and refuses rather than persist som
 - `internal.refile_to_paperless`: targets ONLY `failed` — clearing a live `pending` `paperless_task_id` risks the
   duplicate-upload loop; the backend never OCRs (enqueue a `paperless_refile` worker task).
 - `internal.reindex_documents`: skips unindexable docs unless `force=true`; SQL filter, so the cap (200/500) hits repairable docs.
+
+## Ein gepaarter Peer kann in der Positivliste NICHT stehen
+`mcp_servers` je Rolle ist ein **exakter** Namensvergleich (`agent_tools.py`), ein Peer-Server heißt `peer_<id>` und
+entsteht beim Paaren — der Name ist beim Schreiben der Konfiguration unbekannt. Darum `federation: true` an der Rolle,
+erkannt am **Transport** (`MCPManager.is_federation_server`), nie am Namenspräfix: das Präfix lebt in
+`peer_mcp_registry` und würde zwei getrennt gepflegte Dateien aneinanderbinden.
+🛑 **Gemessen 2026-10-29: der fertige Föderationskanal hatte NIE einen Aufrufer** — gepaart, verknüpft,
+`federation_query_log` 0 Zeilen auf beiden Instanzen, weil `documents` nur `[paperless, email, scanner]` listet. Die
+Zwei-Schritt-Falle oben, aber mit **unmöglichem** zweitem Schritt.
+🛑 Die Rollenkonfiguration ist **nicht** die Sicherheitsgrenze. Was der Peer herausgibt, entscheidet die
+**Antwortseite** zirkel-skaliert gegen die verknüpfte Identität; die Rolle entscheidet nur, ob die FRAGE die Instanz
+verlässt und ob das Werkzeug den Vorauswahl-Prompt belastet (Föderationswerkzeuge tragen keinen `hint`).
+🛑 Drei Stellen lesen `role.mcp_servers`, nicht eine: `agent_tools.py` (Filter), `agent_router._filter_available_roles`
+(Verfügbarkeit — `connected_set` enthält Peers) und `agent_router.role_for_intent` (die „Korrigieren"-Zuordnung, die
+für Peer-Intents nie eine Rolle fand). Wer nur den Filter anfasst, lässt zwei stille Lücken stehen.

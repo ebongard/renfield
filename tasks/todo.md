@@ -1,411 +1,251 @@
-# Scan-Fertigmeldung: Knopf zum Paperless-Dokument
+# Stufe 3 — Dokumentverweise über die Instanzgrenze
 
-**Bitte (2026-10-27):** „wenn ich scanne, dann möchte ich danach ein Link zu dem
-Paperless Document in der Antwort haben, nicht nur die Nummer."
+*Entwurf: `docs/design/cross-instance-document-reference.md` §3.3/§3.4 · geplant 2026-10-29*
 
-**Entschieden:** Chip in der Meldung, **beim Anzeigen aufgelöst**. LAN-Adresse
-als Linkziel genügt.
+## ✅ Stufe 2 ist vollständig (2026-10-29 09:27)
 
-## Warum nicht einfach einen Link in den Text
+Die Personenverknüpfung steht auf beiden Seiten, und zwar als EIN Vorgang:
 
-Gemessen, bevor entworfen wurde:
+| | Haushalt | x-idra |
+|---|---|---|
+| link | id=2, peer=3 | id=1, peer=2 |
+| gebunden an | lokales Konto **2** | lokales Konto **107** |
+| `querier_ref` | `3012b21c63…` | `3012b21c63…` |
 
-| Befund | Folge |
+🛑 Der identische `querier_ref` ist der Beleg: er wird im Handschlag EINMAL geprägt und vom
+Angebot mitgeführt. Zwei unabhängige Versuche hätten zwei Merkmale ergeben. Gebunden ist das
+EIGENE Konto, nicht `admin` — als `admin` hätte der Peer mit dessen Reichweite geantwortet.
+
+Zuvor stand hier „0 Zeilen, blockierend". Richtig war: gelungen war der **Paarungs**-, nicht
+der **Verknüpfungs**-Handschlag. Zwei Vorgänge, derselbe Name, verschiedene Tabellen.
+
+🛑 **Die Blockade ist jetzt Schicht 4** (unten), nicht die Verknüpfung. Und die Begründung des
+Entwurfs, die Instanz-Stufe sei für Dokumente zu grob, bleibt eine **Entwurfsaussage**: sie
+ist weiterhin nicht gemessen, weil über die Grenze noch nie eine Anfrage ging
+(`federation_query_log` = 0 auf beiden Instanzen, seit immer).
+
+## Stand der Bausteine (gemessen, nicht vermutet)
+
+| Baustein | Stelle | Stand |
+|---|---|---|
+| `INSTANCE_ID` | beide Instanzen | ✅ `household` / `xidra` |
+| Paarung | `peer_users` | ✅ je 1 aktiv, tier 2 |
+| `FEDERATION_IDENTITY_LINKS_ENABLED` | beide | ✅ `true` |
+| Personenverknüpfung | `federation_user_links` | ✅ je 1 Zeile, `querier_ref` identisch |
+| Rechteprüfung | `knowledge.py:164 check_document_access` | ✅ vorhanden |
+| Identitätsauflösung | `resolve_linked_user`, `_peer_scope_for` | ✅ vorhanden, mit Aufrufern |
+| Transport | `query_brain/{initiate,retrieve}` | ⚠️ **nicht generisch** |
+| `peer.document_status` / `_fetch` | — | ❌ nicht gebaut |
+| Rolle darf den Peer sehen | `agent_roles.yaml` + `agent_tools.py:247` | ❌ **Schicht 4, blockierend** |
+
+🛑 **Der Transport trägt keine Art-Kennung.** `QueryBrainInitiateRequest` ist auf `query`
+zugeschnitten, und die Signatur deckt genau die benannten Felder. Ein `kind`-Feld
+nachzurüsten würde ändern, *was* auf dem bestehenden Pfad signiert wird — also ein
+**zweiter** Umschlag, der die Maschinerie teilt, nicht ein erweiterter erster.
+
+## Die Arbeit
+
+### 1. Zweiter signierter Umschlag
+`PeerDocumentRequest`: `version`, `asker_pubkey`, `instance`, `document_id`, `querier_ref`,
+`nonce`, `timestamp`, `depth`, `path` + `signature` über das kanonische JSON aller
+Nicht-Signatur-Felder. **Geteilt** wird: Signier-/Prüfhelfer, Nonce-Speicher samt
+±60-s-Fenster, `_lookup_peer`, `resolve_linked_user`, `_peer_scope_for`.
+Ein Strukturtest hält fest, dass beide Umschläge **denselben** Signierhelfer benutzen —
+zwei Kopien kanonischer JSON-Kodierung sind die Stelle, an der Signaturen auseinanderlaufen.
+
+### 2. Antwortseite — `POST /peer/document/status`
+Löst `querier_ref` auf die lokale Person auf und ruft `check_document_access` mit **dieser**
+Identität, nicht mit der Instanz-Identität. Antwort: `{status, in_paperless, filed_at}`.
+🛑 **Fail-closed bei fehlender Abbildung:** ist der Satz nicht `mapped`, wird abgewiesen,
+nicht auf `PeerScope` zurückgefallen. Für einen Dokumentzugriff ist die Instanz-Stufe zu
+grob — dieselbe Begründung wie im Entwurf.
+Uniform 400 wie der bestehende Pfad, kein Orakel über Signatur/Nonce/Zeitfenster.
+
+### 3. Fragerseite — `GET /api/knowledge/documents/{instance}/{id}`
+Eigene Instanz → delegiert intern an `GET /documents/{id}`. Fremde → Peer-Anfrage.
+**Dieselbe Antwortform** wie der lokale Endpunkt, aber die Paperless-Adresse der Gegenseite
+wird entfernt, nicht durchgereicht. Löst nebenbei die LAN-Frage: die Gegenseite muss nur von
+der eigenen Instanz erreichbar sein, nicht vom Gerät der Person.
+
+### 4. Oberfläche
+`DocumentRefArtifact`: bei gesetztem `instance` den qualifizierten Endpunkt abfragen statt
+`enabled: false`. Aus dem Hinweis „liegt in … — noch nicht abrufbar" wird ein Knopf. Der
+`remote`-Zweig und sein Kommentar entfallen; der Grund, der dort steht (eigene Zählfolgen je
+Instanz), bleibt als Begründung der **Qualifizierung** erhalten.
+
+### 5. Prüfprotokoll
+Siehe offene Entscheidung D2.
+
+### 6. Tests (echtes Postgres)
+- Nicht abgebildete Person → **abgewiesen**, nicht auf Instanz-Stufe beantwortet.
+- Fremde Instanz → wird **nie** lokal aufgelöst (die Falle, die Stufe 1 abstellt).
+- Signatur falsch / Nonce wiederholt / Zeitstempel außerhalb → abgewiesen, uniform.
+- `check_document_access` greift mit der **abgebildeten** Identität: dieselbe Anfrage als
+  zwei verschiedene verknüpfte Personen sieht Verschiedenes.
+- Negativkontrolle zu jedem Riegel: erst zeigen, dass er beim Nachbarfall **nicht** feuert.
+
+## Offene Entscheidungen
+
+**D1 — `document_status` allein, oder zusätzlich `document_fetch`?**
+Status heißt: der Knopf sagt „dort abgelegt" und nennt den Zustand. Fetch heißt: die Bytes
+kommen durch die eigene Instanz, das Dokument öffnet im eigenen Browser — mit
+Zwischenspeicherung, Protokollierung und einem Durchsatzpfad, den es heute nicht gibt.
+
+**D2 — Prüfprotokoll in `FederationQueryLog` oder eigene Tabelle?**
+`FederationQueryLog` deckt Atom-Abfragen. Ein Dokumentabruf ist etwas anderes; dieselbe
+Tabelle spart eine Migration, eine eigene hält die Auswertung sauber.
+
+## Was dieser Plan NICHT vorschlägt
+- **Keinen Deeplink** in die Paperless-Oberfläche der Gegenseite (Entwurf §7).
+- **Kein `kind`-Feld** im bestehenden Umschlag — das änderte, was auf dem laufenden Pfad
+  signiert wird.
+- **Kein Zurückfallen auf die Instanz-Stufe**, wenn die Verknüpfung fehlt.
+
+---
+
+# Schicht 4 — eine Rolle muss den Föderationspeer sehen dürfen
+
+*Gefunden 2026-10-29 beim Gegenmessen der Verknüpfung · liegt VOR Stufe 3*
+
+## Der Befund
+
+Die Verknüpfung steht (beide Seiten, `querier_ref` identisch, gebunden an Konto 2 / 107).
+Trotzdem überschritt die Frage „Welche Dokumente sind in der x-idra instanz heute angelegt
+worden?" die Grenze nicht: `federation_query_log` zählt auf **beiden** Instanzen 0 Zeilen —
+nicht seit gestern, sondern **überhaupt nie**.
+
+Gemessen am Zug vom 09:32:
+
+    Router  -> Rolle `documents`
+    Vorauswahl: 4/33 -> ingest_status, list_unfiled_documents,
+                        paperless.get_document, paperless.search_documents
+
+`mcp.peer_3.query_brain` ist nicht dabei, und die Gesamtzahl ist unverändert **33**.
+
+Ursache, zwei Zeilen:
+
+| Stelle | Inhalt |
 |---|---|
-| Die Nummer ist `renfield_document_id`, nicht Paperless | heute zeigt die Antwort die falsche Kennung für diesen Zweck |
-| Paperless-Kennung existiert zur Meldung noch nicht (⌀ 363 s Ingest, Haushalt, 60 Tage) | ein Link beim Schreiben wäre meistens leer |
-| 6 von 37 abgeschlossenen bekommen **nie** eine (Dublette/Ablehnung) | der Fall „kein Link" muss sauber aussehen |
-| Der Chat rendert **kein** Markdown | ein Rohtext-Link bliebe tote Zeichenkette |
-| `render_completion_message` ist eine **Vertrauensgrenze** (Text wird in spätere Agentenzüge wieder eingespielt) | der Text bleibt unverändert; der Link lebt in den Metadaten |
-| Die Meldung trägt bereits `message_metadata.scanner_job` | der Hausweg steht offen: strukturierte Daten → React-Komponente |
+| `config/agent_roles.yaml` | `documents: mcp_servers: [paperless, email, scanner]` |
+| `agent_tools.py:247` | `if server_filter is not None and mcp_tool.server_name not in server_filter: continue` |
 
-## Plan
+🛑 **Exakter Namensvergleich gegen einen Namen, der erst beim Paaren entsteht.**
+`FEDERATION_SERVER_PREFIX = "peer_"`, der Server heißt `peer_<id>` — er lässt sich nicht in
+eine Konfiguration schreiben, die vorher existiert. Nur `general` (`mcp_servers: null`) sieht
+ihn je, und Dokumentfragen landen bei `documents`.
 
-### Backend
-- [x] `services/artifact_service.py`: `ALLOWED_KINDS` um `document_ref` ergänzen
-      (Backend deckelt nur Größe; die Form prüft zod im Frontend).
-- [x] `services/scanner_jobs.py`: bei `status == "done"` ein `document_ref`-Artefakt
-      über `merge_artifacts_into_metadata` an die Meldung hängen. **Der
-      Meldungstext bleibt Zeichen für Zeichen gleich** — kein Link im Text.
-- [x] `src/frontend/src/components/chat/artifacts/artifactSchema.ts`: `kind`
-      `document_ref` in die zod-Union, Daten = `{ documentId: number }`.
-- [x] 🛑 `api/routes/knowledge_schemas.py`: `paperless_url: str | None = None` auf
-      `DocumentResponse` deklarieren. OHNE das verwirft Pydantic den Schlüssel
-      **still** (`knowledge.py:706` baut `DocumentResponse(**kwargs)`), und das
-      Feld käme nie beim Frontend an. Vorbild steht daneben: `in_paperless`.
-      (Review-Korrektur C1, keine Wahl — ohne sie wirkt das Feature nicht.)
-- [x] `api/routes/knowledge.py`: im gemeinsamen Dokument-Serialisierer
-      `paperless_url: str | None` ergänzen, zusammengesetzt aus
-      `settings.paperless_api_url` + `/documents/<id>/details`, nur wenn
-      `paperless_document_id` gesetzt ist. `in_paperless` bleibt unverändert.
-      🛑 Das Zusammensetzen gehört in **eine** Hilfsfunktion, damit es testbar
-      ist und nicht an drei Endpunkten driftet (`/documents`,
-      `/documents/batch`, `/documents/{id}` teilen den Serialisierer).
-- [x] Keine neue Einstellung: `PAPERLESS_API_URL` wird wiederverwendet.
+Dieselbe Klasse wie die Zwei-Schritt-Falle für `internal.*` in CLAUDE.md
+(„Registrierung UND Eintrag in die Rolle"), nur schärfer: der zweite Schritt ist hier
+**unmöglich**. Ergebnis ist ein korrekt gebauter Kanal ohne Aufrufer.
 
-### Frontend
-- [x] Neue Artefakt-Komponente `DocumentRefArtifact.tsx` neben den bestehenden
-      (`KeyValueArtifact`, `PresenceMapArtifact`, `DeviceControlArtifact`), in
-      `ArtifactRenderer.tsx` auf den neuen `kind` geschaltet. Sie holt
-      `GET /api/knowledge/documents/<id>` und zeigt genau einen von drei
-      Zuständen:
-      - `paperless_url` gesetzt → Knopf „In Paperless öffnen"
-      - noch im Ingest → „wird gerade abgelegt" (nicht klickbar)
-      - abgeschlossen ohne Kennung → „nicht in Paperless abgelegt"
-- [x] i18n-Schlüssel in `de.json` **und** `en.json` (und `it.json`, wo die
-      Nachbarschlüssel existieren). Keine fest verdrahteten Texte.
-- [x] Dark-Mode-Varianten, nur DESIGN.md-Token. Kein vom Modell erzeugtes HTML.
+## Reichweite der Änderung (gemessen)
 
-### Tests (Pflicht, nicht optional)
-- [x] Backend: `paperless_url` ist gesetzt, wenn die Kennung existiert, und
-      `None`, wenn nicht. Zusammensetzung ohne doppelten Schrägstrich.
-- [x] Backend: die Metadaten tragen `renfield_document_id` — **und** eine
-      Negativkontrolle, dass der Meldungs*text* unverändert bleibt (die
-      Vertrauensgrenze darf nicht aufweichen).
-- [x] Backend: ein Scan ohne Dokument (unrouted/failed) trägt **keine**
-      `renfield_document_id` und die Komponente erscheint dort nicht.
-- [x] Frontend: RTL + MSW für alle drei Zustände.
+`server_filter` hat genau **zwei** Aufrufer, beide reichen `role.mcp_servers` durch dieselbe
+Funktion: `chat_handler.py:2268` und `orchestrator.py:536`. Eine Änderung in
+`_register_mcp_tools` deckt beide. `intent_registry` hängt nicht daran. Nur `general` trägt
+`null`.
 
-### Doku (nach `/review`, vor dem Merge)
-- [x] `.claude/rules/scanner.md`: ein Satz, dass die Meldung die Dokument-
-      kennung in den Metadaten führt und der Knopf erst beim Anzeigen auflöst —
-      samt Begründung (Kennung existiert zur Meldung noch nicht).
+## Die drei Formen
 
-## Offene Punkte / Risiken
-- **Berechtigung:** `GET /documents/{id}` muss für die anfragende Person
-  zugelassen sein und über die Kreis-Stufen gehen (`user_id=asker_id`). Vor dem
-  Bau prüfen, ob der Endpunkt das bereits tut — sonst ist das der erste Schritt.
-- **LAN-Grenze:** Der Link trägt nur im Heimnetz. Bewusst so entschieden; falls
-  das später stört, wird aus `PAPERLESS_API_URL` eine getrennte Link-Basis.
-- **Ein Abruf je Scan-Nachricht.** Selten genug, kein Zwischenspeicher nötig.
+### F1 — ein erkannter Eintrag `peer_*` in der Positivliste
+Der Filter lässt ein Werkzeug zu, wenn `server_name in server_filter` **oder** der Eintrag
+`peer_*` in der Liste steht und `server_name.startswith("peer_")`. Kein allgemeines Globbing,
+ein einziges erkanntes Zeichen. `documents` bekommt `peer_*` dazu.
 
-## Decision ledger
+- ✅ **Eine** Stelle beantwortet „welche Server sieht diese Rolle" — und das ist in diesem
+  Projekt wiederholt der Unterschied zwischen tragend und driftend gewesen.
+- ✅ Je Rolle ausdrücklich: `smart_home` bekommt den Peer nicht, nur weil es ihn gibt.
+- ✅ Kleinste Änderung: eine Funktion, eine Konfigurationszeile, zwei Aufrufer gedeckt.
+- ❌ Führt ein Muster in eine Liste ein, die bisher exakt verglich. Ein Leser könnte
+  annehmen, `paperles*` ginge auch. Braucht einen Test, der festhält: **nur** `peer_*` wirkt,
+  jedes andere Sternchen bleibt ein gewöhnlicher Name.
 
-### R1: Traegermechanik fuer den Knopf — bestehendes Artefakt-System oder eigene Komponente
-Finding: F3 (P1, confidence 9/10, `src/frontend/src/components/chat/artifacts/artifactSchema.ts:110`,
-Reviewer: plan-eng-review, ausgeloest durch die Nutzerfrage „Haben wir nicht eine extra
-Funktionalitaet fuer das Rendering von Daten, wie z.B. Wetterdaten?")
-Plan baseline: urspruenglicher Vorschlag — eigene Komponente, die `message_metadata.scanner_job`
-liest und in `ChatMessages.tsx` eingehaengt wird. Nicht genehmigt.
-Runtime evidence:
-- `artifactSchema.ts:110-117` — zod-Union ueber `kind`: table, list, keyvalue, chart, weather,
-  device_control, presence_map. `weather` ist woertlich der vom Nutzer genannte Fall.
-- `chat_handler.py:1524-1525` — „Emitted as `artifact` WS frames and persisted into
-  message_metadata[\"artifacts\"]". Artefakte sind also PERSISTENT, nicht nur Strom.
-- `ChatContext.tsx:245` — `...(Array.isArray(meta?.artifacts) && … { artifacts: meta.artifacts })`
-  — Rehydrierung beim Verlaufsladen. Genau der Weg, den eine Scan-Meldung nimmt.
-- `ChatMessages.tsx:533` — Renderstelle existiert, hinter `artifacts_typed_enabled`.
-- Live: `ARTIFACTS_TYPED_ENABLED=true` im Haushalt.
-- `artifact_service.py:44` — `ALLOWED_KINDS` (Backend deckelt Groesse), Form prueft zod vorne.
-- `artifactSchema.ts:36-38` — `keyValueDataSchema` ist nur `pairs: [{key, value}]`, reine
-  Zeichenketten. Ein bestehender kind kann KEINEN Link tragen.
+### F2 — ein Rollen-Flag `federation: true`
+Neues Feld an `AgentRole` und in der YAML; der Filter lässt `peer_`-Server zu, wenn es gesetzt
+ist. Vorgabe `false`.
 
-Comparison grid:
+- ✅ Die Absicht steht als Wort da, nicht als Zeichenmuster — greppbar, nicht zu verwechseln.
+- ✅ Kein Muster in der Positivliste, der exakte Vergleich bleibt exakt.
+- ✅ Kann später mehr tragen (etwa *welche* Peers eine Rolle sehen darf).
+- ❌ **Zwei** Stellen beantworten dieselbe Frage: `mcp_servers` und `federation`. Wer künftig
+  wissen will, was eine Rolle sieht, muss beide lesen — genau die Zweiteilung, die in dieser
+  Sitzung dreimal etwas gekostet hat.
+- ❌ Neues Feld in Doku, Schema und Tests.
 
-| Choice | Current | A (Artefakt-System) | B (eigene Komponente) |
-|---|---|---|---|
-| Traegermechanik | keine, pending | bestehendes Artefakt-System, neuer `kind` | eigenes Feld in `scanner_job` |
-| Formpruefung | keine, pending | zod, mit Rueckfall auf escaped Codeblock | keine |
-| Persistenz/Rehydrierung | keine, pending | vorhanden, wiederverwendet | eigener Pfad ueber `scanner_job` |
-| Renderstelle | keine, pending | vorhanden (`ChatMessages.tsx:533`) | neue Einhaengung noetig |
-| Funktionsschalter | keine, pending | `artifacts_typed_enabled` (live an) | keiner |
-| Live-Aufloesung Paperless | gefordert | in der neuen Komponente | in der neuen Komponente |
-| Dateien | — | ~13 | ~12 |
-| `paperless_url` im Serialisierer | pending | gleich | gleich |
+### F3 — instanzbezogene Fragen an `general` routen
+Keine Änderung am Filter; der Router schickt Fragen, die eine andere Instanz benennen, an
+`general`, das ohnehin alles sieht.
 
-State: approved
-Actual answer: A) Bestehendes Artefakt-System (Antwort auf D2)
-Accepted scope: Der Knopf faehrt auf dem bestehenden Artefakt-System. Neuer `kind`
-`document_ref` in `artifact_service.ALLOWED_KINDS` (Backend-Deckel) und in
-`artifactSchema.ts` (zod-Form); die Scan-Fertigmeldung haengt ihr Artefakt ueber
-`merge_artifacts_into_metadata` an; eine neue Artefakt-Komponente loest beim Anzeigen
-auf und zeigt Paperless-Link / „wird abgelegt" / „nicht abgelegt". Renderstelle,
-Persistenz, Rehydrierung und Funktionsschalter werden WIEDERVERWENDET, nicht neu gebaut.
-Nicht genehmigt und nicht Teil dieser Antwort: F1 und F2 (siehe Befunde).
-History: D1 (Komplexitaetstor, Dateiaufteilung) ist damit erledigt — unter A ist die
-Komponentendatei vom System vorgegeben, nicht waehlbar; die Aufteilung wird nicht neu
-gestellt. D1 (Komplexitaetstor, Dateiaufteilung) wurde gestellt und vom Nutzer mit dieser
-Rueckfrage beantwortet statt mit einer Auswahl. D1 ist dadurch gegenstandslos geworden:
-unter A ist die eigene Komponentendatei vom System vorgegeben, nicht waehlbar. D1 wird nach
-der Entscheidung zu R1 nur dann neu gestellt, wenn die Aufteilung dann noch offen ist.
+- ✅ Kein Eingriff in Filter oder Konfiguration.
+- ❌ **Verschiebt das Problem.** `general` trägt ALLE Werkzeuge — die Vorauswahl steht dann
+  vor 33+ statt vor einer gezielten Auswahl, und genau an dieser Fläche liegen die Fehlgriffe
+  dieser Woche.
+- ❌ Die Dokumentfrage verliert die Hinweise der `documents`-Rolle, die sie erst tragen.
+- ❌ Eine Router-Prompt-Änderung hat **keinen Prüfstand** (anders als die Vorauswahl mit
+  `bin/measure-preselect.py`) — sie wäre geraten, nicht gemessen.
+- ❌ Jede andere Rolle bleibt föderationsunfähig.
 
-### R2: Wie der Artefakt-Anhang auf `done` begrenzt wird
-Finding: C2 (P2, confidence 9/10, `src/backend/services/scanner_jobs.py:200`, Reviewer: plan-eng-review)
-Plan baseline: nicht spezifiziert — der Plan sagt nur „bei `status == \"done\"`". Nicht genehmigt.
-Runtime evidence:
-- Prior learning `two-switches-over-one-status-set-drift` (9/10, 2026-10-04): in DIESER Datei
-  verzweigten `render_completion_message` und `describe_failure_for_log` ueber dieselbe
-  Statusmenge; die zweite vergass zwei Zustaende, ein `unrouted`-Auftrag meldete
-  `error_code=<fehlt>`.
-- `scanner_jobs.py:200` — Kommentar: „`render_completion_message` und `describe_failure_for_log`
-  verzweigen ueber ..." — die Menge `_STATES_WITHOUT_ERROR_CODE` wurde daraufhin hochgezogen.
-- Der Artefakt-Anhang waere die DRITTE Verzweigung ueber dieselbe Statusmenge.
+## Architektur-Review (`architecture-guide`, 2026-10-29) — zwei Korrekturen
 
-Comparison grid:
+🛑 **Zwei weitere Konsumenten von `role.mcp_servers`, beide exakt vergleichend**, von mir
+übersehen und am Code nachgeprüft:
 
-| Choice | Current | A (Menge hochziehen) | B (inline `== "done"`) |
-|---|---|---|---|
-| Verhalten: Artefakt nur bei `done` | gefordert | gleich | gleich |
-| Wo steht die Statusmenge | 1 hochgezogene + 1 inline | 2 hochgezogene, geteilt | 1 hochgezogen + 2 inline |
-| Drift bei einem neuen Status | moeglich | Strukturtest faengt sie | moeglich, still |
-| Test | pending | Test ueber die geteilte Menge | Test je Zustand |
-| Aufwand | — | human ~20min / CC ~3min | human ~5min / CC ~1min |
+| Stelle | Inhalt | Folge |
+|---|---|---|
+| `agent_router.py:181-192` | `_filter_available_roles`: `any(server in connected_set …)` | `connected_set` enthält Peers, weil `peer_mcp_registry.py:133` `connected=True` setzt — im eigenen Kommentar als „a lie — there's no MCP session" bezeichnet. Ein Literal `peer_*` greift hier nicht. Heute harmlos (`documents` hat reale Server), latent: fallen die aus, während der Peer steht, gilt die Rolle fälschlich als nicht verfügbar. |
+| `agent_router.py:260-271` | `role_for_intent`: `if role.mcp_servers and server in role.mcp_servers` | `None` ist falsy → `general` ist **nie** Kandidat. Für `mcp.peer_3.query_brain` kommt `None` zurück: die Korrektur „das war eine Föderationssache" bleibt wirkungslos. **Vorbestehender Fehler, den KEINE der Formen nebenbei behebt.** |
 
-State: approved
-Actual answer: A) Menge hochziehen und teilen (Antwort auf D3)
-Accepted scope: Die Zustaende, bei denen ein Dokument existiert, werden als benannte
-Modulkonstante in `scanner_jobs.py` gefuehrt (Muster: `_STATES_WITHOUT_ERROR_CODE`), der
-Artefakt-Anhang verzweigt ueber genau diese Menge, und ein Test haelt das fest.
-History: —
+`kiosk_handler.py:345` ist nur Admin-Anzeige, `filter_agent_tools` (`utils/hooks.py:285`) eine
+Plugin-Erweiterungsstelle ohne Handler im Kern — beide nicht betroffen.
 
-## Testabdeckung (geplante Pfade)
+🛑 **Sicherheitskorrektur — ein Argument von mir fällt.** Ich hatte gefragt, welche Form
+unabsichtlichen Zugriff am schwersten macht. Die Zugriffskontrolle sitzt aber beim
+**antwortenden** Peer, zirkel-skaliert gegen die aufgelöste verknüpfte Identität; welche
+lokale Rolle gefragt hat, ändert die Antwort nicht. Der Rollenfilter ist **nicht** die
+Sicherheitsgrenze. Was wirklich auf dem Spiel steht: die Frage im Freitext verlässt unnötig
+die Instanz, Rate-Limit, Prompt-Verschmutzung.
 
-```
-CODE PATHS                                              USER FLOWS
-[+] services/scanner_jobs.py                            [+] Scan fertig -> Knopf
-  |-- Artefakt-Anhang                                     |-- [GAP] Meldung erscheint, Knopf sichtbar
-  |   |-- [GAP] status in DOCUMENT_STATES + doc_id        |-- [GAP] Klick oeffnet Paperless
-  |   |-- [GAP] status in DOCUMENT_STATES, doc_id fehlt   |-- [GAP] Ablage laeuft noch -> "wird abgelegt"
-  |   |-- [GAP] status NICHT in DOCUMENT_STATES           |-- [GAP] Dublette -> "nicht abgelegt"
-  |   \-- [GAP] Meldungstext UNVERAENDERT (Negativkontrolle)
-  \-- [GAP] Strukturtest: Verzweigung ueber die GETEILTE Menge (R2)
-[+] api/routes/knowledge.py                             [+] Fehlerzustaende
-  |-- paperless_url                                       |-- [GAP] Abruf 403 -> kein Knopf, keine Fehlerwand
-  |   |-- [GAP] paperless_document_id gesetzt             |-- [GAP] Abruf 404 -> dasselbe
-  |   |-- [GAP] None -> Feld ist None                     \-- [GAP] Netzfehler -> stiller Rueckfall
-  |   \-- [GAP] Basis-URL mit Schraegstrich am Ende
-  \-- [GAP] C1: Feld kommt TATSAECHLICH durch das response_model
-[+] DocumentRefArtifact.tsx                             [+] Schalter
-  |-- [GAP] [->E2E nicht noetig] drei Zustaende            \-- [GAP] artifacts_typed_enabled aus -> kein Knopf
-  \-- [GAP] zod-Formfehler -> Rueckfall auf Codeblock (vom System geerbt)
+## F2′ — die empfohlene Form (vom Review, nicht von mir)
 
-COVERAGE: 0/18 geplante Pfade (Plan, noch kein Code)  |  GAPS: 18
-```
+Bool-Flag `federation` **plus** Erkennung über `MCPServerConfig.transport == FEDERATION`
+(existiert, `peer_mcp_registry.py:103`) statt über das Namenspräfix.
 
-🛑 Zwei Tests tragen mehr als die anderen:
-- **Die Negativkontrolle auf den unveraenderten Meldungstext.** `render_completion_message`
-  ist eine Vertrauensgrenze (ihr Text wird in spaetere Agentenzuege wieder eingespielt).
-  Ohne diesen Test weicht sie beim naechsten Umbau unbemerkt auf.
-- **C1 muss END-ZU-ENDE geprueft werden**, nicht am Serialisierer: ein Test, der nur
-  `_doc_to_response_kwargs` aufruft, bliebe gruen, waehrend Pydantic das Feld verwirft.
-  Der Test muss durch `DocumentResponse` gehen.
+- ✅ Kein Abgleich zwischen zwei getrennt gepflegten Dateien; bindet an ein Enum, nicht an
+  eine Zeichenkette, die woanders definiert wird.
+- ✅ Kein Kollisionsrisiko mit einem künftigen echten Server namens `peer_etwas`.
+- ✅ Im Review leicht zu sehen („hat die Rolle `federation: true`?") — ein `peer_*` zwischen
+  zehn Servernamen übersieht man.
+- ❌ **Von mir nachgemessen:** `MCPToolInfo` (`mcp_client.py:975-984`) trägt `server_name`,
+  `original_name`, `namespaced_name`, `description`, `input_schema`, `hint` — **keinen
+  Transport**. Der sitzt an `state.config.transport`, ein öffentlicher Zugang existiert
+  nicht. F2′ braucht daher ein Prädikat am Manager (`is_federation_server(name)`), sonst
+  greift der Filter in privaten Zustand. Eigener Posten, kein Gegenargument: es benennt den
+  Begriff einmal an einer Stelle.
 
-## NOT in scope
-- **Zweite Nachricht, wenn die Ablage spaeter durchlaeuft.** Verworfen in der
-  Entwurfsentscheidung: braucht eine zweite Zustellung mit denselben
-  Genau-einmal-Garantien wie die erste.
-- **Von aussen erreichbare Paperless-Adresse.** Bewusst zurueckgestellt; der Link
-  traegt im Heimnetz. Aenderung waere spaeter eine getrennte Link-Basis, kein Code.
-- **Buendelung der Dokumentabrufe** ueber `/documents/batch` (knowledge.py:643).
-  Bei 37 Scans in 60 Tagen Vorratshaltung; P3.
-- **Renfield-eigene Dokument-Detailseite.** Existiert nicht und wird hier nicht gebaut.
+🛑 **Das Argument, das F1 bei mir gewonnen hätte, kippt:** F1 müsste Präfix-Vergleich an
+**drei** Stellen einführen statt an einer, und vergrößert damit gerade die Driftfläche, die
+es verkleinern sollte. Dazu eine Nebenwirkung: `role_for_intent` sortiert nach
+`len(role.mcp_servers)` — `peer_*` zählt als ein Eintrag und verschiebt die Spezifitätsregel.
 
-## What already exists (wiederverwendet statt nachgebaut)
-- **Artefakt-System**: `artifactSchema.ts` (zod-Union), `ArtifactRenderer.tsx`,
-  `artifact_service.merge_artifacts_into_metadata`, Persistenz in
-  `message_metadata["artifacts"]`, Rehydrierung in `ChatContext.tsx:245`,
-  Renderstelle `ChatMessages.tsx:533`, Schalter `artifacts_typed_enabled` (live an).
-  Neu ist allein ein `kind` plus seine Komponente.
-- **Zugriffsschutz**: `GET /documents/{id}` ist fail-closed (401/403 ueber
-  `check_document_access`). Kein neuer Riegel noetig.
-- **Dokument-Serialisierer**: `_doc_to_response_kwargs` bedient bereits alle fuenf
-  Dokument-Endpunkte; `in_paperless` ist das Vorbild fuer `paperless_url`.
-- **Statusmengen-Muster**: `_STATES_WITHOUT_ERROR_CODE` in `scanner_jobs.py`.
+**Prompt-Last:** F1/F2/F2′ gleichwertig (nur Opt-in-Rollen sehen den Peer). Die vierte Form
+(Peers generell ausnehmen) verschlechtert sie in **jeder** Rolle — Föderations- und
+`internal.*`-Werkzeuge tragen laut `.claude/rules/agent-loop.md` **keinen** `hint`, ihre
+ungekürzte Beschreibung geht voll in den Vorauswahl-Prompt. Sie gibt außerdem fail-closed auf:
+es gäbe keinen Hebel mehr, eine Rolle vom Kanal auszuschließen.
 
-## Datenfluss
+## Umsetzungsstellen (jede Form)
+`agent_tools.py:247` · `agent_router.py:181-192` · `agent_router.py:260-271` ·
+bei F2′ zusätzlich ein Prädikat an `MCPManager` (`mcp_client.py`, bei `get_connected_server_names`).
 
-```
-Scanner (Mac) --POST /api/scanner/job-event--> Backend
-                                                 |
-                                   render_completion_message()   [Text, UNVERAENDERT]
-                                                 |
-                              status in DOCUMENT_STATES ? --nein--> keine Artefakte
-                                                 | ja
-                              merge_artifacts_into_metadata(meta, [document_ref])
-                                                 |
-                                         save_message() --> DB
-                                                 |
-           /ws/user scan_job_finished --> Frontend laedt Gespraech neu
-                                                 |
-                      ChatContext rehydriert meta.artifacts --> ArtifactRenderer
-                                                 |
-                                      DocumentRefArtifact (kind=document_ref)
-                                                 |
-                              GET /api/knowledge/documents/<id>   [401/403 fail-closed]
-                                                 |
-                 paperless_url ? --ja--> Knopf "In Paperless oeffnen"
-                                 --nein, in Arbeit--> "wird gerade abgelegt"
-                                 --nein, abgeschlossen--> "nicht in Paperless abgelegt"
-```
+## Tests zusätzlich
+- Der vorbestehende `role_for_intent`-Fehler: eine Korrektur auf ein `mcp.peer_*`-Intent
+  findet heute **keine** Rolle. Negativkontrolle: für `mcp.paperless.*` findet sie eine.
+- Rollenverfügbarkeit: steht nur der Peer und sonst nichts, gilt eine föderationsfähige
+  Rolle als verfügbar.
 
-## Failure modes
-| Pfad | Realistischer Produktionsfehler | Abdeckung | Sichtbar? |
-|---|---|---|---|
-| Artefakt-Anhang | Caps des Backends weisen das Artefakt ab | Test geplant | Knopf fehlt, Meldung bleibt — kein Bruch |
-| `paperless_url` | Feld nicht auf `DocumentResponse` (C1) | Test geplant (end-zu-ende) | 🛑 STILL, deshalb C1 als Pflicht im Plan |
-| Abruf im Knopf | 403, weil das Dokument einer anderen Person gehoert | Test geplant | Knopf zeigt keinen Link, keine Fehlerwand |
-| Abruf im Knopf | Netzfehler / Backend weg | Test geplant | stiller Rueckfall auf "wird abgelegt" |
-| Schalter aus | `artifacts_typed_enabled=false` | Test geplant | Knopf verschwindet ganz |
-
-**Kritische Luecken: 0** — jede Stelle, die still scheitern koennte, hat einen geplanten Test.
-C1 waere ohne den Plan-Eintrag eine gewesen.
-
-## Worktree parallelization strategy
-Sequential implementation, no parallelization opportunity. Das Frontend braucht
-`paperless_url` aus dem Backend, und der neue `kind` muss in beiden Erlaubnislisten
-stehen, bevor die Komponente etwas zu rendern hat.
-
-## Implementation Tasks
-Synthesized from this review's findings. Each task derives from a specific
-finding above. Run with Claude Code or Codex; checkbox as you ship.
-
-- [x] **T1 (P1, human: ~45min / CC: ~5min)** — backend/artifacts — `document_ref` als kind registrieren
-  - Surfaced by: R1 (Antwort D2) — bestehendes Artefakt-System statt Parallelgleis
-  - Files: `src/backend/services/artifact_service.py`, `src/frontend/src/components/chat/artifacts/artifactSchema.ts`
-  - Verify: Backend-Test auf `ALLOWED_KINDS`; `npx tsc --noEmit -p .` im Frontend
-- [x] **T2 (P1, human: ~1h / CC: ~8min)** — scanner — Artefakt an die Fertigmeldung haengen
-  - Surfaced by: R2 (Antwort D3) — Verzweigung ueber die geteilte Statusmenge
-  - Files: `src/backend/services/scanner_jobs.py`, `tests/backend/test_scanner_jobs*.py`
-  - Verify: Tests inkl. Negativkontrolle „Meldungstext unveraendert"
-- [x] **T3 (P1, human: ~30min / CC: ~4min)** — api — `paperless_url` ausliefern
-  - Surfaced by: C1 — Pydantic verwirft unbekannte Schluessel still
-  - Files: `src/backend/api/routes/knowledge_schemas.py`, `src/backend/api/routes/knowledge.py`, `tests/backend/test_knowledge*.py`
-  - Verify: Test geht durch `DocumentResponse`, nicht nur durch den Serialisierer
-- [x] **T4 (P1, human: ~2h / CC: ~12min)** — frontend — `DocumentRefArtifact` mit drei Zustaenden
-  - Surfaced by: Entwurfsentscheidung „beim Anzeigen aufloesen"
-  - Files: `src/frontend/src/components/chat/artifacts/DocumentRefArtifact.tsx`, `ArtifactRenderer.tsx`, `i18n/locales/{de,en,it}.json`, `tests/frontend/react/`
-  - Verify: RTL fuer alle drei Zustaende + 403/Netzfehler; dark mode, DESIGN.md-Token
-- [x] **T5 (P2, human: ~15min / CC: ~2min)** — docs — Rule nachziehen
-  - Surfaced by: Doku-Tor des Projekts
-  - Files: `.claude/rules/scanner.md`
-  - Verify: Sweep ueber `docs/`, `CLAUDE.md`, `.claude/rules/`
-
-## Unresolved decisions that may bite you later
-Keine. R1 und R2 sind beantwortet; C1 ist eine sachliche Korrektur ohne Wahl;
-A1, A2 und die Leistungsnotiz sind berichtet und bewusst nicht remediert.
-
-Approval readiness: PASS — R1 (Antwort D2), R2 (Antwort D3). C1 als notwendige
-Umsetzung eines bereits genehmigten Vertrags mitgefuehrt, ohne eigene Frage.
-
-## Completion summary
-- Step 0: Scope Challenge — scope accepted as-is (Komplexitaetstor ausgeloest, D1 durch D2 gegenstandslos)
-- Architecture Review: 2 issues found (A1, A2; A3 geprueft und entkraeftet)
-- Code Quality Review: 2 issues found (C1, C2)
-- Test Review: diagram produced, 18 gaps identified (Plan ohne Code)
-- Performance Review: 1 issue found (P3, Buendelung zurueckgestellt)
-- NOT in scope: written
-- What already exists: written
-- TODOS.md updates: 0 items proposed to user
-- Failure modes: 0 critical gaps flagged
-- Unresolved decisions: 0 in this review
-- Outside voice: codex, unavailable (nicht installiert; nativer Rueckfall mangels TaskOutput nicht moeglich)
-- Parallelization: 1 lane, 0 parallel / 5 sequential
-- Lake Score: 2/2 = 10/10 choices
-
-## Review
-(wird nach der Umsetzung ergänzt)
-
-## Gestaltungsentscheidungen (plan-design-review)
-
-### Zustandstabelle
-
-| Zustand | Auftritt | Token | Text (de) |
-|---|---|---|---|
-| Link vorhanden | Knopf, `.btn-secondary`, Radius `sm` 4px | Standard-Knopf aus DESIGN.md §Buttons | „In Paperless öffnen" |
-| wird gerade abgelegt | gedämpfter Text, kein Knopf | neutral gedämpft (`text-gray-500 dark:text-gray-400`) | „wird gerade abgelegt" |
-| nicht abgelegt | gedämpfter Text, **Grund im Text** | dieselbe neutrale Dämpfung | „schon vorhanden" (Dublette) / „nicht abgelegt" |
-
-🛑 **Entscheidung D2: KEIN Bernstein für „nicht abgelegt".** Eine Dublette ist kein
-Fehlschlag — das Dokument liegt in Paperless, nur schon länger. Gemessen betrifft das
-rund jeden sechsten Scan (6 von 37 in 60 Tagen); eine Warnfarbe bei jedem sechsten Mal
-nutzt sich ab und warnt bald vor nichts mehr. Bernstein bleibt den Fällen vorbehalten,
-die DESIGN.md am 2026-09-28 dafür vorgesehen hat.
-Preis, bewusst in Kauf genommen: eine echte Ablehnung durch Paperless sieht damit so
-ruhig aus wie eine Dublette. Der Grund steht aber im Text.
-
-### Zustandsabdeckung (Entscheidung D3)
-
-| Feature | LADEN | LEER | FEHLER | ERFOLG | TEILWEISE |
-|---|---|---|---|---|---|
-| Dokumentknopf | Ladegerüst des Artefakt-Rahmens (`animate-pulse motion-reduce:animate-none`) | entfällt — ohne Dokumentkennung entsteht kein Artefakt | wie „wird gerade abgelegt": der Stand ist unbekannt | Knopf „In Paperless öffnen" | erbt der Artefakt-Rahmen (`partial` → Rückfall) |
-
-🛑 **Nur der klickbare Zustand ist ein `<button>`/`<a>`.** Die übrigen sind schlichter
-Text ohne Fokus — kein Tabben durch tote Schaltflächen, und der Screenreader kündigt
-keine Taste an, die keine ist. Ein deaktivierter Knopf wäre zudem regelmäßig unter
-4,5:1 Kontrast.
-
-Bewusst nicht unterschieden: gescheiterter Abruf und „noch in Arbeit" sehen gleich aus.
-Für die Person bedeutet beides dasselbe — noch kein Link.
-
-### Zugänglichkeit (aus DESIGN.md übernommen, keine neuen Entscheidungen)
-- Tippfläche im Link-Zustand **≥ 44 px** (DESIGN.md §Accessibility).
-- Kontrast **≥ 4,5:1** für allen Text, auch den gedämpften.
-- Dunkelmodus über `dark:`-Varianten; keine fest verdrahteten Farben.
-- Reduzierte Bewegung: erbt der Artefakt-Rahmen (`motion-reduce:animate-none`).
-- Der Knopf öffnet in einem neuen Tab (`rel="noopener"`), weil er aus dem Gespräch
-  herausführt — das Gespräch bleibt stehen.
-
-### Sperrlisten-Abgleich
-Keine Treffer. Kein Symbol in farbigem Kreis (Sperrliste 3), keine farbige linke
-Kante (8), kein eigener Radius (5 — es gilt `sm` 4px aus der Skala), keine Emoji (7),
-kein Verlauf (1). Der Knopf ist ein Knopf.
-
-## Implementation Tasks (Gestaltung, Ergänzung zu T1–T5)
-
-- [x] **T4a (P1, human: ~30min / CC: ~4min)** — frontend — Zustandstabelle umsetzen
-  - Surfaced by: Pass 2 / D3 — Lade- und Fehlerzustand fehlten im Plan
-  - Files: `src/frontend/src/components/chat/artifacts/DocumentRefArtifact.tsx`
-  - Verify: RTL deckt Laden, Erfolg, „wird abgelegt", „schon vorhanden", Abruffehler
-- [x] **T4b (P2, human: ~20min / CC: ~3min)** — frontend — Zugänglichkeit festnageln
-  - Surfaced by: Pass 6 — nichts spezifiziert
-  - Files: dieselbe Komponente
-  - Verify: nur der Link-Zustand ist fokussierbar; Tippfläche ≥44px; Kontrast geprüft
-
-```
-  +====================================================================+
-  |         DESIGN PLAN REVIEW — COMPLETION SUMMARY                    |
-  +====================================================================+
-  | System Audit         | DESIGN.md vorhanden + festgelegt; UI-Umfang:|
-  |                      | eine Artefakt-Komponente, drei Zustaende    |
-  | Step 0               | 4/10, Fokus auf Zustaende/Zugang/Text       |
-  | Pass 1  (Info Arch)  | nicht bewertet — vom Nutzer ausgeklammert   |
-  | Pass 2  (States)     | 3/10 -> 9/10 after fixes                    |
-  | Pass 3  (Journey)    | nicht bewertet — vom Nutzer ausgeklammert   |
-  | Pass 4  (AI Slop)    | nicht bewertet — Sperrlisten-Abgleich: 0    |
-  | Pass 5  (Design Sys) | 2/10 -> 9/10 after fixes                    |
-  | Pass 6  (Responsive) | 1/10 -> 9/10 after fixes                    |
-  | Pass 7  (Decisions)  | 2 resolved, 0 deferred                      |
-  +--------------------------------------------------------------------+
-  | NOT in scope         | written (4 items, aus der Technikpruefung)   |
-  | What already exists  | written                                     |
-  | TODOS.md updates     | 0 items proposed                            |
-  | Approved Mockups     | 0 generated, 0 approved (vom Nutzer         |
-  |                      | ausgeklammert)                              |
-  | Decisions made       | 2 added to plan (D2 Token, D3 Zustaende)    |
-  | Decisions deferred   | 0                                           |
-  | Overall design score | 4/10 -> 9/10                                |
-  +====================================================================+
-```
-
-🛑 **Drei Dimensionen wurden auf ausdruecklichen Wunsch NICHT geprueft** (Informations-
-hierarchie, Nutzerreise, volle Slop-Pruefung mit Bildentwuerfen). Der Gesamtwert bezieht
-sich auf die drei geprueften. Das ist eine bewusste Einschraenkung, keine Abdeckung.
-
-## GSTACK REVIEW REPORT
-
-| Review | Trigger | Why | Runs | Status | Findings |
-|--------|---------|-----|------|--------|----------|
-| CEO Review | `/plan-ceo-review` | Scope & strategy | 3 | STALE (2026-06-22, issues_open) | mode: HOLD_SCOPE, 5 critical gaps |
-| Outside Review | codex (`/plan-eng-review`) | Independent 2nd opinion | 17 | UNAVAILABLE (2026-10-27) | nicht installiert; nativer Rueckfall mangels TaskOutput nicht moeglich |
-| Eng Review | `/plan-eng-review` | Architecture & tests (required) | 29 | ISSUES OPEN (PLAN) | 5 issues, 0 critical gaps |
-| Design Review | `/plan-design-review` | UI/UX gaps | 7 | CLEAR (FULL) | score: 4/10 -> 9/10, 2 decisions |
-| DX Review | `/plan-devex-review` | Developer experience gaps | 1 | STALE | — |
-
-- **OUTSIDE COVERAGE:** codex, Phase plan-review, **unavailable** (nicht installiert,
-  nativer Rueckfall mangels `TaskOutput` nicht moeglich). Die Gestaltungspruefung hat
-  ihre eigenen Fremdstimmen NICHT angefordert — der Umfang wurde auf drei Dimensionen
-  ohne Bildentwuerfe begrenzt. Beides sind Luecken, keine sauberen Ergebnisse.
-- **VERDICT:** Design Review CLEAR. Eng Review ISSUES OPEN — 5 Befunde, alle in
-  Aufgaben ueberfuehrt, 0 kritische Luecken. eng review required
-
-NO UNRESOLVED DECISIONS
+## Tests (zu jeder Form)
+- Ein `peer_3`-Werkzeug erscheint für eine zugelassene Rolle und **nicht** für `smart_home`.
+- Negativkontrolle: ohne die Zulassung ist es auch bei der zugelassenen Rolle weg — sonst
+  prüft der Test nur, dass Werkzeuge überhaupt ankommen.
+- Bei F1 zusätzlich: ein Eintrag `paperles*` wirkt **nicht** als Muster.
+- Die Zahl im Protokoll steigt von 33 auf 34 — die Messung, die den Befund fand.
