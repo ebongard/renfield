@@ -67,6 +67,7 @@ from models.database import TIER_PUBLIC, ConversationMemory
 from services.circle_sql import PeerScope, conversation_memories_circles_filter
 from utils.config import settings
 from utils.llm_client import get_embed_client
+from utils.log_safety import fehlertext_ohne_inhalt
 
 # Similarity score assigned to deterministic subject-linked memories (Phase 3c).
 # High floor so a fact about a query-named subject is never ranked below a fuzzy
@@ -631,7 +632,8 @@ class MemoryRetrieval:
                 seen_ids.add(row.id)
                 used_chars += content_len
         except Exception as e:
-            logger.warning(f"Procedural memory retrieval failed: {e}")
+            logger.warning(
+                f"Procedural memory retrieval failed: {fehlertext_ohne_inhalt(e)}")
 
         # --- 3. Semantic memories (query-relevant) ---
         if used_chars < budget:
@@ -669,7 +671,8 @@ class MemoryRetrieval:
                     sections["episodic"].append(ep)
                     used_chars += summary_len
             except Exception as e:
-                logger.warning(f"Episodic memory retrieval failed: {e}")
+                logger.warning(
+                    f"Episodic memory retrieval failed: {fehlertext_ohne_inhalt(e)}")
 
         total = sum(len(v) for v in sections.values())
         if total:

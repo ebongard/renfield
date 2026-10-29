@@ -611,8 +611,10 @@ class TestEnforceCirclesOnRetrieve:
             def __init__(self, session):
                 pass
 
-            async def query(self, query_text, *, asker_id, max_visible_tier, top_k, peer=None):
+            async def query(self, query_text, *, asker_id, max_visible_tier, top_k,
+                            peer=None, federated=False):
                 captured["peer"] = peer
+                captured["federated"] = federated
                 captured["asker_id"] = asker_id
                 captured["max_visible_tier"] = max_visible_tier
                 return []
@@ -655,6 +657,11 @@ class TestEnforceCirclesOnRetrieve:
         assert captured["peer"] is not None
         assert captured["peer"].owner_id == 1
         assert captured["peer"].tier == 2
+        # 🛑 Der Pfad wird GESAGT, nicht aus `peer` abgeleitet. Im gemappten
+        # Fall ist `peer` naemlich `None` — dort blieb der kalte Lauf sonst
+        # unmarkiert, und kalt gegen warm ist der ganze Unterschied (gemessen:
+        # 1 von 8 Quellen gegen 8 von 8).
+        assert captured["federated"] is True
         # Die Kennung ist 0 (der Platzhalter), und das ist folgenlos: im
         # peer-bezogenen Zweig erzeugt `circles_filter_params` gar keine
         # `:asker_id`-Bindung mehr.

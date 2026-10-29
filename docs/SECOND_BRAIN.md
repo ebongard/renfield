@@ -56,12 +56,29 @@ Wenn ein Nutzer fragt *„Was weiß ich über Am Stirkenbend 20?"*, will er kein
 
 `services/polymorphic_atom_store.py` löst das per **Reciprocal Rank Fusion (RRF)**:
 
-1. Parallele Suche gegen alle Quell-Tabellen über **zwei komplementäre Retrieval-Pfade**:
+1. Suche gegen alle Quell-Tabellen über **zwei komplementäre Retrieval-Pfade**:
    - **Dense** — Vektorsuche mit der Query-Embedding (semantische Nähe).
    - **Lexical** (`services/lexical_retrieval.py`) — Postgres-FTS mit `ts_rank` (Keyword- und Eigennamen-Treffer). Schließt die Recall-Lücke bei Einzeltoken-Queries wie *„Erika"*, deren Embedding-Ähnlichkeit zur passenden Stelle unter der Threshold liegen kann.
 2. Jeder Pfad liefert sein Top-*k* unter Berücksichtigung des Circle-Filters (`services/circle_sql.build_filter`).
 3. RRF berechnet einen kombinierten Rang-Score pro Atom anhand der Position in allen Ergebnislisten. Ein Atom, das sowohl semantisch als auch lexikalisch trifft, bekommt den Doppel-Boost — exakt das gewünschte Verhalten für „beides".
 4. Die fusionierte Top-*n*-Liste wandert zurück zum Aufrufer, angereichert mit Source-Metadaten (Dokumenttitel, Entity-Label, Memory-Kategorie).
+
+🛑 **Die acht Quellen laufen NICHT gleichzeitig, obwohl `asyncio.gather` danach aussieht.** Sie teilen
+eine `AsyncSession`, und die hält eine Verbindung. Gemessen am 2026-10-29 gegen echtes Postgres
+(`bin/probe-atom-store-sessions.py`), acht Abrufe à ~50 ms reine SQL-Zeit:
+
+| Sitzung | geliefert | Dauer |
+|---|---|---|
+| eine, **kalt** | **1 von 8** | 52 ms |
+| eine, vorgewärmt | 8 von 8 | **408 ms** (reihum) |
+| je Quelle eine eigene | 8 von 8 | 56 ms |
+
+Der **föderierte** Pfad (`federation_query_responder._retrieve`) öffnet eine frische Sitzung und fächert
+sofort — dort beruht die Antwort auf **einer** Quelle. Der **lokale** Pfad bekommt eine warme Sitzung aus
+`get_db` und liefert alle acht, aber nacheinander. Vorwärmen ist deshalb keine Lösung: es beseitigt die
+Meldung, indem es die Nebenläufigkeit beseitigt. Die Reparatur ist eine Sitzung je Quelle und steht aus;
+seit dem 2026-10-29 protokolliert `query` eine Zeile je Durchlauf (geliefert / leer / abgestürzt, Dauer,
+Pfad), damit die Wirkung überhaupt messbar ist.
 
 Der API-Endpunkt `/api/atoms` und die `/brain`-Frontend-Seite exponieren genau diesen Weg.
 

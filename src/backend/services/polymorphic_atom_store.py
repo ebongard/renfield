@@ -12,14 +12,58 @@ ASCII query flow:
         |
         +-- Build per-asker AccessContext (dimensions + memberships) once.
         |
-        +-- Parallel fan-out (asyncio.gather):
+        +-- Faecherung ueber ACHT Quellen (asyncio.gather), alle auf `self.db`:
         |     +-- RAGRetrieval(db).search(text, top_k=top_k*3) -> kb_chunks
-        |     +-- KGRetrieval(db).get_relevant_context(text, asker)
+        |     +-- KGRetrieval(db).get_relevant_atoms(text, asker)
         |     +-- MemoryRetrieval(db).retrieve(text, asker_id)
+        |     +-- LexicalRetrieval(db).search_chunks_lexical / _memories_lexical
+        |     +-- SkillService(db).find_similar          (flaggengesteuert)
+        |     +-- DocumentFactRetrieval(db).search
+        |     +-- NoteRetrieval(db).search               (flaggengesteuert)
+        |
+        |   🛑 NICHT parallel, und hier stand bis zum 2026-10-29 das Gegenteil.
+        |   Eine `AsyncSession` haelt EINE Verbindung; acht gleichzeitige
+        |   Abfragen darauf sind in SQLAlchemy nicht vorgesehen. Gemessen auf
+        |   echtem Postgres mit der echten Sitzungsfabrik, acht Abrufe a ~50 ms
+        |   REINE SQL-Zeit, drei Durchlaeufe stabil
+        |   (`bin/probe-atom-store-sessions.py`):
+        |
+        |       eine Sitzung, KALT          1 von 8 geliefert    52 ms
+        |       eine Sitzung, vorgewaermt   8 von 8             408 ms  (reihum)
+        |       je eigene Sitzung           8 von 8              56 ms
+        |
+        |   🛑 Diese Zahlen sind NICHT die Dauer in der Protokollzeile. Die
+        |   Zeile misst die ganze Faecherung, also auch die Einbettungsaufrufe
+        |   gegen Ollama/llama-server, und die beherrschen sie. „408 gegen
+        |   56 ms" wird man dort nicht wiederfinden — die Probe isoliert die
+        |   SQL-Zeit, die Zeile nicht.
+        |
+        |   Der foederierte Pfad (`federation_query_responder._retrieve`) oeffnet
+        |   eine frische Sitzung und faechert sofort -> 1 von 8. Der lokale Pfad
+        |   bekommt eine warme Sitzung aus `get_db` -> 8 von 8, aber REIHUM.
+        |   Vorwaermen ist deshalb keine Loesung: es beseitigt die Meldung,
+        |   indem es die Nebenlaeufigkeit beseitigt.
+        |
+        |   Die Reparatur ist eine Sitzung JE QUELLE (Regime C). Vorher muss
+        |   der Aufrufbaum jeder Quelle auf Schreibvorgaenge geprueft werden:
+        |   `MemoryRetrieval.retrieve` erhoeht `access_count` und benutzt dafuer
+        |   ausdruecklich `flush()`, nicht `commit()`, weil die Transaktion des
+        |   Aufrufers entscheiden soll — eine eigene Sitzung kuendigte diesen
+        |   Vertrag.
+        |
+        |   🛑 Wie viele Quellen einen Ausfall MELDEN koennen, ist nicht
+        |   dasselbe wie acht. `lexical_chunks`, `lexical_memories` und `note`
+        |   reichen ihre Ausnahme an die Faecherung weiter (seit 2026-10-29;
+        |   sie haben keinen Aufrufer ausserhalb). `rag` und `skill` ebenfalls.
+        |   `memory`, `document_fact` und `kg` fangen sie SELBST und geben `[]`
+        |   zurueck — sie erscheinen in der Zeile als „leer", nicht als
+        |   „abgestuerzt". Das sind die drei mit Fremdaufrufern, und die
+        |   Umstellung ist eine offene Entscheidung. Wer die Zahl aus der Zeile
+        |   deutet, muss das wissen.
         |
         +-- Wrap each source result list as AtomMatch[] with rank assigned.
         |
-        +-- RRF merge across the four sources:
+        +-- RRF merge across the eight sources:
         |     score = sum(weight / (k + rank + 1))
         |     where k = settings.rag_hybrid_rrf_k (default 60)
         |
@@ -38,6 +82,7 @@ NOT IN SCOPE for v1 PolymorphicAtomStore:
 from __future__ import annotations
 
 import asyncio
+import time
 from collections.abc import Sequence
 from datetime import datetime
 from typing import Any
@@ -56,6 +101,7 @@ from services.atom_types import Atom, AtomMatch
 from services.circle_resolver import CircleResolver
 from services.circle_sql import PeerScope
 from utils.config import settings
+from utils.log_safety import fehlertext_ohne_inhalt
 
 
 class PolymorphicAtomStore:
@@ -75,6 +121,7 @@ class PolymorphicAtomStore:
         hybrid: bool = True,
         top_k: int = 20,
         peer: PeerScope | None = None,
+        federated: bool = False,
     ) -> Sequence[AtomMatch]:
         """
         Query each source in parallel; merge with RRF; return top_k.
@@ -157,11 +204,18 @@ class PolymorphicAtomStore:
         # them a fourth source for the unified /brain search. Gated on
         # skills_enabled so the existing three-source RRF behavior is
         # unchanged for deployments that haven't opted in.
+        # Welche Quellen sind GAR NICHT befragt worden. Sie duerfen nicht als
+        # „leer" zaehlen — sonst sieht eine Instanz mit `NOTES_ENABLED=false`
+        # dauerhaft wie ein Teilausfall aus.
+        aus: set[str] = set()
+
         if settings.skills_enabled:
             skill_task = SkillService(self.db).find_similar(
                 query_text, asker_id=asker_id, top_k=candidate_k, peer=peer,
             )
         else:
+            aus.add("skill")
+
             async def _empty():
                 return []
             skill_task = _empty()
@@ -175,6 +229,8 @@ class PolymorphicAtomStore:
                 query_text, asker_id=asker_id, top_k=candidate_k, peer=peer,
             )
         else:
+            aus.add("note")
+
             async def _empty_notes():
                 return []
             note_task = _empty_notes()
@@ -184,6 +240,7 @@ class PolymorphicAtomStore:
         # programmer errors (e.g., import failure on the lazy-imported retrieval modules).
         # Removing the wrapper — exceptions in retrieval modules are converted to []
         # by the _wrap_* helpers, and any actual programmer error now bubbles to FastAPI.
+        _t0 = time.perf_counter()
         (
             rag_results, kg_atoms, memory_results,
             lexical_chunks, lexical_memories, skill_results, document_fact_results,
@@ -195,14 +252,35 @@ class PolymorphicAtomStore:
             return_exceptions=True,
         )
 
-        rag_matches = _wrap_rag_results(rag_results)
-        kg_matches = _wrap_kg_atoms(kg_atoms)
-        memory_matches = _wrap_memory_results(memory_results)
-        lexical_chunk_matches = _wrap_rag_results(lexical_chunks)
-        lexical_memory_matches = _wrap_memory_results(lexical_memories)
-        skill_matches = _wrap_skill_results(skill_results)
-        document_fact_matches = _wrap_document_fact_results(document_fact_results)
-        note_matches = _wrap_note_results(note_results)
+        # 🛑 Einpacken UND klassifizieren in einem Durchgang. Die Leerheit
+        # darf nicht mit `not wert` bestimmt werden: `kg` liefert bei
+        # Nichttreffer `{"entities": [], "relations": []}`, und ein Woerterbuch
+        # mit zwei Schluesseln ist WAHR. Die Zahl waere dauerhaft um eins zu
+        # hoch — gefunden im Review am 2026-10-29, und ich hatte den Fehler
+        # sogar als Erwartung in den Test geschrieben.
+        #
+        # Die `_wrap_*`-Helfer sind die einzige Stelle, die die Form JEDER
+        # Quelle kennt. Darum entscheiden sie die Leerheit, und hier wird nur
+        # noch die Ausnahme davor abgefangen.
+        (
+            rag_matches, kg_matches, memory_matches,
+            lexical_chunk_matches, lexical_memory_matches, skill_matches,
+            document_fact_matches, note_matches,
+        ), _ = _einpacken_und_zaehlen(
+            [
+                ("rag", rag_results, _wrap_rag_results),
+                ("kg", kg_atoms, _wrap_kg_atoms),
+                ("memory", memory_results, _wrap_memory_results),
+                ("lexical_chunks", lexical_chunks, _wrap_rag_results),
+                ("lexical_memories", lexical_memories, _wrap_memory_results),
+                ("skill", skill_results, _wrap_skill_results),
+                ("document_fact", document_fact_results, _wrap_document_fact_results),
+                ("note", note_results, _wrap_note_results),
+            ],
+            ausgeschaltet=aus,
+            dauer_s=time.perf_counter() - _t0,
+            foederiert=federated,
+        )
 
         merged = _rrf_merge(
             [
@@ -251,6 +329,64 @@ class PolymorphicAtomStore:
 
 def _now() -> datetime:
     return datetime.now()
+
+
+def _einpacken_und_zaehlen(
+    quellen: list[tuple[str, Any, Any]],
+    *,
+    ausgeschaltet: set[str],
+    dauer_s: float,
+    foederiert: bool,
+) -> tuple[list[list[AtomMatch]], tuple[list[str], list[str], list[str]]]:
+    """Jede Quelle einpacken und dabei zaehlen: geliefert / leer / abgestuerzt.
+
+    Eine Zeile je Durchlauf. 🛑 Kein Inhalt — Quellenname, Anzahl, Fehlerart.
+    Keine Anfragetexte, keine Treffer.
+
+    🛑 Die Leerheit entscheidet der EINPACKER, nicht `not wert`. Jede Quelle hat
+    ihre eigene Form, und zwei davon sind bei Nichttreffer wahr (`kg` liefert
+    ein Woerterbuch mit leeren Listen). Der Einpacker ist die einzige Stelle,
+    die alle acht Formen kennt.
+
+    🛑 Abgeschaltete Quellen zaehlen nicht in den Nenner. Sonst stuende bei
+    `NOTES_ENABLED=false` dauerhaft „6/8 geliefert, 2 leer", was wie ein
+    Teilausfall aussieht, obwohl zwei Quellen nie befragt wurden.
+    """
+    eingepackt: list[list[AtomMatch]] = []
+    geliefert: list[str] = []
+    leer: list[str] = []
+    abgestuerzt: list[str] = []
+
+    for name, wert, einpacker in quellen:
+        if isinstance(wert, BaseException):
+            abgestuerzt.append(name)
+            eingepackt.append([])
+            logger.warning(
+                f"🔍 Atom-Abruf: Quelle '{name}' abgestuerzt "
+                f"({type(wert).__name__}): {fehlertext_ohne_inhalt(wert)}"
+            )
+            continue
+        treffer = einpacker(wert)
+        eingepackt.append(treffer)
+        if name in ausgeschaltet:
+            continue
+        (geliefert if treffer else leer).append(name)
+
+    befragt = len(quellen) - len(ausgeschaltet)
+    zeile = (
+        f"🔍 Atom-Abruf{' (foederiert)' if foederiert else ''}: "
+        f"{len(geliefert)}/{befragt} Quellen geliefert, "
+        f"{len(leer)} leer, {len(abgestuerzt)} abgestuerzt"
+        + (f", {len(ausgeschaltet)} aus" if ausgeschaltet else "")
+        + f" — Faecherung {dauer_s * 1000:.0f} ms"
+    )
+    if abgestuerzt:
+        # Abgestuerzte Quellen sind keine Nebensache: die Antwort stand dann
+        # auf einem Teil des Abrufs, ohne dass es jemand sah.
+        logger.warning(f"{zeile} — abgestuerzt: {', '.join(abgestuerzt)}")
+    else:
+        logger.info(zeile)
+    return eingepackt, (geliefert, leer, abgestuerzt)
 
 
 def _wrap_rag_results(rag_results: Any) -> list[AtomMatch]:

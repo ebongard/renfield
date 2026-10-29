@@ -38,6 +38,7 @@ from services.circle_sql import PeerScope, document_facts_circles_filter
 from services.fts_languages import build_tsquery_union_sql
 from services.lexical_retrieval import _significant_tokens
 from utils.config import settings
+from utils.log_safety import fehlertext_ohne_inhalt
 
 # Rank floor for rows that match ONLY via the identifier-ILIKE branch (no FTS
 # hit). Small positive constant so an exact-identifier match always sorts above
@@ -163,7 +164,7 @@ class DocumentFactRetrieval:
             logger.error(f"🔍 {label}: operational DB error — re-raising (not masking as empty)")
             raise
         except Exception as e:
-            logger.warning(f"🔍 {label} failed (ignored): {e}")
+            logger.warning(f"🔍 {label} failed (ignored): {fehlertext_ohne_inhalt(e)}")
             return []
 
     # ------------------------------------------------------------------ #

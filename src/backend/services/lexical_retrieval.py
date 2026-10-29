@@ -195,11 +195,17 @@ class LexicalRetrieval:
         }
         try:
             rows = (await self.db.execute(sql, params)).fetchall()
-        except Exception as e:
-            # Don't let a malformed query take the brain page down — we
-            # have a vector retriever as the primary path.
-            logger.warning(f"🔍 Lexical chunk search failed (ignored): {e}")
-            return []
+        except Exception:
+            # 🛑 NICHT hier zu `[]` degradieren. Die Faecherung in
+            # `PolymorphicAtomStore.query` faengt die Ausnahme ohnehin
+            # (`gather(return_exceptions=True)`) und macht `[]` daraus — das
+            # Ergebnis ist also dasselbe. Der Unterschied: dort wird der
+            # Ausfall GEZAEHLT und protokolliert, hier verschwand er als
+            # „nichts gefunden". Am 2026-10-29 liess sich deshalb nicht
+            # feststellen, auf wie vielen Quellen eine Antwort beruhte.
+            # Diese Methode hat keinen Aufrufer ausserhalb der Faecherung
+            # (nachgemessen); der Weitergriff ist daher ohne Nebenwirkung.
+            raise
 
         out: list[dict[str, Any]] = []
         for row in rows:
@@ -349,9 +355,17 @@ class LexicalRetrieval:
 
         try:
             rows = (await self.db.execute(sql, params)).fetchall()
-        except Exception as e:
-            logger.warning(f"🔍 Lexical memory search failed (ignored): {e}")
-            return []
+        except Exception:
+            # 🛑 NICHT hier zu `[]` degradieren. Die Faecherung in
+            # `PolymorphicAtomStore.query` faengt die Ausnahme ohnehin
+            # (`gather(return_exceptions=True)`) und macht `[]` daraus — das
+            # Ergebnis ist also dasselbe. Der Unterschied: dort wird der
+            # Ausfall GEZAEHLT und protokolliert, hier verschwand er als
+            # „nichts gefunden". Am 2026-10-29 liess sich deshalb nicht
+            # feststellen, auf wie vielen Quellen eine Antwort beruhte.
+            # Diese Methode hat keinen Aufrufer ausserhalb der Faecherung
+            # (nachgemessen); der Weitergriff ist daher ohne Nebenwirkung.
+            raise
 
         return [
             {
