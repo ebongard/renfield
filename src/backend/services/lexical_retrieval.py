@@ -196,14 +196,14 @@ class LexicalRetrieval:
         try:
             rows = (await self.db.execute(sql, params)).fetchall()
         except Exception:
-            # 🛑 NICHT hier zu `[]` degradieren. Die Faecherung in
+            # 🛑 NICHT hier zu `[]` degradieren. Die Fan-out in
             # `PolymorphicAtomStore.query` faengt die Ausnahme ohnehin
             # (`gather(return_exceptions=True)`) und macht `[]` daraus — das
             # Ergebnis ist also dasselbe. Der Unterschied: dort wird der
             # Ausfall GEZAEHLT und protokolliert, hier verschwand er als
             # „nichts gefunden". Am 2026-10-29 liess sich deshalb nicht
             # feststellen, auf wie vielen Quellen eine Antwort beruhte.
-            # Diese Methode hat keinen Aufrufer ausserhalb der Faecherung
+            # Diese Methode hat keinen Aufrufer ausserhalb der Fan-out
             # (nachgemessen); der Weitergriff ist daher ohne Nebenwirkung.
             raise
 
@@ -356,14 +356,14 @@ class LexicalRetrieval:
         try:
             rows = (await self.db.execute(sql, params)).fetchall()
         except Exception:
-            # 🛑 NICHT hier zu `[]` degradieren. Die Faecherung in
+            # 🛑 NICHT hier zu `[]` degradieren. Die Fan-out in
             # `PolymorphicAtomStore.query` faengt die Ausnahme ohnehin
             # (`gather(return_exceptions=True)`) und macht `[]` daraus — das
             # Ergebnis ist also dasselbe. Der Unterschied: dort wird der
             # Ausfall GEZAEHLT und protokolliert, hier verschwand er als
             # „nichts gefunden". Am 2026-10-29 liess sich deshalb nicht
             # feststellen, auf wie vielen Quellen eine Antwort beruhte.
-            # Diese Methode hat keinen Aufrufer ausserhalb der Faecherung
+            # Diese Methode hat keinen Aufrufer ausserhalb der Fan-out
             # (nachgemessen); der Weitergriff ist daher ohne Nebenwirkung.
             raise
 

@@ -1,6 +1,6 @@
 """Messung: acht nebenlaeufige Abrufe auf EINER AsyncSession — kalt, warm, je eigene.
 
-Gemessen wird die ECHTE Sitzungsfabrik des Projekts (`services.database`),
+Gemessen wird die ECHTE Session-Fabrik des Projekts (`services.database`),
 nur gegen die Testbank. Die Verbindungszeichenkette wird im Container aus der
 Umgebung gelesen und NIE ausgegeben.
 """
@@ -68,9 +68,9 @@ async def main():
     print(f"N = {N} nebenlaeufige Abrufe, je ~50 ms Serverzeit\n")
     for i in range(3):
         print(f"--- Durchlauf {i+1} ---")
-        await regime("A) EINE Sitzung, kalt", warm=False, je_eigene_sitzung=False)
-        await regime("B) EINE Sitzung, vorgewaermt", warm=True, je_eigene_sitzung=False)
-        await regime("C) je eigene Sitzung", warm=False, je_eigene_sitzung=True)
+        await regime("A) EINE Session, kalt", warm=False, je_eigene_sitzung=False)
+        await regime("B) EINE Session, vorgewaermt", warm=True, je_eigene_sitzung=False)
+        await regime("C) je eigene Session", warm=False, je_eigene_sitzung=True)
         print()
 
 asyncio.run(main())

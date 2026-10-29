@@ -624,7 +624,7 @@ class TestCancellationAuditRow:
 class TestTheRouteCarriesTheIdentityBasis:
     """🛑 Die Spalten zu schreiben nützt nichts, wenn die Route sie nicht
     weitergibt — und ein VERTAUSCHEN der beiden fiele Pydantic nicht auf,
-    solange beide Zeichenketten tragen. Darum am Feldinhalt geprüft, nicht
+    solange beide einen String tragen. Darum am Feldinhalt geprüft, nicht
     daran, dass die Antwort überhaupt entsteht.
     """
 

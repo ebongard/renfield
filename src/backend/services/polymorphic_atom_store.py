@@ -12,7 +12,7 @@ ASCII query flow:
         |
         +-- Build per-asker AccessContext (dimensions + memberships) once.
         |
-        +-- Faecherung ueber ACHT Quellen (asyncio.gather), alle auf `self.db`:
+        +-- Fan-out ueber ACHT Quellen (asyncio.gather), alle auf `self.db`:
         |     +-- RAGRetrieval(db).search(text, top_k=top_k*3) -> kb_chunks
         |     +-- KGRetrieval(db).get_relevant_atoms(text, asker)
         |     +-- MemoryRetrieval(db).retrieve(text, asker_id)
@@ -24,36 +24,36 @@ ASCII query flow:
         |   🛑 NICHT parallel, und hier stand bis zum 2026-10-29 das Gegenteil.
         |   Eine `AsyncSession` haelt EINE Verbindung; acht gleichzeitige
         |   Abfragen darauf sind in SQLAlchemy nicht vorgesehen. Gemessen auf
-        |   echtem Postgres mit der echten Sitzungsfabrik, acht Abrufe a ~50 ms
+        |   echtem Postgres mit der echten Session-Fabrik, acht Abrufe a ~50 ms
         |   REINE SQL-Zeit, drei Durchlaeufe stabil
         |   (`bin/probe-atom-store-sessions.py`):
         |
-        |       eine Sitzung, KALT          1 von 8 geliefert    52 ms
-        |       eine Sitzung, vorgewaermt   8 von 8             408 ms  (reihum)
-        |       je eigene Sitzung           8 von 8              56 ms
+        |       eine Session, KALT          1 von 8 geliefert    52 ms
+        |       eine Session, vorgewaermt   8 von 8             408 ms  (reihum)
+        |       je eigene Session           8 von 8              56 ms
         |
         |   🛑 Diese Zahlen sind NICHT die Dauer in der Protokollzeile. Die
-        |   Zeile misst die ganze Faecherung, also auch die Einbettungsaufrufe
+        |   Zeile misst die ganze Fan-out, also auch die Einbettungsaufrufe
         |   gegen Ollama/llama-server, und die beherrschen sie. „408 gegen
         |   56 ms" wird man dort nicht wiederfinden — die Probe isoliert die
         |   SQL-Zeit, die Zeile nicht.
         |
         |   Der foederierte Pfad (`federation_query_responder._retrieve`) oeffnet
-        |   eine frische Sitzung und faechert sofort -> 1 von 8. Der lokale Pfad
-        |   bekommt eine warme Sitzung aus `get_db` -> 8 von 8, aber REIHUM.
+        |   eine frische Session und fan-out macht sofort -> 1 von 8. Der lokale Pfad
+        |   bekommt eine warme Session aus `get_db` -> 8 von 8, aber REIHUM.
         |   Vorwaermen ist deshalb keine Loesung: es beseitigt die Meldung,
         |   indem es die Nebenlaeufigkeit beseitigt.
         |
-        |   Die Reparatur ist eine Sitzung JE QUELLE (Regime C). Vorher muss
+        |   Die Reparatur ist eine Session JE QUELLE (Regime C). Vorher muss
         |   der Aufrufbaum jeder Quelle auf Schreibvorgaenge geprueft werden:
         |   `MemoryRetrieval.retrieve` erhoeht `access_count` und benutzt dafuer
         |   ausdruecklich `flush()`, nicht `commit()`, weil die Transaktion des
-        |   Aufrufers entscheiden soll — eine eigene Sitzung kuendigte diesen
+        |   Aufrufers entscheiden soll — eine eigene Session kuendigte diesen
         |   Vertrag.
         |
         |   🛑 Wie viele Quellen einen Ausfall MELDEN koennen, ist nicht
         |   dasselbe wie acht. `lexical_chunks`, `lexical_memories` und `note`
-        |   reichen ihre Ausnahme an die Faecherung weiter (seit 2026-10-29;
+        |   reichen ihre Ausnahme an die Fan-out weiter (seit 2026-10-29;
         |   sie haben keinen Aufrufer ausserhalb). `rag` und `skill` ebenfalls.
         |   `memory`, `document_fact` und `kg` fangen sie SELBST und geben `[]`
         |   zurueck — sie erscheinen in der Zeile als „leer", nicht als
@@ -254,7 +254,7 @@ class PolymorphicAtomStore:
 
         # 🛑 Einpacken UND klassifizieren in einem Durchgang. Die Leerheit
         # darf nicht mit `not wert` bestimmt werden: `kg` liefert bei
-        # Nichttreffer `{"entities": [], "relations": []}`, und ein Woerterbuch
+        # Nichttreffer `{"entities": [], "relations": []}`, und ein Dict
         # mit zwei Schluesseln ist WAHR. Die Zahl waere dauerhaft um eins zu
         # hoch — gefunden im Review am 2026-10-29, und ich hatte den Fehler
         # sogar als Erwartung in den Test geschrieben.
@@ -266,7 +266,7 @@ class PolymorphicAtomStore:
             rag_matches, kg_matches, memory_matches,
             lexical_chunk_matches, lexical_memory_matches, skill_matches,
             document_fact_matches, note_matches,
-        ), _ = _einpacken_und_zaehlen(
+        ), _ = _wrappen_und_zaehlen(
             [
                 ("rag", rag_results, _wrap_rag_results),
                 ("kg", kg_atoms, _wrap_kg_atoms),
@@ -331,28 +331,28 @@ def _now() -> datetime:
     return datetime.now()
 
 
-def _einpacken_und_zaehlen(
+def _wrappen_und_zaehlen(
     quellen: list[tuple[str, Any, Any]],
     *,
     ausgeschaltet: set[str],
     dauer_s: float,
     foederiert: bool,
 ) -> tuple[list[list[AtomMatch]], tuple[list[str], list[str], list[str]]]:
-    """Jede Quelle einpacken und dabei zaehlen: geliefert / leer / abgestuerzt.
+    """Jede Quelle wrappen und dabei zaehlen: geliefert / leer / abgestuerzt.
 
     Eine Zeile je Durchlauf. 🛑 Kein Inhalt — Quellenname, Anzahl, Fehlerart.
     Keine Anfragetexte, keine Treffer.
 
     🛑 Die Leerheit entscheidet der EINPACKER, nicht `not wert`. Jede Quelle hat
     ihre eigene Form, und zwei davon sind bei Nichttreffer wahr (`kg` liefert
-    ein Woerterbuch mit leeren Listen). Der Einpacker ist die einzige Stelle,
+    ein Dict mit leeren Listen). Der Wrapper ist die einzige Stelle,
     die alle acht Formen kennt.
 
     🛑 Abgeschaltete Quellen zaehlen nicht in den Nenner. Sonst stuende bei
     `NOTES_ENABLED=false` dauerhaft „6/8 geliefert, 2 leer", was wie ein
     Teilausfall aussieht, obwohl zwei Quellen nie befragt wurden.
     """
-    eingepackt: list[list[AtomMatch]] = []
+    gewrappt: list[list[AtomMatch]] = []
     geliefert: list[str] = []
     leer: list[str] = []
     abgestuerzt: list[str] = []
@@ -360,14 +360,14 @@ def _einpacken_und_zaehlen(
     for name, wert, einpacker in quellen:
         if isinstance(wert, BaseException):
             abgestuerzt.append(name)
-            eingepackt.append([])
+            gewrappt.append([])
             logger.warning(
                 f"🔍 Atom-Abruf: Quelle '{name}' abgestuerzt "
                 f"({type(wert).__name__}): {fehlertext_ohne_inhalt(wert)}"
             )
             continue
         treffer = einpacker(wert)
-        eingepackt.append(treffer)
+        gewrappt.append(treffer)
         if name in ausgeschaltet:
             continue
         (geliefert if treffer else leer).append(name)
@@ -378,7 +378,7 @@ def _einpacken_und_zaehlen(
         f"{len(geliefert)}/{befragt} Quellen geliefert, "
         f"{len(leer)} leer, {len(abgestuerzt)} abgestuerzt"
         + (f", {len(ausgeschaltet)} aus" if ausgeschaltet else "")
-        + f" — Faecherung {dauer_s * 1000:.0f} ms"
+        + f" — Fan-out {dauer_s * 1000:.0f} ms"
     )
     if abgestuerzt:
         # Abgestuerzte Quellen sind keine Nebensache: die Antwort stand dann
@@ -386,7 +386,7 @@ def _einpacken_und_zaehlen(
         logger.warning(f"{zeile} — abgestuerzt: {', '.join(abgestuerzt)}")
     else:
         logger.info(zeile)
-    return eingepackt, (geliefert, leer, abgestuerzt)
+    return gewrappt, (geliefert, leer, abgestuerzt)
 
 
 def _wrap_rag_results(rag_results: Any) -> list[AtomMatch]:

@@ -4,12 +4,12 @@
 foederierten Zuges. `PolymorphicAtomStore.query` verteilt ACHT Abrufquellen
 ueber EINE `AsyncSession` per `asyncio.gather(return_exceptions=True)`.
 
-Gemessen auf der Baubox gegen echtes Postgres, mit der echten Sitzungsfabrik
+Gemessen auf der Baubox gegen echtes Postgres, mit der echten Session-Fabrik
 des Projekts, 8 nebenlaeufige Abrufe, drei Durchlaeufe stabil:
 
-    eine Sitzung, kalt          1 von 8 geliefert     52 ms
-    eine Sitzung, vorgewaermt   8 von 8               408 ms   (REIHUM)
-    je eigene Sitzung           8 von 8               56 ms
+    eine Session, kalt          1 von 8 geliefert     52 ms
+    eine Session, vorgewaermt   8 von 8               408 ms   (REIHUM)
+    je eigene Session           8 von 8               56 ms
 
 🛑 Und es liess sich nicht ZAEHLEN. Alle sechs `_wrap_*`-Helfer beginnen mit
 `if isinstance(x, Exception) or not x: return []` — sie werfen „abgestuerzt"
@@ -23,7 +23,7 @@ waere die Wirkung von Schritt 2 in der Produktion nicht nachweisbar.
 🛑 Erste Fassung im Review zerlegt, und zwei der Befunde standen HIER:
 
 - Die Leerheit wurde mit `not wert` bestimmt. `kg` liefert bei Nichttreffer
-  `{"entities": [], "relations": []}` — ein Woerterbuch mit zwei Schluesseln
+  `{"entities": [], "relations": []}` — ein Dict mit zwei Schluesseln
   ist WAHR, also zaehlte `kg` immer als geliefert. Und mein Test nagelte das
   als Erwartung fest (`8/8 geliefert` bei leerem `kg`), mit einem Kommentar,
   der es rechtfertigte. Ein Test, der den Fehler zum Soll macht, ist
@@ -37,11 +37,11 @@ from __future__ import annotations
 import pytest
 
 from services.polymorphic_atom_store import (
-    _einpacken_und_zaehlen,
     _wrap_kg_atoms,
     _wrap_memory_results,
     _wrap_note_results,
     _wrap_rag_results,
+    _wrappen_und_zaehlen,
 )
 from utils.log_safety import fehlertext_ohne_inhalt
 
@@ -49,7 +49,7 @@ pytestmark = pytest.mark.unit
 
 
 #: Die acht Quellen in der Reihenfolge, in der `query` sie uebergibt, je mit
-#: ihrem Einpacker — der die Leerheit entscheidet, weil nur er die Form kennt.
+#: ihrem Wrapper — der die Leerheit entscheidet, weil nur er die Form kennt.
 _EINPACKER = {
     "rag": _wrap_rag_results,
     "kg": _wrap_kg_atoms,
@@ -62,7 +62,7 @@ _EINPACKER = {
 }
 
 #: Eine Form MIT Treffer je Quelle. 🛑 Nicht erfunden, sondern an den
-#: Einpackern abgelesen — `_wrap_rag_results` liest `chunk`/`document`,
+#: Wrappern abgelesen — `_wrap_rag_results` liest `chunk`/`document`,
 #: `_wrap_kg_atoms` liest `entities`/`relations`.
 _MIT_TREFFER: dict[str, object] = {
     "rag": [{"chunk": {"id": 1, "content": "x", "circle_tier": 0},
@@ -101,11 +101,11 @@ def _quellen(**über):
 
 
 def _zaehle(**über):
-    """Nur die Zaehlung, ohne die eingepackten Treffer."""
+    """Nur die Zaehlung, ohne die gewrappten Treffer."""
     aus = über.pop("aus", set())
     dauer = über.pop("dauer_s", 0.05)
     foed = über.pop("foederiert", False)
-    _, zahlen = _einpacken_und_zaehlen(
+    _, zahlen = _wrappen_und_zaehlen(
         _quellen(**über), ausgeschaltet=aus, dauer_s=dauer, foederiert=foed)
     return zahlen
 
@@ -203,7 +203,7 @@ class TestTheRealColdCase:
     Ausnahme selbst und gaben `[]` zurueck, kamen also als „leer" an.
 
     Drei davon (`lexical_chunks`, `lexical_memories`, `note`) haben keinen
-    Aufrufer ausserhalb der Faecherung (nachgemessen) und greifen jetzt weiter.
+    Aufrufer ausserhalb der Fan-out (nachgemessen) und greifen jetzt weiter.
     `memory`, `document_fact` und `kg` haben Fremdaufrufer und schlucken
     weiter — das ist eine offene Entscheidung, kein Versehen, und dieser Test
     haelt den Stand fest, damit die Zahl nicht spaeter still kippt.
@@ -261,7 +261,7 @@ class TestTheGuardAgainstContentInTheLog:
 
     def test_a_real_sqlalchemy_error_is_stripped(self):
         """Gegen eine ECHTE SQLAlchemy-Ausnahme, nicht gegen eine
-        nachgestellte Zeichenkette — die Anhaengsel baut die Bibliothek."""
+        nachgestellte String — die Anhaengsel baut die Bibliothek."""
         from sqlalchemy.exc import StatementError
 
         e = StatementError(
@@ -419,7 +419,7 @@ class TestTheSummaryLine:
                          level="INFO", format="{message}")
         try:
             _zaehle(dauer_s=0.408)
-            assert any("Faecherung 408 ms" in t for t in texte), texte
+            assert any("Fan-out 408 ms" in t for t in texte), texte
         finally:
             _l.remove(kennung)
 
@@ -433,14 +433,14 @@ class TestQueryACTUALLYCallsIt:
     die Helfer veraendern ihr Argument nicht, sie geben eine neue Liste zurueck
     — die Reihenfolge war also gleichgueltig, und der Test blieb gruen, wenn
     man sie umdrehte. Eine Scheinpruefung an genau der Stelle, die sich „den
-    Kern" nannte. Die Behauptung ist gestrichen; Einpacken und Zaehlen sind
+    Kern" nannte. Die Behauptung ist gestrichen; Wrappen und Zaehlen sind
     jetzt ohnehin ein Durchgang.
     """
 
     @pytest.fixture
     def quellen(self, monkeypatch):
         """Alle sieben Abrufklassen ersetzt, jede mit der Form, die ihr
-        Einpacker WIRKLICH liest — an den Einpackern abgelesen, nicht geraten.
+        Wrapper WIRKLICH liest — an den Wrappern abgelesen, nicht geraten.
         Die erste Fassung gab `rag` eine Form ohne `chunk`/`document`, womit
         bei jedem Lauf eine WARNING mitlief und die rag-Form ungeprueft blieb.
 
@@ -515,12 +515,12 @@ class TestQueryACTUALLYCallsIt:
         zeilen = [m for _, m in texte if "Atom-Abruf" in m]
         assert zeilen, f"keine Abruf-Zeile im Protokoll: {texte}"
         assert "8/8 Quellen geliefert" in zeilen[0], zeilen[0]
-        assert "Faecherung" in zeilen[0]
+        assert "Fan-out" in zeilen[0]
 
     @pytest.mark.asyncio
     async def test_the_mock_shapes_produce_NO_stray_warning(self, quellen, monkeypatch):
         """🛑 Negativkontrolle an der Attrappe selbst. Passt eine Form nicht,
-        protokolliert der Einpacker eine WARNING — dann ist nicht zu sehen, ob
+        protokolliert der Wrapper eine WARNING — dann ist nicht zu sehen, ob
         ein Test wegen der Sache gruen ist oder trotz einer kaputten Attrappe."""
         texte = await self._lauf(monkeypatch)
         fremd = [m for s, m in texte if s == "WARNING" and "Atom-Abruf" not in m]
@@ -601,18 +601,18 @@ class TestTheFederatedPathIsMarkedBYTHECALLER:
         wird die WIRKUNG — `peer` gesetzt, `federated` nicht, also unmarkiert."""
         from loguru import logger as _l
 
-        from services.polymorphic_atom_store import _einpacken_und_zaehlen
+        from services.polymorphic_atom_store import _wrappen_und_zaehlen
 
         texte: list[str] = []
         kennung = _l.add(lambda m: texte.append(m.record["message"]),
                          level="INFO", format="{message}")
         try:
-            _einpacken_und_zaehlen(
+            _wrappen_und_zaehlen(
                 _quellen(), ausgeschaltet=set(), dauer_s=0.05,
                 foederiert=False)
             assert not any("foederiert" in t for t in texte), texte
             texte.clear()
-            _einpacken_und_zaehlen(
+            _wrappen_und_zaehlen(
                 _quellen(), ausgeschaltet=set(), dauer_s=0.05,
                 foederiert=True)
             assert any("foederiert" in t for t in texte), texte
