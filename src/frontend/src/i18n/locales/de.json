@@ -2150,7 +2150,12 @@
       "success": "Erfolgreich beantwortet",
       "failed": "Fehlgeschlagen",
       "unknown": "Status unbekannt (abgebrochen)"
-    }
+    },
+    "directionAnswered": "beantwortet",
+    "basisMapped": "als du",
+    "basisMappedHelp": "Diese Instanz hat als die verknüpfte Person geantwortet — mit deren voller eigener Reichweite, nicht nur mit dem für die gekoppelte Instanz Freigegebenen.",
+    "basisPeerTier": "als fremde Instanz",
+    "basisPeerTierHelp": "Diese Instanz hat ohne Personenverknüpfung geantwortet — nur mit dem, was der gekoppelten Instanz auf ihrer Stufe freigegeben ist."
   },
   "wissensbasis": {
     "page": {

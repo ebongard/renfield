@@ -2150,7 +2150,12 @@
       "success": "Answered successfully",
       "failed": "Failed",
       "unknown": "Unknown status (cancelled)"
-    }
+    },
+    "directionAnswered": "answered",
+    "basisMapped": "as you",
+    "basisMappedHelp": "This instance answered as the linked person — with their full own reach, not only what is shared with the paired instance.",
+    "basisPeerTier": "as a foreign instance",
+    "basisPeerTierHelp": "This instance answered without a person link — only with what the paired instance may see at its tier."
   },
   "wissensbasis": {
     "page": {

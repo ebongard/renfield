@@ -181,6 +181,34 @@ export default function FederationAuditPage() {
                           · {duration}
                         </span>
                       )}
+                      {entry.direction === 'answered' && (
+                        <span className="text-xs px-1.5 py-0.5 rounded bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300">
+                          {t('federationAudit.directionAnswered')}
+                        </span>
+                      )}
+                      {/* 🛑 Nur anzeigen, wenn die Angabe WIRKLICH da ist.
+                          Fehlt sie, wird nichts behauptet — nicht die engere
+                          Stufe unterstellt. */}
+                      {entry.identity_basis && (
+                        <span
+                          className={
+                            entry.identity_basis === 'mapped'
+                              ? 'text-xs px-1.5 py-0.5 rounded bg-amber-100 dark:bg-amber-900/40 text-amber-800 dark:text-amber-200'
+                              : 'text-xs px-1.5 py-0.5 rounded bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300'
+                          }
+                          title={t(
+                            entry.identity_basis === 'mapped'
+                              ? 'federationAudit.basisMappedHelp'
+                              : 'federationAudit.basisPeerTierHelp',
+                          )}
+                        >
+                          {t(
+                            entry.identity_basis === 'mapped'
+                              ? 'federationAudit.basisMapped'
+                              : 'federationAudit.basisPeerTier',
+                          )}
+                        </span>
+                      )}
                     </div>
                     <div className="text-sm text-gray-600 dark:text-gray-300 truncate">
                       {entry.query_text}

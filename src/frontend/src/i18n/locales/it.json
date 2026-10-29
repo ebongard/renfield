@@ -1750,7 +1750,12 @@
       "success": "Risposto con successo",
       "failed": "Fallito",
       "unknown": "Stato sconosciuto (annullato)"
-    }
+    },
+    "directionAnswered": "risposto",
+    "basisMapped": "come te",
+    "basisMappedHelp": "Questa istanza ha risposto come la persona collegata — con la sua piena portata, non solo con quanto è condiviso con l'istanza accoppiata.",
+    "basisPeerTier": "come istanza esterna",
+    "basisPeerTierHelp": "Questa istanza ha risposto senza un collegamento di persona — solo con quanto l'istanza accoppiata può vedere al suo livello."
   },
   "wissensbasis": {
     "page": {

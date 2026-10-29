@@ -26,6 +26,18 @@ export interface AuditEntry {
   finalized_at?: string;
   final_status: AuditStatus;
   verified_signature?: boolean;
+  /** 'asked' = diese Instanz hat gefragt, 'answered' = sie hat geantwortet. */
+  direction?: 'asked' | 'answered';
+  /**
+   * Auf welcher Identität die Antwort beruhte.
+   *
+   * 🛑 `undefined`/`null` heisst NICHT 'peer_tier', sondern „nicht
+   * festgehalten": bei Frager-Zeilen weiss diese Instanz es nicht (die
+   * Gegenseite entscheidet), und Zeilen von vor dem 2026-10-29 kennen die
+   * Angabe gar nicht. Wer das zusammenwirft, behauptet die engere Stufe fuer
+   * Zuege, die mit voller Reichweite liefen.
+   */
+  identity_basis?: 'mapped' | 'peer_tier' | null;
 }
 
 async function fetchFederationPeers(): Promise<FederationPeer[]> {
