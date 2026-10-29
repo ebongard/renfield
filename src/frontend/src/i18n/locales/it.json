@@ -1725,7 +1725,10 @@
     "linkRevoked": "Il collegamento è stato revocato.",
     "linkRevokeFailed": "Non è stato possibile revocare il collegamento.",
     "linkCreatedAt": "collegato il {{date}}",
-    "linkHalfDone": "Il tuo lato del collegamento è pronto. Diventa effettivo solo al completamento sull'altra istanza."
+    "linkHalfDone": "Il tuo lato del collegamento è pronto. Diventa effettivo solo al completamento sull'altra istanza.",
+    "pairAdvertisedUrlLabel": "Indirizzo di QUESTA istanza (facoltativo)",
+    "pairAdvertisedUrlPlaceholder": "lascia vuoto per l'impostazione predefinita",
+    "pairAdvertisedUrlHelp": "Dove il peer raggiunge QUESTA istanza per le richieste — non l'indirizzo dell'altra parte. Lascia vuoto per usare il valore predefinito configurato."
   },
   "federationAudit": {
     "title": "Cronologia federazione",

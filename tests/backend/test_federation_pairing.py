@@ -443,7 +443,13 @@ class TestAdvertisedEndpointResolution:
         from api.routes.federation_pairing import _resolve_advertised_endpoints
         from utils.config import settings
         monkeypatch.setattr(settings, "federation_advertised_url", "http://from-setting:8000")
-        provided = [{"url": "http://ui-override:8000"}]
+        # 🛑 Ein AUFLOESBARER Name. Die Absicht dieses Tests („die Eingabe
+        # ueberstimmt den Standard") ist unveraendert; seit 2026-10-29 weist
+        # `_refuse_unresolvable` eine Eingabe ab, deren Name nicht auflöst, und
+        # `ui-override` tat das nie. Die Vorrichtung wurde nachgezogen, nicht
+        # die Absicht — `from-setting` darf unauflösbar bleiben, denn der
+        # konfigurierte Standard wird bewusst NICHT geprueft.
+        provided = [{"url": "http://localhost:8000"}]
         assert _resolve_advertised_endpoints(provided) == provided
 
     @pytest.mark.unit
