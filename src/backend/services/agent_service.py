@@ -129,6 +129,11 @@ class AgentStep:
     reason: str | None = None
     success: bool | None = None
     data: dict | None = None
+    #: Warum der Lauf abgebrochen wurde, wenn er abgebrochen wurde
+    #: ("loop_detected" | "same_tool_threshold"). 🛑 Ein eigenes Feld und NICHT
+    #: der Inhaltstext: `content` kommt aus dem Prompt-Katalog, ist uebersetzt
+    #: und frei redigierbar — wer darauf abgleicht, prueft Prosa statt Code.
+    abort_reason: str | None = None
 
 
 @dataclass
@@ -2722,6 +2727,7 @@ class AgentService:
                     step_type="error",
                     content=prompt_manager.get("agent", "error_loop_detected", lang=lang, tool=action),
                     tool=action,
+                    abort_reason="loop_detected",
                 )
                 summary_step = await self._build_summary_answer(context, step_num, message, ollama, agent_model, lang=lang, agent_client=agent_client, trigger="loop_detected")
                 yield summary_step
@@ -2740,6 +2746,7 @@ class AgentService:
                     step_type="error",
                     content=prompt_manager.get("agent", "error_loop_detected", lang=lang, tool=action),
                     tool=action,
+                    abort_reason="same_tool_threshold",
                 )
                 summary_step = await self._build_summary_answer(context, step_num, message, ollama, agent_model, lang=lang, agent_client=agent_client, trigger="same_tool")
                 yield summary_step

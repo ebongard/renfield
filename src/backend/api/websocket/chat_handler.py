@@ -426,7 +426,7 @@ def _collect_tool_artifacts(tool_results: list) -> list:
     return artifacts
 
 
-def _failed_agent_actions(outcomes: list) -> list:
+def _failed_agent_actions(outcomes: list, aborted_tools: set | None = None) -> list:
     """Which ACTIONS of this agent turn ended in failure.
 
     ``outcomes`` is every ``tool_result`` step of the turn as ``(tool, success)``
@@ -439,11 +439,34 @@ def _failed_agent_actions(outcomes: list) -> list:
 
     Order matters, dict insertion order does not: the verdict is per tool name,
     so the list is "actions that ended badly", not "calls that failed".
+
+    🛑 ``aborted_tools`` sind die Werkzeuge, deren Wiederholung der Agent-Loop
+    SELBST abgebrochen hat (Schleifenerkennung). Hat ein solches Werkzeug im
+    Zug schon einmal GEKLAPPT, zaehlt es nicht als gescheitert — die spaeteren
+    Fehlversuche hat die Schleife erzeugt, nicht das Werkzeug.
+
+    Der Anlass, am 2026-10-29 beobachtet: „scanne nach x-idra" startete den
+    Scan in Schritt 1 (`success=True`, Job 22 s spaeter `done`), der Agent rief
+    dasselbe Werkzeug zweimal nach, bekam „laeuft bereits" und die
+    Schleifenerkennung brach ab. Nach der Regel „letzter Versuch zaehlt" galt
+    der Zug als gescheitert — der Nutzer sah einen Fehler fuer einen Scan, der
+    gelaufen war, und der stale-error-Marker (#1367) erzaehlte es dem naechsten
+    Zug weiter. Die Regel bleibt fuer jede andere Form unveraendert; nur die
+    vom Abbruch selbst erzeugten Wiederholungen kippen das Urteil nicht mehr.
     """
     last: dict[str, bool | None] = {}
+    je_erfolgreich: set = set()
     for tool, success in outcomes:
-        last[tool or "?"] = success
-    return [tool for tool, success in last.items() if success is False]
+        name = tool or "?"
+        last[name] = success
+        if success:
+            je_erfolgreich.add(name)
+    abgebrochen = aborted_tools or set()
+    return [
+        tool for tool, success in last.items()
+        if success is False
+        and not (tool in abgebrochen and tool in je_erfolgreich)
+    ]
 
 
 def _build_agent_action_result(tool_results: list, failed_actions: list | None = None) -> dict:
@@ -1519,6 +1542,7 @@ async def websocket_endpoint(
             # agent_tool_results. This is what makes action_success able to say
             # False on the agent path at all (#1367).
             agent_tool_outcomes: list = []
+            agent_aborted_tools: set = set()
             # Validated chat artifacts (Lane A typed table/list/keyvalue/chart)
             # produced by the hook / sub-intent / orchestration card path this
             # turn. Emitted as `artifact` WS frames and persisted into
@@ -2053,6 +2077,7 @@ async def websocket_endpoint(
                         executor = ActionExecutor(mcp_manager=mcp_manager, session_id=msg_session_id)
                         agent_tool_results = []
                         agent_tool_outcomes = []
+                        agent_aborted_tools = set()
                         # Buffer final_answer AND card steps so check_output
                         # can redact before send AND the card arrives after
                         # the assistant message bubble it should attach to.
@@ -2118,6 +2143,10 @@ async def websocket_endpoint(
                                 await websocket.send_json(step_to_ws_message(step))
                             if step.step_type == "tool_result":
                                 agent_tool_outcomes.append((step.tool, step.success))
+                                if step.abort_reason and step.tool:
+                                    # Der Loop hat SICH SELBST gestoppt — die Wiederholungen
+                                    # davor sind seine, nicht die des Werkzeugs.
+                                    agent_aborted_tools.add(step.tool)
                                 if step.success and step.data:
                                     agent_tool_results.append((step.tool, step.data))
                             if step.step_type in ("tool_call", "tool_result"):
@@ -2170,7 +2199,7 @@ async def websocket_endpoint(
                                 )
                             ))
 
-                        _failed = _failed_agent_actions(agent_tool_outcomes)
+                        _failed = _failed_agent_actions(agent_tool_outcomes, agent_aborted_tools)
                         if agent_tool_results or _failed:
                             action_result = _build_agent_action_result(
                                 agent_tool_results, _failed
@@ -2257,6 +2286,7 @@ async def websocket_endpoint(
 
                     agent_tool_results = []
                     agent_tool_outcomes = []
+                    agent_aborted_tools = set()
 
                     # F4c — federation progress relay. When the agent's
                     # tool call is a federated query, ProgressChunks
@@ -2316,6 +2346,10 @@ async def websocket_endpoint(
                             full_response = step.content
                         if step.step_type == "tool_result":
                             agent_tool_outcomes.append((step.tool, step.success))
+                            if step.abort_reason and step.tool:
+                                # Der Loop hat SICH SELBST gestoppt — die Wiederholungen
+                                # davor sind seine, nicht die des Werkzeugs.
+                                agent_aborted_tools.add(step.tool)
                             if step.success and step.data:
                                 agent_tool_results.append((step.tool, step.data))
                         if step.step_type in ("tool_call", "tool_result"):
@@ -2331,7 +2365,7 @@ async def websocket_endpoint(
                     # Build action summary from agent tool results for conversation
                     # history — and let a tool that FAILED set the turn's outcome,
                     # so the stale-error marker can fire on the next turn (#1367).
-                    _failed = _failed_agent_actions(agent_tool_outcomes)
+                    _failed = _failed_agent_actions(agent_tool_outcomes, agent_aborted_tools)
                     if agent_tool_results or _failed:
                         action_result = _build_agent_action_result(
                             agent_tool_results, _failed

@@ -2839,3 +2839,96 @@ class TestAgentTurnMetrics:
         assert first.step_type == "final_answer"
         await gen.aclose()
         assert seen == {"steps": [1], "outcome": ["final_answer"]}
+
+
+class TestAStartedScanIsNotAFailure:
+    """🛑 Ein angestossener Vorgang ist kein Fehlschlag, nur weil der Agent
+    danach in seine eigene Schleife lief.
+
+    Am 2026-10-29 beobachtet: „scanne nach x-idra" startete den Scan in
+    Schritt 1 (`success=True`; der Job meldete 22 s spaeter `done`). Der Agent
+    rief dasselbe Werkzeug zweimal nach, bekam „laeuft bereits" und die
+    Schleifenerkennung brach ab. Nach der Regel „letzter Versuch zaehlt" galt
+    der ganze Zug als gescheitert — der Nutzer sah einen Fehler fuer einen
+    Scan, der gelaufen war, und der stale-error-Marker (#1367) erzaehlte es
+    dem naechsten Zug weiter.
+    """
+
+    @pytest.mark.unit
+    def test_a_tool_that_succeeded_before_the_loop_abort_is_not_failed(self):
+        from api.websocket.chat_handler import _failed_agent_actions
+
+        outcomes = [
+            ("mcp.scanner.scan_document", True),    # der Scan laeuft
+            ("mcp.scanner.scan_document", False),   # „laeuft bereits"
+            ("mcp.scanner.scan_document", False),
+        ]
+        assert _failed_agent_actions(outcomes, {"mcp.scanner.scan_document"}) == []
+
+    @pytest.mark.unit
+    def test_WITHOUT_an_abort_the_documented_rule_is_untouched(self):
+        """🛑 Negativkontrolle. Dieselbe Folge, aber der Abbruch kam NICHT von
+        der Schleifenerkennung — dann gilt weiter „letzter Versuch zaehlt".
+        Ohne diese Pruefung waere nicht zu sehen, ob die neue Regel die alte
+        aufweicht oder nur den einen Fall ausnimmt."""
+        from api.websocket.chat_handler import _failed_agent_actions
+
+        outcomes = [
+            ("mcp.scanner.scan_document", True),
+            ("mcp.scanner.scan_document", False),
+        ]
+        assert _failed_agent_actions(outcomes) == ["mcp.scanner.scan_document"]
+        assert _failed_agent_actions(outcomes, set()) == ["mcp.scanner.scan_document"]
+
+    @pytest.mark.unit
+    def test_an_abort_alone_does_not_excuse_a_tool_that_never_worked(self):
+        """🛑 Zweite Negativkontrolle. Die Ausnahme haengt an BEIDEM: Abbruch
+        durch die Schleife UND ein frueherer Erfolg. Fehlt der Erfolg, bleibt
+        es ein Fehlschlag — sonst verstoeckte ein Loop jeden kaputten Aufruf."""
+        from api.websocket.chat_handler import _failed_agent_actions
+
+        outcomes = [
+            ("mcp.scanner.scan_document", False),
+            ("mcp.scanner.scan_document", False),
+            ("mcp.scanner.scan_document", False),
+        ]
+        assert _failed_agent_actions(
+            outcomes, {"mcp.scanner.scan_document"}) == ["mcp.scanner.scan_document"]
+
+    @pytest.mark.unit
+    def test_the_recovered_shape_from_2026_10_04_still_holds(self):
+        """Die urspruengliche Absicht: Parameter abgelehnt, sofort wiederholt,
+        geklappt — das ist kein gescheiterter Zug. Und ein anderes Werkzeug,
+        das danach scheitert, bleibt gescheitert."""
+        from api.websocket.chat_handler import _failed_agent_actions
+
+        outcomes = [
+            ("mcp.scanner.scan_document", False),
+            ("mcp.scanner.scan_document", True),
+            ("mcp.scanner.route_scan", False),
+        ]
+        assert _failed_agent_actions(outcomes) == ["mcp.scanner.route_scan"]
+
+    @pytest.mark.unit
+    def test_BOTH_consumption_sites_pass_the_abort_set(self):
+        """🛑 Die KLASSE, nicht die Instanz: `chat_handler` wertet den Zug an
+        ZWEI Stellen aus (Orchestrator-Pfad und Einzelrollen-Pfad). Eine davon
+        zu verdrahten und die andere zu vergessen ist genau der Fehler, der
+        heute schon dreimal vorkam. Am AST geprueft, nicht am Quelltext."""
+        import ast
+        import pathlib
+
+        quelle = (pathlib.Path(__file__).resolve().parents[2]
+                  / "src" / "backend" / "api" / "websocket" / "chat_handler.py")
+        baum = ast.parse(quelle.read_text(encoding="utf-8"))
+
+        aufrufe = [
+            n for n in ast.walk(baum)
+            if isinstance(n, ast.Call)
+            and getattr(n.func, "id", None) == "_failed_agent_actions"
+        ]
+        assert len(aufrufe) == 2, f"{len(aufrufe)} Auswertungsstellen — Test oder Code driftet"
+        for a in aufrufe:
+            assert len(a.args) == 2, (
+                "eine Auswertungsstelle uebergibt die Abbruch-Menge nicht — "
+                "dort gilt dann weiter `letzter Versuch zaehlt`")

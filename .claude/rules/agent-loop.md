@@ -134,3 +134,17 @@ kommt ABGESCHNITTEN zurueck — unparsbar wie vorher. Ohne diesen Schluessel ver
 🛑 **Die Quote aendert sich nicht** (90/95 beidseits). Wer hier Genauigkeit erwartet, misst das Falsche;
 die Grammatikfrage sitzt im `tool_preselect_prompt`, und jede Aenderung daran geht durch
 `bin/measure-preselect.py` — vier Review-Runden am Hinweistext ohne Messung kosteten acht Messrunden.
+
+## Ein angestossener Vorgang ist kein Fehlschlag
+Der Geraete-Hinweis („eine wiederholte Bitte an einem GERAET ist eine NEUE Bitte") loeste sich SELBST aus: nach
+dem erfolgreichen Werkzeugaufruf steht derselbe Vorgang als ERLEDIGT im Kontext — vom Agenten gerade erzeugt —
+und der Hinweis verbot `final_answer` und forderte einen neuen Aufruf. 2026-10-29: Scan in Schritt 1 gestartet
+(Job 22 s spaeter `done`), zwei Nachrufe auf „laeuft bereits", Schleifenerkennung, Zug als Fehler gemeldet.
+Der Hinweis gilt jetzt nur fuer FRUEHERE Zuege; wer in DIESEM Zug schon erfolgreich war, meldet mit `final_answer`.
+🛑 **`_failed_agent_actions` nimmt bewusst den LETZTEN Versuch je Werkzeugname** (fail→success = erholt). Die
+Gegenrichtung success→fail war nicht bedacht: ein Werkzeug, das einen Hintergrundauftrag STARTET, hat seine Wirkung
+beim ersten Erfolg. Darum nimmt das Urteil ein Werkzeug aus, das (a) im Zug schon klappte UND (b) dessen
+Wiederholung die Schleifenerkennung selbst abbrach — beides, nie nur eines. Der Abbruchgrund reist als
+`AgentStep.abort_reason` mit, NICHT als Inhaltstext: `content` kommt aus dem Prompt-Katalog und ist uebersetzt.
+🛑 **`chat_handler` urteilt an ZWEI Stellen** (Orchestrator- und Einzelrollen-Pfad). Eine zu verdrahten und die
+andere zu vergessen ist der Normalfall des Irrtums; ein AST-Test haelt fest, dass beide die Menge uebergeben.
