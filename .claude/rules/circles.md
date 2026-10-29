@@ -74,3 +74,15 @@ never ownership**. So the apply layer enforces it:
   i.e. other users' rows.
 - `AUTH_ENABLED=false` is one trust domain (filter bypassed, every row carries the same `_resolve_owner_user_id`
   fallback owner) and keeps its unscoped behaviour. Test: `tests/backend/test_memory_ownership_guard.py`.
+
+## Das Prüfprotokoll hält die IDENTITÄTSGRUNDLAGE fest
+`federation_query_log` trägt seit 2026-10-29 `direction` (`asked`/`answered`) und `identity_basis`
+(`mapped`/`peer_tier`). 🛑 Vorher schrieb **nur die Fragerseite** (`mcp_client.py`, ein einziger Aufrufer), und damit
+stand nirgends, ob eine Antwort mit der vollen Reichweite der verknüpften Person oder nur auf der gewährten Stufe
+zustande kam — beim ersten erfolgreichen Zug war das hinterher nur noch zu erschliessen, weil der Pending-Satz mit
+`mapped` im Arbeitsspeicher liegt.
+🛑 **Der ANTWORTENDE schreibt es**, nicht der Frager: die Instanz, deren Daten gelesen wurden, verzeichnet den
+Zugriff. Ein Vermerk auf der Fragerseite wäre die Behauptung der Gegenseite über ihre eigene Zugriffsentscheidung.
+🛑 `user_id` heisst durchgehend „die lokale Person, deren Reichweite benutzt wurde" — gemappt die verknüpfte Person,
+im Rückfall der Eigentümer der Paarung. Darum bleibt die Spalte NOT NULL; `identity_basis` ist nullable, weil
+Bestandszeilen und Frager-Zeilen es nicht WISSEN und ein Vorgabewert Unwissen als Tatsache ausgäbe.

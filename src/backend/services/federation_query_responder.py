@@ -172,6 +172,56 @@ class PendingScopeError(Exception):
     """Ein Pending-Satz, der sich nicht eindeutig deuten laesst."""
 
 
+async def _write_responder_audit(
+    pending: _PendingRequest,
+    *,
+    erfolg: bool,
+    fehler: str | None = None,
+) -> None:
+    """Der ANTWORTENDE haelt fest, auf welcher Identitaet er geantwortet hat.
+
+    🛑 Bis 2026-10-29 schrieb nur die Fragerseite (`mcp_client.py`, ein
+    einziger Aufrufer). Die Entscheidung ueber die Identitaet faellt aber
+    HIER — und damit war nirgends festgehalten, ob eine Antwort mit der vollen
+    Reichweite der verknuepften Person oder nur auf der gewaehrten Stufe
+    zustande kam. Beim ersten erfolgreichen foederierten Zug der
+    Projektgeschichte liess sich das hinterher nicht mehr feststellen, nur
+    erschliessen: der Pending-Satz, der `mapped` traegt, liegt im
+    Arbeitsspeicher und ist nach dem Zug weg.
+
+    🛑 Ein Vermerk auf der FRAGERSEITE waere kein Ersatz. Er waere die
+    Behauptung der Gegenseite ueber ihre eigene Zugriffsentscheidung; die
+    Instanz, deren Daten gelesen wurden, muss den Zugriff selbst verzeichnen.
+
+    `user_id` bedeutet durchgehend „die lokale Person, deren Reichweite
+    benutzt wurde": gemappt die verknuepfte Person, im Rueckfall der
+    Eigentuemer der Paarung. Beide Faelle haben eine, darum bleibt die Spalte
+    NOT NULL.
+
+    Fehlschlaege beim Schreiben werden in `write_federation_audit`
+    geschluckt — ein Protokolleintrag darf eine beantwortete Anfrage nicht
+    nachtraeglich umwerfen.
+    """
+    from services.federation_audit import write_federation_audit
+
+    user_id = pending.asker_local_user_id if pending.mapped else pending.peer_owner_id
+    if user_id is None:
+        # Weder gemappt noch mit Eigentuemer — ein Satz aus einer aelteren
+        # Fassung, den `_peer_scope_for` ohnehin abweist. Nichts zu verzeichnen.
+        return
+    await write_federation_audit(
+        user_id=user_id,
+        peer_user_id=pending.peer_user_id,
+        peer_pubkey_snapshot=pending.asker_pubkey,
+        peer_display_name_snapshot="",
+        query_text=pending.query,
+        initiated_at=datetime.fromtimestamp(pending.initiated_at, tz=UTC).replace(tzinfo=None),
+        final_item={"answer": pending.answer or ""} if erfolg else None,
+        direction="answered",
+        identity_basis="mapped" if pending.mapped else "peer_tier",
+    )
+
+
 def _peer_scope_for(pending: _PendingRequest) -> PeerScope | None:
     """Die `PeerScope` zu einem Pending-Satz — oder ein Fehlschlag.
 
@@ -502,6 +552,7 @@ class FederationQueryResponder:
             pending.progress_label = PROGRESS_LABEL_COMPLETE
             pending.status = STATUS_COMPLETE
             await store.save(pending)
+            await _write_responder_audit(pending, erfolg=True)
         except asyncio.CancelledError:
             # Propagate cancellation (from _clear_state_for_tests or
             # graceful shutdown). Don't mark failed.
@@ -519,6 +570,7 @@ class FederationQueryResponder:
             pending.progress_label = PROGRESS_LABEL_FAILED
             pending.status = STATUS_FAILED
             await store.save(pending)
+            await _write_responder_audit(pending, erfolg=False, fehler=str(e))
 
     async def _retrieve(
         self,
