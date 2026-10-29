@@ -1349,8 +1349,13 @@ class Settings(BaseSettings):
     # "Peer has no usable transport endpoint" — why federation has been
     # population-of-1). The pairing offer/accept already SIGN + PERSIST endpoints
     # (#408/#421); this setting just supplies the value a caller didn't override.
-    # Same-cluster peers use the internal svc DNS, e.g.
-    #   http://backend.renfield.svc.cluster.local:8000
+    # 🛑 Die Instanz bewirbt ihren EIGENEN, allgemein erreichbaren Namen, nicht
+    # die clusterinterne Dienstadresse. Letztere stand hier bis 2026-10-29 als
+    # Empfehlung fuer „same-cluster peers" — sie traegt aber nur, solange beide
+    # Instanzen zufaellig im selben Cluster liegen, und erscheint fuer die
+    # bedienende Person als unverstaendlicher Name in der Paarungsoberflaeche.
+    # Genau das lud dazu ein, dort von Hand etwas einzutragen, und so entstand
+    # ein Endpunkt mit Tippfehler, der die Foederation ins Leere laufen liess.
     # A per-pairing UI field can override it. Empty = advertise nothing (legacy).
     federation_advertised_url: str = ""
 

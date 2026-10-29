@@ -44,7 +44,59 @@ from utils.config import settings
 router = APIRouter()
 
 
-def _resolve_advertised_endpoints(provided: list[dict]) -> list[dict]:
+async def _refuse_unresolvable(endpoints: list[dict]) -> None:
+    """Ein Übersteuerungswert, dessen Name nicht auflöst, wird abgewiesen.
+
+    🛑 Der Anlass, am 2026-10-29 gefunden: in `transport_config` stand
+    `https://renfield.loca` — dem Namen fehlte das letzte `l`, UND es war der
+    Name der GEGENSEITE statt des eigenen. Beides stammte aus diesem Feld. Die
+    Paarung meldete Erfolg, und der Ausfall zeigte sich erst beim ersten echten
+    Gebrauch, Tage später, als „Name or service not known" tief im
+    Föderationsclient.
+
+    Die Säuberung darüber verwirft schon Leeres, mit der Begründung, sonst
+    persistiere „a garbage endpoint". Ein Tippfehler ist auch Unrat.
+
+    🛑 Geprüft wird NUR die Eingabe aus der Oberfläche, nicht der konfigurierte
+    Standard (`federation_advertised_url`). Der ist Betreibersache, durchläuft
+    ein Review und kann bewusst einen Namen tragen, den diese Instanz selbst
+    nicht auflöst (geteilte Horizonte). Die Eingabe ist das, was sich vertippt.
+
+    Nur die NAMENSAUFLÖSUNG, kein HTTP-Abruf: letzterer wäre strenger, würde
+    aber einen Aufbau abweisen, in dem die Instanz sich selbst nicht über ihren
+    öffentlichen Namen erreicht. Die Auflösung allein hätte den Fall gefangen
+    (gemessen: `renfield.local` → 192.168.1.230, `renfield.loca` → Fehler).
+    🛑 `getaddrinfo` BLOCKIERT, und beide Aufrufer sind `async`. Eine
+    fehlschlagende Auflösung laeuft in den Resolver-Zeitablauf (Sekunden) und
+    legt solange die ganze Ereignisschleife still — also in einen Thread.
+    `_with_tofu_fingerprint` ist aus demselben Grund async.
+    """
+    import asyncio
+    import socket
+    from urllib.parse import urlparse
+
+    for eintrag in endpoints:
+        roh = str(eintrag.get("url", "")).strip()
+        host = urlparse(roh).hostname
+        if not host:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Die angegebene URL hat keinen Hostnamen: {roh!r}")
+        try:
+            await asyncio.to_thread(socket.getaddrinfo, host, None)
+        except OSError:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"Der Name {host!r} ist von dieser Instanz aus nicht "
+                    "auflösbar. Gemeint ist die Adresse, unter der die "
+                    "GEGENSEITE DIESE Instanz erreicht — nicht die Adresse der "
+                    "Gegenseite. Feld leer lassen, um den konfigurierten "
+                    "Standard dieser Instanz zu verwenden."),
+            ) from None
+
+
+async def _resolve_advertised_endpoints(provided: list[dict]) -> list[dict]:
     """The endpoints THIS instance advertises during pairing. A per-pairing UI
     override wins; else fall back to the `federation_advertised_url` setting;
     else advertise nothing (legacy — the peer gets no usable endpoint).
@@ -56,6 +108,7 @@ def _resolve_advertised_endpoints(provided: list[dict]) -> list[dict]:
     override re-falls-through to the setting."""
     cleaned = [e for e in provided if isinstance(e, dict) and str(e.get("url", "")).strip()]
     if cleaned:
+        await _refuse_unresolvable(cleaned)
         return cleaned
     if settings.federation_advertised_url:
         return [{"url": settings.federation_advertised_url}]
@@ -136,7 +189,7 @@ async def create_pair_offer(
     return svc.create_offer(
         current_user=current_user,
         display_name=body.display_name,
-        offered_endpoints=_resolve_advertised_endpoints(body.offered_endpoints),
+        offered_endpoints=await _resolve_advertised_endpoints(body.offered_endpoints),
     )
 
 
@@ -178,7 +231,7 @@ async def accept_pair_offer(
             current_user=current_user,
             offer=body.offer,
             my_tier_for_you=body.my_tier_for_you,
-            accepted_endpoints=_resolve_advertised_endpoints(body.accepted_endpoints),
+            accepted_endpoints=await _resolve_advertised_endpoints(body.accepted_endpoints),
         )
     except AlreadyPairedElsewhere as e:
         # 🛑 VOR dem uniformen Fang: lokaler Zustand, kein kryptografischer
