@@ -12,14 +12,40 @@ ASCII query flow:
         |
         +-- Build per-asker AccessContext (dimensions + memberships) once.
         |
-        +-- Parallel fan-out (asyncio.gather):
+        +-- Faecherung ueber ACHT Quellen (asyncio.gather), alle auf `self.db`:
         |     +-- RAGRetrieval(db).search(text, top_k=top_k*3) -> kb_chunks
-        |     +-- KGRetrieval(db).get_relevant_context(text, asker)
+        |     +-- KGRetrieval(db).get_relevant_atoms(text, asker)
         |     +-- MemoryRetrieval(db).retrieve(text, asker_id)
+        |     +-- LexicalRetrieval(db).search_chunks_lexical / _memories_lexical
+        |     +-- SkillService(db).find_similar          (flaggengesteuert)
+        |     +-- DocumentFactRetrieval(db).search
+        |     +-- NoteRetrieval(db).search               (flaggengesteuert)
+        |
+        |   🛑 NICHT parallel, und hier stand bis zum 2026-10-29 das Gegenteil.
+        |   Eine `AsyncSession` haelt EINE Verbindung; acht gleichzeitige
+        |   Abfragen darauf sind in SQLAlchemy nicht vorgesehen. Gemessen auf
+        |   echtem Postgres mit der echten Sitzungsfabrik, acht Abrufe a ~50 ms,
+        |   drei Durchlaeufe stabil:
+        |
+        |       eine Sitzung, KALT          1 von 8 geliefert    52 ms
+        |       eine Sitzung, vorgewaermt   8 von 8             408 ms  (reihum)
+        |       je eigene Sitzung           8 von 8              56 ms
+        |
+        |   Der foederierte Pfad (`federation_query_responder._retrieve`) oeffnet
+        |   eine frische Sitzung und faechert sofort -> 1 von 8. Der lokale Pfad
+        |   bekommt eine warme Sitzung aus `get_db` -> 8 von 8, aber REIHUM, also
+        |   Faktor ~7 auf die Abrufdauer. Vorwaermen ist deshalb keine Loesung:
+        |   es beseitigt die Meldung, indem es die Nebenlaeufigkeit beseitigt.
+        |   Die Reparatur ist eine Sitzung JE QUELLE (Regime C). Vorher muss
+        |   der Aufrufbaum jeder Quelle auf Schreibvorgaenge geprueft werden:
+        |   `MemoryRetrieval.retrieve` erhoeht `access_count` und benutzt dafuer
+        |   ausdruecklich `flush()`, nicht `commit()`, weil die Transaktion des
+        |   Aufrufers entscheiden soll — eine eigene Sitzung kuendigte diesen
+        |   Vertrag. Reproduzierbar mit `bin/probe-atom-store-sessions.py`.
         |
         +-- Wrap each source result list as AtomMatch[] with rank assigned.
         |
-        +-- RRF merge across the four sources:
+        +-- RRF merge across the eight sources:
         |     score = sum(weight / (k + rank + 1))
         |     where k = settings.rag_hybrid_rrf_k (default 60)
         |
@@ -38,6 +64,7 @@ NOT IN SCOPE for v1 PolymorphicAtomStore:
 from __future__ import annotations
 
 import asyncio
+import time
 from collections.abc import Sequence
 from datetime import datetime
 from typing import Any
@@ -184,6 +211,7 @@ class PolymorphicAtomStore:
         # programmer errors (e.g., import failure on the lazy-imported retrieval modules).
         # Removing the wrapper — exceptions in retrieval modules are converted to []
         # by the _wrap_* helpers, and any actual programmer error now bubbles to FastAPI.
+        _t0 = time.perf_counter()
         (
             rag_results, kg_atoms, memory_results,
             lexical_chunks, lexical_memories, skill_results, document_fact_results,
@@ -193,6 +221,29 @@ class PolymorphicAtomStore:
             lexical_chunks_task, lexical_memories_task, skill_task, document_fact_task,
             note_task,
             return_exceptions=True,
+        )
+
+        # 🛑 Erst klassifizieren, dann einpacken. Die `_wrap_*`-Helfer beginnen
+        # alle mit `if isinstance(x, Exception) or not x: return []` — sie
+        # werfen damit ABGESTUERZT und NICHTS GEFUNDEN in einen Topf, und keiner
+        # protokolliert. Am 2026-10-29 liess sich darum nicht feststellen, auf
+        # wie vielen der acht Quellen eine Antwort beruhte: gemessen lieferte
+        # eine KALTE Sitzung 1 von 8 (die anderen sieben brechen mit
+        # „provisioning a new connection" ab), und nur drei der acht Quellen
+        # melden einen Fehlschlag selbst — `rag` und `kg` gar nicht.
+        _ = _protokolliere_quellen(
+            {
+                "rag": rag_results,
+                "kg": kg_atoms,
+                "memory": memory_results,
+                "lexical_chunks": lexical_chunks,
+                "lexical_memories": lexical_memories,
+                "skill": skill_results,
+                "document_fact": document_fact_results,
+                "note": note_results,
+            },
+            dauer_s=time.perf_counter() - _t0,
+            foederiert=peer is not None,
         )
 
         rag_matches = _wrap_rag_results(rag_results)
@@ -251,6 +302,54 @@ class PolymorphicAtomStore:
 
 def _now() -> datetime:
     return datetime.now()
+
+
+def _fehlertext(e: BaseException) -> str:
+    """Fehlermeldung OHNE Anfrageinhalt.
+
+    🛑 SQLAlchemy haengt `[SQL: ...] [parameters: ...]` an seine Meldungen —
+    darin stehen der Anfragetext und die Bindungen, also genau das, was nicht
+    ins Protokoll gehoert. Abgeschnitten, bevor es hinausgeht.
+    """
+    return str(e).split("[SQL:")[0].strip()[:200]
+
+
+def _protokolliere_quellen(
+    roh: dict[str, Any], *, dauer_s: float, foederiert: bool
+) -> tuple[list[str], list[str], list[str]]:
+    """Eine Zeile je Durchlauf: wer lieferte, wer war leer, wer stuerzte ab.
+
+    🛑 Kein Inhalt — Quellenname, Anzahl, Fehlerart. Keine Anfragetexte, keine
+    Treffer. Der Rueckgabewert ist fuer Tests da, nicht fuer den Aufrufer.
+    """
+    geliefert: list[str] = []
+    leer: list[str] = []
+    abgestuerzt: list[str] = []
+    for name, wert in roh.items():
+        if isinstance(wert, BaseException):
+            abgestuerzt.append(name)
+            logger.warning(
+                f"🔍 Atom-Abruf: Quelle '{name}' abgestuerzt "
+                f"({type(wert).__name__}): {_fehlertext(wert)}"
+            )
+        elif not wert:
+            leer.append(name)
+        else:
+            geliefert.append(name)
+
+    zeile = (
+        f"🔍 Atom-Abruf{' (foederiert)' if foederiert else ''}: "
+        f"{len(geliefert)}/{len(roh)} Quellen geliefert, "
+        f"{len(leer)} leer, {len(abgestuerzt)} abgestuerzt "
+        f"in {dauer_s * 1000:.0f} ms"
+    )
+    if abgestuerzt:
+        # Abgestuerzte Quellen sind keine Nebensache: die Antwort stand dann
+        # auf einem Teil des Abrufs, ohne dass es jemand sah.
+        logger.warning(f"{zeile} — abgestuerzt: {', '.join(abgestuerzt)}")
+    else:
+        logger.info(zeile)
+    return geliefert, leer, abgestuerzt
 
 
 def _wrap_rag_results(rag_results: Any) -> list[AtomMatch]:
