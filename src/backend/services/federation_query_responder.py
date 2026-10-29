@@ -213,7 +213,7 @@ async def _write_responder_audit(
         user_id=user_id,
         peer_user_id=pending.peer_user_id,
         peer_pubkey_snapshot=pending.asker_pubkey,
-        peer_display_name_snapshot="",
+        peer_display_name_snapshot=pending.peer_display_name,
         query_text=pending.query,
         initiated_at=datetime.fromtimestamp(pending.initiated_at, tz=UTC).replace(tzinfo=None),
         # 🛑 Die FORM zaehlt, nicht nur der Inhalt: `_classify_final` liest
@@ -441,6 +441,7 @@ class FederationQueryResponder:
             initiated_at=now,
             peer_owner_id=peer_owner_id,
             mapped=mapped,
+            peer_display_name=peer.remote_display_name or "",
         ))
 
         # Schedule the background work. The task is fire-and-forget —

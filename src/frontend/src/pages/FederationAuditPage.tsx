@@ -25,6 +25,41 @@ interface StatusIconProps {
 
 const PAGE_SIZE = 50;
 
+/**
+ * Hilfetext zur Identitätsgrundlage einer beantworteten Anfrage.
+ *
+ * 🛑 Der dritte Zweig ist der Grund, dass es diese Funktion gibt. Die Spalte
+ * ist serverseitig ein freier Text; fiele ein unbekannter Wert in den
+ * `peer_tier`-Zweig, behauptete die Ansicht die ENGERE Reichweite für einen
+ * Zugriff, über den sie nichts weiß. Dann lieber den rohen Wert zeigen und
+ * ausdrücklich nichts behaupten.
+ */
+export function basisHelpKey(basis: string): string {
+  if (basis === 'mapped') return 'federationAudit.basisMappedHelp';
+  if (basis === 'peer_tier') return 'federationAudit.basisPeerTierHelp';
+  return 'federationAudit.basisUnknownHelp';
+}
+
+/**
+ * Einfaerbung des Kennzeichens — DREIWERTIG, aus demselben Grund wie oben.
+ *
+ * 🛑 Der Text allein genuegt nicht. In der Bildsprache dieses Plaettchens
+ * heisst bernstein „volle Reichweite, hinsehen" und grau „die harmlose
+ * Variante". Bekaeme ein unbekannter Wert dasselbe Grau wie `peer_tier`,
+ * stuende die engere Behauptung eben in der FARBE statt im Wort — und die
+ * Farbe liest man zuerst. Unbekanntes wird darum abgesetzt und gestrichelt:
+ * auffaellig, nicht beruhigend.
+ */
+export function basisBadgeClass(basis: string): string {
+  if (basis === 'mapped') {
+    return 'bg-amber-100 dark:bg-amber-900/40 text-amber-800 dark:text-amber-200';
+  }
+  if (basis === 'peer_tier') {
+    return 'bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300';
+  }
+  return 'border border-dashed border-gray-400 dark:border-gray-500 text-gray-700 dark:text-gray-200';
+}
+
 function StatusIcon({ status, verified }: StatusIconProps) {
   if (status === 'success') {
     return verified
@@ -169,8 +204,18 @@ export default function FederationAuditPage() {
                   <div className="flex-1 min-w-0 space-y-1">
                     <div className="flex flex-wrap items-center gap-2">
                       <StatusIcon status={entry.final_status} verified={entry.verified_signature} />
+                      {/* 🛑 Rueckfall auf den Schluessel. Zeilen, die der
+                          ANTWORTENDE vor dem 2026-10-29 geschrieben hat,
+                          tragen einen leeren Namen — und an dieser Stelle
+                          steht, WER zugegriffen hat. Lieber ein Fingerabdruck
+                          als eine Luecke; ein erfundener Name waere schlimmer
+                          als beides. */}
                       <span className="font-medium text-gray-900 dark:text-white truncate">
-                        {entry.peer_display_name}
+                        {entry.peer_display_name || (
+                          <code className="tabular-nums text-sm">
+                            {entry.peer_pubkey.slice(0, 12)}…
+                          </code>
+                        )}
                       </span>
                       <span className="text-xs text-gray-500 dark:text-gray-400 inline-flex items-center gap-1">
                         <Clock className="w-3 h-3" aria-hidden="true" />
@@ -191,22 +236,16 @@ export default function FederationAuditPage() {
                           Stufe unterstellt. */}
                       {entry.identity_basis && (
                         <span
-                          className={
-                            entry.identity_basis === 'mapped'
-                              ? 'text-xs px-1.5 py-0.5 rounded bg-amber-100 dark:bg-amber-900/40 text-amber-800 dark:text-amber-200'
-                              : 'text-xs px-1.5 py-0.5 rounded bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300'
-                          }
-                          title={t(
-                            entry.identity_basis === 'mapped'
-                              ? 'federationAudit.basisMappedHelp'
-                              : 'federationAudit.basisPeerTierHelp',
-                          )}
+                          className={`text-xs px-1.5 py-0.5 rounded ${basisBadgeClass(
+                            entry.identity_basis,
+                          )}`}
+                          title={t(basisHelpKey(entry.identity_basis))}
                         >
-                          {t(
-                            entry.identity_basis === 'mapped'
-                              ? 'federationAudit.basisMapped'
-                              : 'federationAudit.basisPeerTier',
-                          )}
+                          {entry.identity_basis === 'mapped'
+                            ? t('federationAudit.basisMapped')
+                            : entry.identity_basis === 'peer_tier'
+                              ? t('federationAudit.basisPeerTier')
+                              : entry.identity_basis}
                         </span>
                       )}
                     </div>

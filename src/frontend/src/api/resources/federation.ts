@@ -36,8 +36,14 @@ export interface AuditEntry {
    * Gegenseite entscheidet), und Zeilen von vor dem 2026-10-29 kennen die
    * Angabe gar nicht. Wer das zusammenwirft, behauptet die engere Stufe fuer
    * Zuege, die mit voller Reichweite liefen.
+   *
+   * 🛑 `(string & {})` ist Absicht, keine Nachlaessigkeit: die Spalte ist
+   * serverseitig ein freier Text, kein Aufzaehlungstyp. Ohne diesen Zusatz
+   * hielte TypeScript eine Fallunterscheidung ueber die beiden bekannten
+   * Werte fuer vollstaendig — und ein kuenftiger dritter Wert liefe
+   * stillschweigend in den `peer_tier`-Zweig, also in die ENGERE Behauptung.
    */
-  identity_basis?: 'mapped' | 'peer_tier' | null;
+  identity_basis?: 'mapped' | 'peer_tier' | (string & {}) | null;
 }
 
 async function fetchFederationPeers(): Promise<FederationPeer[]> {

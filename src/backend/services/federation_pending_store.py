@@ -107,6 +107,15 @@ class _PendingRequest:
     #: (Rueckfall ohne Eigentuemer) und wird abgewiesen, statt still auf den
     #: weiteren Pfad zu fallen. Der Vorgabewert landet auf der sicheren Seite.
     mapped: bool = False
+
+    #: Anzeigename der Gegenstelle, fuer den Schnappschuss im Pruefprotokoll.
+    #: 🛑 Hier mitgefuehrt, nicht beim Schreiben nachgeschlagen: das Protokoll
+    #: haelt den Namen fest, der ZUM ZEITPUNKT DES ZUGRIFFS galt. Wird die
+    #: Paarung spaeter umbenannt oder widerrufen, soll die alte Zeile weiter
+    #: zeigen, wer damals gefragt hat. Vorgabe leer — eine Zeile aus einer
+    #: aelteren Fassung (rollender Deploy, Redis-Speicher) kennt das Feld
+    #: nicht, und ein erfundener Name waere schlimmer als gar keiner.
+    peer_display_name: str = ""
     status: str = STATUS_PROCESSING
     progress_label: str = PROGRESS_LABEL_RETRIEVING
     progress_count: int = 0

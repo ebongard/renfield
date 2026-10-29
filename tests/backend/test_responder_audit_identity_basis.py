@@ -31,7 +31,8 @@ from services.federation_query_responder import (
 pytestmark = [pytest.mark.unit, pytest.mark.asyncio]
 
 
-def _pending(*, mapped: bool, asker_local_user_id=None, peer_owner_id=None):
+def _pending(*, mapped: bool, asker_local_user_id=None, peer_owner_id=None,
+             peer_display_name="Nachbars Renfield"):
     return _PendingRequest(
         request_id="r1",
         asker_pubkey="aa" * 32,
@@ -42,6 +43,7 @@ def _pending(*, mapped: bool, asker_local_user_id=None, peer_owner_id=None):
         initiated_at=time.time(),
         peer_owner_id=peer_owner_id,
         mapped=mapped,
+        peer_display_name=peer_display_name,
     )
 
 
@@ -190,3 +192,49 @@ class TestTheRecordedOutcomeIsTheTruth:
         status, _, _, fehler = _classify_final(
             geschrieben.await_args.kwargs["final_item"])
         assert status == "failed" and "Zeitablauf" in fehler
+
+
+class TestTheRecordSaysWHOAccessed:
+    """🛑 Gefunden im adversarialen Durchgang am 2026-10-29: der Antwortende
+    schrieb `peer_display_name_snapshot=""` — fest. In der Pruefansicht steht
+    an genau dieser Stelle, WER zugegriffen hat; jede beantwortete Zeile war
+    dort leer. Fuer ein Protokoll, dessen Zweck „wer hat auf meine Daten
+    zugegriffen, mit welcher Reichweite" ist, fehlte damit die halbe Aussage.
+    """
+
+    @pytest.mark.asyncio
+    async def test_the_peer_name_is_recorded(self, geschrieben):
+        await _write_responder_audit(
+            _pending(mapped=True, asker_local_user_id=107), erfolg=True)
+        assert geschrieben.await_args.kwargs[
+            "peer_display_name_snapshot"] == "Nachbars Renfield"
+
+    @pytest.mark.asyncio
+    async def test_an_empty_name_is_NOT_invented(self, geschrieben):
+        """Negativkontrolle. Eine Zeile aus einer aelteren Fassung kennt das
+        Feld nicht und faellt auf den leeren Vorgabewert — der wird
+        durchgereicht, nicht durch einen erfundenen Namen ersetzt. Die
+        Ansicht zeigt dafuer den Schluessel."""
+        await _write_responder_audit(
+            _pending(mapped=True, asker_local_user_id=107, peer_display_name=""),
+            erfolg=True)
+        assert geschrieben.await_args.kwargs["peer_display_name_snapshot"] == ""
+
+    def test_the_name_survives_the_redis_round_trip(self):
+        """🛑 Der Pending-Satz geht beim Redis-Speicher durch JSON. Ein Feld,
+        das die Hin- und Rueckwandlung nicht uebersteht, waere beim rollenden
+        Deploy still leer — und der Fehler saehe aus wie der alte."""
+        from services.federation_pending_store import _from_jsonable, _to_jsonable
+
+        zurueck = _from_jsonable(_to_jsonable(
+            _pending(mapped=True, asker_local_user_id=107)))
+        assert zurueck.peer_display_name == "Nachbars Renfield"
+
+    def test_an_older_row_without_the_field_still_loads(self):
+        """Vorwaertskompatibilitaet: fehlt der Schluessel, faellt er auf die
+        Vorgabe, statt die Wandlung zu sprengen."""
+        from services.federation_pending_store import _from_jsonable, _to_jsonable
+
+        d = _to_jsonable(_pending(mapped=True, asker_local_user_id=107))
+        del d["peer_display_name"]
+        assert _from_jsonable(d).peer_display_name == ""

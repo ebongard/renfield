@@ -86,3 +86,12 @@ Zugriff. Ein Vermerk auf der Fragerseite wäre die Behauptung der Gegenseite üb
 🛑 `user_id` heisst durchgehend „die lokale Person, deren Reichweite benutzt wurde" — gemappt die verknüpfte Person,
 im Rückfall der Eigentümer der Paarung. Darum bleibt die Spalte NOT NULL; `identity_basis` ist nullable, weil
 Bestandszeilen und Frager-Zeilen es nicht WISSEN und ein Vorgabewert Unwissen als Tatsache ausgäbe.
+🛑 **Die Ansicht (`/brain/audit`) darf aus Unwissen keine Behauptung machen.** Fehlt `identity_basis`, zeigt sie
+**nichts** — nicht „als fremde Instanz“, denn das unterstellte die ENGERE Stufe für Züge mit voller Reichweite.
+Ein unbekannter dritter Wert wird **roh** angezeigt, nie in den `peer_tier`-Zweig geleitet; darum trägt der
+TypeScript-Typ `(string & {})` und `basisHelpKey()` einen dritten Zweig.
+Die FARBE ist aus demselben Grund dreiwertig (`basisBadgeClass()`): dasselbe Grau wie `peer_tier` waere die
+engere Behauptung im Bild statt im Wort, und die Farbe liest man zuerst.
+🛑 Der Antwortende fuehrt `peer_display_name` auf dem Pending-Satz MIT — ein Schnappschuss des Zeitpunkts,
+kein Nachschlagen beim Schreiben (die Paarung kann spaeter umbenannt oder widerrufen sein). Zeilen vor dem
+2026-10-29 tragen dort leer; die Ansicht faellt dann auf den Schluessel zurueck, nie auf einen Platzhalter.
