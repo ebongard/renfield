@@ -290,7 +290,22 @@ Daraus folgt eine Begriffslücke durch das ganze System: Scan-Ziele heißen nach
 
 ---
 
-# Schicht 6 — ein Hinweis-Kanal für Peer-Werkzeuge
+# Schicht 6 — ~~ein Hinweis-Kanal für Peer-Werkzeuge~~ GEMESSEN WIDERLEGT
+
+🛑 **Dieser Plan ist am 2026-10-29 durch Messung erledigt — und zwar negativ.**
+Ein Hinweis geht ungekürzt mit, kostet also dieselbe Länge wie das Aufheben der Kappung.
+Und das Aufheben kostete 7 Punkte in der Peer-Sammlung (92 % → 85 %) und brach die
+Negativkontrolle „suche nach Rechnungen" (3/3 → 0/3): eine LOKALE Suche wurde zur
+föderierten Anfrage. Ein Hinweis-Kanal hätte dasselbe getan, nur aus einer anderen Datei.
+
+Gelöst ist es stattdessen durch **`_PRESELECT_DESC_BUDGET`** — eine Grenze je Werkzeug mit
+Obergrenze auf der SUMME (+589, die gemessene Kante). Peer 92 %, Scanner 95 %, beides.
+
+Der ursprüngliche Text bleibt unten als Begründung stehen, warum der Weg verlockend aussah.
+
+---
+
+## Verworfen: ein Hinweis-Kanal für Peer-Werkzeuge
 
 *Gefunden 2026-10-29 · getrennt von Schicht 4 und 5*
 

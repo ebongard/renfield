@@ -948,6 +948,43 @@ def _record_agent_turn_metrics(context: AgentContext, last_step: AgentStep | Non
 #: Anleitung steht in der Beschreibung, und darum musste die Grenze reichen.
 _PRESELECT_DESC_CHARS = 480
 
+#: Werkzeuge, die MEHR als die Vorgabe bekommen — je Werkzeug, nicht global.
+#:
+#: 🛑 Gemessen am 2026-10-29 gegen den ECHTEN Prompt (Signatur `aa62fdb7`),
+#: zwei Fallsammlungen, je 3 Wiederholungen:
+#:
+#:     alles bei 480            Peer 92 %   Scanner 91 %
+#:     diese vier voll (+589)   Peer 92 %   Scanner 95 %   <- beides
+#:     alle neun voll (+2640)   Peer 85 %   Scanner 95 %
+#:
+#: Die volle Aufhebung brach die Negativkontrolle „suche nach Rechnungen"
+#: (3/3 -> 0/3): eine gewoehnliche LOKALE Suche wurde zur foederierten
+#: Anfrage, der Freitext haette also die Instanz verlassen. Darum keine
+#: globale Anhebung.
+#:
+#: 🛑 Und auch keine hoehere GLOBALE Zahl: um diese vier vollstaendig zu
+#: fassen, muesste sie auf 706 — das fuegte 1719 Zeichen hinzu statt 589 und
+#: schnitte fuenf der neun WEITER mitten im Satz ab. Eine Grenze je Werkzeug
+#: ist hier nicht nur feiner, sie ist die einzige Form, die den Inhalt
+#: vollstaendig bekommt und die Laenge klein haelt.
+#:
+#: Die Zahlen sind die VOLLE Laenge der jeweiligen Beschreibung. Wird ein Text
+#: laenger, schneidet sein Budget ihn wieder ab — `test_preselect_budget.py`
+#: faengt das, und die Gesamtobergrenze dort macht jede Anhebung zu einer
+#: sichtbaren Entscheidung statt zu einem stillen Zuwachs.
+#:
+#: Was bewusst NICHT hier steht: `reindex_documents` (+672),
+#: `list_unfiled_documents` (+399), `forward_attachment_to_paperless` (+385),
+#: `paperless_dedupe` (+355), `ingest_status` (+240). Ihre Enden sind ebenfalls
+#: tragend, aber die Messung zeigt keinen Gewinn (+829 statt +589 brachte
+#: 0 Punkte). Sie gehoeren redaktionell gekuerzt, nicht budgetiert.
+_PRESELECT_DESC_BUDGET: dict[str, int] = {
+    "internal.system_health": 562,
+    "internal.list_chunkless_documents": 614,
+    "internal.refile_to_paperless": 627,
+    "internal.find_duplicate_documents": 706,
+}
+
 
 def _tools_pinned_by_correction(
     corrected_intent: str | None, registry: dict,
@@ -1047,7 +1084,8 @@ def preselect_tool_line(name: str, tool) -> str:
     hint = str(getattr(tool, "hint", "") or "")
     if hint and desc.endswith(hint):
         desc = desc[: len(desc) - len(hint)].rstrip()
-    zeile = f"- {name}: {desc[:_PRESELECT_DESC_CHARS]}"
+    grenze = _PRESELECT_DESC_BUDGET.get(name, _PRESELECT_DESC_CHARS)
+    zeile = f"- {name}: {desc[:grenze]}"
     return f"{zeile} {hint}" if hint else zeile
 
 
