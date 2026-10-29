@@ -70,7 +70,7 @@ from services.atom_service import AtomService
 from services.circle_sql import PeerScope
 from utils.config import settings
 from utils.llm_client import get_embed_client
-from utils.log_safety import fehlertext_ohne_inhalt
+from utils.log_safety import error_text_without_content
 from utils.prompt_scrub import scrub_for_prompt
 
 
@@ -550,7 +550,7 @@ class SkillService:
                 # Never let the shadow log break the prompt path.
                 logger.warning(
                     "🧠 Shadow-log query failed (ignored): "
-                    f"{fehlertext_ohne_inhalt(e)}")
+                    f"{error_text_without_content(e)}")
 
         return out
 

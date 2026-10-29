@@ -1,18 +1,18 @@
-"""Die Tokenisierung der Lexikalsuche haelt Umlaute aus.
+"""Lexical tokenisation survives German umlauts.
 
-🛑 Der Anlass, am 2026-10-29: beim Umstellen meiner eigenen Kommentare auf
-ASCII habe ich die Zeichenklasse in `_significant_tokens` gleich mit
-transliteriert — aus `[A-Za-zAeOeUeaeoeuess0-9]` wurde eine Klasse, die genau
-die Buchstaben NICHT mehr matcht, fuer die sie da war. Ein blankes
-Suchen-und-Ersetzen gegen eine Datei, ohne nachzusehen, was es trifft.
+Why this file exists, 2026-10-29: while converting my own comments to ASCII I
+transliterated the character class in `_significant_tokens` along with them.
+`[A-Za-zÄÖÜäöüß0-9]` became a class that no
+longer matches the very letters it was there for -- a blanket search-and-replace
+over a file without looking at what it hits.
 
-Gefunden habe ich es beim Nachsehen, nicht durch einen Test: KEIN Test deckte
-Umlaute in dieser Funktion ab. Eine deutsche Suche nach „Mietvertrag fuer die
-Wohnung in Koeln" waere stillschweigend schlechter geworden — der Fehler haette
-keine Ausnahme geworfen, nur weniger gefunden.
+I found it by looking, not by a test: NO test covered umlauts in this function.
+A German query for "Mietvertrag fuer die Wohnung in Koeln" would have quietly
+got worse -- no exception, just fewer hits.
 
-Diese Datei schliesst die Luecke. Sie prueft die Funktion, nicht die Schreibweise
-der Zeichenklasse: wer sie umbaut, darf das, solange Umlaute weiter durchkommen.
+This file closes that gap. It tests the function's behaviour, not the spelling
+of the character class: rewrite it however you like, as long as umlauts still
+get through.
 """
 from __future__ import annotations
 
@@ -24,34 +24,38 @@ pytestmark = pytest.mark.unit
 
 
 class TestUmlautsSurviveTokenisation:
-    @pytest.mark.parametrize("wort", ["Koeln", "Köln", "Grundstück", "Straße",
-                                      "Übergabe", "Ärztin", "Öffnungszeiten"])
-    def test_a_word_with_an_umlaut_is_one_token(self, wort):
-        """🛑 Nicht nur „irgendein Token": das Wort muss GANZ durchkommen.
-        Faellt der Umlaut aus der Zeichenklasse, zerfaellt `Grundstück` in
-        `Grundst` und `ck` — beides ueberlebt die Mindestlaenge, der Test
-        bliebe also gruen, wenn er nur auf „nicht leer" prueft.
+    @pytest.mark.parametrize("word", [
+        "Koeln", "Köln", "Grundstück", "Straße", "Übergabe", "Ärztin",
+        "Öffnungszeiten",
+    ])
+    def test_a_word_with_an_umlaut_is_one_token(self, word):
+        """Not merely "some token": the word has to come through WHOLE.
 
-        🛑 Die Funktion senkt NICHT die Schreibweise — sie tut das nur fuer den
-        Stoppwort-Vergleich und gibt das Token unveraendert zurueck. Meine erste
-        Fassung behauptete `[wort.lower()]` und fiel fuer ALLE Woerter, auch
-        reines ASCII; die Erwartung war falsch, nicht der Code."""
-        assert _significant_tokens(wort) == [wort]
+        Drop the umlaut from the class and `Grundstück` splits into
+        `Grundst` and `ck` -- both clear the minimum length, so a test that
+        only checks "not empty" would stay green.
+
+        The function does NOT lower-case its output; it only lowers for the
+        stop-word comparison and returns the token unchanged. My first version
+        asserted `[word.lower()]` and failed for EVERY word, plain ASCII
+        included -- the expectation was wrong, not the code.
+        """
+        assert _significant_tokens(word) == [word]
 
     def test_a_real_german_query_keeps_every_word(self):
-        treffer = _significant_tokens("Mietvertrag für die Wohnung in Köln")
-        assert "Mietvertrag" in treffer
-        assert "Köln" in treffer, "der Umlaut darf das Wort nicht zerlegen"
-        assert "Wohnung" in treffer
+        hits = _significant_tokens("Mietvertrag für die Wohnung in Köln")
+        assert "Mietvertrag" in hits
+        assert "Köln" in hits, "the umlaut must not split the word"
+        assert "Wohnung" in hits
 
     def test_the_eszett_is_not_a_separator(self):
         assert _significant_tokens("Hauptstraße") == ["Hauptstraße"]
 
     def test_plain_ASCII_still_works(self):
-        """Negativkontrolle: die Pruefung darf nicht nur Umlaute messen."""
+        """Negative control: the check must not only measure umlauts."""
         assert _significant_tokens("rental contract") == ["rental", "contract"]
 
     def test_short_tokens_are_STILL_dropped(self):
-        """Negativkontrolle gegen eine zu weite Zeichenklasse: die
-        Mindestlaenge bleibt wirksam."""
+        """Negative control against an over-wide character class: the minimum
+        length stays in force."""
         assert "in" not in _significant_tokens("Vertrag in Köln")

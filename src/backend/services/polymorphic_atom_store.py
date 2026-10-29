@@ -21,45 +21,42 @@ ASCII query flow:
         |     +-- DocumentFactRetrieval(db).search
         |     +-- NoteRetrieval(db).search               (flaggengesteuert)
         |
-        |   🛑 NICHT parallel, und hier stand bis zum 2026-10-29 das Gegenteil.
-        |   Eine `AsyncSession` haelt EINE Verbindung; acht gleichzeitige
-        |   Abfragen darauf sind in SQLAlchemy nicht vorgesehen. Gemessen auf
-        |   echtem Postgres mit der echten Session-Fabrik, acht Abrufe a ~50 ms
-        |   REINE SQL-Zeit, drei Durchlaeufe stabil
+        |   NOT parallel, and this docstring claimed the opposite until
+        |   2026-10-29. An `AsyncSession` holds ONE connection; eight
+        |   concurrent queries on it are not supported by SQLAlchemy. Measured
+        |   against real Postgres with the project's own session factory,
+        |   eight queries at ~50 ms PURE SQL time, three runs, stable
         |   (`bin/probe-atom-store-sessions.py`):
         |
-        |       eine Session, KALT          1 von 8 geliefert    52 ms
-        |       eine Session, vorgewaermt   8 von 8             408 ms  (reihum)
-        |       je eigene Session           8 von 8              56 ms
+        |       one session, COLD           1 of 8 delivered     52 ms
+        |       one session, pre-warmed     8 of 8              408 ms  (serial)
+        |       one session per source      8 of 8               56 ms
         |
-        |   🛑 Diese Zahlen sind NICHT die Dauer in der Protokollzeile. Die
-        |   Zeile misst die ganze Fan-out, also auch die Einbettungsaufrufe
-        |   gegen Ollama/llama-server, und die beherrschen sie. „408 gegen
-        |   56 ms" wird man dort nicht wiederfinden — die Probe isoliert die
-        |   SQL-Zeit, die Zeile nicht.
+        |   These numbers are NOT the duration in the log line. The line times
+        |   the whole fan-out, embedding calls to Ollama/llama-server included,
+        |   and those dominate it. You will not find "408 vs 56 ms" there --
+        |   the probe isolates SQL time, the line does not.
         |
-        |   Der foederierte Pfad (`federation_query_responder._retrieve`) oeffnet
-        |   eine frische Session und fan-out macht sofort -> 1 von 8. Der lokale Pfad
-        |   bekommt eine warme Session aus `get_db` -> 8 von 8, aber REIHUM.
-        |   Vorwaermen ist deshalb keine Loesung: es beseitigt die Meldung,
-        |   indem es die Nebenlaeufigkeit beseitigt.
+        |   The federated path (`federation_query_responder._retrieve`) opens a
+        |   fresh session and fans out immediately -> 1 of 8. The local path
+        |   gets a warm session from `get_db` -> 8 of 8, but SERIALLY.
+        |   Pre-warming is therefore not a fix: it removes the error message by
+        |   removing the concurrency.
         |
-        |   Die Reparatur ist eine Session JE QUELLE (Regime C). Vorher muss
-        |   der Aufrufbaum jeder Quelle auf Schreibvorgaenge geprueft werden:
-        |   `MemoryRetrieval.retrieve` erhoeht `access_count` und benutzt dafuer
-        |   ausdruecklich `flush()`, nicht `commit()`, weil die Transaktion des
-        |   Aufrufers entscheiden soll — eine eigene Session kuendigte diesen
-        |   Vertrag.
+        |   The fix is one session per source (regime C). Before that, each
+        |   source's call tree needs checking for writes:
+        |   `MemoryRetrieval.retrieve` bumps `access_count` and deliberately
+        |   uses `flush()`, not `commit()`, because the caller's transaction
+        |   should decide -- a session of its own would break that contract.
         |
-        |   🛑 Wie viele Quellen einen Ausfall MELDEN koennen, ist nicht
-        |   dasselbe wie acht. `lexical_chunks`, `lexical_memories` und `note`
-        |   reichen ihre Ausnahme an die Fan-out weiter (seit 2026-10-29;
-        |   sie haben keinen Aufrufer ausserhalb). `rag` und `skill` ebenfalls.
-        |   `memory`, `document_fact` und `kg` fangen sie SELBST und geben `[]`
-        |   zurueck — sie erscheinen in der Zeile als „leer", nicht als
-        |   „abgestuerzt". Das sind die drei mit Fremdaufrufern, und die
-        |   Umstellung ist eine offene Entscheidung. Wer die Zahl aus der Zeile
-        |   deutet, muss das wissen.
+        |   How many sources CAN report a failure is not the same as eight.
+        |   `lexical_chunks`, `lexical_memories` and `note` re-raise to the
+        |   fan-out (since 2026-10-29; they have no caller outside it), and so
+        |   do `rag` and `skill`. `memory`, `document_fact` and `kg` catch it
+        |   THEMSELVES and return empty -- they show up in the line as "empty",
+        |   not as "crashed". Those are the three with external callers, and
+        |   converting them is an open decision. Anyone reading the number off
+        |   that line needs to know this.
         |
         +-- Wrap each source result list as AtomMatch[] with rank assigned.
         |
@@ -101,7 +98,7 @@ from services.atom_types import Atom, AtomMatch
 from services.circle_resolver import CircleResolver
 from services.circle_sql import PeerScope
 from utils.config import settings
-from utils.log_safety import fehlertext_ohne_inhalt
+from utils.log_safety import error_text_without_content
 
 
 class PolymorphicAtomStore:
@@ -145,14 +142,14 @@ class PolymorphicAtomStore:
         ``users.id`` — often the sole owner's). Default False → local callers
         (REST ``/api/atoms``, agent path) are byte-identical to today.
 
-        🛑 ``max_visible_tier`` IST seit 2026-10-27 der wirksame Filter — hier
-        stand bis dahin das Gegenteil („not consulted as a scalar … retained for
-        call-site compatibility"). Der Grund fuer die Untaetigkeit WAR der
-        Fehler: die Stufe kam aus einer ``CircleMembership``, die auf der
-        ENTFERNTEN Nutzerkennung keyte. Jetzt stammt sie aus der Paarung
-        (``peer_users.granted_tier``), wird zusammen mit dem Eigentuemer als
-        ``PeerScope`` weitergereicht und bildet im peer-bezogenen Zweig die
-        Bedingung ``granted_tier <= atom.circle_tier``.
+        ``max_visible_tier`` HAS been the effective filter since 2026-10-27 --
+        this docstring said the opposite until then ("not consulted as a scalar
+        ... retained for call-site compatibility"). The reason it was inert WAS
+        the bug: the tier came from a ``CircleMembership`` keyed on the REMOTE
+        user id. It now comes from the pairing (``peer_users.granted_tier``),
+        travels together with the owner as a ``PeerScope``, and forms the
+        condition ``granted_tier <= atom.circle_tier`` in the peer-scoped
+        branch.
         """
         from services.document_fact_retrieval import DocumentFactRetrieval
         from services.kg_retrieval import KGRetrieval
@@ -204,17 +201,17 @@ class PolymorphicAtomStore:
         # them a fourth source for the unified /brain search. Gated on
         # skills_enabled so the existing three-source RRF behavior is
         # unchanged for deployments that haven't opted in.
-        # Welche Quellen sind GAR NICHT befragt worden. Sie duerfen nicht als
-        # „leer" zaehlen — sonst sieht eine Instanz mit `NOTES_ENABLED=false`
-        # dauerhaft wie ein Teilausfall aus.
-        aus: set[str] = set()
+        # Which sources were not asked AT ALL. They must not count as
+        # "empty" -- otherwise an instance with `NOTES_ENABLED=false` looks
+        # like a permanent partial outage.
+        off: set[str] = set()
 
         if settings.skills_enabled:
             skill_task = SkillService(self.db).find_similar(
                 query_text, asker_id=asker_id, top_k=candidate_k, peer=peer,
             )
         else:
-            aus.add("skill")
+            off.add("skill")
 
             async def _empty():
                 return []
@@ -229,7 +226,7 @@ class PolymorphicAtomStore:
                 query_text, asker_id=asker_id, top_k=candidate_k, peer=peer,
             )
         else:
-            aus.add("note")
+            off.add("note")
 
             async def _empty_notes():
                 return []
@@ -252,21 +249,20 @@ class PolymorphicAtomStore:
             return_exceptions=True,
         )
 
-        # 🛑 Einpacken UND klassifizieren in einem Durchgang. Die Leerheit
-        # darf nicht mit `not wert` bestimmt werden: `kg` liefert bei
-        # Nichttreffer `{"entities": [], "relations": []}`, und ein Dict
-        # mit zwei Schluesseln ist WAHR. Die Zahl waere dauerhaft um eins zu
-        # hoch — gefunden im Review am 2026-10-29, und ich hatte den Fehler
-        # sogar als Erwartung in den Test geschrieben.
+        # Wrap AND classify in one pass. Emptiness must not be decided with
+        # `not value`: `kg` returns `{"entities": [], "relations": []}` when it
+        # finds nothing, and a dict with two keys is TRUTHY. The count would be
+        # permanently one too high -- found in review on 2026-10-29, and I had
+        # even written that bug into the test as the expected value.
         #
-        # Die `_wrap_*`-Helfer sind die einzige Stelle, die die Form JEDER
-        # Quelle kennt. Darum entscheiden sie die Leerheit, und hier wird nur
-        # noch die Ausnahme davor abgefangen.
+        # The `_wrap_*` helpers are the only place that knows the shape of
+        # EVERY source. So they decide emptiness, and all that happens here is
+        # catching the exception first.
         (
             rag_matches, kg_matches, memory_matches,
             lexical_chunk_matches, lexical_memory_matches, skill_matches,
             document_fact_matches, note_matches,
-        ), _ = _wrappen_und_zaehlen(
+        ), _ = _wrap_and_count(
             [
                 ("rag", rag_results, _wrap_rag_results),
                 ("kg", kg_atoms, _wrap_kg_atoms),
@@ -277,9 +273,9 @@ class PolymorphicAtomStore:
                 ("document_fact", document_fact_results, _wrap_document_fact_results),
                 ("note", note_results, _wrap_note_results),
             ],
-            ausgeschaltet=aus,
-            dauer_s=time.perf_counter() - _t0,
-            foederiert=federated,
+            disabled=off,
+            duration_s=time.perf_counter() - _t0,
+            federated=federated,
         )
 
         merged = _rrf_merge(
@@ -331,62 +327,63 @@ def _now() -> datetime:
     return datetime.now()
 
 
-def _wrappen_und_zaehlen(
-    quellen: list[tuple[str, Any, Any]],
+def _wrap_and_count(
+    sources: list[tuple[str, Any, Any]],
     *,
-    ausgeschaltet: set[str],
-    dauer_s: float,
-    foederiert: bool,
+    disabled: set[str],
+    duration_s: float,
+    federated: bool,
 ) -> tuple[list[list[AtomMatch]], tuple[list[str], list[str], list[str]]]:
-    """Jede Quelle wrappen und dabei zaehlen: geliefert / leer / abgestuerzt.
+    """Wrap every source and count as we go: delivered / empty / crashed.
 
-    Eine Zeile je Durchlauf. 🛑 Kein Inhalt — Quellenname, Anzahl, Fehlerart.
-    Keine Anfragetexte, keine Treffer.
+    One line per run. No content -- source name, counts, exception type. No
+    query text, no hits.
 
-    🛑 Die Leerheit entscheidet der EINPACKER, nicht `not wert`. Jede Quelle hat
-    ihre eigene Form, und zwei davon sind bei Nichttreffer wahr (`kg` liefert
-    ein Dict mit leeren Listen). Der Wrapper ist die einzige Stelle,
-    die alle acht Formen kennt.
+    Emptiness is decided by the WRAPPER, not by `not value`. Every source has
+    its own shape, and two of them are truthy when they found nothing (`kg`
+    returns a dict with empty lists). The wrapper is the only place that knows
+    all eight shapes.
 
-    🛑 Abgeschaltete Quellen zaehlen nicht in den Nenner. Sonst stuende bei
-    `NOTES_ENABLED=false` dauerhaft „6/8 geliefert, 2 leer", was wie ein
-    Teilausfall aussieht, obwohl zwei Quellen nie befragt wurden.
+    Disabled sources do not count towards the denominator. Otherwise an
+    instance with `NOTES_ENABLED=false` would permanently read "6/8
+    delivered, 2 empty", which looks like a partial outage even though two
+    sources were never asked.
     """
-    gewrappt: list[list[AtomMatch]] = []
-    geliefert: list[str] = []
-    leer: list[str] = []
-    abgestuerzt: list[str] = []
+    wrapped: list[list[AtomMatch]] = []
+    delivered: list[str] = []
+    empty: list[str] = []
+    crashed: list[str] = []
 
-    for name, wert, einpacker in quellen:
-        if isinstance(wert, BaseException):
-            abgestuerzt.append(name)
-            gewrappt.append([])
+    for name, value, wrapper in sources:
+        if isinstance(value, BaseException):
+            crashed.append(name)
+            wrapped.append([])
             logger.warning(
-                f"🔍 Atom-Abruf: Quelle '{name}' abgestuerzt "
-                f"({type(wert).__name__}): {fehlertext_ohne_inhalt(wert)}"
+                f"🔍 Atom retrieval: source '{name}' crashed "
+                f"({type(value).__name__}): {error_text_without_content(value)}"
             )
             continue
-        treffer = einpacker(wert)
-        gewrappt.append(treffer)
-        if name in ausgeschaltet:
+        hits = wrapper(value)
+        wrapped.append(hits)
+        if name in disabled:
             continue
-        (geliefert if treffer else leer).append(name)
+        (delivered if hits else empty).append(name)
 
-    befragt = len(quellen) - len(ausgeschaltet)
-    zeile = (
-        f"🔍 Atom-Abruf{' (foederiert)' if foederiert else ''}: "
-        f"{len(geliefert)}/{befragt} Quellen geliefert, "
-        f"{len(leer)} leer, {len(abgestuerzt)} abgestuerzt"
-        + (f", {len(ausgeschaltet)} aus" if ausgeschaltet else "")
-        + f" — Fan-out {dauer_s * 1000:.0f} ms"
+    asked = len(sources) - len(disabled)
+    line = (
+        f"🔍 Atom retrieval{' (federated)' if federated else ''}: "
+        f"{len(delivered)}/{asked} sources delivered, "
+        f"{len(empty)} empty, {len(crashed)} crashed"
+        + (f", {len(disabled)} off" if disabled else "")
+        + f" — fan-out {duration_s * 1000:.0f} ms"
     )
-    if abgestuerzt:
-        # Abgestuerzte Quellen sind keine Nebensache: die Antwort stand dann
-        # auf einem Teil des Abrufs, ohne dass es jemand sah.
-        logger.warning(f"{zeile} — abgestuerzt: {', '.join(abgestuerzt)}")
+    if crashed:
+        # A crashed source is not a footnote: the answer then rested on part
+        # of the retrieval without anyone seeing it.
+        logger.warning(f"{line} — crashed: {', '.join(crashed)}")
     else:
-        logger.info(zeile)
-    return gewrappt, (geliefert, leer, abgestuerzt)
+        logger.info(line)
+    return wrapped, (delivered, empty, crashed)
 
 
 def _wrap_rag_results(rag_results: Any) -> list[AtomMatch]:
