@@ -2149,7 +2149,8 @@
     "status": {
       "success": "Answered successfully",
       "failed": "Failed",
-      "unknown": "Unknown status (cancelled)"
+      "aborted": "Aborted",
+      "unknown": "Outcome unknown — cancelled before the far side delivered a result"
     },
     "directionAnswered": "answered",
     "basisMapped": "as you",

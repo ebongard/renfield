@@ -238,3 +238,201 @@ class TestTheRecordSaysWHOAccessed:
         d = _to_jsonable(_pending(mapped=True, asker_local_user_id=107))
         del d["peer_display_name"]
         assert _from_jsonable(d).peer_display_name == ""
+
+
+class TestACancelledAccessIsStillAnAccess:
+    """🛑 Gefunden am 2026-10-29: der Abbruchzweig von `_run_query` schrieb
+    NICHTS und warf weiter. Die FRAGERSEITE schreibt ihren Vermerk seit F4d in
+    einem `finally`, ausdruecklich fuer diesen Fall — diese Seite kam spaeter
+    und hat es nicht uebernommen. Ausgerechnet sie verzeichnet den FREMDEN
+    Zugriff auf eigene Daten.
+
+    Die datenschutzrelevante Trennlinie ist `_retrieve`: davor wurde nichts
+    gelesen, danach lagen fremde Daten im Speicher — auch ohne ausgelieferte
+    Antwort. Hinterher ist das nicht mehr rekonstruierbar.
+    """
+
+    @pytest.mark.asyncio
+    async def test_a_cancellation_AFTER_the_read_is_recorded(self, geschrieben):
+        from services.federation_query_responder import (
+            _abgebrochenen_zugriff_verzeichnen,
+        )
+
+        p = _pending(mapped=True, asker_local_user_id=107)
+        p.retrieved_count = 3
+        await _abgebrochenen_zugriff_verzeichnen(p)
+
+        k = geschrieben.await_args.kwargs
+        assert k["direction"] == "answered"
+        assert k["identity_basis"] == "mapped"
+        assert "3 Treffer" in k["final_item"]["message"]
+
+    @pytest.mark.asyncio
+    async def test_a_cancellation_BEFORE_the_read_is_recorded_TOO(self, geschrieben):
+        """Auch ein Zugriffsversuch ohne Lesevorgang gehoert ins Protokoll —
+        dieselbe Begruendung wie bei `test_a_failure_is_recorded_too`: zeigte
+        es nur die geglueckten, saehe es ruhiger aus, als es war."""
+        from services.federation_query_responder import (
+            _abgebrochenen_zugriff_verzeichnen,
+        )
+
+        p = _pending(mapped=True, asker_local_user_id=107)
+        assert p.retrieved_count is None, "Vorgabe: noch nichts gelesen"
+        await _abgebrochenen_zugriff_verzeichnen(p)
+
+        assert "keine Daten gelesen" in geschrieben.await_args.kwargs[
+            "final_item"]["message"]
+
+    @pytest.mark.asyncio
+    async def test_the_two_cases_do_NOT_collapse(self, geschrieben):
+        """🛑 Negativkontrolle. `retrieved_count = 0` heisst „gelesen, nichts
+        gefunden" und darf nicht mit `None` („nicht gelesen") zusammenfallen —
+        darum ist das Feld `int | None` und nicht `int = 0`."""
+        from services.federation_query_responder import (
+            _abgebrochenen_zugriff_verzeichnen,
+        )
+
+        p = _pending(mapped=True, asker_local_user_id=107)
+        p.retrieved_count = 0
+        await _abgebrochenen_zugriff_verzeichnen(p)
+        text_null = geschrieben.await_args.kwargs["final_item"]["message"]
+
+        geschrieben.reset_mock()
+        p.retrieved_count = None
+        await _abgebrochenen_zugriff_verzeichnen(p)
+        text_none = geschrieben.await_args.kwargs["final_item"]["message"]
+
+        assert text_null != text_none
+        assert "nach dem Abruf" in text_null
+        assert "vor dem Abruf" in text_none
+
+    @pytest.mark.asyncio
+    async def test_it_classifies_as_aborted_NOT_failed(self, geschrieben):
+        """🛑 Die Kette, nicht die Aufrufgrenze. Ein Abbruch traegt
+        `success=False` und fiele sonst in den Fehlschlag-Zweig — dort liegt
+        ein gelesener Zugriff zwischen echten Fehlschlaegen und wird beim
+        Durchsehen uebergangen."""
+        from services.federation_audit import _classify_final
+        from services.federation_query_responder import (
+            _abgebrochenen_zugriff_verzeichnen,
+        )
+
+        p = _pending(mapped=True, asker_local_user_id=107)
+        p.retrieved_count = 3
+        await _abgebrochenen_zugriff_verzeichnen(p)
+
+        status, verifiziert, auszug, fehler = _classify_final(
+            geschrieben.await_args.kwargs["final_item"])
+        assert status == "aborted"
+        assert verifiziert is False
+        assert auszug is None
+        assert "3 Treffer" in fehler
+
+    def test_a_plain_failure_is_STILL_failed(self):
+        """Negativkontrolle zum Klassierer: der neue Zweig darf den alten
+        nicht schlucken. Ohne `aborted` bleibt es ein Fehlschlag."""
+        from services.federation_audit import _classify_final
+
+        status, _, _, _ = _classify_final(
+            {"success": False, "message": "Zeitablauf"})
+        assert status == "failed"
+
+    @pytest.mark.asyncio
+    async def test_a_failing_write_does_NOT_swallow_the_cancellation(self, monkeypatch):
+        """🛑 Der Vermerk darf den Abbruch nie ueberdecken: `_run_query` muss
+        weiterhin `CancelledError` werfen, auch wenn das Schreiben scheitert."""
+        from services import federation_audit
+        from services.federation_query_responder import (
+            _abgebrochenen_zugriff_verzeichnen,
+        )
+
+        monkeypatch.setattr(
+            federation_audit, "write_federation_audit",
+            AsyncMock(side_effect=RuntimeError("Bank weg")))
+        p = _pending(mapped=True, asker_local_user_id=107)
+        p.retrieved_count = 3
+        # Kein Werfen — der Aufrufer wirft danach selbst weiter.
+        await _abgebrochenen_zugriff_verzeichnen(p)
+
+
+class TestTheCancellationBranchIsACTUALLYWired:
+    """🛑 Die Klasse darueber prueft die FUNKTION. Diese prueft, dass
+    `_run_query` sie beim Abbruch auch RUFT — genau die Lücke, die mir in
+    dieser Sitzung schon einmal nachgewiesen wurde: eine gemessene Funktion
+    und eine ungeprueefte Verwendung.
+    """
+
+    @pytest.mark.asyncio
+    async def test_cancelling_mid_retrieve_still_writes_a_row(self, monkeypatch):
+        import asyncio
+
+        from services import federation_query_responder as fqr
+
+        geschrieben = AsyncMock()
+        monkeypatch.setattr(fqr, "_abgebrochenen_zugriff_verzeichnen", geschrieben)
+
+        p = _pending(mapped=True, asker_local_user_id=107)
+        store = AsyncMock()
+        store.get = AsyncMock(return_value=p)
+        store.save = AsyncMock()
+        monkeypatch.setattr(fqr, "get_pending_store", lambda: store)
+
+        responder = fqr.FederationQueryResponder(db=AsyncMock())
+        monkeypatch.setattr(responder, "_emit_progress", AsyncMock())
+
+        losgelaufen = asyncio.Event()
+
+        async def haengender_abruf(session, pending):
+            losgelaufen.set()
+            await asyncio.sleep(3600)   # bis zum Abbruch
+
+        monkeypatch.setattr(responder, "_retrieve", haengender_abruf)
+        # Die eigene Sitzung des Hintergrundlaufs darf keine Bank anfassen.
+        monkeypatch.setattr(fqr, "AsyncSessionLocal", lambda: AsyncMock())
+
+        task = asyncio.create_task(responder._run_query(p.request_id))
+        await losgelaufen.wait()
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+        geschrieben.assert_awaited_once()
+        assert geschrieben.await_args.args[0] is p
+
+    @pytest.mark.asyncio
+    async def test_the_retrieved_count_is_set_before_synthesis(self, monkeypatch):
+        """🛑 Die Trennlinie muss GESETZT sein, bevor der naechste
+        Unterbrechungspunkt kommt. Stuende sie erst nach der Synthese, waere
+        ein Abbruch waehrend der Synthese als „nichts gelesen" verzeichnet —
+        die Beschoenigung, gegen die das Ganze geschrieben ist."""
+        import asyncio
+
+        from services import federation_query_responder as fqr
+
+        monkeypatch.setattr(fqr, "_abgebrochenen_zugriff_verzeichnen", AsyncMock())
+        p = _pending(mapped=True, asker_local_user_id=107)
+        store = AsyncMock()
+        store.get = AsyncMock(return_value=p)
+        store.save = AsyncMock()
+        monkeypatch.setattr(fqr, "get_pending_store", lambda: store)
+        monkeypatch.setattr(fqr, "AsyncSessionLocal", lambda: AsyncMock())
+
+        responder = fqr.FederationQueryResponder(db=AsyncMock())
+        monkeypatch.setattr(responder, "_emit_progress", AsyncMock())
+        monkeypatch.setattr(responder, "_retrieve", AsyncMock(return_value=[1, 2, 3]))
+
+        in_synthese = asyncio.Event()
+
+        async def haengende_synthese(frage, treffer):
+            in_synthese.set()
+            await asyncio.sleep(3600)
+
+        monkeypatch.setattr(responder, "_synthesize", haengende_synthese)
+
+        task = asyncio.create_task(responder._run_query(p.request_id))
+        await in_synthese.wait()
+        assert p.retrieved_count == 3, (
+            "zum Zeitpunkt der Synthese muss feststehen, dass gelesen wurde")
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task

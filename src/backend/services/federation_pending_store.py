@@ -116,6 +116,17 @@ class _PendingRequest:
     #: aelteren Fassung (rollender Deploy, Redis-Speicher) kennt das Feld
     #: nicht, und ein erfundener Name waere schlimmer als gar keiner.
     peer_display_name: str = ""
+
+    #: Zahl der Treffer, die `_retrieve` zurueckgegeben hat — oder `None`,
+    #: solange es nicht zurueckgekehrt ist.
+    #:
+    #: 🛑 Das ist die datenschutzrelevante Trennlinie eines ABGEBROCHENEN
+    #: Zuges, und sie laesst sich hinterher nicht rekonstruieren: vor dem
+    #: Abruf wurde nichts gelesen, danach lagen fremde Daten im Speicher —
+    #: auch wenn nie eine Antwort hinausging. `None` heisst „nicht gelesen",
+    #: `0` heisst „gelesen, nichts gefunden". Die beiden duerfen nicht
+    #: zusammenfallen; darum `int | None` und nicht `int = 0`.
+    retrieved_count: int | None = None
     status: str = STATUS_PROCESSING
     progress_label: str = PROGRESS_LABEL_RETRIEVING
     progress_count: int = 0

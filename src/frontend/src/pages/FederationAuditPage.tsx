@@ -13,6 +13,7 @@ import {
   ChevronRight,
   ShieldCheck,
   ShieldAlert,
+  CircleSlash,
 } from 'lucide-react';
 import PageHeader from '../components/PageHeader';
 import Alert from '../components/Alert';
@@ -68,6 +69,13 @@ function StatusIcon({ status, verified }: StatusIconProps) {
   }
   if (status === 'failed') {
     return <XCircle className="w-4 h-4 text-red-500 dark:text-red-400" aria-hidden="true" />;
+  }
+  // 🛑 Eigenes Zeichen, nicht das graue Fragezeichen von `unknown`. Ein
+  // Abbruch auf der Antwortseite kann bedeuten, dass fremde Daten BEREITS
+  // gelesen waren — bernstein ist nach DESIGN.md „Achtung, die noch kein
+  // Stopp ist", und genau das ist der Fall.
+  if (status === 'aborted') {
+    return <CircleSlash className="w-4 h-4 text-amber-500 dark:text-amber-400" aria-hidden="true" />;
   }
   return <HelpCircle className="w-4 h-4 text-gray-400 dark:text-gray-500" aria-hidden="true" />;
 }

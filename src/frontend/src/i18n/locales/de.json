@@ -2149,7 +2149,8 @@
     "status": {
       "success": "Erfolgreich beantwortet",
       "failed": "Fehlgeschlagen",
-      "unknown": "Status unbekannt (abgebrochen)"
+      "aborted": "Abgebrochen",
+      "unknown": "Ausgang unbekannt — abgebrochen, bevor die Gegenseite ein Ergebnis lieferte"
     },
     "directionAnswered": "beantwortet",
     "basisMapped": "als du",

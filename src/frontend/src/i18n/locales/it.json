@@ -1749,7 +1749,8 @@
     "status": {
       "success": "Risposto con successo",
       "failed": "Fallito",
-      "unknown": "Stato sconosciuto (annullato)"
+      "aborted": "Interrotto",
+      "unknown": "Esito sconosciuto — annullato prima che l'altra istanza fornisse un risultato"
     },
     "directionAnswered": "risposto",
     "basisMapped": "come te",

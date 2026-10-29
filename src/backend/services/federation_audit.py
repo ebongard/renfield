@@ -74,6 +74,19 @@ def _classify_final(final: dict[str, Any] | None) -> tuple[str, bool, str | None
             None,
         )
 
+    # 🛑 Abbruch VOR Fehlschlag pruefen. Ein abgebrochener Zug traegt
+    # `success=False` und faellt sonst in den Fehlschlag-Zweig — dort ist er
+    # falsch einsortiert: auf der Antwortseite kann ein Abbruch bedeuten, dass
+    # fremde Daten bereits gelesen waren. Ein Zugriff, der zwischen echten
+    # Fehlschlaegen liegt, wird beim Durchsehen uebergangen.
+    if final.get("aborted"):
+        return (
+            "aborted",
+            False,
+            None,
+            _truncate(final.get("message") or "Abgebrochen", MAX_ERROR_MESSAGE_LEN),
+        )
+
     # Failure path. The message carries the asker's reason text.
     msg = final.get("message") or "Unknown failure"
     return "failed", False, None, _truncate(msg, MAX_ERROR_MESSAGE_LEN)

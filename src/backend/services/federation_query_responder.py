@@ -177,6 +177,7 @@ async def _write_responder_audit(
     *,
     erfolg: bool,
     fehler: str | None = None,
+    abgebrochen: bool = False,
 ) -> None:
     """Der ANTWORTENDE haelt fest, auf welcher Identitaet er geantwortet hat.
 
@@ -224,11 +225,43 @@ async def _write_responder_audit(
         final_item=(
             {"success": True, "message": pending.answer or ""}
             if erfolg
-            else {"success": False, "message": fehler or "unbekannter Fehler"}
+            # 🛑 `aborted` ist ein eigener Status, kein `failed`: ein Abbruch
+            # NACH dem Abruf ist kein fehlgeschlagener Zugriff, sondern ein
+            # geglueckter ohne Auslieferung. Unter den Fehlschlaegen begraben
+            # saehe das Protokoll ruhiger aus, als es war.
+            else {"success": False, "aborted": abgebrochen,
+                  "message": fehler or "unbekannter Fehler"}
         ),
         direction="answered",
         identity_basis="mapped" if pending.mapped else "peer_tier",
     )
+
+
+async def _abgebrochenen_zugriff_verzeichnen(pending: _PendingRequest) -> None:
+    """Den Vermerk fuer einen abgebrochenen fremden Zugriff schreiben.
+
+    Getrennte Funktion, damit der Abbruchzweig oben lesbar bleibt und der
+    Schreibvorgang testbar ist, ohne eine Nebenlaeufigkeit nachzustellen.
+    """
+    if pending.retrieved_count is None:
+        grund = "Abgebrochen vor dem Abruf — es wurden keine Daten gelesen."
+    else:
+        grund = (
+            f"Abgebrochen nach dem Abruf — {pending.retrieved_count} Treffer "
+            "gelesen, keine Antwort ausgeliefert."
+        )
+    try:
+        # `shield`: ein ZWEITES cancel() beendet das Warten hier, nicht den
+        # Schreibvorgang selbst. Gegen einen schliessenden Ereignisring hilft
+        # nichts — dann gibt es keine Zeile, also genau das alte Verhalten.
+        await asyncio.shield(
+            _write_responder_audit(pending, erfolg=False, fehler=grund,
+                                   abgebrochen=True)
+        )
+    except asyncio.CancelledError:
+        raise
+    except Exception as e:  # pragma: no cover — darf den Abbruch nie ueberdecken
+        logger.warning(f"Federation: Abbruch-Vermerk nicht geschrieben: {e}")
 
 
 def _peer_scope_for(pending: _PendingRequest) -> PeerScope | None:
@@ -538,6 +571,10 @@ class FederationQueryResponder:
             # Fresh session scoped to this bg task only.
             async with AsyncSessionLocal() as session:
                 matches = await self._retrieve(session, pending)
+            # 🛑 Ab hier lagen fremde Daten im Speicher. Wird der Zug jetzt
+            # abgebrochen, ist das trotzdem ein Zugriff — und nur dieser
+            # Vermerk unterscheidet ihn hinterher von einem Abbruch davor.
+            pending.retrieved_count = len(matches)
 
             # Transition: synthesizing (Ollama call).
             await self._emit_progress(pending, PROGRESS_LABEL_SYNTHESIZING)
@@ -564,8 +601,25 @@ class FederationQueryResponder:
             await store.save(pending)
             await _write_responder_audit(pending, erfolg=True)
         except asyncio.CancelledError:
-            # Propagate cancellation (from _clear_state_for_tests or
-            # graceful shutdown). Don't mark failed.
+            # 🛑 Ein Abbruch ist kein Grund, den Zugriff zu verschweigen.
+            #
+            # Hier stand bis zum 2026-10-29 nur `raise`. Die FRAGERSEITE
+            # schreibt ihren Vermerk seit F4d in einem `finally`, ausdruecklich
+            # damit „cancellation, caller-side aclose(), or a consumer raising
+            # mid-iteration still produces one audit row" — diese Seite kam
+            # spaeter und hat es nicht uebernommen. Ausgerechnet sie
+            # verzeichnet aber den FREMDEN Zugriff auf eigene Daten.
+            #
+            # Der Status ist NICHT `unknown`: diese Seite weiss, wie weit sie
+            # gekommen ist. `retrieved_count` sagt, ob fremde Daten schon im
+            # Speicher lagen.
+            #
+            # Dass der Schreibvorgang im Abbruchzweig selbst abgebrochen wird,
+            # bleibt moeglich (ein zweites `cancel()`, oder der Ereignisring
+            # schliesst gerade) — dann faellt es auf das alte Verhalten
+            # zurueck, nie auf etwas Schlechteres. Darum `shield`: ein zweiter
+            # Abbruch beendet das Warten, nicht den Schreibvorgang.
+            await _abgebrochenen_zugriff_verzeichnen(pending)
             raise
         except Exception as e:
             logger.error(

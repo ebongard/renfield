@@ -342,6 +342,36 @@ describe('FederationAuditPage', () => {
     }
   });
 
+  it('nennt einen abgebrochenen Zugriff abgebrochen, nicht unbekannt', async () => {
+    // 🛑 `unknown` und `aborted` sind nicht dasselbe. Auf der Antwortseite
+    // WEISS diese Instanz, wie weit sie gekommen ist — und ob dabei fremde
+    // Daten schon gelesen waren. Das unter „Status unbekannt" zu führen wäre
+    // eine Beschönigung.
+    mockAuditResponse({
+      entries: [
+        {
+          id: '1',
+          peer_pubkey: MOM_PUBKEY,
+          peer_display_name: 'Mom',
+          query_text: 'was liegt in x-idra?',
+          initiated_at: '2026-10-29T14:43:37',
+          final_status: 'aborted',
+          error_message: 'Abgebrochen nach dem Abruf — 3 Treffer gelesen, keine Antwort ausgeliefert.',
+          direction: 'answered',
+          identity_basis: 'mapped',
+        },
+      ],
+      limit: 50, offset: 0, peer_pubkey: null,
+    });
+    renderWithRouter(<FederationAuditPage />, { route: '/brain/audit' });
+    // Aufklappen — dort steht der Status im Klartext.
+    fireEvent.click(await screen.findByText(/was liegt in x-idra/i));
+    expect(await screen.findByText('Abgebrochen')).toBeInTheDocument();
+    expect(screen.queryByText(/unbekannt/i)).not.toBeInTheDocument();
+    // Und der GRUND, der die datenschutzrelevante Hälfte trägt.
+    expect(screen.getByText(/3 Treffer gelesen/)).toBeInTheDocument();
+  });
+
   it('filters by peer when ?peer= query param is present', async () => {
     mockAuditResponse({
       entries: [
