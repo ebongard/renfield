@@ -303,8 +303,16 @@ class AgentRouter:
                         if role.federation
                     ]
                     if candidates:
+                        # Nur nach Namen, nicht nach `len(mcp_servers)` wie der
+                        # Zweig darunter: die Spezifitaetsregel dort meint „die
+                        # engste Positivliste gewinnt", und ein Peer steht in
+                        # keiner. Bei mehreren foederationsfaehigen Rollen ist
+                        # die Wahl damit willkuerlich, aber bestimmt — und nicht
+                        # von der Reihenfolge in der YAML abhaengig.
                         candidates.sort(key=lambda nr: nr[0])
                         return candidates[0][0]
+                    # Keine foederationsfaehige Rolle: faellt unten auf `None`
+                    # durch, wie jedes unbekannte Intent.
                 if not candidates:
                     return None
                 candidates.sort(key=lambda nr: (len(nr[1].mcp_servers), nr[0]))
