@@ -86,12 +86,12 @@ _OHNE_TREFFER: dict[str, object] = {
 }
 
 
-def _quellen(**über):
+def _quellen(**ueber):
     """Die acht Quellen, standardmaessig alle mit Treffer."""
     liste = []
     for name, einpacker in _EINPACKER.items():
-        if name in über:
-            wert = über[name]
+        if name in ueber:
+            wert = ueber[name]
             if wert == "leer":
                 wert = _OHNE_TREFFER.get(name, [])
         else:
@@ -100,13 +100,13 @@ def _quellen(**über):
     return liste
 
 
-def _zaehle(**über):
+def _zaehle(**ueber):
     """Nur die Zaehlung, ohne die gewrappten Treffer."""
-    aus = über.pop("aus", set())
-    dauer = über.pop("dauer_s", 0.05)
-    foed = über.pop("foederiert", False)
+    aus = ueber.pop("aus", set())
+    dauer = ueber.pop("dauer_s", 0.05)
+    foed = ueber.pop("foederiert", False)
     _, zahlen = _wrappen_und_zaehlen(
-        _quellen(**über), ausgeschaltet=aus, dauer_s=dauer, foederiert=foed)
+        _quellen(**ueber), ausgeschaltet=aus, dauer_s=dauer, foederiert=foed)
     return zahlen
 
 
@@ -117,18 +117,18 @@ class TestItTellsCrashApartFromEmpty:
     """
 
     def test_all_eight_delivering(self):
-        geliefert, leer, abgestürzt = _zaehle()
-        assert len(geliefert) == 8, f"leer={leer} abgestuerzt={abgestürzt}"
-        assert leer == [] and abgestürzt == []
+        geliefert, leer, abgestuerzt = _zaehle()
+        assert len(geliefert) == 8, f"leer={leer} abgestuerzt={abgestuerzt}"
+        assert leer == [] and abgestuerzt == []
 
     def test_an_empty_source_is_NOT_a_crash(self):
-        _, leer, abgestürzt = _zaehle(note="leer")
+        _, leer, abgestuerzt = _zaehle(note="leer")
         assert leer == ["note"]
-        assert abgestürzt == []
+        assert abgestuerzt == []
 
     def test_a_crashed_source_is_NOT_empty(self):
-        _, leer, abgestürzt = _zaehle(note=RuntimeError("kaputt"))
-        assert abgestürzt == ["note"]
+        _, leer, abgestuerzt = _zaehle(note=RuntimeError("kaputt"))
+        assert abgestuerzt == ["note"]
         assert leer == []
 
     def test_an_empty_KG_DICT_counts_as_empty(self):
@@ -136,10 +136,10 @@ class TestItTellsCrashApartFromEmpty:
         Nichttreffer `{"entities": [], "relations": []}`, und das ist WAHR —
         mit `not wert` zaehlte es als geliefert, dauerhaft eins zu hoch. Und
         meine erste Testfassung nagelte genau das als Soll fest."""
-        geliefert, leer, abgestürzt = _zaehle(kg="leer")
+        geliefert, leer, abgestuerzt = _zaehle(kg="leer")
         assert leer == ["kg"], f"geliefert={geliefert}"
         assert len(geliefert) == 7
-        assert abgestürzt == []
+        assert abgestuerzt == []
 
     def test_a_KG_WITH_hits_still_counts_as_delivered(self):
         """Negativkontrolle dazu: der Riegel darf `kg` nicht grundsaetzlich
@@ -152,9 +152,9 @@ class TestItTellsCrashApartFromEmpty:
         Fall, aber die Frage gilt fuer alle acht. Jede Quelle muss mit ihrer
         eigenen Leer-Form als leer herauskommen."""
         for name in _EINPACKER:
-            _, leer, abgestürzt = _zaehle(**{name: "leer"})
+            _, leer, abgestuerzt = _zaehle(**{name: "leer"})
             assert leer == [name], f"{name}: leer={leer}"
-            assert abgestürzt == []
+            assert abgestuerzt == []
 
 
 class TestDisabledSourcesAreNotEmptySources:
@@ -165,9 +165,9 @@ class TestDisabledSourcesAreNotEmptySources:
     """
 
     def test_a_disabled_source_is_in_NEITHER_bucket(self):
-        geliefert, leer, abgestürzt = _zaehle(note="leer", aus={"note"})
+        geliefert, leer, abgestuerzt = _zaehle(note="leer", aus={"note"})
         assert "note" not in geliefert and "note" not in leer
-        assert abgestürzt == []
+        assert abgestuerzt == []
 
     def test_the_denominator_shrinks(self):
         from loguru import logger as _l
@@ -215,17 +215,17 @@ class TestTheRealColdCase:
         kalt = InvalidRequestError(
             "This session is provisioning a new connection; "
             "concurrent operations are not permitted")
-        _, _, abgestürzt = _zaehle(
+        _, _, abgestuerzt = _zaehle(
             lexical_chunks=kalt, lexical_memories=kalt, note=kalt)
-        assert set(abgestürzt) == {"lexical_chunks", "lexical_memories", "note"}
+        assert set(abgestuerzt) == {"lexical_chunks", "lexical_memories", "note"}
 
     def test_a_still_swallowing_source_shows_up_as_empty(self):
         """Der Stand, nicht das Ziel: schluckt eine Quelle weiter, kommt sie
         als leer an. Wird das repariert, faellt dieser Test — und das ist
         dann der Anlass, die Zahl im Docstring nachzuziehen."""
-        _, leer, abgestürzt = _zaehle(memory="leer", document_fact="leer")
+        _, leer, abgestuerzt = _zaehle(memory="leer", document_fact="leer")
         assert set(leer) == {"memory", "document_fact"}
-        assert abgestürzt == []
+        assert abgestuerzt == []
 
 
 class TestTheGuardAgainstContentInTheLog:
