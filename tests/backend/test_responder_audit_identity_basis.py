@@ -145,7 +145,7 @@ class TestTheRecordedOutcomeIsTheTruth:
     def test_the_success_shape_classifies_as_success(self):
         from services.federation_audit import _classify_final
 
-        status, sig, auszug, fehler = _classify_final(
+        status, _sig, auszug, fehler = _classify_final(
             {"success": True, "message": "eine Antwort"})
         assert status == "success"
         assert auszug == "eine Antwort"
