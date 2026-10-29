@@ -2149,8 +2149,15 @@
     "status": {
       "success": "Answered successfully",
       "failed": "Failed",
-      "unknown": "Unknown status (cancelled)"
-    }
+      "aborted": "Aborted",
+      "unknown": "Outcome unknown — cancelled before the far side delivered a result"
+    },
+    "directionAnswered": "answered",
+    "basisMapped": "as you",
+    "basisMappedHelp": "Answered as the linked person — with their full own reach, not only what is shared with the paired instance.",
+    "basisPeerTier": "as a foreign instance",
+    "basisPeerTierHelp": "Answered without a person link — only with what the paired instance may see at its tier.",
+    "basisUnknownHelp": "Unknown identity basis. What was recorded is shown as is; this view makes no claim about the reach that applied."
   },
   "wissensbasis": {
     "page": {

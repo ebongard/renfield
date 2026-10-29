@@ -614,3 +614,76 @@ class TestCancellationAuditRow:
         assert audit_calls[0]["final_item"] is None
 
         reset_federation_identity_for_tests()
+
+
+# =============================================================================
+# Die Route reicht die Identitätsgrundlage durch (2026-10-29)
+# =============================================================================
+
+
+class TestTheRouteCarriesTheIdentityBasis:
+    """🛑 Die Spalten zu schreiben nützt nichts, wenn die Route sie nicht
+    weitergibt — und ein VERTAUSCHEN der beiden fiele Pydantic nicht auf,
+    solange beide Zeichenketten tragen. Darum am Feldinhalt geprüft, nicht
+    daran, dass die Antwort überhaupt entsteht.
+    """
+
+    def _zeile(self, **über):
+        basis = dict(
+            id=7,
+            direction="answered",
+            identity_basis="mapped",
+            peer_user_id=3,
+            peer_pubkey_snapshot="aa" * 32,
+            peer_display_name_snapshot="evdb",
+            query_text="was liegt in x-idra?",
+            initiated_at=datetime(2026, 10, 29, 14, 43, tzinfo=UTC),
+            finalized_at=datetime(2026, 10, 29, 14, 43, 5, tzinfo=UTC),
+            final_status="success",
+            verified_signature=True,
+            answer_excerpt="eine Antwort",
+            error_message=None,
+        )
+        basis.update(über)
+        return SimpleNamespace(**basis)
+
+    async def _aufrufen(self, zeile, monkeypatch):
+        from api.routes import federation_audit as route
+
+        monkeypatch.setattr(
+            route, "list_audit_for_user", AsyncMock(return_value=[zeile]))
+        # 🛑 limit/offset ausdrücklich: ruft man die Funktion direkt, sind die
+        # Vorgaben `Query(...)`-Objekte und landen unverändert in der Antwort.
+        antwort = await route.list_federation_audit(
+            limit=50, offset=0, peer_pubkey=None,
+            current_user=SimpleNamespace(id=1))
+        return antwort.entries[0]
+
+    @pytest.mark.asyncio
+    @pytest.mark.unit
+    async def test_both_fields_land_in_the_right_place(self, monkeypatch):
+        e = await self._aufrufen(self._zeile(), monkeypatch)
+        assert e.direction == "answered"
+        assert e.identity_basis == "mapped"
+
+    @pytest.mark.asyncio
+    @pytest.mark.unit
+    async def test_a_swap_would_be_visible(self, monkeypatch):
+        """Negativkontrolle zum Test darüber: mit getauschten Werten in der
+        ZEILE müssen auch die Felder getauscht herauskommen. Wäre die Route
+        verdrahtet statt durchreichend, blieben beide gleich."""
+        e = await self._aufrufen(
+            self._zeile(direction="asked", identity_basis="peer_tier"),
+            monkeypatch)
+        assert e.direction == "asked"
+        assert e.identity_basis == "peer_tier"
+
+    @pytest.mark.asyncio
+    @pytest.mark.unit
+    async def test_a_legacy_row_keeps_its_None(self, monkeypatch):
+        """🛑 Bestandszeilen und Frager-Zeilen tragen `None`. Die Route darf
+        daraus NICHT "peer_tier" machen — das behauptete die engere Stufe für
+        Züge, die mit voller Reichweite liefen."""
+        e = await self._aufrufen(
+            self._zeile(direction="asked", identity_basis=None), monkeypatch)
+        assert e.identity_basis is None

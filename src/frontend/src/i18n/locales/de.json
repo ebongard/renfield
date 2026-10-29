@@ -2149,8 +2149,15 @@
     "status": {
       "success": "Erfolgreich beantwortet",
       "failed": "Fehlgeschlagen",
-      "unknown": "Status unbekannt (abgebrochen)"
-    }
+      "aborted": "Abgebrochen",
+      "unknown": "Ausgang unbekannt — abgebrochen, bevor die Gegenseite ein Ergebnis lieferte"
+    },
+    "directionAnswered": "beantwortet",
+    "basisMapped": "als du",
+    "basisMappedHelp": "Beantwortet als die verknüpfte Person — mit deren voller eigener Reichweite, nicht nur mit dem für die gekoppelte Instanz Freigegebenen.",
+    "basisPeerTier": "als fremde Instanz",
+    "basisPeerTierHelp": "Beantwortet ohne Personenverknüpfung — nur mit dem, was der gekoppelten Instanz auf ihrer Stufe freigegeben ist.",
+    "basisUnknownHelp": "Unbekannte Identitätsgrundlage. Angezeigt wird, was festgehalten wurde — welche Reichweite dabei galt, sagt diese Ansicht nicht."
   },
   "wissensbasis": {
     "page": {

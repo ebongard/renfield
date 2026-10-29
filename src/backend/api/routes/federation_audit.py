@@ -35,6 +35,18 @@ class FederationAuditEntry(BaseModel):
     verified_signature: bool
     answer_excerpt: str | None
     error_message: str | None
+    #: "asked" = diese Instanz hat gefragt, "answered" = sie hat geantwortet.
+    direction: str
+    #: Auf WELCHER Identität die Antwort beruhte — "mapped" (als die
+    #: verknüpfte Person, volle eigene Reichweite) oder "peer_tier" (als
+    #: fremde Instanz, nur die gewährte Stufe).
+    #:
+    #: 🛑 `None` heißt NICHT "peer_tier", sondern „nicht festgehalten": bei
+    #: Frager-Zeilen weiß diese Instanz es nicht (die Gegenseite entscheidet),
+    #: und Bestandszeilen von vor dem 2026-10-29 kennen die Angabe gar nicht.
+    #: Die Oberfläche muss das unterscheiden, sonst behauptet sie die engere
+    #: Stufe für Züge, die in Wahrheit mit voller Reichweite liefen.
+    identity_basis: str | None
 
 
 class FederationAuditListResponse(BaseModel):
@@ -74,6 +86,8 @@ async def list_federation_audit(
     entries = [
         FederationAuditEntry(
             id=row.id,
+            direction=row.direction,
+            identity_basis=row.identity_basis,
             peer_user_id=row.peer_user_id,
             peer_pubkey=row.peer_pubkey_snapshot,
             peer_display_name=row.peer_display_name_snapshot,

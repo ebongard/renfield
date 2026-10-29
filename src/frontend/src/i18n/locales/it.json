@@ -1749,8 +1749,15 @@
     "status": {
       "success": "Risposto con successo",
       "failed": "Fallito",
-      "unknown": "Stato sconosciuto (annullato)"
-    }
+      "aborted": "Interrotto",
+      "unknown": "Esito sconosciuto — annullato prima che l'altra istanza fornisse un risultato"
+    },
+    "directionAnswered": "risposto",
+    "basisMapped": "come te",
+    "basisMappedHelp": "Risposta data come la persona collegata — con la sua piena portata, non solo con quanto è condiviso con l'istanza accoppiata.",
+    "basisPeerTier": "come istanza esterna",
+    "basisPeerTierHelp": "Risposta data senza un collegamento di persona — solo con quanto l'istanza accoppiata può vedere al suo livello.",
+    "basisUnknownHelp": "Base d'identità sconosciuta. Viene mostrato quanto è stato registrato; questa vista non afferma quale portata fosse in vigore."
   },
   "wissensbasis": {
     "page": {
