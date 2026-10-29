@@ -249,3 +249,75 @@ bei F2′ zusätzlich ein Prädikat an `MCPManager` (`mcp_client.py`, bei `get_c
   prüft der Test nur, dass Werkzeuge überhaupt ankommen.
 - Bei F1 zusätzlich: ein Eintrag `paperles*` wirkt **nicht** als Muster.
 - Die Zahl im Protokoll steigt von 33 auf 34 — die Messung, die den Befund fand.
+
+---
+
+# Schicht 5 — der Instanzname muss beim Paaren mitkommen
+
+*Gefunden 2026-10-29 beim Messen der Peer-Beschreibung · getrennt von Schicht 4*
+
+## Der Befund, gemessen
+
+Nach der Textfassung V2 trifft die Vorauswahl 36/39 (92 %, vorher 27/39). Der EINE
+verbleibende Ausfall ist genau die ursprünglich gemeldete Frage:
+
+    „Welche Dokumente sind in der x-idra instanz heute angelegt worden?"   0/3
+
+🛑 Er widersteht **drei verschiedenen** Dokumentformulierungen (V3 und V4 gemessen, beide
+92 %, kein Zugewinn). Es ist also **keine** Vokabellücke im Text. Was fehlt, ist der
+INSTANZNAME selbst — „x-idra" steht nirgends, weil:
+
+| Stelle | Befund |
+|---|---|
+| `peer_users` | trägt **keine** entfernte `INSTANCE_ID` — nur `display_name`, `pubkey`, `remote_user_id` |
+| `pairing_service` | das Angebot führt `INSTANCE_ID` **nicht** mit |
+| `remote_display_name` | ist `evdb`, also der **Personen**name der Gegenseite, nicht der Instanzname |
+
+Daraus folgt eine Begriffslücke durch das ganze System: Scan-Ziele heißen nach der INSTANZ
+(`xidra`), die Instanzgrenze sagt „liegt in xidra", die Kopplung ist nach der PERSON benannt
+(`evdb`) — und nichts verbindet beides.
+
+## Die Arbeit
+1. `INSTANCE_ID` in das Paarungsangebot und die Antwort (beide signiert — das Feld geht
+   also in den signierten Umschlag, nicht daneben).
+2. Spalte `remote_instance_id` an `peer_users`, Migration, nullable (bestehende Paarungen
+   haben sie nicht und sollen nicht brechen).
+3. Die Beschreibung nennt beides: Person UND Instanz. **Vorher und nachher messen** —
+   mehr Text kann schlechter messen, zweimal belegt.
+4. Fail-safe: fehlt die Instanzkennung (alte Paarung), bleibt die heutige Fassung.
+
+🛑 Ohne Punkt 4 wäre das eine Verschlechterung für jede bestehende Paarung.
+
+---
+
+# Schicht 6 — ein Hinweis-Kanal für Peer-Werkzeuge
+
+*Gefunden 2026-10-29 · getrennt von Schicht 4 und 5*
+
+## Der Befund
+
+Die Beschreibung eines Peer-Werkzeugs wird bei `_PRESELECT_DESC_CHARS` (480) **gekappt**.
+Der Betreiber-Hinweis aus `mcp_servers.yaml` geht danach **ungekürzt** mit — bei
+`scan_document` sind das 1760 Zeichen. Peer-Werkzeuge haben diesen Kanal **nicht**: sie
+entstehen in `peer_mcp_registry`, nicht aus der Konfiguration.
+
+Folge, heute schon spürbar: V3 wollte 499 Zeichen und wäre abgeschnitten worden — mitten im
+Scanner-Abgrenzungssatz, also genau an der Stelle, die „scanne nach x-idra" beim Scanner
+hält. Ich musste kürzen, nicht weil der Text zu lang war, sondern weil dem Peer der Kanal
+fehlt, in dem er lang sein dürfte.
+
+🛑 Dazu die Falle, die der Kappungstest jetzt bewacht: der Anzeigename kommt von der
+GEGENSEITE (`offer.display_name`) und ist nicht unter eigener Kontrolle. Ohne die Kappung auf
+40 Zeichen schiebt ein langer Name den Abgrenzungssatz über die Kante.
+
+## Die Arbeit
+1. Ein `tool_hints`-Eintrag für Peer-Werkzeuge — unter einem reservierten Schlüssel in
+   `mcp_servers.yaml` (etwa `peer:` als Pseudoserver), oder ein eigenes Feld.
+2. `peer_mcp_registry` setzt `hint` am `MCPToolInfo`, statt alles in `description` zu
+   drängen. Das Feld existiert bereits (`MCPToolInfo.hint`).
+3. Dann kann der Steuertext ohne Codeänderung justiert werden — und **muss** nach jeder
+   Justierung durch `bin/measure-preselect.py`.
+
+## Was beide Schichten NICHT sind
+Keine Voraussetzung für Stufe 3. Die 92 % reichen für die gemeldeten Formulierungen; diese
+zwei Schichten schließen den letzten Fall und machen den Text justierbar.
