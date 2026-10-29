@@ -216,7 +216,16 @@ async def _write_responder_audit(
         peer_display_name_snapshot="",
         query_text=pending.query,
         initiated_at=datetime.fromtimestamp(pending.initiated_at, tz=UTC).replace(tzinfo=None),
-        final_item={"answer": pending.answer or ""} if erfolg else None,
+        # 🛑 Die FORM zaehlt, nicht nur der Inhalt: `_classify_final` liest
+        # `final.get("success")`. Ein Satz ohne diesen Schluessel ist falsy und
+        # wuerde als „failed / Unknown failure" verzeichnet — eine geglueckte
+        # Antwort als Fehlschlag. Und `None` bedeutet dort „abgebrochen", nicht
+        # „fehlgeschlagen"; der echte Grund ginge verloren.
+        final_item=(
+            {"success": True, "message": pending.answer or ""}
+            if erfolg
+            else {"success": False, "message": fehler or "unbekannter Fehler"}
+        ),
         direction="answered",
         identity_basis="mapped" if pending.mapped else "peer_tier",
     )

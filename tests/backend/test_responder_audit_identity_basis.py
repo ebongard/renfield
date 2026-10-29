@@ -88,7 +88,10 @@ async def test_a_failure_is_recorded_too(geschrieben):
 
     k = geschrieben.await_args.kwargs
     assert k["direction"] == "answered"
-    assert k["final_item"] is None
+    # 🛑 NICHT `None`. Das bedeutet in `_classify_final` „abgebrochen" und
+    # verlöre den Grund; dieser Zug ist FEHLGESCHLAGEN, und zwar erkennbar.
+    assert k["final_item"]["success"] is False
+    assert k["final_item"]["message"] == "kaputt"
 
 
 async def test_a_record_with_NEITHER_writes_nothing(geschrieben):
@@ -123,3 +126,67 @@ def test_both_columns_exist_on_the_model():
     assert spalten["direction"].nullable is False
     assert spalten["identity_basis"].nullable is True, (
         "nullable, weil Bestandszeilen und Frager-Zeilen es NICHT wissen")
+
+
+class TestTheRecordedOutcomeIsTheTruth:
+    """🛑 Die Tests oben pruefen, WAS uebergeben wird — nicht, was daraus wird.
+
+    Genau daran ist mir im `/review` ein Fehler durchgerutscht: der
+    Erfolgspfad uebergab `{"answer": …}`, und `_classify_final` liest
+    `final.get("success")`. Ohne diesen Schluessel ist der Satz falsy, und jede
+    GEGLUECKTE Antwort waere als „failed / Unknown failure" im Protokoll
+    gelandet. Ein Pruefprotokoll, das Erfolge als Fehlschlaege verzeichnet, ist
+    schlimmer als keines.
+
+    Darum hier durch `_classify_final` hindurch gemessen, statt an der
+    Aufrufgrenze stehenzubleiben.
+    """
+
+    def test_the_success_shape_classifies_as_success(self):
+        from services.federation_audit import _classify_final
+
+        status, sig, auszug, fehler = _classify_final(
+            {"success": True, "message": "eine Antwort"})
+        assert status == "success"
+        assert auszug == "eine Antwort"
+        assert fehler is None
+
+    def test_the_failure_shape_carries_the_REAL_reason(self):
+        """Nicht `None` uebergeben: das bedeutet dort „abgebrochen", und der
+        Grund ginge verloren."""
+        from services.federation_audit import _classify_final
+
+        status, _, _, fehler = _classify_final(
+            {"success": False, "message": "Zeitablauf beim Abruf"})
+        assert status == "failed"
+        assert "Zeitablauf" in fehler
+
+    def test_the_OLD_shape_would_have_been_recorded_as_a_failure(self):
+        """🛑 Negativkontrolle, die den Fehler festnagelt, den ich gemacht
+        habe. Faellt dieser Test, ist `_classify_final` umgebaut worden — dann
+        gehoert der Erfolgspfad oben neu geprueft."""
+        from services.federation_audit import _classify_final
+
+        status, _, _, _ = _classify_final({"answer": "eine Antwort"})
+        assert status == "failed", (
+            "ohne `success`-Schluessel gilt der Satz als Fehlschlag — darum "
+            "muss der Erfolgspfad ihn setzen")
+
+    @pytest.mark.asyncio
+    async def test_the_responder_passes_the_shape_that_classifies_right(self, geschrieben):
+        """Die Kette zusammen: was der Antwortende uebergibt, muss durch
+        `_classify_final` als Erfolg bzw. Fehlschlag herauskommen."""
+        from services.federation_audit import _classify_final
+
+        p = _pending(mapped=True, asker_local_user_id=107)
+        p.answer = "eine Antwort"
+        await _write_responder_audit(p, erfolg=True)
+        status, _, auszug, _ = _classify_final(
+            geschrieben.await_args.kwargs["final_item"])
+        assert status == "success" and auszug == "eine Antwort"
+
+        geschrieben.reset_mock()
+        await _write_responder_audit(p, erfolg=False, fehler="Zeitablauf")
+        status, _, _, fehler = _classify_final(
+            geschrieben.await_args.kwargs["final_item"])
+        assert status == "failed" and "Zeitablauf" in fehler
