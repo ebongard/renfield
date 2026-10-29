@@ -95,3 +95,10 @@ engere Behauptung im Bild statt im Wort, und die Farbe liest man zuerst.
 🛑 Der Antwortende fuehrt `peer_display_name` auf dem Pending-Satz MIT — ein Schnappschuss des Zeitpunkts,
 kein Nachschlagen beim Schreiben (die Paarung kann spaeter umbenannt oder widerrufen sein). Zeilen vor dem
 2026-10-29 tragen dort leer; die Ansicht faellt dann auf den Schluessel zurueck, nie auf einen Platzhalter.
+🛑 **Ein ABGEBROCHENER Zugriff wird verzeichnet, und zwar als `aborted`, nicht als `unknown` oder `failed`.**
+Die Fragerseite schreibt ihren Vermerk in einem `finally` (`mcp_client.py`); der Antwortende hatte das bis zum
+2026-10-29 NICHT — sein `except CancelledError` warf ohne Vermerk, also verlor ausgerechnet die Seite, die den
+FREMDEN Zugriff verzeichnet, die Zeile. Die Trennlinie ist `_retrieve`: `pending.retrieved_count` ist `None`,
+solange nichts gelesen wurde, danach die Trefferzahl (`0` = gelesen, nichts gefunden — nicht dasselbe).
+Ein Abbruch NACH dem Abruf ist kein Fehlschlag, sondern ein geglückter Zugriff ohne Auslieferung; unter den
+Fehlschlägen begraben sähe das Protokoll ruhiger aus, als es war.
