@@ -27,8 +27,27 @@ data:
   FEDERATION_REQUIRE_PERSISTENT_IDENTITY: "true"
   # This instance's own reachable URL, advertised to a peer at pairing so the
   # peer's transport_config gets a usable endpoint (without it a UI pairing yields
-  # no endpoint → federation unusable). Same-cluster peers use the internal svc DNS.
-  FEDERATION_ADVERTISED_URL: "http://backend.renfield.svc.cluster.local:8000"
+  # no endpoint → federation unusable).
+  #
+  # 🛑 Dies war bis 2026-10-29 die CLUSTERINTERNE Dienstadresse
+  # (`http://backend.renfield.svc.cluster.local:8000`). Sie funktionierte nur,
+  # WEIL beide Instanzen zufaellig im selben Cluster liegen — fuer einen Peer
+  # ausserhalb des Heimnetzes gibt es sie nicht. Sie stand ausserdem als
+  # unverstaendlicher Name in der Paarungsoberflaeche, was dazu einlud, dort von
+  # Hand etwas anderes einzutragen; genau so entstand `https://renfield.loca`
+  # (Tippfehler UND falsche Richtung), und die Foederation lief ins Leere.
+  #
+  # Jetzt der Name, unter dem diese Instanz ueberall erreichbar ist. Gemessen
+  # 2026-10-29 aus dem x-idra-Pod: 200 in 14 ms, Zertifikat greifbar
+  # (`CN=renfield.local`). Die TOFU-Sondierung heftet es beim Paaren an
+  # (`pairing_service._with_tofu_fingerprint`); das Zertifikat laeuft bis 2036,
+  # der Pin ist also stabil.
+  #
+  # 🛑 VOR einem Umstieg auf Let's Encrypt: `_with_tofu_fingerprint` wird
+  # BEDINGUNGSLOS gerufen und kennt keinen Schalter. Ein ACME-Zertifikat wuerde
+  # angeheftet und der Pin braeche bei jeder Erneuerung (~60 Tage) mit
+  # „fingerprint mismatch". Anheften und ACME schliessen einander aus.
+  FEDERATION_ADVERTISED_URL: "https://renfield.local"
   # Der Name DIESER Instanz. Er muss Zeichen fuer Zeichen der `id` entsprechen,
   # unter der die Gegenstelle sie kennt — fuer den Scanner ist das die `id` in
   # dessen `targets.yaml` (dort `household` bzw. `xidra`, am 2026-10-27 in der
