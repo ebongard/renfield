@@ -662,6 +662,13 @@ class FederationQueryResponder:
             # MAPPED (F-ID-1): `peer=None` → die Anfrage laeuft ALS die
             # verknuepfte Person mit deren voller Reichweite.
             peer=_peer_scope_for(pending),
+            # 🛑 Der Pfad wird GESAGT, nicht aus `peer` geraten. Genau hier lag
+            # ein Fehler: die Protokollzeile im Atom-Store leitete ihn aus
+            # `peer is not None` ab — und `_peer_scope_for` gibt im GEMAPPTEN
+            # Fall `None` zurueck. Damit blieb der eine Lauf unmarkiert, fuer
+            # den die Markierung gebaut wurde: der kalte, auf dem die Sitzung
+            # frisch ist und sieben von acht Quellen abbrechen.
+            federated=True,
         )
 
     async def _synthesize(self, query: str, matches: list) -> str:

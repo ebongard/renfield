@@ -44,14 +44,23 @@ async def regime(name, *, warm, je_eigene_sitzung):
                                              return_exceptions=True)
     dauer = time.perf_counter() - t0
 
-    ok = [r for r in ergebnisse if not isinstance(r, Exception)]
-    fehler = [r for r in ergebnisse if isinstance(r, Exception)]
+    # 🛑 `BaseException`, nicht `Exception` — wie in der Produktionsfassung.
+    # `asyncio.CancelledError` erbt seit 3.8 von `BaseException`; mit
+    # `Exception` erschien ein ABGEBROCHENER Zweig als geliefert, und genau
+    # dieses Werkzeug hat die Zahlen 1/8, 8/8, 8/8 erzeugt.
+    ok = [r for r in ergebnisse if not isinstance(r, BaseException)]
+    fehler = [r for r in ergebnisse if isinstance(r, BaseException)]
     arten = {}
     for f in fehler:
         arten[type(f).__name__] = arten.get(type(f).__name__, 0) + 1
     print(f"{name:34}  {len(ok)}/{N} geliefert   {dauer*1000:7.0f} ms   {arten or ''}")
     if fehler:
-        print(f"{'':36}  erste Meldung: {str(fehler[0])[:180]}")
+        # 🛑 Nur die ART, nicht die Meldung. Der Docstring verspricht, die
+        # Verbindungszeichenkette nie auszugeben — und bei einem
+        # Verbindungsfehler steht Benutzer oder Wirt in der Meldung
+        # (asyncpg: `password authentication failed for user "…"`). Genau der
+        # Fall, fuer den dieses Skript gebaut ist.
+        print(f"{'':36}  erste Art: {type(fehler[0]).__name__}")
     return len(ok), dauer
 
 
