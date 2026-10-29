@@ -74,10 +74,35 @@ def _build_query_brain_tool(peer: PeerUser) -> MCPToolInfo:
         original_name=QUERY_BRAIN_TOOL_NAME,
         namespaced_name=f"mcp.{server_name}.{QUERY_BRAIN_TOOL_NAME}",
         description=(
-            f"Ask {peer.remote_display_name}'s Renfield for information "
-            f"they've chosen to share with you through circles. "
-            f"Use when the user's question is about something "
-            f"{peer.remote_display_name} would know but you don't."
+            # 🛑 Gemessen, nicht geraten (2026-10-29, `bin/measure-preselect.py`
+            # gegen den ECHTEN Prompt des Live-Zuges, Signatur `aa62fdb7`):
+            # die alte Fassung traf 27/39 (69 %), diese 36/39 (92 %).
+            #
+            # Die alte nannte nur die PERSON. „frag <jemand>s Renfield" traf
+            # damit 3/3 — das Modell erkennt das Muster, nicht den Namen, denn
+            # auch „frag Mamas renfield" traf, obwohl Mama nicht der Name ist.
+            # Was 0/3 traf, war jede Frage, die die INSTANZ nennt („was liegt
+            # in x-idra?", „weiss die andere Instanz …") oder die MEHRZAHL
+            # („suche in allen Renfields"). Diese drei sind jetzt 3/3.
+            #
+            # 🛑 Der Scanner-Satz am Ende ist kein Beiwerk: „scanne nach
+            # x-idra" nennt ein ABLAGEZIEL, keine Instanz, und muss beim
+            # Scanner bleiben. Er tut es (3/3) — aber nur, solange der Satz
+            # nicht abgeschnitten wird, siehe die Kappung des Namens unten.
+            #
+            # Was Text NICHT schafft: „Welche Dokumente sind in der x-idra
+            # instanz …" bleibt 0/3, auch mit drei verschiedenen
+            # Dokumentformulierungen (V3/V4 gemessen, beide 92 %, kein
+            # Zugewinn). Dafuer muesste der INSTANZNAME hier stehen — er ist
+            # nicht da: `peer_users` traegt keine entfernte `INSTANCE_ID`, und
+            # das Paarungsangebot fuehrt sie nicht mit. Eigener Posten.
+            f"Ask {_kurzer_name(peer.remote_display_name)}'s Renfield \u2014 "
+            f"another paired INSTANCE \u2014 for information its people chose "
+            f"to share with you through circles. Use for \u201efrag "
+            f"<jemand>s Renfield\u201c, \u201ewas liegt in <Instanz>\u201c, "
+            f"\u201edie andere Instanz\u201c and \u201ein allen Renfields "
+            f"suchen\u201c. NOT for scanning paper: in \u201escanne nach "
+            f"<Ziel>\u201c <Ziel> is a filing target, not an instance."
         ),
         input_schema={
             "type": "object",
@@ -93,6 +118,21 @@ def _build_query_brain_tool(peer: PeerUser) -> MCPToolInfo:
             "required": ["query"],
         },
     )
+
+
+#: Wie viel vom Anzeigenamen in die Beschreibung darf.
+#: 🛑 Die Beschreibung wird bei `_PRESELECT_DESC_CHARS` (480) GEKAPPT, und der
+#: Scanner-Abgrenzungssatz steht am ENDE. Ein langer Anzeigename schiebt genau
+#: ihn ueber die Kante — und dann wird aus „scanne nach x-idra" wieder eine
+#: Peer-Anfrage. Der Name kommt von der GEGENSEITE (`offer.display_name`), ist
+#: also nicht unter eigener Kontrolle. Mit dieser Kappung bleibt die Zeile
+#: unter 400 Zeichen, egal was dort steht.
+_NAME_IN_DESC_CHARS = 40
+
+
+def _kurzer_name(name: str) -> str:
+    """Der Anzeigename, gekappt — siehe `_NAME_IN_DESC_CHARS`."""
+    return name[:_NAME_IN_DESC_CHARS]
 
 
 def _build_federation_config(peer: PeerUser) -> MCPServerConfig:

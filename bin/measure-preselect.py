@@ -184,6 +184,13 @@ def main() -> int:
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--variant", action="append", required=True, metavar="LABEL=PFAD",
                    help="Prompt-Datei je Fassung; mehrfach angebbar")
+    # 🛑 `bin/preselect-cases-peer.json` liegt im Repo, damit die
+    # Foederations-Messung wiederholbar ist. Die Standardfaelle unten
+    # decken den Papier-/Suche-Zweig; die Peer-Faelle decken
+    # „frag Xs renfield" / „was liegt in <Instanz>" / „in allen
+    # renfields" samt der Negativkontrollen, an denen am 2026-10-29 die
+    # Entscheidung gegen eine globale Grenze gefallen ist:
+    #   --cases bin/preselect-cases-peer.json --tool query_brain
     p.add_argument("--cases", metavar="PFAD",
                    help="JSON-Liste [{task, expect}]; ohne Angabe die Standardfaelle")
     p.add_argument("--tool", default="scan_document",
