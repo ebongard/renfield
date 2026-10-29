@@ -174,6 +174,80 @@ describe('FederationAuditPage', () => {
     });
   });
 
+  // 🛑 Die Identitätsgrundlage entscheidet über die REICHWEITE eines Zugriffs.
+  // „als du" heißt: die Gegenseite hat mit der vollen eigenen Reichweite der
+  // verknüpften Person geantwortet, nicht nur mit dem Freigegebenen.
+  it('zeigt „als du" bei einer Antwort auf verknüpfter Identität', async () => {
+    mockAuditResponse({
+      entries: [
+        {
+          id: '1',
+          peer_pubkey: MOM_PUBKEY,
+          peer_display_name: 'Mom',
+          query_text: 'was liegt in x-idra?',
+          initiated_at: '2026-10-29T14:43:37',
+          final_status: 'success',
+          verified_signature: true,
+          direction: 'answered',
+          identity_basis: 'mapped',
+        },
+      ],
+      limit: 50, offset: 0, peer_pubkey: null,
+    });
+    renderWithRouter(<FederationAuditPage />, { route: '/brain/audit' });
+    expect(await screen.findByText(/als du/i)).toBeInTheDocument();
+    expect(screen.getByText(/beantwortet/i)).toBeInTheDocument();
+  });
+
+  it('zeigt „als fremde Instanz" im Rückfall', async () => {
+    mockAuditResponse({
+      entries: [
+        {
+          id: '1',
+          peer_pubkey: MOM_PUBKEY,
+          peer_display_name: 'Mom',
+          query_text: 'was liegt in x-idra?',
+          initiated_at: '2026-10-29T14:43:37',
+          final_status: 'success',
+          direction: 'answered',
+          identity_basis: 'peer_tier',
+        },
+      ],
+      limit: 50, offset: 0, peer_pubkey: null,
+    });
+    renderWithRouter(<FederationAuditPage />, { route: '/brain/audit' });
+    expect(await screen.findByText(/als fremde Instanz/i)).toBeInTheDocument();
+  });
+
+  // 🛑 Die wichtigste der drei. `null` heißt „nicht festgehalten", NICHT
+  // „peer_tier": bei Frager-Zeilen weiß diese Instanz es nicht, und Zeilen von
+  // vor dem 2026-10-29 kennen die Angabe gar nicht. Würde die Oberfläche hier
+  // „als fremde Instanz" zeigen, behauptete sie die ENGERE Stufe für Züge, die
+  // mit voller Reichweite liefen — die gefährlichere Richtung des Irrtums.
+  it('behauptet NICHTS, wenn die Grundlage fehlt', async () => {
+    mockAuditResponse({
+      entries: [
+        {
+          id: '1',
+          peer_pubkey: MOM_PUBKEY,
+          peer_display_name: 'Mom',
+          query_text: 'Wann ist Omas Geburtstag?',
+          initiated_at: '2026-04-22T10:15:00',
+          final_status: 'success',
+          direction: 'asked',
+        },
+      ],
+      limit: 50, offset: 0, peer_pubkey: null,
+    });
+    renderWithRouter(<FederationAuditPage />, { route: '/brain/audit' });
+    // Die Zeile ist da …
+    expect(await screen.findByText(/Omas Geburtstag/i)).toBeInTheDocument();
+    // … aber ohne jede Behauptung über die Identität.
+    expect(screen.queryByText(/als du/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/als fremde Instanz/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/beantwortet/i)).not.toBeInTheDocument();
+  });
+
   it('filters by peer when ?peer= query param is present', async () => {
     mockAuditResponse({
       entries: [
