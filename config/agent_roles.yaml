@@ -7,6 +7,9 @@
 #   description:     Bilingual description (de/en) shown to the router LLM
 #   mcp_servers:     List of MCP server names to include (null = all servers)
 #   internal_tools:  List of internal tool names to include (null = all)
+#   federation:      May this role query PAIRED PEERS? (default false)
+#                    mcp_servers cannot name them — a peer server is
+#                    `peer_<id>`, created when the pairing is made.
 #   max_steps:       Maximum agent loop steps for this role
 #   prompt_key:      Key in agent.yaml for the role-specific prompt
 #   model:           Optional per-role model override (default: AGENT_MODEL or OLLAMA_MODEL)
@@ -58,6 +61,12 @@ roles:
     # scanner: "scanne das Dokument" — the USB scanner pushes into the same
     # folder-ingest seam, so a scan is a document action, not a device action.
     mcp_servers: [paperless, email, scanner]
+    # 🛑 Die Positivliste oben kann einen gepaarten Peer NICHT nennen:
+    # er heisst `peer_<id>` und entsteht erst beim Paaren. Dieses Flag
+    # laesst ihn zu, erkannt am Transport, nicht am Namen. Ohne es hatte
+    # der fertige Foederationskanal NIE einen Aufrufer (gemessen
+    # 2026-10-29: `federation_query_log` 0 Zeilen auf beiden Instanzen).
+    federation: true
     internal_tools: [internal.knowledge_search, internal.forward_attachment_to_paperless, internal.render_table, internal.render_list, internal.ingest_status, internal.reindex_documents, internal.list_chunkless_documents, internal.list_unfiled_documents, internal.refile_to_paperless, internal.system_health, internal.reextract_paperless_metadata, internal.paperless_dedupe, internal.find_duplicate_documents]
     max_steps: 8
     prompt_key: agent_prompt_documents

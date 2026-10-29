@@ -534,6 +534,7 @@ class QueryOrchestrator:
                 tool_registry = await AgentToolRegistry.create(
                     mcp_manager=self.mcp_manager,
                     server_filter=role.mcp_servers,
+                    federation=role.federation,
                     internal_filter=role.internal_tools,
                 )
             except Exception as e:

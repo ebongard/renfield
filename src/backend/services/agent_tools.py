@@ -83,6 +83,7 @@ class AgentToolRegistry:
         self,
         mcp_manager: Optional["MCPManager"] = None,
         server_filter: list[str] | None = None,
+        federation: bool = False,
         internal_filter: list[str] | None = None,
         _init_only: bool = False,
     ):
@@ -136,7 +137,7 @@ class AgentToolRegistry:
 
         # Register MCP tools (includes HA, n8n, weather, search, etc.)
         if mcp_manager:
-            self._register_mcp_tools(mcp_manager, server_filter=server_filter)
+            self._register_mcp_tools(mcp_manager, server_filter=server_filter, federation=federation)
 
         # Is the Simba MCP configured on THIS instance? The Simba internal tools
         # (forward_attachment_to_simba / simba_commit_upload) are useless without
@@ -158,6 +159,7 @@ class AgentToolRegistry:
         cls,
         mcp_manager: Optional["MCPManager"] = None,
         server_filter: list[str] | None = None,
+        federation: bool = False,
         internal_filter: list[str] | None = None,
     ) -> "AgentToolRegistry":
         """Async constructor — builds the registry AND awaits plugin tools.
@@ -179,6 +181,7 @@ class AgentToolRegistry:
         registry = cls(
             mcp_manager=mcp_manager,
             server_filter=server_filter,
+            federation=federation,
             internal_filter=internal_filter,
             _init_only=True,
         )
@@ -236,16 +239,34 @@ class AgentToolRegistry:
             self._tools[tool.name] = tool
             logger.debug(f"Internal agent tool registered: {tool.name}")
 
-    def _register_mcp_tools(self, mcp_manager: "MCPManager", server_filter: list[str] | None = None) -> None:
+    def _register_mcp_tools(
+        self,
+        mcp_manager: "MCPManager",
+        server_filter: list[str] | None = None,
+        federation: bool = False,
+    ) -> None:
         """Register MCP tools as agent tools.
 
         Args:
             mcp_manager: MCP server manager
             server_filter: If set, only include tools from these server names. None = all.
+            federation: Admit paired-peer servers although the allowlist cannot
+                name them. 🛑 The allowlist is an EXACT match, and a peer server
+                is called `peer_<id>` — the name comes into being when the
+                pairing is made, so it cannot be written into a config that
+                exists beforehand. Measured 2026-10-29: the federation channel
+                had been fully built, paired and identity-linked, and had never
+                had a single caller (`federation_query_log` = 0 rows on both
+                instances) because `documents` lists `[paperless, email,
+                scanner]` and only `general` (`None`) ever saw the peer.
+                Default off, so a role gets the channel only by saying so.
         """
         for mcp_tool in mcp_manager.get_all_tools():
             if server_filter is not None and mcp_tool.server_name not in server_filter:
-                continue
+                # Recognised by TRANSPORT, not by name prefix — the prefix lives
+                # in `peer_mcp_registry` and would bind two files together.
+                if not (federation and mcp_manager.is_federation_server(mcp_tool.server_name)):
+                    continue
             params = {}
             schema_props = mcp_tool.input_schema.get("properties", {})
             required_params = mcp_tool.input_schema.get("required", [])

@@ -2266,6 +2266,7 @@ async def websocket_endpoint(
                     tool_registry = await AgentToolRegistry.create(
                         mcp_manager=mcp_manager,
                         server_filter=role.mcp_servers,
+                        federation=role.federation,
                         internal_filter=role.internal_tools,
                     )
                     # Per-request tool filtering seam (mirrors pre_sub_agent for

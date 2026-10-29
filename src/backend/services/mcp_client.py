@@ -3081,6 +3081,28 @@ class MCPManager:
         """Return names of all currently connected MCP servers."""
         return [name for name, state in self._servers.items() if state.connected]
 
+    def is_federation_server(self, name: str) -> bool:
+        """Is this a paired-peer server (`peer_<id>`), not a configured one?
+
+        🛑 EIN Begriff, EINE Stelle. Der Transport steht an `state.config`, nicht
+        an `MCPToolInfo` — ohne dieses Praedikat muesste jeder Aufrufer in
+        `self._servers` greifen, also in privaten Zustand. Gemessen am
+        2026-10-29: `MCPToolInfo` traegt `server_name`, `original_name`,
+        `namespaced_name`, `description`, `input_schema`, `hint` — keinen
+        Transport.
+
+        🛑 Und NICHT am Namenspraefix erkennen. `peer_` ist in
+        `peer_mcp_registry.py` definiert; ein Vergleich darauf bindet zwei
+        getrennt gepflegte Dateien aneinander und kollidiert mit einem
+        kuenftigen echten Server, der so heisst. Der Transport ist die
+        Eigenschaft, die zaehlt.
+        """
+        state = self._servers.get(name)
+        return (
+            state is not None
+            and state.config.transport == MCPTransportType.FEDERATION
+        )
+
     def get_server_examples(self) -> dict[str, dict]:
         """Return configured examples for all servers.
 
