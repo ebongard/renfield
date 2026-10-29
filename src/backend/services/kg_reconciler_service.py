@@ -678,7 +678,7 @@ class KgReconcilerService:
         SECOND INVARIANT: only TYPE-COMPATIBLE pairs take part. Folding a place
         into an organization rewrites what the entity IS. Those are counted in
         ``skipped_cross_type`` and likewise stay individually decidable. Note
-        where this bites: the review UI builds its components on primary-type
+        where this matters: the review UI builds its components on primary-type
         EQUALITY, which is transitive, so a cluster it submits can never contain
         such a pair. This bar is for the ROUTE — ``entity_ids`` is caller-supplied
         and need not come from a cluster card at all.

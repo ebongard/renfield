@@ -170,7 +170,7 @@ async def test_resave_does_not_duplicate_link_entities_with_seeded_user(
     under the real id, and mints a fresh duplicate on every save. The earlier tests
     hid this because their users table was empty (_resolve_owner_user_id(None)
     stayed None, so match+create agreed on NULL). Seed a user and the divergence
-    bites — the fix resolves the owner ONCE up front so both sides agree.
+    takes effect -- the fix resolves the owner ONCE up front so both sides agree.
     """
     from sqlalchemy import func, select
 

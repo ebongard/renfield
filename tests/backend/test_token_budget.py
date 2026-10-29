@@ -238,7 +238,7 @@ class TestConfigurableContentCaps:
         assert "z" * 12001 not in prompt
 
     @pytest.mark.unit
-    def test_budget_reduction_bites_text_results_too(self, monkeypatch):
+    def test_budget_reduction_affects_text_results_too(self, monkeypatch):
         """Pass-0 budget reduction (tool_result_budget_chars) must also cap
         TEXT results — else a text-dominated overrun is irreducible and falls
         through to the harsher history/memory passes."""

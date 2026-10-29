@@ -437,21 +437,20 @@ class SkillService:
         # to a width that misses the index entirely.
         dim = EMBEDDING_DIMENSION
 
-        # Visibility arms. Eine foederierte Anfrage (`peer`) DROPS den
-        # null-asker-Zweig UND den `user_id = :asker`-Eigentuemerzweig — beide
-        # waren Kollisionssenken, solange die Peer-Kennung eine fremde Zahl in
-        # einer lokalen Spalte war.
+        # Visibility arms. A federated request (`peer`) DROPS the null-asker
+        # arm AND the `user_id = :asker` owner arm -- both were collision sinks
+        # for as long as the peer id was a foreign number in a local column.
         #
-        # 🛑 DIESE STELLE IST EINE ZWEITE, HANDGESCHRIEBENE KOPIE des Praedikats
-        # aus `circle_sql.circles_filter_clause`. Ein Umbau dort erfasst sie
-        # NICHT. Vergisst man sie, bekommt ein Peer stillschweigend die falschen
-        # Faehigkeiten — und nichts meldet es. Beide Stellen wurden am
-        # 2026-10-27 gemeinsam von der Mitgliedschaft auf die Paarungsstufe
-        # umgestellt; `test_peer_tier_isolation.py` haelt ihren Gleichlauf fest.
+        # THIS IS A SECOND, HAND-WRITTEN COPY of the predicate in
+        # `circle_sql.circles_filter_clause`. A rewrite there does NOT reach
+        # it. Forget it and a peer silently gets the wrong skills -- with
+        # nothing reporting it. Both places were moved from membership to the
+        # pairing tier together on 2026-10-27;
+        # `test_peer_tier_isolation.py` pins down that they stay in step.
         seed_arm = "(user_id IS NULL AND source = :seed AND circle_tier = 4)"
-        # Der LOKALE Mitgliedschaftszweig bleibt unveraendert: er beschreibt eine
-        # echte Mitgliedschaft zwischen zwei lokalen Menschen und hat mit der
-        # Peer-Kollision nichts zu tun.
+        # The LOCAL membership arm is unchanged: it describes a real
+        # membership between two local people and has nothing to do with the
+        # peer collision.
         membership_arm = (
             "EXISTS ("
             "  SELECT 1 FROM circle_memberships cm"
@@ -506,7 +505,7 @@ class SkillService:
             "limit": top_k * 2,  # over-fetch then threshold-filter
         }
         if peer is not None:
-            # Nur hier, weil nur der peer-bezogene Zweig sie nennt.
+            # Only here, because only the peer-scoped arm references them.
             params["peer_owner"] = peer.owner_id
             params["peer_tier"] = peer.tier
         rows = (await self.db.execute(sql, params)).fetchall()

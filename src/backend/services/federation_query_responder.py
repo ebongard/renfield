@@ -169,45 +169,44 @@ async def _prune_expired(now: float | None = None) -> None:
 
 
 class PendingScopeError(Exception):
-    """Ein Pending-Satz, der sich nicht eindeutig deuten laesst."""
+    """A pending record that cannot be interpreted unambiguously."""
 
 
 async def _write_responder_audit(
     pending: _PendingRequest,
     *,
-    erfolg: bool,
-    fehler: str | None = None,
-    abgebrochen: bool = False,
+    success: bool,
+    error: str | None = None,
+    aborted: bool = False,
 ) -> None:
-    """Der ANTWORTENDE haelt fest, auf welcher Identitaet er geantwortet hat.
+    """The RESPONDER records which identity it answered on.
 
-    🛑 Bis 2026-10-29 schrieb nur die Fragerseite (`mcp_client.py`, ein
-    einziger Aufrufer). Die Entscheidung ueber die Identitaet faellt aber
-    HIER — und damit war nirgends festgehalten, ob eine Antwort mit der vollen
-    Reichweite der verknuepften Person oder nur auf der gewaehrten Stufe
-    zustande kam. Beim ersten erfolgreichen foederierten Zug der
-    Projektgeschichte liess sich das hinterher nicht mehr feststellen, nur
-    erschliessen: der Pending-Satz, der `mapped` traegt, liegt im
-    Arbeitsspeicher und ist nach dem Zug weg.
+    Until 2026-10-29 only the asker side wrote (`mcp_client.py`, a single
+    caller). But the identity decision is made HERE -- so nothing recorded
+    whether an answer came about with the linked person's full reach or only
+    on the granted tier. For the first successful federated query in this
+    project that could no longer be established afterwards, only inferred:
+    the pending record that carries `mapped` lives in memory and is gone once
+    the query ends.
 
-    🛑 Ein Vermerk auf der FRAGERSEITE waere kein Ersatz. Er waere die
-    Behauptung der Gegenseite ueber ihre eigene Zugriffsentscheidung; die
-    Instanz, deren Daten gelesen wurden, muss den Zugriff selbst verzeichnen.
+    A record on the ASKER side would be no substitute. It would be the far
+    side's claim about its own access decision; the instance whose data was
+    read has to record the access itself.
 
-    `user_id` bedeutet durchgehend „die lokale Person, deren Reichweite
-    benutzt wurde": gemappt die verknuepfte Person, im Rueckfall der
-    Eigentuemer der Paarung. Beide Faelle haben eine, darum bleibt die Spalte
+    `user_id` always means "the local person whose reach was used": mapped,
+    the linked person; in the fallback, the owner of the pairing. Both cases
+    have one, which is why the column stays
     NOT NULL.
 
-    Fehlschlaege beim Schreiben werden in `write_federation_audit`
-    geschluckt — ein Protokolleintrag darf eine beantwortete Anfrage nicht
+    Write failures are swallowed in `write_federation_audit` -- an audit row
+    must not take down an answered request
     nachtraeglich umwerfen.
     """
     from services.federation_audit import write_federation_audit
 
     user_id = pending.asker_local_user_id if pending.mapped else pending.peer_owner_id
     if user_id is None:
-        # Weder gemappt noch mit Eigentuemer — ein Satz aus einer aelteren
+        # Neither mapped nor with an owner -- a record from an older
         # Fassung, den `_peer_scope_for` ohnehin abweist. Nichts zu verzeichnen.
         return
     await write_federation_audit(
@@ -217,77 +216,75 @@ async def _write_responder_audit(
         peer_display_name_snapshot=pending.peer_display_name,
         query_text=pending.query,
         initiated_at=datetime.fromtimestamp(pending.initiated_at, tz=UTC).replace(tzinfo=None),
-        # 🛑 Die FORM zaehlt, nicht nur der Inhalt: `_classify_final` liest
-        # `final.get("success")`. Ein Satz ohne diesen Schluessel ist falsy und
-        # wuerde als „failed / Unknown failure" verzeichnet — eine geglueckte
-        # Antwort als Fehlschlag. Und `None` bedeutet dort „abgebrochen", nicht
-        # „fehlgeschlagen"; der echte Grund ginge verloren.
+        # The SHAPE matters, not just the content: `_classify_final` reads
+        # `final.get("success")`. A record without that key is falsy and would
+        # be logged as "failed / Unknown failure" -- a successful answer as a
+        # failure. And `None` there means "aborted", not "failed"; the real
+        # reason would be lost.
         final_item=(
             {"success": True, "message": pending.answer or ""}
-            if erfolg
-            # 🛑 `aborted` ist ein eigener Status, kein `failed`: ein Abbruch
-            # NACH dem Abruf ist kein fehlgeschlagener Zugriff, sondern ein
-            # geglueckter ohne Auslieferung. Unter den Fehlschlaegen begraben
-            # saehe das Protokoll ruhiger aus, als es war.
-            else {"success": False, "aborted": abgebrochen,
-                  "message": fehler or "unbekannter Fehler"}
+            if success
+            # `aborted` is a status of its own, not `failed`: a cancellation
+            # AFTER the retrieval is not a failed access but a successful one
+            # without delivery. Buried among the failures the log would look
+            # calmer than it was.
+            else {"success": False, "aborted": aborted,
+                  "message": error or "unbekannter Fehler"}
         ),
         direction="answered",
         identity_basis="mapped" if pending.mapped else "peer_tier",
     )
 
 
-async def _abgebrochenen_zugriff_verzeichnen(pending: _PendingRequest) -> None:
+async def _record_cancelled_access(pending: _PendingRequest) -> None:
     """Den Vermerk fuer einen abgebrochenen fremden Zugriff schreiben.
 
-    Getrennte Funktion, damit der Abbruchzweig oben lesbar bleibt und der
-    Schreibvorgang testbar ist, ohne eine Nebenlaeufigkeit nachzustellen.
+    A separate function so the cancellation branch above stays readable and
+    the write is testable without staging a race.
     """
     if pending.retrieved_count is None:
-        grund = "Abgebrochen vor dem Abruf — es wurden keine Daten gelesen."
+        reason = "Abgebrochen vor dem Abruf — es wurden keine Daten gelesen."
     else:
-        grund = (
+        reason = (
             f"Abgebrochen nach dem Abruf — {pending.retrieved_count} Treffer "
             "gelesen, keine Antwort ausgeliefert."
         )
     try:
-        # `shield`: ein ZWEITES cancel() beendet das Warten hier, nicht den
+        # `shield`: a SECOND cancel() ends the wait here, not the
         # Schreibvorgang selbst. Gegen einen schliessenden Ereignisring hilft
-        # nichts — dann gibt es keine Zeile, also genau das alte Verhalten.
+        # nothing -- then there is no row, i.e. exactly the old behaviour.
         await asyncio.shield(
-            _write_responder_audit(pending, erfolg=False, fehler=grund,
-                                   abgebrochen=True)
+            _write_responder_audit(pending, success=False, error=reason,
+                                   aborted=True)
         )
     except asyncio.CancelledError:
         raise
     except Exception as e:  # pragma: no cover — darf den Abbruch nie ueberdecken
-        logger.warning(f"Federation: Abbruch-Vermerk nicht geschrieben: {e}")
+        logger.warning(f"Federation: cancellation record not written: {e}")
 
 
 def _peer_scope_for(pending: _PendingRequest) -> PeerScope | None:
-    """Die `PeerScope` zu einem Pending-Satz — oder ein Fehlschlag.
+    """The `PeerScope` for a pending record -- or a refusal.
 
-    🛑 Hier wird NICHT geraten. Ein Satz ist entweder gemappt (`mapped=True`,
-    laeuft als die verknuepfte Person, kein Peer-Filter) oder ein Rueckfall
-    (`mapped=False`, verlangt `peer_owner_id`). Alles andere ist
-    widerspruechlich und wird abgewiesen.
+    Nothing is GUESSED here. A record is either mapped (`mapped=True`, runs as
+    the linked person, no peer filter) or a fallback (`mapped=False`, requires
+    `peer_owner_id`). Anything else is contradictory and gets refused.
 
-    Der Fall, den das abfaengt: eine Zeile aus einer AELTEREN Fassung, die
-    weder `mapped` noch `peer_owner_id` kennt. Beim Redis-Speicher ist das
-    waehrend eines rollenden Deploys der Normalfall (siehe `_from_jsonable`).
-    Sie traegt `asker_local_user_id = peer.remote_user_id` — die geliehene
-    fremde Kennung, die F-ID-3 abgeschafft hat — und saehe ohne diese Pruefung
-    aus wie ein gueltiger gemappter Satz. Unter Auth-aus faende sie dann sogar
-    die Einzelnutzer-Abkuerzung.
+    The case this catches: a row from an OLDER version that knows neither
+    `mapped` nor `peer_owner_id`. With the Redis store that is the normal case
+    during a rolling deploy (see `_from_jsonable`). It carries
+    `asker_local_user_id = peer.remote_user_id` -- the borrowed foreign id
+    that F-ID-3 abolished -- and without this check would look like a valid
+    mapped record. With auth off it would even hit the single-user shortcut.
 
-    Lieber eine abgewiesene Anfrage als eine beantwortete mit falscher Reichweite.
+    Better a refused request than an answered one with the wrong reach.
     """
     if pending.mapped:
         return None
     if pending.peer_owner_id is None:
         raise PendingScopeError(
             f"Rueckfall ohne Eigentuemer (request_id={pending.request_id}) — "
-            "vermutlich ein Satz aus einer aelteren Fassung; abgewiesen"
+            "probably a record from an older version; refused"
         )
     return PeerScope(owner_id=pending.peer_owner_id, tier=pending.max_visible_tier)
 
@@ -444,19 +441,19 @@ class FederationQueryResponder:
         if mapped_user_id is not None:
             # MAPPED — run as the local user with full circle semantics.
             asker_local_user_id = mapped_user_id
-            max_visible_tier = 0          # im gemappten Pfad nicht gelesen
+            max_visible_tier = 0          # not read on the mapped path
             peer_owner_id = None
             mapped = True
         else:
-            # FALLBACK — peer-bezogen. Die Stufe kommt seit F-ID-3 aus der
-            # PAARUNG (`peer_users.granted_tier`), nicht mehr aus einer
-            # `CircleMembership`, die auf `peer.remote_user_id` keyte.
+            # FALLBACK -- peer-scoped. Since F-ID-3 the tier comes from the
+            # PAIRING (`peer_users.granted_tier`), no longer from a
+            # `CircleMembership` keyed on `peer.remote_user_id`.
             #
-            # 🛑 `asker_local_user_id` wird hier NICHT mehr gesetzt. Es stand
-            # dort `peer.remote_user_id` — eine Zahl der GEGENSTELLE, die der
-            # Filter als lokale Person las. Im peer-bezogenen Zweig gibt es
-            # keine fragende lokale Person mehr, also auch keine Kennung, die
-            # jemand verwechseln koennte.
+            # `asker_local_user_id` is NO LONGER set here. It used to hold
+            # `peer.remote_user_id` -- a number from the FAR SIDE that the
+            # filter read as a local person. On the peer-scoped branch there is
+            # no asking local person any more, so there is no id anyone could
+            # confuse either.
             asker_local_user_id = None
             max_visible_tier = peer.granted_tier
             peer_owner_id = peer.circle_owner_id
@@ -571,9 +568,9 @@ class FederationQueryResponder:
             # Fresh session scoped to this bg task only.
             async with AsyncSessionLocal() as session:
                 matches = await self._retrieve(session, pending)
-            # 🛑 Ab hier lagen fremde Daten im Speicher. Wird der Zug jetzt
-            # abgebrochen, ist das trotzdem ein Zugriff — und nur dieser
-            # Vermerk unterscheidet ihn hinterher von einem Abbruch davor.
+            # From here on foreign data sat in memory. If the query is
+            # cancelled now that is still an access -- and only this record
+            # tells it apart afterwards from a cancellation before it.
             pending.retrieved_count = len(matches)
 
             # Transition: synthesizing (Ollama call).
@@ -599,27 +596,26 @@ class FederationQueryResponder:
             pending.progress_label = PROGRESS_LABEL_COMPLETE
             pending.status = STATUS_COMPLETE
             await store.save(pending)
-            await _write_responder_audit(pending, erfolg=True)
+            await _write_responder_audit(pending, success=True)
         except asyncio.CancelledError:
-            # 🛑 Ein Abbruch ist kein Grund, den Zugriff zu verschweigen.
+            # A cancellation is no reason to keep the access quiet.
             #
-            # Hier stand bis zum 2026-10-29 nur `raise`. Die FRAGERSEITE
-            # schreibt ihren Vermerk seit F4d in einem `finally`, ausdruecklich
-            # damit „cancellation, caller-side aclose(), or a consumer raising
-            # mid-iteration still produces one audit row" — diese Seite kam
-            # spaeter und hat es nicht uebernommen. Ausgerechnet sie
-            # verzeichnet aber den FREMDEN Zugriff auf eigene Daten.
+            # Until 2026-10-29 this was just `raise`. The ASKER side has
+            # written its record inside a `finally` since F4d, explicitly so
+            # that "cancellation, caller-side aclose(), or a consumer raising
+            # mid-iteration still produces one audit row" -- this side came
+            # later and did not adopt it. And this is the side that records a
+            # FOREIGN access to one's own data.
             #
-            # Der Status ist NICHT `unknown`: diese Seite weiss, wie weit sie
-            # gekommen ist. `retrieved_count` sagt, ob fremde Daten schon im
-            # Speicher lagen.
+            # The status is NOT `unknown`: this side knows how far it got.
+            # `retrieved_count` says whether foreign data was already in
+            # memory.
             #
-            # Dass der Schreibvorgang im Abbruchzweig selbst abgebrochen wird,
-            # bleibt moeglich (ein zweites `cancel()`, oder der Ereignisring
-            # schliesst gerade) — dann faellt es auf das alte Verhalten
-            # zurueck, nie auf etwas Schlechteres. Darum `shield`: ein zweiter
-            # Abbruch beendet das Warten, nicht den Schreibvorgang.
-            await _abgebrochenen_zugriff_verzeichnen(pending)
+            # The write inside the cancellation branch can itself be cancelled
+            # (a second `cancel()`, or the event loop closing) -- then it falls
+            # back to the old behaviour, never to anything worse. Hence
+            # `shield`: a second cancellation ends the wait, not the write.
+            await _record_cancelled_access(pending)
             raise
         except Exception as e:
             logger.error(
@@ -634,7 +630,7 @@ class FederationQueryResponder:
             pending.progress_label = PROGRESS_LABEL_FAILED
             pending.status = STATUS_FAILED
             await store.save(pending)
-            await _write_responder_audit(pending, erfolg=False, fehler=str(e))
+            await _write_responder_audit(pending, success=False, error=str(e))
 
     async def _retrieve(
         self,
@@ -654,20 +650,20 @@ class FederationQueryResponder:
             max_visible_tier=pending.max_visible_tier,
             top_k=10,
             # FALLBACK: `peer` gesetzt → peer-bezogener Filter, unabhaengig von
-            # `settings.auth_enabled`. Ohne ihn liefe eine auth-aus-Instanz in
-            # die Einzelnutzer-Abkuerzung und gaebe ihr ganzes Gehirn preis.
-            # Die Stufe stammt aus der Paarung, der Eigentuemer bindet sie an
-            # dessen Zeilen — beides zusammen, sonst saehe der Peer seine Stufe
+            # `settings.auth_enabled`. Without it an auth-off instance would
+            # hit the single-user shortcut and give away its whole brain.
+            # The tier comes from the pairing, the owner binds it to that
+            # owner's rows -- both together, or the peer would see its tier
             # bei jedem Eigentuemer.
-            # MAPPED (F-ID-1): `peer=None` → die Anfrage laeuft ALS die
-            # verknuepfte Person mit deren voller Reichweite.
+            # MAPPED (F-ID-1): `peer=None` -> the request runs AS the linked
+            # person with that person's full reach.
             peer=_peer_scope_for(pending),
-            # 🛑 Der Pfad wird GESAGT, nicht aus `peer` geraten. Genau hier lag
-            # ein Fehler: die Protokollzeile im Atom-Store leitete ihn aus
-            # `peer is not None` ab — und `_peer_scope_for` gibt im GEMAPPTEN
-            # Fall `None` zurueck. Damit blieb der eine Lauf unmarkiert, fuer
-            # den die Markierung gebaut wurde: der kalte, auf dem die Sitzung
-            # frisch ist und sieben von acht Quellen abbrechen.
+            # The path is STATED, not guessed from `peer`. There was a bug
+            # exactly here: the log line in the atom store derived it from
+            # `peer is not None` -- and `_peer_scope_for` returns `None` in the
+            # MAPPED case. So the one run the marker was built for stayed
+            # unmarked: the cold one, where the session is fresh and seven of
+            # eight sources break off.
             federated=True,
         )
 
@@ -822,15 +818,15 @@ class FederationQueryResponder:
         signed peer could also exploit this path to amplify writes;
         debouncing is a future F5 task.
         """
-        # 🛑 Die Kennung einer Paarung ist `(circle_owner_id, remote_pubkey)` —
+        # A pairing is identified by `(circle_owner_id, remote_pubkey)` --
         # so steht es im Eindeutigkeitsindex `uq_peer_users_owner_pubkey`. Hier
-        # wurde bis 2026-10-28 allein ueber den Schluessel gesucht, und zwar mit
-        # `scalar_one_or_none()`. Zwei lokale Menschen, die sich mit DERSELBEN
-        # Gegenstelle paaren, sind laut Index erlaubt — und liessen dann jede
+        # was looked up by the key alone until 2026-10-28, and with
+        # `scalar_one_or_none()`. Two local people pairing with the SAME far
+        # side are permitted by the index -- and would then make every
         # foederierte Anfrage mit `MultipleResultsFound` als 500 enden. Im
-        # Haushalt stand das am 2026-10-28 unmittelbar bevor: eine aktive Zeile
-        # fuer Konto 1 und eine widerrufene fuer Konto 2, beide mit x-idras
-        # Schluessel; ein erneutes Paaren haette die zweite wiederbelebt.
+        # the household was one step away from this on 2026-10-28: an active
+        # row for account 1 and a revoked one for account 2, both with
+        # x-idra's key; pairing again would have revived the second.
         candidates = (await self.db.execute(
             select(PeerUser).where(
                 PeerUser.remote_pubkey == asker_pubkey,
@@ -840,17 +836,17 @@ class FederationQueryResponder:
         if not candidates:
             raise FederationQueryError("Unknown or revoked peer")
         if len(candidates) > 1:
-            # 🛑 ABWEISEN, nicht waehlen. Es gaebe einen naheliegenden Ausweg —
-            # den `querier_ref` entscheiden lassen, welche Paarung gemeint ist.
-            # Der kommt aber VON DER GEGENSTELLE. Ihn bestimmen zu lassen, in
-            # wessen Kreis die Anfrage laeuft, waere dieselbe Klasse von Fehler,
-            # die F-ID-3 gerade beseitigt hat: eine fremde Angabe entscheidet
+            # REFUSE, do not pick. There is an obvious way out -- let the
+            # `querier_ref` decide which pairing is meant. But it comes FROM
+            # THE FAR SIDE. Letting it determine whose circle the request runs
+            # in would be the same class of bug F-ID-3 just removed: a foreign
+            # value decides
             # ueber lokale Reichweite.
             logger.warning(
                 f"Federation query_brain: {len(candidates)} aktive Paarungen mit "
                 f"demselben Schluessel (Eigentuemer "
                 f"{[k.circle_owner_id for k in candidates]}) — abgewiesen. "
-                f"Genau eine davon darf aktiv sein."
+                f"Exactly one of them may be active."
             )
             raise FederationQueryError("Unknown or revoked peer")
         peer = candidates[0]
@@ -865,11 +861,11 @@ class FederationQueryResponder:
             await self.db.rollback()
         return peer
 
-    # 🛑 `_resolve_asker_tier` ist am 2026-10-27 ENTFALLEN (F-ID-3). Sie suchte
-    # eine `CircleMembership` ueber `member_user_id = peer.remote_user_id` — eine
-    # fremde Zahl in einer Spalte mit Fremdschluessel auf die lokale `users.id` —
-    # und tat das mit `scalar_one_or_none()`, das bei zwei Peers unter einem
-    # Eigentuemer geworfen haette. Die Stufe kommt jetzt aus `peer.granted_tier`.
+    # `_resolve_asker_tier` was REMOVED on 2026-10-27 (F-ID-3). It looked up a
+    # `CircleMembership` via `member_user_id = peer.remote_user_id` -- a foreign
+    # number in a column with a foreign key onto the local `users.id` -- and did
+    # so with `scalar_one_or_none()`, which would have raised for two peers
+    # under one owner. The tier now comes from `peer.granted_tier`.
 
     @staticmethod
     async def _emit_progress(pending: _PendingRequest, label: str) -> None:

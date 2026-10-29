@@ -5,7 +5,7 @@ mcp.paperless.read and mutations (update_document, create_*, delete_document,
 upload_document) to mcp.paperless.write, so a read-only role can no longer
 drive a Paperless write. BACKWARD-COMPATIBLE: the broad `mcp.paperless` server
 grant still covers both, so existing search flows don't break on deploy — the
-restriction bites once a role is tightened to `mcp.paperless.read`.
+restriction takes effect once a role is tightened to `mcp.paperless.read`.
 """
 from models.permissions import has_mcp_permission
 

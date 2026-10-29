@@ -24,7 +24,7 @@ relation visibility never leaks an entity the asker cannot already see.
 Scale note: production holds ~200 entities / ~50 relations, so we load the
 accessible slice into memory and compute components/BFS in Python rather than
 leaning on recursive SQL. The corpus load is capped (``CORPUS_ENTITY_CAP``) and
-reports ``truncated`` when the cap or the cluster cap bites.
+reports ``truncated`` when the cap or the cluster cap takes effect.
 """
 
 from __future__ import annotations

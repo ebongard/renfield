@@ -12,7 +12,7 @@ ASCII query flow:
         |
         +-- Build per-asker AccessContext (dimensions + memberships) once.
         |
-        +-- Fan-out ueber ACHT Quellen (asyncio.gather), alle auf `self.db`:
+        +-- Fan-out over EIGHT sources (asyncio.gather), all on `self.db`:
         |     +-- RAGRetrieval(db).search(text, top_k=top_k*3) -> kb_chunks
         |     +-- KGRetrieval(db).get_relevant_atoms(text, asker)
         |     +-- MemoryRetrieval(db).retrieve(text, asker_id)

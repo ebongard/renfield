@@ -265,9 +265,14 @@ class TestPairingServiceTofuIntegration:
             "services.pairing_service._get_or_create_circle",
             AsyncMock(),
         )
-        monkeypatch.setattr(
-            PairingService, "_upsert_circle_membership", AsyncMock(),
-        )
+        # `_upsert_circle_membership` was REMOVED with F-ID-3 (#1420,
+        # 2026-10-27): the pairing no longer writes a `CircleMembership` with
+        # the remote user id in a column that foreign-keys onto the local
+        # `users.id`. The tier now lives on `peer_users.granted_tier`.
+        #
+        # Patching it kept raising `AttributeError` for two days -- this test
+        # was red and nobody ran it. Found on 2026-10-29 by a broad run, not by
+        # the topical ones.
 
         # Build a valid signed offer.
         now = int(time.time())
@@ -348,9 +353,6 @@ class TestPairingServiceTofuIntegration:
         monkeypatch.setattr(
             "services.pairing_service._get_or_create_circle", AsyncMock(),
         )
-        monkeypatch.setattr(
-            PairingService, "_upsert_circle_membership", AsyncMock(),
-        )
 
         nonce = "deadbeefdeadbeef" * 2
         _cache_nonce(nonce, int(time.time()) + 600, initiator_user_id=7)
@@ -427,9 +429,6 @@ class TestPairingServiceTofuIntegration:
         monkeypatch.setattr(PairingService, "_upsert_peer_user", spy_upsert)
         monkeypatch.setattr(
             "services.pairing_service._get_or_create_circle", AsyncMock(),
-        )
-        monkeypatch.setattr(
-            PairingService, "_upsert_circle_membership", AsyncMock(),
         )
 
         nonce = "cafebabecafebabe" * 2
