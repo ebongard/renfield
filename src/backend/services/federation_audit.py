@@ -88,6 +88,8 @@ async def write_federation_audit(
     query_text: str,
     initiated_at: datetime,
     final_item: dict[str, Any] | None,
+    direction: str = "asked",
+    identity_basis: str | None = None,
 ) -> None:
     """
     Write one audit row for a completed federated query.
@@ -115,6 +117,8 @@ async def write_federation_audit(
     try:
         async with AsyncSessionLocal() as session:
             row = FederationQueryLog(
+                direction=direction,
+                identity_basis=identity_basis,
                 user_id=user_id,
                 peer_user_id=peer_user_id,
                 peer_pubkey_snapshot=peer_pubkey_snapshot,

@@ -3457,6 +3457,18 @@ class FederationQueryLog(Base):
     answer_excerpt = Column(Text, nullable=True)
     # Error text on non-success paths. None on success.
     error_message = Column(Text, nullable=True)
+    # "asked" = diese Instanz hat gefragt, "answered" = sie hat geantwortet.
+    # 🛑 Bis 2026-10-29 schrieb NUR die Fragerseite (ein einziger Aufrufer in
+    # `mcp_client.py`); Bestandszeilen sind daher alle "asked" — keine Vorgabe,
+    # sondern die Wahrheit.
+    direction = Column(String(8), nullable=False, server_default="asked",
+                       default="asked")
+    # Auf WELCHER Identitaet die Antwort beruhte: "mapped" (die verknuepfte
+    # Person, volle eigene Reichweite) oder "peer_tier" (als fremde Instanz,
+    # nur die gewaehrte Stufe). 🛑 Nullable: Bestandszeilen und Frager-Zeilen
+    # WISSEN es nicht, und das soll sichtbar bleiben. Ein Vorgabewert gaebe
+    # Unwissen als Tatsache aus.
+    identity_basis = Column(String(16), nullable=True)
 
     __table_args__ = (
         # Primary list query: "my queries, newest first".
