@@ -298,20 +298,19 @@ def _clean(value: Any, cap: int) -> str:
     return (str(value).strip())[:cap] if value is not None else ""
 
 
-# 🛑 WIE GROSS DARF EINE GESCHLOSSENE LUECKE SEIN (#1368, Review-Nachtrag)
+# 🛑 HOW LARGE MAY A CLOSED GAP BE (#1368, review addendum)
 #
-# Die Reparatur war zuerst UNBEGRENZT, und das war ein Datenfehler: gemessen
-# ergab `(1,2),(30,38)` ueber 38 Seiten das Ergebnis `1-29, 30-38` — aus einem
-# zweiseitigen Brief wurde ein 29-seitiges Dokument, und 27 Seiten fremder Post
-# lagen unter dessen Titel. Das Protokoll meldete es, da waren die Seiten aber
-# schon falsch abgelegt. Eine Warnung NACH der Ablage repariert keine Ablage.
+# The repair was UNBOUNDED at first, and that was a data defect: measured,
+# `(1,2),(30,38)` over 38 pages produced `1-29, 30-38` -- a two-page letter
+# became a 29-page document, and 27 pages of somebody else's mail sat under its
+# title. The log reported it, but by then the pages were already filed wrongly.
+# A warning AFTER the filing repairs no filing.
 #
-# Gemeint waren leere Rueckseiten eines Duplex-Einzugs. Im echten Fall war jede
-# der sieben Luecken genau EINE Seite; zwei faengt zusaetzlich ein beidseitig
-# leeres Trennblatt. Darueber ist es kein Leerblatt mehr, sondern ein
-# verlorenes Dokument — und dann ist der Rueckfall "ein Dokument" richtig, denn
-# er ist sichtbar falsch, waehrend eine falsche Zuordnung wie ein geglueckter
-# Schnitt aussieht.
+# What was meant were the blank backs of a duplex feed. In the real case each
+# of the seven gaps was exactly ONE page; two additionally catches a separator
+# sheet blank on both sides. Above that it is no longer a blank sheet but a
+# lost document -- and then the fallback "one document" is right, because it is
+# visibly wrong, whereas a wrong assignment looks like a successful cut.
 _MAX_ABSORBED_GAP = 2
 
 
@@ -323,48 +322,45 @@ def validate_boundaries(
     Returns None when the payload cannot be salvaged (caller falls back to a
     single-document verdict).
 
-    🛑 EINE LUECKE WIRD REPARIERT, NIE EINE UEBERLAPPUNG (#1368)
-    ============================================================
-    Ein duplex eingezogener Posteingang (38 Seiten, Dokument 460, 2026-10-04)
-    blieb ungeschnitten, obwohl das Modell neun Dokumente korrekt erkannt hatte:
-    es liess die leeren Rueckseiten (6, 12, 18, 20, 30, 34, 38) einfach weg.
-    Die frueher exakte Pruefung verwarf daran ALLE NEUN Grenzen und fiel auf
-    "ein Dokument" zurueck. Bei einem Duplex-Stapel ist das der Normalfall,
-    nicht die Ausnahme.
+    🛑 A GAP IS REPAIRED, NEVER AN OVERLAP (#1368)
+    ==============================================
+    An inbox fed in duplex (38 pages, document 460, 2026-10-04) stayed uncut
+    although the model had correctly recognised nine documents: it simply left
+    the blank backs out (6, 12, 18, 20, 30, 34, 38). The previously exact check
+    discarded ALL NINE boundaries over that and fell back to "one document".
+    With a duplex stack that is the normal case, not the exception.
 
-    🛑 Der Prompt ist NICHT die Ursache und wurde deshalb nicht angefasst. Er
-    sagt es bereits wortwoertlich (`prompts/pdf_split.yaml`, de UND en): eine
-    "[leere Seite]" ist "NIE eine Dokumentgrenze und NIE ein eigenes Dokument;
-    sie gehoeren zum vorhergehenden Dokument", und die Bereiche muessen
-    "lueckenlos, ueberlappungsfrei und aufsteigend" abdecken. Das Modell haelt
-    sich nicht daran. Eine weitere Verschaerfung waere eine Hoffnung, keine
-    Reparatur.
+    🛑 The prompt is NOT the cause and was therefore not touched. It already
+    says so word for word (`prompts/pdf_split.yaml`, de AND en): a
+    "[leere Seite]" is "NIE eine Dokumentgrenze und NIE ein eigenes Dokument;
+    sie gehoeren zum vorhergehenden Dokument", and the ranges have to cover
+    "lueckenlos, ueberlappungsfrei und aufsteigend". The model does not comply.
+    Tightening it further would be a hope, not a repair.
 
-    Die Luecke wird darum GENAU SO geschlossen, wie der Prompt es vorschreibt:
-    uebersprungene Seiten fallen an das VORANGEHENDE Dokument. Das ist kein
-    Raten, sondern das Anwenden der dokumentierten Regel.
+    The gap is therefore closed EXACTLY as the prompt prescribes: skipped pages
+    fall to the PRECEDING document. That is not guessing, it is applying the
+    documented rule.
 
-    Was NICHT repariert wird:
-    * **Eine Luecke ueber `_MAX_ABSORBED_GAP` Seiten** — das ist kein Leerblatt
-      mehr, sondern ein verlorenes Dokument. Siehe die Begruendung dort.
-    * **Ueberlappungen** (`s < expected_start`) — ein echter Widerspruch; welche
-      Seite zu welchem Dokument gehoert, ist dann nicht mehr bestimmt.
-    * **Ein fehlender Kopf** (erstes Stueck beginnt nach `start_page`) — es gibt
-      kein vorangehendes Dokument, dem die Seiten zufallen koennten.
-    Beides bleibt ein Grund zum Verwerfen.
+    What is NOT repaired:
+    * **A gap over `_MAX_ABSORBED_GAP` pages** -- that is no longer a blank
+      sheet but a lost document. See the reasoning there.
+    * **Overlaps** (`s < expected_start`) -- a real contradiction; which page
+      belongs to which document is then no longer determined.
+    * **A missing head** (the first piece starts after `start_page`) -- there is
+      no preceding document the pages could fall to.
+    Both remain a reason to discard.
 
-    🛑 `absorb_gaps` IST OPT-IN, UND ZWAR AUS EINEM GRUND
-    ====================================================
-    Nur der MODELL-Pfad (`detect_boundaries`) repariert. Die Freigabe durch den
-    MENSCHEN (`pdf_split_proposals`, `/api/pdf-split`) bleibt streng: wer
-    Bereiche von Hand einreicht, soll ein **422** sehen und seinen Fehler
-    korrigieren, nicht eine stille Reparatur bekommen. Ein erster Entwurf
-    aenderte den gemeinsamen Pruefer fuer alle Aufrufer — `test_approve_non_
-    covering_ranges_is_422` fiel darueber, zu Recht.
+    🛑 `absorb_gaps` IS OPT-IN, AND FOR A REASON
+    ============================================
+    Only the MODEL path (`detect_boundaries`) repairs. Approval by a HUMAN
+    (`pdf_split_proposals`, `/api/pdf-split`) stays strict: whoever submits
+    ranges by hand should see a **422** and correct their mistake, not get a
+    silent repair. A first draft changed the shared checker for all callers --
+    `test_approve_non_covering_ranges_is_422` tripped over that, rightly.
 
-    Jede Reparatur wird PROTOKOLLIERT. Eine stille Reparatur verbirgt, dass das
-    Modell die Anweisung missachtet — und genau diese Zahl braucht man, um den
-    Prompt je zu beurteilen.
+    Every repair is LOGGED. A silent repair hides that the model disregards the
+    instruction -- and that number is exactly what one needs to ever judge the
+    prompt.
     """
     if not isinstance(raw, dict):
         return None
@@ -384,8 +380,8 @@ def validate_boundaries(
         except (TypeError, ValueError):
             return None
         if absorb_gaps and s > expected_start and pieces:
-            # Luecke: die uebersprungenen Seiten fallen an das vorangehende
-            # Dokument — dieselbe Regel, die der Prompt dem Modell gibt.
+            # Gap: the skipped pages fall to the preceding document -- the
+            # same rule the prompt gives the model.
             luecke = s - expected_start
             if luecke > _MAX_ABSORBED_GAP:
                 logger.warning(
@@ -419,7 +415,7 @@ def validate_boundaries(
     if expected_start != end_page + 1:
         if not absorb_gaps or not pieces:
             return None  # coverage gap at the tail
-        # Luecke am Ende: dieselbe Grenze wie in der Mitte.
+        # Gap at the tail: the same limit as in the middle.
         luecke = end_page + 1 - expected_start
         if luecke > _MAX_ABSORBED_GAP:
             logger.warning(

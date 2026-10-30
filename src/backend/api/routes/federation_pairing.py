@@ -234,7 +234,7 @@ async def accept_pair_offer(
             accepted_endpoints=await _resolve_advertised_endpoints(body.accepted_endpoints),
         )
     except AlreadyPairedElsewhere as e:
-        # 🛑 VOR dem uniformen Fang: lokaler Zustand, kein kryptografischer
+        # 🛑 BEFORE the uniform catch: local state, not a cryptographic
         # finding. Kept opaque it sends the person to the wrong place.
         logger.warning(f"Pairing accept refused for user {current_user.id}: {e}")
         raise HTTPException(status_code=409, detail=str(e)) from e

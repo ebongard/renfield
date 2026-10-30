@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Renfield Debug Script
-# Zeigt Status und Logs aller Container
+# Shows the status and logs of every container
 
 # Change to project root directory
 cd "$(dirname "$0")/.."
@@ -33,7 +33,7 @@ echo "-----------------------------------"
 docker-compose logs --tail=20 ollama
 echo ""
 
-# Netzwerk prüfen
+# Check the network
 echo "🌐 Netzwerk-Ports:"
 echo "-----------------------------------"
 docker-compose ps | grep -E "PORTS|frontend|backend"

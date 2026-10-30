@@ -1,24 +1,24 @@
 #!/usr/bin/env python3
 """
-Renfield Bulk Import — klassifiziert Dokumente nach Dateiname oder Adressat
-und lädt sie in die richtige Wissensdatenbank hoch.
+Renfield bulk import -- classifies documents by file name or addressee and
+uploads them into the right knowledge base.
 
-Verwendung:
+Usage:
     python bin/bulk_import.py --dir ~/Downloads/Docs
     python bin/bulk_import.py --dir ~/Downloads/Docs --dry-run
     python bin/bulk_import.py --dir ~/Downloads/Docs --config config/import_rules.yaml
     python bin/bulk_import.py --dir ~/Downloads/Docs --base-url https://renfield.local
-    python bin/bulk_import.py --dir ~/Downloads/Docs --verify-ssl   # erzwingt SSL-Verifikation
+    python bin/bulk_import.py --dir ~/Downloads/Docs --verify-ssl   # forces SSL verification
 
-Klassifizierungsreihenfolge:
-    1. Dateiname: enthält ein konfigurables Schlüsselwort (z.B. PERSONAL / WORK)
-    2. Adressat:  Text der 1. Seite (PDF) auf konfigurierte Regex-Muster prüfen
-    3. Fallback:  unclassified — wird separat gemeldet (kein Upload)
+Order of classification:
+    1. File name: contains a configurable keyword (e.g. PERSONAL / WORK)
+    2. Addressee: check the text of page 1 (PDF) against configured regexes
+    3. Fallback:  unclassified -- reported separately (no upload)
 
-Die eingebauten Default-Regeln sind nur Platzhalter. Für echten Gebrauch eine
-`config/import_rules.yaml` anlegen (siehe `config/import_rules.example.yaml`).
+The built-in default rules are placeholders only. For real use create a
+`config/import_rules.yaml` (see `config/import_rules.example.yaml`).
 
-Duplikate (HTTP 409) werden als "bereits importiert" gewertet, nicht als Fehler.
+Duplicates (HTTP 409) count as "already imported", not as an error.
 """
 
 from __future__ import annotations
@@ -41,25 +41,25 @@ except ImportError:
     sys.exit("httpx nicht installiert. Bitte: pip install httpx")
 
 # ---------------------------------------------------------------------------
-# Standardkonfiguration (kann per --config überschrieben werden)
+# Default configuration (can be overridden with --config)
 # ---------------------------------------------------------------------------
 
 DEFAULT_CONFIG: dict = {
-    # Platzhalter-Defaults — für echten Gebrauch eine eigene
-    # `config/import_rules.yaml` anlegen (siehe `config/import_rules.example.yaml`).
+    # Placeholder defaults -- for real use create your own
+    # `config/import_rules.yaml` (see `config/import_rules.example.yaml`).
     #
-    # Groß-/Kleinschreibung wird ignoriert; Reihenfolge bestimmt Priorität.
+    # Case is ignored; the order determines the priority.
     "filename_patterns": {
         "PERSONAL": "personal",
         "WORK": "work",
         "FINANCE": "finance",
     },
-    # Regex gegen den extrahierten Text der 1. Seite (nur PDF).
-    # Leer per Default — Nutzer definieren eigene Muster in der Config-Datei.
+    # Regexes against the extracted text of page 1 (PDF only).
+    # Empty by default -- users define their own patterns in the config file.
     "addressee_patterns": {},
-    # KB-Name für nicht klassifizierte Dateien (None = überspringen, nur melden).
+    # KB name for unclassified files (None = skip, report only).
     "fallback_kb": None,
-    # PDFs größer als dieser Wert (in KB) bekommen automatisch force_ocr=true.
+    # PDFs larger than this value (in KB) automatically get force_ocr=true.
     "ocr_size_threshold_kb": 500,
 }
 
@@ -69,7 +69,7 @@ SUPPORTED_EXTENSIONS = {
 }
 
 # ---------------------------------------------------------------------------
-# Datenklassen
+# Data classes
 # ---------------------------------------------------------------------------
 
 
@@ -86,7 +86,7 @@ class ImportResult:
 
 
 # ---------------------------------------------------------------------------
-# Hilfsfunktionen
+# Helper functions
 # ---------------------------------------------------------------------------
 
 
@@ -108,10 +108,10 @@ def load_config(config_path: Optional[Path]) -> dict:
 
 
 def resolve_local_hostname(url: str) -> str:
-    """Löst .local-Hostnamen via mDNS auf, falls Python's socket das nicht kann.
+    """Resolves .local host names via mDNS when Python's socket cannot.
 
-    macOS löst .local über Bonjour auf, aber Python's socket.getaddrinfo()
-    unterstützt das häufig nicht. Fallback: ping -c1 → IP extrahieren.
+    macOS resolves .local over Bonjour, but Python's socket.getaddrinfo() often
+    does not support it. Fallback: ping -c1 and extract the IP.
     """
     from urllib.parse import urlparse, urlunparse
     import socket
@@ -121,24 +121,24 @@ def resolve_local_hostname(url: str) -> str:
     if not hostname or not hostname.endswith(".local"):
         return url
 
-    # Prüfen ob Python es selbst auflösen kann
+    # Check whether Python can resolve it itself
     try:
         socket.getaddrinfo(hostname, parsed.port or 443)
-        return url  # klappt, nichts zu tun
+        return url  # works, nothing to do
     except socket.gaierror:
         pass
 
-    # Fallback: ping -c1 um die IP zu bekommen
+    # Fallback: ping -c1 to get the IP
     try:
         result = subprocess.run(
             ["ping", "-c", "1", "-t", "2", hostname],
             capture_output=True, text=True, timeout=5,
         )
-        # Zeile: "PING renfield.local (192.168.1.159): ..."
+        # The line: "PING renfield.local (192.168.1.159): ..."
         match = re.search(r"\((\d+\.\d+\.\d+\.\d+)\)", result.stdout)
         if match:
             ip = match.group(1)
-            # Host im URL ersetzen, aber SNI/Host-Header bleibt korrekt
+            # Replace the host in the URL, but keep the SNI/Host header correct
             new_netloc = parsed.netloc.replace(hostname, ip)
             resolved = urlunparse(parsed._replace(netloc=new_netloc))
             print(f"   ℹ️  {hostname} → {ip} (mDNS-Fallback)")
@@ -146,11 +146,11 @@ def resolve_local_hostname(url: str) -> str:
     except Exception:
         pass
 
-    return url  # Auflösung fehlgeschlagen, Original-URL zurückgeben
+    return url  # resolution failed, return the original URL
 
 
 def fetch_kb_map(base_url: str, token: Optional[str], verify_ssl: bool = True) -> dict[str, int]:
-    """Lädt alle Knowledge Bases und gibt name→id zurück."""
+    """Loads every knowledge base and returns name -> id."""
     headers = {"Authorization": f"Bearer {token}"} if token else {}
     with httpx.Client(base_url=base_url, timeout=10, verify=verify_ssl) as client:
         r = client.get("/api/knowledge/bases", headers=headers)
@@ -159,11 +159,11 @@ def fetch_kb_map(base_url: str, token: Optional[str], verify_ssl: bool = True) -
 
 
 def extract_first_page_text(path: Path) -> str:
-    """Versucht, Text der 1. Seite eines PDFs zu extrahieren (best-effort)."""
+    """Tries to extract the text of a PDF's first page (best-effort)."""
     if path.suffix.lower() != ".pdf":
         return ""
 
-    # 1. pypdf (keine System-Abhängigkeit)
+    # 1. pypdf (no system dependency)
     try:
         from pypdf import PdfReader  # type: ignore
         reader = PdfReader(str(path))
@@ -187,15 +187,15 @@ def extract_first_page_text(path: Path) -> str:
 
 
 def classify(path: Path, cfg: dict) -> tuple[Optional[str], str]:
-    """Gibt (kb_name, grund) zurück. kb_name=None → unklassifiziert."""
+    """Returns (kb_name, reason). kb_name=None means unclassified."""
     name_upper = path.stem.upper()
 
-    # 1. Dateiname
+    # 1. File name
     for pattern, kb_name in cfg["filename_patterns"].items():
         if pattern.upper() in name_upper:
             return kb_name, f"Dateiname enthält '{pattern}'"
 
-    # 2. Adressat (1. Seite)
+    # 2. Addressee (page 1)
     first_page = extract_first_page_text(path)
     if first_page:
         for regex, kb_name in cfg["addressee_patterns"].items():
@@ -243,7 +243,7 @@ def upload_file(
 
 
 # ---------------------------------------------------------------------------
-# Haupt-Ablauf
+# Main flow
 # ---------------------------------------------------------------------------
 
 
@@ -404,14 +404,14 @@ def main() -> None:
     cfg = load_config(args.config)
     verify_ssl = args.verify_ssl
 
-    # Self-signed-Zertifikat-Warnung unterdrücken
+    # Suppress the self-signed certificate warning
     if not verify_ssl:
         warnings.filterwarnings("ignore", message="Unverified HTTPS request")
 
-    # .local-Hostname auflösen (mDNS-Fallback für macOS + Python)
+    # Resolve the .local host name (mDNS fallback for macOS + Python)
     base_url = resolve_local_hostname(args.base_url)
 
-    # KB-Map vom Server laden
+    # Load the KB map from the server
     print(f"🔗 Verbinde mit {base_url} …")
     try:
         kb_map = fetch_kb_map(base_url, args.token, verify_ssl)
@@ -419,7 +419,7 @@ def main() -> None:
         sys.exit(f"❌ Kann Knowledge Bases nicht laden: {e}")
     print(f"   Gefundene KBs: {', '.join(f'{n} (ID={i})' for n, i in kb_map.items())}\n")
 
-    # Dateien einlesen und klassifizieren
+    # Read the files in and classify them
     files = scan_directory(args.dir, args.recursive)
     if not files:
         print("Keine unterstützten Dateien gefunden.")
@@ -441,7 +441,7 @@ def main() -> None:
         print_plan(results, kb_map)
         return
 
-    # Import durchführen
+    # Carry out the import
     run_import(results, kb_map, base_url, args.token, args.delay, verify_ssl)
     print_summary(results)
 

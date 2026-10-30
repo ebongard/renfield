@@ -511,7 +511,7 @@ class ConversationService:
                 # expects newest-first, so hand it the descending slice.
                 messages = [by_id[i] for i in reversed(window_ids) if i in by_id]
             else:
-                # Lade letzte N Nachrichten
+                # Load the last N messages
                 result = await self.db.execute(
                     select(Message)
                     .where(Message.conversation_id == conversation.id)
@@ -520,7 +520,7 @@ class ConversationService:
                 )
                 messages = result.scalars().all()
 
-            # Konvertiere zu Chat-Format (älteste zuerst)
+            # Convert to the chat format (oldest first)
             # Reconstruct action summary prefix for LLM context (kept out of DB content for clean UI)
             context = []
             for msg in reversed(messages):
@@ -590,7 +590,7 @@ class ConversationService:
                 content = result.get("content", content)
                 metadata = result.get("metadata", metadata)
 
-            # Finde oder erstelle Conversation. FOR UPDATE: the append below reads
+            # Find or create the conversation. FOR UPDATE: the append below reads
             # active_leaf_message_id and writes a new leaf. Two writers into one
             # conversation (a chat turn + a background scan's outcome) otherwise
             # both chain onto the SAME parent — one message then sits on a branch
@@ -1085,7 +1085,7 @@ class ConversationService:
             if not conversation:
                 return None
 
-            # Zähle Nachrichten
+            # Count the messages
             result = await self.db.execute(
                 select(func.count(Message.id))
                 .where(Message.conversation_id == conversation.id)

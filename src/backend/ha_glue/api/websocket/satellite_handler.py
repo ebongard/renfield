@@ -116,12 +116,12 @@ def _build_assistant_metadata(
     }
 
 
-# Der Satellit meldet mit `audio_end`, WARUM er aufgehört hat. `"timeout"`
-# heißt: `vad.max_recording_seconds` hat gegriffen, die Äußerung ist mitten im
-# Satz abgeschnitten. Bis 2026-10-10 wurde dieser Grund nur protokolliert
-# (satellite_handler, Zeile ~906) und nie wieder gelesen — eine gekappte
-# Aufnahme ging wie ein fertiger Satz in die Transkription. Gemessen am
-# Haushalt: 7 Mal in 7 Tagen, jedes Mal ohne jeden Hinweis an den Sprechenden.
+# With `audio_end` the satellite reports WHY it stopped. `"timeout"` means:
+# `vad.max_recording_seconds` kicked in, the utterance is cut off mid-sentence.
+# Until 2026-10-10 this reason was only logged (satellite_handler, line ~906)
+# and never read again -- a truncated recording went into transcription like a
+# finished sentence. Measured in the household: 7 times in 7 days, every time
+# without any notice to the person speaking.
 TURN_END_TIMEOUT = "timeout"
 
 _CUT_NOTICE = {
@@ -133,18 +133,18 @@ _CUT_NOTICE = {
 
 
 def truncation_notice(turn_end_reason: str | None, language: str | None) -> str:
-    """Der Hinweis, dass die Äußerung gekappt wurde — oder "" wenn nicht.
+    """The notice that the utterance was truncated -- or "" when it was not.
 
-    🛑 DETERMINISTISCH, kein Prompt-Zusatz. Ob jemand erfährt, dass sein Satz
-    abgeschnitten wurde, ist eine TATSACHE ÜBER DAS GERÄT und darf nicht davon
-    abhängen, ob das Modell sie erwähnt.
+    🛑 DETERMINISTIC, not a prompt addition. Whether somebody learns that their
+    sentence was cut off is a FACT ABOUT THE DEVICE and must not depend on
+    whether the model mentions it.
 
-    Nur `timeout` löst ihn aus. `silence` (zu Ende gesprochen) und `button`
-    sind vollständige Äußerungen; ein Fehlweckruf läuft nie bis an die
-    Höchstdauer, hier ist also keine Verwechslung möglich.
+    Only `timeout` triggers it. `silence` (spoken to the end) and `button` are
+    complete utterances; a false wake call never runs up to the maximum length,
+    so no confusion is possible here.
 
-    Die Höchstdauer selbst steht in der Satelliten-Konfiguration, nicht hier —
-    darum nennt der Text keine Zahl, die auseinanderlaufen könnte.
+    The maximum length itself lives in the satellite configuration, not here --
+    which is why the text names no number that could drift apart.
     """
     if turn_end_reason != TURN_END_TIMEOUT:
         return ""
@@ -188,15 +188,15 @@ def _spawn_satellite_extraction(
     memories with ``session_id=None``, attached to no conversation — so an
     unpersisted turn is skipped as well. Rare in practice, not impossible.
 
-    **Vollständigkeits-Grenze — nur eine GANZE Äußerung wird Wissen.**
-    ``turn_truncated`` ist gesetzt, wenn der Satellit mit ``reason="timeout"``
-    aufgehört hat: ``vad.max_recording_seconds`` hat gegriffen, der Satz ist
-    mitten im Wort abgeschnitten. Aus einem halben Satz eine DAUERHAFTE
-    Erinnerung oder eine KG-Kante zu bauen heißt, eine möglicherweise falsche
-    Tatsache festzuschreiben — und eine falsche KG-Kante ist praktisch nicht
-    zurückzunehmen (die Kanten führen keine Dokumentherkunft, s.
-    `docs/design/kg-bitemporal-edges.md`). Gemessen 7 Fälle in 7 Tagen: der
-    Verzicht kostet fast nichts, der Irrtum bliebe. Entschieden 2026-10-10.
+    **Completeness boundary -- only a WHOLE utterance becomes knowledge.**
+    ``turn_truncated`` is set when the satellite stopped with
+    ``reason="timeout"``: ``vad.max_recording_seconds`` kicked in, the sentence
+    is cut off mid-word. Building a PERMANENT memory or a KG edge out of half a
+    sentence means writing down a possibly wrong fact -- and a wrong KG edge is
+    practically impossible to take back (the edges carry no document
+    provenance, see `docs/design/kg-bitemporal-edges.md`). Measured 7 cases in
+    7 days: skipping costs almost nothing, the error would stay. Decided
+    2026-10-10.
 
     Fire-and-forget: the work is scheduled, never awaited, so the turn's TTS is
     not delayed; every failure is swallowed so a broken extractor cannot break
@@ -957,12 +957,12 @@ async def satellite_websocket(
                     logger.info(f"📸 Image received with audio_end ({len(image_b64)} chars base64)")
                 logger.info(f"🔚 Audio ended for session {session_id} (reason: {reason})")
 
-                # Den Grund FESTHALTEN, nicht nur protokollieren: `timeout`
-                # heisst, `vad.max_recording_seconds` hat gegriffen und die
-                # Äußerung ist mitten im Satz abgeschnitten. Bis 2026-10-10
-                # endete diese Information in der Zeile darueber, und eine
-                # gekappte Aufnahme ging wie ein fertiger Satz in die
-                # Transkription — 7 Mal in 7 Tagen, ohne jeden Hinweis.
+                # RECORD the reason, do not just log it: `timeout` means
+                # `vad.max_recording_seconds` kicked in and the utterance is
+                # cut off mid-sentence. Until 2026-10-10 this information
+                # ended in the line above, and a truncated recording went into
+                # transcription like a finished sentence -- 7 times in 7 days,
+                # without any notice.
                 satellite_manager.set_turn_end_reason(session_id, reason)
 
                 # Update state to processing
@@ -1380,11 +1380,11 @@ Gib eine kurze, natürliche Antwort. KEIN JSON, nur Text."""
                         async for chunk in ollama.chat_stream(text, history=satellite_conversation_history):
                             response_text += chunk
 
-                    # Die Kappung VORAN stellen, weil der Hinweis die Antwort
-                    # einordnet — hinterher käme er zu spät. Er landet damit
-                    # auch in der Historie und in der Datenbank, nicht nur im
-                    # gesprochenen Satz: sonst wäre beim nächsten Durchlauf
-                    # nicht mehr zu sehen, dass die Frage unvollständig war.
+                    # Put the truncation notice FIRST, because it frames the
+                    # answer -- afterwards it would come too late. That also
+                    # puts it into the history and into the database, not only
+                    # into the spoken sentence: otherwise the next turn would
+                    # no longer show that the question was incomplete.
                     _cut_notice = truncation_notice(reason, satellite_language)
                     if _cut_notice:
                         response_text = _cut_notice + response_text
@@ -1490,9 +1490,9 @@ Gib eine kurze, natürliche Antwort. KEIN JSON, nur Text."""
                         lang=satellite_language,
                         action_success=assistant_metadata.get("action_success"),
                         is_device_account=sat_is_device_account,
-                        # Ein gekappter Satz wird kein dauerhaftes Wissen — und
-                        # damit erreicht auch der Geräte-Hinweis aus
-                        # `truncation_notice` die Extraktion nicht.
+                        # A truncated sentence does not become permanent
+                        # knowledge -- so the device notice from
+                        # `truncation_notice` does not reach extraction either.
                         turn_truncated=reason == TURN_END_TIMEOUT,
                     )
 

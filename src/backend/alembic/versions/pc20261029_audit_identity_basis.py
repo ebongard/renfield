@@ -1,31 +1,27 @@
-"""federation_query_log: Richtung und Identitaetsgrundlage festhalten.
+"""federation_query_log: record the direction and the identity basis.
 
-Bis heute hielt das Pruefprotokoll Status, Signatur, Anfragetext und
-Antwortauszug fest — aber NICHT, auf welcher Identitaet eine foederierte
-Antwort beruhte. Fuer eine Unterscheidung, die ueber die REICHWEITE eines
-Zugriffs entscheidet, ist das zu wenig:
+Until today the audit log recorded status, signature, query text and an excerpt
+of the answer -- but NOT which identity a federated answer rested on. For a
+distinction that decides the REACH of an access, that is too little:
 
-  gemappt   -> die Gegenstelle antwortet mit der vollen eigenen Reichweite
-               der verknuepften Person
-  Rueckfall -> sie antwortet als „die andere Instanz", nur auf der
-               gewaehrten Stufe
+  mapped   -> the far side answers with the linked person's own full reach
+  fallback -> it answers as "the other instance", only at the granted tier
 
-Am 2026-10-29 lief der erste erfolgreiche foederierte Zug der
-Projektgeschichte. Welcher der beiden Faelle es war, liess sich hinterher
-NICHT feststellen — nur aus dem gleichen `querier_ref` auf beiden Seiten und
-aus dem Code erschliessen. Der Pending-Satz, der `mapped` traegt, liegt im
-Arbeitsspeicher und ist nach dem Zug weg.
+On 2026-10-29 the first successful federated turn in the project's history ran.
+Which of the two cases it was could NOT be established afterwards -- only
+inferred from the same `querier_ref` on both sides and from the code. The
+pending record that carries `mapped` lives in memory and is gone after the
+turn.
 
-🛑 Und: geschrieben hat bisher nur die FRAGERSEITE (`mcp_client.py`, ein
-einziger Aufrufer). Die Entscheidung ueber die Identitaet faellt aber beim
-ANTWORTENDEN — also muss er sie festhalten. Ein Vermerk auf der Fragerseite
-waere die Behauptung der Gegenseite ueber ihre eigene Zugriffsentscheidung.
-Darum `direction`: dieselbe Tabelle traegt jetzt beide Seiten.
+🛑 And: so far only the ASKING side wrote at all (`mcp_client.py`, a single
+caller). But the decision about the identity is made by the ANSWERING side --
+so that side has to record it. A note on the asking side would be the far
+side's claim about its own access decision. Hence `direction`: the same table
+now carries both sides.
 
-`user_id` bleibt NOT NULL und bedeutet durchgehend „die lokale Person, deren
-Reichweite benutzt wurde": beim Frager die fragende Person, beim Antwortenden
-die verknuepfte Person (gemappt) bzw. der Eigentuemer der Paarung
-(Rueckfall). Beide Faelle haben eine.
+`user_id` stays NOT NULL and means throughout "the local person whose reach was
+used": on the asking side the person asking, on the answering side the linked
+person (mapped) or the owner of the pairing (fallback). Both cases have one.
 
 Revision ID: pc20261029_audit_basis
 Revises: pc20261027_peer_tier
@@ -41,7 +37,7 @@ depends_on: None = None
 
 
 def _has_column(table: str, column: str) -> bool:
-    """Entwicklungsstaende fahren `create_all` und haben die Spalte dann schon."""
+    """Development checkouts run `create_all` and already have the column."""
     inspector = sa.inspect(op.get_bind())
     if table not in inspector.get_table_names():
         return False
@@ -52,26 +48,26 @@ def upgrade() -> None:
     if not _has_column("federation_query_log", "direction"):
         op.add_column(
             "federation_query_log",
-            # Bestandszeilen sind alle von der Fragerseite — es gab keine
-            # andere. `asked` ist damit kein Vorgabewert, sondern die Wahrheit.
+            # Existing rows are all from the asking side -- there was no
+            # other. So `asked` is not a default but the truth.
             sa.Column("direction", sa.String(8), nullable=False,
                       server_default="asked"),
         )
     if not _has_column("federation_query_log", "identity_basis"):
         op.add_column(
             "federation_query_log",
-            # Nullable: Bestandszeilen WISSEN es nicht, und das soll man sehen.
-            # Ein Vorgabewert wuerde Unwissen als Tatsache ausgeben.
+            # Nullable: existing rows do not KNOW, and that should be
+            # visible. A default would pass ignorance off as fact.
             sa.Column("identity_basis", sa.String(16), nullable=True),
         )
 
 
 def downgrade() -> None:
-    # 🛑 Der Rueckweg VERLIERT die Angabe, auf welcher Identitaet geantwortet
-    # wurde — sie steht nirgends sonst. Aus „nachher" ist „vorher" hier
-    # rekonstruierbar (die Spalten entfallen schlicht), aber die Protokollzeilen
-    # der Antwortseite bleiben als `asked` zurueck und sind dann nicht mehr von
-    # echten Frager-Zeilen zu unterscheiden.
+    # 🛑 The way back LOSES the record of which identity was answered on --
+    # it is held nowhere else. "Before" is reconstructible from "after" here
+    # (the columns simply go away), but the answering side's log rows stay
+    # behind as `asked` and are then indistinguishable from genuine asking-side
+    # rows.
     if _has_column("federation_query_log", "identity_basis"):
         op.drop_column("federation_query_log", "identity_basis")
     if _has_column("federation_query_log", "direction"):

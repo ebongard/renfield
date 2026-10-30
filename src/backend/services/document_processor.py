@@ -115,7 +115,7 @@ class DocumentProcessor:
         return "deu" in langs and "eng" in langs
 
     def _ensure_initialized(self):
-        """Lazy initialization von Docling (lädt Modelle beim ersten Aufruf)"""
+        """Lazy initialization of Docling (loads models on the first call)"""
         if self._initialized:
             return
 
@@ -287,7 +287,7 @@ class DocumentProcessor:
             # the deferred OCR-engine benchmark (group history by engine).
             ocr_engine = "docling_full_page_ocr" if use_ocr else "docling"
 
-            # Dokument in Thread-Pool konvertieren (CPU-intensiv)
+            # Convert the document in a thread pool (CPU-intensive)
             loop = asyncio.get_event_loop()
 
             if use_ocr:
@@ -733,7 +733,7 @@ class DocumentProcessor:
             return None
 
     def _convert_document(self, file_path: str):
-        """Synchrone Dokumentkonvertierung (für Thread-Pool)"""
+        """Synchronous document conversion (for the thread pool)"""
         try:
             return self._converter.convert(file_path)
         except Exception as e:
@@ -741,7 +741,7 @@ class DocumentProcessor:
             return None
 
     def _convert_document_ocr(self, file_path: str):
-        """Synchrone Dokumentkonvertierung mit force_full_page_ocr (für Thread-Pool).
+        """Synchronous document conversion with force_full_page_ocr (for the thread pool).
 
         Ignores the embedded text layer and runs full OCR on
         jeder Seite durch. Liefert bessere Ergebnisse bei gescannten PDFs
@@ -764,7 +764,7 @@ class DocumentProcessor:
         return re.sub(r'^[a-f0-9]{32}_', '', name)
 
     def _extract_metadata(self, doc, file_path: str) -> dict[str, Any]:
-        """Extrahiert Dokument-Metadaten"""
+        """Extract the document metadata"""
         path = Path(file_path)
 
         # Basis-Metadaten
@@ -786,7 +786,7 @@ class DocumentProcessor:
                 if hasattr(doc.origin, 'author'):
                     metadata["author"] = doc.origin.author
 
-            # Seitenanzahl (nur für seitenbasierte Dokumente)
+            # Page count (only for page-based documents)
             if hasattr(doc, 'pages') and doc.pages:
                 metadata["page_count"] = len(doc.pages)
             elif hasattr(doc, 'page_count'):
@@ -1007,7 +1007,7 @@ class DocumentProcessor:
             return None
 
     def get_supported_formats(self) -> list[str]:
-        """Gibt unterstützte Dateiformate zurück"""
+        """Return the supported file formats"""
         return [
             "pdf",      # PDF Dokumente
             "docx",     # Microsoft Word

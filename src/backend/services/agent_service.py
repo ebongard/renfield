@@ -542,8 +542,8 @@ def _build_preselect_schema(tool_names: list[str]) -> dict:
     return {
         "type": "array",
         "maxItems": 8,
-        # Angenommen, aber NICHT erzwungen — siehe Docstring. Bleibt als
-        # Absichtserklaerung stehen, traegt aber keine Zusicherung.
+        # Assumed, but NOT enforced -- see the docstring. It stays as a
+        # statement of intent, but carries no guarantee.
         "uniqueItems": True,
         "items": {"type": "string", "enum": list(tool_names)},
     }
@@ -1359,13 +1359,13 @@ class AgentService:
             # was a scan" has settled the question; a preselect model must not
             # reopen it.
             #
-            # And the whole SERVER at that, not the named tool: the menu
+            # 🛑 And the whole SERVER at that, not the named tool: the menu
             # groups MCP tools by server, shows the server name ("Scanner")
-            # and submits the FIRST tool
-            # dieses Servers als Vertreter (`IntentCorrectionButton.tsx:57-67`).
-            # Forcing exactly that stand-in would be wrong -- the user means
-            # "this is a scanner matter", not "call `list_scanners`". An
-            # `internal.<x>`, by contrast, IS one tool and stays one.
+            # and submits the FIRST tool of that server as a stand-in
+            # (`IntentCorrectionButton.tsx:57-67`). Forcing exactly that
+            # stand-in would be wrong -- the user means "this is a scanner
+            # matter", not "call `list_scanners`". An `internal.<x>`, by
+            # contrast, IS one tool and stays one.
             if corrected_intent:
                 festgenagelt = _tools_pinned_by_correction(
                     corrected_intent, self.tool_registry._tools,
@@ -1373,14 +1373,14 @@ class AgentService:
                 neu_dazu = [n for n in festgenagelt if n not in filtered]
                 for name in neu_dazu:
                     filtered[name] = self.tool_registry._tools[name]
-                # ONE line, always -- even when nothing was pinned down.
+                # 🛑 ONE line, always -- even when nothing was pinned down.
                 # Without it five different cases look identical, namely
-                # STILL: `knowledge.ask` (kein Werkzeug dahinter), ein
-                # an unknown server, a server the chosen role does not own
-                # (palette role hint), a preselect that aborted earlier, and a
-                # tool the model had already picked. The next report "my
-                # correction did nothing" would then be just as hard to answer
-                # as the one that produced this branch.
+                # SILENCE: `knowledge.ask` (no tool behind it), an unknown
+                # server, a server the chosen role does not own (palette role
+                # hint), a preselect that aborted earlier, and a tool the model
+                # had already picked. The next report "my correction did
+                # nothing" would then be just as hard to answer as the one that
+                # produced this branch.
                 logger.info(
                     "Tool pre-selection: correction {!r} pinned {} tool(s), "
                     "{} newly added{} (in={})",
@@ -1404,10 +1404,10 @@ class AgentService:
             # never offered or merely not chosen. A count without names is
             # nearly worthless for diagnosis; the list is short and the space
             # costs nothing.
-            # `in=` is the fingerprint of the OFFERED list including its
+            # 🛑 `in=` is the fingerprint of the OFFERED list including its
             # order. Without it, on 2026-10-26 there was no way to tell whether
-            # ein wechselndes Ergebnis von einer geaenderten Eingabe oder vom
-            # Modell kam — siehe `preselect_input_signature`.
+            # a changing result came from a changed input or from the model --
+            # see `preselect_input_signature`.
             logger.info(
                 "Tool pre-selection: {}/{} tools selected for: '{}' (in={}) -> {}",
                 len(filtered), len(tool_names), message[:60],

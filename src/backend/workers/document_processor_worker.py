@@ -253,23 +253,23 @@ async def _process_entry(
         return
 
     if trigger == "resplit":
-        # 🛑 WIEDERANSTOSS DER SCHNITT-ERKENNUNG (#1372)
+        # 🛑 RE-TRIGGERING THE SPLIT DETECTION (#1372)
         #
-        # Die Idempotenz-Sperre weiter unten (`initial_ingest_status ==
-        # COMPLETED` -> "duplicate delivery, acked") sitzt VOR der
-        # Schneide-Vorstufe. Fuer Doppelzustellungen ist das richtig, aber sie
-        # machte auch jeden gewollten Wiederanstoss unmoeglich: nach einer
-        # Reparatur am Schneider kam man an bereits abgelegte Stapel nicht mehr
-        # heran (am 2026-10-04 musste `maybe_split_at_ingest` dafuer von Hand
-        # im Pod gerufen werden — Handarbeit am laufenden System).
+        # The idempotency lock further down (`initial_ingest_status ==
+        # COMPLETED` -> "duplicate delivery, acked") sits BEFORE the splitting
+        # stage. For duplicate deliveries that is right, but it also made every
+        # intentional re-trigger impossible: after a repair to the splitter
+        # there was no way to reach batches that had already been filed (on
+        # 2026-10-04 `maybe_split_at_ingest` had to be called by hand in the
+        # pod for that -- manual work on a running system).
         #
-        # Dieser Zweig laeuft DAVOR und faehrt NUR die Erkennung. Die normale
-        # Einlieferung wird nicht wiederholt — sonst zweite Paperless-Ablage,
-        # doppelte Abschnitte, doppelte KG-Extraktion, und die Sperre haette
-        # recht gehabt.
+        # This branch runs BEFORE it and drives ONLY the detection. The normal
+        # ingest is not repeated -- otherwise a second Paperless filing,
+        # duplicate chunks, duplicate KG extraction, and the lock would have
+        # been right.
         #
-        # 🛑 `resplit=True` heisst: immer VORLEGEN, nie ausfuehren. Begruendung
-        # im Docstring von `act_on_verdict`.
+        # 🛑 `resplit=True` means: always PROPOSE, never execute. Reasoning in
+        # the docstring of `act_on_verdict`.
         try:
             from services.pdf_splitter import maybe_split_at_ingest
 
@@ -282,9 +282,9 @@ async def _process_entry(
                 f"(entry {entry.entry_id})"
             )
         except Exception as e:
-            # Best-effort wie beim Nachlegen: ein gescheiterter Wiederanstoss
-            # laesst das Dokument unveraendert stehen und ist wiederholbar. Ein
-            # ungeackter Eintrag wuerde dagegen endlos neu zugestellt.
+            # Best-effort as with re-filing: a failed re-trigger leaves the
+            # document unchanged and can be repeated. An unacked entry, by
+            # contrast, would be redelivered endlessly.
             logger.warning(f"resplit for doc {doc_id} failed: {e}")
         await queue.ack(entry.entry_id)
         return

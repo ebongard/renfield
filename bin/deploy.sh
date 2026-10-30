@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Renfield GitHub Deploy Script
-# Committed und pushed alle Dateien ins GitHub Repository
+# Commits and pushes every file to the GitHub repository
 
 set -e
 
@@ -18,29 +18,29 @@ BLUE='\033[0;34m'
 YELLOW='\033[1;33m'
 NC='\033[0m'
 
-# Prüfe ob wir in einem Git Repository sind
+# Check that we are inside a git repository
 if [ ! -d .git ]; then
     echo -e "${YELLOW}Initialisiere Git Repository...${NC}"
     git init
     git remote add origin https://github.com/ebongard/renfield.git
 fi
 
-# Zeige Status
+# Show the status
 echo -e "${BLUE}Git Status:${NC}"
 git status
 echo ""
 
-# Füge alle Dateien hinzu
+# Add every file
 echo -e "${YELLOW}Füge Dateien hinzu...${NC}"
 git add .
 
-# Zeige was hinzugefügt wurde
+# Show what was added
 echo ""
 echo -e "${BLUE}Dateien die committed werden:${NC}"
 git diff --cached --name-only
 echo ""
 
-# Erstelle Commit
+# Create the commit
 read -p "Commit Message (Enter für default): " commit_msg
 if [ -z "$commit_msg" ]; then
     commit_msg="Initial commit: Complete Renfield AI Assistant system
@@ -56,7 +56,7 @@ echo ""
 echo -e "${YELLOW}Erstelle Commit...${NC}"
 git commit -m "$commit_msg"
 
-# Branch setzen
+# Set the branch
 echo ""
 echo -e "${YELLOW}Setze Main Branch...${NC}"
 git branch -M main
@@ -67,14 +67,14 @@ echo -e "${YELLOW}Pushe zu GitHub...${NC}"
 echo "Repository: https://github.com/ebongard/renfield"
 echo ""
 
-# Prüfe ob Remote schon existiert
+# Check whether the remote already exists
 if git remote | grep -q origin; then
     echo "Remote 'origin' existiert bereits"
 else
     git remote add origin https://github.com/ebongard/renfield.git
 fi
 
-# Push durchführen
+# Carry out the push
 git push -u origin main
 
 echo ""

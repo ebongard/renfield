@@ -155,15 +155,15 @@ class ServiceStatusResponse(BaseModel):
 async def get_speaker_embeddings_averaged(
     db: AsyncSession
 ) -> list[tuple]:
-    """Die Referenzprofile fuer `/identify` — DIESELBE Rechnung wie die Erkennung.
+    """The reference profiles for `/identify` -- the SAME computation as recognition.
 
-    🛑 Diese Funktion hatte bis 2026-09-27 ihre eigene Fassung und wich vom
-    lebenden Pfad in drei Punkten ab (Normalisierung nur unter
-    `speaker_quality_gating_enabled`, keine `enrolled`-Auswahl, alle statt der 10
-    juengsten Einbettungen). Damit antwortete das DIAGNOSE-Endpunkt aus einem
-    anderen Modell als die Erkennung — ausgerechnet das Werkzeug, mit dem man
-    einer Fehlerkennung nachgeht. Die Rechnung steht jetzt genau einmal, in
-    `speaker_resolver`. Begruendung dort im Docstring.
+    🛑 Until 2026-09-27 this function had its own version and differed from the
+    live path in three points (normalization only under
+    `speaker_quality_gating_enabled`, no `enrolled` selection, all embeddings
+    instead of the 10 most recent). So the DIAGNOSTIC endpoint answered from a
+    different model than recognition did -- of all things the tool one uses to
+    chase down a misidentification. The computation now stands exactly once, in
+    `speaker_resolver`. The reasoning is in the docstring there.
 
     Returns:
         List of (speaker_id, speaker_name, averaged_embedding) tuples
@@ -640,10 +640,10 @@ async def enroll_speaker(
     logger.info(f"📥 Enrolling voice sample for {speaker.name}: {audio.filename}")
     audio_bytes = await audio.read()
 
-    # 🛑 `to_thread`: der Aufruf ist ein schlichtes `def` (Tempdatei,
-    # librosa, torch-ECAPA) und blockiert nackt die GESAMTE
-    # Ereignisschleife — auch jede Satelliten-Sprachrunde. Admin-Tor
-    # davor aendert daran nichts.
+    # 🛑 `to_thread`: the call is a plain `def` (temp file, librosa,
+    # torch-ECAPA) and bare it blocks the ENTIRE event loop -- including every
+    # satellite voice turn. An admin gate in front of it changes nothing about
+    # that.
     embedding = await asyncio.to_thread(
         service.extract_embedding_from_bytes, audio_bytes, audio.filename
     )
@@ -713,10 +713,10 @@ async def identify_speaker(
     logger.info(f"🔍 Identifying speaker from: {audio.filename}")
     audio_bytes = await audio.read()
 
-    # 🛑 `to_thread`: der Aufruf ist ein schlichtes `def` (Tempdatei,
-    # librosa, torch-ECAPA) und blockiert nackt die GESAMTE
-    # Ereignisschleife — auch jede Satelliten-Sprachrunde. Admin-Tor
-    # davor aendert daran nichts.
+    # 🛑 `to_thread`: the call is a plain `def` (temp file, librosa,
+    # torch-ECAPA) and bare it blocks the ENTIRE event loop -- including every
+    # satellite voice turn. An admin gate in front of it changes nothing about
+    # that.
     query_embedding = await asyncio.to_thread(
         service.extract_embedding_from_bytes, audio_bytes, audio.filename
     )
@@ -814,10 +814,10 @@ async def verify_speaker(
 
     # Extract query embedding
     audio_bytes = await audio.read()
-    # 🛑 `to_thread`: der Aufruf ist ein schlichtes `def` (Tempdatei,
-    # librosa, torch-ECAPA) und blockiert nackt die GESAMTE
-    # Ereignisschleife — auch jede Satelliten-Sprachrunde. Admin-Tor
-    # davor aendert daran nichts.
+    # 🛑 `to_thread`: the call is a plain `def` (temp file, librosa,
+    # torch-ECAPA) and bare it blocks the ENTIRE event loop -- including every
+    # satellite voice turn. An admin gate in front of it changes nothing about
+    # that.
     query_embedding = await asyncio.to_thread(
         service.extract_embedding_from_bytes, audio_bytes, audio.filename
     )

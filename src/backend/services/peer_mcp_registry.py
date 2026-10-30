@@ -74,28 +74,28 @@ def _build_query_brain_tool(peer: PeerUser) -> MCPToolInfo:
         original_name=QUERY_BRAIN_TOOL_NAME,
         namespaced_name=f"mcp.{server_name}.{QUERY_BRAIN_TOOL_NAME}",
         description=(
-            # 🛑 Gemessen, nicht geraten (2026-10-29, `bin/measure-preselect.py`
-            # gegen den ECHTEN Prompt des Live-Zuges, Signatur `aa62fdb7`):
-            # die alte Fassung traf 27/39 (69 %), diese 36/39 (92 %).
+            # 🛑 Measured, not guessed (2026-10-29, `bin/measure-preselect.py`
+            # against the REAL prompt of the live turn, signature `aa62fdb7`):
+            # the old version hit 27/39 (69 %), this one 36/39 (92 %).
             #
-            # Die alte nannte nur die PERSON. „frag <jemand>s Renfield" traf
-            # damit 3/3 — das Modell erkennt das Muster, nicht den Namen, denn
-            # auch „frag Mamas renfield" traf, obwohl Mama nicht der Name ist.
-            # Was 0/3 traf, war jede Frage, die die INSTANZ nennt („was liegt
-            # in x-idra?", „weiss die andere Instanz …") oder die MEHRZAHL
-            # („suche in allen Renfields"). Diese drei sind jetzt 3/3.
+            # The old one named only the PERSON. "frag <jemand>s Renfield" hit
+            # 3/3 with it -- the model recognises the pattern, not the name,
+            # because "frag Mamas renfield" hit too, although Mama is not the
+            # name. What hit 0/3 was every question naming the INSTANCE ("was
+            # liegt in x-idra?", "weiss die andere Instanz ...") or the PLURAL
+            # ("suche in allen Renfields"). Those three are now 3/3.
             #
-            # 🛑 Der Scanner-Satz am Ende ist kein Beiwerk: „scanne nach
-            # x-idra" nennt ein ABLAGEZIEL, keine Instanz, und muss beim
-            # Scanner bleiben. Er tut es (3/3) — aber nur, solange der Satz
-            # nicht abgeschnitten wird, siehe die Kappung des Namens unten.
+            # 🛑 The scanner sentence at the end is not decoration: "scanne
+            # nach x-idra" names a FILING TARGET, not an instance, and has to
+            # stay with the scanner. It does (3/3) -- but only as long as the
+            # sentence is not cut off, see the truncation of the name below.
             #
-            # Was Text NICHT schafft: „Welche Dokumente sind in der x-idra
-            # instanz …" bleibt 0/3, auch mit drei verschiedenen
-            # Dokumentformulierungen (V3/V4 gemessen, beide 92 %, kein
-            # Zugewinn). Dafuer muesste der INSTANZNAME hier stehen — er ist
-            # nicht da: `peer_users` traegt keine entfernte `INSTANCE_ID`, und
-            # das Paarungsangebot fuehrt sie nicht mit. Eigener Posten.
+            # What text does NOT achieve: "Welche Dokumente sind in der x-idra
+            # instanz ..." stays 0/3, even with three different document
+            # phrasings (V3/V4 measured, both 92 %, no gain). For that the
+            # INSTANCE NAME would have to appear here -- and it is not
+            # available: `peer_users` carries no remote `INSTANCE_ID`, and the
+            # pairing offer does not carry it along. Its own item.
             f"Ask {_kurzer_name(peer.remote_display_name)}'s Renfield \u2014 "
             f"another paired INSTANCE \u2014 for information its people chose "
             f"to share with you through circles. Use for \u201efrag "
@@ -120,18 +120,18 @@ def _build_query_brain_tool(peer: PeerUser) -> MCPToolInfo:
     )
 
 
-#: Wie viel vom Anzeigenamen in die Beschreibung darf.
-#: 🛑 Die Beschreibung wird bei `_PRESELECT_DESC_CHARS` (480) GEKAPPT, und der
-#: Scanner-Abgrenzungssatz steht am ENDE. Ein langer Anzeigename schiebt genau
-#: ihn ueber die Kante — und dann wird aus „scanne nach x-idra" wieder eine
-#: Peer-Anfrage. Der Name kommt von der GEGENSEITE (`offer.display_name`), ist
-#: also nicht unter eigener Kontrolle. Mit dieser Kappung bleibt die Zeile
-#: unter 400 Zeichen, egal was dort steht.
+#: How much of the display name may go into the description.
+#: 🛑 The description is TRUNCATED at `_PRESELECT_DESC_CHARS` (480), and the
+#: scanner-delimiting sentence stands at the END. A long display name pushes
+#: exactly that sentence over the edge -- and then "scanne nach x-idra" becomes
+#: a peer query again. The name comes from the FAR SIDE
+#: (`offer.display_name`), so it is not under our own control. With this
+#: truncation the line stays under 400 characters, whatever it says.
 _NAME_IN_DESC_CHARS = 40
 
 
 def _kurzer_name(name: str) -> str:
-    """Der Anzeigename, gekappt — siehe `_NAME_IN_DESC_CHARS`."""
+    """The display name, truncated -- see `_NAME_IN_DESC_CHARS`."""
     return name[:_NAME_IN_DESC_CHARS]
 
 

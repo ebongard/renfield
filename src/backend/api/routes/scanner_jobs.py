@@ -156,13 +156,14 @@ async def scan_job_event(
     if outcome == "unknown_job" and event.caller == BUTTON_CALLER:
         # For the BUTTON this refusal is final, and only for it. A completion
         # notice is bound to the `session_id` of the requesting chat
-        # gebunden; ein Knopfdruck hat keine Sitzung, also entsteht hier NIE
-        # an entry. Without the marker the scanner retried on 2026-10-21
+        # session; a button press has no session, so NO entry is ever created
+        # here. Without the marker the scanner retried on 2026-10-21
         # against an answer that could not change.
         #
         # The DOCUMENT is unaffected: it arrives over the separate ingest
         # path and was filed long ago. All that remains open is WHO a
-        # Fertigmeldung gälte — ein Knopfdruck nennt keinen Empfänger (#1390).
+        # completion notice would go to -- a button press names no recipient
+        # (#1390).
         logger.info(
             f"scanner: Knopf-Scan {event.job_id} ({event.status}) ohne "
             f"Meldeadresse — Dokument ist abgelegt, Meldung entfällt"

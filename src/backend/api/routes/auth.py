@@ -1121,7 +1121,7 @@ async def voice_authenticate(
 
         query_embedding = np.asarray(raw_embedding, dtype=np.float32)
         if not np.all(np.isfinite(query_embedding)):
-            # Ein NaN rutscht durch jeden Schwellenvergleich (NaN < x ist False).
+            # A NaN slips through every threshold comparison (NaN < x is False).
             return _refused("non-finite embedding from voice-server")
 
         # VERIFY, do not identify: against the embeddings of EXACTLY this

@@ -70,7 +70,7 @@ class Settings(BaseSettings):
     led_day_brightness: int = 20
     led_night_brightness: int = 5
 
-    # Datenbank - Einzelfelder für dynamischen DATABASE_URL-Aufbau
+    # Database -- individual fields, for assembling DATABASE_URL dynamically
     database_url: str | None = None
     postgres_user: str = "renfield"
     postgres_password: SecretStr = "changeme"
@@ -116,23 +116,23 @@ class Settings(BaseSettings):
     #:
     #: The same variable the Paperless MCP server already gets -- added here
     #: as a settings field so the backend can build a link.
-    #: KEINE neue Umgebungsvariable: `PAPERLESS_API_URL` steht in beiden
-    #: instances already have it in `renfield-env`.
+    #: NO new environment variable: `PAPERLESS_API_URL` is set on both
+    #: instances already, in `renfield-env`.
     #: Empty means: no link. The button then shows the state without a target.
     #: It is a LAN address. The link works inside the home network; from
     #: outside it goes nowhere. Decided deliberately (2026-10-27) -- if that
     #: becomes a problem, split the link base from the API URL.
     paperless_api_url: str = ""
     #: The name of THIS instance as the scan target registry carries it
-    #: (`household`, `xidra`). Leer heißt: unbekannt.
+    #: (`household`, `xidra`). Empty means: unknown.
     #:
     #: Until 2026-10-27 an instance did not know itself -- it carried only its
     #: Ed25519 federation key, which is not a readable name. That gap made the
     #: following bug possible: a scan from the household to xidra delivers a
     #: completion notice WITH xidra's document id to the household. Since
-    #: beide Instanzen eigene Zählfolgen führen, gibt es diese Kennung hier auch —
+    #: both instances keep their own sequences, that id exists here too --
     #: for a different document. A button on it does not go nowhere but
-    #: ins Falsche.
+    #: somewhere wrong.
     #:
     #: FAIL-CLOSED: if the value is empty, EVERY targeted reference counts as
     #: remote. So an unconfigured instance never links wrongly -- it does not
@@ -1350,8 +1350,8 @@ class Settings(BaseSettings):
     # (#408/#421); this setting just supplies the value a caller didn't override.
     # The instance advertises its OWN, generally reachable name, not the
     # cluster-internal service address. The latter stood here until 2026-10-29
-    # Empfehlung fuer „same-cluster peers" — sie traegt aber nur, solange beide
-    # instances happen to sit in the same cluster, and it shows up for the
+    # as the recommendation for "same-cluster peers" -- but it only holds while
+    # both instances happen to sit in the same cluster, and it shows up for the
     # operator as an unintelligible name in the pairing UI. That is exactly
     # what invited typing something in by hand, which produced an endpoint with
     # a typo and sent the federation nowhere.
@@ -2017,7 +2017,7 @@ class Settings(BaseSettings):
 
     @property
     def allowed_extensions_list(self) -> list[str]:
-        """Gibt allowed_extensions als Liste zurück"""
+        """Returns allowed_extensions as a list"""
         return [ext.strip().lower() for ext in self.allowed_extensions.split(",")]
 
     @property
@@ -2355,7 +2355,7 @@ class Settings(BaseSettings):
         case_sensitive = False
 
 
-# Globale Settings Instanz
+# The global settings instance
 settings = Settings()
 
 

@@ -29,8 +29,8 @@ class ChatRequest(BaseModel):
     context: list[dict] | None = None
     # The same length as in the WS frame (`websocket_messages.py`): the
     # frontend falls back to REST while the WS connection is not up yet, and a
-    # "correct & re-answer" racing the
-    # Handschlag verlor sonst Rollenhinweis UND Festnagelung.
+    # "correct & re-answer" racing the handshake otherwise lost both the role
+    # hint AND the pinning.
     corrected_intent: str | None = Field(None, max_length=128)
 
 class ChatResponse(BaseModel):
@@ -311,7 +311,7 @@ async def send_message(
             logger.info("💬 Alle Intents fehlgeschlagen, Fallback zu Konversation")
             intent = {"intent": "general.conversation", "parameters": {}, "confidence": 1.0}
 
-        # Antwort generieren
+        # Generate the answer
         if action_result and action_result.get("success"):
             enhanced_prompt = f"""Du bist Renfield, ein persönlicher Assistent.
 
@@ -470,7 +470,7 @@ async def delete_session(
     db: AsyncSession = Depends(get_db),
     current_user: User | None = Depends(get_current_user),
 ):
-    """Chat-Session löschen"""
+    """Delete a chat session"""
     try:
         query = select(Conversation).where(Conversation.session_id == session_id)
         # Destructive: reach is NOT enough. A shared room history would
@@ -497,7 +497,7 @@ async def list_conversations(
     db: AsyncSession = Depends(get_db),
     current_user: User | None = Depends(get_current_user),
 ):
-    """Liste aller Konversationen.
+    """A list of all conversations.
 
     Authenticated users see only their own conversations; in single-user mode
     (no auth) all conversations are returned. Both paths produce the same
@@ -530,7 +530,7 @@ async def get_conversation_summary(
     db: AsyncSession = Depends(get_db),
     current_user: User | None = Depends(get_current_user),
 ):
-    """Zusammenfassung einer Konversation"""
+    """A summary of one conversation"""
     try:
         reach = _reach_clause(current_user)
         if current_user is not None:
@@ -732,7 +732,7 @@ async def get_conversation_stats(
     db: AsyncSession = Depends(get_db),
     _admin: User = Depends(require_permission(Permission.ADMIN)),
 ):
-    """Statistiken über Konversationen"""
+    """Statistics about conversations"""
     try:
         # Gesamt-Anzahl Konversationen
         result = await db.execute(select(func.count(Conversation.id)))
@@ -779,7 +779,7 @@ async def cleanup_old_conversations(
     db: AsyncSession = Depends(get_db),
     _admin: User = Depends(require_permission(Permission.ADMIN)),
 ):
-    """Lösche alte Konversationen (älter als X Tage)"""
+    """Delete old conversations (older than X days)"""
     try:
         from datetime import timedelta
         cutoff_date = datetime.now(UTC).replace(tzinfo=None) - timedelta(days=days)

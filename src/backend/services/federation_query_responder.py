@@ -206,8 +206,8 @@ async def _write_responder_audit(
 
     user_id = pending.asker_local_user_id if pending.mapped else pending.peer_owner_id
     if user_id is None:
-        # Neither mapped nor with an owner -- a record from an older
-        # Fassung, den `_peer_scope_for` ohnehin abweist. Nichts zu verzeichnen.
+        # Neither mapped nor with an owner -- a record from an older version,
+        # which `_peer_scope_for` rejects anyway. Nothing to record.
         return
     await write_federation_audit(
         user_id=user_id,
@@ -237,7 +237,7 @@ async def _write_responder_audit(
 
 
 async def _record_cancelled_access(pending: _PendingRequest) -> None:
-    """Den Vermerk fuer einen abgebrochenen fremden Zugriff schreiben.
+    """Write the record for a cancelled foreign access.
 
     A separate function so the cancellation branch above stays readable and
     the write is testable without staging a race.
@@ -250,9 +250,9 @@ async def _record_cancelled_access(pending: _PendingRequest) -> None:
             "gelesen, keine Antwort ausgeliefert."
         )
     try:
-        # `shield`: a SECOND cancel() ends the wait here, not the
-        # Schreibvorgang selbst. Gegen einen schliessenden Ereignisring hilft
-        # nothing -- then there is no row, i.e. exactly the old behaviour.
+        # `shield`: a SECOND cancel() ends the wait here, not the write
+        # itself. Against a closing event loop nothing helps -- then there is
+        # no row, i.e. exactly the old behaviour.
         await asyncio.shield(
             _write_responder_audit(pending, success=False, error=reason,
                                    aborted=True)
@@ -819,11 +819,11 @@ class FederationQueryResponder:
         debouncing is a future F5 task.
         """
         # A pairing is identified by `(circle_owner_id, remote_pubkey)` --
-        # so steht es im Eindeutigkeitsindex `uq_peer_users_owner_pubkey`. Hier
-        # was looked up by the key alone until 2026-10-28, and with
+        # that is how the unique index `uq_peer_users_owner_pubkey` states it.
+        # Here it was looked up by the key alone until 2026-10-28, and with
         # `scalar_one_or_none()`. Two local people pairing with the SAME far
         # side are permitted by the index -- and would then make every
-        # foederierte Anfrage mit `MultipleResultsFound` als 500 enden. Im
+        # federated request end as a 500 with `MultipleResultsFound`. In
         # the household was one step away from this on 2026-10-28: an active
         # row for account 1 and a revoked one for account 2, both with
         # x-idra's key; pairing again would have revived the second.

@@ -246,10 +246,10 @@ async def _process_entry(
 ) -> None:
     document_id = entry.params.get("document_id")
     user_id = entry.params.get("user_id")
-    # 🛑 Ein Wiederanstoss legt VOR, er fuehrt nicht aus (#1372). Das Kennzeichen
-    # kommt aus der Nutzlast — der langsame Pfad liegt hinter Redis, und ohne
-    # es wuerde ein Wiederanstoss an einem unlesbaren Stapel (genau der Fall,
-    # der #1368 ausgeloest hat) wieder automatisch schneiden.
+    # 🛑 A re-trigger PROPOSES, it does not execute (#1372). The marker comes
+    # from the payload -- the slow path lies behind Redis, and without it a
+    # re-trigger on an unreadable batch (exactly the case that set off #1368)
+    # would split automatically again.
     resplit = bool(entry.params.get("resplit"))
     if document_id is None:
         logger.error(f"skipping entry {entry.entry_id}: missing document_id")

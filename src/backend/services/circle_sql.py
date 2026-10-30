@@ -204,11 +204,11 @@ def circles_filter_clause(
         #   - the row's owner must be the one who entered into this pairing.
         #     Without that the peer would see its tier under EVERY owner on
         #     the instance.
-        #   - the granted tier has to reach the row. Smaller number =
-        #     weiter: `4 <= tier` trifft nur Oeffentliches, `0 <= tier` alles.
+        #   - the granted tier has to reach the row. Smaller number = wider:
+        #     `4 <= tier` reaches only public rows, `0 <= tier` reaches all.
         # The EXISTS on `circle_memberships` that used to stand here read the
-        # REMOTE user id from a column with a foreign key onto the
-        # LOKALE `users.id` — siehe `peer` im Docstring.
+        # REMOTE user id from a column with a foreign key onto the LOCAL
+        # `users.id` -- see `peer` in the docstring.
         parts.append(
             f"({owner_alias}.{owner_col} = :{asker_param}_peer_owner"
             f" AND :{asker_param}_peer_tier <= {table_alias}.{tier_col})"
@@ -267,11 +267,11 @@ def circles_filter_params(
     user-supplied strings here (bind param, not interpolated).
     """
     if peer is not None:
-        # 🛑 Im foederierten Fall gibt es KEINE fragende lokale Person — also
-        # `{asker_param}` is not created at all. Supplied anyway it would be
-        # an unused binding, and a strict
-        # `text(clause).bindparams()`-Aufrufer (kg_retrieval._resolve_entity_names)
-        # caller raises on it. The same goes for `_src`: the grant branch drops out.
+        # 🛑 In the federated case there is NO asking local person -- so
+        # `{asker_param}` is not created at all. Supplied anyway it would be an
+        # unused binding, and a strict `text(clause).bindparams()` caller
+        # (kg_retrieval._resolve_entity_names) raises on it. The same goes for
+        # `_src`: the grant branch drops out.
         return {
             f"{asker_param}_pub": public_tier_index,
             f"{asker_param}_peer_owner": peer.owner_id,
@@ -302,8 +302,8 @@ def kg_entities_circles_filter(
     src = "kg_entities"
     clause = circles_filter_clause(table_alias=alias, source_table_value=src, peer=peer)
     # The federated case drops the grant branch (and with it `_src`) AND the
-    # Fragenden-Kennung weg — sonst wirft ein strikter
-    # `text(clause).bindparams()` caller would raise on the unused name.
+    # asker id -- otherwise a strict `text(clause).bindparams()` caller would
+    # raise on the unused name.
     return clause, circles_filter_params(
         asker_id, source_table_value=("" if peer is not None else src), peer=peer
     )
@@ -319,8 +319,8 @@ def kg_relations_circles_filter(
     src = "kg_relations"
     clause = circles_filter_clause(table_alias=alias, source_table_value=src, peer=peer)
     # The federated case drops the grant branch (and with it `_src`) AND the
-    # Fragenden-Kennung weg — sonst wirft ein strikter
-    # `text(clause).bindparams()` caller would raise on the unused name.
+    # asker id -- otherwise a strict `text(clause).bindparams()` caller would
+    # raise on the unused name.
     return clause, circles_filter_params(
         asker_id, source_table_value=("" if peer is not None else src), peer=peer
     )
@@ -336,8 +336,8 @@ def conversation_memories_circles_filter(
     src = "conversation_memories"
     clause = circles_filter_clause(table_alias=alias, source_table_value=src, peer=peer)
     # The federated case drops the grant branch (and with it `_src`) AND the
-    # Fragenden-Kennung weg — sonst wirft ein strikter
-    # `text(clause).bindparams()` caller would raise on the unused name.
+    # asker id -- otherwise a strict `text(clause).bindparams()` caller would
+    # raise on the unused name.
     return clause, circles_filter_params(
         asker_id, source_table_value=("" if peer is not None else src), peer=peer
     )
@@ -410,8 +410,8 @@ def document_chunks_circles_filter(
         peer=peer,
     )
     # The federated case drops the grant branch (and with it `_src`) AND the
-    # Fragenden-Kennung weg — sonst wirft ein strikter
-    # `text(clause).bindparams()` caller would raise on the unused name.
+    # asker id -- otherwise a strict `text(clause).bindparams()` caller would
+    # raise on the unused name.
     return clause, circles_filter_params(
         asker_id, source_table_value=("" if peer is not None else src), peer=peer
     )
@@ -461,8 +461,8 @@ def document_facts_circles_filter(
         peer=peer,
     )
     # The federated case drops the grant branch (and with it `_src`) AND the
-    # Fragenden-Kennung weg — sonst wirft ein strikter
-    # `text(clause).bindparams()` caller would raise on the unused name.
+    # asker id -- otherwise a strict `text(clause).bindparams()` caller would
+    # raise on the unused name.
     return clause, circles_filter_params(
         asker_id, source_table_value=("" if peer is not None else src), peer=peer
     )

@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Renfield Update Script
-# Aktualisiert das System sicher
+# Updates the system safely
 
 set -e
 
@@ -17,7 +17,7 @@ GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 NC='\033[0m'
 
-# Backup erstellen
+# Create a backup
 echo "💾 Erstelle Backup..."
 timestamp=$(date +%Y%m%d_%H%M%S)
 backup_dir="backups/backup_$timestamp"
@@ -42,11 +42,11 @@ if [ -d .git ]; then
     echo ""
 fi
 
-# Container neu bauen
+# Rebuild the containers
 echo "🔨 Baue Container neu..."
 docker-compose build
 
-# Container neu starten
+# Restart the containers
 echo "🔄 Starte Container neu..."
 docker-compose down
 docker-compose up -d

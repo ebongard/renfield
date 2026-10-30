@@ -64,7 +64,7 @@ async def speech_to_text(
         audio_bytes = await audio.read()
         logger.info(f"📊 Audio-Größe: {len(audio_bytes)} bytes")
 
-        # Transkribieren mit Sprechererkennung (wenn aktiviert)
+        # Transcribe with speaker recognition (when enabled)
         logger.info("🔄 Starte Transkription...")
 
         # B-3: per-request STT bias prompt. The /stt endpoint has the
@@ -163,7 +163,7 @@ async def text_to_speech(request: Request, tts_request: TTSRequest, _user=Depend
         if not audio_bytes:
             raise HTTPException(status_code=400, detail="TTS-Generierung fehlgeschlagen")
 
-        # Als WAV-Stream zurückgeben
+        # Return it as a WAV stream
         return StreamingResponse(
             BytesIO(audio_bytes),
             media_type="audio/wav",

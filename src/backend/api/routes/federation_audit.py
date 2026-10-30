@@ -35,10 +35,10 @@ class FederationAuditEntry(BaseModel):
     verified_signature: bool
     answer_excerpt: str | None
     error_message: str | None
-    #: "asked" = diese Instanz hat gefragt, "answered" = sie hat geantwortet.
+    #: "asked" = this instance asked, "answered" = this instance answered.
     direction: str
     #: WHICH identity the answer rested on -- "mapped" (as the
-    #: verknüpfte Person, volle eigene Reichweite) oder "peer_tier" (als
+    #: linked person, with that person's own full reach) or "peer_tier" (as a
     #: foreign instance, only the granted tier).
     #:
     #: `None` does NOT mean "peer_tier" but "not recorded": on asker rows this

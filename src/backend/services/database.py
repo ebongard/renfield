@@ -113,7 +113,7 @@ PRE_BASELINE_REVISION = "pc20260924_restore_idx"
 
 
 async def _run_alembic_upgrade_head() -> None:
-    """`alembic upgrade head` im selben Prozess, gegen dieselbe Datenbank."""
+    """`alembic upgrade head` in the same process, against the same database."""
     import asyncio
 
     from alembic.config import Config
@@ -232,8 +232,8 @@ async def init_db():
             # create whatever was in the model but in no migration. That net is
             # gone -- rightly so, because it masked a missing migration. But it
             # must not turn into a runtime error on the first query:
-            # lieber EINE laute Zeile beim Start als `UndefinedTable` irgendwann
-            # mitten im Betrieb.
+            # better ONE loud line at startup than `UndefinedTable` at some
+            # point in the middle of operation.
             await _warn_about_tables_no_migration_created()
             logger.info("Datenbank vorhanden — keine Initialisierung noetig")
             return
@@ -247,7 +247,7 @@ async def init_db():
         raise
 
 async def get_db():
-    """Dependency für FastAPI Endpoints"""
+    """Dependency for FastAPI endpoints"""
     async with AsyncSessionLocal() as session:
         try:
             yield session

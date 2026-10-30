@@ -196,10 +196,10 @@ def _filter_available_roles(
             filtered[name] = role
         else:
             # Check if at least one required server is connected
-            # A paired peer counts as available for a federation-capable role
-            # mit. `connected_set` enthaelt ihn (`peer_mcp_registry` setzt
-            # `connected=True` — im eigenen Kommentar als „a lie — there's no
-            # MCP session", set precisely so it shows up here), but the
+            # 🛑 A paired peer counts as available for a federation-capable
+            # role. `connected_set` contains it (`peer_mcp_registry` sets
+            # `connected=True` -- called "a lie -- there's no MCP session" in
+            # its own comment, set precisely so it shows up here), but the
             # allowlist cannot name it. Without this a role whose real servers
             # are down while the peer is up would wrongly count as
             # unavailable.
@@ -288,15 +288,15 @@ class AgentRouter:
                     (name, role) for name, role in self.roles.items()
                     if role.mcp_servers and server in role.mcp_servers
                 ]
-                # 🛑 VORBESTEHENDER Fehler, vom Architektur-Review am
-                # 2026-10-29 gefunden: fuer ein `mcp.peer_<id>.*`-Intent fand
-                # this list NEVER produced a role. The allowlist cannot name
-                # the peer, and `general` carries `mcp_servers = None` --
-                # falsy, also hier nie Kandidat, obwohl es faktisch jedes
-                # tool. So the correction "that was a federation matter" went
-                # nowhere, independently of
-                # von jeder Filterform: wer nur den Filter repariert, repariert
-                # the correction did not come along.
+                # 🛑 PRE-EXISTING defect, found by the architecture review on
+                # 2026-10-29: for an `mcp.peer_<id>.*` intent this list NEVER
+                # found a role. The allowlist cannot name the peer, and
+                # `general` carries `mcp_servers = None` -- falsy, so never a
+                # candidate here, although it factually sees every tool. The
+                # correction "that was a federation matter" therefore went
+                # nowhere, and that holds independently of any filter form:
+                # whoever repairs only the filter does not repair the
+                # correction along with it.
                 if not candidates and server.startswith(FEDERATION_SERVER_PREFIX):
                     candidates = [
                         (name, role) for name, role in self.roles.items()
@@ -312,7 +312,7 @@ class AgentRouter:
                         candidates.sort(key=lambda nr: nr[0])
                         return candidates[0][0]
                     # No federation-capable role: falls through to `None`
-                    # durch, wie jedes unbekannte Intent.
+                    # below, like every unknown intent.
                 if not candidates:
                     return None
                 candidates.sort(key=lambda nr: (len(nr[1].mcp_servers), nr[0]))

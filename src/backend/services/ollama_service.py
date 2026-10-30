@@ -54,7 +54,7 @@ def _build_personality_context(personality_style: str, personality_prompt: str |
 
 
 class OllamaService:
-    """Service für Ollama LLM Interaktion mit Mehrsprachigkeit."""
+    """Service for Ollama LLM interaction, multilingual."""
 
     def __init__(self):
         self.client = get_default_client()
@@ -133,7 +133,7 @@ WICHTIGE REGELN FÜR ANTWORTEN:
 4. Wenn eine Aktion ausgeführt wurde, bestätige dies einfach"""
 
     async def ensure_model_loaded(self) -> None:
-        """Stelle sicher, dass das Modell geladen ist.
+        """Make sure the model is loaded.
 
         Skips gracefully when the client is not a native Ollama client
         (e.g. OpenAICompatibleClient for llama-server / vLLM), since those
@@ -962,7 +962,7 @@ WICHTIGE REGELN FÜR ANTWORTEN:
         user_id: int | None = None,
         enforce_ownership: bool = False,
     ) -> list[dict]:
-        """Lade Konversationskontext aus der Datenbank (delegiert an ConversationService).
+        """Load the conversation context from the database (delegates to ConversationService).
 
         ``user_id`` + ``enforce_ownership`` close the cross-user history-read IDOR on
         the WS path; see ConversationService.load_context.
@@ -986,7 +986,7 @@ WICHTIGE REGELN FÜR ANTWORTEN:
         enforce_ownership: bool = False,
         circle_tier: int | None = None,
     ) -> "Message":
-        """Speichere eine einzelne Nachricht (delegiert an ConversationService).
+        """Save a single message (delegates to ConversationService).
 
         ``parent_message_id`` (chat branching, Phase 1): when given, the message
         forks as a sibling under that parent; else it chains onto the current
@@ -1018,7 +1018,7 @@ WICHTIGE REGELN FÜR ANTWORTEN:
         session_id: str,
         db: AsyncSession
     ) -> bool:
-        """Lösche eine komplette Konversation (delegiert an ConversationService)"""
+        """Delete a whole conversation (delegates to ConversationService)"""
         from services.conversation_service import ConversationService
         service = ConversationService(db)
         return await service.delete(session_id)
@@ -1029,7 +1029,7 @@ WICHTIGE REGELN FÜR ANTWORTEN:
         limit: int = 50,
         offset: int = 0
     ) -> list[dict]:
-        """Hole Liste aller Konversationen (delegiert an ConversationService)"""
+        """Fetch the list of all conversations (delegates to ConversationService)"""
         from services.conversation_service import ConversationService
         service = ConversationService(db)
         return await service.list_all(limit, offset)
@@ -1093,7 +1093,7 @@ WICHTIGE REGELN FÜR ANTWORTEN:
         """
         lang = lang or self.default_lang
         try:
-            # Wähle Modell basierend auf RAG-Kontext
+            # Pick the model based on the RAG context
             model = self.rag_model if rag_context else self.chat_model
 
             # Baue System-Prompt mit RAG-Kontext
@@ -1151,7 +1151,7 @@ WICHTIGE REGELN FÜR ANTWORTEN:
         """
         lang = lang or self.default_lang
         try:
-            # Wähle Modell basierend auf RAG-Kontext
+            # Pick the model based on the RAG context
             model = self.rag_model if rag_context else self.chat_model
 
             # Baue System-Prompt mit RAG-Kontext

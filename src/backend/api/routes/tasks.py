@@ -175,7 +175,7 @@ async def delete_task(
     db: AsyncSession = Depends(get_db),
     _user: User = Depends(require_permission(Permission.TASKS_MANAGE)),
 ):
-    """Task löschen"""
+    """Delete a task"""
     try:
         result = await db.execute(
             select(Task).where(Task.id == task_id)

@@ -103,7 +103,7 @@ router = APIRouter()
 # =============================================================================
 
 def get_rag_service(db: AsyncSession = Depends(get_db)) -> RAGService:
-    """Dependency für RAG Service"""
+    """Dependency for the RAG service"""
     return RAGService(db)
 
 
@@ -318,7 +318,7 @@ async def upload_document(
             },
         )
 
-    # Validierung: Dateigröße — 413 Content Too Large is the correct code.
+    # Validation: file size -- 413 Content Too Large is the correct code.
     # Include max_mb in the detail so the frontend can show the limit
     # without hard-coding it.
     file.file.seek(0, 2)
@@ -373,7 +373,7 @@ async def upload_document(
     unique_filename = f"{uuid.uuid4().hex}_{safe_name}"
     file_path = upload_dir / unique_filename
 
-    # Datei speichern
+    # Save the file
     try:
         async with aiofiles.open(file_path, 'wb') as f:
             await f.write(content)
@@ -1365,8 +1365,8 @@ async def search_in_document(
     user: User | None = Depends(get_optional_user),
     db: AsyncSession = Depends(get_db)
 ):
-    """Sucht nur innerhalb eines bestimmten Dokuments"""
-    # Prüfe ob Dokument existiert
+    """Searches only inside one specific document"""
+    # Check that the document exists
     doc = await rag.get_document(document_id)
     if not doc:
         raise HTTPException(status_code=404, detail="Dokument nicht gefunden")

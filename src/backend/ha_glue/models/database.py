@@ -112,7 +112,7 @@ class HomeAssistantEntity(Base):
 
 
 class Room(Base):
-    """Raum für Smart Home und Device-Zuordnung."""
+    """A room, for smart home and device assignment."""
 
     __tablename__ = "rooms"
 
@@ -401,11 +401,11 @@ class UserBleIrk(Base):
 
     __tablename__ = "user_ble_irks"
 
-    # KEIN `index=True`: die Spalte ist der Primaerschluessel und traegt dessen
-    # UNIQUE-Index bereits. `index=True` baute daneben einen zweiten, nicht
-    # eindeutigen Index auf dieselbe Spalte — reine Schreiblast. Gemessen
-    # 2026-09-25: `create_all` erzeugte 25 solche Doppler, die KEINE Instanz
-    # hat; die Produktion lief nie mit ihnen.
+    # NO `index=True`: the column is the primary key and already carries its
+    # UNIQUE index. `index=True` built a second, non-unique index next to it on
+    # the same column -- pure write load. Measured 2026-09-25: `create_all`
+    # produced 25 such duplicates that NO instance has; production never ran
+    # with them.
     id = Column(Integer, primary_key=True)
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
     # Globally-unique stable identity the satellite reports on a resolved match;
@@ -438,11 +438,11 @@ class Satellite(Base):
 
     __tablename__ = "satellites"
 
-    # KEIN `index=True`: die Spalte ist der Primaerschluessel und traegt dessen
-    # UNIQUE-Index bereits. `index=True` baute daneben einen zweiten, nicht
-    # eindeutigen Index auf dieselbe Spalte — reine Schreiblast. Gemessen
-    # 2026-09-25: `create_all` erzeugte 25 solche Doppler, die KEINE Instanz
-    # hat; die Produktion lief nie mit ihnen.
+    # NO `index=True`: the column is the primary key and already carries its
+    # UNIQUE index. `index=True` built a second, non-unique index next to it on
+    # the same column -- pure write load. Measured 2026-09-25: `create_all`
+    # produced 25 such duplicates that NO instance has; production never ran
+    # with them.
     id = Column(Integer, primary_key=True)
     # The asserted identity the satellite registers under; the token is bound
     # to this id, so a register frame whose satellite_id ≠ the token's id fails.

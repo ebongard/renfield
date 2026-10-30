@@ -1,44 +1,43 @@
-"""Die Vorbedingungen des zweiten Faktors — an EINER Stelle.
+"""The preconditions of the second factor -- in ONE place.
 
-🛑 DER FEHLER, GEGEN DEN DIESES MODUL GESCHRIEBEN IST
-=====================================================
-Die Hürde wurde auf EINE Bedingung gestellt und auf FÜNF abgeräumt.
+🛑 THE DEFECT THIS MODULE IS WRITTEN AGAINST
+============================================
+The hurdle was raised on ONE condition and cleared on FIVE.
 
-`/auth/login` stellte sie, sobald `voice_auth_enabled` an war. `/auth/voice`
-verlangte zum Einlösen zusätzlich: eingeschaltete Sprecherkennung, ein
-verknüpftes Profil, mindestens eine Einbettung — und einen Einbettungsweg, den
-ein älterer P0-Riegel in der Produktion zuhält. **Jede Lücke zwischen den
-beiden Mengen ist eine Aussperrung**, denn es gibt bewusst keinen Rückfall auf
-Passwort allein.
+`/auth/login` raised it as soon as `voice_auth_enabled` was on. To redeem it,
+`/auth/voice` additionally demanded: speaker recognition switched on, a linked
+profile, at least one embedding -- and an embedding path that an older P0 guard
+keeps shut in production. **Every gap between the two sets is a lockout**,
+because there is deliberately no fallback to the password alone.
 
-Der Kommentar an der Login-Stelle sprach die Regel bereits aus — „die Hürde
-greift nur, wenn es auch eine Tür gibt" — und prüfte dann nur einen der Flügel.
-Deshalb liegt die Prüfung jetzt hier, und alle drei Aufrufer laufen hindurch:
+The comment at the login site already stated the rule -- "the hurdle only
+applies when there is also a door" -- and then checked only one of its leaves.
+That is why the check now lives here, and all three callers run through it:
 
-* `POST /auth/login` — stellt die Hürde NUR, wenn sie auch fällt.
-* `POST /users/{id}/voice-second-factor` — 409 statt einer scharfen Einwilligung,
-  die ins Leere greift.
-* `POST /auth/voice` — prüft vor dem Einlösen dasselbe noch einmal, weil sich
-  zwischen Passwort und Aufnahme etwas geändert haben kann.
+* `POST /auth/login` -- raises the hurdle ONLY when it also falls.
+* `POST /users/{id}/voice-second-factor` -- 409 instead of an armed consent
+  that grasps at nothing.
+* `POST /auth/voice` -- checks the same thing again before redeeming, because
+  something may have changed between the password and the recording.
 
-🛑 WARUM DIE EINWILLIGUNG DABEI STEHEN BLEIBT
-=============================================
-Fehlt die Tür, RUHT die Hürde — die Spalte wird nicht gelöscht. Zwei Gründe:
+🛑 WHY THE CONSENT STAYS IN PLACE
+=================================
+When the door is missing, the hurdle RESTS -- the column is not deleted. Two
+reasons:
 
-1. Es ist genau das Verhalten, das für `voice_auth_enabled=false` schon
-   dokumentiert und gewollt ist (`docs/ENVIRONMENT_VARIABLES.md`): ohne
-   Sprachweg könnte niemand einlösen, also ruht die Anforderung, statt das
-   Konto auszusperren. Eine Regel, nicht zwei.
-2. Die Spalte IST die Einwilligung (Art. 9 DSGVO). Sie beim Entzug des Profils
-   still zu löschen, vernichtete den Nachweis einer Erklärung, die die Person
-   abgegeben hat. Kehrt das Profil zurück, greift die Anforderung von selbst
-   wieder.
+1. It is exactly the behaviour already documented and intended for
+   `voice_auth_enabled=false` (`docs/ENVIRONMENT_VARIABLES.md`): without a
+   voice path nobody could redeem, so the requirement rests instead of locking
+   the account out. One rule, not two.
+2. The column IS the consent (Art. 9 GDPR). Deleting it silently when the
+   profile is withdrawn would destroy the record of a declaration the person
+   made. When the profile comes back, the requirement applies again by itself.
 
-Ein Angreifer gewinnt dadurch nichts: um die Hürde zum Ruhen zu bringen, muss
-er das Profil entfernen, und das verlangt `users.manage` bzw. `speakers.all` —
-dieselbe Berechtigung, mit der er die Einwilligung ohnehin direkt abschalten
-könnte. Neu ist keine Fähigkeit, nur ein Protokolleintrag: das Ruhen wird als
-WARNING geschrieben, sonst wäre es eine stille Absenkung des Schutzes.
+An attacker gains nothing from this: to put the hurdle to rest they have to
+remove the profile, and that requires `users.manage` or `speakers.all` --
+the same permission with which they could switch the consent off directly
+anyway. No capability is new, only a log entry: the resting is written as a
+WARNING, otherwise it would be a silent lowering of the protection.
 """
 
 from loguru import logger
@@ -48,46 +47,48 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from models.database import SpeakerEmbedding, User
 from utils.config import settings
 
-# Gründe, maschinenlesbar. Sie gehen NIE an den Anmeldenden heraus (eine
-# Fehlschlagsantwort unterscheidet nichts), sondern nur ins Protokoll und in
-# die 409-Antwort der Verwaltungsroute, wo die Person ihr eigenes Konto ansieht.
+# Reasons, machine-readable. They NEVER go out to whoever is logging in (a
+# failure answer distinguishes nothing), only into the log and into the 409
+# answer of the administration route, where the person looks at their own
+# account.
 PATH_OFF = "voice_path_off"
 RECOGNITION_OFF = "recognition_off"
 NO_PROFILE = "no_profile"
 NO_EMBEDDINGS = "no_embeddings"
 
-# 🛑 NUR fuer die 409-Antwort des Einschaltens, nie aus `voice_factor_blocker()`:
-# ein Geraetekonto meldet sich nicht ueber `/auth/login` an, kann seinen eigenen
-# Zustand also gar nicht lesen. Der Code steht trotzdem HIER, weil er dieselbe
-# Frage beantwortet — „warum kann dieses Konto den Faktor nicht tragen" — und
-# weil er sonst wieder als Prosa herausgeht. Genau das war er: beim Umbau vom
-# 2026-09-29 wurden die drei benannten englischen Saetze ersetzt und dieser
-# vierte, VIER ZEILEN darueber in derselben Funktion, stehen gelassen.
+# 🛑 ONLY for the 409 answer when switching on, never from
+# `voice_factor_blocker()`: a device account does not log in through
+# `/auth/login`, so it cannot read its own state at all. The code still stands
+# HERE, because it answers the same question -- "why can this account not carry
+# the factor" -- and because otherwise it goes out as prose again. That is
+# exactly what it was: in the 2026-09-29 rework the three named English
+# sentences were replaced and this fourth one, FOUR LINES above them in the
+# same function, was left standing.
 DEVICE_ACCOUNT = "device_account"
 
 
 def voice_path_blocker() -> str | None:
-    """Was den Einlöseweg für ALLE Konten versperrt, oder ``None``.
+    """What blocks the redemption path for ALL accounts, or ``None``.
 
-    Nur Schalter der Instanz. Bewusst getrennt vom Profil-Prüfer: beim
-    **Einschalten** der Einwilligung darf `voice_auth_enabled=false` kein
-    Hindernis sein, sonst wäre die Reihenfolge des Cutovers (erst Einwilligung
-    sammeln, dann Flag umlegen) nicht durchführbar.
+    Instance switches only. Deliberately separate from the profile checker:
+    when **switching on** the consent, `voice_auth_enabled=false` must not be
+    an obstacle, otherwise the cutover order (collect consents first, then flip
+    the flag) would not be workable.
     """
     if not settings.voice_auth_enabled:
         return PATH_OFF
-    # Ein Stimmabdruck ist biometrisches Datum. Ist die Erkennung aus, wird auch
-    # für die Anmeldung keiner berechnet — derselbe Grundsatz wie im Resolver.
+    # A voiceprint is biometric data. With recognition off, none is computed
+    # for the login either -- the same principle as in the resolver.
     if not settings.speaker_recognition_enabled:
         return RECOGNITION_OFF
     return None
 
 
 async def voice_profile_blocker(db: AsyncSession, user: User) -> str | None:
-    """Was DIESES Konto am Einlösen hindert, oder ``None``.
+    """What stops THIS account from redeeming, or ``None``.
 
-    Ein verknüpftes Profil ohne Einbettungen ist derselbe Fall wie gar keines:
-    es gäbe nichts, wogegen verglichen werden könnte.
+    A linked profile without embeddings is the same case as none at all: there
+    would be nothing to compare against.
     """
     if not user.speaker_id:
         return NO_PROFILE
@@ -99,31 +100,31 @@ async def voice_profile_blocker(db: AsyncSession, user: User) -> str | None:
 
 
 async def voice_factor_blocker(db: AsyncSession, user: User) -> str | None:
-    """Was den zweiten Faktor für DIESES Konto heute versperrt, oder ``None``.
+    """What blocks the second factor for THIS account today, or ``None``.
 
-    Die volle Wahrheit: erst die Schalter der Instanz, dann das Profil. Getrennt
-    von der EINSCHALT-Prüfung in `POST /users/{id}/voice-second-factor`, und das
-    ist Absicht — dort darf `PATH_OFF` nicht blockieren, sonst wäre die
-    Reihenfolge des Cutovers (erst Einwilligung sammeln, dann Flag umlegen)
-    nicht durchführbar. Zum ANZEIGEN dagegen zählt `PATH_OFF` mit: eine Hürde,
-    die ruht, weil der Sprachweg aus ist, soll die Person auch so genannt
-    bekommen.
+    The full truth: first the instance switches, then the profile. Separate
+    from the SWITCH-ON check in `POST /users/{id}/voice-second-factor`, and
+    that is deliberate -- there `PATH_OFF` must not block, otherwise the
+    cutover order (collect consents first, then flip the flag) would not be
+    workable. For DISPLAY, by contrast, `PATH_OFF` counts: a hurdle that rests
+    because the voice path is off should be named as such to the person too.
 
-    🛑 Der Grund ist UNABHÄNGIG von der Einwilligung. Die Seite „Mein Konto"
-    zeigte ihn vorher nur im Zustand „scharf" — also nie für jemanden, der
-    gerade überlegt einzuwilligen. Gemessen am 2026-09-29 im Haushalt: bei
-    6 von 7 Konten greift `NO_PROFILE`, und genau die sahen ein blankes „Aus"
-    mit einer Schaltfläche, die fehlschlagen musste.
+    🛑 The reason is INDEPENDENT of the consent. The "Mein Konto" page
+    previously showed it only in the "armed" state -- so never for somebody who
+    is just considering consenting. Measured on 2026-09-29 in the household:
+    `NO_PROFILE` applies to 6 of 7 accounts, and exactly those saw a bare "off"
+    with a button that was bound to fail.
     """
     return voice_path_blocker() or await voice_profile_blocker(db, user)
 
 
 async def second_factor_applies(db: AsyncSession, user: User) -> bool:
-    """Darf `/auth/login` diesem Konto die Token vorenthalten?
+    """May `/auth/login` withhold the tokens from this account?
 
-    Nur wenn die Einwilligung vorliegt UND der Weg heraus offen ist. Sonst ruht
-    die Hürde — mit einem WARNING, denn eine ruhende Hürde ist ein Schutz, der
-    gerade nicht wirkt, und das soll der Betreiber im Protokoll sehen.
+    Only when the consent is on record AND the way out is open. Otherwise the
+    hurdle rests -- with a WARNING, because a resting hurdle is a protection
+    that is currently not in effect, and the operator should see that in the
+    log.
     """
     if not user.voice_second_factor_enabled:
         return False
@@ -133,9 +134,9 @@ async def second_factor_applies(db: AsyncSession, user: User) -> bool:
         return True
 
     if blocker != PATH_OFF:
-        # `PATH_OFF` ist der dokumentierte Normalzustand beider Instanzen und
-        # würde das Protokoll bei jeder Anmeldung fluten. Die anderen drei sind
-        # Abweichungen, die jemand beheben sollte.
+        # `PATH_OFF` is the documented normal state of both instances and
+        # would flood the log on every login. The other three are deviations
+        # somebody should fix.
         logger.warning(
             f"Voice second factor RESTS for user {user.id}: {blocker}. "
             f"The consent is recorded but cannot be redeemed, so the password "
@@ -145,18 +146,18 @@ async def second_factor_applies(db: AsyncSession, user: User) -> bool:
 
 
 def voice_factor_lock_id(user_id: int) -> str:
-    """Die Kennung, unter der die Fehlversuche des ZWEITEN Faktors zaehlen.
+    """The id under which the failed attempts of the SECOND factor are counted.
 
-    🛑 Bewusst ein anderer Namensraum als der Benutzername: ein Fehlversuch der
-    Stimme darf den Passwortpfad NICHT mitsperren, sonst waere der zweite Faktor
-    ein Weg, jemanden mit fremden Mitteln aus seinem Konto zu draengen.
+    🛑 Deliberately a different namespace from the user name: a failed voice
+    attempt must NOT lock the password path as well, otherwise the second
+    factor would be a way to push somebody out of their account using
+    somebody else's means.
 
-    Der Befund, weshalb die Kennung hier steht statt als Zeichenkette in der
-    Route: die Verwaltungsoberflaeche fragte die Sperre unter dem BENUTZERNAMEN
-    ab. Beide trafen sich nie — die Liste meldete „nicht gesperrt", und der
-    Entsperr-Knopf raeumte nichts (`cleared_keys=0`), waehrend die Person
-    tatsaechlich nicht hereinkam. Ausgerechnet auf dem Bildschirm, der der
-    Wiederherstellungsweg ist. Wer die Sperre setzt und wer sie anzeigt oder
-    raeumt, liest die Kennung jetzt von hier.
+    The finding behind why the id lives here instead of as a string in the
+    route: the administration interface queried the lock under the USER NAME.
+    The two never met -- the list reported "not locked", and the unlock button
+    cleared nothing (`cleared_keys=0`), while the person really could not get
+    in. On the very screen that is the recovery path. Whoever sets the lock and
+    whoever displays or clears it now reads the id from here.
     """
     return f"voice2fa:{user_id}"

@@ -1,45 +1,45 @@
-"""Das Zwischenticket zwischen Passwort und Stimme.
+"""The intermediate ticket between password and voice.
 
-WARUM ES DAS GIBT
------------------
-`POST /auth/voice` war bis 2026-09-27 der ERSTE Faktor: Tonaufnahme rein, Zugriffs-
-und Erneuerungstoken raus. Eine Aufnahme der Stimme genügte damit für eine
-vollständige Anmeldung, ohne Lebendigkeitsprüfung und ohne zweiten Faktor. Die
-Entscheidung vom 2026-09-27 war, daraus einen ZUSATZfaktor zu machen.
+WHY IT EXISTS
+-------------
+Until 2026-09-27 `POST /auth/voice` was the FIRST factor: audio recording in,
+access and refresh token out. One recording of the voice was therefore enough for
+a complete login, with no liveness check and no second factor. The decision of
+2026-09-27 was to turn it into an ADDITIONAL factor.
 
-Ein Zusatzfaktor ist nur dann einer, wenn er nach einem ersten kommt und ohne ihn
-nichts wert ist. Also braucht die Stimmprüfung einen Nachweis „Passwort wurde
-gezeigt". Dieses Modul hält ihn: `/auth/login` legt für ein Konto mit dem Flag ein
-einmaliges, kurzlebiges Ticket ab und gibt KEINE Token aus; `/auth/voice` löst das
-Ticket ein und gibt erst dann Token.
+An additional factor only is one if it comes after a first one and is worth
+nothing without it. So the voice check needs a proof that "the password was
+shown". This module holds it: for an account carrying the flag, `/auth/login`
+stores a one-time, short-lived ticket and issues NO tokens; `/auth/voice` redeems
+the ticket and only then issues tokens.
 
-🛑 WAS DAS NEBENBEI ERLEDIGT
----------------------------
-Weil der Nutzer nach dem ersten Faktor BEKANNT ist, kippt die Route von „wer ist
-das?" zu „ist das die behauptete Person?" — von 1:N auf 1:1. Damit verschwinden
-zwei Befunde des Reviews vom 2026-09-27 strukturell statt durch einen Riegel:
+🛑 WHAT THIS SETTLES ALONG THE WAY
+---------------------------------
+Because the user is KNOWN after the first factor, the route turns from "who is
+this?" into "is this the claimed person?" -- from 1:N to 1:1. Two findings of the
+2026-09-27 review thereby disappear structurally instead of behind a guard:
 
-* Das **Namensorakel**: es gibt nichts mehr zu identifizieren, also auch keinen
-  Namen zurückzugeben. Der Aufrufer weiß ohnehin, wer er zu sein behauptet.
-* Der **Münzwurf**: `verify_speaker` prüft gegen die Einbettungen EINES Profils.
-  Die Läufer-Marge, die bei 1:N nötig war (und deren Fehlen die Anmeldung von der
-  Erkennung trennte), hat hier keinen Gegenstand mehr.
+* The **name oracle**: there is nothing left to identify, hence no name to return
+  either. The caller knows anyway who they claim to be.
+* The **coin toss**: `verify_speaker` checks against the embeddings of ONE
+  profile. The runner-up margin that 1:N needed (and whose absence separated the
+  login from the recognition) has nothing left to apply to here.
 
 FORM
 ----
-Bewusst gebaut wie `sso_handoff_store`: ein 256-Bit-Token als Schlüssel, die
-Nutzlast in Redis, Einlösung als atomares `GETDEL` (also einmalig, auch bei zwei
-gleichzeitigen Versuchen), kurzer Ablauf. **Es liegt KEIN Token in Redis** — nur
-die aufgelöste Identität. `/auth/voice` prägt die JWTs frisch und prüft den Nutzer
-dabei erneut, sodass ein in der Zwischenzeit deaktiviertes Konto nicht durchkommt
-und `must_change_password` aktuell ist.
+Deliberately built like `sso_handoff_store`: a 256-bit token as the key, the
+payload in Redis, redemption as an atomic `GETDEL` (so one-time, even on two
+concurrent attempts), short expiry. **NO token lies in Redis** -- only the
+resolved identity. `/auth/voice` mints the JWTs fresh and re-checks the user
+while doing so, so an account deactivated in the meantime does not get through
+and `must_change_password` is current.
 
-🛑 Das Ticket ist an die ANFRAGEADRESSE gebunden, wenn diese fälschungsresistent
-ist. Ohne die Bindung könnte ein Angreifer, der ein Ticket abfängt, es von
-irgendwo einlösen; mit ihr muss er auch die Adresse halten. Ist die Adresse nicht
-fälschungsresistent (kein `TRUSTED_PROXIES`), wird NICHT gebunden statt falsch
-gebunden — eine Bindung an einen fälschbaren Wert wäre ein Zugewinn für den
-Angreifer, nicht für uns.
+🛑 The ticket is bound to the REQUEST ADDRESS when that address is resistant to
+forgery. Without the binding an attacker who intercepts a ticket could redeem it
+from anywhere; with it they also have to hold the address. If the address is not
+resistant to forgery (no `TRUSTED_PROXIES`), NO binding happens rather than a
+wrong one -- binding to a forgeable value would be a gain for the attacker, not
+for us.
 """
 from __future__ import annotations
 
@@ -55,18 +55,18 @@ from utils.config import settings
 
 _KEY_PREFIX = "voice2fa:"
 
-#: Wie lange das Ticket gilt. Kurz: es überbrückt nur die Sekunden zwischen
-#: Passworteingabe und Sprachaufnahme. Zu lang wäre ein Zeitfenster, in dem ein
-#: abgefangenes Ticket noch etwas wert ist.
+#: How long the ticket is valid. Short: it only bridges the seconds between
+#: entering the password and recording the voice. Too long would be a window in
+#: which an intercepted ticket is still worth something.
 DEFAULT_TTL_SECONDS = 180
 
 
 @dataclass(frozen=True)
 class PendingVoiceFactor:
-    """Der Nachweis „erster Faktor bestanden" — NICHT die Token.
+    """The proof that "the first factor passed" -- NOT the tokens.
 
-    ``client_ip`` ist None, wenn die Adresse nicht fälschungsresistent ist; dann
-    findet keine Adressbindung statt (siehe Modulkopf).
+    ``client_ip`` is None when the address is not resistant to forgery; no
+    address binding takes place then (see the module header).
     """
     user_id: int
     client_ip: str | None
@@ -81,11 +81,11 @@ def _ttl() -> int:
 
 
 async def issue_ticket(user_id: int, client_ip: str | None) -> str | None:
-    """Lege ein Einmalticket ab und gib es zurück. None, wenn Redis nicht mitspielt.
+    """Store a one-time ticket and return it. None when Redis does not play along.
 
-    🛑 Fail-closed: ohne Ticket gibt `/auth/login` keine Token aus und der Nutzer
-    kommt nicht herein. Das ist die richtige Richtung — ein Redis-Ausfall darf
-    nicht dazu führen, dass der zweite Faktor stillschweigend entfällt.
+    🛑 Fail-closed: without a ticket `/auth/login` issues no tokens and the user
+    does not get in. That is the right direction -- a Redis outage must not lead
+    to the second factor quietly falling away.
     """
     ticket = secrets.token_urlsafe(32)  # 256 Bit
     payload = json.dumps({"user_id": int(user_id), "client_ip": client_ip})
@@ -95,19 +95,19 @@ async def issue_ticket(user_id: int, client_ip: str | None) -> str | None:
         logger.warning(f"voice 2fa: Ticket konnte nicht abgelegt werden: {e}")
         return None
     if not stored:
-        # Kollision auf einem 256-Bit-Token heisst: irgendetwas ist grundlegend
-        # falsch. Kein Wiederholen, kein stilles Weitergehen.
+        # A collision on a 256-bit token means something is fundamentally
+        # wrong. No retry, no quiet continuation.
         logger.error("voice 2fa: Ticketkollision — kein Ticket ausgegeben")
         return None
     return ticket
 
 
 async def consume_ticket(ticket: str, client_ip: str | None) -> PendingVoiceFactor | None:
-    """Löse das Ticket EINMALIG ein (atomares `GETDEL`).
+    """Redeem the ticket ONCE (atomic `GETDEL`).
 
-    None bei unbekanntem, bereits benutztem oder abgelaufenem Ticket — und auch
-    dann, wenn die Adressbindung nicht passt. Der Aufrufer darf diese Fälle nicht
-    unterscheidbar nach außen melden.
+    None on an unknown, already used or expired ticket -- and also when the
+    address binding does not match. The caller must not report these cases
+    distinguishably to the outside.
     """
     if not ticket:
         return None
@@ -128,9 +128,9 @@ async def consume_ticket(ticket: str, client_ip: str | None) -> PendingVoiceFact
         logger.warning(f"voice 2fa: unbrauchbare Nutzlast verworfen: {e}")
         return None
 
-    # Adressbindung, aber nur wenn beim Ausstellen eine gebunden wurde. Vergleich
-    # in konstanter Zeit — die Adresse ist kein Geheimnis, aber der Vergleich ist
-    # gratis und die Gewohnheit richtig.
+    # Address binding, but only if one was bound when issuing. Comparison in
+    # constant time -- the address is not a secret, but the comparison is free
+    # and the habit is the right one.
     if pending.client_ip is not None:
         if client_ip is None or not hmac.compare_digest(pending.client_ip, client_ip):
             logger.warning(

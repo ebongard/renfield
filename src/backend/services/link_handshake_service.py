@@ -70,21 +70,21 @@ from services.federation_pending_store import get_pending_store
 #: browser window, short enough as a replay window.
 LINK_OFFER_TTL_SECONDS = 600
 
-#: Erlaubte Uhren-Abweichung nach vorn, wie beim Paarungs-Vorbild.
+#: Permitted clock skew into the future, as in the pairing it is modelled on.
 CLOCK_SKEW_TOLERANCE_SECONDS = 60
 
 
 class LinkHandshakeError(Exception):
-    """Jeder Fehlschlag des Handschlags — EIN Typ, wie `PairingError`.
+    """Every failure of the handshake -- ONE type, like `PairingError`.
 
     Deliberate: the route layer turns this into one single, always identical
-    400. Different messages per cause would be an oracle against which
-    ablesen liesse, WELCHE Pruefung gegriffen hat.
+    400. Different messages per cause would be an oracle from which one could
+    read off WHICH check fired.
     """
 
 
 # =============================================================================
-# Wire-Modelle — im Modul, wie `PairingOffer`/`PairingResponse`
+# Wire models -- in this module, like `PairingOffer`/`PairingResponse`
 # =============================================================================
 
 

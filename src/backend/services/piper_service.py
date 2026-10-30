@@ -32,7 +32,7 @@ except ImportError:
 
 
 class PiperService:
-    """Service für Text-to-Speech mit Piper (in-process)."""
+    """Service for text-to-speech with Piper (in-process)."""
 
     def __init__(self):
         self.default_voice = settings.piper_default_voice
@@ -182,7 +182,7 @@ class PiperService:
             return None
 
     def ensure_model_downloaded(self):
-        """Stelle sicher, dass das Sprachmodell heruntergeladen ist."""
+        """Make sure the voice model has been downloaded."""
         # Voice models are pre-baked into the Docker image at /usr/share/piper/voices/.
         # In-process load happens lazily on first synthesis call via _load_voice().
         return

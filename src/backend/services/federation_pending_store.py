@@ -73,11 +73,11 @@ class _PendingRequest:
     initiated_at: float
     #: F-ID-3: set = peer-scoped fallback; this is the id of the local person
     #: who entered into the PAIRING
-    #: (`peer_users.circle_owner_id`). Zusammen mit `max_visible_tier` ergibt
-    #: this forms the `PeerScope` the filter runs with.
+    #: (`peer_users.circle_owner_id`). Together with `max_visible_tier` this
+    #: forms the `PeerScope` the filter runs with.
     #:
-    #: `None` = the mapped path (F-ID-1): the request runs AS the
-    #: verknuepfte Person mit deren voller Reichweite.
+    #: `None` = the mapped path (F-ID-1): the request runs AS the linked
+    #: person, with that person's full reach.
     #:
     #: Until 2026-10-27 there was an `enforce_circles: bool = True` here, and
     #: the tier came from a `CircleMembership` keyed on the REMOTE user id.
@@ -85,8 +85,7 @@ class _PendingRequest:
     #: way: without an owner there is no peer-scoped filter, and without a
     #: link there is no mapped reach either. An old row still sitting in the
     #: store without this field falls back to `None`, i.e. the mapped path --
-    #: which in turn requires a link and without one returns
-    #: ohne sie nichts.
+    #: which in turn requires a link and without one returns nothing.
     peer_owner_id: int | None = None
 
     #: The DISCRIMINATOR, and its default is deliberate.

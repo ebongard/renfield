@@ -1,35 +1,35 @@
 #!/usr/bin/env python3
-"""Misst die Werkzeug-Vorauswahl gegen den ECHTEN Prompt, statt sie zu raten.
+"""Measures the tool pre-selection against the REAL prompt instead of guessing.
 
-Warum es das gibt
------------------
-Am 2026-10-27 kostete „scanne nach x-idra sucht Dokumente" acht Messrunden. Vier
-Review-Runden davor hatten am Hinweistext gearbeitet, ohne je zu messen, ob die
-Aenderung etwas bewirkt. Zwei Fassungen, die „offensichtlich besser" aussahen,
-massen schlechter (70 % und 74 % gegen 89 %); eine dritte verschlechterte den
-gemeldeten Fall von 3/3 auf 0/3. Ohne Bank haette jede davon ausgeliefert werden
-koennen.
+Why this exists
+---------------
+On 2026-10-27 "scanne nach x-idra sucht Dokumente" cost eight rounds of
+measurement. Four review rounds before that had worked on the hint text without
+ever measuring whether the change had any effect. Two versions that looked
+"obviously better" measured worse (70 % and 74 % against 89 %); a third made
+the reported case worse, from 3/3 to 0/3. Without a bench any of them could
+have shipped.
 
-🛑 Gemessen wird gegen den ECHTEN Prompt, nicht gegen einen Nachbau. Einen
-Nachbau im Pod hielt ich am 2026-10-26 fuer die Wirklichkeit — er wich ab.
+🛑 The measurement runs against the REAL prompt, not against a reconstruction.
+On 2026-10-26 I took a reconstruction in the pod for reality -- it differed.
 
-So kommt man an den echten Prompt
----------------------------------
-1. `AGENT_PRESELECT_PROMPT_DUMP: "true"` in `k8s/configmap.yaml`, committen,
-   `kubectl apply`, Backend neu rollen. (Dunkel, weil der Prompt die Nachricht
-   des Nutzers ungekuerzt traegt — danach sofort wieder aus.)
-2. Einen Zug machen, dann die Zeile holen:
+How to get at the real prompt
+-----------------------------
+1. `AGENT_PRESELECT_PROMPT_DUMP: "true"` in `k8s/configmap.yaml`, commit,
+   `kubectl apply`, roll the backend. (Dark, because the prompt carries the
+   user's message in full -- switch it back off immediately afterwards.)
+2. Make one turn, then fetch the line:
        kubectl -n renfield logs <backend-pod> --since=10m \
          | grep "Tool pre-selection PROMPT"
-3. Den `{!r}`-Teil mit `ast.literal_eval` in eine Datei schreiben.
-4. `--verify-signature` prueft, dass die Datei der Prompt aus dem Protokoll ist:
-   die Signatur muss mit dem `(in=…)` der Protokollzeile uebereinstimmen. Erst
-   dann ist die Messung eine Messung.
+3. Write the `{!r}` part into a file with `ast.literal_eval`.
+4. `--verify-signature` checks that the file is the prompt from the log: the
+   signature has to match the `(in=...)` of the log line. Only then is the
+   measurement a measurement.
 
-Varianten
----------
-Eine Variante ist eine vollstaendige Prompt-Datei. Gebaut wird sie ausserhalb
-dieses Skripts, damit es keine Patch-Sprache lernen muss:
+Variants
+--------
+A variant is a complete prompt file. It is built outside this script, so the
+script does not have to learn a patch language:
 
     python3 - <<'PY'
     p = open("dump.txt").read()
@@ -37,20 +37,20 @@ dieses Skripts, damit es keine Patch-Sprache lernen muss:
     open("variante.txt","w").write(p.replace(anker, anker + " " + NEUER_TEXT, 1))
     PY
 
-🛑 Was gemessen wurde, wird ausgeliefert — byteweise. Eine Variante, die mitten
-in einem Satz eingefuegt wurde, darf nicht als sauberes Deutsch in die YAML
-wandern, ohne die saubere Fassung erneut zu messen.
+🛑 What was measured is what ships -- byte for byte. A variant that was spliced
+into the middle of a sentence must not travel into the YAML as clean German
+without measuring the clean version again.
 
-Beispiel
---------
+Example
+-------
     bin/measure-preselect.py \
         --variant IST=dump.txt --variant NEU=variante.txt \
         --reps 3 --verify-signature 7ebd68f5
 
-Die Auftraege werden VERSCHRAENKT und gemischt abgearbeitet. Blockweise
-hintereinander profitiert llama-servers KV-Zwischenspeicher und taeuscht
-Stabilitaet vor — ein 15er-Block lieferte so 15 identische Antworten, waehrend
-derselbe Fall ueber die Bank verteilt schwankte.
+The jobs are INTERLEAVED and worked through in shuffled order. Run in blocks
+one after another, llama-server's KV cache benefits and feigns stability -- a
+block of 15 delivered 15 identical answers that way, while the same case
+fluctuated when spread across the bench.
 """
 from __future__ import annotations
 
@@ -63,17 +63,18 @@ import sys
 import urllib.request
 from collections import defaultdict
 
-# Muss zu `_DEFAULT_LLM_OPTIONS_TOOL_PRESELECT` in services/agent_service.py und
-# zu `get_classification_chat_kwargs` passen — sonst misst die Bank etwas
-# anderes als die Produktion. `num_ctx` fehlt absichtlich: der OpenAI-Pfad
-# bildet es nicht ab (s. `_options_to_openai`).
+# Has to match `_DEFAULT_LLM_OPTIONS_TOOL_PRESELECT` in
+# services/agent_service.py and `get_classification_chat_kwargs` -- otherwise
+# the bench measures something other than production. `num_ctx` is missing on
+# purpose: the OpenAI path does not map it (see `_options_to_openai`).
 AUFRUF = {"temperature": 0, "max_tokens": 512,
           "chat_template_kwargs": {"enable_thinking": False}}
 
-# Der Satz, der im Papier-/Suche-Zweig immer wieder kippte. `expect: "treffer"`
-# heisst: `--tool` MUSS gewaehlt werden; "kein-treffer" heisst: darf NICHT.
+# The sentence that kept tipping over in the paper/search branch.
+# `expect: "treffer"` means `--tool` MUST be chosen; "kein-treffer" means it
+# must NOT be.
 STANDARDFAELLE = [
-    # Ziel nach „scanne nach <X>" — kein Objekt dazwischen
+    # A target after "scanne nach <X>" -- no object in between
     {"task": "scanne nach x-idra", "expect": "treffer"},
     {"task": "scanne nach X-IDRA", "expect": "treffer"},
     {"task": "scanne nach xidra", "expect": "treffer"},
@@ -83,15 +84,15 @@ STANDARDFAELLE = [
     {"task": "scanne das Dokument", "expect": "treffer"},
     {"task": "scanne die Seiten", "expect": "treffer"},
     {"task": "einscannen nach x-idra", "expect": "treffer"},
-    # Papier als Objekt: ungelesenes Papier hat keinen durchsuchbaren Inhalt
+    # Paper as the object: unread paper has no searchable content
     {"task": "scanne die Seiten nach x-idra", "expect": "treffer"},
     {"task": "scanne die Seiten nach Haushalt", "expect": "treffer"},
-    # Negativkontrollen: explizite Suchverben
+    # Negative controls: explicit search verbs
     {"task": "suche nach x-idra", "expect": "kein-treffer"},
     {"task": "finde Dokumente von x-idra", "expect": "kein-treffer"},
     {"task": "zeig mir die Rechnungen von x-idra", "expect": "kein-treffer"},
     {"task": "welche Dokumente gibt es zu x-idra", "expect": "kein-treffer"},
-    # Negativkontrollen: Objekt mit lesbarem Text zwischen Verb und „nach"
+    # Negative controls: an object with readable text between the verb and "nach"
     {"task": "scanne das Dokument nach x-idra", "expect": "kein-treffer"},
     {"task": "scanne x-idra nach Rechnungen", "expect": "kein-treffer"},
     {"task": "scanne die Rechnung nach dem Betrag", "expect": "kein-treffer"},
@@ -100,7 +101,7 @@ STANDARDFAELLE = [
 
 
 def signatur(prompt: str) -> str:
-    """Wie `agent_service.preselect_input_signature` — der FERTIGE Prompt."""
+    """Like `agent_service.preselect_input_signature` -- the FINISHED prompt."""
     return hashlib.sha1(prompt.encode("utf-8"), usedforsecurity=False).hexdigest()[:8]
 
 
@@ -113,7 +114,7 @@ def aufgabe_finden(prompt: str) -> str:
 
 
 def aufgabe_einsetzen(prompt: str, alt: str, neu: str) -> str:
-    """Tauscht die Aufgabe — ausschliesslich in der `Aufgabe:`/`Task:`-Zeile.
+    """Swaps the task -- exclusively in the `Aufgabe:`/`Task:` line.
 
     🛑 Ein blankes `prompt.replace(alt, neu)` hat zwei stille Fehlschlaege, und
     beide sehen nach einem Ergebnis aus:
@@ -137,7 +138,7 @@ def aufgabe_einsetzen(prompt: str, alt: str, neu: str) -> str:
 
 
 def werkzeugnamen(prompt: str) -> list:
-    """Die angebotenen Werkzeugnamen aus dem Prompt — fuer das `enum`.
+    """The offered tool names, taken from the prompt -- for the `enum`.
 
     🛑 `re.split(r"(?m)^- ")` und NICHT `splitlines()`: ein Eintrag geht ueber
     Zeilenumbrueche, weil die Hinweistexte welche enthalten. Dieser Schnitt hat
@@ -155,15 +156,15 @@ def frage(url: str, modell: str, prompt: str, zeit: float, typisiert: bool = Fal
     nutzlast = {"model": modell, "messages": [{"role": "user", "content": prompt}],
                 **AUFRUF}
     if typisiert:
-        # Wurzel-Array, damit der PROMPT unveraendert bleibt: so unterscheiden
-        # sich die beiden Messungen in genau einer Variable.
+        # A root array, so the PROMPT stays unchanged: that way the two
+        # measurements differ in exactly one variable.
         nutzlast["response_format"] = {
             "type": "json_schema",
             "json_schema": {"name": "preselect", "strict": True, "schema": {
-                # `maxItems` ist Pflicht: `uniqueItems` wird NICHT erzwungen,
-                # also wiederholt das Modell sonst einen gueltigen Namen bis das
-                # Token-Budget aufgebraucht ist und die Antwort abgeschnitten
-                # zurueckkommt. Muss zu `_build_preselect_schema` passen.
+                # `maxItems` is mandatory: `uniqueItems` is NOT enforced, so
+                # otherwise the model repeats a valid name until the token
+                # budget is used up and the answer comes back truncated. Has to
+                # match `_build_preselect_schema`.
                 "type": "array", "maxItems": 8, "uniqueItems": True,
                 "items": {"type": "string", "enum": werkzeugnamen(prompt)},
             }},
@@ -184,12 +185,12 @@ def main() -> int:
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--variant", action="append", required=True, metavar="LABEL=PFAD",
                    help="Prompt-Datei je Fassung; mehrfach angebbar")
-    # 🛑 `bin/preselect-cases-peer.json` liegt im Repo, damit die
-    # Foederations-Messung wiederholbar ist. Die Standardfaelle unten
-    # decken den Papier-/Suche-Zweig; die Peer-Faelle decken
-    # „frag Xs renfield" / „was liegt in <Instanz>" / „in allen
-    # renfields" samt der Negativkontrollen, an denen am 2026-10-29 die
-    # Entscheidung gegen eine globale Grenze gefallen ist:
+    # 🛑 `bin/preselect-cases-peer.json` lives in the repo so the federation
+    # measurement is repeatable. The default cases below cover the
+    # paper/search branch; the peer cases cover "frag Xs renfield" /
+    # "was liegt in <Instanz>" / "in allen renfields" together with the
+    # negative controls on which the decision against a global limit was made
+    # on 2026-10-29:
     #   --cases bin/preselect-cases-peer.json --tool query_brain
     p.add_argument("--cases", metavar="PFAD",
                    help="JSON-Liste [{task, expect}]; ohne Angabe die Standardfaelle")
@@ -224,13 +225,13 @@ def main() -> int:
     erlaubt = {"treffer", "kein-treffer"}
     for nr, fall in enumerate(faelle, 1):
         if fall.get("expect") not in erlaubt:
-            # 🛑 Ohne diese Pruefung zaehlt ein Tippfehler stumm als
-            # "kein-treffer" und dreht die Bewertung des Falls um.
+            # 🛑 Without this check a typo counts silently as "kein-treffer"
+            # and inverts the case's verdict.
             sys.exit(f"Fall {nr} ({fall.get('task')!r}): expect="
                      f"{fall.get('expect')!r}, erlaubt sind {sorted(erlaubt)}.")
     original = a.original_task or aufgabe_finden(next(iter(fassungen.values())))
 
-    # 🛑 Jede Fassung muss die Aufgabe tragen, BEVOR 100+ Aufrufe laufen.
+    # 🛑 Every version has to carry the task BEFORE 100+ calls run.
     for label, text in fassungen.items():
         try:
             aufgabe_einsetzen(text, original, original)
@@ -242,10 +243,10 @@ def main() -> int:
         sig = signatur(text)
         marke = ""
         if a.verify_signature:
-            # 🛑 Nur die UNVERAENDERTE Fassung kann die Signatur aus dem
-            # Protokoll tragen; eine Variante ist per Definition ein anderer
-            # Prompt. Darum eine Warnung, kein Abbruch — ausser es stimmt
-            # NIRGENDS, dann wurde die falsche Datei gemessen.
+            # 🛑 Only the UNCHANGED version can carry the signature from the
+            # log; a variant is by definition a different prompt. Hence a
+            # warning, not an abort -- unless it matches NOWHERE, in which case
+            # the wrong file was measured.
             marke = "  <= deckt sich mit dem Protokoll" if sig == a.verify_signature else ""
         print(f"    {label:12s} {len(text):6d} Zeichen, Signatur {sig}{marke}")
     if a.verify_signature and not any(

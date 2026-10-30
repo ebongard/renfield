@@ -106,9 +106,9 @@ async def accept_link_offer(
         await db.rollback()
         raise _reject(e, current_user.id) from e
     except IntegrityError:
-        # The uniqueness index on (peer_id, querier_ref) IS the
-        # eigentliche Sicherung gegen Wiedereinspielung — siehe den
-        # service's module docstring. This is where it fires.
+        # The uniqueness index on (peer_id, querier_ref) IS the real guard
+        # against a replay -- see the service's module docstring. This is where
+        # it fires.
         await db.rollback()
         raise HTTPException(
             status_code=409, detail="This link already exists",
@@ -192,11 +192,11 @@ async def revoke_my_link(
     await delete_link(db, link_id=link.id)
     await db.commit()
 
-    # 🛑 Laufende Anfragen nachraeumen, wie `revoke_peer` es tut: `handle_retrieve`
-    # does NOT re-check the link, so a request started before the revocation
-    # could still be collected with full reach.
-    # Bewusst zu grob — es trifft auch unverknuepfte Anfragen desselben Peers —,
-    # in exchange it cannot miss the mapped one.
+    # 🛑 Clean up requests in flight, the way `revoke_peer` does:
+    # `handle_retrieve` does NOT re-check the link, so a request started before
+    # the revocation could still be collected with full reach.
+    # Deliberately too coarse -- it also hits unlinked requests from the same
+    # peer -- and in exchange it cannot miss the mapped one.
     from services.federation_query_responder import purge_requests_for_pubkey
     discarded = await purge_requests_for_pubkey(peer.remote_pubkey)
     logger.info(

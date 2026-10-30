@@ -33,7 +33,7 @@ try:
     from pgvector.sqlalchemy import Vector
     PGVECTOR_AVAILABLE = True
 except ImportError:
-    # Fallback für Tests ohne pgvector
+    # Fallback for tests without pgvector
     PGVECTOR_AVAILABLE = False
     Vector = None
 
@@ -196,7 +196,7 @@ class Task(Base):
 # --- Speaker Recognition Models ---
 
 class Speaker(Base):
-    """Registrierter Sprecher für Speaker Recognition"""
+    """A registered speaker for speaker recognition"""
     __tablename__ = "speakers"
 
     id = Column(Integer, primary_key=True, index=True)
@@ -337,7 +337,7 @@ class SpeakerVocabulary(Base):
 # =============================================================================
 
 class KnowledgeBase(Base):
-    """Gruppierung von Dokumenten für RAG"""
+    """A grouping of documents for RAG"""
     __tablename__ = "knowledge_bases"
 
     id = Column(Integer, primary_key=True, index=True)
@@ -773,8 +773,8 @@ class DocumentChunk(Base):
     # declaration only governs ORM behavior.
     search_vector = Column(TSVECTOR, FetchedValue(), nullable=True)
 
-    # Additional Metadata (JSON für Flexibilität)
-    chunk_metadata = Column(JSON, nullable=True)  # Umbenannt von 'metadata' (SQLAlchemy reserved)
+    # Additional metadata (JSON, for flexibility)
+    chunk_metadata = Column(JSON, nullable=True)  # Renamed from 'metadata' (reserved by SQLAlchemy)
 
     # Circles v2 (atoms-per-document): chunks no longer carry atom_id. The
     # access-control unit is the parent Document — retrieval joins chunks →
@@ -826,7 +826,7 @@ UPLOAD_STATUSES = [UPLOAD_STATUS_PROCESSING, UPLOAD_STATUS_COMPLETED, UPLOAD_STA
 
 
 class ChatUpload(Base):
-    """Dokument-Upload direkt im Chat (ohne RAG-Indexierung)"""
+    """A document uploaded directly in the chat (no RAG indexing)"""
     __tablename__ = "chat_uploads"
 
     id = Column(Integer, primary_key=True, index=True)
@@ -1255,7 +1255,7 @@ class User(Base):
     is_device_account = Column(Boolean, default=False, nullable=False, server_default="false")
     # Consent per person, not configuration. An ECAPA voiceprint is biometric
     # data (Art. 9 GDPR); the fact that a LOGIN requires it cannot be
-    # niemand fuer jemanden anderen entscheiden. Standard `false`, einzeln
+    # decided for anybody by somebody else. Default `false`, individually
     # revocable. `speaker_id` is NOT suitable for it: that link was created
     # for speaker recognition, not as consent to log in.
     #

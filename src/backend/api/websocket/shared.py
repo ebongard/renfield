@@ -106,7 +106,7 @@ class ConversationSessionState:
         """Update the last action context for pronoun resolution."""
         self.last_intent = intent
         self.last_action_result = result
-        # Extract entity IDs for "es/das" resolution
+        # Extract entity IDs for resolving "es"/"das"
         if intent and intent.get("parameters"):
             entity_id = intent["parameters"].get("entity_id")
             if entity_id:

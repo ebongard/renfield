@@ -125,7 +125,7 @@ class RAGService(AtomOwnerResolverMixin):
         return AtomService(self.db)
 
     async def _get_ollama_client(self):
-        """Lazy initialization des Ollama Clients"""
+        """Lazy initialization of the Ollama client"""
         if self._ollama_client is None:
             self._ollama_client = get_embed_client()
         return self._ollama_client
@@ -912,7 +912,7 @@ class RAGService(AtomOwnerResolverMixin):
         sort_by: str | None = None,
         order: str = "desc",
     ) -> list[Document]:
-        """Listet Dokumente auf.
+        """List documents.
 
         ``sort_by`` ∈ {name, imported, document_date} orders the FULL result set
         before paginating (so the sort is correct across pages, not just the page).
@@ -954,14 +954,14 @@ class RAGService(AtomOwnerResolverMixin):
         return list(result.scalars().all())
 
     async def get_document(self, document_id: int) -> Document | None:
-        """Holt ein Dokument nach ID"""
+        """Fetch a document by id"""
         stmt = select(Document).where(Document.id == document_id)
         result = await self.db.execute(stmt)
         return result.scalar_one_or_none()
 
     async def delete_document(self, document_id: int) -> bool:
-        """Löscht ein Dokument und alle zugehörigen Chunks"""
-        # Prüfe ob Dokument existiert
+        """Delete a document and all chunks belonging to it"""
+        # Check whether the document exists
         doc = await self.get_document(document_id)
         if not doc:
             return False
@@ -976,7 +976,7 @@ class RAGService(AtomOwnerResolverMixin):
         except Exception:
             _deleted_owner = None
 
-        # Lösche auch die Datei
+        # Delete the file as well
         try:
             if doc.file_path and os.path.exists(doc.file_path):
                 os.remove(doc.file_path)
@@ -984,7 +984,7 @@ class RAGService(AtomOwnerResolverMixin):
         except Exception as e:
             logger.warning(f"Konnte Datei nicht löschen: {e}")
 
-        # Lösche FK-Referenzen aus chat_uploads
+        # Delete the foreign-key references in chat_uploads
         await self.db.execute(
             text("UPDATE chat_uploads SET document_id = NULL WHERE document_id = :doc_id"),
             {"doc_id": document_id}
@@ -1005,11 +1005,11 @@ class RAGService(AtomOwnerResolverMixin):
             if aid:
                 await AtomPurgeService.purge(self.db, atom_id=aid, reason="document_deleted")
 
-        # Lösche zuerst die Chunks (explizit, falls CASCADE nicht greift)
+        # Delete the chunks first (explicitly, in case CASCADE does not apply)
         chunk_stmt = delete(DocumentChunk).where(DocumentChunk.document_id == document_id)
         await self.db.execute(chunk_stmt)
 
-        # Dann lösche das Dokument
+        # Then delete the document
         stmt = delete(Document).where(Document.id == document_id)
         result = await self.db.execute(stmt)
         await self.db.commit()
@@ -1037,7 +1037,7 @@ class RAGService(AtomOwnerResolverMixin):
         name: str,
         description: str | None = None
     ) -> KnowledgeBase:
-        """Erstellt eine neue Knowledge Base"""
+        """Create a new knowledge base"""
         kb = KnowledgeBase(name=name, description=description)
         self.db.add(kb)
         await self.db.commit()
@@ -1046,7 +1046,7 @@ class RAGService(AtomOwnerResolverMixin):
         return kb
 
     async def list_knowledge_bases(self) -> list[KnowledgeBase]:
-        """Listet alle Knowledge Bases auf (without eager-loading documents)"""
+        """List all knowledge bases (without eager-loading documents)"""
         # Use a count subquery instead of selectinload to avoid loading all documents
         doc_count_subq = (
             select(func.count(Document.id))
@@ -1070,7 +1070,7 @@ class RAGService(AtomOwnerResolverMixin):
         return kbs
 
     async def get_knowledge_base(self, kb_id: int) -> KnowledgeBase | None:
-        """Holt eine Knowledge Base nach ID"""
+        """Fetch a knowledge base by id"""
         stmt = (
             select(KnowledgeBase)
             .options(selectinload(KnowledgeBase.documents))
@@ -1104,7 +1104,7 @@ class RAGService(AtomOwnerResolverMixin):
         if not target_kb.is_active:
             raise ValueError(f"Knowledge Base '{target_kb.name}' ist nicht aktiv")
 
-        # Lade alle Dokumente
+        # Load all documents
         stmt = select(Document).where(Document.id.in_(document_ids))
         result = await self.db.execute(stmt)
         docs = list(result.scalars().all())
@@ -1112,7 +1112,7 @@ class RAGService(AtomOwnerResolverMixin):
         if not docs:
             raise ValueError("Keine der angegebenen Dokumente gefunden")
 
-        # Verschiebe nur Dokumente die nicht bereits in der Ziel-KB sind
+        # Move only documents that are not already in the target knowledge base
         moved = 0
         for doc in docs:
             if doc.knowledge_base_id != target_kb_id:
@@ -1128,12 +1128,12 @@ class RAGService(AtomOwnerResolverMixin):
         return moved
 
     async def delete_knowledge_base(self, kb_id: int) -> bool:
-        """Löscht eine Knowledge Base mit allen Dokumenten"""
+        """Delete a knowledge base with all of its documents"""
         kb = await self.get_knowledge_base(kb_id)
         if not kb:
             return False
 
-        # Lösche Dateien aller Dokumente
+        # Delete the files of all documents
         for doc in kb.documents:
             try:
                 if doc.file_path and os.path.exists(doc.file_path):
@@ -1141,7 +1141,7 @@ class RAGService(AtomOwnerResolverMixin):
             except Exception as e:
                 logger.warning(f"Konnte Datei nicht löschen: {e}")
 
-        # Lösche aus DB (Documents + Chunks werden durch cascade gelöscht)
+        # Delete from the database (documents + chunks go via cascade)
         stmt = delete(KnowledgeBase).where(KnowledgeBase.id == kb_id)
         result = await self.db.execute(stmt)
         await self.db.commit()
@@ -1154,7 +1154,7 @@ class RAGService(AtomOwnerResolverMixin):
     # ==========================================================================
 
     async def get_stats(self) -> dict[str, Any]:
-        """Gibt Statistiken über die RAG-Datenbank zurück"""
+        """Return statistics about the RAG database"""
         doc_count = await self.db.scalar(
             select(func.count(Document.id))
         )

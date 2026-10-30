@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
-# generate-secrets.sh — Generiert sichere Secret-Dateien für Docker Compose Secrets
+# generate-secrets.sh -- generates secure secret files for Docker Compose secrets
 #
-# Nutzung: ./bin/generate-secrets.sh
+# Usage: ./bin/generate-secrets.sh
 #
-# Erstellt das secrets/ Verzeichnis mit folgenden Dateien:
-#   postgres_password, secret_key, default_admin_password (auto-generiert)
-#   home_assistant_token, openweather_api_key, newsapi_key, jellyfin_api_key (interaktiv)
+# Creates the secrets/ directory with these files:
+#   postgres_password, secret_key, default_admin_password (auto-generated)
+#   home_assistant_token, openweather_api_key, newsapi_key, jellyfin_api_key (interactive)
 
 set -euo pipefail
 
@@ -16,11 +16,11 @@ SECRETS_DIR="$PROJECT_DIR/secrets"
 echo "=== Renfield Secrets Generator ==="
 echo ""
 
-# Secrets-Verzeichnis erstellen
+# Create the secrets directory
 mkdir -p "$SECRETS_DIR"
 chmod 700 "$SECRETS_DIR"
 
-# Hilfsfunktion: Secret generieren (überspringt wenn bereits vorhanden)
+# Helper: generate a secret (skips when one is already there)
 generate_secret() {
     local name="$1"
     local length="$2"
@@ -36,7 +36,7 @@ generate_secret() {
     echo "  [OK]   $name (generiert)"
 }
 
-# Hilfsfunktion: URL-safe Token generieren
+# Helper: generate a URL-safe token
 generate_token() {
     local name="$1"
     local length="$2"
@@ -52,12 +52,12 @@ generate_token() {
     echo "  [OK]   $name (generiert)"
 }
 
-# Hilfsfunktion: Interaktive Eingabe.
-# Leere Eingabe → es wird eine leere Placeholder-Datei angelegt. Dadurch bleibt
-# `docker compose -f docker-compose.prod*.yml up` startfaehig auch wenn ein
-# optionales Integration-Secret (Jellyfin, Presence, ...) nicht konfiguriert
-# ist. Pydantic's `SecretStr | None` liest eine leere Datei als falsy und das
-# Feature deaktiviert sich automatisch.
+# Helper: interactive input.
+# Empty input -> an empty placeholder file is created. That keeps
+# `docker compose -f docker-compose.prod*.yml up` able to start even when an
+# optional integration secret (Jellyfin, Presence, ...) is not configured.
+# Pydantic's `SecretStr | None` reads an empty file as falsy and the feature
+# disables itself.
 prompt_secret() {
     local name="$1"
     local description="$2"

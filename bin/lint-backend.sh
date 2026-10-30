@@ -1,31 +1,32 @@
 #!/usr/bin/env bash
-# Lint the backend with ruff — auf dem HOST, nicht im Container.
+# Lint the backend with ruff -- on the HOST, not in the container.
 #
-# WARUM NICHT IM CONTAINER
+# WHY NOT IN THE CONTAINER
 # ------------------------
-# `make lint-backend` lief bis 2026-09-27 als
+# Until 2026-09-27 `make lint-backend` ran as
 #   docker compose exec -T backend ruff check /app --config /app/pyproject.toml
-# und war doppelt unmöglich:
+# and that was impossible for two separate reasons:
 #
-#   1. `pyproject.toml` liegt im Projektwurzelverzeichnis, der Bau-Kontext des
-#      Backend-Bildes ist aber `src/backend/` — die Datei ist im Bild NIE
-#      vorhanden. Fehler wortwörtlich:
+#   1. `pyproject.toml` sits in the project root, but the backend image's build
+#      context is `src/backend/` -- the file is NEVER present in the image.
+#      The error, verbatim:
 #      `error: invalid value '/app/pyproject.toml' for '--config <CONFIG_OPTION>'`
-#   2. `ruff` steht in `requirements-test.txt`. Das Produktionsbild installiert
-#      nur `requirements.txt` — im Container gibt es `ruff` überhaupt nicht
-#      (`sh: 1: ruff: not found`, geprüft am 2026-09-27 auf .159).
+#   2. `ruff` is listed in `requirements-test.txt`. The production image
+#      installs only `requirements.txt` -- `ruff` does not exist in the
+#      container at all (`sh: 1: ruff: not found`, checked 2026-09-27 on .159).
 #
-# Der Container war also nie der richtige Ort. ruff ist ein einzelnes Rust-Binary
-# ohne Projektabhängigkeiten; es gehört auf den Host, genau wie eslint im
-# Frontend-Ziel.
+# So the container was never the right place. ruff is a single Rust binary with
+# no project dependencies; it belongs on the host, exactly like eslint in the
+# frontend target.
 #
-# WARUM DIE VERSION FESTGENAGELT IST
-# ----------------------------------
-# `RUF100` („unused noqa") urteilt über die AKTIVE Regelmenge. Ein Wechsel der
-# ruff-Version verschiebt diese Menge und damit die Befundzahl — ein Tor, dessen
-# Urteil von der zufällig installierten Version abhängt, ist kein Tor. Beim
-# Anheben: Version hier UND in `src/backend/requirements-test.txt` ändern, dann
-# `make lint-backend` einmal laufen lassen und die neue Lage bereinigen.
+# WHY THE VERSION IS PINNED
+# -------------------------
+# `RUF100` ("unused noqa") judges against the ACTIVE rule set. Changing the
+# ruff version shifts that set and with it the number of findings -- a gate
+# whose verdict depends on whichever version happens to be installed is not a
+# gate. When raising it: change the version HERE AND in
+# `src/backend/requirements-test.txt`, then run `make lint-backend` once and
+# clean up the new findings.
 set -euo pipefail
 
 RUFF_PINNED_VERSION="0.16.9"
@@ -52,9 +53,9 @@ fi
 
 FOUND_VERSION="$("$RUFF" --version | awk '{print $2}')"
 if [[ "$FOUND_VERSION" != "$RUFF_PINNED_VERSION" ]]; then
-    # WARNUNG, kein Abbruch: eine abweichende Version soll niemanden am Linten
-    # hindern. Aber sie muss SICHTBAR sein, sonst rätselt man über Befunde, die
-    # nur aus dem Versionsunterschied stammen.
+    # A WARNING, not an abort: a differing version should not stop anybody
+    # from linting. But it has to be VISIBLE, or one puzzles over findings that
+    # come purely from the version difference.
     echo "⚠ ruff ${FOUND_VERSION} statt der festgenagelten ${RUFF_PINNED_VERSION} —" >&2
     echo "  Befundzahlen können abweichen (RUF100 hängt an der Regelmenge)." >&2
 fi

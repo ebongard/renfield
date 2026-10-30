@@ -72,7 +72,7 @@ branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
 
-# (Index, Tabelle, Spalte) — die HNSW-Vektorindizes.
+# (index, table, column) -- the HNSW vector indexes.
 _VECTOR_INDEXES = [
     ("idx_document_chunks_embedding_hnsw", "document_chunks", "embedding"),
     ("idx_kg_entities_embedding_hnsw", "kg_entities", "embedding"),
@@ -81,21 +81,21 @@ _VECTOR_INDEXES = [
     ("idx_intent_corrections_embedding_hnsw", "intent_corrections", "embedding"),
 ]
 
-# Die übrigen drei, ohne Dimensionsabhängigkeit.
+# The other three, with no dependency on the dimension.
 _PLAIN_INDEXES = [
     ("idx_document_chunks_doc_chunk", "document_chunks",
      "CREATE INDEX IF NOT EXISTS idx_document_chunks_doc_chunk "
      "ON document_chunks (document_id, chunk_index)"),
-    # NICHT `idx_document_chunks_search_vector` — das ist der ALTE Name. Der
-    # GIN heisst heute `..._gin`: `pc20260529` wirft die alte Spalte weg
-    # (Postgres entfernt deren Index automatisch) und benennt den neuen um.
-    # `rag_service.py:1207` sucht ihn NAMENTLICH unter `..._gin`. Den alten
-    # Namen anzulegen hiesse: im Haushalt ein zweiter, vollstaendig redundanter
-    # GIN auf derselben GENERATED-Spalte (doppelte Schreibkosten, null
-    # Lesenutzen), auf xidra ein Index, den der Dienst nie findet. Gefunden im
-    # adversarialen Review von #1336 — ich hatte die Liste aus den alten
-    # Migrationen abgeschrieben, ohne den Rename mitzulesen.
-    # Auf xidra fehlt der GIN wirklich; unter DIESEM Namen schliesst das die Luecke.
+    # NOT `idx_document_chunks_search_vector` -- that is the OLD name. Today
+    # the GIN is called `..._gin`: `pc20260529` drops the old column (Postgres
+    # removes its index automatically) and renames the new one.
+    # `rag_service.py:1207` looks it up BY NAME as `..._gin`. Creating the old
+    # name would mean: in the household a second, fully redundant GIN on the
+    # same GENERATED column (double write cost, zero read benefit), on xidra an
+    # index the service never finds. Found in the adversarial review of #1336
+    # -- I had copied the list from the old migrations without reading the
+    # rename along with it.
+    # On xidra the GIN really is missing; under THIS name that closes the gap.
     ("idx_document_chunks_search_vector_gin", "document_chunks",
      "CREATE INDEX IF NOT EXISTS idx_document_chunks_search_vector_gin "
      "ON document_chunks USING gin(search_vector)"),
@@ -104,15 +104,15 @@ _PLAIN_INDEXES = [
      "ON conversation_memories (category, last_accessed_at) WHERE is_active = true"),
 ]
 
-# Der Rückbau fasst NICHT alles an, was das `upgrade()` anlegt.
-# `idx_document_chunks_search_vector_gin` existiert im Haushalt bereits (aus dem
-# Rename in `pc20260529`), dort ist das `upgrade()` wegen `IF NOT EXISTS` ein
-# Nichts — ein `DROP` im Rückbau würde also einen FREMDEN, produktiv genutzten
-# Index entfernen und der lexikalischen Suche die Grundlage nehmen
-# (`rag_service.py:1207` sucht ihn namentlich). Nur auf xidra legt ihn diese
-# Migration wirklich an; dort bleibt er nach einem Rückbau stehen. Das ist die
-# richtige Richtung des Irrtums: ein Index zu viel kostet Schreibzeit, ein
-# fehlender kostet jede Suche.
+# The downgrade does NOT touch everything `upgrade()` creates.
+# `idx_document_chunks_search_vector_gin` already exists in the household (from
+# the rename in `pc20260529`); there `upgrade()` is a no-op because of
+# `IF NOT EXISTS` -- so a `DROP` in the downgrade would remove a FOREIGN index
+# that is in production use and pull the ground out from under the lexical
+# search (`rag_service.py:1207` looks it up by name). Only on xidra does this
+# migration really create it; there it stays standing after a downgrade. That
+# is the right direction for the error to point: one index too many costs write
+# time, a missing one costs every search.
 _KEEP_ON_DOWNGRADE = {"idx_document_chunks_search_vector_gin"}
 
 _ALL_NAMES = [
@@ -122,9 +122,10 @@ _ALL_NAMES = [
 
 
 def _column_dim(conn, table: str, column: str) -> int | None:
-    """Dimension einer `vector(N)`-Spalte, oder None wenn es sie nicht gibt.
+    """Dimension of a `vector(N)` column, or None when there is none.
 
-    ROH, ohne `- 4`: pgvector legt N direkt im typmod ab. Siehe Kopfkommentar.
+    RAW, without `- 4`: pgvector stores N directly in the typmod. See the
+    header comment.
     """
     row = conn.execute(text("""
         SELECT a.atttypmod
@@ -147,11 +148,11 @@ def _table_exists(conn, table: str) -> bool:
 
 
 def _configured_embedding_dim() -> int | None:
-    """`EMBEDDING_DIMENSION` aus der Konfiguration, oder None.
+    """`EMBEDDING_DIMENSION` from the configuration, or None.
 
-    Nur für eine Warnung. Eine Migration darf nicht daran scheitern, dass die
-    Anwendungskonfiguration in diesem Kontext nicht importierbar ist — dann
-    entfällt eben die Warnung, nicht die Reparatur.
+    For a warning only. A migration must not fail because the application
+    configuration is not importable in this context -- then the warning is what
+    falls away, not the repair.
     """
     try:
         from utils.config import settings
@@ -166,22 +167,22 @@ def upgrade() -> None:
     _configured_dim = _configured_embedding_dim()
 
     for name, table, column in _VECTOR_INDEXES:
-        # Eine Instanz muss nicht jede Tabelle haben (dunkle Funktionen, andere
-        # Ausbaustufe). Ein fehlendes Ziel ist kein Fehler, sondern ein Auslassen.
+        # An instance need not have every table (dark features, a different
+        # stage of build-out). A missing target is not an error, it is a skip.
         if not _table_exists(conn, table):
             continue
         dim = _column_dim(conn, table, column)
         if dim is None:
             continue
-        # Der Index wird mit der Dimension der SPALTE gebaut — sie ist die
-        # Wahrheit darüber, was dort liegt. Die Abfragen der Dienste casten
-        # dagegen auf `EMBEDDING_DIMENSION` aus der Konfiguration. Laufen die
-        # beiden auseinander, ist der Index gebaut, gepflegt und wird NIE
-        # benutzt: exakt der stumme Fehlermodus, gegen den diese Migration
-        # antritt. Der Vorgabewert der Einstellung ist 768, produktiv steht
-        # 2560 nur, weil die ConfigMap es setzt — eine Instanz ohne diesen
-        # Schlüssel driftet also sofort. Das kann die Migration nicht
-        # reparieren, aber sie kann es SAGEN statt es geschehen zu lassen.
+        # The index is built with the dimension of the COLUMN -- that is the
+        # truth about what lies there. The services' queries, by contrast, cast
+        # to `EMBEDDING_DIMENSION` from the configuration. If the two drift
+        # apart, the index is built, maintained and NEVER used: exactly the
+        # silent failure mode this migration exists to fix. The setting's
+        # default is 768; production runs 2560 only because the ConfigMap sets
+        # it -- so an instance without that key drifts immediately. The
+        # migration cannot repair that, but it can SAY it instead of letting it
+        # happen.
         if _configured_dim is not None and _configured_dim != dim:
             logger.warning(
                 "%s: Spalte %s.%s ist vector(%d), die Konfiguration sagt "
@@ -190,7 +191,7 @@ def upgrade() -> None:
                 name, table, column, dim, _configured_dim, dim, _configured_dim,
             )
         if dim > 2000:
-            # halfvec, weil der reguläre vector-Typ beim Indizieren bei 2000 endet.
+            # halfvec, because the regular vector type stops at 2000 when indexing.
             expr = f"(({column}::halfvec({dim})) halfvec_cosine_ops)"
         else:
             expr = f"({column} vector_cosine_ops)"
@@ -206,19 +207,19 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    # Rein additiv, also ist der Rückweg ein reines Entfernen. `IF EXISTS`, damit
-    # ein Rückbau auf einer Instanz, die einen dieser Indizes nie hatte, nicht
-    # abbricht — genau die Lage, aus der diese Migration hervorging.
+    # Purely additive, so the way back is a pure removal. `IF EXISTS`, so a
+    # downgrade on an instance that never had one of these indexes does not
+    # abort -- exactly the situation this migration came out of.
     #
-    # 🛑 EINE UNSCHÄRFE, die hier steht statt verschwiegen zu werden: auf einer
-    # Instanz, die einen dieser Indizes SCHON HATTE, war das `upgrade()` wegen
-    # `IF NOT EXISTS` ein Nichts — dieses `downgrade()` entfernt ihn trotzdem.
-    # Der Rückbau stellt dort also nicht den Zustand von vorher her, sondern
-    # einen schlechteren. Bewusst in Kauf genommen: es sind reine Indizes, kein
-    # Datenverlust, in Sekunden neu gebaut (gemessen 762 ms je HNSW bei
-    # Produktionsgröße), und ein Buchführen darüber, wer welchen Index angelegt
-    # hat, wäre mehr Apparat als der Fehler wert. Wiederherstellung: `upgrade`
-    # erneut. Auf BEIDEN Produktivinstanzen fehlen heute alle acht, dort ist der
-    # Rundlauf exakt (gemessen: 326 → 334 → 326 → 334).
+    # 🛑 ONE IMPRECISION, stated here instead of passed over in silence: on an
+    # instance that ALREADY HAD one of these indexes, `upgrade()` was a no-op
+    # because of `IF NOT EXISTS` -- this `downgrade()` removes it regardless.
+    # There the downgrade does not restore the state from before but a worse
+    # one. Deliberately accepted: these are pure indexes, no data loss, rebuilt
+    # in seconds (measured 762 ms per HNSW at production size), and keeping
+    # books on who created which index would be more apparatus than the error
+    # is worth. Recovery: run `upgrade` again. On BOTH production instances all
+    # eight are missing today, so there the round trip is exact (measured:
+    # 326 -> 334 -> 326 -> 334).
     for name in _ALL_NAMES:
         op.execute(f"DROP INDEX IF EXISTS {name}")

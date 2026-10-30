@@ -505,8 +505,8 @@ async def _satellite_fleet_watchdog_handler(app: FastAPI, params: dict) -> str |
     # enabled, handler decides at runtime), so turning the satellite feature on
     # later needs no migration of the seed row.
     if not settings.features.get("satellites"):
-        # Marker statt stummem `None`: dasselbe wie beim MCP-Gesundheitsmonitor
-        # instead. Anyone looking at the run log should read "the gate was
+        # A marker instead of a silent `None`: the same as in the MCP health
+        # monitor. Anyone looking at the run log should read "the gate was
         # closed" and not an empty line that might also be a failure.
         return "skipped: satellite feature off"
 

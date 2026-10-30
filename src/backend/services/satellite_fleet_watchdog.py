@@ -1,62 +1,63 @@
-"""Meldet, wenn ein eingebuchter Satellit nicht mehr da ist.
+"""Reports when an enrolled satellite is no longer there.
 
-WARUM ES DAS GIBT
------------------
-Am 2026-09-26 war die halbe Flotte dunkel, und NICHTS hat es gesagt:
-
-    Fitnessraum, Kinderbad, Wohnzimmer   verbunden
-    Esszimmer                            seit 1 Tag weg (Knoten NotReady)
-    Arbeitszimmer                        seit 2 Tagen weg
-    BensZimmer                           seit 30 TAGEN weg
-
-In 36 Stunden Benachrichtigungen: ausschliesslich `mcp_health`, keine einzige zu
-einem Satelliten. Die MCP-Server haben Gesundheitsproben mit Alarm, die
-Aufgaben eine Fehlerserien-Erkennung — die Satelliten hatten nichts. Ein Raum
-hoert auf zu antworten, und man merkt es, wenn man hineingeht und redet.
-
-🛑 WARUM NICHT `last_authenticated_at` ALLEIN
----------------------------------------------
-Das war der naheliegende Wurf und er ist falsch. Die Spalte wird beim
-VERBINDUNGSAUFBAU gesetzt, nicht laufend. Ihr Alter misst „Zeit seit dem
-letzten Neuverbinden", nicht „Zeit seit dem letzten Lebenszeichen" — ein
-Satellit, der seit Tagen stabil verbunden ist, sieht damit aus wie einer, der
-seit Tagen weg ist.
-
-Gemessen am 2026-09-26: unmittelbar nach einem Backend-Neustart zeigten alle
-drei GESUNDEN Satelliten vier Minuten, weil sie sich neu angemeldet hatten. Vor
-dem Neustart waere derselbe Wert Stunden alt gewesen. Ein Waechter auf dieser
-Spalte haette also die Gesunden gemeldet und die Toten verschwiegen.
-
-WAS STATTDESSEN
+WHY THIS EXISTS
 ---------------
-Die Registratur des `SatelliteManager` sagt, wer JETZT verbunden ist — das ist
-die Wahrheit, die auch die Oberflaeche zeigt. Sie lebt aber im Arbeitsspeicher
-und ist nach einem Neustart leer, bis sich alle wieder gemeldet haben. Deshalb:
+On 2026-09-26 half the fleet was dark, and NOTHING said so:
 
-* **Karenz nach dem Start.** Vor `SETTLE_SECONDS` urteilt die Aufgabe NICHT.
-  Ohne das meldete jeder Rollout die ganze Flotte als tot — Fehlalarm, der eine
-  echte Meldung wertlos macht.
-* **Erwartet** sind die eingebuchten, nicht widerrufenen, aktivierten Zeilen aus
+    Fitnessraum, Kinderbad, Wohnzimmer   connected
+    Esszimmer                            gone for 1 day (node NotReady)
+    Arbeitszimmer                        gone for 2 days
+    BensZimmer                           gone for 30 DAYS
+
+In 36 hours of notifications: exclusively `mcp_health`, not a single one about a
+satellite. The MCP servers have health probes with alerting, the tasks have
+failure-streak detection -- the satellites had nothing. A room stops answering,
+and you find out by walking in and talking.
+
+🛑 WHY NOT `last_authenticated_at` ALONE
+----------------------------------------
+That was the obvious shot and it is wrong. The column is set when the
+CONNECTION IS ESTABLISHED, not continuously. Its age measures "time since the
+last reconnect", not "time since the last sign of life" -- a satellite that has
+been stably connected for days therefore looks like one that has been gone for
+days.
+
+Measured on 2026-09-26: immediately after a backend restart all three HEALTHY
+satellites showed four minutes, because they had re-authenticated. Before the
+restart the same value would have been hours old. A watchdog on this column
+would therefore have reported the healthy ones and kept quiet about the dead
+ones.
+
+WHAT INSTEAD
+------------
+The `SatelliteManager` registry says who is connected NOW -- that is the truth
+the user interface shows too. But it lives in memory and is empty after a
+restart until everyone has reported back. Hence:
+
+* **Grace period after the start.** Before `SETTLE_SECONDS` the task does NOT
+  judge. Without it every rollout reported the whole fleet as dead -- a false
+  alarm that makes a real report worthless.
+* **Expected** are the enrolled, non-revoked, activated rows from
   `satellites`.
-* **Fehlend** = erwartet minus verbunden. `last_authenticated_at` liefert dann
-  nur noch das SEIT WANN fuer den Text, nicht das OB.
+* **Missing** = expected minus connected. `last_authenticated_at` then only
+  supplies the SINCE WHEN for the text, not the WHETHER.
 
-🛑 GEMELDET WIRD NUR EINE AENDERUNG
------------------------------------
-Die erste Fassung verliess sich auf den `dedup_key` von `notify_admin` und ich
-habe behauptet, damit werde „nicht stuendlich erneut gemeldet". Das war falsch,
-und der Betrieb hat es innerhalb von drei Stunden gezeigt: drei identische
-Benachrichtigungen um 13:59, 14:59, 15:59. Der Grund steht in `config.py` —
-`proactive_suppression_window` ist **60 Sekunden**. Das unterdrueckt Salven,
-keine stuendliche Wiederholung. Bei BensZimmer (30 Tage weg) waeren das 24
-Meldungen am Tag: Alarmmuedigkeit mit Ansage, und damit genau das kaputt, wofuer
-diese Aufgabe gebaut ist.
+🛑 ONLY A CHANGE IS REPORTED
+----------------------------
+The first version relied on the `dedup_key` of `notify_admin` and I claimed
+that this meant it would "not be reported again every hour". That was wrong,
+and operation showed it within three hours: three identical notifications at
+13:59, 14:59, 15:59. The reason is in `config.py` --
+`proactive_suppression_window` is **60 seconds**. That suppresses bursts, not
+an hourly repetition. For BensZimmer (gone for 30 days) that would be 24
+reports a day: alert fatigue by design, and thereby exactly the thing broken
+that this task was built for.
 
-Deshalb merkt sich der Waechter die zuletzt GEMELDETE Menge in `system_settings`
-(dasselbe Schluessel-Wert-Moebel, das `chat_upload_tool` schon nutzt) und meldet
-nur, wenn sie sich aendert — einschliesslich der Rueckkehr: kommt ein Raum
-zurueck, ist das eine eigene, gute Nachricht. Ins PROTOKOLL geht weiterhin jeder
-Lauf, damit die Lage ohne Benachrichtigung nachlesbar bleibt.
+That is why the watchdog remembers the last REPORTED set in `system_settings`
+(the same key-value furniture `chat_upload_tool` already uses) and reports only
+when it changes -- including the return: when a room comes back, that is its
+own piece of good news. Every run still goes into the LOG, so the situation
+stays readable without a notification.
 """
 from __future__ import annotations
 
@@ -68,17 +69,17 @@ from sqlalchemy import text
 
 from services.database import AsyncSessionLocal
 
-#: Wie lange nach dem Prozessstart NICHT geurteilt wird. Ein Satellit verbindet
-#: sich nach einem Backend-Neustart binnen Sekunden neu (gemessen: alle drei
-#: gesunden innerhalb von vier Minuten); fuenf Minuten sind reichlich Luft.
+#: How long after the process start NO judgement is made. A satellite
+#: reconnects within seconds of a backend restart (measured: all three healthy
+#: ones within four minutes); five minutes is ample room.
 SETTLE_SECONDS = 300
 
-#: Zeitpunkt des Prozessstarts. Modulweit, weil die Aufgabe zustandslos laeuft.
+#: Time of the process start. Module-wide, because the task runs stateless.
 _STARTED_AT = time.monotonic()
 
-#: Schluessel in `system_settings`, unter dem die zuletzt GEMELDETE Menge steht.
-#: Dauerhaft, nicht im Speicher: sonst meldete jeder Neustart erneut, und bei
-#: einem wochenlangen Ausfall waere das wieder Laerm.
+#: Key in `system_settings` holding the last REPORTED set. Durable, not in
+#: memory: otherwise every restart would report again, and with an outage
+#: lasting weeks that would be noise all over again.
 STATE_KEY = "satellite_fleet_watchdog:last_reported"
 
 
@@ -87,8 +88,8 @@ def _uptime_seconds() -> float:
 
 
 async def _fetch_enrolled() -> list[tuple[str, str | None, datetime | None]]:
-    """Eingebucht = nicht widerrufen UND aktiviert. Widerrufene Geraete sind
-    absichtlich weg und duerfen nicht als Ausfall gemeldet werden."""
+    """Enrolled = not revoked AND activated. Revoked devices are deliberately
+    gone and must not be reported as an outage."""
     async with AsyncSessionLocal() as db:
         return list((await db.execute(text("""
             SELECT satellite_id, room, last_authenticated_at
@@ -122,27 +123,28 @@ async def check_satellite_fleet(
     *, notify=None, manager=None, fetch_enrolled=None,
     read_state=None, write_state=None,
 ) -> str | None:
-    """Vergleiche eingebuchte gegen verbundene Satelliten.
+    """Compare enrolled against connected satellites.
 
-    ``notify`` und ``manager`` sind nur fuer Tests einspeisbar — ohne sie waere
-    weder die Karenz noch der Meldeweg pruefbar, ohne einen echten Satelliten.
+    ``notify`` and ``manager`` can be injected for tests only -- without them
+    neither the grace period nor the reporting path would be testable without a
+    real satellite.
 
-    Rueckgabe: eine Zeile fuers Laufprotokoll, oder None, wenn nichts zu melden
-    ist. Die Aufgabe schweigt im Normalfall.
+    Returns: one line for the run log, or None when there is nothing to report.
+    The task stays silent in the normal case.
     """
     if _uptime_seconds() < SETTLE_SECONDS:
-        # KEIN Urteil. Die Registratur ist nach einem Neustart leer, bis sich
-        # alle gemeldet haben — hier zu melden hiesse, jeden Rollout als
-        # Totalausfall zu melden.
+        # NO judgement. The registry is empty after a restart until everyone
+        # has reported back -- reporting here would mean reporting every
+        # rollout as a total outage.
         logger.debug("Flottenwache: Karenz nach dem Start, kein Urteil")
         return None
 
     if manager is None:
-        # 🛑 Der Import steht im FUNKTIONSRUMPF und hinter diesem Tor, damit eine
-        # Plattform-Installation ohne `ha_glue` ihn nie erreicht — dieselbe
-        # Bedingung prueft schon der Aufrufer in `scheduled_tasks/builtins.py`,
-        # hier nochmal fuer direkte Aufrufer. Das ist die Begruendung des
-        # Eintrags in `ALLOWED_IMPORTERS` von `test_ha_glue_boundary.py`.
+        # 🛑 The import stands in the FUNCTION BODY and behind this gate, so
+        # that a platform installation without `ha_glue` never reaches it --
+        # the caller in `scheduled_tasks/builtins.py` already checks the same
+        # condition, here once more for direct callers. This is the reason for
+        # the entry in `ALLOWED_IMPORTERS` of `test_ha_glue_boundary.py`.
         from utils.config import settings as _platform_settings
 
         if not _platform_settings.features.get("satellites"):
@@ -160,7 +162,7 @@ async def check_satellite_fleet(
 
     missing = [(sid, room, seen) for sid, room, seen in rows if sid not in connected]
 
-    # Die zuletzt GEMELDETE Menge, damit nur eine Aenderung eine Nachricht wird.
+    # The last REPORTED set, so that only a change becomes a message.
     read_state = read_state or _read_last_reported
     write_state = write_state or _write_last_reported
     signature = ",".join(sorted(sid for sid, _, _ in missing))
@@ -169,8 +171,8 @@ async def check_satellite_fleet(
 
     if not missing:
         if changed:
-            # Rueckkehr ist eine eigene, gute Nachricht — und der Marker MUSS
-            # geleert werden, sonst bliebe der naechste Ausfall stumm.
+            # A return is its own piece of good news -- and the marker MUST be
+            # cleared, otherwise the next outage would stay silent.
             logger.info("🛰 Flottenwache: alle Satelliten wieder verbunden")
             await _try_notify(
                 notify, title="Alle Satelliten wieder verbunden",
@@ -193,16 +195,18 @@ async def check_satellite_fleet(
     summary = ", ".join(parts)
     line = (f"🛰 Flottenwache: {len(missing)} von {len(rows)} Satelliten nicht "
             f"verbunden — {summary}")
-    # Ins PROTOKOLL geht JEDER Lauf: die Lage soll ohne Benachrichtigung
-    # nachlesbar sein. Nur die Dringlichkeit unterscheidet unveraendert von neu.
+    # EVERY run goes into the LOG: the situation is meant to be readable
+    # without a notification. Only the urgency distinguishes unchanged from
+    # new.
     (logger.warning if changed else logger.info)(
         line if changed else line + " (unveraendert, keine neue Meldung)")
 
     if changed:
         await _try_notify(
             notify, title=f"{len(missing)} Satellit(en) offline",
-            # Raumnamen sind keine privaten INHALTE — sie stehen so auch in der
-            # Geraeteverwaltung. Es geht kein Gespraech und kein Dokument mit.
+            # Room names are not private CONTENT -- they appear the same way in
+            # the device administration. No conversation and no document goes
+            # along.
             message=f"Nicht verbunden: {summary}.",
             dedup_key=f"satellite_fleet_offline:{signature}",
         )
@@ -212,8 +216,8 @@ async def check_satellite_fleet(
 
 
 async def _try_notify(notify, *, title: str, message: str, dedup_key: str) -> None:
-    """EINE Meldung an den Eigentuemer. Ein Fehler hier darf die Aufgabe nie
-    umbringen — die Lage steht ohnehin im Protokoll."""
+    """ONE report to the owner. A failure here must never kill the task -- the
+    situation is in the log anyway."""
     if notify is None:
         from services import ops_alert
 
@@ -222,5 +226,5 @@ async def _try_notify(notify, *, title: str, message: str, dedup_key: str) -> No
         await notify(title=title, message=message, dedup_key=dedup_key,
                      event_type="satellite_health",
                      source="satellite_fleet_watchdog")
-    except Exception as exc:  # pragma: no cover - eine Meldung darf nie stoeren
+    except Exception as exc:  # pragma: no cover - a report must never disturb
         logger.warning(f"Flottenwache: Benachrichtigung fehlgeschlagen: {exc}")

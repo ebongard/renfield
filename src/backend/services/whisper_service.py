@@ -71,7 +71,7 @@ def _content_type_for_filename(filename: str) -> str:
 
 
 class WhisperService:
-    """Service für Speech-to-Text mit Whisper"""
+    """Service for speech-to-text with Whisper"""
 
     def __init__(self):
         self.model_size = settings.whisper_model
@@ -285,7 +285,7 @@ class WhisperService:
             logger.error("opus STT requested but no voice_server_url configured")
             return ""
 
-        # Temporäre Datei erstellen
+        # Create a temporary file
         with tempfile.NamedTemporaryFile(suffix=Path(filename).suffix, delete=False) as tmp:
             tmp.write(audio_bytes)
             tmp_path = tmp.name
@@ -293,7 +293,7 @@ class WhisperService:
         try:
             return await self.transcribe_file(tmp_path, language=language, initial_prompt=initial_prompt)
         finally:
-            # Temporäre Datei löschen
+            # Delete the temporary file
             Path(tmp_path).unlink(missing_ok=True)
 
     async def _transcribe_bytes_via_voice_server(

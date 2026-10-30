@@ -1400,9 +1400,9 @@ async def websocket_endpoint(
                                 session_state.conversation_history = db_history
                                 logger.info(f"📚 Conversation history loaded: {len(db_history)} messages for session {msg_session_id}")
                             session_state.history_loaded = True
-                            # Die Marke gilt fuer den Stand, den wir JETZT
-                            # gelesen haben — auch wenn die Historie leer
-                            # zurueckkam (fremde Sitzung, nichts da).
+                            # The mark applies to the state we have read
+                            # JUST NOW -- even when the history came back empty
+                            # (somebody else's session, nothing there).
                             from services.conversation_service import (
                                 ConversationService as _CS,
                             )

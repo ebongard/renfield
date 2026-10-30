@@ -99,8 +99,8 @@ class UserResponse(BaseModel):
     # `is_device_account` next to it: it has to be settable SOMEWHERE, and the
     # alternative would be a hand-written UPDATE against the production
     # database. It is set via `POST /{id}/voice-second-factor` -- not via the
-    # general PATCH, because turning it on and off do NOT
-    # dieselbe Berechtigung haben (s. dort).
+    # general PATCH, because turning it on and off do NOT carry the same
+    # permission (see there).
     voice_second_factor_enabled: bool = False
     personality_style: str = "freundlich"
     personality_prompt: str | None = None
@@ -163,7 +163,7 @@ class LinkSpeakerRequest(BaseModel):
 
 
 class VoiceSecondFactorState(BaseModel):
-    """Zustand des zweiten Faktors am EIGENEN Konto — Einwilligung plus Grund.
+    """State of the second factor on ONE'S OWN account -- consent plus blocker.
 
     `blocker` carries one of the machine-readable codes from
     `services/voice_factor_preconditions` (`voice_path_off`, `recognition_off`,
@@ -231,7 +231,7 @@ async def list_users(
 
     # One Redis SCAN for the whole page (fail-open → nobody shows as locked).
     # The SCAN also returns the second factor's lockouts: those live in the
-    # selben Schluesselraum, nur unter `voice2fa:<id>` statt dem Benutzernamen
+    # same key space, just under `voice2fa:<id>` instead of the username
     # (separate, so a failed voice attempt does not lock the password path as
     # well). Previously only the username was checked -- the list reported
     # "not locked" while the person could not get in.
@@ -743,9 +743,9 @@ async def unlock_user(
         )
 
     try:
-        # Both counters: the password path's and the second factor's. A button
-        # that clears only one reports "unlocked" and leaves the
-        # Person draussen.
+        # Both counters: the password path's and the second factor's. A
+        # button that clears only one reports "unlocked" and leaves the person
+        # locked out.
         cleared = await login_lockout.unlock(user.username)
         cleared += await login_lockout.unlock(voice_factor_lock_id(user.id))
     except LockoutStoreUnavailable:
@@ -1181,8 +1181,8 @@ async def set_voice_second_factor(
     # would be a lazy load outside the greenlet loop (MissingGreenlet). The
     # sessions run with `expire_on_commit=False`, so the commit is enough.
 
-    # Logged because it is a consent: who gave it, when, and for which
-    # Konto gesetzt oder zurueckgenommen.
+    # Logged because it is a consent: who gave it, when, and on which account
+    # it was set or withdrawn.
     # REMOVING a consent weighs more than granting one: it lowers an account
     # to the password alone. The same subsystem checker already writes a
     # WARNING when the hurdle goes dormant BY ITSELF

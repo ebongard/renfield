@@ -9,7 +9,7 @@ from loguru import logger
 
 
 class ActionExecutor:
-    """Führt Intents aus und gibt Ergebnisse zurück"""
+    """Execute intents and return the results"""
 
     def __init__(self, mcp_manager=None, session_id: str | None = None):
         # MCP system (handles HA, n8n, camera, weather, search, news, etc.)
@@ -397,7 +397,7 @@ class ActionExecutor:
     async def _execute_knowledge(
         self, intent: str, parameters: dict, user_id: int | None = None,
     ) -> dict:
-        """Wissensdatenbank-Aktionen ausführen (RAG)"""
+        """Execute knowledge-base actions (RAG)"""
         query = parameters.get("query") or parameters.get("question") or parameters.get("text", "")
 
         if not query:
