@@ -329,7 +329,7 @@ export default function UsersPage() {
       await setVoiceSecondFactor.mutateAsync({ id: user.id, enabled: enabling });
       setSuccess(enabling ? t('users.voiceFactorArmed') : t('users.voiceFactorDisarmed'));
     } catch (err) {
-      // The same translation as under "my account": the 409 response carries
+      // 🛑 The same translation as under "my account": the 409 response carries
       // the CODE, not the sentence. The `device_account` case is only
       // reachable here -- a device account never signs in anywhere itself.
       const detail = (err as { response?: { data?: { detail?: unknown } } })
@@ -350,14 +350,14 @@ export default function UsersPage() {
    * first -- the second ran into the 409 and showed the English server message
    * in a German screen.
    *
-   * A profile that is NOT in the list counts as usable: `fetchSpeakers`
+   * 🛑 A profile that is NOT in the list counts as usable: `fetchSpeakers`
    * swallows errors and returns `[]` (`api/resources/users.ts`). Concluding
    * "no embeddings" from an empty list would disable every switch whenever
    * `/api/speakers` is down -- so only disable when the profile is there and
    * demonstrably empty.
    */
   /**
-   * TWO DIFFERENT QUESTIONS that do not coincide.
+   * 🛑 TWO DIFFERENT QUESTIONS that do not coincide.
    *
    * Both mirror `services/voice_factor_preconditions` in the backend:
    *
@@ -372,10 +372,10 @@ export default function UsersPage() {
    *   hurdle dormant. During the cutover window that would be wrong on EVERY
    *   row, i.e. exactly when it matters.
    *
-   * While the flags are still loading (`undefined`), "dormant" is NOT
+   * 🛑 While the flags are still loading (`undefined`), "dormant" is NOT
    * concluded -- an unknown answer is no evidence.
    *
-   * A profile that is NOT in the speaker list counts as usable:
+   * 🛑 A profile that is NOT in the speaker list counts as usable:
    * `fetchSpeakers` swallows errors and returns `[]`. Concluding "no
    * embeddings" from an empty list would disable every switch whenever
    * `/api/speakers` is down.
@@ -508,7 +508,7 @@ export default function UsersPage() {
                         </span>
                       )}
                       {user.voice_second_factor_enabled && (
-                        /* Keep "armed" and "dormant" apart. With a
+                        /* 🛑 Keep "armed" and "dormant" apart. With a
                            precondition missing, the login does NOT hold the
                            tokens back -- the consent is in place but has no
                            effect. A badge showing both the same way would be a

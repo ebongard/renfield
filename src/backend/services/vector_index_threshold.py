@@ -113,7 +113,7 @@ async def check_vector_index_thresholds() -> str | None:
                 raw = (await db.execute(
                     text(f"EXPLAIN (FORMAT JSON) {probe}")
                 )).scalar_one()
-            except Exception as exc:  # pragma: no cover - Planerfehler ist kein Ausfall
+            except Exception as exc:  # pragma: no cover - a planner error is not an outage
                 logger.debug(f"Vektorindex-Probe fuer {table} fehlgeschlagen: {exc}")
                 continue
 

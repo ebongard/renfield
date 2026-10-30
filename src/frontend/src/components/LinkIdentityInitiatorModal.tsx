@@ -4,11 +4,11 @@
  * Links "me here" with "me there". Mirrored on `PairInitiatorModal`,
  * with two deliberate differences:
  *
- * **No tier picker.** An instance pairing GRANTS a tier; a person link
+ * 🛑 **No tier picker.** An instance pairing GRANTS a tier; a person link
  * LIFTS it -- from then on the request runs with the person's own full reach.
  * A `TierPicker` here would be a lie about what is happening.
  *
- * **The offer comes back at completion.** The server remembers NOTHING
+ * 🛑 **The offer comes back at completion.** The server remembers NOTHING
  * between step 1 and step 3; the binding to the person lives in our own
  * signature over the offer. So this dialog keeps the offer in state and sends
  * it along -- lose it (window closed) and the whole flow is lost and has to
@@ -115,7 +115,7 @@ export default function LinkIdentityInitiatorModal({
         return;
       }
     }
-    // Local cross-check BEFORE sending: does the confirmation even answer
+    // 🛑 Local cross-check BEFORE sending: does the confirmation even answer
     // THIS offer? Saves a round trip and a meaningless 400 -- the
     // server checks it again anyway, and there is where it counts.
     if (parsed.nonce !== offer.nonce) {

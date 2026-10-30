@@ -36,7 +36,7 @@ class ConversationSessionState:
     db_session_id: str | None = None  # Session ID for DB persistence
     #: The highest message id this session KNOWS about.
     #:
-    #: Why: the history is loaded from the database once per socket and after
+    #: 🛑 Why: the history is loaded from the database once per socket and after
     #: that only grows through `add_to_history`. An ASYNCHRONOUS producer --
     #: the scanner with its completion notice, the conversation handover, the
     #: Paperless confirmation -- writes to the database without touching this
@@ -235,11 +235,11 @@ def history_needs_reload(
     3. The database holds a HIGHER id than the known one -- then an
        asynchronous producer wrote without touching the live list.
 
-    `newest_in_db is None` means "no answer" and does NOT reload. A missing
+    🛑 `newest_in_db is None` means "no answer" and does NOT reload. A missing
     measurement must not force a reload cycle; that would trade stale context
     for a query per turn that fires on every database hiccup.
 
-    `watermark is None` with a loaded history also means do not reload: the
+    🛑 `watermark is None` with a loaded history also means do not reload: the
     mark is only absent when reading the number failed, and turning that into a
     permanent reload cycle would be worse than the state it prevents.
     """

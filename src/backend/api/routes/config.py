@@ -126,7 +126,7 @@ class FeatureFlags(BaseModel):
     # Per-user live event push (/ws/user). On => the frontend opens the socket and
     # invalidates KB queries on server-side changes. See utils/config.py.
     user_events_enabled: bool = True
-    # The two switches the VOICE HURDLE depends on -- without them the UI
+    # 🛑 The two switches the VOICE HURDLE depends on -- without them the UI
     # reports "armed" while the factor is in fact DORMANT.
     #
     # The preconditions have two halves

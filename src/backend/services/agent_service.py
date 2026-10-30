@@ -130,7 +130,7 @@ class AgentStep:
     success: bool | None = None
     data: dict | None = None
     #: Why the run was aborted, if it was aborted ("loop_detected" |
-    #: "same_tool_threshold"). A field of its own and NOT the content text:
+    #: "same_tool_threshold"). 🛑 A field of its own and NOT the content text:
     #: `content` comes from the prompt catalogue, is translated and freely
     #: editable -- matching on it checks prose instead of code.
     abort_reason: str | None = None
@@ -927,7 +927,7 @@ def _record_agent_turn_metrics(context: AgentContext, last_step: AgentStep | Non
 
 #: How much of the GENERIC tool description the preselect sees.
 #:
-#: The 80 came from #312 and were never justified there -- only the word
+#: 🛑 The 80 came from #312 and were never justified there -- only the word
 #: "compact" stood next to them. What they cost is measured: on "scanne nach
 #: xidra" `scan_document` dropped out of the selection and the agent searched
 #: Paperless, because the steering text lay beyond the cap.
@@ -942,7 +942,7 @@ def _record_agent_turn_metrics(context: AgentContext, last_step: AgentStep | Non
 #: of a 262,144-token window. The increase is 1.4 percentage points for one
 #: classification call.
 #:
-#: The cap does NOT apply to the `tool_hints` entry at all: that is the
+#: 🛑 The cap does NOT apply to the `tool_hints` entry at all: that is the
 #: operator's deliberate steering text and goes along untruncated. Internal
 #: tools and federation tools carry no such entry -- their instructions live in
 #: the description, which is why the cap had to be enough.
@@ -950,7 +950,7 @@ _PRESELECT_DESC_CHARS = 480
 
 #: Tools that get MORE than the default -- per tool, not globally.
 #:
-#: Measured on 2026-10-29 against the REAL prompt (signature `aa62fdb7`), two
+#: 🛑 Measured on 2026-10-29 against the REAL prompt (signature `aa62fdb7`), two
 #: case sets, 3 repetitions each:
 #:
 #:     everything at 480        peer 92 %   scanner 91 %
@@ -961,7 +961,7 @@ _PRESELECT_DESC_CHARS = 480
 #: (3/3 -> 0/3): an ordinary LOCAL search turned into a federated request, so
 #: the free text would have left the instance. Hence no global increase.
 #:
-#: And no higher GLOBAL number either: to cover these four completely it would
+#: 🛑 And no higher GLOBAL number either: to cover these four completely it would
 #: have to go to 706 -- that adds 1719 characters instead of 589 and still cuts
 #: five of the nine mid-sentence. A per-tool cap is not just finer here, it is
 #: the only shape that gets the content complete and keeps the length small.
@@ -989,7 +989,7 @@ def _tools_pinned_by_correction(
 ) -> list[str]:
     """Which tools a user correction pins down against the preselect.
 
-    The "correct & re-answer" menu groups the MCP tools BY SERVER: the label
+    🛑 The "correct & re-answer" menu groups the MCP tools BY SERVER: the label
     is the server name ("Scanner") and the submitted value is the FIRST tool of
     that server, standing in
     (`IntentCorrectionButton.tsx:57-67`). So whoever picks "Scanner" means the
@@ -1018,7 +1018,7 @@ def _tools_pinned_by_correction(
 def preselect_input_signature(preselect_prompt: str) -> str:
     """A short fingerprint of the FINISHED preselect prompt.
 
-    Why, measured on 2026-10-26. On the same message ("scanne nach xidra") the
+    🛑 Why, measured on 2026-10-26. On the same message ("scanne nach xidra") the
     preselect produced two different results across nine runs: seven times the
     scanner tools, twice the document search. The log said "3/33" both times --
     so there was NO way to tell whether the input had changed or the model was
@@ -1029,7 +1029,7 @@ def preselect_input_signature(preselect_prompt: str) -> str:
     and a different result means the input was identical; a different signature
     means the list changed (order, or a tool arriving or dropping out).
 
-    What is hashed is the COMPOSED prompt, nothing selected out of it. Two
+    🛑 What is hashed is the COMPOSED prompt, nothing selected out of it. Two
     earlier versions were too narrow, and each time the claim "same signature
     means identical input" was false because of it:
 
@@ -1059,7 +1059,7 @@ def preselect_input_signature(preselect_prompt: str) -> str:
 def preselect_tool_line(name: str, tool) -> str:
     """One line of the tool list for the preselect.
 
-    ONE pure function, so test and production use the same one. The first
+    🛑 ONE pure function, so test and production use the same one. The first
     version of the tests rebuilt the line themselves -- and was therefore
     tautological: both negative controls stayed green although the production
     path was cut apart. A test that checks its own copy proves nothing.
@@ -1070,7 +1070,7 @@ def preselect_tool_line(name: str, tool) -> str:
     `mcp_client._tool_info_from_mcp`) and is subtracted there, otherwise it
     would appear twice in the line.
     """
-    # `str()` is not decoration: the registry guarantees no types, and the
+    # 🛑 `str()` is not decoration: the registry guarantees no types, and the
     # predecessor got away with it because `desc[:80]` works on anything. My
     # first version called `.endswith()` and thereby broke
     # `test_max_steps_reached` (a mock as the description) -- a regression the
@@ -1221,7 +1221,7 @@ class AgentService:
 
         # Build compact tool list (name + description only, no parameters)
         #
-        # `_PRESELECT_DESC_CHARS` cuts the vendor's GENERIC description. The
+        # 🛑 `_PRESELECT_DESC_CHARS` cuts the vendor's GENERIC description. The
         # operator's `tool_hints` entry goes along UNTRUNCATED, and that is the
         # point: it is written deliberately for exactly this
         # Entscheidung geschrieben.
@@ -1235,7 +1235,7 @@ class AgentService:
         # description over 500 characters long and therefore beyond the 80
         # characters this layer saw. The agent itself sees the full text -- it just never got
         # the tool offered.
-        # ONE list for both. `tool_names` can carry names whose tool is
+        # 🛑 ONE list for both. `tool_names` can carry names whose tool is
         # `None`; those drop out here and are then NOT in the prompt. If the
         # schema binding's `enum` were still built from `tool_names`, the
         # grammar would permit a name the model never saw -- and `filtered`
@@ -1257,7 +1257,7 @@ class AgentService:
             message=message, tool_list=tool_list
         )
         if not preselect_prompt:
-            # This too is a silent fallback to ALL tools: a missing or
+            # 🛑 This too is a silent fallback to ALL tools: a missing or
             # renamed prompt key turns the preselect off without leaving a
             # trace. The absence of the line is then indistinguishable from
             # "fewer than 7 tools" to
@@ -1273,13 +1273,13 @@ class AgentService:
         # erscheint.
         eingabe_signatur = preselect_input_signature(preselect_prompt)
 
-        # The whole prompt, behind a switch of its OWN -- not behind DEBUG.
+        # 🛑 The whole prompt, behind a switch of its OWN -- not behind DEBUG.
         # The sink in `main.py` is global and single-level; a DEBUG run would
         # also write stored messages and memory excerpts from other modules.
         # This switch opens exactly this line. It is dark because the prompt
         # carries the user's message UNTRUNCATED.
         if settings.agent_preselect_prompt_dump:
-            # `{!r}` and not `{}`: the prompt carries the user's message
+            # 🛑 `{!r}` and not `{}`: the prompt carries the user's message
             # VERBATIM, and a newline in it could otherwise forge arbitrary
             # log lines. The same reasoning as with the correction value and
             # `chat_handler.py:1733`. Side
@@ -1294,7 +1294,7 @@ class AgentService:
             preselect_options = _llm_options_or_default(
                 "llm_options_tool_preselect", _DEFAULT_LLM_OPTIONS_TOOL_PRESELECT,
             )
-            # Without the binding an unparseable answer is possible BY
+            # 🛑 Without the binding an unparseable answer is possible BY
             # DESIGN, and it costs not the preselect but its entire effect:
             # the `except` branch below returns `None`, and then ALL tools end
             # up in the agent prompt. Observed live on 2026-10-28 -- the model
@@ -1323,7 +1323,7 @@ class AgentService:
             # Parse JSON array from response
             selected = json.loads(response_text)
             if not isinstance(selected, list) or not selected:
-                # The most common case is an EMPTY list (the task needs no
+                # 🛑 The most common case is an EMPTY list (the task needs no
                 # tool), and empty is falsy -- hence the same branch. `in=`
                 # belongs here too: this path falls back to ALL tools, and
                 # that is exactly the incident the signature is meant to
@@ -1347,7 +1347,7 @@ class AgentService:
                 if name in self.tool_registry._tools
             }
 
-            # An explicit user correction overrides the preselect. Until
+            # 🛑 An explicit user correction overrides the preselect. Until
             # 2026-10-26 the `chat_handler` only derived the ROLE from it and
             # threw the rest away -- and in every reported miss the role was
             # already the right one. So the correction had no effect, because
@@ -1392,7 +1392,7 @@ class AgentService:
                 )
                 return None
 
-            # The NAMES belong in the line, not just the count. "3/33 tools
+            # 🛑 The NAMES belong in the line, not just the count. "3/33 tools
             # selected" does not say whether the ONE right tool was among them
             # -- and that was exactly the question on 2026-10-26: on "scanne
             # nach xidra" the agent reached for the Paperless search three
@@ -1409,7 +1409,7 @@ class AgentService:
                 len(filtered), len(tool_names), message[:60],
                 eingabe_signatur, sorted(filtered),
             )
-            # At DEBUG, one digest of ITS line per tool, in list order.
+            # 🛑 At DEBUG, one digest of ITS line per tool, in list order.
             # Writing the full lines here would be unusable (they carry the
             # hint texts, orders of magnitude more), but the bare NAMES would
             # be too: a changed `in=` would then only say THAT something

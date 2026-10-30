@@ -177,7 +177,7 @@ class VoiceSecondFactorState(BaseModel):
 class VoiceSecondFactorRequest(BaseModel):
     """Turn the voice as a second login factor on or off."""
     enabled: bool
-    # Required only when turning it off FOR YOURSELF. Reason in the route's
+    # 🛑 Required only when turning it off FOR YOURSELF. Reason in the route's
     # docstring: a token from BEFORE the consent survives it (the epoch bump is
     # deliberately omitted) and could otherwise revoke it.
     current_password: str | None = None
@@ -230,7 +230,7 @@ async def list_users(
     users = result.scalars().all()
 
     # One Redis SCAN for the whole page (fail-open → nobody shows as locked).
-    # The SCAN also returns the second factor's lockouts: those live in the
+    # 🛑 The SCAN also returns the second factor's lockouts: those live in the
     # same key space, just under `voice2fa:<id>` instead of the username
     # (separate, so a failed voice attempt does not lock the password path as
     # well). Previously only the username was checked -- the list reported
@@ -917,7 +917,7 @@ async def get_voice_second_factor(
     household on 2026-09-29: on 6 of 7 accounts the account-bound half was the
     blocker -- precisely the half the page could not see.
 
-    YOUR OWN ACCOUNT ONLY. The reason names a property of a person's speaker
+    🛑 YOUR OWN ACCOUNT ONLY. The reason names a property of a person's speaker
     profile; it belongs to them. Administration sees the state through the user
     list anyway and derives its dormancy from flags and the speaker list -- a
     read route onto OTHER accounts would be new attack surface with no new
@@ -964,8 +964,8 @@ async def set_voice_second_factor(
 ):
     """Turn the voice on or off as a second login factor.
 
-    TURNING IT ON AND TURNING IT OFF ARE NOT THE SAME RIGHT
-    -------------------------------------------------------
+    🛑 TURNING IT ON AND TURNING IT OFF ARE NOT THE SAME RIGHT
+    ----------------------------------------------------------
     An ECAPA voiceprint is biometric data (Art. 9 GDPR). The fact that a LOGIN
     requires it is a consent -- and nobody can give a consent on someone
     else's behalf. Therefore:
@@ -974,7 +974,7 @@ async def set_voice_second_factor(
       that. Not even an administrator may impose it on another account; that
       would not be administration but forced biometric enrolment.
 
-      The route therefore no longer requires `users.manage`. That used to stand
+      🛑 The route therefore no longer requires `users.manage`. That used to stand
       in front of BOTH directions, which put the consent out of reach for the
       very person whose voice it is about: a household member without the
       management permission could neither consent nor see their own state. A
@@ -982,7 +982,7 @@ async def set_voice_second_factor(
       Arming your own factor adds an ADDITIONAL hurdle on your own account --
       not an escalation.
 
-      CORRECTION: this used to say that revoking required having passed the
+      🛑 CORRECTION: this used to say that revoking required having passed the
       factor. That was WRONG. Turning it on does not bump `token_epoch`, so a
       token from BEFORE the consent survives it and renews itself via
       `/auth/refresh` (which does not check the factor). That is why turning it
@@ -993,7 +993,7 @@ async def set_voice_second_factor(
       is hoarse: there is deliberately no fallback to the password alone
       (`.claude/rules/auth.md`).
 
-      Why `admin` and not `users.manage`: the way back is also a way in.
+      🛑 Why `admin` and not `users.manage`: the way back is also a way in.
       Whoever removes another account's second factor silently lowers its login
       to the password alone -- and can then try that password with no voice in
       the way. That is MORE than a password reset (which on its own does not
@@ -1007,8 +1007,8 @@ async def set_voice_second_factor(
     both directions would carry the same permission -- the asymmetry could not
     be expressed.
 
-    TURNING IT ON WITHOUT A PROFILE WOULD LOCK YOU OUT
-    --------------------------------------------------
+    🛑 TURNING IT ON WITHOUT A PROFILE WOULD LOCK YOU OUT
+    -----------------------------------------------------
     `POST /auth/voice` checks 1:1 against the linked speaker profile and
     refuses fail-closed when there is none. An account with the consent set but
     no profile with embeddings would therefore NEVER get in -- and the way out
@@ -1019,7 +1019,7 @@ async def set_voice_second_factor(
     ANOTHER account requires `admin`, turning it on for another account is
     always a 403.
     """
-    # NO CALLER, NO DECISION -- and in BOTH directions.
+    # 🛑 NO CALLER, NO DECISION -- and in BOTH directions.
     #
     # `get_user_or_default` always returns a user (with auth off, the
     # administrator), so `None` cannot arrive here. The guard stands anyway,
@@ -1035,7 +1035,7 @@ async def set_voice_second_factor(
             detail="Authentication required",
         )
 
-    # 🛑 OHNE AUTHENTIFIZIERUNG GIBT ES KEIN „SELBST", ALSO AUCH KEINE EINWILLIGUNG.
+    # 🛑 WITHOUT AUTHENTICATION THERE IS NO "SELF", AND SO NO CONSENT EITHER.
     #
     # With `AUTH_ENABLED=false`, `get_user_or_default` resolves EVERY caller
     # to the administrator account. `is_self` would then be true, and whoever
@@ -1058,15 +1058,14 @@ async def set_voice_second_factor(
             ),
         )
 
-    # PERMISSION BEFORE DATABASE. The decision "may this caller do this at
+    # 🛑 PERMISSION BEFORE DATABASE. The decision "may this caller do this at
     # all" depends only on `user_id` and the caller -- not on the loaded
     # account. With the query first, the answer for an unauthorised caller
     # distinguished 404 (does not exist) from 403 (exists, not yours): an
-    # enumeration oracle over the entire id space, available to every
-    # signed-in
-    # Mitglied offenstand. Vorher verwehrte `require_permission(USERS_MANAGE)`
-    # entry before the query; with the relaxation that protection falls away,
-    # so the ordering has to replace it.
+    # enumeration oracle over the entire id space, open to every signed-in
+    # member. Previously `require_permission(USERS_MANAGE)` denied entry
+    # before the query; with the relaxation that protection falls away, so
+    # the ordering has to replace it.
     is_self = user_id == current_user.id
     actor = current_user.username
 
@@ -1103,7 +1102,7 @@ async def set_voice_second_factor(
             detail="User not found"
         )
 
-    # 🛑 SELBST-ABSCHALTEN VERLANGT DAS PASSWORT ERNEUT.
+    # 🛑 TURNING IT OFF FOR YOURSELF REQUIRES THE PASSWORD AGAIN.
     #
     # Turning it on does NOT bump `token_epoch` (an epoch jump would sign the
     # person out at the moment of consenting -- on a single-admin instance with
@@ -1117,7 +1116,7 @@ async def set_voice_second_factor(
     # through. Whoever also has the password was separated by the voice alone
     # anyway -- so the factor loses nothing it had before.
     #
-    # Requiring a VOICE sample would be circular: the person who cannot speak
+    # 🛑 Requiring a VOICE sample would be circular: the person who cannot speak
     # is exactly the one who needs this path. For ANOTHER account the question
     # does not arise -- `admin` stands there, and an administrator does not
     # know the other person's password.
@@ -1160,7 +1159,7 @@ async def set_voice_second_factor(
         if blocker is None and voice_path_blocker() == RECOGNITION_OFF:
             blocker = RECOGNITION_OFF
         if blocker is not None:
-            # 🛑 DER CODE GEHT HERAUS, NICHT DER SATZ.
+            # 🛑 THE CODE GOES OUT, NOT THE SENTENCE.
             #
             # Three hard-coded ENGLISH sentences used to stand here, and they
             # were the only place the person learned the reason at all -- so a
@@ -1168,8 +1167,8 @@ async def set_voice_second_factor(
             # i18n rule, and the root was the construction: the
             # machine-readable codes already existed and served only as keys to
             # look up prose. Now the code goes out and the UI translates it --
-            # the same codes that
-            # `GET /{id}/voice-second-factor` liefert, also EIN Vokabular.
+            # the same codes that `GET /{id}/voice-second-factor` returns, so
+            # there is ONE vocabulary.
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
                 detail=blocker,
@@ -1183,7 +1182,7 @@ async def set_voice_second_factor(
 
     # Logged because it is a consent: who gave it, when, and on which account
     # it was set or withdrawn.
-    # REMOVING a consent weighs more than granting one: it lowers an account
+    # 🛑 REMOVING a consent weighs more than granting one: it lowers an account
     # to the password alone. The same subsystem checker already writes a
     # WARNING when the hurdle goes dormant BY ITSELF
     # (`voice_factor_preconditions`) -- a human taking it away must not be

@@ -181,7 +181,7 @@ async def _write_responder_audit(
 ) -> None:
     """The RESPONDER records which identity it answered on.
 
-    Until 2026-10-29 only the asker side wrote (`mcp_client.py`, a single
+    🛑 Until 2026-10-29 only the asker side wrote (`mcp_client.py`, a single
     caller). But the identity decision is made HERE -- so nothing recorded
     whether an answer came about with the linked person's full reach or only
     on the granted tier. For the first successful federated query in this
@@ -189,18 +189,16 @@ async def _write_responder_audit(
     the pending record that carries `mapped` lives in memory and is gone once
     the query ends.
 
-    A record on the ASKER side would be no substitute. It would be the far
+    🛑 A record on the ASKER side would be no substitute. It would be the far
     side's claim about its own access decision; the instance whose data was
     read has to record the access itself.
 
     `user_id` always means "the local person whose reach was used": mapped,
     the linked person; in the fallback, the owner of the pairing. Both cases
-    have one, which is why the column stays
-    NOT NULL.
+    have one, which is why the column stays NOT NULL.
 
     Write failures are swallowed in `write_federation_audit` -- an audit row
-    must not take down an answered request
-    nachtraeglich umwerfen.
+    must not retroactively overturn a request that was already answered.
     """
     from services.federation_audit import write_federation_audit
 
@@ -216,7 +214,7 @@ async def _write_responder_audit(
         peer_display_name_snapshot=pending.peer_display_name,
         query_text=pending.query,
         initiated_at=datetime.fromtimestamp(pending.initiated_at, tz=UTC).replace(tzinfo=None),
-        # The SHAPE matters, not just the content: `_classify_final` reads
+        # 🛑 The SHAPE matters, not just the content: `_classify_final` reads
         # `final.get("success")`. A record without that key is falsy and would
         # be logged as "failed / Unknown failure" -- a successful answer as a
         # failure. And `None` there means "aborted", not "failed"; the real
@@ -224,7 +222,7 @@ async def _write_responder_audit(
         final_item=(
             {"success": True, "message": pending.answer or ""}
             if success
-            # `aborted` is a status of its own, not `failed`: a cancellation
+            # 🛑 `aborted` is a status of its own, not `failed`: a cancellation
             # AFTER the retrieval is not a failed access but a successful one
             # without delivery. Buried among the failures the log would look
             # calmer than it was.
@@ -266,7 +264,7 @@ async def _record_cancelled_access(pending: _PendingRequest) -> None:
 def _peer_scope_for(pending: _PendingRequest) -> PeerScope | None:
     """The `PeerScope` for a pending record -- or a refusal.
 
-    Nothing is GUESSED here. A record is either mapped (`mapped=True`, runs as
+    🛑 Nothing is GUESSED here. A record is either mapped (`mapped=True`, runs as
     the linked person, no peer filter) or a fallback (`mapped=False`, requires
     `peer_owner_id`). Anything else is contradictory and gets refused.
 
@@ -449,7 +447,7 @@ class FederationQueryResponder:
             # PAIRING (`peer_users.granted_tier`), no longer from a
             # `CircleMembership` keyed on `peer.remote_user_id`.
             #
-            # `asker_local_user_id` is NO LONGER set here. It used to hold
+            # 🛑 `asker_local_user_id` is NO LONGER set here. It used to hold
             # `peer.remote_user_id` -- a number from the FAR SIDE that the
             # filter read as a local person. On the peer-scoped branch there is
             # no asking local person any more, so there is no id anyone could
@@ -568,7 +566,7 @@ class FederationQueryResponder:
             # Fresh session scoped to this bg task only.
             async with AsyncSessionLocal() as session:
                 matches = await self._retrieve(session, pending)
-            # From here on foreign data sat in memory. If the query is
+            # 🛑 From here on foreign data sat in memory. If the query is
             # cancelled now that is still an access -- and only this record
             # tells it apart afterwards from a cancellation before it.
             pending.retrieved_count = len(matches)
@@ -598,7 +596,7 @@ class FederationQueryResponder:
             await store.save(pending)
             await _write_responder_audit(pending, success=True)
         except asyncio.CancelledError:
-            # A cancellation is no reason to keep the access quiet.
+            # 🛑 A cancellation is no reason to keep the access quiet.
             #
             # Until 2026-10-29 this was just `raise`. The ASKER side has
             # written its record inside a `finally` since F4d, explicitly so
@@ -649,16 +647,16 @@ class FederationQueryResponder:
             asker_id=pending.asker_local_user_id or 0,
             max_visible_tier=pending.max_visible_tier,
             top_k=10,
-            # FALLBACK: `peer` gesetzt → peer-bezogener Filter, unabhaengig von
+            # FALLBACK: `peer` set -> peer-scoped filter, independent of
             # `settings.auth_enabled`. Without it an auth-off instance would
             # hit the single-user shortcut and give away its whole brain.
             # The tier comes from the pairing, the owner binds it to that
             # owner's rows -- both together, or the peer would see its tier
-            # bei jedem Eigentuemer.
+            # across every owner.
             # MAPPED (F-ID-1): `peer=None` -> the request runs AS the linked
             # person with that person's full reach.
             peer=_peer_scope_for(pending),
-            # The path is STATED, not guessed from `peer`. There was a bug
+            # 🛑 The path is STATED, not guessed from `peer`. There was a bug
             # exactly here: the log line in the atom store derived it from
             # `peer is not None` -- and `_peer_scope_for` returns `None` in the
             # MAPPED case. So the one run the marker was built for stayed
@@ -818,13 +816,13 @@ class FederationQueryResponder:
         signed peer could also exploit this path to amplify writes;
         debouncing is a future F5 task.
         """
-        # A pairing is identified by `(circle_owner_id, remote_pubkey)` --
+        # 🛑 A pairing is identified by `(circle_owner_id, remote_pubkey)` --
         # that is how the unique index `uq_peer_users_owner_pubkey` states it.
         # Here it was looked up by the key alone until 2026-10-28, and with
         # `scalar_one_or_none()`. Two local people pairing with the SAME far
         # side are permitted by the index -- and would then make every
-        # federated request end as a 500 with `MultipleResultsFound`. In
-        # the household was one step away from this on 2026-10-28: an active
+        # federated request end as a 500 with `MultipleResultsFound`. The
+        # household was one step away from this on 2026-10-28: an active
         # row for account 1 and a revoked one for account 2, both with
         # x-idra's key; pairing again would have revived the second.
         candidates = (await self.db.execute(
@@ -836,7 +834,7 @@ class FederationQueryResponder:
         if not candidates:
             raise FederationQueryError("Unknown or revoked peer")
         if len(candidates) > 1:
-            # REFUSE, do not pick. There is an obvious way out -- let the
+            # 🛑 REFUSE, do not pick. There is an obvious way out -- let the
             # `querier_ref` decide which pairing is meant. But it comes FROM
             # THE FAR SIDE. Letting it determine whose circle the request runs
             # in would be the same class of bug F-ID-3 just removed: a
@@ -860,7 +858,7 @@ class FederationQueryResponder:
             await self.db.rollback()
         return peer
 
-    # `_resolve_asker_tier` was REMOVED on 2026-10-27 (F-ID-3). It looked up a
+    # 🛑 `_resolve_asker_tier` was REMOVED on 2026-10-27 (F-ID-3). It looked up a
     # `CircleMembership` via `member_user_id = peer.remote_user_id` -- a foreign
     # number in a column with a foreign key onto the local `users.id` -- and did
     # so with `scalar_one_or_none()`, which would have raised for two peers

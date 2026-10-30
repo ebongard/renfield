@@ -498,7 +498,7 @@ async def _satellite_fleet_watchdog_handler(app: FastAPI, params: dict) -> str |
     # 2026-09-26 and kept quiet about the three dead ones. See
     # services/satellite_fleet_watchdog.py.
     #
-    # SELF-GATE before the import. A platform install without `ha_glue` has
+    # 🛑 SELF-GATE before the import. A platform install without `ha_glue` has
     # no satellites; the watchdog would import `ha_glue.services.
     # satellite_manager` there and tear through the architecture boundary. The
     # task is seeded anyway (same pattern as `mcp_health_monitor`: seeded

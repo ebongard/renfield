@@ -47,10 +47,10 @@ case "$args" in
     fi
     printf '%s\n' "${STUB_IMG_HEADS}"; exit 0 ;;
   *"image inspect"*) exit "${STUB_IMG_PRESENT_EXIT:-0}" ;;
-  # Die Richtungs-Sonde fragt BEIDE Revisionen in EINEM Aufruf und gibt die
-  # Rueckgabewerte als Text zurueck. `STUB_PROBE_SILENT=1` spielt den Fall, in
-  # dem ssh/docker gar nicht antworten — genau der Fail-open-Pfad aus dem
-  # Review vom 2026-10-11.
+  # The direction probe asks for BOTH revisions in ONE call and returns the
+  # exit codes as text. `STUB_PROBE_SILENT=1` plays the case where ssh/docker
+  # do not answer at all -- exactly the fail-open path from the review of
+  # 2026-10-11.
   *"alembic show"*)
     if [[ "${STUB_PROBE_SILENT:-0}" == 1 ]]; then
       echo "ssh: connect to host ... port 22: Operation timed out" >&2
@@ -67,6 +67,19 @@ exit 0
 # BEFORE the first `set image` hangs on that.
 _KUBECTL_STUB = r"""#!/bin/bash
 printf '%s\n' "$*" >> "$STUB_LOG"
+# 🛑 MUST drain stdin -- on EVERY call, not per branch. The script pipes
+# `sed <manifest> | kubectl apply -f -` under `set -o pipefail`; a reader that
+# exits without reading leaves `sed` writing into a closed pipe, so `sed` dies
+# of SIGPIPE and the pipeline -- and with it the script -- returns 141.
+# Measured on the build box with the real 3041-byte manifest: 614 of 3000
+# runs, a 20% race that made `..._with_migrate_proceeds` flaky in the full
+# suite and green in isolation. Real `kubectl ... -f -` always reads stdin;
+# the stub has to as well, or it invents a failure mode the tool does not
+# have. Draining here rather than in the `apply` branch means a future
+# `replace -f -` or `create -f -` cannot reopen the race. Calls that are not
+# piped read the runner's stdin, which `_run` pins to /dev/null, so this
+# never blocks.
+cat >/dev/null
 args="$*"
 case "$args" in
   *"alembic current"*)
@@ -76,19 +89,10 @@ case "$args" in
     fi
     printf '%s\n' "${STUB_DB_OUT}"; exit 0 ;;
   *"get cm renfield-env"*)
-    # Der Plugin-Riegel vor dem Push liest PLUGIN_MODULES; eine leere Antwort
-    # laesst seine Pipeline unter `pipefail` scheitern. Eigenheit der Attrappe.
+    # The plugin guard before the push reads PLUGIN_MODULES; an empty answer
+    # makes its pipeline fail under `pipefail`. A quirk of the stub.
     printf 'stubpkg'; exit 0 ;;
   *version*) echo '{}'; exit 0 ;;
-  # 🛑 MUST drain stdin. The script pipes `sed <manifest> | kubectl apply -f -`
-  # under `set -o pipefail`; a reader that exits without reading leaves `sed`
-  # writing into a closed pipe, so `sed` dies of SIGPIPE and the pipeline --
-  # and with it the script -- returns 141. Measured on the build box with the
-  # real 3041-byte manifest: 614 of 3000 runs, a 20% race that made
-  # `..._with_migrate_proceeds` flaky in the full suite and green in isolation.
-  # Real `kubectl apply -f -` always reads stdin; the stub has to as well, or
-  # it invents a failure mode the tool does not have.
-  *"apply -f -"*) cat >/dev/null; exit 0 ;;
 esac
 exit 0
 """
@@ -129,6 +133,7 @@ def deploy(tmp_path):
         proc = subprocess.run(
             ["bash", str(_SCRIPT), *flags, *args],
             capture_output=True, text=True, env=env, timeout=120,
+            stdin=subprocess.DEVNULL,
         )
         rolled_out = "set image" in log.read_text()
         return proc, rolled_out
@@ -334,3 +339,23 @@ def test_a_missing_image_in_a_real_run_aborts(deploy):
     proc, rolled_out = deploy(STUB_IMG_PRESENT_EXIT=1)
     assert proc.returncode == 1
     assert not rolled_out
+
+
+@pytest.mark.parametrize("subcommand", ["apply -f -", "replace -f -", "get pods"])
+def test_the_kubectl_stub_drains_stdin_on_every_call(tmp_path, subcommand):
+    """The 20% race above, made deterministic: with more than a pipe buffer
+    (64 KiB) in flight, a stub that does not read makes the writer die of
+    SIGPIPE every time, not one run in five. Covers a subcommand the script
+    does not pipe into today, so the guard is the stub's contract, not the
+    one branch that happens to be used."""
+    if shutil.which("bash") is None:  # pragma: no cover - environment guard
+        pytest.skip("bash not available")
+    stub = tmp_path / "kubectl"
+    stub.write_text(_KUBECTL_STUB)
+    stub.chmod(0o755)
+    proc = subprocess.run(
+        ["bash", "-c", f'set -o pipefail; head -c 262144 /dev/zero | "{stub}" {subcommand}'],
+        capture_output=True, text=True, timeout=30,
+        env={**os.environ, "STUB_LOG": str(tmp_path / "kubectl.log")},
+    )
+    assert proc.returncode == 0, f"exit {proc.returncode} (141 = SIGPIPE: the stub did not read stdin)"

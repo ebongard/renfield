@@ -20,8 +20,8 @@
  * hook next can extract the shared core -- doing it beforehand would be a
  * rebuild of a path `ChatContext` uses, for a gain of forty lines.
  *
- * THE MINIMUM DURATION IS NOT A SECURITY CHECK
- * ---------------------------------------------
+ * 🛑 THE MINIMUM DURATION IS NOT A SECURITY CHECK
+ * ------------------------------------------------
  * It is guidance: half a second of audio yields a poor comparison, and the
  * user should notice that before submitting rather than collect a rejection.
  * An attacker posts straight to the API anyway. The server-side duration bound
@@ -89,7 +89,7 @@ export function useVoiceFactorRecording() {
       clearTimeout(stopTimerRef.current);
       stopTimerRef.current = null;
     }
-    // The tracks MUST be stopped individually, or the browser's microphone
+    // 🛑 The tracks MUST be stopped individually, or the browser's microphone
     // indicator stays on -- on a LOGIN page a quietly open microphone is the
     // last thing anyone wants.
     streamRef.current?.getTracks().forEach((track) => track.stop());

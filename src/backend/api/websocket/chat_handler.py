@@ -440,7 +440,7 @@ def _failed_agent_actions(outcomes: list, aborted_tools: set | None = None) -> l
     Order matters, dict insertion order does not: the verdict is per tool name,
     so the list is "actions that ended badly", not "calls that failed".
 
-    ``aborted_tools`` are the tools whose repetition the agent loop aborted
+    🛑 ``aborted_tools`` are the tools whose repetition the agent loop aborted
     ITSELF (loop detection). If such a tool already SUCCEEDED in the turn, it
     does not count as failed -- the later attempts were produced by the loop,
     not by the tool.
@@ -1317,7 +1317,7 @@ async def websocket_endpoint(
 
             # Handle session_id for conversation persistence
             if msg_session_id:
-                # The history is NOT loaded only once per socket. It grows
+                # 🛑 The history is NOT loaded only once per socket. It grows
                 # afterwards through `add_to_history`, and an ASYNCHRONOUS
                 # producer does not touch this list: the scanner completion
                 # notice, the conversation handover and the Paperless
@@ -1357,7 +1357,7 @@ async def websocket_endpoint(
                     newest_in_db=_newest,
                 ):
                     if _newest is not None:
-                        # Braces, NOT `%s`: this module's logger is loguru,
+                        # 🛑 Braces, NOT `%s`: this module's logger is loguru,
                         # which only substitutes `{}`. With `%s` the arguments
                         # silently vanish -- the line printed literally
                         # "(database %s > known %s)", i.e. precisely without
@@ -1743,7 +1743,7 @@ async def websocket_endpoint(
                 # "Korrigieren & neu beantworten" regenerate maps its corrected
                 # intent to the owning role (None = fall through to normal routing).
                 _role_hint = getattr(msg, "role_hint", None)
-                # Read outside the `if`: the correction does not only steer
+                # 🛑 Read outside the `if`: the correction does not only steer
                 # the role, it also has to reach the tool PRESELECT. Until
                 # 2026-10-26 only the role was derived and the tool name thrown
                 # away -- and in every reported miss the role was already the
@@ -2110,14 +2110,14 @@ async def websocket_endpoint(
                             user_id=user_id,
                             context_vars_text=_context_vars_text,
                             summary_text=_summary_text,
-                            # Here too: the orchestrator is NOT suppressed by a
+                            # 🛑 Here too: the orchestrator is NOT suppressed by a
                             # correction (the gates at :2030 only check
                             # sub_queries/role/entity). Without this line the
                             # correction falls away one layer deeper on every
                             # multi-domain request -- precisely the silent
                             # ineffectiveness this branch exists to end.
-                            # `agent_kwargs` is
-                            # `agent.run(**agent_kwargs)` gespreizt.
+                            # `agent_kwargs` is spread into
+                            # `agent.run(**agent_kwargs)`.
                             corrected_intent=_corrected,
                         ):
                             if step.step_type == "final_answer":
@@ -2689,7 +2689,7 @@ WICHTIG: Nutze die ECHTEN Daten aus dem Ergebnis! Gib NUR die Antwort, KEIN JSON
                             enforce_ownership=settings.auth_enabled,
                         )
                         saved_assistant_message_id = _asst_msg.id
-                        # Our own writes raise the mark ALONG WITH them.
+                        # 🛑 Our own writes raise the mark ALONG WITH them.
                         # Without that the next turn would always be "stale"
                         # and the freshness check would turn into a permanent
                         # reload -- a behaviour change nobody asked for. The

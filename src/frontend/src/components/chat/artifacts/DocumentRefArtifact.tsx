@@ -2,7 +2,7 @@
  * DocumentRefArtifact -- the button to the Paperless document under a scan
  * completion notice.
  *
- * The artifact carries ONLY a document id, never a URL. The link is resolved
+ * 🛑 The artifact carries ONLY a document id, never a URL. The link is resolved
  * here at render time, for two measured reasons (2026-10-27, household,
  * 60 days):
  *   - At write time it usually does not exist yet: Paperless filing is a
@@ -13,12 +13,12 @@
  * Because the person looks at the answer again minutes later anyway, the id is
  * usually there by the time they click.
  *
- * Only the clickable state is a focusable element. The others are plain text:
+ * 🛑 Only the clickable state is a focusable element. The others are plain text:
  * no tabbing through dead buttons, and the screen reader does not announce a
  * control that is not one. A `disabled` button would also regularly fall below
  * 4.5:1 contrast (DESIGN.md §Accessibility).
  *
- * NO amber for "not filed". A duplicate is not a failure -- the document is in
+ * 🛑 NO amber for "not filed". A duplicate is not a failure -- the document is in
  * Paperless, just for longer. Showing a warning colour on roughly every sixth
  * scan wears it out; amber stays reserved for the cases DESIGN.md introduced
  * it for on 2026-09-28.
@@ -46,7 +46,7 @@ function Hint({ text }: { text: string }) {
 
 export default function DocumentRefArtifact({ data }: { data: DocumentRefData }) {
   const { t } = useTranslation();
-  // `instance` set means: the document lives elsewhere. Do NOT query locally
+  // 🛑 `instance` set means: the document lives elsewhere. Do NOT query locally
   // -- the id belongs to the other instance, and because both run their own
   // sequences a local query would hit an unrelated document with the same
   // number. So the fetch is never started in the first place
@@ -60,7 +60,7 @@ export default function DocumentRefArtifact({ data }: { data: DocumentRefData })
 
   if (isLoading) return <Skeleton />;
 
-  // A failed fetch looks like "still in progress", and that is deliberate:
+  // 🛑 A failed fetch looks like "still in progress", and that is deliberate:
   // for the person both mean the same thing -- no link yet. The endpoint
   // enforces access control, so a 403 is a valid answer and not an error to
   // show them.

@@ -41,7 +41,7 @@ class FederationAuditEntry(BaseModel):
     #: linked person, with that person's own full reach) or "peer_tier" (as a
     #: foreign instance, only the granted tier).
     #:
-    #: `None` does NOT mean "peer_tier" but "not recorded": on asker rows this
+    #: 🛑 `None` does NOT mean "peer_tier" but "not recorded": on asker rows this
     #: instance does not know (the far side decides), and rows from before
     #: 2026-10-29 do not know the field at all. The UI has to tell those apart,
     #: or it claims the narrower tier for queries that in truth ran with full

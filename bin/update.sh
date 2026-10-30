@@ -11,7 +11,7 @@ cd "$(dirname "$0")/.."
 echo "🔄 Renfield Update"
 echo ""
 
-# Farben
+# Colors
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
@@ -23,7 +23,7 @@ timestamp=$(date +%Y%m%d_%H%M%S)
 backup_dir="backups/backup_$timestamp"
 mkdir -p "$backup_dir"
 
-# Datenbank Backup
+# Database backup
 echo "  → Datenbank..."
 docker exec renfield-postgres pg_dump -U renfield renfield > "$backup_dir/database.sql"
 
@@ -34,7 +34,7 @@ cp .env "$backup_dir/.env"
 echo -e "${GREEN}✓${NC} Backup erstellt in $backup_dir"
 echo ""
 
-# Git Pull (falls Git Repository)
+# Git pull (if this is a git repository)
 if [ -d .git ]; then
     echo "📥 Lade Updates..."
     git pull

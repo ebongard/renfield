@@ -74,7 +74,7 @@ def _classify_final(final: dict[str, Any] | None) -> tuple[str, bool, str | None
             None,
         )
 
-    # Check aborted BEFORE failed. A cancelled query carries `success=False`
+    # 🛑 Check aborted BEFORE failed. A cancelled query carries `success=False`
     # and would otherwise fall into the failure branch -- where it is filed
     # wrongly: on the responder side a cancellation can mean foreign data had
     # already been read. An access sitting among genuine failures gets skipped

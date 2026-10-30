@@ -123,7 +123,7 @@ def _clear_auth_cookies(response: Response | None) -> None:
 class TokenResponse(BaseModel):
     """Response model for successful authentication.
 
-    `access_token`/`refresh_token` are OPTIONAL because the password path for
+    🛑 `access_token`/`refresh_token` are OPTIONAL because the password path for
     an account with `voice_second_factor_enabled` deliberately issues NO
     tokens: the first factor has passed and the login is not finished. In that
     case `second_factor` and `second_factor_ticket` are present and the client
@@ -199,7 +199,7 @@ class UserResponse(BaseModel):
     # Security (review M5): surface the forced-rotation flag so /auth/me and the
     # login response are actionable (the frontend can force a password change).
     must_change_password: bool = False
-    # Same reason, one level further: without this field a person could not
+    # 🛑 Same reason, one level further: without this field a person could not
     # even SEE whether their own account requires the voice -- the state lived
     # only in the administration list, which is closed to them. A consent under
     # Art. 9 GDPR that you cannot inspect is not one.
@@ -333,7 +333,7 @@ async def login(
     user.last_login = datetime.now(UTC).replace(tzinfo=None)
     await db.commit()
 
-    # SECOND FACTOR: this is where the password path ends for an account that
+    # 🛑 SECOND FACTOR: this is where the password path ends for an account that
     # requires the voice. NO tokens, NO cookies -- only a one-shot ticket that
     # `POST /auth/voice` redeems. An additional factor that already grants
     # access after the first one is not a factor.
@@ -343,7 +343,7 @@ async def login(
     # locked out. So the hurdle only applies when there is also a door --
     # otherwise the password path continues normally and the consent lies
     # dormant.
-    # The check lives in `services/voice_factor_preconditions`, NOT here. This
+    # 🛑 The check lives in `services/voice_factor_preconditions`, NOT here. This
     # used to test only `voice_auth_enabled` -- but redeeming at `/auth/voice`
     # requires more (speaker recognition on, a linked profile, embeddings), and
     # every gap between raising the hurdle and clearing it is a lockout,
@@ -357,7 +357,7 @@ async def login(
 
         ticket = await issue_ticket(user.id, client_ip)
         if ticket is None:
-            # Fail-closed. Without a ticket there is no second factor, and
+            # 🛑 Fail-closed. Without a ticket there is no second factor, and
             # without a second factor there is no login for this account. A
             # Redis outage must not silently remove the hurdle.
             record_login_failure("voice_2fa_ticket_unavailable")
@@ -909,7 +909,7 @@ async def list_all_permissions(user: User = Depends(require_permission(Permissio
 class VoiceAuthResponse(BaseModel):
     """Response of the SECOND factor.
 
-    Deliberately narrow. Until the review of 2026-09-27 this model carried
+    🛑 Deliberately narrow. Until the review of 2026-09-27 this model carried
     `speaker_id`, `speaker_name`, `confidence`, `user_id` and `username` -- and
     returned them to an unauthenticated caller on EVERY failure. That was two
     attacks at once: a name list of the household without credentials, and a
@@ -925,7 +925,7 @@ class VoiceAuthResponse(BaseModel):
     refresh_token: str | None = None
     token_type: str = "bearer"
     expires_in: int = 0
-    # Every other login path reports this. Without the field an account with
+    # 🛑 Every other login path reports this. Without the field an account with
     # a forced password change would slip past it here.
     must_change_password: bool = False
     message: str
@@ -952,8 +952,8 @@ async def voice_authenticate(
        is identified.
     3. Only here do tokens and cookies come into existence.
 
-    WHY IT HAS THIS SHAPE AND NOT THE OLD ONE
-    ------------------------------------------
+    🛑 WHY IT HAS THIS SHAPE AND NOT THE OLD ONE
+    ---------------------------------------------
     Until 2026-09-27 this route was the FIRST factor: recording in, tokens out.
     An audio recording of the voice was enough for a complete login, with no
     liveness check and no second factor. The review found five issues in it;
@@ -970,7 +970,7 @@ async def voice_authenticate(
     factor. As the FIRST factor that was the whole door; as the SECOND the
     attacker also needs the password. That is the gain.
 
-    NO FALLBACK. An account with the flag does not get in without the voice --
+    🛑 NO FALLBACK. An account with the flag does not get in without the voice --
     not even after many failed attempts. A fallback the attacker can trigger
     themselves cancels the factor. Recovery is an administrator turning
     `voice_second_factor_enabled` off for that person.
@@ -993,7 +993,7 @@ async def voice_authenticate(
 
     client_ip = get_client_ip(request) if client_ip_is_spoof_resistant() else None
 
-    # ONE failure, ONE response. No field, no text and no status code
+    # 🛑 ONE failure, ONE response. No field, no text and no status code
     # distinguishes "unknown ticket" from "voice does not match" from "account
     # disabled". Same principle as the password path, which does not separate
     # "unknown user" from "wrong password". The diagnosis is in the log, where
@@ -1065,7 +1065,7 @@ async def voice_authenticate(
 
         speaker_service = get_speaker_service()
 
-        # THE EMBEDDING COMES FROM THE VOICE-SERVER, NOT FROM THIS PROCESS.
+        # 🛑 THE EMBEDDING COMES FROM THE VOICE-SERVER, NOT FROM THIS PROCESS.
         #
         # This used to be `speaker_service.extract_embedding_from_bytes`. That
         # path could NEVER have worked in production, for two reasons:
@@ -1108,7 +1108,7 @@ async def voice_authenticate(
         if not raw_embedding:
             return _refused("voice-server returned no embedding (too short / silent?)")
 
-        # H3, closed with this: a minimum duration SERVER-SIDE. The 1.5 s in
+        # 🛑 H3, closed with this: a minimum duration SERVER-SIDE. The 1.5 s in
         # the UI are guidance -- an attacker posts straight to the API. The
         # voice-server measures the recording itself, and that is the only
         # number that can be trusted here.
@@ -1124,7 +1124,7 @@ async def voice_authenticate(
             # A NaN slips through every threshold comparison (NaN < x is False).
             return _refused("non-finite embedding from voice-server")
 
-        # VERIFY, do not identify: against the embeddings of EXACTLY this
+        # 🛑 VERIFY, do not identify: against the embeddings of EXACTLY this
         # profile. That is the core of the rework -- no argmax over all
         # speakers, hence no runner-up, no margin, and no name to return.
         claimed = [
@@ -1146,7 +1146,7 @@ async def voice_authenticate(
                 f"{settings.voice_auth_min_confidence})"
             )
 
-        # Beide Faktoren bestanden.
+        # Both factors passed.
         user.last_login = datetime.now(UTC).replace(tzinfo=None)
         await db.commit()
 

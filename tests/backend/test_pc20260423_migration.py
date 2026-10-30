@@ -401,12 +401,26 @@ async def test_upgrade_downgrade_cycle(schema_conn):
 #    per-document atom whose policy tier is the KB default.
 # ===========================================================================
 async def test_create_document_populates_atom_id_and_tier_from_kb(schema_conn):
-    conn, _schema = schema_conn
+    conn, schema = schema_conn
 
     from models.database import Base
 
-    await conn.run_sync(Base.metadata.create_all)
+    # 🛑 Create the tables IN the throwaway schema, explicitly. A bare
+    # `create_all` skips every table that is merely VISIBLE on the search
+    # path, and `public` is on it -- so it created nothing here and every row
+    # below landed in the public schema of the shared test database.
+    await conn.run_sync(
+        lambda sync_conn: Base.metadata.create_all(
+            sync_conn.execution_options(schema_translate_map={None: schema})
+        )
+    )
     await conn.commit()
+    in_schema = (
+        await conn.execute(
+            text("SELECT to_regclass(:t) IS NOT NULL"), {"t": f'"{schema}".roles'}
+        )
+    ).scalar()
+    assert in_schema, "tables were not created in the throwaway schema"
 
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -415,20 +429,12 @@ async def test_create_document_populates_atom_id_and_tier_from_kb(schema_conn):
     sm = async_sessionmaker(bind=conn, class_=AsyncSession, expire_on_commit=False)
 
     async with sm() as session:
-        # Unique per run. With the fixed names "doc_role"/"doc_owner" the
-        # test was NOT repeatable: `roles` and `users` live in the public
-        # schema of the shared test database, not in this module's throwaway
-        # schema, and the cleanup between tests does not touch them. The first
-        # run was green, every further one died on
-        # `duplicate key ... ix_roles_name`, and the rows could no longer be
-        # removed by hand either, because of an FK chain
-        # (users -> knowledge_bases). Found 2026-09-24.
-        #
-        # `tag` applies to EVERY uniqueness-bound name here, not only to the
-        # one that happened to be red: `roles.name`, `users.username`,
-        # `users.email` AND `knowledge_bases.name` all carry a UNIQUE. Tagging
-        # only the first three merely moved the failure one line further --
-        # which is exactly what happened on the first attempt.
+        # Unique per run. Found 2026-09-24: with fixed names the test was not
+        # repeatable, because `create_all` had created nothing in the
+        # throwaway schema (see above) and the rows sat in public. The tag
+        # used to hide that; now it is only a second line of defence. It
+        # covers EVERY uniqueness-bound name: `roles.name`, `users.username`,
+        # `users.email` AND `knowledge_bases.name`.
         tag = uuid.uuid4().hex[:8]
         role = Role(name=f"doc_role_{tag}")
         session.add(role)

@@ -21,7 +21,7 @@ can forge the other.
     complete       <-- LinkConfirmation --
     (writes ITS row)
 
-Step 1 deliberately writes NOTHING. If the person abandons the flow after it,
+🛑 Step 1 deliberately writes NOTHING. If the person abandons the flow after it,
 no half link is left behind.
 
 Limits of the handshake, stated explicitly
@@ -77,7 +77,7 @@ CLOCK_SKEW_TOLERANCE_SECONDS = 60
 class LinkHandshakeError(Exception):
     """Every failure of the handshake -- ONE type, like `PairingError`.
 
-    Deliberate: the route layer turns this into one single, always identical
+    🛑 Deliberate: the route layer turns this into one single, always identical
     400. Different messages per cause would be an oracle from which one could
     read off WHICH check fired.
     """
@@ -94,7 +94,7 @@ class LinkOffer(BaseModel):
     version: int = 1
     #: A's instance key -- and also what B knows us by in `peer_users`.
     initiator_pubkey: str = Field(..., min_length=64, max_length=64)
-    #: The offer NAMES its recipient. Without this field an offer meant for B
+    #: 🛑 The offer NAMES its recipient. Without this field an offer meant for B
     #: could be submitted to C, and C would write a row for a person nobody
     #: ever consented to.
     responder_pubkey: str = Field(..., min_length=64, max_length=64)
@@ -122,18 +122,18 @@ class LinkConfirmation(BaseModel):
 
 
 # =============================================================================
-# Dienst
+# Service
 # =============================================================================
 
 
 class LinkHandshakeService:
     """The three steps. Writes with `flush`, does NOT commit.
 
-    The write convention follows `federation_identity_link` (flush, route
-    committet), NICHT `pairing_service` (committet selbst). Dadurch rollt ein
+    🛑 The write convention follows `federation_identity_link` (flush, the
+    route commits), NOT `pairing_service` (commits itself). That way a
     failure AFTER `create_link` -- when signing the confirmation, say -- takes
-    the row back with it. Otherwise exactly the half link step 1
-    vermeidet.
+    the row back with it. Otherwise exactly the half link that step 1 avoids
+    would come about.
     """
 
     def __init__(self, db: AsyncSession):
@@ -174,7 +174,7 @@ class LinkHandshakeService:
         """
         self._verify_offer_shape(offer)
 
-        # The offer has to mean US. Without this check an offer meant for a
+        # 🛑 The offer has to mean US. Without this check an offer meant for a
         # third instance could be submitted here.
         if offer.responder_pubkey != self.identity.public_key_hex():
             raise LinkHandshakeError("Offer names a different responder")
@@ -215,7 +215,7 @@ class LinkHandshakeService:
     ) -> FederationUserLink:
         """A verifies B's consent and writes ITS row. The link is live after this.
 
-        The offer comes back from the browser, so it is untrusted -- but it
+        🛑 The offer comes back from the browser, so it is untrusted -- but it
         carries OUR own signature. We verify that first; everything inside is
         then trustworthy again without the server having remembered
         anything.
@@ -225,7 +225,7 @@ class LinkHandshakeService:
             offer, pubkey_hex=self.identity.public_key_hex(), was="Offer",
         )
 
-        # An offer is NOT transferable: it belongs to the person who declared
+        # 🛑 An offer is NOT transferable: it belongs to the person who declared
         # it. Without this line any other signed-in person could complete an
         # intercepted offer -- in THEIR name.
         if offer.stated_by != current_user.id:
@@ -263,7 +263,7 @@ class LinkHandshakeService:
         )
         return link
 
-    # -- Innereien ------------------------------------------------------------
+    # -- Internals ------------------------------------------------------------
 
     def _verify_offer_shape(self, offer: LinkOffer) -> None:
         if offer.version != 1:
@@ -289,7 +289,7 @@ class LinkHandshakeService:
     async def _peer_by_pubkey(self, owner_user_id: int, pubkey: str) -> PeerUser:
         """The peer row, or a refusal.
 
-        Without a completed instance pairing there is nothing to link: the
+        🛑 Without a completed instance pairing there is nothing to link: the
         handshake presupposes it, it does not replace it. A revoked pairing
         does not count (`revoked_at IS NULL`).
         """
@@ -308,7 +308,7 @@ class LinkHandshakeService:
     async def _burn_nonce(nonce: str) -> None:
         """Cheap early rejection of a double submit.
 
-        NOT a wall against replay -- the store keeps a nonce for only
+        🛑 NOT a wall against replay -- the store keeps a nonce for only
         `NONCE_WINDOW_SECONDS` (60 s), while the offer lives ten times as long.
         What actually carries is in the module docstring: the uniqueness index
         on `(peer_id, querier_ref)`, the expiry, and the requirement of a

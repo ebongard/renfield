@@ -44,7 +44,7 @@ export default function LoginPage() {
   const [showPassword, setShowPassword] = useState<boolean>(false);
   const [loading, setLoading] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
-  // The ticket, for when the password was right and the voice is still
+  // 🛑 The ticket, for when the password was right and the voice is still
   // missing. While it is set, the second-factor screen is shown and NOT the
   // form: the login is not finished, there is no session.
   const [voiceTicket, setVoiceTicket] = useState<string | null>(null);

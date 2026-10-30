@@ -106,8 +106,8 @@ AsyncSessionLocal = async_sessionmaker(
 #: The revision IMMEDIATELY BEFORE `pc20260926_baseline`. A fresh database is
 #: stamped to this so `upgrade head` runs exactly the baseline and not the 115
 #: migrations before it -- those do not run from empty anyway (the root
-#: `9a0d8ccea5b0` is an empty `pass` body, and `rooms` creates no
-#: Migration an). `tests/backend/test_database_alembic_baseline.py` haelt fest,
+#: `9a0d8ccea5b0` is an empty `pass` body, and no migration creates
+#: `rooms`). `tests/backend/test_database_alembic_baseline.py` pins down
 #: that this value really is the baseline's predecessor revision.
 PRE_BASELINE_REVISION = "pc20260924_restore_idx"
 
@@ -170,10 +170,10 @@ async def _warn_about_tables_no_migration_created() -> None:
 
     Does not abort: a dark-shipped feature must not prevent a start. But
     visible -- exactly the class of bug that otherwise surfaces only as
-    `UndefinedTable` mitten im Betrieb auffaellt.
+    `UndefinedTable` in the middle of operation.
     """
     try:
-        import ha_glue.models.database  # noqa: F401 — fuellt Base.metadata
+        import ha_glue.models.database  # noqa: F401 — populates Base.metadata
         from models.database import Base
 
         async with engine.begin() as conn:
@@ -196,7 +196,7 @@ async def _warn_about_tables_no_migration_created() -> None:
 
 async def init_db():
     """Create the schema of a fresh database -- via the MIGRATION, not
-    ueber `create_all`.
+    via `create_all`.
 
     🛑 WHY THIS WAS CHANGED. This used to run `Base.metadata.create_all`
     followed by a STAMP onto the Alembic head. As a result every piece of DDL
@@ -214,7 +214,7 @@ async def init_db():
     SQL. Verified by SET comparison against the production schema (not by
     count): 76 tables and 333 indexes, both differences empty.
 
-    An EXISTING database is NOT migrated here. In this project migrations run
+    🛑 An EXISTING database is NOT migrated here. In this project migrations run
     as their own job BEFORE the rollout (`bin/deploy-production.sh --migrate`)
     -- an automatic `upgrade` at startup would be a different operating mode,
     and exactly the kind of silent change that has no place here.

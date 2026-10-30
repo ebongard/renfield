@@ -79,7 +79,7 @@ class _PendingRequest:
     #: `None` = the mapped path (F-ID-1): the request runs AS the linked
     #: person, with that person's full reach.
     #:
-    #: Until 2026-10-27 there was an `enforce_circles: bool = True` here, and
+    #: 🛑 Until 2026-10-27 there was an `enforce_circles: bool = True` here, and
     #: the tier came from a `CircleMembership` keyed on the REMOTE user id.
     #: The default was `True` and therefore fail-closed -- and it stays that
     #: way: without an owner there is no peer-scoped filter, and without a
@@ -88,7 +88,7 @@ class _PendingRequest:
     #: which in turn requires a link and without one returns nothing.
     peer_owner_id: int | None = None
 
-    #: The DISCRIMINATOR, and its default is deliberate.
+    #: 🛑 The DISCRIMINATOR, and its default is deliberate.
     #:
     #: `False` = fallback (peer-scoped) and requires `peer_owner_id`.
     #: `True`  = mapped: the request runs AS the linked person.
@@ -107,7 +107,7 @@ class _PendingRequest:
     mapped: bool = False
 
     #: Display name of the far side, for the snapshot in the audit log.
-    #: Carried here rather than looked up at write time: the log records the
+    #: 🛑 Carried here rather than looked up at write time: the log records the
     #: name that applied AT THE TIME OF THE ACCESS. If the pairing is renamed
     #: or revoked later, the old row should still show who asked back then.
     #: Default empty -- a row from an older version (rolling deploy, Redis
@@ -118,7 +118,7 @@ class _PendingRequest:
     #: Number of hits `_retrieve` returned -- or `None` while it has not
     #: returned.
     #:
-    #: This is the privacy-relevant dividing line of a CANCELLED query, and it
+    #: 🛑 This is the privacy-relevant dividing line of a CANCELLED query, and it
     #: cannot be reconstructed afterwards: before the retrieval nothing was
     #: read, after it foreign data sat in memory -- even if no answer ever went
     #: out. `None` means "not read", `0` means "read, found nothing". The two

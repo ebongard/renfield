@@ -6,12 +6,13 @@ evidence: there an administrator types in two account numbers, here the person
 proves control over BOTH accounts by running the handshake signed in on both
 instances.
 
-That is why there is NO `require_permission(Permission.ADMIN)` here. That is
+🛑 That is why there is NO `require_permission(Permission.ADMIN)` here. That is
 the point of the whole thing; putting it back turns this into the admin
 assertion with more steps.
 
 Service: `services/link_handshake_service.py` (the limits of the procedure and
 why the nonce is NOT a wall against replay are documented there).
+Design: `docs/design/federation-identity-mapping.md` §9.
 """
 from fastapi import APIRouter, Depends, HTTPException
 from loguru import logger
@@ -45,9 +46,9 @@ class AcceptLinkOfferRequest(BaseModel):
 
 
 class CompleteLinkRequest(BaseModel):
-    #: The offer comes back because the server remembered NOTHING. It carries
-    #: our own signature, which is verified at completion --
-    #: kryptografische Bindung statt Sitzungszustand im Arbeitsspeicher.
+    #: 🛑 The offer comes back because the server remembered NOTHING. It
+    #: carries our own signature, which is verified at completion --
+    #: cryptographic binding instead of in-memory session state.
     offer: LinkOffer
     confirmation: LinkConfirmation
 
@@ -106,7 +107,7 @@ async def accept_link_offer(
         await db.rollback()
         raise _reject(e, current_user.id) from e
     except IntegrityError:
-        # The uniqueness index on (peer_id, querier_ref) IS the real guard
+        # 🛑 The uniqueness index on (peer_id, querier_ref) IS the real guard
         # against a replay -- see the service's module docstring. This is where
         # it fires.
         await db.rollback()
@@ -146,7 +147,7 @@ async def list_my_links(
 ):
     """This person's OWN links.
 
-    Filtered hard on `local_user_id == current_user.id`, not on the peer
+    🛑 Filtered hard on `local_user_id == current_user.id`, not on the peer
     owner. And without `querier_ref` in the response: that is the opaque band
     between two instances, not a display value -- whoever holds it can present
     themselves to the far side as this person.
@@ -180,7 +181,7 @@ async def revoke_my_link(
         .join(PeerUser, PeerUser.id == FederationUserLink.peer_id)
         .where(
             FederationUserLink.id == link_id,
-            # 404 rather than 403 for someone else's id: a 403 would confirm
+            # 🛑 404 rather than 403 for someone else's id: a 403 would confirm
             # that this link EXISTS.
             FederationUserLink.local_user_id == current_user.id,
         )

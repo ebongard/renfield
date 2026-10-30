@@ -27,7 +27,7 @@ class ChatRequest(BaseModel):
     message: str
     session_id: str | None = None
     context: list[dict] | None = None
-    # The same length as in the WS frame (`websocket_messages.py`): the
+    # 🛑 The same length as in the WS frame (`websocket_messages.py`): the
     # frontend falls back to REST while the WS connection is not up yet, and a
     # "correct & re-answer" racing the handshake otherwise lost both the role
     # hint AND the pinning.
@@ -47,7 +47,7 @@ def _has_chat_all(current_user) -> bool:
 
     A tier-2 room history is owned by the DEVICE account, so no person is its
     owner — without this escape nobody could ever delete or re-branch one
-    (D-3: "Löschen, Umbenennen, Verzweigen nur durch den Admin").
+    (D-3: "deleting, renaming and branching only by the admin").
     """
     if current_user is None:
         return False
@@ -734,18 +734,18 @@ async def get_conversation_stats(
 ):
     """Statistics about conversations"""
     try:
-        # Gesamt-Anzahl Konversationen
+        # Total number of conversations
         result = await db.execute(select(func.count(Conversation.id)))
         total_conversations = result.scalar()
 
-        # Gesamt-Anzahl Nachrichten
+        # Total number of messages
         result = await db.execute(select(func.count(Message.id)))
         total_messages = result.scalar()
 
-        # Durchschnittliche Nachrichten pro Konversation
+        # Average messages per conversation
         avg_messages = total_messages / total_conversations if total_conversations > 0 else 0
 
-        # Letzte aktive Konversation
+        # Most recently active conversation
         result = await db.execute(
             select(Conversation)
             .order_by(Conversation.updated_at.desc())

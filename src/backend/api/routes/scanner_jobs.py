@@ -54,12 +54,12 @@ router = APIRouter()
 FOLDER_INGEST_DISABLED_REASON = "folder_ingest_disabled"
 
 #: Caller of a scan started by the blue button on the device.
-#: Muss zu `BUTTON_CALLER` in renfield-mcp-scanner/button.py passen.
+#: Must match `BUTTON_CALLER` in renfield-mcp-scanner/button.py.
 BUTTON_CALLER = "button"
 
 #: Marker of a 409 that is FINAL -- the far side may stop retrying.
 #:
-#: A bare 409 "unknown job" is deliberately RETRYABLE (see below): a scan
+#: 🛑 A bare 409 "unknown job" is deliberately RETRYABLE (see below): a scan
 #: that fails immediately can report before we have recorded who asked. For a
 #: BUTTON scan that never applies -- it has no session a completion notice
 #: could be bound to, so no entry is ever created here. On 2026-10-21 the
@@ -154,7 +154,7 @@ async def scan_job_event(
         return {"status": "ignored", "detail": "not a terminal status"}
     outcome = await handle_job_event(db, event.model_dump())
     if outcome == "unknown_job" and event.caller == BUTTON_CALLER:
-        # For the BUTTON this refusal is final, and only for it. A completion
+        # 🛑 For the BUTTON this refusal is final, and only for it. A completion
         # notice is bound to the `session_id` of the requesting chat
         # session; a button press has no session, so NO entry is ever created
         # here. Without the marker the scanner retried on 2026-10-21

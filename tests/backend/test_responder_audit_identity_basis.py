@@ -1,6 +1,6 @@
 """The responder records WHICH identity it answered on.
 
-Why: on 2026-10-29 the first successful federated query in this project ran
+🛑 Why: on 2026-10-29 the first successful federated query in this project ran
 (`status=success`, signature verified). Whether it ran as the linked person --
 full own reach on the far side -- or fell back to the granted tier could NOT
 be established afterwards. Only inferred: from the same `querier_ref` on both
@@ -10,7 +10,7 @@ memory and is gone once the query ends.
 For a distinction that decides the REACH of an access, an inference is not
 enough.
 
-And it has to be the RESPONDER. Until today only the asker side wrote
+🛑 And it has to be the RESPONDER. Until today only the asker side wrote
 (`mcp_client.py`, a single caller). A record there would be the far side's
 claim about its own access decision; the instance whose data was read has to
 record the access itself.
@@ -70,7 +70,7 @@ async def test_the_mapped_path_is_recorded_as_mapped(written):
 
 
 async def test_the_fallback_is_recorded_as_peer_tier(written):
-    """Negative control against a check that always says "mapped". And
+    """🛑 Negative control against a check that always says "mapped". And
     `user_id` here is the OWNER of the pairing -- even in the fallback a local
     person's reach was used, just a narrower one."""
     await _write_responder_audit(_pending(mapped=False, peer_owner_id=2), success=True)
@@ -89,7 +89,7 @@ async def test_a_failure_is_recorded_too(written):
 
     k = written.await_args.kwargs
     assert k["direction"] == "answered"
-    # NOT `None`. In `_classify_final` that means "aborted" and would lose
+    # 🛑 NOT `None`. In `_classify_final` that means "aborted" and would lose
     # the reason; this query FAILED, and recognisably so.
     assert k["final_item"]["success"] is False
     assert k["final_item"]["message"] == "broken"
@@ -105,7 +105,7 @@ async def test_a_record_with_NEITHER_writes_nothing(written):
 
 
 async def test_the_asker_side_keeps_its_meaning():
-    """Negative control on the defaults: whoever calls
+    """🛑 Negative control on the defaults: whoever calls
     `write_federation_audit` without the new arguments -- that is, the
     unchanged asker side -- writes `asked` and NO identity basis. A default
     there would report ignorance as fact."""
@@ -130,7 +130,7 @@ def test_both_columns_exist_on_the_model():
 
 
 class TestTheRecordedOutcomeIsTheTruth:
-    """The tests above check WHAT is passed -- not what becomes of it.
+    """🛑 The tests above check WHAT is passed -- not what becomes of it.
 
     That is exactly where a bug slipped past me in `/review`: the success path
     passed `{"answer": ...}`, and `_classify_final` reads
@@ -163,7 +163,7 @@ class TestTheRecordedOutcomeIsTheTruth:
         assert "timeout" in error
 
     def test_the_OLD_shape_would_have_been_recorded_as_a_failure(self):
-        """Negative control pinning down the bug I made. If this test fails,
+        """🛑 Negative control pinning down the bug I made. If this test fails,
         `_classify_final` was rewritten -- and then the success path above
         needs re-checking."""
         from services.federation_audit import _classify_final
@@ -194,7 +194,7 @@ class TestTheRecordedOutcomeIsTheTruth:
 
 
 class TestTheRecordSaysWHOAccessed:
-    """Found in the adversarial pass on 2026-10-29: the responder wrote
+    """🛑 Found in the adversarial pass on 2026-10-29: the responder wrote
     `peer_display_name_snapshot=""` -- hard-coded. In the audit view that spot
     says WHO accessed the data, and every answered row was blank there. For a
     log whose purpose is "who accessed my data, with what reach", that is half
@@ -219,7 +219,7 @@ class TestTheRecordSaysWHOAccessed:
         assert written.await_args.kwargs["peer_display_name_snapshot"] == ""
 
     def test_the_name_survives_the_redis_round_trip(self):
-        """With the Redis store the pending record goes through JSON. A field
+        """🛑 With the Redis store the pending record goes through JSON. A field
         that does not survive the round trip would be silently empty during a
         rolling deploy -- and the bug would look just like the old one."""
         from services.federation_pending_store import _from_jsonable, _to_jsonable
@@ -239,7 +239,7 @@ class TestTheRecordSaysWHOAccessed:
 
 
 class TestACancelledAccessIsStillAnAccess:
-    """Found on 2026-10-29: the cancellation branch of `_run_query` wrote
+    """🛑 Found on 2026-10-29: the cancellation branch of `_run_query` wrote
     NOTHING and re-raised. The ASKER side has written its record inside a
     `finally` since F4d, explicitly for this case -- this side came later and
     did not adopt it. And this is the side that records a FOREIGN access to
@@ -283,7 +283,7 @@ class TestACancelledAccessIsStillAnAccess:
 
     @pytest.mark.asyncio
     async def test_the_two_cases_do_NOT_collapse(self, written):
-        """Negative control. `retrieved_count = 0` means "read, found
+        """🛑 Negative control. `retrieved_count = 0` means "read, found
         nothing" and must not collapse into `None` ("not read") -- which is
         why the field is `int | None` and not `int = 0`."""
         from services.federation_query_responder import (
@@ -306,7 +306,7 @@ class TestACancelledAccessIsStillAnAccess:
 
     @pytest.mark.asyncio
     async def test_it_classifies_as_aborted_NOT_failed(self, written):
-        """The chain, not the call boundary. A cancellation carries
+        """🛑 The chain, not the call boundary. A cancellation carries
         `success=False` and would otherwise fall into the failure branch --
         where a completed read sits among genuine failures and gets skipped
         when someone reads through the log."""
@@ -337,7 +337,7 @@ class TestACancelledAccessIsStillAnAccess:
 
     @pytest.mark.asyncio
     async def test_a_failing_write_does_NOT_swallow_the_cancellation(self, monkeypatch):
-        """The record must never mask the cancellation: `_run_query` has to
+        """🛑 The record must never mask the cancellation: `_run_query` has to
         keep raising `CancelledError` even when the write fails."""
         from services import federation_audit
         from services.federation_query_responder import (
@@ -354,7 +354,7 @@ class TestACancelledAccessIsStillAnAccess:
 
 
 class TestTheCancellationBranchIsACTUALLYWired:
-    """The class above tests the FUNCTION. This one tests that `_run_query`
+    """🛑 The class above tests the FUNCTION. This one tests that `_run_query`
     actually CALLS it on cancellation -- exactly the gap already demonstrated
     to me once in this session: a measured function and an unchecked use.
     """
@@ -381,7 +381,7 @@ class TestTheCancellationBranchIsACTUALLYWired:
 
         async def haengender_abruf(session, pending):
             losgelaufen.set()
-            await asyncio.sleep(3600)   # bis zum Abbruch
+            await asyncio.sleep(3600)   # until cancelled
 
         monkeypatch.setattr(responder, "_retrieve", haengender_abruf)
         # The background run's own session must not touch a database.
@@ -398,7 +398,7 @@ class TestTheCancellationBranchIsACTUALLYWired:
 
     @pytest.mark.asyncio
     async def test_the_retrieved_count_is_set_before_synthesis(self, monkeypatch):
-        """The dividing line has to be SET before the next suspension point.
+        """🛑 The dividing line has to be SET before the next suspension point.
         If it were only set after synthesis, a cancellation during synthesis
         would be recorded as "nothing read" -- the very understatement this
         whole thing is written against."""

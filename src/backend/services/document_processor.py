@@ -906,7 +906,7 @@ class DocumentProcessor:
             end = start + chunk_size
             chunk_text = text[start:end]
 
-            # Versuche, an Satzende zu brechen
+            # Try to break at the end of a sentence
             if end < len(text):
                 last_period = chunk_text.rfind('.')
                 last_newline = chunk_text.rfind('\n')
@@ -1009,15 +1009,15 @@ class DocumentProcessor:
     def get_supported_formats(self) -> list[str]:
         """Return the supported file formats"""
         return [
-            "pdf",      # PDF Dokumente
+            "pdf",      # PDF documents
             "docx",     # Microsoft Word
             "doc",      # Legacy Word
             "pptx",     # PowerPoint
             "xlsx",     # Excel
-            "html",     # HTML Seiten
+            "html",     # HTML pages
             "md",       # Markdown
             "txt",      # Plain Text
-            "png",      # Bilder (OCR)
+            "png",      # Images (OCR)
             "jpg",
             "jpeg",
         ]

@@ -75,7 +75,7 @@ class NoteRetrieval:
             logger.error("🔍 Note search: operational DB error — re-raising (not masking as empty)")
             raise
         except Exception:
-            # Do NOT degrade to `[]` here. The fan-out in
+            # 🛑 Do NOT degrade to `[]` here. The fan-out in
             # `PolymorphicAtomStore.query` catches the exception anyway
             # (`gather(return_exceptions=True)`) and turns it into `[]`, so the
             # outcome is identical. The difference: there the failure is

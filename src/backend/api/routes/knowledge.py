@@ -368,7 +368,7 @@ async def upload_document(
     upload_dir = Path(settings.upload_dir)
     upload_dir.mkdir(parents=True, exist_ok=True)
 
-    # Eindeutigen Dateinamen generieren
+    # Generate a unique filename
     safe_name = os.path.basename((file.filename or "unknown").replace("\x00", ""))
     unique_filename = f"{uuid.uuid4().hex}_{safe_name}"
     file_path = upload_dir / unique_filename
@@ -506,8 +506,8 @@ async def list_documents(
     db: AsyncSession = Depends(get_db)
 ):
     """List documents -- by recency, OR (with ``q``) as a ranked hybrid search
-    (name + layer-A facts + content) that also reaches documents beyond
-    des 100-Neueste-Fensters findet."""
+    (name + layer-A facts + content) that also finds documents beyond the
+    100-most-recent window."""
     if settings.auth_enabled:
         if not user:
             raise HTTPException(status_code=401, detail="Authentication required")
@@ -608,7 +608,7 @@ async def _simba_uploaded_ids(db: AsyncSession, doc_ids: list[int]) -> set[int]:
 def paperless_document_url(paperless_document_id: int | None) -> str | None:
     """The link to a document in Paperless, or None.
 
-    ONE place, not three: `_doc_to_response_kwargs` serves `/documents`,
+    🛑 ONE place, not three: `_doc_to_response_kwargs` serves `/documents`,
     `/documents/batch`, `/documents/{id}`, `/upload` and `/reindex`. A URL
     assembled in several places drifts apart.
 

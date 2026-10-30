@@ -47,7 +47,7 @@ router = APIRouter()
 async def _refuse_unresolvable(endpoints: list[dict]) -> None:
     """An override whose host does not resolve is refused.
 
-    Why, found on 2026-10-29: `transport_config` held
+    🛑 Why, found on 2026-10-29: `transport_config` held
     `https://renfield.loca` -- the name was missing its final `l`, AND it was
     the FAR SIDE's name instead of our own. Both came from this field. The
     pairing reported success, and the failure only showed on the first real
@@ -57,7 +57,7 @@ async def _refuse_unresolvable(endpoints: list[dict]) -> None:
     The sanitisation above already discards empty values, on the grounds that
     otherwise "a garbage endpoint" would persist. A typo is garbage too.
 
-    ONLY the input from the UI is checked, not the configured default
+    🛑 ONLY the input from the UI is checked, not the configured default
     (`federation_advertised_url`). That one is the operator's business, goes
     through review, and may deliberately carry a name this instance does not
     resolve itself (split horizon). The input is what gets mistyped.
@@ -66,7 +66,7 @@ async def _refuse_unresolvable(endpoints: list[dict]) -> None:
     would reject a setup in which the instance cannot reach itself under its
     public name. Resolution alone would have caught the case
     (measured: `renfield.local` -> 192.168.1.230, `renfield.loca` -> error).
-    `getaddrinfo` BLOCKS, and both callers are `async`. A failing resolution
+    🛑 `getaddrinfo` BLOCKS, and both callers are `async`. A failing resolution
     runs into the resolver timeout (seconds) and stalls the entire event loop
     for that long -- hence a thread. `_with_tofu_fingerprint` is async for the
     same reason.
@@ -289,7 +289,7 @@ async def complete_pair_handshake(
 def _tier_for_peer(peer: PeerUser) -> int:
     """The tier this owner granted the peer at pairing time.
 
-    Since F-ID-3 it lives ON THE PAIRING. Until 2026-10-27 this looked up a
+    🛑 Since F-ID-3 it lives ON THE PAIRING. Until 2026-10-27 this looked up a
     `CircleMembership` whose `member_user_id` was the REMOTE user id -- with
     `scalar_one_or_none()`, which with two peers under one owner (both number
     their users from 1) would have raised `MultipleResultsFound` and, in the
@@ -365,7 +365,7 @@ async def revoke_peer(
 
     peer.revoked_at = datetime.now(UTC).replace(tzinfo=None)
 
-    # Until 2026-10-27 there was a DELETE on `circle_memberships` here with
+    # 🛑 Until 2026-10-27 there was a DELETE on `circle_memberships` here with
     # `member_user_id = peer.remote_user_id`. That was the bug itself -- the
     # row never belonged there -- and on top of that it deleted WITHOUT a
     # `dimension` filter, so it also took `tenant` and `project` rows of the

@@ -146,7 +146,7 @@ class LexicalRetrieval:
         the owner and grant branches then drop out and the tier comes from the
         pairing.
 
-        This used to default to ``enforce_circles=True``, and the LOCAL search
+        🛑 This used to default to ``enforce_circles=True``, and the LOCAL search
         path (`knowledge.py` -> `document_search`) passed
         ``settings.auth_enabled`` for it -- so a signed-in person got the
         peer-scoped form and lost their own non-public hits.
@@ -205,7 +205,7 @@ class LexicalRetrieval:
         try:
             rows = (await self.db.execute(sql, params)).fetchall()
         except Exception:
-            # Do NOT degrade to `[]` here. The fan-out in
+            # 🛑 Do NOT degrade to `[]` here. The fan-out in
             # `PolymorphicAtomStore.query` catches the exception anyway
             # (`gather(return_exceptions=True)`) and turns it into `[]`, so the
             # outcome is identical. The difference: there the failure is
@@ -364,7 +364,7 @@ class LexicalRetrieval:
         try:
             rows = (await self.db.execute(sql, params)).fetchall()
         except Exception:
-            # Do NOT degrade to `[]` here. The fan-out in
+            # 🛑 Do NOT degrade to `[]` here. The fan-out in
             # `PolymorphicAtomStore.query` catches the exception anyway
             # (`gather(return_exceptions=True)`) and turns it into `[]`, so the
             # outcome is identical. The difference: there the failure is

@@ -628,20 +628,20 @@ WICHTIGE REGELN FÜR ANTWORTEN:
             # Strip markdown code blocks
             response = response.strip()
 
-            # Methode 1: Markdown Code-Block
+            # Method 1: Markdown code block
             if "```" in response:
                 match = re.search(r'```(?:json)?\s*(\{.*\})\s*```', response, re.DOTALL)
                 if match:
                     response = match.group(1)
                 else:
-                    # Fallback: Nimm alles zwischen ersten ```
+                    # Fallback: take everything between the first ```
                     parts = response.split("```")
                     if len(parts) >= 2:
                         response = parts[1].strip()
                         if response.startswith("json"):
                             response = response[4:].strip()
 
-            # Methode 2: Balanced braces extraction (supports nested objects/arrays)
+            # Method 2: Balanced braces extraction (supports nested objects/arrays)
             # Find the first { and match to its balanced closing }
             first_brace = response.find('{')
             if first_brace >= 0:
@@ -950,7 +950,7 @@ WICHTIGE REGELN FÜR ANTWORTEN:
             logger.warning(f"⚠️ Intent correction lookup failed: {e}")
         return ""
 
-    # ========== Kontext-Management Methoden ==========
+    # ========== Context management methods ==========
     # NOTE: These methods delegate to ConversationService for backwards compatibility.
     # New code should use ConversationService directly.
 

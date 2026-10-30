@@ -45,7 +45,7 @@ async def regime(name, *, warm, own_session):
                                            return_exceptions=True)
     duration = time.perf_counter() - t0
 
-    # `BaseException`, not `Exception` -- same as the production code.
+    # 🛑 `BaseException`, not `Exception` -- same as the production code.
     # `asyncio.CancelledError` has inherited from `BaseException` since 3.8;
     # with `Exception` a CANCELLED leg showed up as delivered, and this is the
     # tool that produced the numbers 1/8, 8/8, 8/8.
@@ -57,7 +57,7 @@ async def regime(name, *, warm, own_session):
     print(f"{name:34}  {len(ok)}/{N} delivered   {duration*1000:7.0f} ms   "
           f"{kinds or ''}")
     if failed:
-        # Only the KIND, not the message. The docstring promises never to print
+        # 🛑 Only the KIND, not the message. The docstring promises never to print
         # the connection string -- and on a connection error the message
         # carries the user or the host (asyncpg: `password authentication
         # failed for user "..."`). Exactly the case this script exists for.

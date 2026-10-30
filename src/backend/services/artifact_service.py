@@ -351,9 +351,8 @@ def _validate_presence_map(data: object) -> dict:
 def _validate_document_ref(data: object) -> dict:
     """A reference to a Renfield document -- the button resolves it on render.
 
-    This artifact carries ONLY an id, never a URL. The link is built at render
-    time from `GET /api/knowledge/documents/<id>`, for two
-    Gruenden:
+    🛑 This artifact carries ONLY an id, never a URL. The link is built at render
+    time from `GET /api/knowledge/documents/<id>`, for two reasons:
       - At write time it does not exist yet. Paperless filing is a decoupled
         follow-up; measured in the household on 2026-10-27 the ingest took
         363 s on average, and 6 of 37 completed documents never got a
@@ -365,12 +364,12 @@ def _validate_document_ref(data: object) -> dict:
     if not isinstance(data, dict):
         raise ArtifactRejected("document_ref.data: not an object")
     doc_id = data.get("documentId")
-    # In Python `bool` is an `int`; without excluding it `True` would be a
-    # gueltige Dokumentkennung.
+    # 🛑 In Python `bool` is an `int`; without excluding it `True` would be a
+    # valid document id.
     if not isinstance(doc_id, int) or isinstance(doc_id, bool) or doc_id <= 0:
         raise ArtifactRejected("document_ref.data: documentId must be a positive int")
     out: dict = {"documentId": doc_id}
-    # `instance` is set ONLY when the document lives in ANOTHER instance. The
+    # 🛑 `instance` is set ONLY when the document lives in ANOTHER instance. The
     # decision is made in the backend (it knows `settings.instance_id`), not in
     # the frontend: that way there is exactly one place where "local or remote"
     # is decided. For the component, present simply means: do not query here,

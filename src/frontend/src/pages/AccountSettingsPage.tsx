@@ -1,7 +1,7 @@
 /**
  * My account -- the settings that belong to the person themselves.
  *
- * WHY THIS PAGE EXISTS
+ * 🛑 WHY THIS PAGE EXISTS
  * Consenting to the voice as a second login factor is a consent to processing
  * biometric data (Art. 9 GDPR). Until 2026-09-28 it was reachable only through
  * user administration, i.e. only for accounts with `users.manage` -- a
@@ -36,7 +36,7 @@ export default function AccountSettingsPage() {
 
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
-  // For turning it off only. The server requires the password there because a
+  // 🛑 For turning it off only. The server requires the password there because a
   // token from BEFORE the consent could otherwise revoke it.
   const [password, setPassword] = useState('');
   const [askPassword, setAskPassword] = useState(false);
@@ -44,7 +44,7 @@ export default function AccountSettingsPage() {
   const armed = !!user?.voice_second_factor_enabled;
 
   /**
-   * THE REASON COMES FROM THE SERVER, AND IT HOLDS REGARDLESS OF THE CONSENT.
+   * 🛑 THE REASON COMES FROM THE SERVER, AND IT HOLDS REGARDLESS OF THE CONSENT.
    *
    * Previously this page read only the feature flags -- the INSTANCE-WIDE half
    * of the preconditions -- and showed a reason only in the "armed" state.
@@ -101,7 +101,7 @@ export default function AccountSettingsPage() {
       await fetchUser();
       setSuccess(enabling ? t('account.voiceArmed') : t('account.voiceDisarmed'));
     } catch (err) {
-      // The 409 response carries the CODE, not the sentence -- otherwise raw
+      // 🛑 The 409 response carries the CODE, not the sentence -- otherwise raw
       // text like "no_profile" would end up in the UI. It is translated here,
       // from the same vocabulary as the state above.
       const detail = (err as { response?: { data?: { detail?: unknown } } })
@@ -153,7 +153,7 @@ export default function AccountSettingsPage() {
                   : t('account.voiceStateOn')}
             </p>
 
-            {/* The REASON, in BOTH states. It is the only hint as to why
+            {/* 🛑 The REASON, in BOTH states. It is the only hint as to why
                 turning it on would fail -- previously the person only learned
                 it after pressing, and in English. */}
             {blockerText && (

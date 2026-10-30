@@ -115,7 +115,7 @@ class Conversation(Base):
         nullable=True,
     )
 
-    # Beziehungen
+    # Relationships
     messages = relationship(
         "Message",
         back_populates="conversation",
@@ -165,7 +165,7 @@ class Message(Base):
     # atoms), NOT through circle_sql — see ConversationService.search_messages.
     search_vector = Column(TSVECTOR, FetchedValue(), nullable=True)
 
-    # Beziehungen
+    # Relationships
     # Explicit foreign_keys: two FK paths now exist between conversations and
     # messages (Message.conversation_id → conversations.id AND
     # Conversation.active_leaf_message_id → messages.id), so pin the join column
@@ -210,7 +210,7 @@ class Speaker(Base):
     created_at = Column(DateTime, default=_utcnow)
     updated_at = Column(DateTime, default=_utcnow, onupdate=_utcnow)
 
-    # Beziehungen. The FK-column ON DELETE rules (migration pc20260705) are the
+    # Relationships. The FK-column ON DELETE rules (migration pc20260705) are the
     # authoritative cleanup for the bulk-SQL delete/merge paths + referential
     # integrity; the ORM cascade here still handles any ORM ``db.delete(speaker)``
     # caller (and the sqlite test harness, which doesn't enforce DB-level ON
@@ -234,10 +234,10 @@ class SpeakerEmbedding(Base):
     id = Column(Integer, primary_key=True, index=True)
     speaker_id = Column(Integer, ForeignKey("speakers.id", ondelete="CASCADE"), nullable=False, index=True)
     embedding = Column(Text, nullable=False)         # Base64-encoded numpy array
-    sample_duration = Column(Integer, nullable=True)  # Dauer des Samples in Millisekunden
+    sample_duration = Column(Integer, nullable=True)  # Sample duration in milliseconds
     created_at = Column(DateTime, default=_utcnow)
 
-    # Beziehungen
+    # Relationships
     speaker = relationship("Speaker", back_populates="embeddings")
 
 
@@ -360,7 +360,7 @@ class KnowledgeBase(Base):
     created_at = Column(DateTime, default=_utcnow)
     updated_at = Column(DateTime, default=_utcnow, onupdate=_utcnow)
 
-    # Beziehungen
+    # Relationships
     documents = relationship("Document", back_populates="knowledge_base", cascade="all, delete-orphan")
     owner = relationship("User", back_populates="knowledge_bases", foreign_keys=[owner_id])
     # Note: KBPermission was removed in circles v1 — explicit per-resource shares
@@ -717,7 +717,7 @@ class Document(Base):
         nullable=True,
     )
 
-    # Beziehungen
+    # Relationships
     knowledge_base = relationship("KnowledgeBase", back_populates="documents")
     chunks = relationship("DocumentChunk", back_populates="document", cascade="all, delete-orphan")
 
@@ -790,7 +790,7 @@ class DocumentChunk(Base):
     # Timestamps
     created_at = Column(DateTime, default=_utcnow)
 
-    # Beziehungen
+    # Relationships
     document = relationship("Document", back_populates="chunks")
     parent_chunk = relationship("DocumentChunk", remote_side=[id], foreign_keys=[parent_chunk_id])
 
@@ -1253,7 +1253,7 @@ class User(Base):
     # presence booking, and a recognised speaker replaces it inside the turn.
     # Nothing keys on the username — the flag is the contract.
     is_device_account = Column(Boolean, default=False, nullable=False, server_default="false")
-    # Consent per person, not configuration. An ECAPA voiceprint is biometric
+    # 🛑 Consent per person, not configuration. An ECAPA voiceprint is biometric
     # data (Art. 9 GDPR); the fact that a LOGIN requires it cannot be
     # decided for anybody by somebody else. Default `false`, individually
     # revocable. `speaker_id` is NOT suitable for it: that link was created
@@ -1417,7 +1417,7 @@ URGENCY_LEVELS = [URGENCY_CRITICAL, URGENCY_INFO, URGENCY_LOW]
 
 class Notification(Base):
     """
-    Proaktive Benachrichtigungen — empfangen via Webhook (z.B. von HA-Automationen),
+    Proactive notifications — received via webhook (e.g. from HA automations),
     stored in the database and delivered to connected devices (WS + TTS).
     """
     __tablename__ = "notifications"
@@ -2921,7 +2921,7 @@ class DocumentFact(Base):
     value = Column(Text, nullable=False)            # verbatim extracted value/summary
     normalized_value = Column(Text, nullable=True)  # whitespace-collapsed (identifiers)
     excerpt = Column(Text, nullable=True)           # verbatim source span (trust anchor)
-    obligation_date = Column(Date, nullable=True)   # Frist/Faelligkeit AS PRINTED
+    obligation_date = Column(Date, nullable=True)   # deadline/due date AS PRINTED
     amount_value = Column(Numeric(14, 2), nullable=True)
     amount_currency = Column(String(8), nullable=True)
     legal_gate = Column(Boolean, nullable=False, default=False)
@@ -3321,7 +3321,7 @@ class PeerUser(Base):
     #: (0 self ... 4 public). It is a property of the PAIRING, not of a
     #: membership between two local people -- confusing the two was the bug.
     #:
-    #: The ladder runs against intuition: a SMALLER number grants MORE
+    #: 🛑 The ladder runs against intuition: a SMALLER number grants MORE
     #: (`granted_tier <= atom.circle_tier`). 0 would open everything, 4 only
     #: public rows. The default is therefore 4, the narrowest tier -- a peer
     #: that comes into existence through a gap without an explicit grant sees
@@ -3458,14 +3458,14 @@ class FederationQueryLog(Base):
     # Error text on non-success paths. None on success.
     error_message = Column(Text, nullable=True)
     # "asked" = this instance asked, "answered" = it answered.
-    # Until 2026-10-29 ONLY the asker side wrote (a single caller in
+    # 🛑 Until 2026-10-29 ONLY the asker side wrote (a single caller in
     # `mcp_client.py`); legacy rows are therefore all "asked" -- not a default
     # but the truth.
     direction = Column(String(8), nullable=False, server_default="asked",
                        default="asked")
     # WHICH identity the answer rested on: "mapped" (the linked person, full
     # own reach) or "peer_tier" (as a foreign instance, only the granted tier).
-    # Nullable: legacy rows and asker rows do NOT know it, and that should stay
+    # 🛑 Nullable: legacy rows and asker rows do NOT know it, and that should stay
     # visible. A default would report ignorance as fact.
     identity_basis = Column(String(16), nullable=True)
 

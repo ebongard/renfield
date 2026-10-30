@@ -47,7 +47,7 @@ async def speech_to_text(
     _user=Depends(get_current_user)
 ):
     """
-    Speech-to-Text: Audio zu Text konvertieren mit optionaler Sprechererkennung.
+    Speech-to-text: convert audio to text, with optional speaker recognition.
 
     Multi-language support: Pass ?language=en to transcribe in English, etc.
     """
@@ -60,7 +60,7 @@ async def speech_to_text(
         effective_language = language or settings.default_language
         logger.info(f"🎤 STT-Anfrage erhalten: {audio.filename}, Content-Type: {audio.content_type}, Language: {effective_language}")
 
-        # Audio-Bytes lesen
+        # Read the audio bytes
         audio_bytes = await audio.read()
         logger.info(f"📊 Audio-Größe: {len(audio_bytes)} bytes")
 
@@ -88,7 +88,7 @@ async def speech_to_text(
             )
 
         if settings.speaker_recognition_enabled:
-            # Transkription MIT Sprechererkennung
+            # Transcription WITH speaker recognition
             result = await whisper_service.transcribe_bytes_with_speaker(
                 audio_bytes,
                 filename=audio.filename,
@@ -107,7 +107,7 @@ async def speech_to_text(
             else:
                 logger.info("🎤 Speaker not recognised (unknown or below threshold)")
         else:
-            # Transkription OHNE Sprechererkennung
+            # Transcription WITHOUT speaker recognition
             text = await whisper_service.transcribe_bytes(
                 audio_bytes,
                 filename=audio.filename,
@@ -143,7 +143,7 @@ async def speech_to_text(
 @limiter.limit(settings.api_rate_limit_voice)
 async def text_to_speech(request: Request, tts_request: TTSRequest, _user=Depends(get_current_user)):
     """
-    Text-to-Speech: Text zu Audio konvertieren.
+    Text-to-speech: convert text to audio.
 
     Multi-language support: Pass {"language": "en"} to synthesize in English, etc.
     """
@@ -157,7 +157,7 @@ async def text_to_speech(request: Request, tts_request: TTSRequest, _user=Depend
         effective_language = language or settings.default_language
         logger.info(f"🔊 TTS request: {len(tts_request.text)} chars, language: {effective_language}")
 
-        # TTS generieren with language support
+        # Generate TTS with language support
         audio_bytes = await piper_service.synthesize_to_bytes(tts_request.text, language=language)
 
         if not audio_bytes:
@@ -262,7 +262,7 @@ async def voice_chat(
         effective_language = language or settings.default_language
         logger.info(f"🎤 Voice-Chat request, language: {effective_language}")
 
-        # 1. Speech-to-Text mit Sprechererkennung
+        # 1. Speech-to-text with speaker recognition
         audio_bytes = await audio.read()
 
         # If voice_server is configured, delegate STT+TTS to the pod.
@@ -320,7 +320,7 @@ async def voice_chat(
         if not user_text:
             raise HTTPException(status_code=400, detail="Konnte Audio nicht verstehen")
 
-        # 2. Chat mit Ollama
+        # 2. Chat with Ollama
         from main import app
         from services.ollama_service import OllamaService
 

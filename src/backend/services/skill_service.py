@@ -441,7 +441,7 @@ class SkillService:
         # arm AND the `user_id = :asker` owner arm -- both were collision sinks
         # for as long as the peer id was a foreign number in a local column.
         #
-        # THIS IS A SECOND, HAND-WRITTEN COPY of the predicate in
+        # 🛑 THIS IS A SECOND, HAND-WRITTEN COPY of the predicate in
         # `circle_sql.circles_filter_clause`. A rewrite there does NOT reach
         # it. Forget it and a peer silently gets the wrong skills -- with
         # nothing reporting it. Both places were moved from membership to the

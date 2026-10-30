@@ -857,10 +857,10 @@ class RAGService(AtomOwnerResolverMixin):
         had no permission filter and would leak chunks across circle boundaries.
 
         Args:
-            query: Suchanfrage
-            top_k: Anzahl der Ergebnisse (default: settings.rag_top_k)
-            knowledge_base_id: Optional Knowledge Base Filter
-            similarity_threshold: Minimum Similarity (default: settings.rag_similarity_threshold)
+            query: Search query
+            top_k: Number of results (default: settings.rag_top_k)
+            knowledge_base_id: Optional knowledge base filter
+            similarity_threshold: Minimum similarity (default: settings.rag_similarity_threshold)
             user_id: Authenticated asker — required for circle filtering. None
                      reduces results to public-tier only.
         """

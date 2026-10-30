@@ -416,7 +416,7 @@ class ConversationService:
     async def latest_message_id(self, session_id: str) -> int | None:
         """The highest message id in this session, or `None`.
 
-        Cheap and DELIBERATELY without an ownership check: the number says
+        🛑 Cheap and DELIBERATELY without an ownership check: the number says
         nothing about content, it only decides whether the history has to be
         reloaded. The load itself checks ownership (`load_context` with
         `enforce_ownership`), and a foreign session still yields an empty
@@ -424,11 +424,11 @@ class ConversationService:
 
         Why: the history is loaded once per socket, but an ASYNCHRONOUS
         producer writes to the database without touching the live list
-        anzufassen (Scanner-Fertigmeldung, Gespraechsuebergabe,
-        Paperless confirmation). Without this comparison the agent read a
+        (scanner completion notice, conversation handover, Paperless
+        confirmation). Without this comparison the agent read a
         stale context -- measured on 2026-10-26, when it believed a scan that
         had failed on a paper jam was still running and, on two further
-        Bitten nur beteuerte, er laufe.
+        requests, merely insisted that it was.
         """
         try:
             result = await self.db.execute(
@@ -455,7 +455,7 @@ class ConversationService:
 
         Args:
             session_id: session id of the conversation
-            max_messages: Maximale Anzahl zu ladender Nachrichten
+            max_messages: Maximum number of messages to load
             user_id: Authenticated caller identity (for the ownership check).
             enforce_ownership: When True (auth-enabled deployments), a conversation
                 owned by a DIFFERENT user is treated as not-found and yields an empty

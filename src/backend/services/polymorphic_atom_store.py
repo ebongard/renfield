@@ -17,11 +17,11 @@ ASCII query flow:
         |     +-- KGRetrieval(db).get_relevant_atoms(text, asker)
         |     +-- MemoryRetrieval(db).retrieve(text, asker_id)
         |     +-- LexicalRetrieval(db).search_chunks_lexical / _memories_lexical
-        |     +-- SkillService(db).find_similar          (flaggengesteuert)
+        |     +-- SkillService(db).find_similar          (flag-gated)
         |     +-- DocumentFactRetrieval(db).search
-        |     +-- NoteRetrieval(db).search               (flaggengesteuert)
+        |     +-- NoteRetrieval(db).search               (flag-gated)
         |
-        |   NOT parallel, and this docstring claimed the opposite until
+        |   🛑 NOT parallel, and this docstring claimed the opposite until
         |   2026-10-29. An `AsyncSession` holds ONE connection; eight
         |   concurrent queries on it are not supported by SQLAlchemy. Measured
         |   against real Postgres with the project's own session factory,
@@ -32,7 +32,7 @@ ASCII query flow:
         |       one session, pre-warmed     8 of 8              408 ms  (serial)
         |       one session per source      8 of 8               56 ms
         |
-        |   These numbers are NOT the duration in the log line. The line times
+        |   🛑 These numbers are NOT the duration in the log line. The line times
         |   the whole fan-out, embedding calls to Ollama/llama-server included,
         |   and those dominate it. You will not find "408 vs 56 ms" there --
         |   the probe isolates SQL time, the line does not.
@@ -49,7 +49,7 @@ ASCII query flow:
         |   uses `flush()`, not `commit()`, because the caller's transaction
         |   should decide -- a session of its own would break that contract.
         |
-        |   How many sources CAN report a failure is not the same as eight.
+        |   🛑 How many sources CAN report a failure is not the same as eight.
         |   `lexical_chunks`, `lexical_memories` and `note` re-raise to the
         |   fan-out (since 2026-10-29; they have no caller outside it), and so
         |   do `rag` and `skill`. `memory`, `document_fact` and `kg` catch it
@@ -142,7 +142,7 @@ class PolymorphicAtomStore:
         ``users.id`` — often the sole owner's). Default False → local callers
         (REST ``/api/atoms``, agent path) are byte-identical to today.
 
-        ``max_visible_tier`` HAS been the effective filter since 2026-10-27 --
+        🛑 ``max_visible_tier`` HAS been the effective filter since 2026-10-27 --
         this docstring said the opposite until then ("not consulted as a scalar
         ... retained for call-site compatibility"). The reason it was inert WAS
         the bug: the tier came from a ``CircleMembership`` keyed on the REMOTE
@@ -249,7 +249,7 @@ class PolymorphicAtomStore:
             return_exceptions=True,
         )
 
-        # Wrap AND classify in one pass. Emptiness must not be decided with
+        # 🛑 Wrap AND classify in one pass. Emptiness must not be decided with
         # `not value`: `kg` returns `{"entities": [], "relations": []}` when it
         # finds nothing, and a dict with two keys is TRUTHY. The count would be
         # permanently one too high -- found in review on 2026-10-29, and I had
@@ -336,15 +336,15 @@ def _wrap_and_count(
 ) -> tuple[list[list[AtomMatch]], tuple[list[str], list[str], list[str]]]:
     """Wrap every source and count as we go: delivered / empty / crashed.
 
-    One line per run. No content -- source name, counts, exception type. No
+    One line per run. 🛑 No content -- source name, counts, exception type. No
     query text, no hits.
 
-    Emptiness is decided by the WRAPPER, not by `not value`. Every source has
+    🛑 Emptiness is decided by the WRAPPER, not by `not value`. Every source has
     its own shape, and two of them are truthy when they found nothing (`kg`
     returns a dict with empty lists). The wrapper is the only place that knows
     all eight shapes.
 
-    Disabled sources do not count towards the denominator. Otherwise an
+    🛑 Disabled sources do not count towards the denominator. Otherwise an
     instance with `NOTES_ENABLED=false` would permanently read "6/8
     delivered, 2 empty", which looks like a partial outage even though two
     sources were never asked.

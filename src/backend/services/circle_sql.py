@@ -39,7 +39,7 @@ from models.database import TIER_PUBLIC
 class PeerScope:
     """Where a federated request comes from and what it was granted.
 
-    This object REPLACES the earlier `peer_scoped: bool`, and the difference
+    🛑 This object REPLACES the earlier `peer_scoped: bool`, and the difference
     is the whole fix (F-ID-3, BL-0135): a bare "yes, peer" left open WHICH
     peer -- so the filter reached for the asker's user id, which in the
     federated case came from `PeerUser.remote_user_id`. A FOREIGN number in a
@@ -50,7 +50,7 @@ class PeerScope:
     peer: whoever sets `peer` supplies the OWNER AND the tier along with it.
 
     - `owner_id`: the local person who entered into this pairing
-      (`peer_users.circle_owner_id`). Without this binding the peer would see
+      (`peer_users.circle_owner_id`). 🛑 Without this binding the peer would see
       its tier under EVERY owner -- the fix would become a leak.
     - `tier`: the tier granted at pairing time (`peer_users.granted_tier`).
       The ladder runs against intuition: a SMALLER number grants MORE
@@ -130,7 +130,7 @@ def circles_filter_clause(
                            `(tier = public) OR (THIS owner AND the tier granted
                            to them)` -- independent of ``auth_enabled``.
 
-                           Until 2026-10-27 this was a bare `peer_scoped:
+                           🛑 Until 2026-10-27 this was a bare `peer_scoped:
                            bool`, and the tier came from an EXISTS on
                            `circle_memberships.member_user_id = :asker`. That
                            column held the REMOTE user id: in a household with
@@ -197,7 +197,7 @@ def circles_filter_clause(
         )
 
     if peer is not None:
-        # FEDERATED: the tier comes from the PAIRING, not from a membership.
+        # 🛑 FEDERATED: the tier comes from the PAIRING, not from a membership.
         # Two conditions, and BOTH carry weight:
         #   - the row's owner must be the one who entered into this pairing.
         #     Without that the peer would see its tier under EVERY owner on

@@ -5,8 +5,8 @@
  * correct, the login is not finished. This screen records and sends ticket +
  * recording to `POST /api/auth/voice`.
  *
- * WHAT IS DELIBERATELY NOT HERE
- * ------------------------------
+ * 🛑 WHAT IS DELIBERATELY NOT HERE
+ * ---------------------------------
  * The server answers EVERY failure identically
  * (`{"success": false, "message": "Voice authentication failed"}`) -- no field
  * distinguishes "ticket expired" from "voice does not match" from "account
@@ -19,7 +19,7 @@
  * the server's secrets, and somebody who does not know they denied the
  * microphone cannot allow it.
  *
- * AND WHAT DOES NOT EXIST: a way around. There is no "sign in without voice"
+ * 🛑 AND WHAT DOES NOT EXIST: a way around. There is no "sign in without voice"
  * button, not even after several failed attempts -- a fallback an attacker can
  * trigger themselves cancels the factor. After the third attempt the screen
  * names the intended path: an administrator turns the factor off for this
@@ -70,7 +70,7 @@ export default function VoiceSecondFactorStep({ ticket, onVerified, onCancel }: 
       const form = new FormData();
       form.append('ticket', ticket);
       form.append('audio_file', rec.blob, 'second-factor.webm');
-      // The header MUST be set. `apiClient` carries
+      // 🛑 The header MUST be set. `apiClient` carries
       // `Content-Type: application/json` as its default (`utils/axios.ts`),
       // and axios only strips that for FormData when it is NOT set
       // explicitly. Without this line the body is multipart while the header
@@ -85,10 +85,9 @@ export default function VoiceSecondFactorStep({ ticket, onVerified, onCancel }: 
         await onVerified();
         return;
       }
-      // `data.message` is NOT displayed. It is deliberately uninformative,
+      // 🛑 `data.message` is NOT displayed. It is deliberately uninformative,
       // and passing it through would only add noise -- or, if the server ever
-      // makes it more forthcoming, an oracle in
-      // the UI.
+      // makes it more forthcoming, an oracle in the UI.
       setRefused(true);
       setAttempts((n) => n + 1);
     } catch {

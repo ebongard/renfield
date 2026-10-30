@@ -31,12 +31,12 @@ export interface AuditEntry {
   /**
    * Which identity the answer rested on.
    *
-   * `undefined`/`null` does NOT mean 'peer_tier' but "not recorded": on
+   * 🛑 `undefined`/`null` does NOT mean 'peer_tier' but "not recorded": on
    * asker rows this instance does not know (the far side decides), and rows
    * from before 2026-10-29 do not know the field at all. Conflating the two
    * claims the narrower tier for queries that ran with full reach.
    *
-   * `(string & {})` is deliberate, not sloppiness: server-side the column is
+   * 🛑 `(string & {})` is deliberate, not sloppiness: server-side the column is
    * free text, not an enum. Without it TypeScript would consider a switch over
    * the two known values exhaustive -- and a future third value would run
    * silently into the `peer_tier` branch, i.e. into the NARROWER claim.
@@ -98,7 +98,7 @@ export function useDeleteFederationPeer() {
 /**
  * A person link as the person themselves sees it.
  *
- * Without `querier_ref`. That is the opaque band between two instances and
+ * 🛑 Without `querier_ref`. That is the opaque band between two instances and
  * not a display value -- whoever holds it can present themselves to the far
  * side as this person. The backend does not emit it in the first place.
  */

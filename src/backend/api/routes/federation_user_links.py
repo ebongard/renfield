@@ -1,7 +1,7 @@
 """
 Federation identity-link admin API (F-ID-1 — person-scoped federation).
 
-ESCAPE HATCH, not the regular path. Since 2026-10-27 a person establishes the
+🛑 ESCAPE HATCH, not the regular path. Since 2026-10-27 a person establishes the
 link THEMSELVES, through the consent-signed handshake in
 `api/routes/federation_links.py` -- signed in on both instances, each side
 signing its own half. This module remains for the case where the handshake is

@@ -1,6 +1,6 @@
 """Log an exception without shipping user content along with it.
 
-Found in review on 2026-10-29: the atom-store fan-out had a guard against
+🛑 The occasion, found in review on 2026-10-29: the atom-store fan-out had a guard against
 content in the log, and four of its eight retrieval sources bypassed it by
 logging the raw exception (`logger.warning(f"... {e}")`).
 
@@ -12,7 +12,7 @@ SQLAlchemy appends this to its messages:
 The bound query IS the user's text. In `lexical_retrieval` it is the search
 string; in `document_fact_retrieval` and `note_retrieval` the same.
 
-This cut is a floor, not a guarantee. Two formats carry the value in the
+🛑 The cut at `[SQL:` is a floor, not a guarantee. Two formats carry the value in the
 PRIMARY message and therefore survive it: `invalid input syntax for type <t>:
 "<value>"` (Postgres) and `invalid input for query argument $N: <repr(value)>`
 (asyncpg). Both only arise from a type error in a binding, not on the search

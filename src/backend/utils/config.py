@@ -31,7 +31,7 @@ _REAL_DEPLOY_ENVS = frozenset({"production", "prod", "staging"})
 
 
 class Settings(BaseSettings):
-    """Anwendungs-Einstellungen"""
+    """Application settings."""
 
     # Edition & Feature Flags
     #
@@ -114,19 +114,19 @@ class Settings(BaseSettings):
     paperless_extraction_model: str = ""
     #: Base URL of the Paperless UI, for links out of Renfield.
     #:
-    #: The same variable the Paperless MCP server already gets -- added here
+    #: 🛑 The same variable the Paperless MCP server already gets -- added here
     #: as a settings field so the backend can build a link.
     #: NO new environment variable: `PAPERLESS_API_URL` is set on both
     #: instances already, in `renfield-env`.
     #: Empty means: no link. The button then shows the state without a target.
-    #: It is a LAN address. The link works inside the home network; from
+    #: 🛑 It is a LAN address. The link works inside the home network; from
     #: outside it goes nowhere. Decided deliberately (2026-10-27) -- if that
     #: becomes a problem, split the link base from the API URL.
     paperless_api_url: str = ""
     #: The name of THIS instance as the scan target registry carries it
     #: (`household`, `xidra`). Empty means: unknown.
     #:
-    #: Until 2026-10-27 an instance did not know itself -- it carried only its
+    #: 🛑 Until 2026-10-27 an instance did not know itself -- it carried only its
     #: Ed25519 federation key, which is not a readable name. That gap made the
     #: following bug possible: a scan from the household to xidra delivers a
     #: completion notice WITH xidra's document id to the household. Since
@@ -134,7 +134,7 @@ class Settings(BaseSettings):
     #: for a different document. A button on it does not go nowhere but
     #: somewhere wrong.
     #:
-    #: FAIL-CLOSED: if the value is empty, EVERY targeted reference counts as
+    #: 🛑 FAIL-CLOSED: if the value is empty, EVERY targeted reference counts as
     #: remote. So an unconfigured instance never links wrongly -- it does not
     #: link at all. Design: `docs/design/cross-instance-document-reference.md`.
     instance_id: str = ""
@@ -197,7 +197,7 @@ class Settings(BaseSettings):
     search_enabled: bool = False
     calendar_enabled: bool = False
 
-    # Sprache
+    # Language
     default_language: str = "de"
     supported_languages: str = "de,en,it"  # Comma-separated list of supported languages
     whisper_model: str = "base"
@@ -415,7 +415,7 @@ class Settings(BaseSettings):
     agent_preselect_typed: bool = False
     """Logs the COMPLETE preselect prompt at INFO. Dark.
 
-    The prompt contains the user's message UNTRUNCATED -- the regular line
+    🛑 The prompt contains the user's message UNTRUNCATED -- the regular line
     shows only `message[:60]`. Hence a switch of its own rather than
     `LOG_LEVEL=DEBUG`: the sink in `main.py` is GLOBAL and has one level, so a
     DEBUG run would also capture `conversation_service` and
@@ -1348,7 +1348,7 @@ class Settings(BaseSettings):
     # "Peer has no usable transport endpoint" — why federation has been
     # population-of-1). The pairing offer/accept already SIGN + PERSIST endpoints
     # (#408/#421); this setting just supplies the value a caller didn't override.
-    # The instance advertises its OWN, generally reachable name, not the
+    # 🛑 The instance advertises its OWN, generally reachable name, not the
     # cluster-internal service address. The latter stood here until 2026-10-29
     # as the recommendation for "same-cluster peers" -- but it only holds while
     # both instances happen to sit in the same cluster, and it shows up for the

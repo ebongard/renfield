@@ -1,6 +1,6 @@
 """Atom retrieval reports how many of its eight sources an answer rests on.
 
-Why this file exists, 2026-10-29: the thin answer of the first successful
+🛑 Why this file exists, 2026-10-29: the thin answer of the first successful
 federated query. `PolymorphicAtomStore.query` spreads EIGHT retrieval sources
 over ONE `AsyncSession` via `asyncio.gather(return_exceptions=True)`.
 
@@ -11,7 +11,7 @@ session factory, 8 concurrent queries, three runs, stable:
     one session, pre-warmed     8 of 8               408 ms   (SERIAL)
     one session per source      8 of 8                56 ms
 
-And it could not be COUNTED. All six `_wrap_*` helpers start with
+🛑 And it could not be COUNTED. All six `_wrap_*` helpers start with
 `if isinstance(x, Exception) or not x: return []` -- they conflate "crashed"
 with "found nothing", and none of them logs. Of the eight sources only three
 report a failure themselves; `rag` and `kg` not at all, and those two are
@@ -20,7 +20,7 @@ document retrieval and the knowledge graph.
 This file tests VISIBILITY (step 1), not the fix. Without it the effect of
 step 2 would not be provable in production.
 
-The first version was taken apart in review, and two of the findings were
+🛑 The first version was taken apart in review, and two of the findings were
 HERE:
 
 - Emptiness was decided with `not value`. `kg` returns
@@ -62,7 +62,7 @@ _WRAPPERS = {
     "note": _wrap_note_results,
 }
 
-#: A shape WITH hits per source. Not invented but read off the wrappers:
+#: A shape WITH hits per source. 🛑 Not invented but read off the wrappers:
 #: `_wrap_rag_results` reads `chunk`/`document`, `_wrap_kg_atoms` reads
 #: `entities`/`relations`.
 _WITH_HITS: dict[str, object] = {
@@ -80,7 +80,7 @@ _WITH_HITS: dict[str, object] = {
 _WITH_HITS["lexical_chunks"] = _WITH_HITS["rag"]
 _WITH_HITS["lexical_memories"] = _WITH_HITS["memory"]
 
-#: A shape WITHOUT hits per source. For `kg` that is NOT `{}` but
+#: A shape WITHOUT hits per source. 🛑 For `kg` that is NOT `{}` but
 #: `{"entities": [], "relations": []}` -- the exact value that fools
 #: `not value`.
 _WITHOUT_HITS: dict[str, object] = {
@@ -113,7 +113,7 @@ def _count(**overrides):
 
 
 class TestItTellsCrashApartFromEmpty:
-    """The distinction IS the point. An empty source is a measurement, a
+    """🛑 The distinction IS the point. An empty source is a measurement, a
     crashed one is an outage -- conflated, a retrieval that used one
     eighth of its sources looks like a household with no data.
     """
@@ -150,7 +150,7 @@ class TestItTellsCrashApartFromEmpty:
         assert "kg" in delivered and "kg" not in empty
 
     def test_the_wrapper_decides_emptiness_for_EVERY_source(self):
-        """The class, not the named instance: `kg` was the case that was
+        """🛑 The class, not the named instance: `kg` was the case that was
         found, but the question applies to all eight. Every source must
         come out as empty when given its own empty shape."""
         for name in _WRAPPERS:
@@ -160,7 +160,7 @@ class TestItTellsCrashApartFromEmpty:
 
 
 class TestDisabledSourcesAreNotEmptySources:
-    """A disabled source was never asked. Counting it as empty would make
+    """🛑 A disabled source was never asked. Counting it as empty would make
     `NOTES_ENABLED=false` read "6/8 delivered, 2 empty" forever -- that
     looks like a partial outage, and anyone chasing it hunts a bug that is
     not there.
@@ -201,7 +201,7 @@ class TestDisabledSourcesAreNotEmptySources:
 
 class TestTheRealColdCase:
     """🛑 The first version reproduced SEVEN simultaneous exceptions. The
-    cannot produce that state -- five sources caught their own exception and
+    real path cannot produce that state -- five sources caught their own exception and
     returned `[]`, so they arrived as "empty".
 
     Three of them (`lexical_chunks`, `lexical_memories`, `note`) have no caller
@@ -234,7 +234,7 @@ class TestTheGuardAgainstContentInTheLog:
     """🛑 SQLAlchemy's `[SQL: ...] [parameters: ...]` tail carries the
     bound user text. It adds nothing diagnostically and is cut off.
 
-    What this is NOT: a ban on content in the log. The repo logs the query
+    🛑 What this is NOT: a ban on content in the log. The repo logs the query
     text elsewhere on purpose (`rag_retrieval` writes `query='...'` at
     INFO). That decision is not reversed here -- all that happens is
     removing a liability with no benefit. The first version of this PR
@@ -277,7 +277,7 @@ class TestTheGuardAgainstContentInTheLog:
         assert "SELECT" not in text
 
     def test_the_crash_line_uses_the_guard(self):
-        """The wiring: not just the function but its use in the crash line."""
+        """🛑 The wiring: not just the function but its use in the crash line."""
         from loguru import logger as _l
         from sqlalchemy.exc import StatementError
 
@@ -294,11 +294,11 @@ class TestTheGuardAgainstContentInTheLog:
             _l.remove(sink_id)
 
     def test_every_DB_error_log_in_the_retrieval_modules_uses_it(self):
-        """The guard was bypassed by the sources themselves in the first
+        """🛑 The guard was bypassed by the sources themselves in the first
         version: four logged `{e}` raw, `[SQL: ...]` tail and the bound
         user query included.
 
-        The scope is neither arbitrary nor a list that rots: what is
+        🛑 The scope is neither arbitrary nor a list that rots: what is
         checked is exactly those `except` handlers whose `try` body
         contains a `.execute(...)` -- there and only there can a SQL tail
         arise, and only there does the cut help. An embedding or LLM error
@@ -343,7 +343,7 @@ class TestTheGuardAgainstContentInTheLog:
             f"SQL tail goes out uncut: {suspicious}")
 
     def test_the_structural_sweep_FINDS_the_obvious_case(self):
-        """Negative control on the check itself: does the sweep find
+        """🛑 Negative control on the check itself: does the sweep find
         anything at all when there is something to find? Without this it
         could fail on a detail and the test would be silently green."""
         import ast
@@ -376,7 +376,7 @@ class TestTheSummaryLine:
     """The one line per run -- level and content."""
 
     def test_a_crash_logs_at_WARNING_not_info(self):
-        """A crashed source is not a footnote: the answer then rested on
+        """🛑 A crashed source is not a footnote: the answer then rested on
         part of the retrieval. At INFO that would disappear among the
         ordinary lines."""
         from loguru import logger as _l
@@ -425,10 +425,10 @@ class TestTheSummaryLine:
 
 
 class TestQueryACTUALLYCallsIt:
-    """The classes above test the COUNTING. This one tests that `query`
+    """🛑 The classes above test the COUNTING. This one tests that `query`
     calls it -- and that the path marker is right.
 
-    The first version claimed here that it tested the ORDER
+    🛑 The first version claimed here that it tested the ORDER
     ("classification before the `_wrap_*` helpers"). That was provably
     false: the helpers do not mutate their argument, they return a new
     list -- so the order was irrelevant and the test stayed green when you
@@ -443,7 +443,8 @@ class TestQueryACTUALLYCallsIt:
         first version gave `rag` a shape without `chunk`/`document`, which
         logged a WARNING on every run and left the rag shape unchecked.
 
-        `query` imports the classes lazily in the body, so patching the
+        `query` imports the classes lazily in the body, so the patch takes
+        effect on the module.
         """
         from unittest.mock import MagicMock
 
@@ -488,7 +489,7 @@ class TestQueryACTUALLYCallsIt:
 
         # Graph expansion would hit the database after fusion.
         monkeypatch.setattr(settings, "graph_expansion_enabled", False)
-        # `skill` and `note` are flag-gated. In the container they are off,
+        # 🛑 `skill` and `note` are flag-gated. In the container they are off,
         # but live on BOTH instances they are `true` -- without setting them
         # the test measures a configuration that does not exist in production.
         monkeypatch.setattr(settings, "skills_enabled", True)
@@ -517,7 +518,7 @@ class TestQueryACTUALLYCallsIt:
 
     @pytest.mark.asyncio
     async def test_the_mock_shapes_produce_NO_stray_warning(self, sources_fixture, monkeypatch):
-        """Negative control on the double itself. If a shape does not fit,
+        """🛑 Negative control on the double itself. If a shape does not fit,
         the wrapper logs a WARNING -- and then there is no telling whether
         a test is green on the merits or despite a broken double."""
         lines = await self._run(monkeypatch)
@@ -554,7 +555,7 @@ class TestQueryACTUALLYCallsIt:
 
 
 class TestTheFederatedPathIsMarkedBYTHECALLER:
-    """The heaviest finding of the review. The line derived the path from
+    """🛑 The heaviest finding of the review. The line derived the path from
     `peer is not None` -- and `_peer_scope_for` returns `None` in the
     MAPPED case (`federation_query_responder.py:285`). Mapped is the path
     that runs live. So the one cold run the marker was built for was
@@ -594,7 +595,7 @@ class TestTheFederatedPathIsMarkedBYTHECALLER:
             "difference")
 
     def test_peer_is_NOT_used_as_the_path_signal(self):
-        """Negative control against sliding back into the old bug: the
+        """🛑 Negative control against sliding back into the old bug: the
         marker must not be derived from `peer` again. The EFFECT is what
         is checked -- `peer` set, `federated` not, so unmarked."""
         from loguru import logger as _l

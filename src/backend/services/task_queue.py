@@ -100,7 +100,7 @@ class TaskQueue:
             logger.error(f"Update Status Fehler: {e}")
 
     async def queue_length(self) -> int:
-        """Anzahl der Tasks in Queue"""
+        """Number of tasks in the queue."""
         return await self.redis_client.llen(self.queue_name)
 
     async def close(self):

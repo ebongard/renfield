@@ -268,7 +268,7 @@ export default function CirclesPeersPage() {
       <LinkIdentityResponderModal
         isOpen={showAcceptLink}
         onClose={() => setShowAcceptLink(false)}
-        /* NOT `linkSuccess`. On accepting, only OUR half exists; the link
+        /* 🛑 NOT `linkSuccess`. On accepting, only OUR half exists; the link
            takes effect with the completion on the other side. The first
            version reported "the identities are linked" here -- contradicting
            the hint in the same dialog, which says it correctly. Anyone reading

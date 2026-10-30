@@ -21,7 +21,7 @@ from typing import TYPE_CHECKING, Optional
 import yaml
 from loguru import logger
 
-# Imported, NOT copied. F2' recognises a peer by its TRANSPORT
+# 🛑 Imported, NOT copied. F2' recognises a peer by its TRANSPORT
 # (`MCPManager.is_federation_server`), but the transport is only available
 # where the manager is. Here there are only names: `connected_servers` is a
 # list of strings and an intent is `mcp.peer_<id>.<tool>`. So match on the

@@ -29,7 +29,7 @@ const PAGE_SIZE = 50;
 /**
  * Help text for the identity basis of an answered request.
  *
- * The third branch is the reason this function exists. Server-side the column
+ * 🛑 The third branch is the reason this function exists. Server-side the column
  * is free text; if an unknown value fell into the `peer_tier` branch, the view
  * would claim the NARROWER reach for an access it knows nothing about. Better
  * to show the raw value and explicitly claim nothing.
@@ -43,7 +43,7 @@ export function basisHelpKey(basis: string): string {
 /**
  * Badge colouring -- THREE-VALUED, for the same reason as above.
  *
- * The text alone is not enough. In this badge's visual language amber means
+ * 🛑 The text alone is not enough. In this badge's visual language amber means
  * "full reach, look here" and grey means "the harmless variant". If an unknown
  * value got the same grey as `peer_tier`, the narrower claim would sit in the
  * COLOUR instead of the word -- and the colour is read first. Unknown values
@@ -68,7 +68,7 @@ function StatusIcon({ status, verified }: StatusIconProps) {
   if (status === 'failed') {
     return <XCircle className="w-4 h-4 text-red-500 dark:text-red-400" aria-hidden="true" />;
   }
-  // Its own icon, not the grey question mark of `unknown`. A cancellation on
+  // 🛑 Its own icon, not the grey question mark of `unknown`. A cancellation on
   // the responder side can mean foreign data had ALREADY been read -- amber is
   // DESIGN.md's "attention that is not yet a stop", which is exactly the
   // case.
@@ -210,7 +210,7 @@ export default function FederationAuditPage() {
                   <div className="flex-1 min-w-0 space-y-1">
                     <div className="flex flex-wrap items-center gap-2">
                       <StatusIcon status={entry.final_status} verified={entry.verified_signature} />
-                      {/* Fall back to the key. Rows the RESPONDER wrote
+                      {/* 🛑 Fall back to the key. Rows the RESPONDER wrote
                           before 2026-10-29 carry an empty name -- and this is
                           the spot that says WHO accessed the data. Better a
                           fingerprint than a gap; an invented name would be
@@ -236,7 +236,7 @@ export default function FederationAuditPage() {
                           {t('federationAudit.directionAnswered')}
                         </span>
                       )}
-                      {/* Show it only when the value is REALLY there. If it
+                      {/* 🛑 Show it only when the value is REALLY there. If it
                           is missing, nothing is claimed -- the narrower tier is
                           not implied. */}
                       {entry.identity_basis && (
