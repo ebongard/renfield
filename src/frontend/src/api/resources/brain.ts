@@ -143,9 +143,9 @@ export interface FeatureFlags {
   user_events_enabled?: boolean;
   /** Registry client id the browser sends as `?client=` on /ws/voice. Empty =>
    *  build-time VITE_VOICE_CLIENT_ID, else the parameter is omitted. */
-  /** 🛑 Die instanzweite Haelfte der Stimm-Vorbedingungen. Ohne sie meldet die
-   *  Benutzerverwaltung „scharf", waehrend der Faktor in Wahrheit RUHT — und
-   *  zwar genau im Cutover-Fenster (erst Einwilligungen, dann Flag umlegen). */
+  /** 🛑 The instance-wide half of the voice preconditions. Without it the user
+   *  administration reports "armed" while the factor is in fact DORMANT -- and
+   *  precisely inside the cutover window (consents first, then flip the flag). */
   voice_auth_enabled: boolean;
   speaker_recognition_enabled: boolean;
   voice_client_id?: string;

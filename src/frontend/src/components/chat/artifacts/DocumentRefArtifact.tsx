@@ -1,34 +1,34 @@
 /**
- * DocumentRefArtifact — der Knopf zum Paperless-Dokument unter einer
- * Scan-Fertigmeldung.
+ * DocumentRefArtifact -- the button to the Paperless document under a scan
+ * completion notice.
  *
- * 🛑 Das Artefakt traegt NUR eine Dokumentkennung, nie eine URL. Der Link wird
- * hier beim Anzeigen aufgeloest, und zwar aus zwei gemessenen Gruenden
- * (2026-10-27, Haushalt, 60 Tage):
- *   - Zur Schreibzeit gibt es ihn meist noch nicht: die Paperless-Ablage ist ein
- *     entkoppelter Nachlauf, der Ingest brauchte im Mittel 363 s.
- *   - 6 von 37 abgeschlossenen Dokumenten bekommen NIE eine eigene Kennung —
- *     sie sind Dubletten. Ein beim Schreiben eingefrorener Link waere dort
- *     dauerhaft leer, ohne zu sagen warum.
- * Weil die Person die Antwort ohnehin erst Minuten spaeter wieder ansieht, ist
- * die Kennung beim Klicken meist da.
+ * The artifact carries ONLY a document id, never a URL. The link is resolved
+ * here at render time, for two measured reasons (2026-10-27, household,
+ * 60 days):
+ *   - At write time it usually does not exist yet: Paperless filing is a
+ *     decoupled follow-up, and the ingest averaged 363 s.
+ *   - 6 of 37 completed documents NEVER get an id of their own -- they are
+ *     duplicates. A link frozen at write time would be permanently empty
+ *     there, without saying why.
+ * Because the person looks at the answer again minutes later anyway, the id is
+ * usually there by the time they click.
  *
- * 🛑 Nur der klickbare Zustand ist ein Element mit Fokus. Die uebrigen sind
- * schlichter Text: kein Tabben durch tote Schaltflaechen, und der Screenreader
- * kuendigt keine Taste an, die keine ist. Ein `disabled`-Knopf waere zudem
- * regelmaessig unter 4,5:1 Kontrast (DESIGN.md §Accessibility).
+ * Only the clickable state is a focusable element. The others are plain text:
+ * no tabbing through dead buttons, and the screen reader does not announce a
+ * control that is not one. A `disabled` button would also regularly fall below
+ * 4.5:1 contrast (DESIGN.md §Accessibility).
  *
- * 🛑 KEIN Bernstein fuer „nicht abgelegt". Eine Dublette ist kein Fehlschlag —
- * das Dokument liegt in Paperless, nur schon laenger. Bei rund jedem sechsten
- * Scan eine Warnfarbe zu zeigen nutzt sie ab; Bernstein bleibt den Faellen
- * vorbehalten, fuer die DESIGN.md es am 2026-09-28 eingefuehrt hat.
+ * NO amber for "not filed". A duplicate is not a failure -- the document is in
+ * Paperless, just for longer. Showing a warning colour on roughly every sixth
+ * scan wears it out; amber stays reserved for the cases DESIGN.md introduced
+ * it for on 2026-09-28.
  */
 import { useTranslation } from 'react-i18next';
 
 import { useDocumentQuery } from '../../../api/resources/knowledge';
 import type { DocumentRefData } from './artifactSchema';
 
-/** Waehrend des Abrufs — dieselbe Gestalt wie das Geruest des Artefakt-Rahmens. */
+/** While fetching -- the same shape as the artifact frame's skeleton. */
 function Skeleton() {
   return (
     <div
@@ -46,11 +46,11 @@ function Hint({ text }: { text: string }) {
 
 export default function DocumentRefArtifact({ data }: { data: DocumentRefData }) {
   const { t } = useTranslation();
-  // 🛑 `instance` gesetzt heisst: das Dokument liegt woanders. NICHT lokal
-  // nachfragen — die Kennung gehoert der anderen Instanz, und weil beide eigene
-  // Zaehlfolgen fuehren, traefe eine lokale Abfrage ein fremdes Dokument mit
-  // derselben Nummer. Der Abruf wird darum gar nicht erst ausgeloest
-  // (`enabled: false`), nicht nur sein Ergebnis verworfen.
+  // `instance` set means: the document lives elsewhere. Do NOT query locally
+  // -- the id belongs to the other instance, and because both run their own
+  // sequences a local query would hit an unrelated document with the same
+  // number. So the fetch is never started in the first place
+  // (`enabled: false`), not merely its result discarded.
   const remote = data.instance;
   const { data: doc, isLoading, isError } = useDocumentQuery(data.documentId, !remote);
 
@@ -60,10 +60,10 @@ export default function DocumentRefArtifact({ data }: { data: DocumentRefData })
 
   if (isLoading) return <Skeleton />;
 
-  // 🛑 Ein gescheiterter Abruf sieht aus wie „noch in Arbeit", und das ist
-  // Absicht: fuer die Person bedeutet beides dasselbe — noch kein Link. Der
-  // Endpunkt setzt den Zugriffsschutz durch, ein 403 ist also eine gueltige
-  // Antwort und kein Fehler, den man ihr zeigen muesste.
+  // A failed fetch looks like "still in progress", and that is deliberate:
+  // for the person both mean the same thing -- no link yet. The endpoint
+  // enforces access control, so a 403 is a valid answer and not an error to
+  // show them.
   if (isError || !doc) return <Hint text={t('chat.artifacts.documentRef.filing')} />;
 
   if (doc.paperless_url) {
@@ -72,8 +72,8 @@ export default function DocumentRefArtifact({ data }: { data: DocumentRefData })
         href={doc.paperless_url}
         target="_blank"
         rel="noopener noreferrer"
-        // min-h-11 = 44px Tippflaeche (DESIGN.md §Accessibility); rounded-sm ist
-        // die Knopf-Stufe der Radius-Skala, nicht der Karten-Radius.
+        // min-h-11 = 44px tap target (DESIGN.md §Accessibility); rounded-sm is
+        // the button step of the radius scale, not the card radius.
         className="btn-secondary inline-flex min-h-11 items-center rounded-sm text-sm"
       >
         {t('chat.artifacts.documentRef.open')}
@@ -81,15 +81,15 @@ export default function DocumentRefArtifact({ data }: { data: DocumentRefData })
     );
   }
 
-  // In Paperless gemeldet, aber ohne eigene Kennung: das ist die Dublette.
-  // `in_paperless` ist genau dann wahr, wenn eine Kennung existiert ODER der
-  // Ablagelauf „done" meldete — faellt der Link, bleibt nur der zweite Fall.
+  // Reported in Paperless but without an id of its own: that is the
+  // duplicate. `in_paperless` is true exactly when an id exists OR the filing
+  // run reported "done" -- with no link, only the second case remains.
   if (doc.in_paperless) {
     return <Hint text={t('chat.artifacts.documentRef.alreadyThere')} />;
   }
 
-  // Noch in Arbeit, solange der Ingest laeuft; danach ist es ein echtes
-  // Nichtablegen (Paperless hat abgelehnt).
+  // Still in progress while the ingest runs; after that it is a genuine
+  // not-filed (Paperless refused).
   const stillWorking = doc.status === 'pending' || doc.status === 'processing';
   return (
     <Hint

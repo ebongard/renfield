@@ -26,22 +26,20 @@ export interface AuditEntry {
   finalized_at?: string;
   final_status: AuditStatus;
   verified_signature?: boolean;
-  /** 'asked' = diese Instanz hat gefragt, 'answered' = sie hat geantwortet. */
+  /** 'asked' = this instance asked, 'answered' = this instance answered. */
   direction?: 'asked' | 'answered';
   /**
-   * Auf welcher Identität die Antwort beruhte.
+   * Which identity the answer rested on.
    *
-   * 🛑 `undefined`/`null` heisst NICHT 'peer_tier', sondern „nicht
-   * festgehalten": bei Frager-Zeilen weiss diese Instanz es nicht (die
-   * Gegenseite entscheidet), und Zeilen von vor dem 2026-10-29 kennen die
-   * Angabe gar nicht. Wer das zusammenwirft, behauptet die engere Stufe fuer
-   * Zuege, die mit voller Reichweite liefen.
+   * `undefined`/`null` does NOT mean 'peer_tier' but "not recorded": on
+   * asker rows this instance does not know (the far side decides), and rows
+   * from before 2026-10-29 do not know the field at all. Conflating the two
+   * claims the narrower tier for queries that ran with full reach.
    *
-   * 🛑 `(string & {})` ist Absicht, keine Nachlaessigkeit: die Spalte ist
-   * serverseitig ein freier Text, kein Aufzaehlungstyp. Ohne diesen Zusatz
-   * hielte TypeScript eine Fallunterscheidung ueber die beiden bekannten
-   * Werte fuer vollstaendig — und ein kuenftiger dritter Wert liefe
-   * stillschweigend in den `peer_tier`-Zweig, also in die ENGERE Behauptung.
+   * `(string & {})` is deliberate, not sloppiness: server-side the column is
+   * free text, not an enum. Without it TypeScript would consider a switch over
+   * the two known values exhaustive -- and a future third value would run
+   * silently into the `peer_tier` branch, i.e. into the NARROWER claim.
    */
   identity_basis?: 'mapped' | 'peer_tier' | (string & {}) | null;
 }
@@ -98,11 +96,11 @@ export function useDeleteFederationPeer() {
 }
 
 /**
- * Eine Personenverknuepfung, wie sie die EIGENE Person sieht.
+ * A person link as the person themselves sees it.
  *
- * 🛑 Ohne `querier_ref`. Der ist das opake Band zwischen zwei Instanzen und
- * kein Anzeigewert — wer ihn hat, kann sich bei der Gegenstelle als diese
- * Person ausgeben. Das Backend laesst ihn darum gar nicht erst heraus.
+ * Without `querier_ref`. That is the opaque band between two instances and
+ * not a display value -- whoever holds it can present themselves to the far
+ * side as this person. The backend does not emit it in the first place.
  */
 export interface IdentityLink {
   id: number;

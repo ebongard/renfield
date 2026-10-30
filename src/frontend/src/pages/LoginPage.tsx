@@ -44,9 +44,9 @@ export default function LoginPage() {
   const [showPassword, setShowPassword] = useState<boolean>(false);
   const [loading, setLoading] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
-  // 🛑 Das Ticket, wenn das Passwort stimmte und die Stimme noch fehlt. Solange es
-  // steht, wird die Maske fuer den zweiten Faktor gezeigt und NICHT das Formular:
-  // Anmeldung ist noch nicht fertig, es gibt keine Sitzung.
+  // The ticket, for when the password was right and the voice is still
+  // missing. While it is set, the second-factor screen is shown and NOT the
+  // form: the login is not finished, there is no session.
   const [voiceTicket, setVoiceTicket] = useState<string | null>(null);
 
   // Redirect path from location state, default to home.
@@ -100,12 +100,12 @@ export default function LoginPage() {
       await login(username, password);
       navigate(from, { replace: true });
     } catch (err: unknown) {
-      // Kein Fehler, sondern ein Zwischenschritt: das Passwort stimmte, die
-      // Stimme fehlt noch. `login()` wirft hier absichtlich, damit kein Aufrufer
-      // versehentlich weitermacht, als waere er angemeldet.
+      // Not an error but an intermediate step: the password was right, the
+      // voice is still missing. `login()` throws here deliberately so no
+      // caller accidentally proceeds as if signed in.
       if (err instanceof SecondFactorRequired) {
         setVoiceTicket(err.ticket);
-        setPassword('');   // nicht im Speicher stehen lassen, waehrend aufgenommen wird
+        setPassword('');   // do not keep it in memory while recording
         return;
       }
       setError(extractApiError(err, t('auth.loginFailed')));
@@ -210,15 +210,15 @@ export default function LoginPage() {
             <VoiceSecondFactorStep
               ticket={voiceTicket}
               onVerified={async () => {
-                // Die Sitzung steht erst JETZT. `fetchUser` holt den Nutzer
-                // ueber das frisch gesetzte Cookie; danach ist die Navigation
-                // dieselbe wie beim einfaktorigen Weg.
+                // The session exists only NOW. `fetchUser` loads the user via
+                // the freshly set cookie; after that the navigation is the
+                // same as on the single-factor path.
                 setVoiceTicket(null);
                 await fetchUser();
                 navigate(from, { replace: true });
               }}
               onCancel={() => {
-                // Das Ticket verfaellt von selbst (kurze Lebensdauer, einmalig).
+                // The ticket expires on its own (short-lived, single use).
                 setVoiceTicket(null);
                 setError(null);
               }}

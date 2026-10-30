@@ -1,29 +1,29 @@
 /**
- * Der zweite Schritt der Anmeldung: Stimme aufnehmen und bestätigen.
+ * The second step of the login: record the voice and confirm.
  *
- * Erscheint, wenn `/auth/login` `SecondFactorRequired` wirft — das Passwort war
- * richtig, die Anmeldung ist noch nicht fertig. Diese Maske nimmt auf und schickt
- * Ticket + Aufnahme an `POST /api/auth/voice`.
+ * Appears when `/auth/login` throws `SecondFactorRequired` -- the password was
+ * correct, the login is not finished. This screen records and sends ticket +
+ * recording to `POST /api/auth/voice`.
  *
- * 🛑 WAS HIER ABSICHTLICH NICHT STEHT
- * ----------------------------------
- * Der Server antwortet auf JEDEN Fehlschlag identisch
- * (`{"success": false, "message": "Voice authentication failed"}`) — kein Feld
- * unterscheidet „Ticket abgelaufen" von „Stimme passt nicht" von „Konto
- * gesperrt". Das ist der Orakel-Schutz, und diese Maske darf ihn nicht
- * untergraben: sie zeigt die Server-Meldung NICHT durch und rät auch nicht,
- * welcher Fall es war.
+ * WHAT IS DELIBERATELY NOT HERE
+ * ------------------------------
+ * The server answers EVERY failure identically
+ * (`{"success": false, "message": "Voice authentication failed"}`) -- no field
+ * distinguishes "ticket expired" from "voice does not match" from "account
+ * locked". That is the oracle protection, and this screen must not undermine
+ * it: it does NOT pass the server message through and does not guess which
+ * case it was.
  *
- * Unterscheidbar sind nur Dinge, die dem NUTZER gehören: ein verweigertes
- * Mikrofon, ein fehlendes Gerät, ein Browser, der nicht aufnehmen kann. Das sind
- * keine Geheimnisse des Servers, und wer nicht weiß, dass er das Mikrofon
- * verweigert hat, kann es nicht erlauben.
+ * Only things that belong to the USER are distinguishable: a denied
+ * microphone, a missing device, a browser that cannot record. Those are not
+ * the server's secrets, and somebody who does not know they denied the
+ * microphone cannot allow it.
  *
- * 🛑 UND WAS ES NICHT GIBT: einen Weg vorbei. Es gibt keinen „ohne Stimme
- * anmelden"-Knopf, auch nicht nach mehreren Fehlversuchen — ein Rückfall, den
- * ein Angreifer selbst auslöst, hebt den Faktor auf. Nach dem dritten Versuch
- * nennt die Maske den vorgesehenen Weg: ein Administrator schaltet den Faktor
- * für dieses Konto ab.
+ * AND WHAT DOES NOT EXIST: a way around. There is no "sign in without voice"
+ * button, not even after several failed attempts -- a fallback an attacker can
+ * trigger themselves cancels the factor. After the third attempt the screen
+ * names the intended path: an administrator turns the factor off for this
+ * account.
  */
 import { useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
@@ -37,15 +37,15 @@ import {
 } from '../../hooks/useVoiceFactorRecording';
 
 interface Props {
-  /** Das Einmalticket aus `/auth/login`. */
+  /** The one-shot ticket from `/auth/login`. */
   ticket: string;
-  /** Beide Faktoren bestanden — der Aufrufer holt den Nutzer und navigiert. */
+  /** Both factors passed -- the caller fetches the user and navigates. */
   onVerified: () => void | Promise<void>;
-  /** Abbrechen: zurück zur Passworteingabe. Das Ticket verfällt von selbst. */
+  /** Cancel: back to the password form. The ticket expires on its own. */
   onCancel: () => void;
 }
 
-/** Ab so vielen Fehlversuchen wird der Wiederherstellungsweg genannt. */
+/** From this many failed attempts on, the recovery path is named. */
 const HINT_AFTER_ATTEMPTS = 3;
 
 export default function VoiceSecondFactorStep({ ticket, onVerified, onCancel }: Props) {
@@ -56,8 +56,8 @@ export default function VoiceSecondFactorStep({ ticket, onVerified, onCancel }: 
   const [attempts, setAttempts] = useState(0);
   const recordButtonRef = useRef<HTMLButtonElement | null>(null);
 
-  // Fokus auf den Aufnahmeknopf, sobald der Schritt erscheint: wer mit der
-  // Tastatur anmeldet, soll nicht suchen müssen.
+  // Focus the record button as soon as the step appears: somebody signing in
+  // with the keyboard should not have to hunt for it.
   useEffect(() => {
     recordButtonRef.current?.focus();
   }, []);
@@ -70,11 +70,12 @@ export default function VoiceSecondFactorStep({ ticket, onVerified, onCancel }: 
       const form = new FormData();
       form.append('ticket', ticket);
       form.append('audio_file', rec.blob, 'second-factor.webm');
-      // 🛑 Der Kopf MUSS gesetzt werden. `apiClient` traegt
+      // The header MUST be set. `apiClient` carries
       // `Content-Type: application/json` als Voreinstellung (`utils/axios.ts`),
-      // und axios entfernt den bei FormData nur, wenn er NICHT explizit gesetzt
-      // ist. Ohne diese Zeile ist der Koerper multipart, der Kopf behauptet
-      // JSON, und FastAPI antwortet 422 — die Aufnahme wird nie geprueft.
+      // and axios only strips that for FormData when it is NOT set
+      // explicitly. Without this line the body is multipart while the header
+      // claims JSON, and FastAPI answers 422 -- the recording is never
+      // checked.
       // Alle vier anderen Uploads im Projekt machen es genauso
       // (`api/resources/speakers.ts`, `useAudioRecording`, `useDocumentUpload`).
       const { data } = await apiClient.post('/api/auth/voice', form, {
@@ -84,10 +85,10 @@ export default function VoiceSecondFactorStep({ ticket, onVerified, onCancel }: 
         await onVerified();
         return;
       }
-      // 🛑 `data.message` wird NICHT angezeigt. Sie ist absichtlich
-      // uninformativ, und sie durchzureichen würde nur Rauschen erzeugen —
-      // oder, wenn der Server sie je auskunftsfreudiger macht, ein Orakel in
-      // die Oberfläche tragen.
+      // `data.message` is NOT displayed. It is deliberately uninformative,
+      // and passing it through would only add noise -- or, if the server ever
+      // makes it more forthcoming, an oracle in
+      // the UI.
       setRefused(true);
       setAttempts((n) => n + 1);
     } catch {
@@ -114,8 +115,8 @@ export default function VoiceSecondFactorStep({ ticket, onVerified, onCancel }: 
         </p>
       </div>
 
-      {/* Aussteuerung. Ohne Bewegungswunsch nur ein statischer Balken —
-          `motion-reduce` deckt genau das ab (DESIGN.md §Motion). */}
+      {/* Level meter. Without a motion preference just a static bar --
+          `motion-reduce` covers exactly that (DESIGN.md §Motion). */}
       <div
         className="h-2 w-full rounded-full bg-gray-200 dark:bg-gray-700 overflow-hidden"
         role="presentation"
@@ -126,8 +127,8 @@ export default function VoiceSecondFactorStep({ ticket, onVerified, onCancel }: 
         />
       </div>
 
-      {/* Zustand für Screenreader. `polite`, damit es die Eingabe nicht
-          unterbricht (DESIGN.md §Accessibility). */}
+      {/* State for screen readers. `polite`, so it does not interrupt input
+          (DESIGN.md §Accessibility). */}
       <p aria-live="polite" className="sr-only">
         {rec.recording
           ? t('auth.voiceFactor.srRecording')
@@ -136,11 +137,11 @@ export default function VoiceSecondFactorStep({ ticket, onVerified, onCancel }: 
             : ''}
       </p>
 
-      {/* Die beiden Hinweise tragen dieselbe visuelle Sprache wie
-          `.merge-notice` (DESIGN.md: warm = Aufmerksamkeit, Symbol + Text, damit
-          Farbe nie das einzige Signal ist) — aber NICHT jene Klasse: sie ist
-          dort ausdruecklich als Merge-Hinweis definiert, und DESIGN.md verlangt,
-          dass ein Klassenname EIN Konzept traegt. */}
+      {/* Both notices use the same visual language as `.merge-notice`
+          (DESIGN.md: warm = attention, symbol + text so colour is never the
+          only signal) -- but NOT that class: it is explicitly defined there as
+          a merge notice, and DESIGN.md requires a class name to carry ONE
+          concept. */}
       {deviceError && (
         <div
           className="flex items-start gap-2 rounded-sm px-2 py-1 text-xs font-medium bg-cream text-primary-700 border border-primary-200 dark:bg-gray-800 dark:text-primary-300 dark:border-primary-700"
@@ -181,8 +182,8 @@ export default function VoiceSecondFactorStep({ ticket, onVerified, onCancel }: 
             onClick={rec.stop}
             disabled={!rec.longEnough}
             className="btn-primary inline-flex items-center gap-2 px-4 min-h-11"
-            // Vor der Mindestdauer ist der Knopf gesperrt — mit einer Begründung,
-            // sonst ist er nur kaputt.
+            // Before the minimum duration the button is disabled -- with a
+            // reason, otherwise it just looks broken.
             title={rec.longEnough ? undefined : t('auth.voiceFactor.keepTalking')}
           >
             <Square className="w-4 h-4" aria-hidden="true" />

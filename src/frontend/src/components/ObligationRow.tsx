@@ -38,18 +38,18 @@ export default function ObligationRow({ fact, now, confirmed = false, className 
         fact.amount_value,
       );
     } catch {
-      // Der Rückfall bleibt nötig, die BEGRÜNDUNG war überholt: bis 2026-09-27
-      // stand hier „backend TODO", als validiere das Backend nicht. Es tut es
-      // seit 2026-06-18 (`_clean_currency` im Schicht-A-Extraktor, der einzige
-      // Schreibpfad — nachgeprüft am 2026-09-27: ein `DocumentFact(...)`,
-      // zwei Roh-SQL-Anweisungen, die die Spalte nicht anfassen, kein
-      // API-Schreibweg).
+      // The fallback is still needed, but its REASONING was out of date: until
+      // 2026-09-27 this said "backend TODO", as though the backend did not
+      // validate. It has since 2026-06-18 (`_clean_currency` in the layer-A
+      // extractor, the only write path -- re-checked on 2026-09-27: one
+      // `DocumentFact(...)`, two raw SQL statements that do not touch the
+      // column, no API write path).
       //
-      // Warum das `catch` trotzdem steht: die ALTBESTÄNDE sind älter als die
-      // Validierung. In der Produktion liegt eine Zeile mit `KWH` als Währung,
-      // angelegt am 2026-06-01 21:27 — 17 Tage davor. `Intl.NumberFormat` wirft
-      // darauf einen `RangeError` mitten im Rendern; ohne diesen Zweig reisst
-      // eine einzige Altzeile die Agenda mit.
+      // Why the `catch` stands regardless: the OLD ROWS are older than the
+      // validation. Production holds a row with `KWH` as its currency, created
+      // on 2026-06-01 21:27 -- 17 days before. `Intl.NumberFormat` throws a
+      // `RangeError` on it mid-render; without this branch a single legacy row
+      // takes the agenda down with it.
       amount = `${new Intl.NumberFormat(locale, {
         minimumFractionDigits: 2,
         maximumFractionDigits: 2,

@@ -43,15 +43,15 @@ export default function TierPicker({ value, onChange, disabled = false, classNam
     }
   }, [value]);
 
-  // 🛑 JEDER Hook steht VOR diesem Ausstieg. Bis 2026-09-27 standen
-  // `pendingFocusTier` und der `useEffect` DAHINTER: bei `variant="compact"`
-  // kehrte die Komponente vorher zurueck und rief zwei Hooks weniger auf. React
-  // fuehrt Hooks ueber die Aufrufreihenfolge, nicht ueber Namen — wechselt eine
-  // Instanz die Variante, verrutscht der ganze Hook-Zustand und React wirft
-  // „Rendered fewer hooks than expected". Latent blieb das nur, weil alle vier
-  // Aufrufstellen die Variante als Literal setzen (PairInitiatorModal,
+  // 🛑 EVERY hook stands BEFORE this exit. Until 2026-09-27
+  // `pendingFocusTier` and the `useEffect` BEHIND it: with
+  // `variant="compact"` the component used to return early and call two fewer
+  // hooks. React tracks hooks by call order, not by name -- if an instance
+  // switches variant, the whole hook state shifts and React throws "Rendered
+  // fewer hooks than expected". It only stayed latent because all four call
+  // sites set the variant as a literal (PairInitiatorModal,
   // PairResponderModal, TierControlPopover: "pills"; WissenDetailDrawer:
-  // "compact"). Die erste veraenderliche Variante waere ein Absturz.
+  // "compact"). The first variable variant would be a crash.
   if (variant === 'compact') {
     const current: CircleTier = (value != null ? (value as CircleTier) : 0);
     return (

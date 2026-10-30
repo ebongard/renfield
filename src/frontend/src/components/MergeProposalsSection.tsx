@@ -122,14 +122,13 @@ export default function MergeProposalsSection() {
       const key = `circles.mergeProposals.cluster.refused_${code}`;
       const text = t(key, { defaultValue: '' });
       if (text) return text;
-      // Unbekannter Code. Das Backend LIEFERT den Grund mit (`notes`) — nur
-      // eben auf Englisch, und damit unbrauchbar auf dem Bildschirm. Ihn
-      // wegzuwerfen liess den Eigentuemer aber mit dem blossen Wort "Fehler"
-      // zurueck, waehrend ein diagnostizierbarer Satz in der Antwort stand.
-      // Also beides: ein wahrer allgemeiner Satz fuer die Anzeige, der genaue
-      // Grund in die Konsole fuer den, der ihn auswerten muss. Das greift, wenn
-      // das Backend dem Bundle vorauseilt (zwischengespeicherter Service
-      // Worker nach einem Rollout) oder ein neuer Code ohne Schluessel ging.
+      // Unknown code. The backend DOES supply the reason (`notes`) -- in
+      // English, which makes it unusable on screen. But throwing it away left
+      // the owner with the bare word "error", while a diagnosable sentence sat
+      // in the response. So both: a truthful generic sentence on screen, the
+      // exact reason in the console for whoever has to evaluate it. This
+      // applies when the backend runs ahead of the bundle (a cached service
+      // worker after a rollout) or a new code shipped without a key.
       console.warn('[merge-cluster] untranslated refusal', code, detail?.notes);
       return t('circles.mergeProposals.cluster.refused_generic');
     }
@@ -210,12 +209,12 @@ export default function MergeProposalsSection() {
       {clusterNote && (
         <p
           className="merge-notice"
-          // `alert`, nicht `status`: das hier ist die Fehlermeldung zu einer
-          // gerade ausgeloesten Aktion, die NICHTS bewirkt hat — ein
-          // Bildschirmleser muss sie ansagen, nicht hoeflich anhaengen.
-          // Nebenwirkung, die zaehlt: der Rueckgaengig-Hinweis weiter unten ist
-          // ebenfalls `role="status"`, und `getByRole('status')` war dadurch
-          // zweideutig; jetzt ist jede Rolle eindeutig einem Ding zugeordnet.
+          // `alert`, not `status`: this is the error for an action that was
+          // just triggered and did NOTHING -- a screen reader has to announce
+          // it, not append it politely. The side effect that matters: the undo
+          // hint further down is also `role="status"`, which made
+          // `getByRole('status')` ambiguous; now each role maps to exactly one
+          // thing.
           role="alert"
         >
           <span aria-hidden="true">⚠</span>

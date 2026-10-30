@@ -68,10 +68,10 @@ export interface DocumentRow {
   /** The document's own date (invoice/letter date) for the Dokumentdatum sort;
    *  null when none derivable. Distinct from created_at (import). */
   document_date?: string | null;
-  /** Fertiger Link auf das Dokument in Paperless; null, solange die Ablage
-   *  laeuft, und dauerhaft null bei einer Dublette (die hat keine eigene
-   *  Kennung). Das Backend setzt ihn zusammen — das Frontend kennt die
-   *  Paperless-Adresse nicht. */
+  /** Ready-made link to the document in Paperless; null while filing is
+   *  still running, and permanently null for a duplicate (which has no id of
+   *  its own). The backend composes it -- the frontend does not know the
+   *  Paperless address. */
   paperless_url?: string | null;
   /** Integration upload status for the per-row icons. */
   in_paperless?: boolean;
@@ -327,11 +327,11 @@ async function fetchDocument(id: number): Promise<DocumentRow> {
 }
 
 /**
- * Ein einzelnes Dokument — fuer den Knopf unter einer Scan-Fertigmeldung.
+ * A single document -- for the button under a scan completion notice.
  *
- * Der Endpunkt setzt den Zugriffsschutz durch (401/403 ueber
- * `check_document_access`); ein Fehlschlag ist deshalb kein Sonderfall, der
- * behandelt werden muesste, sondern bedeutet schlicht: kein Link.
+ * The endpoint enforces access control (401/403 via
+ * `check_document_access`); a failure is therefore not a special case to
+ * handle but simply means: no link.
  */
 export function useDocumentQuery(id: number, enabled = true) {
   return useApiQuery(

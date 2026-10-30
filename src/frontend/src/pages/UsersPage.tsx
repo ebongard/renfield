@@ -172,7 +172,7 @@ export default function UsersPage() {
       errors.password = t('users.validationPasswordMin', { defaultValue: 'Mindestens 8 Zeichen' });
     }
     if (!formData.role_id) {
-      errors.role_id = t('users.validationRoleRequired', { defaultValue: 'Rolle ist erforderlich' });
+      errors.role_id = t('users.validationRoleRequired', { defaultValue: 'Role is required' });
     }
     if (Object.keys(errors).length > 0) {
       setFieldErrors(errors);
@@ -303,15 +303,15 @@ export default function UsersPage() {
   };
 
   /**
-   * Die Stimme als zweiten Faktor scharf stellen oder zuruecknehmen.
+   * Arm or revoke the voice as a second factor.
    *
-   * Die Asymmetrie ist ABSICHT und wird hier sichtbar gemacht: einschalten
-   * darf nur das Konto selbst, abschalten darf die Verwaltung fuer jedes Konto.
-   * Der Grund steht im Backend (`POST /users/{id}/voice-second-factor`): ein
-   * Stimmabdruck verlangen heisst einwilligen, und einwilligen kann niemand
-   * fuer jemanden anderen. Der Rueckweg dagegen MUSS offen bleiben — es gibt
-   * bewusst keinen Rueckfall auf Passwort allein, ein defektes Mikrofon waere
-   * sonst eine dauerhafte Aussperrung.
+   * The asymmetry is DELIBERATE and made visible here: only the account
+   * itself may turn it on, administration may turn it off for any account. The
+   * reason lives in the backend (`POST /users/{id}/voice-second-factor`):
+   * requiring a voiceprint means consenting, and nobody can consent on
+   * someone else's behalf. The way back, by contrast, MUST stay open -- there
+   * is deliberately no fallback to the password alone, so a broken microphone
+   * would otherwise be a permanent lockout.
    */
   const handleVoiceSecondFactor = async (user: AdminUser) => {
     const enabling = !user.voice_second_factor_enabled;
@@ -329,9 +329,9 @@ export default function UsersPage() {
       await setVoiceSecondFactor.mutateAsync({ id: user.id, enabled: enabling });
       setSuccess(enabling ? t('users.voiceFactorArmed') : t('users.voiceFactorDisarmed'));
     } catch (err) {
-      // 🛑 Dieselbe Übersetzung wie unter „Mein Konto": die 409-Antwort trägt
-      // den CODE, nicht den Satz. Hier ist der Fall `device_account` überhaupt
-      // erst erreichbar — ein Gerätekonto meldet sich nirgends selbst an.
+      // The same translation as under "my account": the 409 response carries
+      // the CODE, not the sentence. The `device_account` case is only
+      // reachable here -- a device account never signs in anywhere itself.
       const detail = (err as { response?: { data?: { detail?: unknown } } })
         ?.response?.data?.detail;
       setError(
@@ -343,42 +343,42 @@ export default function UsersPage() {
   };
 
   /**
-   * Kann dieses Konto den zweiten Faktor ueberhaupt bestehen?
+   * Can this account pass the second factor at all?
    *
-   * Das Backend verweigert das Einschalten mit 409 in ZWEI Faellen: kein
-   * verknuepftes Profil, UND ein verknuepftes Profil ohne Einbettungen. Die
-   * Oberflaeche sperrte nur den ersten — der zweite lief ins 409 und zeigte die
-   * englische Server-Meldung in einer deutschen Maske.
+   * The backend refuses turning it on with a 409 in TWO cases: no linked
+   * profile, AND a linked profile without embeddings. The UI blocked only the
+   * first -- the second ran into the 409 and showed the English server message
+   * in a German screen.
    *
-   * 🛑 Ein Profil, das NICHT in der Liste steht, gilt als brauchbar: `fetchSpeakers`
-   * schluckt Fehler und gibt `[]` zurueck (`api/resources/users.ts`). Aus einer
-   * leeren Liste „keine Einbettungen" zu folgern, wuerde bei totem
-   * `/api/speakers` jeden Schalter sperren — also nur sperren, wenn das Profil
-   * da ist und nachweislich leer.
+   * A profile that is NOT in the list counts as usable: `fetchSpeakers`
+   * swallows errors and returns `[]` (`api/resources/users.ts`). Concluding
+   * "no embeddings" from an empty list would disable every switch whenever
+   * `/api/speakers` is down -- so only disable when the profile is there and
+   * demonstrably empty.
    */
   /**
-   * 🛑 ZWEI VERSCHIEDENE FRAGEN, die nicht zusammenfallen.
+   * TWO DIFFERENT QUESTIONS that do not coincide.
    *
-   * Beide spiegeln `services/voice_factor_preconditions` im Backend:
+   * Both mirror `services/voice_factor_preconditions` in the backend:
    *
-   * * **Darf eingeschaltet werden?** — `armingBlocker`. Entspricht dem 409 der
-   *   Route und schliesst `voice_auth_enabled` BEWUSST aus: sonst waere die
-   *   Cutover-Reihenfolge unmoeglich (erst die Einwilligungen einsammeln, dann
-   *   das Flag umlegen). Solange das Flag aus ist, ruht die Huerde eben.
-   * * **Wirkt ein scharfer Faktor gerade?** — `restingReason`. Hier zaehlen
-   *   BEIDE Haelften. Diese Maske kannte nur die Profil-Haelfte und nannte alles
-   *   andere „scharf": bei der Browser-Abnahme am 2026-09-28 zeigte eine
-   *   eingewilligte Zeile „scharf", waehrend `VOICE_AUTH_ENABLED=false` die
-   *   Huerde ruhen liess. Im Cutover-Fenster waere das bei JEDER Zeile falsch,
-   *   also genau dann, wenn es zaehlt.
+   * * **May it be turned on?** -- `armingBlocker`. Matches the route's 409 and
+   *   DELIBERATELY excludes `voice_auth_enabled`: otherwise the cutover order
+   *   would be impossible (collect the consents first, then flip the flag).
+   *   While the flag is off, the hurdle simply lies dormant.
+   * * **Is an armed factor in effect right now?** -- `restingReason`. Here
+   *   BOTH halves count. This screen knew only the profile half and called
+   *   everything else "armed": in the browser acceptance check on 2026-09-28 a
+   *   consenting row showed "armed" while `VOICE_AUTH_ENABLED=false` kept the
+   *   hurdle dormant. During the cutover window that would be wrong on EVERY
+   *   row, i.e. exactly when it matters.
    *
-   * 🛑 Solange die Schalter noch laden (`undefined`), wird NICHT auf „ruht"
-   * geschlossen — eine unbekannte Antwort ist kein Beweis.
+   * While the flags are still loading (`undefined`), "dormant" is NOT
+   * concluded -- an unknown answer is no evidence.
    *
-   * 🛑 Ein Profil, das NICHT in der Sprecherliste steht, gilt als brauchbar:
-   * `fetchSpeakers` schluckt Fehler und gibt `[]` zurueck. Aus einer leeren
-   * Liste „keine Einbettungen" zu folgern, wuerde bei totem `/api/speakers`
-   * jeden Schalter sperren.
+   * A profile that is NOT in the speaker list counts as usable:
+   * `fetchSpeakers` swallows errors and returns `[]`. Concluding "no
+   * embeddings" from an empty list would disable every switch whenever
+   * `/api/speakers` is down.
    */
   const profileBlocker = (user: AdminUser): 'no_profile' | 'no_samples' | null => {
     if (!user.speaker_id) return 'no_profile';
@@ -402,7 +402,7 @@ export default function UsersPage() {
     return profileBlocker(user);
   };
 
-  /** Der Titel der Schild-Schaltflaeche: benennt den GRUND, wenn gesperrt. */
+  /** The shield button's title: names the REASON when disabled. */
   const armingTitle = (user: AdminUser): string => {
     switch (armingBlocker(user)) {
       case 'recognition_off': return t('users.voiceFactorRecognitionOff');
@@ -508,11 +508,11 @@ export default function UsersPage() {
                         </span>
                       )}
                       {user.voice_second_factor_enabled && (
-                        /* 🛑 „Scharf" und „ruht" auseinanderhalten. Fehlt eine
-                           Vorbedingung, haelt die Anmeldung die Token NICHT
-                           zurueck — die Einwilligung steht, wirkt aber nicht.
-                           Ein Abzeichen, das beides gleich zeigt, waere eine
-                           Anzeige, die luegt. */
+                        /* Keep "armed" and "dormant" apart. With a
+                           precondition missing, the login does NOT hold the
+                           tokens back -- the consent is in place but has no
+                           effect. A badge showing both the same way would be a
+                           display that lies. */
                         <span
                           className={
                             restingReason(user) === null

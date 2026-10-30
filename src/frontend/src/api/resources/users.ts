@@ -28,11 +28,11 @@ export interface AdminUser {
    */
   is_device_account?: boolean;
   /**
-   * Die Stimme ist fuer dieses Konto ZWEITER Anmeldefaktor: Passwort allein
-   * gibt keine Token mehr, `POST /auth/voice` prueft 1:1 gegen das verknuepfte
-   * Sprecherprofil. Einschalten darf das nur das Konto selbst (es ist eine
-   * Einwilligung in biometrische Verarbeitung), abschalten jede und jeder mit
-   * `users.manage` — das ist der einzige Weg zurueck bei defektem Mikrofon.
+   * For this account the voice is a SECOND login factor: the password alone no
+   * longer yields tokens, `POST /auth/voice` checks 1:1 against the linked
+   * speaker profile. Only the account itself may switch it on (it is a consent
+   * to biometric processing); anyone holding `users.manage` may switch it off
+   * -- that is the only way back when the microphone is broken.
    */
   voice_second_factor_enabled?: boolean;
 }
@@ -198,31 +198,32 @@ async function setVoiceSecondFactorRequest(
 ): Promise<AdminUser> {
   const response = await apiClient.post<AdminUser>(
     `/api/users/${args.id}/voice-second-factor`,
-    // 🛑 Das Passwort verlangt der Server NUR beim Abschalten des EIGENEN
-    // Faktors: ein Token von vor der Einwilligung überlebt sie und dürfte sie
-    // sonst zurücknehmen. Für ein fremdes Konto steht `admin` als Schutz.
+    // 🛑 The server demands the password ONLY when switching off ONE'S OWN
+    // factor: a token issued before the consent outlives it and would
+    // otherwise be able to withdraw it. For somebody else's account `admin`
+    // is the guard.
     { enabled: args.enabled, current_password: args.currentPassword ?? null },
   );
   return response.data;
 }
 
 /**
- * Die vier maschinenlesbaren Gruende aus
- * `services/voice_factor_preconditions` im Backend. Sie kommen als Code
- * heraus — aus `GET /{id}/voice-second-factor` wie aus der 409-Antwort des
- * Einschaltens — und werden HIER uebersetzt. Vorher schickte der Server drei
- * hartkodierte englische Saetze, die ein deutschsprachiges Haushaltsmitglied
- * unuebersetzt zu lesen bekam.
+ * The four machine-readable reasons from the backend's
+ * `services/voice_factor_preconditions`. They arrive as codes -- from
+ * `GET /{id}/voice-second-factor` as well as from the 409 answer when
+ * switching on -- and are translated HERE. Before that the server sent three
+ * hard-coded English sentences that a German-speaking household member got to
+ * read untranslated.
  */
 export type VoiceFactorBlocker =
   | 'voice_path_off'
   | 'recognition_off'
   | 'no_profile'
   | 'no_embeddings'
-  // 🛑 Kommt NUR aus der 409-Antwort, nie aus der Leseroute: ein Geraetekonto
-  // meldet sich nicht an und liest seinen Zustand nie selbst. Der Code gehoert
-  // trotzdem hierher — beim Umbau vom 2026-09-29 blieb er als hartkodierter
-  // englischer Satz stehen, vier Zeilen neben den dreien, die ersetzt wurden.
+  // 🛑 Comes ONLY from the 409 answer, never from the read route: a device
+  // account does not log in and never reads its own state. The code belongs
+  // here regardless -- in the 2026-09-29 rework it was left standing as a
+  // hard-coded English sentence, four lines from the three that were replaced.
   | 'device_account';
 
 export const VOICE_FACTOR_BLOCKERS: readonly VoiceFactorBlocker[] = [
@@ -240,7 +241,7 @@ export function isVoiceFactorBlocker(value: unknown): value is VoiceFactorBlocke
 
 export interface VoiceSecondFactorState {
   enabled: boolean;
-  /** `null` = nichts steht im Weg. */
+  /** `null` = nothing is in the way. */
   blocker: VoiceFactorBlocker | null;
 }
 
@@ -267,8 +268,8 @@ export function useSetVoiceSecondFactor() {
     {
       mutationFn: setVoiceSecondFactorRequest,
       onSuccess: () => {
-        // `keys.users.all` deckt auch `voiceFactor` ab (gleiches Praefix) — der
-        // Grund kann sich mit dem Umschalten geaendert haben.
+        // `keys.users.all` covers `voiceFactor` too (same prefix) -- the
+        // blocker may have changed along with the toggle.
         queryClient.invalidateQueries({ queryKey: keys.users.all });
       },
     },
