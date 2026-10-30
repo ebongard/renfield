@@ -122,7 +122,7 @@ class DocumentProcessor:
         try:
             from docling.chunking import HybridChunker
             from docling.datamodel.base_models import InputFormat
-            from docling.datamodel.pipeline_options import (  # noqa: F401 — Verfuegbarkeitstest, s. except darunter
+            from docling.datamodel.pipeline_options import (  # noqa: F401 — availability probe, see the except below
                 OcrAutoOptions,
                 PdfPipelineOptions,
             )
@@ -305,7 +305,7 @@ class DocumentProcessor:
                     "metadata": {},
                     "chunks": [],
                     "status": "failed",
-                    "error": "Dokumentkonvertierung fehlgeschlagen"
+                    "error": "conversion_failed"
                 }
 
             doc = result.document
@@ -841,7 +841,7 @@ class DocumentProcessor:
 
         except Exception as e:
             logger.error(f"Fehler beim Chunking: {e}")
-            # Fallback: Einfaches Text-Splitting (also gated).
+            # Fallback: simple text splitting (also gated).
             if hasattr(doc, 'export_to_text'):
                 text = doc.export_to_text()
                 fallback = self._simple_chunk(text)
@@ -870,7 +870,7 @@ class DocumentProcessor:
         return []
 
     def _get_chunk_type(self, chunk) -> str:
-        """Ermittelt den Chunk-Typ (paragraph, table, code, etc.)"""
+        """Determine the chunk type (paragraph, table, code, etc.)"""
         try:
             if hasattr(chunk, 'meta') and hasattr(chunk.meta, 'doc_items'):
                 if chunk.meta.doc_items:
@@ -894,7 +894,7 @@ class DocumentProcessor:
         return None
 
     def _simple_chunk(self, text: str) -> list[dict[str, Any]]:
-        """Fallback: Einfaches Text-Splitting nach Zeichen"""
+        """Fallback: simple character-based text splitting"""
         chunks = []
         chunk_size = settings.rag_chunk_size * 4  # ~4 chars per token
         overlap = settings.rag_chunk_overlap * 4

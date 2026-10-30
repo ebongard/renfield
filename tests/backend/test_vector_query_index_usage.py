@@ -53,9 +53,9 @@ INDEXED_TABLES = {
 #     cast is only free when the index is used as a result; otherwise the
 #     halfvec conversion costs every row of a Seq Scan for nothing.
 #     Measured in the household on 2026-09-25 against real data:
-#       kg_entities            4 813 Zeilen   4,6 ms mit Cast (hnsw) / 34 ms ohne
-#       document_chunks        2 122 Zeilen   101 ms mit Cast (seq)  / 16 ms ohne
-#       conversation_memories     81 Zeilen   4,1 ms mit Cast (seq)  / 0,9 ms ohne
+#       kg_entities            4 813 rows     4.6 ms with cast (hnsw) / 34 ms without
+#       document_chunks        2 122 rows     101 ms with cast (seq)  / 16 ms without
+#       conversation_memories     81 rows     4.1 ms with cast (seq)  / 0.9 ms without
 #     TRIGGER against forgetting: `services/vector_index_threshold.py` asks
 #     the PLANNER daily whether it would take the index in the cast form --
 #     not the row count. The row count does not predict it: xidra uses the

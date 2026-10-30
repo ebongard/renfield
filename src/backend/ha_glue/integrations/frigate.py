@@ -104,7 +104,7 @@ class FrigateClient:
         port = port if port is not None else ha_glue_settings.frigate_mqtt_port
         def on_connect(client, userdata, flags, rc):
             logger.info(f"✅ MQTT verbunden (Code: {rc})")
-            # Alle Frigate Events abonnieren
+            # Subscribe to all Frigate events
             client.subscribe("frigate/events")
             client.subscribe("frigate/+/+/snapshot")
 
@@ -113,18 +113,18 @@ class FrigateClient:
                 topic = msg.topic
                 payload = json.loads(msg.payload.decode())
 
-                # Event-Typ identifizieren
+                # Identify the event type
                 if "events" in topic:
                     event_type = payload.get("type")
 
                     if event_type == "new":
-                        # Neues Objekt erkannt
+                        # New object detected
                         self._handle_new_object(payload)
                     elif event_type == "end":
-                        # Objekt verlassen
+                        # Object left
                         self._handle_object_left(payload)
 
-                # Callbacks aufrufen
+                # Invoke the callbacks
                 for callback in self.event_callbacks:
                     callback(topic, payload)
             except Exception as e:

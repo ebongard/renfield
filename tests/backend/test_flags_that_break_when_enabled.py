@@ -362,7 +362,7 @@ class TestVoiceSecondFactor:
 
     @staticmethod
     def _stub_ticket(monkeypatch, *, user_id):
-        """Redis-freies Ticket. Der Speicher hat seine eigenen Tests."""
+        """Redis-free ticket. The store has its own tests."""
         from services import voice_second_factor_store as store
 
         async def _consume(_t, _ip):
@@ -465,7 +465,7 @@ class TestVoiceSecondFactor:
         assert not out.access_token
         assert "voice_second_factor" not in failures
 
-    # --- der gute Fall ---------------------------------------------------
+    # --- the good case ---------------------------------------------------
 
     async def test_both_factors_pass_then_tokens_and_cookies(self, db_session, monkeypatch):
         from fastapi import Response
@@ -635,7 +635,7 @@ class TestVoiceSecondFactor:
         self._assert_opaque(out)
 
     async def test_recognition_off_computes_no_embedding(self, db_session, monkeypatch):
-        """Ein ECAPA-Stimmabdruck ist biometrisches Datum (Art. 9 DSGVO)."""
+        """An ECAPA voiceprint is biometric data (Art. 9 GDPR)."""
         from fastapi import Response
 
         from api.routes import auth as auth_routes

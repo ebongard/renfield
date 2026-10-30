@@ -99,7 +99,7 @@ def test_a_hinted_tool_filtered_OUT_of_the_offered_set_is_a_WARNING(protokoll):
     log_hint_arrival(_zustand(
         {"scan_document": "x" * 1426},
         [_Werkzeug("scan_document", "x" * 1426), _Werkzeug("scanner_status")],
-        angeboten=[_Werkzeug("scanner_status")],   # der behinweiste fiel raus
+        angeboten=[_Werkzeug("scanner_status")],   # the hinted one dropped out
     ))
     warnungen = [m for stufe, m in protokoll if stufe == "WARNING"]
     assert warnungen, (

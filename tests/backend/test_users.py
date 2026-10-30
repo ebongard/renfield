@@ -634,7 +634,7 @@ class TestDeleteRefusesToTakeKnowledgeWithIt:
             await users_routes.delete_user(
                 user_id=victim.id, db=db_session, current_user=self._admin(test_role),
             )
-        assert err.value.status_code == 409          # kein 500
+        assert err.value.status_code == 409          # not a 500
         assert err.value.detail["blocked_by"] == "circle_memberships"
 
     @pytest.mark.database
@@ -1401,7 +1401,7 @@ class TestTheConsentBelongsToThePerson:
                 current_user=_plain_member(test_user.id),
             )
         assert exc.value.status_code == 409
-        # 🛑 AUCH HIER DER CODE, NICHT DER SATZ.
+        # 🛑 HERE TOO: THE CODE, NOT THE SENTENCE.
         #
         # In the 2026-09-29 rework the three named English sentences were
         # replaced by codes -- and this fourth one, FOUR LINES above it in the

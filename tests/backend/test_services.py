@@ -1,7 +1,7 @@
 """
 Tests for the backend services
 
-Testet:
+Covers:
 - OllamaService (LLM Chat, Intent Extraction)
 - RAGService (Document Processing, Search)
 - SpeakerService (Voice Embeddings, Identification)
@@ -49,7 +49,7 @@ class TestOllamaService:
 
     @pytest.mark.unit
     async def test_chat_simple(self, mock_ollama_client):
-        """Testet einfachen Chat"""
+        """Tests a simple chat"""
         from services.ollama_service import OllamaService
 
         with patch('services.ollama_service.settings') as mock_settings:
@@ -69,7 +69,7 @@ class TestOllamaService:
 
     @pytest.mark.unit
     async def test_chat_with_history(self, mock_ollama_client):
-        """Testet Chat mit Historie"""
+        """Tests chat with history"""
         from services.ollama_service import OllamaService
 
         with patch('services.ollama_service.settings') as mock_settings:
@@ -94,7 +94,7 @@ class TestOllamaService:
 
     @pytest.mark.unit
     async def test_ensure_model_loaded(self, mock_ollama_client):
-        """Testet Model-Loading"""
+        """Tests model loading"""
         from services.ollama_service import OllamaService
 
         with patch('services.ollama_service.settings') as mock_settings:
@@ -342,7 +342,7 @@ class TestRAGService:
 
     @pytest.mark.unit
     async def test_get_embedding(self, db_session):
-        """Testet Embedding-Generierung"""
+        """Tests embedding generation"""
         from services.rag_service import RAGService
 
         # Create mock client
@@ -429,7 +429,7 @@ class TestSpeakerService:
 
     @pytest.mark.unit
     def test_embedding_to_base64(self):
-        """Testet Embedding zu Base64 Konvertierung"""
+        """Tests embedding-to-Base64 conversion"""
         from services.speaker_service import SpeakerService
 
         with patch('services.speaker_service.settings') as mock_settings:
@@ -447,7 +447,7 @@ class TestSpeakerService:
 
     @pytest.mark.unit
     def test_embedding_from_base64(self):
-        """Testet Base64 zu Embedding Konvertierung"""
+        """Tests Base64-to-embedding conversion"""
         from services.speaker_service import SpeakerService
 
         with patch('services.speaker_service.settings') as mock_settings:
@@ -465,7 +465,7 @@ class TestSpeakerService:
 
     @pytest.mark.unit
     def test_compute_similarity(self):
-        """Testet Cosine Similarity Berechnung"""
+        """Tests the cosine similarity computation"""
         from services.speaker_service import SpeakerService
 
         with patch('services.speaker_service.settings') as mock_settings:
@@ -525,7 +525,7 @@ class TestActionExecutor:
 
     @pytest.mark.unit
     async def test_execute_mcp_intent(self):
-        """Testet MCP Intent Routing"""
+        """Tests MCP intent routing"""
         from services.action_executor import ActionExecutor
 
         mock_mcp = AsyncMock()
@@ -579,7 +579,7 @@ class TestAudioPreprocessor:
 
     @pytest.mark.unit
     def test_audio_preprocessor_init(self):
-        """Testet Initialisierung"""
+        """Tests initialization"""
         from services.audio_preprocessor import AudioPreprocessor
 
         preprocessor = AudioPreprocessor()
@@ -589,7 +589,7 @@ class TestAudioPreprocessor:
 
     @pytest.mark.unit
     def test_normalize_audio(self):
-        """Testet Audio-Normalisierung"""
+        """Tests audio normalization"""
         from services.audio_preprocessor import AudioPreprocessor
 
         preprocessor = AudioPreprocessor()
@@ -612,7 +612,7 @@ class TestDeviceManager:
 
     @pytest.mark.unit
     def test_device_manager_init(self):
-        """Testet Initialisierung"""
+        """Tests initialization"""
         from ha_glue.services.device_manager import DeviceManager
 
         manager = DeviceManager()
@@ -702,7 +702,7 @@ class TestRoomServiceUnit:
 
     @pytest.mark.database
     async def test_create_room(self, db_session):
-        """Testet Raum-Erstellung"""
+        """Tests room creation"""
         from ha_glue.services.room_service import RoomService
 
         # Create a fresh session to avoid transaction issues
@@ -738,7 +738,7 @@ class TestRoomServiceUnit:
 
     @pytest.mark.database
     async def test_get_all_rooms(self, db_session, test_room):
-        """Testet Raum-Liste"""
+        """Tests the room list"""
         from ha_glue.services.room_service import RoomService
 
         # Flush to ensure test_room is in the database

@@ -1043,7 +1043,7 @@ def preselect_input_signature(preselect_prompt: str) -> str:
       `lang` is the REQUESTED code, not the resolved template -- for a
       language without an entry of its own `prompt_manager` falls back to the
       default, and the signature would have claimed a change where the prompt
-      byteweise derselbe war.
+      was byte-for-byte the same.
 
     The finished prompt carries all four inputs: resolved template, language,
     message and tool list -- and it cannot go stale when a fifth one is added.
@@ -1224,7 +1224,7 @@ class AgentService:
         # 🛑 `_PRESELECT_DESC_CHARS` cuts the vendor's GENERIC description. The
         # operator's `tool_hints` entry goes along UNTRUNCATED, and that is the
         # point: it is written deliberately for exactly this
-        # Entscheidung geschrieben.
+        # decision.
         #
         # What happens without it, measured 2026-10-26: on "scanne nach
         # xidra" `scan_document` dropped out of the preselect (3 of 33 tools)

@@ -214,7 +214,7 @@ def test_gekappter_durchlauf_extrahiert_NICHT(monkeypatch):
     )
 
     ergebnis = _spawn_satellite_extraction(
-        user_text="Überweise an die Stadtkasse dreihundert",   # abgeschnitten
+        user_text="Überweise an die Stadtkasse dreihundert",   # cut off
         response_text="Ich musste die Aufnahme … ",
         user_id=1,
         session_id="sess-1",

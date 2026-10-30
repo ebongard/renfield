@@ -86,7 +86,7 @@ class HomeAssistantClient:
         service_data: dict | None = None,
         timeout: float | None = None
     ) -> bool:
-        """Service aufrufen"""
+        """Call a service"""
         try:
             data = service_data or {}
             if entity_id:
@@ -263,7 +263,7 @@ class HomeAssistantClient:
             ]
             keywords.update(action_words)
 
-            # Cache aktualisieren
+            # Update the cache
             self._keywords_cache = keywords
             self._keywords_last_updated = datetime.now()
 

@@ -135,7 +135,7 @@ class _Op:
 
 
 async def _run(conn, direction: str) -> None:
-    """Migration im echten Schema fahren (sync-Bridge, wie Alembic selbst)."""
+    """Run the migration against the real schema (sync bridge, as Alembic itself does)."""
     mig = _load_migration()
 
     def _sync(sync_conn):

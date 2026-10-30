@@ -1,7 +1,7 @@
 """
 Tests for the rooms API routes
 
-Testet:
+Covers:
 - Room CRUD Endpoints
 - Device Management Endpoints
 - Home Assistant Sync Endpoints
@@ -89,7 +89,7 @@ class TestRoomCRUDEndpoints:
 
     @pytest.mark.integration
     async def test_update_room(self, async_client: AsyncClient, test_room: Room):
-        """Test: PATCH /api/rooms/{id} - Room aktualisieren"""
+        """Test: PATCH /api/rooms/{id} - update a room"""
         response = await async_client.patch(
             f"/api/rooms/{test_room.id}",
             json={
@@ -146,7 +146,7 @@ class TestRoomDeviceEndpoints:
     async def test_register_device_to_room(
         self, async_client: AsyncClient, test_room: Room
     ):
-        """Test: POST /api/rooms/{id}/devices - Device registrieren"""
+        """Test: POST /api/rooms/{id}/devices - register a device"""
         response = await async_client.post(
             f"/api/rooms/{test_room.id}/devices",
             json={
@@ -187,7 +187,7 @@ class TestRoomDeviceEndpoints:
     async def test_move_device_to_room(
         self, async_client: AsyncClient, test_device: RoomDevice, db_session: AsyncSession
     ):
-        """Test: PATCH /api/rooms/devices/{device_id}/room/{room_id} - Device verschieben"""
+        """Test: PATCH /api/rooms/devices/{device_id}/room/{room_id} - move a device"""
         # Create target room
         target_room = Room(name="Target Room", alias="targetroom")
         db_session.add(target_room)
@@ -330,7 +330,7 @@ class TestOutputDeviceEndpoints:
     async def test_update_output_device(
         self, async_client: AsyncClient, test_room: Room, db_session: AsyncSession
     ):
-        """Test: PATCH /api/rooms/output-devices/{id} - Output Device aktualisieren"""
+        """Test: PATCH /api/rooms/output-devices/{id} - update an output device"""
         # Create output device
         output = RoomOutputDevice(
             room_id=test_room.id,
@@ -528,7 +528,7 @@ class TestRoomAPIErrorHandling:
 
     @pytest.mark.integration
     async def test_missing_required_fields(self, async_client: AsyncClient):
-        """Test: Fehlende Pflichtfelder"""
+        """Test: Missing required fields"""
         response = await async_client.post(
             "/api/rooms",
             json={}  # Missing 'name'
@@ -540,7 +540,7 @@ class TestRoomAPIErrorHandling:
     async def test_output_device_missing_target(
         self, async_client: AsyncClient, test_room: Room
     ):
-        """Test: Output Device ohne renfield_device_id und ha_entity_id"""
+        """Test: Output device without renfield_device_id and ha_entity_id"""
         response = await async_client.post(
             f"/api/rooms/{test_room.id}/output-devices",
             json={

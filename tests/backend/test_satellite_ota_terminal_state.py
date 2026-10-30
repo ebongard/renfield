@@ -45,7 +45,7 @@ def _manager_with_satellite(status=None, stage=None, error=None):
 
 
 # ==========================================================================
-# 1. Endstufen beenden den Lauf
+# 1. Terminal stages end the run
 # ==========================================================================
 
 
@@ -185,14 +185,14 @@ def test_progress_for_unknown_satellite_is_ignored():
 
 
 # ==========================================================================
-# 3. Die Zeitgrenze im Kehraus
+# 3. The time limit in the sweep
 # ==========================================================================
 
 
 @pytest.mark.backend
 @pytest.mark.asyncio
 async def test_cleanup_stale_fails_a_run_without_terminal_state():
-    """Das Auffangnetz: ein Lauf, dessen Endmeldung nie eintrifft."""
+    """The safety net: a run whose final report never arrives."""
     import time
 
     from ha_glue.services.satellite_manager import UpdateStatus as US

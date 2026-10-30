@@ -94,7 +94,7 @@ class Settings(BaseSettings):
     # Redis
     redis_url: str = "redis://redis:6379"
 
-    # Ollama - Multi-Modell Konfiguration
+    # Ollama - multi-model configuration
     ollama_url: str = "http://ollama:11434"
     ollama_model: str = "llama3.2:3b"  # Legacy fallback; recommended: qwen3:14b
     ollama_chat_model: str = "llama3.2:3b"      # Default for dev; recommended: qwen3:14b
@@ -927,11 +927,11 @@ class Settings(BaseSettings):
     skill_curator_min_uses_to_consider_stale: int = Field(default=3, ge=1, le=100)  # Avoid archiving rarely-tested skills
     skill_curator_max_merges_per_run: int = Field(default=20, ge=1, le=200)   # Safety cap
 
-    # KG edge validity (#875 Stufe 1, docs/design/kg-bitemporal-edges.md). Gates the
+    # KG edge validity (#875 stage 1, docs/design/kg-bitemporal-edges.md). Gates the
     # READ filter `valid_to IS NULL OR valid_to > now` on every live-relation query
     # (services/kg_validity_sql.py). Off = every query's SQL is byte-identical to
-    # before the columns existed. Stufe 1 never SETS valid_to, so turning it on
-    # changes no result either — it only arms the filter for Stufe 2's detector,
+    # before the columns existed. Stage 1 never SETS valid_to, so turning it on
+    # changes no result either — it only arms the filter for stage 2's detector,
     # which will get its own switch and its own explicit go.
     kg_validity_filter_enabled: bool = False
 
@@ -1821,7 +1821,7 @@ class Settings(BaseSettings):
 
     # Phase 3: Reminders
     proactive_reminders_enabled: bool = False
-    proactive_reminder_check_interval: int = 15        # Sekunden
+    proactive_reminder_check_interval: int = 15        # seconds
 
     # Obligation-deadline notifier (Schicht A). Daily idempotent scan over
     # document_facts (obligations are the scheduling source of truth) →

@@ -83,7 +83,7 @@ Die Review-Schlange wird **je Namens-Cluster** entschieden, nicht je Paar (`POST
 | `atom_explicit_grants` | Ausnahme-Grants: `(atom_id, granted_to_user_id, permission_level)` |
 | `circles` | Pro-User Tier-Konfiguration (optionale Anpassung der 5 Standard-Stufen) |
 | `circle_memberships` | Wer ist in welchem Tier-Ring welches Eigentümers |
-| `kb_shares` | Knowledge-Base-Level Share → explodiert in Per-Chunk-Grants (siehe `kb_shares_service.py`) |
+| `kb_shares` | Knowledge-Base-Level Share → ein Grant je Dokument-Atom (seit `pc20260423`, vorher je Chunk; siehe `kb_shares_service.py`) |
 
 **Denormalisierte Spalten**: `document_chunks.circle_tier`, `document_chunks.atom_id`, dasselbe Paar auf `kg_entities`, `kg_relations`, `conversation_memories`.
 
@@ -120,7 +120,7 @@ Jedes Subsystem, das Inhalte dem LLM präsentiert, wendet den Circle-Filter an:
 | `services/circle_resolver.py` | `PolicyEvaluator` + Cache, Access-Checks außerhalb von SQL |
 | `services/circle_sql.py` | `build_filter(user_id)` — die zentrale WHERE-Klausel-Factory |
 | `services/polymorphic_atom_store.py` | Cross-Source-Retrieval mit RRF für `/api/atoms` |
-| `services/kb_shares_service.py` | KB-Level-Share → generiert pro Chunk einen `AtomExplicitGrant` |
+| `services/kb_shares_service.py` | KB-Level-Share → generiert pro Dokument einen `AtomExplicitGrant` |
 
 ---
 

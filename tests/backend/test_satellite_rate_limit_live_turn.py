@@ -205,7 +205,7 @@ def test_erlaubter_frame_wird_nicht_klassifiziert():
 
 
 # ---------------------------------------------------------------------------
-# Review-Befunde: Parse-Budget, ehrliche Verstossmeldung, Verdrahtung
+# Review findings: parse budget, honest violation report, wiring
 # ---------------------------------------------------------------------------
 
 @pytest.mark.unit

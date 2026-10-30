@@ -228,7 +228,7 @@ class PiperService:
 
     async def synthesize_to_bytes(self, text: str, language: str = None) -> bytes:
         """
-        Text zu Audio-Bytes synthetisieren.
+        Synthesize text to audio bytes.
 
         Args:
             text: Text to synthesize

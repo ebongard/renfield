@@ -73,7 +73,7 @@ class TestSpeechToTextAPI:
         mock_audio_file,
         mock_whisper_service
     ):
-        """Testet POST /api/voice/stt"""
+        """Tests POST /api/voice/stt"""
         import api.routes.voice as voice_module
         original_service = voice_module.whisper_service
 
@@ -100,7 +100,7 @@ class TestSpeechToTextAPI:
         mock_audio_file,
         mock_whisper_service
     ):
-        """Testet STT mit Sprechererkennung"""
+        """Tests STT with speaker recognition"""
         import api.routes.voice as voice_module
         original_service = voice_module.whisper_service
 
@@ -128,7 +128,7 @@ class TestSpeechToTextAPI:
         async_client: AsyncClient,
         mock_audio_file
     ):
-        """Testet STT mit leerem Ergebnis"""
+        """Tests STT with an empty result"""
         import api.routes.voice as voice_module
         original_service = voice_module.whisper_service
 
@@ -163,7 +163,7 @@ class TestTextToSpeechAPI:
         async_client: AsyncClient,
         mock_piper_service
     ):
-        """Testet POST /api/voice/tts"""
+        """Tests POST /api/voice/tts"""
         import api.routes.voice as voice_module
         original_service = voice_module.piper_service
 
@@ -182,7 +182,7 @@ class TestTextToSpeechAPI:
 
     @pytest.mark.integration
     async def test_tts_empty_response(self, async_client: AsyncClient):
-        """Testet TTS mit leerem Ergebnis"""
+        """Tests TTS with an empty result"""
         import api.routes.voice as voice_module
         original_service = voice_module.piper_service
 
@@ -208,7 +208,7 @@ class TestTextToSpeechAPI:
         async_client: AsyncClient,
         mock_piper_service
     ):
-        """Testet TTS mit Standard-Voice"""
+        """Tests TTS with the default voice"""
         import api.routes.voice as voice_module
         original_service = voice_module.piper_service
 
@@ -242,7 +242,7 @@ class TestTTSCacheAPI:
 
     @pytest.mark.integration
     async def test_tts_cache_found(self, async_client: AsyncClient):
-        """Testet GET /api/voice/tts-cache mit gecachtem Audio.
+        """Tests GET /api/voice/tts-cache with cached audio.
 
         The route resolves cached audio through the ``fetch_tts_audio_cache``
         hook (ha_glue owns the cache storage), not a direct
@@ -327,7 +327,7 @@ class TestVoiceChatAPI:
         mock_whisper_service,
         mock_piper_service
     ):
-        """Testet POST /api/voice/voice-chat"""
+        """Tests POST /api/voice/voice-chat"""
         import api.routes.voice as voice_module
 
         original_whisper = voice_module.whisper_service
@@ -369,7 +369,7 @@ class TestVoiceChatAPI:
         mock_whisper_service,
         mock_piper_service
     ):
-        """Testet Voice-Chat mit Sprechererkennung"""
+        """Tests voice chat with speaker recognition"""
         import api.routes.voice as voice_module
 
         original_whisper = voice_module.whisper_service
@@ -408,7 +408,7 @@ class TestVoiceChatAPI:
         async_client: AsyncClient,
         mock_audio_file
     ):
-        """Testet Voice-Chat mit leerem STT-Ergebnis"""
+        """Tests voice chat with an empty STT result"""
         import api.routes.voice as voice_module
 
         original_whisper = voice_module.whisper_service

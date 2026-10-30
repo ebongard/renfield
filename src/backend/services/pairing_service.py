@@ -314,8 +314,8 @@ class PairingService:
         """
         Verify the offer + create the responder-side PeerUser row carrying
         `granted_tier = my_tier_for_you`. Returns a signed response for the
-        initiator to ingest. KEINE `CircleMembership` mehr — siehe
-        Modul-Docstring.
+        initiator to ingest. NO `CircleMembership` any more — see the
+        module docstring.
         """
         self._verify_offer(offer)
 
@@ -400,7 +400,7 @@ class PairingService:
             remote_pubkey=response.responder_pubkey,
             remote_display_name=response.responder_display_name,
             remote_user_id=response.responder_user_id,
-            granted_tier=their_tier_for_me,   # siehe `accept_offer`
+            granted_tier=their_tier_for_me,   # see `accept_offer`
             transport_config=transport_config,
         )
         await _get_or_create_circle(self.db, current_user.id)

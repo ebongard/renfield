@@ -16,7 +16,7 @@ Three access shapes, each circle-access-filtered through the parent Document:
   - ``facts_for_document(document_id, asker_id)`` → all facts of one doc (the
     future per-document panel; the route gates access separately).
   - ``obligations(asker_id, due_before, limit)`` → the obligation agenda
-    (bills + Behörde deadlines), ordered by printed Frist.
+    (bills + deadlines set by authorities), ordered by the printed deadline.
 
 Results mirror the dict shape the ``_wrap_document_fact_results`` helper in
 ``polymorphic_atom_store`` consumes. Each query swallows its own exceptions and

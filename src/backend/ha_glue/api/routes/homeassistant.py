@@ -163,7 +163,7 @@ async def call_service(
     user: User = Depends(require_permission(Permission.HA_FULL))
 ):
     """
-    Beliebigen Service aufrufen.
+    Call an arbitrary service.
 
     Requires: ha.full permission (most privileged HA permission)
     """

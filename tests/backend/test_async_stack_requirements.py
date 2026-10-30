@@ -36,7 +36,7 @@ _REQUIREMENTS = Path(__file__).resolve().parents[2] / "src" / "backend" / "requi
 
 
 def _zeilen() -> list[str]:
-    """Die Anforderungszeilen ohne Kommentare und Leerzeilen."""
+    """The requirement lines without comments and blank lines."""
     return [
         z.split("#", 1)[0].strip()
         for z in _REQUIREMENTS.read_text().splitlines()

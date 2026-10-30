@@ -1,10 +1,10 @@
 """
 Tests for the chat API
 
-Testet:
+Covers:
 - Sending chat messages
-- Konversations-Historie
-- Session-Management
+- Conversation history
+- Session management
 - Search and statistics
 """
 
@@ -167,7 +167,7 @@ class TestChatHistoryAPI:
         async_client: AsyncClient,
         conversation_with_messages: Conversation
     ):
-        """Testet GET /api/chat/history mit Nachrichten"""
+        """Tests GET /api/chat/history with messages"""
         response = await async_client.get(
             f"/api/chat/history/{conversation_with_messages.session_id}"
         )
@@ -188,7 +188,7 @@ class TestChatSessionAPI:
         async_client: AsyncClient,
         test_conversation: Conversation
     ):
-        """Testet DELETE /api/chat/session"""
+        """Tests DELETE /api/chat/session"""
         response = await async_client.delete(
             f"/api/chat/session/{test_conversation.session_id}"
         )
@@ -215,7 +215,7 @@ class TestConversationsAPI:
         async_client: AsyncClient,
         conversation_with_messages: Conversation
     ):
-        """Testet GET /api/chat/conversations"""
+        """Tests GET /api/chat/conversations"""
         # Mock the ollama service method - app is imported from main module
         with patch('main.app') as mock_app:
             mock_ollama = AsyncMock()
@@ -245,7 +245,7 @@ class TestChatStatsAPI:
         async_client: AsyncClient,
         conversation_with_messages: Conversation
     ):
-        """Testet GET /api/chat/stats"""
+        """Tests GET /api/chat/stats"""
         response = await async_client.get("/api/chat/stats")
 
         assert response.status_code == 200
@@ -272,7 +272,7 @@ class TestChatSearchAPI:
         async_client: AsyncClient,
         conversation_with_messages: Conversation
     ):
-        """Testet GET /api/chat/search"""
+        """Tests GET /api/chat/search"""
         # Mock the ollama service - app is imported from main module
         with patch('main.app') as mock_app:
             mock_ollama = AsyncMock()
@@ -346,7 +346,7 @@ class TestChatCleanupAPI:
         old_conversation: Conversation,
         db_session: AsyncSession
     ):
-        """Testet DELETE /api/chat/conversations/cleanup"""
+        """Tests DELETE /api/chat/conversations/cleanup"""
         response = await async_client.delete("/api/chat/conversations/cleanup?days=30")
 
         assert response.status_code == 200

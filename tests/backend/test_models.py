@@ -1,9 +1,9 @@
 """
 Tests for the database models
 
-Testet:
+Covers:
 - Model instantiation and defaults
-- Relationships und Foreign Keys
+- Relationships and foreign keys
 - Property methods
 - Validation
 """
@@ -64,7 +64,7 @@ class TestRoomModel:
 
     @pytest.mark.database
     async def test_room_with_ha_area(self, db_session: AsyncSession):
-        """Test: Room mit Home Assistant Area ID"""
+        """Test: Room with a Home Assistant area ID"""
         room = Room(
             name="Küche",
             alias="kueche",
@@ -192,7 +192,7 @@ class TestRoomDeviceModel:
 
     @pytest.mark.database
     async def test_device_capability_properties(self, db_session: AsyncSession, test_room: Room):
-        """Test: Device Capability Property-Methoden"""
+        """Test: Device capability property methods"""
         device = RoomDevice(
             room_id=test_room.id,
             device_id="prop-device",
@@ -240,7 +240,7 @@ class TestRoomOutputDeviceModel:
     async def test_output_device_with_renfield_device(
         self, db_session: AsyncSession, test_room: Room, test_device: RoomDevice
     ):
-        """Test: Output Device mit Renfield Device"""
+        """Test: Output device with a Renfield device"""
         output = RoomOutputDevice(
             room_id=test_room.id,
             output_provider="renfield",
@@ -261,7 +261,7 @@ class TestRoomOutputDeviceModel:
 
     @pytest.mark.database
     async def test_output_device_with_ha_entity(self, db_session: AsyncSession, test_room: Room):
-        """Test: Output Device mit Home Assistant Entity"""
+        """Test: Output device with a Home Assistant entity"""
         output = RoomOutputDevice(
             room_id=test_room.id,
             output_provider="homeassistant",
@@ -397,7 +397,7 @@ class TestSpeakerModel:
 
     @pytest.mark.database
     async def test_speaker_with_embeddings(self, db_session: AsyncSession, test_speaker: Speaker):
-        """Test: Speaker mit Embeddings Relationship"""
+        """Test: Speaker-to-embeddings relationship"""
         embedding1 = SpeakerEmbedding(
             speaker_id=test_speaker.id,
             embedding="base64_encoded_data_1",
@@ -471,7 +471,7 @@ class TestConversationModel:
     async def test_conversation_with_messages(
         self, db_session: AsyncSession, test_conversation: Conversation
     ):
-        """Test: Conversation mit Messages Relationship"""
+        """Test: Conversation-to-messages relationship"""
         msg1 = Message(
             conversation_id=test_conversation.id,
             role="user",
@@ -496,7 +496,7 @@ class TestConversationModel:
 
     @pytest.mark.database
     async def test_message_with_metadata(self, db_session: AsyncSession, test_conversation: Conversation):
-        """Test: Message mit Metadata JSON"""
+        """Test: Message with metadata JSON"""
         metadata = {
             "intent": "homeassistant.turn_on",
             "confidence": 0.95,
@@ -627,7 +627,7 @@ class TestHomeAssistantEntityModel:
 
     @pytest.mark.database
     async def test_ha_entity_unique_constraint(self, db_session: AsyncSession):
-        """Test: entity_id muss eindeutig sein"""
+        """Test: entity_id must be unique"""
         entity1 = HomeAssistantEntity(
             entity_id="switch.test",
             friendly_name="Test Switch",
@@ -637,7 +637,7 @@ class TestHomeAssistantEntityModel:
         db_session.add(entity1)
         await db_session.commit()
 
-        # Versuche doppelte entity_id
+        # Attempt a duplicate entity_id
         entity2 = HomeAssistantEntity(
             entity_id="switch.test",
             friendly_name="Another Switch",

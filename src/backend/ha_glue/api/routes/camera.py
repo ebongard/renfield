@@ -47,7 +47,7 @@ async def list_cameras(
     user: User = Depends(require_permission(Permission.CAM_VIEW))
 ):
     """
-    Liste aller Kameras.
+    List every camera.
 
     Requires: cam.view permission
     """

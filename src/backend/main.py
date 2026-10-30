@@ -13,11 +13,11 @@ from fastapi.responses import JSONResponse
 from loguru import logger
 from starlette.middleware.base import BaseHTTPMiddleware
 
-# Logging konfigurieren
+# Configure logging
 logger.remove()
 logger.add(sys.stderr, level=os.getenv("LOG_LEVEL", "INFO"))
 
-# Lokale Imports
+# Local imports
 from api.lifecycle import lifespan
 from api.routes import (
     atoms,

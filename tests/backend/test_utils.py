@@ -1,7 +1,7 @@
 """
 Tests for the utility modules
 
-Testet:
+Covers:
 - Config Settings
 - Audio Preprocessor
 - Other helper functions
@@ -227,7 +227,7 @@ class TestRoomNameNormalizationEdgeCases:
 
     @pytest.mark.unit
     def test_numbers_preserved(self):
-        """Test: Zahlen bleiben erhalten"""
+        """Test: Digits are preserved"""
         from ha_glue.services.room_service import normalize_room_name
 
         assert normalize_room_name("Zimmer 1") == "zimmer1"
@@ -244,7 +244,7 @@ class TestRoomNameNormalizationEdgeCases:
 
     @pytest.mark.unit
     def test_accented_characters(self):
-        """Test: Akzentierte Zeichen"""
+        """Test: Accented characters"""
         from ha_glue.services.room_service import normalize_room_name
 
         assert normalize_room_name("Café") == "cafe"
@@ -252,14 +252,14 @@ class TestRoomNameNormalizationEdgeCases:
 
     @pytest.mark.unit
     def test_consecutive_spaces(self):
-        """Test: Mehrere aufeinanderfolgende Leerzeichen"""
+        """Test: Several consecutive spaces"""
         from ha_glue.services.room_service import normalize_room_name
 
         assert normalize_room_name("Wohn    Zimmer") == "wohnzimmer"
 
     @pytest.mark.unit
     def test_underscores_and_dashes(self):
-        """Test: Unterstriche und Bindestriche"""
+        """Test: Underscores and hyphens"""
         from ha_glue.services.room_service import normalize_room_name
 
         assert normalize_room_name("kinder-zimmer") == "kinderzimmer"
@@ -275,7 +275,7 @@ class TestDeviceIdGenerationEdgeCases:
 
     @pytest.mark.unit
     def test_unknown_device_type(self):
-        """Test: Unbekannter Device Type bekommt default prefix"""
+        """Test: An unknown device type gets the default prefix"""
         from ha_glue.services.room_service import generate_device_id
 
         device_id = generate_device_id("unknown_type", "Test Room", "suffix")
@@ -284,7 +284,7 @@ class TestDeviceIdGenerationEdgeCases:
 
     @pytest.mark.unit
     def test_special_characters_in_room(self):
-        """Test: Sonderzeichen im Raumnamen"""
+        """Test: Special characters in the room name"""
         from ha_glue.services.room_service import generate_device_id
 
         device_id = generate_device_id("satellite", "Wohn/Ess-Zimmer!", "main")
@@ -295,7 +295,7 @@ class TestDeviceIdGenerationEdgeCases:
 
     @pytest.mark.unit
     def test_empty_room_name(self):
-        """Test: Leerer Raumname"""
+        """Test: Empty room name"""
         from ha_glue.services.room_service import generate_device_id
 
         device_id = generate_device_id("satellite", "", "suffix")
@@ -324,7 +324,7 @@ class TestAudioPreprocessor:
 
     @pytest.mark.unit
     def test_normalize_audio(self):
-        """Test: Audio Normalisierung"""
+        """Test: Audio normalization"""
         try:
             import numpy as np
 

@@ -1,5 +1,5 @@
 """
-Task Queue Service mit Redis (async).
+Task queue service on Redis (async).
 
 Two implementations live here:
 
@@ -36,14 +36,14 @@ _REDIS_SOCKET_TIMEOUT_S = 15
 
 
 class TaskQueue:
-    """Async Task Queue mit Redis"""
+    """Async task queue on Redis"""
 
     def __init__(self):
         self.redis_client = aioredis.from_url(settings.redis_url, decode_responses=True)
         self.queue_name = "renfield:tasks"
 
     async def enqueue(self, task_type: str, parameters: dict) -> str:
-        """Task in Queue einreihen"""
+        """Enqueue a task"""
         try:
             task_id = f"task:{task_type}:{await self.redis_client.incr('task:counter')}"
 
@@ -87,7 +87,7 @@ class TaskQueue:
             return None
 
     async def update_task_status(self, task_id: str, status: str, result: dict | None = None):
-        """Task-Status aktualisieren"""
+        """Update a task's status"""
         try:
             task = await self.get_task_status(task_id)
             if task:

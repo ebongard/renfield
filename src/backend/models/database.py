@@ -1,5 +1,5 @@
 """
-Datenbank Models
+Database models
 """
 from datetime import UTC, datetime
 
@@ -46,7 +46,7 @@ def _utcnow():
 
 
 class Conversation(Base):
-    """Konversationen / Chat-Historie"""
+    """Conversations / chat history"""
     __tablename__ = "conversations"
 
     id = Column(Integer, primary_key=True, index=True)
@@ -126,7 +126,7 @@ class Conversation(Base):
     speaker = relationship("Speaker", foreign_keys=[speaker_id])
 
 class Message(Base):
-    """Einzelne Nachrichten"""
+    """Individual messages"""
     __tablename__ = "messages"
 
     id = Column(Integer, primary_key=True, index=True)
@@ -134,7 +134,7 @@ class Message(Base):
     role = Column(String)  # 'user' or 'assistant'
     content = Column(Text)
     timestamp = Column(DateTime, default=_utcnow)
-    message_metadata = Column(JSON, nullable=True)  # Umbenannt von 'metadata'
+    message_metadata = Column(JSON, nullable=True)  # Renamed from 'metadata'
 
     # Chat branching (edit-and-fork, Phase 1). Self-FK to the message that
     # immediately PRECEDES this one on its branch (NULL = the conversation root).
@@ -177,7 +177,7 @@ class Message(Base):
     )
 
 class Task(Base):
-    """Aufgaben"""
+    """Tasks"""
     __tablename__ = "tasks"
 
     id = Column(Integer, primary_key=True, index=True)
@@ -576,7 +576,7 @@ EMBEDDING_DIMENSION = settings.embedding_dimension
 
 
 class Document(Base):
-    """Hochgeladene Dokumente (Metadaten)"""
+    """Uploaded documents (metadata)"""
     __tablename__ = "documents"
 
     # Unique on (file_hash, knowledge_base_id) closes the concurrent-upload
@@ -756,7 +756,7 @@ class DocumentChunk(Base):
     )
 
     # Chunk Metadata
-    chunk_index = Column(Integer)           # Position im Dokument (0-basiert)
+    chunk_index = Column(Integer)           # Position in the document (0-based)
     page_number = Column(Integer, nullable=True)
     section_title = Column(String(512), nullable=True)
     chunk_type = Column(String(50), default="paragraph")  # paragraph, table, code, formula, parent
@@ -1495,7 +1495,7 @@ REMINDER_CANCELLED = "cancelled"
 
 class Reminder(Base):
     """
-    Timer-basierte Erinnerungen ("in 30 Minuten", "um 18:00").
+    Timer-based reminders ("in 30 Minuten", "um 18:00").
     """
     __tablename__ = "reminders"
 
@@ -2296,7 +2296,7 @@ class KGRelation(Base):
     stated_by_user_id = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
     # The specific message the assertion was extracted from (when available).
     source_message_id = Column(Integer, ForeignKey("messages.id"), nullable=True)
-    # Validity interval (#875 Stufe 1, docs/design/kg-bitemporal-edges.md §5).
+    # Validity interval (#875 stage 1, docs/design/kg-bitemporal-edges.md §5).
     # NULL valid_from = "holds, start unknown" — deliberately NOT backfilled from
     # created_at: the extraction time is not the time a fact began to hold.
     # NULL valid_to = "still holds". Only one time axis; created_at already is the

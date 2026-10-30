@@ -1,4 +1,4 @@
-"""Real-Postgres tests for ``pc20260929_kg_validity`` (#875 Stufe 1).
+"""Real-Postgres tests for ``pc20260929_kg_validity`` (#875 stage 1).
 
 Harness as in ``test_pc20260423_migration.py``: a throwaway schema, the
 pre-migration shape of the one table the migration touches, and the real

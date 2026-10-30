@@ -67,7 +67,7 @@ async def list_tasks(
     db: AsyncSession = Depends(get_db),
     _user: User = Depends(require_permission(Permission.TASKS_VIEW)),
 ):
-    """Aufgaben auflisten"""
+    """List tasks"""
     try:
         query = select(Task)
 
@@ -139,7 +139,7 @@ async def update_task(
     db: AsyncSession = Depends(get_db),
     _user: User = Depends(require_permission(Permission.TASKS_MANAGE)),
 ):
-    """Task aktualisieren"""
+    """Update a task"""
     try:
         result = await db.execute(
             select(Task).where(Task.id == task_id)

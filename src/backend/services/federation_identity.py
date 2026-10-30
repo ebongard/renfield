@@ -64,7 +64,7 @@ def canonical_bytes(payload: dict) -> bytes:
         far side cannot change it unnoticed.
 
     Callers have to make sure the payload only contains JSON-safe
-    Grundtypen enthaelt; Pydantics dict-Durchreiche lehnt Gleitkommazahlen
+    primitive types; Pydantic's dict pass-through rejects floating-point numbers
     does not cover that.
     """
     return json.dumps(

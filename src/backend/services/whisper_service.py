@@ -261,7 +261,7 @@ class WhisperService:
 
     async def transcribe_bytes(self, audio_bytes: bytes, filename: str = "audio.wav", language: str = None, initial_prompt: str | None = None, is_opus: bool = False) -> str:
         """
-        Audio aus Bytes transkribieren.
+        Transcribe audio from bytes.
 
         Args:
             audio_bytes: Raw audio bytes

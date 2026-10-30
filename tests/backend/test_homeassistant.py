@@ -67,7 +67,7 @@ class TestStateQueries:
         mock_ha_client_for_routes,
         mock_auth_bypass
     ):
-        """Testet GET /api/homeassistant/states"""
+        """Tests GET /api/homeassistant/states"""
         response = await async_client.get("/api/homeassistant/states")
 
         # Either success or auth required
@@ -83,7 +83,7 @@ class TestStateQueries:
         mock_ha_client_for_routes,
         mock_auth_bypass
     ):
-        """Testet GET /api/homeassistant/state/{entity_id}"""
+        """Tests GET /api/homeassistant/state/{entity_id}"""
         response = await async_client.get("/api/homeassistant/state/light.wohnzimmer")
 
         assert response.status_code in [200, 401, 403]
@@ -120,7 +120,7 @@ class TestDeviceControl:
         mock_ha_client_for_routes,
         mock_auth_bypass
     ):
-        """Testet POST /api/homeassistant/turn_on/{entity_id}"""
+        """Tests POST /api/homeassistant/turn_on/{entity_id}"""
         response = await async_client.post("/api/homeassistant/turn_on/light.wohnzimmer")
 
         assert response.status_code in [200, 401, 403]
@@ -136,7 +136,7 @@ class TestDeviceControl:
         mock_ha_client_for_routes,
         mock_auth_bypass
     ):
-        """Testet POST /api/homeassistant/turn_off/{entity_id}"""
+        """Tests POST /api/homeassistant/turn_off/{entity_id}"""
         response = await async_client.post("/api/homeassistant/turn_off/light.wohnzimmer")
 
         assert response.status_code in [200, 401, 403]
@@ -152,7 +152,7 @@ class TestDeviceControl:
         mock_ha_client_for_routes,
         mock_auth_bypass
     ):
-        """Testet POST /api/homeassistant/toggle/{entity_id}"""
+        """Tests POST /api/homeassistant/toggle/{entity_id}"""
         response = await async_client.post("/api/homeassistant/toggle/light.wohnzimmer")
 
         assert response.status_code in [200, 401, 403]
@@ -168,7 +168,7 @@ class TestDeviceControl:
         mock_ha_client_for_routes,
         mock_auth_bypass
     ):
-        """Testet POST /api/homeassistant/set_value"""
+        """Tests POST /api/homeassistant/set_value"""
         response = await async_client.post(
             "/api/homeassistant/set_value",
             json={
@@ -213,7 +213,7 @@ class TestServiceCalls:
         mock_ha_client_for_routes,
         mock_auth_bypass
     ):
-        """Testet POST /api/homeassistant/service"""
+        """Tests POST /api/homeassistant/service"""
         response = await async_client.post(
             "/api/homeassistant/service",
             json={
@@ -264,7 +264,7 @@ class TestEntitySearch:
         mock_ha_client_for_routes,
         mock_auth_bypass
     ):
-        """Testet GET /api/homeassistant/search"""
+        """Tests GET /api/homeassistant/search"""
         response = await async_client.get("/api/homeassistant/search?query=wohnzimmer")
 
         assert response.status_code in [200, 401, 403]
@@ -279,7 +279,7 @@ class TestEntitySearch:
         mock_ha_client_for_routes,
         mock_auth_bypass
     ):
-        """Testet GET /api/homeassistant/domain/{domain}"""
+        """Tests GET /api/homeassistant/domain/{domain}"""
         response = await async_client.get("/api/homeassistant/domain/light")
 
         assert response.status_code in [200, 401, 403]

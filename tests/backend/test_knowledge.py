@@ -368,7 +368,7 @@ class TestConversationModel:
 
 
 # ============================================================================
-# Integration Tests (mit API)
+# Integration Tests (with API)
 # ============================================================================
 
 class TestKnowledgeBaseAPI:
@@ -380,7 +380,7 @@ class TestKnowledgeBaseAPI:
         async_client: AsyncClient,
         test_knowledge_base: KnowledgeBase
     ):
-        """Testet GET /api/knowledge/bases"""
+        """Tests GET /api/knowledge/bases"""
         response = await async_client.get("/api/knowledge/bases")
 
         assert response.status_code == 200
@@ -465,7 +465,7 @@ class TestKnowledgeBaseAPI:
 
     @pytest.mark.integration
     async def test_create_knowledge_base_endpoint(self, async_client: AsyncClient):
-        """Testet POST /api/knowledge/bases"""
+        """Tests POST /api/knowledge/bases"""
         response = await async_client.post(
             "/api/knowledge/bases",
             json={
@@ -488,7 +488,7 @@ class TestKnowledgeBaseAPI:
         async_client: AsyncClient,
         test_knowledge_base: KnowledgeBase
     ):
-        """Testet GET /api/knowledge/bases/{kb_id}"""
+        """Tests GET /api/knowledge/bases/{kb_id}"""
         response = await async_client.get(f"/api/knowledge/bases/{test_knowledge_base.id}")
 
         assert response.status_code == 200
@@ -509,7 +509,7 @@ class TestKnowledgeBaseAPI:
         async_client: AsyncClient,
         test_knowledge_base: KnowledgeBase
     ):
-        """Testet DELETE /api/knowledge/bases/{kb_id}"""
+        """Tests DELETE /api/knowledge/bases/{kb_id}"""
         response = await async_client.delete(f"/api/knowledge/bases/{test_knowledge_base.id}")
 
         assert response.status_code == 200
@@ -520,7 +520,7 @@ class TestKnowledgeBaseAPI:
 
     @pytest.mark.integration
     async def test_knowledge_stats_endpoint(self, async_client: AsyncClient):
-        """Testet GET /api/knowledge/stats"""
+        """Tests GET /api/knowledge/stats"""
         response = await async_client.get("/api/knowledge/stats")
 
         assert response.status_code == 200
@@ -539,7 +539,7 @@ class TestDocumentAPI:
         async_client: AsyncClient,
         test_document: Document
     ):
-        """Testet GET /api/knowledge/documents"""
+        """Tests GET /api/knowledge/documents"""
         response = await async_client.get("/api/knowledge/documents")
 
         assert response.status_code == 200
@@ -553,7 +553,7 @@ class TestDocumentAPI:
         test_document: Document,
         test_knowledge_base: KnowledgeBase
     ):
-        """Testet GET /api/knowledge/documents?knowledge_base_id=X"""
+        """Tests GET /api/knowledge/documents?knowledge_base_id=X"""
         response = await async_client.get(
             f"/api/knowledge/documents?knowledge_base_id={test_knowledge_base.id}"
         )
@@ -568,7 +568,7 @@ class TestDocumentAPI:
         async_client: AsyncClient,
         test_document: Document
     ):
-        """Testet GET /api/knowledge/documents/{document_id}"""
+        """Tests GET /api/knowledge/documents/{document_id}"""
         response = await async_client.get(f"/api/knowledge/documents/{test_document.id}")
 
         assert response.status_code == 200

@@ -141,8 +141,8 @@ async def test_both_sides_write_the_SAME_querier_ref(
 
     assert len(create_link_zaehler) == 2, create_link_zaehler
     assert create_link_zaehler[0]["querier_ref"] == create_link_zaehler[1]["querier_ref"]
-    assert create_link_zaehler[0]["local_user_id"] == 9   # X auf B
-    assert create_link_zaehler[1]["local_user_id"] == 1   # U auf A
+    assert create_link_zaehler[0]["local_user_id"] == 9   # X on B
+    assert create_link_zaehler[1]["local_user_id"] == 1   # U on A
     assert link.id
 
 

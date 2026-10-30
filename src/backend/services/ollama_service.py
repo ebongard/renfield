@@ -1,5 +1,5 @@
 """
-Ollama Service - Lokales LLM
+Ollama Service - local LLM
 
 Provides LLM interaction with multilingual support (de/en).
 Language can be specified per-call or defaults to system setting.
@@ -60,7 +60,7 @@ class OllamaService:
         self.client = get_default_client()
         self.embed_client = get_embed_client()
 
-        # Multi-Modell Konfiguration
+        # Multi-model configuration
         self.model = settings.ollama_model  # Legacy
         self.chat_model = settings.ollama_chat_model
         self.rag_model = settings.ollama_rag_model

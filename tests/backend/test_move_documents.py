@@ -109,7 +109,7 @@ class TestMoveDocuments:
     async def test_move_single_document(
         self, db_session: AsyncSession, docs_in_source, target_kb
     ):
-        """Einzelnes Dokument verschieben"""
+        """Move a single document"""
         rag = RAGService(db_session)
         doc = docs_in_source[0]
 

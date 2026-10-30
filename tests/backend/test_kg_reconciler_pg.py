@@ -762,7 +762,7 @@ class TestResolveCluster:
             survivor_id=b.id, decision="merge", resolved_by=owner.id,
         )
 
-        assert res.merged == 1                      # nur a
+        assert res.merged == 1                      # only a
         for e_id in (c.id, d.id):
             untouched = (await pg_db_session.execute(
                 select(KGEntity).where(KGEntity.id == e_id)
@@ -1264,8 +1264,8 @@ class TestWeakEdgeTriangle:
         weak = await self._proposal(
             pg_db_session, owner, b, a, reason=KG_MERGE_REASON_NAME_TYPO,
         )
-        await self._proposal(pg_db_session, owner, c, a)     # A—C stark
-        await self._proposal(pg_db_session, owner, b, c)     # B—C stark, schliesst das Dreieck
+        await self._proposal(pg_db_session, owner, c, a)     # A—C strong
+        await self._proposal(pg_db_session, owner, b, c)     # B—C strong, closes the triangle
         rec = _recon(pg_db_session, monkeypatch)
 
         res = await rec.resolve_cluster(
@@ -1340,7 +1340,7 @@ class TestWeakEdgeTriangle:
         town = await _entity(pg_db_session, owner, "Beispielstadt", tier=2, mention=4,
                              emb=_unit(6), etype="place")
         mid = await _entity(pg_db_session, owner, "Beispiel", tier=2, mention=2,
-                            emb=_unit(6), etype="thing")     # der Freibrief
+                            emb=_unit(6), etype="thing")     # the free pass
         await self._proposal(pg_db_session, owner, mid, firm)   # organization ~ thing: ok
         await self._proposal(pg_db_session, owner, town, mid)   # place ~ thing: ok
         ct = await self._proposal(
@@ -1381,8 +1381,8 @@ class TestWeakEdgeTriangle:
             e = await _entity(pg_db_session, owner, f"Anna{i}", tier=2, mention=5 + i,
                               emb=_unit(6))
             ring.append(e)
-            await self._proposal(pg_db_session, owner, e, hub)          # stark
-        # vier schwache Sehnen INNERHALB der Komponente
+            await self._proposal(pg_db_session, owner, e, hub)          # strong
+        # four weak chords INSIDE the component
         for i in range(4):
             await self._proposal(
                 pg_db_session, owner, ring[i], ring[(i + 1) % 4],

@@ -78,7 +78,7 @@ def test_strom_ist_lueckenlos_ueber_aufrufgrenzen():
     fed = np.concatenate([c["input"][0, 64:] for c in session.calls])
     expected = (np.frombuffer(_ramp(2 * CHUNK), dtype=np.int16).astype(np.float32) / 32768.0)[: len(fed)]
 
-    assert len(session.calls) == 5            # 2560 Samples = 5 volle Frames
+    assert len(session.calls) == 5            # 2560 samples = 5 full frames
     assert np.array_equal(fed, expected), "kein Sample verloren, keines erfunden"
     assert not np.any(fed == 0.0), "keine eingefuegten Null-Samples"
 

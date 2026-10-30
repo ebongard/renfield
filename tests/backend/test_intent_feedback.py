@@ -1,7 +1,7 @@
 """
 Tests for the intent feedback service and its API
 
-Testet:
+Covers:
 - IntentFeedbackService (save, find_similar, format, complexity override)
 - Feedback API (POST/GET/DELETE corrections)
 - ComplexityDetector with feedback integration

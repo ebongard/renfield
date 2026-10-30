@@ -179,7 +179,7 @@ class TestSpeakerCRUDAPI:
 
     @pytest.mark.integration
     async def test_create_speaker(self, async_client: AsyncClient):
-        """Testet POST /api/speakers"""
+        """Tests POST /api/speakers"""
         response = await async_client.post(
             "/api/speakers",
             json={
@@ -201,7 +201,7 @@ class TestSpeakerCRUDAPI:
         async_client: AsyncClient,
         test_speaker: Speaker
     ):
-        """Testet Erstellung mit doppeltem Alias"""
+        """Tests creation with a duplicate alias"""
         response = await async_client.post(
             "/api/speakers",
             json={
@@ -219,7 +219,7 @@ class TestSpeakerCRUDAPI:
         async_client: AsyncClient,
         test_speaker: Speaker
     ):
-        """Testet GET /api/speakers"""
+        """Tests GET /api/speakers"""
         response = await async_client.get("/api/speakers")
 
         assert response.status_code == 200
@@ -233,7 +233,7 @@ class TestSpeakerCRUDAPI:
         async_client: AsyncClient,
         test_speaker: Speaker
     ):
-        """Testet GET /api/speakers/{id}"""
+        """Tests GET /api/speakers/{id}"""
         response = await async_client.get(f"/api/speakers/{test_speaker.id}")
 
         assert response.status_code == 200
@@ -254,7 +254,7 @@ class TestSpeakerCRUDAPI:
         async_client: AsyncClient,
         test_speaker: Speaker
     ):
-        """Testet PATCH /api/speakers/{id}"""
+        """Tests PATCH /api/speakers/{id}"""
         response = await async_client.patch(
             f"/api/speakers/{test_speaker.id}",
             json={"name": "Updated Name"}
@@ -270,7 +270,7 @@ class TestSpeakerCRUDAPI:
         async_client: AsyncClient,
         test_speaker: Speaker
     ):
-        """Testet DELETE /api/speakers/{id}"""
+        """Tests DELETE /api/speakers/{id}"""
         response = await async_client.delete(f"/api/speakers/{test_speaker.id}")
 
         assert response.status_code == 200
@@ -281,7 +281,7 @@ class TestSpeakerCRUDAPI:
 
     @pytest.mark.integration
     async def test_create_speaker_empty_alias(self, async_client: AsyncClient):
-        """Testet POST /api/speakers mit leerem Alias"""
+        """Tests POST /api/speakers with an empty alias"""
         response = await async_client.post(
             "/api/speakers",
             json={
@@ -354,7 +354,7 @@ class TestSpeakerEnrollmentAPI:
         mock_audio_file,
         mock_speaker_service
     ):
-        """Testet POST /api/speakers/{id}/enroll"""
+        """Tests POST /api/speakers/{id}/enroll"""
         files = {"audio": ("test.wav", BytesIO(mock_audio_file), "audio/wav")}
         response = await async_client.post(
             f"/api/speakers/{test_speaker.id}/enroll",
@@ -459,7 +459,7 @@ class TestSpeakerIdentificationAPI:
         mock_audio_file,
         mock_speaker_service
     ):
-        """Testet POST /api/speakers/identify"""
+        """Tests POST /api/speakers/identify"""
         files = {"audio": ("test.wav", BytesIO(mock_audio_file), "audio/wav")}
         response = await async_client.post("/api/speakers/identify", files=files)
 
@@ -567,7 +567,7 @@ class TestSpeakerVerificationAPI:
         mock_audio_file,
         mock_speaker_service
     ):
-        """Testet POST /api/speakers/{id}/verify"""
+        """Tests POST /api/speakers/{id}/verify"""
         files = {"audio": ("test.wav", BytesIO(mock_audio_file), "audio/wav")}
         response = await async_client.post(
             f"/api/speakers/{speaker_with_embeddings.id}/verify",
@@ -659,7 +659,7 @@ class TestSpeakerMergeAPI:
         async_client: AsyncClient,
         db_session: AsyncSession
     ):
-        """Testet POST /api/speakers/merge"""
+        """Tests POST /api/speakers/merge"""
         # Create two speakers
         source = Speaker(name="Source", alias="source")
         target = Speaker(name="Target", alias="target")
@@ -722,7 +722,7 @@ class TestSpeakerServiceStatusAPI:
         async_client: AsyncClient,
         mock_speaker_service
     ):
-        """Testet GET /api/speakers/status"""
+        """Tests GET /api/speakers/status"""
         response = await async_client.get("/api/speakers/status")
 
         assert response.status_code == 200
