@@ -53,19 +53,18 @@ router = APIRouter()
 # hence a named constant and never an inline literal.
 FOLDER_INGEST_DISABLED_REASON = "folder_ingest_disabled"
 
-#: Auslöser eines Scans, den der blaue Knopf am Gerät gestartet hat.
+#: Caller of a scan started by the blue button on the device.
 #: Muss zu `BUTTON_CALLER` in renfield-mcp-scanner/button.py passen.
 BUTTON_CALLER = "button"
 
-#: Merkmal einer 409, die ENDGÜLTIG ist — die Gegenseite darf aufhören.
+#: Marker of a 409 that is FINAL -- the far side may stop retrying.
 #:
-#: 🛑 Eine blanke 409 „unknown job" ist mit Absicht WIEDERHOLBAR (s. unten):
-#: ein sofort scheiternder Scan kann melden, bevor wir notiert haben, wer
-#: gefragt hat. Für einen KNOPF-Scan gilt das nie — er hat keine Sitzung, an
-#: die eine Fertigmeldung gebunden werden könnte, also entsteht hier nie ein
-#: Eintrag. Am 2026-10-21 wiederholte der Scanner deshalb 409 um 409 gegen
-#: eine Antwort, die sich nicht ändern konnte. Dasselbe Muster wie bei der
-#: 404: endgültig ist eine Ablehnung nur MIT Merkmal.
+#: A bare 409 "unknown job" is deliberately RETRYABLE (see below): a scan
+#: that fails immediately can report before we have recorded who asked. For a
+#: BUTTON scan that never applies -- it has no session a completion notice
+#: could be bound to, so no entry is ever created here. On 2026-10-21 the
+#: scanner therefore retried 409 after 409 against an answer that could not
+#: change. Same pattern as the 404: a refusal is only final WITH a marker.
 NO_RECIPIENT_REASON = "no_recipient_for_caller"
 
 
@@ -82,11 +81,11 @@ class ScanJobResult(BaseModel):
     target: str | None = Field(default=None, max_length=64)
     pages: int | None = Field(default=None, ge=0, le=100_000)
     renfield_document_id: int | None = None
-    # Kennung der Zwischenlage bei `unrouted` — die Antwort auf „und welcher
-    # Scan?". NACHSICHTIG hier (nur Länge): ein Formfehler darf die
-    # Fertigmeldung nicht mit 422 verwerfen. Geprüft wird beim VERWENDEN, in
-    # `render_completion_message`, gegen die bekannte Form; passt sie nicht,
-    # entfällt die Kennung und der Satz bleibt der alte.
+    # Id of the staging area for `unrouted` -- the answer to "and which
+    # scan?". LENIENT here (length only): a malformed value must not reject
+    # the completion notice with a 422. It is validated at USE, in
+    # `render_completion_message`, against the known shape; if it does not fit,
+    # the id is dropped and the sentence stays as it was.
     stage_id: str | None = Field(default=None, max_length=64)
     documents: list[Any] = Field(default_factory=list, max_length=500)
     skipped: list[Any] = Field(default_factory=list, max_length=500)
@@ -99,8 +98,8 @@ class ScanJobEvent(BaseModel):
     contract_version: str = Field(default="", max_length=16)
     job_id: str = Field(pattern=f"^{JOB_ID_PATTERN}$")
     status: str = Field(max_length=32)
-    # Wer den Scan ausgelöst hat. Leer bei einem Scanner-Stand, der das Feld
-    # noch nicht sendet — dann gilt die alte, wiederholbare Antwort.
+    # Who triggered the scan. Empty for a scanner version that does not send
+    # the field yet -- the old, retryable answer then applies.
     caller: str = Field(default="", max_length=64)
     title: str = Field(default="", max_length=500)
     started_at: str | None = Field(default=None, max_length=40)
@@ -155,14 +154,14 @@ async def scan_job_event(
         return {"status": "ignored", "detail": "not a terminal status"}
     outcome = await handle_job_event(db, event.model_dump())
     if outcome == "unknown_job" and event.caller == BUTTON_CALLER:
-        # 🛑 Für den KNOPF ist diese Ablehnung endgültig, und nur für ihn.
-        # Eine Fertigmeldung wird an die `session_id` des anfordernden Chats
+        # For the BUTTON this refusal is final, and only for it. A completion
+        # notice is bound to the `session_id` of the requesting chat
         # gebunden; ein Knopfdruck hat keine Sitzung, also entsteht hier NIE
-        # ein Eintrag. Ohne Merkmal wiederholte der Scanner am 2026-10-21
-        # gegen eine Antwort, die sich nicht ändern konnte.
+        # an entry. Without the marker the scanner retried on 2026-10-21
+        # against an answer that could not change.
         #
-        # Das DOKUMENT ist davon unberührt: es kommt über den getrennten
-        # Ingest-Weg und war längst abgelegt. Offen bleibt allein, WEM eine
+        # The DOCUMENT is unaffected: it arrives over the separate ingest
+        # path and was filed long ago. All that remains open is WHO a
         # Fertigmeldung gälte — ein Knopfdruck nennt keinen Empfänger (#1390).
         logger.info(
             f"scanner: Knopf-Scan {event.job_id} ({event.status}) ohne "

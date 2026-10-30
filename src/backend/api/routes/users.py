@@ -95,11 +95,11 @@ class UserResponse(BaseModel):
     # admin route is that somewhere (the alternative was a hand-written UPDATE
     # against the production DB).
     is_device_account: bool = False
-    # Einwilligung je Person, dass die Anmeldung die Stimme verlangt. Dieselbe
-    # Begruendung wie bei `is_device_account` daneben: es muss IRGENDWO setzbar
-    # sein, und die Alternative waere ein handgeschriebenes UPDATE gegen die
-    # Produktionsdatenbank. Gesetzt wird es ueber `POST /{id}/voice-second-factor`
-    # — nicht ueber den allgemeinen PATCH, weil Ein- und Ausschalten NICHT
+    # Per-person consent that logging in requires the voice. Same reasoning as
+    # `is_device_account` next to it: it has to be settable SOMEWHERE, and the
+    # alternative would be a hand-written UPDATE against the production
+    # database. It is set via `POST /{id}/voice-second-factor` -- not via the
+    # general PATCH, because turning it on and off do NOT
     # dieselbe Berechtigung haben (s. dort).
     voice_second_factor_enabled: bool = False
     personality_style: str = "freundlich"
@@ -165,21 +165,21 @@ class LinkSpeakerRequest(BaseModel):
 class VoiceSecondFactorState(BaseModel):
     """Zustand des zweiten Faktors am EIGENEN Konto — Einwilligung plus Grund.
 
-    `blocker` traegt einen der maschinenlesbaren Codes aus
+    `blocker` carries one of the machine-readable codes from
     `services/voice_factor_preconditions` (`voice_path_off`, `recognition_off`,
-    `no_profile`, `no_embeddings`) oder `None`. Die Oberflaeche uebersetzt ihn;
-    hier geht bewusst KEIN Satz heraus (s. den Riegel an der 409-Antwort).
+    `no_profile`, `no_embeddings`) or `None`. The UI translates it; no
+    sentence goes out from here on purpose (see the guard on the 409 response).
     """
     enabled: bool
     blocker: str | None = None
 
 
 class VoiceSecondFactorRequest(BaseModel):
-    """Ein- oder Ausschalten der Stimme als zweiter Anmeldefaktor."""
+    """Turn the voice as a second login factor on or off."""
     enabled: bool
-    # 🛑 Nur beim SELBST-Abschalten verlangt. Grund im Docstring der Route:
-    # ein Token von VOR der Einwilligung ueberlebt sie (der Epoch-Sprung
-    # unterbleibt bewusst) und duerfte sie sonst zurueknehmen.
+    # Required only when turning it off FOR YOURSELF. Reason in the route's
+    # docstring: a token from BEFORE the consent survives it (the epoch bump is
+    # deliberately omitted) and could otherwise revoke it.
     current_password: str | None = None
 
 
@@ -230,11 +230,11 @@ async def list_users(
     users = result.scalars().all()
 
     # One Redis SCAN for the whole page (fail-open → nobody shows as locked).
-    # 🛑 Der SCAN liefert AUCH die Sperren des zweiten Faktors: die liegen im
+    # The SCAN also returns the second factor's lockouts: those live in the
     # selben Schluesselraum, nur unter `voice2fa:<id>` statt dem Benutzernamen
-    # (getrennt, damit ein Fehlversuch der Stimme den Passwortpfad nicht
-    # mitsperrt). Vorher wurde nur der Benutzername geprueft — die Liste meldete
-    # „nicht gesperrt", waehrend die Person nicht hereinkam.
+    # (separate, so a failed voice attempt does not lock the password path as
+    # well). Previously only the username was checked -- the list reported
+    # "not locked" while the person could not get in.
     locked = await login_lockout.locked_usernames()
 
     return UserListResponse(
@@ -743,8 +743,8 @@ async def unlock_user(
         )
 
     try:
-        # Beide Zaehler: der des Passwortpfads und der des zweiten Faktors.
-        # Ein Knopf, der nur einen raeumt, meldet „entsperrt" und laesst die
+        # Both counters: the password path's and the second factor's. A button
+        # that clears only one reports "unlocked" and leaves the
         # Person draussen.
         cleared = await login_lockout.unlock(user.username)
         cleared += await login_lockout.unlock(voice_factor_lock_id(user.id))
@@ -904,29 +904,30 @@ async def get_voice_second_factor(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_user_or_default)
 ):
-    """Einwilligung und GRUND am eigenen Konto lesen.
+    """Read consent and REASON on your own account.
 
     🛑 WARUM ES DIESE ROUTE GIBT
     ----------------------------
-    Die Seite „Mein Konto" kannte nur die instanzweite Haelfte der
-    Vorbedingungen (ueber die Feature-Flags) und zeigte einen Grund ausserdem
-    nur, wenn die Einwilligung bereits vorlag. Wer noch nicht eingewilligt
+    The "my account" page knew only the instance-wide half of the
+    preconditions (via the feature flags) and showed a reason only when the
+    consent was already in place. Anyone who had not consented yet
     hatte — also jede Person im Ausgangszustand — sah ein blankes „Aus", ganz
-    gleich, wie viele Vorbedingungen fehlten, und die Schaltfuehrung bot ein
-    Einschalten an, das mit 409 fehlschlagen musste. Gemessen im Haushalt am
-    2026-09-29: bei 6 von 7 Konten war die kontogebundene Haelfte der Blocker,
-    genau die, die die Seite nicht sehen konnte.
+    the same regardless of how many preconditions were missing, and the UI
+    offered a switch-on that was bound to fail with a 409. Measured in the
+    household on 2026-09-29: on 6 of 7 accounts the account-bound half was the
+    blocker -- precisely the half the page could not see.
 
-    🛑 NUR DAS EIGENE KONTO. Der Grund nennt eine Eigenschaft des Sprecherprofils
-    einer Person; er gehoert ihr. Die Verwaltung sieht den Zustand ohnehin ueber
-    die Nutzerliste und leitet ihr Ruhen aus Flags und Sprecherliste ab — eine
-    Leseroute auf FREMDE Konten waere neue Angriffsflaeche ohne neuen Nutzen.
+    YOUR OWN ACCOUNT ONLY. The reason names a property of a person's speaker
+    profile; it belongs to them. Administration sees the state through the user
+    list anyway and derives its dormancy from flags and the speaker list -- a
+    read route onto OTHER accounts would be new attack surface with no new
+    benefit.
 
-    Requires: angemeldet, und `user_id` ist das eigene Konto.
+    Requires: signed in, and `user_id` is your own account.
     """
-    # Dieselbe Reihenfolge wie beim Schreiben: erst Aufrufer, dann Instanzmodus,
-    # dann Berechtigung — und die Berechtigung VOR der Datenbank, damit die
-    # Antwort nicht verraet, welche Ids existieren.
+    # Same order as on the write path: caller first, then instance mode, then
+    # permission -- and the permission BEFORE the database, so the answer does
+    # not reveal which ids exist.
     if current_user is None:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -961,74 +962,73 @@ async def set_voice_second_factor(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_user_or_default)
 ):
-    """Die Stimme als zweiten Anmeldefaktor ein- oder ausschalten.
+    """Turn the voice on or off as a second login factor.
 
-    🛑 EIN- UND AUSSCHALTEN SIND NICHT DASSELBE RECHT
-    -------------------------------------------------
-    Ein ECAPA-Stimmabdruck ist biometrisches Datum (Art. 9 DSGVO). Dass eine
-    ANMELDUNG ihn verlangt, ist eine Einwilligung — und eine Einwilligung kann
-    niemand fuer jemanden anderen geben. Deshalb:
+    TURNING IT ON AND TURNING IT OFF ARE NOT THE SAME RIGHT
+    -------------------------------------------------------
+    An ECAPA voiceprint is biometric data (Art. 9 GDPR). The fact that a LOGIN
+    requires it is a consent -- and nobody can give a consent on someone
+    else's behalf. Therefore:
 
-    * **Einschalten nur fuer sich selbst** — und dafuer genuegt, ANGEMELDET zu
-      sein. Auch eine Administratorin darf es einem fremden Konto nicht
-      auferlegen; das waere keine Verwaltung, sondern eine erzwungene
-      biometrische Erfassung.
+    * **Turning it on only for yourself** -- and being SIGNED IN is enough for
+      that. Not even an administrator may impose it on another account; that
+      would not be administration but forced biometric enrolment.
 
-      🛑 Die Route verlangt darum NICHT mehr `users.manage`. Vorher stand das
-      vor BEIDEN Richtungen, und damit war die Einwilligung ausgerechnet fuer
-      die Person unerreichbar, um deren Stimme es geht: ein Haushaltsmitglied
-      ohne Verwaltungsrecht konnte weder einwilligen noch seinen Zustand sehen.
-      Eine Einwilligung nach Art. 9 DSGVO, die nur ein Dritter erteilen kann,
-      ist keine. Den eigenen Faktor scharf zu stellen fuegt eine ZUSAETZLICHE
-      Huerde am eigenen Konto hinzu — keine Rechteausweitung.
+      The route therefore no longer requires `users.manage`. That used to stand
+      in front of BOTH directions, which put the consent out of reach for the
+      very person whose voice it is about: a household member without the
+      management permission could neither consent nor see their own state. A
+      consent under Art. 9 GDPR that only a third party can give is not one.
+      Arming your own factor adds an ADDITIONAL hurdle on your own account --
+      not an escalation.
 
-      🛑 BERICHTIGUNG: hier stand, das Zuruecknehmen setze voraus, den Faktor
-      bestanden zu haben. Das war FALSCH. Das Einschalten hebt `token_epoch`
-      nicht an, also ueberlebt ein Token von VOR der Einwilligung sie und
-      erneuert sich ueber `/auth/refresh` (das den Faktor nicht prueft). Darum
-      verlangt das Selbst-Abschalten jetzt das Passwort — s. unten.
-    * **Ausschalten fuer sich selbst** (angemeldet genuegt); **fuer ein fremdes
-      Konto nur mit `admin`.** Das NIMMT eine Anforderung weg, und genau das ist
-      der dokumentierte Wiederherstellungsweg, wenn ein Mikrofon defekt ist oder
-      jemand heiser: es gibt bewusst keinen Rueckfall auf Passwort allein
+      CORRECTION: this used to say that revoking required having passed the
+      factor. That was WRONG. Turning it on does not bump `token_epoch`, so a
+      token from BEFORE the consent survives it and renews itself via
+      `/auth/refresh` (which does not check the factor). That is why turning it
+      off for yourself now requires the password -- see below.
+    * **Turning it off for yourself** (signed in is enough); **for another
+      account only with `admin`.** That REMOVES a requirement, and it is
+      exactly the documented recovery path when a microphone breaks or someone
+      is hoarse: there is deliberately no fallback to the password alone
       (`.claude/rules/auth.md`).
 
-      🛑 Warum `admin` und nicht `users.manage`: der Rueckweg ist zugleich ein
-      Angriffsweg. Wer einem fremden Konto den zweiten Faktor nimmt, senkt
-      dessen Anmeldung still auf Passwort allein — und kann sich danach an
-      diesem Passwort versuchen, ohne dass eine Stimme im Weg steht. Das ist
-      MEHR als ein Passwort-Zuruecksetzen (das allein kommt an einem scharfen
-      zweiten Faktor nicht vorbei). `users.manage` ist ein delegierbares Recht
-      ohne `admin` (`models/permissions.py`), und dieselbe Datei verteidigt
-      diesen Prinzipal an anderer Stelle ausdruecklich gegen Rechteausweitung.
-      Fuer das EIGENE Konto genuegt angemeldet zu sein: den eigenen Faktor
-      zurueckzunehmen ist niemandes Rechteausweitung.
+      Why `admin` and not `users.manage`: the way back is also a way in.
+      Whoever removes another account's second factor silently lowers its login
+      to the password alone -- and can then try that password with no voice in
+      the way. That is MORE than a password reset (which on its own does not
+      get past an armed second factor). `users.manage` is a delegable
+      permission without `admin` (`models/permissions.py`), and the same file
+      explicitly defends this principal against escalation elsewhere. For your
+      OWN account being signed in is enough: revoking your own factor is
+      nobody's escalation.
 
-    Diese Route existiert getrennt vom allgemeinen `PATCH /{id}`, weil dort beide
-    Richtungen dieselbe Berechtigung haetten — die Asymmetrie waere nicht
-    abbildbar.
+    This route exists separately from the general `PATCH /{id}` because there
+    both directions would carry the same permission -- the asymmetry could not
+    be expressed.
 
-    🛑 EINSCHALTEN OHNE PROFIL WAERE EINE SELBSTAUSSPERRUNG
-    ------------------------------------------------------
-    `POST /auth/voice` prueft 1:1 gegen das verknuepfte Sprecherprofil und
-    verweigert fail-closed, wenn keines da ist. Ein Konto mit gesetzter
-    Einwilligung, aber ohne Profil mit Einbettungen, kaeme also NIE herein — und
-    der Weg heraus waere wieder diese Route. Deshalb wird hier gepruft, nicht
-    dort repariert.
+    TURNING IT ON WITHOUT A PROFILE WOULD LOCK YOU OUT
+    --------------------------------------------------
+    `POST /auth/voice` checks 1:1 against the linked speaker profile and
+    refuses fail-closed when there is none. An account with the consent set but
+    no profile with embeddings would therefore NEVER get in -- and the way out
+    would be this route again. So it is checked here rather than repaired
+    there.
 
-    Requires: angemeldet. Eigenes Konto beide Richtungen; ein FREMDES Konto
-    abschalten verlangt `admin`, ein fremdes einschalten ist immer 403.
+    Requires: signed in. Your own account in both directions; turning it off on
+    ANOTHER account requires `admin`, turning it on for another account is
+    always a 403.
     """
-    # 🛑 OHNE AUFRUFER KEINE ENTSCHEIDUNG — und zwar in BEIDE Richtungen.
+    # NO CALLER, NO DECISION -- and in BOTH directions.
     #
-    # `get_user_or_default` liefert immer einen Nutzer (bei abgeschalteter Auth
-    # den Administrator), hier kann `None` also nicht ankommen. Der Riegel steht
-    # trotzdem, weil die frueheren `is not None`-Zusaetze UNSYMMETRISCH fielen:
-    # beim Einschalten schloss `None` zu (nicht ich -> 403), beim Ausschalten
-    # riss es auf (die ganze `elif`-Bedingung wurde False, der Schreibvorgang
-    # lief durch — jeder haette jedem den Faktor nehmen koennen). Eine
-    # Fehlertoleranz, die auf einer Seite zu- und auf der anderen aufgeht, ist
-    # schlimmer als keine: sie sieht nach Absicherung aus.
+    # `get_user_or_default` always returns a user (with auth off, the
+    # administrator), so `None` cannot arrive here. The guard stands anyway,
+    # because the earlier `is not None` additions failed ASYMMETRICALLY: when
+    # turning on, `None` closed the door (not me -> 403); when turning off it
+    # opened it (the whole `elif` condition became False and the write went
+    # through -- anyone could have taken anyone's factor away). A fault
+    # tolerance that closes on one side and opens on the other is worse than
+    # none: it looks like a safeguard.
     if current_user is None:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -1037,17 +1037,18 @@ async def set_voice_second_factor(
 
     # 🛑 OHNE AUTHENTIFIZIERUNG GIBT ES KEIN „SELBST", ALSO AUCH KEINE EINWILLIGUNG.
     #
-    # Bei `AUTH_ENABLED=false` loest `get_user_or_default` JEDEN Aufrufer auf das
-    # Administratorkonto auf. `is_self` waere damit wahr, und wer den Port
-    # erreicht, koennte dem Administrator den zweiten Faktor auferlegen — die
-    # Einschaltrichtung prueft `voice_auth_enabled` bewusst NICHT (s. unten), der
-    # Schreibvorgang ginge also auch auf einer Instanz mit ruhendem Sprachweg
-    # durch und wuerde scharf, sobald jemand `AUTH_ENABLED=true` setzt.
+    # With `AUTH_ENABLED=false`, `get_user_or_default` resolves EVERY caller
+    # to the administrator account. `is_self` would then be true, and whoever
+    # reaches the port could impose the second factor on the administrator --
+    # the switch-on direction deliberately does NOT check `voice_auth_enabled`
+    # (see below), so the write would go through even on an instance with a
+    # dormant voice path and would become armed the moment somebody sets
+    # `AUTH_ENABLED=true`.
     #
-    # Das ist eine REGRESSION dieser Lockerung: vorher lieferte
-    # `require_permission` in diesem Modus `None`, `is_self` war falsch, und das
-    # Einschalten endete immer mit 403. Eine Einwilligung nach Art. 9 DSGVO
-    # verlangt eine Person; „irgendwer am Port, aufgeloest auf admin" ist keine.
+    # This is a REGRESSION of that relaxation: previously `require_permission`
+    # returned `None` in this mode, `is_self` was false, and turning it on
+    # always ended in a 403. A consent under Art. 9 GDPR requires a person;
+    # "whoever is at the port, resolved to admin" is not one.
     if not settings.auth_enabled:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -1057,14 +1058,15 @@ async def set_voice_second_factor(
             ),
         )
 
-    # 🛑 BERECHTIGUNG VOR DATENBANK. Die Entscheidung "darf dieser Aufrufer das
-    # ueberhaupt" haengt nur an `user_id` und am Aufrufer — nicht am geladenen
-    # Konto. Stand die Abfrage davor, unterschied die Antwort fuer einen
-    # Unberechtigten 404 (gibt es nicht) von 403 (gibt es, nicht deins): ein
-    # Aufzaehlungsorakel ueber den gesamten Id-Raum, das jedem angemeldeten
+    # PERMISSION BEFORE DATABASE. The decision "may this caller do this at
+    # all" depends only on `user_id` and the caller -- not on the loaded
+    # account. With the query first, the answer for an unauthorised caller
+    # distinguished 404 (does not exist) from 403 (exists, not yours): an
+    # enumeration oracle over the entire id space, available to every
+    # signed-in
     # Mitglied offenstand. Vorher verwehrte `require_permission(USERS_MANAGE)`
-    # den Zutritt vor der Abfrage; mit der Lockerung faellt dieser Schutz weg,
-    # also muss die Reihenfolge ihn ersetzen.
+    # entry before the query; with the relaxation that protection falls away,
+    # so the ordering has to replace it.
     is_self = user_id == current_user.id
     actor = current_user.username
 
@@ -1079,8 +1081,8 @@ async def set_voice_second_factor(
     if not request.enabled and not is_self and not has_permission(
         current_user.get_permissions(), Permission.ADMIN
     ):
-        # Fremden Faktor abschalten ist der Rueckweg UND ein Angriffsweg: er
-        # senkt ein fremdes Konto still auf Passwort allein.
+        # Turning off someone else's factor is the way back AND a way in: it
+        # silently lowers another account to the password alone.
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail=(
@@ -1103,21 +1105,22 @@ async def set_voice_second_factor(
 
     # 🛑 SELBST-ABSCHALTEN VERLANGT DAS PASSWORT ERNEUT.
     #
-    # Das Einschalten hebt `token_epoch` NICHT an (ein Epoch-Sprung wuerde die
-    # Person im Moment des Einwilligens abmelden — auf einer Ein-Admin-Instanz
-    # mit klemmendem Sprachweg eine sofortige Aussperrung). Folge: ein Token von
-    # VOR der Einwilligung ueberlebt sie, erneuert sich ueber `/auth/refresh`
-    # (das den Faktor nicht prueft) und duerfte den Faktor sonst dauerhaft
-    # entfernen — genau das, wogegen er schuetzt. Vorher verlangte das
-    # `users.manage`; mit der Lockerung faellt dieser Schutz weg.
+    # Turning it on does NOT bump `token_epoch` (an epoch jump would sign the
+    # person out at the moment of consenting -- on a single-admin instance with
+    # a jammed voice path, an immediate lockout). Consequence: a token from
+    # BEFORE the consent survives it, renews itself via `/auth/refresh` (which
+    # does not check the factor), and could otherwise remove the factor
+    # permanently -- exactly what it protects against. That used to require
+    # `users.manage`; with the relaxation that protection falls away.
     #
-    # Das Passwort ersetzt ihn: wer nur ein Token erbeutet hat, kommt nicht
-    # durch. Wer auch das Passwort hat, war ohnehin nur noch durch die Stimme
-    # getrennt — der Faktor verliert also nichts, was er vorher hatte.
+    # The password replaces it: whoever only captured a token does not get
+    # through. Whoever also has the password was separated by the voice alone
+    # anyway -- so the factor loses nothing it had before.
     #
-    # 🛑 Eine STIMMprobe zu verlangen waere zirkulaer: genau wer nicht sprechen
-    # kann, braucht diesen Weg. Fuer ein FREMDES Konto entfaellt die Frage — dort
-    # steht `admin`, und eine Administratorin kennt das fremde Passwort nicht.
+    # Requiring a VOICE sample would be circular: the person who cannot speak
+    # is exactly the one who needs this path. For ANOTHER account the question
+    # does not arise -- `admin` stands there, and an administrator does not
+    # know the other person's password.
     if not request.enabled and is_self and user.voice_second_factor_enabled:
         from services.auth_service import verify_password
 
@@ -1130,10 +1133,10 @@ async def set_voice_second_factor(
             )
 
     if request.enabled:
-        # Ein Geraetekonto spricht nicht. Es meldet sich auch nicht ueber
-        # `/auth/login` an, die Huerde traefe es also nie — aber ein Konto mit
-        # gesetzter Einwilligung, das niemals einloesen kann, ist ein Zustand,
-        # den niemand gebrauchen kann. Lieber hier sagen als spaeter raten.
+        # A device account does not speak. It does not sign in via
+        # `/auth/login` either, so the hurdle would never apply to it -- but an
+        # account with the consent set that can never redeem it is a state
+        # nobody can use. Better said here than guessed at later.
         if user.is_device_account:
             from services.voice_factor_preconditions import DEVICE_ACCOUNT
 
@@ -1142,11 +1145,11 @@ async def set_voice_second_factor(
                 detail=DEVICE_ACCOUNT,
             )
 
-        # Derselbe Pruefer wie in `/auth/login` und `/auth/voice`: eine scharfe
-        # Einwilligung, die nicht eingeloest werden kann, ist keine Sicherheit,
-        # sondern eine Falle. `voice_auth_enabled` wird hier bewusst NICHT
-        # geprueft — sonst waere die Reihenfolge des Cutovers (erst Einwilligung,
-        # dann Flag) nicht durchfuehrbar; das Ruhen ist dort dokumentiert.
+        # The same checker as in `/auth/login` and `/auth/voice`: an armed
+        # consent that cannot be redeemed is not security but a trap.
+        # `voice_auth_enabled` is deliberately NOT checked here -- otherwise
+        # the cutover order (consents first, then the flag) would not be
+        # possible; the dormancy is documented there.
         from services.voice_factor_preconditions import (
             RECOGNITION_OFF,
             voice_path_blocker,
@@ -1159,13 +1162,13 @@ async def set_voice_second_factor(
         if blocker is not None:
             # 🛑 DER CODE GEHT HERAUS, NICHT DER SATZ.
             #
-            # Hier standen drei hartkodierte ENGLISCHE Saetze, und sie waren die
-            # einzige Stelle, an der die Person den Grund ueberhaupt erfuhr —
-            # ein deutschsprachiges Haushaltsmitglied las also Englisch. Das
-            # verstoesst gegen die i18n-Regel, und die Wurzel war die Bauweise:
-            # die maschinenlesbaren Codes existierten bereits und dienten nur
-            # als Schluessel, um Prosa nachzuschlagen. Jetzt geht der Code
-            # heraus und die Oberflaeche uebersetzt ihn — dieselben Codes, die
+            # Three hard-coded ENGLISH sentences used to stand here, and they
+            # were the only place the person learned the reason at all -- so a
+            # German-speaking household member read English. That violates the
+            # i18n rule, and the root was the construction: the
+            # machine-readable codes already existed and served only as keys to
+            # look up prose. Now the code goes out and the UI translates it --
+            # the same codes that
             # `GET /{id}/voice-second-factor` liefert, also EIN Vokabular.
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
@@ -1173,18 +1176,18 @@ async def set_voice_second_factor(
             )
     user.voice_second_factor_enabled = bool(request.enabled)
     await db.commit()
-    # KEIN blankes `db.refresh(user)`: das verfaellt AUCH `role` und `speaker`,
-    # die oben mit `selectinload` geholt wurden — der naechste Zugriff darauf
-    # waere ein Lazy-Load ausserhalb der greenlet-Schleife (MissingGreenlet).
-    # Die Sitzungen laufen mit `expire_on_commit=False`, das Commit genuegt.
+    # NOT a bare `db.refresh(user)`: that also expires `role` and `speaker`,
+    # which were fetched above with `selectinload` -- the next access to them
+    # would be a lazy load outside the greenlet loop (MissingGreenlet). The
+    # sessions run with `expire_on_commit=False`, so the commit is enough.
 
-    # Protokoll, weil es eine Einwilligung ist: wer hat sie wann fuer welches
+    # Logged because it is a consent: who gave it, when, and for which
     # Konto gesetzt oder zurueckgenommen.
-    # 🛑 Das ENTFERNEN einer Einwilligung wiegt schwerer als das Erteilen: es
-    # senkt ein Konto auf Passwort allein. Derselbe Subsystem-Pruefer schreibt
-    # bereits WARNING, wenn die Huerde von SELBST ruht
-    # (`voice_factor_preconditions`) — dass ein Mensch sie wegnimmt, darf nicht
-    # leiser protokolliert werden als dass sie von allein einschlaeft.
+    # REMOVING a consent weighs more than granting one: it lowers an account
+    # to the password alone. The same subsystem checker already writes a
+    # WARNING when the hurdle goes dormant BY ITSELF
+    # (`voice_factor_preconditions`) -- a human taking it away must not be
+    # logged more quietly than it falling asleep on its own.
     if request.enabled:
         logger.info(f"Voice second factor enabled for user {user.id} by {actor}")
     else:

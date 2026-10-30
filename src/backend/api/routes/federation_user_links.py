@@ -1,13 +1,12 @@
 """
 Federation identity-link admin API (F-ID-1 — person-scoped federation).
 
-🛑 NOTLUKE, nicht der regulaere Weg. Seit 2026-10-27 stellt eine Person ihre
+ESCAPE HATCH, not the regular path. Since 2026-10-27 a person establishes
 Verknuepfung SELBST her, ueber den einwilligungs-signierten Handschlag in
-`api/routes/federation_links.py` — angemeldet auf beiden Instanzen, jede Seite
-unterschreibt ihre eigene Haelfte. Dieses Modul bleibt fuer den Fall, dass der
-Handschlag nicht geht (eine Oberflaeche ist unerreichbar, eine Zeile muss von
-Hand gerade gezogen werden). Wer es als Normalweg benutzt, tauscht einen Beweis
-gegen eine Behauptung.
+`api/routes/federation_links.py` -- signed in on both instances, each side
+signing its own half. This module remains for the case where the handshake is
+not possible (one UI is unreachable, a row has to be straightened out by hand).
+Using it as the normal path trades a proof for an assertion.
 
 ADMIN-gated CRUD over `federation_user_links` — the cross-instance person map
 that lets a federated query be served AS a mapped local user (full circle

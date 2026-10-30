@@ -27,9 +27,9 @@ class ChatRequest(BaseModel):
     message: str
     session_id: str | None = None
     context: list[dict] | None = None
-    # 🛑 Dieselbe Laenge wie im WS-Rahmen (`websocket_messages.py`): das
-    # Frontend faellt auf REST zurueck, wenn die WS-Verbindung noch nicht
-    # steht, und ein „Korrigieren & neu beantworten" im Wettlauf mit dem
+    # The same length as in the WS frame (`websocket_messages.py`): the
+    # frontend falls back to REST while the WS connection is not up yet, and a
+    # "correct & re-answer" racing the
     # Handschlag verlor sonst Rollenhinweis UND Festnagelung.
     corrected_intent: str | None = Field(None, max_length=128)
 
@@ -61,7 +61,7 @@ def _has_chat_all(current_user) -> bool:
         # MissingGreenlet. Swallowed, that reads as "this admin has no chat.all"
         # and the shared room history becomes undeletable by anyone — the exact
         # failure mode that hid the satellite speaker-permission bug (P0 Nr. 3).
-        logger.warning(f"⚠️ `chat.all` konnte nicht gelesen werden, verweigere: {e}")
+        logger.warning(f"⚠️ `chat.all` could not be read, refusing: {e}")
         return False
 
 
@@ -104,7 +104,7 @@ async def send_message(
     db: AsyncSession = Depends(get_db),
     current_user: User | None = Depends(get_current_user)
 ):
-    """Nachricht senden und Antwort erhalten"""
+    """Send a message and receive an answer."""
     try:
         logger.info(f"📨 Neue Nachricht: '{chat_request.message[:100]}'")
 
@@ -117,7 +117,7 @@ async def send_message(
             )
             raise HTTPException(status_code=400, detail="Request blocked by input guard.")
 
-        # Session ID generieren falls nicht vorhanden
+        # Generate a session id if there is none
         session_id = chat_request.session_id or str(uuid.uuid4())
 
         # Conversation in DB speichern/laden
@@ -159,7 +159,7 @@ async def send_message(
         )
         db.add(user_msg)
 
-        # Kontext aus DB laden falls nicht übergeben
+        # Load the context from the database if it was not passed in
         context = chat_request.context or []
         if not context:
             # Letzte 10 Nachrichten laden
@@ -461,7 +461,7 @@ async def get_history(
             ]
         }
     except Exception as e:
-        logger.error(f"❌ Fehler beim Laden der Historie: {e}")
+        logger.error(f"❌ Failed to load the history: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.delete("/session/{session_id}")
@@ -487,7 +487,7 @@ async def delete_session(
 
         return {"success": True}
     except Exception as e:
-        logger.error(f"❌ Fehler beim Löschen der Session: {e}")
+        logger.error(f"❌ Failed to delete the session: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.get("/conversations")
@@ -521,7 +521,7 @@ async def list_conversations(
             "count": len(conversations)
         }
     except Exception as e:
-        logger.error(f"❌ Fehler beim Laden der Konversationen: {e}")
+        logger.error(f"❌ Failed to load the conversations: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.get("/conversation/{session_id}/summary")
@@ -555,7 +555,7 @@ async def get_conversation_summary(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"❌ Fehler beim Laden der Zusammenfassung: {e}")
+        logger.error(f"❌ Failed to load the summary: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.get("/search")
@@ -594,7 +594,7 @@ async def search_conversations(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"❌ Fehler bei der Suche: {e}")
+        logger.error(f"❌ Search failed: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.get("/messages/search")
@@ -649,7 +649,7 @@ async def search_messages(
         )
         return {"query": q, **payload}
     except Exception as e:
-        logger.error(f"❌ Fehler bei der Message-Suche: {e}")
+        logger.error(f"❌ Message search failed: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -753,7 +753,7 @@ async def get_conversation_stats(
         )
         latest_conversation = result.scalar_one_or_none()
 
-        # Nachrichten der letzten 24h
+        # Messages from the last 24h
         from datetime import timedelta
         yesterday = datetime.now(UTC).replace(tzinfo=None) - timedelta(days=1)
         result = await db.execute(
@@ -770,7 +770,7 @@ async def get_conversation_stats(
             "latest_activity": latest_conversation.updated_at.isoformat() if latest_conversation else None
         }
     except Exception as e:
-        logger.error(f"❌ Fehler beim Laden der Statistiken: {e}")
+        logger.error(f"❌ Failed to load the statistics: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.delete("/conversations/cleanup")

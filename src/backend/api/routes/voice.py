@@ -105,7 +105,7 @@ async def speech_to_text(
             if speaker_name:
                 logger.info(f"🎤 Sprecher erkannt: {speaker_name} (@{speaker_alias}) - Konfidenz: {speaker_confidence:.2f}")
             else:
-                logger.info("🎤 Sprecher nicht erkannt (unbekannt oder unter Threshold)")
+                logger.info("🎤 Speaker not recognised (unknown or below threshold)")
         else:
             # Transkription OHNE Sprechererkennung
             text = await whisper_service.transcribe_bytes(
