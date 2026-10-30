@@ -37,26 +37,25 @@ from models.database import TIER_PUBLIC
 
 @dataclass(frozen=True)
 class PeerScope:
-    """Woher eine foederierte Anfrage kommt und was ihr gewaehrt wurde.
+    """Where a federated request comes from and what it was granted.
 
-    🛑 Dieses Objekt ERSETZT das fruehere `peer_scoped: bool`, und der
-    Unterschied ist der ganze Fix (F-ID-3, BL-0135): ein blosses „ja, Peer"
-    liess offen, WELCHER Peer — und der Filter griff daraufhin zur
-    Nutzerkennung des Fragenden, die im foederierten Fall aus
-    `PeerUser.remote_user_id` stammte. Eine FREMDE Zahl in einer Spalte, deren
-    Fremdschluessel auf die LOKALE `users.id` zeigt. Am 2026-10-27 brach das
-    auf einer Instanz den Schluessel und band auf der anderen still die falsche
+    This object REPLACES the earlier `peer_scoped: bool`, and the difference
+    is the whole fix (F-ID-3, BL-0135): a bare "yes, peer" left open WHICH
+    peer -- so the filter reached for the asker's user id, which in the
+    federated case came from `PeerUser.remote_user_id`. A FOREIGN number in a
+    column whose foreign key points at the LOCAL `users.id`. On 2026-10-27
+    that broke the key on one instance and silently bound the wrong
     Person.
 
-    Jetzt ist es strukturell unmoeglich, peer-bezogen zu filtern, ohne den Peer
+    It is now structurally impossible to filter peer-scoped without naming
     zu benennen: wer `peer` setzt, liefert Eigentuemer UND Stufe mit.
 
-    - `owner_id`: der lokale Mensch, der diese Paarung eingegangen ist
-      (`peer_users.circle_owner_id`). 🛑 Ohne diese Bindung saehe der Peer seine
-      Stufe bei JEDEM Eigentuemer — aus der Reparatur wuerde ein Leck.
-    - `tier`: die bei der Paarung gewaehrte Stufe (`peer_users.granted_tier`).
-      Die Leiter laeuft gegen die Anschauung: eine KLEINERE Zahl gewaehrt MEHR
-      (`tier <= atom.circle_tier`), 4 ist die engste.
+    - `owner_id`: the local person who entered into this pairing
+      (`peer_users.circle_owner_id`). Without this binding the peer would see
+      its tier under EVERY owner -- the fix would become a leak.
+    - `tier`: the tier granted at pairing time (`peer_users.granted_tier`).
+      The ladder runs against intuition: a SMALLER number grants MORE
+      (`tier <= atom.circle_tier`), 4 is the narrowest.
     """
 
     owner_id: int
@@ -125,33 +124,33 @@ def circles_filter_clause(
                            is NULL so the owner can never reach their own content
                            via the KB-owner branch. The atom-owner fallback keeps
                            ownership intact for KB-less documents. (CM-1 fix.)
-        peer:              eine `PeerScope` macht die Abfrage FOEDERIERT: die
-                           Zweige „Eigentuemer-Gleichheit" und „ausdrueckliche
-                           Freigabe" entfallen, und die Stufe kommt aus der
-                           PAARUNG statt aus einer Mitgliedschaft. Uebrig bleibt
+        peer:              a `PeerScope` makes the query FEDERATED: the
+                           "owner equality" and "explicit grant" branches drop
+                           out, and the tier comes from the PAIRING instead of
+                           a membership. What remains is
                            beweisbar `(tier = public) OR (dieser Eigentuemer UND
                            seine gewaehrte Stufe)` — unabhaengig von
                            ``auth_enabled``.
 
-                           🛑 Bis 2026-10-27 war das ein blosses `peer_scoped:
-                           bool`, und die Stufe kam aus einem EXISTS auf
-                           `circle_memberships.member_user_id = :asker`. Dort
-                           stand die ENTFERNTE Nutzerkennung: in einem Haushalt
-                           mit mehreren Konten band sie die Gewaehrung an die
-                           falsche lokale Person, auf einer Instanz mit weniger
-                           Konten brach der Fremdschluessel. Zudem war der Bool
-                           an `enforce_circles` verdrahtet, weshalb auch eine
-                           LOKALE Dokumentsuche peer-bezogen lief und die
-                           eigenen nicht-oeffentlichen Treffer verlor.
-                           Beide Bedeutungen sind jetzt getrennt: `enforce_circles`
-                           unterdrueckt nur noch die Einzelnutzer-Abkuerzung,
-                           `peer` sagt, dass und welcher Peer fragt.
+                           Until 2026-10-27 this was a bare `peer_scoped:
+                           bool`, and the tier came from an EXISTS on
+                           `circle_memberships.member_user_id = :asker`. That
+                           column held the REMOTE user id: in a household with
+                           several accounts it bound the grant to the wrong
+                           local person, and on an instance with fewer accounts
+                           it broke the foreign key. The bool was also wired to
+                           `enforce_circles`, which is why a LOCAL document
+                           search ran peer-scoped too and lost the searcher's
+                           own non-public hits.
+                           The two meanings are now separate: `enforce_circles`
+                           only suppresses the single-user shortcut, and `peer`
+                           says that -- and which -- peer is asking.
 
                            🛑 Im peer-Fall entsteht `:{asker_param}` GAR NICHT
                            mehr — es gibt dort keine fragende lokale Person.
-                           `circles_filter_params` laesst die Bindung weg; ein
+                           `circles_filter_params` omits the binding; a
                            strikter `text(clause).bindparams()`-Aufrufer wuerde
-                           sonst auf den unbenutzten Namen werfen.
+                           strict caller would otherwise raise on the unused name.
     """
     owner_alias = owner_table_alias or table_alias
     sid_expr = source_id_expr or f"{table_alias}.id"
@@ -200,15 +199,15 @@ def circles_filter_clause(
         )
 
     if peer is not None:
-        # 🛑 FOEDERIERT: die Stufe kommt aus der PAARUNG, nicht aus einer
-        # Mitgliedschaft. Zwei Bedingungen, und BEIDE sind tragend:
-        #   - der Eigentuemer der Zeile muss der sein, der diese Paarung
-        #     eingegangen ist. Ohne das saehe der Peer seine Stufe bei JEDEM
-        #     Eigentuemer der Instanz.
-        #   - die gewaehrte Stufe muss die Zeile erreichen. Kleinere Zahl =
+        # FEDERATED: the tier comes from the PAIRING, not from a membership.
+        # Two conditions, and BOTH carry weight:
+        #   - the row's owner must be the one who entered into this pairing.
+        #     Without that the peer would see its tier under EVERY owner on
+        #     the instance.
+        #   - the granted tier has to reach the row. Smaller number =
         #     weiter: `4 <= tier` trifft nur Oeffentliches, `0 <= tier` alles.
-        # Der frueher hier stehende EXISTS auf `circle_memberships` las die
-        # ENTFERNTE Nutzerkennung in einer Spalte mit Fremdschluessel auf die
+        # The EXISTS on `circle_memberships` that used to stand here read the
+        # REMOTE user id from a column with a foreign key onto the
         # LOKALE `users.id` — siehe `peer` im Docstring.
         parts.append(
             f"({owner_alias}.{owner_col} = :{asker_param}_peer_owner"
@@ -269,10 +268,10 @@ def circles_filter_params(
     """
     if peer is not None:
         # 🛑 Im foederierten Fall gibt es KEINE fragende lokale Person — also
-        # entsteht `{asker_param}` erst gar nicht. Wuerde es mitgeliefert,
-        # waere es eine unbenutzte Bindung, und ein strikter
+        # `{asker_param}` is not created at all. Supplied anyway it would be
+        # an unused binding, and a strict
         # `text(clause).bindparams()`-Aufrufer (kg_retrieval._resolve_entity_names)
-        # wirft darauf. Dasselbe gilt fuer `_src`: der Freigabe-Zweig entfaellt.
+        # caller raises on it. The same goes for `_src`: the grant branch drops out.
         return {
             f"{asker_param}_pub": public_tier_index,
             f"{asker_param}_peer_owner": peer.owner_id,
@@ -297,14 +296,14 @@ def kg_entities_circles_filter(
 ) -> tuple[str, dict[str, Any]]:
     """Returns (clause, params) for circle-filtering kg_entities.
 
-    ``peer`` (federation): drop the owner + explicit-grant branches, Stufe aus der Paarung —
+    ``peer`` (federation): drop the owner + explicit-grant branches, tier from the pairing —
     see ``circles_filter_clause``.
     """
     src = "kg_entities"
     clause = circles_filter_clause(table_alias=alias, source_table_value=src, peer=peer)
-    # Der foederierte Fall laesst den Freigabe-Zweig (und damit `_src`) UND die
+    # The federated case drops the grant branch (and with it `_src`) AND the
     # Fragenden-Kennung weg — sonst wirft ein strikter
-    # `text(clause).bindparams()`-Aufrufer auf den unbenutzten Namen.
+    # `text(clause).bindparams()` caller would raise on the unused name.
     return clause, circles_filter_params(
         asker_id, source_table_value=("" if peer is not None else src), peer=peer
     )
@@ -315,13 +314,13 @@ def kg_relations_circles_filter(
 ) -> tuple[str, dict[str, Any]]:
     """Returns (clause, params) for circle-filtering kg_relations.
 
-    ``peer`` (federation): drop the owner + explicit-grant branches, Stufe aus der Paarung.
+    ``peer`` (federation): drop the owner + explicit-grant branches, tier from the pairing.
     """
     src = "kg_relations"
     clause = circles_filter_clause(table_alias=alias, source_table_value=src, peer=peer)
-    # Der foederierte Fall laesst den Freigabe-Zweig (und damit `_src`) UND die
+    # The federated case drops the grant branch (and with it `_src`) AND the
     # Fragenden-Kennung weg — sonst wirft ein strikter
-    # `text(clause).bindparams()`-Aufrufer auf den unbenutzten Namen.
+    # `text(clause).bindparams()` caller would raise on the unused name.
     return clause, circles_filter_params(
         asker_id, source_table_value=("" if peer is not None else src), peer=peer
     )
@@ -332,13 +331,13 @@ def conversation_memories_circles_filter(
 ) -> tuple[str, dict[str, Any]]:
     """Returns (clause, params) for circle-filtering conversation_memories.
 
-    ``peer`` (federation): drop the owner + explicit-grant branches, Stufe aus der Paarung.
+    ``peer`` (federation): drop the owner + explicit-grant branches, tier from the pairing.
     """
     src = "conversation_memories"
     clause = circles_filter_clause(table_alias=alias, source_table_value=src, peer=peer)
-    # Der foederierte Fall laesst den Freigabe-Zweig (und damit `_src`) UND die
+    # The federated case drops the grant branch (and with it `_src`) AND the
     # Fragenden-Kennung weg — sonst wirft ein strikter
-    # `text(clause).bindparams()`-Aufrufer auf den unbenutzten Namen.
+    # `text(clause).bindparams()` caller would raise on the unused name.
     return clause, circles_filter_params(
         asker_id, source_table_value=("" if peer is not None else src), peer=peer
     )
@@ -374,7 +373,7 @@ def document_chunks_circles_filter(
     """
     Returns (clause, params) for circle-filtering document_chunks.
 
-    ``peer`` (federation): drop the owner + explicit-grant branches, Stufe aus der Paarung —
+    ``peer`` (federation): drop the owner + explicit-grant branches, tier from the pairing —
     see ``circles_filter_clause``.
 
     Post-atoms-per-document (pc20260423): the access-control unit is the
@@ -410,9 +409,9 @@ def document_chunks_circles_filter(
         owner_atom_id_expr=f"{doc_alias}.atom_id",
         peer=peer,
     )
-    # Der foederierte Fall laesst den Freigabe-Zweig (und damit `_src`) UND die
+    # The federated case drops the grant branch (and with it `_src`) AND the
     # Fragenden-Kennung weg — sonst wirft ein strikter
-    # `text(clause).bindparams()`-Aufrufer auf den unbenutzten Namen.
+    # `text(clause).bindparams()` caller would raise on the unused name.
     return clause, circles_filter_params(
         asker_id, source_table_value=("" if peer is not None else src), peer=peer
     )
@@ -429,7 +428,7 @@ def document_facts_circles_filter(
     """
     Returns (clause, params) for circle-filtering ``document_facts``.
 
-    ``peer`` (federation): drop the owner + explicit-grant branches, Stufe aus der Paarung —
+    ``peer`` (federation): drop the owner + explicit-grant branches, tier from the pairing —
     see ``circles_filter_clause``.
 
     A Schicht A fact inherits the access policy of its parent Document — the
@@ -461,9 +460,9 @@ def document_facts_circles_filter(
         owner_atom_id_expr=f"{doc_alias}.atom_id",
         peer=peer,
     )
-    # Der foederierte Fall laesst den Freigabe-Zweig (und damit `_src`) UND die
+    # The federated case drops the grant branch (and with it `_src`) AND the
     # Fragenden-Kennung weg — sonst wirft ein strikter
-    # `text(clause).bindparams()`-Aufrufer auf den unbenutzten Namen.
+    # `text(clause).bindparams()` caller would raise on the unused name.
     return clause, circles_filter_params(
         asker_id, source_table_value=("" if peer is not None else src), peer=peer
     )

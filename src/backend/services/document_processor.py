@@ -32,7 +32,7 @@ class DocumentProcessor:
     - Standard: Docling nutzt embedded Text + OCR für Bitmap-Regionen
     - rag_force_ocr=True: Immer force_full_page_ocr (embedded Text ignoriert)
     - rag_ocr_auto_detect=True: Erkennt garbled Text (Leerzeichen-Anteil < Schwellwert)
-      und wiederholt die Konvertierung mit force_full_page_ocr
+      and repeats the conversion with force_full_page_ocr
     """
 
     def __init__(self):
@@ -60,8 +60,8 @@ class DocumentProcessor:
             if tess is not None:
                 return tess
             logger.warning(
-                "rag_ocr_engine='tesseract', aber die Tesseract-Runtime ist nicht nutzbar "
-                "(CLI+deu/eng-traineddata oder tesserocr-Binding fehlen) — Fallback auf EasyOcr"
+                "rag_ocr_engine='tesseract', but the Tesseract runtime is not usable "
+                "(CLI+deu/eng traineddata or the tesserocr binding are missing) -- falling back to EasyOcr"
             )
 
         logger.info("Initialisiere force_full_page_ocr-Converter (Engine: EasyOcr de+en)")
@@ -151,9 +151,9 @@ class DocumentProcessor:
             logger.info("Docling erfolgreich initialisiert")
 
         except ImportError as e:
-            logger.error(f"Docling nicht installiert: {e}")
+            logger.error(f"Docling is not installed: {e}")
             raise RuntimeError(
-                "Docling ist nicht installiert. "
+                "Docling is not installed. "
                 "Bitte 'pip install docling docling-core' ausführen."
             ) from e
         except Exception as e:
@@ -246,13 +246,13 @@ class DocumentProcessor:
         force_ocr: bool = False
     ) -> dict[str, Any]:
         """
-        Verarbeitet ein Dokument und extrahiert strukturierte Chunks.
+        Process a document and extract structured chunks.
 
         Args:
             file_path: Pfad zur Dokumentdatei
-            force_ocr: OCR auf allen Seiten erzwingen (ignoriert embedded Text).
+            force_ocr: force OCR on every page (ignores the embedded text).
                        Nützlich für PDFs mit kaputtem Text-Layer.
-                       Überschreibt rag_force_ocr und rag_ocr_auto_detect.
+                       Overrides rag_force_ocr and rag_ocr_auto_detect.
 
         Returns:
             {
@@ -272,12 +272,12 @@ class DocumentProcessor:
                     "metadata": {},
                     "chunks": [],
                     "status": "failed",
-                    "error": f"Datei nicht gefunden: {file_path}"
+                    "error": f"file not found: {file_path}"
                 }
 
             logger.info(f"Verarbeite Dokument: {path.name}")
 
-            # Bestimme ob force_full_page_ocr genutzt werden soll
+            # Decide whether force_full_page_ocr should be used
             use_ocr = force_ocr or settings.rag_force_ocr
 
             # Track which OCR pathway actually produced the chunks we'll
@@ -310,13 +310,13 @@ class DocumentProcessor:
 
             doc = result.document
 
-            # Auto-Erkennung garbled Text: wenn aktiviert und PDF, prüfe ob OCR nötig
+            # Auto-detect garbled text: if enabled and a PDF, check whether OCR is needed
             if (
                 not use_ocr
                 and settings.rag_ocr_auto_detect
                 and path.suffix.lower() == ".pdf"
             ):
-                # Schnellcheck: ersten Chunk-Text auf Leerzeichen prüfen
+                # Quick check: look at the first chunk's text for spacing
                 sample_text = doc.export_to_text() if hasattr(doc, 'export_to_text') else ""
                 if self._is_text_garbled(sample_text):
                     logger.info(f"Re-konvertiere mit force_full_page_ocr: {path.name}")
@@ -743,7 +743,7 @@ class DocumentProcessor:
     def _convert_document_ocr(self, file_path: str):
         """Synchrone Dokumentkonvertierung mit force_full_page_ocr (für Thread-Pool).
 
-        Ignoriert den embedded Text-Layer und führt vollständiges OCR auf
+        Ignores the embedded text layer and runs full OCR on
         jeder Seite durch. Liefert bessere Ergebnisse bei gescannten PDFs
         mit kaputtem Text-Layer (fehlende Leerzeichen etc.).
         """
@@ -861,7 +861,7 @@ class DocumentProcessor:
         return {"chunks": chunks, "dropped_low_quality": dropped}
 
     def _get_headings(self, chunk) -> list[str]:
-        """Extrahiert Überschriften aus Chunk-Metadaten"""
+        """Extract headings from the chunk metadata."""
         try:
             if hasattr(chunk, 'meta') and hasattr(chunk.meta, 'headings'):
                 return list(chunk.meta.headings) if chunk.meta.headings else []
@@ -882,7 +882,7 @@ class DocumentProcessor:
         return "paragraph"
 
     def _get_page_number(self, chunk) -> int | None:
-        """Ermittelt die Seitennummer des Chunks"""
+        """Determine the chunk's page number."""
         try:
             if hasattr(chunk, 'meta') and hasattr(chunk.meta, 'doc_items'):
                 if chunk.meta.doc_items:
@@ -952,7 +952,7 @@ class DocumentProcessor:
         try:
             path = Path(file_path)
             if not path.exists():
-                logger.warning(f"extract_text_only: Datei nicht gefunden: {file_path}")
+                logger.warning(f"extract_text_only: file not found: {file_path}")
                 return None
 
             ext = path.suffix.lower().lstrip('.')
@@ -1023,6 +1023,6 @@ class DocumentProcessor:
         ]
 
     def is_supported(self, filename: str) -> bool:
-        """Prüft, ob ein Dateiformat unterstützt wird"""
+        """Check whether a file format is supported."""
         ext = Path(filename).suffix.lower().lstrip('.')
         return ext in self.get_supported_formats()

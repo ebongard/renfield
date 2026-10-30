@@ -355,7 +355,12 @@ class TestProcessDocument:
         result = await processor.process_document("/nonexistent/file.pdf")
 
         assert result["status"] == "failed"
-        assert "nicht gefunden" in result["error"]
+        # The error has to NAME the missing path -- that is the intent. The
+        # wording moved from German to English on 2026-10-30 with the
+        # source-language pass; the assertion follows the intent, not the
+        # old wording.
+        assert "not found" in result["error"]
+        assert "/nonexistent/file.pdf" in result["error"]
         assert result["chunks"] == []
 
     @pytest.mark.asyncio

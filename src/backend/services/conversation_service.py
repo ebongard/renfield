@@ -414,20 +414,20 @@ class ConversationService:
         return out
 
     async def latest_message_id(self, session_id: str) -> int | None:
-        """Die hoechste Nachrichten-Kennung dieser Sitzung, oder `None`.
+        """The highest message id in this session, or `None`.
 
-        🛑 Billig und ABSICHTLICH ohne Besitzpruefung: die Zahl ist keine
-        Auskunft ueber Inhalte, sie entscheidet nur, ob die Historie neu
-        geladen werden muss. Das Laden selbst prueft den Besitz
-        (`load_context` mit `enforce_ownership`), eine fremde Sitzung ergibt
-        dort weiterhin eine leere Historie.
+        Cheap and DELIBERATELY without an ownership check: the number says
+        nothing about content, it only decides whether the history has to be
+        reloaded. The load itself checks ownership (`load_context` with
+        `enforce_ownership`), and a foreign session still yields an empty
+        history there.
 
-        Wozu: die Historie wird einmal je Socket geladen, ein ASYNCHRONER
-        Erzeuger schreibt aber in die Datenbank, ohne die lebende Liste
+        Why: the history is loaded once per socket, but an ASYNCHRONOUS
+        producer writes to the database without touching the live list
         anzufassen (Scanner-Fertigmeldung, Gespraechsuebergabe,
-        Paperless-Bestaetigung). Ohne diesen Vergleich las der Agent einen
-        veralteten Kontext — gemessen am 2026-10-26, als er einen am
-        Papierstau gescheiterten Scan fuer laufend hielt und auf zwei weitere
+        Paperless confirmation). Without this comparison the agent read a
+        stale context -- measured on 2026-10-26, when it believed a scan that
+        had failed on a paper jam was still running and, on two further
         Bitten nur beteuerte, er laufe.
         """
         try:
@@ -438,8 +438,8 @@ class ConversationService:
             )
             return result.scalar_one_or_none()
         except Exception as exc:
-            # Eine fehlende Auskunft darf den Zug nicht mitnehmen. `None` heisst
-            # „keine Aussage"; der Aufrufer behandelt das wie „unveraendert".
+            # A missing answer must not take the query down with it. `None`
+            # means "no statement"; the caller treats it as "unchanged".
             logger.warning(f"⚠️ latest_message_id failed for {session_id}: {exc}")
             return None
 
@@ -451,10 +451,10 @@ class ConversationService:
         enforce_ownership: bool = False,
     ) -> list[dict[str, str]]:
         """
-        Lade Konversationskontext aus der Datenbank.
+        Load conversation context from the database.
 
         Args:
-            session_id: Session ID der Konversation
+            session_id: session id of the conversation
             max_messages: Maximale Anzahl zu ladender Nachrichten
             user_id: Authenticated caller identity (for the ownership check).
             enforce_ownership: When True (auth-enabled deployments), a conversation
@@ -558,10 +558,10 @@ class ConversationService:
         circle_tier: int | None = None,
     ) -> Message:
         """
-        Speichere eine einzelne Nachricht.
+        Store a single message.
 
         Args:
-            session_id: Session ID der Konversation
+            session_id: session id of the conversation
             role: "user" oder "assistant"
             content: Nachrichteninhalt
             metadata: Optional zusätzliche Metadaten
@@ -686,7 +686,7 @@ class ConversationService:
             return message
 
         except Exception as e:
-            logger.error(f"Fehler beim Speichern der Nachricht: {e}")
+            logger.error(f"Failed to store the message: {e}")
             await self.db.rollback()
             raise
 
@@ -1071,7 +1071,7 @@ class ConversationService:
         Hole Zusammenfassung einer Konversation.
 
         Args:
-            session_id: Session ID der Konversation
+            session_id: session id of the conversation
 
         Returns:
             Dict mit session_id, created_at, updated_at, message_count, first_message, last_message
@@ -1092,7 +1092,7 @@ class ConversationService:
             )
             message_count = result.scalar()
 
-            # Hole erste und letzte Nachricht
+            # Fetch the first and last message
             result = await self.db.execute(
                 select(Message)
                 .where(Message.conversation_id == conversation.id)
@@ -1119,7 +1119,7 @@ class ConversationService:
             }
 
         except Exception as e:
-            logger.error(f"Fehler beim Laden der Zusammenfassung: {e}")
+            logger.error(f"Failed to load the summary: {e}")
             return None
 
     async def delete(
@@ -1127,13 +1127,13 @@ class ConversationService:
         session_id: str
     ) -> bool:
         """
-        Lösche eine komplette Konversation.
+        Delete an entire conversation.
 
         Args:
-            session_id: Session ID der zu löschenden Konversation
+            session_id: session id of the conversation to delete
 
         Returns:
-            True wenn gelöscht, False wenn nicht gefunden
+            True if deleted, False if not found
         """
         try:
             result = await self.db.execute(
@@ -1150,7 +1150,7 @@ class ConversationService:
             return False
 
         except Exception as e:
-            logger.error(f"Fehler beim Löschen der Konversation: {e}")
+            logger.error(f"Failed to delete the conversation: {e}")
             await self.db.rollback()
             return False
 
@@ -1166,12 +1166,12 @@ class ConversationService:
         Args:
             limit: Maximale Anzahl
             offset: Pagination-Offset
-            user_id: Wenn gesetzt, nur Konversationen dieses Users (auth mode).
-                Wenn None, werden alle Konversationen zurueckgegeben (single-user mode).
+            user_id: if set, only this user's conversations (auth mode).
+                If None, all conversations are returned (single-user mode).
 
         Returns:
             Liste von Konversations-Zusammenfassungen mit `preview` (gekuerzte
-            erste User-Nachricht) und `message_count`.
+            first user message) and `message_count`.
         """
         try:
             # Count subquery: message count per conversation
@@ -1242,7 +1242,7 @@ class ConversationService:
             return summaries
 
         except Exception as e:
-            logger.error(f"Fehler beim Laden der Konversationen: {e}")
+            logger.error(f"Failed to load the conversations: {e}")
             return []
 
     async def search(
@@ -1293,7 +1293,7 @@ class ConversationService:
             return results
 
         except Exception as e:
-            logger.error(f"Fehler bei der Suche: {e}")
+            logger.error(f"Search failed: {e}")
             return []
 
     def _is_postgres(self) -> bool:
@@ -1504,7 +1504,7 @@ class ConversationService:
             return {"results": results, "count": len(results), "has_more": has_more}
 
         except Exception as e:
-            logger.error(f"Fehler bei der Message-Suche: {e}")
+            logger.error(f"Message search failed: {e}")
             return {"results": [], "count": 0, "has_more": False}
 
     async def _search_messages_sqlite(

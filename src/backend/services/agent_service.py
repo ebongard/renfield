@@ -129,10 +129,10 @@ class AgentStep:
     reason: str | None = None
     success: bool | None = None
     data: dict | None = None
-    #: Warum der Lauf abgebrochen wurde, wenn er abgebrochen wurde
-    #: ("loop_detected" | "same_tool_threshold"). 🛑 Ein eigenes Feld und NICHT
-    #: der Inhaltstext: `content` kommt aus dem Prompt-Katalog, ist uebersetzt
-    #: und frei redigierbar — wer darauf abgleicht, prueft Prosa statt Code.
+    #: Why the run was aborted, if it was aborted ("loop_detected" |
+    #: "same_tool_threshold"). A field of its own and NOT the content text:
+    #: `content` comes from the prompt catalogue, is translated and freely
+    #: editable -- matching on it checks prose instead of code.
     abort_reason: str | None = None
 
 
@@ -925,59 +925,57 @@ def _record_agent_turn_metrics(context: AgentContext, last_step: AgentStep | Non
         logger.warning(f"⚠️ Could not record agent turn metrics: {e!r}")
 
 
-#: Wie viel der GENERISCHEN Werkzeugbeschreibung die Vorauswahl sieht.
+#: How much of the GENERIC tool description the preselect sees.
 #:
-#: 🛑 Die 80 stammen aus #312 und waren dort nie begruendet — nur das Wort
-#: „compact" stand daneben. Was sie gekostet haben, ist gemessen: auf „scanne
-#: nach xidra" fiel `scan_document` aus der Auswahl und der Agent suchte in
-#: Paperless, weil der Steuertext jenseits der Grenze lag.
+#: The 80 came from #312 and were never justified there -- only the word
+#: "compact" stood next to them. What they cost is measured: on "scanne nach
+#: xidra" `scan_document` dropped out of the selection and the agent searched
+#: Paperless, because the steering text lay beyond the cap.
 #:
-#: 480 ist ABGELEITET, nicht gewaehlt. Die entscheidenden Riegel in den
-#: `internal.*`-Beschreibungen — die Saetze, die eine Fehlauswahl verhindern,
-#: etwa „Use it ONLY for an explicit announcement to everybody" — beginnen bei
-#: Zeichen 56, 121, 284, 385 und 472 (2026-10-26 ausgemessen). 480 deckt alle.
+#: 480 is DERIVED, not chosen. The decisive guards in the `internal.*`
+#: descriptions -- the sentences that prevent a wrong pick, e.g. "Use it ONLY
+#: for an explicit announcement to everybody" -- start at characters 56, 121,
+#: 284, 385 and 472 (measured 2026-10-26). 480 covers all of them.
 #:
-#: Die Kosten, mit dem echten Zaehler gemessen: bei 106 Werkzeugen (der
-#: schlimmste beobachtete Fall) 3063 Token bei Grenze 80 und 6829 bei 480 —
-#: also 1,2 % gegen 2,6 % eines 262.144-Token-Fensters. Der Zuwachs ist 1,4
-#: Prozentpunkte fuer einen Klassifizierungsaufruf.
+#: The cost, measured with the real counter: at 106 tools (the worst case
+#: observed) 3063 tokens at cap 80 and 6829 at 480 -- i.e. 1.2 % against 2.6 %
+#: of a 262,144-token window. The increase is 1.4 percentage points for one
+#: classification call.
 #:
-#: 🛑 Fuer den `tool_hints`-Eintrag gilt die Grenze GAR NICHT: der ist der
-#: absichtliche Steuertext des Betreibers und geht ungekuerzt mit. Interne
-#: Werkzeuge und Foederations-Werkzeuge tragen keinen solchen Eintrag — ihre
-#: Anleitung steht in der Beschreibung, und darum musste die Grenze reichen.
+#: The cap does NOT apply to the `tool_hints` entry at all: that is the
+#: operator's deliberate steering text and goes along untruncated. Internal
+#: tools and federation tools carry no such entry -- their instructions live in
+#: the description, which is why the cap had to be enough.
 _PRESELECT_DESC_CHARS = 480
 
-#: Werkzeuge, die MEHR als die Vorgabe bekommen — je Werkzeug, nicht global.
+#: Tools that get MORE than the default -- per tool, not globally.
 #:
-#: 🛑 Gemessen am 2026-10-29 gegen den ECHTEN Prompt (Signatur `aa62fdb7`),
-#: zwei Fallsammlungen, je 3 Wiederholungen:
+#: Measured on 2026-10-29 against the REAL prompt (signature `aa62fdb7`), two
+#: case sets, 3 repetitions each:
 #:
-#:     alles bei 480            Peer 92 %   Scanner 91 %
-#:     diese vier voll (+589)   Peer 92 %   Scanner 95 %   <- beides
-#:     alle neun voll (+2640)   Peer 85 %   Scanner 95 %
+#:     everything at 480        peer 92 %   scanner 91 %
+#:     these four in full (+589) peer 92 %   scanner 95 %   <- both
+#:     all nine in full (+2640) peer 85 %   scanner 95 %
 #:
-#: Die volle Aufhebung brach die Negativkontrolle „suche nach Rechnungen"
-#: (3/3 -> 0/3): eine gewoehnliche LOKALE Suche wurde zur foederierten
-#: Anfrage, der Freitext haette also die Instanz verlassen. Darum keine
-#: globale Anhebung.
+#: Lifting the cap entirely broke the negative control "suche nach Rechnungen"
+#: (3/3 -> 0/3): an ordinary LOCAL search turned into a federated request, so
+#: the free text would have left the instance. Hence no global increase.
 #:
-#: 🛑 Und auch keine hoehere GLOBALE Zahl: um diese vier vollstaendig zu
-#: fassen, muesste sie auf 706 — das fuegte 1719 Zeichen hinzu statt 589 und
-#: schnitte fuenf der neun WEITER mitten im Satz ab. Eine Grenze je Werkzeug
-#: ist hier nicht nur feiner, sie ist die einzige Form, die den Inhalt
-#: vollstaendig bekommt und die Laenge klein haelt.
+#: And no higher GLOBAL number either: to cover these four completely it would
+#: have to go to 706 -- that adds 1719 characters instead of 589 and still cuts
+#: five of the nine mid-sentence. A per-tool cap is not just finer here, it is
+#: the only shape that gets the content complete and keeps the length small.
 #:
-#: Die Zahlen sind die VOLLE Laenge der jeweiligen Beschreibung. Wird ein Text
-#: laenger, schneidet sein Budget ihn wieder ab — `test_preselect_budget.py`
-#: faengt das, und die Gesamtobergrenze dort macht jede Anhebung zu einer
-#: sichtbaren Entscheidung statt zu einem stillen Zuwachs.
+#: The numbers are the FULL length of the respective description. If a text
+#: grows, its budget cuts it again -- `test_preselect_budget.py` catches that,
+#: and the overall ceiling there makes any increase a visible decision instead
+#: of a silent one.
 #:
-#: Was bewusst NICHT hier steht: `reindex_documents` (+672),
+#: Deliberately NOT here: `reindex_documents` (+672),
 #: `list_unfiled_documents` (+399), `forward_attachment_to_paperless` (+385),
-#: `paperless_dedupe` (+355), `ingest_status` (+240). Ihre Enden sind ebenfalls
-#: tragend, aber die Messung zeigt keinen Gewinn (+829 statt +589 brachte
-#: 0 Punkte). Sie gehoeren redaktionell gekuerzt, nicht budgetiert.
+#: `paperless_dedupe` (+355), `ingest_status` (+240). Their endings carry
+#: weight too, but the measurement shows no gain (+829 instead of +589 brought
+#: 0 points). They want editorial shortening, not a budget.
 _PRESELECT_DESC_BUDGET: dict[str, int] = {
     "internal.system_health": 562,
     "internal.list_chunkless_documents": 614,
@@ -989,22 +987,22 @@ _PRESELECT_DESC_BUDGET: dict[str, int] = {
 def _tools_pinned_by_correction(
     corrected_intent: str | None, registry: dict,
 ) -> list[str]:
-    """Welche Werkzeuge eine Nutzerkorrektur gegen die Vorauswahl festnagelt.
+    """Which tools a user correction pins down against the preselect.
 
-    🛑 Das Auswahlmenue „Korrigieren & neu beantworten" gruppiert die
-    MCP-Werkzeuge NACH SERVER: die Beschriftung ist der Servername („Scanner"),
-    der gesendete Wert ist das ERSTE Werkzeug dieses Servers als Vertreter
+    The "correct & re-answer" menu groups the MCP tools BY SERVER: the label
+    is the server name ("Scanner") and the submitted value is the FIRST tool of
+    that server, standing in
     (`IntentCorrectionButton.tsx:57-67`). Wer „Scanner" waehlt, meint also den
-    Server — nicht den Vertreter, der dort zufaellig vorn steht. Genau ihn zu
-    erzwingen hiesse, eine Korrektur in ein anderes Werkzeug umzudeuten.
+    server -- not the stand-in that happens to sit first. Forcing exactly that
+    one would mean reinterpreting a correction as a different tool.
 
     - `mcp.<server>.<tool>` -> ALLE Werkzeuge dieses Servers
     - `internal.<x>`        -> genau dieses Werkzeug (kein Server dahinter)
     - alles andere (`knowledge.ask`, `general.conversation`, Unbekanntes)
-      -> nichts; dort entscheidet weiter die Rolle
+      -> nothing; the role keeps deciding there
 
     Am 2026-10-26 gemeldet: „wenn ich über falsch erkannt den scanner
-    auswähle, sollte das eine Auswirkung haben."
+    pick, that should have an effect."
     """
     if not corrected_intent:
         return []
@@ -1018,42 +1016,41 @@ def _tools_pinned_by_correction(
 
 
 def preselect_input_signature(preselect_prompt: str) -> str:
-    """Ein kurzer Fingerabdruck des FERTIGEN Vorauswahl-Prompts.
+    """A short fingerprint of the FINISHED preselect prompt.
 
-    🛑 Der Anlass, am 2026-10-26 gemessen. Auf dieselbe Nachricht
-    („scanne nach xidra") lieferte die Vorauswahl neunmal zwei verschiedene
-    Ergebnisse: siebenmal die Scanner-Werkzeuge, zweimal die Dokumentensuche.
-    Das Protokoll sagte beide Male „3/33" — und damit war NICHT zu entscheiden,
-    ob sich die Eingabe geändert hatte oder das Modell schwankte. Drei
-    Fehldiagnosen gingen auf diese Lücke; die dritte hätte eine Verschlechterung
-    ausgerollt, wenn sie nicht vorher gemessen worden wäre.
+    Why, measured on 2026-10-26. On the same message ("scanne nach xidra") the
+    preselect produced two different results across nine runs: seven times the
+    scanner tools, twice the document search. The log said "3/33" both times --
+    so there was NO way to tell whether the input had changed or the model was
+    wavering. Three misdiagnoses came out of that gap; the third would have
+    shipped a regression had it not been measured first.
 
-    Mit dem Fingerabdruck ist die Frage in einem Blick entschieden: gleiche
-    Signatur und verschiedenes Ergebnis heißt, die Eingabe war identisch;
-    verschiedene Signatur heißt, die Liste hat sich geändert (Reihenfolge,
+    With the fingerprint the question is settled at a glance: same signature
+    and a different result means the input was identical; a different signature
+    means the list changed (order,
     Zugang oder Wegfall eines Werkzeugs).
 
-    🛑 Gehasht wird der ZUSAMMENGESETZTE Prompt, nichts daraus Ausgewähltes.
-    Zwei Fassungen davor waren zu eng, und jedes Mal war die Behauptung
-    „gleiche Signatur heißt identische Eingabe" damit falsch:
+    What is hashed is the COMPOSED prompt, nothing selected out of it. Two
+    earlier versions were too narrow, and each time the claim "same signature
+    means identical input" was false because of it:
 
-    - Fassung 1 nahm nur `tool_names`. Ein geänderter Hinweistext — etwa durch
-      einen ConfigMap-Patch, wie am 2026-10-26 geschehen — stellte den Prompt
-      um und ließ die Signatur unberührt.
-    - Fassung 2 nahm `lang` + `tool_list`. Die NACHRICHT fehlte, und die Zeile
-      zeigt nur `message[:60]`: zwei Züge, die in den ersten 60 Zeichen
-      übereinstimmen und danach auseinandergehen, hätten identische Nachricht
+    - Version 1 took only `tool_names`. A changed hint text -- through a
+      ConfigMap patch, as happened on 2026-10-26 -- reshaped the prompt and
+      left the signature untouched.
+    - Version 2 took `lang` + `tool_list`. The MESSAGE was missing, and the log
+      line only shows `message[:60]`: two queries agreeing in the first 60
+      characters and diverging after would have looked like an identical
       UND identische Signatur über zwei verschiedene Prompts gezeigt. Dazu war
-      `lang` der ANGEFRAGTE Code, nicht die aufgelöste Vorlage — bei einer
-      Sprache ohne eigenen Eintrag fällt `prompt_manager` auf die Vorgabe
-      zurück, und die Signatur hätte eine Änderung behauptet, wo der Prompt
+      `lang` is the REQUESTED code, not the resolved template -- for a
+      language without an entry of its own `prompt_manager` falls back to the
+      default, and the signature would have claimed a change where the prompt
       byteweise derselbe war.
 
-    Der fertige Prompt trägt alle vier Eingänge: aufgelöste Vorlage, Sprache,
-    Nachricht und Werkzeugliste — und er kann nicht veralten, wenn ein fünfter
-    dazukommt. Die Reihenfolge der Liste geht mit ein, weil sie im Text steht.
+    The finished prompt carries all four inputs: resolved template, language,
+    message and tool list -- and it cannot go stale when a fifth one is added.
+    The list's order is included because it is in the text.
 
-    Beides im Review zu #1413 gefunden, bevor es gemergt wurde.
+    Both found in the review of #1413, before it was merged.
     """
     return hashlib.sha1(
         preselect_prompt.encode("utf-8"), usedforsecurity=False,
@@ -1061,25 +1058,25 @@ def preselect_input_signature(preselect_prompt: str) -> str:
 
 
 def preselect_tool_line(name: str, tool) -> str:
-    """Eine Zeile der Werkzeugliste fuer die Vorauswahl.
+    """One line of the tool list for the preselect.
 
-    🛑 EINE reine Funktion, damit Test und Produktion dieselbe benutzen. Die
-    erste Fassung der Tests baute die Zeile selbst nach — und war damit
-    tautologisch: beide Negativkontrollen blieben gruen, obwohl der
-    Produktionspfad zerschnitten war. Ein Test, der seine eigene Kopie prueft,
+    ONE pure function, so test and production use the same one. The first
+    version of the tests rebuilt the line themselves -- and was therefore
+    tautological: both negative controls stayed green although the production
+    path was cut apart. A test that checks its own copy
     beweist nichts.
 
-    Der `tool_hints`-Eintrag des Betreibers geht UNGEKUERZT mit; nur die
-    generische Beschreibung des Herstellers wird auf `_PRESELECT_DESC_CHARS`
-    beschnitten. Der Hinweis steckt auch am ENDE von `description` (s.
-    `mcp_client._tool_info_from_mcp`) und wird dort abgezogen, sonst stuende er
-    zweimal in der Zeile.
+    The operator's `tool_hints` entry goes along UNTRUNCATED; only the
+    vendor's generic description is cut to `_PRESELECT_DESC_CHARS`. The hint
+    also sits at the END of `description` (see
+    `mcp_client._tool_info_from_mcp`) and is subtracted there, otherwise it
+    would appear twice in the line.
     """
-    # 🛑 `str()` ist nicht Zierde: die Registratur garantiert keine Typen, und
-    # der Vorgaenger kam damit durch, weil `desc[:80]` auf allem funktioniert.
-    # Meine erste Fassung rief `.endswith()` und brach damit
-    # `test_max_steps_reached` (ein Mock als Beschreibung) — eine Regression,
-    # die der Test sofort gefangen hat. Die Funktion bleibt total.
+    # `str()` is not decoration: the registry guarantees no types, and the
+    # predecessor got away with it because `desc[:80]` works on anything. My
+    # first version called `.endswith()` and thereby broke
+    # `test_max_steps_reached` (a mock as the description) -- a regression the
+    # test caught immediately. The function stays total.
     desc = str(getattr(tool, "description", "") or "")
     hint = str(getattr(tool, "hint", "") or "")
     if hint and desc.endswith(hint):
@@ -1226,28 +1223,28 @@ class AgentService:
 
         # Build compact tool list (name + description only, no parameters)
         #
-        # 🛑 `_PRESELECT_DESC_CHARS` beschneidet die GENERISCHE Beschreibung des
-        # Herstellers. Der `tool_hints`-Eintrag des Betreibers geht UNGEKUERZT
-        # mit, und das ist der Punkt: er ist absichtlich fuer genau diese
+        # `_PRESELECT_DESC_CHARS` cuts the vendor's GENERIC description. The
+        # operator's `tool_hints` entry goes along UNTRUNCATED, and that is the
+        # point: it is written deliberately for exactly this
         # Entscheidung geschrieben.
         #
-        # Was ohne das passiert, am 2026-10-26 gemessen: auf „scanne nach
-        # xidra" fiel `scan_document` aus der Vorauswahl (3 von 33 Werkzeugen)
-        # und der Agent griff `mcp.paperless.search_documents` — er SUCHTE
-        # statt zu scannen. Der Hinweis NANNTE damals wortwoertlich „scanne
-        # die Seiten nach <Ziel>" (heute steht diese Formulierung nur noch in
-        # der NICHT-Klausel von `route_scan`), stand aber hinter einer
+        # What happens without it, measured 2026-10-26: on "scanne nach
+        # xidra" `scan_document` dropped out of the preselect (3 of 33 tools)
+        # and the agent reached for `mcp.paperless.search_documents` -- it
+        # SEARCHED instead of scanning. The hint NAMED "scanne die Seiten nach
+        # <Ziel>" verbatim back then (today that phrasing only survives in the
+        # NOT clause of `route_scan`), but it sat behind an
         # ueber 500 Zeichen langen
-        # englischen Beschreibung und lag damit jenseits der 80 Zeichen, die
-        # diese Schicht sah. Der Agent selbst sieht den vollen Text — nur
-        # bekam er das Werkzeug nie angeboten.
-        # 🛑 EINE Liste fuer beides. `tool_names` kann Namen tragen, deren
-        # Werkzeug `None` ist; die fallen hier heraus und stehen dann NICHT im
-        # Prompt. Wuerde das `enum` der Schema-Bindung trotzdem aus
-        # `tool_names` gebaut, erlaubte die Grammatik einen Namen, den das
-        # Modell nie gesehen hat — und `filtered` unten prueft nur
-        # `name in _tools`, nicht den Wert, liesse also ein `None`-Werkzeug
-        # durch. Angebot und erlaubte Antwort muessen dieselbe Menge sein.
+        # English description and therefore beyond the 80 characters this
+        # layer saw. The agent itself sees the full text -- it just never got
+        # the tool offered.
+        # ONE list for both. `tool_names` can carry names whose tool is
+        # `None`; those drop out here and are then NOT in the prompt. If the
+        # schema binding's `enum` were still built from `tool_names`, the
+        # grammar would permit a name the model never saw -- and `filtered`
+        # below only checks `name in _tools`, not the value, so it would let a
+        # `None` tool through. Offer and permitted answer must be the same
+        # set.
         angebotene = [
             name for name in tool_names
             if self.tool_registry._tools.get(name) is not None
@@ -1263,10 +1260,10 @@ class AgentService:
             message=message, tool_list=tool_list
         )
         if not preselect_prompt:
-            # 🛑 Auch das ist ein stiller Rückfall auf ALLE Werkzeuge: ein
-            # fehlender oder umbenannter Prompt-Schlüssel schaltet die
-            # Vorauswahl ab, ohne eine Spur zu lassen. Die Abwesenheit der
-            # Zeile ist dann nicht von „weniger als 7 Werkzeuge" zu
+            # This too is a silent fallback to ALL tools: a missing or
+            # renamed prompt key turns the preselect off without leaving a
+            # trace. The absence of the line is then indistinguishable from
+            # "fewer than 7 tools" to
             # unterscheiden.
             logger.warning(
                 "Tool pre-selection disabled: no `tool_preselect_prompt` "
@@ -1274,23 +1271,23 @@ class AgentService:
             )
             return None
 
-        # Einmal berechnen und an jede Protokollzeile weitergeben: loguru
-        # wertet seine Argumente eifrig aus, auch wenn eine Zeile nie
+        # Compute once and pass to every log line: loguru evaluates its
+        # arguments eagerly, even when a line is never
         # erscheint.
         eingabe_signatur = preselect_input_signature(preselect_prompt)
 
-        # 🛑 Der ganze Prompt, hinter einem EIGENEN Schalter — nicht hinter
-        # DEBUG. Die Senke in `main.py` ist global und einstufig; ein
-        # DEBUG-Lauf schriebe auch gespeicherte Nachrichten und
-        # Gedaechtnisauszuege aus anderen Modulen mit. Dieser Schalter oeffnet
-        # genau diese Zeile. Er ist dunkel, weil der Prompt die Nachricht des
+        # The whole prompt, behind a switch of its OWN -- not behind DEBUG.
+        # The sink in `main.py` is global and single-level; a DEBUG run would
+        # also write stored messages and memory excerpts from other modules.
+        # This switch opens exactly this line. It is dark because the prompt
+        # carries the user's
         # Nutzers UNGEKUERZT traegt.
         if settings.agent_preselect_prompt_dump:
-            # 🛑 `{!r}` und nicht `{}`: der Prompt traegt die Nachricht des
-            # Nutzers WOERTLICH, und ein Zeilenumbruch darin koennte sonst
+            # `{!r}` and not `{}`: the prompt carries the user's message
+            # VERBATIM, and a newline in it could otherwise
             # beliebige Protokollzeilen faelschen. Dieselbe Begruendung wie
-            # beim Korrekturwert und bei `chat_handler.py:1733`. Nebeneffekt:
-            # der Auszug bleibt EINE Zeile und ist damit greifbar.
+            # as with the correction value and `chat_handler.py:1733`. Side
+            # effect: the excerpt stays ONE line and is therefore greppable.
             logger.info(
                 "Tool pre-selection PROMPT (in={}): {!r}",
                 eingabe_signatur, preselect_prompt,
@@ -1301,15 +1298,15 @@ class AgentService:
             preselect_options = _llm_options_or_default(
                 "llm_options_tool_preselect", _DEFAULT_LLM_OPTIONS_TOOL_PRESELECT,
             )
-            # 🛑 Ohne Bindung ist eine unparsbare Antwort BAUARTBEDINGT
-            # moeglich, und sie kostet nicht die Vorauswahl, sondern ihre
-            # ganze Wirkung: der `except`-Zweig unten gibt `None` zurueck, und
-            # dann stehen ALLE Werkzeuge im Agent-Prompt. Am 2026-10-28 live
-            # beobachtet — das Modell antwortete auf „scanne nach x-idra" mit
-            # der Form eines Werkzeug-AUFRUFS (`"query": "xidra"` samt
-            # `"reason"`, ohne schliessende Klammern) statt mit der Liste.
-            # Dieselbe Eingabe traf im Prueflauf 5/5 richtig; der Fehlgriff lag
-            # nicht am Prompt, sondern an der freien Form der Antwort.
+            # Without the binding an unparseable answer is possible BY
+            # DESIGN, and it costs not the preselect but its entire effect:
+            # the `except` branch below returns `None`, and then ALL tools end
+            # up in the agent prompt. Observed live on 2026-10-28 -- the model
+            # answered "scanne nach x-idra" with the shape of a tool CALL
+            # (`"query": "xidra"` plus `"reason"`, without closing braces)
+            # instead of with the list. The same input scored 5/5 in the probe
+            # run; the miss was not in the prompt but in the free form of the
+            # answer.
             typed_format = (
                 _build_preselect_schema(angebotene)
                 if settings.agent_preselect_typed else None
@@ -1330,11 +1327,11 @@ class AgentService:
             # Parse JSON array from response
             selected = json.loads(response_text)
             if not isinstance(selected, list) or not selected:
-                # 🛑 Haeufigster Fall ist eine LEERE Liste (die Aufgabe
-                # braucht kein Werkzeug), und leer ist falsy — darum derselbe
-                # Zweig. `in=` gehoert auch hierher: dieser Pfad faellt auf
-                # ALLE Werkzeuge zurueck, und genau das ist der Vorfall, den
-                # die Signatur aufklaeren soll.
+                # The most common case is an EMPTY list (the task needs no
+                # tool), and empty is falsy -- hence the same branch. `in=`
+                # belongs here too: this path falls back to ALL tools, and
+                # that is exactly the incident the signature is meant to
+                # clear up.
                 logger.warning(
                     "Tool pre-selection unusable response (in={}): {!r} "
                     "— using all {} tools",
@@ -1354,21 +1351,21 @@ class AgentService:
                 if name in self.tool_registry._tools
             }
 
-            # 🛑 Eine ausdrueckliche Korrektur des Nutzers ueberstimmt die
-            # Vorauswahl. Bis 2026-10-26 leitete der `chat_handler` daraus nur
-            # die ROLLE ab und warf den Rest weg — und die Rolle war in jedem
-            # gemeldeten Fehlgriff schon die richtige. Die Korrektur blieb also
-            # ohne Wirkung, weil die Schicht DARUNTER das Werkzeug wieder
-            # entfernte. Wer sagt „das war ein Scan", hat die Frage
-            # entschieden; ein Vorauswahl-Modell darf sie nicht neu aufwerfen.
+            # An explicit user correction overrides the preselect. Until
+            # 2026-10-26 the `chat_handler` only derived the ROLE from it and
+            # threw the rest away -- and in every reported miss the role was
+            # already the right one. So the correction had no effect, because
+            # the layer BELOW removed the tool again. Someone who says "that
+            # was a scan" has settled the question; a preselect model must not
+            # reopen it.
             #
-            # 🛑 Und zwar der ganze SERVER, nicht das benannte Werkzeug: das
-            # Auswahlmenue gruppiert die MCP-Werkzeuge nach Server, zeigt den
-            # Servernamen („Scanner") und schickt als Wert das ERSTE Werkzeug
+            # And the whole SERVER at that, not the named tool: the menu
+            # groups MCP tools by server, shows the server name ("Scanner")
+            # and submits the FIRST tool
             # dieses Servers als Vertreter (`IntentCorrectionButton.tsx:57-67`).
-            # Genau diesen Vertreter zu erzwingen waere falsch — der Nutzer
-            # meint „das ist eine Scanner-Sache", nicht „rufe `list_scanners`".
-            # Ein `internal.<x>` ist dagegen EIN Werkzeug und bleibt eines.
+            # Forcing exactly that stand-in would be wrong -- the user means
+            # "this is a scanner matter", not "call `list_scanners`". An
+            # `internal.<x>`, by contrast, IS one tool and stays one.
             if corrected_intent:
                 festgenagelt = _tools_pinned_by_correction(
                     corrected_intent, self.tool_registry._tools,
@@ -1376,15 +1373,14 @@ class AgentService:
                 neu_dazu = [n for n in festgenagelt if n not in filtered]
                 for name in neu_dazu:
                     filtered[name] = self.tool_registry._tools[name]
-                # 🛑 EINE Zeile, immer — auch wenn nichts festgenagelt wurde.
-                # Ohne sie sehen fuenf verschiedene Faelle gleich aus, naemlich
+                # ONE line, always -- even when nothing was pinned down.
+                # Without it five different cases look identical, namely
                 # STILL: `knowledge.ask` (kein Werkzeug dahinter), ein
-                # unbekannter Server, ein Server, den die gewaehlte Rolle nicht
-                # besitzt (Paletten-Rollenhinweis), eine Vorauswahl, die vorher
-                # abbrach, und ein Werkzeug, das das Modell schon gewaehlt
-                # hatte. Der naechste Bericht „meine Korrektur hat nichts
-                # bewirkt" laese sich dann genauso schlecht beantworten wie
-                # der, der diesen Zweig ausgeloest hat.
+                # an unknown server, a server the chosen role does not own
+                # (palette role hint), a preselect that aborted earlier, and a
+                # tool the model had already picked. The next report "my
+                # correction did nothing" would then be just as hard to answer
+                # as the one that produced this branch.
                 logger.info(
                     "Tool pre-selection: correction {!r} pinned {} tool(s), "
                     "{} newly added{} (in={})",
@@ -1400,16 +1396,16 @@ class AgentService:
                 )
                 return None
 
-            # 🛑 Die NAMEN gehoeren in die Zeile, nicht nur die Anzahl.
-            # „3/33 tools selected" sagt nicht, ob das EINE richtige Werkzeug
-            # dabei war — und genau das war am 2026-10-26 die Frage: auf
-            # „scanne nach xidra" griff der Agent dreimal zur Paperless-Suche,
-            # und aus dem Protokoll war nicht zu entscheiden, ob
-            # `scan_document` gar nicht angeboten oder nur nicht gewaehlt
-            # wurde. Eine Zaehlung ohne Namen ist fuer die Diagnose fast
-            # wertlos; die Liste ist kurz, der Platz kostet nichts.
-            # 🛑 `in=` ist der Fingerabdruck der ANGEBOTENEN Liste samt
-            # Reihenfolge. Ohne ihn war am 2026-10-26 nicht zu entscheiden, ob
+            # The NAMES belong in the line, not just the count. "3/33 tools
+            # selected" does not say whether the ONE right tool was among them
+            # -- and that was exactly the question on 2026-10-26: on "scanne
+            # nach xidra" the agent reached for the Paperless search three
+            # times, and the log could not settle whether `scan_document` was
+            # never offered or merely not chosen. A count without names is
+            # nearly worthless for diagnosis; the list is short and the space
+            # costs nothing.
+            # `in=` is the fingerprint of the OFFERED list including its
+            # order. Without it, on 2026-10-26 there was no way to tell whether
             # ein wechselndes Ergebnis von einer geaenderten Eingabe oder vom
             # Modell kam — siehe `preselect_input_signature`.
             logger.info(
@@ -1417,12 +1413,12 @@ class AgentService:
                 len(filtered), len(tool_names), message[:60],
                 eingabe_signatur, sorted(filtered),
             )
-            # 🛑 Auf DEBUG je Werkzeug ein Abdruck SEINER Zeile, in der
-            # Reihenfolge der Liste. Die vollen Zeilen hierher zu schreiben
-            # waere unbrauchbar (sie tragen die Hinweistexte, Groessenordnungen
-            # mehr), die blossen NAMEN aber auch: dann sagt ein geaenderter
-            # `in=` nur DASS sich etwas geaendert hat, nie WAS. Mit dem
-            # Zeilenabdruck ist das Werkzeug benennbar, das sich bewegt hat.
+            # At DEBUG, one digest of ITS line per tool, in list order.
+            # Writing the full lines here would be unusable (they carry the
+            # hint texts, orders of magnitude more), but the bare NAMES would
+            # be too: a changed `in=` would then only say THAT something
+            # changed, never WHAT. With the per-line digest the tool that
+            # moved can be named.
             logger.debug(
                 "Tool pre-selection input (in={}): {}",
                 eingabe_signatur,

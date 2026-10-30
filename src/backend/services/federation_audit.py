@@ -74,11 +74,11 @@ def _classify_final(final: dict[str, Any] | None) -> tuple[str, bool, str | None
             None,
         )
 
-    # 🛑 Abbruch VOR Fehlschlag pruefen. Ein abgebrochener Zug traegt
-    # `success=False` und faellt sonst in den Fehlschlag-Zweig — dort ist er
-    # falsch einsortiert: auf der Antwortseite kann ein Abbruch bedeuten, dass
-    # fremde Daten bereits gelesen waren. Ein Zugriff, der zwischen echten
-    # Fehlschlaegen liegt, wird beim Durchsehen uebergangen.
+    # Check aborted BEFORE failed. A cancelled query carries `success=False`
+    # and would otherwise fall into the failure branch -- where it is filed
+    # wrongly: on the responder side a cancellation can mean foreign data had
+    # already been read. An access sitting among genuine failures gets skipped
+    # when someone reads through the log.
     if final.get("aborted"):
         return (
             "aborted",

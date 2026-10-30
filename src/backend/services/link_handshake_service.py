@@ -1,54 +1,54 @@
-"""F-ID-2 — der einwilligungs-signierte Personen-Handschlag.
+"""F-ID-2 -- the consent-signed person handshake.
 
-Eine **Personenverknuepfung** behauptet „Nutzer U auf Instanz A und Nutzer X auf
-Instanz B sind derselbe Mensch". Sie ist folgenreich: liegt sie vor, laeuft eine
-foederierte Anfrage nicht mehr als die GANZE fremde Instanz mit der bei der
-Paarung gewaehrten Stufe, sondern als DIESE PERSON mit deren eigener, voller
-Reichweite (`federation_query_responder`, gemappter Pfad: `peer=None`).
+A **person link** asserts "user U on instance A and user X on instance B are
+the same human". It has consequences: once it exists, a federated request no
+longer runs as the WHOLE foreign instance with the tier granted at pairing
+time, but as THAT PERSON with their own, full reach
+(`federation_query_responder`, mapped path: `peer=None`).
 
-Bis heute liess sie sich nur behaupten: ein Administrator trug zwei
-Kontonummern und ein Geheimnis von Hand ein (`api/routes/federation_user_links`).
-Der Entwurf nennt das beim Namen — *„it trusts an admin, not a proof of
-same-person, and is not user-establishable"*. Dieses Modul ersetzt die
-Behauptung durch einen BEWEIS: der Handschlag laeuft, waehrend man gleichzeitig
-als U auf A und als X auf B angemeldet ist, und jede Seite unterschreibt ihre
-eigene Haelfte mit dem Instanzschluessel. Keine Instanz kann die andere faelschen.
+Until now it could only be asserted: an administrator typed in two account
+numbers and a secret by hand (`api/routes/federation_user_links`). The design
+calls that what it is -- *"it trusts an admin, not a proof of same-person, and
+is not user-establishable"*. This module replaces the assertion with a PROOF:
+the handshake runs while you are signed in as U on A and as X on B at the same
+time, and each side signs its own half with the instance key. Neither instance
+can forge the other.
 
     A (U)                                   B (X)
-    ─────                                   ─────
-    create_offer   ──  LinkOffer       ──▶  accept_offer
-    (nichts in der DB)                      (schreibt SEINE Zeile, signiert)
-    complete       ◀── LinkConfirmation ──
-    (schreibt SEINE Zeile)
+    -----                                   -----
+    create_offer   --  LinkOffer       -->  accept_offer
+    (nothing in the DB)                     (writes ITS row, signed)
+    complete       <-- LinkConfirmation --
+    (writes ITS row)
 
-🛑 Schritt 1 schreibt bewusst NICHTS. Bricht die Person danach ab, bleibt kein
-halber Link stehen.
+Step 1 deliberately writes NOTHING. If the person abandons the flow after it,
+no half link is left behind.
 
-Grenzen des Handschlags, ausdruecklich benannt
-----------------------------------------------
-Er beweist die Kontrolle ueber beide Konten. Er beweist NICHT, dass die
-Gegenstelle ehrlich ist: die tragende Annahme bleibt *„M2 trusts that M1
-correctly authenticated the human behind querier_ref"* — tragbar nur zwischen
-Instanzen, die derselben Person gehoeren. Darum ist die Verknuepfung jederzeit
-einseitig widerrufbar, und der Zugriff bleibt lesend.
+Limits of the handshake, stated explicitly
+------------------------------------------
+It proves control over both accounts. It does NOT prove the far side is honest:
+the load-bearing assumption remains *"M2 trusts that M1 correctly authenticated
+the human behind querier_ref"* -- tenable only between instances belonging to
+the same person. That is why the link is unilaterally revocable at any time,
+and the access stays read-only.
 
-Zur Wiedereinspielung — die Sicherung ist die DATENBANK, nicht der Nonce
-----------------------------------------------------------------------
-`record_nonce` deckt NUR `NONCE_WINDOW_SECONDS` (60 s) ab, ein Angebot lebt aber
-``LINK_OFFER_TTL_SECONDS`` (600 s). Wer hier „Nonce also Wiedereinspielung
-abgewehrt" liest, irrt fuer 9 von 10 Minuten des Fensters. Was wirklich traegt:
+On replay -- the safeguard is the DATABASE, not the nonce
+---------------------------------------------------------
+`record_nonce` covers ONLY `NONCE_WINDOW_SECONDS` (60 s), but an offer lives
+``LINK_OFFER_TTL_SECONDS`` (600 s). Reading this as "nonce, therefore replay
+handled" is wrong for 9 of the window's 10 minutes. What actually carries:
 
-1. ``UNIQUE(peer_id, querier_ref)`` auf `federation_user_links` — ein zweites
-   Einspielen desselben Angebots trifft den Index und wird zu einer 409.
-2. ``expires_at`` begrenzt das Fenster hart auf 600 s.
-3. Beide Schritte verlangen eine ANGEMELDETE Sitzung auf der jeweiligen Seite;
-   ein Dritter mit abgefangenem JSON kommt ohne sie nicht durch.
+1. ``UNIQUE(peer_id, querier_ref)`` on `federation_user_links` -- replaying the
+   same offer hits the index and becomes a 409.
+2. ``expires_at`` caps the window hard at 600 s.
+3. Both steps require a SIGNED-IN session on their respective side; a third
+   party with intercepted JSON gets nowhere without one.
 
-`record_nonce` bleibt trotzdem drin: es faengt den haeufigen Fall (doppelt
-abgeschickt, Knopf zweimal gedrueckt) billig und frueh ab, bevor die Datenbank
-ihn abfaengt. Es ist eine Abkuerzung, keine Mauer.
+`record_nonce` stays anyway: it catches the common case (submitted twice,
+button pressed twice) cheaply and early, before the database does. It is a
+shortcut, not a wall.
 
-Entwurf: `docs/design/federation-identity-mapping.md` §9 (Option A aus §4.2).
+Design: `docs/design/federation-identity-mapping.md` §9 (option A from §4.2).
 """
 from __future__ import annotations
 
@@ -65,9 +65,9 @@ from services.federation_identity import canonical_bytes, get_federation_identit
 from services.federation_identity_link import create_link, mint_querier_ref
 from services.federation_pending_store import get_pending_store
 
-#: Lebensdauer eines Angebots. Dieselben 600 s wie bei der Instanz-Paarung
-#: (`pairing_service.OFFER_TTL_SECONDS`) — lang genug, um in einem zweiten
-#: Browserfenster anzunehmen, kurz genug als Fenster fuer eine Wiedereinspielung.
+#: Lifetime of an offer. The same 600 s as the instance pairing
+#: (`pairing_service.OFFER_TTL_SECONDS`) -- long enough to accept in a second
+#: browser window, short enough as a replay window.
 LINK_OFFER_TTL_SECONDS = 600
 
 #: Erlaubte Uhren-Abweichung nach vorn, wie beim Paarungs-Vorbild.
@@ -77,8 +77,8 @@ CLOCK_SKEW_TOLERANCE_SECONDS = 60
 class LinkHandshakeError(Exception):
     """Jeder Fehlschlag des Handschlags — EIN Typ, wie `PairingError`.
 
-    🛑 Absicht: die Routenschicht macht daraus eine einzige, immer gleiche 400.
-    Unterschiedliche Meldungen je Ursache waeren ein Orakel, an dem sich
+    Deliberate: the route layer turns this into one single, always identical
+    400. Different messages per cause would be an oracle against which
     ablesen liesse, WELCHE Pruefung gegriffen hat.
     """
 
@@ -89,19 +89,19 @@ class LinkHandshakeError(Exception):
 
 
 class LinkOffer(BaseModel):
-    """Die von A signierte Haelfte. Jedes Feld ausser `signature` ist gedeckt."""
+    """The half signed by A. Every field except `signature` is covered."""
 
     version: int = 1
-    #: A's Instanzschluessel — und zugleich das, womit B uns in `peer_users` kennt.
+    #: A's instance key -- and also what B knows us by in `peer_users`.
     initiator_pubkey: str = Field(..., min_length=64, max_length=64)
-    #: 🛑 Das Angebot NENNT seinen Empfaenger. Ohne dieses Feld liesse sich ein
-    #: fuer B bestimmtes Angebot bei C einreichen, und C schriebe eine Zeile fuer
-    #: eine Person, der nie jemand zugestimmt hat.
+    #: The offer NAMES its recipient. Without this field an offer meant for B
+    #: could be submitted to C, and C would write a row for a person nobody
+    #: ever consented to.
     responder_pubkey: str = Field(..., min_length=64, max_length=64)
-    #: Wer auf A die Verknuepfung erklaert. Beim Abschluss wird gegen die
-    #: angemeldete Person geprueft — ein Angebot ist nicht uebertragbar.
+    #: Who declares the link on A. At completion this is checked against the
+    #: signed-in person -- an offer is not transferable.
     stated_by: int
-    #: Das opake Band zwischen beiden Zeilen (256 Bit).
+    #: The opaque band between the two rows (256 bits).
     querier_ref: str = Field(..., min_length=64, max_length=64)
     nonce: str = Field(..., min_length=16)
     issued_at: int
@@ -110,7 +110,7 @@ class LinkOffer(BaseModel):
 
 
 class LinkConfirmation(BaseModel):
-    """Die von B signierte Haelfte: „`querier_ref` bin ich hier."""
+    """The half signed by B: "`querier_ref` is me over here"."""
 
     version: int = 1
     nonce: str = Field(..., min_length=16)
@@ -127,12 +127,12 @@ class LinkConfirmation(BaseModel):
 
 
 class LinkHandshakeService:
-    """Die drei Schritte. Schreibt mit `flush`, committet NICHT.
+    """The three steps. Writes with `flush`, does NOT commit.
 
-    🛑 Die Schreibkonvention folgt `federation_identity_link` (flush, Route
+    The write convention follows `federation_identity_link` (flush, route
     committet), NICHT `pairing_service` (committet selbst). Dadurch rollt ein
-    Fehlschlag NACH dem `create_link` — etwa beim Signieren der Bestaetigung —
-    die Zeile mit zurueck. Sonst entstuende genau der halbe Link, den Schritt 1
+    failure AFTER `create_link` -- when signing the confirmation, say -- takes
+    the row back with it. Otherwise exactly the half link step 1
     vermeidet.
     """
 
@@ -145,8 +145,8 @@ class LinkHandshakeService:
     def create_offer(self, current_user: User, peer: PeerUser) -> LinkOffer:
         """A erklaert: „Ich, U, moechte mich bei diesem Peer verknuepfen."
 
-        Kein Schreibvorgang. Das Angebel traegt sich selbst: beim Abschluss
-        prueft A die EIGENE Signatur darueber, statt sich an einen Nonce im
+        No write. The offer carries itself: at completion A verifies its OWN
+        signature over it instead of remembering a nonce in
         Arbeitsspeicher zu erinnern.
         """
         now = int(time.time())
@@ -168,16 +168,16 @@ class LinkHandshakeService:
     async def accept_offer(
         self, current_user: User, offer: LinkOffer,
     ) -> LinkConfirmation:
-        """B stimmt zu und schreibt SEINE Zeile.
+        """B consents and writes ITS row.
 
-        Reihenfolge wie beim Paarungs-Vorbild: erst die nicht-mutierenden
-        Pruefungen, dann der Nonce, dann der Schreibvorgang. Eine gefaelschte
+        Order as in the pairing precedent: the non-mutating checks first, then
+        the nonce, then the write. A forged
         Signatur darf keinen Nonce verbrennen.
         """
         self._verify_offer_shape(offer)
 
-        # 🛑 Das Angebot muss UNS meinen. Ohne diese Pruefung liesse sich ein
-        # fuer eine dritte Instanz bestimmtes Angebot hier einreichen.
+        # The offer has to mean US. Without this check an offer meant for a
+        # third instance could be submitted here.
         if offer.responder_pubkey != self.identity.public_key_hex():
             raise LinkHandshakeError("Offer names a different responder")
 
@@ -215,21 +215,21 @@ class LinkHandshakeService:
     async def complete(
         self, current_user: User, offer: LinkOffer, confirmation: LinkConfirmation,
     ) -> FederationUserLink:
-        """A prueft B's Zustimmung und schreibt SEINE Zeile. Danach lebt der Link.
+        """A verifies B's consent and writes ITS row. The link is live after this.
 
-        🛑 Das Angebot kommt vom Browser zurueck, ist also unvertraut — aber es
-        traegt UNSERE eigene Signatur. Die pruefen wir zuerst; damit ist alles
-        darin wieder vertrauenswuerdig, ohne dass der Server sich etwas gemerkt
-        haette.
+        The offer comes back from the browser, so it is untrusted -- but it
+        carries OUR own signature. We verify that first; everything inside is
+        then trustworthy again without the server having remembered
+        anything.
         """
         self._verify_offer_shape(offer)
         self._verify_signature(
             offer, pubkey_hex=self.identity.public_key_hex(), was="Offer",
         )
 
-        # 🛑 Ein Angebot ist NICHT uebertragbar: es gilt der Person, die es
-        # erklaert hat. Ohne diese Zeile koennte jede andere angemeldete Person
-        # ein abgefangenes Angebot abschliessen — und zwar auf IHREN Namen.
+        # An offer is NOT transferable: it belongs to the person who declared
+        # it. Without this line any other signed-in person could complete an
+        # intercepted offer -- in THEIR name.
         if offer.stated_by != current_user.id:
             raise LinkHandshakeError("Offer was stated by a different user")
 
@@ -289,11 +289,11 @@ class LinkHandshakeService:
             raise LinkHandshakeError(f"{was} signature failed verification")
 
     async def _peer_by_pubkey(self, owner_user_id: int, pubkey: str) -> PeerUser:
-        """Die Peer-Zeile, oder ein Fehlschlag.
+        """The peer row, or a refusal.
 
-        🛑 Ohne abgeschlossene Instanz-Paarung gibt es nichts zu verknuepfen:
-        der Handschlag setzt sie voraus, er ersetzt sie nicht. Eine widerrufene
-        Paarung zaehlt nicht (`revoked_at IS NULL`).
+        Without a completed instance pairing there is nothing to link: the
+        handshake presupposes it, it does not replace it. A revoked pairing
+        does not count (`revoked_at IS NULL`).
         """
         peer = (await self.db.execute(
             select(PeerUser).where(
@@ -308,13 +308,13 @@ class LinkHandshakeService:
 
     @staticmethod
     async def _burn_nonce(nonce: str) -> None:
-        """Billiger Frueh-Abweiser gegen das doppelte Abschicken.
+        """Cheap early rejection of a double submit.
 
-        🛑 KEINE Mauer gegen Wiedereinspielung — der Speicher haelt einen Nonce
-        nur `NONCE_WINDOW_SECONDS` (60 s), das Angebot lebt zehnmal so lang.
-        Was wirklich traegt, steht im Modul-Docstring: der Eindeutigkeitsindex
-        auf `(peer_id, querier_ref)`, das Ablaufdatum und die Pflicht zur
-        angemeldeten Sitzung auf beiden Seiten.
+        NOT a wall against replay -- the store keeps a nonce for only
+        `NONCE_WINDOW_SECONDS` (60 s), while the offer lives ten times as long.
+        What actually carries is in the module docstring: the uniqueness index
+        on `(peer_id, querier_ref)`, the expiry, and the requirement of a
+        signed-in session on both sides.
         """
         if not await get_pending_store().record_nonce(nonce, time.time()):
             raise LinkHandshakeError("Nonce already used")

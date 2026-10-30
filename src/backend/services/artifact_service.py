@@ -349,32 +349,32 @@ def _validate_presence_map(data: object) -> dict:
 
 
 def _validate_document_ref(data: object) -> dict:
-    """Ein Verweis auf ein Renfield-Dokument — der Knopf loest ihn beim Anzeigen auf.
+    """A reference to a Renfield document -- the button resolves it on render.
 
-    🛑 Dieses Artefakt traegt NUR eine Kennung, nie eine URL. Der Link entsteht
-    erst beim Rendern aus `GET /api/knowledge/documents/<id>`, und zwar aus zwei
+    This artifact carries ONLY an id, never a URL. The link is built at render
+    time from `GET /api/knowledge/documents/<id>`, for two
     Gruenden:
-      - Zur Schreibzeit gibt es ihn noch nicht. Die Paperless-Ablage ist ein
-        entkoppelter Nachlauf; gemessen am 2026-10-27 im Haushalt brauchte der
-        Ingest im Schnitt 363 s, und 6 von 37 abgeschlossenen Dokumenten bekamen
-        nie eine Paperless-Kennung (Dubletten).
-      - Eine persistierte URL waere eingefroren. Die Kennung altert nicht.
-    Damit gilt auch der Zugriffsschutz des Endpunkts (401/403 ueber
-    `check_document_access`) statt eines Links, der an ihm vorbeifuehrt.
+      - At write time it does not exist yet. Paperless filing is a decoupled
+        follow-up; measured in the household on 2026-10-27 the ingest took
+        363 s on average, and 6 of 37 completed documents never got a
+        Paperless id at all (duplicates).
+      - A persisted URL would be frozen. The id does not age.
+    This also means the endpoint's access control applies (401/403 via
+    `check_document_access`) instead of a link that routes around it.
     """
     if not isinstance(data, dict):
         raise ArtifactRejected("document_ref.data: not an object")
     doc_id = data.get("documentId")
-    # 🛑 `bool` ist in Python ein `int`; ohne den Ausschluss waere `True` eine
+    # In Python `bool` is an `int`; without excluding it `True` would be a
     # gueltige Dokumentkennung.
     if not isinstance(doc_id, int) or isinstance(doc_id, bool) or doc_id <= 0:
         raise ArtifactRejected("document_ref.data: documentId must be a positive int")
     out: dict = {"documentId": doc_id}
-    # 🛑 `instance` wird NUR gesetzt, wenn das Dokument in einer ANDEREN Instanz
-    # liegt. Die Entscheidung faellt im Backend (es kennt `settings.instance_id`),
-    # nicht im Frontend: so gibt es genau eine Stelle, an der „lokal oder
-    # entfernt" entschieden wird. Vorhanden heisst fuer die Komponente schlicht:
-    # nicht hier nachfragen, nur benennen.
+    # `instance` is set ONLY when the document lives in ANOTHER instance. The
+    # decision is made in the backend (it knows `settings.instance_id`), not in
+    # the frontend: that way there is exactly one place where "local or remote"
+    # is decided. For the component, present simply means: do not query here,
+    # just name it.
     instance = data.get("instance")
     if instance is not None:
         out["instance"] = _require_str(instance, field="document_ref.instance", max_chars=64)
