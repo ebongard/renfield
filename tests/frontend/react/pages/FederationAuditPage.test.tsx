@@ -178,7 +178,7 @@ describe('FederationAuditPage', () => {
   // 🛑 The identity basis decides the REACH of an access. "als du" means: the
   // far side answered with the linked person's own full reach, not only with
   // what was granted.
-  it('zeigt „als du" bei einer Antwort auf verknüpfter Identität', async () => {
+  it('shows „als du" for an answer on a linked identity', async () => {
     mockAuditResponse({
       entries: [
         {
@@ -200,7 +200,7 @@ describe('FederationAuditPage', () => {
     expect(screen.getByText(/beantwortet/i)).toBeInTheDocument();
   });
 
-  it('zeigt „als fremde Instanz" im Rückfall', async () => {
+  it('shows „als fremde Instanz" in the fallback', async () => {
     mockAuditResponse({
       entries: [
         {
@@ -226,7 +226,7 @@ describe('FederationAuditPage', () => {
   // "als fremde Instanz" here, it would claim the NARROWER tier for turns that
   // ran with full reach -- the more dangerous direction for the error to
   // point.
-  it('behauptet NICHTS, wenn die Grundlage fehlt', async () => {
+  it('claims NOTHING when the basis is missing', async () => {
     mockAuditResponse({
       entries: [
         {
@@ -255,7 +255,7 @@ describe('FederationAuditPage', () => {
   // view would claim the NARROWER reach for an access it knows nothing about --
   // the same dangerous direction as with the missing value, only harder to
   // notice.
-  it('zeigt einen unbekannten Wert ROH, statt ihn als „fremde Instanz" auszugeben', async () => {
+  it('shows an unknown value RAW instead of passing it off as „fremde Instanz"', async () => {
     mockAuditResponse({
       entries: [
         {
@@ -286,7 +286,7 @@ describe('FederationAuditPage', () => {
       `text-xs px-1.5 py-0.5 rounded ${basisBadgeClass('peer_tier')}`);
   });
 
-  it('färbt die drei Fälle unterscheidbar', async () => {
+  it('colours the three cases distinguishably', async () => {
     const m = basisBadgeClass('mapped');
     const p = basisBadgeClass('peer_tier');
     const u = basisBadgeClass('delegated');
@@ -294,7 +294,7 @@ describe('FederationAuditPage', () => {
     expect(u).toBe(basisBadgeClass(''));
   });
 
-  it('zeigt den Schlüssel, wenn der Name der Gegenstelle fehlt', async () => {
+  it('shows the key when the peer name is missing', async () => {
     // 🛑 Rows the answering side wrote before 2026-10-29 carry
     // `peer_display_name_snapshot=""`. This is the place that says WHO
     // accessed -- a gap there would be the opposite of an audit log.
@@ -319,7 +319,7 @@ describe('FederationAuditPage', () => {
     ).toBeInTheDocument();
   });
 
-  it('ordnet jedem Wert seinen eigenen Hilfetext zu', async () => {
+  it('assigns each value its own help text', async () => {
     // Measured directly on the mapping function, not on the `title`
     // attribute: a tooltip is invisible on touch devices, but the mapping is
     // the assertion that holds.
@@ -329,7 +329,7 @@ describe('FederationAuditPage', () => {
     expect(basisHelpKey('')).toBe('federationAudit.basisUnknownHelp');
   });
 
-  it('der Hilfetext behauptet nicht, WELCHE Instanz geantwortet hat', async () => {
+  it('the help text does not claim WHICH instance answered', async () => {
     // 🛑 It appears on an asker row too, as soon as the far side supplies the
     // field at all. "Diese Instanz hat geantwortet" would simply be wrong
     // there -- so the text does not say it in the first place.
@@ -343,7 +343,7 @@ describe('FederationAuditPage', () => {
     }
   });
 
-  it('nennt einen abgebrochenen Zugriff abgebrochen, nicht unbekannt', async () => {
+  it('calls an aborted access aborted, not unknown', async () => {
     // 🛑 `unknown` and `aborted` are not the same. On the answering side this
     // instance KNOWS how far it got -- and whether somebody else's data had
     // already been read along the way. Filing that under "Status unbekannt"

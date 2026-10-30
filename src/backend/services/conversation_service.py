@@ -17,6 +17,7 @@ from models.database import ATOM_TYPE_CONVERSATION, Conversation, Message
 from services.circle_sql import conversations_circles_filter
 from services.fts_languages import build_tsquery_union_sql
 from utils.config import settings
+from utils.log_safety import error_text_without_content
 
 # Drop short tokens (≤2 chars) so single-letter / punctuation noise never
 # reaches the tsquery. Word characters only (German alphabet + digits), so the
@@ -440,7 +441,7 @@ class ConversationService:
         except Exception as exc:
             # A missing answer must not take the query down with it. `None`
             # means "no statement"; the caller treats it as "unchanged".
-            logger.warning(f"⚠️ latest_message_id failed for {session_id}: {exc}")
+            logger.warning(f"⚠️ latest_message_id failed for {session_id}: {error_text_without_content(exc)}")
             return None
 
     async def load_context(
@@ -543,7 +544,7 @@ class ConversationService:
             return context
 
         except Exception as e:
-            logger.error(f"Fehler beim Laden des Kontexts: {e}")
+            logger.error(f"Fehler beim Laden des Kontexts: {error_text_without_content(e)}")
             return []
 
     async def save_message(
@@ -682,11 +683,11 @@ class ConversationService:
             await self.db.commit()
             await self.db.refresh(message)
 
-            logger.debug(f"Nachricht gespeichert: {role} - {content[:50]}...")
+            logger.debug(f"Nachricht gespeichert: {role} ({len(content)} Zeichen)")
             return message
 
         except Exception as e:
-            logger.error(f"Failed to store the message: {e}")
+            logger.error(f"Failed to store the message: {error_text_without_content(e)}")
             await self.db.rollback()
             raise
 
@@ -925,7 +926,7 @@ class ConversationService:
                 await self.db.commit()
                 logger.debug(f"Conversation {session_id} associated: speaker={speaker_id}, user={user_id}")
         except Exception as e:
-            logger.warning(f"Failed to associate speaker with conversation: {e}")
+            logger.warning(f"Failed to associate speaker with conversation: {error_text_without_content(e)}")
             await self.db.rollback()
 
     async def save_context_vars(
@@ -955,7 +956,7 @@ class ConversationService:
             await self.db.commit()
             logger.debug(f"Context vars updated for {session_id}: {list(current.keys())}")
         except Exception as e:
-            logger.warning(f"Failed to save context vars: {e}")
+            logger.warning(f"Failed to save context vars: {error_text_without_content(e)}")
             await self.db.rollback()
 
     async def load_context_vars(self, session_id: str) -> dict:
@@ -969,7 +970,7 @@ class ConversationService:
             row = result.scalar_one_or_none()
             return dict(row) if row else {}
         except Exception as e:
-            logger.warning(f"Failed to load context vars: {e}")
+            logger.warning(f"Failed to load context vars: {error_text_without_content(e)}")
             return {}
 
     async def update_summary(
@@ -1046,7 +1047,7 @@ class ConversationService:
             return summary
 
         except Exception as e:
-            logger.warning(f"Failed to update summary: {e}")
+            logger.warning(f"Failed to update summary: {error_text_without_content(e)}")
             await self.db.rollback()
             return None
 
@@ -1060,7 +1061,7 @@ class ConversationService:
             )
             return result.scalar_one_or_none()
         except Exception as e:
-            logger.warning(f"Failed to load summary: {e}")
+            logger.warning(f"Failed to load summary: {error_text_without_content(e)}")
             return None
 
     async def get_summary(
@@ -1119,7 +1120,7 @@ class ConversationService:
             }
 
         except Exception as e:
-            logger.error(f"Failed to load the summary: {e}")
+            logger.error(f"Failed to load the summary: {error_text_without_content(e)}")
             return None
 
     async def delete(
@@ -1150,7 +1151,7 @@ class ConversationService:
             return False
 
         except Exception as e:
-            logger.error(f"Failed to delete the conversation: {e}")
+            logger.error(f"Failed to delete the conversation: {error_text_without_content(e)}")
             await self.db.rollback()
             return False
 
@@ -1242,7 +1243,7 @@ class ConversationService:
             return summaries
 
         except Exception as e:
-            logger.error(f"Failed to load the conversations: {e}")
+            logger.error(f"Failed to load the conversations: {error_text_without_content(e)}")
             return []
 
     async def search(
@@ -1289,11 +1290,11 @@ class ConversationService:
                 })
 
             results = list(conv_groups.values())
-            logger.info(f"Gefunden: {len(results)} Konversationen mit '{query}'")
+            logger.info(f"Gefunden: {len(results)} Konversationen")
             return results
 
         except Exception as e:
-            logger.error(f"Search failed: {e}")
+            logger.error(f"Search failed: {error_text_without_content(e)}")
             return []
 
     def _is_postgres(self) -> bool:
@@ -1498,13 +1499,13 @@ class ConversationService:
                 for r in rows
             ]
             logger.info(
-                f"Message-Suche: {len(results)} Treffer für '{query[:50]}' "
+                f"Message-Suche: {len(results)} Treffer "
                 f"(session={session_id or 'all'})"
             )
             return {"results": results, "count": len(results), "has_more": has_more}
 
         except Exception as e:
-            logger.error(f"Message search failed: {e}")
+            logger.error(f"Message search failed: {error_text_without_content(e)}")
             return {"results": [], "count": 0, "has_more": False}
 
     async def _search_messages_sqlite(

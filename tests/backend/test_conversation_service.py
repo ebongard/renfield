@@ -378,6 +378,60 @@ class TestSearch:
         assert total_messages <= 3
 
 
+@pytest.mark.backend
+@pytest.mark.database
+class TestNoContentInTheLog:
+    """🛑 What a person wrote or searched for never goes into the log --
+    neither on the success path nor through the `[SQL: ...] [parameters:
+    ...]` tail of a raw SQLAlchemy error. Until 2026-10-30 the service
+    logged the search query on success, the first 50 characters of every
+    saved message at DEBUG, and 13 raw exceptions."""
+
+    SECRET = "sehr privater Satz"
+
+    @staticmethod
+    def _capture():
+        from loguru import logger as _l
+
+        lines: list[str] = []
+        sink_id = _l.add(lambda m: lines.append(m.record["message"]),
+                         level="DEBUG", format="{message}")
+        return lines, lambda: _l.remove(sink_id)
+
+    async def test_saving_and_searching_log_no_content(self, db_session: AsyncSession):
+        service = ConversationService(db_session)
+        lines, stop = self._capture()
+        try:
+            await service.save_message("leak-1", "user", self.SECRET)
+            found = await service.search(self.SECRET)
+            await service.search_messages(self.SECRET, user_id=None)
+        finally:
+            stop()
+        assert found, "the search must actually have run"
+        assert lines, "nothing was logged -- the capture measured nothing"
+        assert not [t for t in lines if self.SECRET in t], lines
+
+    async def test_a_failing_query_logs_no_bound_parameter(self, db_session: AsyncSession):
+        from unittest.mock import patch
+
+        from sqlalchemy.exc import StatementError
+
+        service = ConversationService(db_session)
+        boom = StatementError(message="boom", statement="SELECT ...",
+                              params={"q": self.SECRET}, orig=RuntimeError("o"))
+        assert self.SECRET in str(boom), "control: the raw error carries it"
+        lines, stop = self._capture()
+        try:
+            with patch.object(db_session, "execute", side_effect=boom):
+                assert await service.search(self.SECRET) == []
+                result = await service.search_messages(self.SECRET, user_id=None)
+                assert result["results"] == []
+        finally:
+            stop()
+        assert [t for t in lines if "boom" in t], lines
+        assert not [t for t in lines if self.SECRET in t], lines
+
+
 # ============================================================================
 # Database Model Tests
 # ============================================================================

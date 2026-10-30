@@ -59,23 +59,23 @@ describe('LinkIdentityInitiatorModal', () => {
     post.mockReset();
   });
 
-  it('zeigt nichts, solange er geschlossen ist', () => {
+  it('shows nothing while it is closed', () => {
     renderWithRouter(<LinkIdentityInitiatorModal isOpen={false} peerId={7} />);
     expect(screen.queryByRole('button', { name: /angebot erzeugen/i })).not.toBeInTheDocument();
   });
 
-  it('warnt VOR dem Erzeugen, was eine Verknuepfung bedeutet', () => {
+  it('warns BEFORE generating what a link means', () => {
     renderWithRouter(<LinkIdentityInitiatorModal isOpen peerId={7} peerName="x-idra" />);
     // The reach is the whole point -- it must not appear only afterwards.
     expect(screen.getByText(/vollen eigenen Reichweite/i)).toBeInTheDocument();
   });
 
-  it('erzeugt das Angebot und zeigt den QR-Rahmen', async () => {
+  it('generates the offer and shows the QR frame', async () => {
     await bisZurBestaetigung();
     expect(post).toHaveBeenCalledWith('/api/federation/links/offer', { peer_id: 7 });
   });
 
-  it('🛑 schickt beim Abschluss das ANGEBOT mit, nicht nur die Bestaetigung', async () => {
+  it('🛑 sends the OFFER along at completion, not just the confirmation', async () => {
     await bisZurBestaetigung();
     post.mockResolvedValueOnce({ data: { id: 1 } });
 
@@ -92,7 +92,7 @@ describe('LinkIdentityInitiatorModal', () => {
     expect(rumpf).toMatchObject({ offer: ANGEBOT, confirmation: BESTAETIGUNG });
   });
 
-  it('weist eine Bestaetigung zum falschen Angebot ab, OHNE zu senden', async () => {
+  it('rejects a confirmation for the wrong offer WITHOUT sending', async () => {
     await bisZurBestaetigung();
 
     fireEvent.change(screen.getByLabelText(/bestätigung der anderen instanz/i), {
@@ -106,7 +106,7 @@ describe('LinkIdentityInitiatorModal', () => {
     expect(post).toHaveBeenCalledTimes(1);
   });
 
-  it('nennt das fehlende Feld beim Namen', async () => {
+  it('names the missing field', async () => {
     await bisZurBestaetigung();
     const { signature: _weg, ...ohne } = BESTAETIGUNG;
 

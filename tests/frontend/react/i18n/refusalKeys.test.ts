@@ -55,8 +55,8 @@ function lookup(bundle: unknown, path: string): unknown {
   );
 }
 
-describe('Refus-Codes und Sprachdateien', () => {
-  it('kennt ueberhaupt Codes (sonst prueft der Rest nichts)', () => {
+describe('refusal codes and locale files', () => {
+  it('knows any codes at all (otherwise the rest checks nothing)', () => {
     // Without this assertion a broken regex would silently turn the whole file
     // into an empty loop -- green and worthless.
     const codes = backendRefusalCodes();
@@ -64,7 +64,7 @@ describe('Refus-Codes und Sprachdateien', () => {
   });
 
   it.each(Object.keys(LOCALES))(
-    'hat in %s fuer jeden Backend-Code einen nicht-leeren Satz',
+    'has a non-empty sentence in %s for every backend code',
     (loc) => {
       const missing: string[] = [];
       for (const code of backendRefusalCodes()) {
@@ -77,7 +77,7 @@ describe('Refus-Codes und Sprachdateien', () => {
     },
   );
 
-  it('haelt die drei Sprachen im Cluster-Zweig deckungsgleich', () => {
+  it('keeps the three languages congruent in the cluster branch', () => {
     const keys = (loc: string): string[] => Object.keys(
       (lookup(LOCALES[loc], 'circles.mergeProposals.cluster') ?? {}) as object,
     ).sort();
@@ -85,7 +85,7 @@ describe('Refus-Codes und Sprachdateien', () => {
     expect(keys('it')).toEqual(keys('de'));
   });
 
-  it('hat einen allgemeinen Rueckfall fuer einen UNBEKANNTEN Code', () => {
+  it('has a general fallback for an UNKNOWN code', () => {
     // The fallback is the only reason a backend running ahead of the bundle (a
     // cached service worker) does not show an empty line. It must not be
     // missing in any language.

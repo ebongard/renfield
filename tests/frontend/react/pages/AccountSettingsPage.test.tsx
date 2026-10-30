@@ -83,13 +83,13 @@ describe('AccountSettingsPage', () => {
   beforeEach(() => { server.resetHandlers(); state(); });
   afterEach(() => vi.clearAllMocks());
 
-  it('zeigt den eigenen Zustand — ohne Verwaltungsrecht', async () => {
+  it('shows one\'s own state — without the management permission', async () => {
     asUser(false);
     renderWithProviders(<AccountSettingsPage />);
     expect(await screen.findByText('Aus — Ihr Passwort genügt')).toBeInTheDocument();
   });
 
-  it('die Person kann fuer sich selbst einwilligen', async () => {
+  it('the person can consent for themselves', async () => {
     asUser(false);
     const calls = captureToggle();
     renderWithProviders(<AccountSettingsPage />);
@@ -97,7 +97,7 @@ describe('AccountSettingsPage', () => {
     await waitFor(() => expect(calls).toEqual([{ id: '1', enabled: true }]));
   });
 
-  it('🛑 verlangt zum Zuruecknehmen erst das Passwort', async () => {
+  it('🛑 requires the password before withdrawing', async () => {
     // The server refuses to switch off ONE'S OWN factor without a password
     // (400): a token from BEFORE the consent outlives it and would otherwise be
     // able to withdraw it. Without the field the button would run into the 400.
@@ -118,7 +118,7 @@ describe('AccountSettingsPage', () => {
     );
   });
 
-  it('🛑 liest `/auth/me` neu, statt der Antwort der Mutation zu glauben', async () => {
+  it('🛑 re-reads `/auth/me` instead of trusting the mutation response', async () => {
     // Otherwise the page shows something other than what the session believes
     // -- and this page's state IS the session state.
     const fetchUser = vi.fn().mockResolvedValue(null);
@@ -129,7 +129,7 @@ describe('AccountSettingsPage', () => {
     await waitFor(() => expect(fetchUser).toHaveBeenCalled());
   });
 
-  it('unterscheidet „scharf\" von „ruht\", wenn der Sprachweg aus ist', async () => {
+  it('distinguishes „scharf\" from „ruht\" when the voice path is off', async () => {
     asUser(true);
     state('voice_path_off', true);
     renderWithProviders(<AccountSettingsPage />);
@@ -138,7 +138,7 @@ describe('AccountSettingsPage', () => {
     ).toBeInTheDocument();
   });
 
-  it('🛑 nennt den Grund AUCH ohne Einwilligung', async () => {
+  it('🛑 names the reason EVEN without consent', async () => {
     // The actual finding of 2026-09-29: in the "off" state the page stayed
     // completely silent, no matter how many preconditions were missing.
     asUser(false);
@@ -148,7 +148,7 @@ describe('AccountSettingsPage', () => {
     expect(await screen.findByText(/noch kein Sprecherprofil verknüpft/)).toBeInTheDocument();
   });
 
-  it('🛑 bietet kein Einschalten an, das der Server ablehnen MUSS', async () => {
+  it('🛑 offers no switch-on that the server MUST refuse', async () => {
     asUser(false);
     state('no_profile');
     renderWithProviders(<AccountSettingsPage />);
@@ -157,7 +157,7 @@ describe('AccountSettingsPage', () => {
     );
   });
 
-  it('🛑 `voice_path_off` blockiert das Einschalten NICHT', async () => {
+  it('🛑 `voice_path_off` does NOT block switching on', async () => {
     // Otherwise the cutover order would not be workable: collect the consent
     // first, then flip the flag.
     asUser(false);
@@ -168,7 +168,7 @@ describe('AccountSettingsPage', () => {
     );
   });
 
-  it('🛑 uebersetzt den 409-Code, statt ihn roh anzuzeigen', async () => {
+  it('🛑 translates the 409 code instead of showing it raw', async () => {
     // Since 2026-09-29 the server sends the CODE. Without a translation
     // "no_embeddings" would stand in the interface -- before that there was a
     // hard-coded ENGLISH sentence.
@@ -185,13 +185,13 @@ describe('AccountSettingsPage', () => {
     expect(screen.queryByText('no_embeddings')).not.toBeInTheDocument();
   });
 
-  it('nennt bei scharfem Faktor, dass es keinen Rueckfall gibt', async () => {
+  it('with an armed factor, states that there is no fallback', async () => {
     asUser(true);
     renderWithProviders(<AccountSettingsPage />);
     expect(await screen.findByText(/Rückfall auf das Passwort allein/)).toBeInTheDocument();
   });
 
-  it('beim EINSCHALTEN wird kein Passwort verlangt', async () => {
+  it('no password is required when SWITCHING ON', async () => {
     // Only removing it is the attack path. When granting it, the input would
     // be friction with no gain.
     asUser(false);

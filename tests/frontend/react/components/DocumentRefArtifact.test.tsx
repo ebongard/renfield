@@ -44,7 +44,7 @@ afterEach(() => server.resetHandlers());
 afterAll(() => server.close());
 
 describe('DocumentRefArtifact', () => {
-  it('zeigt einen echten Link, sobald die Paperless-Kennung da ist', async () => {
+  it('shows a real link as soon as the Paperless id is present', async () => {
     antwortet(doc({ in_paperless: true, paperless_url: 'http://paperless.local:8000/documents/42/details' }));
     renderWithProviders(<DocumentRefArtifact data={{ documentId: 515 }} />);
 
@@ -55,7 +55,7 @@ describe('DocumentRefArtifact', () => {
     expect(link.getAttribute('rel')).toContain('noopener');
   });
 
-  it('sagt waehrend der Ablage, dass sie laeuft — ohne Knopf', async () => {
+  it('says during filing that it is running — without a button', async () => {
     antwortet(doc({ status: 'processing' }));
     renderWithProviders(<DocumentRefArtifact data={{ documentId: 515 }} />);
 
@@ -64,7 +64,7 @@ describe('DocumentRefArtifact', () => {
     expect(screen.queryByRole('button')).toBeNull();
   });
 
-  it('nennt die Dublette beim Namen: in Paperless, aber ohne eigene Kennung', async () => {
+  it('names the duplicate as such: in Paperless, but without its own id', async () => {
     antwortet(doc({ in_paperless: true, paperless_url: null }));
     renderWithProviders(<DocumentRefArtifact data={{ documentId: 515 }} />);
 
@@ -72,14 +72,14 @@ describe('DocumentRefArtifact', () => {
     expect(screen.queryByRole('link')).toBeNull();
   });
 
-  it('unterscheidet ein echtes Nichtablegen von „laeuft noch"', async () => {
+  it('distinguishes a real failure to file from „laeuft noch"', async () => {
     antwortet(doc({ status: 'completed', in_paperless: false }));
     renderWithProviders(<DocumentRefArtifact data={{ documentId: 515 }} />);
 
     expect(await screen.findByText(/nicht in Paperless abgelegt/i)).toBeInTheDocument();
   });
 
-  it('ein 403 ist eine gueltige Antwort, keine Fehlerwand', async () => {
+  it('a 403 is a valid answer, not an error wall', async () => {
     antwortet({ detail: 'No access to this document' }, 403);
     renderWithProviders(<DocumentRefArtifact data={{ documentId: 515 }} />);
 
@@ -88,7 +88,7 @@ describe('DocumentRefArtifact', () => {
     expect(screen.queryByRole('link')).toBeNull();
   });
 
-  it('ein Netzfehler faellt still zurueck, statt die Nachricht zu zerreissen', async () => {
+  it('a network error falls back quietly instead of tearing the message apart', async () => {
     server.use(http.get(URL, () => HttpResponse.error()));
     renderWithProviders(<DocumentRefArtifact data={{ documentId: 515 }} />);
 
@@ -104,7 +104,7 @@ describe('DocumentRefArtifact', () => {
   // result discarded. The count is taken at the endpoint -- the negative
   // control directly below proves with the same counter that it registers at
   // all.
-  it('🛑 ein Dokument in einer anderen Instanz fragt hier NICHT nach', async () => {
+  it('🛑 a document on another instance does NOT query here', async () => {
     let abrufe = 0;
     server.use(http.get(URL, () => { abrufe += 1; return HttpResponse.json(doc()); }));
     renderWithProviders(<DocumentRefArtifact data={{ documentId: 515, instance: 'xidra' }} />);
@@ -115,7 +115,7 @@ describe('DocumentRefArtifact', () => {
     await waitFor(() => expect(abrufe).toBe(0));
   });
 
-  it('Negativkontrolle: derselbe Zaehler schlaegt lokal sehr wohl an', async () => {
+  it('negative control: the same counter does register locally', async () => {
     let abrufe = 0;
     server.use(http.get(URL, () => { abrufe += 1; return HttpResponse.json(doc()); }));
     renderWithProviders(<DocumentRefArtifact data={{ documentId: 515 }} />);
@@ -126,7 +126,7 @@ describe('DocumentRefArtifact', () => {
     await waitFor(() => expect(abrufe).toBeGreaterThan(0));
   });
 
-  it('🛑 KEIN Zustand ausser dem Link ist fokussierbar', async () => {
+  it('🛑 NO state except the link is focusable', async () => {
     for (const fall of [
       doc({ status: 'processing' }),
       doc({ in_paperless: true, paperless_url: null }),
