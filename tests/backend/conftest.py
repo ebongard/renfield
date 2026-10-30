@@ -132,6 +132,26 @@ def _pg_url_or_skip() -> str:
     return dsn
 
 
+@pytest.fixture
+def pg_url() -> str:
+    """The test DSN, normalised to the async driver -- or skip.
+
+    Use this instead of reading `RENFIELD_TEST_PG_URL` yourself. The documented
+    form is the async scheme, but a sync `postgresql://` is easy to hand in by
+    accident, and `create_async_engine` then resolves to the psycopg2 dialect,
+    which is not installed in the backend image. The failure reads
+    `ModuleNotFoundError: No module named 'psycopg2'` and looks like a broken
+    environment.
+
+    Measured on 2026-10-30: that is exactly what produced 15 ERRORS in
+    `test_pc20260924_restore_indexes.py` and
+    `test_pc20260927_voice_second_factor.py` -- the only two files that read
+    the variable raw. Three further files each carried their own copy of the
+    normalisation. One helper, one place.
+    """
+    return _pg_url_or_skip()
+
+
 
 _SCHEMA_READY = False
 

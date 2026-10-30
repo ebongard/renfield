@@ -25,7 +25,6 @@ Gated auf ``RENFIELD_TEST_PG_URL`` wie die übrigen Postgres-Tests.
 from __future__ import annotations
 
 import importlib.util
-import os
 import uuid
 from pathlib import Path
 
@@ -54,16 +53,17 @@ def _load_migration():
     return module
 
 
-def _pg_test_dsn() -> str | None:
-    return os.environ.get("RENFIELD_TEST_PG_URL")
-
-
 @pytest.fixture
-async def schema_conn():
-    """(AsyncConnection, schema) in einem Wegwerf-Schema, wie in #447."""
-    dsn = _pg_test_dsn()
-    if not dsn:
-        pytest.skip("RENFIELD_TEST_PG_URL nicht gesetzt")
+async def schema_conn(pg_url):
+    """(AsyncConnection, schema) in a throwaway schema, as in #447.
+
+    Takes the DSN from the shared `pg_url` fixture rather than reading the env
+    var. This file read it raw and handed it to `create_async_engine` -- with a
+    sync `postgresql://` that resolves to the psycopg2 dialect, which is not
+    installed in the backend image, and all six tests here ERROR with
+    `ModuleNotFoundError`. Measured on 2026-10-30.
+    """
+    dsn = pg_url
     schema = f"t_{uuid.uuid4().hex[:12]}"
     engine = create_async_engine(dsn, poolclass=NullPool)
     async with engine.connect() as conn:

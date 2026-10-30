@@ -31,7 +31,6 @@ container points it at the dedicated ``renfield_test`` DB.
 from __future__ import annotations
 
 import importlib.util
-import os
 import uuid
 from pathlib import Path
 
@@ -73,27 +72,22 @@ def _load_migration():
     return module
 
 
-def _pg_test_dsn() -> str | None:
-    return os.environ.get("RENFIELD_TEST_PG_URL")
-
-
 # ---------------------------------------------------------------------------
 # Dedicated-schema connection fixture.
 # ---------------------------------------------------------------------------
 @pytest.fixture
-async def schema_conn():
+async def schema_conn(pg_url):
     """Yield ``(AsyncConnection, schema_name)`` pinned to a throwaway schema.
 
     The connection is a single physical asyncpg connection (NullPool) so the
     session-level ``SET search_path`` persists across commits for the whole
     test. Torn down with ``DROP SCHEMA ... CASCADE``.
     """
-    dsn = _pg_test_dsn()
-    if dsn is None:
-        pytest.skip("RENFIELD_TEST_PG_URL not set — Postgres tests disabled")
-    if dsn.startswith("postgresql://"):
-        dsn = dsn.replace("postgresql://", "postgresql+asyncpg://", 1)
-
+    # DSN from the shared `pg_url` fixture. This file used to carry its own
+    # copy of the scheme normalisation -- one of three copies, while two other
+    # files had none and errored out with ModuleNotFoundError: psycopg2
+    # (2026-10-30). One helper, one place.
+    dsn = pg_url
     engine = create_async_engine(dsn, poolclass=NullPool, future=True)
     schema = f"pc447_{uuid.uuid4().hex[:12]}"
     conn = await engine.connect()

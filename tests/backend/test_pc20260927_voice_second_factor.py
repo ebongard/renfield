@@ -21,7 +21,6 @@ Gated auf ``RENFIELD_TEST_PG_URL`` wie die übrigen Postgres-Tests.
 from __future__ import annotations
 
 import importlib.util
-import os
 import uuid
 from pathlib import Path
 
@@ -52,11 +51,16 @@ def _load_migration():
 
 
 @pytest.fixture
-async def schema_conn():
-    """(AsyncConnection, schema) in einem Wegwerf-Schema."""
-    dsn = os.environ.get("RENFIELD_TEST_PG_URL")
-    if not dsn:
-        pytest.skip("RENFIELD_TEST_PG_URL nicht gesetzt")
+async def schema_conn(pg_url):
+    """(AsyncConnection, schema) in a throwaway schema.
+
+    Takes the DSN from the shared `pg_url` fixture rather than reading the env
+    var -- see the note there. Reading it raw is what made all seven tests in
+    this file ERROR with `ModuleNotFoundError: psycopg2` on 2026-10-30, and
+    that includes `TestTheDowngradeIsExercised`: the reverse path was never
+    actually exercised, only written down.
+    """
+    dsn = pg_url
     schema = f"t_{uuid.uuid4().hex[:12]}"
     engine = create_async_engine(dsn, poolclass=NullPool)
     async with engine.connect() as conn:
