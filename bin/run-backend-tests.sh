@@ -18,4 +18,10 @@ PY
 export RENFIELD_TEST_PG_URL
 echo "TEST_PG_URL gesetzt: $(printf '%s' "$RENFIELD_TEST_PG_URL" | sed 's#//[^@]*@#//<verdeckt>@#')"
 cd "$ROOT/src/backend"
+
+# NEVER pipe this through `tail -N` or `grep` at the call site. On 2026-10-30
+# that discarded the very thing being measured seven times in one session: the
+# summary line and the `-rE` error list sit ABOVE pytest's teardown noise, so a
+# fixed-size tail shows warnings and hides the result. Capture the whole output
+# and search it afterwards.
 PYTHONPATH="$ROOT/src/backend" exec python -m pytest "$@"
