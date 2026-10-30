@@ -1,15 +1,15 @@
 /**
- * LinkIdentityInitiatorModal — Seite A des Personen-Handschlags (F-ID-2).
+ * LinkIdentityInitiatorModal -- side A of the person handshake (F-ID-2).
  *
- * 🛑 Der Test, der hier mehr trägt als die übrigen, ist der auf den
- * MITGESCHICKTEN Angebotsrumpf. Der Server merkt sich zwischen Schritt 1 und 3
- * nichts; die Bindung an die Person steht in seiner eigenen Signatur über dem
- * Angebot. Schickte dieser Dialog beim Abschluss nur die Bestätigung, wäre der
- * Handschlag nicht zu Ende zu bringen — und zwar mit einer nichtssagenden 400,
- * weil die Routenschicht absichtlich kein Orakel ist.
+ * 🛑 The test that carries more here than the others is the one on the offer
+ * body being SENT ALONG. The server remembers nothing between step 1 and step
+ * 3; the binding to the person lives in its own signature over the offer. If
+ * this dialog sent only the confirmation at completion, the handshake could not
+ * be brought to an end -- and would fail with a meaningless 400, because the
+ * route layer is deliberately not an oracle.
  *
- * `qrcode.react` ist per Vitest-Alias auf einen Stub gelegt; geprüft wird
- * darum immer der `role="img"`-Rahmen, nie das SVG.
+ * `qrcode.react` is aliased to a stub via Vitest; what is checked is therefore
+ * always the `role="img"` wrapper, never the SVG.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { screen, fireEvent, waitFor } from '@testing-library/react';
@@ -66,7 +66,7 @@ describe('LinkIdentityInitiatorModal', () => {
 
   it('warnt VOR dem Erzeugen, was eine Verknuepfung bedeutet', () => {
     renderWithRouter(<LinkIdentityInitiatorModal isOpen peerId={7} peerName="x-idra" />);
-    // Die Reichweite ist der ganze Punkt — sie darf nicht erst hinterher stehen.
+    // The reach is the whole point -- it must not appear only afterwards.
     expect(screen.getByText(/vollen eigenen Reichweite/i)).toBeInTheDocument();
   });
 
@@ -87,8 +87,8 @@ describe('LinkIdentityInitiatorModal', () => {
     await waitFor(() => expect(post).toHaveBeenCalledTimes(2));
     const [pfad, rumpf] = post.mock.calls[1];
     expect(pfad).toBe('/api/federation/links/complete');
-    // Der Server haelt KEINEN Zustand — ohne das Angebot kann er seine eigene
-    // Signatur nicht pruefen und der Handschlag endet in einer blanken 400.
+    // The server holds NO state -- without the offer it cannot check its own
+    // signature and the handshake ends in a bare 400.
     expect(rumpf).toMatchObject({ offer: ANGEBOT, confirmation: BESTAETIGUNG });
   });
 
@@ -101,8 +101,8 @@ describe('LinkIdentityInitiatorModal', () => {
     fireEvent.click(screen.getByRole('button', { name: /verknüpfung abschließen/i }));
 
     expect(await screen.findByText(/anderen Angebot/i)).toBeInTheDocument();
-    // 🛑 Kein zweiter Zug: die lokale Pruefung spart der Person eine
-    // nichtssagende 400 von der absichtlich orakelfreien Routenschicht.
+    // 🛑 No second round trip: the local check saves the person a meaningless
+    // 400 from the deliberately oracle-free route layer.
     expect(post).toHaveBeenCalledTimes(1);
   });
 

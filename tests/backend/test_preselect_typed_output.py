@@ -1,14 +1,15 @@
-"""Die Werkzeug-Vorauswahl an ein JSON-Schema gebunden (`AGENT_PRESELECT_TYPED`).
+"""The tool preselection bound to a JSON schema (`AGENT_PRESELECT_TYPED`).
 
-Anlass, am 2026-10-28 live beobachtet: auf „scanne nach x-idra" antwortete das
-Vorauswahl-Modell mit der Form eines Werkzeug-AUFRUFS (`"query": "xidra"` samt
-`"reason"`, ohne schliessende Klammern) statt mit der Liste. Die Antwort war
-unparsbar, der `except`-Zweig gab `None` zurueck, und damit standen ALLE 33
-Werkzeuge im Agent-Prompt — die Vorauswahl war nicht ungenau, sie war wirkungslos.
+The occasion, observed live on 2026-10-28: to "scanne nach x-idra" the
+preselection model answered in the shape of a tool CALL (`"query": "xidra"`
+with a `"reason"`, without closing brackets) instead of with the list. The
+answer was unparsable, the `except` branch returned `None`, and so ALL 33 tools
+stood in the agent prompt -- the preselection was not imprecise, it had no
+effect.
 
-Dieselbe Eingabe traf im Prueflauf gegen denselben Endpunkt und dasselbe Modell
-5/5 richtig (90/95 gesamt). Der Fehlgriff lag also nicht am Prompt, sondern an
-der FREIEN FORM der Antwort — und die ist bauartbedingt, nicht zufaellig.
+In the measurement run the same input hit 5/5 correct against the same endpoint
+and the same model (90/95 overall). So the misfire was not in the prompt but in
+the FREE FORM of the answer -- and that is by construction, not by chance.
 """
 from __future__ import annotations
 
@@ -25,36 +26,36 @@ pytestmark = pytest.mark.unit
 
 
 def test_the_schema_binds_a_root_array_so_the_prompt_stays_untouched():
-    """🛑 Wurzel-Array, nicht Objekt: der Prompt bittet bereits um ein Array und
-    der Parser erwartet eines. Ein Objekt haette eine Prompt-Aenderung erzwungen
-    — dann unterscheiden sich Flag-aus und Flag-an in ZWEI Variablen und der
-    Vergleich am Pruefstand ist keiner mehr."""
+    """🛑 A root array, not an object: the prompt already asks for an array and
+    the parser expects one. An object would have forced a prompt change -- then
+    flag-off and flag-on differ in TWO variables and the comparison on the
+    harness is no longer a comparison."""
     s = _build_preselect_schema(["mcp.a.b", "internal.c"])
     assert s["type"] == "array", s
     assert s["items"]["type"] == "string"
 
 
 def test_only_the_offered_names_are_allowed():
-    """`enum` ist die staerkere Haelfte: ein erfundener Name kann nicht
-    entstehen, statt erst unten am Registry-Filter still wegzufallen."""
+    """`enum` is the stronger half: an invented name cannot come into being at
+    all, instead of falling away silently further down at the registry
+    filter."""
     namen = ["mcp.scanner.scan_document", "internal.knowledge_search"]
     s = _build_preselect_schema(namen)
     assert s["items"]["enum"] == namen
 
 
 def test_maxItems_is_present_because_uniqueItems_is_NOT_enforced():
-    """🛑 Der Befund, der diese Bindung erst tragfaehig macht — gemessen gegen
-    den lebenden Endpunkt (cuda.local:8081, qwen3.6):
+    """🛑 The finding that makes this binding viable in the first place --
+    measured against the live endpoint (cuda.local:8081, qwen3.6):
 
-    `uniqueItems` wird angenommen, aber NICHT erzwungen. Ein Modell, das zu
-    einer anderen Form gedraengt wird, wiederholt dann denselben GUELTIGEN Namen
-    bis `num_predict` aufgebraucht ist — und die Antwort kommt ABGESCHNITTEN
-    zurueck. Unparsbar wie vorher, nur aus einem neuen Grund. Zwei von drei
-    boshaften Prompts taten genau das.
+    `uniqueItems` is accepted but NOT enforced. A model that is pushed towards
+    a different shape then repeats the same VALID name until `num_predict` is
+    used up -- and the answer comes back TRUNCATED. Unparsable as before, only
+    for a new reason. Two out of three adversarial prompts did exactly that.
 
-    Mit `maxItems` begrenzt die Grammatik das Array und alle drei kamen
-    parsebar und gueltig zurueck. Ohne diesen Schluessel VERSCHIEBT die
-    Bindung den Fehler, statt ihn zu beseitigen.
+    With `maxItems` the grammar bounds the array and all three came back
+    parsable and valid. Without that key the binding MOVES the failure instead
+    of removing it.
     """
     s = _build_preselect_schema(["mcp.a.b"])
     assert "maxItems" in s, (
@@ -66,34 +67,35 @@ def test_maxItems_is_present_because_uniqueItems_is_NOT_enforced():
 
 
 def test_an_empty_offer_does_not_produce_a_schema_that_matches_nothing():
-    """Ohne Werkzeuge wird die Vorauswahl ohnehin nicht gerufen (`<= 6` kehrt
-    vorher um). Der Bau darf aber nicht werfen — sonst entscheidet ein
-    Randfall ueber die Erreichbarkeit des ganzen Pfads."""
+    """Without tools the preselection is not called anyway (`<= 6` turns back
+    before that). But building it must not raise -- otherwise an edge case
+    decides whether the whole path is reachable."""
     s = _build_preselect_schema([])
     assert s["items"]["enum"] == []
 
 
 def test_the_flag_is_dark_by_default():
-    """Neue Funktion = dunkel. Der Pfad mit `false` muss der alte sein."""
+    """A new feature is dark. The path with `false` has to be the old one."""
     from utils.config import Settings
 
     assert Settings.model_fields["agent_preselect_typed"].default is False
 
 
 def test_the_binding_is_the_ONLY_difference_the_flag_makes():
-    """🛑 Strukturell am AST geprueft, nicht am Quelltext: der Flag-Zweig darf
-    ausschliesslich `format` setzen. Setzte er daneben etwas am Prompt oder an
-    den Sampling-Optionen, waere der gemessene Vergleich (95 % gebunden gegen
-    95 % ungebunden) wertlos, weil er zwei Dinge auf einmal messen wuerde.
+    """🛑 Checked structurally on the AST, not on the source text: the flag
+    branch may set `format` and nothing else. Were it to set something on the
+    prompt or on the sampling options as well, the measured comparison (95 %
+    bound against 95 % unbound) would be worthless, because it would be
+    measuring two things at once.
     """
     from services import agent_service
 
-    # 🛑 `dedent` ist Pflicht: `getsource` einer METHODE liefert eingerueckten
-    # Code, und `ast.parse` wirft darauf `IndentationError`. Dieser Test ist
-    # daran gescheitert, bevor er je etwas geprueft hat.
+    # 🛑 `dedent` is mandatory: `getsource` of a METHOD yields indented code,
+    # and `ast.parse` raises `IndentationError` on it. This test failed on that
+    # before it ever checked anything.
     quelle = textwrap.dedent(
         inspect.getsource(agent_service.AgentService._preselect_tools))
-    baum = ast.parse(ast.unparse(ast.parse(quelle)))  # Kommentare fallen weg
+    baum = ast.parse(ast.unparse(ast.parse(quelle)))  # comments fall away
 
     zuweisungen: list[str] = []
     for knoten in ast.walk(baum):
@@ -112,13 +114,14 @@ def test_the_binding_is_the_ONLY_difference_the_flag_makes():
 
 
 def test_the_harness_measures_the_SAME_schema_as_production():
-    """🛑 Ein Pruefstand, der etwas anderes schickt als die Produktion, misst
-    etwas anderes. `bin/measure-preselect.py` traegt das Schema als Literal,
-    damit es ohne Backend-Import laeuft — und genau darum kann es driften.
+    """🛑 A harness that sends something other than production measures
+    something else. `bin/measure-preselect.py` carries the schema as a literal
+    so it runs without importing the backend -- and that is exactly why it can
+    drift.
 
-    Verglichen werden die Schluessel, die die Zusicherung tragen: `type`,
-    `maxItems` und die Form von `items`. Die `enum`-Werte selbst stehen im
-    Pruefstand zur Laufzeit aus dem Prompt und koennen hier nicht gleich sein.
+    What is compared are the keys that carry the guarantee: `type`, `maxItems`
+    and the shape of `items`. The `enum` values themselves come from the prompt
+    at runtime in the harness and cannot be equal here.
     """
     skript = pathlib.Path(__file__).resolve().parents[2] / "bin" / "measure-preselect.py"
     baum = ast.parse(skript.read_text(encoding="utf-8"))
@@ -144,14 +147,14 @@ def test_the_harness_measures_the_SAME_schema_as_production():
 
 
 class TestTheEnumMatchesTheOffer:
-    """🛑 Angebot und erlaubte Antwort muessen DIESELBE Menge sein.
+    """🛑 The offer and the permitted answer have to be the SAME set.
 
-    `get_tool_names()` kann Namen tragen, deren Registry-Eintrag `None` ist.
-    Die fallen beim Bau der Prompt-Zeilen heraus und stehen dann nicht im
-    Prompt — das `enum` aus `tool_names` zu bauen erlaubte also einen Namen,
-    den das Modell nie gesehen hat. Und `filtered` unten prueft nur
-    `name in _tools`, nicht den WERT: ein `None`-Werkzeug kaeme durch.
-    Gefunden im `/review` des eigenen Diffs, bevor das Flag anging.
+    `get_tool_names()` can carry names whose registry entry is `None`. Those
+    drop out when the prompt lines are built and then do not stand in the
+    prompt -- so building the `enum` from `tool_names` permitted a name the
+    model never saw. And `filtered` below only checks `name in _tools`, not the
+    VALUE: a `None` tool would get through. Found in the `/review` of my own
+    diff, before the flag went on.
     """
 
     @pytest.mark.unit
@@ -168,7 +171,7 @@ class TestTheEnumMatchesTheOffer:
             w = MagicMock()
             w.description = f"Beschreibung {i}"
             tools[f"mcp.server.tool_{i}"] = w
-        tools["mcp.server.kaputt"] = None          # genau der Fall
+        tools["mcp.server.kaputt"] = None          # exactly the case
         registry._tools = tools
         registry.get_tool_names.return_value = list(tools.keys())
 
@@ -193,13 +196,13 @@ class TestTheEnumMatchesTheOffer:
         assert "mcp.server.kaputt" not in prompt, "der kaputte Name steht im Prompt"
         assert "mcp.server.kaputt" not in enum, (
             "das enum erlaubt einen Namen, den das Modell nie gesehen hat")
-        # Negativkontrolle: die Pruefung ist nicht trivial wahr — die GESUNDEN
-        # Namen stehen sehr wohl in beiden.
+        # Negative control: the check is not trivially true -- the HEALTHY
+        # names do stand in both.
         assert "mcp.server.tool_0" in enum and "mcp.server.tool_0" in prompt
 
     @pytest.mark.unit
     async def test_the_flag_off_path_sends_no_format_at_all(self, monkeypatch):
-        """Dunkel heisst byteweise der alte Pfad — kein `format` im Aufruf."""
+        """Dark means the old path byte for byte -- no `format` in the call."""
         from unittest.mock import AsyncMock, MagicMock
 
         from services.agent_service import AgentService

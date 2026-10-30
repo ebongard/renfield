@@ -113,7 +113,7 @@ class WhisperService:
         return self._inflight_sem
 
     def load_model(self):
-        """Modell laden"""
+        """Load the model"""
         if self.model is None:
             try:
                 logger.info(
@@ -180,7 +180,7 @@ class WhisperService:
 
     async def transcribe_file(self, audio_path: str, language: str = None, initial_prompt: str | None = None) -> str:
         """
-        Audio-Datei transkribieren mit optionalem Preprocessing.
+        Transcribe an audio file, with optional preprocessing.
 
         Args:
             audio_path: Path to the audio file

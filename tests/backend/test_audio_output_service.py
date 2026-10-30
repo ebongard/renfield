@@ -289,7 +289,7 @@ class TestPlayAudioDispatch:
 
 @pytest.mark.unit
 class TestSoundProfile:
-    """Das Klangprofil wirkt auf HiFi-Ausgaben — und nur dort."""
+    """The sound profile applies to hi-fi outputs -- and only there."""
 
     @staticmethod
     def _wav() -> bytes:
@@ -335,7 +335,7 @@ class TestSoundProfile:
 
     @pytest.mark.asyncio
     async def test_renfield_geraete_bleiben_unbearbeitet(self, service):
-        """Satellit/Browser: die Stimme ist auf deren kleinen Lautsprecher abgestimmt."""
+        """Satellite/browser: the voice is tuned for their small speaker."""
         service._play_on_renfield_device = AsyncMock(return_value=True)
         original = self._wav()
 

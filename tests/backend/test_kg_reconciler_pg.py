@@ -750,7 +750,7 @@ class TestResolveCluster:
         owner = await _make_user(pg_db_session, "clu_comp")
         a = await _entity(pg_db_session, owner, "Anna", tier=2, mention=1, emb=_unit(6))
         b = await _entity(pg_db_session, owner, "Anna", tier=2, mention=9, emb=_unit(6))
-        # ein zweites, UNVERBUNDENES Paar auf einer anderen Stufe
+        # a second, UNCONNECTED pair on a different tier
         c = await _entity(pg_db_session, owner, "Clara", tier=0, mention=2, emb=_unit(7))
         d = await _entity(pg_db_session, owner, "Clara", tier=0, mention=5, emb=_unit(7))
         await self._proposal(pg_db_session, owner, a, b)
@@ -768,7 +768,7 @@ class TestResolveCluster:
                 select(KGEntity).where(KGEntity.id == e_id)
             )).scalar_one()
             assert untouched.is_active is True
-            assert untouched.circle_tier == 0       # keine Stufenverschiebung
+            assert untouched.circle_tier == 0       # no tier shift
         kept = (await pg_db_session.execute(
             select(KGEntity).where(KGEntity.id == b.id)
         )).scalar_one()
@@ -785,7 +785,7 @@ class TestResolveCluster:
         b = await _entity(pg_db_session, owner, "Jutta", tier=2, mention=9, emb=_unit(6))
         privat = await _entity(pg_db_session, owner, "Jutta", tier=0, mention=4, emb=_unit(6))
         await self._proposal(pg_db_session, owner, a, b)
-        # haengt am SPAETER gefalteten a, nicht am Ueberlebenden
+        # hangs off a, which is folded LATER, not off the survivor
         px = await self._proposal(
             pg_db_session, owner, privat, a, reason=KG_MERGE_REASON_CROSS_TIER
         )
@@ -801,7 +801,7 @@ class TestResolveCluster:
             select(KgMergeProposal).where(KgMergeProposal.id == px.id)
         )).scalar_one()
         assert moved.status == KG_MERGE_PROPOSAL_PENDING
-        assert moved.winner_entity_id == b.id       # zeigt jetzt auf den Ueberlebenden
+        assert moved.winner_entity_id == b.id       # now points at the survivor
         assert moved.loser_entity_id == privat.id
 
     async def test_a_pair_between_two_folded_entities_is_closed(
@@ -814,8 +814,8 @@ class TestResolveCluster:
         c = await _entity(pg_db_session, owner, "Anna", tier=2, mention=3, emb=_unit(6))
         await self._proposal(pg_db_session, owner, a, b)
         await self._proposal(pg_db_session, owner, c, b)
-        # a~c auf einer anderen Stufe waere cross_tier; hier gleichstufig, also
-        # Teil des Clusters — und nach der Faltung gegenstandslos.
+        # a~c on a different tier would be cross_tier; here it is same-tier,
+        # so part of the cluster -- and moot after the fold.
         extra = await self._proposal(pg_db_session, owner, a, c)
         rec = _recon(pg_db_session, monkeypatch)
 
@@ -1180,28 +1180,27 @@ class TestTypeGuard:
 
 
 class TestNothingFolded:
-    """Der zweite Klick auf dasselbe Cluster sagt etwas — und zwar was.
+    """The second click on the same cluster says something -- and says what.
 
-    Vorgeschichte, weil sie lehrreicher ist als der Test: der adversariale
-    Durchgang meldete den Erfolgsausgang als STUMMEN Pfad (200, lauter Nullen,
-    Cluster optimistisch verworfen, kein Wort). Der erste Entwurf dieses Tests
-    sollte das belegen und behauptete nur `refusal_code is not None`. Die
-    NEGATIVKONTROLLE — Riegel raus, Test muss rot werden — blieb gruen, und das
-    war der eigentliche Befund: der zweite Aufruf erreicht jenen Ausgang gar
-    nicht. Nach der ersten Faltung steht der Vorschlag auf `approved`, also
-    findet die Abfrage KEIN offenes Paar mehr und der Aufruf steigt bei
-    `no_foldable_pair` aus — einem Ausgang, der seinen Code laengst trug. Der
-    Doppelklick war nie stumm.
+    The backstory, because it teaches more than the test: the adversarial pass
+    reported the success exit as a SILENT path (200, all zeroes, cluster
+    discarded optimistically, not a word). The first draft of this test was
+    meant to evidence that and asserted only `refusal_code is not None`. The
+    NEGATIVE CONTROL -- remove the guard, the test must go red -- stayed green,
+    and that was the actual finding: the second call does not reach that exit at
+    all. After the first fold the proposal stands at `approved`, so the query
+    finds NO open pair any more and the call bails out at `no_foldable_pair` --
+    an exit that had carried its code all along. The double click was never
+    silent.
 
-    Deshalb prueft dieser Test, was wirklich geschieht, und nennt den Code beim
-    Namen; eine Zusicherung auf "irgendein Code" haette die Luecke genau so
-    verdeckt, wie sie es im ersten Entwurf tat.
+    So this test checks what really happens and names the code; an assertion on
+    "some code" would have hidden the gap exactly as it did in the first draft.
 
-    Der Erfolgsausgang mit lauter Nullen bleibt moeglich, aber nur im echten
-    Wettlauf zwischen Abfrage und Nachladen INNERHALB eines Aufrufs. Dagegen
-    steht ein Riegel im Dienst (`nothing_folded`); er ist durch Konstruktion
-    gedeckt, nicht durch diesen Test, und das steht hier, statt ein gruener Test
-    das Gegenteil zu suggerieren.
+    The success exit with all zeroes stays possible, but only in a real race
+    between the query and the reload WITHIN one call. There is a guard in the
+    service against that (`nothing_folded`); it is covered by construction, not
+    by this test, and that is stated here rather than letting a green test
+    suggest otherwise.
     """
 
     async def test_a_second_fold_of_the_same_cluster_is_not_silent(
@@ -1218,9 +1217,9 @@ class TestNothingFolded:
             survivor_id=a.id, decision="merge", resolved_by=owner.id,
         )
         assert first.merged == 1
-        assert first.refusal_code is None      # der Erfolg traegt keinen Code
+        assert first.refusal_code is None      # success carries no code
 
-        # Derselbe Aufruf noch einmal — der Doppelklick.
+        # The same call again -- the double click.
         second = await rec.resolve_cluster(
             user_id=owner.id, entity_ids=[a.id, b.id],
             survivor_id=a.id, decision="merge", resolved_by=owner.id,
@@ -1228,8 +1227,8 @@ class TestNothingFolded:
 
         assert second.merged == 0
         assert second.approved == 0
-        # Beim Namen genannt: "irgendein Code" hat im ersten Entwurf genau die
-        # Luecke verdeckt, die die Negativkontrolle dann aufdeckte.
+        # Named explicitly: "some code" hid exactly the gap in the first
+        # draft that the negative control then exposed.
         assert second.refusal_code == "no_foldable_pair"
 
 
@@ -1274,7 +1273,7 @@ class TestWeakEdgeTriangle:
             survivor_id=a.id, decision="merge", resolved_by=owner.id,
         )
 
-        # NICHTS wurde gefaltet — und der Vermerk nennt das Paar.
+        # NOTHING was folded -- and the note names the pair.
         assert res.merged == 0
         assert res.skipped_weak_edge == 1
         # Structured, not a sentence — the UI translates it (the note stays for
@@ -1286,7 +1285,7 @@ class TestWeakEdgeTriangle:
                 select(KGEntity).where(KGEntity.id == e_id)
             )).scalar_one()
             assert row.is_active is True
-        # …und das schwache Paar steht weiter offen, nicht superseded.
+        # ...and the weak pair stays open, not superseded.
         prop = (await pg_db_session.execute(
             select(KgMergeProposal).where(KgMergeProposal.id == weak.id)
         )).scalar_one()
@@ -1398,5 +1397,5 @@ class TestWeakEdgeTriangle:
 
         assert res.merged == 0
         assert res.blocked_total == 4
-        assert len(res.blocked_pairs) == 3          # gezeigt
-        assert "+1 more" in res.notes[0]            # und der Rest als Zahl
+        assert len(res.blocked_pairs) == 3          # shown
+        assert "+1 more" in res.notes[0]            # and the rest as a number

@@ -1,5 +1,5 @@
 """
-Frigate Integration für Kamera-Überwachung
+Frigate integration for camera surveillance
 """
 import json
 from collections.abc import Callable
@@ -45,7 +45,7 @@ class FrigateClient:
         label: str | None = None,
         limit: int = 10
     ) -> list[dict]:
-        """Events von Frigate abrufen"""
+        """Fetch events from Frigate"""
         try:
             params = {"limit": limit}
             if camera:

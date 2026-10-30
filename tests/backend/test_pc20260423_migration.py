@@ -415,19 +415,20 @@ async def test_create_document_populates_atom_id_and_tier_from_kb(schema_conn):
     sm = async_sessionmaker(bind=conn, class_=AsyncSession, expire_on_commit=False)
 
     async with sm() as session:
-        # Eindeutig je Lauf. Mit den festen Namen "doc_role"/"doc_owner" war der
-        # Test NICHT wiederholbar: `roles` und `users` liegen im public-Schema
-        # der geteilten Testbank, nicht im Wegwerf-Schema dieses Moduls, und der
-        # Aufräumlauf zwischen den Tests fasst sie nicht an. Der erste Lauf war
-        # grün, jeder weitere starb an `duplicate key … ix_roles_name`, und die
-        # Zeilen liessen sich wegen einer FK-Kette (users -> knowledge_bases)
-        # auch nicht mehr von Hand entfernen. Gefunden 2026-09-24.
+        # Unique per run. With the fixed names "doc_role"/"doc_owner" the
+        # test was NOT repeatable: `roles` and `users` live in the public
+        # schema of the shared test database, not in this module's throwaway
+        # schema, and the cleanup between tests does not touch them. The first
+        # run was green, every further one died on
+        # `duplicate key ... ix_roles_name`, and the rows could no longer be
+        # removed by hand either, because of an FK chain
+        # (users -> knowledge_bases). Found 2026-09-24.
         #
-        # `tag` gilt fuer JEDEN eindeutigkeitsgebundenen Namen hier, nicht nur
-        # fuer den, der gerade rot war: `roles.name`, `users.username`,
-        # `users.email` UND `knowledge_bases.name` tragen alle ein UNIQUE. Nur
-        # die ersten drei zu kennzeichnen verschob den Fehler bloss eine Zeile
-        # weiter — beim ersten Versuch genau so passiert.
+        # `tag` applies to EVERY uniqueness-bound name here, not only to the
+        # one that happened to be red: `roles.name`, `users.username`,
+        # `users.email` AND `knowledge_bases.name` all carry a UNIQUE. Tagging
+        # only the first three merely moved the failure one line further --
+        # which is exactly what happened on the first attempt.
         tag = uuid.uuid4().hex[:8]
         role = Role(name=f"doc_role_{tag}")
         session.add(role)

@@ -272,7 +272,7 @@ async def upload_document(
     """
     Uploads a document and indexes it for RAG.
 
-    Unterstützte Formate: PDF, DOCX, TXT, MD, HTML, PPTX, XLSX
+    Supported formats: PDF, DOCX, TXT, MD, HTML, PPTX, XLSX
 
     Requires: rag.manage permission or write access to KB
     """
@@ -301,7 +301,7 @@ async def upload_document(
                     status_code=403,
                     detail="Permission required: rag.manage"
                 )
-    # Validierung: Dateiformat — 415 Unsupported Media Type is the semantic
+    # Validation: file format -- 415 Unsupported Media Type is the semantic
     # match. Frontend reads the structured detail to render allowed-format
     # copy; legacy clients that only read status codes also get the right
     # signal.
@@ -364,7 +364,7 @@ async def upload_document(
             }
         )
 
-    # Upload-Verzeichnis erstellen
+    # Create the upload directory
     upload_dir = Path(settings.upload_dir)
     upload_dir.mkdir(parents=True, exist_ok=True)
 
@@ -609,8 +609,8 @@ def paperless_document_url(paperless_document_id: int | None) -> str | None:
     """The link to a document in Paperless, or None.
 
     ONE place, not three: `_doc_to_response_kwargs` serves `/documents`,
-    `/documents/batch`, `/documents/{id}`, `/upload` and `/reindex`. A
-    zusammengesetzte URL an mehreren Stellen läuft auseinander.
+    `/documents/batch`, `/documents/{id}`, `/upload` and `/reindex`. A URL
+    assembled in several places drifts apart.
 
     None when the id is missing (the document is not filed yet, or it was a
     duplicate) or no base URL is configured. The trailing
@@ -1102,10 +1102,10 @@ async def list_knowledge_bases(
     """
     List knowledge bases, filtered by the user's permissions.
 
-    - kb.all: Alle KBs
-    - kb.shared: Eigene + öffentliche + geteilte
+    - kb.all: all KBs
+    - kb.shared: own + public + shared
     - kb.own: own ones only
-    - kb.none: Keine
+    - kb.none: none
     """
     # Get all KBs first
     all_bases = await rag.list_knowledge_bases()

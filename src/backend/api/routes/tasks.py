@@ -34,7 +34,7 @@ async def create_task(
     db: AsyncSession = Depends(get_db),
     _user: User = Depends(require_permission(Permission.TASKS_MANAGE)),
 ):
-    """Neue Aufgabe erstellen"""
+    """Create a new task"""
     try:
         new_task = Task(
             title=task.title,
@@ -104,7 +104,7 @@ async def get_task(
     db: AsyncSession = Depends(get_db),
     _user: User = Depends(require_permission(Permission.TASKS_VIEW)),
 ):
-    """Einzelne Aufgabe abrufen"""
+    """Fetch one single task"""
     try:
         result = await db.execute(
             select(Task).where(Task.id == task_id)

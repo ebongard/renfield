@@ -1,11 +1,11 @@
 """
-Tests für Users API
+Tests for the users API
 
-Testet:
-- User CRUD Operations
-- Password Reset
-- Speaker Linking
-- Permission-basierte Zugriffskontrolle
+Covers:
+- user CRUD operations
+- password reset
+- speaker linking
+- permission-based access control
 """
 
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -56,11 +56,11 @@ def mock_require_permission():
 # ============================================================================
 
 class TestUserModel:
-    """Tests für das User Model"""
+    """Tests for the User model"""
 
     @pytest.mark.database
     async def test_create_user(self, db_session: AsyncSession, test_role: Role):
-        """Testet das Erstellen eines Users"""
+        """Tests creating a user"""
         user = User(
             username="newuser",
             email="newuser@example.com",
@@ -78,7 +78,7 @@ class TestUserModel:
 
     @pytest.mark.database
     async def test_user_unique_username(self, db_session: AsyncSession, test_user: User, test_role: Role):
-        """Testet, dass Username eindeutig sein muss"""
+        """Tests that the username has to be unique"""
         from sqlalchemy.exc import IntegrityError
 
         duplicate = User(
@@ -93,7 +93,7 @@ class TestUserModel:
 
     @pytest.mark.database
     async def test_user_role_relationship(self, db_session: AsyncSession, test_user: User):
-        """Testet die Beziehung zwischen User und Role"""
+        """Tests the relationship between User and Role"""
         result = await db_session.execute(
             select(User)
             .where(User.id == test_user.id)
@@ -111,7 +111,7 @@ class TestUserModel:
         test_user: User,
         test_speaker: Speaker
     ):
-        """Testet die Beziehung zwischen User und Speaker"""
+        """Tests the relationship between User and Speaker"""
         test_user.speaker_id = test_speaker.id
         await db_session.commit()
         await db_session.refresh(test_user)
@@ -132,11 +132,11 @@ class TestUserModel:
 # ============================================================================
 
 class TestUserCRUDAPI:
-    """Tests für User CRUD API (require mocked auth)"""
+    """Tests for the user CRUD API (require mocked auth)"""
 
     @pytest.mark.integration
     async def test_list_users(self, async_client: AsyncClient, test_user: User):
-        """Testet GET /api/users"""
+        """Tests GET /api/users"""
         with patch('api.routes.users.require_permission') as mock_perm:
             mock_perm.return_value = lambda: test_user
 
@@ -151,7 +151,7 @@ class TestUserCRUDAPI:
         async_client: AsyncClient,
         test_role: Role
     ):
-        """Testet POST /api/users"""
+        """Tests POST /api/users"""
         with patch('api.routes.users.require_permission') as mock_perm:
             mock_perm.return_value = lambda: MagicMock()
 
@@ -171,7 +171,7 @@ class TestUserCRUDAPI:
 
     @pytest.mark.integration
     async def test_get_nonexistent_user(self, async_client: AsyncClient):
-        """Testet GET für nicht-existenten User"""
+        """Tests GET for a user that does not exist"""
         response = await async_client.get("/api/users/99999")
 
         # Expect 404 or 401/403 if auth required
@@ -193,12 +193,12 @@ class TestAdminUnlock:
             body = await users_routes.unlock_user(
                 user_id=test_user.id, db=db_session, current_user=MagicMock(username="admin")
             )
-        # 🛑 ZWEI Zaehler, nicht einer. Der zweite Faktor sperrt unter
-        # `voice2fa:<id>`, damit ein Stimm-Fehlversuch den Passwortpfad nicht
-        # mitsperrt — aber ein Entsperr-Knopf, der nur einen raeumt, meldet
-        # „entsperrt" und laesst die Person draussen. Hier stand vorher
-        # `assert_awaited_once_with(username)`; das war die Absicht, solange es
-        # nur einen Zaehler gab.
+        # 🛑 TWO counters, not one. The second factor locks under
+        # `voice2fa:<id>`, so a failed voice attempt does not lock the password
+        # path as well -- but an unlock button that clears only one reports
+        # "unlocked" and leaves the person locked out. This used to read
+        # `assert_awaited_once_with(username)`; that was the intent while there
+        # was only one counter.
         assert [c.args for c in unlock.await_args_list] == [
             (test_user.username,), (voice_factor_lock_id(test_user.id),),
         ]
@@ -280,7 +280,7 @@ class TestAdminUnlock:
 # ============================================================================
 
 class TestUserQueries:
-    """Tests für User-Abfragen"""
+    """Tests for user queries"""
 
     @pytest.mark.database
     async def test_filter_by_role(
@@ -289,7 +289,7 @@ class TestUserQueries:
         test_user: User,
         test_role: Role
     ):
-        """Testet Filterung nach Rolle"""
+        """Tests filtering by role"""
         result = await db_session.execute(
             select(User).where(User.role_id == test_role.id)
         )
@@ -304,7 +304,7 @@ class TestUserQueries:
         db_session: AsyncSession,
         test_user: User
     ):
-        """Testet Filterung nach Aktivstatus"""
+        """Tests filtering by active status"""
         result = await db_session.execute(
             select(User).where(User.is_active)
         )
@@ -319,7 +319,7 @@ class TestUserQueries:
         db_session: AsyncSession,
         test_user: User
     ):
-        """Testet Suche nach Username"""
+        """Tests searching by username"""
         result = await db_session.execute(
             select(User).where(User.username.ilike(f"%{test_user.username[:3]}%"))
         )
@@ -333,7 +333,7 @@ class TestUserQueries:
 # ============================================================================
 
 class TestPasswordReset:
-    """Tests für Password Reset"""
+    """Tests for password reset"""
 
     @pytest.mark.database
     async def test_update_password_hash(
@@ -341,7 +341,7 @@ class TestPasswordReset:
         db_session: AsyncSession,
         test_user: User
     ):
-        """Testet Aktualisierung des Passwort-Hash"""
+        """Tests updating the password hash"""
         old_hash = test_user.password_hash
         new_hash = "newhash123456"
 
@@ -358,7 +358,7 @@ class TestPasswordReset:
 # ============================================================================
 
 class TestSpeakerLinking:
-    """Tests für Speaker-User Verknüpfung"""
+    """Tests for linking a speaker to a user"""
 
     @pytest.mark.database
     async def test_link_speaker_to_user(
@@ -367,7 +367,7 @@ class TestSpeakerLinking:
         test_user: User,
         test_speaker: Speaker
     ):
-        """Testet Verknüpfung von Speaker zu User"""
+        """Tests linking a speaker to a user"""
         test_user.speaker_id = test_speaker.id
         await db_session.commit()
         await db_session.refresh(test_user)
@@ -381,7 +381,7 @@ class TestSpeakerLinking:
         test_user: User,
         test_speaker: Speaker
     ):
-        """Testet Aufheben der Speaker-Verknüpfung"""
+        """Tests removing the speaker link"""
         # First link
         test_user.speaker_id = test_speaker.id
         await db_session.commit()
@@ -400,7 +400,7 @@ class TestSpeakerLinking:
         test_role: Role,
         test_speaker: Speaker
     ):
-        """Testet, dass ein Speaker nur einem User zugewiesen werden kann"""
+        """Tests that a speaker can be assigned to only one user"""
         # Create first user with speaker
         user1 = User(
             username="user1_speaker",
@@ -659,11 +659,12 @@ class TestDeleteRefusesToTakeKnowledgeWithIt:
 
 
 async def _with_password(db_session, user, passwort: str = "testpassword123"):
-    """Ein ECHTES Passwort setzen.
+    """Set a REAL password.
 
-    🛑 `sample_user_data` traegt einen gefaelschten bcrypt-Hash (Kommentar dort:
-    „Fake hash"). `verify_password` schlaegt dagegen immer fehl — ein Test, der
-    das Passwort vorlegen muss, pruefte sonst nur, dass die Ablehnung feuert.
+    🛑 `sample_user_data` carries a faked bcrypt hash (the comment there reads
+    "Fake hash"). `verify_password` always fails against it -- so a test that
+    has to present the password would otherwise only check that the rejection
+    fires.
     """
     from services.auth_service import get_password_hash
 
@@ -672,8 +673,8 @@ async def _with_password(db_session, user, passwort: str = "testpassword123"):
     return passwort
 
 def _admin(user_id: int):
-    """Ein Konto MIT `admin` — seit dem Review verlangt das Abschalten eines
-    FREMDEN Faktors mehr als `users.manage`."""
+    """An account WITH `admin` -- since the review, switching off somebody
+    ELSE'S factor requires more than `users.manage`."""
     return MagicMock(
         username="admin", id=user_id,
         get_permissions=lambda: ["admin", "users.manage", "users.view"],
@@ -681,9 +682,9 @@ def _admin(user_id: int):
 
 
 def _user_manager(user_id: int):
-    """Delegiertes `users.manage` OHNE `admin`. Diesen Prinzipal verteidigt
-    `models/permissions.py` an anderer Stelle ausdruecklich gegen
-    Rechteausweitung — hier ist er der Angreifer."""
+    """Delegated `users.manage` WITHOUT `admin`. Elsewhere
+    `models/permissions.py` explicitly defends this principal against
+    privilege escalation -- here it is the attacker."""
     return MagicMock(
         username="verwalter", id=user_id,
         get_permissions=lambda: ["users.manage", "users.view"],
@@ -691,49 +692,49 @@ def _user_manager(user_id: int):
 
 
 class TestVoiceSecondFactorConsent:
-    """`POST /users/{id}/voice-second-factor` — die Einwilligung in die Stimme
-    als zweiten Faktor.
+    """`POST /users/{id}/voice-second-factor` -- consent to the voice as a
+    second factor.
 
-    🛑 Diese Route hat BEWUSST zwei verschiedene Rechte fuer zwei Richtungen.
-    Ein ECAPA-Stimmabdruck ist biometrisches Datum (Art. 9 DSGVO); eine
-    Anmeldung, die ihn verlangt, ist eine Einwilligung, und die kann niemand
-    fuer jemanden anderen geben. Einschalten also nur fuer sich selbst,
-    ausschalten fuer jede und jeden mit `users.manage` — denn Ausschalten ist
-    der einzige dokumentierte Weg zurueck, wenn ein Mikrofon defekt ist
-    (`.claude/rules/auth.md`: es gibt keinen Rueckfall auf Passwort allein).
+    🛑 This route DELIBERATELY has two different permissions for two
+    directions. An ECAPA voiceprint is biometric data (Art. 9 GDPR); a login
+    that demands it is a consent, and nobody can give that on somebody else's
+    behalf. So switching on only for oneself, switching off for anyone holding
+    `users.manage` -- because switching off is the only documented way back
+    when a microphone is broken (`.claude/rules/auth.md`: there is no fallback
+    to the password alone).
 
-    Ohne diese Route waere der in PR #1350 beschriebene Wiederherstellungsweg
-    („ein Administrator schaltet es ab") reine Theorie: der Zustand haette
-    keine API und keine Oberflaeche.
+    Without this route the recovery path described in PR #1350 ("an
+    administrator switches it off") would be pure theory: the state would have
+    no API and no user interface.
     """
 
     @pytest.fixture(autouse=True)
     def _auth_on(self, monkeypatch):
-        """🛑 Der zweite Faktor ergibt nur mit eingeschalteter Auth einen Sinn.
+        """🛑 The second factor only makes sense with auth switched on.
 
-        `settings.auth_enabled` ist im Prüfstand standardmäßig `False`, und die
-        Route verweigert in diesem Modus BEIDE Richtungen mit 401: bei
-        abgeschalteter Auth löst `get_user_or_default` jeden Aufrufer auf das
-        Administratorkonto auf, es gäbe also kein „Selbst", mit dem man
-        einwilligen könnte (Befund F4 des adversarialen Durchgangs).
+        `settings.auth_enabled` is `False` by default in the harness, and in
+        that mode the route refuses BOTH directions with a 401: with auth off,
+        `get_user_or_default` resolves every caller to the administrator
+        account, so there would be no "self" to consent with (finding F4 of the
+        adversarial pass).
 
-        Die Tests hier prüfen die Berechtigungslogik einer auth-ON-Instanz —
-        also muss der Prüfstand das auch sein. Ohne diese Fixture prüften sie
-        nur noch, dass der 401 feuert.
+        The tests here check the permission logic of an auth-ON instance -- so
+        the harness has to be one. Without this fixture they would only check
+        that the 401 fires.
         """
         from utils.config import settings
         monkeypatch.setattr(settings, "auth_enabled", True)
 
     @staticmethod
     def _path_on():
-        """Die instanzweite Haelfte oeffnen.
+        """Open the instance-wide half.
 
-        🛑 Der Pruefstand faehrt `voice_auth_enabled=False`. Die ANZEIGE meldet
-        die instanzweite Haelfte zuerst — voellig richtig, denn ein
-        abgeschalteter Sprachweg ist die dominante Wahrheit. Wer die
-        kontogebundene Haelfte pruefen will, muss die instanzweite also
-        oeffnen; sonst prueft er `voice_path_off` und glaubt, er pruefe das
-        Profil. Genau darauf sind diese Tests beim ersten Lauf hereingefallen.
+        🛑 The harness runs `voice_auth_enabled=False`. The DISPLAY reports the
+        instance-wide half first -- entirely correctly, because a switched-off
+        voice path is the dominant truth. So whoever wants to check the
+        account-bound half has to open the instance-wide one; otherwise they
+        check `voice_path_off` and believe they are checking the profile. These
+        tests fell for exactly that on their first run.
         """
         from utils.config import settings
         return patch.multiple(
@@ -743,7 +744,7 @@ class TestVoiceSecondFactorConsent:
 
     @staticmethod
     async def _with_voice(db_session: AsyncSession, user: User, embeddings: int = 1):
-        """Verknuepft `user` mit einem Sprecherprofil samt `embeddings` Einbettungen."""
+        """Links `user` to a speaker profile holding `embeddings` embeddings."""
         from models.database import SpeakerEmbedding
 
         speaker = Speaker(name=f"stimme-{uuid4().hex[:8]}")
@@ -778,8 +779,8 @@ class TestVoiceSecondFactorConsent:
     async def test_an_admin_cannot_impose_it_on_someone_else(
         self, db_session: AsyncSession, test_user: User
     ):
-        """Das ist der eigentliche Punkt der Route: eine erzwungene biometrische
-        Erfassung waere keine Verwaltung."""
+        """This is the actual point of the route: a forced biometric
+        enrolment would not be administration."""
         from fastapi import HTTPException
 
         from api.routes import users as users_routes
@@ -800,8 +801,8 @@ class TestVoiceSecondFactorConsent:
     async def test_an_admin_can_always_take_it_away(
         self, db_session: AsyncSession, test_user: User
     ):
-        """Der Rueckweg ist genau die entgegengesetzte Asymmetrie — sonst waere
-        ein defektes Mikrofon eine dauerhafte Aussperrung."""
+        """The way back is exactly the opposite asymmetry -- otherwise a
+        broken microphone would be a permanent lockout."""
         from api.routes import users as users_routes
 
         await self._with_voice(db_session, test_user)
@@ -819,20 +820,20 @@ class TestVoiceSecondFactorConsent:
         assert test_user.voice_second_factor_enabled is False
 
     # ------------------------------------------------------------------
-    # GET /{id}/voice-second-factor — der Grund, den die Seite vorher nie sah
+    # GET /{id}/voice-second-factor -- the reason the page never used to see
     # ------------------------------------------------------------------
 
     @pytest.mark.database
     async def test_the_reason_is_readable_BEFORE_consenting(
         self, db_session: AsyncSession, test_user: User
     ):
-        """🛑 Der Kern des Befundes vom 2026-09-29.
+        """🛑 The core of the 2026-09-29 finding.
 
-        Die Seite „Mein Konto" zeigte einen Grund nur im Zustand „scharf" — also
-        nie fuer jemanden, der gerade ueberlegt einzuwilligen. Gemessen im
-        Haushalt: bei 6 von 7 Konten war `no_profile` der Blocker, und genau die
-        sahen ein blankes „Aus" mit einer Schaltflaeche, die fehlschlagen musste.
-        Der Grund muss also OHNE Einwilligung lesbar sein.
+        The "Mein Konto" page showed a reason only in the "armed" state -- so
+        never for somebody who is just considering consenting. Measured in the
+        household: on 6 of 7 accounts `no_profile` was the blocker, and exactly
+        those saw a blank "off" with a button that was bound to fail. So the
+        reason has to be readable WITHOUT consenting.
         """
         from api.routes import users as users_routes
 
@@ -852,8 +853,8 @@ class TestVoiceSecondFactorConsent:
     async def test_no_blocker_once_the_profile_carries_a_sample(
         self, db_session: AsyncSession, test_user: User
     ):
-        """Gegenprobe: ohne sie waere der Test oben auch dann gruen, wenn die
-        Route IMMER `no_profile` meldete."""
+        """The counter-check: without it the test above would be green even
+        if the route ALWAYS reported `no_profile`."""
         from api.routes import users as users_routes
 
         await self._with_voice(db_session, test_user, embeddings=1)
@@ -867,8 +868,8 @@ class TestVoiceSecondFactorConsent:
     async def test_a_profile_without_samples_reads_as_such(
         self, db_session: AsyncSession, test_user: User
     ):
-        """Die vier Gruende muessen UNTERSCHEIDBAR herauskommen — sonst kann die
-        Oberflaeche sie nicht verschieden uebersetzen."""
+        """The four reasons have to come out DISTINGUISHABLE -- otherwise the
+        user interface cannot translate them differently."""
         from api.routes import users as users_routes
 
         await self._with_voice(db_session, test_user, embeddings=0)
@@ -882,8 +883,9 @@ class TestVoiceSecondFactorConsent:
     async def test_the_instance_half_is_reported_too(
         self, db_session: AsyncSession, test_user: User
     ):
-        """`voice_path_off` gehoert zum ANZEIGEN dazu, obwohl es das Einschalten
-        bewusst nicht blockiert — sonst kann die Seite ein Ruhen nicht benennen.
+        """`voice_path_off` belongs to the DISPLAY, even though it
+        deliberately does not block switching on -- otherwise the page cannot
+        name a dormant state.
         """
         from api.routes import users as users_routes
         from utils.config import settings
@@ -895,8 +897,9 @@ class TestVoiceSecondFactorConsent:
             )
         assert state.blocker == PATH_OFF
 
-        # 🛑 Der Sprachweg muss dafuer AN sein, sonst gewinnt `PATH_OFF` und der
-        # Test behauptete etwas ueber die Erkennung, ohne sie zu beruehren.
+        # 🛑 For this the voice path has to be ON, otherwise `PATH_OFF` wins
+        # and the test would claim something about recognition without
+        # touching it.
         with patch.multiple(
             settings, voice_auth_enabled=True, speaker_recognition_enabled=False,
         ):
@@ -909,8 +912,8 @@ class TestVoiceSecondFactorConsent:
     async def test_reading_someone_elses_state_is_refused(
         self, db_session: AsyncSession, test_user: User
     ):
-        """Der Grund nennt eine Eigenschaft des Sprecherprofils einer Person —
-        er gehoert ihr. Auch `admin` liest ihn hier nicht."""
+        """The reason names a property of a person's speaker profile -- it
+        belongs to them. Not even `admin` reads it here."""
         from fastapi import HTTPException
 
         from api.routes import users as users_routes
@@ -927,8 +930,8 @@ class TestVoiceSecondFactorConsent:
     async def test_reading_needs_an_authenticated_instance(
         self, db_session: AsyncSession, test_user: User
     ):
-        """Dieselbe Regel wie beim Schreiben: ohne Authentifizierung gibt es kein
-        „selbst", also auch nichts eigenes zu lesen."""
+        """The same rule as for writing: without authentication there is no
+        "self", so there is nothing of one's own to read either."""
         from fastapi import HTTPException
 
         from api.routes import users as users_routes
@@ -945,9 +948,9 @@ class TestVoiceSecondFactorConsent:
     async def test_arming_without_a_speaker_profile_is_refused(
         self, db_session: AsyncSession, test_user: User
     ):
-        """`POST /auth/voice` prueft 1:1 gegen das verknuepfte Profil und
-        verweigert fail-closed, wenn keines da ist. Ohne diese Sperre waere das
-        Einschalten eine Selbstaussperrung."""
+        """`POST /auth/voice` checks 1:1 against the linked profile and
+        refuses fail-closed when there is none. Without this guard, switching
+        on would be locking yourself out."""
         from fastapi import HTTPException
 
         from api.routes import users as users_routes
@@ -961,11 +964,11 @@ class TestVoiceSecondFactorConsent:
                 current_user=MagicMock(username=test_user.username, id=test_user.id),
             )
         assert exc.value.status_code == 409
-        # 🛑 Der CODE ist der Vertrag, nicht der Satz. Hier standen drei
-        # hartkodierte englische Saetze, und sie waren die einzige Stelle, an
-        # der die Person den Grund erfuhr — ein deutschsprachiges Mitglied las
-        # Englisch. Die Oberflaeche uebersetzt jetzt diesen Code; pruefte der
-        # Test nur den Statuscode, koennte er unbemerkt wieder zu Prosa werden.
+        # 🛑 The CODE is the contract, not the sentence. Three hard-coded
+        # English sentences used to stand here, and they were the only place
+        # the person learned the reason -- a German-speaking member read
+        # English. The user interface now translates this code; if the test
+        # only checked the status code, it could quietly turn back into prose.
         assert exc.value.detail == NO_PROFILE
         await db_session.refresh(test_user)
         assert test_user.voice_second_factor_enabled is False
@@ -974,8 +977,8 @@ class TestVoiceSecondFactorConsent:
     async def test_a_profile_without_embeddings_is_the_same_trap(
         self, db_session: AsyncSession, test_user: User
     ):
-        """Ein verknuepftes Profil, gegen das nichts verglichen werden kann,
-        sperrt genauso aus wie gar keines."""
+        """A linked profile with nothing to compare against locks you out
+        just as completely as no profile at all."""
         from fastapi import HTTPException
 
         from api.routes import users as users_routes
@@ -995,8 +998,8 @@ class TestVoiceSecondFactorConsent:
     async def test_disarming_needs_no_profile_at_all(
         self, db_session: AsyncSession, test_user: User
     ):
-        """Der Wiederherstellungsweg darf nicht an derselben Bedingung haengen
-        wie der Hinweg — sonst waere ein geloeschtes Sprecherprofil endgueltig."""
+        """The recovery path must not hang on the same condition as the way
+        in -- otherwise a deleted speaker profile would be final."""
         from api.routes import users as users_routes
 
         test_user.voice_second_factor_enabled = True
@@ -1032,11 +1035,12 @@ class TestVoiceSecondFactorConsent:
     async def test_every_other_endpoint_reports_the_state_too(
         self, db_session: AsyncSession, test_user: User
     ):
-        """🛑 Negativkontrolle gegen den Fehler, den ich beim Bau fast gemacht
-        haette: `UserResponse` wird an sieben Stellen INLINE aufgebaut. Das neue
-        Feld hat den Standard `False` — ohne Ergaenzung an jeder Stelle haette
-        die Liste den Zustand falsch gemeldet, und die Oberflaeche haette einen
-        Schalter gezeigt, der aus aussieht, obwohl er an ist."""
+        """🛑 A negative control against the mistake that was nearly made
+        while building this: `UserResponse` is assembled INLINE in seven
+        places. The new field defaults to `False` -- without adding it at every
+        one of them the list would have reported the state wrongly, and the
+        user interface would have shown a switch that looks off while it is
+        on."""
         from api.routes import users as users_routes
 
         await self._with_voice(db_session, test_user)
@@ -1057,13 +1061,13 @@ class TestVoiceSecondFactorConsent:
     async def test_a_user_manager_cannot_strip_someone_elses_factor(
         self, db_session: AsyncSession, test_user: User
     ):
-        """🛑 Der Rueckweg ist zugleich ein Angriffsweg.
+        """🛑 The way back is also an attack path.
 
-        Wer einem fremden Konto den zweiten Faktor nimmt, senkt dessen Anmeldung
-        still auf Passwort allein und kann sich danach an diesem Passwort
-        versuchen. Das ist MEHR als ein Passwort-Zuruecksetzen — das allein kommt
-        an einem scharfen zweiten Faktor nicht vorbei. `users.manage` ist ein
-        delegierbares Recht ohne `admin`, also verlangt diese Richtung `admin`.
+        Whoever takes the second factor off somebody else's account quietly
+        lowers that login to the password alone and can then try that password.
+        That is MORE than a password reset -- a reset on its own does not get
+        past an armed second factor. `users.manage` is a delegable permission
+        without `admin`, so this direction requires `admin`.
         """
         from fastapi import HTTPException
 
@@ -1087,8 +1091,8 @@ class TestVoiceSecondFactorConsent:
     async def test_a_user_manager_may_still_withdraw_their_OWN_consent(
         self, db_session: AsyncSession, test_user: User
     ):
-        """Die Gegenprobe zum Test darueber: den eigenen Faktor zurueckzunehmen
-        ist niemandes Rechteausweitung und darf nicht an `admin` haengen."""
+        """The counter-check to the test above: withdrawing one's own factor
+        is nobody's privilege escalation and must not hang on `admin`."""
         from api.routes import users as users_routes
 
         test_user.voice_second_factor_enabled = True
@@ -1108,20 +1112,20 @@ class TestVoiceSecondFactorConsent:
     async def test_without_a_caller_nothing_is_decided(
         self, db_session: AsyncSession, test_user: User
     ):
-        """🛑 Dieser Test stand vorher auf dem Kopf — er verlangte, dass ein
-        Aufruf OHNE Aufrufer den Faktor eines fremden Kontos abschaltet, und
-        war gruen.
+        """🛑 This test used to stand on its head -- it demanded that a call
+        WITHOUT a caller switch off the factor on somebody else's account, and
+        it was green.
 
-        Grund: die `is not None`-Zusaetze fielen unsymmetrisch. Beim Einschalten
-        schloss `None` zu (nicht ich -> 403), beim Ausschalten riss es auf — die
-        ganze `elif`-Bedingung wurde False und der Schreibvorgang lief durch.
-        Jeder haette jedem den zweiten Faktor nehmen koennen, und ein gruener
-        Test hat das festgeschrieben.
+        The reason: the `is not None` additions fell asymmetrically. On
+        switching on, `None` closed the door (not me -> 403); on switching off
+        it opened it -- the whole `elif` condition became False and the write
+        went through. Anybody could have taken anybody's second factor away,
+        and a green test had written that down as intended.
 
-        Heute unerreichbar (`get_user_or_default` liefert immer einen Nutzer,
-        bei abgeschalteter Auth den Administrator) — aber genau deshalb muss der
-        Riegel stehen und dieser Test ihn belegen: eine Fehlertoleranz, die auf
-        einer Seite zu- und auf der anderen aufgeht, sieht nach Absicherung aus.
+        Unreachable today (`get_user_or_default` always yields a user, the
+        administrator when auth is off) -- but that is exactly why the guard
+        has to stand and this test has to prove it: a tolerance that closes on
+        one side and opens on the other looks like a safeguard.
         """
         from fastapi import HTTPException
 
@@ -1145,8 +1149,8 @@ class TestVoiceSecondFactorConsent:
     async def test_arming_is_refused_while_recognition_is_off(
         self, db_session: AsyncSession, test_user: User, monkeypatch
     ):
-        """Auch das ist eine Falle: die Einwilligung waere scharf, aber
-        `/auth/voice` verweigert kategorisch, solange die Erkennung aus ist."""
+        """This is a trap too: the consent would be armed, but `/auth/voice`
+        refuses categorically while recognition is off."""
         from fastapi import HTTPException
 
         from api.routes import users as users_routes
@@ -1169,12 +1173,12 @@ class TestVoiceSecondFactorConsent:
     async def test_arming_stays_possible_while_the_voice_path_is_still_off(
         self, db_session: AsyncSession, test_user: User, monkeypatch
     ):
-        """🛑 Gegenkontrolle gegen einen zu strengen Riegel.
+        """🛑 A counter-control against a guard that is too strict.
 
-        `VOICE_AUTH_ENABLED=false` darf das Einschalten NICHT blockieren, sonst
-        waere die Reihenfolge des Cutovers unmoeglich: erst die Einwilligungen
-        einsammeln, dann das Flag umlegen. Dass die Huerde solange ruht, ist
-        dokumentiert und gewollt.
+        `VOICE_AUTH_ENABLED=false` must NOT block switching on, otherwise the
+        order of the cutover would be impossible: collect the consents first,
+        then flip the flag. That the hurdle lies dormant until then is
+        documented and intended.
         """
         from api.routes import users as users_routes
         from utils.config import settings
@@ -1193,17 +1197,18 @@ class TestVoiceSecondFactorConsent:
 
 
 class TestTheUnlockButtonSeesBothCounters:
-    """🛑 Die Oberfläche meldete auf dem WIEDERHERSTELLUNGSBILDSCHIRM das
-    Gegenteil der Wahrheit.
+    """🛑 On the RECOVERY SCREEN the user interface reported the opposite of
+    the truth.
 
-    `/auth/voice` zählt Fehlversuche unter `voice2fa:<id>`, die Verwaltung
-    fragte unter dem Benutzernamen. Beide trafen sich nie: die Liste zeigte
-    „nicht gesperrt", und der Entsperr-Knopf meldete `cleared_keys=0`, während
-    die Person tatsächlich nicht hereinkam.
+    `/auth/voice` counts failed attempts under `voice2fa:<id>`; the
+    administration asked under the username. The two never met: the list showed
+    "not locked", and the unlock button reported `cleared_keys=0`, while the
+    person genuinely could not get in.
 
-    Die getrennten Namensräume bleiben — ein Fehlversuch der Stimme darf den
-    Passwortpfad nicht mitsperren, sonst wäre der zweite Faktor ein Weg, jemanden
-    mit fremden Mitteln aus seinem Konto zu drängen. Nur die Anzeige wird ehrlich.
+    The separate key spaces stay -- a failed voice attempt must not lock the
+    password path as well, or the second factor would become a way to push
+    somebody out of their own account using means that are not theirs. Only the
+    display becomes honest.
     """
 
     @pytest.mark.database
@@ -1254,8 +1259,8 @@ class TestTheUnlockButtonSeesBothCounters:
     async def test_an_unlocked_account_still_reports_false(
         self, db_session: AsyncSession, test_user: User, monkeypatch
     ):
-        """Gegenprobe: sonst bewiesen die Tests darüber nur, dass `locked_out`
-        jetzt immer `True` sagt."""
+        """The counter-check: otherwise the tests above would only prove
+        that `locked_out` now always says `True`."""
         from api.routes import users as users_routes
 
         async def _has_any_lock(_username: str) -> bool:
@@ -1271,9 +1276,9 @@ class TestTheUnlockButtonSeesBothCounters:
 
 
 def _plain_member(user_id: int):
-    """Ein Haushaltsmitglied: KEIN `users.manage`, KEIN `admin`. Genau die
-    Person, für die die Einwilligung gedacht ist — und die sie bis zum
-    2026-09-28 nicht erteilen konnte."""
+    """A household member: NO `users.manage`, NO `admin`. Exactly the person
+    the consent is meant for -- and the one who could not give it until
+    2026-09-28."""
     return MagicMock(
         username="familie", id=user_id,
         get_permissions=lambda: ["chat.own", "kb.shared"],
@@ -1281,35 +1286,34 @@ def _plain_member(user_id: int):
 
 
 class TestTheConsentBelongsToThePerson:
-    """🛑 Die Einwilligung ist höchstpersönlich — also muss die Person sie
-    erteilen können, nicht nur eine Administratorin.
+    """🛑 The consent is strictly personal -- so the person has to be able to
+    give it, not only an administrator.
 
-    Vor dem 2026-09-28 stand `require_permission(USERS_MANAGE)` vor BEIDEN
-    Richtungen. Damit war die Einwilligung in die Verarbeitung biometrischer
-    Daten (Art. 9 DSGVO) ausgerechnet für die Person unerreichbar, um deren
-    Stimme es geht: ein Haushaltsmitglied konnte weder einwilligen noch seinen
-    Zustand sehen. Eine Einwilligung, die nur ein Dritter erteilen kann, ist
-    keine.
+    Before 2026-09-28, `require_permission(USERS_MANAGE)` stood in front of
+    BOTH directions. That put the consent to processing biometric data (Art. 9
+    GDPR) out of reach for exactly the person whose voice it is about: a
+    household member could neither consent nor see their own state. A consent
+    only a third party can give is not one.
 
-    Sicherheitslage dabei unverändert: den eigenen Faktor scharf zu stellen
-    fügt eine ZUSÄTZLICHE Hürde am eigenen Konto hinzu, und ihn zurückzunehmen
-    setzt voraus, angemeldet zu sein — was bei scharfem Faktor bereits bedeutet,
-    ihn bestanden zu haben.
+    The security position is unchanged by this: arming one's own factor adds an
+    ADDITIONAL hurdle on one's own account, and withdrawing it requires being
+    signed in -- which, with the factor armed, already means having passed
+    it.
     """
 
     @pytest.fixture(autouse=True)
     def _auth_on(self, monkeypatch):
-        """🛑 Der zweite Faktor ergibt nur mit eingeschalteter Auth einen Sinn.
+        """🛑 The second factor only makes sense with auth switched on.
 
-        `settings.auth_enabled` ist im Prüfstand standardmäßig `False`, und die
-        Route verweigert in diesem Modus BEIDE Richtungen mit 401: bei
-        abgeschalteter Auth löst `get_user_or_default` jeden Aufrufer auf das
-        Administratorkonto auf, es gäbe also kein „Selbst", mit dem man
-        einwilligen könnte (Befund F4 des adversarialen Durchgangs).
+        `settings.auth_enabled` is `False` by default in the harness, and in
+        that mode the route refuses BOTH directions with a 401: with auth off,
+        `get_user_or_default` resolves every caller to the administrator
+        account, so there would be no "self" to consent with (finding F4 of the
+        adversarial pass).
 
-        Die Tests hier prüfen die Berechtigungslogik einer auth-ON-Instanz —
-        also muss der Prüfstand das auch sein. Ohne diese Fixture prüften sie
-        nur noch, dass der 401 feuert.
+        The tests here check the permission logic of an auth-ON instance -- so
+        the harness has to be one. Without this fixture they would only check
+        that the 401 fires.
         """
         from utils.config import settings
         monkeypatch.setattr(settings, "auth_enabled", True)
@@ -1352,9 +1356,10 @@ class TestTheConsentBelongsToThePerson:
     async def test_a_plain_member_still_cannot_touch_a_stranger(
         self, db_session: AsyncSession, test_user: User
     ):
-        """🛑 Die Gegenkontrolle zur Lockerung: die Berechtigung fällt NUR für
-        das eigene Konto. Ein fremdes abzuschalten verlangt weiter `admin` —
-        sonst wäre der Rückweg ein Angriffsweg für jedermann."""
+        """🛑 The counter-control to the relaxation: the permission drops
+        ONLY for one's own account. Switching off somebody else's still
+        requires `admin` -- otherwise the way back would be an attack path for
+        anybody."""
         from fastapi import HTTPException
 
         from api.routes import users as users_routes
@@ -1377,10 +1382,9 @@ class TestTheConsentBelongsToThePerson:
     async def test_a_device_account_has_no_voice(
         self, db_session: AsyncSession, test_user: User
     ):
-        """Ein Gerätekonto spricht nicht und meldet sich nicht über
-        `/auth/login` an. Eine Einwilligung, die es nie einlösen kann, ist ein
-        Zustand, den niemand gebrauchen kann — lieber hier sagen als später
-        raten."""
+        """A device account does not speak and does not sign in through
+        `/auth/login`. A consent it can never redeem is a state nobody can use
+        -- better said here than guessed at later."""
         from fastapi import HTTPException
 
         from api.routes import users as users_routes
@@ -1399,21 +1403,21 @@ class TestTheConsentBelongsToThePerson:
         assert exc.value.status_code == 409
         # 🛑 AUCH HIER DER CODE, NICHT DER SATZ.
         #
-        # Beim Umbau vom 2026-09-29 wurden die drei benannten englischen Saetze
-        # durch Codes ersetzt — und dieser vierte, VIER ZEILEN darueber in
-        # derselben Funktion, blieb stehen. Gefunden hat ihn erst die Abnahme.
-        # Der Test haelt den Geschwisterfall fest, damit die naechste Reparatur
-        # nicht wieder nur die benannte Instanz trifft.
+        # In the 2026-09-29 rework the three named English sentences were
+        # replaced by codes -- and this fourth one, FOUR LINES above it in the
+        # same function, stayed standing. Only the acceptance pass found it.
+        # The test pins the sibling case down, so the next repair does not
+        # again hit only the named instance.
         assert exc.value.detail == DEVICE_ACCOUNT
 
     def test_every_409_of_this_route_speaks_in_codes(self):
-        """Strukturpruefung gegen genau diesen Rueckfall: KEIN 409 dieser Route
-        darf einen Satz herausgeben.
+        """A structural check against exactly this relapse: NO 409 of this
+        route may hand out a sentence.
 
-        Ein Satz aus dem Server kommt unuebersetzt in der Oberflaeche an — die
-        i18n-Regel gilt auch fuer Fehlertexte. Der Test liest die Quelle, weil
-        ein Verhaltenstest nur die Faelle abdeckt, an die jemand gedacht hat;
-        genau daran ist es beim ersten Mal gescheitert.
+        A sentence from the server arrives untranslated in the user interface
+        -- the i18n rule applies to error texts too. The test reads the source,
+        because a behavioural test only covers the cases somebody thought of;
+        that is precisely what failed the first time.
         """
         import inspect
         import re
@@ -1421,8 +1425,8 @@ class TestTheConsentBelongsToThePerson:
         from api.routes import users as users_routes
 
         quelle = inspect.getsource(users_routes.set_voice_second_factor)
-        # Jedes `detail=` im 409-Zweig muss ein Bezeichner sein (ein Code), kein
-        # String-Literal. `detail="..."` ist der Rueckfall, den wir verbieten.
+        # Every `detail=` in a 409 branch has to be an identifier (a code),
+        # not a string literal. `detail="..."` is the relapse being forbidden.
         blockweise = quelle.split("HTTP_409_CONFLICT")
         for block in blockweise[1:]:
             kopf = block[:200]
@@ -1432,10 +1436,10 @@ class TestTheConsentBelongsToThePerson:
             )
 
     def test_the_route_no_longer_demands_users_manage(self):
-        """Strukturprüfung gegen das Zurückrutschen: kehrt
-        `require_permission(USERS_MANAGE)` an diese Route zurück, ist die
-        Einwilligung wieder fremdbestimmt — und das Verhalten oben fiele mit
-        einem 403 aus, dessen Ursache man in der Route suchen müsste."""
+        """A structural check against sliding back: if
+        `require_permission(USERS_MANAGE)` returns to this route, the consent
+        is decided by somebody else again -- and the behaviour above would fail
+        with a 403 whose cause one would have to hunt for in the route."""
         import inspect
 
         from api.routes import users as users_routes
@@ -1450,16 +1454,16 @@ class TestTheConsentBelongsToThePerson:
     async def test_it_does_not_leak_which_user_ids_exist(
         self, db_session: AsyncSession, test_user: User
     ):
-        """🛑 Aufzählungsorakel, entstanden durch die Lockerung selbst.
+        """🛑 An enumeration oracle, created by the relaxation itself.
 
-        Das 404 stand VOR jeder Berechtigungsprüfung. Für einen Unberechtigten
-        unterschied die Antwort damit „gibt es nicht" (404) von „gibt es, nicht
-        deins" (403) — über den gesamten Id-Raum, und offen für jedes
-        angemeldete Mitglied. Vorher verwehrte `require_permission(USERS_MANAGE)`
-        den Zutritt vor der Abfrage; mit der Lockerung fällt dieser Schutz weg,
-        also muss die Reihenfolge ihn ersetzen.
+        The 404 stood BEFORE every permission check. For somebody without
+        permission the answer therefore distinguished "does not exist" (404)
+        from "exists, not yours" (403) -- across the whole id space, and open
+        to every signed-in member. Previously `require_permission(USERS_MANAGE)`
+        denied entry before the query; with the relaxation that protection
+        falls away, so the ordering has to replace it.
 
-        Beide Fälle müssen für einen Unberechtigten gleich aussehen.
+        Both cases have to look the same to somebody without permission.
         """
         from fastapi import HTTPException
 
@@ -1489,27 +1493,28 @@ class TestTheConsentBelongsToThePerson:
     async def test_with_auth_off_there_is_no_self_to_consent_with(
         self, db_session: AsyncSession, test_user: User, monkeypatch
     ):
-        """🛑 Regression dieser Lockerung, gefunden im adversarialen Durchgang.
+        """🛑 A regression of this relaxation, found in the adversarial pass.
 
-        Bei `AUTH_ENABLED=false` löst `get_user_or_default` JEDEN Aufrufer auf
-        das Administratorkonto auf. `is_self` wäre damit wahr, und wer den Port
-        erreicht, könnte dem Administrator den zweiten Faktor auferlegen. Die
-        Einschaltrichtung prüft `voice_auth_enabled` bewusst nicht — der
-        Schreibvorgang ginge also auch bei ruhendem Sprachweg durch und würde
-        scharf, sobald jemand `AUTH_ENABLED=true` setzt.
+        With `AUTH_ENABLED=false`, `get_user_or_default` resolves EVERY caller
+        to the administrator account. `is_self` would therefore be true, and
+        whoever reaches the port could impose the second factor on the
+        administrator. The switch-on direction deliberately does not check
+        `voice_auth_enabled` -- so the write would go through even with the
+        voice path dormant, and would become armed as soon as somebody sets
+        `AUTH_ENABLED=true`.
 
-        Vorher lieferte `require_permission` in diesem Modus `None`, `is_self`
-        war falsch, und das Einschalten endete immer mit 403. Eine Einwilligung
-        nach Art. 9 DSGVO verlangt eine Person; „irgendwer am Port, aufgelöst
-        auf admin" ist keine.
+        Previously `require_permission` returned `None` in this mode, `is_self`
+        was false, and switching on always ended in a 403. A consent under
+        Art. 9 GDPR requires a person; "whoever is at the port, resolved to
+        admin" is not one.
         """
         from fastapi import HTTPException
 
         from api.routes import users as users_routes
         from utils.config import settings
 
-        # Ueberschreibt die `_auth_on`-Fixture dieser Klasse: DIESER Test will
-        # gerade den auth-off-Fall.
+        # Overrides this class's `_auth_on` fixture: THIS test wants
+        # precisely the auth-off case.
         monkeypatch.setattr(settings, "auth_enabled", False)
         await TestVoiceSecondFactorConsent._with_voice(db_session, test_user)
 
@@ -1529,13 +1534,13 @@ class TestTheConsentBelongsToThePerson:
     async def test_removing_a_consent_is_logged_louder_than_granting_one(
         self, db_session: AsyncSession, test_user: User
     ):
-        """🛑 Das Entfernen wiegt schwerer als das Erteilen: es senkt ein Konto
-        auf Passwort allein.
+        """🛑 Removing weighs more than granting: it lowers an account to the
+        password alone.
 
-        Derselbe Subsystem-Prüfer schreibt bereits WARNING, wenn die Hürde von
-        SELBST ruht (`voice_factor_preconditions`). Dass ein Mensch sie
-        wegnimmt, darf nicht leiser protokolliert werden als dass sie von allein
-        einschläft — sonst ist der lauteste Eintrag der harmloseste Vorgang.
+        The same subsystem checker already writes a WARNING when the hurdle
+        goes dormant BY ITSELF (`voice_factor_preconditions`). A human taking
+        it away must not be logged more quietly than it falling asleep on its
+        own -- otherwise the loudest entry is the most harmless event.
         """
         from loguru import logger as loguru_logger
 
@@ -1574,18 +1579,19 @@ class TestTheConsentBelongsToThePerson:
     async def test_removing_your_own_factor_needs_the_password(
         self, db_session: AsyncSession, test_user: User
     ):
-        """🛑 Befund 7 des adversarialen Durchgangs, hier festgenagelt.
+        """🛑 Finding 7 of the adversarial pass, pinned down here.
 
-        Das Einschalten hebt `token_epoch` NICHT an (ein Epoch-Sprung würde die
-        Person im Moment des Einwilligens abmelden — auf einer Ein-Admin-Instanz
-        mit klemmendem Sprachweg eine sofortige Aussperrung). Folge: ein Token
-        von VOR der Einwilligung überlebt sie, erneuert sich über
-        `/auth/refresh` (das den Faktor nicht prüft) und dürfte ihn sonst
-        dauerhaft entfernen — genau das, wogegen er schützt. Vorher verlangte
-        das `users.manage`; mit der Lockerung fällt dieser Schutz weg.
+        Switching on does NOT raise `token_epoch` (an epoch jump would sign the
+        person out at the moment of consenting -- on a single-admin instance
+        with a jammed voice path, an immediate lockout). Consequence: a token
+        from BEFORE the consent outlives it, renews itself through
+        `/auth/refresh` (which does not check the factor) and would otherwise
+        be able to remove it permanently -- precisely what it protects against.
+        Previously that required `users.manage`; with the relaxation that
+        protection falls away.
 
-        Das Passwort ersetzt ihn: wer nur ein Token erbeutet hat, kommt nicht
-        durch.
+        The password replaces it: whoever only captured a token does not get
+        through.
         """
         from fastapi import HTTPException
 
@@ -1612,9 +1618,10 @@ class TestTheConsentBelongsToThePerson:
     async def test_an_admin_needs_no_password_for_a_stranger(
         self, db_session: AsyncSession, test_user: User
     ):
-        """Gegenkontrolle: der Riegel gilt nur fürs EIGENE Konto. Eine
-        Administratorin kennt das fremde Passwort nicht — dort steht `admin` als
-        Schutz, und der Wiederherstellungsweg darf daran nicht scheitern."""
+        """A counter-control: the guard applies only to one's OWN account. An
+        administrator does not know somebody else's password -- there `admin`
+        stands as the protection, and the recovery path must not fail on
+        it."""
         from api.routes import users as users_routes
 
         test_user.voice_second_factor_enabled = True
@@ -1632,8 +1639,8 @@ class TestTheConsentBelongsToThePerson:
     async def test_arming_needs_no_password(
         self, db_session: AsyncSession, test_user: User
     ):
-        """Nur das ENTFERNEN ist der Angriffsweg. Beim Erteilen die Eingabe zu
-        verlangen wäre Reibung ohne Gewinn."""
+        """Only REMOVING is the attack path. Demanding the input when
+        granting would be friction without gain."""
         from api.routes import users as users_routes
 
         await TestVoiceSecondFactorConsent._with_voice(db_session, test_user)

@@ -1,24 +1,23 @@
-"""Der Ausloeser fragt den PLANER, nicht die Zeilenzahl.
+"""The trigger asks the PLANNER, not the row count.
 
-Die erste Fassung meldete ab 4 000 Zeilen. Die Messung auf der zweiten Instanz
-hat diese Schwelle am Tag ihrer Einfuehrung widerlegt:
+The first version reported from 4,000 rows up. The measurement on the second
+instance disproved that threshold on the day it was introduced:
 
-    xidra  document_chunks  3 165 Zeilen  -> Index NICHT gewaehlt (145 ms / 22 ms)
-    xidra  kg_entities      1 953 Zeilen  -> Index GEWAEHLT       (4,1 ms / 14,7 ms)
+    xidra  document_chunks  3,165 rows  -> index NOT chosen (145 ms / 22 ms)
+    xidra  kg_entities      1,953 rows  -> index CHOSEN     (4.1 ms / 14.7 ms)
 
-Die Zeilenzahl sagt die Kippbedingung nicht vorher — Heap-Seiten und Indexform
-tun es (`document_chunks`: 416 Seiten bei 2 847 Zeilen, `kg_entities`: 150 bei
-4 813, geschaetzter HNSW-Einstieg Faktor acht auseinander, bei WENIGER Zeilen).
+The row count does not predict the tipping point -- heap pages and index shape
+do (`document_chunks`: 416 pages at 2,847 rows, `kg_entities`: 150 at 4,813,
+estimated HNSW entry cost a factor of eight apart, at FEWER rows).
 
-Also fragt die Aufgabe direkt: naehme der Planer den Index, wenn die Abfrage
-casten wuerde? Das beantwortet ein blosses `EXPLAIN`. Nachgewiesen auf beiden
-Produktivinstanzen am 2026-09-25: beide beobachteten Tabellen schweigen,
-`kg_entities` (das castet) schlaegt an — auf BEIDEN, obwohl die Zeilenzahlen
-dort gegenlaeufig sind.
+So the task asks directly: would the planner take the index if the query cast?
+A plain `EXPLAIN` answers that. Demonstrated on both production instances on
+2026-09-25: both watched tables stay silent, `kg_entities` (which casts) fires
+-- on BOTH, although the row counts there run in opposite directions.
 
-Dieser Test deckt das Plan-Lesen ab: der Indexname steckt beliebig tief in der
-JSON-Struktur, und ein Ausloeser, der ihn uebersieht, schweigt fuer immer —
-lautlos, ohne dass etwas kaputtgeht.
+This test covers the plan reading: the index name sits at any depth in the JSON
+structure, and a trigger that misses it stays silent forever -- quietly,
+without anything breaking.
 """
 from __future__ import annotations
 
@@ -35,9 +34,10 @@ class TestPlanWalking:
         assert _plan_uses_hnsw(plan) == "idx_kg_entities_embedding_hnsw"
 
     def test_finds_it_nested_under_limit_and_subplans(self):
-        # Die echte Form: Limit -> Index Scan, mit einem InitPlan daneben. Genau
-        # so sieht der Plan der Sonde aus; eine Suche nur auf oberster Ebene
-        # wuerde ihn uebersehen und der Ausloeser bliebe fuer immer stumm.
+        # The real shape: Limit -> Index Scan, with an InitPlan next to it.
+        # That is exactly what the probe's plan looks like; a search only at
+        # the top level would miss it and the trigger would stay mute
+        # forever.
         plan = {
             "Node Type": "Limit",
             "Plans": [
@@ -51,9 +51,9 @@ class TestPlanWalking:
         assert _plan_uses_hnsw(plan) == "idx_document_chunks_embedding_hnsw"
 
     def test_a_plain_btree_index_is_not_a_hit(self):
-        # Der Primaerschluessel taucht im Plan der Sonde IMMER auf (der
-        # InitPlan holt sich eine Zeile). Ihn als Treffer zu werten hiesse:
-        # jede Tabelle meldet sofort, der Ausloeser waere Dauerlaerm.
+        # The primary key ALWAYS turns up in the probe's plan (the InitPlan
+        # fetches one row). Counting it as a hit would mean: every table
+        # reports immediately, and the trigger would be constant noise.
         plan = {"Node Type": "Limit", "Plans": [
             {"Node Type": "Index Scan", "Index Name": "document_chunks_pkey"},
         ]}
@@ -68,8 +68,8 @@ class TestPlanWalking:
         assert _plan_uses_hnsw(plan) is None
 
     def test_a_single_dict_subplan_is_walked_too(self):
-        # Postgres liefert "Plan" als Objekt, "Plans" als Liste. Beide Formen
-        # muessen durchlaufen werden, sonst haengt es vom Zufall ab.
+        # Postgres delivers "Plan" as an object, "Plans" as a list. Both
+        # forms have to be walked, otherwise it depends on chance.
         assert _plan_uses_hnsw(
             {"Plan": {"Index Name": "ix_episodic_embedding_hnsw"}}
         ) == "ix_episodic_embedding_hnsw"
@@ -77,8 +77,8 @@ class TestPlanWalking:
 
 class TestWatchedSet:
     def test_every_watched_table_names_the_files_to_change(self):
-        # Eine Warnung ohne Handlungsanweisung ist halb nutzlos: wer sie liest,
-        # muss wissen, WO der Cast hingehoert.
+        # A warning without an instruction is half useless: whoever reads it
+        # has to know WHERE the cast belongs.
         assert _WATCHED, "nichts beobachtet — der Ausloeser waere wirkungslos"
         for table, sites in _WATCHED.items():
             assert sites, f"{table} nennt keine Datei"

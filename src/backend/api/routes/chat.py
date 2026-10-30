@@ -120,7 +120,7 @@ async def send_message(
         # Generate a session id if there is none
         session_id = chat_request.session_id or str(uuid.uuid4())
 
-        # Conversation in DB speichern/laden
+        # Save/load the conversation in the DB
         result = await db.execute(
             select(Conversation).where(Conversation.session_id == session_id)
         )
@@ -151,7 +151,7 @@ async def send_message(
             await db.commit()
             await db.refresh(conversation)
 
-        # User Message speichern
+        # Save the user message
         user_msg = Message(
             conversation_id=conversation.id,
             role="user",
@@ -162,7 +162,7 @@ async def send_message(
         # Load the context from the database if it was not passed in
         context = chat_request.context or []
         if not context:
-            # Letzte 10 Nachrichten laden
+            # Load the last 10 messages
             result = await db.execute(
                 select(Message)
                 .where(Message.conversation_id == conversation.id)
@@ -175,7 +175,7 @@ async def send_message(
                 for msg in reversed(messages)
             ]
 
-        # Ollama Service nutzen
+        # Use the Ollama service
         from main import app
         ollama: OllamaService = app.state.ollama
 
@@ -338,7 +338,7 @@ WICHTIG: Gib NUR die Antwort, KEIN JSON, KEINE technischen Details!"""
         from services.output_gate import apply_check_output_gate
         response_text = await apply_check_output_gate(response_text, user_id=user_id)
 
-        # Assistant Message speichern
+        # Save the assistant message
         assistant_msg = Message(
             conversation_id=conversation.id,
             role="assistant",
@@ -375,7 +375,7 @@ async def get_history(
     db: AsyncSession = Depends(get_db),
     current_user: User | None = Depends(get_current_user),
 ):
-    """Chat-Historie abrufen"""
+    """Fetch the chat history"""
     try:
         query = select(Conversation).where(Conversation.session_id == session_id)
         reach = _reach_clause(current_user)
@@ -446,7 +446,7 @@ async def get_history(
                     "role": msg.role,
                     "content": msg.content,
                     "timestamp": msg.timestamp.isoformat(),
-                    "metadata": msg.message_metadata,  # Spalte heißt message_metadata
+                    "metadata": msg.message_metadata,  # the column is called message_metadata
                     # Chat branching (Phase 2): {index,count,sibling_ids} when this
                     # message has sibling branches; absent otherwise.
                     **({"branch": branch_meta[msg.id]} if msg.id in branch_meta else {}),
@@ -565,7 +565,7 @@ async def search_conversations(
     db: AsyncSession = Depends(get_db),
     current_user: User | None = Depends(get_current_user),
 ):
-    """Suche in Konversationen"""
+    """Search within conversations"""
     try:
         if not q or len(q) < 2:
             raise HTTPException(status_code=400, detail="Suchanfrage muss mindestens 2 Zeichen lang sein")
@@ -784,7 +784,7 @@ async def cleanup_old_conversations(
         from datetime import timedelta
         cutoff_date = datetime.now(UTC).replace(tzinfo=None) - timedelta(days=days)
 
-        # Finde alte Konversationen
+        # Find old conversations
         result = await db.execute(
             select(Conversation)
             .where(Conversation.updated_at < cutoff_date)

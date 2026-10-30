@@ -146,17 +146,19 @@ async def test_features_chat_starters_default_empty(monkeypatch):
 async def test_features_reports_the_instance_half_of_the_voice_preconditions(
     monkeypatch, flag, enabled
 ):
-    """🛑 Ohne diese beiden meldet die Benutzerverwaltung „scharf", während der
-    zweite Faktor in Wahrheit RUHT.
+    """🛑 Without these two the user administration reports "armed" while the
+    second factor is in fact DORMANT.
 
-    Die Vorbedingungen haben zwei Hälften (`services/voice_factor_preconditions`):
-    instanzweite Schalter und das Profil der Person. Die Maske sah nur die
-    zweite. Bei der Browser-Abnahme am 2026-09-28 zeigte eine eingewilligte Zeile
-    „scharf", während `VOICE_AUTH_ENABLED=false` die Hürde ruhen ließ — und im
-    Cutover-Fenster (erst Einwilligungen, dann Flag) ist das bei JEDER Zeile
-    falsch, also genau dann, wenn es zählt.
+    The preconditions have two halves
+    (`services/voice_factor_preconditions`): instance-wide switches and the
+    person's profile. The UI saw only the second. In the browser acceptance
+    check on 2026-09-28 a row that had consented showed "armed" while
+    `VOICE_AUTH_ENABLED=false` left the hurdle resting -- and inside the
+    cutover window (consents first, then the flag) that is wrong for EVERY row,
+    so precisely when it counts.
 
-    Kein Geheimnis: die Flags sagen nur, ob ein Weg offen ist, nicht wer ihn geht.
+    No secret here: the flags say only whether a path is open, not who walks
+    it.
     """
     monkeypatch.setattr(settings, flag, enabled)
     from main import app

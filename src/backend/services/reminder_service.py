@@ -1,9 +1,9 @@
 """
-Reminder Service — Timer-basierte Erinnerungen
+Reminder service -- timer-based reminders
 
-Parst relative Zeitangaben ("in 30 Minuten", "in 2 Stunden", "um 18:00")
-und erstellt Reminder-Einträge. Background-Loop prüft periodisch auf
-fällige Reminders und liefert sie als Notifications aus.
+Parses relative time expressions ("in 30 Minuten", "in 2 Stunden", "um 18:00")
+and creates reminder rows. A background loop checks periodically for reminders
+that have come due and delivers them as notifications.
 """
 
 import re

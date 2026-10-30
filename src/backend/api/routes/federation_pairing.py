@@ -51,8 +51,8 @@ async def _refuse_unresolvable(endpoints: list[dict]) -> None:
     `https://renfield.loca` -- the name was missing its final `l`, AND it was
     the FAR SIDE's name instead of our own. Both came from this field. The
     pairing reported success, and the failure only showed on the first real
-    Gebrauch, Tage später, als „Name or service not known" tief im
-    Föderationsclient.
+    use, days later, as "Name or service not known" deep inside the
+    federation client.
 
     The sanitisation above already discards empty values, on the grounds that
     otherwise "a garbage endpoint" would persist. A typo is garbage too.
@@ -65,7 +65,7 @@ async def _refuse_unresolvable(endpoints: list[dict]) -> None:
     NAME RESOLUTION only, no HTTP request: the latter would be stricter but
     would reject a setup in which the instance cannot reach itself under its
     public name. Resolution alone would have caught the case
-    (gemessen: `renfield.local` → 192.168.1.230, `renfield.loca` → Fehler).
+    (measured: `renfield.local` -> 192.168.1.230, `renfield.loca` -> error).
     `getaddrinfo` BLOCKS, and both callers are `async`. A failing resolution
     runs into the resolver timeout (seconds) and stalls the entire event loop
     for that long -- hence a thread. `_with_tofu_fingerprint` is async for the

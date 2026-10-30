@@ -1,11 +1,11 @@
 /**
- * „Mein Konto" — die Einwilligung gehört der Person.
+ * "Mein Konto" -- the consent belongs to the person.
  *
- * 🛑 Bis zum 2026-09-28 stand `require_permission(USERS_MANAGE)` vor beiden
- * Richtungen der Route, und die einzige Oberfläche dafür war die
- * Benutzerverwaltung. Ein Haushaltsmitglied konnte also weder einwilligen noch
- * sehen, ob der Faktor für sein Konto gilt — bei einer Einwilligung nach
- * Art. 9 DSGVO die falsche Eigentumsverteilung.
+ * 🛑 Until 2026-09-28 `require_permission(USERS_MANAGE)` stood in front of both
+ * directions of the route, and the only interface for it was the user
+ * administration. So a household member could neither consent nor see whether
+ * the factor applies to their account -- the wrong distribution of ownership
+ * for a consent under Art. 9 GDPR.
  */
 import { createElement, Fragment } from 'react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
@@ -36,12 +36,13 @@ vi.mock('../../../../src/frontend/src/components/ConfirmDialog', () => {
 });
 
 /**
- * Der GRUND kommt seit dem 2026-09-29 vom Server, nicht aus den Feature-Flags.
+ * Since 2026-09-29 the BLOCKER comes from the server, not from the feature
+ * flags.
  *
- * 🛑 Vorher las die Seite nur die instanzweite Hälfte (die Flags) und zeigte
- * einen Grund ausserdem nur im Zustand „scharf". Wer noch nicht eingewilligt
- * hatte, sah ein blankes „Aus" — gemessen im Haushalt bei 6 von 7 Konten, denn
- * deren Blocker war `no_profile`, die kontogebundene Hälfte.
+ * 🛑 Before that the page read only the instance-wide half (the flags) and
+ * showed a blocker only in the "armed" state as well. Anyone who had not
+ * consented yet saw a blank "off" -- measured in the household on 6 of 7
+ * accounts, because their blocker was `no_profile`, the account-bound half.
  */
 function state(blocker: string | null = null, enabled = false) {
   server.use(
@@ -97,15 +98,15 @@ describe('AccountSettingsPage', () => {
   });
 
   it('🛑 verlangt zum Zuruecknehmen erst das Passwort', async () => {
-    // Der Server verweigert das Abschalten des EIGENEN Faktors ohne Passwort
-    // (400): ein Token von VOR der Einwilligung ueberlebt sie und duerfte sie
-    // sonst zuruecknehmen. Ohne Feld liefe die Schaltflaeche ins 400.
+    // The server refuses to switch off ONE'S OWN factor without a password
+    // (400): a token from BEFORE the consent outlives it and would otherwise be
+    // able to withdraw it. Without the field the button would run into the 400.
     asUser(true);
     const calls = captureToggle();
     renderWithProviders(<AccountSettingsPage />);
 
     await userEvent.click(await screen.findByRole('button', { name: 'Nicht mehr verlangen' }));
-    // Erster Klick oeffnet nur das Feld — noch nichts gesendet.
+    // The first click only opens the field -- nothing sent yet.
     expect(calls).toEqual([]);
     const feld = await screen.findByLabelText('Passwort zur Bestätigung');
     expect(screen.getByRole('button', { name: 'Nicht mehr verlangen' })).toBeDisabled();
@@ -118,8 +119,8 @@ describe('AccountSettingsPage', () => {
   });
 
   it('🛑 liest `/auth/me` neu, statt der Antwort der Mutation zu glauben', async () => {
-    // Sonst zeigt die Seite etwas anderes als die Sitzung glaubt — und der
-    // Zustand dieser Seite IST der Sitzungszustand.
+    // Otherwise the page shows something other than what the session believes
+    // -- and this page's state IS the session state.
     const fetchUser = vi.fn().mockResolvedValue(null);
     asUser(false, fetchUser);
     captureToggle();
@@ -138,8 +139,8 @@ describe('AccountSettingsPage', () => {
   });
 
   it('🛑 nennt den Grund AUCH ohne Einwilligung', async () => {
-    // Der eigentliche Befund vom 2026-09-29: im Zustand „Aus" schwieg die
-    // Seite vollstaendig, ganz gleich wie viele Vorbedingungen fehlten.
+    // The actual finding of 2026-09-29: in the "off" state the page stayed
+    // completely silent, no matter how many preconditions were missing.
     asUser(false);
     state('no_profile');
     renderWithProviders(<AccountSettingsPage />);
@@ -157,8 +158,8 @@ describe('AccountSettingsPage', () => {
   });
 
   it('🛑 `voice_path_off` blockiert das Einschalten NICHT', async () => {
-    // Sonst waere die Reihenfolge des Cutovers nicht durchfuehrbar: erst
-    // Einwilligung sammeln, dann das Flag umlegen.
+    // Otherwise the cutover order would not be workable: collect the consent
+    // first, then flip the flag.
     asUser(false);
     state('voice_path_off');
     renderWithProviders(<AccountSettingsPage />);
@@ -168,9 +169,9 @@ describe('AccountSettingsPage', () => {
   });
 
   it('🛑 uebersetzt den 409-Code, statt ihn roh anzuzeigen', async () => {
-    // Der Server schickt seit dem 2026-09-29 den CODE. Ohne Uebersetzung
-    // stuende „no_embeddings" in der Oberflaeche — vorher stand dort ein
-    // hartkodierter ENGLISCHER Satz.
+    // Since 2026-09-29 the server sends the CODE. Without a translation
+    // "no_embeddings" would stand in the interface -- before that there was a
+    // hard-coded ENGLISH sentence.
     asUser(false);
     state(null);
     server.use(
@@ -191,8 +192,8 @@ describe('AccountSettingsPage', () => {
   });
 
   it('beim EINSCHALTEN wird kein Passwort verlangt', async () => {
-    // Nur das Entfernen ist der Angriffsweg. Beim Erteilen waere die Eingabe
-    // Reibung ohne Gewinn.
+    // Only removing it is the attack path. When granting it, the input would
+    // be friction with no gain.
     asUser(false);
     const calls = captureToggle();
     renderWithProviders(<AccountSettingsPage />);

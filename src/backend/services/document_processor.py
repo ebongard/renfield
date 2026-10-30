@@ -21,23 +21,23 @@ from utils.config import settings
 
 class DocumentProcessor:
     """
-    Prozessiert Dokumente mit IBM Docling für RAG.
+    Processes documents with IBM Docling, for RAG.
 
-    Docling bietet strukturierte Dokumentenextraktion mit:
-    - Layout-Erkennung (Tabellen, Formeln, Code-Blöcke)
-    - OCR für gescannte Dokumente (inkl. force_full_page_ocr für garbled PDFs)
-    - Metadaten-Extraktion
+    Docling offers structured document extraction with:
+    - layout detection (tables, formulas, code blocks)
+    - OCR for scanned documents (incl. force_full_page_ocr for garbled PDFs)
+    - metadata extraction
 
-    OCR-Verhalten (konfigurierbar via Settings):
-    - Standard: Docling nutzt embedded Text + OCR für Bitmap-Regionen
-    - rag_force_ocr=True: Immer force_full_page_ocr (embedded Text ignoriert)
-    - rag_ocr_auto_detect=True: Erkennt garbled Text (Leerzeichen-Anteil < Schwellwert)
-      and repeats the conversion with force_full_page_ocr
+    OCR behaviour (configurable via settings):
+    - default: Docling uses the embedded text + OCR for bitmap regions
+    - rag_force_ocr=True: always force_full_page_ocr (embedded text ignored)
+    - rag_ocr_auto_detect=True: detects garbled text (share of spaces below the
+      threshold) and repeats the conversion with force_full_page_ocr
     """
 
     def __init__(self):
         self._converter = None
-        self._ocr_converter = None   # Converter mit force_full_page_ocr=True
+        self._ocr_converter = None   # converter with force_full_page_ocr=True
         self._chunker = None
         self._initialized = False
 
@@ -249,9 +249,9 @@ class DocumentProcessor:
         Process a document and extract structured chunks.
 
         Args:
-            file_path: Pfad zur Dokumentdatei
+            file_path: path to the document file
             force_ocr: force OCR on every page (ignores the embedded text).
-                       Nützlich für PDFs mit kaputtem Text-Layer.
+                       Useful for PDFs with a broken text layer.
                        Overrides rag_force_ocr and rag_ocr_auto_detect.
 
         Returns:
@@ -328,11 +328,11 @@ class DocumentProcessor:
                         doc = result.document
                         ocr_engine = "docling_full_page_ocr"
 
-            # Metadaten extrahieren
+            # Extract the metadata
             metadata = self._extract_metadata(doc, file_path)
             logger.info(f"Metadaten extrahiert: {metadata.get('title', path.name)}")
 
-            # Chunks erstellen
+            # Create the chunks
             chunk_result = await loop.run_in_executor(
                 None,
                 self._create_chunks,
@@ -743,9 +743,9 @@ class DocumentProcessor:
     def _convert_document_ocr(self, file_path: str):
         """Synchronous document conversion with force_full_page_ocr (for the thread pool).
 
-        Ignores the embedded text layer and runs full OCR on
-        jeder Seite durch. Liefert bessere Ergebnisse bei gescannten PDFs
-        mit kaputtem Text-Layer (fehlende Leerzeichen etc.).
+        Ignores the embedded text layer and runs full OCR on every page.
+        Gives better results on scanned PDFs with a broken text layer (missing
+        spaces and the like).
         """
         try:
             return self._ocr_converter.convert(file_path)

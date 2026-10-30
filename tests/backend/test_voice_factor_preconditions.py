@@ -1,12 +1,12 @@
-"""Die Hürde wird genau dann gestellt, wenn sie auch fällt.
+"""The hurdle is raised exactly when it can also be cleared.
 
-🛑 DER BEFUND, GEGEN DEN DIESE DATEI STEHT
-==========================================
-`/auth/login` stellte die Hürde, sobald `VOICE_AUTH_ENABLED` an war.
-`/auth/voice` verlangte zum Einlösen VIER weitere Dinge. Jede Lücke zwischen
-den beiden Mengen war eine Aussperrung — es gibt bewusst keinen Rückfall auf
-Passwort allein. Gefunden wurden fünf Ausprägungen desselben Fehlers; hier
-steht für jede eine Gegenkontrolle.
+🛑 THE FINDING THIS FILE STANDS AGAINST
+=======================================
+`/auth/login` raised the hurdle as soon as `VOICE_AUTH_ENABLED` was on.
+`/auth/voice` demanded FOUR further things to clear it. Every gap between the
+two sets was a lockout -- there is deliberately no fallback to the password
+alone. Five variants of the same defect were found; there is one counter-check
+here for each.
 """
 from unittest.mock import MagicMock
 
@@ -22,7 +22,7 @@ def _user(**kw):
 
 
 class TestPathBlocker:
-    """Die Schalter der Instanz — beide, nicht nur einer."""
+    """The instance's switches -- both of them, not only one."""
 
     @pytest.mark.unit
     def test_the_voice_path_being_off_blocks(self, monkeypatch):
@@ -34,11 +34,11 @@ class TestPathBlocker:
 
     @pytest.mark.unit
     def test_recognition_being_off_blocks_too(self, monkeypatch):
-        """🛑 Der zweite Riegel, den die Anmeldeseite NIE abgefragt hat.
+        """🛑 The second guard the login page NEVER queried.
 
-        `/auth/voice` verweigert kategorisch bei abgeschalteter Sprecherkennung.
-        Wer sie abschaltet — eine naheliegende Datenschutz-Handlung — sperrte
-        damit jedes Konto mit Einwilligung aus, Passwortpfad eingeschlossen.
+        `/auth/voice` refuses categorically when speaker recognition is off.
+        Whoever switches it off -- an obvious privacy action -- thereby locked
+        out every account with a consent, the password path included.
         """
         from services.voice_factor_preconditions import RECOGNITION_OFF, voice_path_blocker
         from utils.config import settings
@@ -58,7 +58,7 @@ class TestPathBlocker:
 
 
 class TestProfileBlocker:
-    """Die Tür DIESER Person."""
+    """THIS person's door."""
 
     @pytest.mark.database
     async def test_no_profile_blocks(self, db_session):
@@ -84,16 +84,15 @@ class TestProfileBlocker:
 
 
 class TestTheHurdleRestsInsteadOfLockingOut:
-    """🛑 Der Kern: sechs Routen konnten das Profil nach der Einwilligung
-    entfernen (`DELETE /users/{id}/link-speaker`, `DELETE /speakers/{id}` über
-    `ON DELETE SET NULL`, das Löschen der letzten Einbettung, das Neuanlernen).
-    Danach hielt `/auth/login` die Token zurück und `/auth/voice` verweigerte
-    fail-closed: das Konto war zu.
+    """🛑 The core: six routes could remove the profile after the consent
+    (`DELETE /users/{id}/link-speaker`, `DELETE /speakers/{id}` via
+    `ON DELETE SET NULL`, deleting the last embedding, re-enrolling). After
+    that `/auth/login` withheld the tokens and `/auth/voice` refused
+    fail-closed: the account was shut.
 
-    Jetzt RUHT die Hürde. Die Einwilligung bleibt gespeichert — sie ist der
-    Nachweis einer Erklärung der Person (Art. 9 DSGVO), nicht ein Schalter, den
-    das System still umlegen darf — und greift von selbst wieder, sobald das
-    Profil zurück ist.
+    Now the hurdle RESTS. The consent stays stored -- it is the record of a
+    declaration by the person (Art. 9 GDPR), not a switch the system may flip
+    silently -- and takes hold again by itself as soon as the profile is back.
     """
 
     @pytest.mark.database
@@ -127,8 +126,8 @@ class TestTheHurdleRestsInsteadOfLockingOut:
     async def test_a_resting_hurdle_is_logged_as_a_warning(
         self, db_session, monkeypatch, caplog
     ):
-        """Eine ruhende Hürde ist ein Schutz, der gerade NICHT wirkt. Still
-        wäre das eine Absenkung, die niemand bemerkt."""
+        """A resting hurdle is a protection that is NOT in effect right now.
+        Silently, that would be a lowering nobody notices."""
         import logging
 
         from loguru import logger as loguru_logger
@@ -146,13 +145,13 @@ class TestTheHurdleRestsInsteadOfLockingOut:
         finally:
             loguru_logger.remove(sink)
         assert any("RESTS" in m for m in seen), seen
-        assert logging is not None  # (Import nur zur Klarheit der Absicht)
+        assert logging is not None  # (imported only to make the intent clear)
 
     @pytest.mark.database
     async def test_the_path_being_off_is_quiet(self, db_session, monkeypatch):
-        """`VOICE_AUTH_ENABLED=false` ist der dokumentierte Normalzustand beider
-        Instanzen — eine Warnung bei JEDER Anmeldung wäre Rauschen, in dem die
-        echten Abweichungen untergehen."""
+        """`VOICE_AUTH_ENABLED=false` is the documented normal state of both
+        instances -- a warning on EVERY login would be noise that the real
+        deviations drown in."""
         from loguru import logger as loguru_logger
 
         from services.voice_factor_preconditions import second_factor_applies
@@ -179,8 +178,8 @@ class TestTheHurdleRestsInsteadOfLockingOut:
     async def test_everything_in_place_raises_the_hurdle(
         self, db_session, test_speaker, monkeypatch
     ):
-        """Die Gegenprobe: sonst bewiesen die fünf Tests darüber nur, dass die
-        Funktion immer `False` sagt."""
+        """The counter-check: otherwise the five tests above would only prove
+        that the function always says `False`."""
         from models.database import SpeakerEmbedding
         from services.voice_factor_preconditions import second_factor_applies
         from utils.config import settings

@@ -19,11 +19,11 @@ Handshake State Machine):
      persists a PeerUser row on the initiator side with
      `granted_tier = their_tier_for_me`. The pairing is live.
 
-🛑 Die gewaehrte Stufe steht seit 2026-10-27 (F-ID-3) AN DER PAARUNG, nicht
-mehr als `CircleMembership`. Davor landete die ENTFERNTE Nutzerkennung in
-`circle_memberships.member_user_id` — einer Spalte, deren Fremdschluessel auf
-die LOKALE `users.id` zeigt. Das brach auf einer Instanz den Schluessel und
-band auf der anderen still die falsche Person.
+🛑 Since 2026-10-27 (F-ID-3) the granted tier sits ON THE PAIRING, no longer
+as a `CircleMembership`. Before that the REMOTE user id ended up in
+`circle_memberships.member_user_id` -- a column whose foreign key points at the
+LOCAL `users.id`. That broke the key on one instance and silently bound the
+wrong person on the other.
 
 Adversary model (design doc § Threat Model):
   - Offers expire in 10 minutes. The nonce cache is TTL'd + single-use.
@@ -542,10 +542,10 @@ _canonical_bytes = canonical_bytes
 
 async def _get_or_create_circle(db: AsyncSession, owner_user_id: int) -> Circle:
     """
-    Ensure a `circles` row exists for the pairing user. Seit F-ID-3 braucht
-    die PAARUNG sie nicht mehr (die Stufe steht an `peer_users`), aber die
-    Zeile wird anderswo gelesen und ist idempotent — in einer
-    Sicherheitsaenderung wird nicht nebenbei aufgeraeumt.
+    Ensure a `circles` row exists for the pairing user. Since F-ID-3 the
+    PAIRING no longer needs it (the tier sits on `peer_users`), but the row is
+    read elsewhere and this is idempotent -- a security change does not tidy up
+    on the side.
     Mirrors the helper in api/routes/circles.py:
     IntegrityError recovery for concurrent-first-hit races.
     """

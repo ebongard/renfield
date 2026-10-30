@@ -1,27 +1,26 @@
 /**
- * Die Erfassungsmaske des zweiten Faktors.
+ * The capture form for the second factor.
  *
- * 🛑 Die wichtigsten zwei Tests hier prüfen, was die Maske NICHT tut:
+ * 🛑 The two most important tests here check what the form does NOT do:
  *
- * * `does not surface the server message` — der Server antwortet auf jeden
- *   Fehlschlag identisch und absichtlich uninformativ. Reicht die Oberfläche
- *   diese Meldung durch, trägt sie ein Orakel nach draußen, sobald der Server je
- *   auskunftsfreudiger wird. Der Schutz muss auf BEIDEN Seiten stehen.
- * * `offers no way past the factor` — es darf keinen „ohne Stimme anmelden"-Knopf
- *   geben, auch nicht nach mehreren Fehlversuchen. Ein Rückfall, den ein
- *   Angreifer selbst auslöst, hebt den Faktor auf.
+ * * `does not surface the server message` -- the server answers every failure
+ *   identically and deliberately uninformatively. If the interface passes that
+ *   message through, it carries an oracle outwards the moment the server ever
+ *   becomes more forthcoming. The protection has to stand on BOTH sides.
+ * * `offers no way past the factor` -- there must be no "sign in without voice"
+ *   button, not even after several failed attempts. A fallback an attacker can
+ *   trigger themselves cancels the factor out.
  *
- * Mikrofonfehler sind dagegen ABSICHTLICH unterscheidbar: es geht um das Gerät
- * des Nutzers, nicht um ein Geheimnis des Servers.
+ * Microphone errors, by contrast, are DELIBERATELY distinguishable: they are
+ * about the user's device, not about a secret of the server's.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { I18nextProvider } from 'react-i18next';
 
-// 🛑 Mit dem ECHTEN Sprachpaket, nicht mit einem Stub. Sonst liefert `t()` die
-// Schlüssel zurück, jede Textsuche prüft nur Schlüsselnamen, und ein fehlender
-// Übersetzungseintrag fällt nie auf — genau die Lücke, die ein Test hier
-// schließen soll.
+// 🛑 With the REAL language pack, not with a stub. Otherwise `t()` returns the
+// keys, every text search only checks key names, and a missing translation
+// entry never shows up -- exactly the gap a test here is supposed to close.
 import i18n from '../../../../src/frontend/src/i18n';
 
 import VoiceSecondFactorStep from '../../../../src/frontend/src/components/auth/VoiceSecondFactorStep';
@@ -31,7 +30,7 @@ vi.mock('../../../../src/frontend/src/utils/axios', () => ({
   default: { post: vi.fn() },
 }));
 
-/** Ein MediaRecorder-Ersatz, den wir von Hand takten. */
+/** A MediaRecorder stand-in that we clock by hand. */
 class FakeRecorder {
   static instances: FakeRecorder[] = [];
   state: 'inactive' | 'recording' = 'inactive';
@@ -66,11 +65,11 @@ function stubMedia({ fail }: { fail?: string } = {}) {
   return { getUserMedia, track };
 }
 
-/** Aufnahme starten, die Mindestdauer überspringen, stoppen. */
+/** Start recording, skip past the minimum duration, stop. */
 async function recordSomething() {
   fireEvent.click(screen.getByRole('button', { name: /aufnahme starten|start recording/i }));
   await waitFor(() => expect(FakeRecorder.instances.length).toBeGreaterThan(0));
-  // Die Mindestdauer wird über die Uhr geprüft, nicht über Timer — vorspulen.
+  // The minimum duration is checked against the clock, not a timer -- fast-forward.
   vi.setSystemTime(Date.now() + 5000);
   FakeRecorder.instances.at(-1)!.stop();
   await waitFor(() =>
@@ -78,7 +77,7 @@ async function recordSomething() {
   );
 }
 
-/** Rendern mit dem echten Sprachpaket auf Deutsch. */
+/** Render with the real language pack in German. */
 function renderStep(ui: React.ReactElement) {
   return render(<I18nextProvider i18n={i18n}>{ui}</I18nextProvider>);
 }
@@ -112,18 +111,18 @@ describe('VoiceSecondFactorStep', () => {
     expect((form as FormData).get('ticket')).toBe('TICKET-9');
     expect((form as FormData).get('audio_file')).toBeInstanceOf(Blob);
 
-    // 🛑 DIESE ZEILE FEHLTE, und sie hat den ersten echten Anmeldeversuch
-    // gekostet (2026-09-28): `POST /api/auth/voice` kam als **422** zurück, die
-    // Stimme wurde nie geprüft.
+    // 🛑 THIS LINE WAS MISSING, and it cost the first real login attempt
+    // (2026-09-28): `POST /api/auth/voice` came back as a **422**, the voice
+    // was never checked.
     //
-    // `apiClient` trägt `Content-Type: application/json` als Voreinstellung
-    // (`utils/axios.ts`). Axios entfernt den bei FormData nur, wenn er NICHT
-    // explizit gesetzt ist — hier blieb er stehen: Körper multipart, Kopf
-    // behauptet JSON, FastAPI kann ihn nicht lesen.
+    // `apiClient` carries `Content-Type: application/json` as its default
+    // (`utils/axios.ts`). Axios only removes it for FormData when it is NOT set
+    // explicitly -- here it stayed: body multipart, header claiming JSON,
+    // FastAPI cannot read it.
     //
-    // Der Test lief trotzdem grün, weil er nur `[url, form]` ansah und das
-    // dritte Argument — in dem die Köpfe stehen — nie prüfte. Alle vier
-    // anderen Uploads im Projekt setzen den Kopf; dieser war der Ausreißer.
+    // The test still ran green, because it only looked at `[url, form]` and
+    // never checked the third argument -- the one the headers are in. All four
+    // other uploads in the project set the header; this one was the outlier.
     expect((config as { headers?: Record<string, string> })?.headers?.['Content-Type'])
       .toBe('multipart/form-data');
 
@@ -132,9 +131,9 @@ describe('VoiceSecondFactorStep', () => {
 
   it('does not surface the server message on a refusal', async () => {
     stubMedia();
-    // 🛑 Der Server sendet absichtlich denselben nichtssagenden Text auf jedem
-    // Fehlschlag. Zeigt die Oberfläche ihn, trägt sie das Orakel nach draußen,
-    // sobald der Server je auskunftsfreudiger wird.
+    // 🛑 The server deliberately sends the same meaningless text on every
+    // failure. If the interface shows it, it carries the oracle outwards the
+    // moment the server ever becomes more forthcoming.
     vi.mocked(apiClient.post).mockResolvedValue({
       data: { success: false, message: 'Voice authentication failed' },
     });
@@ -164,7 +163,7 @@ describe('VoiceSecondFactorStep', () => {
       await waitFor(() => expect(screen.getByRole('alert')).toBeInTheDocument());
     }
 
-    // Nach vier Fehlversuchen: kein Knopf, der die Stimme überspringt.
+    // After four failed attempts: no button that skips the voice.
     const labels = screen.getAllByRole('button').map((b) => b.textContent ?? '');
     expect(labels.join(' ')).not.toMatch(/ohne|skip|überspringen|without/i);
     expect(onVerified).not.toHaveBeenCalled();
@@ -182,8 +181,8 @@ describe('VoiceSecondFactorStep', () => {
       fireEvent.click(screen.getByRole('button', { name: /bestätigen|confirm/i }));
       await waitFor(() => expect(screen.getByRole('alert')).toBeInTheDocument());
     }
-    // Bei einem defekten Mikrofon soll der Nutzer erfahren, wie es weitergeht —
-    // ohne dass ihm die Maske selbst einen Weg vorbei anbietet.
+    // With a broken microphone the user should learn how to proceed -- without
+    // the form itself offering them a way past it.
     expect(screen.getByRole('alert').textContent).toMatch(/administrativ|administrator/i);
   });
 
@@ -207,9 +206,9 @@ describe('VoiceSecondFactorStep', () => {
     );
     fireEvent.click(screen.getByRole('button', { name: /aufnahme starten|start recording/i }));
 
-    // Sofort danach: der Stopp-Knopf ist gesperrt und sagt, warum. Eine halbe
-    // Sekunde Audio ergibt einen schlechten Vergleich, und der Nutzer soll das
-    // vor dem Absenden merken statt eine Ablehnung zu kassieren.
+    // Immediately afterwards: the stop button is disabled and says why. Half a
+    // second of audio makes for a poor comparison, and the user should notice
+    // that before submitting instead of collecting a refusal.
     await waitFor(() => {
       const stop = screen.getByRole('button', { name: /weitersprechen|keep talking/i });
       expect(stop).toBeDisabled();
@@ -225,8 +224,8 @@ describe('VoiceSecondFactorStep', () => {
     await waitFor(() => expect(FakeRecorder.instances.length).toBeGreaterThan(0));
 
     unmount();
-    // 🛑 Auf einer ANMELDESEITE ist ein heimlich offenes Mikrofon das Letzte, was
-    // man will — die Browser-Anzeige bliebe an.
+    // 🛑 On a LOGIN PAGE a secretly open microphone is the last thing one
+    // wants -- the browser indicator would stay on.
     expect(track.stop).toHaveBeenCalled();
   });
 

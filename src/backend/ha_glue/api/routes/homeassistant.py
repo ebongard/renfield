@@ -28,7 +28,7 @@ class ServiceCall(BaseModel):
 
 class SetValue(BaseModel):
     entity_id: str
-    value: Any  # Geändert von 'any' zu 'Any'
+    value: Any  # Changed from 'any' to 'Any'
     attribute: str = "value"
 
 @router.get("/states")
@@ -36,7 +36,7 @@ async def get_all_states(
     user: User = Depends(require_permission(Permission.HA_READ))
 ):
     """
-    Alle Entity States abrufen.
+    Fetch all entity states.
 
     Requires: ha.read permission
     """
@@ -54,7 +54,7 @@ async def get_entity_state(
     user: User = Depends(require_permission(Permission.HA_READ))
 ):
     """
-    State einer bestimmten Entity.
+    The state of one specific entity.
 
     Requires: ha.read permission
     """
@@ -75,7 +75,7 @@ async def turn_on(
     user: User = Depends(require_permission(Permission.HA_CONTROL))
 ):
     """
-    Gerät einschalten.
+    Switch a device on.
 
     Requires: ha.control permission
     """
@@ -95,7 +95,7 @@ async def turn_off(
     user: User = Depends(require_permission(Permission.HA_CONTROL))
 ):
     """
-    Gerät ausschalten.
+    Switch a device off.
 
     Requires: ha.control permission
     """
@@ -115,7 +115,7 @@ async def toggle(
     user: User = Depends(require_permission(Permission.HA_CONTROL))
 ):
     """
-    Gerät umschalten.
+    Toggle a device.
 
     Requires: ha.control permission
     """
@@ -135,7 +135,7 @@ async def set_value(
     user: User = Depends(require_permission(Permission.HA_CONTROL))
 ):
     """
-    Wert setzen (Helligkeit, Temperatur, etc.).
+    Set a value (brightness, temperature, etc.).
 
     Requires: ha.control permission
     """
@@ -188,7 +188,7 @@ async def search_entities(
     user: User = Depends(require_permission(Permission.HA_READ))
 ):
     """
-    Entities suchen.
+    Search entities.
 
     Requires: ha.read permission
     """
@@ -206,7 +206,7 @@ async def get_entities_by_domain(
     user: User = Depends(require_permission(Permission.HA_READ))
 ):
     """
-    Alle Entities eines Domains.
+    All entities of one domain.
 
     Requires: ha.read permission
     """

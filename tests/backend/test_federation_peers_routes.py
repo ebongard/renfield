@@ -40,7 +40,7 @@ def _peer_row(*, id_=1, owner_id=42, pubkey="a" * 64, display="Mom",
     row.remote_pubkey = pubkey
     row.remote_display_name = display
     row.remote_user_id = remote_user_id
-    # Die gewaehrte Stufe steht seit F-ID-3 auf der Paarungszeile selbst.
+    # Since F-ID-3 the granted tier stands on the pairing row itself.
     row.granted_tier = granted_tier
     row.revoked_at = revoked
     row.paired_at = paired_at or datetime.now(UTC).replace(tzinfo=None)
@@ -64,9 +64,9 @@ class TestListPeers:
     @pytest.mark.asyncio
     @pytest.mark.unit
     async def test_hydrates_tier_from_the_pairing_row(self):
-        """🛑 `circle_tier` kommt aus `peer_users.granted_tier` — nicht aus einer
-        CircleMembership (die auf der ENTFERNTEN Kennung keyte) und erst recht
-        nicht erfunden."""
+        """🛑 `circle_tier` comes from `peer_users.granted_tier` -- not from a
+        CircleMembership (which keyed on the REMOTE id) and certainly not
+        invented."""
         db = MagicMock()
         peers = [_peer_row(id_=1, owner_id=42, remote_user_id=99, display="Mom", granted_tier=2)]
         membership = MagicMock(value=2)  # household tier
@@ -95,15 +95,14 @@ class TestListPeers:
 
 
 class TestTierForPeer:
-    """Die Stufe kommt seit F-ID-3 aus der PAARUNG, nicht aus einer Mitgliedschaft.
+    """Since F-ID-3 the tier comes from the PAIRING, not from a membership.
 
-    🛑 Diese Klasse prueefte vier Fail-closed-Faelle, die es nicht mehr gibt:
-    fehlende Mitgliedschaftszeile, fehlende `remote_user_id`, unlesbarer
-    JSON-Wert. Alle drei entstanden daraus, dass die Stufe woanders lag als die
-    Paarung und ueber eine FREMDE Nutzerkennung gesucht wurde. `granted_tier`
-    ist `NOT NULL` auf derselben Zeile — es gibt keinen Fehlschlagfall mehr,
-    auf den man antworten muesste. Das ist kein verlorener Riegel, sondern ein
-    entfallener Fehlermodus.
+    🛑 This class used to check four fail-closed cases that no longer exist: a
+    missing membership row, a missing `remote_user_id`, an unreadable JSON
+    value. All three arose from the tier living somewhere other than the
+    pairing and being looked up via a FOREIGN user id. `granted_tier` is
+    `NOT NULL` on the same row -- there is no failure case left to answer. That
+    is not a lost guard but a failure mode that has gone away.
     """
 
     @pytest.mark.unit
@@ -113,20 +112,20 @@ class TestTierForPeer:
 
     @pytest.mark.unit
     def test_takes_no_database_at_all(self):
-        """🛑 Frueher eine Abfrage mit `scalar_one_or_none()` — die bei ZWEI
-        Peers unter einem Eigentuemer (beide numerieren ab 1) geworfen haette
-        (BL-0135). Ohne Abfrage gibt es die Mehrdeutigkeit nicht mehr."""
+        """🛑 Formerly a query with `scalar_one_or_none()` -- which would have
+        raised for TWO peers under one owner (both number from 1) (BL-0135).
+        Without a query the ambiguity no longer exists."""
         import ast
         import inspect
         import textwrap
 
         from api.routes import federation_pairing
 
-        # 🛑 Den RUMPF pruefen, nicht die Quelle als Text: der Docstring dieser
-        # Funktion ERKLAERT, dass dort frueher eine `CircleMembership` gesucht
-        # wurde — eine Zeichenkettenpruefung traefe also die Erklaerung statt
-        # des Codes. Genau dieser Fehler ist mir am 2026-10-27 schon einmal
-        # unterlaufen (beim Riegel-Test des Personen-Handschlags).
+        # 🛑 Check the BODY, not the source as text: this function's
+        # docstring EXPLAINS that a `CircleMembership` used to be looked up
+        # there -- so a string check would hit the explanation instead of the
+        # code. I made exactly this mistake once already on 2026-10-27 (in the
+        # guard test for the person handshake).
         baum = ast.parse(textwrap.dedent(
             inspect.getsource(federation_pairing._tier_for_peer)))
         fn = baum.body[0]
@@ -139,15 +138,15 @@ class TestTierForPeer:
         assert "CircleMembership" not in rumpf, rumpf
         assert "scalar_one_or_none" not in rumpf, rumpf
         assert not inspect.iscoroutinefunction(federation_pairing._tier_for_peer)
-        # Negativkontrolle: der Rumpf ist nicht leer, die Pruefung misst also
-        # ueberhaupt etwas.
+        # Negative control: the body is not empty, so the check measures
+        # something at all.
         assert "granted_tier" in rumpf, rumpf
 
     @pytest.mark.unit
     def test_two_peers_under_one_owner_keep_their_own_tiers(self):
-        """Das Abnahmekriterium aus BL-0135, auf Einheitsebene: zwei Peers,
-        dieselbe `remote_user_id`, verschiedene Stufen — jeder seine eigene.
-        Frueher haetten beide dieselbe Mitgliedschaftszeile getroffen."""
+        """The acceptance criterion from BL-0135, at unit level: two peers,
+        the same `remote_user_id`, different tiers -- each one its own.
+        Formerly both would have hit the same membership row."""
         a = MagicMock(granted_tier=2, remote_user_id=1)
         b = MagicMock(granted_tier=4, remote_user_id=1)
         assert _tier_for_peer(a) == 2
@@ -173,14 +172,15 @@ class TestRevokePeer:
         # revoked_at is now set
         assert peer.revoked_at is not None
         assert isinstance(peer.revoked_at, datetime)
-        # 🛑 Nur NOCH der SELECT auf die Peer-Zeile. Das zweite `execute` war ein
-        # DELETE auf `circle_memberships` mit `member_user_id = remote_user_id` —
-        # der Fehler selbst, und obendrein ohne `dimension`-Filter, also auch
-        # `tenant`/`project`-Zeilen desselben Paares treffend.
+        # 🛑 ONLY the SELECT on the peer row is left. The second `execute`
+        # was a DELETE on `circle_memberships` with
+        # `member_user_id = remote_user_id` -- the defect itself, and on top of
+        # that without a `dimension` filter, so it also hit `tenant`/`project`
+        # rows of the same pair.
         assert db.execute.await_count == 1
-        # Die Reichweite faellt jetzt ueber die Zeile selbst: widerrufen UND
-        # auf die engste Stufe zurueckgesetzt, damit ein spaeteres Entsperren
-        # nicht still die alte Gewaehrung erbt.
+        # The reach now falls over the row itself: revoked AND reset to the
+        # narrowest tier, so a later unblocking does not silently inherit the
+        # old grant.
         assert peer.granted_tier == 4
         db.commit.assert_awaited_once()
 
@@ -339,13 +339,13 @@ class TestRevokePeer:
     @pytest.mark.asyncio
     @pytest.mark.unit
     async def test_does_NOT_touch_the_circle_resolver_cache(self, monkeypatch):
-        """🛑 Der Zwischenspeicher haelt `(circle_owner_id, member_user_id)`-Paare.
+        """🛑 The cache holds `(circle_owner_id, member_user_id)` pairs.
 
-        Ein Peer hat seit F-ID-3 kein solches Paar mehr — seine Stufe steht auf
-        der eigenen Zeile. Ihn trotzdem zu leeren waere harmlos, aber es waere
-        ein Aufruf, der etwas behauptet, das nicht mehr stimmt: dass ein Peer
-        eine Mitgliedschaft hat. Laufende Anfragen raeumt
-        `purge_requests_for_pubkey` weg, das bleibt.
+        Since F-ID-3 a peer no longer has such a pair -- its tier stands on its
+        own row. Clearing it regardless would be harmless, but it would be a
+        call asserting something that is no longer true: that a peer has a
+        membership. Requests in flight are cleaned up by
+        `purge_requests_for_pubkey`, and that stays.
         """
         peer = _peer_row(id_=1, owner_id=42, remote_user_id=99)
         db = MagicMock()

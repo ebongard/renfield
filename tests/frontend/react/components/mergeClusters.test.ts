@@ -69,7 +69,7 @@ describe('groupProposals', () => {
     const a = ent(1, 'Jutta', 2, 1);
     const b = ent(2, 'Jutta', 2, 9);
     const c = ent(3, 'Jutta', 2, 3);
-    const privat = ent(4, 'Jutta', 0, 4);   // andere Stufe
+    const privat = ent(4, 'Jutta', 0, 4);   // a different tier
     const { clusters } = groupProposals([
       pair(a, b), pair(c, b), pair(privat, b, 'cross_tier'),
     ]);
@@ -145,27 +145,27 @@ describe('groupProposals — the type boundary', () => {
 });
 
 describe('groupProposals — schwache Kanten', () => {
-  // Gemessen am lebenden Haushalts-Graphen 2026-09-24: 11 `name_typo`-Paare
-  // offen, SECHS davon in einem faltbaren Cluster. Eine schwache Kante würde
-  // zwei nie verglichene Komponenten verbinden und beide mitfalten.
+  // Measured against the live household graph on 2026-09-24: 11 `name_typo`
+  // pairs open, SIX of them in a collapsible cluster. A weak edge would connect
+  // two components that were never compared and collapse both together.
   it('a name_typo pair is never an edge, and joins nothing', () => {
     const a = ent(1, 'Anna', 2, 1);
     const b = ent(2, 'Anna', 2, 9);
     const c = ent(3, 'Anna', 2, 3);
     const far1 = ent(4, 'Anne', 2, 5);
     const far2 = ent(5, 'Anne', 2, 2);
-    const weak = pair(far1, b, 'name_typo');   // die Brücke
+    const weak = pair(far1, b, 'name_typo');   // the bridge
 
     const { clusters, singles } = groupProposals([
-      pair(a, b), pair(c, b),          // Komponente 1
-      pair(far1, far2),                 // Komponente 2 — nur über `weak` verbunden
+      pair(a, b), pair(c, b),          // component 1
+      pair(far1, far2),                 // component 2 -- connected only via `weak`
       weak,
     ]);
 
     const withB = clusters.find((cl) => cl.entities.some((e) => e.id === 2));
     expect(withB?.entities.map((e) => e.id).sort()).toEqual([1, 2, 3]);
     expect(withB?.entities.some((e) => e.id === 4)).toBe(false);
-    // …und sie verschwindet nicht, sondern bleibt einzeln entscheidbar.
+    // ... and it does not disappear; it stays individually decidable.
     expect(singles.map((p) => p.id)).toContain(weak.id);
   });
 

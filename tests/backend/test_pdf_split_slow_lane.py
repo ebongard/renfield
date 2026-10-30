@@ -763,18 +763,18 @@ def test_pdfsplit_queue_uses_own_stream_and_group():
 
 
 # ---------------------------------------------------------------------------
-# Wiederanstoß (#1372): das Kennzeichen muss über Redis bis hierher reisen
+# Re-trigger (#1372): the marker has to travel through Redis all the way here
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
 async def test_resplit_reaches_act_on_verdict_through_the_slow_lane(monkeypatch):
-    """🛑 DIE STELLE, AN DER ES STILL NICHT FUNKTIONIERT HÄTTE.
+    """🛑 THE PLACE WHERE IT WOULD SILENTLY NOT HAVE WORKED.
 
-    Der langsame Pfad liegt hinter Redis; seine Nutzlast war
-    `{"document_id", "user_id"}`. Fiele das Kennzeichen dort weg, würde ein
-    Wiederanstoß an einem unlesbaren Stapel wieder AUTOMATISCH schneiden — und
-    genau über diesen Pfad lief Dokument 460, das den ganzen Vorgang ausgelöst
-    hat.
+    The slow path lies behind Redis; its payload was
+    `{"document_id", "user_id"}`. If the marker fell away there, a re-trigger
+    on an unreadable stack would split AUTOMATICALLY again -- and that is
+    exactly the path document 460 went through, the one that set this whole
+    thing off.
     """
     _db, act, _execute, _q = _wire_lane(
         monkeypatch,
@@ -791,9 +791,9 @@ async def test_resplit_reaches_act_on_verdict_through_the_slow_lane(monkeypatch)
 
 @pytest.mark.asyncio
 async def test_a_normal_slow_split_does_not_force_review(monkeypatch):
-    """Gegenprobe: ohne Wiederanstoß bleibt die Schwelle die Entscheidung.
-    Ohne diesen Test wäre der obige auch grün, wenn `force_review` fest auf
-    True stünde."""
+    """Counter-check: without a re-trigger the threshold stays the decision.
+    Without this test the one above would also be green if `force_review` were
+    hard-wired to True."""
     _db, act, _execute, _q = _wire_lane(
         monkeypatch,
         doc=_doc(),

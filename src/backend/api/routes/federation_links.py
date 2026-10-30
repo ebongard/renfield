@@ -62,10 +62,10 @@ class LinkResponse(BaseModel):
 def _reject(e: LinkHandshakeError, user_id: int) -> HTTPException:
     """One single, always identical 400.
 
-    🛑 Kein Orakel: unterschiedliche Meldungen je Ursache verrieten, WELCHE
-    Pruefung gegriffen hat — abgelaufen, falscher Empfaenger, Signatur falsch.
-    The reason is in the log, not in the response. Same pattern as
-    `federation_pairing` („Pairing handshake failed").
+    🛑 No oracle: a different message per cause would give away WHICH check
+    fired -- expired, wrong recipient, bad signature. The reason is in the log,
+    not in the response. Same pattern as `federation_pairing`
+    ("Pairing handshake failed").
     """
     logger.warning(f"Link handshake failed for user {user_id}: {e}")
     return HTTPException(status_code=400, detail="Link handshake failed")

@@ -1,5 +1,5 @@
 """
-Tests für Intent Feedback Service und API
+Tests for the intent feedback service and its API
 
 Testet:
 - IntentFeedbackService (save, find_similar, format, complexity override)

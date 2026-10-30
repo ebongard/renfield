@@ -175,9 +175,9 @@ describe('FederationAuditPage', () => {
     });
   });
 
-  // 🛑 Die Identitätsgrundlage entscheidet über die REICHWEITE eines Zugriffs.
-  // „als du" heißt: die Gegenseite hat mit der vollen eigenen Reichweite der
-  // verknüpften Person geantwortet, nicht nur mit dem Freigegebenen.
+  // 🛑 The identity basis decides the REACH of an access. "als du" means: the
+  // far side answered with the linked person's own full reach, not only with
+  // what was granted.
   it('zeigt „als du" bei einer Antwort auf verknüpfter Identität', async () => {
     mockAuditResponse({
       entries: [
@@ -220,11 +220,12 @@ describe('FederationAuditPage', () => {
     expect(await screen.findByText(/als fremde Instanz/i)).toBeInTheDocument();
   });
 
-  // 🛑 Die wichtigste der drei. `null` heißt „nicht festgehalten", NICHT
-  // „peer_tier": bei Frager-Zeilen weiß diese Instanz es nicht, und Zeilen von
-  // vor dem 2026-10-29 kennen die Angabe gar nicht. Würde die Oberfläche hier
-  // „als fremde Instanz" zeigen, behauptete sie die ENGERE Stufe für Züge, die
-  // mit voller Reichweite liefen — die gefährlichere Richtung des Irrtums.
+  // 🛑 The most important of the three. `null` means "not recorded", NOT
+  // "peer_tier": on asker rows this instance does not know, and rows from
+  // before 2026-10-29 do not know the field at all. If the interface showed
+  // "als fremde Instanz" here, it would claim the NARROWER tier for turns that
+  // ran with full reach -- the more dangerous direction for the error to
+  // point.
   it('behauptet NICHTS, wenn die Grundlage fehlt', async () => {
     mockAuditResponse({
       entries: [
@@ -241,19 +242,19 @@ describe('FederationAuditPage', () => {
       limit: 50, offset: 0, peer_pubkey: null,
     });
     renderWithRouter(<FederationAuditPage />, { route: '/brain/audit' });
-    // Die Zeile ist da …
+    // The row is there ...
     expect(await screen.findByText(/Omas Geburtstag/i)).toBeInTheDocument();
-    // … aber ohne jede Behauptung über die Identität.
+    // ... but without any claim about the identity.
     expect(screen.queryByText(/als du/i)).not.toBeInTheDocument();
     expect(screen.queryByText(/als fremde Instanz/i)).not.toBeInTheDocument();
     expect(screen.queryByText(/beantwortet/i)).not.toBeInTheDocument();
   });
 
-  // 🛑 Der Riegel gegen eine stille Fehlbeschriftung: die Spalte ist
-  // serverseitig ein freier Text. Fiele ein unbekannter Wert in den
-  // `peer_tier`-Zweig, behauptete die Ansicht die ENGERE Reichweite für einen
-  // Zugriff, über den sie nichts weiß — dieselbe gefährliche Richtung wie beim
-  // fehlenden Wert, nur schwerer zu bemerken.
+  // 🛑 The guard against a silent mislabelling: on the server side the column
+  // is free text. If an unknown value fell into the `peer_tier` branch, the
+  // view would claim the NARROWER reach for an access it knows nothing about --
+  // the same dangerous direction as with the missing value, only harder to
+  // notice.
   it('zeigt einen unbekannten Wert ROH, statt ihn als „fremde Instanz" auszugeben', async () => {
     mockAuditResponse({
       entries: [
@@ -274,13 +275,13 @@ describe('FederationAuditPage', () => {
     const plaettchen = await screen.findByText('delegated');
     expect(screen.queryByText(/als fremde Instanz/i)).not.toBeInTheDocument();
     expect(screen.queryByText(/als du/i)).not.toBeInTheDocument();
-    // 🛑 Die VERDRAHTUNG, nicht nur die Funktion: ersetzte jemand
-    // `title={t(basisHelpKey(...))}` durch einen festen Schlüssel, blieben die
-    // Funktionstests grün und die Kurzinfo behauptete wieder die engere Stufe.
+    // 🛑 The WIRING, not just the function: if somebody replaced
+    // `title={t(basisHelpKey(...))}` with a fixed key, the function tests would
+    // stay green and the tooltip would claim the narrower tier again.
     expect(plaettchen).toHaveAttribute(
       'title', i18n.t('federationAudit.basisUnknownHelp'));
-    // 🛑 Und die FARBE: dasselbe Grau wie `peer_tier` wäre die engere
-    // Behauptung im Bild statt im Wort.
+    // 🛑 And the COLOUR: the same grey as `peer_tier` would be the narrower
+    // claim made in the picture instead of in the word.
     expect(plaettchen.className).not.toBe(
       `text-xs px-1.5 py-0.5 rounded ${basisBadgeClass('peer_tier')}`);
   });
@@ -294,9 +295,9 @@ describe('FederationAuditPage', () => {
   });
 
   it('zeigt den Schlüssel, wenn der Name der Gegenstelle fehlt', async () => {
-    // 🛑 Zeilen, die der Antwortende vor dem 2026-10-29 geschrieben hat,
-    // tragen `peer_display_name_snapshot=""`. An dieser Stelle steht, WER
-    // zugegriffen hat — eine Lücke wäre dort das Gegenteil eines Prüfprotokolls.
+    // 🛑 Rows the answering side wrote before 2026-10-29 carry
+    // `peer_display_name_snapshot=""`. This is the place that says WHO
+    // accessed -- a gap there would be the opposite of an audit log.
     mockAuditResponse({
       entries: [
         {
@@ -319,9 +320,9 @@ describe('FederationAuditPage', () => {
   });
 
   it('ordnet jedem Wert seinen eigenen Hilfetext zu', async () => {
-    // Direkt an der Zuordnungsfunktion gemessen, nicht am `title`-Attribut:
-    // ein Kurzinfo-Text ist auf Fingergeräten unsichtbar, die Zuordnung aber
-    // ist die Zusicherung, die trägt.
+    // Measured directly on the mapping function, not on the `title`
+    // attribute: a tooltip is invisible on touch devices, but the mapping is
+    // the assertion that holds.
     expect(basisHelpKey('mapped')).toBe('federationAudit.basisMappedHelp');
     expect(basisHelpKey('peer_tier')).toBe('federationAudit.basisPeerTierHelp');
     expect(basisHelpKey('delegated')).toBe('federationAudit.basisUnknownHelp');
@@ -329,24 +330,24 @@ describe('FederationAuditPage', () => {
   });
 
   it('der Hilfetext behauptet nicht, WELCHE Instanz geantwortet hat', async () => {
-    // 🛑 Er erscheint auch auf einer Frager-Zeile, sobald die Gegenseite die
-    // Angabe einmal mitliefert. „Diese Instanz hat geantwortet" wäre dort
-    // schlicht falsch — also sagt der Text es gar nicht erst.
+    // 🛑 It appears on an asker row too, as soon as the far side supplies the
+    // field at all. "Diese Instanz hat geantwortet" would simply be wrong
+    // there -- so the text does not say it in the first place.
     for (const k of ['basisMappedHelp', 'basisPeerTierHelp', 'basisUnknownHelp']) {
       const text = i18n.t(`federationAudit.${k}`);
-      // i18next gibt bei einem fehlenden Schlüssel den Schlüssel zurück — der
-      // enthält „Diese Instanz" nie, der Test ginge also leer durch. Erst
-      // belegen, dass überhaupt ein Text da ist.
+      // On a missing key i18next returns the key -- which never contains
+      // "Diese Instanz", so the test would pass empty. First establish that
+      // there is any text at all.
       expect(text).not.toBe(`federationAudit.${k}`);
       expect(text).not.toMatch(/Diese Instanz/i);
     }
   });
 
   it('nennt einen abgebrochenen Zugriff abgebrochen, nicht unbekannt', async () => {
-    // 🛑 `unknown` und `aborted` sind nicht dasselbe. Auf der Antwortseite
-    // WEISS diese Instanz, wie weit sie gekommen ist — und ob dabei fremde
-    // Daten schon gelesen waren. Das unter „Status unbekannt" zu führen wäre
-    // eine Beschönigung.
+    // 🛑 `unknown` and `aborted` are not the same. On the answering side this
+    // instance KNOWS how far it got -- and whether somebody else's data had
+    // already been read along the way. Filing that under "Status unbekannt"
+    // would be a whitewash.
     mockAuditResponse({
       entries: [
         {
@@ -364,11 +365,11 @@ describe('FederationAuditPage', () => {
       limit: 50, offset: 0, peer_pubkey: null,
     });
     renderWithRouter(<FederationAuditPage />, { route: '/brain/audit' });
-    // Aufklappen — dort steht der Status im Klartext.
+    // Expand -- that is where the status stands in plain words.
     fireEvent.click(await screen.findByText(/was liegt in x-idra/i));
     expect(await screen.findByText('Abgebrochen')).toBeInTheDocument();
     expect(screen.queryByText(/unbekannt/i)).not.toBeInTheDocument();
-    // Und der GRUND, der die datenschutzrelevante Hälfte trägt.
+    // And the REASON, which carries the data-protection half.
     expect(screen.getByText(/3 Treffer gelesen/)).toBeInTheDocument();
   });
 

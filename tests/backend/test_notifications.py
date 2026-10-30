@@ -1,5 +1,5 @@
 """
-Tests für Proaktive Benachrichtigungen
+Tests for proactive notifications
 
 Testet:
 - NotificationService: Webhook, Dedup, CRUD, Token

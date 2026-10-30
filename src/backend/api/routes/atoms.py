@@ -273,10 +273,10 @@ async def get_obligations(
     current_user: User = Depends(get_user_or_default),
 ):
     """
-    List circle-visible obligation facts (bills + Behörde deadlines) with a
-    printed Frist, soonest first. Optional ``due_before`` caps the horizon;
-    ``offset`` pages further into the stable soonest-first order (the agenda's
-    "Mehr laden").
+    List circle-visible obligation facts (bills + public-authority
+    deadlines) with a printed Frist, soonest first. Optional ``due_before``
+    caps the horizon; ``offset`` pages further into the stable soonest-first
+    order (the agenda's "Mehr laden").
 
     List endpoint — circle-filter only (returns what the asker can see; no
     404/403, consistent with the list-vs-single-resource convention).
@@ -462,7 +462,7 @@ async def reopen_obligation(
     current_user: User = Depends(get_user_or_default),
 ):
     """Reopen a previously-confirmed obligation for the current user (the
-    agenda's „Wieder öffnen"). Deletes the user's ``confirmed`` ledger row.
+    agenda's "Wieder öffnen"). Deletes the user's ``confirmed`` ledger row.
     Idempotent; 404 when the fact is not circle-visible."""
     retrieval = DocumentFactRetrieval(db)
     if not await retrieval.is_visible(fact_id, current_user.id):

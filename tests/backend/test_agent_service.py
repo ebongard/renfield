@@ -2842,16 +2842,15 @@ class TestAgentTurnMetrics:
 
 
 class TestAStartedScanIsNotAFailure:
-    """🛑 Ein angestossener Vorgang ist kein Fehlschlag, nur weil der Agent
-    danach in seine eigene Schleife lief.
+    """🛑 An operation that was set in motion is not a failure merely because
+    the agent then ran into a loop of its own.
 
-    Am 2026-10-29 beobachtet: „scanne nach x-idra" startete den Scan in
-    Schritt 1 (`success=True`; der Job meldete 22 s spaeter `done`). Der Agent
-    rief dasselbe Werkzeug zweimal nach, bekam „laeuft bereits" und die
-    Schleifenerkennung brach ab. Nach der Regel „letzter Versuch zaehlt" galt
-    der ganze Zug als gescheitert — der Nutzer sah einen Fehler fuer einen
-    Scan, der gelaufen war, und der stale-error-Marker (#1367) erzaehlte es
-    dem naechsten Zug weiter.
+    Observed on 2026-10-29: "scanne nach x-idra" started the scan in step 1
+    (`success=True`; the job reported `done` 22 s later). The agent called the
+    same tool twice more, got "already running" back, and the loop detection
+    aborted. Under the "the last attempt counts" rule the whole turn counted as
+    failed -- the user saw an error for a scan that had run, and the
+    stale-error marker (#1367) passed it on to the next turn.
     """
 
     @pytest.mark.unit
@@ -2859,18 +2858,18 @@ class TestAStartedScanIsNotAFailure:
         from api.websocket.chat_handler import _failed_agent_actions
 
         outcomes = [
-            ("mcp.scanner.scan_document", True),    # der Scan laeuft
-            ("mcp.scanner.scan_document", False),   # „laeuft bereits"
+            ("mcp.scanner.scan_document", True),    # the scan is running
+            ("mcp.scanner.scan_document", False),   # "already running"
             ("mcp.scanner.scan_document", False),
         ]
         assert _failed_agent_actions(outcomes, {"mcp.scanner.scan_document"}) == []
 
     @pytest.mark.unit
     def test_WITHOUT_an_abort_the_documented_rule_is_untouched(self):
-        """🛑 Negativkontrolle. Dieselbe Folge, aber der Abbruch kam NICHT von
-        der Schleifenerkennung — dann gilt weiter „letzter Versuch zaehlt".
-        Ohne diese Pruefung waere nicht zu sehen, ob die neue Regel die alte
-        aufweicht oder nur den einen Fall ausnimmt."""
+        """🛑 Negative control. The same sequence, but the abort did NOT come
+        from the loop detection -- then "the last attempt counts" still
+        applies. Without this check there would be no way to see whether the
+        new rule softens the old one or merely exempts the one case."""
         from api.websocket.chat_handler import _failed_agent_actions
 
         outcomes = [
@@ -2882,9 +2881,9 @@ class TestAStartedScanIsNotAFailure:
 
     @pytest.mark.unit
     def test_an_abort_alone_does_not_excuse_a_tool_that_never_worked(self):
-        """🛑 Zweite Negativkontrolle. Die Ausnahme haengt an BEIDEM: Abbruch
-        durch die Schleife UND ein frueherer Erfolg. Fehlt der Erfolg, bleibt
-        es ein Fehlschlag — sonst verstoeckte ein Loop jeden kaputten Aufruf."""
+        """🛑 Second negative control. The exemption hangs on BOTH: an abort
+        by the loop detection AND an earlier success. Without the success it
+        stays a failure -- otherwise a loop would hide every broken call."""
         from api.websocket.chat_handler import _failed_agent_actions
 
         outcomes = [
@@ -2897,9 +2896,9 @@ class TestAStartedScanIsNotAFailure:
 
     @pytest.mark.unit
     def test_the_recovered_shape_from_2026_10_04_still_holds(self):
-        """Die urspruengliche Absicht: Parameter abgelehnt, sofort wiederholt,
-        geklappt — das ist kein gescheiterter Zug. Und ein anderes Werkzeug,
-        das danach scheitert, bleibt gescheitert."""
+        """The original intent: a parameter refused, retried immediately,
+        worked -- that is not a failed turn. And a different tool that fails
+        afterwards stays failed."""
         from api.websocket.chat_handler import _failed_agent_actions
 
         outcomes = [
@@ -2911,10 +2910,11 @@ class TestAStartedScanIsNotAFailure:
 
     @pytest.mark.unit
     def test_BOTH_consumption_sites_pass_the_abort_set(self):
-        """🛑 Die KLASSE, nicht die Instanz: `chat_handler` wertet den Zug an
-        ZWEI Stellen aus (Orchestrator-Pfad und Einzelrollen-Pfad). Eine davon
-        zu verdrahten und die andere zu vergessen ist genau der Fehler, der
-        heute schon dreimal vorkam. Am AST geprueft, nicht am Quelltext."""
+        """🛑 The CLASS, not the instance: `chat_handler` evaluates the turn
+        at TWO places (the orchestrator path and the single-role path). Wiring
+        one of them and forgetting the other is exactly the defect that has
+        already occurred three times today. Checked on the AST, not on the
+        source text."""
         import ast
         import pathlib
 

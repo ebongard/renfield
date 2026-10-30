@@ -57,98 +57,99 @@ class TestValidateBoundaries:
         assert [(p.start_page, p.end_page) for p in pieces] == [(1, 2), (3, 3), (4, 9)]
 
     def test_a_gap_falls_to_the_preceding_document(self):
-        """🛑 Fruehere Absicht war: Luecke → alles verwerfen. Geaendert mit #1368.
+        """🛑 The earlier intent was: a gap means discard everything. Changed
+        with #1368.
 
-        Ein duplex eingezogener Posteingang (38 Seiten, Dokument 460,
-        2026-10-04) blieb ungeschnitten, weil das Modell die leeren Rueckseiten
-        wegliess — neun korrekt erkannte Grenzen wurden an EINER Leerseite
-        verworfen. Bei einem Duplex-Stapel ist das der Normalfall.
+        An inbox batch fed in duplex (38 pages, document 460, 2026-10-04) went
+        unsplit because the model left out the blank backs -- nine correctly
+        recognised boundaries were discarded over ONE blank page. On a duplex
+        stack that is the normal case.
 
-        Die Luecke wird genau so geschlossen, wie der Prompt es dem Modell
-        vorschreibt: uebersprungene Seiten fallen an das vorangehende Dokument.
+        The gap is closed exactly the way the prompt prescribes it to the
+        model: skipped pages fall to the preceding document.
         """
         pieces = validate_boundaries(
             _payload((1, 2), (4, 5)), 1, 5, absorb_gaps=True
         )
         assert [(p.start_page, p.end_page) for p in pieces] == [(1, 3), (4, 5)]
 
-        # 🛑 Und die Gegenprobe: ohne das Opt-in bleibt es streng. Der Pfad des
-        # MENSCHEN (`/api/pdf-split`) muss weiterhin 422 geben statt still zu
-        # reparieren — daran fiel der erste Entwurf, der den gemeinsamen
-        # Pruefer fuer alle Aufrufer aenderte.
+        # 🛑 And the counter-check: without the opt-in it stays strict. The
+        # HUMAN path (`/api/pdf-split`) has to keep returning 422 instead of
+        # repairing silently -- the first draft fell over that, having changed
+        # the shared validator for every caller.
         assert validate_boundaries(_payload((1, 2), (4, 5)), 1, 5) is None
 
     def test_the_real_duplex_batch_survives(self):
-        """Der gemessene Fall aus Dokument 460: neun Dokumente, sieben fehlende
-        Leerseiten (6, 12, 18, 20, 30, 34, 38). Vorher: nichts geschnitten."""
+        """The measured case from document 460: nine documents, seven missing
+        blank pages (6, 12, 18, 20, 30, 34, 38). Before: nothing split."""
         pieces = validate_boundaries(
             _payload((1, 5), (7, 11), (13, 17), (19, 19), (21, 26),
                      (27, 29), (31, 33), (35, 36), (37, 37)),
             1, 38, absorb_gaps=True,
         )
         assert pieces is not None and len(pieces) == 9
-        # Lueckenlos und bis zur letzten Seite.
+        # Gapless and through to the last page.
         assert pieces[0].start_page == 1 and pieces[-1].end_page == 38
         for vorher, danach in pairwise(pieces):
             assert danach.start_page == vorher.end_page + 1
 
     def test_a_gap_too_large_for_blank_backs_is_rejected(self):
-        """🛑 Nachtrag aus dem Review: die Reparatur war UNBEGRENZT.
+        """🛑 An addition from the review: the repair was UNBOUNDED.
 
-        Gemessen ergab `(1,2),(30,38)` ueber 38 Seiten das Ergebnis
-        `1-29, 30-38` — aus einem zweiseitigen Brief wurde ein 29-seitiges
-        Dokument, und 27 Seiten fremder Post lagen unter dessen Titel. Eine
-        Warnung NACH der Ablage repariert keine Ablage.
+        Measured, `(1,2),(30,38)` over 38 pages produced `1-29, 30-38` -- a
+        two-page letter became a 29-page document, and 27 pages of somebody
+        else's post sat under its title. A warning AFTER filing repairs no
+        filing.
 
-        Gemeint waren leere Rueckseiten (im echten Fall je EINE Seite); zwei
-        faengt ein beidseitig leeres Trennblatt. Darueber fehlt ein ganzes
-        Dokument, und dann ist der Rueckfall "ein Dokument" richtig: er ist
-        sichtbar falsch, waehrend eine falsche Zuordnung wie ein geglueckter
-        Schnitt aussieht.
+        What was meant were blank backs (ONE page each in the real case); two
+        catches a separator sheet blank on both sides. Above that a whole
+        document is missing, and then the "one document" fallback is right: it
+        is visibly wrong, whereas a wrong assignment looks like a successful
+        split.
         """
         assert validate_boundaries(
             _payload((1, 2), (30, 38)), 1, 38, absorb_gaps=True
         ) is None
 
     def test_the_gap_limit_sits_at_two_pages(self):
-        """Die Grenze selbst, von beiden Seiten angefasst."""
-        # Zwei Seiten (leeres Trennblatt beidseitig) werden geschlossen.
+        """The limit itself, approached from both sides."""
+        # Two pages (a separator sheet blank on both sides) are closed.
         zwei = validate_boundaries(
             _payload((1, 2), (5, 6)), 1, 6, absorb_gaps=True
         )
         assert [(p.start_page, p.end_page) for p in zwei] == [(1, 4), (5, 6)]
-        # Drei nicht mehr.
+        # Three are not.
         assert validate_boundaries(
             _payload((1, 2), (6, 7)), 1, 7, absorb_gaps=True
         ) is None
 
     def test_the_tail_gap_obeys_the_same_limit(self):
-        """Die Grenze gilt am Ende wie in der Mitte — sonst waere das Ende die
-        Luecke, durch die ein verlorenes Dokument doch noch hereinkommt."""
+        """The limit applies at the end as in the middle -- otherwise the end
+        would be the gap a lost document still gets in through."""
         assert validate_boundaries(
             _payload((1, 2),), 1, 3, absorb_gaps=True
-        ) is not None  # eine Seite am Ende: geschlossen
+        ) is not None  # one page at the end: closed
         assert validate_boundaries(
             _payload((1, 2),), 1, 6, absorb_gaps=True
-        ) is None      # vier Seiten am Ende: verworfen
+        ) is None      # four pages at the end: discarded
 
     def test_an_overlap_is_rejected_even_with_the_repair_on(self):
-        """🛑 Die Reparatur darf Luecken schliessen, niemals Widersprueche. Eine
-        Ueberlappung laesst offen, zu welchem Dokument eine Seite gehoert."""
+        """🛑 The repair may close gaps, never contradictions. An overlap
+        leaves open which document a page belongs to."""
         assert validate_boundaries(
             _payload((1, 3), (3, 5)), 1, 5, absorb_gaps=True
         ) is None
 
     def test_a_missing_head_is_rejected_even_with_the_repair_on(self):
-        """Es gibt kein vorangehendes Dokument, dem Seite 1 zufallen koennte."""
+        """There is no preceding document page 1 could fall to."""
         assert validate_boundaries(
             _payload((2, 5)), 1, 5, absorb_gaps=True
         ) is None
 
     def test_an_overlap_is_still_rejected(self):
-        """Eine Ueberlappung ist ein echter Widerspruch — welche Seite zu
-        welchem Dokument gehoert, ist dann nicht mehr bestimmt. Sie darf NICHT
-        in dieselbe Reparatur geraten wie eine Luecke."""
+        """An overlap is a real contradiction -- which page belongs to which
+        document is then no longer determined. It must NOT end up in the same
+        repair as a gap."""
         assert validate_boundaries(_payload((1, 3), (3, 5)), 1, 5) is None
 
     def test_overlap_is_rejected(self):
@@ -158,8 +159,8 @@ class TestValidateBoundaries:
         assert validate_boundaries(_payload((1, 2), (3, 7)), 1, 5) is None
 
     def test_a_tail_gap_extends_the_last_document(self):
-        """Dieselbe Regel am Ende des Bereichs: Seite 38 fehlte im echten Fall
-        genauso wie die Rueckseiten in der Mitte."""
+        """The same rule at the end of the range: in the real case page 38 was
+        missing just like the backs in the middle."""
         pieces = validate_boundaries(
             _payload((1, 2), (3, 4)), 1, 5, absorb_gaps=True
         )
@@ -167,10 +168,10 @@ class TestValidateBoundaries:
         assert validate_boundaries(_payload((1, 2), (3, 4)), 1, 5) is None
 
     def test_a_missing_head_is_still_rejected(self):
-        """🛑 Die Grenze der Reparatur. Beginnt das erste Stueck nach
-        `start_page`, gibt es kein VORANGEHENDES Dokument, dem die Seiten
-        zufallen koennten — hier zu raten hiesse, Seite 1 einem Dokument
-        zuzuschlagen, von dem niemand weiss, ob es dazugehoert."""
+        """🛑 The limit of the repair. If the first piece starts after
+        `start_page`, there is no PRECEDING document the pages could fall to --
+        guessing here would mean assigning page 1 to a document nobody knows it
+        belongs to."""
         assert validate_boundaries(_payload((2, 5)), 1, 5) is None
 
     def test_reversed_range_is_rejected(self):

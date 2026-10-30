@@ -230,16 +230,14 @@ def history_needs_reload(
     A PURE function, so the rule is testable instead of buried in the
     handler. Three reasons, and the third is the new one:
 
-    1. Noch nie geladen.
+    1. Never loaded before.
     2. The socket switches session.
     3. The database holds a HIGHER id than the known one -- then an
-       asynchronous producer wrote without touching the live list
-       anzufassen.
+       asynchronous producer wrote without touching the live list.
 
-    `newest_in_db is None` means "no answer" and does NOT reload. A
-    fehlende Messung darf keinen Neuladezyklus erzwingen; sonst tauscht man
-    stale context against a query per turn that fires on every database
-    hiccup.
+    `newest_in_db is None` means "no answer" and does NOT reload. A missing
+    measurement must not force a reload cycle; that would trade stale context
+    for a query per turn that fires on every database hiccup.
 
     `watermark is None` with a loaded history also means do not reload: the
     mark is only absent when reading the number failed, and turning that into a

@@ -1,15 +1,16 @@
-"""Das Zwischenticket: einmalig, kurzlebig, adressgebunden, fail-closed.
+"""The interim ticket: single-use, short-lived, address-bound, fail-closed.
 
-🛑 Warum diese vier Eigenschaften einzeln geprüft werden: sie sind genau die, an
-denen ein Zwischenticket lautlos scheitert, und keine davon fällt im Betrieb auf.
+🛑 Why these four properties are checked one by one: they are exactly the ones
+an interim ticket fails at silently, and none of them shows up in operation.
 
-* **Nicht einmalig** → ein abgefangenes Ticket ist beliebig oft einlösbar, der
-  zweite Faktor also einmal überwunden und danach dauerhaft offen.
-* **Nicht adressgebunden** → wer das Ticket abfängt, löst es von irgendwo ein.
-* **Nicht fail-closed** → ein Redis-Ausfall entfernt den zweiten Faktor
-  stillschweigend, und niemand merkt es, weil die Anmeldung dann einfach klappt.
-* **Bindung an einen fälschbaren Wert** → schlimmer als keine Bindung, weil sie
-  Sicherheit vortäuscht: der Angreifer setzt den Kopf selbst.
+* **Not single-use** -> an intercepted ticket can be redeemed any number of
+  times, so the second factor is overcome once and open permanently after.
+* **Not address-bound** -> whoever intercepts the ticket redeems it from
+  anywhere.
+* **Not fail-closed** -> a Redis outage removes the second factor silently, and
+  nobody notices, because the login then simply works.
+* **Bound to a forgeable value** -> worse than no binding, because it feigns
+  security: the attacker sets the header themselves.
 """
 from __future__ import annotations
 
@@ -23,7 +24,7 @@ pytestmark = [pytest.mark.unit]
 
 
 class _FakeRedis:
-    """Nur die zwei Aufrufe, die der Speicher macht — `set(nx=True)` und `getdel`."""
+    """Only the two calls the store makes -- `set(nx=True)` and `getdel`."""
 
     def __init__(self):
         self.data: dict[str, str] = {}
@@ -55,8 +56,8 @@ def redis(monkeypatch):
 
 class TestSingleUse:
     async def test_a_ticket_works_exactly_once(self, redis):
-        """🛑 Die wichtigste Eigenschaft. Ein zweites Einlösen muss scheitern,
-        sonst ist der zweite Faktor nach einem Mitschnitt dauerhaft überwunden."""
+        """🛑 The most important property. A second redemption has to fail, or
+        the second factor is overcome permanently after one capture."""
         t = await store.issue_ticket(42, None)
         assert t
 
@@ -68,8 +69,8 @@ class TestSingleUse:
         assert second is None, "das Ticket war zweimal einlösbar"
 
     async def test_it_is_written_with_nx_and_a_ttl(self, redis):
-        """`nx` verhindert das Überschreiben eines fremden Tickets, `ex` begrenzt
-        das Zeitfenster, in dem ein abgefangenes Ticket etwas wert ist."""
+        """`nx` prevents overwriting somebody else's ticket, `ex` limits the
+        window in which an intercepted ticket is worth anything."""
         await store.issue_ticket(1, None)
         call = redis.set_calls[-1]
         assert call["nx"] is True
@@ -86,7 +87,7 @@ class TestSingleUse:
         a = await store.issue_ticket(1, None)
         b = await store.issue_ticket(1, None)
         assert a != b
-        # 256 Bit als URL-sicherer Text: deutlich über 40 Zeichen.
+        # 256 bits as URL-safe text: well over 40 characters.
         assert len(a) > 40
 
 
@@ -96,8 +97,8 @@ class TestAddressBinding:
         assert await store.consume_ticket(t, "10.0.0.2") is None
 
     async def test_a_bound_ticket_is_refused_without_an_address(self, redis):
-        """Kein Freifahrtschein: wer beim Einlösen keine belastbare Adresse hat,
-        löst ein gebundenes Ticket nicht ein."""
+        """No free pass: whoever has no dependable address at redemption time
+        does not redeem a bound ticket."""
         t = await store.issue_ticket(7, "10.0.0.1")
         assert await store.consume_ticket(t, None) is None
 
@@ -107,17 +108,18 @@ class TestAddressBinding:
         assert p is not None and p.user_id == 7
 
     async def test_an_unbound_ticket_ignores_the_address(self, redis):
-        """🛑 Ohne `TRUSTED_PROXIES` wird bewusst NICHT gebunden. Eine Bindung an
-        einen fälschbaren Kopf wäre ein Zugewinn für den Angreifer, nicht für uns:
-        er setzt ihn selbst und schließt damit andere aus."""
+        """🛑 Without `TRUSTED_PROXIES` there is deliberately NO binding. A
+        binding to a forgeable header would be a gain for the attacker, not for
+        us: they set it themselves and thereby lock others out."""
         t = await store.issue_ticket(7, None)
         p = await store.consume_ticket(t, "10.0.0.99")
         assert p is not None and p.user_id == 7
 
     async def test_a_failed_binding_still_consumes_the_ticket(self, redis):
-        """Das Ticket ist nach einem Einlöseversuch von der falschen Adresse WEG.
-        Sonst könnte ein Angreifer beliebig oft raten, welche Adresse gebunden
-        ist, und das Ticket bliebe für den rechtmäßigen Nutzer liegen."""
+        """After a redemption attempt from the wrong address the ticket is
+        GONE. Otherwise an attacker could guess which address is bound any
+        number of times, and the ticket would stay lying around for the
+        rightful user."""
         t = await store.issue_ticket(7, "10.0.0.1")
         assert await store.consume_ticket(t, "10.0.0.2") is None
         assert await store.consume_ticket(t, "10.0.0.1") is None, (
@@ -127,9 +129,9 @@ class TestAddressBinding:
 
 class TestFailClosed:
     async def test_no_ticket_when_redis_refuses_the_write(self, redis):
-        """🛑 Ohne Ticket gibt `/auth/login` keine Token aus. Ein Redis-Ausfall
-        darf den zweiten Faktor nicht stillschweigend entfernen — er muss die
-        Anmeldung verweigern."""
+        """🛑 Without a ticket `/auth/login` issues no tokens. A Redis outage
+        must not remove the second factor silently -- it has to refuse the
+        login."""
         redis.fail_set = True
         assert await store.issue_ticket(1, None) is None
 
@@ -139,8 +141,8 @@ class TestFailClosed:
         assert await store.consume_ticket(t, None) is None
 
     async def test_a_collision_yields_no_ticket(self, redis, monkeypatch):
-        """Auf 256 Bit praktisch unmöglich — aber wenn es passiert, wird kein
-        Ticket ausgegeben, statt ein fremdes zu überschreiben."""
+        """Practically impossible at 256 bits -- but if it happens, no ticket
+        is issued, rather than overwriting somebody else's."""
         monkeypatch.setattr(store.secrets, "token_urlsafe", lambda _n: "immergleich")
         assert await store.issue_ticket(1, None) is not None
         assert await store.issue_ticket(2, None) is None
@@ -158,9 +160,10 @@ class TestFailClosed:
 
 class TestNoSecretsInRedis:
     async def test_only_the_identity_is_stored(self, redis):
-        """🛑 Es liegt KEIN Token in Redis. `/auth/voice` prägt die JWTs frisch und
-        prüft den Nutzer dabei erneut — sonst käme ein zwischenzeitlich
-        deaktiviertes Konto durch, und `must_change_password` wäre veraltet."""
+        """🛑 There is NO token in Redis. `/auth/voice` mints the JWTs fresh
+        and re-checks the user while doing so -- otherwise an account
+        deactivated in the meantime would get through, and
+        `must_change_password` would be stale."""
         t = await store.issue_ticket(5, "10.0.0.1")
         raw = json.loads(redis.data[store._key(t)])
         assert set(raw) == {"user_id", "client_ip"}

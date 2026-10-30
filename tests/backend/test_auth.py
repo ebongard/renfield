@@ -752,14 +752,13 @@ class TestPermissionDependencies:
 
 @pytest.mark.unit
 def test_me_response_carries_the_voice_consent():
-    """🛑 Ohne dieses Feld kann eine Person nicht einmal SEHEN, ob ihr eigenes
-    Konto die Stimme verlangt — der Zustand stand nur in der Verwaltungsliste,
-    die ihr verschlossen ist. Eine Einwilligung nach Art. 9 DSGVO, die man nicht
-    einsehen kann, ist keine.
+    """🛑 Without this field a person cannot even SEE whether their own
+    account demands their voice -- the state was only in the user
+    administration list, which is closed to them. A consent under Art. 9 GDPR
+    that cannot be inspected is not one.
 
-    Derselbe Grund, aus dem `must_change_password` daneben steht (Review M5):
-    ein Zustand, auf den die Oberfläche reagieren soll, muss aus `/auth/me`
-    ablesbar sein.
+    The same reason `must_change_password` stands next to it (review M5): a
+    state the UI is supposed to react to has to be readable from `/auth/me`.
     """
     from api.routes.auth import UserResponse
 
@@ -769,9 +768,10 @@ def test_me_response_carries_the_voice_consent():
 
 @pytest.mark.unit
 def test_every_me_shaped_response_sets_the_consent():
-    """Dieselbe Falle wie bei `UserResponse` in `users.py`: das Feld hat einen
-    Standard, also meldet JEDE Aufbaustelle, die es vergisst, stillschweigend
-    `False`. In `auth.py` sind es drei (register, /auth/me, /auth/status)."""
+    """The same trap as with `UserResponse` in `users.py`: the field has a
+    default, so EVERY construction site that forgets it silently reports
+    `False`. In `auth.py` there are three (register, /auth/me,
+    /auth/status)."""
     import inspect
     import re
 

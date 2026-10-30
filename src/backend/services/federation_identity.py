@@ -43,17 +43,17 @@ _DEFAULT_KEY_PATH = Path("/app/secrets/federation_identity_key")
 def canonical_bytes(payload: dict) -> bytes:
     """The bytes an Ed25519 signature covers -- for EVERY protocol here.
 
-    Kanonisches JSON: sortierte Schluessel, kompakte Trenner, ASCII-escaped,
+    Canonical JSON: sorted keys, compact separators, ASCII-escaped,
     NaN/Infinity forbidden. If signer and verifier differ in canonicalisation
     by even one character, EVERY signature fails -- which is why there is
     exactly this one implementation.
 
-    🛑 Sie stand bis 2026-10-27 als `_canonical_bytes` privat im
-    `pairing_service` and moved here when the person handshake (F-ID-2) got a
+    🛑 Until 2026-10-27 it sat in `pairing_service` as the private
+    `_canonical_bytes`, and moved here when the person handshake (F-ID-2) got a
     SECOND protocol over the same bytes. A copied second implementation would
     be the classic silent break: both sides sign away happily and nothing
-    verifies any more. `pairing_service._canonical_bytes`
-    bleibt als Alias bestehen, weil dessen Tests den privaten Namen einfuehren.
+    verifies any more. `pairing_service._canonical_bytes` stays on as an alias,
+    because its tests import the private name.
 
     Each explicit flag wards off one concrete trap:
       - `allow_nan=False`: otherwise Python's `json.dumps` writes the

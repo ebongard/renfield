@@ -1,19 +1,19 @@
 /**
- * Jeder Refus-Code des Abgleichers hat in JEDER Sprache einen Satz.
+ * Every refusal code of the reconciler has a sentence in EVERY language.
  *
- * Warum als eigener Test und nicht als Zusicherung in der Komponente: der
- * Fehlermodus, gegen den PR #1334 gebaut ist, ist "das Backend kennt einen
- * Grund, den die Oberflaeche nicht aussprechen kann". Ein Komponententest
- * prueft den Weg fuer die Codes, die jemand aufgeschrieben hat. Dieser hier
- * LIEST die Codeliste aus dem Dienst und kann deshalb auch den fangen, den
- * noch niemand aufgeschrieben hat: ein neuer `res.refusal_code = "..."` ohne
- * Schluessel faerbt diese Datei rot, ohne dass jemand daran denken muss.
+ * Why as its own test and not as an assertion in the component: the failure
+ * mode PR #1334 was built against is "the backend knows a reason the interface
+ * cannot say out loud". A component test checks the path for the codes somebody
+ * wrote down. This one READS the code list out of the service and can therefore
+ * also catch the one nobody has written down yet: a new
+ * `res.refusal_code = "..."` without a key turns this file red, with nobody
+ * having to remember it.
  *
- * Zweitens die Sprachparitaet. Der adversariale Durchgang hat sie von Hand
- * nachgerechnet und in Ordnung befunden — aber KEIN Tor bewachte sie, und die
- * Komponententests laufen ausschliesslich auf Deutsch (`test-utils.tsx` setzt
- * `changeLanguage('de')`). Ein fehlender Schluessel in `it.json` waere gruen
- * durchgegangen und im Betrieb als roher Schluesselname erschienen.
+ * Second, language parity. The adversarial pass recomputed it by hand and found
+ * it in order -- but NO gate guarded it, and the component tests run
+ * exclusively in German (`test-utils.tsx` sets `changeLanguage('de')`). A
+ * missing key in `it.json` would have passed green and shown up in operation as
+ * a raw key name.
  */
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
@@ -29,17 +29,17 @@ const SERVICE = resolve(
   __dirname, '../../../../src/backend/services/kg_reconciler_service.py',
 );
 
-/** Die Codes, die `resolve_cluster` tatsaechlich setzen kann. */
+/** The codes `resolve_cluster` can actually set. */
 function backendRefusalCodes(): string[] {
   const src = readFileSync(SERVICE, 'utf8');
   const found = [...src.matchAll(/refusal_code = "([a-z_]+)"/g)].map((m) => m[1]);
   return [...new Set(found)].sort();
 }
 
-/** Der i18n-Schluessel, den `refusalMessage()` aus einem Code baut. */
+/** The i18n key `refusalMessage()` builds from a code. */
 function keyFor(code: string): string[] {
-  // Der Paar-Refus hat eine eigene, reichere Darstellung (Namen + Gesamtzahl)
-  // und deshalb andere Schluessel — die deckt der Komponententest ab.
+  // The pair refusal has its own, richer presentation (names + total) and
+  // therefore different keys -- the component test covers those.
   return code === 'cluster_has_undecidable_pair'
     ? ['circles.mergeProposals.cluster.undecidable_one',
        'circles.mergeProposals.cluster.undecidable_other']
@@ -57,8 +57,8 @@ function lookup(bundle: unknown, path: string): unknown {
 
 describe('Refus-Codes und Sprachdateien', () => {
   it('kennt ueberhaupt Codes (sonst prueft der Rest nichts)', () => {
-    // Ohne diese Zusicherung wuerde eine kaputte Regex die ganze Datei
-    // stillschweigend zu einer leeren Schleife machen — gruen und wertlos.
+    // Without this assertion a broken regex would silently turn the whole file
+    // into an empty loop -- green and worthless.
     const codes = backendRefusalCodes();
     expect(codes.length).toBeGreaterThanOrEqual(7);
   });
@@ -86,9 +86,9 @@ describe('Refus-Codes und Sprachdateien', () => {
   });
 
   it('hat einen allgemeinen Rueckfall fuer einen UNBEKANNTEN Code', () => {
-    // Der Rueckfall ist der einzige Grund, warum ein Backend, das dem Bundle
-    // vorauseilt (zwischengespeicherter Service Worker), keine leere Zeile
-    // zeigt. Er darf in keiner Sprache fehlen.
+    // The fallback is the only reason a backend running ahead of the bundle (a
+    // cached service worker) does not show an empty line. It must not be
+    // missing in any language.
     for (const loc of Object.keys(LOCALES)) {
       const v = lookup(LOCALES[loc], 'circles.mergeProposals.cluster.refused_generic');
       expect(typeof v === 'string' && v.trim() !== '').toBe(true);

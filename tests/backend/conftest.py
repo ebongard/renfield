@@ -1,11 +1,14 @@
 """
-Pytest Fixtures für Renfield Backend Tests
+Pytest fixtures for the Renfield backend tests.
 
-Bietet:
-- In-Memory SQLite Datenbank für isolierte Tests
-- Mock-Services für externe Abhängigkeiten
-- FastAPI TestClient für API-Tests
-- Async Support
+Provides:
+- A REAL Postgres test database (see the note at `RENFIELD_TEST_PG_URL` below).
+  This docstring claimed an in-memory sqlite database until 2026-10-30, which
+  had not been true since the harness was rebuilt -- and it contradicted the
+  rule stated 100 lines further down in this same file.
+- Mock services for external dependencies
+- A FastAPI TestClient for the API tests
+- Async support
 """
 
 import os as _os

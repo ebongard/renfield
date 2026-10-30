@@ -1,21 +1,20 @@
-"""F-ID-2 — der Personen-Handschlag, und vor allem seine Ablehnungen.
+"""F-ID-2 -- the person handshake, and above all its refusals.
 
-Anlass (2026-10-27): die Personenverknuepfung liess sich bis dahin nur von
-einem Administrator BEHAUPTEN. Der Handschlag ersetzt die Behauptung durch
-einen Beweis — und ist damit die Stelle, an der ein Fehler teuer ist: eine
-angenommene Verknuepfung hebt fuer die betroffene Person die Paarungsstufe
-vollstaendig auf (`enforce_circles=False`, volle eigene Reichweite).
+The occasion (2026-10-27): until then a person link could only be ASSERTED by
+an administrator. The handshake replaces the assertion with a proof -- which
+makes it the place where a mistake is expensive: an accepted link lifts the
+pairing tier entirely for the person concerned (`enforce_circles=False`, that
+person's own full reach).
 
-🛑 Die Tests, die hier mehr tragen als der gluecklichen Pfad:
+🛑 The tests that carry more here than the happy path:
 
-- **Das Angebot nennt seinen Empfaenger.** Ohne diese Pruefung liesse sich ein
-  fuer B bestimmtes Angebot bei C einreichen, und C schriebe eine Zeile fuer
-  eine Person, der nie jemand zugestimmt hat.
-- **Ein Angebot ist nicht uebertragbar.** `stated_by` muss die angemeldete
-  Person sein, sonst schliesst ein Fremder ein abgefangenes Angebot auf
-  SEINEN Namen ab.
-- **Kein halber Link.** Jede Ablehnung darf KEINE Zeile hinterlassen; der
-  Test prueft das am Aufrufzaehler von `create_link`, nicht am Rueckgabewert.
+- **The offer names its recipient.** Without this check an offer intended for B
+  could be submitted at C, and C would write a row for a person nobody ever
+  consented for.
+- **An offer is not transferable.** `stated_by` must be the signed-in person,
+  otherwise a stranger completes an intercepted offer in THEIR own name.
+- **No half link.** Every refusal must leave NO row behind; the test checks
+  that on the call counter of `create_link`, not on the return value.
 """
 from __future__ import annotations
 
@@ -44,13 +43,13 @@ pytestmark = [pytest.mark.unit, pytest.mark.backend, pytest.mark.asyncio]
 
 
 # =============================================================================
-# Gerüst
+# Scaffolding
 # =============================================================================
 
 
 @pytest.fixture
 def instanz_a(tmp_path):
-    """Instanz A über das Singleton — so wie der Produktionscode sie sieht."""
+    """Instance A via the singleton -- the way the production code sees it."""
     reset_federation_identity_for_tests()
     init_federation_identity(tmp_path / "a_key")
     yield get_federation_identity()
@@ -59,9 +58,9 @@ def instanz_a(tmp_path):
 
 @pytest.fixture
 def instanz_b():
-    """Instanz B DANEBEN gebaut, ohne Singleton — das Muster aus
-    `test_federation_pairing.py`, mit dem sich zwei Instanzen in einem Prozess
-    simulieren lassen."""
+    """Instance B built ALONGSIDE, without the singleton -- the pattern from
+    `test_federation_pairing.py` that lets two instances be simulated in one
+    process."""
     return FederationIdentity(ed25519.Ed25519PrivateKey.generate())
 
 
@@ -81,8 +80,8 @@ def _peer(pid: int, pubkey: str):
 
 @pytest.fixture
 def frischer_nonce_speicher():
-    """Der Nonce-Speicher ist modulglobal — ohne Leeren faerbt ein Test auf den
-    naechsten ab und `Nonce already used` feuert grundlos."""
+    """The nonce store is module-global -- without clearing it one test bleeds
+    into the next and `Nonce already used` fires for no reason."""
     from services.federation_pending_store import get_pending_store, reset_store_for_tests
     reset_store_for_tests()
     yield
@@ -93,8 +92,8 @@ def frischer_nonce_speicher():
 
 
 def _dienst(identity, *, peer=None, links=None):
-    """Ein Dienst mit gestellter Identität, gestellter Peer-Suche und
-    gezähltem `create_link`."""
+    """A service with a stubbed identity, a stubbed peer lookup and a counted
+    `create_link`."""
     svc = LinkHandshakeService(db=MagicMock())
     svc.identity = identity
     svc._peer_by_pubkey = AsyncMock(
@@ -104,7 +103,7 @@ def _dienst(identity, *, peer=None, links=None):
 
 @pytest.fixture
 def create_link_zaehler(monkeypatch):
-    """Zählt echte Schreibversuche. Eine Ablehnung MUSS bei 0 bleiben."""
+    """Counts real write attempts. A refusal MUST stay at 0."""
     import services.link_handshake_service as mod
     aufrufe = []
 
@@ -120,16 +119,16 @@ def create_link_zaehler(monkeypatch):
 
 
 # =============================================================================
-# Der glückliche Pfad
+# The happy path
 # =============================================================================
 
 
 async def test_both_sides_write_the_SAME_querier_ref(
     instanz_a, instanz_b, create_link_zaehler, frischer_nonce_speicher,
 ):
-    """🛑 Der Kern: die beiden Zeilen sind nur durch denselben `querier_ref`
-    verbunden. Driften sie auseinander, loest die Gegenstelle die Person nie
-    auf und faellt still auf die Paarungsstufe zurueck."""
+    """🛑 The core: the two rows are connected only by the same `querier_ref`.
+    If they drift apart, the far side never resolves the person and falls back
+    silently to the pairing tier."""
     u, x = _nutzer(1), _nutzer(9)
 
     a = _dienst(instanz_a, peer=_peer(7, instanz_b.public_key_hex()))
@@ -148,23 +147,23 @@ async def test_both_sides_write_the_SAME_querier_ref(
 
 
 async def test_step_one_writes_NOTHING(instanz_a, create_link_zaehler):
-    """Bricht die Person nach dem Angebot ab, darf kein halber Link stehen."""
+    """If the person aborts after the offer, no half link may be left standing."""
     a = _dienst(instanz_a)
     a.create_offer(_nutzer(1), _peer(7, "cd" * 32))
     assert create_link_zaehler == []
 
 
 # =============================================================================
-# Ablehnungen — und jede davon OHNE Zeile
+# Refusals -- and every one of them WITHOUT a row
 # =============================================================================
 
 
 async def test_an_offer_for_SOMEONE_ELSE_is_refused(
     instanz_a, instanz_b, create_link_zaehler, frischer_nonce_speicher,
 ):
-    """🛑 Das Angebot nennt seinen Empfaenger. Ein fuer B bestimmtes Angebot
-    darf bei C nicht durchgehen — sonst schriebe C eine Zeile fuer eine Person,
-    der nie jemand zugestimmt hat."""
+    """🛑 The offer names its recipient. An offer intended for B must not pass
+    at C -- otherwise C would write a row for a person nobody ever consented
+    for."""
     instanz_c = FederationIdentity(ed25519.Ed25519PrivateKey.generate())
     a = _dienst(instanz_a)
     angebot = a.create_offer(_nutzer(1), _peer(7, instanz_b.public_key_hex()))
@@ -178,9 +177,9 @@ async def test_an_offer_for_SOMEONE_ELSE_is_refused(
 async def test_an_offer_is_NOT_transferable(
     instanz_a, instanz_b, create_link_zaehler, frischer_nonce_speicher,
 ):
-    """🛑 `stated_by` bindet das Angebot an die Person, die es erklaert hat.
-    Ohne die Pruefung schliesst eine andere angemeldete Person ein abgefangenes
-    Angebot auf IHREN Namen ab."""
+    """🛑 `stated_by` binds the offer to the person who declared it. Without
+    the check another signed-in person completes an intercepted offer in THEIR
+    own name."""
     a = _dienst(instanz_a, peer=_peer(7, instanz_b.public_key_hex()))
     angebot = a.create_offer(_nutzer(1), _peer(7, instanz_b.public_key_hex()))
     b = _dienst(instanz_b, peer=_peer(3, instanz_a.public_key_hex()))
@@ -188,15 +187,15 @@ async def test_an_offer_is_NOT_transferable(
     create_link_zaehler.clear()
 
     with pytest.raises(LinkHandshakeError, match="different user"):
-        await a.complete(_nutzer(2), angebot, bestaetigung)   # NICHT Nutzer 1
+        await a.complete(_nutzer(2), angebot, bestaetigung)   # NOT user 1
     assert create_link_zaehler == []
 
 
 async def test_a_tampered_offer_is_refused(
     instanz_a, instanz_b, create_link_zaehler, frischer_nonce_speicher,
 ):
-    """Ein veraendertes Feld bricht die Signatur — hier die Kennung der Person,
-    also genau das Feld, dessen Faelschung sich lohnen wuerde."""
+    """A changed field breaks the signature -- here the person's id, which is
+    exactly the field worth forging."""
     a = _dienst(instanz_a)
     angebot = a.create_offer(_nutzer(1), _peer(7, instanz_b.public_key_hex()))
     verbogen = angebot.model_copy(update={"stated_by": 999})
@@ -210,13 +209,13 @@ async def test_a_tampered_offer_is_refused(
 async def test_a_FORGED_offer_from_an_unknown_key_is_refused(
     instanz_a, instanz_b, create_link_zaehler, frischer_nonce_speicher,
 ):
-    """Ein Fremder baut ein formal tadelloses Angebot und unterschreibt es mit
-    seinem eigenen Schluessel. Die Peer-Zeile nennt aber A's Schluessel."""
+    """A stranger builds a formally impeccable offer and signs it with their
+    own key. But the peer row names A's key."""
     fremd = FederationIdentity(ed25519.Ed25519PrivateKey.generate())
     now = int(time.time())
     unsigned = {
         "version": 1,
-        "initiator_pubkey": instanz_a.public_key_hex(),   # BEHAUPTET A zu sein
+        "initiator_pubkey": instanz_a.public_key_hex(),   # CLAIMS to be A
         "responder_pubkey": instanz_b.public_key_hex(),
         "stated_by": 1,
         "querier_ref": "ef" * 32,
@@ -250,12 +249,12 @@ async def test_an_expired_offer_is_refused(
 async def test_a_confirmation_from_ANOTHER_instance_is_refused(
     instanz_a, instanz_b, create_link_zaehler, frischer_nonce_speicher,
 ):
-    """Die Bestaetigung muss von der Instanz kommen, der das Angebot galt."""
+    """The confirmation must come from the instance the offer was meant for."""
     instanz_c = FederationIdentity(ed25519.Ed25519PrivateKey.generate())
     a = _dienst(instanz_a, peer=_peer(7, instanz_b.public_key_hex()))
     angebot = a.create_offer(_nutzer(1), _peer(7, instanz_b.public_key_hex()))
 
-    # C bestaetigt, obwohl das Angebot B nennt.
+    # C confirms, although the offer names B.
     unsigned = {
         "version": 1,
         "nonce": angebot.nonce,
@@ -275,8 +274,8 @@ async def test_a_confirmation_from_ANOTHER_instance_is_refused(
 async def test_a_confirmation_answering_ANOTHER_offer_is_refused(
     instanz_a, instanz_b, create_link_zaehler, frischer_nonce_speicher,
 ):
-    """Zwei Angebote nebeneinander: die Bestaetigung des einen darf das andere
-    nicht abschliessen."""
+    """Two offers side by side: the confirmation of one must not complete the
+    other."""
     a = _dienst(instanz_a, peer=_peer(7, instanz_b.public_key_hex()))
     erstes = a.create_offer(_nutzer(1), _peer(7, instanz_b.public_key_hex()))
     zweites = a.create_offer(_nutzer(1), _peer(7, instanz_b.public_key_hex()))
@@ -293,9 +292,8 @@ async def test_a_confirmation_answering_ANOTHER_offer_is_refused(
 async def test_WITHOUT_a_pairing_there_is_nothing_to_link(
     instanz_a, instanz_b, create_link_zaehler, frischer_nonce_speicher,
 ):
-    """🛑 Der Handschlag SETZT die Instanz-Paarung voraus, er ersetzt sie nicht.
-    Ohne aktive Peer-Zeile gibt es keinen Schluessel, gegen den sich pruefen
-    liesse."""
+    """🛑 The handshake PRESUPPOSES the instance pairing, it does not replace
+    it. Without an active peer row there is no key to check against."""
     a = _dienst(instanz_a)
     angebot = a.create_offer(_nutzer(1), _peer(7, instanz_b.public_key_hex()))
 
@@ -310,13 +308,13 @@ async def test_WITHOUT_a_pairing_there_is_nothing_to_link(
 async def test_the_same_offer_cannot_be_accepted_twice_in_the_nonce_window(
     instanz_a, instanz_b, create_link_zaehler, frischer_nonce_speicher,
 ):
-    """Der billige Frueh-Abweiser gegen das doppelte Abschicken.
+    """The cheap early rejector against a double submit.
 
-    🛑 Er ist KEINE Mauer gegen Wiedereinspielung: der Speicher haelt einen
-    Nonce nur `NONCE_WINDOW_SECONDS` (60 s), das Angebot lebt 600 s. Was
-    wirklich traegt, ist der Eindeutigkeitsindex auf `(peer_id, querier_ref)` —
-    siehe den Modul-Docstring des Dienstes. Dieser Test prueft genau den
-    Ausschnitt, den der Nonce abdeckt, und nicht mehr.
+    🛑 It is NOT a wall against replay: the store keeps a nonce only for
+    `NONCE_WINDOW_SECONDS` (60 s), while the offer lives 600 s. What really
+    holds is the uniqueness index on `(peer_id, querier_ref)` -- see the
+    service's module docstring. This test checks exactly the slice the nonce
+    covers, and no more.
     """
     a = _dienst(instanz_a)
     angebot = a.create_offer(_nutzer(1), _peer(7, instanz_b.public_key_hex()))
@@ -329,24 +327,23 @@ async def test_the_same_offer_cannot_be_accepted_twice_in_the_nonce_window(
 
 
 # =============================================================================
-# Strukturtest
+# Structural test
 # =============================================================================
 
 
 def test_the_handshake_routes_are_NOT_admin_gated():
-    """🛑 Der ganze Zweck des Stuecks.
+    """🛑 The entire point of the piece.
 
-    Die Admin-Behauptung existiert bereits (`federation_user_links`); dieser
-    Handschlag ist ihr Ersatz, weil er die Kontrolle ueber BEIDE Konten
-    beweist statt einem Administrator zu glauben. Haengt jemand hier ein
-    `require_permission(ADMIN)` davor, ist der Beweis wieder eine Behauptung
-    mit mehr Schritten — und nichts ausser diesem Test merkt es.
+    The admin assertion already exists (`federation_user_links`); this
+    handshake replaces it, because it PROVES control over BOTH accounts instead
+    of believing an administrator. Hang a `require_permission(ADMIN)` in front
+    of it and the proof is an assertion again, with more steps -- and nothing
+    but this test notices.
 
-    🛑 Geprueft werden die ECHTEN Abhaengigkeiten der Routen, nicht der
-    Quelltext. Die erste Fassung greppte nach „require_permission" und fiel
-    ueber den Kommentar, der genau das verspricht — ein Test, der die Prosa
-    misst statt die Wirkung. Die Gegenprobe darunter zeigt, dass der Zaehler
-    ueberhaupt anschlaegt.
+    🛑 What is checked are the routes' REAL dependencies, not the source. The
+    first version grepped for "require_permission" and tripped over the comment
+    that promises exactly that -- a test measuring the prose instead of the
+    effect. The counter-check below shows that the detector fires at all.
     """
     from api.routes import federation_links, federation_user_links
 
@@ -361,7 +358,7 @@ def test_the_handshake_routes_are_NOT_admin_gated():
     frei = waechter(federation_links.router)
     gesperrt = waechter(federation_user_links.router)
 
-    # Negativkontrolle zuerst: der Nachbar IST gesperrt, der Zaehler misst also.
+    # Negative control first: the neighbour IS gated, so the detector measures.
     assert "permission_checker" in gesperrt, (
         "Die Gegenprobe greift nicht mehr — `federation_user_links` ist nicht "
         f"mehr admin-gesperrt. Gefunden: {sorted(gesperrt)}")
@@ -371,8 +368,8 @@ def test_the_handshake_routes_are_NOT_admin_gated():
 
 
 def test_both_protocols_sign_the_SAME_bytes():
-    """🛑 Eine abgeschriebene zweite Kanonisierung waere der stille Bruch:
-    beide Seiten signierten fleissig, und nichts verifizierte mehr."""
+    """🛑 A copied second canonicalization would be the silent break: both
+    sides would sign away diligently, and nothing would verify any more."""
     from services import pairing_service
 
     assert pairing_service._canonical_bytes is canonical_bytes

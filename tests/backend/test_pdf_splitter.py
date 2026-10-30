@@ -75,9 +75,9 @@ def _parent(**over):
 
 
 def _db(parent_facts=()):
-    """`parent_facts` = [(fact_id, atom_id), …] — was die Faktenabfrage in
-    `_purge_parent_facts` findet. Standard: keine, also der haeufige Fall
-    (Schnitt zur Einlieferungszeit, der Elternteil hat noch keine Fakten)."""
+    """`parent_facts` = [(fact_id, atom_id), ...] -- what the fact query in
+    `_purge_parent_facts` finds. Default: none, so the common case (a split at
+    ingest time, where the parent has no facts yet)."""
     db = MagicMock()
     db.commit = AsyncMock()
     ergebnis = MagicMock()
@@ -181,18 +181,17 @@ async def test_execute_split_creates_all_parts_and_archives_last(monkeypatch):
 
 
 async def test_the_parents_facts_are_purged_through_the_service(monkeypatch):
-    """🛑 #1374: die Abschnitte des Elternteils wurden immer abgeräumt, seine
-    FAKTEN nicht.
+    """🛑 #1374: the parent's chunks were always cleared, its FACTS were not.
 
-    Bei einem Posteingang aus neun Schreiben sind sie zusammengerührt — ein
-    Absender, ein Datum, ein Betrag über den ganzen Stapel — und liegen
-    daneben noch einmal richtig bei den Kindern. Gemessen an Dokument 460:
-    21 Elternfakten gegen 157 der Kinder.
+    In an inbox batch of nine letters they are stirred together -- one sender,
+    one date, one amount across the whole stack -- and sit correctly a second
+    time on the children. Measured on document 460: 21 parent facts against
+    157 of the children.
 
-    🛑 Über `AtomPurgeService`, NIE mit einem direkten DELETE: die Faktenzeile
-    hängt per CASCADE am Atom, und dort sitzt die `legal_hold`-Unterscheidung
-    für `wb_field_provenance`. `test_no_direct_atom_delete.py` verbietet den
-    kurzen Weg aus genau diesem Grund.
+    🛑 Through `AtomPurgeService`, NEVER with a direct DELETE: the fact row
+    hangs off the atom by CASCADE, and that is where the `legal_hold`
+    distinction for `wb_field_provenance` sits. `test_no_direct_atom_delete.py`
+    forbids the short way for exactly this reason.
     """
     db = _db(parent_facts=[(1, "atom-a"), (2, "atom-b")])
     parent = _parent()
@@ -222,19 +221,19 @@ async def test_the_parents_facts_are_purged_through_the_service(monkeypatch):
     await execute_split(db, parent, [_piece(1, 2), _piece(3, 5)])
 
     assert [a for a, _ in gepurgt] == ["atom-a", "atom-b"]
-    # Der Grund gehoert in die Pruefspur, nicht ins Nichts.
+    # The reason belongs in the audit trail, not into nothing.
     assert all(r == "pdf_split_parent_archived" for _, r in gepurgt)
-    # 🛑 NACH dem Archiv-Commit. `AtomPurgeService.purge` committet selbst, einmal
-    # je Atom — stand der Aufruf davor, committete der erste Purge die
-    # Abschnittsloeschung, waehrend der Elternteil noch nicht archiviert war.
-    # Der Riegel dagegen: beim ersten Purge MUSS der Status schon stehen.
+    # 🛑 AFTER the archive commit. `AtomPurgeService.purge` commits itself,
+    # once per atom -- with the call before it, the first purge committed the
+    # chunk deletion while the parent was not yet archived. The guard against
+    # that: at the first purge the status MUST already stand.
     assert reihenfolge == ["archiviert", "atom-a", "atom-b"], reihenfolge
 
 
 async def test_a_parent_without_facts_purges_nothing(monkeypatch):
-    """Der haeufige Fall: Schnitt zur Einlieferungszeit. Der Elternteil hat noch
-    keine Fakten, die Schleife laeuft null Mal — und darf nichts anfassen."""
-    db = _db()  # keine Fakten
+    """The common case: a split at ingest time. The parent has no facts yet,
+    the loop runs zero times -- and must touch nothing."""
+    db = _db()  # no facts
     parent = _parent()
     db.get = AsyncMock(return_value=SimpleNamespace(id=101, split_from_document_id=None))
     _wire_split(
@@ -261,10 +260,10 @@ async def test_a_parent_without_facts_purges_nothing(monkeypatch):
 
 
 async def test_a_failing_purge_never_stops_the_split(monkeypatch):
-    """Die Kinder sind zu diesem Zeitpunkt bereits materialisiert. Ein Atom, das
-    schon weg ist, darf den Schnitt nicht auf halbem Weg stehen lassen —
-    sonst wäre der Elternteil nicht archiviert und die Kinder existierten
-    doppelt beim nächsten Versuch."""
+    """At this point the children are already materialised. An atom that is
+    gone already must not leave the split standing half-way -- otherwise the
+    parent would not be archived and the children would exist twice on the
+    next attempt."""
     db = _db(parent_facts=[(1, "atom-a")])
     parent = _parent()
     db.get = AsyncMock(return_value=SimpleNamespace(id=101, split_from_document_id=None))
@@ -923,24 +922,24 @@ async def test_prestage_mid_split_with_live_heartbeat_is_acked(monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# Wiederanstoß (#1372): vorlegen statt ausführen
+# Re-trigger (#1372): propose instead of execute
 # ---------------------------------------------------------------------------
 
 async def test_a_resplit_always_proposes_even_when_confident(monkeypatch):
-    """🛑 Die Lehre vom 2026-10-04.
+    """🛑 The lesson of 2026-10-04.
 
-    Beim ERSTEN Durchlauf ist Auto-Schneiden vertretbar: niemand hat das
-    Dokument je gesehen. Bei einem WIEDERANSTOSS steht es in Paperless, trägt
-    vielleicht gepflegte Tags, und jemand hat es angesehen.
+    On the FIRST pass auto-splitting is defensible: nobody has ever seen the
+    document. On a RE-TRIGGER it stands in Paperless, may carry curated tags,
+    and somebody has looked at it.
 
-    Der Unterschied ist teuer geworden: eine Leseprobe ergab Zuversicht 0,0
-    (also Vorlage), der echte Lauf kam über die Schwelle und schnitt sofort —
-    acht Dokumente angelegt, Original archiviert, ohne Bestätigung, obwohl eine
-    Vorlage angekündigt war. Derselbe Aufruf gab in drei Durchläufen 9 Stücke,
-    8 Stücke und Zuversicht 0,0.
+    The difference turned expensive: a dry read gave confidence 0.0 (so a
+    proposal), the real run came over the threshold and split immediately --
+    eight documents created, the original archived, without confirmation,
+    although a proposal had been announced. The same call gave 9 pieces, 8
+    pieces and confidence 0.0 across three runs.
 
-    Aus einer Leseprobe ist nicht ableitbar, was der nächste Lauf tut. Darum
-    hängt die Entscheidung hier NICHT an der Zuversicht.
+    What the next run will do cannot be derived from a dry read. That is why
+    the decision here does NOT hang on the confidence.
     """
     doc = _parent()
     db, execute, _store = _wire_prestage(monkeypatch, doc=doc, threshold=0.85)
@@ -954,14 +953,14 @@ async def test_a_resplit_always_proposes_even_when_confident(monkeypatch):
     out = await ps.act_on_verdict(db, doc, verdict, None, force_review=True)
 
     assert out == "review"
-    execute.assert_not_awaited()   # NICHTS wurde geschnitten
+    execute.assert_not_awaited()   # NOTHING was split
     proposal.assert_awaited_once()
 
 
 async def test_without_a_resplit_the_threshold_still_decides(monkeypatch):
-    """Gegenprobe. Ohne sie wäre der Test oben auch grün, wenn `force_review`
-    fest verdrahtet wäre — und der erste Durchlauf dürfte nie mehr automatisch
-    schneiden."""
+    """Counter-check. Without it the test above would also be green if
+    `force_review` were hard-wired -- and the first pass would never be allowed
+    to split automatically again."""
     doc = _parent()
     db, execute, _store = _wire_prestage(monkeypatch, doc=doc, threshold=0.85)
     verdict = SplitVerdict(
@@ -975,12 +974,11 @@ async def test_without_a_resplit_the_threshold_still_decides(monkeypatch):
 
 
 async def test_the_resplit_flag_travels_in_the_slow_lane_payload(monkeypatch):
-    """🛑 Die Stelle, an der es still nicht funktioniert hätte.
+    """🛑 The place where it would silently not have worked.
 
-    Der langsame Pfad liegt hinter Redis. Trüge seine Nutzlast das Kennzeichen
-    nicht, würde ein Wiederanstoß an einem unlesbaren Stapel wieder automatisch
-    schneiden — und genau über diesen Pfad lief das Dokument, das den Vorgang
-    ausgelöst hat.
+    The slow path lies behind Redis. If its payload did not carry the marker, a
+    re-trigger on an unreadable stack would split automatically again -- and
+    that is exactly the path the document that set this off went through.
     """
     doc = _parent()
     monkeypatch.setattr(ps.settings, "pdf_split_enabled", True)
@@ -998,32 +996,31 @@ async def test_the_resplit_flag_travels_in_the_slow_lane_payload(monkeypatch):
     nutzlast = queue.enqueue.await_args.args[0]
     assert nutzlast.get("resplit") is True, nutzlast
 
-    # Gegenprobe: ohne Wiederanstoss bleibt die Nutzlast byte-gleich — ein
-    # bestehender Test nagelt sie fest, und aeltere Stream-Eintraege kennen
-    # den Schluessel nicht.
+    # Counter-check: without a re-trigger the payload stays byte-identical --
+    # an existing test pins it down, and older stream entries do not know the
+    # key.
     queue.enqueue.reset_mock()
     await ps._route_to_slow_lane(db, doc, "vlm", None)
     assert "resplit" not in queue.enqueue.await_args.args[0]
 
 
 # ---------------------------------------------------------------------------
-# #1373: die Kinder eines Wiederanstoßes müssen Paperless erreichen
+# #1373: the children of a re-trigger have to reach Paperless
 # ---------------------------------------------------------------------------
 
 async def test_children_of_an_already_filed_parent_are_filed_too(monkeypatch):
-    """🛑 Der Befund vom 2026-10-04.
+    """🛑 The finding of 2026-10-04.
 
-    `paperless_state == 'done'` heißt ZWEIERLEI: "erfolgreich abgelegt" oder
-    "beigelegt, nie abgelegt". Die alte Ableitung las nur `pending` und machte
-    aus beidem "nicht ablegen".
+    `paperless_state == 'done'` means TWO things: "filed successfully" or
+    "settled, never filed". The old derivation read only `pending` and turned
+    both into "do not file".
 
-    Folge: der Wiederanstoß von Dokument 460 erzeugte acht Kinder, von denen
-    KEINES Paperless erreichte. Dort stand weiter der 38-seitige Stapel mit
-    einem Korrespondenten, der für sieben der acht Briefe falsch war — genau
-    das Problem, das den Schnitt motiviert hatte.
+    Consequence: the re-trigger of document 460 produced eight children, NONE
+    of which reached Paperless. The 38-page stack still stood there with a
+    correspondent that was wrong for seven of the eight letters -- exactly the
+    problem that had motivated the split.
 
-    Der Unterschied ist `paperless_document_id`: gesetzt heißt TATSÄCHLICH
-    abgelegt.
+    The difference is `paperless_document_id`: set means ACTUALLY filed.
     """
     parent = _parent(
         paperless_state=PAPERLESS_STATE_DONE, paperless_document_id=2667
@@ -1045,12 +1042,12 @@ async def test_children_of_an_already_filed_parent_are_filed_too(monkeypatch):
 
 
 async def test_a_settled_parent_that_was_never_filed_keeps_its_children_out(monkeypatch):
-    """🛑 Die Gegenprobe, und sie ist der Grund für `paperless_document_id`.
+    """🛑 The counter-check, and it is the reason for `paperless_document_id`.
 
-    `done` OHNE Id heißt "beigelegt, nie abgelegt" — so stempelt `execute_split`
-    den archivierten Elternteil selbst. Würde man nur auf `done` prüfen, legte
-    jeder Schnitt eines nie abgelegten Dokuments plötzlich ab, und die
-    Ablage-Absicht wäre nicht mehr erbbar, sondern geraten.
+    `done` WITHOUT an id means "settled, never filed" -- that is how
+    `execute_split` stamps the archived parent itself. Were only `done`
+    checked, every split of a document that was never filed would suddenly
+    file, and the filing intent would no longer be inheritable but guessed.
     """
     parent = _parent(paperless_state=PAPERLESS_STATE_DONE, paperless_document_id=None)
     db = _db()
@@ -1070,10 +1067,9 @@ async def test_a_settled_parent_that_was_never_filed_keeps_its_children_out(monk
 
 
 async def test_the_already_filed_original_is_left_alone(monkeypatch):
-    """Das Original zu ersetzen hieße, ein Paperless-Dokument zu löschen —
-    unwiderruflich, und vielleicht hängen daran von Hand gepflegte Tags. Das
-    bleibt eine ausdrückliche Handlung des Eigentümers, keine Nebenwirkung des
-    Schnitts."""
+    """Replacing the original would mean deleting a Paperless document --
+    irreversible, and tags curated by hand may hang off it. That stays an
+    explicit action by the owner, not a side effect of the split."""
     parent = _parent(
         paperless_state=PAPERLESS_STATE_DONE, paperless_document_id=2667
     )
@@ -1089,5 +1085,5 @@ async def test_the_already_filed_original_is_left_alone(monkeypatch):
 
     await execute_split(db, parent, [_piece(1, 2), _piece(3, 5)])
 
-    # Die Id bleibt stehen: nichts wurde in Paperless entfernt.
+    # The id stays: nothing was removed in Paperless.
     assert parent.paperless_document_id == 2667

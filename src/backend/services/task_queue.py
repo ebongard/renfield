@@ -54,7 +54,7 @@ class TaskQueue:
                 "status": "queued"
             }
 
-            # In Redis speichern
+            # Store it in Redis
             await self.redis_client.lpush(self.queue_name, json.dumps(task_data))
             await self.redis_client.set(task_id, json.dumps(task_data))
 
@@ -65,7 +65,7 @@ class TaskQueue:
             raise
 
     async def dequeue(self) -> dict | None:
-        """Naechsten Task aus Queue holen"""
+        """Take the next task off the queue"""
         try:
             task_json = await self.redis_client.rpop(self.queue_name)
             if task_json:
@@ -76,7 +76,7 @@ class TaskQueue:
             return None
 
     async def get_task_status(self, task_id: str) -> dict | None:
-        """Task-Status abrufen"""
+        """Fetch the status of one task"""
         try:
             task_json = await self.redis_client.get(task_id)
             if task_json:

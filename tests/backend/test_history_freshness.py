@@ -1,16 +1,16 @@
-"""Die Regel, wann eine lebende Historie neu geladen wird.
+"""The rule for when a live history is reloaded.
 
-🛑 Der Anlass, gemessen am 2026-10-26: der Eigentümer bat dreimal „scanne nach
-Haushalt" und bekam zweimal „der Scan läuft bereits im Hintergrund, Du wirst
-benachrichtigt" — ohne dass das Werkzeug gerufen wurde. Der erste Scan war am
-Papierstau gescheitert, die Meldung stand in der Datenbank. Nur: die Historie
-einer lebenden Sitzung wird EINMAL je Socket geladen und wächst danach allein
-über `add_to_history`. Ein asynchroner Erzeuger — Scanner-Fertigmeldung,
-Gesprächsübergabe, Paperless-Bestätigung — fasst diese Liste nicht an. Der
-Agent las also einen Kontext, in dem der Scan noch lief.
+🛑 The occasion, measured on 2026-10-26: the owner asked "scanne nach Haushalt"
+three times and twice got "der Scan läuft bereits im Hintergrund, Du wirst
+benachrichtigt" -- without the tool being called. The first scan had failed on a
+paper jam, and the notice was in the database. Except: a live session's history
+is loaded ONCE per socket and after that grows only through `add_to_history`. An
+asynchronous producer -- the scanner completion notice, the conversation
+handover, the Paperless confirmation -- does not touch that list. So the agent
+read a context in which the scan was still running.
 
-Die Regel ist eine REINE Funktion, damit genau das prüfbar ist, statt im
-WebSocket-Handler zu stecken.
+The rule is a PURE function, so that exactly this is testable instead of being
+buried in the WebSocket handler.
 """
 import pytest
 
@@ -26,13 +26,13 @@ def _regel(**kw):
 
 
 def test_a_foreign_write_triggers_a_reload():
-    """Der Fall, der den Scan blockierte."""
+    """The case that blocked the scan."""
     assert _regel(watermark=100, newest_in_db=101) is True
 
 
 def test_an_unchanged_database_does_not_reload():
-    """Der Normalfall: nichts Fremdes geschrieben, kein Neuladen — sonst wäre
-    aus der Prüfung ein Dauer-Neuladezyklus geworden."""
+    """The normal case: nothing foreign written, no reload -- otherwise the
+    check would have turned into a permanent reload cycle."""
     assert _regel(watermark=100, newest_in_db=100) is False
 
 
@@ -45,22 +45,22 @@ def test_a_session_switch_always_loads():
 
 
 def test_no_answer_from_the_database_does_not_reload():
-    """🛑 `None` heisst „keine Auskunft", nicht „veraltet".
+    """🛑 `None` means "no answer", not "stale".
 
-    Daraus ein Neuladen zu machen hiesse: bei jeder Störung der Datenbank
-    schlägt die Prüfung bei JEDEM Zug zu. Eine fehlende Messung darf keinen
-    Zyklus erzwingen — dieselbe Regel wie beim `ioreg` des Scanners.
+    Turning that into a reload would mean: on every database hiccup the check
+    fires on EVERY turn. A missing measurement must not force a cycle -- the
+    same rule as for the scanner's `ioreg`.
     """
     assert _regel(newest_in_db=None) is False
 
 
 def test_a_missing_watermark_does_not_reload():
-    """Die Marke fehlt nur, wenn das Lesen der Zahl scheiterte. Ein
-    Dauer-Neuladezyklus wäre schlimmer als der Zustand, den sie verhindert."""
+    """The mark is only absent when reading the number failed. A permanent
+    reload cycle would be worse than the state it prevents."""
     assert _regel(watermark=None, newest_in_db=500) is False
 
 
 def test_an_older_database_id_does_not_reload():
-    """Kleiner als die Marke kann nur durch Löschen entstehen — das ist kein
-    fremder Schreibvorgang und rechtfertigt kein Neuladen."""
+    """Lower than the mark can only arise through deletion -- that is not a
+    foreign write and does not justify a reload."""
     assert _regel(watermark=100, newest_in_db=99) is False

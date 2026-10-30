@@ -155,7 +155,7 @@ class HomeAssistantClient:
             )
 
     async def search_entities(self, query: str) -> list[dict]:
-        """Entities nach Namen suchen"""
+        """Search entities by name"""
         all_states = await self.get_states()
         query_lower = query.lower()
 
@@ -189,12 +189,12 @@ class HomeAssistantClient:
 
     async def get_keywords(self, refresh: bool = False) -> set:
         """
-        Extrahiere alle Keywords aus Home Assistant Entities
+        Extract every keyword from the Home Assistant entities
 
-        Cached für 5 Minuten, refresh=True erzwingt Neuladung
+        Cached for 5 minutes; refresh=True forces a reload
 
         Returns:
-            set: Keywords (Gerätenamen, Räume, Domains)
+            set: keywords (device names, rooms, domains)
         """
         from datetime import datetime, timedelta
 
@@ -285,13 +285,13 @@ class HomeAssistantClient:
 
     async def get_entity_map(self) -> list[dict]:
         """
-        Erstelle eine Map aller Entities für Intent Recognition.
+        Build a map of every entity, for intent recognition.
 
         Uses a class-level TTL cache (60s) to avoid hitting the HA REST API
         on every intent extraction call.
 
         Returns:
-            List[Dict]: Liste mit entity_id, friendly_name, domain, room (falls vorhanden)
+            List[Dict]: entity_id, friendly_name, domain, room (where present)
         """
         # Check class-level cache
         now = time.time()
@@ -347,9 +347,9 @@ class HomeAssistantClient:
 
     def _extract_room(self, entity_id: str, friendly_name: str) -> str | None:
         """
-        Versuche Raum aus Entity ID oder Friendly Name zu extrahieren
+        Try to extract the room from the entity id or the friendly name
 
-        Beispiele:
+        Examples:
         - "binary_sensor.arbeitszimmer_fenster" → "arbeitszimmer"
         - "Arbeitszimmer Fenster" → "arbeitszimmer"
         - "light.wohnzimmer" → "wohnzimmer"

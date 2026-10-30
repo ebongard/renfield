@@ -1,11 +1,11 @@
 """
-Tests für Chat API
+Tests for the chat API
 
 Testet:
-- Chat-Nachrichten senden
+- Sending chat messages
 - Konversations-Historie
 - Session-Management
-- Suche und Statistiken
+- Search and statistics
 """
 
 from datetime import datetime, timedelta
@@ -81,11 +81,11 @@ async def old_conversation(db_session: AsyncSession) -> Conversation:
 # ============================================================================
 
 class TestConversationModel:
-    """Tests für das Conversation Model"""
+    """Tests for the Conversation model"""
 
     @pytest.mark.database
     async def test_create_conversation(self, db_session: AsyncSession):
-        """Testet das Erstellen einer Konversation"""
+        """Tests creating a conversation"""
         conv = Conversation(session_id="new-test-session")
         db_session.add(conv)
         await db_session.commit()
@@ -97,7 +97,7 @@ class TestConversationModel:
 
     @pytest.mark.database
     async def test_conversation_unique_session_id(self, db_session: AsyncSession, test_conversation):
-        """Testet, dass session_id eindeutig sein muss"""
+        """Tests that session_id must be unique"""
         from sqlalchemy.exc import IntegrityError
 
         duplicate = Conversation(session_id=test_conversation.session_id)
@@ -108,11 +108,11 @@ class TestConversationModel:
 
 
 class TestMessageModel:
-    """Tests für das Message Model"""
+    """Tests for the Message model"""
 
     @pytest.mark.database
     async def test_create_message(self, db_session: AsyncSession, test_conversation):
-        """Testet das Erstellen einer Nachricht"""
+        """Tests creating a message"""
         msg = Message(
             conversation_id=test_conversation.id,
             role="user",
@@ -129,7 +129,7 @@ class TestMessageModel:
 
     @pytest.mark.database
     async def test_message_with_metadata(self, db_session: AsyncSession, test_conversation):
-        """Testet Nachricht mit Metadata"""
+        """Tests a message with metadata"""
         metadata = {"intent": "homeassistant.turn_on", "entity_id": "light.wohnzimmer"}
         msg = Message(
             conversation_id=test_conversation.id,
@@ -150,11 +150,11 @@ class TestMessageModel:
 # ============================================================================
 
 class TestChatHistoryAPI:
-    """Tests für Chat-Historie API"""
+    """Tests for the chat history API"""
 
     @pytest.mark.integration
     async def test_get_history_empty(self, async_client: AsyncClient):
-        """Testet GET /api/chat/history für nicht-existente Session"""
+        """Tests GET /api/chat/history for a session that does not exist"""
         response = await async_client.get("/api/chat/history/non-existent-session")
 
         assert response.status_code == 200
@@ -180,7 +180,7 @@ class TestChatHistoryAPI:
 
 
 class TestChatSessionAPI:
-    """Tests für Session-Management API"""
+    """Tests for the session management API"""
 
     @pytest.mark.integration
     async def test_delete_session(
@@ -199,7 +199,7 @@ class TestChatSessionAPI:
 
     @pytest.mark.integration
     async def test_delete_nonexistent_session(self, async_client: AsyncClient):
-        """Testet DELETE für nicht-existente Session"""
+        """Tests DELETE for a session that does not exist"""
         response = await async_client.delete("/api/chat/session/nonexistent")
 
         # Should still return success (idempotent)
@@ -207,7 +207,7 @@ class TestChatSessionAPI:
 
 
 class TestConversationsAPI:
-    """Tests für Konversations-Liste API"""
+    """Tests for the conversation list API"""
 
     @pytest.mark.integration
     async def test_list_conversations(
@@ -237,7 +237,7 @@ class TestConversationsAPI:
 
 
 class TestChatStatsAPI:
-    """Tests für Chat-Statistiken API"""
+    """Tests for the chat statistics API"""
 
     @pytest.mark.integration
     async def test_get_stats(
@@ -257,11 +257,11 @@ class TestChatStatsAPI:
 
 
 class TestChatSearchAPI:
-    """Tests für Chat-Suche API"""
+    """Tests for the chat search API"""
 
     @pytest.mark.integration
     async def test_search_too_short_query(self, async_client: AsyncClient):
-        """Testet Suche mit zu kurzem Query"""
+        """Tests a search with too short a query"""
         response = await async_client.get("/api/chat/search?q=a")
 
         assert response.status_code == 400
@@ -294,7 +294,7 @@ class TestChatSearchAPI:
 
 
 class TestChatMessageSearchAPI:
-    """Tests für die Message-Suche API (GET /api/chat/messages/search, item 3)."""
+    """Tests for the message search API (GET /api/chat/messages/search, item 3)."""
 
     @pytest.mark.integration
     async def test_message_search_too_short_query(self, async_client: AsyncClient):
@@ -337,7 +337,7 @@ class TestChatMessageSearchAPI:
 
 
 class TestChatCleanupAPI:
-    """Tests für Cleanup API"""
+    """Tests for the cleanup API"""
 
     @pytest.mark.integration
     async def test_cleanup_old_conversations(
@@ -360,7 +360,7 @@ class TestChatCleanupAPI:
 # ============================================================================
 
 class TestChatQueries:
-    """Tests für Chat-Abfragen"""
+    """Tests for the chat queries"""
 
     @pytest.mark.database
     async def test_get_messages_ordered(
@@ -368,7 +368,7 @@ class TestChatQueries:
         db_session: AsyncSession,
         conversation_with_messages: Conversation
     ):
-        """Testet, dass Nachrichten chronologisch sortiert sind"""
+        """Tests that messages are sorted chronologically"""
         result = await db_session.execute(
             select(Message)
             .where(Message.conversation_id == conversation_with_messages.id)
@@ -387,7 +387,7 @@ class TestChatQueries:
         db_session: AsyncSession,
         conversation_with_messages: Conversation
     ):
-        """Testet Nachrichten-Zählung pro Konversation"""
+        """Tests counting messages per conversation"""
         from sqlalchemy import func
 
         result = await db_session.execute(

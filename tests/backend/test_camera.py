@@ -1,11 +1,11 @@
 """
-Tests für Camera API (Frigate Integration)
+Tests for the camera API (Frigate integration)
 
-Testet:
-- Kamera-Events abrufen
-- Kamera-Liste
+Covers:
+- Fetching camera events
+- The camera list
 - Snapshots
-- Events nach Label filtern
+- Filtering events by label
 """
 
 from datetime import datetime
@@ -20,7 +20,7 @@ from httpx import AsyncClient
 
 @pytest.fixture
 def mock_frigate_client():
-    """Mock Frigate Client für Route-Tests"""
+    """Mock Frigate client for the route tests"""
     with patch('ha_glue.api.routes.camera.frigate') as mock:
         mock.get_events = AsyncMock(return_value=[
             {
@@ -70,7 +70,7 @@ def mock_auth_bypass():
 # ============================================================================
 
 class TestCameraEvents:
-    """Tests für Kamera-Events"""
+    """Tests for camera events"""
 
     @pytest.mark.integration
     async def test_get_events(
@@ -79,7 +79,7 @@ class TestCameraEvents:
         mock_frigate_client,
         mock_auth_bypass
     ):
-        """Testet GET /api/camera/events"""
+        """GET /api/camera/events"""
         response = await async_client.get("/api/camera/events")
 
         assert response.status_code in [200, 401, 403]
@@ -95,7 +95,7 @@ class TestCameraEvents:
         mock_frigate_client,
         mock_auth_bypass
     ):
-        """Testet GET /api/camera/events mit Kamera-Filter"""
+        """GET /api/camera/events with a camera filter"""
         response = await async_client.get("/api/camera/events?camera=front_door")
 
         assert response.status_code in [200, 401, 403]
@@ -110,7 +110,7 @@ class TestCameraEvents:
         mock_frigate_client,
         mock_auth_bypass
     ):
-        """Testet GET /api/camera/events mit Label-Filter"""
+        """GET /api/camera/events with a label filter"""
         response = await async_client.get("/api/camera/events?label=person")
 
         assert response.status_code in [200, 401, 403]
@@ -125,7 +125,7 @@ class TestCameraEvents:
         mock_frigate_client,
         mock_auth_bypass
     ):
-        """Testet GET /api/camera/events mit Limit"""
+        """GET /api/camera/events with a limit"""
         response = await async_client.get("/api/camera/events?limit=5")
 
         assert response.status_code in [200, 401, 403]
@@ -136,7 +136,7 @@ class TestCameraEvents:
 # ============================================================================
 
 class TestCameraList:
-    """Tests für Kamera-Liste"""
+    """Tests for the camera list"""
 
     @pytest.mark.integration
     async def test_list_cameras(
@@ -145,7 +145,7 @@ class TestCameraList:
         mock_frigate_client,
         mock_auth_bypass
     ):
-        """Testet GET /api/camera/cameras"""
+        """GET /api/camera/cameras"""
         response = await async_client.get("/api/camera/cameras")
 
         assert response.status_code in [200, 401, 403]
@@ -160,7 +160,7 @@ class TestCameraList:
         async_client: AsyncClient,
         mock_auth_bypass
     ):
-        """Testet Fehler bei Kamera-Liste abrufen"""
+        """An error while fetching the camera list"""
         with patch('ha_glue.api.routes.camera.frigate') as mock:
             mock.get_cameras = AsyncMock(side_effect=Exception("Frigate not available"))
 
@@ -174,7 +174,7 @@ class TestCameraList:
 # ============================================================================
 
 class TestSnapshots:
-    """Tests für Snapshots"""
+    """Tests for snapshots"""
 
     @pytest.mark.integration
     async def test_get_snapshot(
@@ -183,7 +183,7 @@ class TestSnapshots:
         mock_frigate_client,
         mock_auth_bypass
     ):
-        """Testet GET /api/camera/snapshot/{event_id}"""
+        """GET /api/camera/snapshot/{event_id}"""
         response = await async_client.get("/api/camera/snapshot/event-1")
 
         assert response.status_code in [200, 401, 403]
@@ -196,7 +196,7 @@ class TestSnapshots:
         async_client: AsyncClient,
         mock_auth_bypass
     ):
-        """Testet GET /api/camera/snapshot für nicht-existentes Event"""
+        """GET /api/camera/snapshot for an event that does not exist"""
         with patch('ha_glue.api.routes.camera.frigate') as mock:
             mock.get_snapshot = AsyncMock(return_value=None)
 
@@ -210,7 +210,7 @@ class TestSnapshots:
 # ============================================================================
 
 class TestLatestEvents:
-    """Tests für neueste Events nach Label"""
+    """Tests for the latest events by label"""
 
     @pytest.mark.integration
     async def test_get_latest_by_label(
@@ -219,7 +219,7 @@ class TestLatestEvents:
         mock_frigate_client,
         mock_auth_bypass
     ):
-        """Testet GET /api/camera/latest/{label}"""
+        """GET /api/camera/latest/{label}"""
         response = await async_client.get("/api/camera/latest/person")
 
         assert response.status_code in [200, 401, 403]
@@ -234,7 +234,7 @@ class TestLatestEvents:
         mock_frigate_client,
         mock_auth_bypass
     ):
-        """Testet GET /api/camera/latest mit Default-Label"""
+        """GET /api/camera/latest with the default label"""
         # Default label is 'person'
         response = await async_client.get("/api/camera/latest/person")
 
@@ -246,7 +246,7 @@ class TestLatestEvents:
 # ============================================================================
 
 class TestCameraErrorHandling:
-    """Tests für Fehlerbehandlung"""
+    """Tests for error handling"""
 
     @pytest.mark.integration
     async def test_frigate_connection_error(
@@ -254,7 +254,7 @@ class TestCameraErrorHandling:
         async_client: AsyncClient,
         mock_auth_bypass
     ):
-        """Testet Fehler bei Frigate-Verbindungsproblem"""
+        """An error on a Frigate connection problem"""
         with patch('ha_glue.api.routes.camera.frigate') as mock:
             mock.get_events = AsyncMock(side_effect=Exception("Connection refused"))
 
@@ -268,7 +268,7 @@ class TestCameraErrorHandling:
         async_client: AsyncClient,
         mock_auth_bypass
     ):
-        """Testet Fehler beim Snapshot-Abruf"""
+        """An error while fetching a snapshot"""
         with patch('ha_glue.api.routes.camera.frigate') as mock:
             mock.get_snapshot = AsyncMock(side_effect=Exception("Snapshot error"))
 
@@ -282,7 +282,7 @@ class TestCameraErrorHandling:
 # ============================================================================
 
 class TestCameraPermissions:
-    """Tests für Berechtigungen"""
+    """Tests for permissions"""
 
     @pytest.mark.integration
     async def test_events_requires_cam_view(
@@ -290,7 +290,7 @@ class TestCameraPermissions:
         async_client: AsyncClient,
         mock_frigate_client
     ):
-        """Testet, dass Events cam.view Permission erfordert"""
+        """Events require the cam.view permission"""
         # Without auth bypass, should require permission
         response = await async_client.get("/api/camera/events")
 
@@ -303,7 +303,7 @@ class TestCameraPermissions:
         async_client: AsyncClient,
         mock_frigate_client
     ):
-        """Testet, dass Snapshots cam.full Permission erfordert"""
+        """Snapshots require the cam.full permission"""
         response = await async_client.get("/api/camera/snapshot/event-1")
 
         # Either 200 (if auth disabled) or 401/403

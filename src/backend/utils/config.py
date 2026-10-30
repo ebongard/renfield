@@ -101,7 +101,7 @@ class Settings(BaseSettings):
     ollama_rag_model: str = "llama3.2:latest"   # Default for dev; recommended: qwen3:14b
     ollama_embed_model: str = "nomic-embed-text" # Default for dev; recommended: qwen3-embedding:4b (2560 dim)
     ollama_intent_model: str = "llama3.2:3b"    # Default for dev; recommended: qwen3:8b
-    ollama_num_ctx: int = 32768                   # Context window für alle Ollama-Calls
+    ollama_num_ctx: int = 32768                   # Context window for every Ollama call
     ollama_connect_timeout: float = 10.0          # TCP connect timeout in seconds (fast-fail when host is down)
     ollama_read_timeout: float = 300.0            # Read timeout for long LLM responses
     ollama_fallback_url: str = ""                 # Fallback Ollama URL if primary is unreachable (e.g. http://host.docker.internal:11434)
@@ -423,7 +423,7 @@ class Settings(BaseSettings):
     excerpts. This switch opens exactly one line, and only that one.
 
     Turn it on for a diagnosis, run the query in question, turn it off.
-    Am 2026-10-26 gebraucht: `scanne nach x-idra` griff reproduzierbar zur
+    Used on 2026-10-26: `scanne nach x-idra` reproducibly reached for the
     search, and the input signature proved reproducibility -- but WHAT was in
     the prompt could not be read anywhere, and every reconstruction (6, then 10
     of 33 tools) chose correctly and therefore proved nothing."""
@@ -1793,9 +1793,9 @@ class Settings(BaseSettings):
 
     # === Proactive Notifications ===
     proactive_enabled: bool = False                    # Master-Switch (opt-in)
-    proactive_suppression_window: int = 60             # Dedup-Fenster in Sekunden
-    proactive_tts_default: bool = True                 # TTS standardmäßig an
-    proactive_notification_ttl: int = 86400            # Ablauf in Sekunden (24h)
+    proactive_suppression_window: int = 60             # Dedup window in seconds
+    proactive_tts_default: bool = True                 # TTS on by default
+    proactive_notification_ttl: int = 86400            # Expiry in seconds (24h)
 
     # Phase 2: Notification Intelligence
     proactive_semantic_dedup_enabled: bool = False

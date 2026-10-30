@@ -14,7 +14,7 @@ filters ``is_active`` without it.
 so every caller's SQL is exactly what it was before the columns existed. That
 is how Stufe 1 is verified (§11: "Golden-SQL … byte-identisch").
 
-**On changes no result in Stufe 1.** Nothing sets ``valid_to`` yet, so
+**Changes nothing in Stufe 1.** Nothing sets ``valid_to`` yet, so
 ``valid_to IS NULL`` holds for every row. The switch only arms the filter for
 the Stufe 2 detector, which needs its own explicit go.
 

@@ -617,15 +617,15 @@ class TestCancellationAuditRow:
 
 
 # =============================================================================
-# Die Route reicht die Identitätsgrundlage durch (2026-10-29)
+# The route passes the identity basis through (2026-10-29)
 # =============================================================================
 
 
 class TestTheRouteCarriesTheIdentityBasis:
-    """🛑 Die Spalten zu schreiben nützt nichts, wenn die Route sie nicht
-    weitergibt — und ein VERTAUSCHEN der beiden fiele Pydantic nicht auf,
-    solange beide einen String tragen. Darum am Feldinhalt geprüft, nicht
-    daran, dass die Antwort überhaupt entsteht.
+    """🛑 Writing the columns is of no use if the route does not pass them on
+    -- and SWAPPING the two would not be noticed by Pydantic as long as both
+    carry a string. So this is checked on the field content, not on the answer
+    coming into being at all.
     """
 
     def _zeile(self, **über):
@@ -652,8 +652,9 @@ class TestTheRouteCarriesTheIdentityBasis:
 
         monkeypatch.setattr(
             route, "list_audit_for_user", AsyncMock(return_value=[zeile]))
-        # 🛑 limit/offset ausdrücklich: ruft man die Funktion direkt, sind die
-        # Vorgaben `Query(...)`-Objekte und landen unverändert in der Antwort.
+        # 🛑 limit/offset explicitly: calling the function directly leaves
+        # the defaults as `Query(...)` objects, which land in the answer
+        # unchanged.
         antwort = await route.list_federation_audit(
             limit=50, offset=0, peer_pubkey=None,
             current_user=SimpleNamespace(id=1))
@@ -669,9 +670,9 @@ class TestTheRouteCarriesTheIdentityBasis:
     @pytest.mark.asyncio
     @pytest.mark.unit
     async def test_a_swap_would_be_visible(self, monkeypatch):
-        """Negativkontrolle zum Test darüber: mit getauschten Werten in der
-        ZEILE müssen auch die Felder getauscht herauskommen. Wäre die Route
-        verdrahtet statt durchreichend, blieben beide gleich."""
+        """Negative control for the test above: with the values swapped in
+        the ROW, the fields have to come out swapped too. Were the route
+        hard-wired instead of passing through, both would stay the same."""
         e = await self._aufrufen(
             self._zeile(direction="asked", identity_basis="peer_tier"),
             monkeypatch)
@@ -681,9 +682,9 @@ class TestTheRouteCarriesTheIdentityBasis:
     @pytest.mark.asyncio
     @pytest.mark.unit
     async def test_a_legacy_row_keeps_its_None(self, monkeypatch):
-        """🛑 Bestandszeilen und Frager-Zeilen tragen `None`. Die Route darf
-        daraus NICHT "peer_tier" machen — das behauptete die engere Stufe für
-        Züge, die mit voller Reichweite liefen."""
+        """🛑 Existing rows and asking-side rows carry `None`. The route must
+        NOT turn that into "peer_tier" -- that would assert the narrower tier
+        for turns that ran with full reach."""
         e = await self._aufrufen(
             self._zeile(direction="asked", identity_basis=None), monkeypatch)
         assert e.identity_basis is None

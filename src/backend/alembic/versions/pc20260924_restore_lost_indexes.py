@@ -4,59 +4,60 @@ Revision ID: pc20260924_restore_idx
 Revises: pc20260922_conv_meeting_atoms
 Create Date: 2026-09-24
 
-WARUM ES DIESE MIGRATION GIBT
------------------------------
-`services/database.py:_ensure_alembic_baseline()` erzeugt das Schema einer
-Neuinstallation aus den SQLAlchemy-Modellen (`create_all`) und STEMPELT dann den
-Alembic-Kopf. Der Docstring dort sagt es selbst: „the 41-migration history is
-skipped". Folge: alles, was eine Migration per `op.execute("CREATE INDEX …")`
-anlegt, entsteht auf einer Neuinstallation NIE — und wird nie nachgeholt, weil
-der Stempel behauptet, die Migration sei angewandt.
+WHY THIS MIGRATION EXISTS
+-------------------------
+`services/database.py:_ensure_alembic_baseline()` builds a fresh install's
+schema from the SQLAlchemy models (`create_all`) and then STAMPS the Alembic
+head. The docstring there says it itself: "the 41-migration history is
+skipped". Consequence: everything a migration creates via
+`op.execute("CREATE INDEX ...")` NEVER comes into being on a fresh install --
+and is never caught up, because the stamp claims the migration was applied.
 
-Nachgewiesen am 2026-09-24, 37 Datenpunkte ohne eine Ausnahme: jeder per
-Roh-SQL angelegte Index aus einer Migration bis 2026-04-02 fehlt auf BEIDEN
-Instanzen, jeder ab 2026-04-25 ist vorhanden. Die Haushaltsdatenbank wurde am
-2026-04-18 aufgesetzt. Der Schnitt liegt exakt dort.
+Established on 2026-09-24, 37 data points without a single exception: every
+index created by raw SQL in a migration up to 2026-04-02 is missing on BOTH
+instances, every one from 2026-04-25 on is present. The household database was
+set up on 2026-04-18. The cut lies exactly there.
 
-Die Ironie: `models/database.py:748` schreibt ausdrücklich „Vector-search index
-is created at migration time, NOT by SQLAlchemy `create_all`" und notiert das
-exakte DDL darunter. Der Code weiß es — der Bootstrap-Pfad hebelt es aus.
+The irony: `models/database.py:748` states explicitly "Vector-search index
+is created at migration time, NOT by SQLAlchemy `create_all`" and records the
+exact DDL below it. The code knows it -- the bootstrap path defeats it.
 
-Diese Migration REPARIERT die bestehenden Instanzen. Sie behebt NICHT die
-Ursache: die nächste Neuinstallation verliert dasselbe erneut. Dafür braucht es
-eine Basis-Migration, die das Grundschema selbst erzeugt — eigenes Vorhaben,
-denn die Kette läuft heute nicht aus dem Leeren (die Wurzelmigration
-`9a0d8ccea5b0` ist ein leerer Rumpf, `rooms` legt keine Migration je an).
+This migration REPAIRS the existing instances. It does NOT fix the cause: the
+next fresh install loses the same thing again. That needs a baseline migration
+which creates the base schema itself -- its own undertaking, because the chain
+does not run from empty today (the root migration `9a0d8ccea5b0` is an empty
+body, and `rooms` is created by no migration at all).
 
-ZWEI FALLEN, DIE BEIM ABSCHREIBEN DES ALTEN DDL ZUGESCHLAGEN HÄTTEN
--------------------------------------------------------------------
-1. **`atttypmod - 4` ist falsch.** pgvector legt die Dimension DIREKT im typmod
-   ab; der `+4`-Versatz ist die varlena-Konvention (varchar), nicht die von
-   `vector`. Live gemessen: `vector(2560)` hat `atttypmod = 2560`.
-   `pc20260402_add_episodic_hnsw_index.py:60` rechnet `atttypmod - 4` und hätte
-   einen Index auf `halfvec(2556)` gebaut — Abfragen casten auf `halfvec(2560)`,
-   der Index wäre also NIE benutzbar gewesen: gebaut, bei jedem Schreibvorgang
-   gepflegt, nutzlos. `y8z9a0b1c2d3` macht es richtig und liest roh.
-2. **`vector_cosine_ops` geht bei 2560 Dimensionen nicht.** pgvector begrenzt
-   den regulären `vector`-Typ beim Indizieren auf 2000. Das alte DDL für
-   `idx_intent_corrections_embedding_hnsw` nutzt `vector_cosine_ops` — das
-   stammt aus der Zeit von 768-dim-Embeddings und ist heute schlicht nicht
-   ausführbar. Deshalb entscheidet hier die GEMESSENE Dimension über die
-   Operatorklasse, statt sie festzuschreiben.
+TWO TRAPS THAT WOULD HAVE SPRUNG WHEN COPYING THE OLD DDL
+---------------------------------------------------------
+1. **`atttypmod - 4` is wrong.** pgvector stores the dimension DIRECTLY in the
+   typmod; the `+4` offset is the varlena convention (varchar), not the one
+   `vector` uses. Measured live: `vector(2560)` has `atttypmod = 2560`.
+   `pc20260402_add_episodic_hnsw_index.py:60` computes `atttypmod - 4` and
+   would have built an index on `halfvec(2556)` -- queries cast to
+   `halfvec(2560)`, so the index would NEVER have been usable: built,
+   maintained on every write, useless. `y8z9a0b1c2d3` does it right and reads
+   raw.
+2. **`vector_cosine_ops` does not work at 2560 dimensions.** pgvector caps the
+   regular `vector` type at 2000 when indexing. The old DDL for
+   `idx_intent_corrections_embedding_hnsw` uses `vector_cosine_ops` -- that
+   dates from the time of 768-dim embeddings and today is simply not
+   executable. So here the MEASURED dimension decides the operator class,
+   instead of the class being pinned.
 
-BEWUSST NICHT WIEDERHERGESTELLT
--------------------------------
-`ix_kg_entities_embedding` (aus `g7h8i9j0k1l3`) ist der VORGÄNGER von
-`idx_kg_entities_embedding_hnsw`: `vector_cosine_ops` auf einer 2560-dim-Spalte,
-heute nicht anlegbar und durch die halfvec-Fassung ersetzt. Ihn „der
-Vollständigkeit halber" mitzunehmen hieße, einen toten Index zu bauen.
+DELIBERATELY NOT RESTORED
+-------------------------
+`ix_kg_entities_embedding` (from `g7h8i9j0k1l3`) is the PREDECESSOR of
+`idx_kg_entities_embedding_hnsw`: `vector_cosine_ops` on a 2560-dim column,
+not creatable today and replaced by the halfvec version. Taking it along "for
+completeness" would mean building a dead index.
 
-SPERRDAUER
-----------
-Gemessen auf der Baubox an 5 000 Zeilen × 2560 Dimensionen (Produktionsgröße:
-2 847–4 813 Zeilen): **762 ms** je HNSW-Index. Alle acht zusammen bleiben im
-Sekundenbereich, deshalb gewöhnliches `CREATE INDEX` in der Transaktion und
-kein `CONCURRENTLY` (das ginge in einer Alembic-Transaktion ohnehin nicht).
+LOCK DURATION
+-------------
+Measured on the build box at 5 000 rows x 2560 dimensions (production size:
+2 847-4 813 rows): **762 ms** per HNSW index. All eight together stay inside
+seconds, hence an ordinary `CREATE INDEX` inside the transaction and no
+`CONCURRENTLY` (which would not work inside an Alembic transaction anyway).
 """
 import logging
 from typing import Sequence, Union

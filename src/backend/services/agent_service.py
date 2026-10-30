@@ -992,17 +992,17 @@ def _tools_pinned_by_correction(
     The "correct & re-answer" menu groups the MCP tools BY SERVER: the label
     is the server name ("Scanner") and the submitted value is the FIRST tool of
     that server, standing in
-    (`IntentCorrectionButton.tsx:57-67`). Wer „Scanner" waehlt, meint also den
+    (`IntentCorrectionButton.tsx:57-67`). So whoever picks "Scanner" means the
     server -- not the stand-in that happens to sit first. Forcing exactly that
     one would mean reinterpreting a correction as a different tool.
 
-    - `mcp.<server>.<tool>` -> ALLE Werkzeuge dieses Servers
-    - `internal.<x>`        -> genau dieses Werkzeug (kein Server dahinter)
-    - alles andere (`knowledge.ask`, `general.conversation`, Unbekanntes)
+    - `mcp.<server>.<tool>` -> ALL tools of that server
+    - `internal.<x>`        -> exactly this tool (no server behind it)
+    - anything else (`knowledge.ask`, `general.conversation`, unknown values)
       -> nothing; the role keeps deciding there
 
-    Am 2026-10-26 gemeldet: „wenn ich über falsch erkannt den scanner
-    pick, that should have an effect."
+    Reported on 2026-10-26: "wenn ich über falsch erkannt den scanner
+    auswähle, sollte das eine Auswirkung haben."
     """
     if not corrected_intent:
         return []
@@ -1027,8 +1027,7 @@ def preselect_input_signature(preselect_prompt: str) -> str:
 
     With the fingerprint the question is settled at a glance: same signature
     and a different result means the input was identical; a different signature
-    means the list changed (order,
-    Zugang oder Wegfall eines Werkzeugs).
+    means the list changed (order, or a tool arriving or dropping out).
 
     What is hashed is the COMPOSED prompt, nothing selected out of it. Two
     earlier versions were too narrow, and each time the claim "same signature
@@ -1039,8 +1038,8 @@ def preselect_input_signature(preselect_prompt: str) -> str:
       left the signature untouched.
     - Version 2 took `lang` + `tool_list`. The MESSAGE was missing, and the log
       line only shows `message[:60]`: two queries agreeing in the first 60
-      characters and diverging after would have looked like an identical
-      UND identische Signatur über zwei verschiedene Prompts gezeigt. Dazu war
+      characters and diverging after would have shown an identical message
+      AND an identical signature across two different prompts. On top of that
       `lang` is the REQUESTED code, not the resolved template -- for a
       language without an entry of its own `prompt_manager` falls back to the
       default, and the signature would have claimed a change where the prompt
@@ -1063,8 +1062,7 @@ def preselect_tool_line(name: str, tool) -> str:
     ONE pure function, so test and production use the same one. The first
     version of the tests rebuilt the line themselves -- and was therefore
     tautological: both negative controls stayed green although the production
-    path was cut apart. A test that checks its own copy
-    beweist nichts.
+    path was cut apart. A test that checks its own copy proves nothing.
 
     The operator's `tool_hints` entry goes along UNTRUNCATED; only the
     vendor's generic description is cut to `_PRESELECT_DESC_CHARS`. The hint
@@ -1233,10 +1231,9 @@ class AgentService:
         # and the agent reached for `mcp.paperless.search_documents` -- it
         # SEARCHED instead of scanning. The hint NAMED "scanne die Seiten nach
         # <Ziel>" verbatim back then (today that phrasing only survives in the
-        # NOT clause of `route_scan`), but it sat behind an
-        # ueber 500 Zeichen langen
-        # English description and therefore beyond the 80 characters this
-        # layer saw. The agent itself sees the full text -- it just never got
+        # NOT clause of `route_scan`), but it sat behind an English
+        # description over 500 characters long and therefore beyond the 80
+        # characters this layer saw. The agent itself sees the full text -- it just never got
         # the tool offered.
         # ONE list for both. `tool_names` can carry names whose tool is
         # `None`; those drop out here and are then NOT in the prompt. If the
@@ -1280,13 +1277,12 @@ class AgentService:
         # The sink in `main.py` is global and single-level; a DEBUG run would
         # also write stored messages and memory excerpts from other modules.
         # This switch opens exactly this line. It is dark because the prompt
-        # carries the user's
-        # Nutzers UNGEKUERZT traegt.
+        # carries the user's message UNTRUNCATED.
         if settings.agent_preselect_prompt_dump:
             # `{!r}` and not `{}`: the prompt carries the user's message
-            # VERBATIM, and a newline in it could otherwise
-            # beliebige Protokollzeilen faelschen. Dieselbe Begruendung wie
-            # as with the correction value and `chat_handler.py:1733`. Side
+            # VERBATIM, and a newline in it could otherwise forge arbitrary
+            # log lines. The same reasoning as with the correction value and
+            # `chat_handler.py:1733`. Side
             # effect: the excerpt stays ONE line and is therefore greppable.
             logger.info(
                 "Tool pre-selection PROMPT (in={}): {!r}",

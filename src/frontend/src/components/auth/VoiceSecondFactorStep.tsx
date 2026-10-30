@@ -71,12 +71,12 @@ export default function VoiceSecondFactorStep({ ticket, onVerified, onCancel }: 
       form.append('ticket', ticket);
       form.append('audio_file', rec.blob, 'second-factor.webm');
       // The header MUST be set. `apiClient` carries
-      // `Content-Type: application/json` als Voreinstellung (`utils/axios.ts`),
+      // `Content-Type: application/json` as its default (`utils/axios.ts`),
       // and axios only strips that for FormData when it is NOT set
       // explicitly. Without this line the body is multipart while the header
       // claims JSON, and FastAPI answers 422 -- the recording is never
       // checked.
-      // Alle vier anderen Uploads im Projekt machen es genauso
+      // All four other uploads in the project do the same
       // (`api/resources/speakers.ts`, `useAudioRecording`, `useDocumentUpload`).
       const { data } = await apiClient.post('/api/auth/voice', form, {
         headers: { 'Content-Type': 'multipart/form-data' },

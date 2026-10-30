@@ -665,23 +665,23 @@ async def act_on_verdict(
     (uncertain — pending proposal filed, parent parked), or ``'single'``
     (caller proceeds with / hands back to normal ingest).
 
-    🛑 ``force_review`` — EIN WIEDERANSTOSS LEGT VOR, ER FÜHRT NICHT AUS (#1372)
-    ==========================================================================
-    Beim ERSTEN Durchlauf ist Auto-Schneiden vertretbar: niemand hat das
-    Dokument je gesehen, es ist noch nirgends abgelegt, und ein falscher
-    Schnitt kostet eine Wiederholung. Bei einem WIEDERANSTOSS ist das anders —
-    das Dokument steht in Paperless, trägt vielleicht von Hand gepflegte Tags,
-    und jemand hat es angesehen. Dort gehört die Entscheidung dem Menschen.
+    🛑 ``force_review`` -- A RE-RUN PROPOSES, IT DOES NOT EXECUTE (#1372)
+    ====================================================================
+    On the FIRST run auto-splitting is defensible: nobody has ever seen the
+    document, it is not filed anywhere yet, and a wrong split costs a repeat.
+    On a RE-RUN that is different -- the document sits in Paperless, may carry
+    hand-maintained tags, and somebody has looked at it. There the decision
+    belongs to the person.
 
-    Der Unterschied ist am 2026-10-04 teuer geworden: eine lesende Probe ergab
-    Zuversicht 0,0 (also Vorlage), der echte Lauf kam über die Schwelle und
-    schnitt sofort — acht Dokumente angelegt, Original archiviert, ohne
-    Bestätigung, obwohl eine Vorlage angekündigt war. Derselbe Aufruf gab in
-    drei Durchläufen 9 Stücke, 8 Stücke und Zuversicht 0,0.
+    The difference got expensive on 2026-10-04: a read-only probe returned
+    confidence 0.0 (so: propose), the real run came out above the threshold and
+    split immediately -- eight documents created, the original archived, with
+    no confirmation, although a proposal had been announced. The same call gave
+    9 pieces, 8 pieces and confidence 0.0 across three runs.
 
-    🛑 Aus einer Leseprobe ist NICHT ableitbar, was der nächste Lauf tut. Darum
-    hängt die Entscheidung bei einem Wiederanstoß nicht an der Zuversicht,
-    sondern ist festgelegt: immer Vorlage.
+    🛑 What the next run will do is NOT derivable from a read-only probe. So on
+    a re-run the decision does not hang on the confidence but is fixed: always
+    propose.
     """
     if verdict.kind != VERDICT_MULTI:
         return "single"

@@ -3084,18 +3084,17 @@ class MCPManager:
     def is_federation_server(self, name: str) -> bool:
         """Is this a paired-peer server (`peer_<id>`), not a configured one?
 
-        🛑 EIN Begriff, EINE Stelle. Der Transport steht an `state.config`, nicht
-        an `MCPToolInfo` — ohne dieses Praedikat muesste jeder Aufrufer in
-        `self._servers` greifen, also in privaten Zustand. Gemessen am
-        2026-10-29: `MCPToolInfo` traegt `server_name`, `original_name`,
-        `namespaced_name`, `description`, `input_schema`, `hint` — keinen
-        Transport.
+        🛑 ONE concept, ONE place. The transport sits on `state.config`, not on
+        `MCPToolInfo` -- without this predicate every caller would have to
+        reach into `self._servers`, which is private state. Measured on
+        2026-10-29: `MCPToolInfo` carries `server_name`, `original_name`,
+        `namespaced_name`, `description`, `input_schema`, `hint` -- no
+        transport.
 
-        🛑 Und NICHT am Namenspraefix erkennen. `peer_` ist in
-        `peer_mcp_registry.py` definiert; ein Vergleich darauf bindet zwei
-        getrennt gepflegte Dateien aneinander und kollidiert mit einem
-        kuenftigen echten Server, der so heisst. Der Transport ist die
-        Eigenschaft, die zaehlt.
+        🛑 And do NOT recognise it by the name prefix. `peer_` is defined in
+        `peer_mcp_registry.py`; comparing against it ties two separately
+        maintained files together and collides with a future real server
+        called that. The transport is the property that counts.
         """
         state = self._servers.get(name)
         return (

@@ -1,5 +1,5 @@
 """
-Action Executor - Führt erkannte Intents aus
+Action executor -- carries out recognised intents
 
 All external integrations (Home Assistant, n8n, camera, weather, search, etc.)
 are executed via MCP servers. Only internal intents (knowledge/RAG, general
@@ -28,7 +28,7 @@ class ActionExecutor:
         progress_sink=None,
     ) -> dict:
         """
-        Führt einen Intent aus
+        Carry out one intent
 
         Args:
             intent_data: {

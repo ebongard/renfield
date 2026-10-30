@@ -167,7 +167,7 @@ export default function LinkIdentityResponderModal({ isOpen, onClose, onLinked }
             <Fingerprint className="w-3 h-3" aria-hidden="true" />
             <code className="tabular-nums">{parsedOffer.initiator_pubkey.slice(0, 24)}…</code>
           </div>
-          {/* Die Warnung steht VOR dem Knopf. Dieser Klick ist die Zustimmung. */}
+          {/* The warning stands BEFORE the button. This click is the consent. */}
           <Alert variant="warning">{t('circles.linkReachWarning')}</Alert>
           <div className="flex justify-end gap-2">
             <button

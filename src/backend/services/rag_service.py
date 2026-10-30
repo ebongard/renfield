@@ -98,21 +98,21 @@ class DuplicateDocumentError(Exception):
 
 class RAGService(AtomOwnerResolverMixin):
     """
-    RAG Service für Dokument-basierte Anfragen.
+    RAG service for document-based queries.
 
-    Bietet:
-    - Dokument-Ingestion (Upload, Parsing, Chunking, Embedding)
-    - Similarity Search (Vektor-basierte Suche)
-    - Kontext-Generierung für LLM-Anfragen
-    - Dokument- und Knowledge-Base-Management
+    Provides:
+    - document ingestion (upload, parsing, chunking, embedding)
+    - similarity search (vector-based)
+    - context generation for LLM queries
+    - document and knowledge-base management
     """
 
     def __init__(self, db: AsyncSession):
         """
-        Initialisiert den RAG Service.
+        Initializes the RAG service.
 
         Args:
-            db: AsyncSession für Datenbankoperationen
+            db: AsyncSession for database operations
         """
         self.db = db
         self.processor = DocumentProcessor()
@@ -136,17 +136,17 @@ class RAGService(AtomOwnerResolverMixin):
 
     async def get_embedding(self, text: str) -> list[float]:
         """
-        Generiert Embedding für Text mit Ollama.
+        Generates an embedding for the text with Ollama.
 
         Args:
-            text: Text für Embedding
+            text: Text to embed
 
         Returns:
-            Liste von Floats (Dimensionen je nach Embedding-Modell)
+            A list of floats (dimensions depend on the embedding model)
 
         Raises:
-            asyncio.TimeoutError: wenn Ollama nicht innerhalb rag_embedding_timeout antwortet
-            Exception: bei Verbindungsproblemen zu Ollama
+            asyncio.TimeoutError: when Ollama does not answer within rag_embedding_timeout
+            Exception: on connection problems with Ollama
         """
         try:
             client = await self._get_ollama_client()
@@ -849,7 +849,7 @@ class RAGService(AtomOwnerResolverMixin):
         user_id: int | None = None,
     ) -> list[dict[str, Any]]:
         """
-        Sucht relevante Chunks für eine Anfrage.
+        Searches for the chunks relevant to a query.
 
         Lane C: always delegates to the extracted RAGRetrieval module which
         applies the circle-tier WHERE filter (`circle_sql.document_chunks_circles_filter`).
@@ -878,7 +878,7 @@ class RAGService(AtomOwnerResolverMixin):
         user_id: int | None = None,
     ) -> str:
         """
-        Erstellt einen formatierten Kontext-String für das LLM.
+        Builds a formatted context string for the LLM.
 
         Lane C: always delegates to RAGRetrieval (circle-aware). See search()
         for the rationale.
@@ -1085,19 +1085,19 @@ class RAGService(AtomOwnerResolverMixin):
         target_kb_id: int
     ) -> int:
         """
-        Verschiebt Dokumente in eine andere Knowledge Base.
+        Moves documents into another knowledge base.
 
         Args:
-            document_ids: Liste der Dokument-IDs
-            target_kb_id: Ziel-Knowledge-Base-ID
+            document_ids: List of document ids
+            target_kb_id: Id of the target knowledge base
 
         Returns:
-            Anzahl tatsächlich verschobener Dokumente
+            The number of documents actually moved
 
         Raises:
-            ValueError: wenn Ziel-KB nicht existiert oder inaktiv ist
+            ValueError: when the target knowledge base does not exist or is inactive
         """
-        # Validiere Ziel-KB
+        # Validate the target knowledge base
         target_kb = await self.get_knowledge_base(target_kb_id)
         if not target_kb:
             raise ValueError(f"Knowledge Base {target_kb_id} nicht gefunden")
@@ -1281,7 +1281,7 @@ class RAGService(AtomOwnerResolverMixin):
         top_k: int = 5
     ) -> list[dict[str, Any]]:
         """
-        Sucht nur innerhalb eines bestimmten Dokuments.
+        Searches only inside one specific document.
         """
         query_embedding = await self.get_embedding(query)
         embedding_str = f"[{','.join(map(str, query_embedding))}]"

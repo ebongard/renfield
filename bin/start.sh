@@ -74,7 +74,7 @@ else
     docker exec renfield-ollama ollama pull "$OLLAMA_MODEL"
 fi
 
-# Zusammenfassung
+# Summary
 echo ""
 echo "================================================"
 echo -e "${GREEN}✓ Renfield ist bereit!${NC}"

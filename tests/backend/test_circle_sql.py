@@ -105,31 +105,30 @@ class TestCirclesFilterClause:
 
 
 class TestPeerScoped:
-    """Eine foederierte Anfrage (`peer=PeerScope(...)`) laesst die Zweige
-    „Eigentuemer-Gleichheit" und „ausdrueckliche Freigabe" weg und nimmt die
-    Stufe aus der PAARUNG.
+    """A federated request (`peer=PeerScope(...)`) leaves out the "owner
+    equality" and "explicit grant" branches and takes the tier from the
+    PAIRING.
 
-    🛑 Bis 2026-10-27 war das ein `peer_scoped: bool`, und die Stufe kam aus
-    einem EXISTS auf `circle_memberships.member_user_id = :asker_id`. Dort
-    stand die ENTFERNTE Nutzerkennung, in einer Spalte mit Fremdschluessel auf
-    die LOKALE `users.id`. Am 2026-10-27 brach das auf x-idra den Schluessel
-    (500) und band im Haushalt still die falsche Person. Diese Testklasse
-    pruefte die alte Form woertlich und ist bewusst mitgewandert — sie ist die
-    genaueste Vorgabe fuer den Umbau.
+    🛑 Until 2026-10-27 this was a `peer_scoped: bool`, and the tier came from
+    an EXISTS on `circle_memberships.member_user_id = :asker_id`. What stood
+    there was the REMOTE user id, in a column with a foreign key on the LOCAL
+    `users.id`. On 2026-10-27 that broke the key on x-idra (500) and silently
+    bound the wrong person in the household. This test class checked the old
+    form verbatim and was deliberately moved along with it -- it is the most
+    precise specification for the rework.
     """
 
     PEER = PeerScope(owner_id=7, tier=2)
 
     @staticmethod
     def _nennt_fragenden(clause: str) -> bool:
-        """Kommt `:asker_id` ALLEIN vor — nicht als Praefix von
+        """Does `:asker_id` occur ON ITS OWN -- not as a prefix of
         `:asker_id_pub`, `:asker_id_peer_owner`, `:asker_id_peer_tier`?
 
-        🛑 Eine blosse Teilzeichenketten-Pruefung kann das seit dem Umbau NICHT
-        mehr: der neue Zweig enthaelt `e.user_id = :asker_id_peer_owner`, und
-        `"e.user_id = :asker_id"` ist davon ein Praefix. Die erste Fassung
-        dieses Tests behauptete darum etwas, das sie nicht unterscheiden
-        konnte.
+        🛑 Since the rework a plain substring check can NO LONGER do this: the
+        new branch contains `e.user_id = :asker_id_peer_owner`, and
+        `"e.user_id = :asker_id"` is a prefix of it. So the first version of
+        this test asserted something it could not distinguish.
         """
         return re.search(r":asker_id(?![_a-zA-Z0-9])", clause) is not None
 
@@ -142,7 +141,7 @@ class TestPeerScoped:
         assert "atom_explicit_grants" not in clause
 
     def test_peer_omits_owner_branch_with_kb_alias(self):
-        # Dokumentpfad: der Eigentuemer haengt an der verbundenen kb-Tabelle.
+        # Document path: the owner hangs off the joined kb table.
         clause = circles_filter_clause(
             table_alias="dc", owner_col="owner_id", source_table_value="documents",
             owner_table_alias="kb", source_id_expr="d.id", owner_atom_id_expr="d.atom_id",
@@ -150,11 +149,11 @@ class TestPeerScoped:
         )
         assert not self._nennt_fragenden(clause), clause
         assert "atom_explicit_grants" not in clause
-        # Der Null-KB-Rueckfall gehoert zum Eigentuemerzweig → ebenfalls weg.
+        # The null-KB fallback belongs to the owner branch -> also gone.
         assert "atoms da" not in clause
 
     def test_peer_reads_the_tier_from_the_PAIRING_not_a_membership(self):
-        """🛑 Der Kern des Fixes."""
+        """🛑 The core of the fix."""
         clause = circles_filter_clause(table_alias="e", source_table_value="kg_entities", peer=self.PEER)
         assert "circle_memberships" not in clause, (
             "Die Peer-Stufe darf nicht mehr aus einer Mitgliedschaft kommen:\n" + clause)
@@ -162,14 +161,14 @@ class TestPeerScoped:
         assert ":asker_id_peer_tier <= e.circle_tier" in clause
 
     def test_peer_binds_the_tier_to_the_OWNER_of_that_pairing(self):
-        """🛑 Ohne diese Bindung saehe der Peer seine Stufe bei JEDEM
-        Eigentuemer der Instanz — aus der Reparatur wuerde ein Leck."""
+        """🛑 Without this binding the peer would see its tier at EVERY owner
+        on the instance -- the repair would become a leak."""
         clause = circles_filter_clause(table_alias="e", source_table_value="kg_entities", peer=self.PEER)
         assert "e.user_id = :asker_id_peer_owner" in clause
 
     def test_peer_clause_is_exactly_two_branches(self):
         clause = circles_filter_clause(table_alias="e", source_table_value="kg_entities", peer=self.PEER)
-        # Beweisbar: (oeffentlich) ODER (dieser Eigentuemer UND seine Stufe).
+        # Provable: (public) OR (this owner AND its tier).
         assert clause.startswith("(") and clause.endswith(")")
         assert clause == (
             "(e.circle_tier = :asker_id_pub OR "
@@ -177,7 +176,7 @@ class TestPeerScoped:
         ), clause
 
     def test_default_is_byte_identical_to_no_kwarg(self):
-        # Regressionsriegel: ohne `peer` bleibt alles wie zuvor.
+        # Regression guard: without `peer` everything stays as before.
         for src in ("", "kg_entities"):
             assert (
                 circles_filter_clause(table_alias="e", source_table_value=src)
@@ -185,12 +184,12 @@ class TestPeerScoped:
             )
 
     def test_peer_params_carry_NO_asker_id_at_all(self):
-        """🛑 Im foederierten Fall gibt es keine fragende lokale Person.
+        """🛑 In the federated case there is no local person asking.
 
-        Entstuende `:asker_id` trotzdem, waere es eine unbenutzte Bindung, und
-        ein strikter `text(clause).bindparams()`-Aufrufer
-        (`kg_retrieval._resolve_entity_names`) wirft darauf. Wichtiger noch: die
-        Kennung waere wieder da, die der ganze Fehler war.
+        Were `:asker_id` to arise regardless, it would be an unused binding,
+        and a strict `text(clause).bindparams()` caller
+        (`kg_retrieval._resolve_entity_names`) raises on that. More
+        importantly: the id that was the whole defect would be back.
         """
         for wrapper in (
             kg_entities_circles_filter, kg_relations_circles_filter,
@@ -200,14 +199,14 @@ class TestPeerScoped:
             assert "asker_id" not in params, f"{wrapper.__name__}: {params}"
             assert "asker_id_src" not in params
             assert set(params) == {"asker_id_pub", "asker_id_peer_owner", "asker_id_peer_tier"}
-            # Jede ausgegebene Bindung muss im Text vorkommen (bindparams-sicher).
+            # Every binding handed out has to occur in the text (bindparams-safe).
             for key in params:
                 assert f":{key}" in clause, f"{key} ausgegeben, aber nicht im Text"
             assert params["asker_id_peer_owner"] == 7
             assert params["asker_id_peer_tier"] == 2
 
     def test_non_peer_params_still_include_src(self):
-        # Gegenrichtung: der normale Aufrufer behaelt die Freigabe-Bindung.
+        # The other direction: the ordinary caller keeps the grant binding.
         _, params = kg_entities_circles_filter(42)
         assert params.get("asker_id_src") == "kg_entities"
         assert params.get("asker_id") == 42
@@ -227,9 +226,9 @@ class TestPeerScoped:
         assert "atom_explicit_grants" not in clause
 
     def test_the_narrowest_tier_still_reaches_public(self):
-        """Stufe 4 ist die engste Gewaehrung — sie darf Oeffentliches sehen und
-        sonst nichts. Die Leiter laeuft gegen die Anschauung; dieser Test haelt
-        die Richtung fest, damit niemand sie beim Umbau dreht."""
+        """Tier 4 is the narrowest grant -- it may see public content and
+        nothing else. The ladder runs against intuition; this test pins the
+        direction down so nobody reverses it during a rework."""
         _, params = kg_entities_circles_filter(42, peer=PeerScope(owner_id=1, tier=4))
         assert params["asker_id_peer_tier"] == 4
         _, weit = kg_entities_circles_filter(42, peer=PeerScope(owner_id=1, tier=0))

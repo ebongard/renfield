@@ -1,10 +1,10 @@
 """
-Tests für Utility Module
+Tests for the utility modules
 
 Testet:
 - Config Settings
 - Audio Preprocessor
-- Weitere Hilfsfunktionen
+- Other helper functions
 """
 
 import os
@@ -17,11 +17,11 @@ import pytest
 # ============================================================================
 
 class TestConfigSettings:
-    """Tests für Config Settings"""
+    """Tests for the config settings"""
 
     @pytest.mark.unit
     def test_default_settings(self):
-        """Test: Default Settings werden geladen"""
+        """Test: the default settings are loaded"""
         from utils.config import Settings
 
         settings = Settings()
@@ -66,7 +66,7 @@ class TestConfigSettings:
 
     @pytest.mark.unit
     def test_env_override(self):
-        """Test: Environment Variables überschreiben Defaults"""
+        """Test: environment variables override the defaults"""
         with patch.dict(os.environ, {"OLLAMA_MODEL": "custom-model"}):
             from utils.config import Settings
 
@@ -90,11 +90,11 @@ class TestConfigSettings:
 # ============================================================================
 
 class TestSecretsAndDatabaseUrl:
-    """Tests für Secrets-Support und dynamischen DATABASE_URL-Aufbau"""
+    """Tests for secrets support and assembling DATABASE_URL dynamically"""
 
     @pytest.mark.unit
     def test_database_url_assembled_from_parts(self):
-        """Test: DATABASE_URL wird aus Einzelteilen zusammengebaut wenn nicht gesetzt"""
+        """Test: DATABASE_URL is assembled from the individual fields when unset"""
         from utils.config import Settings
 
         settings = Settings(
@@ -110,7 +110,7 @@ class TestSecretsAndDatabaseUrl:
 
     @pytest.mark.unit
     def test_database_url_explicit_takes_precedence(self):
-        """Test: Explizite DATABASE_URL hat Vorrang vor Einzelteilen"""
+        """Test: an explicit DATABASE_URL takes precedence over the individual fields"""
         from utils.config import Settings
 
         explicit_url = "postgresql://explicit:pass@host:5432/db"
@@ -123,7 +123,7 @@ class TestSecretsAndDatabaseUrl:
 
     @pytest.mark.unit
     def test_database_url_default_parts(self):
-        """Test: Default-Werte für Postgres-Einzelteile"""
+        """Test: default values for the individual Postgres fields"""
         from utils.config import Settings
 
         settings = Settings(database_url=None)
@@ -137,7 +137,7 @@ class TestSecretsAndDatabaseUrl:
 
     @pytest.mark.unit
     def test_secrets_dir_configured(self):
-        """Test: secrets_dir ist auf /run/secrets konfiguriert"""
+        """Test: secrets_dir is configured to /run/secrets"""
         from utils.config import Settings
 
         config = Settings.model_config
@@ -169,7 +169,7 @@ class TestSecretsAndDatabaseUrl:
 
     @pytest.mark.unit
     def test_postgres_password_from_env(self):
-        """Test: postgres_password kann per Environment-Variable gesetzt werden"""
+        """Test: postgres_password can be set via an environment variable"""
         with patch.dict(os.environ, {"POSTGRES_PASSWORD": "env-secret-pw"}):
             from utils.config import Settings
 
@@ -179,11 +179,11 @@ class TestSecretsAndDatabaseUrl:
 
     @pytest.mark.unit
     def test_secrets_from_file(self, tmp_path):
-        """Test: Secrets werden aus Dateien gelesen wenn secrets_dir existiert"""
+        """Test: secrets are read from files when secrets_dir exists"""
 
         from pydantic_settings import BaseSettings
 
-        # Erstelle temporäre Secret-Datei
+        # Create a temporary secret file
         secret_file = tmp_path / "test_secret"
         secret_file.write_text("file-based-secret")
 
@@ -193,7 +193,7 @@ class TestSecretsAndDatabaseUrl:
             class Config:
                 secrets_dir = str(tmp_path)
 
-        # Sicherstellen dass keine Env-Var den Test stört
+        # Make sure no environment variable disturbs the test
         env_clean = {k: v for k, v in os.environ.items() if k != "TEST_SECRET"}
         with patch.dict(os.environ, env_clean, clear=True):
             settings = TestSettings()
@@ -201,7 +201,7 @@ class TestSecretsAndDatabaseUrl:
 
     @pytest.mark.unit
     def test_env_var_overrides_secret_file(self, tmp_path):
-        """Test: Environment-Variable hat Vorrang vor Secret-Datei"""
+        """Test: an environment variable takes precedence over a secret file"""
         from pydantic_settings import BaseSettings
 
         secret_file = tmp_path / "secret_key"
@@ -223,7 +223,7 @@ class TestSecretsAndDatabaseUrl:
 # ============================================================================
 
 class TestRoomNameNormalizationEdgeCases:
-    """Zusätzliche Tests für Room Name Normalisierung"""
+    """Additional tests for room name normalization"""
 
     @pytest.mark.unit
     def test_numbers_preserved(self):
@@ -236,7 +236,7 @@ class TestRoomNameNormalizationEdgeCases:
 
     @pytest.mark.unit
     def test_mixed_case(self):
-        """Test: Mixed Case wird normalisiert"""
+        """Test: mixed case is normalized"""
         from ha_glue.services.room_service import normalize_room_name
 
         assert normalize_room_name("WohnZimmer") == "wohnzimmer"
@@ -271,7 +271,7 @@ class TestRoomNameNormalizationEdgeCases:
 # ============================================================================
 
 class TestDeviceIdGenerationEdgeCases:
-    """Zusätzliche Tests für Device ID Generierung"""
+    """Additional tests for device id generation"""
 
     @pytest.mark.unit
     def test_unknown_device_type(self):
@@ -309,11 +309,11 @@ class TestDeviceIdGenerationEdgeCases:
 # ============================================================================
 
 class TestAudioPreprocessor:
-    """Tests für Audio Preprocessor"""
+    """Tests for the audio preprocessor"""
 
     @pytest.mark.unit
     def test_preprocessor_initialization(self):
-        """Test: Preprocessor kann initialisiert werden"""
+        """Test: the preprocessor can be initialized"""
         try:
             from services.audio_preprocessor import AudioPreprocessor
 
@@ -355,7 +355,7 @@ class TestAudioPreprocessor:
 # ============================================================================
 
 class TestValidationHelpers:
-    """Tests für Validierungs-Hilfsfunktionen"""
+    """Tests for the validation helpers"""
 
     @pytest.mark.unit
     def test_entity_id_format(self):
@@ -374,7 +374,7 @@ class TestValidationHelpers:
 
     @pytest.mark.unit
     def test_ip_address_format(self):
-        """Test: IP Adress Format Validierung"""
+        """Test: IP address format validation"""
         import re
 
         def is_valid_ip(ip: str) -> bool:
@@ -411,11 +411,11 @@ class TestValidationHelpers:
 # ============================================================================
 
 class TestOutputRoutingHelpers:
-    """Tests für Output Routing Hilfsfunktionen"""
+    """Tests for the output-routing helpers"""
 
     @pytest.mark.unit
     def test_output_type_validation(self):
-        """Test: Output Type Validierung"""
+        """Test: output type validation"""
         from models.database import OUTPUT_TYPE_AUDIO, OUTPUT_TYPE_VISUAL, OUTPUT_TYPES
 
         assert OUTPUT_TYPE_AUDIO in OUTPUT_TYPES
@@ -424,7 +424,7 @@ class TestOutputRoutingHelpers:
 
     @pytest.mark.unit
     def test_device_type_validation(self):
-        """Test: Device Type Validierung"""
+        """Test: device type validation"""
         from models.database import DEVICE_TYPE_SATELLITE, DEVICE_TYPES
 
         assert DEVICE_TYPE_SATELLITE in DEVICE_TYPES

@@ -160,12 +160,12 @@ WICHTIGE REGELN FÜR ANTWORTEN:
 
     async def chat(self, message: str, history: list[dict] = None, lang: str | None = None, memory_context: str | None = None) -> str:
         """
-        Einfacher Chat (nicht-streamend) mit optionaler Konversationshistorie.
+        Simple chat (non-streaming) with an optional conversation history.
 
         Args:
-            message: Die Benutzernachricht
-            history: Optionale Konversationshistorie
-            lang: Sprache für die Antwort (de/en). None = default_lang
+            message: The user message
+            history: Optional conversation history
+            lang: Language for the answer (de/en). None = default_lang
             memory_context: Optional formatted memory section for the system prompt
         """
         lang = lang or self.default_lang
@@ -214,9 +214,9 @@ WICHTIGE REGELN FÜR ANTWORTEN:
         Streaming Chat with optional conversation history.
 
         Args:
-            message: Die Benutzernachricht
-            history: Optionale Konversationshistorie
-            lang: Sprache für die Antwort (de/en). None = default_lang
+            message: The user message
+            history: Optional conversation history
+            lang: Language for the answer (de/en). None = default_lang
             memory_context: Optional formatted memory section for the system prompt
             document_context: Optional formatted document section for the system prompt
             personality_style: Optional personality style (freundlich/direkt/formell/casual)
@@ -494,21 +494,21 @@ WICHTIGE REGELN FÜR ANTWORTEN:
         lang: str | None = None
     ) -> dict:
         """
-        Extrahiere Intent und Parameter aus Nachricht.
+        Extract the intent and its parameters from a message.
 
         Args:
-            message: Die Benutzernachricht
-            room_context: Optional Room Context mit Informationen wie:
-                - room_name: Name des Raums in dem sich das Gerät befindet
-                - room_id: Datenbank-ID des Raums
-                - device_type: Typ des Geräts (satellite, web_panel, etc.)
-                - speaker_name: Name des erkannten Sprechers (optional)
+            message: The user message
+            room_context: Optional room context, holding information such as:
+                - room_name: name of the room the device stands in
+                - room_id: database id of the room
+                - device_type: type of the device (satellite, web_panel, etc.)
+                - speaker_name: name of the recognised speaker (optional)
             conversation_history: Optional conversation history for resolving
                 pronouns and references like "dort", "es", "das", "dafür"
             lang: Language for prompts (de/en). None = default_lang
 
         Returns:
-            Dict mit intent, parameters und confidence
+            Dict with intent, parameters and confidence
         """
         lang = lang or self.default_lang
         message = _sanitize_user_input(message)
@@ -622,10 +622,10 @@ WICHTIGE REGELN FÜR ANTWORTEN:
                 )
                 response = extract_response_content(response_data)
 
-            # Robuste JSON-Extraktion
+            # Robust JSON extraction
             logger.debug(f"Raw LLM response ({len(response) if response else 0} chars): {response[:300] if response else '(empty)'}")
 
-            # Entferne Markdown-Code-Blocks
+            # Strip markdown code blocks
             response = response.strip()
 
             # Methode 1: Markdown Code-Block
@@ -1008,7 +1008,7 @@ WICHTIGE REGELN FÜR ANTWORTEN:
         session_id: str,
         db: AsyncSession
     ) -> dict | None:
-        """Hole Zusammenfassung einer Konversation (delegiert an ConversationService)"""
+        """Fetch the summary of a conversation (delegates to ConversationService)"""
         from services.conversation_service import ConversationService
         service = ConversationService(db)
         return await service.get_summary(session_id)
@@ -1040,7 +1040,7 @@ WICHTIGE REGELN FÜR ANTWORTEN:
         db: AsyncSession,
         limit: int = 20
     ) -> list[dict]:
-        """Suche in Konversationen nach Text (delegiert an ConversationService)"""
+        """Search conversations for text (delegates to ConversationService)"""
         from services.conversation_service import ConversationService
         service = ConversationService(db)
         return await service.search(query, limit)
@@ -1051,13 +1051,13 @@ WICHTIGE REGELN FÜR ANTWORTEN:
 
     async def get_embedding(self, text: str) -> list[float]:
         """
-        Generiert Embedding für Text mit dem konfigurierten Embed-Modell.
+        Generates an embedding for the text with the configured embed model.
 
         Args:
-            text: Text für Embedding
+            text: Text to embed
 
         Returns:
-            Liste von Floats (768 Dimensionen für nomic-embed-text)
+            A list of floats (768 dimensions for nomic-embed-text)
         """
         try:
             response = await self.embed_client.embeddings(
@@ -1078,25 +1078,25 @@ WICHTIGE REGELN FÜR ANTWORTEN:
         lang: str | None = None
     ) -> str:
         """
-        Chat mit optionalem RAG-Kontext (nicht-streamend).
+        Chat with an optional RAG context (non-streaming).
 
-        Nutzt das größere RAG-Modell wenn Kontext vorhanden.
+        Uses the larger RAG model when a context is present.
 
         Args:
-            message: User-Nachricht
-            rag_context: Optional formatierter Kontext aus der Wissensdatenbank
-            history: Optional Chat-Historie
-            lang: Sprache für die Antwort (de/en). None = default_lang
+            message: User message
+            rag_context: Optional formatted context from the knowledge base
+            history: Optional chat history
+            lang: Language for the answer (de/en). None = default_lang
 
         Returns:
-            Generierte Antwort
+            The generated answer
         """
         lang = lang or self.default_lang
         try:
             # Pick the model based on the RAG context
             model = self.rag_model if rag_context else self.chat_model
 
-            # Baue System-Prompt mit RAG-Kontext
+            # Build the system prompt with the RAG context
             system_prompt = self._build_rag_system_prompt(rag_context, lang=lang)
 
             messages = [{"role": "system", "content": system_prompt}]
@@ -1132,29 +1132,29 @@ WICHTIGE REGELN FÜR ANTWORTEN:
         time_context: str | None = None,
     ) -> AsyncGenerator[str, None]:
         """
-        Streaming Chat mit optionalem RAG-Kontext.
+        Streaming chat with an optional RAG context.
 
-        Nutzt das größere RAG-Modell wenn Kontext vorhanden.
+        Uses the larger RAG model when a context is present.
 
         Args:
-            message: User-Nachricht
-            rag_context: Optional formatierter Kontext aus der Wissensdatenbank
-            history: Optional Chat-Historie
-            lang: Sprache für die Antwort (de/en). None = default_lang
+            message: User message
+            rag_context: Optional formatted context from the knowledge base
+            history: Optional chat history
+            lang: Language for the answer (de/en). None = default_lang
             memory_context: Optional formatted memory section for the system prompt
             document_context: Optional formatted document section for the system prompt
             personality_style: Optional personality style (freundlich/direkt/formell/casual)
             personality_prompt: Optional free-text personality fine-tuning
 
         Yields:
-            Text-Chunks der Antwort
+            Text chunks of the answer
         """
         lang = lang or self.default_lang
         try:
             # Pick the model based on the RAG context
             model = self.rag_model if rag_context else self.chat_model
 
-            # Baue System-Prompt mit RAG-Kontext
+            # Build the system prompt with the RAG context
             system_prompt = self._build_rag_system_prompt(rag_context, lang=lang, memory_context=memory_context, document_context=document_context, personality_style=personality_style, personality_prompt=personality_prompt, time_context=time_context)
 
             messages = [{"role": "system", "content": system_prompt}]
@@ -1184,11 +1184,11 @@ WICHTIGE REGELN FÜR ANTWORTEN:
 
     def _build_rag_system_prompt(self, context: str | None = None, lang: str | None = None, memory_context: str | None = None, document_context: str | None = None, personality_style: str | None = None, personality_prompt: str | None = None, time_context: str | None = None) -> str:
         """
-        Erstellt System-Prompt mit optionalem RAG-Kontext.
+        Builds the system prompt with an optional RAG context.
 
         Args:
-            context: Formatierter Kontext aus der Wissensdatenbank
-            lang: Sprache für den Prompt (de/en). None = default_lang
+            context: Formatted context from the knowledge base
+            lang: Language for the prompt (de/en). None = default_lang
             memory_context: Optional formatted memory section
             document_context: Optional formatted document section
             personality_style: Optional personality style
@@ -1196,7 +1196,7 @@ WICHTIGE REGELN FÜR ANTWORTEN:
             time_context: Optional current-date/time line (grounds date reasoning)
 
         Returns:
-            System-Prompt für das LLM
+            The system prompt for the LLM
         """
         lang = lang or self.default_lang
 
@@ -1251,10 +1251,10 @@ WICHTIG:
 
     async def ensure_rag_models_loaded(self) -> dict[str, bool]:
         """
-        Stellt sicher, dass alle für RAG benötigten Modelle geladen sind.
+        Makes sure every model RAG needs is loaded.
 
         Returns:
-            Dict mit Modell-Namen und ob sie verfügbar sind
+            Dict of model name to whether it is available
         """
         result = {}
         models_to_check = [

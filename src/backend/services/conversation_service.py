@@ -58,21 +58,21 @@ class ConversationNotOwnedError(PermissionError):
 
 class ConversationService:
     """
-    Service für Konversations-Persistenz.
+    Service for conversation persistence.
 
 
-    Bietet:
-    - Konversations-Kontext laden
-    - Nachrichten speichern
-    - Konversations-Management (Liste, Suche, Löschen)
+    Provides:
+    - loading the conversation context
+    - storing messages
+    - conversation management (list, search, delete)
     """
 
     def __init__(self, db: AsyncSession):
         """
-        Initialisiert den Conversation Service.
+        Initializes the conversation service.
 
         Args:
-            db: AsyncSession für Datenbankoperationen
+            db: AsyncSession for database operations
         """
         self.db = db
 
@@ -464,10 +464,10 @@ class ConversationService:
                 voice/household and other internal callers stay byte-identical.
 
         Returns:
-            Liste von Nachrichten im Format [{"role": "user|assistant", "content": "..."}]
+            A list of messages shaped [{"role": "user|assistant", "content": "..."}]
         """
         try:
-            # Finde Conversation
+            # Find the conversation
             result = await self.db.execute(
                 select(Conversation).where(Conversation.session_id == session_id)
             )
@@ -562,9 +562,9 @@ class ConversationService:
 
         Args:
             session_id: session id of the conversation
-            role: "user" oder "assistant"
-            content: Nachrichteninhalt
-            metadata: Optional zusätzliche Metadaten
+            role: "user" or "assistant"
+            content: the message content
+            metadata: optional additional metadata
             parent_message_id: Chat branching (Phase 1). When given (a FORK), the
                 new message is inserted as a SIBLING under that parent — preserving
                 the message it replaces. When ``None`` (the normal append), the new
@@ -663,7 +663,7 @@ class ConversationService:
                 else conversation.active_leaf_message_id
             )
 
-            # Erstelle Message
+            # Create the message
             message = Message(
                 conversation_id=conversation.id,
                 role=role,
@@ -1068,13 +1068,13 @@ class ConversationService:
         session_id: str
     ) -> dict | None:
         """
-        Hole Zusammenfassung einer Konversation.
+        Fetch the summary of a conversation.
 
         Args:
             session_id: session id of the conversation
 
         Returns:
-            Dict mit session_id, created_at, updated_at, message_count, first_message, last_message
+            Dict with session_id, created_at, updated_at, message_count, first_message, last_message
         """
         try:
             result = await self.db.execute(
@@ -1161,16 +1161,16 @@ class ConversationService:
         user_id: int | None = None,
     ) -> list[dict]:
         """
-        Hole Liste aller Konversationen.
+        Fetch a list of all conversations.
 
         Args:
-            limit: Maximale Anzahl
-            offset: Pagination-Offset
+            limit: maximum number of rows
+            offset: pagination offset
             user_id: if set, only this user's conversations (auth mode).
                 If None, all conversations are returned (single-user mode).
 
         Returns:
-            Liste von Konversations-Zusammenfassungen mit `preview` (gekuerzte
+            A list of conversation summaries with `preview` (the shortened
             first user message) and `message_count`.
         """
         try:
@@ -1251,14 +1251,14 @@ class ConversationService:
         limit: int = 20
     ) -> list[dict]:
         """
-        Suche in Konversationen nach Text.
+        Search conversations for text.
 
         Args:
-            query: Suchbegriff
-            limit: Maximale Anzahl Ergebnisse
+            query: the search term
+            limit: maximum number of results
 
         Returns:
-            Liste von Konversationen mit passenden Nachrichten
+            A list of conversations with their matching messages
         """
         try:
             # Search messages and join conversations in a single query

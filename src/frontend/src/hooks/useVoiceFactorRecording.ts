@@ -49,9 +49,9 @@ interface State {
   recording: boolean;
   /** 0..1, for the level meter. */
   level: number;
-  /** Bisherige Dauer in Millisekunden. */
+  /** Elapsed duration in milliseconds. */
   elapsedMs: number;
-  /** Fertige Aufnahme, sobald gestoppt. */
+  /** The finished recording, once stopped. */
   blob: Blob | null;
   error: RecordingError | null;
 }
@@ -211,8 +211,8 @@ export function useVoiceFactorRecording() {
     };
     recorder.start();
 
-    // Self-stop at the maximum duration. Without it the microphone runs until
-    // den Knopf wiederfindet.
+    // Self-stop at the maximum duration. Without it the microphone runs
+    // until the person finds the button again.
     stopTimerRef.current = setTimeout(() => {
       if (recorderRef.current?.state === 'recording') recorderRef.current.stop();
     }, MAX_DURATION_MS);

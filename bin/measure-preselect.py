@@ -116,13 +116,13 @@ def aufgabe_finden(prompt: str) -> str:
 def aufgabe_einsetzen(prompt: str, alt: str, neu: str) -> str:
     """Swaps the task -- exclusively in the `Aufgabe:`/`Task:` line.
 
-    🛑 Ein blankes `prompt.replace(alt, neu)` hat zwei stille Fehlschlaege, und
-    beide sehen nach einem Ergebnis aus:
-    - fehlt `alt` in einer Variante, misst JEDER Fall denselben Prompt, und die
-      Ausgabe steht voller glatter 5/5 oder 0/5;
-    - steht `alt` zufaellig auch in einer Werkzeugbeschreibung, wird die Liste
-      mitveraendert und damit etwas anderes gemessen als beabsichtigt.
-    Darum zeilengenau — und ein Fehlschlag bricht ab, statt zu schweigen.
+    🛑 A bare `prompt.replace(alt, neu)` has two silent failures, and both
+    look like a result:
+    - if `alt` is absent from one variant, EVERY case measures the same prompt,
+      and the output is full of clean 5/5 or 0/5;
+    - if `alt` happens to appear in a tool description too, the list gets
+      changed along with it and something other than the intent is measured.
+    Hence line-exact -- and a failure aborts instead of keeping quiet.
     """
     zeilen = prompt.split("\n")
     getroffen = 0
@@ -140,9 +140,9 @@ def aufgabe_einsetzen(prompt: str, alt: str, neu: str) -> str:
 def werkzeugnamen(prompt: str) -> list:
     """The offered tool names, taken from the prompt -- for the `enum`.
 
-    🛑 `re.split(r"(?m)^- ")` und NICHT `splitlines()`: ein Eintrag geht ueber
-    Zeilenumbrueche, weil die Hinweistexte welche enthalten. Dieser Schnitt hat
-    am 2026-10-27 zweimal einen Falschbefund erzeugt.
+    🛑 `re.split(r"(?m)^- ")` and NOT `splitlines()`: an entry runs across
+    line breaks, because the hint texts contain some. This cut produced a false
+    finding twice on 2026-10-27.
     """
     namen = []
     for stueck in re.split(r"(?m)^- ", prompt):

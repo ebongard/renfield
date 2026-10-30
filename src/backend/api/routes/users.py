@@ -906,13 +906,13 @@ async def get_voice_second_factor(
 ):
     """Read consent and REASON on your own account.
 
-    🛑 WARUM ES DIESE ROUTE GIBT
-    ----------------------------
+    🛑 WHY THIS ROUTE EXISTS
+    ------------------------
     The "my account" page knew only the instance-wide half of the
     preconditions (via the feature flags) and showed a reason only when the
-    consent was already in place. Anyone who had not consented yet
-    hatte — also jede Person im Ausgangszustand — sah ein blankes „Aus", ganz
-    the same regardless of how many preconditions were missing, and the UI
+    consent was already in place. Anyone who had not consented yet -- so
+    every person in the initial state -- saw a blank "off", exactly the same
+    regardless of how many preconditions were missing, and the UI
     offered a switch-on that was bound to fail with a 409. Measured in the
     household on 2026-09-29: on 6 of 7 accounts the account-bound half was the
     blocker -- precisely the half the page could not see.

@@ -29,11 +29,11 @@ def _table(rows):
 
 @pytest.mark.unit
 def test_allowed_kinds_are_exactly_lane_a():
-    """Die Typenmenge ist AUSDRUECKLICH — eine Erweiterung ist eine Handlung.
+    """The set of kinds is EXPLICIT -- extending it is an act.
 
-    `document_ref` kam am 2026-10-27 dazu (Knopf zum Paperless-Dokument unter
-    einer Scan-Fertigmeldung). Er ist Lane A: typisiertes JSON, das eine echte
-    React-Komponente rendert, kein Markup.
+    `document_ref` was added on 2026-10-27 (a button to the Paperless document
+    under a scan completion notice). It is lane A: typed JSON that a real React
+    component renders, not markup.
     """
     assert ALLOWED_KINDS == frozenset(
         {"table", "list", "keyvalue", "chart", "weather", "device_control",
@@ -43,18 +43,18 @@ def test_allowed_kinds_are_exactly_lane_a():
 
 @pytest.mark.unit
 def test_lane_b_kinds_stay_out():
-    """Der eigentliche Riegel hinter der Liste: kein Markup-Typ schleicht sich ein."""
+    """The actual guard behind the list: no markup kind sneaks in."""
     for verboten in ("html", "svg", "iframe", "script", "markdown"):
         assert verboten not in ALLOWED_KINDS, verboten
 
 
 @pytest.mark.unit
 def test_every_allowed_kind_has_a_validator():
-    """🛑 Zwei Stellen, eine Menge — genau die Drift, die man vergisst.
+    """🛑 Two places, one set -- exactly the drift one forgets.
 
-    Ein Typ in `ALLOWED_KINDS` ohne Eintrag in `_VALIDATORS` kommt durch den
-    Erlaubnis-Riegel und stirbt dann an einem KeyError tief im Aufruf, statt
-    sauber abgelehnt zu werden.
+    A kind in `ALLOWED_KINDS` without an entry in `_VALIDATORS` gets through
+    the allowlist guard and then dies on a KeyError deep in the call, instead
+    of being refused cleanly.
     """
     from services.artifact_service import _VALIDATORS
 

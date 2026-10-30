@@ -1,9 +1,9 @@
 """
-Tests für Settings API
+Tests for the settings API
 
-Testet:
-- Wake Word Konfiguration
-- Wake Word Service Status
+Covers:
+- Wake word configuration
+- Wake word service status
 """
 
 from unittest.mock import MagicMock, patch
@@ -16,11 +16,11 @@ from httpx import AsyncClient
 # ============================================================================
 
 class TestWakeWordSettings:
-    """Tests für Wake Word Settings"""
+    """Tests for the wake word settings"""
 
     @pytest.mark.integration
     async def test_get_wakeword_settings(self, async_client: AsyncClient):
-        """Testet GET /api/settings/wakeword"""
+        """GET /api/settings/wakeword"""
         response = await async_client.get("/api/settings/wakeword")
 
         assert response.status_code == 200
@@ -32,7 +32,7 @@ class TestWakeWordSettings:
 
     @pytest.mark.integration
     async def test_wakeword_settings_has_keywords(self, async_client: AsyncClient):
-        """Testet, dass verfügbare Keywords zurückgegeben werden"""
+        """The available keywords are returned"""
         with patch('api.routes.settings._check_server_fallback', return_value=False):
             response = await async_client.get("/api/settings/wakeword")
 
@@ -56,11 +56,11 @@ class TestWakeWordSettings:
 # ============================================================================
 
 class TestWakeWordStatus:
-    """Tests für Wake Word Service Status"""
+    """Tests for the wake word service status"""
 
     @pytest.mark.integration
     async def test_wakeword_status_available(self, async_client: AsyncClient):
-        """Testet GET /api/settings/wakeword/status - Service verfügbar"""
+        """GET /api/settings/wakeword/status -- service available"""
         mock_service = MagicMock()
         mock_service.get_status.return_value = {
             "available": True,
@@ -78,7 +78,7 @@ class TestWakeWordStatus:
 
     @pytest.mark.integration
     async def test_wakeword_status_unavailable(self, async_client: AsyncClient):
-        """Testet GET /api/settings/wakeword/status - Service nicht verfügbar"""
+        """GET /api/settings/wakeword/status -- service unavailable"""
         with patch('services.wakeword_service.get_wakeword_service', side_effect=Exception("OpenWakeWord not installed")):
             response = await async_client.get("/api/settings/wakeword/status")
 
@@ -89,7 +89,7 @@ class TestWakeWordStatus:
 
     @pytest.mark.integration
     async def test_wakeword_status_not_loaded(self, async_client: AsyncClient):
-        """Testet GET /api/settings/wakeword/status - Model nicht geladen"""
+        """GET /api/settings/wakeword/status -- model not loaded"""
         mock_service = MagicMock()
         mock_service.get_status.return_value = {
             "available": True,
@@ -111,11 +111,11 @@ class TestWakeWordStatus:
 # ============================================================================
 
 class TestServerFallback:
-    """Tests für Server-side Fallback"""
+    """Tests for the server-side fallback"""
 
     @pytest.mark.integration
     async def test_server_fallback_available(self, async_client: AsyncClient):
-        """Testet Server-side Fallback verfügbar"""
+        """The server-side fallback is available"""
         with patch('api.routes.settings._check_server_fallback', return_value=True):
             response = await async_client.get("/api/settings/wakeword")
 
@@ -125,7 +125,7 @@ class TestServerFallback:
 
     @pytest.mark.integration
     async def test_server_fallback_unavailable(self, async_client: AsyncClient):
-        """Testet Server-side Fallback nicht verfügbar"""
+        """The server-side fallback is unavailable"""
         with patch('api.routes.settings._check_server_fallback', return_value=False):
             response = await async_client.get("/api/settings/wakeword")
 
@@ -139,11 +139,11 @@ class TestServerFallback:
 # ============================================================================
 
 class TestConfigurationValues:
-    """Tests für Konfigurationswerte"""
+    """Tests for the configuration values"""
 
     @pytest.mark.integration
     async def test_default_keyword_value(self, async_client: AsyncClient):
-        """Testet Default-Keyword Wert"""
+        """The default keyword value"""
         response = await async_client.get("/api/settings/wakeword")
 
         assert response.status_code == 200
@@ -157,7 +157,7 @@ class TestConfigurationValues:
 
     @pytest.mark.integration
     async def test_threshold_value(self, async_client: AsyncClient):
-        """Testet Threshold Wert"""
+        """The threshold value"""
         response = await async_client.get("/api/settings/wakeword")
 
         assert response.status_code == 200
@@ -168,7 +168,7 @@ class TestConfigurationValues:
 
     @pytest.mark.integration
     async def test_cooldown_value(self, async_client: AsyncClient):
-        """Testet Cooldown Wert"""
+        """The cooldown value"""
         response = await async_client.get("/api/settings/wakeword")
 
         assert response.status_code == 200
@@ -179,9 +179,10 @@ class TestConfigurationValues:
 
     @pytest.mark.integration
     async def test_wakeword_settings_carry_no_server_side_enabled(self, async_client: AsyncClient):
-        """Der Ein/Aus-Schalter ist eine Geräteentscheidung (Satellit lokal, Browser
-        in localStorage) — der Server führt kein `enabled`-Feld mehr (WAKE_WORD_ENABLED
-        wurde 2026-09-20 als Flag ohne Leser entfernt)."""
+        """The on/off switch is a per-device decision (satellite locally,
+        browser in localStorage) -- the server no longer carries an `enabled`
+        field (WAKE_WORD_ENABLED was removed on 2026-09-20 as a flag with no
+        reader)."""
         response = await async_client.get("/api/settings/wakeword")
 
         assert response.status_code == 200

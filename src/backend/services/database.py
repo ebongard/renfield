@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 
 from utils.config import settings
 
-# Async Engine erstellen
+# Create the async engine
 engine = create_async_engine(
     settings.database_url.replace("postgresql://", "postgresql+asyncpg://"),
     echo=False,
@@ -198,15 +198,15 @@ async def init_db():
     """Create the schema of a fresh database -- via the MIGRATION, not
     ueber `create_all`.
 
-    🛑 WARUM DAS GEAENDERT WURDE. Frueher lief hier `Base.metadata.create_all`
+    🛑 WHY THIS WAS CHANGED. This used to run `Base.metadata.create_all`
     followed by a STAMP onto the Alembic head. As a result every piece of DDL
     a migration creates via `op.execute("CREATE INDEX ...")` NEVER came into
     existence on a fresh install -- and was never filled in, because the stamp
     claimed the migration had been applied. Demonstrated on 2026-09-25 across
     37 data points without a single exception: nine indexes were missing on
-    BOTH instances, five of them
-    HNSW; jede semantische Suche lief als Seq Scan. #1336 hat den Bestand
-    repaired, and `pc20260926_baseline` fixes the cause.
+    BOTH instances, five of them HNSW; every semantic search ran as a Seq Scan.
+    #1336 repaired the existing stock, and `pc20260926_baseline` fixes the
+    cause.
 
     Now: an EMPTY database is stamped to the revision BEFORE the baseline and
     then run through `alembic upgrade head`. The baseline is the only thing
@@ -214,11 +214,10 @@ async def init_db():
     SQL. Verified by SET comparison against the production schema (not by
     count): 76 tables and 333 indexes, both differences empty.
 
-    An EXISTING database is NOT migrated here. Migrations run in
-    diesem Projekt als eigener Job VOR dem Rollout (`bin/deploy-production.sh
-    --migrate`) -- an automatic `upgrade` at startup would be a different
-    operating mode and exactly the kind of silent change that has no place
-    hat.
+    An EXISTING database is NOT migrated here. In this project migrations run
+    as their own job BEFORE the rollout (`bin/deploy-production.sh --migrate`)
+    -- an automatic `upgrade` at startup would be a different operating mode,
+    and exactly the kind of silent change that has no place here.
     """
     try:
         async with engine.begin() as conn:

@@ -1,15 +1,15 @@
 /**
- * DocumentRefArtifact — der Knopf zum Paperless-Dokument unter einer
- * Scan-Fertigmeldung, in allen seinen Zustaenden.
+ * DocumentRefArtifact -- the button to the Paperless document under a scan
+ * completion notice, in all of its states.
  *
- * Geprueft wird ueber MSW am echten Endpunkt, nicht durch Mocken des Hooks: die
- * drei Zustaende entstehen aus den FELDERN der Antwort (`paperless_url`,
- * `in_paperless`, `status`), und genau diese Ableitung ist der Kern.
+ * Checked through MSW against the real endpoint, not by mocking the hook: the
+ * three states arise from the FIELDS of the response (`paperless_url`,
+ * `in_paperless`, `status`), and that derivation is exactly the point.
  *
- * 🛑 Die Zugaenglichkeitszusage ist mitgetestet: NUR der klickbare Zustand ist
- * ein fokussierbares Element. Ein `disabled`-Knopf fuer die uebrigen Faelle
- * waere im Tabbenverlauf sichtbar, wuerde als Schaltflaeche vorgelesen, obwohl
- * er nichts tut, und reisst regelmaessig den 4,5:1-Kontrast.
+ * 🛑 The accessibility promise is covered too: ONLY the clickable state is a
+ * focusable element. A `disabled` button for the other cases would be visible
+ * in the tab order, would be read out as a button although it does nothing,
+ * and regularly breaks the 4.5:1 contrast.
  */
 import { describe, it, expect, beforeAll, afterAll, afterEach } from 'vitest';
 import { screen, waitFor } from '@testing-library/react';
@@ -32,9 +32,9 @@ function doc(over: Record<string, unknown> = {}) {
   };
 }
 
-// `unknown` ging hier durch Vitest, aber nicht durch `tsc`: MSW verlangt
-// `JsonBodyType`. Gefunden am 2026-10-27, nachdem `npm run typecheck` im
-// Testverzeichnis gelaufen war — der Lauf, den ich beim Schreiben ausliess.
+// `unknown` got through Vitest here but not through `tsc`: MSW requires
+// `JsonBodyType`. Found on 2026-10-27, after `npm run typecheck` had been run
+// in the test directory -- the run I skipped while writing this.
 function antwortet(body: Record<string, unknown>, status = 200) {
   server.use(http.get(URL, () => HttpResponse.json(body, { status })));
 }
@@ -50,7 +50,7 @@ describe('DocumentRefArtifact', () => {
 
     const link = await screen.findByRole('link', { name: /In Paperless öffnen/i });
     expect(link).toHaveAttribute('href', 'http://paperless.local:8000/documents/42/details');
-    // Fuehrt aus dem Gespraech heraus — das Gespraech bleibt stehen.
+    // Leads out of the conversation -- the conversation stays where it is.
     expect(link).toHaveAttribute('target', '_blank');
     expect(link.getAttribute('rel')).toContain('noopener');
   });
@@ -83,7 +83,7 @@ describe('DocumentRefArtifact', () => {
     antwortet({ detail: 'No access to this document' }, 403);
     renderWithProviders(<DocumentRefArtifact data={{ documentId: 515 }} />);
 
-    // Fuer die Person bedeutet es dasselbe wie „noch in Arbeit": kein Link.
+    // For the person it means the same as "still being worked on": no link.
     expect(await screen.findByText(/wird gerade abgelegt/i)).toBeInTheDocument();
     expect(screen.queryByRole('link')).toBeNull();
   });
@@ -95,14 +95,15 @@ describe('DocumentRefArtifact', () => {
     expect(await screen.findByText(/wird gerade abgelegt/i)).toBeInTheDocument();
   });
 
-  // --- Instanzgrenze ---------------------------------------------------------
+  // --- Instance boundary -----------------------------------------------------
   //
-  // 🛑 Der Kern ist NICHT der Hinweistext, sondern die ausbleibende Abfrage.
-  // Die Kennung gehoert der anderen Instanz; beide fuehren eigene Zaehlfolgen,
-  // eine lokale Abfrage traefe also ein FREMDES Dokument derselben Nummer. Der
-  // Abruf darf darum gar nicht erst ausgeloest werden, nicht nur sein Ergebnis
-  // verworfen. Gezaehlt wird am Endpunkt — die Negativkontrolle direkt darunter
-  // beweist mit demselben Zaehler, dass er ueberhaupt anschlaegt.
+  // 🛑 The point is NOT the hint text but the query that does not happen.
+  // The id belongs to the other instance; both keep their own sequences, so a
+  // local query would hit a FOREIGN document with the same number. The fetch
+  // must therefore never be started in the first place, not merely have its
+  // result discarded. The count is taken at the endpoint -- the negative
+  // control directly below proves with the same counter that it registers at
+  // all.
   it('🛑 ein Dokument in einer anderen Instanz fragt hier NICHT nach', async () => {
     let abrufe = 0;
     server.use(http.get(URL, () => { abrufe += 1; return HttpResponse.json(doc()); }));
@@ -110,7 +111,7 @@ describe('DocumentRefArtifact', () => {
 
     expect(await screen.findByText(/liegt in xidra/i)).toBeInTheDocument();
     expect(screen.queryByRole('link')).toBeNull();
-    // Kurz warten, damit ein verspaeteter Abruf noch auffallen wuerde.
+    // Wait a moment, so a late fetch would still show up.
     await waitFor(() => expect(abrufe).toBe(0));
   });
 
@@ -119,9 +120,9 @@ describe('DocumentRefArtifact', () => {
     server.use(http.get(URL, () => { abrufe += 1; return HttpResponse.json(doc()); }));
     renderWithProviders(<DocumentRefArtifact data={{ documentId: 515 }} />);
 
-    // Nicht auf GENAU eins festgenagelt: der Testrahmen haengt die
-    // Komponente doppelt ein (StrictMode), gemessen 2 Abrufe. Die Aussage
-    // hier ist allein, dass der Zaehler ueberhaupt anschlaegt.
+    // Not pinned to EXACTLY one: the test harness mounts the component twice
+    // (StrictMode), measured 2 fetches. The only claim here is that the
+    // counter registers at all.
     await waitFor(() => expect(abrufe).toBeGreaterThan(0));
   });
 

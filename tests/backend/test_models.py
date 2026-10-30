@@ -1,11 +1,11 @@
 """
-Tests für Database Models
+Tests for the database models
 
 Testet:
-- Model-Instanziierung und Defaults
+- Model instantiation and defaults
 - Relationships und Foreign Keys
-- Property-Methoden
-- Validierung
+- Property methods
+- Validation
 """
 
 from datetime import datetime
@@ -41,11 +41,11 @@ from models.database import (
 # ============================================================================
 
 class TestRoomModel:
-    """Tests für Room Model"""
+    """Tests for the Room model"""
 
     @pytest.mark.database
     async def test_room_creation(self, db_session: AsyncSession):
-        """Test: Room kann erstellt werden"""
+        """Test: a room can be created"""
         room = Room(
             name="Wohnzimmer",
             alias="wohnzimmer",
@@ -81,8 +81,8 @@ class TestRoomModel:
 
     @pytest.mark.database
     async def test_room_satellites_property(self, db_session: AsyncSession, test_room: Room):
-        """Test: satellites Property gibt nur Satellites zurück"""
-        # Füge verschiedene Device-Typen hinzu
+        """Test: the satellites property returns only satellites"""
+        # Add several device types
         satellite = RoomDevice(
             room_id=test_room.id,
             device_id="sat-test-1",
@@ -99,7 +99,7 @@ class TestRoomModel:
         db_session.add_all([satellite, web_panel])
         await db_session.commit()
 
-        # Neu laden mit relationships
+        # Reload with relationships
         result = await db_session.execute(
             select(Room).where(Room.id == test_room.id)
         )
@@ -112,7 +112,7 @@ class TestRoomModel:
 
     @pytest.mark.database
     async def test_room_online_devices_property(self, db_session: AsyncSession, test_room: Room):
-        """Test: online_devices Property gibt nur Online-Geräte zurück"""
+        """Test: the online_devices property returns only online devices"""
         online_device = RoomDevice(
             room_id=test_room.id,
             device_id="dev-online",
@@ -145,11 +145,11 @@ class TestRoomModel:
 # ============================================================================
 
 class TestRoomDeviceModel:
-    """Tests für RoomDevice Model"""
+    """Tests for the RoomDevice model"""
 
     @pytest.mark.database
     async def test_device_creation(self, db_session: AsyncSession, test_room: Room):
-        """Test: Device kann erstellt werden"""
+        """Test: a device can be created"""
         device = RoomDevice(
             room_id=test_room.id,
             device_id="test-device-123",
@@ -211,7 +211,7 @@ class TestRoomDeviceModel:
 
     @pytest.mark.unit
     def test_device_types_constant(self):
-        """Test: DEVICE_TYPES Konstante enthält alle Typen"""
+        """Test: the DEVICE_TYPES constant contains every type"""
         assert DEVICE_TYPE_SATELLITE in DEVICE_TYPES
         assert DEVICE_TYPE_WEB_PANEL in DEVICE_TYPES
         assert DEVICE_TYPE_WEB_TABLET in DEVICE_TYPES
@@ -221,7 +221,7 @@ class TestRoomDeviceModel:
 
     @pytest.mark.unit
     def test_default_capabilities_for_all_types(self):
-        """Test: DEFAULT_CAPABILITIES für alle Device-Typen definiert"""
+        """Test: DEFAULT_CAPABILITIES is defined for every device type"""
         for device_type in DEVICE_TYPES:
             assert device_type in DEFAULT_CAPABILITIES
             caps = DEFAULT_CAPABILITIES[device_type]
@@ -234,7 +234,7 @@ class TestRoomDeviceModel:
 # ============================================================================
 
 class TestRoomOutputDeviceModel:
-    """Tests für RoomOutputDevice Model"""
+    """Tests for the RoomOutputDevice model"""
 
     @pytest.mark.database
     async def test_output_device_with_renfield_device(
@@ -282,7 +282,7 @@ class TestRoomOutputDeviceModel:
 
     @pytest.mark.database
     async def test_output_device_priority_ordering(self, db_session: AsyncSession, test_room: Room):
-        """Test: Output Devices werden nach Priorität sortiert"""
+        """Test: output devices are sorted by priority"""
         output1 = RoomOutputDevice(
             room_id=test_room.id,
             output_provider="homeassistant",
@@ -375,11 +375,11 @@ class TestRoomOutputDevicePairProperties:
 # ============================================================================
 
 class TestSpeakerModel:
-    """Tests für Speaker Model"""
+    """Tests for the Speaker model"""
 
     @pytest.mark.database
     async def test_speaker_creation(self, db_session: AsyncSession):
-        """Test: Speaker kann erstellt werden"""
+        """Test: a speaker can be created"""
         speaker = Speaker(
             name="Max Mustermann",
             alias="max",
@@ -422,7 +422,7 @@ class TestSpeakerModel:
 
     @pytest.mark.database
     async def test_speaker_cascade_delete(self, db_session: AsyncSession):
-        """Test: Embeddings werden bei Speaker-Löschung gelöscht"""
+        """Test: embeddings are deleted when a speaker is deleted"""
         speaker = Speaker(name="To Delete", alias="delete_me")
         db_session.add(speaker)
         await db_session.commit()
@@ -452,11 +452,11 @@ class TestSpeakerModel:
 # ============================================================================
 
 class TestConversationModel:
-    """Tests für Conversation Model"""
+    """Tests for the Conversation model"""
 
     @pytest.mark.database
     async def test_conversation_creation(self, db_session: AsyncSession):
-        """Test: Conversation kann erstellt werden"""
+        """Test: a conversation can be created"""
         conv = Conversation(session_id="unique-session-123")
 
         db_session.add(conv)
@@ -523,11 +523,11 @@ class TestConversationModel:
 # ============================================================================
 
 class TestTaskModel:
-    """Tests für Task Model"""
+    """Tests for the Task model"""
 
     @pytest.mark.database
     async def test_task_creation(self, db_session: AsyncSession):
-        """Test: Task kann erstellt werden"""
+        """Test: a task can be created"""
         task = Task(
             title="Test Task",
             description="A test task description",
@@ -547,7 +547,7 @@ class TestTaskModel:
 
     @pytest.mark.database
     async def test_task_status_update(self, db_session: AsyncSession):
-        """Test: Task Status kann aktualisiert werden"""
+        """Test: a task status can be updated"""
         task = Task(
             title="Update Task",
             task_type="n8n",
@@ -574,11 +574,11 @@ class TestTaskModel:
 # ============================================================================
 
 class TestCameraEventModel:
-    """Tests für CameraEvent Model"""
+    """Tests for the CameraEvent model"""
 
     @pytest.mark.database
     async def test_camera_event_creation(self, db_session: AsyncSession):
-        """Test: CameraEvent kann erstellt werden"""
+        """Test: a camera event can be created"""
         event = CameraEvent(
             camera_name="front_door",
             event_type="person",
@@ -603,11 +603,11 @@ class TestCameraEventModel:
 # ============================================================================
 
 class TestHomeAssistantEntityModel:
-    """Tests für HomeAssistantEntity Model"""
+    """Tests for the HomeAssistantEntity model"""
 
     @pytest.mark.database
     async def test_ha_entity_creation(self, db_session: AsyncSession):
-        """Test: HA Entity kann erstellt werden"""
+        """Test: an HA entity can be created"""
         entity = HomeAssistantEntity(
             entity_id="light.wohnzimmer",
             friendly_name="Wohnzimmer Licht",

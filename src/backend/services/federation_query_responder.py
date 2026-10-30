@@ -259,7 +259,7 @@ async def _record_cancelled_access(pending: _PendingRequest) -> None:
         )
     except asyncio.CancelledError:
         raise
-    except Exception as e:  # pragma: no cover — darf den Abbruch nie ueberdecken
+    except Exception as e:  # pragma: no cover -- must never mask the cancellation
         logger.warning(f"Federation: cancellation record not written: {e}")
 
 
@@ -839,9 +839,8 @@ class FederationQueryResponder:
             # REFUSE, do not pick. There is an obvious way out -- let the
             # `querier_ref` decide which pairing is meant. But it comes FROM
             # THE FAR SIDE. Letting it determine whose circle the request runs
-            # in would be the same class of bug F-ID-3 just removed: a foreign
-            # value decides
-            # ueber lokale Reichweite.
+            # in would be the same class of bug F-ID-3 just removed: a
+            # foreign value deciding local reach.
             logger.warning(
                 f"Federation query_brain: {len(candidates)} aktive Paarungen mit "
                 f"demselben Schluessel (Eigentuemer "

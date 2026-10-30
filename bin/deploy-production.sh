@@ -227,7 +227,7 @@ gate_abort() {
 }
 
 if [[ $SKIP_BACKEND == 1 ]]; then
-  : # kein neues Backend-Bild → es gibt keinen Kopf zu vergleichen
+  : # no new backend image -- there is no head to compare against
 elif [[ $SKIP_MIGRATION_GATE == 1 ]]; then
   log "Migrations-Tor UEBERSPRUNGEN (--skip-migration-gate)"
   echo "  WARNING: der Alembic-Kopf des Bildes wurde NICHT gegen $NS geprueft." >&2

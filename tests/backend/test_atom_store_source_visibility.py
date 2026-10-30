@@ -134,7 +134,7 @@ class TestItTellsCrashApartFromEmpty:
         assert empty == []
 
     def test_an_empty_KG_DICT_counts_as_empty(self):
-        """🛑 Der Befund off dem Review, als Test. `kg` liefert bei
+        """🛑 The finding from the review, as a test. `kg` returns a dict on
         a miss, and that is TRUTHY -- with `not value` it counted as
         delivered, permanently one too high. And my first version of this
         test pinned exactly that down as the target."""
@@ -200,11 +200,11 @@ class TestDisabledSourcesAreNotEmptySources:
 
 
 class TestTheRealColdCase:
-    """🛑 Die erste Fassung stellte SIEBEN gleichzeitige Ausnahmen nach. Den
+    """🛑 The first version reproduced SEVEN simultaneous exceptions. The
     cannot produce that state -- five sources caught their own exception and
     returned `[]`, so they arrived as "empty".
 
-    Drei davon (`lexical_chunks`, `lexical_memories`, `note`) haben keinen
+    Three of them (`lexical_chunks`, `lexical_memories`, `note`) have no caller
     outside the fan-out (measured) and now re-raise. `memory`,
     `document_fact` and `kg` have external callers and still swallow --
     that is an open decision, not an oversight, and this test pins down the
@@ -231,7 +231,7 @@ class TestTheRealColdCase:
 
 
 class TestTheGuardAgainstContentInTheLog:
-    """🛑 Der `[SQL: …] [parameters: …]`-Anhang von SQLAlchemy traegt den
+    """🛑 SQLAlchemy's `[SQL: ...] [parameters: ...]` tail carries the
     bound user text. It adds nothing diagnostically and is cut off.
 
     What this is NOT: a ban on content in the log. The repo logs the query

@@ -97,7 +97,7 @@ export default function AccountSettingsPage() {
       setAskPassword(false);
       // Re-read `/auth/me`: this page's state comes from there, not from the
       // mutation's response -- otherwise the page shows something other than
-      // Sitzung glaubt.
+      // what the session believes.
       await fetchUser();
       setSuccess(enabling ? t('account.voiceArmed') : t('account.voiceDisarmed'));
     } catch (err) {

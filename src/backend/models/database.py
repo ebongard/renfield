@@ -131,7 +131,7 @@ class Message(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     conversation_id = Column(Integer, ForeignKey("conversations.id"), index=True)
-    role = Column(String)  # 'user' oder 'assistant'
+    role = Column(String)  # 'user' or 'assistant'
     content = Column(Text)
     timestamp = Column(DateTime, default=_utcnow)
     message_metadata = Column(JSON, nullable=True)  # Umbenannt von 'metadata'
@@ -201,8 +201,8 @@ class Speaker(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String(100), nullable=False)       # "Max Mustermann"
-    alias = Column(String(50), unique=True, index=True)  # "max" (für Ansprache)
-    is_admin = Column(Boolean, default=False)        # Admin-Berechtigung (legacy, use User.role)
+    alias = Column(String(50), unique=True, index=True)  # "max" (for addressing)
+    is_admin = Column(Boolean, default=False)        # admin permission (legacy, use User.role)
     # True = a deliberately enrolled reference profile (guided, quality-gated,
     # user-linked); False = ambient auto-enrolled "Unbekannter" (migration
     # pc20260706). See docs/design/speaker-enrollment-redesign.md.
@@ -724,7 +724,7 @@ class Document(Base):
 
 class DocumentChunk(Base):
     """
-    Text-Chunks mit Embedding-Vektor für RAG
+    Text chunks with an embedding vector, for RAG
 
     Every document is split into smaller chunks, each indexed individually in
     the vector database.
@@ -1466,8 +1466,8 @@ class Notification(Base):
 
 class NotificationSuppression(Base):
     """
-    Feedback-Learning: Benutzer unterdrückt ähnliche Benachrichtigungen.
-    Speichert Event-Pattern + Embedding für semantischen Abgleich.
+    Feedback learning: a user suppresses similar notifications.
+    Stores the event pattern plus an embedding, for semantic matching.
     """
     __tablename__ = "notification_suppressions"
 

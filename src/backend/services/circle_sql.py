@@ -44,11 +44,10 @@ class PeerScope:
     peer -- so the filter reached for the asker's user id, which in the
     federated case came from `PeerUser.remote_user_id`. A FOREIGN number in a
     column whose foreign key points at the LOCAL `users.id`. On 2026-10-27
-    that broke the key on one instance and silently bound the wrong
-    Person.
+    that broke the key on one instance and silently bound the wrong person.
 
-    It is now structurally impossible to filter peer-scoped without naming
-    zu benennen: wer `peer` setzt, liefert Eigentuemer UND Stufe mit.
+    It is now structurally impossible to filter peer-scoped without naming the
+    peer: whoever sets `peer` supplies the OWNER AND the tier along with it.
 
     - `owner_id`: the local person who entered into this pairing
       (`peer_users.circle_owner_id`). Without this binding the peer would see
@@ -127,10 +126,9 @@ def circles_filter_clause(
         peer:              a `PeerScope` makes the query FEDERATED: the
                            "owner equality" and "explicit grant" branches drop
                            out, and the tier comes from the PAIRING instead of
-                           a membership. What remains is
-                           beweisbar `(tier = public) OR (dieser Eigentuemer UND
-                           seine gewaehrte Stufe)` — unabhaengig von
-                           ``auth_enabled``.
+                           a membership. What remains is provably
+                           `(tier = public) OR (THIS owner AND the tier granted
+                           to them)` -- independent of ``auth_enabled``.
 
                            Until 2026-10-27 this was a bare `peer_scoped:
                            bool`, and the tier came from an EXISTS on
@@ -146,11 +144,11 @@ def circles_filter_clause(
                            only suppresses the single-user shortcut, and `peer`
                            says that -- and which -- peer is asking.
 
-                           🛑 Im peer-Fall entsteht `:{asker_param}` GAR NICHT
-                           mehr — es gibt dort keine fragende lokale Person.
-                           `circles_filter_params` omits the binding; a
-                           strikter `text(clause).bindparams()`-Aufrufer wuerde
-                           strict caller would otherwise raise on the unused name.
+                           🛑 In the peer case `:{asker_param}` is NOT created
+                           at all any more -- there is no asking local person
+                           there. `circles_filter_params` omits the binding; a
+                           strict `text(clause).bindparams()` caller would
+                           otherwise raise on the unused name.
     """
     owner_alias = owner_table_alias or table_alias
     sid_expr = source_id_expr or f"{table_alias}.id"

@@ -189,7 +189,7 @@ class PiperService:
 
     async def synthesize_to_file(self, text: str, output_path: str, language: str = None) -> bool:
         """
-        Text zu Audio-Datei synthetisieren.
+        Synthesize text into an audio file.
 
         Args:
             text: Text to synthesize

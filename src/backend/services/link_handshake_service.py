@@ -140,14 +140,13 @@ class LinkHandshakeService:
         self.db = db
         self.identity = get_federation_identity()
 
-    # -- Schritt 1 ------------------------------------------------------------
+    # -- Step 1 ---------------------------------------------------------------
 
     def create_offer(self, current_user: User, peer: PeerUser) -> LinkOffer:
-        """A erklaert: „Ich, U, moechte mich bei diesem Peer verknuepfen."
+        """A declares: "I, U, want to link myself at this peer."
 
         No write. The offer carries itself: at completion A verifies its OWN
-        signature over it instead of remembering a nonce in
-        Arbeitsspeicher zu erinnern.
+        signature over it instead of remembering a nonce in memory.
         """
         now = int(time.time())
         unsigned = {
@@ -163,7 +162,7 @@ class LinkHandshakeService:
         signature = self.identity.sign(canonical_bytes(unsigned)).hex()
         return LinkOffer(**unsigned, signature=signature)
 
-    # -- Schritt 2 ------------------------------------------------------------
+    # -- Step 2 ---------------------------------------------------------------
 
     async def accept_offer(
         self, current_user: User, offer: LinkOffer,
@@ -171,8 +170,7 @@ class LinkHandshakeService:
         """B consents and writes ITS row.
 
         Order as in the pairing precedent: the non-mutating checks first, then
-        the nonce, then the write. A forged
-        Signatur darf keinen Nonce verbrennen.
+        the nonce, then the write. A forged signature must not burn a nonce.
         """
         self._verify_offer_shape(offer)
 
@@ -210,7 +208,7 @@ class LinkHandshakeService:
         signature = self.identity.sign(canonical_bytes(unsigned)).hex()
         return LinkConfirmation(**unsigned, signature=signature)
 
-    # -- Schritt 3 ------------------------------------------------------------
+    # -- Step 3 ---------------------------------------------------------------
 
     async def complete(
         self, current_user: User, offer: LinkOffer, confirmation: LinkConfirmation,

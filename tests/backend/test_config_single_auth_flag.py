@@ -1,19 +1,19 @@
-"""Die zwei Auth-Flags sind zu EINEM verschmolzen: `AUTH_ENABLED`.
+"""The two auth flags have been merged into ONE: `AUTH_ENABLED`.
 
-`WS_AUTH_ENABLED` war nie eine eigene Entscheidung — der Konsistenz-Validator
-(#697) verweigerte den Start bei `auth_enabled and not ws_auth_enabled`, also
-waren nur beide-an und beide-aus erlaubt und das zweite Flag trug keinerlei
-Information. Es ist als eigenständige Einstellung entfernt; jede Lesestelle
-liest `settings.auth_enabled`.
+`WS_AUTH_ENABLED` was never a decision of its own -- the consistency validator
+(#697) refused to start on `auth_enabled and not ws_auth_enabled`, so only
+both-on and both-off were permitted and the second flag carried no information
+whatsoever. It has been removed as a setting in its own right; every read site
+reads `settings.auth_enabled`.
 
-Übergangsweise wird der alte Env-Schlüssel noch ANGENOMMEN (beide Live-
-Instanzen setzen ihn, ihre ConfigMaps liegen in zwei verschiedenen Repos):
+For the transition the old env key is still ACCEPTED (both live instances set
+it, and their ConfigMaps live in two different repos):
 
-* abwesend        → alles leitet sich aus `auth_enabled` ab
-* übereinstimmend → EINE Deprecation-Warnung, Start wie bisher
-* widersprüchlich → harter Boot-Fehler (derselbe Geist wie der alte Validator:
-  lieber gar nicht starten als mit einer Auth-Posture, die der Operator
-  offensichtlich anders gemeint hat)
+* absent        -> everything is derived from `auth_enabled`
+* agreeing      -> ONE deprecation warning, startup as before
+* contradicting -> a hard boot error (the same spirit as the old validator:
+  better not to start at all than to start with an auth posture the operator
+  obviously meant differently)
 """
 import pytest
 from loguru import logger
@@ -21,8 +21,8 @@ from pydantic import SecretStr
 
 from utils.config import Settings
 
-# Starker Key, damit fail_closed_on_insecure_jwt_key (läuft zuerst) passiert und
-# wirklich der Auth-Konsistenz-Validator geprüft wird.
+# A strong key, so that fail_closed_on_insecure_jwt_key (which runs first)
+# passes and the auth consistency validator is really what gets checked.
 _STRONG = "x" * 48
 
 
@@ -45,7 +45,7 @@ def _settings_with_warnings(**kwargs) -> tuple[Settings, list[str]]:
 @pytest.mark.unit
 class TestSingleAuthFlag:
     def test_ws_auth_enabled_is_no_longer_a_setting(self, monkeypatch):
-        """Die Einstellung existiert nicht mehr — es gibt nur noch `auth_enabled`."""
+        """The setting no longer exists -- there is only `auth_enabled`."""
         monkeypatch.delenv("WS_AUTH_ENABLED", raising=False)
         s = Settings(_env_file=None)
         assert not hasattr(s, "ws_auth_enabled")
@@ -58,7 +58,7 @@ class TestSingleAuthFlag:
             auth_enabled=True, secret_key=SecretStr(_STRONG)
         )
         assert on.auth_enabled is True
-        # Ohne den Altschlüssel darf auch nichts nach Deprecation klingen.
+        # Without the legacy key nothing may sound like a deprecation either.
         assert not any("WS_AUTH_ENABLED" in m for m in warnings_off + warnings_on)
 
 
@@ -81,17 +81,17 @@ class TestLegacyWsAuthEnabled:
         )
 
     def test_contradicting_legacy_value_refuses_to_start(self, monkeypatch):
-        """WS_AUTH_ENABLED=false bei AUTH_ENABLED=true — der alte Phantom-Control-Fall."""
+        """WS_AUTH_ENABLED=false with AUTH_ENABLED=true -- the old phantom-control case."""
         monkeypatch.setenv("WS_AUTH_ENABLED", "false")
         with pytest.raises(ValueError, match="WS_AUTH_ENABLED"):
             Settings(_env_file=None, auth_enabled=True, secret_key=SecretStr(_STRONG))
 
     def test_contradicting_legacy_value_other_direction_refuses_to_start(self, monkeypatch):
-        """WS_AUTH_ENABLED=true bei AUTH_ENABLED=false.
+        """WS_AUTH_ENABLED=true with AUTH_ENABLED=false.
 
-        Früher war das erlaubt (WS authentifiziert, REST nicht) — jetzt ist es ein
-        Widerspruch zur einen Entscheidung und wird nicht stillschweigend
-        zugunsten einer der beiden Seiten aufgelöst.
+        This used to be permitted (WS authenticated, REST not) -- now it
+        contradicts the one decision and is not resolved silently in favour of
+        either side.
         """
         monkeypatch.setenv("WS_AUTH_ENABLED", "true")
         with pytest.raises(ValueError, match="WS_AUTH_ENABLED"):

@@ -1,20 +1,21 @@
-"""``bin/k8s-write-image-tags.sh`` — schreibt nach dem Deploy die ausgerollten
-Bildmarken in die Manifeste zurueck.
+"""``bin/k8s-write-image-tags.sh`` -- writes the rolled-out image tags back
+into the manifests after a deploy.
 
-Das Skript fasst fremde Dateien in ZWEI Repos an (oeffentlich + privat), deshalb
-steht hier, was es NICHT anfassen darf:
+The script touches other people's files in TWO repos (public plus private),
+which is why what it must NOT touch is written down here:
 
-* ``:latest`` bleibt ``:latest``. Ein gleitender Zeiger ist kein festgeschriebener
-  Stand — die oeffentlichen Manifeste tragen ihn absichtlich. Beim ersten echten
-  Lauf schrieb das Skript sieben davon auf die Tagesmarke um; ein damit frisch
-  aufgesetzter Cluster haette fuer immer das Bild dieses Tages gezogen.
-* Der Registry-Name bleibt stehen, Platzhalter wie echte Adresse. Die echte
-  Adresse gehoert nicht ins oeffentliche Repo, der Platzhalter nicht ins private.
-* Fremde Bilder (``voice-server``, ``kokoro-tts``) gehen das Skript nichts an —
-  sie haben ihre eigene Versionsreihe.
+* ``:latest`` stays ``:latest``. A moving pointer is not a pinned state -- the
+  public manifests carry it deliberately. On its first real run the script
+  rewrote seven of them to that day's tag; a cluster set up fresh from those
+  would have pulled that day's image forever.
+* The registry name stays, placeholder as well as real address. The real
+  address does not belong in the public repo, the placeholder not in the
+  private one.
+* Other images (``voice-server``, ``kokoro-tts``) are none of the script's
+  business -- they have their own version series.
 
-Der Test faehrt das Skript als Unterprozess: es ist Shell, und genau die
-sed-Ausdruecke sind die Stelle, an der es schiefging.
+The test drives the script as a subprocess: it is shell, and the sed
+expressions are exactly where it went wrong.
 """
 
 from __future__ import annotations
@@ -28,8 +29,8 @@ pytestmark = [pytest.mark.unit, pytest.mark.backend]
 
 _SKRIPT = Path(__file__).resolve().parents[2] / "bin" / "k8s-write-image-tags.sh"
 
-# Beide Registry-Schreibweisen in einer Datei: Platzhalter (oeffentliches Repo)
-# und echte Adresse (privates Repo). Keine darf sich veraendern.
+# Both registry spellings in one file: the placeholder (public repo) and the
+# real address (private repo). Neither may change.
 _MANIFEST = """\
 apiVersion: apps/v1
 kind: Deployment
@@ -66,7 +67,7 @@ def manifest(tmp_path: Path) -> Path:
 
 
 def test_latest_bleibt_stehen(manifest: Path) -> None:
-    """Der eigentliche Befund: `latest` ueberlebt den Lauf — fuer BEIDE Bilder."""
+    """The actual finding: `latest` survives the run -- for BOTH images."""
     ergebnis = _lauf(manifest.parent, "--backend-tag", "2026-09-29-neu", "--frontend-tag", "2026-09-29-neu")
     assert ergebnis.returncode == 0, ergebnis.stderr
 
@@ -76,8 +77,8 @@ def test_latest_bleibt_stehen(manifest: Path) -> None:
 
 
 def test_konkrete_marken_werden_gesetzt(manifest: Path) -> None:
-    """Gegenprobe zum Riegel: ohne sie wuerde `test_latest_bleibt_stehen` auch
-    dann gruen, wenn das Skript ueberhaupt nichts mehr ersetzt."""
+    """Counter-check for the guard: without it `test_latest_bleibt_stehen`
+    would be green even if the script replaced nothing at all any more."""
     _lauf(manifest.parent, "--backend-tag", "2026-09-29-neu", "--frontend-tag", "v2.16.0")
 
     inhalt = manifest.read_text()
@@ -88,8 +89,9 @@ def test_konkrete_marken_werden_gesetzt(manifest: Path) -> None:
 
 
 def test_registry_name_bleibt_unberuehrt(manifest: Path) -> None:
-    """Der Praefix vor `renfield/` wird nie angefasst — sonst wandert die echte
-    Adresse ins oeffentliche Repo oder der Platzhalter ins private."""
+    """The prefix before `renfield/` is never touched -- otherwise the real
+    address migrates into the public repo or the placeholder into the private
+    one."""
     _lauf(manifest.parent, "--backend-tag", "2026-09-29-neu", "--frontend-tag", "v2.16.0")
 
     inhalt = manifest.read_text()
@@ -105,9 +107,9 @@ def test_fremde_bilder_bleiben_unberuehrt(manifest: Path) -> None:
 
 
 def test_latest_praefix_ist_eine_echte_marke(tmp_path: Path) -> None:
-    """Die Grenze sitzt eng: geschuetzt ist die Marke `latest`, nicht alles, was
-    mit `latest` anfaengt. `latest-rc` ist ein festgeschriebener Stand und wird
-    ersetzt wie jede andere Marke."""
+    """The boundary sits tight: what is protected is the tag `latest`, not
+    everything that starts with `latest`. `latest-rc` is a pinned state and is
+    replaced like any other tag."""
     pfad = tmp_path / "rc.yaml"
     pfad.write_text("          image: your-registry.example/renfield/backend:latest-rc\n")
 
@@ -117,8 +119,8 @@ def test_latest_praefix_ist_eine_echte_marke(tmp_path: Path) -> None:
 
 
 def test_reines_latest_manifest_meldet_nichts_zu_tun(tmp_path: Path) -> None:
-    """Ein Manifest, das nur `latest` traegt, ist nach dem Riegel unveraendert —
-    das Skript darf es dann auch nicht als geschrieben melden."""
+    """A manifest that carries only `latest` is unchanged after the guard --
+    so the script must not report it as written either."""
     pfad = tmp_path / "nur-latest.yaml"
     original = "          image: your-registry.example/renfield/backend:latest\n"
     pfad.write_text(original)

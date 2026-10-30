@@ -239,10 +239,10 @@ async def voice_chat(
     _bearer: str | None = Depends(oauth2_scheme),
 ):
     """
-    Kompletter Voice-Chat Flow:
-    1. Audio zu Text (STT) mit Sprechererkennung
-    2. Text an Ollama
-    3. Antwort zu Audio (TTS)
+    The complete voice-chat flow:
+    1. Audio to text (STT) with speaker recognition
+    2. Text to Ollama
+    3. Answer to audio (TTS)
 
     Multi-language support: Pass ?language=en to use English for both STT and TTS.
 

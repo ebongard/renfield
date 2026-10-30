@@ -89,9 +89,9 @@ class TestContract:
     @pytest.mark.unit
     def test_provider_result_frozen(self):
         r = _result()
-        # BENANNT, nicht `Exception`: ein blankes `raises(Exception)` besteht auch
-        # bei einem Tippfehler im Attributnamen — es belegte die Unveraenderlichkeit
-        # also nicht.
+        # NAMED, not `Exception`: a bare `raises(Exception)` also passes on a
+        # typo in the attribute name -- so it did not evidence the
+        # immutability.
         with pytest.raises(FrozenInstanceError):
             r.subject = "mutated"
 

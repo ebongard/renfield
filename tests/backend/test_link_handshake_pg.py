@@ -1,18 +1,18 @@
-"""F-ID-2 gegen ECHTES Postgres — die Wirkung, nicht nur der Ablauf.
+"""F-ID-2 against REAL Postgres -- the effect, not just the sequence.
 
-Die Unit-Tests beweisen, dass der Handschlag die richtigen Aufrufe macht. Sie
-koennen zwei Dinge nicht zeigen, auf die es ankommt:
+The unit tests prove that the handshake makes the right calls. There are two
+things that matter which they cannot show:
 
-1. **Dass die Verknuepfung wirkt.** `resolve_linked_user` ist die Funktion,
-   die beim Antwortenden ueber `enforce_circles=False` entscheidet. Erst wenn
-   sie nach dem Handschlag die Person liefert — und nach dem Widerruf wieder
-   `None` —, ist die Kette geschlossen.
-2. **Dass der Eindeutigkeitsindex traegt.** Er ist laut Modul-Docstring des
-   Dienstes die EIGENTLICHE Sicherung gegen Wiedereinspielung, nicht der
-   Nonce. Eine Behauptung ueber einen Index gehoert gegen die echte Bank
-   geprueft; sqlite erzwingt sie anders.
+1. **That the link takes effect.** `resolve_linked_user` is the function that
+   decides `enforce_circles=False` on the answering side. Only when it returns
+   the person after the handshake -- and `None` again after the revoke -- is
+   the chain closed.
+2. **That the uniqueness index holds.** According to the service's module
+   docstring it is the REAL defence against a replay, not the nonce. An
+   assertion about an index belongs checked against the real database; sqlite
+   enforces it differently.
 
-Gilt nur mit `RENFIELD_TEST_PG_URL` (sonst uebersprungen).
+Applies only with `RENFIELD_TEST_PG_URL` (skipped otherwise).
 """
 from __future__ import annotations
 
@@ -56,12 +56,12 @@ async def welt(pg_db_session: AsyncSession) -> dict:
 async def test_the_link_DECIDES_the_mapped_path_and_the_revoke_undoes_it(
     pg_db_session, welt,
 ):
-    """🛑 Der Rueckweg wird DURCHLAUFEN, nicht behauptet.
+    """🛑 The way back is EXERCISED, not asserted.
 
-    `resolve_linked_user` ist die Weiche beim Antwortenden. Vorher `None`
-    (Rueckfall auf die Paarungsstufe), nach dem Handschlag die Person (volle
-    eigene Reichweite), nach dem Widerruf wieder `None`. Ein Test, der nur den
-    mittleren Zustand prueft, belegt nicht, dass der Widerruf greift.
+    `resolve_linked_user` is the switch on the answering side. `None` before
+    (falling back to the pairing tier), the person after the handshake (that
+    person's own full reach), `None` again after the revoke. A test that checks
+    only the middle state does not evidence that the revoke takes hold.
     """
     ref = mint_querier_ref()
     peer_id, person_id = welt["peer_id"], welt["person_id"]
@@ -84,10 +84,10 @@ async def test_the_link_DECIDES_the_mapped_path_and_the_revoke_undoes_it(
 
 
 async def test_the_unique_index_IS_the_replay_defence(pg_db_session, welt):
-    """🛑 Der Modul-Docstring des Dienstes sagt, der Index traegt — nicht der
-    Nonce, der nur 60 s von 600 s abdeckt. Hier wird das nachgemessen statt
-    geglaubt: dasselbe `(peer_id, querier_ref)` ein zweites Mal muss
-    scheitern, auch mit einer ANDEREN Person.
+    """🛑 The service's module docstring says the index holds -- not the
+    nonce, which covers only 60 s out of 600 s. Here that is measured instead
+    of believed: the same `(peer_id, querier_ref)` a second time has to fail,
+    with a DIFFERENT person as well.
     """
     ref = mint_querier_ref()
     await create_link(
@@ -99,7 +99,7 @@ async def test_the_unique_index_IS_the_replay_defence(pg_db_session, welt):
     with pytest.raises(IntegrityError):
         await create_link(
             pg_db_session, peer_id=welt["peer_id"],
-            local_user_id=welt["fremde_id"],   # andere Person, gleiches Band
+            local_user_id=welt["fremde_id"],   # a different person, the same ref
             querier_ref=ref, created_by=welt["fremde_id"],
         )
         await pg_db_session.flush()
@@ -109,9 +109,9 @@ async def test_the_unique_index_IS_the_replay_defence(pg_db_session, welt):
 async def test_a_deleted_person_demotes_the_link_instead_of_breaking_it(
     pg_db_session, welt,
 ):
-    """Der Fremdschluessel steht auf `ON DELETE SET NULL`, und die Aufloesung
-    behandelt `NULL` als unverknuepft. Das ist fail-closed: ein geloeschtes
-    Konto fuehrt zum Rueckfall, nicht zu einem Treffer auf irgendwen.
+    """The foreign key is set to `ON DELETE SET NULL`, and the resolution
+    treats `NULL` as unlinked. That is fail-closed: a deleted account leads to
+    the fallback, not to a hit on just anybody.
     """
     from sqlalchemy import delete as sql_delete
 
