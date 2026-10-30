@@ -563,7 +563,7 @@ def _build_action_summary(intent: dict, action_result: dict, max_chars: int = 20
             return ""
         result = f"{intent_name} → {len(data)} Ergebnisse:\n" + "\n".join(f"  - {i}" for i in items)
         if len(data) > 10:
-            result += f"\n  ... and {len(data) - 10} more"
+            result += f"\n  ... und {len(data) - 10} weitere"
         return result[:max_chars]
 
     return ""
@@ -1567,7 +1567,7 @@ async def websocket_endpoint(
                     validate_artifacts,
                 )
                 for art in validate_artifacts(raw_artifacts):
-                    turn_artifacts.append(art)  # noqa: B023 — lebt nur in dieser Runde, s. 1427/2404
+                    turn_artifacts.append(art)  # noqa: B023 -- lives only within this turn, see 1427/2404
                     await websocket.send_json(build_artifact_frame(art))
 
             media_shortcut_handled = False
@@ -2308,7 +2308,7 @@ async def websocket_endpoint(
                     _fed_sink_lock = asyncio.Lock()
 
                     async def _federation_progress_sink(payload: dict) -> None:
-                        async with _fed_sink_lock:  # noqa: B023 — Schloss dieser Runde, s. 2147/2183
+                        async with _fed_sink_lock:  # noqa: B023 -- this turn's lock, see 2147/2183
                             try:
                                 await websocket.send_json({
                                     "type": "agent_federation_progress",
